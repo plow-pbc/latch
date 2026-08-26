@@ -587,10 +587,7 @@ ipcMain.handle("vault:items", async () => {
   const vault = device?.vaultClient;
   const server = device?.vaultServer;
   // Four outcomes, one shape: the tab is shown exactly one of these and cannot
-  // be handed a combination that means nothing. They used to be an array, a
-  // null and two independent booleans, which left the renderer reconstructing
-  // which fact won — the same shape-sniffing that let a build with no runtime
-  // render as a vault that had not started yet.
+  // be handed a combination that means nothing.
   //
   // Nothing to start, rather than not started yet: no vault was ever installed
   // here. Deliberately says nothing about the browser runtime, which may be

@@ -745,6 +745,33 @@ app.whenReady().then(async () => {
   const vaultShot = process.env.VAULT_OUT ?? "/tmp/vault-locked.png";
   await captureAfterPaint(win, vaultShot);
 
+  // The state this whole change exists to produce, and the one nothing used to
+  // render: a build with no vault installed. It said "has not started yet",
+  // which sent someone looking for a server that had never been installed —
+  // the same mistake `locked` above had to be rescued from, and the reason
+  // both checks assert the absence of that sentence rather than only the
+  // presence of their own.
+  vaultItemsReply = { status: "missing" };
+  await win.webContents.executeJavaScript(`window.__domoSelectTab("agents")`);
+  await win.webContents.executeJavaScript(`window.__domoSelectTab("vault")`);
+  await waitFor(win, `document.querySelector("#view .empty")`, "the missing-vault pane to render");
+  const vaultMissing = await win.webContents.executeJavaScript(`(${() => {
+    const text = document.body.innerText;
+    return {
+      saysNoVaultInstalled: text.includes("This build has no vault installed."),
+      doesNotClaimEmpty: !text.includes("has not started yet"),
+      doesNotClaimLocked: !text.includes("can't unlock its vault account"),
+      // Nothing is lost, and no remedy is offered: a packaged install always
+      // bundles a vault, so an owner reading this has a broken install rather
+      // than a command to run.
+      reassures: text.includes("a build that includes the vault will open whatever is already here"),
+      // The locked copy must not leak into this pane — they are different facts.
+      noLockedNote: !text.includes("The account file is present but cannot be opened"),
+    };
+  }})()`);
+  // Back to locked, which is what the checks below expect to find.
+  vaultItemsReply = { status: "locked", reason: "undecryptable" };
+
   // Unsaved edits must not vanish without a word. The vault is the only screen
   // that holds a form open behind a Save button, so it is the only one where
   // leaving can throw typing away — by closing the sheet, by collapsing a row,
@@ -1117,6 +1144,11 @@ app.whenReady().then(async () => {
     vaultLocked.hedgesTheCause &&
     vaultLocked.promisesNoFakeRecovery &&
     vaultLocked.saysNothingDeleted &&
+    vaultMissing.saysNoVaultInstalled &&
+    vaultMissing.doesNotClaimEmpty &&
+    vaultMissing.doesNotClaimLocked &&
+    vaultMissing.reassures &&
+    vaultMissing.noLockedNote &&
     modalClosed.gone &&
     modalClosed.paneLive &&
     modalClosed.focusBackOnTrigger &&
@@ -1207,7 +1239,7 @@ app.whenReady().then(async () => {
     errors.length === 0;
   console.log(
     "PROBE:" +
-      JSON.stringify({ main, settings, strandedOnDisk, settingsPane, connect, agentsShot, approvalsReviewer, approvalsShot, purposeRoundTrip, approvalsAsk, askWithoutReviewer, approvalsShotAsk, agentsOpen, modalClosed, vaultLocked, vaultUnsaved, vaultShot, agentsOpenShot, staleSettingsPane, optimisticMode, settingsShot, approval, reviewerNote, consoleErrors: errors, ok }),
+      JSON.stringify({ main, settings, strandedOnDisk, settingsPane, connect, agentsShot, approvalsReviewer, approvalsShot, purposeRoundTrip, approvalsAsk, askWithoutReviewer, approvalsShotAsk, agentsOpen, modalClosed, vaultLocked, vaultMissing, vaultUnsaved, vaultShot, agentsOpenShot, staleSettingsPane, optimisticMode, settingsShot, approval, reviewerNote, consoleErrors: errors, ok }),
   );
   app.exit(ok ? 0 : 1);
 }).catch((err) => {

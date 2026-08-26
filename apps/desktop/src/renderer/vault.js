@@ -785,16 +785,23 @@ export async function renderVault(view, isCurrent = () => true) {
     // Mac restored from backup — used to render as "has not started yet", which
     // sent people looking for a server that was running fine; a build with no
     // runtime rendered the same way, and sent someone looking for a server that
-    // had never been installed. One status decides, so no two of them can be
-    // true at once and none of it is reconstructed here.
+    // had never been installed.
     const missing = reply.status === "missing";
     const locked = reply.status === "locked";
+    // Named, not a fall-through. "Has not started yet" is the sentence this
+    // screen keeps having to be rescued from, so it is the answer to exactly
+    // one status and never the answer to "none of the above" — a fifth outcome
+    // added over in main.ts, or a packaged renderer left behind by one, has to
+    // say something that cannot be mistaken for a diagnosis.
+    const headline = missing
+      ? "This build has no vault installed."
+      : locked
+        ? "This Mac can't unlock its vault account."
+        : reply.status === "starting"
+          ? "The vault has not started yet."
+          : `The vault reported a state this build does not know: ${reply.status}`;
     pane.replaceChildren(masthead, el("div", { class: "col" }, [
-      el("div", { class: "empty", text: missing
-        ? "This build has no vault installed."
-        : locked
-          ? "This Mac can't unlock its vault account."
-          : "The vault has not started yet." }),
+      el("div", { class: "empty", text: headline }),
       // Lead with what is certain and claim no more, the same care the
       // `undecryptable` note below takes. All this state says is that there is
       // no vault here; whether the browser runtime around it is missing too, or

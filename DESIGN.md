@@ -551,7 +551,9 @@ A vault that was never installed is a fourth such fact, and it collapsed the
 same way for the same reason: a build with no vault payload has no server, no
 account and nothing to start, which reaching the tab as "has not started yet"
 sent someone to debug a vault that had never existed. `vault:items` answers it
-as its own shape. The tab says only that there is no vault — whether the whole
+as one of four statuses — `missing`, `locked`, `starting`, `ready` — one
+discriminated reply rather than a shape per outcome, so no two of them can be
+true at once and the tab reconstructs nothing. The tab says only that there is no vault — whether the whole
 browser runtime is absent or only its vault payload is, it cannot tell — and
 carries no remedy, because a packaged install always bundles one and its owner
 has a broken install rather than a recipe to run. The remedy is deliberately
