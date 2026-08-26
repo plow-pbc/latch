@@ -148,18 +148,17 @@ describe("a vendored provider through the exec path", () => {
   ])("reports %s without spawning", async (_why, make, expected) => {
     const d = device(make(), [vendorDir()]);
     const response = await run(d, ["gog", "gmail", "search", "q"]);
-    expect(jv(response).get("error").str).toMatch(expected);
+    const message = jv(response).get("error").str;
+    expect(message).toMatch(expected);
     // Whatever was thrown, the token reaches neither the agent NOR the
     // append-only log. The audit half matters at least as much: an error
     // string there outlives the token and travels wherever the log travels.
-    // No coalesce: a sentinel contains no token, so it would pass vacuously —
-    // which is the shape removed a round ago and re-added by the fallback.
-    const message = jv(response).get("error").str;
-    expect(typeof message).toBe("string");
-    expectNoToken(message!, "response");
+    // No coalesce or sentinel: either contains no token, so either would pass
+    // vacuously. `toMatch` above already fails on a non-string.
+    expectNoToken(String(message), "the response");
     // The log's own BYTES, not a parsed-and-re-encoded view of them: entries()
     // silently drops malformed lines, and what travels is audit.ndjson.
-    expectNoToken(fs.readFileSync(d.audit.file, "utf8"), "audit log");
+    expectNoToken(fs.readFileSync(d.audit.file, "utf8"), "audit.ndjson");
     expectNeverSpawned(d);
   });
 
