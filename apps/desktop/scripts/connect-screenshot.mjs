@@ -115,7 +115,6 @@ const CLOUD_EMPTY = {
   cloudChats: [],
   cloudChatsLoaded: true,
   cloudSendTo: null,
-  cloudAgentSettings: {},
 };
 const CLOUD_READY = {
   ...CLOUD_EMPTY,

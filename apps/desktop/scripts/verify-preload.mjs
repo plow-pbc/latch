@@ -121,9 +121,6 @@ let cloudProbe = {
   cloudChats: [cloudChat],
   cloudChatsLoaded: true,
   cloudSendTo: "+1 (415) 555-0199",
-  cloudAgentSettings: {
-    cag_probe: { relay: true, inference: false, adversarialReview: false },
-  },
 };
 const cloudCalls = { create: [] };
 let releaseCloudCreate = null;
