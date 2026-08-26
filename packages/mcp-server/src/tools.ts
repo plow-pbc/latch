@@ -271,8 +271,10 @@ export const TOOLS: ToolSpec[] = [
       "write access is granted from them. They are NOT the full extent of what the command can " +
       "read — the sandbox profile permits reads more broadly than the paths declared here. " +
       "If the command is still running when the wait elapses you get a job handle for plow_get_output. " +
-      "A command that has produced no output at all after 15 minutes is killed and reported as such — " +
-      "so if long silent work is expected, have it print progress. " +
+      "A read-only command that has produced no output at all after 15 minutes is killed and reported " +
+      "as such — so if long silent work is expected, have it print progress. A command approved to " +
+      "write or to use the network is never killed that way: it could be mid-work, and a truncated " +
+      "file or a half-applied remote call is worse than the wait. " +
       "A run ends when the command itself exits, and its stdout and stderr close with it — so a job " +
       "left running in the background will normally be killed by its next write unless it redirects " +
       "both (`>log 2>&1`), its output is not captured, and no handle tracks it. "  +

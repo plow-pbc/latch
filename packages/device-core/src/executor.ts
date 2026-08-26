@@ -117,12 +117,16 @@ export class ExecutorError extends Error {}
  * Nothing here used to end such a run, so the job answered `running` for the
  * life of the app while an agent polled it, and the process leaked with it.
  *
- * The bound has two halves and needs both. A ceiling alone would kill honest
- * long work: output handles never expire, so a build still running after an
- * hour is retrievable and must survive. `has produced no output` is what
- * separates the two — a child that has written nothing at all by now is not
- * about to start. Nothing here reads CPU or idle time: this Mac legitimately
- * runs near-zero-CPU silent commands (an `ssh` waiting on a remote host), so
+ * The bound has three halves and needs all of them. A ceiling alone would kill
+ * honest long work: output handles never expire, so a build still running
+ * after an hour is retrievable and must survive. `has produced no output`
+ * separates those — a child that has written nothing at all by now is not
+ * about to start. And the run must have been approved for neither writes nor
+ * network, because those are the runs that can be silently mid-work here, and
+ * a truncated copy or a half-applied remote call is worse than the wait.
+ *
+ * Nothing here reads CPU or idle time: this Mac legitimately runs
+ * near-zero-CPU silent commands (an `ssh` waiting on a remote host), so
  * idleness is not evidence of anything.
  *
  * Fifteen minutes is a chosen literal, not a number computed from another:
@@ -386,15 +390,26 @@ export class Executor {
     };
 
     // What is left for the reaper is the one case `exit` cannot answer: a
-    // command that never ends at all. SIGKILL rather than a polite SIGTERM —
+    // command that never ends at all — and only where killing it can cost
+    // nothing. A run that was approved to write or to reach the network can
+    // be silently mid-work at the deadline: killing a large copy truncates
+    // its destination, and killing a series of remote calls leaves them half
+    // applied, neither of which anyone rolls back. A read-only run has no
+    // such half-state, which is also the shape the observed failure had — a
+    // `sqlite3 -readonly` blocked on a consent prompt. So the timer arms for
+    // those alone, and a wedged run with side-effect capability stays the
+    // owner's to end, as it was before any of this.
+    //
+    // SIGKILL rather than a polite SIGTERM —
     // it is wedged in a kernel call with nothing to clean up, and a handler
     // that never gets scheduled would only leave the same process on the
     // table. The group, not the pid, because `sandbox-exec` execs into the
     // approved argv and that argv is routinely a shell: `/bin/sh -c 'a && b'`
     // does NOT exec, so one signal kills the shell and leaves the wedged
     // descendant alive.
+    const reapable = args.writePaths.length === 0 && !args.network;
     reaper = setTimeout(() => {
-      if (buffer.exitCode !== null || buffer.produced) return;
+      if (!reapable || buffer.exitCode !== null || buffer.produced) return;
       buffer.reaped = true;
       abandon(-1);
     }, this.reapAfterMs);

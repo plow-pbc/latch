@@ -78,26 +78,69 @@ async function settle(
   }
 }
 
-describe("a run that produces nothing and never exits", () => {
-  it("is killed once it outlives the reap window, and says so", async () => {
+// Seatbelt (`sandbox-exec`) and the FIFO these cases block on are the Mac's
+// own; anywhere else they assert against a spawn error rather than the
+// behavior. Same guard the real-sandbox suite next door uses.
+const ON_MAC = process.platform === "darwin";
+
+/** The two shapes a wedged silent run takes: the child itself, and a shell's descendant. */
+const silentBlockedRuns = [
+  { name: "the child itself", argv: (fifo: string) => ["/bin/cat", fifo] },
+  {
+    // `sh -c 'cmd'` execs, so that case IS the child above. A compound command
+    // does not: the shell forks, and signalling the shell alone would leave
+    // the blocked `cat` holding the stdout pipe — the original bug wearing a
+    // different hat, since `close` waits on that pipe.
+    name: "a descendant of a shell that does not exec",
+    argv: (fifo: string) => ["/bin/sh", "-c", `/bin/cat ${JSON.stringify(fifo)}; echo unreachable`],
+  },
+];
+
+describe.skipIf(!ON_MAC)("a run that produces nothing and never exits", () => {
+  it.each(silentBlockedRuns)("is killed once it outlives the reap window: $name", async ({ argv }) => {
     const dir = tempDir();
     const fifo = blockingPipe(dir);
     const executor = new Executor(path.join(dir, "scratch"), 300);
 
     const started = await executor.run({
-      argv: ["/bin/cat", fifo],
+      argv: argv(fifo),
       cwd: dir,
       readPaths: [dir],
       writePaths: [],
       network: false,
       waitMs: 50,
     });
+    cleanups.push(() => killAll(fifo));
     expect(started.running).toBe(true);
 
     const ended = await settle(executor, started.handle);
     expect(ended.reaped).toBe(true);
     expect(ended.exitCode).not.toBe(0);
     await until(() => alive(fifo).length === 0);
+  });
+
+  it("leaves a run that was approved to write alone, however silent", async () => {
+    const dir = tempDir();
+    const fifo = blockingPipe(dir);
+    const executor = new Executor(path.join(dir, "scratch"), 300);
+
+    // Same wedged shape as the reaped cases, one capability apart. A run that
+    // may write could be silently mid-work at the deadline, and a truncated
+    // destination is worse than the wait — so this one is the owner's to end.
+    const started = await executor.run({
+      argv: ["/bin/cat", fifo],
+      cwd: dir,
+      readPaths: [dir],
+      writePaths: [dir],
+      network: false,
+      waitMs: 50,
+    });
+    cleanups.push(() => killAll(fifo));
+
+    await new Promise((r) => setTimeout(r, 900));
+    const later = executor.output(started.handle, 0);
+    expect(later.running).toBe(true);
+    expect(later.reaped).toBe(false);
   });
 
   it("leaves a run that has produced output alone", async () => {
@@ -126,32 +169,6 @@ describe("a run that produces nothing and never exits", () => {
     const later = executor.output(started.handle, 0);
     expect(later.running).toBe(true);
     expect(later.reaped).toBe(false);
-  });
-
-  it("takes the descendants of a shell that does not exec", async () => {
-    const dir = tempDir();
-    const fifo = blockingPipe(dir);
-    const executor = new Executor(path.join(dir, "scratch"), 300);
-
-    // `sh -c 'cmd'` execs, so the wedged process IS the child and one signal
-    // would do. A compound command does not: the shell forks, and signalling
-    // the shell alone leaves the blocked `cat` holding the stdout pipe — which
-    // is the original bug wearing a different hat, since `close` waits on that
-    // pipe and the job would answer `running` forever.
-    const started = await executor.run({
-      argv: ["/bin/sh", "-c", `/bin/cat ${JSON.stringify(fifo)}; echo unreachable`],
-      cwd: dir,
-      readPaths: [dir],
-      writePaths: [],
-      network: false,
-      waitMs: 50,
-    });
-    cleanups.push(() => killAll(fifo));
-    expect(started.running).toBe(true);
-
-    const ended = await settle(executor, started.handle);
-    expect(ended.reaped).toBe(true);
-    await until(() => alive(fifo).length === 0);
   });
 
   it("ends when the command ends, not when a job it backgrounded lets go", async () => {
@@ -217,7 +234,7 @@ describe("a run that produces nothing and never exits", () => {
   });
 });
 
-describe("the audit record of a reaped run", () => {
+describe.skipIf(!ON_MAC)("the audit record of a reaped run", () => {
   it("closes the run out once, marked reaped", async () => {
     const home = tempDir();
     const device = new DeviceAgent(home, "Test Mac", new HeadlessPolicy({ intent: "allow_once" }));
