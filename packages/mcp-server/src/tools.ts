@@ -19,7 +19,7 @@ import { Capability, canonicalJSON, canonicalizeAsync, JSONValue, jv } from "@do
 import { LIVE_WEB_ROUTING, MAX_CLICK_TIMEOUT_MS, MAX_FILE_BYTES } from "@domo/device-core";
 import { decideAndRun, GOAL, ToolError, ToolSpec } from "./toolKit.js";
 import type { AgentIdentity, ToolContext } from "./toolKit.js";
-import { SLACK_READ_TOOLS } from "./slackTools.js";
+import { SLACK_READ_TOOLS, SLACK_WRITE_TOOLS } from "./slackTools.js";
 
 // Re-exported for existing importers of tools.ts — the primitives now live in
 // toolKit.ts (see its header comment for why), but nothing outside this
@@ -619,6 +619,7 @@ export const TOOLS: ToolSpec[] = [
     },
   },
   ...SLACK_READ_TOOLS,
+  ...SLACK_WRITE_TOOLS,
 ];
 
 /** An MCP content block a tool result can become. */

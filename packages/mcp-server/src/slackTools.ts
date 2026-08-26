@@ -46,14 +46,22 @@ function body(args: JSONValue, keys: string[]): JSONValue {
  * The capability for one action: what it does, and what it does it to.
  *
  * The target is the scope path Slack itself is organised by — the workspace,
- * then the channel inside it — so the rule the owner creates is the sentence
- * they read in the dialog. An action with neither (`status`, an
- * account-less search) names no scope, which is honest: it is not confined to
- * one.
+ * then the channel or person inside it — so the rule the owner creates is the
+ * sentence they read in the dialog. An action with none of these (`status`,
+ * an account-less search) names no scope, which is honest: it is not confined
+ * to one.
+ *
+ * `user_id` scopes `conversations.open` the same way `channel_id` scopes
+ * everything else: opening a DM sends nothing, but an "always allow" that
+ * covered every person in the workspace would let this Mac silently resolve
+ * a DM channel with anyone the agent named, never mind the one the owner
+ * actually saw approved. Scoping it to the person keeps that the same
+ * per-target grant as a channel — and costs nothing, since no action ever
+ * supplies both a channel and a user.
  */
 function slackCapability(action: SlackAction, args: JSONValue): Capability {
   const a = jv(args);
-  const scope = [a.get("account").str, a.get("channel_id").str].filter(
+  const scope = [a.get("account").str, a.get("channel_id").str, a.get("user_id").str].filter(
     (part): part is string => part !== null && part !== "",
   );
   return {
@@ -195,6 +203,96 @@ export const SLACK_READ_TOOLS: ToolSpec[] = [
         "query",
         "account",
         "limit",
+      ]);
+    },
+  },
+];
+
+export const SLACK_WRITE_TOOLS: ToolSpec[] = [
+  {
+    name: "plow_slack_send",
+    title: "Send a Slack message as the owner",
+    description:
+      "Post a message to a Slack channel or DM **as the owner**. Other people will read it " +
+      "as them, so send only what the owner asked you to send. A lost response is not a " +
+      "no-op — read the channel back before sending again.",
+    inputSchema: {
+      type: "object",
+      required: ["account", "channel_id", "text"],
+      properties: {
+        account: ACCOUNT,
+        channel_id: { type: "string" },
+        text: { type: "string" },
+        thread_ts: { type: "string", description: "Reply in this thread" },
+        goal: GOAL,
+      },
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+    deferrable: true,
+    async run(args, ctx, progress) {
+      required(args, "account");
+      const channel = required(args, "channel_id");
+      required(args, "text");
+      return runSlack(ctx, progress, `send a Slack message to ${channel}`, "messages.send", args, [
+        "account",
+        "channel_id",
+        "text",
+        "thread_ts",
+      ]);
+    },
+  },
+  {
+    name: "plow_slack_update",
+    title: "Edit a Slack message the owner sent",
+    description: "Edit an existing Slack message. Only messages sent as the owner can be edited.",
+    inputSchema: {
+      type: "object",
+      required: ["account", "channel_id", "ts", "text"],
+      properties: {
+        account: ACCOUNT,
+        channel_id: { type: "string" },
+        ts: { type: "string", description: "Timestamp id of the message to edit" },
+        text: { type: "string" },
+        goal: GOAL,
+      },
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
+    deferrable: true,
+    async run(args, ctx, progress) {
+      required(args, "account");
+      required(args, "channel_id");
+      required(args, "ts");
+      required(args, "text");
+      return runSlack(ctx, progress, "edit a Slack message", "messages.update", args, [
+        "account",
+        "channel_id",
+        "ts",
+        "text",
+      ]);
+    },
+  },
+  {
+    name: "plow_slack_open_dm",
+    title: "Open a Slack DM channel",
+    description:
+      "Open (or find) the DM channel with one person, returning the channel id to send to. " +
+      "Opening a DM sends nothing.",
+    inputSchema: {
+      type: "object",
+      required: ["account", "user_id"],
+      properties: { account: ACCOUNT, user_id: { type: "string" }, goal: GOAL },
+      additionalProperties: false,
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+    deferrable: true,
+    async run(args, ctx, progress) {
+      required(args, "account");
+      required(args, "user_id");
+      return runSlack(ctx, progress, "open a Slack DM", "conversations.open", args, [
+        "account",
+        "user_id",
       ]);
     },
   },

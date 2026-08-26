@@ -5,8 +5,8 @@ import path from "node:path";
 import { Capability, JSONValue, RuleKey } from "@domo/protocol";
 import { DeviceAgent, HeadlessPolicy } from "@domo/device-core";
 import { DeniedError, Progress } from "../src/deferred.js";
-import { ToolContext } from "../src/toolKit.js";
-import { SLACK_READ_TOOLS } from "../src/slackTools.js";
+import { ToolContext, ToolSpec } from "../src/toolKit.js";
+import { SLACK_READ_TOOLS, SLACK_WRITE_TOOLS } from "../src/slackTools.js";
 
 /**
  * A `ToolContext` whose device's `handleIntent` is stubbed to capture the
@@ -58,15 +58,18 @@ function fakeProgress(): Progress {
 }
 
 const messages = SLACK_READ_TOOLS.find((t) => t.name === "plow_slack_messages")!;
+const send = SLACK_WRITE_TOOLS.find((t) => t.name === "plow_slack_send")!;
+const update = SLACK_WRITE_TOOLS.find((t) => t.name === "plow_slack_update")!;
+const openDm = SLACK_WRITE_TOOLS.find((t) => t.name === "plow_slack_open_dm")!;
 
-/** The capabilities one call builds. */
-async function capabilitiesOf(args: JSONValue): Promise<Capability[]> {
+/** The capabilities one call builds. Defaults to `messages`; pass another tool to reuse it. */
+async function capabilitiesOf(args: JSONValue, tool: ToolSpec = messages): Promise<Capability[]> {
   let seen: Capability[] = [];
   const ctx = fakeCtx((capabilities) => {
     seen = capabilities as Capability[];
     return { status: "completed", result: { messages: [] } };
   });
-  await messages.run(args, ctx, fakeProgress());
+  await tool.run(args, ctx, fakeProgress());
   return seen;
 }
 
@@ -176,5 +179,118 @@ describe("Slack read tools", () => {
     await expect(
       messages.run({ account: "T1", channel_id: "C1" }, ctx, fakeProgress()),
     ).rejects.toThrow(DeniedError);
+  });
+});
+
+describe("Slack write tools", () => {
+  it("exposes the three write tools, none flagged read-only", () => {
+    expect(SLACK_WRITE_TOOLS.map((t) => t.name).sort()).toEqual([
+      "plow_slack_open_dm",
+      "plow_slack_send",
+      "plow_slack_update",
+    ]);
+    for (const t of SLACK_WRITE_TOOLS) {
+      expect(t.annotations.readOnlyHint, t.name).toBe(false);
+      expect(t.deferrable, t.name).toBe(true);
+    }
+  });
+
+  // Editing a message is the one write here with an undo a stranger cannot
+  // see coming — the other two either create new content or read nothing.
+  it("flags only plow_slack_update as destructive", () => {
+    expect(send.annotations.destructiveHint).toBe(false);
+    expect(update.annotations.destructiveHint).toBe(true);
+    expect(openDm.annotations.destructiveHint).toBe(false);
+  });
+
+  it.each([
+    {
+      name: "plow_slack_send",
+      tool: () => send,
+      args: { account: "T1", channel_id: "C1", text: "hi" },
+      capability: { kind: "tool", tool: "slack.messages.send", target: "T1/C1" },
+    },
+    {
+      name: "plow_slack_update",
+      tool: () => update,
+      args: { account: "T1", channel_id: "C1", ts: "1.1", text: "edited" },
+      capability: { kind: "tool", tool: "slack.messages.update", target: "T1/C1" },
+    },
+    // Scoped to the person, not just the workspace — see slackCapability's
+    // comment on why `user_id` joins the target the same way `channel_id`
+    // does for every other write.
+    {
+      name: "plow_slack_open_dm",
+      tool: () => openDm,
+      args: { account: "T1", user_id: "U1" },
+      capability: { kind: "tool", tool: "slack.conversations.open", target: "T1/U1" },
+    },
+  ])("$name builds its action and target", async ({ tool, args, capability }) => {
+    const seen: unknown[] = [];
+    const ctx = fakeCtx((capabilities) => {
+      seen.push(capabilities);
+      return { status: "completed", result: {} };
+    });
+    await tool().run(args, ctx, fakeProgress());
+    expect(seen[0]).toEqual([capability]);
+  });
+
+  // What an "always allow" on a send is actually worth: the target is in the
+  // capability and the text is not, so a rule follows the channel the owner
+  // saw regardless of what gets typed into it next — and does not follow the
+  // agent to a different channel.
+  it("scopes a send's rule key to the channel, not the text", async () => {
+    const first = await capabilitiesOf({ account: "T1", channel_id: "C1", text: "hello" }, send);
+    const reworded = await capabilitiesOf(
+      { account: "T1", channel_id: "C1", text: "a completely different message" },
+      send,
+    );
+    const otherChannel = await capabilitiesOf({ account: "T1", channel_id: "C2", text: "hello" }, send);
+
+    expect(ruleKey(reworded)).toBe(ruleKey(first));
+    expect(ruleKey(otherChannel)).not.toBe(ruleKey(first));
+  });
+
+  // Same guarantee for opening a DM, keyed on the person instead of a channel.
+  it("scopes an open_dm's rule key to the person", async () => {
+    const alice = await capabilitiesOf({ account: "T1", user_id: "U1" }, openDm);
+    const aliceAgain = await capabilitiesOf({ account: "T1", user_id: "U1" }, openDm);
+    const bob = await capabilitiesOf({ account: "T1", user_id: "U2" }, openDm);
+
+    expect(ruleKey(aliceAgain)).toBe(ruleKey(alice));
+    expect(ruleKey(bob)).not.toBe(ruleKey(alice));
+  });
+
+  it.each([
+    { name: "plow_slack_send", tool: () => send, args: { account: "T1", channel_id: "C1" }, missing: /text/ },
+    {
+      name: "plow_slack_update",
+      tool: () => update,
+      args: { account: "T1", channel_id: "C1", ts: "1.1" },
+      missing: /text/,
+    },
+    { name: "plow_slack_open_dm", tool: () => openDm, args: { account: "T1" }, missing: /user_id/ },
+  ])("$name rejects a missing required argument before building an intent", async ({ tool, args, missing }) => {
+    const ctx = fakeCtx(() => {
+      throw new Error("should not build an intent");
+    });
+    await expect(tool().run(args, ctx, fakeProgress())).rejects.toThrow(missing);
+  });
+
+  it("keeps message text out of the capability so a rule can match twice", async () => {
+    const seen: { capabilities: unknown[]; payload: unknown }[] = [];
+    const ctx = fakeCtx((capabilities, payload) => {
+      seen.push({ capabilities, payload });
+      return { status: "completed", result: { ts: "1.2", channel: "C1" } };
+    });
+
+    await send.run({ account: "T1", channel_id: "C1", text: "hello" }, ctx, fakeProgress());
+    await send.run({ account: "T1", channel_id: "C1", text: "different" }, ctx, fakeProgress());
+
+    expect(seen[0].capabilities).toEqual([
+      { kind: "tool", tool: "slack.messages.send", target: "T1/C1" },
+    ]);
+    expect(seen[0].capabilities).toEqual(seen[1].capabilities);
+    expect(seen[0].payload).toMatchObject({ text: "hello" });
   });
 });

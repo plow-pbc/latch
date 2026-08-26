@@ -45,6 +45,8 @@ export const SLACK_ACTIONS = {
   "messages.list": { method: "POST", segment: "messages.list" },
   "messages.search": { method: "POST", segment: "messages.search" },
   "messages.send": { method: "POST", segment: "messages.send" },
+  "messages.update": { method: "POST", segment: "messages.update" },
+  "conversations.open": { method: "POST", segment: "conversations.open" },
 } as const;
 
 export type SlackAction = keyof typeof SLACK_ACTIONS;
