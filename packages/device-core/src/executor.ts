@@ -33,13 +33,6 @@ export const SandboxProfile = {
     writePaths: string[];
     network: boolean;
     scratch: string;
-    /**
-     * True when this run may be killed for going silent, which is what makes
-     * the housekeeping grant below unsafe to give it: a run that can be shot
-     * mid-write must have nowhere persistent to write. Its scratch stays
-     * writable — that dies with the run either way.
-     */
-    reapable?: boolean;
     /** Home override for golden tests; defaults to the real home. */
     home?: string;
   }): string {
@@ -90,15 +83,25 @@ export const SandboxProfile = {
     // configs/libraries resolve. Writes stay scoped below — reads are the safe
     // capability here, and network is off unless approved.
     lines.push(`(allow file-read* (subpath ${quote(home)}))`);
-    const housekeeping = (
-      args.reapable ? [] : ["Library/Caches", ".cache", ".config", ".local/state", ".npm"]
-    ).map((p) => home + "/" + p);
-    const writable = [args.scratch, ...args.writePaths, ...housekeeping].map((p) =>
-      canonicalize(p),
+    const housekeeping = ["Library/Caches", ".cache", ".config", ".local/state", ".npm"].map(
+      (p) => home + "/" + p,
     );
-    for (const p of writable) {
+    // A run that may be killed for going silent gets nothing persistent to
+    // write, because it can be shot mid-write and nobody rolls that back. The
+    // READS stay: `canonicalize` follows symlinks, so an operator whose
+    // `~/.cache` lives on another volume would otherwise lose a grant the
+    // broad home read cannot cover — and reads were never the risk here.
+    const writable = [args.scratch, ...args.writePaths].concat(
+      isReapable(args) ? [] : housekeeping,
+    );
+    for (const p of writable.map((p) => canonicalize(p))) {
       lines.push(`(allow file-write* (subpath ${quote(p)}))`);
       lines.push(`(allow file-read* (subpath ${quote(p)}))`);
+    }
+    if (isReapable(args)) {
+      for (const p of housekeeping.map((p) => canonicalize(p))) {
+        lines.push(`(allow file-read* (subpath ${quote(p)}))`);
+      }
     }
     for (const p of args.readPaths.map((p) => canonicalize(p))) {
       lines.push(`(allow file-read* (subpath ${quote(p)}))`);
@@ -114,6 +117,18 @@ export const SandboxProfile = {
 };
 
 export class ExecutorError extends Error {}
+
+/**
+ * Whether a run may be killed for going silent — and, because it is the same
+ * question, whether it may be given anywhere persistent to write.
+ *
+ * Both callers derive it from the run's own capabilities rather than being
+ * told: a profile that could be built "reapable" for a run the timer will
+ * never touch, or the reverse, is a contradiction neither could detect.
+ */
+export function isReapable(args: { writePaths: string[]; network: boolean }): boolean {
+  return args.writePaths.length === 0 && !args.network;
+}
 
 /**
  * How long a run that has produced NOTHING may stay alive before it is killed.
@@ -291,18 +306,11 @@ export class Executor {
     const workingDir = args.cwd !== undefined ? canonicalize(args.cwd) : scratch;
     const reads = [...args.readPaths, workingDir];
 
-    // One predicate, two uses, and they have to be the same one: whether this
-    // run may be killed for going silent, and whether it is allowed anywhere
-    // persistent to write. Declaring no writes was never on its own enough —
-    // every profile hands out the housekeeping grant, so a "read-only" run
-    // could still be updating a config or a cache when the timer fired.
-    const reapable = args.writePaths.length === 0 && !args.network;
     const profile = SandboxProfile.generate({
       readPaths: reads,
       writePaths: args.writePaths,
       network: args.network,
       scratch,
-      reapable,
     });
     if (process.env.DOMO_DEBUG_SANDBOX) {
       process.stderr.write(`=== PROFILE ===\n${profile}\n=== ARGV ===\n${args.argv.join(" ")}\n`);
@@ -411,10 +419,15 @@ export class Executor {
     // nothing. A run that was approved to write or to reach the network can
     // be silently mid-work at the deadline: killing a large copy truncates
     // its destination, and killing a series of remote calls leaves them half
-    // applied, neither of which anyone rolls back. A read-only run has no
-    // such half-state, which is also the shape the observed failure had — a
-    // `sqlite3 -readonly` blocked on a consent prompt. So the timer arms for
-    // those alone.
+    // applied, neither of which anyone rolls back.
+    //
+    // What makes the other runs safe to kill is NOT that they declared no
+    // writes — that alone was never enough, since every profile used to hand
+    // out the housekeeping grant. It is that `isReapable` decided the profile
+    // too: a run this timer can fire on was given nowhere persistent to write,
+    // and the scratch it does have is deleted below. The two must stay one
+    // decision. It is also the shape the observed failure had — a
+    // `sqlite3 -readonly` blocked on a consent prompt.
     //
     // Say plainly what that costs, because there is no cancel affordance to
     // soften it: a wedged run with side-effect capability stays alive and
@@ -428,11 +441,16 @@ export class Executor {
     // approved argv and that argv is routinely a shell: `/bin/sh -c 'a && b'`
     // does NOT exec, so one signal kills the shell and leaves the wedged
     // descendant alive.
-    if (reapable) {
+    if (isReapable(args)) {
       reaper = setTimeout(() => {
         if (buffer.exitCode !== null || buffer.produced) return;
         buffer.reaped = true;
         abandon(-1);
+        // The run is dead and its output is already in memory. Its scratch is
+        // the one place it could have left half of something — `TMPDIR` points
+        // there and it is the only writable path a reapable run has — so the
+        // half goes with it. Nothing else deletes a scratch dir (#153).
+        fs.rmSync(scratch, { recursive: true, force: true });
       }, this.reapAfterMs);
       reaper.unref?.();
     }

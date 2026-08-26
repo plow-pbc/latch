@@ -14,7 +14,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { Capability, jv, KeyPair, makeIntent } from "@domo/protocol";
-import { DeviceAgent, Executor, HeadlessPolicy, SandboxProfile } from "@domo/device-core";
+import { DeviceAgent, Executor, HeadlessPolicy, isReapable, SandboxProfile } from "@domo/device-core";
 
 const cleanups: (() => void)[] = [];
 afterEach(() => {
@@ -99,16 +99,22 @@ const silentBlockedRuns = [
 // Pure profile generation — no seatbelt, so this one runs everywhere.
 describe("what a run that may be killed is allowed to write", () => {
   it("gets its scratch and nothing else persistent", () => {
-    const args = { readPaths: [], writePaths: [], network: false, scratch: "/s", home: "/h" };
-    const reapable = SandboxProfile.generate({ ...args, reapable: true });
-    const kept = SandboxProfile.generate({ ...args, reapable: false });
+    // Both profiles come from the capabilities alone — the same derivation the
+    // reaper's own guard makes — so the two cannot be set against each other.
+    const args = { readPaths: [], scratch: "/s", home: "/h" };
+    const reapable = SandboxProfile.generate({ ...args, writePaths: [], network: false });
+    const networked = SandboxProfile.generate({ ...args, writePaths: [], network: true });
+    expect(isReapable({ writePaths: [], network: false })).toBe(true);
+    expect(isReapable({ writePaths: [], network: true })).toBe(false);
 
     // The housekeeping grant is what makes "declared no writes" not mean "writes
     // nothing": every profile hands it out, so a run could be updating a config
-    // when the timer fired. A reapable run has nowhere to leave a half-write.
+    // when the timer fired. A reapable run has nowhere to leave a half-write —
+    // but it keeps the reads, which were never the risk.
     for (const dir of ["Library/Caches", ".cache", ".config", ".local/state", ".npm"]) {
-      expect(kept).toContain(`(allow file-write* (subpath "/h/${dir}"))`);
+      expect(networked).toContain(`(allow file-write* (subpath "/h/${dir}"))`);
       expect(reapable).not.toContain(`(allow file-write* (subpath "/h/${dir}"))`);
+      expect(reapable).toContain(`(allow file-read* (subpath "/h/${dir}"))`);
     }
     expect(reapable).toContain('(allow file-write* (subpath "/s"))');
   });
@@ -135,6 +141,9 @@ describe.skipIf(!ON_MAC)("a run that produces nothing and never exits", () => {
     expect(ended.reaped).toBe(true);
     expect(ended.exitCode).not.toBe(0);
     await until(() => alive(fifo).length === 0);
+    // The one place a killed run could have left half of something — it is the
+    // only writable path it had, and nothing else ever deletes a scratch dir.
+    await until(() => fs.readdirSync(path.join(dir, "scratch")).length === 0);
   });
 
   // Same wedged shape as the reaped cases, one capability apart — and both

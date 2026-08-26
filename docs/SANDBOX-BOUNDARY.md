@@ -185,7 +185,7 @@ How fair the list is depends on which capability, and it is only fully fair for 
 |---|---|
 | `Read: …` (any) | **No.** Per §1 the profile permits the whole home directory regardless of what was declared. |
 | `Write: …` on a **`write_file`** call | **Yes.** `FileOps.write` canonicalises and scope-checks against the approved paths, and refuses outside them. |
-| `Write: …` on a **`run_command`** call | **No.** `executor.ts:77-85` additionally grants writes to `Library/Caches`, `.cache`, `.config`, `.local/state` and `.npm` under home, on every invocation, whatever `write_paths` says. |
+| `Write: …` on a **`run_command`** call | **No.** The profile additionally grants writes to the five housekeeping directories under home, whatever `write_paths` says — except for a reapable run, which gets none of them. §1 states that rule; this row does not restate it. |
 | `Run: …` | Yes, in that the argv shown is the argv executed. |
 | `Network: denied` | Yes — `executor.ts:90-95`. |
 
