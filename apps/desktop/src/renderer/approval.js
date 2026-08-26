@@ -61,6 +61,53 @@ async function render() {
     const deny = button("Deny", "btn", () => decide(`access:${req.agentId}`, "deny"));
     const allow = button("Allow", "btn primary", () => decide(`access:${req.agentId}`, "allow_once"));
     root.replaceChildren(
+      el("div", { class: "who" }, [el("span", { class: "name", text: req.agentDisplay })]),
+      el("div", { class: "faint mono", text: req.agentId }),
+      el("div", { class: "goal", text: "wants access to this Mac" }),
+      el("div", { class: "fine" }, [
+        el("div", { class: "lbl", text: "Stated goals (unverified)" }),
+        el("div", { text: req.goals || "—" }),
+      ]),
+      el("div", { class: "actions" }, [deny, allow]),
+    );
+    armActions([deny, allow], allow);
+    return;
+  }
+
+  const v = req.view;
+  const capchips = el("div", { class: "capchips" }, v.capabilities.map((c) => el("span", { class: "cap", text: c.display })));
+  const warnings = [];
+  if (v.runsCommand) warnings.push("runs a command");
+  if (v.writesFiles) warnings.push("writes files");
+  if (v.needsNetwork) warnings.push("uses the network");
+  if (v.usesBrowser) warnings.push("browses the web as you");
+  if (v.sendsToConnectedAccount) warnings.push("acts in your connected accounts as you, off this Mac — other people will see it");
+  if (v.fillsCredentials) warnings.push("types saved credentials into those sites");
+
+  // "Allow Once" is the default (primary, rightmost, focused); "Always Allow"
+  // is the more permissive option and sits in the middle.
+  const deny = button("Deny", "btn danger", () => decide(v.intentId, "deny"));
+  const alwaysAllow = button("Always Allow", "btn", () => decide(v.intentId, "always_allow"));
+  const allowOnce = button("Allow Once", "btn primary", () => decide(v.intentId, "allow_once"));
+  // Each button lives in a slot; the agent-suggestion glow goes on the slot
+  // (behind the button) so its blur isn't clipped.
+  const denySlot = el("div", { class: "action-slot" }, [deny]);
+  const alwaysSlot = el("div", { class: "action-slot" }, [alwaysAllow]);
+  const allowSlot = el("div", { class: "action-slot" }, [allowOnce]);
+  const slotByDecision = { deny: denySlot, always_allow: alwaysSlot, allow_once: allowSlot };
+
+  // A tiny rainbow spinner pinned to the window's bottom-right corner, shown
+  // while an adversarial review is in flight (Ask mode + suggestions on).
+  // Cleared when the verdict lands.
+  const reviewing = req.suggesting
+    ? el("div", { class: "reviewing-spinner" })
+    : null;
+
+  // Filled in when the reviewer answers. Empty until then, so the window never
+  // reserves space for advice that may never arrive.
+  const reviewerNote = el("div", { class: "reviewer-note" });
+
+  root.replaceChildren(
     // Only the narrative scrolls. The enforceable block and the buttons are
     // both pinned, because bounding them one at a time was a fix per round —
     // the stated goal, then the request line, then the reviewer note — and the
@@ -103,43 +150,6 @@ async function render() {
     ]),
     el("div", { class: "actions" }, [denySlot, alwaysSlot, allowSlot]),
   );
-    armActions([deny, allow], allow);
-    return;
-  }
-
-  const v = req.view;
-  const capchips = el("div", { class: "capchips" }, v.capabilities.map((c) => el("span", { class: "cap", text: c.display })));
-  const warnings = [];
-  if (v.runsCommand) warnings.push("runs a command");
-  if (v.writesFiles) warnings.push("writes files");
-  if (v.needsNetwork) warnings.push("uses the network");
-  if (v.usesBrowser) warnings.push("browses the web as you");
-  if (v.sendsToConnectedAccount) warnings.push("acts in your connected accounts as you, off this Mac — other people will see it");
-  if (v.fillsCredentials) warnings.push("types saved credentials into those sites");
-
-  // "Allow Once" is the default (primary, rightmost, focused); "Always Allow"
-  // is the more permissive option and sits in the middle.
-  const deny = button("Deny", "btn danger", () => decide(v.intentId, "deny"));
-  const alwaysAllow = button("Always Allow", "btn", () => decide(v.intentId, "always_allow"));
-  const allowOnce = button("Allow Once", "btn primary", () => decide(v.intentId, "allow_once"));
-  // Each button lives in a slot; the agent-suggestion glow goes on the slot
-  // (behind the button) so its blur isn't clipped.
-  const denySlot = el("div", { class: "action-slot" }, [deny]);
-  const alwaysSlot = el("div", { class: "action-slot" }, [alwaysAllow]);
-  const allowSlot = el("div", { class: "action-slot" }, [allowOnce]);
-  const slotByDecision = { deny: denySlot, always_allow: alwaysSlot, allow_once: allowSlot };
-
-  // A tiny rainbow spinner pinned to the window's bottom-right corner, shown
-  // while an adversarial review is in flight (Ask mode + suggestions on).
-  // Cleared when the verdict lands.
-  const reviewing = req.suggesting
-    ? el("div", { class: "reviewing-spinner" })
-    : null;
-
-  // Filled in when the reviewer answers. Empty until then, so the window never
-  // reserves space for advice that may never arrive.
-  const reviewerNote = el("div", { class: "reviewer-note" });
-
   if (reviewing) document.body.appendChild(reviewing);
   // Keyboard default: Return activates Allow Once — but only once armed.
   armActions([deny, alwaysAllow, allowOnce], allowOnce);
