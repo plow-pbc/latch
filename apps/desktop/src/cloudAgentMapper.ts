@@ -1,4 +1,5 @@
 import { CloudAgentResource, CloudAgentStatus } from "./cloudAgents.js";
+import type { ChatRecipients } from "./onboarding.js";
 
 /** The complete cloud-agent shape allowed to cross into the renderer. */
 export interface CloudAgentDisplayRow {
@@ -10,11 +11,23 @@ export interface CloudAgentDisplayRow {
   status: CloudAgentStatus;
   failureReason: string | null;
   createdAt: string;
+  /**
+   * The numbers a message to this agent's chat goes to, or `null` when they
+   * are not known.
+   *
+   * Carried rather than derived: the label is prose and was being scraped for
+   * digits, which produced an empty recipient list for a label with none and
+   * an incomplete one for a label that showed a display name. `null` means the
+   * screen must not offer to message the chat at all.
+   */
+  recipients: ChatRecipients | null;
 }
 
 export interface CloudAgentDisplayContext {
   /** Resolved from the separately fetched chat list. */
   chatLabel?: string;
+  /** Resolved from the same place, and absent for the same reasons. */
+  recipients?: ChatRecipients | null;
   /** The submitted name fills the gap in the initial create receipt. */
   fallbackName?: string;
 }
@@ -38,6 +51,9 @@ export function toCloudAgentDisplayRow(
     status: agent.status,
     failureReason: agent.failureReason === null ? null : scrub(agent.failureReason),
     createdAt: agent.createdAt === null ? "" : scrub(agent.createdAt),
+    // Addresses, not prose: nothing to scrub a session id out of, and nothing
+    // to invent when the chat list could not say.
+    recipients: context.recipients ?? null,
   };
 }
 

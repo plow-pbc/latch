@@ -23,7 +23,12 @@ import {
   toCloudAgentDisplayRow,
 } from "./cloudAgentMapper.js";
 import { CloudAgentResource, CreateCloudAgentRequest } from "./cloudAgents.js";
-import { activationChatLabel, storedActivationChat } from "./onboarding.js";
+import {
+  ChatRecipients,
+  activationChatLabel,
+  activationChatRecipients,
+  storedActivationChat,
+} from "./onboarding.js";
 import { PlowApi, PlowApiError, parseActivationChat } from "./plowApi.js";
 import { loadSettings } from "./settings.js";
 
@@ -53,6 +58,16 @@ export function tabShowsCloudAgents(tab: string): boolean {
 export interface CloudChatOption {
   uid: string;
   label: string;
+  /**
+   * The numbers a message to this chat goes to, or `null` when we do not know
+   * them.
+   *
+   * Null is a real answer, not a gap to paper over: the fallback chat comes
+   * from settings, which persist a uid and a label and never the participants.
+   * A screen that cannot address the chat must say so rather than send to
+   * whatever it can find in the label.
+   */
+  recipients: ChatRecipients | null;
 }
 
 /**
@@ -472,17 +487,30 @@ export class CloudAgentState {
   }
 
   private rowFor(agent: CloudAgentResource, fallbackName?: string): CloudAgentDisplayRow {
-    const chatLabel = this.chats.find((chat) => chat.uid === agent.chatUid)?.label;
+    const chat = this.chats.find((option) => option.uid === agent.chatUid);
     return toCloudAgentDisplayRow(agent, {
-      ...(chatLabel ? { chatLabel } : {}),
+      ...(chat?.label ? { chatLabel: chat.label } : {}),
       ...(fallbackName ? { fallbackName } : {}),
+      recipients: chat?.recipients ?? null,
     });
   }
 
+  /**
+   * Re-resolve what the chat list knows about each row's chat.
+   *
+   * The label and the recipients arrive together and go stale together: a row
+   * built before the chats landed has the uid for a label and no addresses, and
+   * both are fixed from the same lookup. Relabelling one without the other is
+   * how a row could name a chat it could not message.
+   */
   private relabelRows(): void {
     for (const [agentId, row] of this.rows) {
-      const label = this.chats.find((chat) => chat.uid === row.chatUid)?.label;
-      if (label && label !== row.chatLabel) this.rows.set(agentId, { ...row, chatLabel: label });
+      const chat = this.chats.find((option) => option.uid === row.chatUid);
+      if (!chat) continue;
+      const label = chat.label || row.chatLabel;
+      const recipients = chat.recipients ?? null;
+      if (label === row.chatLabel && recipients === row.recipients) continue;
+      this.rows.set(agentId, { ...row, chatLabel: label, recipients });
     }
   }
 
@@ -528,7 +556,9 @@ function isTeardown(status: string): boolean {
  */
 function storedChats(home: string): CloudChatOption[] {
   const chat = storedActivationChat(loadSettings(home));
-  return chat ? [chat] : [];
+  // No recipients: settings keep a uid and a label, never the participants. The
+  // chat is still offered so setup works, but it cannot be messaged.
+  return chat ? [{ ...chat, recipients: null }] : [];
 }
 
 /**
@@ -605,6 +635,10 @@ export class CloudChatsClient implements CloudChatsApi {
     return rows
       .map((raw) => parseActivationChat(raw))
       .filter((chat): chat is NonNullable<typeof chat> => chat !== null)
-      .map((chat) => ({ uid: chat.uid, label: activationChatLabel(chat) }));
+      .map((chat) => ({
+        uid: chat.uid,
+        label: activationChatLabel(chat),
+        recipients: activationChatRecipients(chat),
+      }));
   }
 }

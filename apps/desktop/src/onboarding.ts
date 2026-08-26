@@ -122,6 +122,33 @@ export function storedActivationChat(settings: Settings): OnboardingChat | null 
  * a chat with neither is still identified by its uid, which is ugly but true,
  * and beats a blank line on the last screen of setup.
  */
+/**
+ * The numbers a message to this chat would go to.
+ *
+ * Structured, and separate from the label, because they are two different
+ * jobs: the label is prose for a human to recognise a chat by, and these are
+ * addresses. Scraping the one for the other is how a label with no digits — a
+ * bare uid from the fallback — produced an empty recipient list, and how an
+ * upgraded home's `"<line> · <display name>"` produced an incomplete one.
+ *
+ * `line` is the pool line the chat runs on, which is the agent's own number.
+ * `members` are the humans, in the order the server listed them; ordering them
+ * for display is the screen's business, not this function's.
+ */
+export interface ChatRecipients {
+  line: string | null;
+  members: string[];
+}
+
+export function activationChatRecipients(chat: ActivationChat): ChatRecipients {
+  return {
+    line: (chat.line ?? "").trim() || null,
+    members: chat.participants
+      .map((p) => (p.providerKey ?? "").trim())
+      .filter((number) => number.length > 0),
+  };
+}
+
 export function activationChatLabel(chat: ActivationChat): string {
   const line = (chat.line ?? "").trim();
   const handles = chat.participants
