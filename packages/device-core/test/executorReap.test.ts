@@ -14,7 +14,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { Capability, jv, KeyPair, makeIntent } from "@domo/protocol";
-import { DeviceAgent, Executor, HeadlessPolicy, isReapable, SandboxProfile } from "@domo/device-core";
+import { DeviceAgent, Executor, HeadlessPolicy, SandboxProfile } from "@domo/device-core";
 
 const cleanups: (() => void)[] = [];
 afterEach(() => {
@@ -104,17 +104,13 @@ describe("what a run that may be killed is allowed to write", () => {
     const args = { readPaths: [], scratch: "/s", home: "/h" };
     const reapable = SandboxProfile.generate({ ...args, writePaths: [], network: false });
     const networked = SandboxProfile.generate({ ...args, writePaths: [], network: true });
-    expect(isReapable({ writePaths: [], network: false })).toBe(true);
-    expect(isReapable({ writePaths: [], network: true })).toBe(false);
 
     // The housekeeping grant is what makes "declared no writes" not mean "writes
     // nothing": every profile hands it out, so a run could be updating a config
-    // when the timer fired. A reapable run has nowhere to leave a half-write —
-    // but it keeps the reads, which were never the risk.
+    // when the timer fired. A reapable run has nowhere to leave a half-write.
     for (const dir of ["Library/Caches", ".cache", ".config", ".local/state", ".npm"]) {
       expect(networked).toContain(`(allow file-write* (subpath "/h/${dir}"))`);
       expect(reapable).not.toContain(`(allow file-write* (subpath "/h/${dir}"))`);
-      expect(reapable).toContain(`(allow file-read* (subpath "/h/${dir}"))`);
     }
     expect(reapable).toContain('(allow file-write* (subpath "/s"))');
   });

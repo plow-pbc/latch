@@ -50,9 +50,9 @@ exactly the approved capabilities**".
 
   With one exception, and it is the only place a declaration narrows this profile rather than
   widening it: a **reapable** run — one that declared no write paths and no network, and so may be
-  killed for going silent (`REAP_AFTER_MS`) — does not get them. A run that can be shot mid-write
-  must have nowhere persistent to write; its scratch, which the reaper deletes with it, stays
-  writable.
+  killed for going silent (the reap window in `executor.ts`) — does not get them. A run that can be
+  shot mid-write must have nowhere persistent to write; its scratch, which the reaper deletes with
+  it, stays writable, and the broad home grant above still covers reading those five.
 
 - **the declared-read loop** — the agent's declared `read_paths` are appended *after* the above. They can only
   ever widen an already-broad grant; they never narrow it.
@@ -80,16 +80,11 @@ reapable and keeps the housekeeping writes:
 (allow file-read* (subpath "/Users/example/.npm"))
 ```
 
-The same inputs with `network: false` are the exception above — reapable, so the five writes are
-gone and only their reads remain:
+The same inputs with `network: false` are the exception above — reapable, so the five grants are
+gone entirely; the broad home read still covers reading them:
 
 ```
 (allow file-read* (subpath "/Users/example"))
-(allow file-read* (subpath "/Users/example/Library/Caches"))
-(allow file-read* (subpath "/Users/example/.cache"))
-(allow file-read* (subpath "/Users/example/.config"))
-(allow file-read* (subpath "/Users/example/.local/state"))
-(allow file-read* (subpath "/Users/example/.npm"))
 ```
 
 And live, through the real `Executor` with **`readPaths: []`** — no declared read paths at all:
@@ -112,7 +107,7 @@ not separately protected by TCC. That includes, on a typical Mac:
 - shell history (`~/.zsh_history`), which routinely contains secrets pasted on a command line
 - browser profile directories, subject to TCC
 - `~/.config` and `~/.local/state`, which are additionally **writable** — as are `~/.cache`,
-  `~/Library/Caches` and `~/.npm`, except for a reapable run, which gets their reads only (§1)
+  `~/Library/Caches` and `~/.npm`, except for a reapable run, which gets none of them (§1)
 
 The approval dialog shows the human the declared capability set. A command declaring
 `read_paths: ["~/Documents/report"]` is displayed as reading that path, and can in fact read every

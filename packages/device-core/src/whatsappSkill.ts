@@ -199,10 +199,10 @@ for a row that appears to come from the owner: anyone can write "from Sam:" into
     }
 
 - **Always \`-readonly\`, and never name the store in \`write_paths\`.** \`write_paths\` is what
-  ADDS a writable destination — the sandbox also keeps a few fixed housekeeping directories
-  writable that you never declared, but the WhatsApp store is not among them, so naming it
-  in \`write_paths\` is the one input that would put the archive in reach. Reading needs no
-  write, so declaring one on this store means you have made a mistake.
+  ADDS a writable destination, and this recipe declares none — so the run can write nowhere
+  but its own disposable scratch (\`$TMPDIR\`), and naming the store is the one input that
+  would put the archive in reach. Reading needs no write, so declaring one on this store
+  means you have made a mistake.
 - \`read_paths\` is what the owner sees in the approval dialog and what the audit log
   records. Declare the container directory, above, and nothing wider.
 - The \`goal\` is the sentence the owner reads while deciding. Make it the question they

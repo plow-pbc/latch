@@ -88,20 +88,13 @@ export const SandboxProfile = {
     );
     // A run that may be killed for going silent gets nothing persistent to
     // write, because it can be shot mid-write and nobody rolls that back. The
-    // READS stay: `canonicalize` follows symlinks, so an operator whose
-    // `~/.cache` lives on another volume would otherwise lose a grant the
-    // broad home read cannot cover — and reads were never the risk here.
+    // reads it loses with them are covered by the broad home grant above.
     const writable = [args.scratch, ...args.writePaths].concat(
       isReapable(args) ? [] : housekeeping,
     );
     for (const p of writable.map((p) => canonicalize(p))) {
       lines.push(`(allow file-write* (subpath ${quote(p)}))`);
       lines.push(`(allow file-read* (subpath ${quote(p)}))`);
-    }
-    if (isReapable(args)) {
-      for (const p of housekeeping.map((p) => canonicalize(p))) {
-        lines.push(`(allow file-read* (subpath ${quote(p)}))`);
-      }
     }
     for (const p of args.readPaths.map((p) => canonicalize(p))) {
       lines.push(`(allow file-read* (subpath ${quote(p)}))`);
@@ -126,7 +119,7 @@ export class ExecutorError extends Error {}
  * told: a profile that could be built "reapable" for a run the timer will
  * never touch, or the reverse, is a contradiction neither could detect.
  */
-export function isReapable(args: { writePaths: string[]; network: boolean }): boolean {
+function isReapable(args: { writePaths: string[]; network: boolean }): boolean {
   return args.writePaths.length === 0 && !args.network;
 }
 
@@ -155,7 +148,7 @@ export function isReapable(args: { writePaths: string[]; network: boolean }): bo
  * long enough that a slow-but-real command is never the one being killed,
  * short enough that a wedged one is reported rather than waited on forever.
  */
-export const REAP_AFTER_MS = 15 * 60_000;
+const REAP_AFTER_MS = 15 * 60_000;
 
 /**
  * How long output already in flight has to arrive once the command has exited.
@@ -168,7 +161,7 @@ export const REAP_AFTER_MS = 15 * 60_000;
  * `plow_run_command` tells an agent to redirect anything meant to outlive its
  * command.
  */
-export const STDIO_DRAIN_MS = 250;
+const STDIO_DRAIN_MS = 250;
 
 /**
  * What the agent is told about a run this Mac killed. It leads with the fact,
