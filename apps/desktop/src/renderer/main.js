@@ -915,6 +915,21 @@ function visibleCloudAgents(state) {
   ];
 }
 
+function verifiedCloudLines(chats) {
+  const seen = new Set();
+  return chats.flatMap((chat) => {
+    const line = chat?.recipients?.line?.trim();
+    const key = cloudPhoneDigits(line);
+    if (!line || !key || seen.has(key)) return [];
+    seen.add(key);
+    return [line];
+  });
+}
+
+function cloudPhoneDigits(number) {
+  return String(number ?? "").replace(/\D/g, "");
+}
+
 function openCloudPicker(trigger, state, redraw) {
   const newChatValue = "__new_chat__";
   const select = el("select", { class: "text", attrs: { "aria-label": "Chat" } },
@@ -995,6 +1010,10 @@ function openCloudPicker(trigger, state, redraw) {
   };
   const showExplainer = () => {
     if (!panel) return;
+    const verifiedLines = verifiedCloudLines(state.cloudChats);
+    const verifiedLineKeys = new Set(verifiedLines.map(cloudPhoneDigits));
+    const sendTo = state.cloudSendTo?.trim() || null;
+    const sendToAlreadyHeld = sendTo && verifiedLineKeys.has(cloudPhoneDigits(sendTo));
     const back = el("button", { class: "btn", text: "Back" });
     back.addEventListener("click", showPicker);
     const verify = el("button", { class: "btn primary", text: "Verify a new Plow number" });
@@ -1002,28 +1021,38 @@ function openCloudPicker(trigger, state, redraw) {
       closeCloudModal();
       await window.domo.onboardingOpen();
     });
-    const number = state.cloudSendTo
+    const number = sendTo
       ? el("p", { class: "cloud-route-number" }, [
           document.createTextNode("Number to text: "),
-          el("span", { class: "mono", text: state.cloudSendTo }),
+          el("span", { class: "mono", text: sendTo }),
         ])
       : null;
-    panel.replaceChildren(
-      el("div", { class: "group-title", text: "Create a new chat" }),
-      el("p", { class: "faint conn-note", text: "There are two ways to make another chat available here." }),
-      el("div", { class: "cloud-route" }, [
+    const routes = [];
+    if (!sendToAlreadyHeld) {
+      routes.push(el("div", { class: "cloud-route" }, [
         el("div", { class: "cloud-route-title", text: "Verify a new Plow number" }),
         el("p", { class: "faint", text: "Run activation again, then text the code to the number Plow provides." }),
         number,
         verify,
-      ]),
-      el("div", { class: "cloud-route" }, [
+      ]));
+    }
+    if (verifiedLines.length) {
+      routes.push(el("div", { class: "cloud-route" }, [
         el("div", { class: "cloud-route-title", text: "Start a group thread" }),
         el("p", {
           class: "faint",
-          text: "Add a verified Plow number to a group thread with other people. The chat appears here once someone speaks.",
+          text: "Add one of these verified Plow numbers to a group thread with other people:",
         }),
-      ]),
+        el("ul", { class: "cloud-route-numbers" }, verifiedLines.map((line) =>
+          el("li", { class: "cloud-route-number mono", text: line })
+        )),
+        el("p", { class: "faint", text: "The chat appears here once someone speaks." }),
+      ]));
+    }
+    panel.replaceChildren(
+      el("div", { class: "group-title", text: "Create a new chat" }),
+      el("p", { class: "faint conn-note", text: "Make another chat available here." }),
+      ...routes,
       el("div", { class: "row cloud-modal-actions" }, [back]),
     );
     back.focus();

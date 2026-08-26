@@ -389,8 +389,34 @@ const SCREENS = [
       "Verify a new Plow number",
       "Number to text: +1 (415) 555-0199",
       "Start a group thread",
+      "+14155550142",
+      "+14155550188",
       "The chat appears here once someone speaks",
     ],
+  },
+  {
+    name: "cloud-new-chat-held-number",
+    cloud: {
+      ...CLOUD_READY,
+      cloudSendTo: "+1 (415) 555-0142",
+      cloudChats: [CHAT, FAMILY_CHAT],
+    },
+    prepare: async (win) => {
+      await clickText(win, "Set up cloud agent", 0);
+      await waitFor(win, `document.querySelector(".cloud-modal select")`, "the chat picker");
+      await chooseLastChatOption(win);
+      await waitFor(win, `document.querySelector(".cloud-modal .cloud-route")`, "the new-chat explainer");
+      const routes = await win.webContents.executeJavaScript(`(${() => ({
+        offersHeldNumber: [...document.querySelectorAll(".cloud-route-title")]
+          .some((title) => title.textContent.trim() === "Verify a new Plow number"),
+        verifiedLines: [...document.querySelectorAll(".cloud-route-number")]
+          .map((line) => line.textContent.trim()),
+      })})()`);
+      if (routes.offersHeldNumber || routes.verifiedLines.join(",") !== "+14155550142,+14155550188") {
+        throw new Error(`new-chat routes used the wrong verified lines: ${JSON.stringify(routes)}`);
+      }
+    },
+    expect: ["Create a new chat", "Start a group thread", "+14155550142", "+14155550188"],
   },
   {
     name: "cloud-provisioning",
