@@ -37,8 +37,11 @@ A nonce makes the audit line unambiguous — a busy install has other traffic, a
 
 ```bash
 NONCE="latch-smoke-$(date -u +%Y%m%dT%H%M%SZ)"
-TOKEN_FILE="${TOKEN_FILE:?a 0600 file holding the bearer token}"
-MCP_URL="${MCP_URL:?the install's mcpUrl}"
+# EXPORTED: the guards below set shell variables, and the heredoc reads the
+# ENVIRONMENT — without this an operator who satisfies the guard still dies on
+# a bare KeyError.
+export TOKEN_FILE="${TOKEN_FILE:?a 0600 file holding the bearer token}"
+export MCP_URL="${MCP_URL:?the install's mcpUrl}"
 python3 - "$NONCE" <<'PYCALL'
 import json, os, sys, urllib.request
 
@@ -76,8 +79,15 @@ req = urllib.request.Request(os.environ["MCP_URL"], data=body, method="POST", he
     "MCP-Method": "tools/call",
     "MCP-Name": name,
 })
-with urllib.request.urlopen(req, timeout=90) as r:
-    payload = json.load(r)
+try:
+    with urllib.request.urlopen(req, timeout=90) as r:
+        payload = json.load(r)
+except urllib.error.HTTPError as e:
+    # The BODY is where the server names which layer refused -- a 401 from the
+    # relay and a 406 from the MCP handler are different problems, and
+    # urlopen's default traceback discards exactly that.
+    print("HTTP", e.code, e.read().decode(errors="replace")[:500])
+    raise SystemExit(1)
 # A JSON-RPC error or isError is a real failure. Neither absence is PROOF of
 # success, though -- that is the audit log.
 print("status", r.status, "| error:", payload.get("error"),
@@ -109,6 +119,15 @@ for i in $(seq 1 24); do
   # call the owner denied, which is the exact false positive this gate exists
   # to prevent. Its intentId keys the exec_end that follows.
   LINE=$(grep "$NONCE" "$LOG" 2>/dev/null | grep -m1 "\"event\":\"exec_start\"") || true
+  # A denial is written immediately after policy.decide, so there is nothing to
+  # wait for — report it now rather than burning the full window.
+  DENY=$(grep "$NONCE" "$LOG" 2>/dev/null | head -1 \
+         | python3 -c "import json,sys; print(json.load(sys.stdin).get(\"intentId\",\"\"))" 2>/dev/null)
+  if [ -n "$DENY" ] && grep "$DENY" "$LOG" | grep -q "\"decision\":\"deny\""; then
+    grep "$DENY" "$LOG" | grep "intent_decision" | head -1
+    echo "DENIED - the owner refused it. The relay and the device both worked."
+    exit 1
+  fi
   if [ -n "$LINE" ]; then
     echo "$LINE"
     ID=$(printf %s "$LINE" | python3 -c "import json,sys; print(json.load(sys.stdin).get(\"intentId\",\"\"))")
@@ -129,7 +148,14 @@ if [ -n "$ANY" ]; then
   [ -n "$ID" ] && grep "$ID" "$LOG" | grep "intent_decision" | head -1
   echo "TIMEOUT - reached this Mac, never executed: denied, or waiting on the dialog"
 else
-  echo "TIMEOUT - nothing carrying $NONCE: it never reached this install"
+  # Not necessarily "never arrived": a call rejected before an intent exists
+  # (a refused argument, a bad envelope) leaves intent_rejected and no nonce.
+  # The Send step's own output discriminates — an HTTP error or isError there
+  # means it arrived and was refused.
+  echo "TIMEOUT - nothing carrying $NONCE. Either it never reached this install"
+  echo "  (wrong install, wrong credential, dead socket), or it was refused"
+  echo "  before an intent existed — check the Send step's output and:"
+  grep "intent_rejected" "$LOG" 2>/dev/null | tail -2
 fi
 exit 1'
 bash -c "$SCRIPT"                                                   # local install
@@ -176,7 +202,9 @@ four Google scopes and refuses everything else by design.
 - Call returns, and the log carries the nonce but no `exec_start` → it arrived
   and was denied or is unanswered. Read the `intent_decision` line; this is the
   approval dialog, not a plumbing problem.
-- Call returns, and *nothing* carries the nonce → you are reading a
-  **different** install's log. Check the instance home (branch-suffixed homes
-  are the usual cause).
+- Call returns, and *nothing* carries the nonce → either you are reading a
+  **different** install's log (check the instance home; branch-suffixed homes
+  are the usual cause), or it was refused before an intent existed, which
+  leaves `intent_rejected` and no nonce. The Send step's own output tells you
+  which: an HTTP error or `isError` there means it arrived.
 - Approval dialog never answered → expected on an unattended run; see above.
