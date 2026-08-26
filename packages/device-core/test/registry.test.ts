@@ -6,7 +6,7 @@
  * see by reading the command — the command itself looks legitimate.
  */
 import { describe, expect, it } from "vitest";
-import { vendoredProvider, VENDORED_COMMANDS } from "../src/providers/registry.js";
+import { needsToken, vendoredProvider, VENDORED_COMMANDS } from "../src/providers/registry.js";
 
 const gog = vendoredProvider(["gog"])!;
 
@@ -30,11 +30,12 @@ describe("vendoredProvider", () => {
     expect(vendoredProvider([])).toBeNull();
   });
 
-  it("is null when the binary is not staged, so nothing is minted for it", () => {
-    // A token that was minted has left Plow whether or not anything used it,
-    // so spending one on a command that cannot exec is a real cost.
-    expect(vendoredProvider(["gog", "gmail", "search", "q"], [])).toBeNull();
-    expect(vendoredProvider(["gog", "gmail", "search", "q"], ["/vendor"])?.command).toBe("gog");
+  it("matches the NAME regardless of staging, so an unstaged one is refused rather than passed through", () => {
+    // Returning null for an unstaged provider would let the command fall
+    // through to the ordinary exec path and run whatever `gog` the owner
+    // happens to have on their own PATH — unbelted, unrefused, against their
+    // own credentials. The device turns this into a refusal instead.
+    expect(vendoredProvider(["gog", "gmail", "search", "q"])?.command).toBe("gog");
   });
 });
 
@@ -71,5 +72,18 @@ describe("the gog provider's refusal", () => {
     // The reason reaches an error, the approval dialog and the audit log.
     const reason = gog.refuse(["gog", "gmail", "send", "--sneaky-agent-text-file", "/x"])!;
     expect(reason).not.toContain("sneaky-agent-text");
+  });
+});
+
+describe("needsToken", () => {
+  it("is false for a help invocation, which touches no network", () => {
+    // Minting for it would spend a delegation that has left Plow whether or
+    // not anything used it, on a command that cannot use one.
+    expect(needsToken(["gog", "gmail", "--help"])).toBe(false);
+    expect(needsToken(["gog", "calendar", "-h"])).toBe(false);
+  });
+
+  it("is true for anything that reaches Google", () => {
+    expect(needsToken(["gog", "gmail", "search", "q"])).toBe(true);
   });
 });

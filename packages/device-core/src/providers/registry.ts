@@ -109,23 +109,21 @@ const PROVIDERS: readonly VendoredProvider[] = [GOG];
  * controls, and honouring a caller-supplied path would let an agent point the
  * mint at a binary of its choosing.
  */
-export function vendoredProvider(
-  argv: readonly string[],
-  /**
-   * The vendor directories actually staged on this Mac. A provider whose
-   * binary is absent is NOT a provider: minting for it would spend a real
-   * delegation — a token that has left Plow whether or not anything used it —
-   * on a command that then fails to exec. Omitted by callers that only need
-   * to know whether a name is provider-shaped, such as the tool's pre-intent
-   * refusal, which runs before any token exists.
-   */
-  staged?: readonly string[],
-): VendoredProvider | null {
+export function vendoredProvider(argv: readonly string[]): VendoredProvider | null {
   const head = argv[0];
   if (head === undefined) return null;
-  const provider = PROVIDERS.find((p) => p.command === head) ?? null;
-  if (provider === null || staged === undefined) return provider;
-  return staged.length > 0 ? provider : null;
+  return PROVIDERS.find((p) => p.command === head) ?? null;
+}
+
+/**
+ * Whether this invocation needs a token at all.
+ *
+ * `--help` does not: gog prints usage and exits without touching the network.
+ * Minting for it would spend a real delegation — a token that has left Plow
+ * whether or not anything used it — on a command that cannot use one.
+ */
+export function needsToken(argv: readonly string[]): boolean {
+  return !argv.slice(1).some((a) => a === "--help" || a === "-h");
 }
 
 /** Every vendored command name, for the skill and for the tool description. */

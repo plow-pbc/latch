@@ -12,7 +12,7 @@
  * object* owns where an intent's contents go.
  */
 import { capabilityDisplay, Intent, intentIsExpired, JSONValue, jv } from "@domo/protocol";
-import { vendoredProvider, type VendoredProvider } from "./providers/registry.js";
+import { needsToken, vendoredProvider, type VendoredProvider } from "./providers/registry.js";
 import { MintError, type Minter } from "./providers/mint.js";
 import os from "node:os";
 import path from "node:path";
@@ -497,10 +497,7 @@ export class DeviceAgent {
     // environment. Everything below this is the ordinary exec path — the
     // capability the owner approved is the argv, the sandbox profile and the
     // audit are unchanged, and `tools/list` never grew a tool for it.
-    // Staged-ness is part of the question: minting for a provider whose
-    // binary is absent spends a real delegation — a token that has left Plow
-    // whether or not anything used it — on a command that then cannot exec.
-    const provider = vendoredProvider(argv, this.vendorDirs);
+    const provider = vendoredProvider(argv);
     let env: Record<string, string> | undefined;
     let belted = argv;
     if (provider !== null) {
@@ -513,8 +510,19 @@ export class DeviceAgent {
         this.audit.record("exec_error", { intentId: intent.intentId, error: refusal });
         return { status: "error", error: refusal };
       }
+      // A provider NAME with no staged binary is refused, never let through.
+      // Falling through would run whatever `gog` the owner happens to have on
+      // their own PATH — unbelted, unrefused, and against their own
+      // credentials rather than a minted one. The name is this Mac's to
+      // resolve; if it cannot, that is an answer, not a pass.
+      if (this.vendorDirs.length === 0) {
+        const error = `${provider.command} is not installed on this Mac`;
+        this.audit.record("exec_error", { intentId: intent.intentId, error });
+        return { status: "error", error };
+      }
       try {
-        env = await this.mintFor(provider);
+        // A help invocation touches no network, so it gets no token.
+        if (needsToken(argv)) env = await this.mintFor(provider);
       } catch (e) {
         const message = e instanceof MintError ? e.message : `could not authorise ${provider.command}`;
         this.audit.record("exec_error", { intentId: intent.intentId, error: message });

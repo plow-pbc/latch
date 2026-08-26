@@ -17,7 +17,7 @@ export * from "./skills.js";
 export * from "./whatsappSkill.js";
 export * from "./deviceAgent.js";
 export * from "./executor.js";
-export { vendoredProvider, VENDORED_COMMANDS } from "./providers/registry.js";
+export { vendoredProvider, needsToken, VENDORED_COMMANDS } from "./providers/registry.js";
 export type { VendoredProvider } from "./providers/registry.js";
 export { makeMinter, MintError, MINT_TIMEOUT_MS } from "./providers/mint.js";
 export type { Minter, FetchLike } from "./providers/mint.js";

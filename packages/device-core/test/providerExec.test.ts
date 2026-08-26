@@ -108,6 +108,24 @@ describe("a vendored provider through the exec path", () => {
     expect(jv(await run(d, ["gog", "gmail", "search", "q"])).get("status").str).toBe("error");
   });
 
+  it("refuses a provider name with nothing staged, instead of running the owner's own binary", async () => {
+    // Falling through to the ordinary exec path would run whatever `gog` the
+    // owner has installed — unbelted, unrefused, against their credentials.
+    const mint = vi.fn(async () => TOKEN);
+    const d = device({ mint }, []);
+    const response = await run(d, ["gog", "gmail", "search", "q"]);
+    expect(jv(response).get("error").str).toMatch(/not installed/);
+    expect(mint).not.toHaveBeenCalled();
+  });
+
+  it("runs --help without minting a token", async () => {
+    const mint = vi.fn(async () => TOKEN);
+    const d = device({ mint }, [vendorDir()]);
+    const out = String(jv(await run(d, ["gog", "gmail", "--help"])).get("output").str ?? "");
+    expect(out).toContain("ARGV=--no-input --wrap-untrusted gmail --help");
+    expect(mint).not.toHaveBeenCalled();
+  });
+
   it("leaves a non-provider command completely alone", async () => {
     const mint = vi.fn(async () => TOKEN);
     const d = device({ mint }, [vendorDir()]);
