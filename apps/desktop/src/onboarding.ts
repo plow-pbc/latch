@@ -94,6 +94,24 @@ export interface OnboardingChat {
 }
 
 /**
+ * The chat activation provisioned, as the app remembers it.
+ *
+ * One reading of one persisted record. It was two — this screen's and the
+ * cloud-agent picker's — with different ideas about whitespace and a blank
+ * label, so the same Mac could show a chat here and a bare uid there.
+ *
+ * `null` on a Mac that activated before `provision_chat`, which is why nothing
+ * may treat its absence as "this account has no chats". The label falls back to
+ * the uid because a chat with neither a line nor members is still a real chat,
+ * and an empty row is worse than an ugly one.
+ */
+export function storedActivationChat(settings: Settings): OnboardingChat | null {
+  const uid = settings.provisionedChatUid.trim();
+  if (!uid) return null;
+  return { uid, label: settings.provisionedChatLabel.trim() || uid };
+}
+
+/**
  * How a human recognises a chat that has no name: the number it runs on, then
  * who is in it. The number is the agent participant's line — never the chat's
  * own `provider_key`, which is the provider's thread id and would put "chat_5"
@@ -189,9 +207,7 @@ export class Onboarding {
       busy: this.busy,
       codeExpiresAt: this.codeExpiresAt,
       activation: this.activation,
-      chat: settings.provisionedChatUid
-        ? { uid: settings.provisionedChatUid, label: settings.provisionedChatLabel }
-        : null,
+      chat: storedActivationChat(settings),
       activationStale: this.activationStale,
       accountUid: settings.accountUid,
       mcpUrl: settings.mcpUrl,

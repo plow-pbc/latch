@@ -23,7 +23,7 @@ import {
   toCloudAgentDisplayRow,
 } from "./cloudAgentMapper.js";
 import { CloudAgentResource, CreateCloudAgentRequest } from "./cloudAgents.js";
-import { activationChatLabel } from "./onboarding.js";
+import { activationChatLabel, storedActivationChat } from "./onboarding.js";
 import { PlowApi, PlowApiError, parseActivationChat } from "./plowApi.js";
 import { CloudAgentLocalSettings, loadSettings, saveSettings } from "./settings.js";
 
@@ -69,6 +69,15 @@ export interface CloudAgentsUiState {
   cloudAgentsError: string | null;
   /** A chat-list failure, and nothing else. */
   cloudChatsError: string | null;
+  /**
+   * The chat list failed because of the CREDENTIAL, not the network.
+   *
+   * The only failure re-activating fixes. Signing out to recover from a
+   * timeout would wipe the cached activation chat, which is the fallback that
+   * keeps setup working when the list is down — the feature defeating itself
+   * on the very failure it exists for.
+   */
+  cloudChatsNeedReactivation: boolean;
   /** A create/delete/retry failure, and nothing else. */
   cloudActionError: string | null;
   cloudChats: CloudChatOption[];
@@ -151,6 +160,17 @@ export class CloudAgentState {
    * disagree; `state()` is what merges them for the screen.
    */
   private chatsError: string | null = null;
+  private chatsNeedReactivation = false;
+  /**
+   * Which chat refresh is the newest. Bumped per read, not per account.
+   *
+   * `generation` only moves on sign-out, so two refreshes in the same session
+   * share one and neither can tell it has been overtaken. A slow FAILURE
+   * landing after a fast success then replaces a good chat list with the
+   * cached fallback and an error banner — degrading the very fallback this
+   * exists to provide, on an account whose chats we had just read fine.
+   */
+  private chatReads = 0;
   private actionError: string | null = null;
   private chats: CloudChatOption[] = [];
   private chatsLoaded = false;
@@ -181,6 +201,7 @@ export class CloudAgentState {
       cloudAgents: [...this.rows.values()].sort(byNewestFirst),
       cloudAgentsError: this.agentsError,
       cloudChatsError: this.chatsError,
+      cloudChatsNeedReactivation: this.chatsNeedReactivation,
       cloudActionError: this.actionError,
       cloudChats: this.chats,
       cloudChatsLoaded: this.chatsLoaded,
@@ -320,6 +341,9 @@ export class CloudAgentState {
     this.chats = [];
     this.chatsLoaded = false;
     this.chatsError = null;
+    this.chatsNeedReactivation = false;
+    // Nothing in flight belongs to the next account either.
+    this.chatReads += 1;
     this.agentsError = null;
     this.actionError = null;
     this.publish();
@@ -436,25 +460,42 @@ export class CloudAgentState {
   }
 
   private async refreshChats(credential: string, generation: number): Promise<void> {
+    const read = ++this.chatReads;
     try {
       const chats = await this.deps.chats.list(credential);
-      if (generation !== this.generation) return;
+      if (generation !== this.generation || read !== this.chatReads) return;
       this.chats = chats;
       // Only here: the one place a list actually came back. An empty answer is
       // still an answer, and it is the only one the empty state may render.
       this.chatsLoaded = true;
       this.chatsError = null;
+      this.chatsNeedReactivation = false;
       // Labels arrive with the chats, so rows resolve theirs on this pass.
       this.relabelRows();
     } catch (error) {
-      if (generation !== this.generation) return;
-      this.chats = [];
-      // Every failure is the same failure, 403 included: the account's chats
-      // are unknown. What must never happen is the screen reading that as "you
-      // have no chats" — which is why `chatsLoaded` and the error travel
-      // together, and why the roster stays where it is.
+      // A superseded read says nothing about now. Landing late must never undo
+      // a newer answer, and a failure undoing a success is the expensive
+      // direction of that.
+      if (generation !== this.generation || read !== this.chatReads) return;
+      // Whatever went wrong, the account's chats are unknown, and the screen
+      // must not read that as "you have no chats" — which is why `chatsLoaded`
+      // and the error travel together, and why the roster stays where it is.
       this.chatsLoaded = false;
       this.chatsError = messageOf(error);
+      // But not every failure means the same thing to the person reading it.
+      // Only a credential the server refused is fixed by re-activating; a
+      // timeout or a 5xx is fixed by waiting. Offering to sign out for those
+      // would destroy the cached activation chat — the very fallback installed
+      // on the next line — and charge a full re-activation over SMS for a blip.
+      this.chatsNeedReactivation = isCredentialFailure(error);
+      // "Unknown" is not "none". Activation left us one chat, and it is still
+      // the account's chat whatever the list endpoint just did, so setup stays
+      // usable. Offered, never asserted: `chatsLoaded` stays false.
+      this.chats = storedChats(this.deps.home);
+      // The rows may have been built before this landed, against no labels at
+      // all — the success path relabels and this one has to as well, or a raw
+      // chat uid sits on screen where a phone number belongs.
+      this.relabelRows();
     }
   }
 
@@ -540,6 +581,30 @@ function byNewestFirst(a: CloudAgentDisplayRow, b: CloudAgentDisplayRow): number
  */
 function isTeardown(status: string): boolean {
   return status === "teardown";
+}
+
+/**
+ * The chat activation left, as the picker's one-entry list.
+ *
+ * Reads the same record `onboarding.ts` reads, through the same function, so a
+ * Mac cannot show a chat on one screen and a bare uid on the other.
+ */
+function storedChats(home: string): CloudChatOption[] {
+  const chat = storedActivationChat(loadSettings(home));
+  return chat ? [chat] : [];
+}
+
+/**
+ * Did the server refuse this credential?
+ *
+ * The one class of chat-list failure that re-activating fixes. Everything else
+ * — a timeout, a dropped connection, a 5xx — is fixed by waiting, and signing
+ * out for it costs the user their cached chat and a re-activation over SMS.
+ */
+function isCredentialFailure(error: unknown): boolean {
+  return (
+    error instanceof PlowApiError && (error.kind === "forbidden" || error.kind === "unauthorized")
+  );
 }
 
 /** An abort surfaces as `AbortError` however the client raises it. */

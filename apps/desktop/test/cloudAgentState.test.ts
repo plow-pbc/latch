@@ -35,6 +35,9 @@ function tempHome(credential = CREDENTIAL): string {
   cleanups.push(() => fs.rmSync(dir, { recursive: true, force: true }));
   const settings = loadSettings(dir);
   settings.relayCredential = credential;
+  // What activation leaves behind on every signed-in Mac since chunk 1.
+  settings.provisionedChatUid = "cht_1";
+  settings.provisionedChatLabel = "+15550100 · Ada";
   saveSettings(dir, settings);
   return dir;
 }
@@ -168,6 +171,7 @@ describe("before anything has been read", () => {
       cloudActionError: null,
       cloudChats: [],
       cloudChatsLoaded: false,
+      cloudChatsNeedReactivation: false,
       cloudSendTo: null,
       cloudAgentSettings: {},
     });
@@ -231,6 +235,176 @@ describe("refresh", () => {
     expect(state.state().cloudSendTo).toBe("+15550100");
   });
 
+});
+
+describe("the activation chat fallback", () => {
+  /**
+   * A read that has been overtaken says nothing about now, however it ends.
+   *
+   * Two refreshes in one session share a generation, so neither could tell it
+   * had been overtaken: a late failure replaced a good list with the cached
+   * fallback and an error banner, and a late success showed chats the account
+   * no longer has.
+   */
+  it.each([
+    ["failure", (d: ReturnType<typeof deferred<CloudChatOption[]>>) =>
+      d.reject(new PlowApiError("network", "Couldn't reach Plow."))],
+    ["success", (d: ReturnType<typeof deferred<CloudChatOption[]>>) => d.resolve(CHATS)],
+  ])("a late %s never displaces the newer read", async (_ending, finish) => {
+    const newest = [{ uid: "cht_2", label: "+15550188 · Family" }];
+    const slow = deferred<CloudChatOption[]>();
+    let first = true;
+    const state = build(
+      tempHome(),
+      fakes({
+        chats: async () => {
+          if (!first) return newest;
+          first = false;
+          return slow.promise;
+        },
+      }),
+    );
+
+    const stale = state.refresh();
+    await state.refresh();
+
+    finish(slow);
+    await stale;
+
+    expect(state.state()).toMatchObject({
+      cloudChats: newest,
+      cloudChatsLoaded: true,
+      cloudChatsError: null,
+    });
+  });
+
+  /**
+   * Every `PlowApiErrorKind` the chat list can raise, and whether re-activating
+   * is the remedy. One table, because the answer is per-kind and a case with no
+   * row is a kind nobody decided about — `unauthorized` was exactly that, and
+   * it is one of the two arms the fix keys on.
+   *
+   * Following the prompt wipes the credential AND the cached activation chat,
+   * which is the fallback keeping setup usable while the list is down. Offering
+   * it for a blip costs a re-activation over SMS and fixes nothing.
+   */
+  it.each([
+    ["forbidden", new PlowApiError("forbidden", "This Mac cannot list chats yet.", 403), true],
+    ["unauthorized", new PlowApiError("unauthorized", "Not authorized.", 401), true],
+    ["network", new PlowApiError("network", "Couldn't reach Plow."), false],
+    ["http 5xx", new PlowApiError("http", "Plow returned 500.", 500), false],
+    ["provider_unavailable", new PlowApiError("provider_unavailable", "Unavailable.", 503), false],
+    ["expired", new PlowApiError("expired", "That code expired.", 410), false],
+  ])("re-activation prompt for %s: %s", async (_kind, error, expected) => {
+    const state = build(
+      tempHome(),
+      fakes({
+        chats: async () => {
+          throw error;
+        },
+      }),
+    );
+
+    await state.refresh();
+
+    expect(state.state().cloudChatsNeedReactivation).toBe(expected);
+    // Whatever the kind, the fallback is there to be used.
+    expect(state.state().cloudChats).toHaveLength(1);
+  });
+
+  it("clears the prompt once the chats come back", async () => {
+    let refused = true;
+    const state = build(
+      tempHome(),
+      fakes({
+        chats: async () => {
+          if (refused) throw new PlowApiError("forbidden", "Refused.", 403);
+          return CHATS;
+        },
+      }),
+    );
+    await state.refresh();
+    expect(state.state().cloudChatsNeedReactivation).toBe(true);
+
+    refused = false;
+    await state.refresh();
+
+    expect(state.state().cloudChatsNeedReactivation).toBe(false);
+  });
+
+  it("labels rows from the cached chat even when the list failed first", async () => {
+    // The agent list can resolve before the chat list fails. The rows are built
+    // with no labels, and only relabelling puts the number on screen — without
+    // it a raw chat uid sits where a phone number belongs.
+    const agentsLanded = deferred<void>();
+    const state = build(
+      tempHome(),
+      fakes({
+        list: async () => {
+          agentsLanded.resolve();
+          return [agent({ chatUid: "cht_1" })];
+        },
+        // Held until the rows exist, so they are built with no labels at all —
+        // which is the ordering that made a raw uid reach the screen.
+        chats: async () => {
+          await agentsLanded.promise;
+          await settle();
+          throw new PlowApiError("network", "Couldn't reach Plow.");
+        },
+      }),
+    );
+
+    await state.refresh();
+
+    expect(state.state().cloudAgents[0].chatLabel).toBe("+15550100 · Ada");
+  });
+
+  it("offers nothing on a Mac whose activation left no chat", async () => {
+    const home = tempHome();
+    const settings = loadSettings(home);
+    settings.provisionedChatUid = "";
+    settings.provisionedChatLabel = "";
+    saveSettings(home, settings);
+    const state = build(
+      home,
+      fakes({
+        chats: async () => {
+          throw new PlowApiError("network", "Couldn't reach Plow.");
+        },
+      }),
+    );
+
+    await state.refresh();
+
+    // Nothing to fall back to, and nothing invented.
+    expect(state.state().cloudChats).toEqual([]);
+    expect(state.state().cloudChatsError).toBe("Couldn't reach Plow.");
+  });
+
+  it("gives way to the real list as soon as one comes back", async () => {
+    let failing = true;
+    const state = build(
+      tempHome(),
+      fakes({
+        chats: async () => {
+          if (failing) throw new PlowApiError("http", "Plow returned 500.", 500);
+          return [
+            { uid: "cht_1", label: "+15550100 · Ada" },
+            { uid: "cht_2", label: "+15550188 · Family" },
+          ];
+        },
+      }),
+    );
+    await state.refresh();
+    expect(state.state().cloudChats).toHaveLength(1);
+
+    failing = false;
+    await state.refresh();
+
+    // Server truth wins the moment there is any.
+    expect(state.state().cloudChats).toHaveLength(2);
+    expect(state.state().cloudChatsLoaded).toBe(true);
+  });
 });
 
 describe("a stuck teardown", () => {
@@ -617,7 +791,9 @@ describe("a 403 from the real chat endpoint", () => {
     expect(shown.cloudChatsError).toBe(
       "This Mac cannot list chats yet. Try re-activating it, then try again.",
     );
-    expect(shown.cloudChats).toEqual([]);
+    // The activation chat, offered so this is not a dead end — but the list
+    // itself did not come back, and `cloudChatsLoaded` still says so.
+    expect(shown.cloudChats).toEqual([{ uid: "cht_1", label: "+15550100 · Ada" }]);
     // The agent list is fine, and must not be blamed for this.
     expect(shown.cloudAgentsError).toBeNull();
   });
