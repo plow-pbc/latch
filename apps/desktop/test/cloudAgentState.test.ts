@@ -238,68 +238,44 @@ describe("refresh", () => {
 });
 
 describe("the activation chat fallback", () => {
-  it("does not let a slow failure undo a newer success", async () => {
-    // Two refreshes in one session share a generation, so neither could tell
-    // it had been overtaken. A late failure then replaced a good list with the
-    // cached fallback and an error banner — degrading the fallback on an
-    // account whose chats had just been read fine.
+  /**
+   * A read that has been overtaken says nothing about now, however it ends.
+   *
+   * Two refreshes in one session share a generation, so neither could tell it
+   * had been overtaken: a late failure replaced a good list with the cached
+   * fallback and an error banner, and a late success showed chats the account
+   * no longer has.
+   */
+  it.each([
+    ["failure", (d: ReturnType<typeof deferred<CloudChatOption[]>>) =>
+      d.reject(new PlowApiError("network", "Couldn't reach Plow."))],
+    ["success", (d: ReturnType<typeof deferred<CloudChatOption[]>>) => d.resolve(CHATS)],
+  ])("a late %s never displaces the newer read", async (_ending, finish) => {
+    const newest = [{ uid: "cht_2", label: "+15550188 · Family" }];
     const slow = deferred<CloudChatOption[]>();
     let first = true;
     const state = build(
       tempHome(),
       fakes({
         chats: async () => {
-          if (first) {
-            first = false;
-            return slow.promise;
-          }
-          return CHATS;
+          if (!first) return newest;
+          first = false;
+          return slow.promise;
         },
       }),
     );
 
     const stale = state.refresh();
     await state.refresh();
-    expect(state.state().cloudChatsLoaded).toBe(true);
 
-    slow.reject(new PlowApiError("network", "Couldn't reach Plow."));
+    finish(slow);
     await stale;
-    await settle();
 
     expect(state.state()).toMatchObject({
-      cloudChats: CHATS,
+      cloudChats: newest,
       cloudChatsLoaded: true,
       cloudChatsError: null,
     });
-  });
-
-  it("does not let a slow success overwrite a newer one", async () => {
-    // The same overtaking in the other direction: a stale answer is stale even
-    // when it succeeded, and the picker would show chats the account no longer
-    // has.
-    const slow = deferred<CloudChatOption[]>();
-    let first = true;
-    const state = build(
-      tempHome(),
-      fakes({
-        chats: async () => {
-          if (first) {
-            first = false;
-            return slow.promise;
-          }
-          return [{ uid: "cht_2", label: "+15550188 · Family" }];
-        },
-      }),
-    );
-
-    const stale = state.refresh();
-    await state.refresh();
-
-    slow.resolve(CHATS);
-    await stale;
-    await settle();
-
-    expect(state.state().cloudChats).toEqual([{ uid: "cht_2", label: "+15550188 · Family" }]);
   });
 
   /**
