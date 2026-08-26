@@ -179,9 +179,8 @@ export async function decideIntent(
 
   if (reviewDecides) {
     // No credential is no reviewer, and this intent has no other decider: the
-    // global mode either has no human in it, or is Approve with a review the
-    // owner required. Auto-approving here is exactly the bug — it hands the
-    // agent the access the switch was turned on to gate.
+    // mode that got here has no human in it. Auto-approving would hand the
+    // agent exactly the access the mode exists to gate.
     //
     // Decide this BEFORE `review()`, which opens the timeline with "adversarial
     // agent started" and names the model it is about to use. With no credential
