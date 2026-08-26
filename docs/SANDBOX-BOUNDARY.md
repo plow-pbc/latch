@@ -52,8 +52,8 @@ exactly the approved capabilities**".
   widening it: a **reapable** run — one that declared no write paths and no network, and so may be
   killed for going silent (the reap window in `executor.ts`) — does not get them. A run that can be
   shot mid-write must have nowhere persistent to write; its scratch, which the reaper deletes with
-  it, stays writable, and the broad home grant above still covers reading those five wherever
-  they resolve under home.
+  it, stays writable, and the broad home grant above still covers reading those five wherever they
+  resolve under home.
 
 - **the declared-read loop** — the agent's declared `read_paths` are appended *after* the above. They can only
   ever widen an already-broad grant; they never narrow it.
@@ -108,8 +108,7 @@ not separately protected by TCC. That includes, on a typical Mac:
 - shell history (`~/.zsh_history`), which routinely contains secrets pasted on a command line
 - browser profile directories, subject to TCC
 - `~/.config` and `~/.local/state`, which are additionally **writable** — as are `~/.cache`,
-  `~/Library/Caches` and `~/.npm`, except for a reapable run, which gets none of those writes
-  (§1)
+  `~/Library/Caches` and `~/.npm`, except for a reapable run, which gets none of those writes (§1)
 
 The approval dialog shows the human the declared capability set. A command declaring
 `read_paths: ["~/Documents/report"]` is displayed as reading that path, and can in fact read every
