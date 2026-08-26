@@ -8,10 +8,20 @@
  * text/structured nodes — it never eval()s or innerHTML's agent strings.
  */
 import { Capability, capabilityDisplay, Intent, JSONValue, jv } from "@domo/protocol";
+import { slackAction, SLACK_WRITE_ACTIONS } from "@domo/device-core";
 
-/** The `tool` actions that write to the connected account rather than read
- * from it — the set that earns the stronger warning on the approval card. */
-const SLACK_WRITE_ACTIONS = new Set(["slack.messages.send", "slack.messages.update", "slack.conversations.open"]);
+/**
+ * Whether a capability earns the connected-account warning: a `tool`
+ * capability that writes, OR one this Mac's closed set does not recognize at
+ * all. The unrecognized case is deliberately fail-safe rather than silent —
+ * a typo'd action, or a future non-Slack `tool` capability nobody has
+ * classified yet, must still warn rather than pass through unmentioned.
+ */
+function warnsOfConnectedAccountWrite(c: Capability): boolean {
+  if (c.kind !== "tool") return false;
+  const action = slackAction(c.tool ?? "");
+  return action === null || SLACK_WRITE_ACTIONS.has(action);
+}
 
 export interface ApprovalViewModel {
   intentId: string;
@@ -30,12 +40,14 @@ export interface ApprovalViewModel {
   usesBrowser: boolean;
   fillsCredentials: boolean;
   /** A `tool` capability that WRITES — sends, edits, or opens a DM in the
-   * owner's connected account, in their name. Every other flag here warns
-   * about something that happens on the machine; this is the only
-   * irreversible thing other people read, so it gets its own line on the
-   * card. A `tool` capability that only reads (listing channels, users,
-   * messages) does not set this — nothing else on the card would warn on a
-   * write, but a read is not the same risk and does not need the same
+   * owner's connected account, in their name — or one whose action this
+   * Mac's closed set does not recognize at all (fail-safe: an unclassified
+   * or future action warns rather than passing through silently). Every
+   * other flag here warns about something that happens on the machine; this
+   * is the only irreversible thing other people read, so it gets its own
+   * line on the card. A `tool` capability that only reads (listing channels,
+   * users, messages) does not set this — nothing else on the card would warn
+   * on a write, but a read is not the same risk and does not need the same
    * banner. */
   sendsToConnectedAccount: boolean;
   /** browser capability origins, for the card. */
@@ -90,7 +102,7 @@ export function approvalViewModel(
     runsCommand: caps.some((c) => c.kind === "process.exec"),
     usesBrowser: caps.some((c) => c.kind === "browser"),
     fillsCredentials: caps.some((c) => c.kind === "credential" && c.access === "fill"),
-    sendsToConnectedAccount: caps.some((c) => c.kind === "tool" && SLACK_WRITE_ACTIONS.has(c.tool ?? "")),
+    sendsToConnectedAccount: caps.some(warnsOfConnectedAccountWrite),
     origins: caps.find((c) => c.kind === "browser")?.origins ?? [],
     credentialItems,
   };

@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { makeConnectorClient, ConnectorError, SlackAction } from "../src/connectors.js";
+import {
+  makeConnectorClient,
+  ConnectorError,
+  SlackAction,
+  SLACK_ACTIONS,
+  SLACK_WRITE_ACTIONS,
+} from "../src/connectors.js";
 
 /**
  * The rejection a call produced — and a failure if it produced none.
@@ -161,5 +167,35 @@ describe("ConnectorClient", () => {
     expect(error.message).toContain(says);
     expect(error.message).not.toContain(CREDENTIAL);
     for (const foreign of never) expect(error.message).not.toContain(foreign);
+  });
+});
+
+/**
+ * `SLACK_WRITE_ACTIONS` is consumed off-Mac (apps/desktop/src/viewModel.ts)
+ * to decide whether the consent card warns. `KNOWN_READS` here is deliberately
+ * NOT exported and NOT consulted by production code — it exists only so this
+ * test fails loudly the moment a new key lands in `SLACK_ACTIONS` without
+ * anyone deciding which bucket it belongs in, rather than the addition
+ * silently falling through to whatever the desktop's fail-safe default does.
+ */
+describe("SLACK_WRITE_ACTIONS classifies every action in the closed set", () => {
+  const KNOWN_READS = new Set<SlackAction>([
+    "status",
+    "channels.list",
+    "users.list",
+    "messages.list",
+    "messages.search",
+  ]);
+
+  it("puts every SLACK_ACTIONS key in exactly one of write or the known-reads list", () => {
+    for (const action of Object.keys(SLACK_ACTIONS) as SlackAction[]) {
+      const isWrite = SLACK_WRITE_ACTIONS.has(action);
+      const isKnownRead = KNOWN_READS.has(action);
+      expect(isWrite || isKnownRead, `${action} is classified as neither a write nor a known read`).toBe(true);
+      expect(isWrite && isKnownRead, `${action} is classified as both a write and a known read`).toBe(false);
+    }
+    // Nothing in either bucket that isn't a real action — a stale entry left
+    // behind after `SLACK_ACTIONS` drops a key would otherwise go unnoticed.
+    expect(SLACK_WRITE_ACTIONS.size + KNOWN_READS.size).toBe(Object.keys(SLACK_ACTIONS).length);
   });
 });

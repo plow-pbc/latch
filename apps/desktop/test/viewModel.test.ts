@@ -84,6 +84,20 @@ describe("approvalViewModel", () => {
     expect(vm.sendsToConnectedAccount).toBe(false);
   });
 
+  // Fail-safe, not fail-open: a `tool` capability naming an action outside
+  // this Mac's closed set (a typo, a future non-Slack connector nobody has
+  // classified yet) must still warn — the human is not the safety net for
+  // "did someone remember to add this to a set".
+  it("warns on a tool action this Mac's closed set does not recognize", () => {
+    const vm = approvalViewModel(
+      intentOf({
+        request: "do something unrecognized",
+        capabilities: [{ kind: "tool", tool: "slack.messages.delete", target: "T1/C1" }],
+      }),
+    );
+    expect(vm.sendsToConnectedAccount).toBe(true);
+  });
+
   it("flags network when a network capability is allowed", () => {
     const vm = approvalViewModel(
       intentOf({ capabilities: [{ kind: "network", allowed: true }] }),

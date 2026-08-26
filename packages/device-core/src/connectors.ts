@@ -51,6 +51,22 @@ export const SLACK_ACTIONS = {
 
 export type SlackAction = keyof typeof SLACK_ACTIONS;
 
+/**
+ * The actions out of `SLACK_ACTIONS` that act in the owner's name rather than
+ * only reading — send, edit, or open a DM. This is consumed off-Mac from
+ * `apps/desktop/src/viewModel.ts` to decide whether the consent card's
+ * connected-account warning fires: deriving it from here, rather than
+ * restating the three strings in a second package, means the table that IS
+ * the security bound and the card that describes it cannot drift. See
+ * `connectors.test.ts` for the check that every key in `SLACK_ACTIONS` is
+ * accounted for as a read or a write.
+ */
+export const SLACK_WRITE_ACTIONS: ReadonlySet<SlackAction> = new Set([
+  "messages.send",
+  "messages.update",
+  "conversations.open",
+]);
+
 /** The prefix a `tool` capability's name carries. */
 const SLACK_TOOL_PREFIX = "slack.";
 
