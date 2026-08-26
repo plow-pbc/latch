@@ -139,6 +139,22 @@ describe("what one call is confined to", () => {
       capability: { kind: "tool", tool: "slack.status" },
       payload: {},
     },
+    // Scoped to the workspace only, like `search` below — a channel list has
+    // no channel yet to scope it to.
+    {
+      name: "plow_slack_channels",
+      tool: () => channels,
+      args: { account: "T1", limit: 5 },
+      capability: { kind: "tool", tool: "slack.channels.list", target: "T1" },
+      payload: { account: "T1", limit: 5 },
+    },
+    {
+      name: "plow_slack_users",
+      tool: () => users,
+      args: { account: "T1", limit: 5 },
+      capability: { kind: "tool", tool: "slack.users.list", target: "T1" },
+      payload: { account: "T1", limit: 5 },
+    },
     // `goal` is in the args and not in the payload: only the keys Plow's
     // endpoint accepts are copied, never the whole arg bag.
     {
@@ -228,6 +244,8 @@ describe("what one call is confined to", () => {
   // client lets the call through to us, and without the guard we would build
   // an intent whose capability names a scope nobody supplied.
   it.each([
+    { name: "plow_slack_channels", tool: () => channels, args: {}, missing: "account" },
+    { name: "plow_slack_users", tool: () => users, args: {}, missing: "account" },
     {
       name: "plow_slack_messages",
       tool: () => messages,
