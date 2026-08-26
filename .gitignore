@@ -12,6 +12,7 @@ apps/desktop/release/
 # Design specs live outside the repo (see PR descriptions for rationale)
 docs/superpowers/specs/
 
+vendor/gog/
 vendor/python-runtime/
 vendor/camoufox-browser/
 vendor/vault-cli/

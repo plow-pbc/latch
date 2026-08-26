@@ -69,6 +69,12 @@ extraResources:
   - from: ../../vendor/camoufox-browser/universal
     to: browser-runtime/camoufox
     filter: ["**/*", "!.sha256"]
+  # gog, per-arch. resolveVendoredBinary looks it up by process.arch, so the
+  # directory names are Node's (arm64, x64), not the release's. VERSION is a
+  # local staleness marker, not payload.
+  - from: ../../vendor/gog
+    to: gog
+    filter: ["**/*", "!VERSION"]
   - from: ../../vendor/vault-cli
     to: browser-runtime/vault-cli
     filter: ["**/*", "!*/.sha256"]
@@ -107,7 +113,10 @@ mac:
   # identically into both electron slices, and the merger would try to lipo a
   # thin binary against its identical twin and fail. This pattern passes those
   # two through instead. Fusing them the way Camoufox is fused is issue #15.
-  x64ArchFiles: "**/browser-runtime/{vault-cli,vault-server}/**"
+  # gog is the same shape as the vault payloads and needs the same treatment:
+  # two THIN per-arch binaries copied identically into both electron slices, so
+  # the merger would lipo a thin binary against its identical twin and fail.
+  x64ArchFiles: "**/{browser-runtime/{vault-cli,vault-server},gog}/**"
   notarize: true
 
 # Re-sign browser-runtime after the universal merge (which rewrites nested

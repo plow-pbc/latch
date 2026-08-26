@@ -54,8 +54,14 @@ function isTimeout(error: unknown): boolean {
 }
 
 export interface Minter {
-  /** The provider's short-lived token for `account`. */
-  mint(provider: VendoredProvider, account: string): Promise<string>;
+  /**
+   * The provider's short-lived token for the owner's connected account.
+   *
+   * Which account that is stays Plow's answer: it resolves the default
+   * connected one server-side, so this Mac holds no second copy of a fact the
+   * server owns and the two cannot disagree.
+   */
+  mint(provider: VendoredProvider): Promise<string>;
 }
 
 export function makeMinter(opts: {
@@ -73,7 +79,7 @@ export function makeMinter(opts: {
   const base = opts.apiBaseUrl.replace(/\/+$/, "");
 
   return {
-    async mint(provider, account) {
+    async mint(provider) {
       const credential = opts.credential().trim();
       if (!credential) throw MintError.unpaired();
 
@@ -84,7 +90,8 @@ export function makeMinter(opts: {
         response = await doFetch(`${base}${provider.mintPrefix}${provider.mintAction}`, {
           method: "POST",
           headers: { Authorization: `Bearer ${credential}`, "Content-Type": "application/json" },
-          body: JSON.stringify({ account }),
+          // No account: Plow resolves the owner's default connected one.
+          body: "{}",
           signal: AbortSignal.timeout(MINT_TIMEOUT_MS),
         });
       } catch (e) {

@@ -25,6 +25,7 @@ import { VaultServer } from "./browser/vaultServer.js";
 import { VaultClient } from "./browser/vaultClient.js";
 import { ResolvedBrowserRuntime } from "./browser/browserRuntime.js";
 import { BROWSING_SKILL } from "./browser/browsingSkill.js";
+import { GOG_SKILL } from "./providers/gogSkill.js";
 import { ExecResult, Executor, REAPED_MESSAGE } from "./executor.js";
 import { FileOps } from "./fileOps.js";
 import { DeviceIdentity, loadOrCreateIdentity } from "./identity.js";
@@ -169,18 +170,17 @@ export class DeviceAgent {
      */
     private readonly minter: Minter | null = null,
     /**
-     * Which connected account a provider's token is minted for.
-     *
-     * One account per Mac today, read from settings rather than from the
-     * agent: it is the one place the mailbox is chosen, and an account flag in
-     * agent-supplied argv cannot redirect a call whose token is already bound.
+     * Directories holding vendored provider CLIs, prepended to an exec child's
+     * PATH so a bare `gog` reaches the binary this app ships. Empty in a test
+     * and on a Mac with none staged, where every non-provider command still
+     * runs and a provider one reports that it is not installed.
      */
-    private readonly providerAccount: string | null = null,
+    vendorDirs: readonly string[] = [],
   ) {
     this.identity = loadOrCreateIdentity(home, name);
     this.audit = new AuditLog(path.join(home, "device/audit.ndjson"));
     this.policy = new PolicyEngine(path.join(home, "device/rules.json"));
-    this.executor = new Executor(path.join(home, "device/scratch"));
+    this.executor = new Executor(path.join(home, "device/scratch"), undefined, vendorDirs);
     this.skills = new SkillRegistry();
     // `ownerHome`, not `home` — this describes where WhatsApp put the owner's
     // messages on the real machine, while `home` is a DOMO_HOME a test points
@@ -191,6 +191,10 @@ export class DeviceAgent {
     // same start-time answer `browserRuntime` gives, so installing WhatsApp
     // while the app is running needs a restart to publish the skill.
     registerWhatsappSkill(this.skills, ownerHome);
+    // Registered only when a provider CLI is actually staged: a skill for a
+    // binary this Mac does not have would teach an agent to run commands that
+    // cannot work. Sampled once at construction, like the two skills above.
+    if (vendorDirs.length > 0) this.skills.register(GOG_SKILL);
     if (browserRuntime) {
       this.skills.register(BROWSING_SKILL);
       const browserDir = path.join(home, "device/browser");
@@ -468,22 +472,12 @@ export class DeviceAgent {
   }
 
   /**
-   * The environment a vendored provider's child runs with.
-   *
-   * The account rides the environment for the same reason the token does, and
-   * because it is the one place the mailbox is chosen — an account flag in the
-   * agent's argv cannot redirect the call, because the token is already bound
-   * to whoever it was minted for.
+   * The environment a vendored provider's child runs with: its token, and
+   * nothing else.
    */
-  private async mintFor(
-    provider: VendoredProvider,
-    argv: readonly string[],
-  ): Promise<Record<string, string>> {
+  private async mintFor(provider: VendoredProvider): Promise<Record<string, string>> {
     if (this.minter === null) throw MintError.unpaired();
-    const account = this.providerAccount;
-    if (account === null || account.trim() === "") throw MintError.noToken(provider.command);
-    const token = await this.minter.mint(provider, account.trim());
-    return { [provider.tokenEnv]: token, [provider.accountEnv]: account.trim() };
+    return { [provider.tokenEnv]: await this.minter.mint(provider) };
   }
 
   private async executeCommand(
@@ -507,8 +501,17 @@ export class DeviceAgent {
     let env: Record<string, string> | undefined;
     let belted = argv;
     if (provider !== null) {
+      // The device is the chokepoint and cannot rely on its caller having
+      // checked. The tool checks too, so a refusal never reaches an approval
+      // dialog — but an intent can arrive from a replayed or hand-built
+      // request that never passed through it.
+      const refusal = provider.refuse(argv);
+      if (refusal !== null) {
+        this.audit.record("exec_error", { intentId: intent.intentId, error: refusal });
+        return { status: "error", error: refusal };
+      }
       try {
-        env = await this.mintFor(provider, argv);
+        env = await this.mintFor(provider);
       } catch (e) {
         const message = e instanceof MintError ? e.message : `could not authorise ${provider.command}`;
         this.audit.record("exec_error", { intentId: intent.intentId, error: message });

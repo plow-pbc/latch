@@ -36,6 +36,7 @@ import { probeFullDiskAccess } from "./fullDiskAccess.js";
 import { launchAtLoginState, LoginItemApi, setLaunchAtLogin } from "./loginItem.js";
 import { devIconScript } from "./devIcon.js";
 import { migrateLegacyHome } from "./migrateHome.js";
+import { buildMinter, vendorDirs } from "./providerWiring.js";
 import { resolveInstancePaths } from "./paths.js";
 import { loadSettings, saveSettings, WindowBounds } from "./settings.js";
 import { PlowApi, relaySocketUrl, resolveApiBaseUrl } from "./plowApi.js";
@@ -1025,6 +1026,17 @@ app.whenReady().then(async () => {
     // knows it. `home` above is the app's own (branch-suffixed in a from-source
     // run); this is where WhatsApp and everything else of theirs actually lives.
     os.homedir(),
+    // How a vendored provider CLI is authorised. The exec path reports a
+    // missing one through the approval dialog rather than throwing.
+    buildMinter({ apiBaseUrl, home }),
+    // Packaged: Contents/Resources/gog/<arch>. From source: vendor/gog, which
+    // `just fetch-gog` populates. `app.getAppPath()` is <root>/apps/desktop
+    // under `just app`, not the workspace root, so the from-source lookup has
+    // to climb two levels or it can never resolve.
+    vendorDirs({
+      resourcesDir: process.resourcesPath,
+      repoRoot: path.resolve(app.getAppPath(), "..", ".."),
+    }),
   );
   // Same tick as the store's construction (see onAbandoned): an approval that
   // was pending when the app last quit gets closed out in the audit log too,

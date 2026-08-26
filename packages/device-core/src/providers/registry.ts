@@ -27,10 +27,17 @@ export interface VendoredProvider {
   readonly mintAction: string;
   /** Where the mint's routes hang, e.g. `/v1/connectors/gmail/`. */
   readonly mintPrefix: string;
-  /** The environment variable the CLI reads its token from. */
+  /**
+   * The environment variable the CLI reads its token from.
+   *
+   * There is deliberately no account variable beside it. The token IS the
+   * account binding — gog with a caller-supplied token authenticates as
+   * whoever that token belongs to, so an account flag in agent-supplied argv
+   * cannot redirect the call, and Plow's mint resolves the owner's connected
+   * account server-side. One fewer thing for this Mac to hold, get wrong, or
+   * disagree with Plow about.
+   */
   readonly tokenEnv: string;
-  /** Which account the token is minted for, from the environment. */
-  readonly accountEnv: string;
   /**
    * Flags Latch puts in front of the command path on every invocation,
    * whatever the agent asked for.
@@ -69,7 +76,6 @@ const GOG: VendoredProvider = {
   // lived there — the name is Plow's history, not a narrower grant.
   mintPrefix: "/v1/connectors/gmail/",
   tokenEnv: "GOG_ACCESS_TOKEN",
-  accountEnv: "GOG_ACCOUNT",
   belt: ["--no-input", "--wrap-untrusted"],
   refuse: (argv) => {
     const reserved = reservedFlagIn(argv.slice(1));
