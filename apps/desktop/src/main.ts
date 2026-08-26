@@ -34,6 +34,7 @@ import { RelayClient } from "@domo/relay-client";
 import { approvalViewModel, auditActivities, CredentialTitles } from "./viewModel.js";
 import { probeFullDiskAccess } from "./fullDiskAccess.js";
 import { launchAtLoginState, LoginItemApi, setLaunchAtLogin } from "./loginItem.js";
+import { buildConnectorClient } from "./connectorWiring.js";
 import { devIconScript } from "./devIcon.js";
 import { migrateLegacyHome } from "./migrateHome.js";
 import { resolveInstancePaths } from "./paths.js";
@@ -906,6 +907,12 @@ app.whenReady().then(async () => {
     // knows it. `home` above is the app's own (branch-suffixed in a from-source
     // run); this is where WhatsApp and everything else of theirs actually lives.
     os.homedir(),
+    buildConnectorClient({
+      apiBaseUrl,
+      // Read on every call, not captured here — see connectorWiring.ts's
+      // header. A re-pair must reach the next tool call, not the next launch.
+      credential: () => loadSettings(home).relayCredential,
+    }),
   );
   // Same tick as the store's construction (see onAbandoned): an approval that
   // was pending when the app last quit gets closed out in the audit log too,
