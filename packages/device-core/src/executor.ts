@@ -461,12 +461,12 @@ export class Executor {
           // archive through here), and a synchronous walk over that would stall
           // every other run's budget timer, the relay socket and the approval
           // window — the same reason file operations in this codebase are async
-          // and size-capped. The retries are for the descendant still writing
+          // and size-capped. `maxRetries` is for the descendant still writing
           // as we walk: `kill` returns before the group is gone, and `force`
           // covers ENOENT, not the ENOTEMPTY of a file created mid-walk. The
           // empty callback is the last resort — a scratch that outlives its run
           // is issue #153's standing state, and nothing here waits on it.
-          fs.rm(scratch, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 }, () => {});
+          fs.rm(scratch, { recursive: true, force: true, maxRetries: 3 }, () => {});
         }
       }, this.reapAfterMs);
       reaper.unref?.();

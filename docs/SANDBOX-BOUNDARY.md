@@ -8,7 +8,9 @@ This document exists because our layer advertised an enforcement property we do 
 deliver. We have corrected our own claims. The underlying behaviour is yours to decide about, and we
 make no recommendation about it here.
 
-Everything below was verified against the code at commit `28da7a7`, not inferred from documentation.
+Everything below was verified against the code at commit `28da7a7`, not inferred from
+documentation — except §1's two profile transcripts, which were regenerated at head when the
+reapable exception was added and reproduce against that.
 
 ---
 
@@ -49,7 +51,8 @@ exactly the approved capabilities**".
   With one exception, and it is the only place a declaration narrows this profile rather than
   widening it: a **reapable** run — one that declared no write paths and no network, and so may be
   killed for going silent (`REAP_AFTER_MS`) — does not get them. A run that can be shot mid-write
-  must have nowhere persistent to write; its scratch, which dies with it, stays writable.
+  must have nowhere persistent to write; its scratch, which the reaper deletes with it, stays
+  writable.
 
 - **the declared-read loop** — the agent's declared `read_paths` are appended *after* the above. They can only
   ever widen an already-broad grant; they never narrow it.
@@ -109,7 +112,7 @@ not separately protected by TCC. That includes, on a typical Mac:
 - shell history (`~/.zsh_history`), which routinely contains secrets pasted on a command line
 - browser profile directories, subject to TCC
 - `~/.config` and `~/.local/state`, which are additionally **writable** — as are `~/.cache`,
-  `~/Library/Caches` and `~/.npm`
+  `~/Library/Caches` and `~/.npm`, except for a reapable run, which gets their reads only (§1)
 
 The approval dialog shows the human the declared capability set. A command declaring
 `read_paths: ["~/Documents/report"]` is displayed as reading that path, and can in fact read every
