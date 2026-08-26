@@ -752,10 +752,16 @@ app.whenReady().then(async () => {
   // not-started, and each time the fix was a sentence that another state was
   // already entitled to. Structural rather than promised in a comment — a new
   // state added here is excluded from the others by construction.
+  // All five, not the three with fixed wording: the last two are the stable
+  // prefixes of sentences that carry a variable tail. Left out, they are never
+  // excluded from anybody — a regression printing the unknown-status line on
+  // the missing pane would satisfy every probe here.
   const HEADLINES = [
     "This build has no vault installed.",
     "This Mac can't unlock its vault account.",
     "The vault has not started yet.",
+    "does not know:",
+    "Could not read the vault",
   ];
   const saysOnly = (mine) =>
     win.webContents.executeJavaScript(
@@ -846,7 +852,10 @@ app.whenReady().then(async () => {
   vaultItemsReply = { status: "brandnew" };
   await showVault(empty("does not know"), "the unknown-status pane to render");
   const vaultUnknown = {
-    ...(await saysOnly("does not know: brandnew")),
+    ...(await saysOnly(HEADLINES[3])),
+    // The prefix is what the exclusion is keyed on; the status itself is what
+    // this arm exists to print, so it is asserted here rather than folded in.
+    ...(await also(() => ({ namesTheStatus: document.body.innerText.includes("does not know: brandnew") }))),
   };
 
   // The fourth outcome of this handler, on a different path: a REJECTED call.
@@ -857,7 +866,7 @@ app.whenReady().then(async () => {
   let vaultFailure;
   try {
     await showVault(`document.body.innerText.includes("Could not read the vault")`, "the vault failure to render");
-    vaultFailure = await saysOnly("Could not read the vault");
+    vaultFailure = await saysOnly(HEADLINES[4]);
   } finally {
     // The only latch in this block — every other switch is overwritten by the
     // next probe. `waitFor` times out by design, and a stub left rejecting
@@ -1238,6 +1247,7 @@ app.whenReady().then(async () => {
     vaultNoStorage.saysNoSecureStorage &&
     vaultNoStorage.blamesNoKeychain &&
     vaultNoStorage.promisesNoLoss &&
+    vaultUnknown.namesTheStatus &&
     modalClosed.gone &&
     modalClosed.paneLive &&
     modalClosed.focusBackOnTrigger &&
