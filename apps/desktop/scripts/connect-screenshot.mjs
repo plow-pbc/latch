@@ -37,7 +37,10 @@ const CLIENT_TOKEN = "plow_EXAMPLEclientNOTreal_00000";
 
 const home = fs.mkdtempSync(path.join(os.tmpdir(), "connect-shot-"));
 
-const CHAT = { uid: "chat_groceries", label: "+1 (415) 555-0142 · Alex, Sam" };
+const CHAT = {
+  uid: "chat_groceries",
+  label: "+1 (415) 555-0142 · +1 (415) 555-0193 · +1 (628) 555-0112",
+};
 const ACTIVE_AGENT = {
   agentId: "cag_groceries",
   name: "Household helper",
@@ -47,6 +50,61 @@ const ACTIVE_AGENT = {
   status: "running",
   failureReason: null,
   createdAt: "2026-08-24T18:00:00.000Z",
+};
+const PROVISIONING_AGENT = {
+  agentId: "cag_trip",
+  name: "Trip planner",
+  chatUid: "chat_trip",
+  chatLabel: "+1 (628) 555-0144 · +1 (415) 555-0193",
+  provider: "anthropic",
+  status: "provisioning",
+  failureReason: null,
+  createdAt: new Date().toISOString(),
+};
+const EMPTY_ROSTER = { cloud: [], mcp: [], other: [], revokedHidden: 0 };
+const ROSTER = {
+  cloud: [
+    {
+      id: 201, name: ACTIVE_AGENT.name, kind: "Agent",
+      createdAt: "2026-08-24T18:00:00.000Z", lastSeenAt: new Date(Date.now() - 4 * 60_000).toISOString(),
+      agentId: ACTIVE_AGENT.agentId, chatUids: [CHAT.uid], isActive: true, isThisMac: false,
+    },
+    {
+      id: 202, name: PROVISIONING_AGENT.name, kind: "Agent",
+      createdAt: new Date().toISOString(), lastSeenAt: null,
+      agentId: PROVISIONING_AGENT.agentId, chatUids: [PROVISIONING_AGENT.chatUid], isActive: true, isThisMac: false,
+    },
+  ],
+  mcp: [
+    {
+      id: 301, name: "Claude Code on MacBook Pro", kind: "Agent",
+      createdAt: "2026-08-12T17:00:00.000Z", lastSeenAt: new Date(Date.now() - 6 * 60_000).toISOString(),
+      agentId: null, chatUids: ["*"], isActive: true, isThisMac: false,
+    },
+    {
+      id: 302, name: "Cursor desktop", kind: "Agent",
+      createdAt: new Date().toISOString(), lastSeenAt: null,
+      agentId: null, chatUids: ["chat_work"], isActive: true, isThisMac: false,
+    },
+  ],
+  other: [
+    {
+      id: 401, name: "Plow Latch on this Mac", kind: "Session",
+      createdAt: "2026-07-28T17:00:00.000Z", lastSeenAt: new Date(Date.now() - 3 * 60_000).toISOString(),
+      agentId: null, chatUids: [], isActive: true, isThisMac: true,
+    },
+    {
+      id: 402, name: "Plow website · Safari", kind: "Plow web login",
+      createdAt: "2026-08-24T17:00:00.000Z", lastSeenAt: new Date(Date.now() - 12 * 60_000).toISOString(),
+      agentId: null, chatUids: [], isActive: true, isThisMac: false,
+    },
+    {
+      id: 403, name: "Legacy automation token", kind: "Legacy — full access",
+      createdAt: "2026-08-20T17:00:00.000Z", lastSeenAt: null,
+      agentId: null, chatUids: ["*"], isActive: true, isThisMac: false,
+    },
+  ],
+  revokedHidden: 14,
 };
 const CLOUD_EMPTY = {
   cloudAgents: [],
@@ -84,6 +142,8 @@ const RULES = [
   },
 ];
 let cloudFixture = CLOUD_EMPTY;
+let rosterFixture = EMPTY_ROSTER;
+const rosterRemovals = [];
 let holdCloudCreate = false;
 let releaseCloudCreate = null;
 let cloudCreateInFlight = false;
@@ -125,9 +185,20 @@ async function setUp() {
 
   // The main window's IPC surface, as far as this screen reaches. `connect:*`
   // are the real handlers from main.ts, pointed at the same class.
-  ipcMain.handle("connect:get", async () => ({ ...connect.state(), ...cloudFixture }));
+  const state = () => ({ ...connect.state(), roster: rosterFixture, ...cloudFixture });
+  ipcMain.handle("connect:get", async () => state());
   ipcMain.handle("connect:create", async (_e, name) => connect.createCredential(name));
   ipcMain.handle("connect:dismiss", async () => connect.dismissCredential());
+  ipcMain.handle("roster:remove", async (_e, id) => {
+    rosterRemovals.push(id);
+    rosterFixture = {
+      ...rosterFixture,
+      cloud: rosterFixture.cloud.filter((row) => row.id !== id),
+      mcp: rosterFixture.mcp.filter((row) => row.id !== id),
+      other: rosterFixture.other.filter((row) => row.id !== id),
+    };
+    return state();
+  });
   ipcMain.handle("cloud:create", async (_e, chatUid, name) => {
     cloudCreateInFlight = true;
     try {
@@ -142,19 +213,6 @@ async function setUp() {
     } finally {
       cloudCreateInFlight = false;
     }
-  });
-  ipcMain.handle("cloud:delete", async (_e, agentId) => {
-    cloudFixture = { ...cloudFixture, cloudAgents: cloudFixture.cloudAgents.filter((a) => a.agentId !== agentId) };
-  });
-  ipcMain.handle("cloud:apply", async (_e, agentId, settings) => {
-    const previous = cloudFixture.cloudAgentSettings[agentId];
-    cloudFixture = {
-      ...cloudFixture,
-      cloudAgentSettings: {
-        ...cloudFixture.cloudAgentSettings,
-        [agentId]: { ...previous, adversarialReview: settings.adversarialReview },
-      },
-    };
   });
   ipcMain.handle("status:get", async () => ({ deviceId: "dev_example", name: "Example Mac", connected: true }));
   ipcMain.handle("rules:list", async () => RULES);
@@ -191,14 +249,63 @@ async function setUp() {
 /** Each shot: how to get the screen into that state, and what must be on it. */
 const SCREENS = [
   {
-    name: "cloud-roster",
+    name: "agents-final",
+    roster: ROSTER,
     cloud: {
       ...CLOUD_READY,
-      cloudChats: [CHAT],
-      cloudAgents: [ACTIVE_AGENT],
+      cloudChats: [CHAT, { uid: PROVISIONING_AGENT.chatUid, label: PROVISIONING_AGENT.chatLabel }],
+      cloudAgents: [ACTIVE_AGENT, PROVISIONING_AGENT],
     },
-    prepare: async () => {},
-    expect: ["Cloud agents", "Household helper", CHAT.label, "Anthropic", "Ready", "Settings", "Remove"],
+    prepare: async (win) => {
+      await clickAria(win, "More actions for Plow website · Safari");
+      const hasShow = await win.webContents.executeJavaScript(`!!document.querySelector(".revoked-summary button")`);
+      if (hasShow) throw new Error("the count-only revoked summary grew a Show control");
+    },
+    expect: [
+      "Cloud agents", "2 agents", "Household helper", "Ready", "Trip planner", "Setting up…",
+      "Agent +1 (415) 555-0142", "Participants +1 (415) 555-0193, +1 (628) 555-0112",
+      "Reads and replies in 1 chat", "Can reach this Mac", "Can spend inference", "Message",
+      "MCP clients", "Claude Code on MacBook Pro", "Can request tools on this Mac",
+      "Other sessions", "Plow Latch on this Mac", "This Mac", "Plow website · Safari",
+      "Revoking signs you out of the Plow website", "Legacy automation token",
+      "14 revoked sessions hidden", "Revoke",
+    ],
+  },
+  {
+    name: "cloud-remove-confirm",
+    roster: { ...ROSTER, cloud: [ROSTER.cloud[0]], mcp: [], other: [] },
+    cloud: { ...CLOUD_READY, cloudChats: [CHAT], cloudAgents: [ACTIVE_AGENT] },
+    prepare: async (win) => {
+      await clickAria(win, "More actions for Household helper");
+      await clickText(win, "Remove", 0);
+      await waitFor(win, `document.querySelector(".roster-confirm")`, "the cloud removal confirmation");
+    },
+    expect: [
+      "Remove Household helper?",
+      "The agent will stop reading and replying in its chat",
+      "Remove agent",
+    ],
+    after: async (win) => {
+      const before = rosterRemovals.length;
+      await clickText(win, "Remove agent", 0);
+      await waitFor(win, `!document.querySelector(".roster-confirm")`, "the removal confirmation to close");
+      if (rosterRemovals.length !== before + 1 || rosterRemovals.at(-1) !== 201) {
+        throw new Error("cloud-row removal did not use roster:remove with row 201");
+      }
+    },
+  },
+  {
+    name: "agents-final-revoked-count",
+    roster: ROSTER,
+    cloud: {
+      ...CLOUD_READY,
+      cloudChats: [CHAT, { uid: PROVISIONING_AGENT.chatUid, label: PROVISIONING_AGENT.chatLabel }],
+      cloudAgents: [ACTIVE_AGENT, PROVISIONING_AGENT],
+    },
+    prepare: async (win) => {
+      await win.webContents.executeJavaScript(`document.querySelector(".agents-roster").scrollTop = document.querySelector(".agents-roster").scrollHeight`);
+    },
+    expect: ["Other sessions", "14 revoked sessions hidden"],
   },
   {
     name: "cloud-picker",
@@ -260,7 +367,7 @@ const SCREENS = [
       holdCloudCreate = false;
       releaseCloudCreate = null;
     },
-    expect: ["Household helper", "Setting up…", "Setting up your agent — this takes a minute or two"],
+    expect: ["Household helper", "Setting up…", "Will read and reply in 1 chat", "Will reach this Mac"],
   },
   {
     name: "cloud-teardown",
@@ -271,27 +378,6 @@ const SCREENS = [
     },
     prepare: async () => {},
     expect: ["Household helper", "Removing…"],
-  },
-  {
-    name: "cloud-settings",
-    cloud: {
-      ...CLOUD_READY,
-      cloudChats: [CHAT],
-      cloudAgents: [ACTIVE_AGENT],
-      cloudAgentSettings: {
-        [ACTIVE_AGENT.agentId]: { relay: true, inference: false, adversarialReview: true },
-      },
-    },
-    prepare: async (win) => {
-      await clickCloudRowButton(win, "Settings");
-      await waitFor(win, `document.querySelector(".cloud-modal .cloud-setting")`, "the cloud-agent settings panel");
-    },
-    expect: [
-      "Household helper settings",
-      "Adversarial review",
-      "Stored on this Mac and applies immediately",
-      "Apply changes",
-    ],
   },
   {
     name: "cloud-chat-forbidden",
@@ -337,12 +423,15 @@ const SCREENS = [
       ...CLOUD_READY,
     },
     prepare: async () => {},
-    expect: ["No agents.", "Set up cloud agent"],
+    expect: ["No cloud agents.", "No MCP clients.", "No other sessions.", "Set up cloud agent", "Connect MCP client"],
   },
   {
     name: "oauth",
     cloud: CLOUD_EMPTY,
-    prepare: async () => {},
+    prepare: async (win) => {
+      await clickText(win, "Connect MCP client", 0);
+      await waitFor(win, `document.querySelector(".connect-modal .connect")`, "the MCP setup modal");
+    },
     expect: [
       "Connect an MCP client",
       "Add this server URL to Claude Code, Codex, Cursor",
@@ -386,12 +475,18 @@ const SCREENS = [
     // The form is a MODAL now, not an inline expander — same click, same
     // fields, over the pane instead of inside it.
     name: "static-form",
-    prepare: async (win) => clickText(win, "Can't use OAuth"),
+    prepare: async (win) => {
+      await clickText(win, "Connect MCP client", 0);
+      await waitFor(win, `document.querySelector(".connect-modal .connect")`, "the MCP setup modal");
+      await clickText(win, "Can't use OAuth");
+    },
     expect: ["Static credential", "Name this connection", "Create Credential", "Cancel"],
   },
   {
     name: "static-shown",
     prepare: async (win) => {
+      await clickText(win, "Connect MCP client", 0);
+      await waitFor(win, `document.querySelector(".connect-modal .connect")`, "the MCP setup modal");
       await clickText(win, "Can't use OAuth");
       await type(win, `input[placeholder="Claude Code"]`, "Claude Code");
       await clickText(win, "Create Credential");
@@ -411,17 +506,16 @@ const SCREENS = [
   },
 ];
 
-async function clickCloudRowButton(win, label) {
+async function clickAria(win, label) {
   const found = await win.webContents.executeJavaScript(`
     (() => {
-      const button = [...document.querySelectorAll(".cloud-agent-row button")]
-        .find((b) => b.textContent.trim() === ${JSON.stringify(label)});
+      const button = document.querySelector(` + JSON.stringify(`button[aria-label="${label}"]`) + `);
       if (!button) return false;
       button.click();
       return true;
     })()
   `);
-  if (!found) throw new Error(`no cloud-agent row button labelled ${label}`);
+  if (!found) throw new Error(`no button labelled ${label}`);
 }
 
 async function chooseLastChatOption(win) {
@@ -473,9 +567,10 @@ app.whenReady().then(async () => {
     // drops any modal left standing by the screen before it.
     load: async (screen) => {
       cloudFixture = screen.cloud ?? CLOUD_EMPTY;
+      rosterFixture = screen.roster ?? EMPTY_ROSTER;
       await win.loadFile(path.join(dist, "renderer/index.html"));
       await waitFor(win, `document.querySelector("#view .panel.agents")`, "the Agents pane");
-      await waitFor(win, `document.querySelector("#view .cloud-toolbar, #view .cloud-empty, #view .cloud-forbidden, #view .cloud-error, #view .cloud-loading")`, "the cloud-agent group");
+      await waitFor(win, `document.querySelector("#view .agents-roster .list-section")`, "the Agents inventory");
     },
     beforeShot: async (w, screen) => {
       if (screen.scrollToBottom) {

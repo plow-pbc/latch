@@ -594,18 +594,78 @@ textarea.text { min-height: 70px; resize: vertical; }
 }
 .settings .connect .linkbtn:hover { color: var(--fg); }
 
-/* ---------- Cloud agents ----------
-   Nested rows deliberately reuse `.item`; these rules make the outer group
-   the container and the inner cards the roster. */
-.cloud-toolbar { margin: 0 0 12px; }
-.cloud-agent-list { display: flex; flex-direction: column; gap: 10px; }
-.settings .cloud-agent-row {
-  margin: 0; padding: 12px 14px; box-shadow: none; background: var(--bg);
+/* ---------- Agents inventory ---------- */
+.agents-roster { padding: 10px 16px 16px; }
+.list-section + .list-section { margin-top: 10px; }
+.list-section-head {
+  display: flex; align-items: center; gap: 8px; margin-bottom: 5px;
 }
-.cloud-agent-name { font-weight: 600; min-width: 0; overflow-wrap: anywhere; }
-.cloud-agent-heading { align-items: flex-start; }
-.cloud-agent-actions { gap: 6px; flex-wrap: wrap; justify-content: flex-end; }
-.item p.cloud-agent-meta { margin-top: 5px; color: var(--muted); }
+.list-section-head h2 { font-size: 15px; margin: 0; }
+.list-section-head .faint { font-size: 12px; }
+.entity-list {
+  background: var(--card); border: 1px solid var(--border);
+  border-radius: var(--radius); box-shadow: var(--shadow);
+}
+.entity-row {
+  min-height: 53px; display: flex; align-items: center; gap: 9px;
+  padding: 5px 10px; position: relative;
+}
+.entity-row + .entity-row { border-top: 1px solid var(--border); }
+.entity-mark {
+  width: 28px; height: 28px; flex: none; display: grid; place-items: center;
+  border-radius: 8px; background: var(--sel); color: var(--blue-fg);
+  font-weight: 700;
+}
+.entity-mark.client {
+  font-family: var(--mono); background: var(--bg); color: var(--muted);
+  border: 1px solid var(--border); font-size: 11px;
+}
+.entity-main { flex: 1; min-width: 0; }
+.entity-top { display: flex; align-items: center; gap: 8px; margin-bottom: 2px; }
+.entity-name { font-weight: 600; overflow-wrap: anywhere; }
+.entity-context {
+  color: var(--muted); font-size: 11.5px; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis;
+}
+.entity-perms {
+  color: var(--fg); font-size: 11.5px; line-height: 1.3;
+  margin-top: 3px; white-space: normal;
+}
+.entity-perms span + span::before { content: " · "; color: var(--faint); }
+.entity-actions { display: flex; align-items: center; gap: 6px; flex: none; }
+.message-btn { white-space: nowrap; }
+.more { width: 28px; height: 28px; justify-content: center; padding: 0; font-size: 18px; line-height: 1; }
+.more-menu {
+  position: absolute; z-index: 4; right: 9px; top: 42px; width: 124px;
+  padding: 5px; background: var(--card); border: 1px solid var(--border-strong);
+  border-radius: 8px; box-shadow: var(--shadow);
+}
+.more-menu button {
+  -webkit-app-region: no-drag; width: 100%; text-align: left; border: 0;
+  border-radius: 6px; background: none; color: var(--red-fg);
+  padding: 7px 9px; font: inherit; cursor: pointer;
+}
+.more-menu button:hover { background: var(--red-bg); }
+.status-setting {
+  display: inline-flex; align-items: center; gap: 6px;
+  color: var(--amber-fg); font-size: 11px; font-weight: 600;
+}
+.status-setting .cloud-spinner { margin: 0; }
+.status-removing { color: var(--muted); }
+.signout-warning { color: var(--amber-fg); }
+.revoked-summary {
+  min-height: 26px; color: var(--muted); font-size: 11.5px;
+  padding: 4px 10px; border-top: 1px solid var(--border);
+}
+.entity-empty { padding: 16px 10px; text-align: left; }
+.roster-notices { margin-bottom: 10px; }
+.roster-notices .cloud-callout + .cloud-callout { margin-top: 8px; }
+.list-section-head + .cloud-callout,
+.list-section-head + .cloud-progress { margin-bottom: 8px; }
+.cloud-callout + .entity-list,
+.cloud-progress + .entity-list { margin-top: 8px; }
+
+/* ---------- Cloud setup and status ---------- */
 .cloud-progress {
   display: flex; align-items: center; gap: 8px;
   margin-top: 10px; color: var(--muted); font-size: 12px;
@@ -627,14 +687,12 @@ textarea.text { min-height: 70px; resize: vertical; }
   padding: 10px 12px; border: 1px solid var(--border);
   border-radius: var(--radius-sm); background: var(--bg);
 }
-.cloud-callout + .cloud-callout, .cloud-callout + .cloud-agent-list { margin-top: 10px; }
+.cloud-callout + .cloud-callout { margin-top: 10px; }
 .cloud-callout-title, .cloud-warning-title { font-weight: 600; }
 .cloud-callout p, .cloud-warning p { margin-top: 4px; }
 .cloud-callout .btn { margin-top: 10px; }
 .cloud-error { border-color: var(--red-bd); background: var(--red-bg); }
 .cloud-error .cloud-callout-title { color: var(--red-fg); }
-.cloud-empty { padding: 24px 16px 8px; }
-
 .cloud-modal .field { margin-bottom: 12px; }
 .cloud-modal .cloud-warning { margin-top: 4px; border-color: var(--amber-bd); background: var(--amber-bg); }
 .cloud-modal-actions { margin-top: 18px; }
@@ -647,12 +705,7 @@ textarea.text { min-height: 70px; resize: vertical; }
 .cloud-route p { margin: 4px 0 0; }
 .cloud-route .btn { margin-top: 10px; }
 .cloud-route .cloud-route-number { color: var(--fg); }
-.cloud-local-settings { margin-top: 14px; }
-.cloud-setting { align-items: flex-start; margin-top: 0; }
-.cloud-setting input { margin-top: 2px; }
-.cloud-setting-title, .cloud-setting-copy { display: block; }
-.cloud-setting-title { font-weight: 600; color: var(--fg); margin-bottom: 2px; }
-.cloud-local-note { margin: 10px 0 0; }
+.roster-confirm-loud { border-color: var(--red-bd); }
 
 /* ---------- Static-credential modal ----------
    Plain DOM over the pane, which is `inert` while this is up. The panel reuses

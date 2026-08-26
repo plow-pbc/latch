@@ -86,6 +86,32 @@ const cloudAgent = {
   failureReason: null,
   createdAt: "2026-08-24T18:00:00.000Z",
 };
+const rosterProbe = {
+  cloud: [{
+    id: 201,
+    name: "Household helper",
+    kind: "Agent",
+    createdAt: cloudAgent.createdAt,
+    lastSeenAt: "2026-08-25T17:55:00.000Z",
+    agentId: cloudAgent.agentId,
+    chatUids: [cloudChat.uid],
+    isActive: true,
+    isThisMac: false,
+  }],
+  mcp: [{
+    id: 202,
+    name: "Claude Code",
+    kind: "Agent",
+    createdAt: "2026-08-23T18:00:00.000Z",
+    lastSeenAt: "2026-08-25T17:50:00.000Z",
+    agentId: null,
+    chatUids: ["*"],
+    isActive: true,
+    isThisMac: false,
+  }],
+  other: [],
+  revokedHidden: 0,
+};
 let cloudProbe = {
   cloudAgents: [cloudAgent],
   cloudAgentsError: null,
@@ -99,7 +125,7 @@ let cloudProbe = {
     cag_probe: { relay: true, inference: false, adversarialReview: false },
   },
 };
-const cloudCalls = { create: [], delete: [], apply: [] };
+const cloudCalls = { create: [] };
 let releaseCloudCreate = null;
 let cloudCreatePending = false;
 let relaySignOutCalls = 0;
@@ -114,6 +140,9 @@ ipcMain.handle("connect:get", async () => ({
   busy: false,
   message: "",
   credential: null,
+  roster: rosterProbe,
+  rosterError: null,
+  removeError: null,
   ...cloudProbe,
 }));
 ipcMain.handle("cloud:create", async (_e, chatUid, name) => {
@@ -125,18 +154,6 @@ ipcMain.handle("cloud:create", async (_e, chatUid, name) => {
     cloudAgents: [{ ...cloudAgent, chatUid, name: name || "Cloud agent", status: "provisioning" }],
   };
   cloudCreatePending = false;
-});
-ipcMain.handle("cloud:delete", async (_e, agentId) => cloudCalls.delete.push(agentId));
-ipcMain.handle("cloud:apply", async (_e, agentId, settings) => {
-  cloudCalls.apply.push({ agentId, settings });
-  const previous = cloudProbe.cloudAgentSettings[agentId];
-  cloudProbe = {
-    ...cloudProbe,
-    cloudAgentSettings: {
-      ...cloudProbe.cloudAgentSettings,
-      [agentId]: { ...previous, adversarialReview: settings.adversarialReview },
-    },
-  };
 });
 ipcMain.handle("settings:signOut", async () => { relaySignOutCalls += 1; });
 // A packaged-looking updater state so the Software Updates section renders
@@ -534,8 +551,13 @@ app.whenReady().then(async () => {
   }})()`);
 
   await win.webContents.executeJavaScript(`window.__domoSelectTab("agents")`);
-  await waitFor(win, `document.querySelector("#view .panel.agents .connect .client-card")`,
-    "the Agents pane and its client card");
+  await waitFor(win, `document.querySelectorAll("#view .panel.agents .list-section").length === 3`,
+    "the three-section Agents pane");
+  await win.webContents.executeJavaScript(
+    `[...document.querySelectorAll("#view button")].find((b) => b.textContent.trim() === "Connect MCP client").click()`,
+  );
+  await waitFor(win, `document.querySelector(".connect-modal .connect .client-card")`,
+    "the MCP setup modal and its client card");
   const connect = await win.webContents.executeJavaScript(`(${() => {
     const text = document.body.innerText;
     const tabs = [...document.querySelectorAll("#seg button")].map((b) => b.dataset.tab);
@@ -550,7 +572,7 @@ app.whenReady().then(async () => {
       // The move itself: its own tab, FIRST in the bar, under the new key.
       agentsTabFirst: tabs[0] === "agents",
       tabOrder: tabs,
-      hasAgentsPane: !!document.querySelector("#view .panel.agents .connect"),
+      hasAgentsPane: document.querySelectorAll("#view .panel.agents .list-section").length === 3,
       showsTitle: text.includes("Connect an MCP client"),
       noConnectTab: !document.querySelector('#seg button[data-tab="connect"]'),
       // The client shortcut. Exactly one: a card exists only for a client whose
@@ -565,10 +587,13 @@ app.whenReady().then(async () => {
       ).fontWeight === "400",
     };
   }})()`);
+  await win.webContents.executeJavaScript(
+    `[...document.querySelectorAll(".connect-modal button")].find((b) => b.textContent.trim() === "Close").click()`,
+  );
 
   const cloudRoster = await win.webContents.executeJavaScript(`(${() => {
-    const group = [...document.querySelectorAll("#view .panel.agents > .item")]
-      .find((item) => item.querySelector(":scope > .group-title")?.textContent.trim() === "Cloud agents");
+    const group = [...document.querySelectorAll("#view .panel.agents .list-section")]
+      .find((item) => item.querySelector("h2")?.textContent.trim() === "Cloud agents");
     return {
       noCredentialIdentity: !group?.textContent.includes("session") && !group?.textContent.includes("worker"),
     };
@@ -583,12 +608,13 @@ app.whenReady().then(async () => {
   };
   await win.webContents.executeJavaScript(`window.__domoSelectTab("audit")`);
   await win.webContents.executeJavaScript(`window.__domoSelectTab("agents")`);
-  await waitFor(win, `document.querySelector(".cloud-toolbar button")`, "the cloud-agent setup action");
-  await win.webContents.executeJavaScript(`document.querySelector(".cloud-toolbar button").click()`);
+  await waitFor(win, `[...document.querySelectorAll("#view button")].some((b) => b.textContent.trim() === "Set up cloud agent")`, "the cloud-agent setup action");
+  await win.webContents.executeJavaScript(`[...document.querySelectorAll("#view button")].find((b) => b.textContent.trim() === "Set up cloud agent").click()`);
   await waitFor(win, `document.querySelector(".cloud-modal .cloud-warning")`, "the first-agent warning");
   const cloudModalGuard = await win.webContents.executeJavaScript(`(${async () => {
     const visibleSelect = document.querySelector(".cloud-modal select");
-    const trigger = document.querySelector(".cloud-toolbar button");
+    const trigger = [...document.querySelectorAll("#view button")]
+      .find((button) => button.textContent.trim() === "Set up cloud agent");
     const selectPrototype = HTMLSelectElement.prototype;
     const addEventListener = selectPrototype.addEventListener;
     let blockedSelect = null;
@@ -626,7 +652,7 @@ app.whenReady().then(async () => {
   await win.webContents.executeJavaScript(`[...document.querySelectorAll(".cloud-modal button")].find((b) => b.textContent.trim() === "Back").click()`);
   await win.webContents.executeJavaScript(`[...document.querySelectorAll(".cloud-modal button")].find((b) => b.textContent.trim() === "Cancel").click()`);
 
-  await win.webContents.executeJavaScript(`document.querySelector(".cloud-toolbar button").click()`);
+  await win.webContents.executeJavaScript(`[...document.querySelectorAll("#view button")].find((b) => b.textContent.trim() === "Set up cloud agent").click()`);
   await waitFor(win, `document.querySelector(".cloud-modal select")`, "the picker for the create wait");
   const cloudCreateWait = await win.webContents.executeJavaScript(`(${() => {
     const button = [...document.querySelectorAll(".cloud-modal button")]
@@ -646,27 +672,22 @@ app.whenReady().then(async () => {
   })})()`);
   cloudCreateTransition.requestPending = cloudCreatePending;
   releaseCloudCreate();
-  await waitFor(win, `document.querySelector('[data-cloud-agent-id="cag_probe"]')`, "the receipt-backed agent row");
-  cloudCreateTransition.reconciled = await win.webContents.executeJavaScript(
-    `document.querySelectorAll(".cloud-agent-row").length === 1 && !document.querySelector('[data-cloud-agent-id^="pending-cloud-"]')`,
+  await waitFor(
+    win,
+    `document.querySelectorAll(".cloud-agent-row").length === 1 && document.querySelector('[data-cloud-agent-id="cag_probe"]') && !document.querySelector('[data-cloud-agent-id^="pending-cloud-"]')`,
+    "the pending row to reconcile with the receipt-backed agent row",
   );
+  cloudCreateTransition.reconciled = true;
 
-  await waitFor(win, `document.querySelector(".cloud-agent-row button")`, "the cloud-agent row actions");
-  await win.webContents.executeJavaScript(`[...document.querySelectorAll(".cloud-agent-row button")].find((b) => b.textContent.trim() === "Settings").click()`);
-  await waitFor(win, `document.querySelector(".cloud-modal .cloud-setting")`, "the cloud-agent settings panel");
-  await win.webContents.executeJavaScript(`(() => {
-    const modal = document.querySelector(".cloud-modal");
-    modal.querySelector(".cloud-local-settings input").click();
-    [...modal.querySelectorAll("button")].find((b) => b.textContent.trim() === "Apply changes").click();
-  })()`);
-  await waitFor(win, `!document.querySelector(".cloud-modal")`, "the local cloud-agent settings save");
-  const applied = cloudCalls.apply[0];
-  const cloudSettings = {
-    stableId: applied?.agentId === "cag_probe",
-    exactSettings: applied?.settings?.adversarialReview === true &&
-      Object.keys(applied?.settings ?? {}).join(",") === "adversarialReview",
-    persisted: cloudProbe.cloudAgentSettings.cag_probe?.adversarialReview === true,
-  };
+  await waitFor(win, `document.querySelector(".cloud-agent-row .entity-actions")`, "the cloud-agent row actions");
+  const cloudRowActions = await win.webContents.executeJavaScript(`(${() => ({
+    hasMessage: [...document.querySelectorAll(".cloud-agent-row button")]
+      .some((button) => button.textContent.trim() === "Message"),
+    noSettings: ![...document.querySelectorAll(".cloud-agent-row button")]
+      .some((button) => button.textContent.trim() === "Settings"),
+    hasMenu: [...document.querySelectorAll(".cloud-agent-row button")]
+      .some((button) => button.getAttribute("aria-label")?.startsWith("More actions for")),
+  })})()`);
 
   cloudProbe = {
     ...cloudProbe,
@@ -682,8 +703,9 @@ app.whenReady().then(async () => {
   await waitFor(win, `document.querySelector(".cloud-error")`, "the failed chat-list banner");
   const cloudChatFailure = await win.webContents.executeJavaScript(`(${() => ({
     showsError: document.querySelector(".cloud-error")?.textContent.includes("Couldn't reach Plow"),
-    setupDisabled: document.querySelector(".cloud-toolbar button")?.disabled === true,
-    notEmptyState: !document.querySelector(".cloud-empty"),
+    setupDisabled: [...document.querySelectorAll("#view button")]
+      .find((button) => button.textContent.trim() === "Set up cloud agent")?.disabled === true,
+    notEmptyState: !document.querySelector(".list-section:first-child .entity-empty"),
     keepsRoster: document.querySelector(".cloud-agent-row")?.textContent.includes("Household helper"),
     noDestructiveRecovery: ![...document.querySelectorAll(".cloud-error button")]
       .some((button) => button.textContent.trim() === "Sign out and re-activate"),
@@ -700,14 +722,15 @@ app.whenReady().then(async () => {
   await win.webContents.executeJavaScript(`window.__domoSelectTab("agents")`);
   await waitFor(win, `document.querySelector(".cloud-error")`, "the 403 chat-list banner");
   const cloudForbidden = await win.webContents.executeJavaScript(`(${() => {
-    const setup = document.querySelector(".cloud-toolbar button");
+    const setup = [...document.querySelectorAll("#view button")]
+      .find((button) => button.textContent.trim() === "Set up cloud agent");
     setup.click();
     return {
       rawReasonHidden: !document.body.innerText.includes("Method Not Allowed"),
       setupEnabled: setup.disabled === false,
       offersReactivation: [...document.querySelectorAll(".cloud-error button")]
         .some((button) => button.textContent.trim() === "Sign out and re-activate"),
-      notEmptyState: !document.querySelector(".cloud-empty"),
+      notEmptyState: !document.querySelector(".list-section:first-child .entity-empty"),
     };
   }})()`);
   await waitFor(win, `document.querySelector(".cloud-modal select")`, "the activation-chat fallback picker");
@@ -945,8 +968,12 @@ app.whenReady().then(async () => {
   // form must read as the quiet alternative, not the main event.
   await win.webContents.executeJavaScript(`window.__domoSelectTab("agents")`);
   await waitFor(win, `document.querySelector("#view .panel.agents")`, "the Agents pane for static credential setup");
+  await win.webContents.executeJavaScript(
+    `[...document.querySelectorAll("#view button")].find((b) => b.textContent.trim() === "Connect MCP client").click()`,
+  );
+  await waitFor(win, `document.querySelector(".connect-modal .linkbtn")`, "the MCP setup modal for static credential setup");
   await win.webContents.executeJavaScript(`(() => {
-    const link = [...document.querySelectorAll(".linkbtn")].find((b) =>
+    const link = [...document.querySelectorAll(".connect-modal .linkbtn")].find((b) =>
       b.textContent.includes("static credential"),
     );
     link.click();
@@ -1273,7 +1300,7 @@ app.whenReady().then(async () => {
   const modalClosed = await win.webContents.executeJavaScript(`(${() => ({
     gone: !document.querySelector(".modal-backdrop"),
     paneLive: document.querySelector("#view")?.hasAttribute("inert") === false,
-    focusBackOnTrigger: (document.activeElement?.textContent ?? "").includes("static credential"),
+    focusBackOnTrigger: (document.activeElement?.textContent ?? "").includes("Connect MCP client"),
   })})()`);
 
   fs.rmSync(probeHome, { recursive: true, force: true });
@@ -1393,9 +1420,9 @@ app.whenReady().then(async () => {
     cloudCreateTransition.requestPending &&
     cloudCreateTransition.pendingRow &&
     cloudCreateTransition.reconciled &&
-    cloudSettings.stableId &&
-    cloudSettings.exactSettings &&
-    cloudSettings.persisted &&
+    cloudRowActions.hasMessage &&
+    cloudRowActions.noSettings &&
+    cloudRowActions.hasMenu &&
     cloudChatFailure.showsError &&
     cloudChatFailure.setupDisabled &&
     cloudChatFailure.notEmptyState &&
@@ -1484,7 +1511,7 @@ app.whenReady().then(async () => {
     errors.length === 0;
   console.log(
     "PROBE:" +
-      JSON.stringify({ main, settings, strandedOnDisk, settingsPane, connect, cloudRoster, cloudModalGuard, cloudCreateWait, cloudCreateTransition, cloudSettings, cloudChatFailure, cloudForbidden, cloudServerDetail, agentsShot, approvalsReviewer, approvalsShot, purposeRoundTrip, approvalsAsk, askWithoutReviewer, approvalsShotAsk, agentsOpen, modalClosed, vaultLocked, vaultUnsaved, vaultShot, agentsOpenShot, staleSettingsPane, optimisticMode, settingsShot, approval, reviewerNote, consoleErrors: errors, ok }),
+      JSON.stringify({ main, settings, strandedOnDisk, settingsPane, connect, cloudRoster, cloudModalGuard, cloudCreateWait, cloudCreateTransition, cloudRowActions, cloudChatFailure, cloudForbidden, cloudServerDetail, agentsShot, approvalsReviewer, approvalsShot, purposeRoundTrip, approvalsAsk, askWithoutReviewer, approvalsShotAsk, agentsOpen, modalClosed, vaultLocked, vaultUnsaved, vaultShot, agentsOpenShot, staleSettingsPane, optimisticMode, settingsShot, approval, reviewerNote, consoleErrors: errors, ok }),
   );
   app.exit(ok ? 0 : 1);
 }).catch((err) => {
