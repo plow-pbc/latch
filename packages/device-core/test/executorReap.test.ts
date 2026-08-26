@@ -34,6 +34,15 @@ function blockingPipe(dir: string): string {
   return fifo;
 }
 
+/** Wait for a condition, so a test never races SIGKILL delivery. */
+async function until(done: () => boolean, timeoutMs = 5_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!done()) {
+    if (Date.now() > deadline) throw new Error("condition never held");
+    await new Promise((r) => setTimeout(r, 25));
+  }
+}
+
 /** Kill anything left over from a run, so no test can orphan a blocked child. */
 function killAll(marker: string): void {
   for (const line of alive(marker)) {
@@ -88,7 +97,7 @@ describe("a run that produces nothing and never exits", () => {
     const ended = await settle(executor, started.handle);
     expect(ended.reaped).toBe(true);
     expect(ended.exitCode).not.toBe(0);
-    expect(alive(fifo)).toHaveLength(0);
+    await until(() => alive(fifo).length === 0);
   });
 
   it("leaves a run that has produced output alone", async () => {
@@ -142,7 +151,35 @@ describe("a run that produces nothing and never exits", () => {
 
     const ended = await settle(executor, started.handle);
     expect(ended.reaped).toBe(true);
-    expect(alive(fifo)).toHaveLength(0);
+    await until(() => alive(fifo).length === 0);
+  });
+
+  it("settles a run whose command exited but whose background job holds the pipes", async () => {
+    const dir = tempDir();
+    const fifo = blockingPipe(dir);
+    const executor = new Executor(path.join(dir, "scratch"), 300);
+
+    // The shell exits immediately; the job it backgrounded inherits stdout and
+    // blocks forever. `close` waits on that pipe, so the run never settles on
+    // its own — a second route to #155's forever-`running` job, and one that
+    // "did the child exit?" must not be read as permission to walk away from.
+    const started = await executor.run({
+      argv: ["/bin/sh", "-c", `/bin/cat ${JSON.stringify(fifo)} & exit 0`],
+      cwd: dir,
+      readPaths: [dir],
+      writePaths: [],
+      network: false,
+      waitMs: 50,
+    });
+    cleanups.push(() => killAll(fifo));
+    expect(started.running).toBe(true);
+
+    const ended = await settle(executor, started.handle);
+    // Its own command ended, so this is not a run this Mac killed — but the
+    // strays still go, and the job answers instead of hanging.
+    expect(ended.reaped).toBe(false);
+    expect(ended.exitCode).toBe(0);
+    await until(() => alive(fifo).length === 0);
   });
 });
 

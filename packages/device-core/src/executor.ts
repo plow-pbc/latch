@@ -171,6 +171,10 @@ class OutputBuffer {
   }
 
   finish(exitCode: number): void {
+    // Once only. The reaper settles a run without waiting for `close`, so a
+    // straggler's later `close` must not rewrite an outcome already reported
+    // to the agent and written to the audit log.
+    if (this.exitCode !== null) return;
     this.exitCode = exitCode;
     for (const w of this.waiters) w();
     this.waiters = [];
@@ -292,17 +296,26 @@ export class Executor {
       // routinely a shell: `/bin/sh -c 'a && b'` does NOT exec, so signalling
       // one pid kills the shell and leaves the wedged descendant holding the
       // stdout pipe — which is the bug, not the fix.
+      //
+      // This is `setsid`, so a run also leaves the app's session and stops
+      // receiving its terminal signals — a Ctrl-C on `just app` no longer
+      // reaches one. Accepted knowingly: nothing here has ever killed live
+      // children at quit (the packaged app has no terminal to signal it), so
+      // the sweep that would is its own change, not a side effect of this one.
       detached: true,
     });
     // SIGKILL rather than a polite SIGTERM: the run being ended here is one
     // wedged in a kernel call with nothing to clean up, and a handler that
     // never gets scheduled would only leave the same process on the table.
     const reaper = setTimeout(() => {
-      // `close` lags `exit` while stdio drains, so ask the child too: a run
-      // that ended on its own in that window is not one this Mac killed.
+      if (buffer.exitCode !== null || buffer.produced) return;
+      // The command itself may have exited while a descendant it backgrounded
+      // holds the stdout pipe open — `close` waits on the pipe, so the job has
+      // still not settled. That is a run to clean up, not one to walk away
+      // from; `ended` only decides what to call it, since a command that ended
+      // on its own is not one this Mac killed.
       const ended = child.exitCode !== null || child.signalCode !== null;
-      if (buffer.exitCode !== null || ended || buffer.produced) return;
-      buffer.reaped = true;
+      buffer.reaped = !ended;
       if (child.pid !== undefined) {
         try {
           process.kill(-child.pid, "SIGKILL");
@@ -311,10 +324,9 @@ export class Executor {
           // what the caller is owed either way.
         }
       }
-      // Settle now rather than waiting for `close`. A descendant that survived
-      // the group kill would hold the pipes open, and `close` waits on those —
-      // so a job that hangs on to them must not hang the agent as well.
-      buffer.finish(-1);
+      // Settle now rather than waiting for `close`. Whatever held those pipes
+      // open must not hold the agent open with them.
+      buffer.finish(child.exitCode ?? -1);
     }, this.reapAfterMs);
     reaper.unref?.();
 

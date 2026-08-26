@@ -254,12 +254,15 @@ describe("auditActivities (grouping)", () => {
         { event: "exec_end", intentId: "i1", exit_code: -1, reaped: true, ts: "2026-08-18T12:15:01Z" },
       ])[0]!,
     ];
+    const reason = "no output — a permission prompt may be waiting";
+    expect(orphan.status).toBe(`Killed — ${reason}`);
+    expect(decided.status).toBe(`Allowed once · killed (${reason})`);
     for (const act of [orphan, decided]) {
-      expect(act.status).toContain("permission prompt");
-      expect(act.status).not.toContain("exit -1");
       expect(act.tone).toBe("amber");
       expect(act.category).toBe("failed");
     }
+    // The line the owner opens to find out why must not contradict the badge.
+    expect(decided.timeline.map((s) => s.text)).toContain(`Run killed — ${reason}`);
   });
 
   it("browser runtime start/stop are lifecycle noise, never rows", () => {
