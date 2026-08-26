@@ -113,7 +113,16 @@ async function render() {
       badge("blue", "wants to act"),
     ]),
     el("div", { class: "faint mono", text: v.agentId }),
-    el("div", { class: "goal", text: v.goal || v.request }),
+    // The device-composed request line, ALWAYS — it is the only description of
+    // this operation the Mac wrote itself, and for a Slack call it carries the
+    // message excerpt or the search query. `goal` is agent-supplied text; when
+    // it displaced this line, an agent could hide what it was asking to send
+    // merely by stating a goal. CLAUDE.md keeps goal text off every decision
+    // path, and the human's approval is one. Shown beside it, labelled, the way
+    // the access-request card above already treats stated goals.
+    el("div", { class: "goal", text: v.request }),
+    v.goal ? el("div", { class: "lbl", text: "Agent's stated goal (unverified)" }) : null,
+    v.goal ? el("div", { class: "faint", text: v.goal }) : null,
     el("div", { class: "fine" }, [
       el("div", { class: "lbl", text: "This will be allowed to (enforced)" }),
       capchips,
