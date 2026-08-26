@@ -24,12 +24,13 @@ function run(
   tool: string,
   payload: JSONValue,
   target?: string,
+  request = "use slack",
 ): Promise<JSONValue> {
   const intent = makeIntent({
     agentId: "a1",
     agentDisplay: "Agent",
     deviceId: device.identity.deviceId,
-    request: "use slack",
+    request,
     capabilities: [{ kind: "tool", tool, target }],
     sessionId: "s1",
   });
@@ -134,6 +135,11 @@ describe("tool capability execution", () => {
     );
   });
 
+  // The request line is written for the approver and a send puts an excerpt of
+  // the message in it, so this passes the sentinel there as well as in the
+  // payload — the way `plow_slack_send` actually builds one. An earlier version
+  // used a fixed "use slack" request and so could not see content crossing
+  // through `intent_received`, which is the record that keeps it.
   it("audits the action and the target, never the message", async () => {
     const device = deviceWith({ call: async () => ({ ok: true }) });
 
@@ -142,11 +148,13 @@ describe("tool capability execution", () => {
       "slack.messages.send",
       { account: "T1", channel_id: "C1", text: "the launch codes" },
       "T1/C1",
+      'send a Slack message to C1: "the launch codes"',
     );
 
     const log = JSON.stringify(device.audit.entries());
     expect(log).toContain("tool_invoked");
     expect(log).toContain("T1/C1");
+    // Neither the payload's copy nor the approver-facing request line's.
     expect(log).not.toContain("the launch codes");
   });
 

@@ -86,13 +86,17 @@ export function capabilityDisplay(c: Capability): string {
     case "network":
       return c.allowed ? "Network: allowed" : "Network: denied";
     case "tool": {
-      const action = (c.tool ?? "?").replace(/^slack\./, "");
+      // Provider-neutral: the seam is `tool`, not Slack. Stripping a `slack.`
+      // prefix and labelling everything "Slack:" relabels a stored rule from
+      // any other provider — `fixtures/rulekeys.json` still holds a `mac_info`
+      // one — and would misname the next connector's capabilities outright.
+      const action = c.tool ?? "?";
       // The target is what the owner is actually authorising. A capability
       // carrying none names no scope, and must not imply one.
       const where = c.target ? `${action} in ${c.target}` : action;
       // The selector is part of what is authorised, so it is part of what the
       // approval card and the audit log say was authorised.
-      return c.selector ? `Slack: ${where} for "${c.selector}"` : `Slack: ${where}`;
+      return c.selector ? `Tool: ${where} for "${c.selector}"` : `Tool: ${where}`;
     }
     case "browser":
       return `Browse: ${(c.origins ?? []).join(", ")}`;

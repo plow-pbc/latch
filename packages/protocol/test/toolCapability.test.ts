@@ -19,10 +19,10 @@ const key = (caps: Capability[]) => RuleKey.compute("agent-1", "device-1", caps)
 describe("tool capabilities", () => {
   it("names the target it acts on, so the dialog says what is being authorised", () => {
     expect(capabilityDisplay(send("T01234/C0123ABCD")[0])).toBe(
-      "Slack: messages.send in T01234/C0123ABCD",
+      "Tool: slack.messages.send in T01234/C0123ABCD",
     );
     // Nothing to name is said as nothing, never as a scope.
-    expect(capabilityDisplay({ kind: "tool", tool: "slack.status" })).toBe("Slack: status");
+    expect(capabilityDisplay({ kind: "tool", tool: "slack.status" })).toBe("Tool: slack.status");
   });
 
   it("keys a rule to the target: another channel is another rule", () => {

@@ -127,6 +127,20 @@ function runPayload(result: ExecResult): { [k: string]: JSONValue } {
   return payload;
 }
 
+/**
+ * The request line as the audit may keep it.
+ *
+ * `Intent.request` is display copy for the approver and may carry the
+ * operation's content. For a `tool` capability that content is the owner's
+ * message text, so the durable record takes the capability's own description —
+ * action and target — instead. Every other kind passes through: an exec's argv
+ * and a file op's path ARE the operation, not data inside it.
+ */
+function auditableRequest(intent: Intent): string {
+  const tool = intent.capabilities.find((c) => c.kind === "tool");
+  return tool ? capabilityDisplay(tool) : intent.request;
+}
+
 export class DeviceAgent {
   readonly identity: DeviceIdentity;
   readonly audit: AuditLog;
@@ -367,7 +381,14 @@ export class DeviceAgent {
       // never an identity: Session.name is nullable and not unique, so two
       // credentials can produce the same one. `agent` above is the identity.
       agent_name: intent.agentDisplay,
-      request: intent.request,
+      // NOT `intent.request` verbatim. That string is written for the approver
+      // and carries the operation's content — a Slack send puts an excerpt of
+      // the message in it — while this log is append-only and rendered in
+      // Activity. A `tool` capability names its action and target, which is
+      // what was authorised; the content stays on the approval surface and out
+      // of the durable record, the same split `file_read` makes by recording a
+      // path and never the bytes.
+      request: auditableRequest(intent),
       goal: intent.goal ?? "",
       capabilities: intent.capabilities.map(capabilityDisplay),
     });

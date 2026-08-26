@@ -26,6 +26,5 @@ export {
   slackAction,
   SLACK_WRITE_ACTIONS,
   echoesSecret,
-  secretForms,
 } from "./connectors.js";
 export type { ConnectorClient, FetchLike, SlackAction } from "./connectors.js";

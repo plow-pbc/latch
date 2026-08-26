@@ -111,7 +111,7 @@ const SECRET_HEAD = 10;
  * an arbitrary-size decoded response — a `messages.list` body runs to
  * thousands of nodes — and the forms depend only on the secret.
  */
-export function secretForms(secret: string): string[] {
+function secretForms(secret: string): string[] {
   const trimmed = secret.trim();
   if (trimmed.length < SECRET_HEAD) return [];
   const forms = [trimmed];

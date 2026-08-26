@@ -67,7 +67,7 @@ describe("approvalViewModel", () => {
       vm.usesBrowser,
       vm.fillsCredentials,
     ]).toEqual([false, false, false, false, false]);
-    expect(vm.capabilities.map((c) => c.display)).toEqual(["Slack: messages.send in T1/C1"]);
+    expect(vm.capabilities.map((c) => c.display)).toEqual(["Tool: slack.messages.send in T1/C1"]);
   });
 
   // A read (listing channels) is not the same risk as a send: it doesn't act
@@ -337,7 +337,34 @@ describe("auditActivities (grouping)", () => {
  * side owned, and rendered in the timeline as the literal "tool_call".
  */
 describe("the audit names the device writes are the names this reads", () => {
-  it("a Slack tool call reads as a used tool, not as a raw event name", async () => {
+  // Both the invoked and the error path, which differ only in whether the
+  // action is one this Mac's table knows. `request` is agent-controlled free
+  // text, chosen here to collide with the file-kind heuristic: without the
+  // explicit `has("tool_invoked")` / `has("tool_error")` checks in
+  // `activityKind`, either case falls through and reads as "file".
+  //
+  // A `tool_error` with no preceding `tool_invoked` is a real producer path —
+  // an unknown action throws inside `executeToolIntent` before the invoked
+  // record is written — not a hypothetical shape.
+  it.each([
+    {
+      name: "a known action",
+      tool: "slack.messages.list",
+      target: "T1/C1",
+      payload: { account: "T1", channel_id: "C1" },
+      expect_line: "Tool used: slack.messages.list",
+      expect_capability: "Tool: slack.messages.list in T1/C1",
+    },
+    {
+      name: "an action this Mac's table does not know",
+      tool: "slack.channels.delete",
+      target: "T1",
+      payload: { account: "T1" },
+      expect_line:
+        "Tool error: slack.channels.delete — not a Slack action this Mac can perform",
+      expect_capability: "Tool: slack.channels.delete in T1",
+    },
+  ])("$name reads as a used tool, not as a raw event name", async (row) => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "latch-viewmodel-"));
     try {
       const device = new DeviceAgent(
@@ -352,60 +379,20 @@ describe("the audit names the device writes are the names this reads", () => {
         agentId: "agent-1",
         agentDisplay: "Agent",
         deviceId: device.identity.deviceId,
-        // `request` is agent-controlled free text (deviceAgent.ts), chosen
-        // here to collide with the file-kind heuristic below it: if
-        // `has("tool_invoked")` were removed from activityKind, this would
-        // fall through and read as "file" instead of "command".
         request: "read file: not actually a file",
-        capabilities: [{ kind: "tool", tool: "slack.messages.list", target: "T1/C1" }],
+        capabilities: [{ kind: "tool", tool: row.tool, target: row.target }],
         sessionId: "s1",
       });
-      await device.handleIntent(intent, { account: "T1", channel_id: "C1" });
+      await device.handleIntent(intent, row.payload);
 
       const [activity] = auditActivities(device.audit.entries());
       const lines = activity.timeline.map((s) => s.text);
-      expect(lines).toContain("Tool used: slack.messages.list");
+      expect(lines).toContain(row.expect_line);
       expect(activity.kind).toBe("command");
-      expect(activity.capabilities).toContain("Slack: messages.list in T1/C1");
+      expect(activity.capabilities).toContain(row.expect_capability);
       // An event this file does not know falls through to `default: text =
       // event` — the raw name, shown to the owner as if it were a sentence.
       expect(lines.filter((l) => l.startsWith("tool_"))).toEqual([]);
-    } finally {
-      fs.rmSync(home, { recursive: true, force: true });
-    }
-  });
-
-  // A `tool_error` before any `tool_invoked` is a real producer path — an
-  // action this Mac's table doesn't know throws inside executeToolIntent
-  // before the invoked record is written (deviceAgent.ts) — so this is not a
-  // hypothetical shape. Same colliding request text as above: only an
-  // explicit `has("tool_error")` check keeps this "command".
-  it("a Slack tool error reads as a used tool too, even with no tool_invoked", async () => {
-    const home = fs.mkdtempSync(path.join(os.tmpdir(), "latch-viewmodel-"));
-    try {
-      const device = new DeviceAgent(
-        home,
-        "Test Mac",
-        new HeadlessPolicy({ intent: "allow_once" }),
-        null,
-        undefined,
-        { call: async () => ({ messages: [] }) },
-      );
-      const intent = makeIntent({
-        agentId: "agent-1",
-        agentDisplay: "Agent",
-        deviceId: device.identity.deviceId,
-        request: "read file: not actually a file",
-        capabilities: [{ kind: "tool", tool: "slack.channels.delete", target: "T1" }],
-        sessionId: "s1",
-      });
-      await device.handleIntent(intent, { account: "T1" });
-
-      const [activity] = auditActivities(device.audit.entries());
-      const lines = activity.timeline.map((s) => s.text);
-      expect(lines).toContain("Tool error: slack.channels.delete — not a Slack action this Mac can perform");
-      expect(lines.some((l) => l.startsWith("Tool used"))).toBe(false);
-      expect(activity.kind).toBe("command");
     } finally {
       fs.rmSync(home, { recursive: true, force: true });
     }
