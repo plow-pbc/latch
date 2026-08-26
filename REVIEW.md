@@ -64,9 +64,9 @@ these costs a review slot and teaches the author to skim:
 - **The sandbox is broader than the tool description implies.** Home is readable
   and five housekeeping dirs are writable, before declared paths are considered
   — except a reapable run (no declared writes, no network), which gets their
-  reads only; `docs/SANDBOX-BOUNDARY.md` §1 owns that rule and the rest of this
-  one. Flag it only when a diff *widens* it further or re-advertises the tight
-  bound the code does not deliver.
+  reads only; `docs/SANDBOX-BOUNDARY.md` §1 owns the whole rule, exception
+  included. Flag it only when a diff *widens* it further or re-advertises the
+  tight bound the code does not deliver.
 - **The device private key is a plaintext seed in a `0600` file.** No Keychain,
   no `safeStorage`. It is on the roadmap (DESIGN.md §12), not an oversight.
 - **There is no automated live-stack test.** The stand-in relay was deleted
