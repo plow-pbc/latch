@@ -239,6 +239,29 @@ describe("auditActivities (grouping)", () => {
     expect(failed.category).toBe("failed");
   });
 
+  it("a run this Mac killed reads as killed, not as a command that failed", () => {
+    // The owner is the only person who can answer the permission prompt that
+    // usually wedges a run, so "failed (exit -1)" would hide the one thing
+    // they can act on.
+    const [orphan, decided] = [
+      auditActivities([
+        { event: "exec_end", handle: "H1", exit_code: -1, reaped: true, ts: "2026-08-18T12:00:00Z" },
+      ])[0]!,
+      auditActivities([
+        { event: "intent_received", intentId: "i1", request: "run: sqlite3", ts: "2026-08-18T12:00:00Z" },
+        { event: "intent_decision", intentId: "i1", decision: "allow_once", ts: "2026-08-18T12:00:01Z" },
+        { event: "exec_start", intentId: "i1", argv: ["/usr/bin/sqlite3"], ts: "2026-08-18T12:00:01Z" },
+        { event: "exec_end", intentId: "i1", exit_code: -1, reaped: true, ts: "2026-08-18T12:15:01Z" },
+      ])[0]!,
+    ];
+    for (const act of [orphan, decided]) {
+      expect(act.status).toContain("permission prompt");
+      expect(act.status).not.toContain("exit -1");
+      expect(act.tone).toBe("amber");
+      expect(act.category).toBe("failed");
+    }
+  });
+
   it("browser runtime start/stop are lifecycle noise, never rows", () => {
     const acts = auditActivities([
       { event: "browser_started", pid: 12, browser_version: "1.0", ts: "2026-08-18T12:00:00Z" },

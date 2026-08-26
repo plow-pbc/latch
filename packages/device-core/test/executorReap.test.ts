@@ -34,6 +34,20 @@ function blockingPipe(dir: string): string {
   return fifo;
 }
 
+/** Kill anything left over from a run, so no test can orphan a blocked child. */
+function killAll(marker: string): void {
+  for (const line of alive(marker)) {
+    const pid = Number(line.trim().split(/\s+/)[0]);
+    if (Number.isFinite(pid)) {
+      try {
+        process.kill(pid, "SIGKILL");
+      } catch {
+        // Already gone — which is the outcome being asked for.
+      }
+    }
+  }
+}
+
 /** Processes still on the process table for this run's command line. */
 function alive(marker: string): string[] {
   return execFileSync("/bin/ps", ["-ax", "-o", "pid,command"], { encoding: "utf8" })
@@ -94,15 +108,41 @@ describe("a run that produces nothing and never exits", () => {
     });
     expect(started.output.toString()).toContain("working");
 
+    // Registered before the assertions, not after: a failing expectation must
+    // not be the thing that orphans a blocked child — that is the leak this
+    // whole file is about.
+    cleanups.push(() => killAll(fifo));
+
     await new Promise((r) => setTimeout(r, 900));
     const later = executor.output(started.handle, 0);
     expect(later.running).toBe(true);
     expect(later.reaped).toBe(false);
+  });
 
-    for (const line of alive(fifo)) {
-      const pid = Number(line.trim().split(/\s+/)[0]);
-      if (Number.isFinite(pid)) process.kill(pid, "SIGKILL");
-    }
+  it("takes the descendants of a shell that does not exec", async () => {
+    const dir = tempDir();
+    const fifo = blockingPipe(dir);
+    const executor = new Executor(path.join(dir, "scratch"), 300);
+
+    // `sh -c 'cmd'` execs, so the wedged process IS the child and one signal
+    // would do. A compound command does not: the shell forks, and signalling
+    // the shell alone leaves the blocked `cat` holding the stdout pipe — which
+    // is the original bug wearing a different hat, since `close` waits on that
+    // pipe and the job would answer `running` forever.
+    const started = await executor.run({
+      argv: ["/bin/sh", "-c", `/bin/cat ${JSON.stringify(fifo)}; echo unreachable`],
+      cwd: dir,
+      readPaths: [dir],
+      writePaths: [],
+      network: false,
+      waitMs: 50,
+    });
+    cleanups.push(() => killAll(fifo));
+    expect(started.running).toBe(true);
+
+    const ended = await settle(executor, started.handle);
+    expect(ended.reaped).toBe(true);
+    expect(alive(fifo)).toHaveLength(0);
   });
 });
 

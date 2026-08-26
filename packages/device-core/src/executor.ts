@@ -287,14 +287,34 @@ export class Executor {
         LANG: "en_US.UTF-8",
       },
       stdio: ["ignore", "pipe", "pipe"],
+      // Its own process group, purely so the reaper below can take the whole
+      // run. `sandbox-exec` execs into the approved argv, and that argv is
+      // routinely a shell: `/bin/sh -c 'a && b'` does NOT exec, so signalling
+      // one pid kills the shell and leaves the wedged descendant holding the
+      // stdout pipe — which is the bug, not the fix.
+      detached: true,
     });
     // SIGKILL rather than a polite SIGTERM: the run being ended here is one
     // wedged in a kernel call with nothing to clean up, and a handler that
     // never gets scheduled would only leave the same process on the table.
     const reaper = setTimeout(() => {
-      if (buffer.exitCode !== null || buffer.produced) return;
+      // `close` lags `exit` while stdio drains, so ask the child too: a run
+      // that ended on its own in that window is not one this Mac killed.
+      const ended = child.exitCode !== null || child.signalCode !== null;
+      if (buffer.exitCode !== null || ended || buffer.produced) return;
       buffer.reaped = true;
-      child.kill("SIGKILL");
+      if (child.pid !== undefined) {
+        try {
+          process.kill(-child.pid, "SIGKILL");
+        } catch {
+          // Already gone, or a group that no longer exists. Settling below is
+          // what the caller is owed either way.
+        }
+      }
+      // Settle now rather than waiting for `close`. A descendant that survived
+      // the group kill would hold the pipes open, and `close` waits on those —
+      // so a job that hangs on to them must not hang the agent as well.
+      buffer.finish(-1);
     }, this.reapAfterMs);
     reaper.unref?.();
 

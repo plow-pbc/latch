@@ -9,6 +9,13 @@
  */
 import { Capability, capabilityDisplay, Intent, JSONValue, jv } from "@domo/protocol";
 
+/**
+ * How a run this Mac killed reads in the owner's Activity list. Short, because
+ * it sits inside a status badge — and it names the cause, because the owner is
+ * the only person who can answer the permission prompt that usually causes it.
+ */
+const REAPED_STATUS = "killed (no output — a permission prompt may be waiting)";
+
 export interface ApprovalViewModel {
   intentId: string;
   agentDisplay: string;
@@ -362,6 +369,12 @@ function classifyActivity(
     }
     const ee = entry("exec_end");
     if (ee) {
+      // A run this Mac killed is not a command that failed, and the owner is
+      // the one person who can clear what usually wedges it — an unanswered
+      // permission prompt. "failed (exit -1)" would hide that from them.
+      if (jv(ee).get("reaped").bool === true) {
+        return { status: `${base} · ${REAPED_STATUS}`, tone: "amber", category: "failed" };
+      }
       const code = jv(ee).get("exit_code").int ?? -1;
       if (code !== 0) {
         return { status: `${base} · failed (exit ${code})`, tone: "amber", category: "failed" };
@@ -427,6 +440,9 @@ function classifyActivity(
   // without its intent. The exit code is the whole story.
   const ee = entry("exec_end");
   if (ee) {
+    if (jv(ee).get("reaped").bool === true) {
+      return { status: `Killed — ${REAPED_STATUS}`, tone: "amber", category: "failed" };
+    }
     const code = jv(ee).get("exit_code").int ?? -1;
     return code === 0
       ? { status: "Finished", tone: "green", category: "approved" }
