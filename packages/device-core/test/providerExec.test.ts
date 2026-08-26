@@ -44,6 +44,21 @@ function device(minter: Minter | null, dirs: string[]): DeviceAgent {
   );
 }
 
+
+/**
+ * Refused, recorded as refused, and never started.
+ *
+ * One property, restated at four call sites until it was extracted — which is
+ * where the fifth copy would have drifted. An `exec_start` on any of these
+ * paths means something ran with `env === undefined`: gog against whatever
+ * ambient credentials it can find, rather than a scoped minted token.
+ */
+function expectNeverSpawned(d: DeviceAgent): void {
+  const events = d.audit.entries().map((e) => jv(e).get("event").str);
+  expect(events).toContain("exec_error");
+  expect(events).not.toContain("exec_start");
+}
+
 const okMinter = (): Minter => ({ mint: async () => TOKEN });
 
 function run(d: DeviceAgent, argv: string[]): Promise<JSONValue> {
@@ -94,9 +109,7 @@ describe("a vendored provider through the exec path", () => {
     const response = await run(d, ["gog", "gmail", "search", "q", "--wrap-untrusted=false"]);
     expect(jv(response).get("status").str).toBe("error");
     expect(mint).not.toHaveBeenCalled();
-    const events = d.audit.entries().map((e) => jv(e).get("event").str);
-    expect(events).toContain("exec_error");
-    expect(events).not.toContain("exec_start");
+    expectNeverSpawned(d);
   });
 
   it.each([
@@ -106,15 +119,22 @@ describe("a vendored provider through the exec path", () => {
       /could not reach Plow/,
     ],
     ["no minter wired at all", (): Minter | null => null, /not paired/],
+    // The arm that exists so an arbitrary thrown message never becomes the
+    // response. Unreachable today — every path in the real minter throws
+    // MintError — but it is the one place a body carrying a live credential
+    // could reach the agent, so the row is worth its line.
+    [
+      "a minter that threw something else",
+      (): Minter => ({ mint: async () => { throw new Error(TOKEN); } }),
+      /could not authorise gog/,
+    ],
   ])("reports %s without spawning", async (_why, make, expected) => {
     const d = device(make(), [vendorDir()]);
     const response = await run(d, ["gog", "gmail", "search", "q"]);
     expect(jv(response).get("error").str).toMatch(expected);
-    // "without spawning" is the claim the name makes; the audit is where it
-    // can be checked.
-    const events = d.audit.entries().map((e) => jv(e).get("event").str);
-    expect(events).toContain("exec_error");
-    expect(events).not.toContain("exec_start");
+    // Whatever was thrown, the token is not in what comes back.
+    expect(jv(response).get("error").str ?? "").not.toContain(TOKEN.slice(0, 12));
+    expectNeverSpawned(d);
   });
 
   it("refuses a provider name with nothing staged, instead of running the owner's own binary", async () => {
@@ -125,11 +145,7 @@ describe("a vendored provider through the exec path", () => {
     const response = await run(d, ["gog", "gmail", "search", "q"]);
     expect(jv(response).get("error").str).toMatch(/not installed/);
     expect(mint).not.toHaveBeenCalled();
-    // The audit is the oracle: refused, recorded as refused, and never
-    // started. An exec_start here would mean something ran.
-    const events = d.audit.entries().map((e) => jv(e).get("event").str);
-    expect(events).toContain("exec_error");
-    expect(events).not.toContain("exec_start");
+    expectNeverSpawned(d);
   });
 
   it("runs --help without minting a token", async () => {
