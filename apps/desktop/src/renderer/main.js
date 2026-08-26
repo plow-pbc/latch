@@ -1149,9 +1149,12 @@ function rosterUse(row, verb = "Last used") {
   return created ? `Never used · Created ${created}` : "Never used";
 }
 
-function rosterChatGrant(chatUids) {
+function rosterChatGrant(chatUids, chatAccess) {
   const chats = Array.isArray(chatUids) ? chatUids : [];
-  if (!chats.length || (chats.length === 1 && chats[0] === "*")) return "all chats";
+  if (chatAccess === "all") return "all chats";
+  if (chatAccess === "none") return "no chats";
+  if (!chats.length) return "no chats";
+  if (chats.length === 1 && chats[0] === "*") return "all chats";
   return chats.length === 1 ? "1 chat" : `${chats.length} chats`;
 }
 
@@ -1287,7 +1290,16 @@ function cloudStatusNode(agent) {
 function cloudEntityRow(row, agent, redraw) {
   const name = rosterName(row, agent?.name || "Cloud agent");
   const provisioning = agent?.status === "provisioning";
-  const chatGrant = rosterChatGrant(row?.chatUids ?? (agent?.chatUid ? [agent.chatUid] : []));
+  const chatGrant = rosterChatGrant(row?.chatUids, row?.chatAccess);
+  const permissions = [];
+  if (row?.permissions?.canReadAndReply === true) {
+    permissions.push(`${provisioning ? "Will read and reply" : "Reads and replies"} in ${chatGrant}`);
+  }
+  if (row?.permissions?.canReachMac === true) {
+    permissions.push(`${provisioning ? "Will reach" : "Can reach"} this Mac`);
+  }
+  if (row?.permissions?.canSpendInference === true) permissions.push("Can spend inference");
+  if (!permissions.length) permissions.push("No granted permissions known.");
   return el("div", { class: "entity-row cloud-agent-row", attrs: { "data-cloud-agent-id": agent?.agentId ?? row?.agentId ?? "" } }, [
     entityMark(name),
     el("div", { class: "entity-main" }, [
@@ -1296,11 +1308,7 @@ function cloudEntityRow(row, agent, redraw) {
         cloudStatusNode(agent),
       ]),
       el("div", { class: "entity-context", text: cloudContext(agent, row) }),
-      el("div", { class: "entity-perms" }, [
-        el("span", { text: `${provisioning ? "Will read and reply" : "Reads and replies"} in ${chatGrant}` }),
-        el("span", { text: `${provisioning ? "Will reach" : "Can reach"} this Mac` }),
-        el("span", { text: "Can spend inference" }),
-      ]),
+      el("div", { class: "entity-perms" }, permissions.map((text) => el("span", { text }))),
     ]),
     rosterActions(row ?? { name }, "cloud", redraw, {
       messageAgentId: agent?.agentId ?? row?.agentId,
@@ -1319,7 +1327,7 @@ function sessionEntityRow(row, section, redraw) {
     row.lastSeenAt ? `Last used ${rosterAgo(row.lastSeenAt) ?? "date unknown"}` : "Never used",
   ].join(" · ");
   const permissions = section === "mcp"
-    ? ["Can request tools on this Mac", `Can access ${rosterChatGrant(row.chatUids)}`]
+    ? ["Can request tools on this Mac", `Can access ${rosterChatGrant(row.chatUids, row.chatAccess)}`]
     : row.kind === "Legacy — full access"
       ? ["Full legacy account access"]
       : row.kind === "Plow web login"

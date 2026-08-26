@@ -78,41 +78,55 @@ const ROSTER = {
     {
       id: 201, name: ACTIVE_AGENT.name, kind: "Agent",
       createdAt: "2026-08-24T18:00:00.000Z", lastSeenAt: new Date(Date.now() - 4 * 60_000).toISOString(),
-      agentId: ACTIVE_AGENT.agentId, chatUids: [CHAT.uid], isActive: true, isThisMac: false,
+      agentId: ACTIVE_AGENT.agentId, chatUids: [], chatAccess: "none",
+      permissions: { canReadAndReply: true, canReachMac: true, canSpendInference: true },
+      isActive: true, isThisMac: false,
     },
     {
       id: 202, name: PROVISIONING_AGENT.name, kind: "Agent",
       createdAt: new Date().toISOString(), lastSeenAt: null,
-      agentId: PROVISIONING_AGENT.agentId, chatUids: [PROVISIONING_AGENT.chatUid], isActive: true, isThisMac: false,
+      agentId: PROVISIONING_AGENT.agentId, chatUids: [PROVISIONING_AGENT.chatUid], chatAccess: "listed",
+      permissions: { canReadAndReply: true, canReachMac: false, canSpendInference: false },
+      isActive: true, isThisMac: false,
     },
   ],
   mcp: [
     {
       id: 301, name: "Claude Code on MacBook Pro", kind: "Agent",
       createdAt: "2026-08-12T17:00:00.000Z", lastSeenAt: new Date(Date.now() - 6 * 60_000).toISOString(),
-      agentId: null, chatUids: ["*"], isActive: true, isThisMac: false,
+      agentId: null, chatUids: ["*"], chatAccess: "all",
+      permissions: { canReadAndReply: true, canReachMac: true, canSpendInference: true },
+      isActive: true, isThisMac: false,
     },
     {
       id: 302, name: "Cursor desktop", kind: "Agent",
       createdAt: new Date().toISOString(), lastSeenAt: null,
-      agentId: null, chatUids: ["chat_work"], isActive: true, isThisMac: false,
+      agentId: null, chatUids: [], chatAccess: "none",
+      permissions: { canReadAndReply: true, canReachMac: true, canSpendInference: true },
+      isActive: true, isThisMac: false,
     },
   ],
   other: [
     {
       id: 401, name: "Plow Latch on this Mac", kind: "Session",
       createdAt: "2026-07-28T17:00:00.000Z", lastSeenAt: new Date(Date.now() - 3 * 60_000).toISOString(),
-      agentId: null, chatUids: [], isActive: true, isThisMac: true,
+      agentId: null, chatUids: [], chatAccess: "none",
+      permissions: { canReadAndReply: false, canReachMac: false, canSpendInference: false },
+      isActive: true, isThisMac: true,
     },
     {
       id: 402, name: "Plow website · Safari", kind: "Plow web login",
       createdAt: "2026-08-24T17:00:00.000Z", lastSeenAt: new Date(Date.now() - 12 * 60_000).toISOString(),
-      agentId: null, chatUids: [], isActive: true, isThisMac: false,
+      agentId: null, chatUids: [], chatAccess: "none",
+      permissions: { canReadAndReply: false, canReachMac: true, canSpendInference: false },
+      isActive: true, isThisMac: false,
     },
     {
       id: 403, name: "Legacy automation token", kind: "Legacy — full access",
       createdAt: "2026-08-20T17:00:00.000Z", lastSeenAt: null,
-      agentId: null, chatUids: ["*"], isActive: true, isThisMac: false,
+      agentId: null, chatUids: ["*"], chatAccess: "all",
+      permissions: { canReadAndReply: true, canReachMac: true, canSpendInference: true },
+      isActive: true, isThisMac: false,
     },
   ],
   revokedHidden: 14,
@@ -291,11 +305,20 @@ const SCREENS = [
         return {
           readyEnabled: ready.disabled === false,
           provisioningDisabled: provisioning.disabled === true,
+          readyPermissions: [...ready.closest(".cloud-agent-row").querySelectorAll(".entity-perms span")]
+            .map((item) => item.textContent.trim()),
+          provisioningPermissions: [...provisioning.closest(".cloud-agent-row").querySelectorAll(".entity-perms span")]
+            .map((item) => item.textContent.trim()),
         };
       })()`);
       const request = await opened;
       if (!messageState.readyEnabled || !messageState.provisioningDisabled) {
         throw new Error("Message availability did not follow the agent status");
+      }
+      if (messageState.readyPermissions.join("|") !==
+          "Reads and replies in no chats|Can reach this Mac|Can spend inference" ||
+          messageState.provisioningPermissions.join("|") !== "Will read and reply in 1 chat") {
+        throw new Error(`cloud permission copy did not follow grants: ${JSON.stringify(messageState)}`);
       }
       if (request.key !== "cloudAgentMessages" || request.detail !== ACTIVE_AGENT.agentId) {
         throw new Error("Message did not identify the running agent through external:open");
@@ -307,8 +330,9 @@ const SCREENS = [
     expect: [
       "Cloud agents", "2 agents", "Household helper", "Ready", "Trip planner", "Setting up…",
       "Agent +1 (415) 555-0142, +1 (415) 555-0193, +1 (628) 555-0112",
-      "Reads and replies in 1 chat", "Can reach this Mac", "Can spend inference", "Message",
+      "Reads and replies in no chats", "Can reach this Mac", "Can spend inference", "Message",
       "MCP clients", "Claude Code on MacBook Pro", "Can request tools on this Mac",
+      "Can access all chats", "Can access no chats",
       "Other sessions", "Plow Latch on this Mac", "This Mac", "Plow website · Safari",
       "Revoking signs you out of the Plow website", "Legacy automation token",
       "14 revoked sessions hidden", "Revoke",
@@ -440,7 +464,7 @@ const SCREENS = [
       holdCloudCreate = false;
       releaseCloudCreate = null;
     },
-    expect: ["Household helper", "Setting up…", "Will read and reply in 1 chat", "Will reach this Mac"],
+    expect: ["Household helper", "Setting up…", "No granted permissions known."],
   },
   {
     name: "cloud-teardown",
@@ -480,6 +504,7 @@ const SCREENS = [
       "Sign out and re-activate",
       "Household helper",
       "Ready",
+      "No granted permissions known.",
     ],
   },
   {
