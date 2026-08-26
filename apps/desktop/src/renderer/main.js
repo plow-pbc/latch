@@ -528,7 +528,7 @@ async function renderRules() {
       "Approvals",
       "What happens when an agent asks to do something on this Mac. Requests already covered " +
         "by an always-allow rule skip this — unless the agent has its own AI Reviewer switched " +
-        "on, which is reviewed every time — manage those in Rules. The reviewer sees which " +
+        "on, which is reviewed every time — manage those below. The reviewer sees which " +
         "agent is asking, what it's asking to do, the exact bounds it would get, and the purpose " +
         "you wrote for it. It never sees your files, your history on this Mac, or anything the " +
         "agent hasn't asked for.",
