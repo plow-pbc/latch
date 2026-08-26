@@ -28,7 +28,7 @@ exactly the approved capabilities**".
 
 `packages/device-core/src/executor.ts`:
 
-- **`:72–76`** — the user's entire home directory is made readable on every invocation, before any
+- **the broad home read** — the user's entire home directory is made readable on every invocation, before any
   declared path is considered:
 
   ```
@@ -39,7 +39,7 @@ exactly the approved capabilities**".
   The comment there gives the reason: *"Broad READ of the user's home so tools installed under it and
   their configs/libraries resolve."*
 
-- **`:77–86`** — five directories under home are made **writable**, regardless of what was
+- **the `housekeeping` constant** — five directories under home are made **writable**, regardless of what was
   declared:
 
   ```
@@ -51,7 +51,7 @@ exactly the approved capabilities**".
   killed for going silent (`REAP_AFTER_MS`) — does not get them. A run that can be shot mid-write
   must have nowhere persistent to write; its scratch, which dies with it, stays writable.
 
-- **`:87–89`** — the agent's declared `read_paths` are appended *after* the above. They can only
+- **the declared-read loop** — the agent's declared `read_paths` are appended *after* the above. They can only
   ever widen an already-broad grant; they never narrow it.
 
 So `read_paths` is not a bound on reads. It is a declaration that is shown to the human, recorded in
@@ -102,7 +102,7 @@ The approval dialog shows the human the declared capability set. A command decla
 `read_paths: ["~/Documents/report"]` is displayed as reading that path, and can in fact read every
 item in the list above. The human is not being shown a bound; they are being shown a declaration.
 
-Network is denied unless approved (`executor.ts:90–95`), so the default exfiltration route is
+Network is denied unless approved (the `args.network` branch of `SandboxProfile.generate`), so the default exfiltration route is
 closed. That is a mitigation, not the boundary: a command with network approved for a legitimate
 reason has both halves.
 
@@ -187,7 +187,7 @@ How fair the list is depends on which capability, and it is only fully fair for 
 | `Write: …` on a **`write_file`** call | **Yes.** `FileOps.write` canonicalises and scope-checks against the approved paths, and refuses outside them. |
 | `Write: …` on a **`run_command`** call | **No.** The profile additionally grants writes to the five housekeeping directories under home, whatever `write_paths` says — except for a reapable run, which gets none of them. §1 states that rule; this row does not restate it. |
 | `Run: …` | Yes, in that the argv shown is the argv executed. |
-| `Network: denied` | Yes — `executor.ts:90-95`. |
+| `Network: denied` | Yes — the `args.network` branch of `SandboxProfile.generate`. |
 
 So a human approving only `Write: /tmp/report` on a command is not being shown the full writable set
 either, and a human approving any `Read:` is being shown something that is not the bound at all.

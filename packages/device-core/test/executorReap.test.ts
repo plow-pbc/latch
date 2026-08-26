@@ -137,12 +137,15 @@ describe.skipIf(!ON_MAC)("a run that produces nothing and never exits", () => {
     cleanups.push(() => killAll(fifo));
     expect(started.running).toBe(true);
 
+    // Something in the scratch before the deadline, because an empty directory
+    // going away would prove nothing: what the agent is promised is that a
+    // half-written file cannot outlive the run that was killed writing it.
+    fs.writeFileSync(path.join(dir, "scratch", started.handle, "half-written"), "partial");
+
     const ended = await settle(executor, started.handle);
     expect(ended.reaped).toBe(true);
     expect(ended.exitCode).not.toBe(0);
     await until(() => alive(fifo).length === 0);
-    // The one place a killed run could have left half of something — it is the
-    // only writable path it had, and nothing else ever deletes a scratch dir.
     await until(() => fs.readdirSync(path.join(dir, "scratch")).length === 0);
   });
 

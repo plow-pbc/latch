@@ -107,8 +107,9 @@ export const WHATSAPP_QUERIES = {
  * The copy is opened WITHOUT -readonly: a read-only connection will not build
  * the -shm index it needs, even in a directory it can write, so it fails
  * exactly as the original did. And it is removed again in the same command —
- * nothing else deletes a scratch dir (see the Executor), so a copy left behind
- * is the owner's whole archive duplicated somewhere they never approved.
+ * nothing deletes a scratch dir on a normal exit (see the Executor; only its
+ * reaper does, and only when it fires), so a copy left behind is the owner's
+ * whole archive duplicated somewhere they never approved.
  */
 export const WHATSAPP_FALLBACK_SCRIPT =
   'f=${1##*/}; d=./wa.$$ && mkdir "$d" && cp "$1"* "$d"/ && ' +

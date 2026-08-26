@@ -445,12 +445,24 @@ export class Executor {
       reaper = setTimeout(() => {
         if (buffer.exitCode !== null || buffer.produced) return;
         buffer.reaped = true;
-        abandon(-1);
-        // The run is dead and its output is already in memory. Its scratch is
-        // the one place it could have left half of something — `TMPDIR` points
-        // there and it is the only writable path a reapable run has — so the
-        // half goes with it. Nothing else deletes a scratch dir (#153).
-        fs.rmSync(scratch, { recursive: true, force: true });
+        try {
+          abandon(-1);
+        } finally {
+          // The run is dead and its output is already in memory. Its scratch is
+          // the one place it could have left half of something — `TMPDIR` points
+          // there and it is the only writable path a reapable run has — so the
+          // half goes with it. `finally`, because that promise is the one an
+          // agent was given and the one whose omission is silent.
+          try {
+            fs.rmSync(scratch, { recursive: true, force: true });
+          } catch {
+            // `kill` returns before the group is gone, so a descendant can
+            // still be writing here: `force` covers ENOENT, not the ENOTEMPTY
+            // of a file created mid-walk. Losing that race leaves the scratch
+            // behind, which is issue #153's existing state — while throwing out
+            // of a timer callback would take the whole app down with it.
+          }
+        }
       }, this.reapAfterMs);
       reaper.unref?.();
     }
