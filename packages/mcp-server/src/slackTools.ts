@@ -62,6 +62,20 @@ const REQUEST_TEXT_MAX = 200;
 const excerpt = (text: string): string =>
   text.length <= REQUEST_TEXT_MAX ? text : `${text.slice(0, REQUEST_TEXT_MAX)}…`;
 
+/**
+ * A search query rides the request line verbatim (see `plow_slack_search`
+ * below) — deliberately, since for a search the query IS the read scope and
+ * the reviewer must see it, unlike `text`'s `excerpt()`. This cap is not that
+ * kind of summarizing truncation: it exists only to bound a pathological
+ * input, so it is generous and it says so when it fires, rather than leaving
+ * an ellipsis that reads like it could be part of the query itself.
+ */
+const QUERY_REQUEST_MAX = 2_000;
+const boundedQuery = (query: string): string =>
+  query.length <= QUERY_REQUEST_MAX
+    ? query
+    : `${query.slice(0, QUERY_REQUEST_MAX)} […truncated, ${query.length} chars total]`;
+
 /** How much a list or read asked for, when it named a number. */
 function upTo(args: JSONValue): string {
   const limit = jv(args).get("limit").int;
@@ -232,7 +246,7 @@ export const SLACK_READ_TOOLS: ToolSpec[] = [
       // Verbatim: for a search the query IS the read scope — the exact
       // analogue of `paths` on an `fs.read` — and it is in no other channel.
       const query = required(args, "query");
-      return runSlack(ctx, progress, `search Slack: ${query}`, "messages.search", args, [
+      return runSlack(ctx, progress, `search Slack: ${boundedQuery(query)}`, "messages.search", args, [
         "account",
         "query",
         "limit",

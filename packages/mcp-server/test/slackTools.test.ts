@@ -366,4 +366,18 @@ describe("the request line", () => {
     expect(request).toContain(`C1: ${"x".repeat(200)}…`);
     expect(request.length).toBeLessThan(260);
   });
+
+  // A search query rides verbatim — deliberately, it IS the read scope — so
+  // this bound exists only for a pathological input, not to summarize a
+  // normal query the way the excerpt above does. Visibly truncated, and
+  // generous enough that no real query below the cap loses a character.
+  it("does not touch a normal query, and visibly bounds a pathological one", async () => {
+    const untouched = await requestOf({ account: "T1", query: "salary review" }, search);
+    expect(untouched).toBe("search Slack: salary review");
+
+    const request = await requestOf({ account: "T1", query: "q".repeat(5_000) }, search);
+    expect(request).toContain(`search Slack: ${"q".repeat(2_000)} `);
+    expect(request).toContain("truncated, 5000 chars total");
+    expect(request.length).toBeLessThan(2_100);
+  });
 });
