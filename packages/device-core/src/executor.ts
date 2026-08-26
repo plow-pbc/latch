@@ -334,10 +334,15 @@ export class Executor {
       // Answered first, closed second, both in one synchronous breath: nothing
       // can append between the two statements, and everything downstream that
       // asks "is this run still open?" — `abandon`'s kill above all — gets the
-      // right answer for anything the destroys themselves emit.
-      buffer.finish(code);
-      child.stdout?.destroy();
-      child.stderr?.destroy();
+      // right answer for anything the destroys themselves emit. `finally`
+      // because `finish` runs the `onExit` waiters, which are a public seam:
+      // closing the capture is not theirs to skip by throwing.
+      try {
+        buffer.finish(code);
+      } finally {
+        child.stdout?.destroy();
+        child.stderr?.destroy();
+      }
     };
     child.on("error", () => settle(-1));
     child.on("exit", (code, signal) => {
