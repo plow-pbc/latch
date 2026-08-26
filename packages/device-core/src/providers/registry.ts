@@ -141,7 +141,12 @@ export function vendoredProvider(argv: readonly string[]): VendoredProvider | nu
  * whether or not anything used it — on a command that cannot use one.
  */
 export function needsToken(argv: readonly string[]): boolean {
-  return !argv.slice(1).some((a) => a === "--help" || a === "-h");
+  // The SAME predicate `refuse` uses, not a second scan. When they disagreed,
+  // an argv the gate accepted as a real command — `gmail search --help q`,
+  // where `--help` is a positional and not the last word — was treated as
+  // help here and ran with no minted token, which on a Mac where gog can find
+  // ambient credentials means running against those instead.
+  return !isHelpInvocation(argv.slice(1));
 }
 
 /** Every vendored command name, for the skill and for the tool description. */

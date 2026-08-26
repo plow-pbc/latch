@@ -97,4 +97,13 @@ describe("needsToken", () => {
   it("is true for anything that reaches Google", () => {
     expect(needsToken(["gog", "gmail", "search", "q"])).toBe(true);
   });
+
+  it("agrees with the gate: a command it accepts as real still gets a token", () => {
+    // Two predicates drifted apart once. `--help` as a positional rather than
+    // the last word is a REAL search, and treating it as help ran it with no
+    // minted token — against whatever credentials gog could find instead.
+    const argv = ["gog", "gmail", "search", "--help", "q"];
+    expect(gog.refuse(argv)).toBeNull();
+    expect(needsToken(argv)).toBe(true);
+  });
 });
