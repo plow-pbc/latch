@@ -13,6 +13,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ConnectClient, agentConfig } from "../src/connectClient.js";
 import { KeyInfo, PlowApi, PlowApiError } from "../src/plowApi.js";
+import { Deferred, deferred } from "./deferred.js";
 import { loadSettings, saveSettings } from "../src/settings.js";
 
 const DEVICE_TOKEN = "plow_DEVICEtok_secret";
@@ -89,23 +90,6 @@ let home: string;
 let plow: FakePlow;
 let connected: boolean;
 let changes: number;
-interface Deferred<T> {
-  promise: Promise<T>;
-  resolve: (value: T) => void;
-  reject: (error: unknown) => void;
-}
-
-/** A promise a test finishes by hand, to land reads out of order. */
-function deferred<T>(): Deferred<T> {
-  let resolve!: (value: T) => void;
-  let reject!: (error: unknown) => void;
-  const promise = new Promise<T>((res, rej) => {
-    resolve = res;
-    reject = rej;
-  });
-  return { promise, resolve, reject };
-}
-
 /** Every cloud-agent removal the roster routed, in order. */
 let agentDeletes: string[];
 /** How many times the roster asked this Mac to sign out. */
