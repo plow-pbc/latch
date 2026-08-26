@@ -12,6 +12,15 @@
  * text — which would make every rule key unique, and would put a stranger's
  * words inside a rule — never enters the key.
  *
+ * The intent's `request` line is the third channel, and it is display-only —
+ * `RuleKey` hashes capabilities, never this — so what it carries may vary per
+ * call. That is where the operative selector goes: the search query, an
+ * excerpt of the text about to be sent in the owner's name. Without it the
+ * reviewer and the owner see which action runs and nothing about what it does,
+ * which is less than they get from every pre-existing tool (`read file:
+ * <path>`, `run: <argv>`). Both consumers already treat it as data — the
+ * reviewer prompt JSON-encodes it, the renderer sets it with textContent.
+ *
  * The device answers `{status, result}` and the connector's own body is the
  * `result`: `status` is this Mac's verdict, and Slack does not get to write it.
  * Unwrapped here, so the agent still sees exactly what the connector returned.
@@ -40,6 +49,23 @@ function body(args: JSONValue, keys: string[]): JSONValue {
     if (v !== null && v !== undefined) out[k] = v as JSONValue;
   }
   return out as JSONValue;
+}
+
+/**
+ * The text of a message, as the approver reads it.
+ *
+ * Bounded not because `request` is expensive — it is display-only and not in
+ * the rule key — but because the capability chips are the enforceable half of
+ * the dialog, and a wall of text must not push them out of it.
+ */
+const REQUEST_TEXT_MAX = 200;
+const excerpt = (text: string): string =>
+  text.length <= REQUEST_TEXT_MAX ? text : `${text.slice(0, REQUEST_TEXT_MAX)}…`;
+
+/** How much a list or read asked for, when it named a number. */
+function upTo(args: JSONValue): string {
+  const limit = jv(args).get("limit").int;
+  return limit === null ? "" : ` (up to ${limit})`;
 }
 
 /**
@@ -124,8 +150,9 @@ export const SLACK_READ_TOOLS: ToolSpec[] = [
     annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: true },
     deferrable: true,
     async run(args, ctx, progress) {
-      required(args, "account");
-      return runSlack(ctx, progress, "list Slack channels", "channels.list", args, [
+      const account = required(args, "account");
+      const request = `list Slack channels: ${account}${upTo(args)}`;
+      return runSlack(ctx, progress, request, "channels.list", args, [
         "account",
         "limit",
       ]);
@@ -144,8 +171,9 @@ export const SLACK_READ_TOOLS: ToolSpec[] = [
     annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: true },
     deferrable: true,
     async run(args, ctx, progress) {
-      required(args, "account");
-      return runSlack(ctx, progress, "list Slack users", "users.list", args, ["account", "limit"]);
+      const account = required(args, "account");
+      const request = `list Slack users: ${account}${upTo(args)}`;
+      return runSlack(ctx, progress, request, "users.list", args, ["account", "limit"]);
     },
   },
   {
@@ -170,8 +198,9 @@ export const SLACK_READ_TOOLS: ToolSpec[] = [
     deferrable: true,
     async run(args, ctx, progress) {
       required(args, "account");
-      required(args, "channel_id");
-      return runSlack(ctx, progress, "read Slack messages", "messages.list", args, [
+      const channel = required(args, "channel_id");
+      const request = `read Slack messages: ${channel}${upTo(args)}`;
+      return runSlack(ctx, progress, request, "messages.list", args, [
         "account",
         "channel_id",
         "limit",
@@ -200,8 +229,10 @@ export const SLACK_READ_TOOLS: ToolSpec[] = [
     deferrable: true,
     async run(args, ctx, progress) {
       required(args, "account");
-      required(args, "query");
-      return runSlack(ctx, progress, "search Slack", "messages.search", args, [
+      // Verbatim: for a search the query IS the read scope — the exact
+      // analogue of `paths` on an `fs.read` — and it is in no other channel.
+      const query = required(args, "query");
+      return runSlack(ctx, progress, `search Slack: ${query}`, "messages.search", args, [
         "account",
         "query",
         "limit",
@@ -235,8 +266,9 @@ export const SLACK_WRITE_TOOLS: ToolSpec[] = [
     async run(args, ctx, progress) {
       required(args, "account");
       const channel = required(args, "channel_id");
-      required(args, "text");
-      return runSlack(ctx, progress, `send a Slack message to ${channel}`, "messages.send", args, [
+      const text = required(args, "text");
+      const request = `send a Slack message to ${channel}: ${excerpt(text)}`;
+      return runSlack(ctx, progress, request, "messages.send", args, [
         "account",
         "channel_id",
         "text",
@@ -264,10 +296,11 @@ export const SLACK_WRITE_TOOLS: ToolSpec[] = [
     deferrable: true,
     async run(args, ctx, progress) {
       required(args, "account");
-      required(args, "channel_id");
-      required(args, "ts");
-      required(args, "text");
-      return runSlack(ctx, progress, "edit a Slack message", "messages.update", args, [
+      const channel = required(args, "channel_id");
+      const ts = required(args, "ts");
+      const text = required(args, "text");
+      const request = `edit the Slack message ${ts} in ${channel} to: ${excerpt(text)}`;
+      return runSlack(ctx, progress, request, "messages.update", args, [
         "account",
         "channel_id",
         "ts",
@@ -291,8 +324,8 @@ export const SLACK_WRITE_TOOLS: ToolSpec[] = [
     deferrable: true,
     async run(args, ctx, progress) {
       required(args, "account");
-      required(args, "user_id");
-      return runSlack(ctx, progress, "open a Slack DM", "conversations.open", args, [
+      const user = required(args, "user_id");
+      return runSlack(ctx, progress, `open a Slack DM: ${user}`, "conversations.open", args, [
         "account",
         "user_id",
       ]);

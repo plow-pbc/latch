@@ -16,13 +16,15 @@ import { SLACK_READ_TOOLS, SLACK_WRITE_TOOLS } from "../src/slackTools.js";
  * `ctx.device.handleIntent`).
  */
 function fakeCtx(
-  handleIntent: (capabilities: unknown[], payload: unknown) => JSONValue,
+  handleIntent: (capabilities: unknown[], payload: unknown, request: string) => JSONValue,
 ): ToolContext {
   return {
     device: {
       identity: { deviceId: "device-1" },
-      handleIntent: async (intent: { capabilities: unknown[] }, payload: unknown) =>
-        handleIntent(intent.capabilities, payload),
+      handleIntent: async (
+        intent: { capabilities: unknown[]; request: string },
+        payload: unknown,
+      ) => handleIntent(intent.capabilities, payload, intent.request),
     },
     agent: { agentId: "agent-1", agentName: "Agent One" },
     sessionId: "session-1",
@@ -57,6 +59,9 @@ function fakeProgress(): Progress {
   return { decided: () => {} };
 }
 
+const status = SLACK_READ_TOOLS.find((t) => t.name === "plow_slack_status")!;
+const channels = SLACK_READ_TOOLS.find((t) => t.name === "plow_slack_channels")!;
+const users = SLACK_READ_TOOLS.find((t) => t.name === "plow_slack_users")!;
 const messages = SLACK_READ_TOOLS.find((t) => t.name === "plow_slack_messages")!;
 const search = SLACK_READ_TOOLS.find((t) => t.name === "plow_slack_search")!;
 const send = SLACK_WRITE_TOOLS.find((t) => t.name === "plow_slack_send")!;
@@ -72,6 +77,17 @@ async function capabilitiesOf(args: JSONValue, tool: ToolSpec = messages): Promi
   });
   await tool.run(args, ctx, fakeProgress());
   return seen;
+}
+
+/** The `request` line one call composes — the display channel a reviewer reads. */
+async function requestOf(args: JSONValue, tool: ToolSpec): Promise<string> {
+  let request = "";
+  const ctx = fakeCtx((_capabilities, _payload, composed) => {
+    request = composed;
+    return { status: "completed", result: {} };
+  });
+  await tool.run(args, ctx, fakeProgress());
+  return request;
 }
 
 const ruleKey = (caps: Capability[]) => RuleKey.compute("agent-1", "device-1", caps);
@@ -118,8 +134,6 @@ describe("Slack read tools", () => {
       seen.push(capabilities);
       return { status: "completed", result: {} };
     });
-    const status = SLACK_READ_TOOLS.find((t) => t.name === "plow_slack_status")!;
-
     await status.run({}, ctx, fakeProgress());
 
     expect(seen[0]).toEqual([{ kind: "tool", tool: "slack.status" }]);
@@ -312,5 +326,62 @@ describe("Slack write tools", () => {
     ]);
     expect(seen[0].capabilities).toEqual(seen[1].capabilities);
     expect(seen[0].payload).toMatchObject({ text: "hello" });
+  });
+});
+
+/**
+ * `request` is the only channel that says WHAT a call does: the capability
+ * names the action and the target it is confined to, and deliberately carries
+ * no content, so a rule can match twice. Every pre-existing tool puts its
+ * operative selector here — `read file: <path>`, `run: <argv>` — and both
+ * consumers already treat the string as data (the reviewer prompt JSON-encodes
+ * it, the renderer sets it with textContent). Left static, the gate saw less
+ * of a Slack call than of any other tool on this Mac.
+ */
+describe("the request line", () => {
+  it.each([
+    { args: {}, tool: () => status, request: "check Slack connection" },
+    {
+      args: { account: "T1", limit: 500 },
+      tool: () => channels,
+      request: "list Slack channels: T1 (up to 500)",
+    },
+    { args: { account: "T1" }, tool: () => users, request: "list Slack users: T1" },
+    {
+      args: { account: "T1", channel_id: "C1", limit: 20 },
+      tool: () => messages,
+      request: "read Slack messages: C1 (up to 20)",
+    },
+    // Verbatim, because for a search the query IS the read scope — the thing
+    // the reviewer is told to weigh as "a broad acquisition of data".
+    {
+      args: { account: "T1", query: "salary review OR severance" },
+      tool: () => search,
+      request: "search Slack: salary review OR severance",
+    },
+    {
+      args: { account: "T1", channel_id: "C1", text: "ship it" },
+      tool: () => send,
+      request: "send a Slack message to C1: ship it",
+    },
+    {
+      args: { account: "T1", channel_id: "C1", ts: "1.1", text: "never mind" },
+      tool: () => update,
+      request: "edit the Slack message 1.1 in C1 to: never mind",
+    },
+    { args: { account: "T1", user_id: "U1" }, tool: () => openDm, request: "open a Slack DM: U1" },
+  ])("reads '$request'", async ({ args, tool, request }) => {
+    expect(await requestOf(args, tool())).toBe(request);
+  });
+
+  // The capability chips are the enforceable half of the dialog. A message
+  // long enough to scroll them off screen would hide what is being granted.
+  it("bounds a message excerpt, so the capability chips stay on screen", async () => {
+    const request = await requestOf(
+      { account: "T1", channel_id: "C1", text: "x".repeat(5_000) },
+      send,
+    );
+    expect(request).toContain(`C1: ${"x".repeat(200)}…`);
+    expect(request.length).toBeLessThan(260);
   });
 });
