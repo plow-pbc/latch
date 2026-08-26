@@ -265,7 +265,6 @@ describe.skipIf(!ON_MAC)("a run closing out", () => {
     expect(second).toBe(true);
     expect(ended.exitCode).toBe(0);
     expect(ended.output.toString()).toContain("hi");
-
   });
 
   it("holds the same rule for a registrant that arrives after the run closed", async () => {
@@ -284,11 +283,17 @@ describe.skipIf(!ON_MAC)("a run closing out", () => {
     // A registrant arriving after the run has closed reaches its callback by a
     // different path — called straight through, no waiter list — so the seam
     // has to hold the rule twice over rather than once in the loop.
+    let seen: number | null = null;
     expect(() =>
-      executor.onExit(started.handle, () => {
+      executor.onExit(started.handle, (exitCode) => {
+        seen = exitCode;
         throw new Error("a late registrant's problem");
       }),
     ).not.toThrow();
+    // Recorded before the throw, so one case covers both halves of the rule:
+    // the late registrant is reached with the run's real outcome, and its
+    // throw stays its own.
+    expect(seen).toBe(0);
   });
 });
 
