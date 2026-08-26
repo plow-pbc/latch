@@ -306,6 +306,12 @@ const SCREENS = [
       const messageState = await win.webContents.executeJavaScript(`(() => {
         const ready = document.querySelector('button[aria-label="Message Household helper"]');
         const provisioning = document.querySelector('button[aria-label="Message Trip planner"]');
+        const permissionsFor = (name) => {
+          const row = [...document.querySelectorAll(".entity-row")]
+            .find((candidate) => candidate.querySelector(".entity-name")?.textContent.trim() === name);
+          return [...(row?.querySelectorAll(".entity-perms span") ?? [])]
+            .map((item) => item.textContent.trim());
+        };
         ready.click();
         return {
           readyEnabled: ready.disabled === false,
@@ -314,6 +320,10 @@ const SCREENS = [
             .map((item) => item.textContent.trim()),
           provisioningPermissions: [...provisioning.closest(".cloud-agent-row").querySelectorAll(".entity-perms span")]
             .map((item) => item.textContent.trim()),
+          claudePermissions: permissionsFor("Claude Code on MacBook Pro"),
+          thisMacPermissions: permissionsFor("Plow Latch on this Mac"),
+          webPermissions: permissionsFor("Plow website · Safari"),
+          legacyPermissions: permissionsFor("Legacy automation token"),
         };
       })()`);
       const request = await opened;
@@ -324,6 +334,16 @@ const SCREENS = [
           "Reads and replies in no chats|Can reach this Mac|Can spend inference" ||
           messageState.provisioningPermissions.join("|") !== "Will read and reply in 1 chat") {
         throw new Error(`cloud permission copy did not follow grants: ${JSON.stringify(messageState)}`);
+      }
+      if (messageState.claudePermissions.join("|") !==
+          "Reads and replies in all chats|Can reach this Mac|Can spend inference" ||
+          messageState.thisMacPermissions.join("|") !==
+            "No agent permissions granted.|Revoking signs this Mac out" ||
+          messageState.webPermissions.join("|") !==
+            "Can reach this Mac|Revoking signs you out of the Plow website" ||
+          messageState.legacyPermissions.join("|") !==
+            "Reads and replies in all chats|Can reach this Mac|Can spend inference") {
+        throw new Error(`session permission copy did not follow grants: ${JSON.stringify(messageState)}`);
       }
       if (request.key !== "cloudAgentMessages" || request.detail !== ACTIVE_AGENT.agentId) {
         throw new Error("Message did not identify the running agent through external:open");
@@ -336,10 +356,10 @@ const SCREENS = [
       "Cloud agents", "2 agents", "Household helper", "Ready", "Trip planner", "Setting up…",
       "Agent +1 (415) 555-0142, +1 (415) 555-0193, +1 (628) 555-0112",
       "Reads and replies in no chats", "Can reach this Mac", "Can spend inference", "Message",
-      "MCP clients", "Claude Code on MacBook Pro", "Can request tools on this Mac",
-      "Can access all chats", "Can access no chats",
+      "MCP clients", "Claude Code on MacBook Pro", "Reads and replies in all chats",
+      "Can reach this Mac", "Can spend inference", "Reads and replies in no chats",
       "Other sessions", "Plow Latch on this Mac", "This Mac", "Plow website · Safari",
-      "Revoking signs you out of the Plow website", "Legacy automation token",
+      "No agent permissions granted.", "Revoking signs you out of the Plow website", "Legacy automation token",
       "14 revoked sessions hidden", "Revoke",
     ],
   },

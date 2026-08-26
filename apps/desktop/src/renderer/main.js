@@ -1158,6 +1158,23 @@ function rosterChatGrant(chatUids, chatAccess) {
   return chats.length === 1 ? "1 chat" : `${chats.length} chats`;
 }
 
+function rosterPermissionCopy(row, provisioning = false) {
+  const permissions = [];
+  if (row?.permissions?.canReadAndReply === true) {
+    permissions.push(
+      `${provisioning ? "Will read and reply" : "Reads and replies"} in ${rosterChatGrant(row.chatUids, row.chatAccess)}`,
+    );
+  }
+  if (row?.permissions?.canReachMac === true) {
+    permissions.push(`${provisioning ? "Will reach" : "Can reach"} this Mac`);
+  }
+  if (row?.permissions?.canSpendInference === true) permissions.push("Can spend inference");
+  if (!permissions.length) {
+    permissions.push(row ? "No agent permissions granted." : "No granted permissions known.");
+  }
+  return permissions;
+}
+
 function entityMark(name, client = false) {
   const words = String(name).trim().split(/\s+/).filter(Boolean);
   const text = client
@@ -1290,16 +1307,7 @@ function cloudStatusNode(agent) {
 function cloudEntityRow(row, agent, redraw) {
   const name = rosterName(row, agent?.name || "Cloud agent");
   const provisioning = agent?.status === "provisioning";
-  const chatGrant = rosterChatGrant(row?.chatUids, row?.chatAccess);
-  const permissions = [];
-  if (row?.permissions?.canReadAndReply === true) {
-    permissions.push(`${provisioning ? "Will read and reply" : "Reads and replies"} in ${chatGrant}`);
-  }
-  if (row?.permissions?.canReachMac === true) {
-    permissions.push(`${provisioning ? "Will reach" : "Can reach"} this Mac`);
-  }
-  if (row?.permissions?.canSpendInference === true) permissions.push("Can spend inference");
-  if (!permissions.length) permissions.push("No granted permissions known.");
+  const permissions = rosterPermissionCopy(row, provisioning);
   return el("div", { class: "entity-row cloud-agent-row", attrs: { "data-cloud-agent-id": agent?.agentId ?? row?.agentId ?? "" } }, [
     entityMark(name),
     el("div", { class: "entity-main" }, [
@@ -1326,15 +1334,9 @@ function sessionEntityRow(row, section, redraw) {
     row.createdAt ? `Created ${rosterDate(row.createdAt) ?? "date unknown"}` : "Created date unknown",
     row.lastSeenAt ? `Last used ${rosterAgo(row.lastSeenAt) ?? "date unknown"}` : "Never used",
   ].join(" · ");
-  const permissions = section === "mcp"
-    ? ["Can request tools on this Mac", `Can access ${rosterChatGrant(row.chatUids, row.chatAccess)}`]
-    : row.kind === "Legacy — full access"
-      ? ["Full legacy account access"]
-      : row.kind === "Plow web login"
-        ? ["Manages your Plow account", "Revoking signs you out of the Plow website"]
-        : row.isThisMac
-          ? ["Connects agents to this Mac", "Revoking signs this Mac out"]
-          : ["Account session"];
+  const permissions = rosterPermissionCopy(row);
+  if (row.kind === "Plow web login") permissions.push("Revoking signs you out of the Plow website");
+  if (row.isThisMac) permissions.push("Revoking signs this Mac out");
   return el("div", { class: "entity-row" }, [
     entityMark(name, true),
     el("div", { class: "entity-main" }, [
