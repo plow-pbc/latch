@@ -113,7 +113,8 @@ export function storedActivationChat(settings: Settings): OnboardingChat | null 
 
 /**
  * How a human recognises a chat that has no name: the number it runs on, then
- * who is in it. The number is the agent participant's line — never the chat's
+ * each member's real handle in the API's owner-first order. The first number
+ * is the agent participant's line — never the chat's
  * own `provider_key`, which is the provider's thread id and would put "chat_5"
  * where the user is looking for something to text.
  *
@@ -123,11 +124,11 @@ export function storedActivationChat(settings: Settings): OnboardingChat | null 
  */
 export function activationChatLabel(chat: ActivationChat): string {
   const line = (chat.line ?? "").trim();
-  const names = chat.participants
-    .map((p) => p.displayName.trim() || (p.providerKey ?? "").trim())
-    .filter((name) => name && name !== line);
-  const parts = [line, ...names].filter(Boolean);
-  return parts.length ? parts.join(" · ") : chat.uid;
+  const handles = chat.participants
+    .map((participant) => (participant.providerKey ?? "").trim())
+    .filter((handle) => handle && handle !== line);
+  const parts = [line, ...handles].filter(Boolean);
+  return parts.length ? parts.join(", ") : chat.uid;
 }
 
 export interface OnboardingState {

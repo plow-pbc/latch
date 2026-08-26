@@ -75,7 +75,10 @@ ipcMain.handle("settings:getInference", async () => readInference(probeHome));
 // it. Nothing an agent can reach registers a handler on either channel.
 ipcMain.handle("settings:getAgentPurpose", async () => readAgentPurpose(probeHome));
 ipcMain.handle("settings:setAgentPurpose", async (_e, purpose) => setAgentPurpose(probeHome, purpose));
-const cloudChat = { uid: "chat_probe", label: "+1 (415) 555-0142 · Alex, Sam" };
+const cloudChat = {
+  uid: "chat_probe",
+  label: "+1 (415) 555-0142, +1 (415) 555-0193, +1 (628) 555-0112",
+};
 const cloudAgent = {
   agentId: "cag_probe",
   name: "Household helper",

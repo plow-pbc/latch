@@ -43,6 +43,7 @@ import { Onboarding } from "./onboarding.js";
 import { ConnectClient } from "./connectClient.js";
 import { CloudAgentsClient } from "./cloudAgents.js";
 import { CloudAgentState, CloudChatsClient, tabShowsCloudAgents } from "./cloudAgentState.js";
+import { cloudAgentMessagesUrl } from "./cloudAgentMessages.js";
 import { loggingFetch } from "./wireLog.js";
 import { WindowGate } from "./windowGate.js";
 import { SimulatedScenario, SimulatedUpdater, UpdateController } from "./updates.js";
@@ -556,6 +557,11 @@ ipcMain.handle("onboarding:open", async () => openOnboardingWindow());
  * sending the person to the switch IS the whole grant flow (see
  * fullDiskAccess.ts), so the deep link belongs in this table like any other
  * page the app may open.
+ *
+ * `cloudAgentMessages` is the dynamic exception: the renderer supplies only
+ * an agent id. Main requires that agent to be running and derives the `sms:`
+ * recipients from its current display row, so the sandboxed page still cannot
+ * choose an arbitrary external URL or phone number.
  */
 const EXTERNAL_URLS: Readonly<Record<string, string>> = Object.freeze({
   account: `${apiBaseUrl}/app/`,
@@ -565,8 +571,10 @@ const EXTERNAL_URLS: Readonly<Record<string, string>> = Object.freeze({
   fullDiskSettings: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles",
 });
 
-ipcMain.handle("external:open", async (_e, key: string) => {
-  const url = EXTERNAL_URLS[key];
+ipcMain.handle("external:open", async (_e, key: string, detail?: string) => {
+  const url = key === "cloudAgentMessages"
+    ? cloudAgentMessagesUrl(cloudAgents?.state().cloudAgents ?? [], detail ?? "")
+    : EXTERNAL_URLS[key];
   if (!url) return false;
   await shell.openExternal(url);
   return true;

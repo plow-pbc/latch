@@ -129,7 +129,7 @@ const SCREENS = [
     state: {
       ...base,
       step: "connected",
-      chat: { uid: "cht_D7hfWNK", label: "+1 555 987 6543 · Ada Lovelace" },
+      chat: { uid: "cht_D7hfWNK", label: "+1 555 987 6543, +1 555 123 0000" },
     },
     expect: [
       "This Mac is connected",
@@ -138,7 +138,7 @@ const SCREENS = [
       // The chat activation created. A cloud agent has nowhere to live without
       // it, so setup ends by showing it exists.
       "Your chat",
-      "+1 555 987 6543 · Ada Lovelace",
+      "+1 555 987 6543, +1 555 123 0000",
       "Continue",
     ],
     expectFocus: "Continue",

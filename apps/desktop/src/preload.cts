@@ -103,9 +103,9 @@ contextBridge.exposeInMainWorld("domo", {
   cloudCreate: (chatUid: string, name: string) =>
     ipcRenderer.invoke("cloud:create", chatUid, name),
 
-  // Any web page the app links to (client connector cards, Settings' Support
-  // section). A KEY, not a URL: main owns the table of what may be opened.
-  openExternal: (key: string) => ipcRenderer.invoke("external:open", key),
+  // Any external destination the app links to. A KEY plus an optional
+  // main-owned record id, never a URL: main decides what may be opened.
+  openExternal: (key: string, detail?: string) => ipcRenderer.invoke("external:open", key, detail),
 
   // Live browser thumbnail (audit detail pane). One whole-state shape per
   // poll; no push channel — the renderer's own interval is the clock.

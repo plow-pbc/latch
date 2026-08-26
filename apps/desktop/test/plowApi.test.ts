@@ -308,10 +308,20 @@ describe("PlowApi", () => {
               },
               {
                 type: "member",
-                uid: "cpt_ada",
+                uid: "cpt_other",
                 object: "chat_participant",
                 status: "active",
                 display_name: "Ada Lovelace",
+                provider_type: "linq",
+                provider_key: "+15557654321",
+                verified_at: "2026-08-24T18:02:11Z",
+              },
+              {
+                type: "member",
+                uid: "cpt_owner",
+                object: "chat_participant",
+                status: "active",
+                display_name: "You",
                 provider_type: "linq",
                 provider_key: "+15551230000",
                 verified_at: "2026-08-24T18:02:11Z",
@@ -333,7 +343,12 @@ describe("PlowApi", () => {
         line: "+15559876543",
         createdAt: "2026-08-24T18:02:11Z",
         // Members only: the agent participant is not a human in the chat.
-        participants: [{ displayName: "Ada Lovelace", providerKey: "+15551230000" }],
+        // The owner is first even though the wire put another member first.
+        // Display names do not cross into the state.
+        participants: [
+          { providerKey: "+15551230000" },
+          { providerKey: "+15557654321" },
+        ],
       },
     });
     // The thread id is not carried at all, so no screen can show it as a
@@ -366,7 +381,7 @@ describe("PlowApi", () => {
         uid: "cht_x",
         participants: [{ type: "member", provider_key: "+15551230000" }],
       })?.participants,
-    ).toEqual([{ displayName: "", providerKey: "+15551230000" }]);
+    ).toEqual([{ providerKey: "+15551230000" }]);
     // No uid is no chat: there would be nothing to join on later.
     expect(parseActivationChat({ status: "active" })).toBeNull();
     expect(parseActivationChat(undefined)).toBeNull();

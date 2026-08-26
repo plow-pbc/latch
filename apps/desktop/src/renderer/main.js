@@ -1194,15 +1194,24 @@ function openRosterConfirm(row, section, trigger, redraw) {
   });
 }
 
-function rosterActions(row, section, redraw, { message = false, disabled = false } = {}) {
+function rosterActions(
+  row,
+  section,
+  redraw,
+  { messageAgentId = null, messageDisabled = false, disabled = false } = {},
+) {
   const name = rosterName(row, section === "cloud" ? "Cloud agent" : "Unnamed session");
   const actions = [];
-  if (message) {
-    actions.push(el("button", {
+  if (messageAgentId) {
+    const message = el("button", {
       class: "btn small message-btn",
       text: "Message",
       attrs: { "aria-label": `Message ${name}` },
-    }));
+    });
+    message.disabled = messageDisabled;
+    message.addEventListener("click", () =>
+      window.domo.openExternal("cloudAgentMessages", messageAgentId));
+    actions.push(message);
   }
   const more = el("button", {
     class: "btn more",
@@ -1230,10 +1239,9 @@ function rosterActions(row, section, redraw, { message = false, disabled = false
 }
 
 function cloudContext(agent, row) {
-  const parts = String(agent?.chatLabel ?? "").split(" · ").map((part) => part.trim()).filter(Boolean);
+  const handles = String(agent?.chatLabel ?? "").trim();
   return [
-    parts[0] ? `Agent ${parts[0]}` : "Agent number unavailable",
-    parts.length > 1 ? `Participants ${parts.slice(1).join(", ")}` : null,
+    handles ? `Agent ${handles}` : "Agent number unavailable",
     rosterUse(row ?? { createdAt: agent?.createdAt, lastSeenAt: null }, "Used"),
   ].filter(Boolean).join(" · ");
 }
@@ -1270,7 +1278,11 @@ function cloudEntityRow(row, agent, redraw) {
         el("span", { text: "Can spend inference" }),
       ]),
     ]),
-    rosterActions(row ?? { name }, "cloud", redraw, { message: true, disabled: !row }),
+    rosterActions(row ?? { name }, "cloud", redraw, {
+      messageAgentId: agent?.agentId ?? row?.agentId,
+      messageDisabled: agent?.status !== "running",
+      disabled: !row,
+    }),
   ]);
 }
 

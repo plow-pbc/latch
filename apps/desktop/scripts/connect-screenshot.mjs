@@ -39,7 +39,7 @@ const home = fs.mkdtempSync(path.join(os.tmpdir(), "connect-shot-"));
 
 const CHAT = {
   uid: "chat_groceries",
-  label: "+1 (415) 555-0142 · +1 (415) 555-0193 · +1 (628) 555-0112",
+  label: "+1 (415) 555-0142, +1 (415) 555-0193, +1 (628) 555-0112",
 };
 const ACTIVE_AGENT = {
   agentId: "cag_groceries",
@@ -55,7 +55,7 @@ const PROVISIONING_AGENT = {
   agentId: "cag_trip",
   name: "Trip planner",
   chatUid: "chat_trip",
-  chatLabel: "+1 (628) 555-0144 · +1 (415) 555-0193",
+  chatLabel: "+1 (628) 555-0144, +1 (415) 555-0193",
   provider: "anthropic",
   status: "provisioning",
   failureReason: null,
@@ -143,6 +143,7 @@ const RULES = [
 let cloudFixture = CLOUD_EMPTY;
 let rosterFixture = EMPTY_ROSTER;
 const rosterRemovals = [];
+let resolveExternalOpen = null;
 let holdCloudCreate = false;
 let releaseCloudCreate = null;
 let cloudCreateInFlight = false;
@@ -197,6 +198,11 @@ async function setUp() {
       other: rosterFixture.other.filter((row) => row.id !== id),
     };
     return state();
+  });
+  ipcMain.handle("external:open", async (_e, key, detail) => {
+    resolveExternalOpen?.({ key, detail });
+    resolveExternalOpen = null;
+    return true;
   });
   ipcMain.handle("cloud:create", async (_e, chatUid, name) => {
     cloudCreateInFlight = true;
@@ -256,13 +262,36 @@ const SCREENS = [
       cloudAgents: [ACTIVE_AGENT, PROVISIONING_AGENT],
     },
     prepare: async (win) => {
+      const opened = new Promise((resolve, reject) => {
+        const timeout = setTimeout(() => reject(new Error("Message did not use external:open")), 10_000);
+        resolveExternalOpen = (request) => {
+          clearTimeout(timeout);
+          resolve(request);
+        };
+      });
+      const messageState = await win.webContents.executeJavaScript(`(() => {
+        const ready = document.querySelector('button[aria-label="Message Household helper"]');
+        const provisioning = document.querySelector('button[aria-label="Message Trip planner"]');
+        ready.click();
+        return {
+          readyEnabled: ready.disabled === false,
+          provisioningDisabled: provisioning.disabled === true,
+        };
+      })()`);
+      const request = await opened;
+      if (!messageState.readyEnabled || !messageState.provisioningDisabled) {
+        throw new Error("Message availability did not follow the agent status");
+      }
+      if (request.key !== "cloudAgentMessages" || request.detail !== ACTIVE_AGENT.agentId) {
+        throw new Error("Message did not identify the running agent through external:open");
+      }
       await clickAria(win, "More actions for Plow website · Safari");
       const hasShow = await win.webContents.executeJavaScript(`!!document.querySelector(".revoked-summary button")`);
       if (hasShow) throw new Error("the count-only revoked summary grew a Show control");
     },
     expect: [
       "Cloud agents", "2 agents", "Household helper", "Ready", "Trip planner", "Setting up…",
-      "Agent +1 (415) 555-0142", "Participants +1 (415) 555-0193, +1 (628) 555-0112",
+      "Agent +1 (415) 555-0142, +1 (415) 555-0193, +1 (628) 555-0112",
       "Reads and replies in 1 chat", "Can reach this Mac", "Can spend inference", "Message",
       "MCP clients", "Claude Code on MacBook Pro", "Can request tools on this Mac",
       "Other sessions", "Plow Latch on this Mac", "This Mac", "Plow website · Safari",

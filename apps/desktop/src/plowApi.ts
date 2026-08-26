@@ -155,7 +155,6 @@ export interface Activation {
  * "member"` only.
  */
 export interface ActivationChatParticipant {
-  displayName: string;
   /** The member's own address — a phone number, when the server has one. */
   providerKey: string | null;
 }
@@ -164,7 +163,7 @@ export interface ActivationChatParticipant {
  * The chat the activation created.
  *
  * A chat has no title and no last-activity field, so what identifies it to a
- * human is the number it runs on plus its members' names. Nothing here is a
+ * human is the number it runs on plus its members' handles. Nothing here is a
  * secret: it is the same data `GET /v1/chats` hands back, and the renderer may
  * see it.
  *
@@ -217,10 +216,17 @@ export function parseActivationChat(raw: unknown): ActivationChat | null {
   // chat's own `provider_key` — that one is the provider's thread id.
   const agent = all.find((p) => p.type === "agent");
   const line = (agent?.line ?? null) as Record<string, unknown> | null;
-  const participants = all
-    .filter((p) => p.type === "member")
+  const members = all.filter((p) => p.type === "member");
+  const isOwner = (participant: Record<string, unknown>) =>
+    typeof participant.display_name === "string" && participant.display_name.trim() === "You";
+  // The provider marks the account owner as "You". Use that marker only to
+  // establish the promised order, then discard it: rows show real handles,
+  // never that placeholder or any other display name.
+  const participants = [
+    ...members.filter(isOwner),
+    ...members.filter((participant) => !isOwner(participant)),
+  ]
     .map((p) => ({
-      displayName: typeof p.display_name === "string" ? p.display_name : "",
       providerKey: typeof p.provider_key === "string" ? p.provider_key : null,
     }));
   return {
