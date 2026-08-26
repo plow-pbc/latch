@@ -58,14 +58,21 @@ esac`,
   return bin;
 }
 
-function runSetup(): { status: number | null; output: string } {
+/** Run it, and report what happened. Both fields are asserted on: a script
+ * that exits 0 while saying nothing useful is as wrong as one that throws. */
+function runSetup(): { ok: boolean; output: string } {
   const bin = fakeTools();
-  const run = execFileSync("bash", [path.join(work, "scripts/worktree-setup.sh")], {
-    cwd: work,
-    encoding: "utf8",
-    env: { ...process.env, PATH: `${bin}:${process.env.PATH}` },
-  });
-  return { status: 0, output: run };
+  try {
+    const out = execFileSync("bash", [path.join(work, "scripts/worktree-setup.sh")], {
+      cwd: work,
+      encoding: "utf8",
+      env: { ...process.env, PATH: `${bin}:${process.env.PATH}` },
+    });
+    return { ok: true, output: out };
+  } catch (error) {
+    const e = error as { stdout?: string; stderr?: string };
+    return { ok: false, output: `${e.stdout ?? ""}${e.stderr ?? ""}` };
+  }
 }
 
 beforeEach(() => {
@@ -89,8 +96,9 @@ describe("worktree-setup.sh", () => {
     // The stub is exactly what npm leaves: a dist, and no path.txt.
     expect(fs.existsSync(path.join(work, "node_modules/electron/path.txt"))).toBe(false);
 
-    const { output } = runSetup();
+    const { ok, output } = runSetup();
 
+    expect(ok).toBe(true);
     expect(output).toContain("cloning node_modules/electron/dist from the main checkout");
     expect(output).toMatch(/electron ready: .*Electron/);
     expect(output).toContain("is ready");
@@ -102,44 +110,27 @@ describe("worktree-setup.sh", () => {
     expect(fs.statSync(resolved).mode & 0o111).toBeTruthy();
   });
 
-  it("leaves a worktree that already has a runnable electron alone", () => {
-    plantElectron(main, true);
-    plantElectron(work, true);
+  // The three ways the clone does not run. They differ in why, and in whether
+  // the worktree is usable afterwards — a reason is not an outcome, which is
+  // exactly what these guard.
+  it.each([
+    { why: "it is already runnable", donor: true, version: undefined, usable: true, says: "electron already installed" },
+    { why: "the donor has no payload", donor: false, version: undefined, usable: false, says: "no path.txt" },
+    { why: "the donor is a different version", donor: true, version: "30.0.0", usable: false, says: "this one wants 33.4.11" },
+  ])("does not clone when $why", ({ donor, version, usable, says }) => {
+    plantElectron(main, donor, version);
+    // No clone runs in any of these, so the worktree ends as it began —
+    // `usable` is both what it starts with and what it must be afterwards.
+    plantElectron(work, usable);
 
-    const { output } = runSetup();
+    const { ok, output } = runSetup();
 
-    expect(output).toContain("electron already installed");
+    expect(ok).toBe(usable);
+    expect(output).toContain(says);
     expect(output).not.toContain("cloning node_modules/electron/dist");
-  });
-
-  it("refuses to report ready when it could not produce a runnable electron", () => {
-    // The donor is a stub too — the case that used to print a note, carry on,
-    // and hand back a worktree whose only symptom appears at launch.
-    plantElectron(main, false);
-    plantElectron(work, false);
-
-    expect(() => runSetup()).toThrow();
-    try {
-      runSetup();
-    } catch (error) {
-      const said = `${(error as { stdout?: string }).stdout ?? ""}${(error as { stderr?: string }).stderr ?? ""}`;
-      expect(said).toContain("does not resolve to a runnable binary");
-      expect(said).not.toContain("is ready");
-    }
-  });
-
-  it("refuses when the donor's electron is a different version", () => {
-    plantElectron(main, true, "30.0.0");
-    plantElectron(work, false, "33.4.11");
-
-    try {
-      runSetup();
-      throw new Error("expected a nonzero exit");
-    } catch (error) {
-      const said = `${(error as { stdout?: string }).stdout ?? ""}${(error as { stderr?: string }).stderr ?? ""}`;
-      expect(said).toContain("this one wants 33.4.11");
-      expect(said).toContain("does not resolve to a runnable binary");
-      expect(said).not.toContain("is ready");
-    }
+    // A reason printed and then carried past is what let an unusable worktree
+    // report itself ready and fail hours later at `just app`.
+    expect(output).toContain(usable ? "is ready" : "does not resolve to a runnable binary");
+    if (!usable) expect(output).not.toContain("is ready");
   });
 });
