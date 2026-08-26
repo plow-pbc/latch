@@ -10,18 +10,16 @@
  * It wraps the `FetchLike` the clients already take, so it adds nothing to
  * their code and can be unwired by deleting one argument at each construction.
  *
- * **It records no bodies.** Method, URL, status, elapsed ms, and an
- * unauthenticated failure's own `detail` sentence — that is the whole of it.
+ * **It records no bodies or server-authored text.** Method, URL, status, and
+ * elapsed ms are the whole of it.
  * Riding the shared `PlowApi` means every authenticated chat and agent response
  * passes through here, and those carry participants' names and phone numbers
  * and session identities.
  * This file is meant to be pasted into a bug report, which is the worst
  * possible destination for someone else's phone number.
  *
- * **The credential never reaches it either.** The `Authorization` value is
- * recorded as its presence and nothing more. When it is present, response and
- * transport text are dropped outright rather than inspected for secret-shaped
- * substrings.
+ * **The credential never reaches it either.** `Authorization` is neither
+ * inspected nor recorded.
  */
 import fs from "node:fs";
 import path from "node:path";
@@ -38,20 +36,16 @@ export function wireLogPath(home: string): string {
 export function loggingFetch(home: string, inner: FetchLike = fetch): FetchLike {
   return async (url, init) => {
     const started = Date.now();
-    const authenticated = hasBearer(init?.headers);
     const entry: Record<string, unknown> = {
       at: new Date(started).toISOString(),
       method: init?.method ?? "GET",
       url,
-      // Presence, never the value.
-      authorization: authenticated ? "bearer present" : "none",
     };
     try {
       const response = await inner(url, init);
       append(home, {
         ...entry,
         status: response.status,
-        detail: await errorDetail(response, authenticated),
         elapsedMs: Date.now() - started,
       });
       return response;
@@ -59,7 +53,6 @@ export function loggingFetch(home: string, inner: FetchLike = fetch): FetchLike 
       append(home, {
         ...entry,
         status: null,
-        error: authenticated ? null : String((error as { message?: unknown })?.message ?? error),
         elapsedMs: Date.now() - started,
       });
       throw error;
@@ -79,47 +72,5 @@ function append(home: string, entry: Record<string, unknown>): void {
     fs.appendFileSync(file, JSON.stringify(entry) + "\n", { mode: 0o600 });
   } catch {
     // A log that cannot be written must not take the request down with it.
-  }
-}
-
-/** Whether the request carries a bearer credential. Its value is never read. */
-function hasBearer(headers: HeadersInit | undefined): boolean {
-  if (!headers) return false;
-  if (headers instanceof Headers) return headers.has("authorization");
-  if (Array.isArray(headers)) {
-    return headers.some(([name]) => name.toLowerCase() === "authorization");
-  }
-  return Object.keys(headers).some((name) => name.toLowerCase() === "authorization");
-}
-
-/**
- * An unauthenticated server's sentence about a failure, and nothing else from
- * the body. Authenticated response text is never recorded.
- *
- * This is the one thing worth keeping out of a response: every shape mismatch
- * and server failure we chased today showed up in `detail`, and it is written
- * by the API team for a human to read. A 404 uses a different envelope from
- * every other error, so both are read.
- *
- * Successful bodies are never touched. That is where the chat records live —
- * participants' names and phone numbers, session identities — and this file is
- * meant to be pasted into a bug report.
- */
-async function errorDetail(response: Response, authenticated: boolean): Promise<string | null> {
-  if (response.ok || authenticated) return null;
-  try {
-    // `clone()` so the client still gets an unread body.
-    const decoded: unknown = await response.clone().json();
-    if (!decoded || typeof decoded !== "object") return null;
-    const record = decoded as Record<string, unknown>;
-    if (typeof record.detail === "string") return record.detail;
-    const wrapped = record.error;
-    if (wrapped && typeof wrapped === "object") {
-      const message = (wrapped as Record<string, unknown>).message;
-      if (typeof message === "string") return message;
-    }
-    return null;
-  } catch {
-    return null;
   }
 }

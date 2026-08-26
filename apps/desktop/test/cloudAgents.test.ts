@@ -154,21 +154,12 @@ describe("CloudAgentsClient cancellation", () => {
 describe("CloudAgentsClient credential boundary", () => {
   it("drops every server-authored error from authenticated calls", async () => {
     const fragment = CREDENTIAL.slice(3, 18);
-    const echoed = async () =>
-      new Response(JSON.stringify({ detail: `rejected fragment ${fragment}` }), {
-        status: 403,
-        headers: { "content-type": "application/json" },
-      });
-    const nestedEcho = async () =>
-      new Response(JSON.stringify({ error: { message: `rejected fragment ${fragment}` } }), {
-        status: 404,
-        headers: { "content-type": "application/json" },
-      });
-
-    for (const [client, message] of [
-      [new CloudAgentsClient(new PlowApi("https://api.plow.co", echoed)), "Not permitted."],
-      [new CloudAgentsClient(new PlowApi("https://api.plow.co", nestedEcho)), "Plow returned 404."],
+    for (const [status, body, message] of [
+      [403, { detail: `rejected fragment ${fragment}` }, "Not permitted."],
+      [404, { error: { message: `rejected fragment ${fragment}` } }, "Plow returned 404."],
     ] as const) {
+      const { fetchImpl } = recordingFetch([{ status, body }]);
+      const client = new CloudAgentsClient(new PlowApi("https://api.plow.co", fetchImpl));
       const error = await client.list(CREDENTIAL).catch((caught: unknown) => caught);
       expect(error).toBeInstanceOf(PlowApiError);
       expect(String(error)).toBe(`PlowApiError: ${message}`);
