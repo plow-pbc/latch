@@ -144,7 +144,7 @@ describe("a tool call end to end, in process", () => {
     // on an unbounded field — an agent can put a secret, or a file's bytes, in
     // the goal of a write — so it stays on the live approval surface, which
     // reads the intent directly, and out of anything durable.
-    expect(jv(received).get("goal").str).toBe("");
+    expect(jv(received).get("goal").str).toBeNull();
   });
 
   it.skipIf(!ON_MAC)("goal text cannot widen the sandbox: a path outside its permitted region is blocked", async () => {

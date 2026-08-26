@@ -220,6 +220,10 @@ export class ApprovalStore implements PolicyDelegate {
       // record outlives the decision (`reapStale` rewrites, nothing deletes),
       // so it is a durable holder of content in the same sense the log is.
       ...durableIntentText(intent),
+      // The record's own shape requires the field. Blank rather than omitted is
+      // safe here: unlike the audit, nothing resolves a goal through a `??`
+      // chain off this record.
+      goal: "",
       capabilities: intent.capabilities.map(capabilityDisplay),
       createdAt: iso(started),
       expiresAt: iso(started + this.ttlMs),

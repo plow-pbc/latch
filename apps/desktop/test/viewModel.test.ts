@@ -118,7 +118,7 @@ describe("approvalViewModel", () => {
 describe("auditActivities (grouping)", () => {
   // A full command lifecycle for one intent: received → decided → ran → finished.
   const commandRun: JSONValue[] = [
-    { event: "intent_received", intentId: "i1", request: "run: df -h", goal: "disk", agent: "agentA", capabilities: ["Run: df -h", "Network: denied"], ts: "2026-08-09T12:00:20Z" },
+    { event: "intent_received", intentId: "i1", request: "run: df -h", agent: "agentA", capabilities: ["Run: df -h", "Network: denied"], ts: "2026-08-09T12:00:20Z" },
     { event: "intent_decision", intentId: "i1", decision: "allow_once", source: "prompt", ts: "2026-08-09T12:00:21Z" },
     { event: "exec_start", intentId: "i1", argv: ["/bin/sh", "-c", "df -h"], ts: "2026-08-09T12:00:21Z" },
     { event: "exec_end", intentId: "i1", exit_code: 0, ts: "2026-08-09T12:00:23Z" },
@@ -210,10 +210,12 @@ describe("auditActivities (grouping)", () => {
     expect(blocked[0]!.category).toBe("failed");
   });
 
-  it("search matches across title, command, agent, and goal", () => {
+  // `goal` stays in the search key — it is still fed by access_request and
+  // agent_spawned — but no longer by `intent_received`, which the device stopped
+  // writing it to, so a command run has none to match on.
+  it("search matches across title, command, and agent", () => {
     const a = auditActivities(commandRun)[0]!;
     expect(activityMatches(a, "df")).toBe(true);
-    expect(activityMatches(a, "disk")).toBe(true);
     expect(activityMatches(a, "agentA")).toBe(true);
     expect(activityMatches(a, "nonexistent")).toBe(false);
   });

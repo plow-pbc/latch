@@ -58,7 +58,7 @@ describe("approvalViewModel for browser intents", () => {
 
 describe("audit grouping for browser sessions", () => {
   const events: JSONValue[] = [
-    { event: "intent_received", intentId: "i1", agent: "313", agent_name: "Daniel's Test", request: "browse: dominos.com", goal: "Order dinner", capabilities: ["Browse: dominos.com"], ts: "2026-08-10T09:59:58Z" },
+    { event: "intent_received", intentId: "i1", agent: "313", agent_name: "Daniel's Test", request: "browse: dominos.com", capabilities: ["Browse: dominos.com"], ts: "2026-08-10T09:59:58Z" },
     { event: "intent_decision", intentId: "i1", decision: "allow_once", source: "approve", ts: "2026-08-10T09:59:59Z" },
     { event: "browser_session_opened", intentId: "i1", session: "S", origins: ["dominos.com"], ts: "2026-08-10T10:00:00Z" },
     { event: "browser_command", session: "S", action: "goto", url: "https://dominos.com/menu", ts: "2026-08-10T10:00:01Z" },
@@ -85,7 +85,11 @@ describe("audit grouping for browser sessions", () => {
     const browser = auditActivities(events).find((a) => a.id === "browser:S")!;
     expect(browser.agentId).toBe("313");
     expect(browser.agentDisplay).toBe("Daniel's Test");
-    expect(browser.goal).toBe("Order dinner");
+    // The device no longer writes a goal to `intent_received` — it is
+    // unverified agent prose and stays on the approval surface — so a browser
+    // session's row has no "why". The access-request and agent-spawned
+    // fallbacks still carry one where those events exist.
+    expect(browser.goal).toBeNull();
     expect(browser.capabilities).toEqual([
       "Browse: dominos.com",
       "Browse: paypal.com",

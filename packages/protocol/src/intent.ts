@@ -155,7 +155,7 @@ export function makeAlwaysAllowRule(intent: Intent): AlwaysAllowRule {
  * an excerpt is not something a helper can do honestly, so it is named rather
  * than half-solved.
  */
-export function durableIntentText(intent: Intent): { request: string; goal: string } {
+export function durableIntentText(intent: Intent): { request: string } {
   const tool = intent.capabilities.find((c) => c.kind === "tool");
   // `goal` goes unconditionally. Why it is unsafe does not depend on the kind:
   // it is agent-authored prose and `GOAL` is in `plow_write_file`'s and
@@ -164,5 +164,8 @@ export function durableIntentText(intent: Intent): { request: string; goal: stri
   // (record the path, never the bytes) that keying this on `tool` was meant to
   // preserve. The live dialog reads the intent directly, so the approver still
   // sees it.
-  return { request: tool ? capabilityDisplay(tool) : intent.request, goal: "" };
+  // The key is OMITTED, not blanked. `""` is non-null, so it would win a `??`
+  // chain over a real fallback — the Activity view resolves a goal from
+  // `intent_received` then `access_request` then `agent_spawned`.
+  return { request: tool ? capabilityDisplay(tool) : intent.request };
 }
