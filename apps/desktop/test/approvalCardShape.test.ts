@@ -51,7 +51,27 @@ describe("the approval card's structure", () => {
   it("keeps the enforceable block and the actions outside the scroll region", () => {
     const region = source.indexOf('class: "scroll-region"');
     expect(region).toBeGreaterThan(-1);
-    const regionCloses = source.indexOf("    ]),", region);
+
+    // Walk brackets to find where the region's array actually closes. An
+    // indent-matched `"    ]),"` finds the first NESTED close instead, so the
+    // check passed with `.fine` still inside — the precise thing it exists to
+    // catch. Counting depth is the only honest boundary.
+    const open = source.indexOf("[", region);
+    let depth = 0;
+    let regionCloses = -1;
+    for (let i = open; i < source.length; i++) {
+      const ch = source[i];
+      if (ch === "[") depth++;
+      else if (ch === "]") {
+        depth--;
+        if (depth === 0) {
+          regionCloses = i;
+          break;
+        }
+      }
+    }
+    expect(regionCloses).toBeGreaterThan(open);
+
     // Both must sit AFTER the region closes. Inside it, a long request line or
     // a long reviewer note can push the capability chips — or the Deny /
     // Always Allow / Allow Once row — past the window's clipped edge.
