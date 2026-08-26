@@ -9,8 +9,8 @@ deliver. We have corrected our own claims. The underlying behaviour is yours to 
 make no recommendation about it here.
 
 Everything below was verified against the code at commit `28da7a7`, not inferred from
-documentation — except §1's two profile transcripts, which were regenerated at head when the
-reapable exception was added and reproduce against that.
+documentation — except §1's two profile transcripts, regenerated at `2daea30`, where the reapable
+exception was added.
 
 ---
 
