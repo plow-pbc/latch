@@ -164,9 +164,18 @@ stack later with `just fetch-browser` if you want it.
 Nothing is inferred, and there is no way to make it adopt a neighbour: a donor's
 payloads are executed here, outside the seatbelt and within reach of this
 checkout's vault and relay credential, so which checkout may hand this one a
-runtime is a decision you make. What setup does **not** decide is whether the
-copy is any good — the donor is a cache seed, and setup runs `just fetch-browser`
-over whatever runtime is in `vendor/` once it has installed and built, so a
+runtime is a decision you make.
+
+One caller makes that decision for you, deliberately: Termic's setup hook
+(`scripts/termic-setup.sh`, wired in `.termic.yaml`) names this repo's MAIN
+checkout as the donor for a worktree it has just created. Creating that worktree
+from that repository is the designation, and the hook is where it lives so
+that `worktree-setup.sh` does not have to learn to guess — invoked directly,
+it still never does.
+
+What setup does **not** decide is whether the copy is any good — the donor is
+a cache seed, and setup runs `just fetch-browser` over whatever runtime is in
+`vendor/` once it has installed and built, so a
 stale or half-built payload costs a rebuild rather than a refusal. That check is
 not skippable: it is the only look at what is there, so setup stops rather than
 call a checkout ready over an unvalidated runtime.
