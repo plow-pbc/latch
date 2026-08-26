@@ -106,7 +106,14 @@ ipcMain.handle("updates:get", async () => ({
 // Switchable, because the unsaved-edits checks further down need a vault with
 // something in it — the locked reply above has no list and no forms.
 let vaultItemsReply = { status: "locked", reason: "undecryptable" };
-ipcMain.handle("vault:items", async () => vaultItemsReply);
+// A rejected call is its own path: renderVault catches it into `failure` and
+// writes into the list rather than the empty pane, so no status reaches it and
+// the pure module returns null by design. Only a real run covers it.
+let vaultItemsThrows = false;
+ipcMain.handle("vault:items", async () => {
+  if (vaultItemsThrows) throw new Error("the vault did not answer");
+  return vaultItemsReply;
+});
 ipcMain.handle("vault:item", async () => ({
   id: "itm1",
   type: "login",
@@ -727,13 +734,16 @@ app.whenReady().then(async () => {
   // leaves and comes back to make the pane re-read the stub. Going away is
   // AWAITED — `selectTab` does not await the render it starts, and `renderAgents`
   // has no is-this-still-my-tab guard, so hopping through it would let a late
-  // replaceChildren land on top of the pane being asserted. Waiting for the
-  // vault pane to GO proves the other render finished; the marker each caller
-  // passes then proves the right one came back, which `.empty` alone cannot —
-  // every one of these states has an `.empty`.
+  // replaceChildren land on top of the pane being asserted. The hop-out waits
+  // for the RULES pane rather than for the vault pane to disappear: on the
+  // first entry there is no vault pane to lose, so that wait would pass
+  // immediately and prove nothing about the render still in flight. The marker
+  // each caller passes then proves the right pane came back, which `.empty`
+  // alone cannot — every one of these states has an `.empty`.
   const showVault = async (marker, what) => {
     await win.webContents.executeJavaScript(`(() => { window.__domoSelectTab("rules"); return true; })()`);
-    await waitFor(win, `!document.querySelector(".vaultui")`, "the vault pane to go");
+    await waitFor(win, `document.querySelector("#view .section-label")?.textContent === "Always-allow rules"`,
+      "the rules pane to render");
     await win.webContents.executeJavaScript(`(() => { window.__domoSelectTab("vault"); return true; })()`);
     await waitFor(win, marker, what);
   };
@@ -741,12 +751,6 @@ app.whenReady().then(async () => {
   const empty = (says) =>
     `document.querySelector("#view .empty")?.textContent.includes(${JSON.stringify(says)})`;
 
-  // Every headline this pane can show. Each state asserts its own AND the
-  // absence of all the others, which is the whole history of this screen:
-  // locked rendered as not-started, then a missing runtime rendered as
-  // not-started, and each time the fix was a sentence that another state was
-  // already entitled to. Structural rather than promised in a comment — a new
-  // state added here is excluded from the others by construction.
   // The vault's honest failure state: locked is not empty, and the screen has to
   // say so — the old copy sent people to debug a server that was running fine.
   await showVault(empty("can't unlock"), "the locked-vault pane to render");
@@ -789,6 +793,27 @@ app.whenReady().then(async () => {
       noLockedNote: !text.includes("The account file is present but cannot be opened"),
     };
   });
+
+  // The reject path — a different branch of renderVault from every status, and
+  // the sentence carries errText straight into what the owner reads.
+  vaultItemsThrows = true;
+  let vaultFailed;
+  try {
+    await showVault(`document.body.innerText.includes("Could not read the vault")`, "the failed read to render");
+    vaultFailed = await js(() => {
+      const text = document.body.innerText;
+      return {
+        saysItCouldNotRead: text.includes("Could not read the vault"),
+        carriesTheReason: text.includes("the vault did not answer"),
+        // Not a diagnosis of a vault it never reached.
+        doesNotClaimEmpty: !text.includes("has not started yet"),
+      };
+    });
+  } finally {
+    // The only latch here — the reply switches above are each overwritten by
+    // the next probe, and `waitFor` times out by design.
+    vaultItemsThrows = false;
+  }
 
   // Unsaved edits must not vanish without a word. The vault is the only screen
   // that holds a form open behind a Save button, so it is the only one where
@@ -1157,10 +1182,12 @@ app.whenReady().then(async () => {
     vaultLocked.saysNothingDeleted &&
     vaultMissing.reassures &&
     vaultMissing.noLockedNote &&
+    vaultFailed.saysItCouldNotRead &&
+    vaultFailed.carriesTheReason &&
+    vaultFailed.doesNotClaimEmpty &&
     vaultLocked.saysCannotUnlock &&
     vaultLocked.doesNotClaimEmpty &&
     vaultMissing.saysNoVaultInstalled &&
-    vaultMissing.reassures &&
     vaultMissing.doesNotClaimEmpty &&
     vaultMissing.doesNotClaimLocked &&
     modalClosed.gone &&
@@ -1253,7 +1280,7 @@ app.whenReady().then(async () => {
     errors.length === 0;
   console.log(
     "PROBE:" +
-      JSON.stringify({ main, settings, strandedOnDisk, settingsPane, connect, agentsShot, approvalsReviewer, approvalsShot, purposeRoundTrip, approvalsAsk, askWithoutReviewer, approvalsShotAsk, agentsOpen, modalClosed, vaultLocked, vaultMissing, vaultUnsaved, vaultShot, agentsOpenShot, staleSettingsPane, optimisticMode, settingsShot, approval, reviewerNote, consoleErrors: errors, ok }),
+      JSON.stringify({ main, settings, strandedOnDisk, settingsPane, connect, agentsShot, approvalsReviewer, approvalsShot, purposeRoundTrip, approvalsAsk, askWithoutReviewer, approvalsShotAsk, agentsOpen, modalClosed, vaultLocked, vaultMissing, vaultFailed, vaultUnsaved, vaultShot, agentsOpenShot, staleSettingsPane, optimisticMode, settingsShot, approval, reviewerNote, consoleErrors: errors, ok }),
   );
   app.exit(ok ? 0 : 1);
 }).catch((err) => {

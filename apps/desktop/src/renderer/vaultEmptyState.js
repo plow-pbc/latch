@@ -15,7 +15,10 @@ export function vaultEmptyState(reply, failure) {
   // A failed call is not a status: nothing was read, so the pane says that
   // rather than diagnosing a vault it never reached.
   if (failure) return null;
-  if (!reply || reply.status === "ready") return null;
+  // No guard on a missing reply: the only caller sets `failure` when the call
+  // threw, so a null here would be a contract break, and `reply.status` says so
+  // at once rather than deferring a TypeError to the list path below.
+  if (reply.status === "ready") return null;
 
   const missing = reply.status === "missing";
   const locked = reply.status === "locked";

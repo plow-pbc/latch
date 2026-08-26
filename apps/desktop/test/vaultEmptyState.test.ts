@@ -10,20 +10,12 @@ import { describe, expect, it } from "vitest";
 // @ts-expect-error - a renderer asset, plain ESM with no types of its own.
 import { vaultEmptyState } from "../src/renderer/vaultEmptyState.js";
 
-/** Every headline this pane can produce, so each case can exclude the others. */
-const HEADLINES = [
-  "This build has no vault installed.",
-  "This Mac can't unlock its vault account.",
-  "The vault has not started yet.",
-  "The vault reported a state this build does not know:",
-];
-
 describe("vaultEmptyState", () => {
-  const cases: { why: string; reply: unknown; failure?: string; headline: string; note?: RegExp }[] = [
+  const cases: { why: string; reply: unknown; headline: string; note?: RegExp }[] = [
     {
       why: "no vault payload in this build",
       reply: { status: "missing" },
-      headline: HEADLINES[0],
+      headline: "This build has no vault installed.",
       // Claims nothing about the runtime around it, and offers no remedy: a
       // packaged install always bundles a vault, so its owner has a broken
       // install rather than a command to run.
@@ -32,7 +24,7 @@ describe("vaultEmptyState", () => {
     {
       why: "the key has moved",
       reply: { status: "locked", reason: "undecryptable" },
-      headline: HEADLINES[1],
+      headline: "This Mac can't unlock its vault account.",
       // Names the likely cause as likely, since one `catch` covers a wrong key
       // and a damaged file, and promises no recovery that does not exist.
       note: /Usually that means the key is no longer.*it can also mean the file itself is damaged/s,
@@ -40,7 +32,7 @@ describe("vaultEmptyState", () => {
     {
       why: "this build has nowhere to keep the key",
       reply: { status: "locked", reason: "no-storage" },
-      headline: HEADLINES[1],
+      headline: "This Mac can't unlock its vault account.",
       // A different fact from the one above and different words: nothing is
       // wrong with the account, this build just cannot open it.
       note: /no secure storage to open it with/,
@@ -48,7 +40,7 @@ describe("vaultEmptyState", () => {
     {
       why: "the vault is still coming up",
       reply: { status: "starting" },
-      headline: HEADLINES[2],
+      headline: "The vault has not started yet.",
     },
     {
       // The arm that exists so a fifth status added in main.ts, or a packaged
@@ -59,15 +51,14 @@ describe("vaultEmptyState", () => {
     },
   ];
 
-  it.each(cases)("says its own words and no others when $why", ({ reply, failure, headline, note }) => {
-    const state = vaultEmptyState(reply, failure ?? "");
+  it.each(cases)("says its own words when $why", ({ reply, headline, note }) => {
+    const state = vaultEmptyState(reply, "");
 
+    // Exactly its own sentence. The exclusion this screen keeps needing — twice
+    // a state has been handed a sentence another was already entitled to — is
+    // what an equality check already gives; a loop over the other headlines
+    // beside it would be decided by the constants, never by the code.
     expect(state.headline).toBe(headline);
-    // The mutual exclusion, which is the whole history of this screen: twice a
-    // state has been handed a sentence another state was already entitled to.
-    for (const other of HEADLINES.filter((h) => !headline.startsWith(h))) {
-      expect(state.headline).not.toContain(other);
-    }
     if (note) expect(state.note).toMatch(note);
     else expect(state.note).toBeNull();
   });
