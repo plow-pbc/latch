@@ -16,6 +16,14 @@ import { KeyInfo, PlowApi, PlowApiError } from "../src/plowApi.js";
 import { loadSettings, saveSettings } from "../src/settings.js";
 
 const DEVICE_TOKEN = "plow_DEVICEtok_secret";
+
+/**
+ * What plow publishes as `key_prefix`: `token[5:13]`, the eight characters
+ * AFTER the `plow_` scheme. A hand-written prefix with the scheme on the front
+ * made the old `startsWith` match look right here while it never matched in
+ * production.
+ */
+const keyPrefixOf = (token: string) => token.slice(5, 13);
 const CLIENT_TOKEN = "plow_CLIENTtok_shown_once";
 const MCP_URL = "http://localhost:18804/v1/relay/devices/u_123/mcp";
 
@@ -365,7 +373,7 @@ describe("removing a roster row", () => {
   function key(overrides: Partial<KeyInfo> = {}): KeyInfo {
     return {
       id: 1,
-      key_prefix: "plow_sk_other",
+      key_prefix: keyPrefixOf("plow_sk_someone_elses_credential"),
       name: "Kitchen agent",
       scopes: ["relay:call"],
       tokens_used: 0,
@@ -378,49 +386,43 @@ describe("removing a roster row", () => {
     };
   }
 
-  it("NEVER revokes the key of a row that belongs to a cloud agent", async () => {
+  /**
+   * Every route a row can take, and the two it must never take instead.
+   *
+   * Each is destructive in its own way when it goes to the wrong place: a key
+   * revoke on a cloud agent leaves the VM running and the webhook firing while
+   * the row disappears from the list; a key revoke on this Mac leaves the
+   * credential on disk, the socket dialled and the window open, all talking to
+   * an account that no longer accepts them.
+   */
+  it.each([
+    [
+      "a cloud agent",
+      () => key({ id: 7, agent_id: "agent_7" }),
+      { revoked: [] as number[], deleted: ["agent_7"], signOuts: 0 },
+    ],
+    [
+      "this Mac",
+      () => key({ id: 4, key_prefix: keyPrefixOf(DEVICE_TOKEN) }),
+      { revoked: [] as number[], deleted: [] as string[], signOuts: 1 },
+    ],
+    [
+      "an ordinary credential",
+      () => key({ id: 8, agent_id: null }),
+      { revoked: [8], deleted: [] as string[], signOuts: 0 },
+    ],
+  ])("removes %s down its own route and no other", async (_what, row, expected) => {
     signIn();
-    plow.keys = [key({ id: 7, agent_id: "agent_7" })];
+    const only = row();
+    plow.keys = [only];
     const client = build();
     await client.refreshRoster();
 
-    await client.removeRosterRow(7);
+    await client.removeRosterRow(only.id);
 
-    // The whole point. A key revoke flips `is_active` and nothing else: the VM
-    // keeps running, the chat's webhook keeps firing, and the row disappears
-    // from this list because inactive rows are filtered out.
-    expect(plow.revoked).toEqual([]);
-    expect(agentDeletes).toEqual(["agent_7"]);
-  });
-
-  it("signs this Mac out instead of revoking its own key", async () => {
-    signIn();
-    // The roster marks exactly one row as this Mac; its prefix is the stored
-    // credential's.
-    plow.keys = [key({ id: 4, key_prefix: DEVICE_TOKEN.slice(0, 12) })];
-    const client = build();
-    await client.refreshRoster();
-
-    await client.removeRosterRow(4);
-
-    // A revoke alone leaves the credential on disk, the socket dialled and the
-    // window open, all talking to an account that no longer accepts them —
-    // while the row promised an immediate sign-out.
-    expect(signOuts).toBe(1);
-    expect(plow.revoked).toEqual([]);
-    expect(agentDeletes).toEqual([]);
-  });
-
-  it("revokes the key of a row that is not an agent", async () => {
-    signIn();
-    plow.keys = [key({ id: 8, agent_id: null })];
-    const client = build();
-    await client.refreshRoster();
-
-    await client.removeRosterRow(8);
-
-    expect(plow.revoked).toEqual([8]);
-    expect(agentDeletes).toEqual([]);
+    expect(plow.revoked).toEqual(expected.revoked);
+    expect(agentDeletes).toEqual(expected.deleted);
+    expect(signOuts).toBe(expected.signOuts);
   });
 
   it("keeps the row when the removal fails", async () => {

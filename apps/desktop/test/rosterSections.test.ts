@@ -7,10 +7,23 @@ import { describe, expect, it } from "vitest";
 import { sectionRoster, removalRouteFor } from "../src/rosterSections.js";
 import type { KeyInfo } from "../src/plowApi.js";
 
+/** A device credential of the shape plow issues. */
+const DEVICE_CREDENTIAL = "plow_sk_abc123_and_the_rest_of_it";
+
+/**
+ * What plow publishes as `key_prefix`: `token[5:13]`, the eight characters
+ * AFTER the `plow_` scheme — the scheme itself is not in it.
+ *
+ * Fixtures go through here rather than spelling a prefix out. A hand-written
+ * one had the scheme on the front, which made `startsWith` matching look
+ * correct in tests while it could never match in production.
+ */
+const keyPrefixOf = (token: string) => token.slice(5, 13);
+
 function key(overrides: Partial<KeyInfo> = {}): KeyInfo {
   return {
     id: 1,
-    key_prefix: "plow_sk_abc123",
+    key_prefix: keyPrefixOf("plow_sk_other_credential_entirely"),
     name: "Kitchen agent",
     scopes: ["relay:call"],
     tokens_used: 0,
@@ -110,8 +123,11 @@ describe("how a row is removed", () => {
 describe("this Mac's own credential", () => {
   it("is marked, so the screen can say what revoking it does", () => {
     const sections = sectionRoster(
-      [key({ id: 1, key_prefix: "plow_sk_abc123" }), key({ id: 2, key_prefix: "plow_sk_zzz999" })],
-      { deviceCredential: "plow_sk_abc123_and_the_rest_of_it" },
+      [
+        key({ id: 1, key_prefix: keyPrefixOf(DEVICE_CREDENTIAL) }),
+        key({ id: 2, key_prefix: keyPrefixOf("plow_sk_zzz999_someone_elses") }),
+      ],
+      { deviceCredential: DEVICE_CREDENTIAL },
     );
 
     expect(sections.mcp.find((row) => row.id === 1)?.isThisMac).toBe(true);
@@ -119,25 +135,30 @@ describe("this Mac's own credential", () => {
   });
 
   it("marks nothing when two rows would both match", () => {
-    const sections = sectionRoster(
-      [key({ id: 1, key_prefix: "plow_sk_abc123" }), key({ id: 2, key_prefix: "plow_sk_abc123" })],
-      { deviceCredential: "plow_sk_abc123_and_the_rest_of_it" },
-    );
+    const prefix = keyPrefixOf(DEVICE_CREDENTIAL);
+    const sections = sectionRoster([key({ id: 1, key_prefix: prefix }), key({ id: 2, key_prefix: prefix })], {
+      deviceCredential: DEVICE_CREDENTIAL,
+    });
 
     // Two matches means the match identifies nothing. Warning about revoking a
     // credential that is not this Mac's is worse than not warning.
     expect(sections.mcp.every((row) => !row.isThisMac)).toBe(true);
   });
 
-  it("marks nothing when the prefix is absent or too short to mean anything", () => {
-    const sections = sectionRoster(
-      [key({ id: 1, key_prefix: null }), key({ id: 2, key_prefix: "plow" })],
-      { deviceCredential: "plow_sk_abc123_and_the_rest_of_it" },
-    );
+  it.each([
+    ["absent", null],
+    ["the whole token", "plow_sk_abc123_and_the_rest_of_it"],
+    ["the scheme included", "plow_sk_"],
+    ["too short", "sk_abc"],
+    ["too long", "sk_abc123456"],
+  ])("marks nothing when the prefix is %s", (_shape, key_prefix) => {
+    const sections = sectionRoster([key({ id: 1, key_prefix })], {
+      deviceCredential: DEVICE_CREDENTIAL,
+    });
 
-    // A short prefix would match half the account. Better to mark nothing than
-    // to warn about the wrong row.
-    expect(sections.mcp.every((row) => !row.isThisMac)).toBe(true);
+    // Anything but the eight characters plow publishes is not a prefix from
+    // plow, and guessing at a partial match would warn about the wrong row.
+    expect(sections.mcp[0].isThisMac).toBe(false);
   });
 });
 

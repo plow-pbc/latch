@@ -141,9 +141,31 @@ export function sectionRoster(
   return sections;
 }
 
-/** A prefix long enough to mean something, and a credential that starts with
- * it. An empty or absent prefix matches nothing rather than everything. */
+/**
+ * How many characters of the token plow keeps as its public `key_prefix`, and
+ * where they start.
+ *
+ * Plow stores `token[5:13]` — the eight characters AFTER the `plow_` scheme,
+ * not including it. So a prefix never starts the token it came from, and
+ * `startsWith` could not match one in production even once. Written as the
+ * slice plow takes, so the two can be read against each other.
+ */
+const KEY_PREFIX_START = 5;
+const KEY_PREFIX_END = 13;
+
+/**
+ * Is this row the credential this Mac holds?
+ *
+ * Compared against the same slice plow published, not against the start of the
+ * token: the prefix omits the `plow_` scheme, so it matches in the middle or
+ * not at all.
+ *
+ * Equality against a fixed-width slice is the whole check. It rejects a prefix
+ * of any other length on its own — a longer or shorter string cannot equal an
+ * eight-character slice — so nothing here guesses at a partial match, and an
+ * absent or malformed prefix matches nothing rather than everything.
+ */
 function isDeviceCredential(prefix: string | null, credential: string): boolean {
   if (!prefix || !credential) return false;
-  return prefix.length >= 6 && credential.startsWith(prefix);
+  return credential.slice(KEY_PREFIX_START, KEY_PREFIX_END) === prefix;
 }
