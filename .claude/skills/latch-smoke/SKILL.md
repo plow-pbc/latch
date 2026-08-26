@@ -1,0 +1,124 @@
+---
+name: latch-smoke
+description: Prove an installed Latch actually works, by driving one real MCP call through the relay and reading the result out of audit.ndjson. Use after installing a build, after any change to the relay client, the MCP server or the exec path, or when someone asks whether a Mac is reachable. Works against the local install or any SSH-reachable one.
+---
+
+# Latch smoke — one real call, verified in the audit log
+
+The unit test suite never opens a socket to a real relay
+(`docs/TESTING-THE-APP.md` says so explicitly). This is the leg that does: an
+MCP client → the Plow relay → the device WebSocket → `@domo/mcp-server` on the
+Mac → the audit log.
+
+**The audit log is the proof, not the client's reply.** A reply can come from a
+cached deferred handle or a half-working path; an `exec_start`/`exec_end` pair
+with your nonce in the argv cannot.
+
+## Before you start: the credential
+
+You need an MCP client registration for the target install — endpoint plus
+bearer token. **This is not currently recorded anywhere an unattended run can
+read**, which is Stop 3 in `docs/AUTONOMOUS-OPERATION.md`. Today it comes from
+the app's Agents tab on the target Mac, which is a GUI step.
+
+If you have one, it looks like the block `_mcpConfig` renders:
+
+```json
+{"mcpServers":{"plow":{"type":"http","url":"<mcpUrl>","headers":{"Authorization":"Bearer <token>"}}}}
+```
+
+Treat the token the way this repo treats every credential: never echo it, never
+put it in a log line or a commit, reference it by its last 3 characters only.
+
+## Send
+
+A nonce makes the audit line unambiguous — a busy install has other traffic, and
+`grep`ping for `echo` alone would match somebody else's run.
+
+```bash
+NONCE="latch-smoke-$(date -u +%Y%m%dT%H%M%SZ)"
+# Token read from a file, never from argv: argv is world-readable via `ps`.
+TOKEN_FILE="${TOKEN_FILE:?set TOKEN_FILE to a 0600 file holding the bearer token}"
+MCP_URL="${MCP_URL:?set MCP_URL to the install's mcpUrl}"
+python3 - "$NONCE" <<'PY'
+import json, os, sys, urllib.request
+nonce = sys.argv[1]
+token = open(os.environ["TOKEN_FILE"]).read().strip()
+body = json.dumps({
+    "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+    "params": {"name": "plow_run_command",
+               "arguments": {"argv": ["/bin/echo", nonce],
+                             "goal": "smoke test: prove this Mac executes an approved command"}},
+}).encode()
+req = urllib.request.Request(os.environ["MCP_URL"], data=body, method="POST",
+    headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"})
+with urllib.request.urlopen(req, timeout=60) as r:
+    print(r.status, json.load(r).get("result", {}).get("isError", "ok"))
+PY
+echo "NONCE=$NONCE"   # print it — Verify runs in a FRESH shell
+```
+
+**This raises an approval dialog on the target Mac** unless a matching
+always-allow rule exists. That is the product working, not a failure — but it
+means a fully unattended smoke needs either a pre-seeded rule or
+`HeadlessPolicy`, neither of which a shipped app exposes. Say so in the report
+rather than waiting on a dialog nobody is watching.
+
+## Verify — the actual proof
+
+The instance home is `~/Library/Application Support/Plow-Latch` for a packaged
+install, and `Plow-Latch-<branch>` for a from-source run
+(`scripts/worktree-name.sh --branch`).
+
+```bash
+NONCE="<value printed by Send>"
+HOME_DIR="${HOME_DIR:-$HOME/Library/Application Support/Plow-Latch}"
+SCRIPT='NONCE="'"$NONCE"'"; LOG="'"$HOME_DIR"'/device/audit.ndjson";
+for i in $(seq 1 24); do
+  if grep -q "$NONCE" "$LOG" 2>/dev/null; then
+    grep "$NONCE" "$LOG" | head -3
+    # exec_end is keyed to the intent, so take the id from the start line.
+    ID=$(grep -m1 "$NONCE" "$LOG" | python3 -c "import json,sys; print(json.load(sys.stdin).get(\"intentId\",\"\"))")
+    grep "$ID" "$LOG" | grep -E "exec_end|exec_error" | head -2
+    exit 0
+  fi
+  sleep 5
+done; echo "TIMEOUT — no audit line carrying $NONCE"; exit 1'
+bash -c "$SCRIPT"                                                   # local install
+# ssh -o ConnectTimeout=8 -o BatchMode=yes <user>@<host> "$SCRIPT"   # remote (host map: tailscale-ssh skill)
+```
+
+Quote the `exec_start` and `exec_end` lines as the verification. An
+`exec_start` with no `exec_end` means the run is still going or was reaped;
+an `exec_error` names why it failed.
+
+## Smoke-testing the gog provider specifically
+
+Same shape, different argv — and it needs `gog` staged and
+`gmail:access-token` in the device's scopes:
+
+```
+["gog", "gmail", "search", "newer_than:1d", "--json"]
+```
+
+Three things distinguish a working provider path from a broken one, all visible
+in the audit log without touching Google:
+
+| Line | Means |
+|---|---|
+| `exec_error` … `not installed` | no vendored binary — run `just fetch-gog` and repackage |
+| `exec_error` … `could not reach Plow` / `returned 4xx` | the mint failed; check the device credential's scopes |
+| `exec_start` then `exec_end exit_code=0` | the whole path works |
+
+A `403` *inside* gog's own output is not a Latch failure — the token carries
+four Google scopes and refuses everything else by design.
+
+## Failure triage
+
+- HTTP 401/403 from the relay → the credential is wrong or the device was
+  re-paired. Scopes freeze at mint; a Mac paired before a scope grant needs to
+  re-activate.
+- Call returns, nothing in the audit log → you are talking to a *different*
+  install than the one whose log you are reading. Check the instance home
+  (branch-suffixed homes are the usual cause).
+- Approval dialog never answered → expected on an unattended run; see above.

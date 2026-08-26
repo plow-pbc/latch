@@ -8,6 +8,11 @@ The *why* behind real-input verification is in
 procedure is in `/Users/plucas/.claude-kitchen/projects/domo-desktop/wiki/m4-screenshots.md` — the
 head chef wants that kept as prose, not as a maintained script.
 
+For the *installed* app rather than the code — what an unattended run can and
+cannot do to a real install, and the one real MCP call that proves one works —
+see [AUTONOMOUS-OPERATION.md](AUTONOMOUS-OPERATION.md) and the `latch-smoke`
+skill beside it.
+
 ---
 
 ## What changed, and why this file is short now
