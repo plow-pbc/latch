@@ -292,13 +292,21 @@ function buildActivity(id: string, events: JSONValue[]): AuditActivity {
     // the pre-relay shape, kept because the audit log is append-only and old
     // entries are still on disk.
     agentDisplay: value("intent_received", "agent_name") ?? value("access_request", "display"),
-    // `intent_received` is LAST, not absent. The device stopped writing a goal
-    // there — it is unverified agent prose on an unbounded field, so it stays
-    // on the approval surface — but the log is append-only and every entry
-    // written before that change still carries one, which for a browser
-    // session is the row's only "why". `durableIntentText` omits the key
-    // rather than blanking it, so `value()` is null for new entries and the
-    // legacy term falls through. Same policy as `agentDisplay` above.
+    // LEGACY-ONLY, deliberately. All three of these are shapes nothing in this
+    // build emits any more: `access_request` is the pre-relay handshake,
+    // `agent_spawned` went with it, and the device stopped writing `goal` to
+    // `intent_received` because it is unverified agent prose on an unbounded
+    // field that would land in two durable records (`durableIntentText`).
+    //
+    // So the Goal row is absent for every entry written from here on, and this
+    // chain exists to keep rendering the ones already on disk — the log is
+    // append-only, and for a browser session that field was the row's only
+    // "why". `durableIntentText` omits the key rather than blanking it, so
+    // `value()` is null for new entries and the legacy terms fall through.
+    // Same policy as `agentDisplay` above, for the same reason.
+    //
+    // If a live "why" is wanted back, it needs a non-durable surface to travel
+    // on; re-adding it here would just re-open the sink.
     goal:
       value("access_request", "goals") ??
       value("agent_spawned", "goal") ??

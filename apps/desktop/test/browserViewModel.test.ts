@@ -85,10 +85,11 @@ describe("audit grouping for browser sessions", () => {
     const browser = auditActivities(events).find((a) => a.id === "browser:S")!;
     expect(browser.agentId).toBe("313");
     expect(browser.agentDisplay).toBe("Daniel's Test");
-    // The device no longer writes a goal to `intent_received` — it is
-    // unverified agent prose and stays on the approval surface — so a browser
-    // session's row has no "why". The access-request and agent-spawned
-    // fallbacks still carry one where those events exist.
+    // This fixture is the post-redaction shape — no `goal` on
+    // `intent_received` — so the row has no "why", which is what a session
+    // recorded by this build looks like. A session recorded before the
+    // redaction still renders one, through the legacy term of the goal chain;
+    // `viewModel.test.ts` pins that case.
     expect(browser.goal).toBeNull();
     expect(browser.capabilities).toEqual([
       "Browse: dominos.com",

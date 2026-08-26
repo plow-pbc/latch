@@ -166,6 +166,7 @@ export function durableIntentText(intent: Intent): { request: string } {
   // sees it.
   // The key is OMITTED, not blanked. `""` is non-null, so it would win a `??`
   // chain over a real fallback — the Activity view resolves a goal from
-  // `intent_received` then `access_request` then `agent_spawned`.
+  // `access_request`, then `agent_spawned`, then a legacy `intent_received`,
+  // and that last position is the whole reason omitting beats blanking.
   return { request: tool ? capabilityDisplay(tool) : intent.request };
 }
