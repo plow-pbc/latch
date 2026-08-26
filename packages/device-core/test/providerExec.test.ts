@@ -16,6 +16,11 @@ const TOKEN = "ya29.a0AfB_byExampleTokenValue0000000000";
 /**
  * Neither end of the token appears in `text`.
  *
+ * `sink` names the surface being checked, and supplies its own article so a
+ * caller can name a file directly ("audit.ndjson") as readily as a thing
+ * ("the response") — the two have different remedies, so which one leaked is
+ * the first fact whoever fixes it needs.
+ *
  * Both ends, because a leak is rarely the whole value: an end-truncated
  * diagnostic keeps the head and a "token ending …xY7" style one keeps the
  * tail, and checking only the full string catches neither.
@@ -27,7 +32,7 @@ function expectNoToken(text: string, sink: string): void {
   ] as const) {
     // Named, so a failure says WHICH end leaked rather than quoting an opaque
     // fragment at whoever has to fix it.
-    expect(text, `token ${end} leaked into the ${sink}`).not.toContain(fragment);
+    expect(text, `token ${end} leaked into ${sink}`).not.toContain(fragment);
   }
 }
 const cleanups: (() => void)[] = [];
