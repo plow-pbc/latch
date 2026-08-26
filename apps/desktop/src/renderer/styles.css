@@ -399,7 +399,11 @@ textarea.text { min-height: 70px; resize: vertical; }
      natural height eat this block's share of a 560pt window, and the capability
      list is the one thing on this card that must never be the part that
      scrolled out of view. */
-  flex: 1; min-height: 120px; overflow: auto;
+  /* Pinned, not flexed: this block and the buttons are the two things a
+     sibling's height must never displace. It sits outside the scroll region
+     for that reason, and bounds itself so its own chips cannot push the
+     buttons out either. */
+  flex-shrink: 0; max-height: 40vh; overflow: auto;
 }
 .approve .fine .lbl { font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); margin-bottom: 8px; }
 /* Everything above the buttons scrolls as ONE region; the buttons never
@@ -410,7 +414,7 @@ textarea.text { min-height: 70px; resize: vertical; }
    was a fix per round with the next sibling always still open. The reviewer
    note is the case that matters — it arrives after `armActions`, so the
    buttons are live and Return is armed on Allow Once when it lands. */
-.approve .scroll-region { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; }
+.approve .scroll-region { flex: 1; min-height: 0; overflow: auto; }
 .approve .actions { display: flex; gap: 8px; flex-shrink: 0; }
 .approve .actions .action-slot { flex: 1; position: relative; display: flex; }
 /* The opacity transition makes the arming delay (buttons start disabled for a
@@ -530,7 +534,10 @@ textarea.text { min-height: 70px; resize: vertical; }
    Scoped through the `.approve` seam like every other rule for that window, so
    the card styling can never reach a quiet status line of the same name in the
    main window. */
-.approve > .reviewer-note:not(:empty) {
+/* Descendant, not child: the note moved inside `.scroll-region`. Still
+   fenced under `.approve`, so it cannot reach the main window's status line
+   of the same name. */
+.approve .reviewer-note:not(:empty) {
   display: flex;
   flex-direction: column;
   gap: 2px;

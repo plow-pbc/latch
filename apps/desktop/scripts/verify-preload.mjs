@@ -1077,6 +1077,20 @@ app.whenReady().then(async () => {
       // be drawn here. The guard is upstream in the provider; this is the last
       // place to notice if it ever stops holding.
       leaksCredential: /plow_sk|sk-ant|Bearer /i.test(note?.textContent ?? ""),
+      // The card's layout invariant, which four rounds of changes each moved
+      // without anything asserting it. The enforceable block and the action
+      // row are the two things a sibling's height must never displace, so
+      // neither may live inside the scrolling narrative region. Asserted
+      // structurally rather than by measuring pixels: this probe runs headless
+      // at a fixed size, so a height check would pass for the wrong reason.
+      enforcedBlockPinned: !!fine && !document.querySelector(".scroll-region")?.contains(fine),
+      actionsPinned: !document
+        .querySelector(".scroll-region")
+        ?.contains(document.querySelector(".actions")),
+      // The note's rule is the file's only child-combinator selector, so a
+      // restructure that renests it silently drops its whole style block.
+      noteStyleStillApplies:
+        !!note && note.matches(".approve .reviewer-note") && getComputedStyle(note).display === "flex",
     };
   }})()`);
 
@@ -1204,6 +1218,9 @@ app.whenReady().then(async () => {
     reviewerNote.noMarkupInjected &&
     reviewerNote.spinnerCleared &&
     !reviewerNote.leaksCredential &&
+    reviewerNote.enforcedBlockPinned &&
+    reviewerNote.actionsPinned &&
+    reviewerNote.noteStyleStillApplies &&
     errors.length === 0;
   console.log(
     "PROBE:" +
