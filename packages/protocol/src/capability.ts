@@ -36,6 +36,22 @@ export interface Capability {
    * out of the key.
    */
   target?: string;
+  /**
+   * tool: the exact selector a read is scoped BY, when the target alone does
+   * not bound it — today only a Slack search's query.
+   *
+   * A search's query is its read scope the way a path is an `fs.read`'s: the
+   * workspace says where to look, the query says what may be read. With only
+   * the workspace in the key, one "always allow" on a benign search authorises
+   * every later query against the owner's whole Slack. Separate from `target`
+   * rather than folded into it because a query is free text — it can contain
+   * the delimiter a scope path uses, so concatenating them would let two
+   * different requests produce one key.
+   *
+   * The trade this accepts: always-allow becomes per-query for search, exactly
+   * as `fs.read`'s is per-path.
+   */
+  selector?: string;
   origins?: string[]; // browser: host patterns ("dominos.com", "*.dominos.com")
   access?: "fill"; // credential: type values into pages
   items?: string[]; // credential(fill): vault item ids
@@ -73,7 +89,10 @@ export function capabilityDisplay(c: Capability): string {
       const action = (c.tool ?? "?").replace(/^slack\./, "");
       // The target is what the owner is actually authorising. A capability
       // carrying none names no scope, and must not imply one.
-      return c.target ? `Slack: ${action} in ${c.target}` : `Slack: ${action}`;
+      const where = c.target ? `${action} in ${c.target}` : action;
+      // The selector is part of what is authorised, so it is part of what the
+      // approval card and the audit log say was authorised.
+      return c.selector ? `Slack: ${where} for "${c.selector}"` : `Slack: ${where}`;
     }
     case "browser":
       return `Browse: ${(c.origins ?? []).join(", ")}`;

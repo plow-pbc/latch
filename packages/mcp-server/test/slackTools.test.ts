@@ -171,7 +171,15 @@ describe("what one call is confined to", () => {
       name: "plow_slack_search",
       tool: () => search,
       args: { account: "T1", query: "salary review", limit: 5 },
-      capability: { kind: "tool", tool: "slack.messages.search", target: "T1" },
+      // The query rides the capability, not just the payload: it is the read
+      // scope, so it has to reach the rule key or one always-allow covers
+      // every later search.
+      capability: {
+        kind: "tool",
+        tool: "slack.messages.search",
+        target: "T1",
+        selector: "salary review",
+      },
       payload: { account: "T1", query: "salary review", limit: 5 },
     },
     {
@@ -231,6 +239,20 @@ describe("what one call is confined to", () => {
       args: { account: "T1", user_id: "U1" },
       sameTarget: { account: "T1", user_id: "U1" },
       elsewhere: [{ account: "T1", user_id: "U2" }],
+    },
+    // A search is the one action whose content IS its scope, so it keys on the
+    // query too — `sameTarget` here means the same query, and a different
+    // query is "elsewhere" exactly as a different channel is for a send. An
+    // always-allow is therefore per-query, the way `fs.read`'s is per-path.
+    {
+      name: "a search",
+      tool: () => search,
+      args: { account: "T1", query: "salary review", limit: 5 },
+      sameTarget: { account: "T1", query: "salary review", limit: 50 },
+      elsewhere: [
+        { account: "T1", query: "severance package", limit: 5 },
+        { account: "T2", query: "salary review", limit: 5 },
+      ],
     },
   ])("$name keys its rule on the target, not the content", async (row) => {
     const key = await ruleKeyOf(row.args, row.tool());

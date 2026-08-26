@@ -105,10 +105,18 @@ function slackCapability(action: SlackAction, args: JSONValue): Capability {
   const scope = [a.get("account").str, a.get("channel_id").str, a.get("user_id").str].filter(
     (part): part is string => part !== null && part !== "",
   );
+  // A search's query is its read scope, so it belongs in the capability the
+  // rule key hashes — otherwise one "always allow" on a benign query
+  // authorises every later search of the owner's whole Slack. It rides its own
+  // field rather than the target because a query is free text and could
+  // contain the target's delimiter. Only searches carry one; every other
+  // action is bounded by its target alone.
+  const selector = action === "messages.search" ? (a.get("query").str ?? undefined) : undefined;
   return {
     kind: "tool",
     tool: `slack.${action}`,
     target: scope.length > 0 ? scope.join("/") : undefined,
+    selector: selector === "" ? undefined : selector,
   };
 }
 
