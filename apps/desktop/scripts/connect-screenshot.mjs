@@ -45,6 +45,11 @@ const CHAT = {
     members: ["+14155550193", "+16285550112"],
   },
 };
+const FAMILY_CHAT = {
+  uid: "chat_family",
+  label: "+1 (415) 555-0188 · Family group",
+  recipients: { line: "+14155550188", members: [] },
+};
 const ACTIVE_AGENT = {
   agentId: "cag_groceries",
   name: "Household helper",
@@ -353,11 +358,7 @@ const SCREENS = [
     name: "cloud-picker",
     cloud: {
       ...CLOUD_READY,
-      cloudChats: [CHAT, {
-        uid: "chat_family",
-        label: "+1 (415) 555-0188 · Family group",
-        recipients: { line: "+14155550188", members: [] },
-      }],
+      cloudChats: [CHAT, FAMILY_CHAT],
     },
     prepare: async (win) => {
       await clickText(win, "Set up cloud agent", 0);
@@ -375,11 +376,7 @@ const SCREENS = [
     name: "cloud-new-chat",
     cloud: {
       ...CLOUD_READY,
-      cloudChats: [CHAT, {
-        uid: "chat_family",
-        label: "+1 (415) 555-0188 · Family group",
-        recipients: { line: "+14155550188", members: [] },
-      }],
+      cloudChats: [CHAT, FAMILY_CHAT],
     },
     prepare: async (win) => {
       await clickText(win, "Set up cloud agent", 0);
@@ -433,7 +430,10 @@ const SCREENS = [
     name: "cloud-chat-forbidden",
     cloud: {
       ...CLOUD_READY,
-      cloudAgents: [{ ...ACTIVE_AGENT, recipients: null }],
+      cloudAgents: [{
+        ...ACTIVE_AGENT,
+        recipients: { line: null, members: CHAT.recipients.members },
+      }],
       cloudAgentsError: "Method Not Allowed",
       cloudChatsError: "This Mac cannot list chats yet. Try re-activating it, then try again.",
       cloudChatsNeedReactivation: true,
@@ -527,6 +527,21 @@ const SCREENS = [
     ],
   },
   {
+    name: "rules-deny",
+    cloud: CLOUD_EMPTY,
+    prepare: async (win) => {
+      await win.webContents.executeJavaScript(`window.__domoSelectTab("rules")`);
+      await waitFor(win, `document.querySelector("#view .panel.rules")`, "the Rules pane");
+      await clickElementText(win, ".chip", "Deny everything");
+      await waitFor(
+        win,
+        `document.querySelector("#view").innerText.includes("Every request is refused without asking you.")`,
+        "the Deny mode explanation",
+      );
+    },
+    expect: ["Approvals", "Deny everything", "Every request is refused without asking you."],
+  },
+  {
     // The form is a MODAL now, not an inline expander — same click, same
     // fields, over the pane instead of inside it.
     name: "static-form",
@@ -571,6 +586,19 @@ async function clickAria(win, label) {
     })()
   `);
   if (!found) throw new Error(`no button labelled ${label}`);
+}
+
+async function clickElementText(win, selector, label) {
+  const point = await win.webContents.executeJavaScript(`(() => {
+    const element = [...document.querySelectorAll(${JSON.stringify(selector)})]
+      .find((candidate) => candidate.textContent.trim() === ${JSON.stringify(label)});
+    if (!element) return null;
+    const rect = element.getBoundingClientRect();
+    return { x: Math.round(rect.left + rect.width / 2), y: Math.round(rect.top + rect.height / 2) };
+  })()`);
+  if (!point) throw new Error(`no ${selector} labelled ${label}`);
+  win.webContents.sendInputEvent({ type: "mouseDown", ...point, button: "left", clickCount: 1 });
+  win.webContents.sendInputEvent({ type: "mouseUp", ...point, button: "left", clickCount: 1 });
 }
 
 async function chooseLastChatOption(win) {

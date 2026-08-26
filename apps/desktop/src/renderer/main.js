@@ -486,7 +486,7 @@ async function renderRules() {
         "Every request is allowed without asking you and without review.";
     } else if (mode === "deny") {
       modeHintLine.textContent =
-        "Any request a rule doesn't already cover is refused without asking you.";
+        "Every request is refused without asking you.";
     } else {
       // Unknown stored values keep the card useful by falling back to Ask.
       modeHintLine.textContent = mode === "adversarial" ? "" :
@@ -1275,8 +1275,7 @@ function cloudEntityRow(row, agent, redraw) {
     ]),
     rosterActions(row ?? { name }, "cloud", redraw, {
       messageAgentId: agent?.agentId ?? row?.agentId,
-      messageDisabled: agent?.status !== "running" || !agent?.recipients ||
-        (!agent.recipients.line && !agent.recipients.members?.length),
+      messageDisabled: agent?.status !== "running" || !agent?.recipients?.line?.trim(),
       disabled: !row,
     }),
   ]);

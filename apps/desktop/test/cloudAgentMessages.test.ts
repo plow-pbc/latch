@@ -30,4 +30,11 @@ describe("cloudAgentMessagesUrl", () => {
       recipients: null,
     }], running.agentId)).toBeNull();
   });
+
+  it("does not message only the humans when the agent line is unknown", () => {
+    expect(cloudAgentMessagesUrl([{
+      ...running,
+      recipients: { line: null, members: ["+14155550193", "+16285550112"] },
+    }], running.agentId)).toBeNull();
+  });
 });
