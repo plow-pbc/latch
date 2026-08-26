@@ -469,7 +469,7 @@ function activityKind(
     return "browser";
   }
   const request = value("intent_received", "request") ?? "";
-  if (has("tool_invoked") || request.startsWith("use ")) return "command";
+  if (has("tool_invoked") || has("tool_error") || request.startsWith("use ")) return "command";
   if (
     request.startsWith("read file") ||
     request.startsWith("write file") ||

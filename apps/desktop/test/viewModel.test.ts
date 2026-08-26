@@ -312,7 +312,11 @@ describe("the audit names the device writes are the names this reads", () => {
         agentId: "agent-1",
         agentDisplay: "Agent",
         deviceId: device.identity.deviceId,
-        request: "read Slack messages",
+        // `request` is agent-controlled free text (deviceAgent.ts), chosen
+        // here to collide with the file-kind heuristic below it: if
+        // `has("tool_invoked")` were removed from activityKind, this would
+        // fall through and read as "file" instead of "command".
+        request: "read file: not actually a file",
         capabilities: [{ kind: "tool", tool: "slack.messages.list", target: "T1/C1" }],
         sessionId: "s1",
       });
@@ -326,6 +330,42 @@ describe("the audit names the device writes are the names this reads", () => {
       // An event this file does not know falls through to `default: text =
       // event` — the raw name, shown to the owner as if it were a sentence.
       expect(lines.filter((l) => l.startsWith("tool_"))).toEqual([]);
+    } finally {
+      fs.rmSync(home, { recursive: true, force: true });
+    }
+  });
+
+  // A `tool_error` before any `tool_invoked` is a real producer path — an
+  // action this Mac's table doesn't know throws inside executeToolIntent
+  // before the invoked record is written (deviceAgent.ts) — so this is not a
+  // hypothetical shape. Same colliding request text as above: only an
+  // explicit `has("tool_error")` check keeps this "command".
+  it("a Slack tool error reads as a used tool too, even with no tool_invoked", async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "latch-viewmodel-"));
+    try {
+      const device = new DeviceAgent(
+        home,
+        "Test Mac",
+        new HeadlessPolicy({ intent: "allow_once" }),
+        null,
+        undefined,
+        { call: async () => ({ messages: [] }) },
+      );
+      const intent = makeIntent({
+        agentId: "agent-1",
+        agentDisplay: "Agent",
+        deviceId: device.identity.deviceId,
+        request: "read file: not actually a file",
+        capabilities: [{ kind: "tool", tool: "slack.channels.delete", target: "T1" }],
+        sessionId: "s1",
+      });
+      await device.handleIntent(intent, { account: "T1" });
+
+      const [activity] = auditActivities(device.audit.entries());
+      const lines = activity.timeline.map((s) => s.text);
+      expect(lines).toContain("Tool error: slack.channels.delete — not a Slack action this Mac can perform");
+      expect(lines.some((l) => l.startsWith("Tool used"))).toBe(false);
+      expect(activity.kind).toBe("command");
     } finally {
       fs.rmSync(home, { recursive: true, force: true });
     }
