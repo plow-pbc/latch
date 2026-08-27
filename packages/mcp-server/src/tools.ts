@@ -30,6 +30,7 @@ import {
   LIVE_WEB_ROUTING,
   MAX_CLICK_TIMEOUT_MS,
   MAX_FILE_BYTES,
+  needsToken,
   vendoredProvider,
 } from "@domo/device-core";
 import { DeferredResults, DeniedError, Progress } from "./deferred.js";
@@ -346,7 +347,17 @@ export const TOOLS: ToolSpec[] = [
       const rawCwd = a.get("cwd").str;
       const capabilities: Capability[] = [
         { kind: "process.exec", argv, cwd: rawCwd === null ? undefined : await resolved(rawCwd) },
-        { kind: "network", allowed: a.get("network").bool ?? false },
+        // A vendored provider implies network. Its whole purpose is to reach
+        // the service its minted token authenticates against, so a gog call
+        // approved without it is a call the sandbox then denies — and making
+        // the agent remember a flag whose answer is never in doubt is a
+        // footgun a skill can only paper over. The human still sees it: it is
+        // in the capability set they approve, like any other network grant.
+        // `--help` is exempt for the same reason it mints nothing.
+        {
+          kind: "network",
+          allowed: (a.get("network").bool ?? false) || (provider !== null && needsToken(argv)),
+        },
       ];
       if (readPaths.length > 0) capabilities.push({ kind: "fs.read", paths: readPaths });
       if (writePaths.length > 0) capabilities.push({ kind: "fs.write", paths: writePaths });

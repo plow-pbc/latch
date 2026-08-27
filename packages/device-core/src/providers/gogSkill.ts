@@ -26,9 +26,10 @@ through \`plow_run_command\`, like any other command. There is no Google tool in
 ## What you can reach
 
 Most of Gmail and Calendar. **Drive, Docs, Sheets and the rest of gog are not
-connected at all** — the token carries four Google scopes (gmail.readonly,
-gmail.modify, calendar.readonly, calendar.events), so everything outside those
-two groups returns a 403 from Google.
+connected at all** — this Mac refuses any group other than \`gmail\` and
+\`calendar\` before approval, before the token is minted and before anything
+runs, so those never reach Google at all. The token carries four Google scopes
+(gmail.readonly, gmail.modify, calendar.readonly, calendar.events).
 
 Inside them the scopes are not total either: \`gmail settings\` (forwarding,
 delegates, filters, send-as, vacation) needs \`gmail.settings.*\`, and calendar
@@ -49,6 +50,10 @@ Useful starting points:
 
 Each element is one argument. There is no shell here, so nothing is quoted or
 word-split: a query with spaces is a single element, exactly as written.
+
+You do not pass \`network\`. A gog command reaches Google by definition, so this
+Mac adds the network capability itself and the human sees it in the approval
+dialog. \`--help\` is the exception, and needs nothing: it prints and exits.
 
 Run \`["gog","--help"]\` for the top level and \`["gog","gmail","--help"]\` (or any
 group) for the rest; the binary is the authority, not this page. Help runs
