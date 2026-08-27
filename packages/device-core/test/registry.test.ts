@@ -48,9 +48,8 @@ describe("the gog provider's refusal", () => {
     ["a flag that would disarm the belt", ["gog", "gmail", "search", "q", "--wrap-untrusted=false"], "--wrap-untrusted"],
     ["a flag that reads a local file into an outbound message", ["gog", "gmail", "send", "--body-file", "/etc/passwd"], "a --*-file flag"],
     ["a flag that writes to a caller-chosen path", ["gog", "gmail", "attachment", "1", "2", "--out", "/tmp/x"], "a --out* flag"],
-    // The one command check this Mac makes. An out-of-scope group is the case
-    // that SPENDS the token — verified: `gog drive search x` reaches Google
-    // and returns 401, while every in-group usage mistake fails locally.
+    // The one command check this Mac makes; `refuse`'s doc owns what each
+    // shape would otherwise cost.
     // Each row pins WHICH sentence, not just that one came back. Collapsing
     // the spelling branches into the scope branch — restoring "told its scope
     // was wrong when its spelling was" — leaves a not-null assertion green.
@@ -58,10 +57,7 @@ describe("the gog provider's refusal", () => {
     ["a group that does not exist", ["gog", "nonsense", "x"], "only Gmail and Calendar"],
     ["no group at all", ["gog"], "command is missing"],
     // The two mistakes the skill flags as likeliest, refused for DIFFERENT
-    // reasons: gog runs a leading global flag happily (verified — `--json
-    // gmail search x` reaches Google), so it is refused positionally because
-    // the scope check reads rest[0]; the dotted spelling gog cannot see as a
-    // command at all. Each needs its own sentence.
+    // reasons — see `refuse`'s doc. Each needs its own sentence.
     ["a leading global flag", ["gog", "--json", "gmail", "search", "q"], "before any flags"],
     ["the dotted spelling", ["gog", "gmail.search", "q"], "separate words"],
   ])("refuses %s", (_why, argv, expected) => {
@@ -71,8 +67,9 @@ describe("the gog provider's refusal", () => {
   it("leaves gog's own usage errors to gog", () => {
     // gog reports these better than a mirrored command list can — "unexpected
     // argument serach, did you mean \"search\"?" — and reports them LOCALLY,
-    // without reaching Google. Mirroring its command grammar
-    // bought a worse message for a case that costs nothing.
+    // without reaching Google. Mirroring its command grammar bought a worse
+    // message for a case gog already handles; `refuse`'s doc has the cost,
+    // which is not nothing — the mint happens before exec.
     for (const argv of [
       ["gog", "gmail", "serach", "q"],
       ["gog", "gmail", "drafts"],

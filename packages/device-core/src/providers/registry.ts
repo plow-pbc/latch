@@ -64,17 +64,20 @@ export interface VendoredProvider {
    * CLI — hazards a human cannot see by reading the command, because the
    * command itself looks legitimate.
    *
-   * And four shapes of a wrong command, each refused for its own reason:
+   * And four shapes of a wrong command. TWO of them reach Google if nothing
+   * refuses them, and they are not equally bad — which is the axis, not "one
+   * costs a call and the rest are free":
    *
-   *  - **An out-of-scope group.** gog would try it — `drive search x` reaches
-   *    Google and returns 401 — so this is the one that spends a Google call.
-   *  - **A leading global flag.** gog runs this perfectly happily: verified at
-   *    0.36.0, `--json gmail search x` parses `--json` as a global and reaches
-   *    Google. It is refused positionally — the scope check reads `rest[0]`,
-   *    so a flag sitting there means nothing is checking the group at all.
+   *  - **An out-of-scope group.** gog tries it: verified at 0.36.0, `drive
+   *    search x` reaches Google and comes back 401. A spent call with nothing
+   *    to show for it.
+   *  - **A leading global flag.** Worse, and the reason this branch exists at
+   *    all: verified too, `--json gmail search x` parses `--json` as a global
+   *    and **succeeds**. It is refused positionally — the scope check reads
+   *    `rest[0]`, so a flag sitting there means nothing checked the group.
    *  - **A dotted spelling.** gog cannot see it as a command; its own error
    *    calls it an unexpected argument, which does not tell an agent to use
-   *    separate words.
+   *    separate words. Reaches nothing.
    *  - **An empty argv**, which names nothing to run.
    *
    * It deliberately does NOT mirror the binary's command grammar. A misspelt
@@ -99,11 +102,9 @@ export interface VendoredProvider {
 /**
  * The groups the minted token's four Google scopes actually reach.
  *
- * The ONLY command check this Mac makes, and it exists for one reason: an
- * out-of-scope group is the case that SPENDS the token. Verified against
- * pinned 0.36.0 — `gog drive search x` reaches Google and returns 401, while
- * every in-group usage mistake fails locally — no Google call, though the mint
- * has already happened by then (see `refuse`).
+ * The only command check this Mac makes. What each refused shape would
+ * otherwise cost is written once, in `refuse`'s doc — a second account here is
+ * what produced three rounds of one copy drifting out of step with another.
  */
 const GOG_GROUPS: ReadonlySet<string> = new Set(["gmail", "calendar"]);
 
@@ -149,15 +150,10 @@ const GOG: VendoredProvider = {
     // refuses `--help` in a flag's value position (`--subject --help` →
     // "expected string value"), so that shape needs no handling here.
     if (isHelpInvocation(rest)) return null;
-    // The group, and nothing finer. gog reports its own usage errors better
-    // than a mirrored command list can — `unexpected argument serach, did you
-    // mean "search"?` — and reports them without reaching Google. The mint has
-    // already happened by then; `refuse`'s doc has the full cost. What gog
-    // cannot do is decline a group this Mac's token has no scope for: `drive
-    // search x` reaches Google and comes back 401. So this checks the one
-    // thing that is actually ours to check.
+    // The group, and nothing finer — what that leaves to gog and what each
+    // refused shape would otherwise cost are in `refuse`'s doc above.
     const group = rest[0];
-    // Three different mistakes, three sentences — and NONE of them quotes the
+    // Four different mistakes, four sentences — and NONE of them quotes the
     // argv back. These reach the approval dialog and the append-only audit
     // log, so the same rule `gogFlags` follows applies: a reason may name a
     // rule, never the caller's text. The rule is enough to self-correct from.
