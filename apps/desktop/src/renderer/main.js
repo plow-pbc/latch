@@ -8,7 +8,15 @@ import {
   PURPOSE_PLACEHOLDER,
 } from "./approvals.js";
 
-import { canEditChats, editorChats } from "./chatSets.js";
+import {
+  canEditChats,
+  chooseChat,
+  dropChat,
+  editorChats,
+  makeHomeChat,
+  orderedChats,
+  sameChatSet,
+} from "./chatSets.js";
 import { el, icon } from "./dom.js";
 import { renderVault, vaultConfirmLeave } from "./vault.js";
 
@@ -934,10 +942,27 @@ function visibleCloudAgents(state) {
  */
 function cloudChatHolders(state, exceptAgentId = null) {
   const holders = new Map();
+  const claim = (uid, name) => {
+    if (!uid || holders.has(uid)) return;
+    holders.set(uid, name || "another agent");
+  };
+  // BOTH reads, because either can fail on its own. The agent list is the
+  // better source — it is the set the server enforces — but when it fails and
+  // the credential roster does not, indexing agents alone leaves every chat
+  // looking free, and the picker offers a chat whose only possible answer is a
+  // 409. The roster's `chatUids` is the credential's grant, which moves with
+  // the agent's set, so it says the same thing a moment later.
   for (const agent of visibleCloudAgents(state)) {
     if (agent.agentId === exceptAgentId) continue;
-    for (const uid of agent.chatUids ?? []) {
-      if (!holders.has(uid)) holders.set(uid, agent.name || "another agent");
+    for (const uid of agent.chatUids ?? []) claim(uid, agent.name);
+  }
+  for (const row of state.roster?.cloud ?? []) {
+    if (!row.agentId || row.agentId === exceptAgentId) continue;
+    for (const uid of row.chatUids ?? []) {
+      // A credential granted every chat says nothing about which one an agent
+      // serves, and disabling the whole list on it would be a wildcard read as
+      // a claim on everything.
+      if (uid !== "*") claim(uid, row.name);
     }
   }
   return holders;
@@ -970,16 +995,18 @@ function firstUsableControl(panel) {
 }
 
 function chatChecklist({ chats, holders, selected = [], onChange }) {
-  const chosen = new Set(selected.filter((uid) => chats.some((chat) => chat.uid === uid)));
-  let home = selected.find((uid) => chosen.has(uid)) ?? null;
-
-  // Home first, then the rest in list order. Home is only ever prepended if it
-  // is still chosen: unchecking the home chat asks this for the next one, and a
-  // version that trusted `home` blindly answered with the chat just removed.
-  const ordered = () => {
-    const rest = chats.map((chat) => chat.uid).filter((uid) => chosen.has(uid) && uid !== home);
-    return home && chosen.has(home) ? [home, ...rest] : rest;
+  const order = chats.map((chat) => chat.uid);
+  // What the agent already serves. Retained chats keep this order on the way
+  // out, so a set nobody changed is sent back exactly as it arrived.
+  const keepOrder = selected.filter((uid) => order.includes(uid));
+  // The rules live in `chatSets.js`, whole and tested; this holds the answer
+  // and repaints from it.
+  let selection = {
+    chosen: selected.filter((uid) => order.includes(uid)),
+    home: selected.find((uid) => order.includes(uid)) ?? null,
   };
+  const chosenNow = () => new Set(selection.chosen);
+  const ordered = () => orderedChats(selection, order, keepOrder);
 
   // Each row is built ONCE and updated in place. Rebuilding the list from a
   // checkbox's own change handler detaches the <label> that click is still
@@ -987,22 +1014,16 @@ function chatChecklist({ chats, holders, selected = [], onChange }) {
   // checkbox and toggles it straight back.
   const rows = chats.map((chat) => {
     const heldBy = holders.get(chat.uid);
-    const taken = !!heldBy && !chosen.has(chat.uid);
+    const taken = !!heldBy && !selection.chosen.includes(chat.uid);
     const row = el("label", { class: `chat-option${taken ? " disabled" : ""}` });
 
     const box = el("input", { attrs: { type: "checkbox" } });
-    box.checked = chosen.has(chat.uid);
+    box.checked = selection.chosen.includes(chat.uid);
     box.disabled = taken;
     box.addEventListener("change", () => {
-      if (box.checked) {
-        chosen.add(chat.uid);
-        // The first chat chosen is home until someone says otherwise.
-        if (!home || !chosen.has(home)) home = chat.uid;
-      } else {
-        chosen.delete(chat.uid);
-        // Home is always one of the chosen: unchecking it hands ★ on.
-        if (home === chat.uid) home = ordered()[0] ?? null;
-      }
+      selection = box.checked
+        ? chooseChat(selection, chat.uid)
+        : dropChat(selection, chat.uid, order);
       paint();
       onChange?.();
     });
@@ -1026,7 +1047,7 @@ function chatChecklist({ chats, holders, selected = [], onChange }) {
       // Without this the click also activates the surrounding <label>, which
       // would toggle the very chat the user is promoting to home.
       event.preventDefault();
-      home = chat.uid;
+      selection = makeHomeChat(selection, chat.uid);
       paint();
       onChange?.();
     });
@@ -1036,11 +1057,11 @@ function chatChecklist({ chats, holders, selected = [], onChange }) {
   });
 
   const paint = () => {
+    const picked = chosenNow();
     for (const { chat, box, make } of rows) {
-      const picked = chosen.has(chat.uid);
-      box.checked = picked;
-      make.hidden = !picked;
-      const isHome = picked && home === chat.uid;
+      box.checked = picked.has(chat.uid);
+      make.hidden = !picked.has(chat.uid);
+      const isHome = picked.has(chat.uid) && selection.home === chat.uid;
       make.classList.toggle("on", isHome);
       make.textContent = isHome ? "★ Home" : "Make home";
     }
@@ -1051,7 +1072,7 @@ function chatChecklist({ chats, holders, selected = [], onChange }) {
   return {
     node: list,
     chosen: ordered,
-    homeLabel: () => chats.find((chat) => chat.uid === home)?.label ?? null,
+    homeLabel: () => chats.find((chat) => chat.uid === selection.home)?.label ?? null,
   };
 }
 
@@ -1247,11 +1268,10 @@ function openCloudEditor(trigger, agent, state, redraw) {
     onChange: () => syncEditor(),
   });
 
-  const unchanged = () => {
-    const chosen = checklist.chosen();
-    return chosen.length === baseline.length &&
-      chosen.every((uid, index) => uid === baseline[index]);
-  };
+  // Home and membership, never index for index: the checklist orders by the
+  // account's chat list and the server answers in its own, so a three-chat
+  // agent opened with Save alive and one click restarted it for nothing.
+  const unchanged = () => sameChatSet(checklist.chosen(), baseline);
   const syncEditor = () => {
     const chosen = checklist.chosen();
     save.disabled = chosen.length === 0 || unchanged();
