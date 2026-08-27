@@ -97,7 +97,7 @@ const SCREENS = [
     },
     // The one failure the user gets no other signal about: a wrong prefix is
     // answered with silence on both channels.
-    expect: ["Still nothing", "it has to start with", "Plow Activate:", "Try Again"],
+    expect: ["Not signed in yet", "it has to start with", "Plow Activate:", "Try Again"],
     expectFocus: "Try Again",
   },
   {

@@ -152,12 +152,15 @@ function waitingScreen() {
   return [
     el("div", { class: "orow" }, [
       el("span", { class: `status-dot${state.activationStale ? "" : " on"}` }),
-      el("h2", { text: state.activationStale ? "Still nothing" : "Waiting for your text" }),
+      el("h2", { text: state.activationStale ? "Not signed in yet" : "Waiting for your text" }),
     ]),
     el("p", {
       class: "faint lede",
+      // Reason-neutral: a stale screen can mean a text that never arrived, an
+      // expired code, or a handoff that failed AFTER the server verified the
+      // text — `state.message` below says which, so this must not guess.
       text: state.activationStale
-        ? "Plow never got the message. It has to start with the words below — anything before them and Plow ignores it silently."
+        ? "The message has to start with the words below — anything before them and Plow ignores it silently."
         : "Send the message from Messages and this screen will move on by itself. Nothing to type.",
     }),
     el("div", { class: "bigcode mono", text: activation ? activation.displayCode : "—" }),

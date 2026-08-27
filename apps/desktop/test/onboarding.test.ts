@@ -108,6 +108,12 @@ class FakePlow {
     return { token: DEVICE_TOKEN, keyPrefix: DEVICE_TOKEN.slice(5, 13), name };
   }
 
+  revoked: string[] = [];
+
+  async revokeDeviceCredential(token: string): Promise<void> {
+    this.revoked.push(token);
+  }
+
 }
 
 let home: string;
@@ -1072,6 +1078,64 @@ describe("signing out", () => {
     expect(plow.minted.length).toBe(mintedBefore);
     expect(loadSettings(home).relayCredential).toBe("");
     expect(loadSettings(home).accountUid).toBe("");
+    expect(onboarding.state().step).not.toBe("connected");
+  });
+});
+
+describe("a sign-out while the credential handoff is in the air", () => {
+  it("aborts before minting when sign-out lands during relayInfo", async () => {
+    let release = () => {};
+    const inAir = new Promise<void>((r) => {
+      release = () => r();
+    });
+    plow.redeems = [{ status: "verified", token: SESSION_TOKEN }];
+    const original = plow.relayInfo.bind(plow);
+    plow.relayInfo = async (token: string) => {
+      await inAir;
+      return original(token);
+    };
+    const onboarding = build();
+    await onboarding.begin();
+    await settle();
+
+    signOutOfPlow(home);
+    onboarding.reset();
+    release();
+    await settle();
+
+    // Nothing was minted, so there is nothing to revoke and nothing persisted.
+    expect(plow.minted).toHaveLength(0);
+    expect(loadSettings(home).relayCredential).toBe("");
+    expect(onboarding.state().step).not.toBe("connected");
+  });
+
+  it("revokes a credential minted under a sign-out that raced the mint itself", async () => {
+    // The sign-out's own revoke ran before this credential existed, so if the
+    // mint's response lands after the sign-out, the credential must be retired
+    // by the continuation — persisting it would silently undo the sign-out
+    // with a fresh spend-capable credential.
+    let release = () => {};
+    const inAir = new Promise<void>((r) => {
+      release = () => r();
+    });
+    plow.redeems = [{ status: "verified", token: SESSION_TOKEN }];
+    const original = plow.mintDeviceCredential.bind(plow);
+    plow.mintDeviceCredential = async (token: string, name: string) => {
+      const minted = await original(token, name);
+      await inAir;
+      return minted;
+    };
+    const onboarding = build();
+    await onboarding.begin();
+    await settle();
+
+    signOutOfPlow(home);
+    onboarding.reset();
+    release();
+    await settle();
+
+    expect(plow.revoked).toEqual([DEVICE_TOKEN]);
+    expect(loadSettings(home).relayCredential).toBe("");
     expect(onboarding.state().step).not.toBe("connected");
   });
 });

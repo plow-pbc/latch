@@ -639,8 +639,22 @@ export class Onboarding {
     sessionToken: string,
     chat: ActivationChat | null = null,
   ): Promise<void> {
+    // A sign-out can land inside the awaits below, and it must stay signed
+    // out: minting and persisting past it would hand the account a live
+    // spend-capable credential its owner just retired. `pollGeneration` is
+    // bumped by every path that abandons this login — reset, the phone
+    // fallback, a fresh mint — so it is the epoch to check against.
+    const epoch = this.pollGeneration;
     const info = await this.deps.api.relayInfo(sessionToken);
+    if (epoch !== this.pollGeneration) return;
     const minted = await this.deps.api.mintDeviceCredential(sessionToken, this.deps.deviceName);
+    if (epoch !== this.pollGeneration) {
+      // The sign-out landed during the mint itself, so its revoke never saw
+      // this credential. Retire it before it is dropped — best effort, the
+      // same contract sign-out's own revoke keeps.
+      await this.deps.api.revokeDeviceCredential(minted.token).catch(() => {});
+      return;
+    }
 
     // Written 0600 by saveSettings. This is the only copy of the credential and
     // it is never handed to the renderer.
