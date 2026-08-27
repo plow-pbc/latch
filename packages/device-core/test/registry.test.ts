@@ -208,7 +208,7 @@ describe("the scope bound", () => {
   // gog enforces this ITSELF, before any network call. `refuse` still checks
   // the group because it does so before the dialog and the mint; this is the
   // layer beneath it. Per-version verdicts: step 5 of the checklist in
-  // `scripts/fetch-gog.mjs`.
+  // `scripts/vendored-providers.mjs`.
   // Across the interpolation seam: the page an agent reads is built from the
   // same list, so an empty or doubled substitution shows up here rather than
   // in someone's transcript. The scope is stated in prose at ONE site now —

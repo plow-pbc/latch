@@ -65,7 +65,7 @@ export interface VendoredProvider {
    *
    * The per-version verdicts behind all of that — what dispatches, what is
    * refused pre-network, and that help is unaffected — are step 5 of the
-   * pin-bump checklist in `scripts/fetch-gog.mjs`, which is their only home.
+   * pin-bump checklist in `scripts/vendored-providers.mjs`, which is their only home.
    */
   readonly belt: readonly string[];
   /**

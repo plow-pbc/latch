@@ -105,7 +105,7 @@ describe("vendorDirs", () => {
   });
 
   it("finds the directory a from-source checkout fetched", () => {
-    // `just fetch-gog` writes <root>/vendor/gog/<arch>/gog, so repoRoot must be
+    // `just fetch-vendored` writes <root>/vendor/gog/<arch>/gog, so repoRoot must be
     // the WORKSPACE root — app.getAppPath() is <root>/apps/desktop.
     const repoRoot = tree("vendor/gog");
     expect(vendorDirs({ repoRoot })).toEqual([path.join(repoRoot, "vendor/gog", process.arch)]);

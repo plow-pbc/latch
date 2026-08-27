@@ -123,7 +123,7 @@ describe("resolveVendoredBinary", () => {
   });
 
   it("finds the binary a from-source checkout fetched into vendor/gog", () => {
-    // `just fetch-gog` writes <root>/vendor/gog/<arch>/gog, so repoRoot must be
+    // `just fetch-vendored` writes <root>/vendor/gog/<arch>/gog, so repoRoot must be
     // the WORKSPACE root — app.getAppPath() is <root>/apps/desktop and the
     // lookup silently resolved nothing.
     const repoRoot = tree("vendor/gog");

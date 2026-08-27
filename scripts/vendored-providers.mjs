@@ -8,8 +8,12 @@
  * safety probe.
  *
  * `command` is the ONE spelling: argv[0], the vendor directory, the binary
- * inside it, and the row in `PROVIDERS`. `registry.test.ts` asserts the two
- * lists agree, because they live in different halves of the repo.
+ * inside it, the member extracted from the release tarball, and the row in
+ * `PROVIDERS`. A release naming its binary anything else — `bin/foo`,
+ * `foocli` — is unrepresentable, because tar preserves interior paths and
+ * `resolveVendoredBinary` only ever looks at `vendor/<command>/<arch>/<command>`.
+ * `registry.test.ts` asserts the two lists agree, because they live in
+ * different halves of the repo.
  */
 import { execFileSync } from "node:child_process";
 

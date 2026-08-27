@@ -20,10 +20,10 @@
  * set nor either rule.
  *
  * Which exact spellings were tried, and their verdicts, are step 3 of the
- * pin-bump checklist in `scripts/fetch-gog.mjs` — one list, in the place a
+ * pin-bump checklist in `scripts/vendored-providers.mjs` — one list, in the place a
  * bumper is already standing. The schema also reports ZERO negatable flags
  * anywhere — globals or gmail/calendar.
- * `scripts/fetch-gog.mjs` asserts the negated form against the binary it just
+ * `scripts/vendored-providers.mjs` asserts the negated form against the binary it just
  * extracted, so a pin bump that makes a flag negatable fails the FETCH — the
  * earliest point it can. It does NOT cover every way that assertion could go
  * blind.

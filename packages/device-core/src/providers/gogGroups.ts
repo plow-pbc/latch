@@ -31,7 +31,7 @@ export const GOG_ALIASES = ["mail", "email", "cal"] as const;
  * wrong-command shape `refuse` enumerates fails it, and the other branches
  * only choose a better sentence. What each shape would otherwise cost is
  * written once, in `refuse`'s doc; the per-version verdicts behind the bound
- * are step 5 of the pin-bump checklist in `scripts/fetch-gog.mjs`.
+ * are step 5 of the pin-bump checklist in `scripts/vendored-providers.mjs`.
  */
 export const GOG_GROUPS: ReadonlySet<string> = new Set<string>([
   ...GOG_CANONICAL,

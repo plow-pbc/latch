@@ -15,7 +15,15 @@
  */
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -111,7 +119,14 @@ function fetchProvider(provider) {
 
 // Only when run as a script, so a test can import the predicate above without
 // the CLI firing on import.
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+//
+// REALPATHS, both sides. Node resolves symlinks when it computes a module's URL
+// but not when it sets argv[1], so through any symlinked path component — a
+// checkout under /tmp on macOS, a symlinked home — the two differ, this block
+// never runs, and the script exits 0 having fetched nothing. `_package` reads
+// that as a successful fetch and pays the whole browser build before afterPack
+// fails on a missing extraResources source.
+if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const arg = process.argv[2];
   const wanted = arg === "--all" ? VENDORED : [providerNamed(arg)];
   if (!arg || wanted[0] == null) {
