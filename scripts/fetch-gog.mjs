@@ -14,8 +14,8 @@
  * ## Bumping the pin — the whole checklist, and its only home
  *
  * Every bump runs through this script, so this is where the version-specific
- * contract lives. `gogFlags.ts` and `registry.ts` keep only the invariants
- * their own code depends on and point here.
+ * contract lives. `gogFlags.ts`, `registry.ts` and `providers/gogGroups.ts`
+ * keep only the invariants their own code depends on and point here.
  *
  *  1. Set `VERSION`, and set all four digests: each arch's `sha256` (the
  *     tarball) and `binary` (what comes out of it). Derive them from the

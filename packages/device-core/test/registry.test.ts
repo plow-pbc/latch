@@ -216,9 +216,8 @@ describe("the scope bound", () => {
     // EVERY occurrence, not any: the page names it more than once, and
     // `toContain` passes while one of them says something else.
     const named = gog.skill.body.match(/--enable-commands=[^`\s]*/g) ?? [];
-    // The page has to name it at all, and every naming has to agree — a body
-    // that mentioned it zero times would otherwise pass vacuously.
-    expect(named).not.toHaveLength(0);
+    // Every naming agrees, and there is at least one: an empty match set
+    // fails this too, since `[]` is not `[bound]`.
     expect([...new Set(named)]).toEqual([bound]);
   });
 
