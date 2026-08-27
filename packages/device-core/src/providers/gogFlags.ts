@@ -6,41 +6,26 @@
  * flags in `registry.ts` are decorative — verified live at 0.36.0, appending
  * `--readonly=false` to a `gmail send` that is otherwise refused before network
  * dispatch let it reach Google. This module is the gate, not hardening around
- * one.
+ * one. It is deliberately NOT an attempt to police gog's flag grammar
+ * generally; that chase was declined once for the account flag, which is inert
+ * under a supplied token. These are not.
  *
- * Deliberately NOT an attempt to police gog's flag grammar generally. That
- * chase was declined once, correctly, for the account flag — which is inert
- * under a supplied token. These are not inert.
+ * **Double-dash only, verified rather than assumed.** kong rejects the
+ * single-dash spelling of a long flag, reading `-r` as a shorthand cluster, and
+ * none of these has a shorthand. The other spelling kong can mint is the
+ * negated `--no-<name>`, which would disarm a boolean flag while matching
+ * neither the set nor either rule — so the fetch asserts against the binary it
+ * just extracted that no gog flag is negatable, failing a pin bump at the
+ * earliest point it can.
  *
- * **Double-dash only, and that is verified rather than assumed.** gog 0.36.0
- * parses with kong, which rejects the single-dash spelling of a long flag:
- * kong reads `-r` as a shorthand cluster, and none of these flags has a
- * shorthand. The other spelling kong can mint is the negated one,
- * `--no-<name>`, which would disarm a boolean flag while matching neither the
- * set nor either rule.
- *
- * Which exact spellings were tried, and their verdicts, are step 3 of the
- * pin-bump checklist in `scripts/vendored-providers.mjs` — one list, in the place a
- * bumper is already standing. The schema also reports ZERO negatable flags
- * anywhere — globals or gmail/calendar.
- * `scripts/vendored-providers.mjs` asserts the negated form against the binary it just
- * extracted, so a pin bump that makes a flag negatable fails the FETCH — the
- * earliest point it can. It does NOT cover every way that assertion could go
- * blind.
- *
- * What a bumper has to DO is not written here. Every bump runs through that
- * script, so its header carries the whole checklist — the digests, the probes
- * to re-run by hand, and what the automated assertion does and does not cover.
- * A second copy here is a second thing to keep in step.
+ * What a bumper has to DO is not written here. Every bump runs through
+ * `scripts/vendored-providers.mjs`, whose checklist carries the digests, the
+ * probes to re-run by hand, and what the automated assertion does and does not
+ * cover. A second copy here is a second thing to keep in step.
  */
 
-/**
- * Flags that would override the gate itself, plus the one file-reading flag
- * with no shared suffix.
- *
- * Long spellings only, and that is sufficient rather than an oversight:
- * checked against gog 0.36.0, none of these has a shorthand alias.
- */
+/** Flags that would override the gate itself, plus the one file-reading flag
+ * with no shared suffix. */
 const RESERVED_EXACT: ReadonlySet<string> = new Set([
   "--readonly",
   "--gmail-no-send",
@@ -84,26 +69,17 @@ function ruleLabelFor(flag: string): string | null {
  * A safe-to-display name for the first caller-supplied argument that would
  * override the gate, or null when none does.
  *
- * **The return value is never agent text.** An exact match names the flag,
- * which is one of the closed set above; a RULE match returns a fixed label,
- * because `--<anything>-file` matches whatever the caller spelled and this
- * string reaches an error message, the approval dialog and the append-only
- * audit log. `registry.ts`'s refusal reasons name a rule and never the argv,
- * for the same reason; a gate that quoted it here would reopen that hole one
- * module over.
+ * **The return value is never agent text.** An exact match names a flag from
+ * the closed set above; a RULE match returns a fixed label, because
+ * `--<anything>-file` matches whatever the caller spelled and this string
+ * reaches an error message, the approval dialog and the append-only audit log.
  *
- * Split on `=` so the joined spellings (`--readonly=false`) are caught
- * alongside the space-separated ones.
- *
- * There is deliberately no `--` terminator branch, for one reason and not two:
- * it would have let a caller who leads with `--` switch the whole scan off.
- * The consequence is that a positional AFTER a terminator is scanned like any
- * other word, so a search query spelled `--outdated` is refused with a message
- * about safety flags. That is a false positive and it is accepted knowingly —
- * fail-closed, vanishingly rare in a Gmail query, and cheaper than a branch
- * whose correctness rests on gog honouring the terminator at every parse
- * level. (It does honour it — `unexpected argument --readonly=false`, verified
- * at 0.36.0 — which is why the scan does not need to.)
+ * No `--` terminator branch: it would let a caller who leads with `--` switch
+ * the whole scan off. The cost is that a query spelled `--outdated` is refused
+ * with a message about safety flags — a knowingly accepted false positive,
+ * fail-closed and vanishingly rare, and cheaper than a branch resting on gog
+ * honouring the terminator at every parse level. (It does — `unexpected
+ * argument --readonly=false` at 0.36.0 — which is why the scan need not.)
  */
 export function reservedFlagIn(argv: readonly string[]): string | null {
   for (const arg of argv) {
