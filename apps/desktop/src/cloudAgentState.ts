@@ -266,7 +266,9 @@ export class CloudAgentState {
     let receipt: CloudAgentResource;
     try {
       receipt = await this.deps.agents.create(credential, {
-        chatUid: chat,
+        // One chat, sent as the one-element set the API takes. The picker is
+        // single-select; the grant shape is a list either way.
+        chatUids: [chat],
         provider: CLOUD_AGENT_PROVIDER,
         ...(requested ? { name: requested } : {}),
       });

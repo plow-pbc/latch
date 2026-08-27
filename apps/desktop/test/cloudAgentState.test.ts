@@ -53,6 +53,7 @@ function agent(
 ): CloudAgentResource {
   return {
     agentId: "agent_1",
+    chatUids: ["cht_1"],
     chatUid: "cht_1",
     url: "https://agent.example/internal",
     provider: "exe:hermes",
@@ -76,7 +77,7 @@ async function settle(): Promise<void> {
 interface Fakes {
   agents: CloudAgentsApi & {
     calls: string[];
-    created: Array<{ chatUid: string; name?: string; provider?: string | null }>;
+    created: Array<{ chatUids: string[]; name?: string; provider?: string | null }>;
     deleted: string[];
   };
   chats: CloudChatsApi;
@@ -94,7 +95,7 @@ function fakes(opts: {
   chats?: () => Promise<CloudChatOption[]>;
 } = {}): Fakes {
   const calls: string[] = [];
-  const created: Array<{ chatUid: string; name?: string; provider?: string | null }> = [];
+  const created: Array<{ chatUids: string[]; name?: string; provider?: string | null }> = [];
   const deleted: string[] = [];
   return {
     agents: {
@@ -110,7 +111,7 @@ function fakes(opts: {
         calls.push("create");
         expect(credential).toBe(CREDENTIAL);
         created.push({
-          chatUid: request.chatUid,
+          chatUids: request.chatUids,
           name: request.name,
           provider: request.provider,
         });
@@ -276,7 +277,7 @@ describe("the numbers a chat can be messaged on", () => {
     const state = build(
       tempHome(),
       fakes({
-        list: async () => [agent({ chatUid: "cht_1" })],
+        list: async () => [agent({ chatUids: ["cht_1"], chatUid: "cht_1" })],
         chats: async () => [
           {
             uid: "cht_1",
@@ -304,7 +305,7 @@ describe("the numbers a chat can be messaged on", () => {
       tempHome(),
       fakes({
         list: async () => [],
-        create: async () => agent({ chatUid: "cht_1", status: "provisioning" }),
+        create: async () => agent({ chatUids: ["cht_1"], chatUid: "cht_1", status: "provisioning" }),
         poll: async () => held.promise,
         chats: async () => [
           {
@@ -325,14 +326,14 @@ describe("the numbers a chat can be messaged on", () => {
       line: "+15550100",
       members: ["+15550111"],
     });
-    held.resolve(agent({ chatUid: "cht_1" }));
+    held.resolve(agent({ chatUids: ["cht_1"], chatUid: "cht_1" }));
   });
 
   it("says it does not know them rather than guessing from the label", async () => {
     const state = build(
       tempHome(),
       fakes({
-        list: async () => [agent({ chatUid: "cht_1" })],
+        list: async () => [agent({ chatUids: ["cht_1"], chatUid: "cht_1" })],
         chats: async () => {
           throw new PlowApiError("network", "Couldn't reach Plow.");
         },
@@ -352,7 +353,7 @@ describe("the numbers a chat can be messaged on", () => {
     const state = build(
       tempHome(),
       fakes({
-        list: async () => [agent({ chatUid: "cht_1" })],
+        list: async () => [agent({ chatUids: ["cht_1"], chatUid: "cht_1" })],
         chats: async () => {
           if (failing) throw new PlowApiError("network", "Couldn't reach Plow.");
           return [
@@ -508,7 +509,7 @@ describe("the activation chat fallback", () => {
       fakes({
         list: async () => {
           agentsLanded.resolve();
-          return [agent({ chatUid: "cht_1" })];
+          return [agent({ chatUids: ["cht_1"], chatUid: "cht_1" })];
         },
         // Held until the rows exist, so they are built with no labels at all —
         // which is the ordering that made a raw uid reach the screen.
