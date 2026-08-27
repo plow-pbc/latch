@@ -99,7 +99,13 @@ def read_log(log_path, ssh):
 
 
 def send(url, token_file, argv, goal):
-    """POST one `tools/call`. Returns None on success, or a reason to stop.
+    """POST one `tools/call`. Returns None, or `(reason, unknown)`.
+
+    `unknown` is the difference between a call that was refused and one whose
+    fate nobody knows. Only the first is a reason to stop: the second is
+    resolved by the poll loop, which is already primed with the baseline and
+    holds the nonce, so handing it back as manual work would be giving up at
+    the moment this is best equipped to answer it.
 
     The error body is NEVER printed. An authenticated response can repeat the
     bearer credential back, and this repo's contract (CLAUDE.md) is that such a
@@ -140,29 +146,27 @@ def send(url, token_file, argv, goal):
         # the dialog is up, so telling the operator the log is empty is the
         # one thing that must not happen here.
         if error.code >= 500:
-            return (f"HTTP {error.code} — the relay gave up on the exchange.\n"
-                    "  Whether it arrived is UNKNOWN — search the log for the nonce above"
-                    " before assuming it did not.")
+            return (f"HTTP {error.code} — the relay gave up on an exchange it may"
+                    " already have forwarded, so whether it arrived is UNKNOWN.", True)
         return (f"HTTP {error.code} — refused before it became an intent.\n"
                 "  Nothing was written to the audit log. 401/403 is the relay or the"
-                " credential; another 4xx is the MCP handler.")
+                " credential; another 4xx is the MCP handler.", False)
     except OSError as error:
         # NOT the same claim. This branch covers urlopen's own 90s read
         # timeout, where the request did reach the relay and an intent may well
         # exist — so it must not tell an operator the log is empty.
-        return (f"could not reach {url}: {error.__class__.__name__}.\n"
-                "  Whether it arrived is UNKNOWN — search the log for the nonce above"
-                " before assuming it did not.")
+        return (f"could not reach {url}: {error.__class__.__name__}, so whether it"
+                " arrived is UNKNOWN.", True)
     # Neither absence is proof of success — that is the audit log — but either
     # presence is proof of failure, and saying so now beats a 2-minute timeout.
     if payload.get("error") is not None:
         return (f"JSON-RPC error: {json.dumps(payload['error'])[:200]}\n"
-                "  Refused before it became an intent; nothing was written to the log.")
+                "  Refused before it became an intent; nothing was written to the log.", False)
     # `or {}` because a present-but-null `result` is None, and `.get` on it
     # raises rather than answering.
     if (payload.get("result") or {}).get("isError"):
         return ("the tool returned isError.\n"
-                "  Refused inside the MCP layer; no intent was created.")
+                "  Refused inside the MCP layer; no intent was created.", False)
     return None
 
 
@@ -303,13 +307,17 @@ def main():
     # out" having checked nothing, which tells someone to stop looking.
     since = len(baseline)
 
-    refusal = send(args.url, args.token_file, argv, f"smoke test: {nonce}")
-    if refusal is not None:
-        print(f"REFUSED — {refusal}")
-        return 1
+    sent = send(args.url, args.token_file, argv, f"smoke test: {nonce}")
+    if sent is not None:
+        reason, unknown = sent
+        if not unknown:
+            print(f"REFUSED — {reason}")
+            return 1
+        print(f"UNVERIFIED — {reason}")
 
     print(f"waiting up to {args.timeout}s for a terminal event")
     deadline = time.monotonic() + args.timeout
+    saw_any = False
     while True:
         expired = time.monotonic() >= deadline
         events, problem = read_log(log_path, args.ssh)
@@ -321,10 +329,18 @@ def main():
                 print(f"  The call WAS sent. Re-read the log for {nonce} once it is reachable.")
                 return 1
         else:
+            saw_any = saw_any or bool(events)
             outcome = verdict(events, nonce, expired, since)
             if outcome is not None:
                 code, lines = outcome
                 print("\n".join(lines))
+                # Folding ENOENT into "empty" is right, but it makes a wrong
+                # --home look exactly like a fresh install, and none of the
+                # three causes above names that.
+                if code != 0 and not saw_any:
+                    print(f"  Nothing has ever been written at {log_path} — normal on a")
+                    print("  fresh install with nothing approved, and also what a wrong --home")
+                    print("  looks like (a from-source run is Plow-Latch-<branch>).")
                 return code
         time.sleep(5)
 

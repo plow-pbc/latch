@@ -72,7 +72,8 @@ Only success exits 0.
 | `FAILED — it ran and …` | 1 | it executed and exited nonzero, or this Mac reaped it. Not a plumbing fault |
 | `FAILED — the executor threw` | 1 | `exec_error` names why; nothing ran |
 | `DENIED` | 1 | the owner refused it. The relay and the device both worked |
-| `REFUSED — HTTP …` | 1 | refused before an intent existed, so there is no audit line. 401/403 is the relay or the credential; another 4xx is the MCP handler |
+| `REFUSED — HTTP 4xx` | 1 | refused before an intent existed, so there is no audit line. 401/403 is the relay or the credential; another 4xx is the MCP handler |
+| `UNVERIFIED — …` | — | not an outcome. A 5xx, or a transport failure, means the relay may already have forwarded the exchange — so the script does **not** stop; it polls, and one of the rows above is still the answer |
 | `TIMEOUT — … approval dialog` | 1 | it arrived and is sitting unanswered. Not a plumbing problem |
 | `TIMEOUT — approved, never started` | 1 | `exec_start` is written before the spawn, so its absence means the executor was never reached. Check the app is running |
 | `TIMEOUT — started, still running` | 1 | re-run, or raise `--timeout` |
@@ -107,6 +108,10 @@ four Google scopes and refuses everything else by design.
 - `REFUSED — HTTP 401/403` → the credential is wrong or the device was
   re-paired. Scopes freeze at mint; a Mac paired before a scope grant needs to
   re-activate.
+- `UNVERIFIED — HTTP 5xx` → the relay gave up on an exchange it may already
+  have forwarded (`RELAY_TIMEOUT_MS` is 25s, well under the executor's own
+  budget), so the intent may well exist and the dialog may be up. The script
+  keeps polling on its own; read the row it lands on, not this line.
 - `TIMEOUT — nothing carrying …` → the three causes the output names, in
   likelihood order: a **different** install's log (check `--home`; a
   branch-suffixed home is the usual cause), a refusal in the MCP layer before

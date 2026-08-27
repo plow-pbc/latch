@@ -22,8 +22,8 @@ spec.loader.exec_module(smoke)
 request = json.loads(sys.argv[2])
 
 if request["call"] == "read":
-    records, problem = smoke.read_log(request["path"], None)
-    print(json.dumps({"count": len(records), "problem": problem is not None}))
+    records, problem = smoke.read_log(request["path"], request.get("ssh"))
+    print(json.dumps({"count": len(records), "problem": problem or ""}))
 elif request["call"] == "remote":
     print(json.dumps(smoke.remote_cat(request["path"])))
 elif request["call"] == "split":
@@ -41,4 +41,5 @@ else:
         raise urllib.error.HTTPError(request["url"], request["status"], "no", {}, io.BytesIO(body))
 
     urllib.request.urlopen = urlopen
-    print(json.dumps({"reason": smoke.send(request["url"], sys.argv[3], ["/bin/echo", "x"], "goal")}))
+    reason, unknown = smoke.send(request["url"], sys.argv[3], ["/bin/echo", "x"], "goal")
+    print(json.dumps({"reason": reason, "unknown": unknown}))

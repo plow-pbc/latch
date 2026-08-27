@@ -40,12 +40,23 @@ function log(...tail: Record<string, unknown>[]): Record<string, unknown>[] {
 const allow = { event: "intent_decision", intentId: ID, decision: "allow" };
 const start = { event: "exec_start", intentId: ID, argv: ["/bin/echo", "latch-smoke"] };
 
-function call(request: Record<string, unknown>, tokenFile = ""): unknown {
+function call(request: Record<string, unknown>, tokenFile = "", binDir?: string): unknown {
   const out = execFileSync("python3", [probe, script, JSON.stringify(request), tokenFile], {
     encoding: "utf8",
-    env: { ...process.env, PYTHONPYCACHEPREFIX: fs.mkdtempSync(path.join(tmp, "pyc-")) },
+    env: {
+      ...process.env,
+      PYTHONPYCACHEPREFIX: fs.mkdtempSync(path.join(tmp, "pyc-")),
+      ...(binDir ? { PATH: `${binDir}:${process.env.PATH ?? ""}` } : {}),
+    },
   });
   return JSON.parse(out) as unknown;
+}
+
+/** A directory holding a fake `ssh` that behaves as told. */
+function fakeSsh(body: string): string {
+  const dir = fs.mkdtempSync(path.join(tmp, "bin-"));
+  fs.writeFileSync(path.join(dir, "ssh"), `#!/bin/sh\n${body}\n`, { mode: 0o755 });
+  return dir;
 }
 
 describe.skipIf(!havePython())("latch-smoke verdict", () => {
@@ -109,19 +120,42 @@ describe.skipIf(!havePython())("latch-smoke reads the log where it lives", () =>
   // is no evidence — `AuditLog` creates the file on its first record, so a
   // freshly installed build has none, and that is this skill's headline case.
   // A log that could not be READ is a different answer and must refuse.
-  it("tells a not-yet-written log from an unreadable one", () => {
-    const dir = fs.mkdtempSync(path.join(tmp, "logs-"));
+  const dir = fs.mkdtempSync(path.join(tmp, "logs-"));
+
+  it("a not-yet-written log is no evidence, not a failure", () => {
     const populated = path.join(dir, "full.ndjson");
     fs.writeFileSync(populated, `{"event":"intent_received"}\nnot json\n{"event":"exec_end"}\n`);
+    // Unparseable lines are skipped, not fatal — the log is append-only and a
+    // record can be half-written when the read lands.
+    expect(call({ call: "read", path: populated })).toEqual({ count: 2, problem: "" });
+    expect(call({ call: "read", path: path.join(dir, "absent.ndjson") })).toEqual({ count: 0, problem: "" });
+  });
+
+  // Root bypasses the permission bits, so this row inverts rather than failing
+  // honestly — a red test meaning "cannot run here", on the row that guards
+  // the refusal path.
+  it.skipIf(process.getuid?.() === 0)("an unreadable one refuses", () => {
     const locked = path.join(dir, "locked.ndjson");
     fs.writeFileSync(locked, "{}\n");
     fs.chmodSync(locked, 0o000);
+    expect(call({ call: "read", path: locked })).toMatchObject({ count: 0 });
+    expect((call({ call: "read", path: locked }) as { problem: string }).problem).not.toBe("");
+  });
 
-    // Unparseable lines are skipped, not fatal — the log is append-only and a
-    // record can be half-written when the read lands.
-    expect(call({ call: "read", path: populated })).toEqual({ count: 2, problem: false });
-    expect(call({ call: "read", path: path.join(dir, "absent.ndjson") })).toEqual({ count: 0, problem: false });
-    expect(call({ call: "read", path: locked })).toEqual({ count: 0, problem: true });
+  // 4: exit 3 is "no log yet" and must stay ABOVE the generic non-zero check —
+  // moving it below would reinstate the fresh-install regression on the remote
+  // path this is normally driven over, which a command-STRING test cannot see.
+  it("a remote exit 3 is a fresh install, and any other failure refuses", () => {
+    expect(call({ call: "read", path: "/x", ssh: "u@h" }, "", fakeSsh("exit 3")))
+      .toEqual({ count: 0, problem: "" });
+    const noisy = fakeSsh(
+      'echo "Warning: Permanently added \'h\' to the list of known hosts." >&2\n' +
+      'echo "cat: /x: Permission denied" >&2\nexit 255',
+    );
+    const { problem } = call({ call: "read", path: "/x", ssh: "u@h" }, "", noisy) as { problem: string };
+    // The LAST line: the warning is about a connection that succeeded.
+    expect(problem).toContain("Permission denied");
+    expect(problem).not.toContain("known hosts");
   });
 
 
@@ -159,15 +193,21 @@ describe.skipIf(!havePython())("latch-smoke command split", () => {
 });
 
 describe.skipIf(!havePython())("latch-smoke never repeats the credential", () => {
-  it("reports the status, and nothing the relay echoed back", () => {
+  // Both statuses, because they are different return paths built by different
+  // code — and a 5xx must additionally NOT claim the log is empty.
+  it.each([401, 502])("reports status %i, and nothing the relay echoed back", (status) => {
     const tokenFile = path.join(tmp, "token");
     const token = "relay-token-DoNotEcho";
     fs.writeFileSync(tokenFile, `${token}\n`, { mode: 0o600 });
-    const { reason } = call(
-      { call: "send", url: "https://relay.invalid/mcp", status: 401, token },
+    const { reason, unknown } = call(
+      { call: "send", url: "https://relay.invalid/mcp", status, token },
       tokenFile,
-    ) as { reason: string };
-    expect(reason).toContain("401");
+    ) as { reason: string; unknown: boolean };
+    expect(reason).toContain(String(status));
+    // A 5xx is the relay abandoning an exchange it may already have forwarded.
+    expect(unknown).toBe(status >= 500);
+    if (status >= 500) expect(reason).toContain("UNKNOWN");
+    else expect(reason).toContain("Nothing was written");
     expect(reason).not.toContain(token);
     // Not just the literal: no fragment of it, and no encoding of it either.
     expect(reason).not.toMatch(/DoNotEcho|Bearer|relay-token/i);
