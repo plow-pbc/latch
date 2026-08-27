@@ -12,6 +12,9 @@ import path from "node:path";
 import { JSONValue, jv, makeIntent } from "@domo/protocol";
 import { DeviceAgent, HeadlessPolicy, MintError, type Minter } from "@domo/device-core";
 
+/** These spawn through /usr/bin/sandbox-exec, which only exists on macOS. */
+const ON_MAC = process.platform === "darwin";
+
 const TOKEN = "ya29.a0AfB_byExampleTokenValue0000000000";
 /**
  * Neither end of the token appears in `text`.
@@ -100,7 +103,7 @@ function run(d: DeviceAgent, argv: string[]): Promise<JSONValue> {
   );
 }
 
-describe("a vendored provider through the exec path", () => {
+describe.skipIf(!ON_MAC)("a vendored provider through the exec path", () => {
   it("mints a token into the child's environment, and never into argv", async () => {
     const d = device(okMinter(), [vendorDir()]);
     const out = String(jv(await run(d, ["gog", "gmail", "search", "q"])).get("output").str ?? "");
@@ -137,7 +140,7 @@ describe("a vendored provider through the exec path", () => {
   it.each([
     [
       "a mint that failed",
-      (): Minter => ({ mint: async () => { throw MintError.unreachable("gog"); } }),
+      (): Minter => ({ mint: async () => { throw MintError.failed("gog", "could not reach Plow"); } }),
       /could not reach Plow/,
     ],
     ["no minter wired at all", (): Minter | null => null, /not paired/],

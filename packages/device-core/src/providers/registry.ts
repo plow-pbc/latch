@@ -22,7 +22,6 @@
 import type { Skill } from "../skills.js";
 import { reservedFlagIn } from "./gogFlags.js";
 import { GOG_SKILL } from "./gogSkill.js";
-import { gogLeaf, GogArgvError, isKnownCommandPath } from "./gogLeaf.js";
 
 /** What one vendored CLI needs in order to run. */
 export interface VendoredProvider {
@@ -75,12 +74,28 @@ export interface VendoredProvider {
   readonly skill: Skill;
 }
 
-/** `<known command path> --help`, and nothing else. */
+/**
+ * The groups the minted token's four Google scopes actually reach.
+ *
+ * The ONLY command check this Mac makes, and it exists for one reason: an
+ * out-of-scope group is the case that SPENDS the token. Verified against
+ * pinned 0.36.0 — `gog drive search x` reaches Google and returns 401, while
+ * every in-group usage mistake fails locally with no network call at all.
+ */
+const GOG_GROUPS: ReadonlySet<string> = new Set(["gmail", "calendar"]);
+
+/**
+ * `... --help`, which names no group and reaches nothing.
+ *
+ * A `--` terminator disqualifies it: after one, `-h` is the query itself, and
+ * treating `gmail search -- -h` as help would run a real search with no minted
+ * token. Fail-safe — it would simply fail — but wrong, and one condition
+ * cheaper to prevent than to explain.
+ */
 function isHelpInvocation(rest: readonly string[]): boolean {
+  if (rest.includes("--")) return false;
   const last = rest[rest.length - 1];
-  if (last !== "--help" && last !== "-h") return false;
-  const words = rest.slice(0, -1);
-  return words.every((w) => !w.startsWith("-")) && isKnownCommandPath(words);
+  return last === "--help" || last === "-h";
 }
 
 const GOG: VendoredProvider = {
@@ -117,11 +132,16 @@ const GOG: VendoredProvider = {
     // (`--subject --help` → "expected string value"), so that shape needs no
     // handling here.
     if (isHelpInvocation(rest)) return null;
-    try {
-      gogLeaf(rest);
-    } catch (e) {
-      if (e instanceof GogArgvError) return e.message;
-      throw e;
+    // The group, and nothing finer. gog reports its own usage errors better
+    // than a mirrored command list can — `unexpected argument serach, did you
+    // mean "search"?` against `not a command gog has` — and reports them
+    // LOCALLY, with no network call and nothing spent. What gog cannot do is
+    // decline a group this Mac's token has no scope for: `drive search x`
+    // reaches Google and comes back 401, which is a spent delegation. So this
+    // checks the one thing that is actually ours to check.
+    const group = rest[0];
+    if (group === undefined || !GOG_GROUPS.has(group)) {
+      return "this Mac reaches only Gmail and Calendar through gog";
     }
     return null;
   },

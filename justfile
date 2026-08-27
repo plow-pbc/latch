@@ -76,9 +76,6 @@ test-vectors:
 fetch-gog:
     node scripts/fetch-gog.mjs
 
-# Regenerate the pinned leaf list from a fetched gog. Run after a pin bump.
-gog-schema: fetch-gog
-    node scripts/fetch-gog-schema.mjs vendor/gog/$(uname -m | sed 's/x86_64/x64/')/gog
 
 # ---------------------------------------------------------------------------
 # Browser runtime (Camoufox + bundled Python) — see vendor/browser-server/

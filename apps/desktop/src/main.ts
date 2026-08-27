@@ -1028,7 +1028,7 @@ app.whenReady().then(async () => {
     os.homedir(),
     // How a vendored provider CLI is authorised. The exec path reports a
     // missing one through the approval dialog rather than throwing.
-    buildMinter({ apiBaseUrl, home }),
+    buildMinter({ api: new PlowApi(apiBaseUrl), home }),
     // Packaged: Contents/Resources/gog/<arch>. From source: vendor/gog, which
     // `just fetch-gog` populates. `app.getAppPath()` is <root>/apps/desktop
     // under `just app`, not the workspace root, so the from-source lookup has

@@ -48,36 +48,39 @@ describe("the gog provider's refusal", () => {
     ["a flag that would disarm the belt", ["gog", "gmail", "search", "q", "--wrap-untrusted=false"]],
     ["a flag that reads a local file into an outbound message", ["gog", "gmail", "send", "--body-file", "/etc/passwd"]],
     ["a flag that writes to a caller-chosen path", ["gog", "gmail", "attachment", "1", "2", "--out", "/tmp/x"]],
-    ["a command the bundled binary does not have", ["gog", "gmail", "serach", "q"]],
-    ["the dotted spelling of a real command", ["gog", "gmail.search", "q"]],
-    ["a group, which prints help rather than acting", ["gog", "gmail", "drafts"]],
-    ["a command outside the token's scopes", ["gog", "drive", "search", "q"]],
+    // The one command check this Mac makes. An out-of-scope group is the case
+    // that SPENDS the token — verified: `gog drive search x` reaches Google
+    // and returns 401, while every in-group usage mistake fails locally.
+    ["a group outside the token's scopes", ["gog", "drive", "search", "q"]],
+    ["a group that does not exist", ["gog", "nonsense", "x"]],
+    ["no group at all", ["gog"]],
   ])("refuses %s", (_why, argv) => {
     expect(gog.refuse(argv)).not.toBeNull();
   });
 
+  it("leaves gog's own usage errors to gog", () => {
+    // gog reports these better than a mirrored command list can — "unexpected
+    // argument serach, did you mean \"search\"?" — and reports them LOCALLY,
+    // with no network call and nothing spent. Mirroring its command grammar
+    // bought a worse message for a case that costs nothing.
+    for (const argv of [
+      ["gog", "gmail", "serach", "q"],
+      ["gog", "gmail", "drafts"],
+      ["gog", "calendar", "nonsense"],
+    ]) {
+      expect(gog.refuse(argv)).toBeNull();
+    }
+  });
+
   it("allows --help, which the skill tells the agent to run", () => {
-    // A group is not a leaf, so without an explicit allowance the gate would
-    // refuse the exact command the skill teaches. It is inert: gog prints
-    // usage and exits, with no network call and nothing mutated.
     expect(gog.refuse(["gog", "gmail", "--help"])).toBeNull();
-    expect(gog.refuse(["gog", "calendar", "-h"])).toBeNull();
+    expect(gog.refuse(["gog", "--help"])).toBeNull();
   });
 
   it("still refuses a reserved flag hiding behind --help", () => {
     expect(gog.refuse(["gog", "gmail", "--help", "--home", "/tmp/evil"])).not.toBeNull();
   });
 
-  it.each([
-    ["a group this Mac cannot reach", ["gog", "drive", "files", "list", "--help"]],
-    ["a typo", ["gog", "gmail", "serach", "--help"]],
-    ["the dotted spelling", ["gog", "gmail.search", "--help"]],
-    ["help that is not the last word", ["gog", "gmail", "--help", "search"]],
-  ])("does not let --help walk past the leaf check: %s", (_why, argv) => {
-    // Scanning for the token would have turned the whole gate off for anything
-    // with one flag appended.
-    expect(gog.refuse(argv)).not.toBeNull();
-  });
 
   it("never reports a spelling the caller chose", () => {
     // The reason reaches an error, the approval dialog and the audit log.
@@ -119,8 +122,7 @@ describe("needsToken", () => {
     // needsToken is only ever consulted after refuse passes, so these carry
     // the real value rather than one the guard below hides: an unknown path
     // is not a help invocation, so both are true.
-    { argv: ["gog", "drive", "files", "list", "--help"], refused: true, token: true },
-    { argv: ["gog", "gmail", "serach", "--help"], refused: true, token: true },
+    { argv: ["gog", "drive", "search", "q"], refused: true, token: true },
   ])("gate and mint agree on $argv", ({ argv, refused, token }) => {
     expect(gog.refuse(argv) !== null).toBe(refused);
     // Total, not guarded: a row that states the opposite of the truth is the

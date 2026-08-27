@@ -9,6 +9,9 @@ import os from "node:os";
 import path from "node:path";
 import { Executor } from "../src/executor.js";
 
+/** These spawn through /usr/bin/sandbox-exec, which only exists on macOS. */
+const ON_MAC = process.platform === "darwin";
+
 const cleanups: (() => void)[] = [];
 afterEach(() => {
   while (cleanups.length) cleanups.pop()!();
@@ -40,7 +43,7 @@ async function output(exec: Executor, argv: string[], env?: Record<string, strin
   return result.output.toString();
 }
 
-describe("Executor.run", () => {
+describe.skipIf(!ON_MAC)("Executor.run", () => {
   it("passes extra environment to the child", async () => {
     const dir = vendorDir();
     const exec = new Executor(tmp(), undefined, [dir]);

@@ -5,22 +5,35 @@
  * decide which credential leaves this Mac and which binary a bare command name
  * reaches, so both have to be reachable by `npx vitest run` with no display.
  */
-import { makeMinter, resolveVendoredBinary, type FetchLike, type Minter } from "@domo/device-core";
 import path from "node:path";
+import { MintError, resolveVendoredBinary, type Minter, type VendoredProvider } from "@domo/device-core";
+import type { PlowApi } from "./plowApi.js";
 import { loadSettings } from "./settings.js";
 
-export function buildMinter(opts: {
-  apiBaseUrl: string;
-  home: string;
-  fetchImpl?: FetchLike;
-}): Minter {
-  return makeMinter({
-    apiBaseUrl: opts.apiBaseUrl,
-    // Read per call, never captured: re-pairing takes effect on the next
-    // command rather than the next launch.
-    credential: () => loadSettings(opts.home).relayCredential,
-    fetchImpl: opts.fetchImpl,
-  });
+/**
+ * Adapts `PlowApi` to the `Minter` the device expects.
+ *
+ * An adapter rather than a transport: everything about how the call is made —
+ * the bearer header, the bound, the credential-echo rule — is already
+ * `PlowApi`'s, and duplicating it would have put those three properties in two
+ * places that can drift.
+ */
+export function buildMinter(opts: { api: PlowApi; home: string }): Minter {
+  return {
+    async mint(provider: VendoredProvider): Promise<string> {
+      // Read per call, never captured: re-pairing takes effect on the next
+      // command rather than the next launch.
+      const credential = loadSettings(opts.home).relayCredential.trim();
+      if (!credential) throw MintError.unpaired();
+      try {
+        return await opts.api.mintProviderToken(credential, provider.mintPrefix, provider.mintAction);
+      } catch (e) {
+        // PlowApi composes its own messages under the same no-foreign-text
+        // rule, so this one is safe to carry into the audit log.
+        throw MintError.failed(provider.command, e instanceof Error ? e.message : "unknown error");
+      }
+    },
+  };
 }
 
 /**
