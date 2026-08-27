@@ -14,6 +14,8 @@ import {
   vendoredProvider,
 } from "../src/providers/registry.js";
 import { overrideVar } from "../src/providers/vendoredBinary.js";
+// @ts-expect-error — a build-time .mjs manifest with no type declarations.
+import { VENDORED } from "../../../scripts/vendored-providers.mjs";
 
 const gog = vendoredProvider(["gog"])!;
 
@@ -232,5 +234,21 @@ describe("the scope bound", () => {
   // per-version fact; step 5 of the checklist owns it.
   it.each([["mail"], ["email"], ["cal"]])("accepts the alias %s", (group) => {
     expect(gog.refuse(["gog", group, "search", "q"])).toBeNull();
+  });
+});
+
+describe("the runtime registry and the build-time manifest", () => {
+  // A provider added to one side only is the failure this catches, and it is
+  // the likeliest one: the two lists live in different halves of the repo
+  // because one needs a build and the other must not.
+  it("name the same commands", () => {
+    const staged = VENDORED.map((p) => p.command);
+    expect([...staged].sort()).toEqual([...PROVIDERS.map((p) => p.command)].sort());
+  });
+
+  // A row carrying one arch clears every other gate and reaches the other
+  // arch's users with no provider tools at all.
+  it("stage a binary for both macOS arches", () => {
+    for (const p of VENDORED) expect(Object.keys(p.arches).sort()).toEqual(["arm64", "x64"]);
   });
 });
