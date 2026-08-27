@@ -382,6 +382,33 @@ export class PlowApi {
     await this.call<unknown>("POST", "/v1/relay/devices/self/revoke", { token });
   }
 
+  /**
+   * A vendored provider CLI's short-lived token, for one connected account.
+   *
+   * On this seam rather than a transport of its own: the bearer header, the
+   * request bound, and the rule that a response repeating its own credential
+   * never reaches the screen are all `call`/`errorFor`'s, and a provider mint
+   * needs every one of them. The route comes from the provider's registry row
+   * — both halves literals, never composed from anything a caller supplied.
+   *
+   * No account is sent: Plow resolves the owner's default connected one, so
+   * this Mac holds no second copy of a fact the server owns.
+   */
+  async mintProviderToken(token: string, prefix: string, action: string): Promise<string> {
+    const data = await this.call<{ data?: { access_token?: string } }>(
+      "POST",
+      `${prefix}${action}`,
+      { token, body: {} },
+    );
+    // typeof, not `?.trim()`: the body is unvalidated JSON, and a numeric or
+    // object token would throw a raw TypeError past every caller that maps
+    // PlowApiError.
+    const raw = data.data?.access_token;
+    const minted = typeof raw === "string" ? raw.trim() : "";
+    if (!minted) throw new PlowApiError("http", "Plow did not return a usable provider token.");
+    return minted;
+  }
+
   /** Mint an agent credential through the relay's own API (`relay:call` only,
    * whatever we ask for — the server decides). */
   async createAgent(token: string, name: string): Promise<MintedCredential> {

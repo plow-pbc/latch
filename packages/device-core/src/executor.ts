@@ -278,6 +278,16 @@ export class Executor {
     public readonly scratchRoot: string,
     /** Overridden only by tests, which cannot wait out the real window. */
     private readonly reapAfterMs: number = REAP_AFTER_MS,
+    /**
+     * Directories holding vendored provider CLIs, prepended to the child's
+     * PATH so `gog` resolves to the binary this app ships rather than to
+     * whatever the owner happens to have installed.
+     *
+     * Prepended rather than appended for that reason: the provider registry
+     * matches on a bare `argv[0]`, so which binary that name reaches is a
+     * security decision, not a convenience.
+     */
+    private readonly vendorDirs: readonly string[] = [],
   ) {
     fs.mkdirSync(scratchRoot, { recursive: true });
   }
@@ -289,6 +299,19 @@ export class Executor {
     writePaths: string[];
     network: boolean;
     waitMs: number;
+    /**
+     * Extra environment for the child, merged over the curated set below.
+     *
+     * This is how a vendored provider CLI receives its token: in the child's
+     * environment and nowhere else. A token on the command line lands in the
+     * calling agent's captured output and from there in a persisted
+     * transcript, where it outlives the token by a long way — and unlike argv,
+     * a process environment is not readable through `ps`.
+     *
+     * Merged OVER the curated set, so a provider cannot be given a PATH or a
+     * HOME of its choosing by way of this parameter — those are set after it.
+     */
+    env?: Readonly<Record<string, string>>;
   }): Promise<ExecResult> {
     if (args.argv.length === 0) throw new ExecutorError("launch failed: empty argv");
     const handle = crypto.randomUUID().toUpperCase();
@@ -298,7 +321,11 @@ export class Executor {
     // cwd must be readable for the process to even start; it was part of the
     // approved exec capability, so allowing it matches the approval.
     const workingDir = args.cwd !== undefined ? canonicalize(args.cwd) : scratch;
-    const reads = [...args.readPaths, workingDir];
+    // The vendor dirs are always readable, because a vendored CLI lives inside
+    // the .app bundle rather than under the owner's home — the broad home
+    // grant in the profile does not reach it, so without this the child cannot
+    // even exec the binary its PATH just resolved.
+    const reads = [...args.readPaths, ...this.vendorDirs, workingDir];
 
     const profile = SandboxProfile.generate({
       readPaths: reads,
@@ -317,11 +344,24 @@ export class Executor {
     const child = spawn("/usr/bin/sandbox-exec", ["-p", profile, ...args.argv], {
       cwd: workingDir,
       env: {
+        ...args.env,
         // Real home so tools and their configs resolve; TMPDIR stays in the
         // (writable, disposable) scratch dir; PATH includes the user bin dirs.
+        // These come AFTER the caller's env deliberately: a provider supplies
+        // its token, never the shape of the world its child runs in.
         PATH:
-          `${realHome}/.local/bin:${realHome}/bin:${realHome}/.cargo/bin` +
-          ":/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
+          [
+            ...this.vendorDirs,
+            `${realHome}/.local/bin`,
+            `${realHome}/bin`,
+            `${realHome}/.cargo/bin`,
+            "/opt/homebrew/bin",
+            "/usr/local/bin",
+            "/usr/bin",
+            "/bin",
+            "/usr/sbin",
+            "/sbin",
+          ].join(":"),
         HOME: realHome,
         TMPDIR: scratch,
         LANG: "en_US.UTF-8",
