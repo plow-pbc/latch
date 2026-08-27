@@ -34,7 +34,6 @@ import { VENDORED } from "../../../scripts/vendored-providers.mjs";
 
 /** Every vendored CLI the packed app must carry, and the arches it stages. */
 const PROVIDERS: { command: string; arches: Record<string, unknown> }[] = VENDORED;
-const COMMANDS = PROVIDERS.map((p) => p.command);
 
 const IDENTITY = "Developer ID Application: Nobody (TEAMID)";
 
@@ -193,8 +192,11 @@ describe("the packaging hook refuses before it signs", () => {
   );
 
   it.each(
-    COMMANDS.flatMap((command) =>
-      [
+    PROVIDERS.flatMap(({ command, arches }) => {
+      // The row's own first arch, not a literal: a row staging a different set
+      // would fail these while the hook is right.
+      const arch = Object.keys(arches)[0];
+      return [
         {
           how: "a zero-byte binary",
           damage: (d: string) => fs.writeFileSync(path.join(d, command), ""),
@@ -206,20 +208,29 @@ describe("the packaging hook refuses before it signs", () => {
             fs.writeFileSync(path.join(d, ".DS_Store"), "junk");
           },
         },
-      ].map((c) => ({ ...c, command })),
-    ),
-  )("refuses $command with $how, not just an absent directory", async ({ command, damage }) => {
-    pack();
-    damage(path.join(resourcesDir(), command, "arm64"));
-    await expect(afterPack(contextFor(dir))).rejects.toThrow(new RegExp(`no ${command} for arm64`));
-  });
+      ].map((c) => ({ ...c, command, arch }));
+    }),
+  )(
+    "refuses $command with $how, not just an absent directory",
+    async ({ command, arch, damage }) => {
+      pack();
+      damage(path.join(resourcesDir(), command, arch));
+      await expect(afterPack(contextFor(dir))).rejects.toThrow(
+        new RegExp(`no ${command} for ${arch}`),
+      );
+    },
+  );
 
-  it.each(COMMANDS)("names every arch %s is missing, not just the first", async (command) => {
-    // One run of `just fetch-vendored` fixes both; being told about one arch at
-    // a time means two package runs to learn that.
+  it.each(PROVIDERS)("names every arch $command is missing, not just the first", async (p) => {
+    // One run of `just fetch-vendored` fixes them all; being told about one
+    // arch at a time means one package run per arch to learn that. Built from
+    // the row, so this asserts neither the arch set nor the order the hook
+    // happens to iterate it in.
     pack();
-    fs.rmSync(path.join(resourcesDir(), command), { recursive: true, force: true });
-    await expect(afterPack(contextFor(dir))).rejects.toThrow(/arm64, x64/);
+    fs.rmSync(path.join(resourcesDir(), p.command), { recursive: true, force: true });
+    await expect(afterPack(contextFor(dir))).rejects.toThrow(
+      new RegExp(Object.keys(p.arches).join(", ")),
+    );
   });
 
   it("refuses a camoufox tree a fuse left without a bundle", async () => {

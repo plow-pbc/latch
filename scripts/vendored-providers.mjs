@@ -66,8 +66,10 @@ import { execFileSync } from "node:child_process";
 const GOG = {
   command: "gog",
   version: "0.36.0",
-  // Keys are Node's `process.arch` names, not the release's (`amd64`), because
-  // `resolveVendoredBinary` looks them up by `process.arch` at runtime.
+  // Keys are Node's `process.arch` names, not the release's (`amd64`). They are
+  // the one spelling in three places: the directory the fetcher stages into,
+  // the directory `resolveVendoredBinary` reads at runtime, and the directory
+  // inside the packed app that afterPack's gate requires for every key here.
   //
   // `sha256` pins the tarball; `binary` pins what comes OUT of it. Both are
   // needed and they answer different questions: the tarball pin makes a
