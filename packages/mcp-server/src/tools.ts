@@ -30,6 +30,8 @@ import {
   LIVE_WEB_ROUTING,
   MAX_CLICK_TIMEOUT_MS,
   MAX_FILE_BYTES,
+  impliesNetwork,
+  vendoredProvider,
 } from "@domo/device-core";
 import { DeferredResults, DeniedError, Progress } from "./deferred.js";
 import { JobOwners } from "./jobs.js";
@@ -276,7 +278,10 @@ export const TOOLS: ToolSpec[] = [
       "and in exchange its only writable place is `$TMPDIR`, a directory of its own that is deleted " +
       "when it is killed. Declare a write path (or " +
       "network) and it is never killed that way, because it could be mid-work and a truncated file " +
-      "is worse than the wait. " +
+      "is worse than the wait. A vendored provider command counts as having declared network even " +
+      "though you did not — so it is never killed that way either, and the `$TMPDIR` exchange is " +
+      "off — unless it asks for help (`--help`/`-h` last, no `--` before it), which " +
+      "reaches nothing and is exempt. " +
       "A run ends when the command itself exits, and its stdout and stderr close with it — so a job " +
       "left running in the background will normally be killed by its next write unless it redirects " +
       "both (`>log 2>&1`), its output is not captured, and no handle tracks it. "  +
@@ -306,7 +311,12 @@ export const TOOLS: ToolSpec[] = [
         },
         network: {
           type: "boolean",
-          description: "Whether the command needs network access (default false)",
+          description:
+            "Whether the command needs network access (default false). Ignored for a " +
+            "vendored provider command: those reach their service by definition, so " +
+            "network is granted whether you omit this or set it false, and the approver " +
+            "sees it either way. The exception is asking for help — `--help` or `-h` as " +
+            "the LAST argument, with no `--` before it — which reaches nothing.",
         },
         wait_ms: {
           type: "integer",
@@ -327,6 +337,17 @@ export const TOOLS: ToolSpec[] = [
       const argv = strings(argvValues);
       if (argv.length !== argvValues.length) throw new ToolError("argv must be strings");
 
+      // A vendored provider CLI refuses some argv outright — an argument that
+      // would disarm its safety flags or read a local file into an outbound
+      // message, or a command the bundled binary does not have. Checked HERE,
+      // before an intent exists, because a card the owner approves mints a
+      // live provider token: nobody should be asked to authorise a call this
+      // Mac was always going to refuse. The device checks again; it is the
+      // chokepoint and cannot rely on this caller.
+      const provider = vendoredProvider(argv);
+      const refusal = provider?.refuse(argv) ?? null;
+      if (refusal !== null) throw new ToolError(refusal);
+
       // Resolve every declared path before it becomes the bound the human
       // approves and the sandbox enforces.
       const readPaths = await resolveAll(strings(a.get("read_paths").arr));
@@ -334,7 +355,23 @@ export const TOOLS: ToolSpec[] = [
       const rawCwd = a.get("cwd").str;
       const capabilities: Capability[] = [
         { kind: "process.exec", argv, cwd: rawCwd === null ? undefined : await resolved(rawCwd) },
-        { kind: "network", allowed: a.get("network").bool ?? false },
+        // A vendored provider implies network. Its whole purpose is to reach
+        // the service its minted token authenticates against, so a gog call
+        // approved without it is a call the sandbox then denies — and making
+        // the agent remember a flag whose answer is never in doubt is a
+        // footgun a skill can only paper over. The human still sees it: it is
+        // in the capability set they approve, like any other network grant.
+        // `--help` is exempt for the same reason it mints nothing.
+        //
+        // NOT only a network grant. `Executor.isReapable` keys on this same
+        // flag, so a provider command is also exempt from the 15-minute
+        // silent-run reaper and gains the housekeeping write paths — the
+        // coupling is easy to miss from here, and the tool description above
+        // says so because it is the agent's account of when a run is killable.
+        {
+          kind: "network",
+          allowed: (a.get("network").bool ?? false) || impliesNetwork(argv),
+        },
       ];
       if (readPaths.length > 0) capabilities.push({ kind: "fs.read", paths: readPaths });
       if (writePaths.length > 0) capabilities.push({ kind: "fs.write", paths: writePaths });

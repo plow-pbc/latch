@@ -1,0 +1,230 @@
+/**
+ * Vendored provider CLIs, and what running one costs.
+ *
+ * The pattern (latch#181): an agent runs a command through `plow_run_command`,
+ * Latch recognises `argv[0]` as a vendored CLI, mints that provider's
+ * short-lived token, and puts it in the child's environment. Everything else
+ * is the `process.exec` path that already exists — capability, approval
+ * dialog, always-allow rules, adversarial reviewer, seatbelt profile, audit.
+ *
+ * **This adds nothing to `tools/list`.** A new provider is a vendored binary,
+ * a PATH entry, one row here, and a skill. That is the whole point: the
+ * alternative was a hand-written MCP tool surface per provider, which is what
+ * this replaces.
+ *
+ * **The token rides `env`, never argv.** A token on a command line lands in
+ * the calling agent's captured output and from there in a persisted
+ * transcript, where it outlives the token by a long way. It is also why the
+ * mint happens here rather than the agent minting and passing one: the agent
+ * never holds it.
+ */
+
+import type { Skill } from "../skills.js";
+import { reservedFlagIn } from "./gogFlags.js";
+import { GOG_CANONICAL, GOG_GROUPS } from "./gogGroups.js";
+import { GOG_SKILL } from "./gogSkill.js";
+
+/** What one vendored CLI needs in order to run. */
+export interface VendoredProvider {
+  /** `argv[0]`, and the binary's name inside its vendor directory. */
+  readonly command: string;
+  /** The connector action that mints this provider's token. */
+  readonly mintAction: string;
+  /** Where the mint's routes hang, e.g. `/v1/connectors/gmail/`. */
+  readonly mintPrefix: string;
+  /**
+   * The environment variable the CLI reads its token from.
+   *
+   * There is deliberately no account variable beside it. The token IS the
+   * account binding — gog with a caller-supplied token authenticates as
+   * whoever that token belongs to, so an account flag in agent-supplied argv
+   * cannot redirect the call, and Plow's mint resolves the owner's connected
+   * account server-side. One fewer thing for this Mac to hold, get wrong, or
+   * disagree with Plow about.
+   */
+  readonly tokenEnv: string;
+  /**
+   * Flags Latch puts in front of the command path on every invocation,
+   * whatever the agent asked for.
+   *
+   * NOT a read/write boundary. An earlier design carried a `write` bit on the
+   * capability and enforced it with gog's `--readonly`; under this pattern the
+   * capability IS the argv, so the human approves the literal command and
+   * there is no claim left to enforce. What remains are the flags that are
+   * unconditionally right: no interactive prompting in a headless child, the
+   * marker that keeps fetched message text from reading as instructions, and
+   * the scope bound.
+   *
+   * `--enable-commands` is the scope bound, and it makes gog enforce it
+   * ITSELF, before any network call. `refuse` still checks the group, because
+   * it does so before the approval dialog and before the mint; this is the
+   * layer under it, and the one that still holds if the other is ever wrong.
+   * gog's last-wins parsing would let a caller append their own
+   * `--enable-commands` to widen it, which is exactly why that flag and its
+   * siblings are in `RESERVED_EXACT`.
+   *
+   * The per-version verdicts behind all of that — what dispatches, what is
+   * refused pre-network, and that help is unaffected — are step 5 of the
+   * pin-bump checklist in `scripts/fetch-gog.mjs`, which is their only home.
+   */
+  readonly belt: readonly string[];
+  /**
+   * Reject argv the human must not be asked to approve, before any intent
+   * exists. Returns a reason, or null.
+   *
+   * Five refusals, in two groups.
+   *
+   * Arguments that would disarm the belt or read/write local files through the
+   * CLI — hazards a human cannot see by reading the command, because the
+   * command itself looks legitimate.
+   *
+   * And four shapes of a wrong command. ONE check refuses all of them: a
+   * group that is not gmail or calendar, which `--json` and `gmail.search`
+   * and an absent group all fail. The other three branches exist only to say
+   * something an agent can act on — remove any of them and the command is
+   * still refused, with a sentence about scopes that is not its problem.
+   *
+   * What differs is what each would have COST if nothing refused it, and two
+   * of the four reach Google:
+   *
+   *  - **An out-of-scope group.** Without the belt's scope bound gog tries it,
+   *    reaches Google and comes back 401 — a spent call with nothing to show
+   *    for it. The belt closes that too; this branch is what closes it before
+   *    the dialog and the mint.
+   *  - **A leading global flag.** Worse: verified too, `--json gmail search x`
+   *    parses `--json` as a global and **succeeds**. Nothing about the scope
+   *    check reads `rest[0]` in that shape, so nothing would have checked the
+   *    group — which is why the message names the position rather than scopes.
+   *  - **A dotted spelling** and **an empty argv** reach nothing; gog cannot
+   *    see either as a command.
+   *
+   * It deliberately does NOT mirror the binary's command grammar. A misspelt
+   * leaf is left to gog, which says `did you mean "search"?` — better than a
+   * mirrored list can — and says it without reaching Google. Note what that
+   * does still cost: this Mac mints BEFORE it execs, so a typo spends a mint
+   * even though nothing reaches Google. That is the accepted price of not
+   * carrying 101 leaf names, and it is cheap — Plow returns a cached token
+   * outside a 60s expiry buffer, so a wasted mint is usually not even a
+   * Google-facing refresh.
+   */
+  readonly refuse: (argv: readonly string[]) => string | null;
+  /**
+   * How an agent learns to drive this CLI. Published only when the binary is
+   * staged, and carried on the row so the provider's name has ONE spelling —
+   * a rename here cannot silently unpublish a skill registered under a
+   * literal somewhere else.
+   */
+  readonly skill: Skill;
+}
+
+/**
+ * `... --help`, which names no group and reaches nothing.
+ *
+ * A `--` terminator disqualifies it: after one, `-h` is the query itself, and
+ * treating `gmail search -- -h` as help would run a real search with no minted
+ * token. Fail-safe — it would simply fail — but wrong, and one condition
+ * cheaper to prevent than to explain.
+ */
+function isHelpInvocation(rest: readonly string[]): boolean {
+  if (rest.includes("--")) return false;
+  const last = rest[rest.length - 1];
+  return last === "--help" || last === "-h";
+}
+
+const GOG: VendoredProvider = {
+  command: "gog",
+  mintAction: "access-token",
+  // Not a Gmail-only scope, though the prefix says gmail: checked against
+  // plow's GMAIL_DEFAULT_SCOPES, the mint covers calendar.readonly and
+  // calendar.events too, which is what gog's ~40 calendar leaves are spent on.
+  // The route was mounted on this prefix because the calendar routes already
+  // lived there — the name is Plow's history, not a narrower grant.
+  mintPrefix: "/v1/connectors/gmail/",
+  tokenEnv: "GOG_ACCESS_TOKEN",
+  // The bound is DERIVED from the same list the check reads, so the two
+  // cannot drift into disagreeing about what is in scope.
+  belt: ["--no-input", "--wrap-untrusted", `--enable-commands=${GOG_CANONICAL.join(",")}`],
+  skill: GOG_SKILL,
+  refuse: (argv) => {
+    const rest = argv.slice(1);
+    const reserved = reservedFlagIn(rest);
+    if (reserved !== null) {
+      return `${reserved} may not be supplied: it would override this Mac's safety flags`;
+    }
+    // `--help` is how the skill tells an agent to discover the rest of the
+    // surface, and it is inert: gog prints usage and exits, with no network
+    // call and nothing mutated. Without an allowance the leaf check refuses
+    // `gog gmail --help`, because a group is not a leaf — so the skill would
+    // be teaching a command the gate rejects.
+    //
+    // `-h` is gog's group help, and gog itself refuses `--help` in a flag's
+    // value position (`--subject --help` → "expected string value"), so that
+    // shape needs no handling here. Per-version verdicts: the checklist.
+    if (isHelpInvocation(rest)) return null;
+    // The group, and nothing finer — what that leaves to gog and what each
+    // refused shape would otherwise cost are in `refuse`'s doc above.
+    const group = rest[0];
+    // Four different mistakes, four sentences — and NONE of them quotes the
+    // argv back. These reach the approval dialog and the append-only audit
+    // log, so the same rule `gogFlags` follows applies: a reason may name a
+    // rule, never the caller's text. The rule is enough to self-correct from.
+    if (group === undefined) return 'the command is missing: try ["gog", "gmail", "search", ...]';
+    if (group.startsWith("-")) return "the command must come first, before any flags";
+    // Its own sentence, for the reason the doc above gives: the scope check
+    // below already refuses it, and says the wrong thing when it does.
+    if (group.includes(".")) return 'the command must be separate words: ["gmail", "search"], not ["gmail.search"]';
+    if (!GOG_GROUPS.has(group)) return "this Mac reaches only Gmail and Calendar through gog";
+    return null;
+  },
+};
+
+export const PROVIDERS: readonly VendoredProvider[] = [GOG];
+
+/**
+ * The provider an argv invokes, or null when it invokes none.
+ *
+ * Matched on `argv[0]` exactly. A path (`/usr/local/bin/gog`) is deliberately
+ * NOT a match: the vendored binary is reached through the PATH this Mac
+ * controls, and honouring a caller-supplied path would let an agent point the
+ * mint at a binary of its choosing.
+ */
+export function vendoredProvider(argv: readonly string[]): VendoredProvider | null {
+  const head = argv[0];
+  if (head === undefined) return null;
+  return PROVIDERS.find((p) => p.command === head) ?? null;
+}
+
+/**
+ * Whether this invocation needs a token at all.
+ *
+ * `--help` does not: gog prints usage and exits without touching the network.
+ * Minting for it would spend a real delegation — a token that has left Plow
+ * whether or not anything used it — on a command that cannot use one.
+ */
+export function needsToken(argv: readonly string[]): boolean {
+  // The SAME predicate `refuse` uses, not a second scan. When they disagreed,
+  // an argv the gate accepted as a real command — `gmail search --help q`,
+  // where `--help` is a positional and not the last word — was treated as
+  // help here and ran with no minted token, which on a Mac where gog can find
+  // ambient credentials means running against those instead.
+  return !isHelpInvocation(argv.slice(1));
+}
+
+/**
+ * Whether this argv gets the network capability whether or not it asked.
+ *
+ * A provider reaches its service by definition, so the flag is not the agent's
+ * to remember — but a help invocation reaches nothing, for the same reason it
+ * mints nothing. `isHelpInvocation` is narrow on purpose and TWO conditions
+ * make it so: the flag must be LAST, and there must be no `--` terminator.
+ * `gog gmail search --help q` runs a search, and `gog gmail search -- -h`
+ * searches for the literal `-h`.
+ *
+ * Spelled ONCE because it decides two different things in two packages: what
+ * `mcp-server` puts in the capability set, and, through
+ * `Executor.isReapable`, whether the run is exempt from the silent-run reaper.
+ * Spelled twice, one of them drifted within a single commit.
+ */
+export function impliesNetwork(argv: readonly string[]): boolean {
+  return vendoredProvider(argv) !== null && needsToken(argv);
+}

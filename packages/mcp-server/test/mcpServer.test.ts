@@ -547,6 +547,35 @@ describe("review findings", () => {
       expect(approved).toEqual([canonicalize(realDir)]);
       expect(cwd).toBe(canonicalize(realDir));
     });
+
+    async function networkFor(argv: string[], network?: boolean): Promise<boolean | undefined> {
+      let allowed: boolean | undefined;
+      const { server } = makeServer({
+        async decideIntent(intent) {
+          allowed = intent.capabilities.find((c) => c.kind === "network")?.allowed;
+          return "deny" as const;
+        },
+      });
+      await callTool(server, "plow_run_command",
+        { argv, wait_ms: 1_000, ...(network === undefined ? {} : { network }) }, AGENT);
+      return allowed;
+    }
+
+    // A vendored provider reaches its service by definition, so the network
+    // capability is not the agent's to remember. Without this the skill's own
+    // canonical example is approved with network denied and the sandbox
+    // refuses every Google request — the advertised flow, broken. An explicit
+    // `false` does not disarm it either: honouring that would approve a gog
+    // call the sandbox then denies, which is the same bug spelled out loud.
+    it.each([
+      ["a gog command implies network", ["gog", "gmail", "search", "q"], undefined, true],
+      ["and an explicit false does not disarm it", ["gog", "gmail", "search", "q"], false, true],
+      ["gog --help does not, like the mint it also skips", ["gog", "--help"], undefined, false],
+      ["and an ordinary command still asks", ["/bin/echo", "x"], undefined, false],
+      ["...and still means false when it says so", ["/bin/echo", "x"], false, false],
+    ])("%s", async (_name, argv, network, allowed) => {
+      expect(await networkFor(argv, network)).toBe(allowed);
+    });
   });
 
   // 5 — the wait_ms cap does not produce a direct job handle. Pin what really

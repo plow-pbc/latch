@@ -12,7 +12,10 @@
  * object* owns where an intent's contents go.
  */
 import { capabilityDisplay, Intent, intentIsExpired, JSONValue, jv } from "@domo/protocol";
+import { needsToken, PROVIDERS, vendoredProvider, type VendoredProvider } from "./providers/registry.js";
+import { MintError, type Minter } from "./providers/mint.js";
 import os from "node:os";
+import fs from "node:fs";
 import path from "node:path";
 import { APPROVAL_SOURCE_EXPIRED } from "./approvalStore.js";
 import { AuditLog } from "./auditLog.js";
@@ -159,11 +162,25 @@ export class DeviceAgent {
      * and a manifest that does not depend on the machine running the suite.
      */
     ownerHome: string = home,
+    /**
+     * How a vendored provider CLI is authorised. Null in a test that does not
+     * exercise one, and on a Mac that has never paired — the exec path reports
+     * that rather than throwing, so an unpaired Mac gets a sentence in the
+     * approval dialog instead of a stack trace.
+     */
+    private readonly minter: Minter | null = null,
+    /**
+     * Directories holding vendored provider CLIs, prepended to an exec child's
+     * PATH so a bare `gog` reaches the binary this app ships. Empty in a test
+     * and on a Mac with none staged, where every non-provider command still
+     * runs and a provider one reports that it is not installed.
+     */
+    private readonly vendorDirs: readonly string[] = [],
   ) {
     this.identity = loadOrCreateIdentity(home, name);
     this.audit = new AuditLog(path.join(home, "device/audit.ndjson"));
     this.policy = new PolicyEngine(path.join(home, "device/rules.json"));
-    this.executor = new Executor(path.join(home, "device/scratch"));
+    this.executor = new Executor(path.join(home, "device/scratch"), undefined, this.vendorDirs);
     this.skills = new SkillRegistry();
     // `ownerHome`, not `home` — this describes where WhatsApp put the owner's
     // messages on the real machine, while `home` is a DOMO_HOME a test points
@@ -174,6 +191,12 @@ export class DeviceAgent {
     // same start-time answer `browserRuntime` gives, so installing WhatsApp
     // while the app is running needs a restart to publish the skill.
     registerWhatsappSkill(this.skills, ownerHome);
+    // Registered only when the CLI it documents is actually staged: a skill
+    // for a binary this Mac does not have teaches an agent commands the exec
+    // path refuses unconditionally. The SAME predicate that gate uses — two
+    // sites answering one question two ways is what produces that gap — and
+    // driven off the registry, so a provider's name has one spelling.
+    for (const p of PROVIDERS) if (this.hasStaged(p.command)) this.skills.register(p.skill);
     if (browserRuntime) {
       this.skills.register(BROWSING_SKILL);
       const browserDir = path.join(home, "device/browser");
@@ -450,6 +473,26 @@ export class DeviceAgent {
     }
   }
 
+  /**
+   * Whether this Mac actually ships the named CLI.
+   *
+   * Per-provider rather than "is anything staged": the day a second row joins
+   * the registry, a Mac with only gog staged would otherwise report the other
+   * as present — publishing its skill and minting for it.
+   */
+  private hasStaged(command: string): boolean {
+    return this.vendorDirs.some((d) => fs.existsSync(path.join(d, command)));
+  }
+
+  /**
+   * The environment a vendored provider's child runs with: its token, and
+   * nothing else.
+   */
+  private async mintFor(provider: VendoredProvider): Promise<Record<string, string>> {
+    if (this.minter === null) throw MintError.unpaired();
+    return { [provider.tokenEnv]: await this.minter.mint(provider) };
+  }
+
   private async executeCommand(
     intent: Intent,
     exec: { argv?: string[]; cwd?: string },
@@ -461,15 +504,60 @@ export class DeviceAgent {
     // wait_ms is delivery detail, not an approved capability, so it rides in
     // the payload rather than the approved capability set.
     const waitMs = jv(payload).get("wait_ms").int ?? 10000;
-    this.audit.record("exec_start", { intentId: intent.intentId, argv: exec.argv ?? [] });
+    const argv = exec.argv ?? [];
+
+    // A vendored provider CLI gets its token minted into the child's
+    // environment. Everything below this is the ordinary exec path — the
+    // capability the owner approved is the argv, the sandbox profile and the
+    // audit are unchanged, and `tools/list` never grew a tool for it.
+    const provider = vendoredProvider(argv);
+    let env: Record<string, string> | undefined;
+    let belted = argv;
+    if (provider !== null) {
+      // The device is the chokepoint and cannot rely on its caller having
+      // checked. The tool checks too, so a refusal never reaches an approval
+      // dialog — but an intent can arrive from a replayed or hand-built
+      // request that never passed through it.
+      const refusal = provider.refuse(argv);
+      if (refusal !== null) {
+        this.audit.record("exec_error", { intentId: intent.intentId, error: refusal });
+        return { status: "error", error: refusal };
+      }
+      // A provider NAME with no staged binary is refused, never let through.
+      // Falling through would run whatever `gog` the owner happens to have on
+      // their own PATH — unbelted, unrefused, and against their own
+      // credentials rather than a minted one. The name is this Mac's to
+      // resolve; if it cannot, that is an answer, not a pass.
+      if (!this.hasStaged(provider.command)) {
+        const error = `${provider.command} is not installed on this Mac`;
+        this.audit.record("exec_error", { intentId: intent.intentId, error });
+        return { status: "error", error };
+      }
+      try {
+        // A help invocation touches no network, so it gets no token.
+        if (needsToken(argv)) env = await this.mintFor(provider);
+      } catch (e) {
+        const message = e instanceof MintError ? e.message : `could not authorise ${provider.command}`;
+        this.audit.record("exec_error", { intentId: intent.intentId, error: message });
+        return { status: "error", error: message };
+      }
+      // The belt goes in front of the command path, where the CLI accepts
+      // globals. It is not in the approved argv deliberately: the owner
+      // approved the command they read, and these only ever narrow it — the
+      // same reason the sandbox profile is not in the argv either.
+      belted = [argv[0]!, ...provider.belt, ...argv.slice(1)];
+    }
+
+    this.audit.record("exec_start", { intentId: intent.intentId, argv });
     try {
       const result = await this.executor.run({
-        argv: exec.argv ?? [],
+        argv: belted,
         cwd: exec.cwd,
         readPaths,
         writePaths,
         network,
         waitMs,
+        env,
       });
       if (!result.running) {
         this.audit.record("exec_end", {

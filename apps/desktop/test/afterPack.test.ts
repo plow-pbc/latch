@@ -46,12 +46,21 @@ describe("the packaging hook refuses before it signs", () => {
   let dir: string;
   const realIdentity = process.env.CODESIGN_IDENTITY;
 
-  const runtimeDir = () =>
-    path.join(dir, "Plow Latch.app", "Contents", "Resources", "browser-runtime");
+  const resourcesDir = () => path.join(dir, "Plow Latch.app", "Contents", "Resources");
+  const runtimeDir = () => path.join(resourcesDir(), "browser-runtime");
+
+  /** gog as production ships it: one thin binary per arch. */
+  const packGog = () => {
+    for (const arch of ["arm64", "x64"]) {
+      fs.mkdirSync(path.join(resourcesDir(), "gog", arch), { recursive: true });
+      fs.writeFileSync(path.join(resourcesDir(), "gog", arch, "gog"), "#!/bin/sh\n");
+    }
+  };
 
   /** A packed app whose payloads all carry something, minus `omit`. */
   const pack = (omit?: string) => {
     const runtime = runtimeDir();
+    packGog();
     for (const payload of PAYLOADS) {
       if (payload === omit) continue;
       fs.mkdirSync(path.join(runtime, payload), { recursive: true });
@@ -159,6 +168,29 @@ describe("the packaging hook refuses before it signs", () => {
     await expect(afterPack(contextFor(dir))).rejects.toThrow(
       `vault-server is missing ${path.dirname(piece) === "web-vault" ? "web-vault" : piece}`,
     );
+  });
+
+  it.each(["arm64", "x64"])("refuses a packed app with no gog for %s", async (arch) => {
+    // Silent half-install: a tree carrying only the packaging Mac's arch
+    // clears every other gate and reaches the other arch's users with nothing.
+    pack();
+    fs.rmSync(path.join(resourcesDir(), "gog", arch), { recursive: true, force: true });
+    await expect(afterPack(contextFor(dir))).rejects.toThrow(new RegExp(`no gog for ${arch}`));
+  });
+
+  it.each([
+    { how: "a zero-byte gog", damage: (d: string) => fs.writeFileSync(path.join(d, "gog"), "") },
+    {
+      how: "an arch folder carrying only a stray file",
+      damage: (d: string) => {
+        fs.rmSync(path.join(d, "gog"));
+        fs.writeFileSync(path.join(d, ".DS_Store"), "junk");
+      },
+    },
+  ])("refuses $how, not just an absent directory", async ({ damage }) => {
+    pack();
+    damage(path.join(resourcesDir(), "gog", "arm64"));
+    await expect(afterPack(contextFor(dir))).rejects.toThrow(/no gog for arm64/);
   });
 
   it("refuses a camoufox tree a fuse left without a bundle", async () => {
