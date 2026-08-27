@@ -49,8 +49,7 @@ else:
 
     def urlopen(*_args, **kwargs):
         seen["timeout"] = kwargs.get("timeout")
-        if raises == "capture-budget":
-            raise urllib.error.URLError(ConnectionRefusedError(61, "refused"))
+
         if raises == "rpc-error":
             # Server-authored text, and it reflects the request back.
             return response({"jsonrpc": "2.0", "id": 1,

@@ -126,10 +126,12 @@ describe.skipIf(!havePython())("latch-smoke, run for real", () => {
 
   it("reaches a verdict and annotates it, without a traceback", () => {
     const started = Date.now();
-    const run = spawnSync("python3", fixture("1").argv, { encoding: "utf8", env });
-    // The window an operator asks for is the window they get: an unbounded
-    // `sleep(5)` overshot a 1s timeout fivefold, and nothing here saw it.
-    expect(Date.now() - started).toBeLessThan(4_000);
+    // Above MIN_SEND_S — below it the run refuses before sending, which is a
+    // different (also correct) outcome, covered by its own row.
+    const run = spawnSync("python3", fixture("3").argv, { encoding: "utf8", env });
+    // The window an operator asks for is roughly the window they get: an
+    // unbounded sleep overshot fivefold and nothing here saw it.
+    expect(Date.now() - started).toBeLessThan(9_000);
     const out = run.stdout + run.stderr;
     expect(out).not.toContain("Traceback");
     expect(run.status).toBe(1);
@@ -147,6 +149,18 @@ describe.skipIf(!havePython())("latch-smoke, run for real", () => {
   // run, so the record is written from the outside once the script has printed
   // it — which is also the only way anything external can correlate with a
   // run, and worth having demonstrated.
+  it("refuses rather than send a call with no time to answer", () => {
+    // A baseline read that nearly consumed the window used to still fire a
+    // call with milliseconds to answer in — which raises a dialog on someone's
+    // Mac that nothing can then verify.
+    const run = spawnSync("python3", fixture("1").argv, { encoding: "utf8", env });
+    const out = run.stdout + run.stderr;
+    expect(run.status).toBe(1);
+    expect(out).toContain("REFUSED");
+    expect(out).toContain("left of the 1s window");
+    expect(out).not.toContain("UNVERIFIED");
+  });
+
   it("does not blame the send when the verdict proves it arrived", async () => {
     const { log, argv } = fixture("25");
     const child = spawn("python3", argv, { stdio: ["ignore", "pipe", "pipe"], env });
@@ -336,7 +350,7 @@ describe.skipIf(!havePython())("latch-smoke treats a response as evidence and an
     const file = path.join(tmp, "budget-token");
     fs.writeFileSync(file, "t\n", { mode: 0o600 });
     const sent = call({ call: "send", url: "https://relay.invalid/mcp", status: 0, token: "t",
-      raises: "capture-budget" }, file) as { urlopenTimeout: number };
+      raises: "refused" }, file) as { urlopenTimeout: number };
     // The probe passes 30; a hard-coded 90 (or an unset timeout) fails here.
     expect(sent.urlopenTimeout).toBe(30);
   });

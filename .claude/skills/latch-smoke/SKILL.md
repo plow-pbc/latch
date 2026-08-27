@@ -50,10 +50,14 @@ scripts/latch-smoke --url <mcpUrl> --token-file <path>
 - `--ssh <user@host>` — read that Mac's audit log over ssh instead of this
   one's. Host map: the `tailscale-ssh` skill. The call itself always goes over
   the relay, so only the log read is remote.
-- `--timeout <seconds>` — default 120. It bounds the **whole run**, not just
-  the polling: the log read, the send, and every poll draw on one deadline. So
-  a relay that accepts and never answers costs what you asked for, not the
-  90 seconds a hard-coded socket timeout used to spend.
+- `--timeout <seconds>` — default 120. One deadline covers the log read, the
+  send and every poll, rather than starting after the send: a relay that
+  accepts and never answers costs roughly what you asked for instead of the
+  90 seconds a hard-coded socket timeout used to spend. It is a bound on each
+  blocking wait, not a wall-clock guarantee — `urlopen`'s timeout is per socket
+  operation, so name resolution is outside it and a trickled response body
+  resets it — and the final log read is always allowed 5s so a timed-out run
+  reports its real verdict rather than an unreadable log.
 - Everything after `--` replaces the command. The default is a **fixed**
   `/bin/echo latch-smoke`, and that is deliberate: the run's nonce rides `goal`,
   which `RuleKey.compute` excludes from the rule key, so one pre-seeded Always

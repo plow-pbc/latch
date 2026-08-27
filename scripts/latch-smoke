@@ -42,6 +42,15 @@ DEFAULT_HOME = "~/Library/Application Support/Plow-Latch"
 # written the moment one arrives, so this is generous; it exists so a typo'd
 # --url does not cost the full window.
 ARRIVAL_GRACE_S = 20
+# Every read gets at least this long, even past the deadline. Spending the
+# budget down to zero starved the FINAL read, so a timed-out ssh run reported
+# "the audit log stopped being readable" instead of the verdict it had the
+# evidence for — the wrong cause, on the path where reads are slowest.
+FINAL_READ_S = 5.0
+# ...and a send needs enough left to plausibly settle. `remaining() > 0` let a
+# baseline read that nearly consumed the window still fire a call with
+# milliseconds to answer in, which raises a dialog nothing can then verify.
+MIN_SEND_S = 2.0
 
 
 def remote_cat(log_path):
@@ -378,7 +387,7 @@ def main():
     # moment where refusing costs nothing: past it, the call has raised a
     # dialog on someone's Mac that nothing here can then verify. It is the same
     # reasoning the send-side guards use, one layer down.
-    baseline, problem = read_log(log_path, args.ssh, remaining())
+    baseline, problem = read_log(log_path, args.ssh, max(remaining(), FINAL_READ_S))
     if problem is not None:
         print(f"REFUSED — cannot read the audit log: {problem}")
         print("  Not sending: a call this cannot verify would still raise a dialog.")
@@ -391,9 +400,11 @@ def main():
     # out" having checked nothing, which tells someone to stop looking.
     since = len(baseline)
 
-    if remaining() <= 0:
-        print(f"REFUSED — the {args.timeout}s window closed while reading the log.")
-        print("  Nothing was sent. Raise --timeout.")
+    if remaining() < MIN_SEND_S:
+        print(f"REFUSED — under {MIN_SEND_S:.0f}s left of the {args.timeout}s window"
+              " after reading the log.")
+        print("  Nothing was sent: a call with no time to answer still raises a dialog.")
+        print("  Raise --timeout.")
         return 1
     sent = send(args.url, args.token_file, argv, f"smoke test: {nonce}", remaining())
     if sent is not None:
@@ -417,7 +428,7 @@ def main():
     # evidence the path is right, which is all the hint below asserts against.
     saw_any = bool(baseline)
     while True:
-        events, problem = read_log(log_path, args.ssh, remaining())
+        events, problem = read_log(log_path, args.ssh, max(remaining(), FINAL_READ_S))
         if problem is not None:
             expired = time.monotonic() >= deadline
             # It was readable a moment ago, so this is transient. Never let it
