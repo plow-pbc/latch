@@ -902,18 +902,7 @@ function cloudStatus(status, failureReason) {
   if (status === "provisioning") return { tone: "amber", label: "Setting up…" };
   if (status === "teardown") return { tone: "amber", label: "Removing…" };
   if (status === "failed") {
-    const reasons = {
-      provider_unreachable: "Provider unreachable",
-      image_pull_timeout: "Image pull timed out",
-      setup_failed: "Setup failed",
-      validation_failed: "Validation failed — retrying will not help; ask a human",
-      unknown: "Unknown failure",
-      provision_timeout: "Provision timed out",
-    };
-    const reason = failureReason && Object.hasOwn(reasons, failureReason)
-      ? reasons[failureReason]
-      : failureReason ?? "Reason unavailable";
-    return { tone: "red", label: `Failed · ${reason}` };
+    return { tone: "red", label: `Failed · ${failureReason ?? "Reason unavailable"}` };
   }
   return { tone: "amber", label: "Status unavailable" };
 }

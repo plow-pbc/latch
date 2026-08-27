@@ -52,75 +52,15 @@ describe("CloudAgentsClient destructive actions", () => {
     ]);
   });
 
-  it("deletes only the unfinished id prescribed by a recoverable 409 and re-POSTs once", async () => {
-    const staleId = "dead_agent_456";
-    const { calls, fetchImpl } = recordingFetch([
-      {
-        status: 409,
-        body: {
-          detail: `This chat has an unfinished cloud agent (${staleId}). Delete it with DELETE /v1/agents/cloud/${staleId} and provision again.`,
-        },
-      },
-      { status: 204 },
-      { status: 202, body: resource("provisioning", { agent_id: "replacement" }) },
-    ]);
-
-    const created = await new CloudAgentsClient(
-      new PlowApi("https://api.plow.co", fetchImpl),
-    ).create(CREDENTIAL, { chatUid: "cht_123" });
-
-    expect(created.agentId).toBe("replacement");
-    expect(calls.map(({ url, init }) => [init.method, url])).toEqual([
-      ["POST", "https://api.plow.co/v1/agents/cloud"],
-      ["DELETE", `https://api.plow.co/v1/agents/cloud/${staleId}`],
-      ["POST", "https://api.plow.co/v1/agents/cloud"],
-    ]);
-    expect(calls[0].init.body).toBe(calls[2].init.body);
-  });
-
-  it("names the stuck agent when prescribed recovery cannot delete it", async () => {
-    const staleId = "dead_agent_456";
-    const { calls, fetchImpl } = recordingFetch([
-      {
-        status: 409,
-        body: {
-          detail: `This chat has an unfinished cloud agent (${staleId}). Delete it with DELETE /v1/agents/cloud/${staleId} and provision again.`,
-        },
-      },
-      { status: 500, body: { detail: "Database unavailable." } },
-    ]);
-
-    const error = await new CloudAgentsClient(new PlowApi("https://api.plow.co", fetchImpl))
-      .create(CREDENTIAL, { chatUid: "cht_123" })
-      .catch((caught: unknown) => caught);
-
-    expect(error).toBeInstanceOf(PlowApiError);
-    expect(String(error)).toBe(
-      `PlowApiError: Cloud agent ${staleId} could not be removed. This chat cannot be provisioned until that agent is removed.`,
-    );
-    expect(calls.map(({ init }) => init.method)).toEqual(["POST", "DELETE"]);
-  });
-
-  it("does not delete a live agent named by a provider-switch 409", async () => {
-    const liveId = "live_agent_789";
-    const detail = `This chat already has a hermes agent (${liveId}). Delete it with DELETE /v1/agents/cloud/${liveId} before provisioning a codex one.`;
-    const { calls, fetchImpl } = recordingFetch([{ status: 409, body: { detail } }]);
-
-    const error = await new CloudAgentsClient(new PlowApi("https://api.plow.co", fetchImpl))
-      .create(CREDENTIAL, { chatUid: "cht_123", provider: "exe:codex" })
-      .catch((caught: unknown) => caught);
-
-    expect(error).toBeInstanceOf(PlowApiError);
-    expect(String(error)).toBe("PlowApiError: Plow returned 409.");
-    expect(calls.map(({ init }) => init.method)).toEqual(["POST"]);
-  });
-
   it.each([
     ["PENDING_TEARDOWN", "still being removed"],
     ["PROVIDER_CONFLICT", "different cloud-agent provider"],
+    ["PROVISION_IN_FLIGHT", "already in progress"],
     ["CHAT_DELETED", "chat has been deleted"],
     ["OWNER_NO_ADDRESS", "no address for that chat"],
     ["OWNER_NOT_IN_CHAT", "not a member of that chat"],
+    ["A_NEW_CONFLICT", "Plow returned 409."],
+    ["constructor", "Plow returned 409."],
   ])("surfaces structured 409 %s without deleting anything", async (code, message) => {
     const { calls, fetchImpl } = recordingFetch([{
       status: 409,
@@ -133,59 +73,6 @@ describe("CloudAgentsClient destructive actions", () => {
 
     expect(String(error)).toContain(message);
     expect(calls.map(({ init }) => init.method)).toEqual(["POST"]);
-  });
-
-  it("re-POSTs a structured PROVISION_IN_FLIGHT without deleting anything", async () => {
-    const { calls, fetchImpl } = recordingFetch([
-      {
-        status: 409,
-        body: {
-          detail: {
-            code: "PROVISION_IN_FLIGHT",
-            message: "identical prose must not decide behavior",
-          },
-        },
-      },
-      { status: 202, body: resource("provisioning", { agent_id: "winner" }) },
-    ]);
-
-    const created = await new CloudAgentsClient(new PlowApi("https://api.plow.co", fetchImpl))
-      .create(CREDENTIAL, { chatUid: "cht_123" });
-
-    expect(created.agentId).toBe("winner");
-    expect(calls.map(({ init }) => init.method)).toEqual(["POST", "POST"]);
-  });
-
-  it("tolerates an unrecognised structured 409 code without following its prose", async () => {
-    const { calls, fetchImpl } = recordingFetch([{
-      status: 409,
-      body: {
-        detail: {
-          code: "A_NEW_CONFLICT",
-          message: "This chat has an unfinished cloud agent (bait). Delete it now.",
-        },
-      },
-    }]);
-
-    const error = await new CloudAgentsClient(new PlowApi("https://api.plow.co", fetchImpl))
-      .create(CREDENTIAL, { chatUid: "cht_123" })
-      .catch((caught: unknown) => caught);
-
-    expect(String(error)).toBe("PlowApiError: Plow returned 409.");
-    expect(calls.map(({ init }) => init.method)).toEqual(["POST"]);
-  });
-
-  it("does not inherit a conflict message from Object.prototype", async () => {
-    const { fetchImpl } = recordingFetch([{
-      status: 409,
-      body: { detail: { code: "constructor", message: "ignored" } },
-    }]);
-
-    const error = await new CloudAgentsClient(new PlowApi("https://api.plow.co", fetchImpl))
-      .create(CREDENTIAL, { chatUid: "cht_123" })
-      .catch((caught: unknown) => caught);
-
-    expect(String(error)).toBe("PlowApiError: Plow returned 409.");
   });
 });
 

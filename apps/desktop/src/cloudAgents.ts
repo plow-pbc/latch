@@ -86,39 +86,13 @@ export class CloudAgentsClient {
       ...(request.scopes === undefined ? {} : { scopes: request.scopes }),
     };
 
-    let response = await this.api.request(
+    const response = await this.api.request(
       "POST",
       "/v1/agents/cloud",
       { token: deviceCredential, body, timeoutMs: CREATE_REQUEST_TIMEOUT_MS },
     );
     if (response.status === 409) {
-      const failure = await decodeJson(response);
-      const conflict = conflictCode(failure);
-      if (conflict === "PROVISION_IN_FLIGHT") {
-        response = await this.api.request(
-          "POST",
-          "/v1/agents/cloud",
-          { token: deviceCredential, body, timeoutMs: CREATE_REQUEST_TIMEOUT_MS },
-        );
-        return this.resourceFor(response, deviceCredential);
-      }
-      const staleAgentId = recoverableAgentId(failure);
-      if (!staleAgentId) throw conflictError(conflict);
-
-      try {
-        await this.delete(deviceCredential, staleAgentId);
-      } catch (error) {
-        throw new PlowApiError(
-          "http",
-          `Cloud agent ${staleAgentId} could not be removed. This chat cannot be provisioned until that agent is removed.`,
-          error instanceof PlowApiError ? error.status : undefined,
-        );
-      }
-      response = await this.api.request(
-        "POST",
-        "/v1/agents/cloud",
-        { token: deviceCredential, body, timeoutMs: CREATE_REQUEST_TIMEOUT_MS },
-      );
+      throw conflictError(conflictCode(await decodeJson(response)));
     }
 
     return this.resourceFor(response, deviceCredential);
@@ -281,15 +255,6 @@ function conflictError(code: string | null): PlowApiError {
   };
   const message = code && Object.hasOwn(messages, code) ? messages[code] : "Plow returned 409.";
   return new PlowApiError("http", message, 409);
-}
-
-function recoverableAgentId(decoded: unknown): string | null {
-  if (!isRecord(decoded) || typeof decoded.detail !== "string") return null;
-  return (
-    decoded.detail.match(
-      /^This chat has an unfinished cloud agent \(([A-Za-z0-9_-]+)\)\. Delete it with DELETE \/v1\/agents\/cloud\/\1 and provision again\.$/,
-    )?.[1] ?? null
-  );
 }
 
 function echoesCredential(text: string, credential: string): boolean {

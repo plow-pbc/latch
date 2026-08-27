@@ -1,10 +1,14 @@
 import { CloudAgentResource, CloudAgentStatus } from "./cloudAgents.js";
 import type { ChatRecipients } from "./onboarding.js";
 
-const KNOWN_FAILURE_CODES = new Set([
-  "provider_unreachable", "image_pull_timeout", "setup_failed",
-  "validation_failed", "unknown", "provision_timeout",
-]);
+const FAILURE_LABELS: Record<string, string> = {
+  provider_unreachable: "Provider unreachable",
+  image_pull_timeout: "Image pull timed out",
+  setup_failed: "Setup failed",
+  validation_failed: "Validation failed — retrying will not help; ask a human",
+  unknown: "Unknown failure",
+  provision_timeout: "Provision timed out",
+};
 
 /** The complete cloud-agent shape allowed to cross into the renderer. */
 export interface CloudAgentDisplayRow {
@@ -47,9 +51,9 @@ export function toCloudAgentDisplayRow(
   context: CloudAgentDisplayContext = {},
 ): CloudAgentDisplayRow {
   const scrub = (value: string): string => scrubSessionId(value, agent.sessionId);
-  const failureReason = agent.failureCode && KNOWN_FAILURE_CODES.has(agent.failureCode)
-    ? agent.failureCode
-    : agent.failureReason ?? agent.failureCode ?? null;
+  const failureReason = agent.failureCode && Object.hasOwn(FAILURE_LABELS, agent.failureCode)
+    ? FAILURE_LABELS[agent.failureCode]
+    : agent.failureReason;
   return {
     agentId: scrub(agent.agentId),
     name: scrub(agent.name ?? context.fallbackName ?? "cloud agent"),
