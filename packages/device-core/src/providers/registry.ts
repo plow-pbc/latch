@@ -117,26 +117,32 @@ export interface VendoredProvider {
 }
 
 /**
+ * The canonical group names, and the ONE source of the belt's scope bound.
+ *
+ * Separate from the aliases because they are not the same thing: these are
+ * what gog is TOLD to enable, and an alias sent to `--enable-commands` would
+ * be asking gog to resolve its own alias twice.
+ */
+export const GOG_CANONICAL = ["gmail", "calendar"] as const;
+
 /**
- * The groups this Mac accepts, and the one source of the belt's scope bound.
+ * gog's own alias spellings for those two — `gog gmail (mail,email)`,
+ * `gog calendar (cal)`.
  *
- * Two lists rather than one because they are not the same thing. The canonical
- * names are what gog is TOLD to enable; the aliases are spellings it resolves
- * itself, which this check has to accept or it refuses Gmail for being called
- * `mail`. Sending an alias to `--enable-commands` would be asking gog to
- * resolve its own alias twice.
+ * Accepted by the check, never sent to the belt: gog resolves them itself.
+ * Without them this refused Gmail for being called `mail`.
+ */
+export const GOG_ALIASES = ["mail", "email", "cal"] as const;
+
+/**
+ * Every spelling this Mac accepts as a group.
  *
- * This is the check that decides whether a command is refused at all — every
+ * The check that decides whether a command is refused at all — every
  * wrong-command shape `refuse` enumerates fails it, and the other branches
  * only choose a better sentence. What each shape would otherwise cost is
  * written once, in `refuse`'s doc; the per-version verdicts behind the bound
  * are step 5 of the pin-bump checklist in `scripts/fetch-gog.mjs`.
  */
-const GOG_CANONICAL = ["gmail", "calendar"] as const;
-
-/** gog's own alias spellings for those two. Accepted; never sent to the belt. */
-const GOG_ALIASES = ["mail", "email", "cal"] as const;
-
 const GOG_GROUPS: ReadonlySet<string> = new Set<string>([...GOG_CANONICAL, ...GOG_ALIASES]);
 
 /**

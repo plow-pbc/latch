@@ -55,8 +55,8 @@
  *         calendar --help, gmail search -h   in-scope help, for completeness
  *
  *     versus `drive ls`, which is refused. So an agent can read help for a
- *     group it cannot run, which is what the skill's own scope paragraph is
- *     for.
+ *     group it cannot run — the skill says so, because otherwise usage that
+ *     prints cleanly reads as a surface that works.
  *
  *     And that appending a second `--enable-commands` still widens it, which
  *     is what `RESERVED_EXACT` exists to refuse. The alias list is gog's to

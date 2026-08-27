@@ -7,6 +7,8 @@
  */
 import { describe, expect, it } from "vitest";
 import {
+  GOG_ALIASES,
+  GOG_CANONICAL,
   impliesNetwork,
   needsToken,
   PROVIDERS,
@@ -138,10 +140,10 @@ describe("needsToken", () => {
     // Top level: as inert as any group help, and the first thing an agent
     // discovering the surface tries.
     { argv: ["gog", "--help"], refused: false, token: false },
-    // This PRINTS USAGE — kong takes --help
-    // wherever it appears in the flag stream. So the gate accepts it as a real
-    // command and it gets a token it will not use. Fail-safe, and the cost is
-    // a spent delegation rather than an unauthenticated run.
+    // This PRINTS USAGE — kong takes --help wherever it appears in the flag
+    // stream. So the gate accepts it as a real command and it gets a token it
+    // will not use. Fail-safe, and the cost is a spent delegation rather than
+    // an unauthenticated run.
     { argv: ["gog", "gmail", "search", "--help", "q"], refused: false, token: true },
     // After the terminator, -h is a positional — the query itself — so this is
     // a real search and correctly needs a token. The help predicate requires
@@ -207,20 +209,25 @@ describe("the scope bound", () => {
   // the group because it does so before the dialog and the mint; this is the
   // layer beneath it. Per-version verdicts: step 5 of the checklist in
   // `scripts/fetch-gog.mjs`.
-  it("rides the belt, naming groups this Mac would also accept", () => {
+  it("rides the belt, and names exactly the canonical groups", () => {
     const bound = gog.belt.find((f) => f.startsWith("--enable-commands="));
     expect(bound).toBeDefined();
     const named = bound!.slice("--enable-commands=".length).split(",");
-    expect(named.length).toBeGreaterThan(0);
-    // The relationship, not the literal: a bound naming a group `refuse`
-    // rejects would enable in gog what this Mac blocks, and the reverse leaves
-    // an accepted group disabled inside gog. Either is a drift the derivation
-    // exists to prevent.
-    for (const group of named) expect(gog.refuse(["gog", group, "x"])).toBeNull();
-    // ...and only canonical names: gog resolves its own aliases, so sending
-    // one would ask it to do that twice.
-    expect(named).not.toContain("mail");
-    expect(named).not.toContain("cal");
+    // The derivation itself. Asserting only that each name is one `refuse`
+    // accepts cannot fail — `GOG_GROUPS` is a superset of `GOG_CANONICAL` by
+    // construction — so it has to be equality against the list the bound is
+    // built from, which a hand-written string can drift away from.
+    expect(named).toEqual([...GOG_CANONICAL]);
+    // ...and no alias, for ANY of them: gog resolves its own, so sending one
+    // asks it to do that twice.
+    for (const alias of GOG_ALIASES) expect(named).not.toContain(alias);
+  });
+
+  it("accepts every canonical name and every alias, and nothing else", () => {
+    for (const group of [...GOG_CANONICAL, ...GOG_ALIASES]) {
+      expect(gog.refuse(["gog", group, "x"])).toBeNull();
+    }
+    expect(gog.refuse(["gog", "drive", "x"])).toContain("only Gmail and Calendar");
   });
 
   // gog answers to `gog gmail (mail,email)` and `gog calendar (cal)`. Refusing

@@ -31,6 +31,10 @@ before approval, before the token is minted and before anything runs, and gog
 is additionally launched with \`--enable-commands=gmail,calendar\` so it refuses
 them itself. Either way they never reach Google.
 
+Their **help** still prints, though: \`["gog","drive","--help"]\` returns usage
+for a group you cannot actually run. Usage that prints cleanly is not a surface
+that works.
+
 The token carries four Google scopes (gmail.readonly, gmail.modify,
 calendar.readonly, calendar.events).
 
