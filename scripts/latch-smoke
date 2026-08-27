@@ -152,11 +152,17 @@ def send(url, token_file, argv, goal):
                 "  Nothing was written to the audit log. 401/403 is the relay or the"
                 " credential; another 4xx is the MCP handler.", False)
     except OSError as error:
-        # NOT the same claim. This branch covers urlopen's own 90s read
-        # timeout, where the request did reach the relay and an intent may well
-        # exist — so it must not tell an operator the log is empty.
-        return (f"could not reach {url}: {error.__class__.__name__}, so whether it"
-                " arrived is UNKNOWN.", True)
+        # Only a TIMEOUT is unknown: the request went out and the answer did
+        # not come back, so an intent may well exist. A refused connection or a
+        # DNS failure is a call that never left this Mac, and treating it as
+        # unknown burns the whole window before ending on a verdict about an
+        # audit log that was never the problem.
+        reason = getattr(error, "reason", None)
+        if isinstance(error, TimeoutError) or isinstance(reason, TimeoutError):
+            return (f"no answer from {url} within the read timeout, so whether it"
+                    " arrived is UNKNOWN.", True)
+        return (f"could not reach {url}: {error.__class__.__name__}.\n"
+                "  The request never left this Mac; nothing was written to the log.", False)
     # Neither absence is proof of success — that is the audit log — but either
     # presence is proof of failure, and saying so now beats a 2-minute timeout.
     if payload.get("error") is not None:
@@ -317,7 +323,9 @@ def main():
 
     print(f"waiting up to {args.timeout}s for a terminal event")
     deadline = time.monotonic() + args.timeout
-    saw_any = False
+    # The baseline was read from the same path a moment ago; records in it are
+    # evidence the path is right, which is all the hint below asserts against.
+    saw_any = bool(baseline)
     while True:
         expired = time.monotonic() >= deadline
         events, problem = read_log(log_path, args.ssh)

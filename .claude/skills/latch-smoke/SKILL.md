@@ -78,6 +78,8 @@ Only success exits 0.
 | `TIMEOUT — approved, never started` | 1 | `exec_start` is written before the spawn, so its absence means the executor was never reached. Check the app is running |
 | `TIMEOUT — started, still running` | 1 | re-run, or raise `--timeout` |
 | `TIMEOUT — nothing carrying …` | 1 | it never arrived; the output names the three causes |
+| `TIMEOUT — the audit log stopped being readable` | 1 | the call WAS sent — re-read the log for the nonce once the host is reachable |
+| `REFUSED — cannot read the audit log` | 1 | nothing was sent, deliberately: a call this cannot verify would still raise a dialog. Check `--ssh`, and that `--home` is readable — a *missing* log is not this |
 
 ## Smoke-testing the gog provider specifically
 

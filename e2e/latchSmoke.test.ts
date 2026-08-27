@@ -138,8 +138,9 @@ describe.skipIf(!havePython())("latch-smoke reads the log where it lives", () =>
     const locked = path.join(dir, "locked.ndjson");
     fs.writeFileSync(locked, "{}\n");
     fs.chmodSync(locked, 0o000);
-    expect(call({ call: "read", path: locked })).toMatchObject({ count: 0 });
-    expect((call({ call: "read", path: locked }) as { problem: string }).problem).not.toBe("");
+    const read = call({ call: "read", path: locked }) as { count: number; problem: string };
+    expect(read.count).toBe(0);
+    expect(read.problem).not.toBe("");
   });
 
   // 4: exit 3 is "no log yet" and must stay ABOVE the generic non-zero check —
@@ -175,6 +176,27 @@ describe.skipIf(!havePython())("latch-smoke reads the log where it lives", () =>
   ];
   it.each(cases)("%s", (_name, path, expected) => {
     expect(call({ call: "remote", path })).toBe(expected);
+  });
+});
+
+describe.skipIf(!havePython())("latch-smoke only calls a timeout unknown", () => {
+  // A refused connection or a DNS failure never left this Mac, so falling
+  // through to the poll loop burns the whole window and then ends on a verdict
+  // about an audit log that was never the problem.
+  const cases: [string, string, boolean, string][] = [
+    ["a read timeout may have arrived", "timeout", true, "UNKNOWN"],
+    ["a refused connection did not", "refused", false, "never left this Mac"],
+  ];
+  const tokenFile = path.join(tmp, "transport-token");
+  fs.writeFileSync(tokenFile, "t\n", { mode: 0o600 });
+
+  it.each(cases)("%s", (_name, raises, unknown, contains) => {
+    const sent = call(
+      { call: "send", url: "https://relay.invalid/mcp", status: 0, token: "t", raises },
+      tokenFile,
+    ) as { reason: string; unknown: boolean };
+    expect(sent.unknown).toBe(unknown);
+    expect(sent.reason).toContain(contains);
   });
 });
 

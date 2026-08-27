@@ -36,10 +36,18 @@ else:
     # the case the credential rule exists for. Function-level stub: no socket,
     # no server.
     body = json.dumps({"error": "Bearer " + request["token"]}).encode()
+    raises = request.get("raises", "http")
 
     def urlopen(*_args, **_kwargs):
+        if raises == "timeout":
+            raise urllib.error.URLError(TimeoutError("timed out"))
+        if raises == "refused":
+            raise urllib.error.URLError(ConnectionRefusedError(61, "Connection refused"))
         raise urllib.error.HTTPError(request["url"], request["status"], "no", {}, io.BytesIO(body))
 
     urllib.request.urlopen = urlopen
-    reason, unknown = smoke.send(request["url"], sys.argv[3], ["/bin/echo", "x"], "goal")
-    print(json.dumps({"reason": reason, "unknown": unknown}))
+    sent = smoke.send(request["url"], sys.argv[3], ["/bin/echo", "x"], "goal")
+    # `send` returns None when the call went through; the success path has to be
+    # representable or the first test that stubs a 200 fails inside the harness.
+    print(json.dumps({"reason": None, "unknown": False} if sent is None
+                     else {"reason": sent[0], "unknown": sent[1]}))
