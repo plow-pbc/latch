@@ -69,12 +69,14 @@ extraResources:
   - from: ../../vendor/camoufox-browser/universal
     to: browser-runtime/camoufox
     filter: ["**/*", "!.sha256"]
-  # gog, per-arch. resolveVendoredBinary looks it up by process.arch, so the
-  # directory names are Node's (arm64, x64), not the release's. VERSION is a
-  # local staleness marker, not payload.
-  - from: ../../vendor/gog
-    to: gog
-    filter: ["**/*", "!VERSION"]
+  # Every vendored provider CLI, per-arch, in ONE entry — the payloads live
+  # under vendor/providers/<command>/<arch>/, so adding a provider edits nothing
+  # here. resolveVendoredBinary looks the arch up by process.arch, so those
+  # directory names are Node's (arm64, x64), not any release's. VERSION is each
+  # provider's local staleness marker, not payload.
+  - from: ../../vendor/providers
+    to: providers
+    filter: ["**/*", "!*/VERSION"]
   - from: ../../vendor/vault-cli
     to: browser-runtime/vault-cli
     filter: ["**/*", "!*/.sha256"]
@@ -113,10 +115,11 @@ mac:
   # identically into both electron slices, and the merger would try to lipo a
   # thin binary against its identical twin and fail. This pattern passes those
   # two through instead. Fusing them the way Camoufox is fused is issue #15.
-  # gog is the same shape as the vault payloads and needs the same treatment:
-  # two THIN per-arch binaries copied identically into both electron slices, so
-  # the merger would lipo a thin binary against its identical twin and fail.
-  x64ArchFiles: "**/{browser-runtime/{vault-cli,vault-server},gog}/**"
+  # Vendored provider CLIs are the same shape as the vault payloads and need the
+  # same treatment: two THIN per-arch binaries copied identically into both
+  # electron slices, so the merger would lipo a thin binary against its
+  # identical twin and fail. One `providers` alternation covers all of them.
+  x64ArchFiles: "**/{browser-runtime/{vault-cli,vault-server},providers}/**"
   notarize: true
 
 # Re-sign browser-runtime after the universal merge (which rewrites nested

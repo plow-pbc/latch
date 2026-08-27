@@ -42,9 +42,9 @@ describe("resolveVendoredBinary", () => {
   // generic in NAME only — a literal `gog` in every segment and a hard-coded
   // `DOMO_GOG` — so the second provider would have found the facade was a lie.
   it("looks under the command it was asked about, not gog's", () => {
-    const resourcesDir = tree("slack", "slack");
+    const resourcesDir = tree("providers/slack", "slack");
     expect(resolveVendoredBinary("slack", { resourcesDir }).path).toBe(
-      path.join(resourcesDir, "slack", process.arch, "slack"),
+      path.join(resourcesDir, "providers/slack", process.arch, "slack"),
     );
     // gog's own staging does not answer for another provider.
     expect(resolveVendoredBinary("gog", { resourcesDir }).path).toBeNull();
@@ -104,8 +104,8 @@ describe("resolveVendoredBinary", () => {
   });
 
   it("takes its override from that command's own variable", () => {
-    const staged = tree("slack", "slack");
-    process.env.DOMO_SLACK = path.join(staged, "slack", process.arch, "slack");
+    const staged = tree("providers/slack", "slack");
+    process.env.DOMO_SLACK = path.join(staged, "providers/slack", process.arch, "slack");
     cleanups.push(() => delete process.env.DOMO_SLACK);
     process.env.DOMO_GOG = "/nonexistent";
     expect(resolveVendoredBinary("slack").path).toBe(process.env.DOMO_SLACK);
@@ -116,25 +116,25 @@ describe("resolveVendoredBinary", () => {
   });
 
   it("finds the binary a packaged app ships in Resources", () => {
-    const resourcesDir = tree("gog");
+    const resourcesDir = tree("providers/gog");
     expect(resolveVendoredBinary("gog", { resourcesDir }).path).toBe(
-      path.join(resourcesDir, "gog", process.arch, "gog"),
+      path.join(resourcesDir, "providers/gog", process.arch, "gog"),
     );
   });
 
-  it("finds the binary a from-source checkout fetched into vendor/gog", () => {
-    // `just fetch-gog` writes <root>/vendor/gog/<arch>/gog, so repoRoot must be
+  it("finds the binary a from-source checkout fetched into vendor/providers/gog", () => {
+    // `just fetch-vendored` writes <root>/vendor/providers/gog/<arch>/gog, so repoRoot must be
     // the WORKSPACE root — app.getAppPath() is <root>/apps/desktop and the
     // lookup silently resolved nothing.
-    const repoRoot = tree("vendor/gog");
+    const repoRoot = tree("vendor/providers/gog");
     expect(resolveVendoredBinary("gog", { repoRoot }).path).toBe(
-      path.join(repoRoot, "vendor/gog", process.arch, "gog"),
+      path.join(repoRoot, "vendor/providers/gog", process.arch, "gog"),
     );
   });
 
   it("prefers the packaged copy over a vendor tree", () => {
-    const resourcesDir = tree("gog");
-    const repoRoot = tree("vendor/gog");
+    const resourcesDir = tree("providers/gog");
+    const repoRoot = tree("vendor/providers/gog");
     expect(resolveVendoredBinary("gog", { resourcesDir, repoRoot }).path).toContain(resourcesDir);
   });
 
@@ -156,9 +156,9 @@ describe("resolveVendoredBinary", () => {
   });
 
   it("takes DOMO_GOG ahead of everything else", () => {
-    const named = tree("gog");
-    process.env.DOMO_GOG = path.join(named, "gog", process.arch, "gog");
-    expect(resolveVendoredBinary("gog", { resourcesDir: tree("gog") }).path).toBe(process.env.DOMO_GOG);
+    const named = tree("providers/gog");
+    process.env.DOMO_GOG = path.join(named, "providers/gog", process.arch, "gog");
+    expect(resolveVendoredBinary("gog", { resourcesDir: tree("providers/gog") }).path).toBe(process.env.DOMO_GOG);
   });
 
   it("reports a named-but-missing DOMO_GOG apart from nothing being staged", () => {

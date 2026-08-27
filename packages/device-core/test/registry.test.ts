@@ -14,6 +14,8 @@ import {
   vendoredProvider,
 } from "../src/providers/registry.js";
 import { overrideVar } from "../src/providers/vendoredBinary.js";
+// @ts-expect-error — a build-time .mjs manifest with no type declarations.
+import { VENDORED } from "../../../scripts/vendored-providers.mjs";
 
 const gog = vendoredProvider(["gog"])!;
 
@@ -143,6 +145,11 @@ describe("needsToken", () => {
     // will not use. Fail-safe, and the cost is a spent delegation rather than
     // an unauthenticated run.
     { argv: ["gog", "gmail", "search", "--help", "q"], refused: false, token: true },
+    // `--help` as a flag's VALUE and the last word: the help predicate accepts
+    // it, so the gate passes it with no group check and mints nothing. Safe
+    // only because gog refuses it there itself (checklist step 3), which is why
+    // the shape is pinned here rather than only described.
+    { argv: ["gog", "gmail", "send", "--subject", "--help"], refused: false, token: false },
     // After the terminator, -h is a positional — the query itself — so this is
     // a real search and correctly needs a token. The help predicate requires
     // the words before it to be plain, which "--" is not.
@@ -206,7 +213,7 @@ describe("the scope bound", () => {
   // gog enforces this ITSELF, before any network call. `refuse` still checks
   // the group because it does so before the dialog and the mint; this is the
   // layer beneath it. Per-version verdicts: step 5 of the checklist in
-  // `scripts/fetch-gog.mjs`.
+  // `scripts/vendored-providers.mjs`.
   // Across the interpolation seam: the page an agent reads is built from the
   // same list, so an empty or doubled substitution shows up here rather than
   // in someone's transcript. The scope is stated in prose at ONE site now —
@@ -232,5 +239,21 @@ describe("the scope bound", () => {
   // per-version fact; step 5 of the checklist owns it.
   it.each([["mail"], ["email"], ["cal"]])("accepts the alias %s", (group) => {
     expect(gog.refuse(["gog", group, "search", "q"])).toBeNull();
+  });
+});
+
+describe("the runtime registry and the build-time manifest", () => {
+  // A provider added to one side only is the failure this catches, and it is
+  // the likeliest one: the two lists live in different halves of the repo
+  // because one needs a build and the other must not.
+  it("name the same commands", () => {
+    const staged = VENDORED.map((p) => p.command);
+    expect([...staged].sort()).toEqual([...PROVIDERS.map((p) => p.command)].sort());
+  });
+
+  // A row carrying one arch clears every other gate and reaches the other
+  // arch's users with no provider tools at all.
+  it("stage a binary for both macOS arches", () => {
+    for (const p of VENDORED) expect(Object.keys(p.arches).sort()).toEqual(["arm64", "x64"]);
   });
 });

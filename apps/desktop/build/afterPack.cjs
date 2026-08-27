@@ -108,24 +108,31 @@ module.exports = async function afterPack(context) {
         "package with `just package` or `just package-unnotarized`",
     );
   }
-  // gog is signed by electron-builder's own signer — it is outside signIgnore's
-  // browser-runtime scope and has no nested plists for the universal merge to
-  // rewrite. What it needs from here is proof it is in the packed app for BOTH
-  // arches: a tree carrying only the packaging Mac's arch clears every other
-  // gate and reaches the other arch's users with no Google tools at all.
+  // Vendored provider CLIs are signed by electron-builder's own signer — they
+  // are outside signIgnore's browser-runtime scope and have no nested plists for
+  // the universal merge to rewrite. What they need from here is proof each is in
+  // the packed app for BOTH arches: a tree carrying only the packaging Mac's
+  // arch clears every other gate and reaches the other arch's users with no
+  // provider tools at all.
   //
   // The BINARY, with a size — not `bare` on the directory, which passes for a
-  // folder carrying only a stray .DS_Store the copy picked up. gog's payload is
-  // one known file, so unlike the browser trees there is nothing to generalise.
-  const gogDir = path.join(context.appOutDir, appName, "Contents", "Resources", "gog");
-  const missingGog = ["arm64", "x64"].filter((a) => {
-    const binary = path.join(gogDir, a, "gog");
-    return !fs.existsSync(binary) || fs.statSync(binary).size === 0;
-  });
-  if (missingGog.length > 0) {
-    throw new Error(
-      `[afterPack] the packed app has no gog for ${missingGog.join(", ")} — run \`just fetch-gog\``,
-    );
+  // folder carrying only a stray .DS_Store the copy picked up.
+  //
+  // `await import`, because the manifest is ESM and this hook is not. It is the
+  // one list of providers; a literal here was true of one and false of two.
+  const { VENDORED } = await import("../../../scripts/vendored-providers.mjs");
+  for (const { command, arches } of VENDORED) {
+    const dir = path.join(context.appOutDir, appName, "Contents", "Resources", "providers", command);
+    const missingArches = Object.keys(arches).filter((a) => {
+      const binary = path.join(dir, a, command);
+      return !fs.existsSync(binary) || fs.statSync(binary).size === 0;
+    });
+    if (missingArches.length > 0) {
+      throw new Error(
+        `[afterPack] the packed app has no ${command} for ${missingArches.join(", ")} — ` +
+          `run \`just fetch-vendored ${command}\``,
+      );
+    }
   }
   // vault-server has a known interior, and unlike camoufox it is NOT fused: it
   // ships as two thin per-arch trees the merge passes through (x64ArchFiles),
