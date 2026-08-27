@@ -13,11 +13,6 @@
 import fs from "node:fs";
 import path from "node:path";
 
-/** Where `just fetch-<command>` lands it, and electron-builder copies it from. */
-function vendorDir(command: string): string {
-  return `vendor/${command}`;
-}
-
 /**
  * The override, e.g. `DOMO_GOG`: the command uppercased, with every
  * non-alphanumeric folded to `_`.
@@ -104,7 +99,8 @@ export function resolveVendoredBinary(
     if (packaged) return { path: packaged };
   }
   if (opts.repoRoot) {
-    const vendored = executable(path.join(opts.repoRoot, vendorDir(command), process.arch, command));
+    // Where `just fetch-vendored` lands it, and electron-builder copies it from.
+    const vendored = executable(path.join(opts.repoRoot, "vendor", command, process.arch, command));
     if (vendored) return { path: vendored };
   }
   return { path: null, problem: "not-staged" };
