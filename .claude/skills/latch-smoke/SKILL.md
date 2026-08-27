@@ -43,16 +43,17 @@ NONCE="latch-smoke-$(date -u +%Y%m%dT%H%M%SZ)"
 # is compared against is the TARGET's — and the failure that costs is a false
 # "ruled out", which tells someone to stop looking.
 SINCE=$(date -u -v-1M +%Y-%m-%dT%H:%M:%S 2>/dev/null || date -u -d '1 minute ago' +%Y-%m-%dT%H:%M:%S)
-# Refuse here rather than at Verify: the empty case is cheapest to catch on the
-# line that produces it, and by Verify the call has already raised a dialog on
-# someone's Mac.
-SINCE="${SINCE:?date produced no bound - neither -v nor -d is available}"
+# Refuse here rather than at Verify: by Verify the call has already raised a
+# dialog on someone's Mac. An explicit test, NOT ${SINCE:?...} — that aborts
+# only a non-interactive shell, and a pasted block is interactive, so the send
+# would have gone out with the error scrolling past above it.
+[ -n "$SINCE" ] || echo "date produced no bound - neither -v nor -d is available; not sending" >&2
 # EXPORTED: the guards below set shell variables, and the heredoc reads the
 # ENVIRONMENT — without this an operator who satisfies the guard still dies on
 # a bare KeyError.
 export TOKEN_FILE="${TOKEN_FILE:?a 0600 file holding the bearer token}"
 export MCP_URL="${MCP_URL:?the install's mcpUrl}"
-python3 - "$NONCE" <<'PYCALL'
+[ -n "$SINCE" ] && python3 - "$NONCE" <<'PYCALL'
 import json, os, sys, urllib.request
 
 # The wire shape is NOT generic JSON-RPC. This server validates that the body's
