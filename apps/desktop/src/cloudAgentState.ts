@@ -352,8 +352,6 @@ export class CloudAgentState {
       if (!refused) {
         this.mutations += 1;
         await this.refresh();
-        this.editsPending.delete(id);
-        if (generation === this.generation) this.publish();
       }
       return false;
     }
@@ -518,6 +516,7 @@ export class CloudAgentState {
       }
       this.rows = listed;
       this.agentsError = null;
+      this.editsPending.clear();
       // `teardown` is not a state an agent rests in — it is a delete that
       // failed provider-side and is waiting to be asked again. Nothing else
       // will ask, so this does, from whichever refresh sees it.

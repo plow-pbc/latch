@@ -1061,6 +1061,36 @@ describe("changing which chats an agent serves", () => {
     expect(state.state().cloudAgentEditsPending).toEqual([]);
   });
 
+  it("keeps an indeterminate edit gated until an agent-list read succeeds", async () => {
+    let lists = 0;
+    const f = fakes({
+      list: async () => {
+        lists += 1;
+        if (lists === 1) return [agent({ chatUids: ["cht_1"] })];
+        if (lists === 2) throw new PlowApiError("http", "Plow returned 503.", 503);
+        return [agent({ chatUids: ["cht_2"] })];
+      },
+      update: async () => {
+        throw new PlowApiError("network", "Plow didn't answer in time. Try again.");
+      },
+    });
+    const state = build(tempHome(), f);
+    await state.refresh();
+
+    await expect(state.editChats("agent_1", ["cht_2"])).resolves.toBe(false);
+
+    expect(state.state().cloudAgentEditsPending).toEqual(["agent_1"]);
+    expect(state.state().cloudAgentsError).toBe("Plow returned 503.");
+    await expect(state.editChats("agent_1", ["cht_3"])).resolves.toBe(false);
+    expect(f.agents.updated).toEqual([{ agentId: "agent_1", chatUids: ["cht_2"] }]);
+
+    await state.refresh();
+
+    expect(state.state().cloudAgentEditsPending).toEqual([]);
+    expect(state.state().cloudAgents[0].chatUids).toEqual(["cht_2"]);
+    expect(state.state().cloudAgentsError).toBeNull();
+  });
+
   it("names a conflicting agent only when a candidate id matches our list", async () => {
     const f = fakes({
       list: async () => [

@@ -1429,7 +1429,7 @@ function openRosterConfirm(row, section, trigger, redraw, cloudAgentId = null) {
   const destructive = section === "cloud" ? "Remove agent" : "Revoke";
   let title = section === "cloud" ? `Remove ${name}?` : `Revoke ${name}?`;
   let copy = section === "cloud"
-    ? "The agent will stop reading and replying in its chat. The chat's previous notification setup cannot be restored."
+    ? "The agent will stop reading and replying in all its chats. Their previous notification setup cannot be restored."
     : "Any client or session using this credential will stop working.";
   if (row.isThisMac) {
     title = "Sign this Mac out?";

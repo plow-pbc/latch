@@ -382,7 +382,7 @@ const SCREENS = [
     },
     expect: [
       "Remove Household helper?",
-      "The agent will stop reading and replying in its chat",
+      "The agent will stop reading and replying in all its chats. Their previous notification setup cannot be restored.",
       "Remove agent",
     ],
     after: async (win) => {
@@ -408,7 +408,7 @@ const SCREENS = [
     },
     expect: [
       "Remove Household helper?",
-      "The agent will stop reading and replying in its chat",
+      "The agent will stop reading and replying in all its chats. Their previous notification setup cannot be restored.",
       "Remove agent",
     ],
     after: async (win) => {
