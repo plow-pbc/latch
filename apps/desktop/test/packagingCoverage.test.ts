@@ -12,11 +12,11 @@
  * tools for one arch, or a ~13 MB binary committed to git.
  *
  * Every assertion here is against the thing that actually decides — the glob
- * matched with minimatch against a real packaged path, `.gitignore` resolved by
- * git's last-match-wins rule, the clone list's own tokens. A substring check reads the same and
- * passes on edits that do not work: adding a provider to the INNER alternation
- * of the arch glob contains its name while matching none of its paths, and a
- * provider named `vault` is a substring of `vault-cli` everywhere at once.
+ * matched against a real packaged path, an ignore line resolved for a later
+ * negation of itself, the clone list's own tokens. A substring check reads the
+ * same and passes on edits that do not work: adding a provider to the INNER
+ * alternation of the arch glob contains its name while matching none of its
+ * paths, and a provider named `vault` is a substring of `vault-cli` at once.
  */
 import { describe, expect, it } from "vitest";
 import fs from "node:fs";
@@ -67,10 +67,12 @@ const ignorePatterns = read(".gitignore")
   .filter((l) => l !== "" && !l.startsWith("#"));
 
 /**
- * Whether git would ignore this pattern's paths, by git's own last-match-wins
- * rule.
+ * Whether this EXACT pattern survives a later negation of itself, by git's
+ * last-match-wins rule.
  *
- * Dropping the negations instead would discard exactly what decides it: a file
+ * Not a gitignore engine: git treats `/vendor/gog/`, `vendor/gog` and others as
+ * the same pattern, and none of those spellings is resolved here. What it
+ * catches is the one shape that made the old substring check wrong — a file
  * carrying `vendor/gog/` AND a later `!vendor/gog/` ignores nothing, while the
  * positive line is still present to be found.
  */
@@ -101,10 +103,11 @@ describe.each(PROVIDERS)("packaging covers $command", ({ command, arches }) => {
     // slices, so the merger would try to lipo a thin binary against its
     // identical twin and fail. x64ArchFiles is what passes them through.
     //
-    // Matched against the real packaged path with minimatch, which is what
-    // @electron/universal uses — but deliberately WITHOUT its `matchBase`
-    // option, so only a path-form glob passes here. That is stricter than the
-    // merge, never looser: it cannot accept a glob the merge would reject.
+    // Matched against the real packaged path with minimatch, as
+    // @electron/universal does — though with a different major and without its
+    // `matchBase`, so this is a close approximation rather than the merge
+    // itself. Both differences make it stricter for the globs in play here, so
+    // the risk it carries is a false failure, not a false pass.
     const glob = builder.mac.x64ArchFiles;
     expect(glob, "mac.x64ArchFiles is not set at all").toBeDefined();
     expect(minimatch(`Contents/Resources/${command}/${arch}/${command}`, glob!)).toBe(true);

@@ -4,6 +4,10 @@
  * it used to check, and a cached binary modified by anything with write access
  * to the checkout passed: it carried the current VERSION marker, so the fetch
  * was skipped and it was signed and handed minted tokens.
+ *
+ * The fetcher's argv check is at the bottom. It lives here rather than in a
+ * file of its own because `fetch-vendored.mjs` exports nothing to test — the
+ * only way to reach it is to spawn it.
  */
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createHash } from "node:crypto";

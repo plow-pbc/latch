@@ -40,6 +40,11 @@ import { execFileSync } from "node:child_process";
  *         gog gmail send … -readonly=false
  *         gog gmail send … -readonly false
  *
+ *     And that `--help` in a flag's VALUE position is still refused by gog
+ *     itself — `gog gmail send --subject --help` → `expected string value` at
+ *     0.36.0. `refuse` lets that shape through without a group check, so gog's
+ *     own refusal is what keeps the help allowance narrow enough.
+ *
  *  4. Re-run the one that proves the gate is load-bearing: appending
  *     `--readonly=false` to an otherwise-refused `gmail send` must be refused
  *     by `gogFlags.ts` before it reaches gog. At 0.36.0, without the gate, it

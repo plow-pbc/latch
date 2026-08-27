@@ -135,9 +135,10 @@ const GOG: VendoredProvider = {
     // (`gog gmail --help`) passes the group check without it.
     //
     // It also passes `gmail send --subject --help`, where `--help` is a flag's
-    // VALUE and the last word, with no group check reached. Safe because gog
-    // refuses `--help` there itself — `expected string value` at 0.36.0 — which
-    // is the only thing making this allowance narrow enough.
+    // VALUE and the last word, so no group check is reached. What keeps that
+    // safe is gog refusing `--help` in a value position itself — a per-version
+    // verdict, so step 3 of the pin-bump checklist owns it, and the agreement
+    // table pins the shape.
     if (isHelpInvocation(rest)) return null;
     const group = rest[0];
     // Four sentences, and NONE quotes the argv back: these reach the approval

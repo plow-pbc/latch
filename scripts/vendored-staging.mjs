@@ -13,11 +13,13 @@ import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 
 /**
- * The staleness marker's filename, spelled once.
+ * The staleness marker's filename.
  *
- * The fetcher writes it, `isStaged` reads it, and electron-builder's
- * `extraResources` filter excludes it from the bundle — so a rename that missed
- * one would ship it into signed Resources.
+ * The fetcher writes it and `isStaged` reads it, both from here.
+ * `electron-builder.yml` carries the literal a third time and cannot import it
+ * — what this buys is that the test asserting that filter derives its
+ * expectation from here, so a rename fails rather than leaving a green test
+ * demanding a filter for a file that no longer exists.
  */
 export const MARKER = "VERSION";
 

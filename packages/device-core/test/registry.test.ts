@@ -145,6 +145,11 @@ describe("needsToken", () => {
     // will not use. Fail-safe, and the cost is a spent delegation rather than
     // an unauthenticated run.
     { argv: ["gog", "gmail", "search", "--help", "q"], refused: false, token: true },
+    // `--help` as a flag's VALUE and the last word: the help predicate accepts
+    // it, so the gate passes it with no group check and mints nothing. Safe
+    // only because gog refuses it there itself (checklist step 3), which is why
+    // the shape is pinned here rather than only described.
+    { argv: ["gog", "gmail", "send", "--subject", "--help"], refused: false, token: false },
     // After the terminator, -h is a positional — the query itself — so this is
     // a real search and correctly needs a token. The help predicate requires
     // the words before it to be plain, which "--" is not.
