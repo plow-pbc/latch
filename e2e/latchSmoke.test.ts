@@ -172,21 +172,6 @@ describe.skipIf(!havePython())("latch-smoke, run for real", () => {
     // `2` is the case that makes the bound exclusive: the baseline read always
     // consumes something, so exactly MIN_SEND_S leaves less than it.
     ["a window of exactly 2s", () => fixture("2").argv, 2, "--timeout must be more than", null, false],
-    // The credential read sits at the top of `send`, outside its own try, so
-    // these used to end in a traceback — after the nonce had printed and
-    // without the retraction it promises.
-    ["a token file that is not there", () => {
-      const argv = fixture("5", REAL_HOME).argv;
-      const i = argv.indexOf("--token-file");
-      return [...argv.slice(0, i + 1), "/nonexistent/token", ...argv.slice(i + 2)];
-    }, 1, "No such file or directory", REAL_HOME, true],
-    ["a token file that is empty", () => {
-      const empty = path.join(REAL_HOME, "empty-token");
-      fs.writeFileSync(empty, "", { mode: 0o600 });
-      const argv = fixture("5", REAL_HOME).argv;
-      const i = argv.indexOf("--token-file");
-      return [...argv.slice(0, i + 1), empty, ...argv.slice(i + 2)];
-    }, 1, "is empty", REAL_HOME, true],
     ["a URL that never reaches a socket", () => {
       const argv = fixture("5", REAL_HOME).argv;
       const i = argv.indexOf("--url");
@@ -453,19 +438,46 @@ describe.skipIf(!havePython())("latch-smoke treats a response as evidence and an
     expect(sent.reason).not.toContain("MustNotAppear");
   });
 
-  // ...and the cause that reaches it is caught earlier, where the FILE can be
-  // named instead of what is in it.
-  it("a token split across lines is refused by name", () => {
-    const file = path.join(tmp, "split-token");
-    fs.writeFileSync(file, "sk-secret-Must\nNotAppear\n", { mode: 0o600 });
-    const sent = call({ call: "send", url: "https://relay.invalid/mcp", status: 0, token: "x", raises: "http" }, file) as
-      { reason: string; unknown: boolean };
-    expect(sent.reason).toContain("line break inside the token");
-    expect(sent.reason).toContain(path.basename(file));
-    expect(sent.reason).not.toContain("NotAppear");
+  // `urllib` carries a request's custom headers across a redirect — verified
+  // on this Python, a 302 to another origin delivered the bearer to that
+  // origin in full. So this follows none, and says so terminally: no intent
+  // exists, and the fix is the --url rather than a retry.
+  it("refuses a redirect instead of forwarding the credential to it", () => {
+    const token = "sk-secret-MustNotAppear";
+    const file = path.join(tmp, "redirect-token");
+    fs.writeFileSync(file, `${token}\n`, { mode: 0o600 });
+    const sent = call({ call: "send", url: "https://relay.invalid/mcp", status: 302, token,
+      raises: "http", headers: { Location: "https://evil.invalid/steal" } },
+      file) as { reason: string; unknown: boolean };
     expect(sent.unknown).toBe(false);
+    expect(sent.reason).toContain("does not follow redirects");
+    // Neither the credential nor the destination reaches the output — the
+    // Location is a real header here, so this can actually fail.
+    expect(sent.reason).not.toContain("MustNotAppear");
+    expect(sent.reason).not.toContain("evil.invalid");
   });
 
+  // ...and the mechanism itself, which the row above cannot reach: every send
+  // row stubs `_OPENER.open`, so deleting the handler entirely would leave
+  // them all green.
+  it("carries a handler that declines redirects, in the opener send uses", () => {
+    expect(call({ call: "redirect-mechanism" })).toEqual({ declines: true, inOpener: true });
+  });
+
+  // The catch-all returns the class NAME, never the message — `putheader`
+  // raises one that quotes the header value, which is the bearer itself.
+  it("a header error names its class and not the credential", () => {
+    const token = "sk-secret-MustNotAppear";
+    const file = path.join(tmp, "wrapped-token");
+    fs.writeFileSync(file, `${token}\n`, { mode: 0o600 });
+    const sent = call({ call: "send", url: "https://relay.invalid/mcp", status: 0, token, raises: "header" }, file) as
+      { reason: string; unknown: boolean };
+    expect(sent.reason).toBe("ValueError");
+    expect(sent.reason).not.toContain("MustNotAppear");
+  });
+
+  // ...and the cause that reaches it is caught earlier, where the FILE can be
+  // named instead of what is in it.
   // `--timeout` is the whole run's budget, not the poll loop's. Hard-coding
   // 90s here made `--timeout 1` take 91 seconds against a relay that accepts
   // and never answers — measured before the fix, 1.0s after.
@@ -521,6 +533,45 @@ describe.skipIf(!havePython())("latch-smoke treats a response as evidence and an
     if (contains === null) expect(sent.reason).toBeNull();
     else expect(sent.reason).toContain(contains);
     expect(sent.reason ?? "").not.toMatch(/Bearer|MustNotAppear/);
+  });
+});
+
+describe.skipIf(!havePython())("latch-smoke reads the credential before it spends anything", () => {
+  // In `main`, not inside `send`: an unreadable path is found before the
+  // baseline read spends budget and before a nonce is printed, which is why
+  // these refusals need no retraction — nothing was ever offered.
+  const dir = fs.mkdtempSync(path.join(tmp, "tokens-"));
+  const write = (name: string, bytes: string | Buffer) => {
+    const p = path.join(dir, name);
+    fs.writeFileSync(p, bytes, { mode: 0o600 });
+    return p;
+  };
+  const cases: [string, () => string, string][] = [
+    ["a path that is not there", () => "/nonexistent/token", "No such file or directory"],
+    ["an empty file", () => write("empty", ""), "is empty"],
+    ["one holding only whitespace", () => write("blank", "  \n"), "is empty"],
+    // Text mode decodes, so this raises UnicodeDecodeError — a ValueError, not
+    // an OSError, which is how it escaped the first guard.
+    ["a binary file", () => write("binary", Buffer.from([0xff, 0xfe, 0x00])), "is not text"],
+    // `.strip()` removes surrounding whitespace only, so a token pasted across
+    // two lines keeps its newline — and `putheader` quotes the header value.
+    ["one wrapped across two lines",
+      () => write("wrapped", "sk-secret-MustNotAppear\nsecond\n"), "line break inside"],
+  ];
+  it.each(cases)("refuses %s", (_name, make, says) => {
+    const file = make();
+    const { ok, problem } = call({ call: "token", path: file }) as { ok: boolean; problem: string };
+    expect(ok).toBe(false);
+    expect(problem).toContain(says);
+    // The script's own contribution, not just the OS's strerror: the FILE is
+    // named, and never its contents.
+    expect(problem).toContain(file);
+    expect(problem).not.toContain("MustNotAppear");
+  });
+
+  it("accepts a one-line token, trimmed", () => {
+    const file = write("good", "  sk-secret-abc  \n");
+    expect(call({ call: "token", path: file })).toEqual({ ok: true, problem: "" });
   });
 });
 

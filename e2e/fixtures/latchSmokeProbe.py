@@ -22,7 +22,10 @@ spec.loader.exec_module(smoke)
 
 request = json.loads(sys.argv[2])
 
-if request["call"] == "redirect-mechanism":
+if request["call"] == "token":
+    token, problem = smoke.read_token(request["path"])
+    print(json.dumps({"ok": token is not None, "problem": problem or ""}))
+elif request["call"] == "redirect-mechanism":
     # The opener `send` uses must actually carry the refusing handler, and that
     # handler must decline. Stubbing `_OPENER.open` — which every other row
     # does — exercises neither.
@@ -105,7 +108,8 @@ else:
     # `urllib.request.urlopen` — stubbing the latter would leave every row
     # below exercising nothing.
     smoke._OPENER.open = urlopen
-    sent = smoke.send(request["url"], sys.argv[3], ["/bin/echo", "x"], "goal", 30)
+    token, _ = smoke.read_token(sys.argv[3])
+    sent = smoke.send(request["url"], token, ["/bin/echo", "x"], "goal", 30)
     # `send` returns None when the call went through; the success path has to be
     # representable or the first test that stubs a 200 fails inside the harness.
     out = ({"reason": None, "unknown": False, "hint": None} if sent is None

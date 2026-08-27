@@ -69,6 +69,33 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
 _OPENER = urllib.request.build_opener(_NoRedirect)
 
 
+def read_token(token_file):
+    """`(token, problem)` — the bearer, or why there is none.
+
+    In `main` rather than inside `send`, so an unreadable path is found before
+    the baseline read has spent budget and before a nonce is printed. That is
+    also why these refusals need no retraction: nothing was ever offered.
+
+    Text mode decodes, so a binary file raises `UnicodeDecodeError` — a
+    `ValueError`, not an `OSError`, which is how it escaped the first guard.
+    """
+    try:
+        with open(token_file) as handle:
+            token = handle.read().strip()
+    except OSError as error:
+        return None, f"{token_file}: {error.strerror}"
+    except UnicodeDecodeError:
+        return None, f"{token_file} is not text — it must hold the bearer token, on one line"
+    if not token:
+        return None, f"{token_file} is empty — it must hold the bearer token, on one line"
+    if "\r" in token or "\n" in token:
+        # `.strip()` removes SURROUNDING whitespace only, so a token pasted
+        # across two lines keeps its newline — and `putheader` refuses it with
+        # a message that quotes the header value.
+        return None, f"{token_file} has a line break inside the token"
+    return token, None
+
+
 def remote_cat(log_path, home):
     """The shell command that reads the log on the far side.
 
@@ -143,7 +170,7 @@ def read_log(log_path, ssh, budget, home):
     return records, None
 
 
-def send(url, token_file, argv, goal, budget):
+def send(url, token, argv, goal, budget):
     """POST one `tools/call`. Returns None, or `(reason, unknown, hint)`.
 
     `budget` is what is left of the run's deadline, and it bounds the read.
@@ -167,25 +194,6 @@ def send(url, token_file, argv, goal, budget):
     before the MCP handler is reached, and the handler's own refusals are 4xx
     from a server that already authenticated you.
     """
-    try:
-        with open(token_file) as handle:
-            token = handle.read().strip()
-    except OSError as error:
-        # Terminal, and a sentence rather than a traceback: nothing can be
-        # sent, so no intent exists. The path is the operator's own, not a
-        # server's — and the FILE is named, never its contents.
-        return (f"{token_file}: {error.strerror}.\n"
-                "  Nothing was sent. That path is --token-file (or TOKEN_FILE).", False, None)
-    if not token:
-        return (f"{token_file} is empty.\n"
-                "  Nothing was sent. It must hold the bearer token, on one line.", False, None)
-    # `.strip()` removes SURROUNDING whitespace only, so a token pasted across
-    # two lines keeps its newline — and `putheader` refuses it with a message
-    # that quotes the header value. Caught here, where the file can be named
-    # instead of its contents.
-    if "\r" in token or "\n" in token:
-        return (f"{token_file} has a line break inside the token.\n"
-                "  Nothing was sent. Rewrite it as a single line.", False, None)
     name = "plow_run_command"
     body = json.dumps({
         "jsonrpc": "2.0", "id": 1, "method": "tools/call",
@@ -415,6 +423,11 @@ def main():
     # `--home "$(just --evaluate apphome)"` yields "" when that command fails,
     # which is the likeliest way the documented invocation breaks — and falling
     # through to the packaged install would read the wrong one silently.
+    token, token_problem = read_token(args.token_file)
+    if token_problem is not None:
+        print(f"REFUSED — {token_problem}.")
+        print("  Nothing was sent. That path is --token-file (or TOKEN_FILE).")
+        return 1
     if not args.home.strip():
         parser.error('--home was empty — did `just --evaluate apphome` fail?')
     # Below the send floor there is no run to have: the guard downstream would
@@ -482,7 +495,7 @@ def main():
     # terminal refusal retracts it rather than the print being delayed — an
     # operator who has already scrolled past it needs to be told it is void.
     print(f"nonce={nonce}")
-    sent = send(args.url, args.token_file, argv, f"smoke test: {nonce}", remaining())
+    sent = send(args.url, token, argv, f"smoke test: {nonce}", remaining())
     if sent is not None:
         reason, unknown, _hint = sent
         if not unknown:
