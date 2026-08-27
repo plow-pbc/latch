@@ -37,7 +37,9 @@ export function runProbe<T>(script: string, args: string[] = [], env: NodeJS.Pro
   try {
     const out = execFileSync("python3", [script, ...args], {
       encoding: "utf8",
-      env: { ...process.env, PYTHONPYCACHEPREFIX: cache, ...env },
+      // The cache prefix wins: it is the one policy this helper exists to
+      // enforce, and the `finally` below removes exactly that directory.
+      env: { ...process.env, ...env, PYTHONPYCACHEPREFIX: cache },
     });
     return JSON.parse(out) as T;
   } finally {

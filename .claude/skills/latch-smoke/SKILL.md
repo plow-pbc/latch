@@ -73,7 +73,7 @@ Only success exits 0.
 | `FAILED — the executor threw` | 1 | `exec_error` names why; nothing ran |
 | `DENIED` | 1 | the owner refused it. The relay and the device both worked |
 | `REFUSED — HTTP 4xx` | 1 | refused before an intent existed, so there is no audit line. 401/403 is the relay or the credential; another 4xx is the MCP handler |
-| `UNVERIFIED — …` | — | not an outcome. **Anything that is not a response** — a 5xx, a timeout, a dropped socket, a malformed URL — leaves the call's fate unknown, so the script does not stop; it polls (20s to see it arrive, then the full window), and one of the rows above is still the answer |
+| `UNVERIFIED — …` | — | not an outcome. The send did not settle the question: anything that is not a response (a timeout, a dropped socket, a malformed URL), a 5xx, or an `isError` — which is also how an ordinary **denial** comes back. So the script does not stop; it polls (20s to see it arrive, then the full window), and one of the rows above is still the answer |
 | `TIMEOUT — … approval dialog` | 1 | it arrived and is sitting unanswered. Not a plumbing problem |
 | `TIMEOUT — approved, never started` | 1 | `exec_start` is written before the spawn, so its absence means the executor was never reached. Check the app is running |
 | `TIMEOUT — started, still running` | 1 | re-run, or raise `--timeout` |
@@ -110,13 +110,14 @@ four Google scopes and refuses everything else by design.
 - `REFUSED — HTTP 401/403` → the credential is wrong or the device was
   re-paired. Scopes freeze at mint; a Mac paired before a scope grant needs to
   re-activate.
-- `UNVERIFIED — …` → the send did not come back with a response, so whether an
-  intent exists is not something to guess at: the relay can abandon an exchange
-  it has already forwarded (`RELAY_TIMEOUT_MS` is 25s, well under the
-  executor's budget) either as a 5xx or by dropping the socket, and a bad
-  `--url` looks the same from here. The script reads the log instead — 20s for
-  an `intent_received` to appear, then the full window. Read the row it lands
-  on, not this line.
+- `UNVERIFIED — …` → the send did not settle whether an intent exists, which is
+  not something to guess at. The relay can abandon an exchange it has already
+  forwarded (`RELAY_TIMEOUT_MS` is 25s, well under the executor's budget) as a
+  5xx or by dropping the socket; a bad `--url` looks the same from here; and an
+  `isError` is what an ordinary **denial** comes back as, after its audit
+  records already exist. The script reads the log instead — 20s for an
+  `intent_received` to appear, then the full window. Read the row it lands on,
+  not this line.
 - `TIMEOUT — nothing carrying …` → the three causes the output names, in
   likelihood order: a **different** install's log (check `--home`; a
   branch-suffixed home is the usual cause), a refusal in the MCP layer before

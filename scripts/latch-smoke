@@ -418,7 +418,10 @@ def main():
                 # Both hints annotate the nothing-carrying-the-nonce verdict,
                 # so they hang off `arrived` — not off a non-zero exit, which
                 # a DENIED also has, and a DENIED is proof the send arrived.
-                if not arrived and sent is not None and sent[2] is not None:
+                # Every branch that reaches this loop carries one: `send`
+                # returns early unless `unknown`, and all three unknown
+                # branches set a hint.
+                if not arrived and sent is not None:
                     print(sent[2])
                 # Folding ENOENT into "empty" is right, but it makes a wrong
                 # --home look exactly like a fresh install, and none of the
@@ -428,7 +431,9 @@ def main():
                     print("  fresh install with nothing approved, and also what a wrong --home")
                     print("  looks like (a from-source run is Plow-Latch-<branch>).")
                 return code
-        time.sleep(5)
+        # Bounded by the deadline: `--timeout 1` slept five seconds, so the
+        # window an operator asked for was never the window they got.
+        time.sleep(max(0.0, min(5.0, deadline - time.monotonic())))
 
 
 if __name__ == "__main__":

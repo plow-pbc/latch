@@ -92,29 +92,40 @@ describe.skipIf(!havePython())("latch-smoke verdict", () => {
 // seam, and needs nothing stood up: a send that fails, a home with no log, and
 // a one-second window put the loop through a verdict and both of its hints.
 describe.skipIf(!havePython())("latch-smoke, run for real", () => {
-  it("reaches a verdict and annotates it, without a traceback", () => {
+  /** A home with `device/` and a 0600 token, and the argv to run against it. */
+  function fixture(timeout: string): { home: string; log: string; argv: string[] } {
     const home = fs.mkdtempSync(path.join(tmp, "home-"));
     fs.mkdirSync(path.join(home, "device"));
     const tokenFile = path.join(home, "token");
     fs.writeFileSync(tokenFile, "t\n", { mode: 0o600 });
-    const run = spawnSync("python3", [script, "--url", "http://127.0.0.1:9/mcp",
-      "--token-file", tokenFile, "--home", home, "--timeout", "1"], { encoding: "utf8" });
+    return {
+      home,
+      log: path.join(home, "device", "audit.ndjson"),
+      argv: [script, "--url", "http://127.0.0.1:9/mcp", "--token-file", tokenFile,
+        "--home", home, "--timeout", timeout],
+    };
+  }
+
+  // These drive the real `urllib` stack, which reads `http_proxy` through
+  // `getproxies()` — so a developer with one exported sends the loopback URL
+  // to their proxy and gets a different failure than the row names.
+  const env = { ...process.env, http_proxy: "", https_proxy: "", no_proxy: "*" };
+
+  it("reaches a verdict and annotates it, without a traceback", () => {
+    const run = spawnSync("python3", fixture("1").argv, { encoding: "utf8", env });
     const out = run.stdout + run.stderr;
     expect(out).not.toContain("Traceback");
     expect(run.status).toBe(1);
     expect(out).toContain("UNVERIFIED");
     expect(out).toContain("TIMEOUT — nothing carrying");
-    // Both hints, which only this verdict may carry — and the send-side one is
-    // the branch's OWN, because a shared line blamed a send that had returned
-    // 200 the moment `isError` became non-terminal.
+    // The send-side hint is the branch's OWN, because a shared line blamed a
+    // send that had returned 200 the moment `isError` became non-terminal.
+    // (This row cannot separate hint 2's two guards — nothing was ever read
+    // here, so `not saw_any` and `not arrived` are both true.)
     expect(out).toContain("The send never completed");
     expect(out).toContain("Nothing has ever been written at");
   });
 
-  // The suppression case, reached for real. The nonce is generated inside the
-  // run, so the record is written from the outside once the script has printed
-  // it — which is also the only way anything external can correlate with a
-  // run, and worth having demonstrated.
   it("points a pre-intent isError at cause 2, not at the send", () => {
     // `isError` is ALSO how the MCP layer refuses before an intent exists, so
     // nothing is written to the log and the run times out — with a 200 on
@@ -128,19 +139,20 @@ describe.skipIf(!havePython())("latch-smoke, run for real", () => {
     expect(sent.hint).not.toContain("never completed");
   });
 
+  // The suppression case, reached for real. The nonce is generated inside the
+  // run, so the record is written from the outside once the script has printed
+  // it — which is also the only way anything external can correlate with a
+  // run, and worth having demonstrated.
   it("does not blame the send when the verdict proves it arrived", async () => {
-    const home = fs.mkdtempSync(path.join(tmp, "home-"));
-    fs.mkdirSync(path.join(home, "device"));
-    const log = path.join(home, "device", "audit.ndjson");
-    const tokenFile = path.join(home, "token");
-    fs.writeFileSync(tokenFile, "t\n", { mode: 0o600 });
-
-    const child = spawn("python3", [script, "--url", "http://127.0.0.1:9/mcp",
-      "--token-file", tokenFile, "--home", home, "--timeout", "25"], { stdio: ["ignore", "pipe", "pipe"] });
+    const { log, argv } = fixture("25");
+    const child = spawn("python3", argv, { stdio: ["ignore", "pipe", "pipe"], env });
     let out = "";
     const answer = (chunk: string) => {
       out += chunk;
-      const nonce = /nonce=(\S+)/.exec(out)?.[1];
+      // Anchored to the newline: without it a chunk landing mid-line matches a
+      // PREFIX of the nonce, the seeded goal carries that prefix, and the run
+      // correlates nothing — a flake that looks like a real failure.
+      const nonce = /nonce=(\S+)\n/.exec(out)?.[1];
       if (!nonce || fs.existsSync(log)) return;
       // A denial: itself proof the send arrived, and the verdict both hints
       // must stay off.
@@ -156,9 +168,12 @@ describe.skipIf(!havePython())("latch-smoke, run for real", () => {
     expect(out).toContain("DENIED");
     expect(code).toBe(1);
     // The send DID fail here — and neither hint may fire, because the verdict
-    // is proof the call arrived anyway.
+    // is proof the call arrived anyway. Asserted against the strings the
+    // script can actually print: a rename once made this row vacuous.
     expect(out).toContain("UNVERIFIED");
-    expect(out).not.toContain("The send itself failed");
+    expect(out).not.toContain("The send never completed");
+    expect(out).not.toContain("The relay gave up mid-exchange");
+    expect(out).not.toContain("Cause 2 is the likeliest");
     expect(out).not.toContain("Nothing has ever been written at");
   });
 });
@@ -313,32 +328,23 @@ describe.skipIf(!havePython())("latch-smoke treats a response as evidence and an
   // A 200 is still a response, and two of them are refusals — but only one is
   // terminal. `isError` is what an ordinary DENIAL comes back as, after its
   // audit records already exist, so exiting on it reported "nothing reached
-  // this Mac" about a call the owner had just refused.
+  // this Mac" about a call the owner had just refused. And the relay's own
+  // error text is server-authored on an authenticated response, so it can
+  // reflect the request back.
   it.each([
-    ["a JSON-RPC error is terminal", "rpc-error", false],
-    ["isError is not, because a denial looks like this", "is-error", true],
-  ])("%s", (_name, raises, unknown) => {
-    const sent = call({ call: "send", url: "https://relay.invalid/mcp", status: 0, token: "t", raises }, tokenFile) as
-      { reason: string; unknown: boolean };
-    expect(sent.unknown).toBe(unknown);
-  });
-
-  it("a 200 that went through returns nothing to report", () => {
-    const sent = call({ call: "send", url: "https://relay.invalid/mcp", status: 0, token: "t", raises: "ok" }, tokenFile) as
-      { reason: string | null };
-    expect(sent.reason).toBeNull();
-  });
-
-  // The relay's own error text is server-authored on an AUTHENTICATED
-  // response, so it can reflect the request back.
-  it("never repeats a JSON-RPC error's text", () => {
+    ["a JSON-RPC error is terminal", "rpc-error", false, "relay answered"],
+    ["isError is not, because a denial looks like this", "is-error", true, "isError"],
+    ["and a 200 that went through reports nothing", "ok", false, null],
+  ])("%s", (_name, raises, unknown, contains) => {
     const token = "sk-secret-MustNotAppear";
-    const file = path.join(tmp, "rpc-token");
+    const file = path.join(tmp, `${raises}-token`);
     fs.writeFileSync(file, `${token}\n`, { mode: 0o600 });
-    const { reason } = call({ call: "send", url: "https://relay.invalid/mcp", status: 0, token, raises: "rpc-error" }, file) as
-      { reason: string };
-    expect(reason).not.toContain("MustNotAppear");
-    expect(reason).not.toContain("Bearer");
+    const sent = call({ call: "send", url: "https://relay.invalid/mcp", status: 0, token, raises }, file) as
+      { reason: string | null; unknown: boolean };
+    expect(sent.unknown).toBe(unknown);
+    if (contains === null) expect(sent.reason).toBeNull();
+    else expect(sent.reason).toContain(contains);
+    expect(sent.reason ?? "").not.toMatch(/Bearer|MustNotAppear/);
   });
 });
 
@@ -363,15 +369,21 @@ describe.skipIf(!havePython())("latch-smoke never repeats the credential", () =>
     const tokenFile = path.join(tmp, "token");
     const token = "relay-token-DoNotEcho";
     fs.writeFileSync(tokenFile, `${token}\n`, { mode: 0o600 });
-    const { reason, unknown } = call(
+    const { reason, unknown, hint } = call(
       { call: "send", url: "https://relay.invalid/mcp", status, token },
       tokenFile,
-    ) as { reason: string; unknown: boolean };
+    ) as { reason: string; unknown: boolean; hint: string | null };
     expect(reason).toContain(String(status));
     // A 5xx is the relay abandoning an exchange it may already have forwarded.
     expect(unknown).toBe(status >= 500);
-    if (status >= 500) expect(reason).toContain("already have forwarded");
-    else expect(reason).toContain("Nothing was written");
+    if (status >= 500) {
+      expect(reason).toContain("already have forwarded");
+      // The third of the three hints, and the only one nothing pinned.
+      expect(hint).toContain("The relay gave up mid-exchange");
+    } else {
+      expect(reason).toContain("Nothing was written");
+      expect(hint).toBeNull();
+    }
     expect(reason).not.toContain(token);
     // Not just the literal: no fragment of it, and no encoding of it either.
     expect(reason).not.toMatch(/DoNotEcho|Bearer|relay-token/i);

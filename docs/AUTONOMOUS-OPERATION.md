@@ -23,27 +23,43 @@ that gates the rest.
 
 ---
 
-## Stop 1 — the signed build (hard)
+## Stop 1 — getting a signed build onto a target (partly solved)
 
-`just package` needs the Plow Developer ID in the login keychain and, for
-notarization, a stored `notarytool` credential profile. Over SSH the login
-keychain is **audit-session-scoped**: a non-interactive session cannot unlock
-it, so `codesign` fails no matter how the recipe is invoked.
+Signing is **not** the wall it looks like from a shell. `just package` does need
+the Plow Developer ID in the login keychain, and over SSH that keychain is
+audit-session-scoped — a non-interactive session cannot unlock it, so a local
+`codesign` fails however the recipe is invoked. But this repo already ships the
+answer, a port of plow's: `.github/workflows/build-release-candidate.yml` runs
+on `macos-26`, signs and notarizes in the runner's own keychain, uploads
+versioned artifacts to S3 and opens a **draft** GitHub release. No local
+keychain, no FDA, dispatchable over SSH.
 
-This is the same wall plow hit, and plow's answer is the pattern to copy:
-`~/Hacking/plow3/.claude/skills/plow-prod-install-auto/SKILL.md` dispatches
-`build-release-candidate.yml` so a **CI runner** signs and notarizes in its own
-keychain, then installs the resulting notarized DMG. No local keychain, no FDA,
-fully SSH-drivable.
+What actually stops an unattended run is narrower than "no workflow", and each
+piece is worth naming separately:
 
-**Latch has no equivalent workflow.** That is the single highest-leverage thing
-to build for unattended operation: a `build-release-candidate`-shaped GitHub
-Action that runs `just package`, and an `install-latest-*` script that resolves
-the newest artifact and `ditto`s it over `/Applications/Plow Latch.app`.
+1. **It builds `main` only** (`if: github.ref == 'refs/heads/main'`, enforced
+   for real by the release environment's deployment branch policy). A feature
+   branch cannot be built this way, so smoking an unmerged change still needs a
+   local signed build — which is where the keychain wall is real.
+2. **The `release` environment has required reviewers**, deliberately: the
+   environment is what keeps a dispatch from an arbitrary branch away from the
+   signing secret. A human approves the deployment before the runner starts.
+3. **Publishing the draft is a human gate** by design — it fires
+   `promote-app.yml`, which is the moment installed apps begin updating. This
+   one should stay a gate.
+4. **Nothing installs the result.** There is no `install-latest-*` script that
+   resolves the newest artifact and puts it on a target Mac; plow's
+   `plow-prod-install-auto` skill has that half. This is the piece worth
+   building, and it is small next to the workflow that already exists.
 
-Until that exists, every unattended run stops here and hands off:
+So the hand-off here is not "go build it by hand" for a merged change:
 
-> Run `just package` from the main checkout on a Mac with the signing keychain
+> Dispatch `build-release-candidate.yml` from `main`, approve the `release`
+> environment when GitHub asks, then install the notarized DMG on the target.
+
+For an **unmerged** branch it is still local:
+
+> Run `just package` from a checkout on a Mac with the signing keychain
 > unlocked, then install the DMG on the target.
 
 `just package-unnotarized` runs from any checkout and needs the same keychain,
@@ -111,7 +127,15 @@ Everything up to the artifact:
 - clone, install deps, `just build`, `npx vitest run`
 - `just fetch-gog` and any other vendored runtime fetch — digest-verified, no keychain
 - open a PR, iterate review, merge
+- **sign and notarize a build of `main`**, by dispatching
+  `build-release-candidate.yml` — a human approves the `release` environment,
+  and nothing else about it needs a local keychain
+- drive one real MCP call against an install and read the verdict out of its
+  audit log, locally or over SSH: `scripts/latch-smoke`
 - read any install's `audit.ndjson` over SSH, given access to the host
 
-That is most of the loop. The gap is narrow and specific: **sign a build without
-a human, and know how to address an install as a client.**
+That is most of the loop. What is left is narrower than it looks, and only one
+piece of it is a real gap: **put a built artifact onto a target Mac, and know
+how to address an install as a client.** The signing wall is only a wall for an
+unmerged branch; the reviewer gates on `release` and on publishing the draft are
+deliberate, and should stay.

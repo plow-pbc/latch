@@ -28,6 +28,11 @@ same ruling — so **be clear about what that leaves: there is no automated live
 in this repo or in CI.** The whole-flow walk against a real plow is a manual run, start to finish,
 by a person following the sections below.
 
+One leg of it is not, and it is the leg with no unit coverage at all: `scripts/latch-smoke` drives a
+real MCP call through the relay to an installed app and reads the verdict out of `audit.ndjson`. That
+proves the relay, the device socket, the MCP server and the exec path — it does not walk the UI, and
+it needs an install and a client registration, so it does not make the walk above optional.
+
 What went, and what it did:
 
 | Deleted | What it did |
