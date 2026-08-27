@@ -6,7 +6,14 @@
  * reaches, so both have to be reachable by `npx vitest run` with no display.
  */
 import path from "node:path";
-import { MintError, resolveVendoredBinary, type Minter, type VendoredProvider } from "@domo/device-core";
+import {
+  MintError,
+  overrideVar,
+  PROVIDERS,
+  resolveVendoredBinary,
+  type Minter,
+  type VendoredProvider,
+} from "@domo/device-core";
 import type { PlowApi } from "./plowApi.js";
 import { loadSettings } from "./settings.js";
 
@@ -44,15 +51,22 @@ export function buildMinter(opts: { api: PlowApi; home: string }): Minter {
  * launch, and every non-provider command still runs.
  */
 export function vendorDirs(opts: { resourcesDir?: string; repoRoot?: string }): string[] {
-  const located = resolveVendoredBinary(opts);
-  if (located.path !== null) return [path.dirname(located.path)];
-  // The distinction `resolveVendoredBinary` draws is worth keeping: an
-  // operator who NAMED a path gets told that path is wrong, rather than
-  // "nothing is staged", which would send them to run a fetch they have
-  // already run. Logged rather than thrown — this runs inside the launch
-  // chain, and a stale env var must not be able to take the app down.
-  if (located.problem === "override-missing") {
-    console.error(`[providers] DOMO_GOG names no executable: ${process.env.DOMO_GOG}`);
+  const dirs: string[] = [];
+  for (const provider of PROVIDERS) {
+    const located = resolveVendoredBinary(provider.command, opts);
+    if (located.path !== null) {
+      dirs.push(path.dirname(located.path));
+      continue;
+    }
+    // The distinction `resolveVendoredBinary` draws is worth keeping: an
+    // operator who NAMED a path gets told that path is wrong, rather than
+    // "nothing is staged", which would send them to run a fetch they have
+    // already run. Logged rather than thrown — this runs inside the launch
+    // chain, and a stale env var must not be able to take the app down.
+    if (located.problem === "override-missing") {
+      const name = overrideVar(provider.command);
+      console.error(`[providers] ${name} names no executable: ${process.env[name]}`);
+    }
   }
-  return [];
+  return dirs;
 }

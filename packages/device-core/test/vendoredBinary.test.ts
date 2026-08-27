@@ -15,20 +15,42 @@ afterEach(() => {
   delete process.env.DOMO_GOG;
 });
 
-/** A tree with an executable gog at `<base>/<rel>/<arch>/gog`. */
-function tree(rel: string): string {
+/** A tree with an executable `<name>` at `<base>/<rel>/<arch>/<name>`. */
+function tree(rel: string, name = "gog"): string {
   const base = fs.mkdtempSync(path.join(os.tmpdir(), "gogbin-"));
   cleanups.push(() => fs.rmSync(base, { recursive: true, force: true }));
   const dir = path.join(base, rel, process.arch);
   fs.mkdirSync(dir, { recursive: true });
-  fs.writeFileSync(path.join(dir, "gog"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+  fs.writeFileSync(path.join(dir, name), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
   return base;
 }
 
 describe("resolveVendoredBinary", () => {
+  // The registry's claim is that a provider is one row. This function was
+  // generic in NAME only — a literal `gog` in every segment and a hard-coded
+  // `DOMO_GOG` — so the second provider would have found the facade was a lie.
+  it("looks under the command it was asked about, not gog's", () => {
+    const resourcesDir = tree("slack", "slack");
+    expect(resolveVendoredBinary("slack", { resourcesDir }).path).toBe(
+      path.join(resourcesDir, "slack", process.arch, "slack"),
+    );
+    // gog's own staging does not answer for another provider.
+    expect(resolveVendoredBinary("gog", { resourcesDir }).path).toBeNull();
+  });
+
+  it("takes its override from that command's own variable", () => {
+    const staged = tree("slack", "slack");
+    process.env.DOMO_SLACK = path.join(staged, "slack", process.arch, "slack");
+    cleanups.push(() => delete process.env.DOMO_SLACK);
+    process.env.DOMO_GOG = "/nonexistent";
+    expect(resolveVendoredBinary("slack").path).toBe(process.env.DOMO_SLACK);
+    // ...and gog still reads its own, which is missing.
+    expect(resolveVendoredBinary("gog")).toEqual({ path: null, problem: "override-missing" });
+  });
+
   it("finds the binary a packaged app ships in Resources", () => {
     const resourcesDir = tree("gog");
-    expect(resolveVendoredBinary({ resourcesDir }).path).toBe(
+    expect(resolveVendoredBinary("gog", { resourcesDir }).path).toBe(
       path.join(resourcesDir, "gog", process.arch, "gog"),
     );
   });
@@ -38,7 +60,7 @@ describe("resolveVendoredBinary", () => {
     // the WORKSPACE root — app.getAppPath() is <root>/apps/desktop and the
     // lookup silently resolved nothing.
     const repoRoot = tree("vendor/gog");
-    expect(resolveVendoredBinary({ repoRoot }).path).toBe(
+    expect(resolveVendoredBinary("gog", { repoRoot }).path).toBe(
       path.join(repoRoot, "vendor/gog", process.arch, "gog"),
     );
   });
@@ -46,12 +68,12 @@ describe("resolveVendoredBinary", () => {
   it("prefers the packaged copy over a vendor tree", () => {
     const resourcesDir = tree("gog");
     const repoRoot = tree("vendor/gog");
-    expect(resolveVendoredBinary({ resourcesDir, repoRoot }).path).toContain(resourcesDir);
+    expect(resolveVendoredBinary("gog", { resourcesDir, repoRoot }).path).toContain(resourcesDir);
   });
 
   it("is null when neither is staged", () => {
-    expect(resolveVendoredBinary({})).toEqual({ path: null, problem: "not-staged" });
-    expect(resolveVendoredBinary({ resourcesDir: os.tmpdir(), repoRoot: os.tmpdir() })).toEqual({
+    expect(resolveVendoredBinary("gog")).toEqual({ path: null, problem: "not-staged" });
+    expect(resolveVendoredBinary("gog", { resourcesDir: os.tmpdir(), repoRoot: os.tmpdir() })).toEqual({
       path: null,
       problem: "not-staged",
     });
@@ -63,13 +85,13 @@ describe("resolveVendoredBinary", () => {
     const dir = path.join(base, "gog", process.arch);
     fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(path.join(dir, "gog"), "", { mode: 0o644 });
-    expect(resolveVendoredBinary({ resourcesDir: base }).path).toBeNull();
+    expect(resolveVendoredBinary("gog", { resourcesDir: base }).path).toBeNull();
   });
 
   it("takes DOMO_GOG ahead of everything else", () => {
     const named = tree("gog");
     process.env.DOMO_GOG = path.join(named, "gog", process.arch, "gog");
-    expect(resolveVendoredBinary({ resourcesDir: tree("gog") }).path).toBe(process.env.DOMO_GOG);
+    expect(resolveVendoredBinary("gog", { resourcesDir: tree("gog") }).path).toBe(process.env.DOMO_GOG);
   });
 
   it("reports a named-but-missing DOMO_GOG apart from nothing being staged", () => {
@@ -79,6 +101,6 @@ describe("resolveVendoredBinary", () => {
     // would reject the launch chain — no windows, no tray, no relay — over a
     // stale env var.
     process.env.DOMO_GOG = "/nonexistent/gog";
-    expect(resolveVendoredBinary({})).toEqual({ path: null, problem: "override-missing" });
+    expect(resolveVendoredBinary("gog")).toEqual({ path: null, problem: "override-missing" });
   });
 });
