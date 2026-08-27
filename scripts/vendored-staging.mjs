@@ -26,10 +26,10 @@ export const PROVIDER_ROOT = "providers";
  * The staleness marker's filename.
  *
  * The fetcher writes it and `isStaged` reads it, both from here.
- * `electron-builder.yml` carries the literal a third time and cannot import it
- * — what this buys is that the test asserting that filter derives its
- * expectation from here, so a rename fails rather than leaving a green test
- * demanding a filter for a file that no longer exists.
+ * `electron-builder.yml`'s exclude filter is a third spelling that YAML
+ * cannot import and NOTHING checks against this one — the test that did was
+ * deleted with the packaging fence. Renaming this leaves that filter excluding
+ * a file that no longer exists, and the new marker shipping into Resources.
  */
 export const MARKER = "VERSION";
 

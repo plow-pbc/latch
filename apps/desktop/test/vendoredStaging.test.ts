@@ -56,24 +56,31 @@ function stage(opts: { arm64?: string; x64?: string; version?: string } = {}) {
 
 describe("isStaged", () => {
   it.each([
-    ["both arches carry the pinned bytes at the pinned version", () => stage(), true],
+    ["both arches carry the pinned bytes at the pinned version", true, () => stage()],
     // The case that matters: the marker still attests 1.2.3, so an
     // existence-only check skips the fetch and signs the tampered binary.
-    ["a cached binary's bytes changed, marker notwithstanding", () => stage({ arm64: "tampered" }), false],
+    [
+      "a cached binary's bytes changed, marker notwithstanding",
+      false,
+      () => stage({ arm64: "tampered" }),
+    ],
     // The case the skip exists for. A tree carrying only the packaging Mac's
     // arch reaches the other arch's users with no provider at all.
     [
       "one arch is missing entirely",
+      false,
       () => {
         stage();
         fs.rmSync(path.join(root, "vendor/providers/demo/x64/demo"));
       },
-      false,
     ],
-    ["an arch's binary is empty", () => stage({ x64: "" }), false],
-    ["the marker names another version", () => stage({ version: "1.2.2" }), false],
-    ["nothing is staged at all", () => {}, false],
-  ])("is %s → %s", (_case, arrange, expected) => {
+    ["an arch's binary is empty", false, () => stage({ x64: "" })],
+    ["the marker names another version", false, () => stage({ version: "1.2.2" })],
+    ["nothing is staged at all", false, () => {}],
+    // [case, expected, arrange] so the template's two %s land on the case and
+    // the boolean: vitest fills them from the row's first N items, so arrange
+    // in slot two printed the whole function body as the test name.
+  ])("is %s → %s", (_case, expected, arrange) => {
     arrange();
     expect(isStaged(provider(), root)).toBe(expected);
   });

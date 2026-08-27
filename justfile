@@ -70,7 +70,8 @@ test-vectors:
 # Vendored provider CLIs — see packages/device-core/src/providers/
 # ---------------------------------------------------------------------------
 
-# Fetch a pinned provider CLI for both macOS arches into vendor/<name>/<arch>/.
+# Fetch a pinned provider CLI for both macOS arches into
+# vendor/providers/<name>/<arch>/.
 # The sha256 is verified before extraction. Needed for a from-source run of that
 # provider's tools, and by `just package`. Defaults to every provider.
 # What is pinned, and how to bump it: scripts/vendored-providers.mjs
