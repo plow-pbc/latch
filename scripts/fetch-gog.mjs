@@ -43,8 +43,15 @@
  *
  *         gmail|mail|email search q     exit 4 — dispatches (aliases count)
  *         calendar|cal list             exit 4 — dispatches
- *         gmail --help                  exit 0 — discovery intact
  *         drive ls, chat spaces list    exit 2 — refused BEFORE any network
+ *
+ *     And every help shape, since the belt rides those too — all exit 0 with
+ *     full output at 0.36.0:
+ *
+ *         --help                        top level, still lists every group
+ *         -h                            same
+ *         calendar --help               group help
+ *         gmail search -h               leaf help
  *
  *     And that appending a second `--enable-commands` still widens it, which
  *     is what `RESERVED_EXACT` exists to refuse. The alias list is gog's to

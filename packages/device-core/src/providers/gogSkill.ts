@@ -31,10 +31,12 @@ before approval, before the token is minted and before anything runs, and gog
 is additionally launched with \`--enable-commands=gmail,calendar\` so it refuses
 them itself. Either way they never reach Google.
 
+The token carries four Google scopes (gmail.readonly, gmail.modify,
+calendar.readonly, calendar.events).
+
 gog's own aliases count as those groups on both sides: \`mail\` and \`email\` are
 \`gmail\`, \`cal\` is \`calendar\`, and all five spellings run. The canonical ones
-are what this page uses. The token carries four Google scopes
-(gmail.readonly, gmail.modify, calendar.readonly, calendar.events).
+are what this page uses.
 
 Inside them the scopes are not total either: \`gmail settings\` (forwarding,
 delegates, filters, send-as, vacation) needs \`gmail.settings.*\`, and calendar

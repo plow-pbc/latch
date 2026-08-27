@@ -53,7 +53,9 @@ describe("the gog provider's refusal", () => {
     ["a flag that would disarm the belt", ["gog", "gmail", "search", "q", "--wrap-untrusted=false"], "--wrap-untrusted"],
     // Last-wins parsing means an appended one WIDENS the scope bound —
     // confirmed reaching Google — so it has to be unsupplyable like the rest.
-    ["a flag that would widen the scope bound", ["gog", "drive", "ls", "--enable-commands=drive"], "--enable-commands"],
+    // An IN-SCOPE group, so the flag is the only thing refusing it — with an
+    // out-of-scope one the row passes on branch ordering instead.
+    ["a flag that would widen the scope bound", ["gog", "gmail", "search", "q", "--enable-commands=drive"], "--enable-commands"],
     ["a flag that reads a local file into an outbound message", ["gog", "gmail", "send", "--body-file", "/etc/passwd"], "a --*-file flag"],
     ["a flag that writes to a caller-chosen path", ["gog", "gmail", "attachment", "1", "2", "--out", "/tmp/x"], "a --out* flag"],
     // The check that refuses every wrong-command shape; the other branches
@@ -206,8 +208,12 @@ describe("the scope bound", () => {
   // and returns 4; with the flag it exits 2, `command "drive ls" is not
   // enabled`. `refuse` still checks the group because it does so before the
   // dialog and the mint; this is the layer beneath it.
-  it("rides the belt on every invocation", () => {
+  it("rides the belt on every invocation, derived from the accepted groups", () => {
     expect(gog.belt).toContain("--enable-commands=gmail,calendar");
+    // The canonical two only — an alias in the belt would be gog's problem to
+    // resolve, and the derivation is what keeps the two lists in step.
+    expect(gog.refuse(["gog", "gmail", "x"])).toBeNull();
+    expect(gog.refuse(["gog", "calendar", "x"])).toBeNull();
   });
 
   // gog answers to `gog gmail (mail,email)` and `gog calendar (cal)`, and all

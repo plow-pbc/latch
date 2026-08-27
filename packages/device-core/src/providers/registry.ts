@@ -55,15 +55,16 @@ export interface VendoredProvider {
    * the scope bound.
    *
    * `--enable-commands` is the scope bound, and it makes gog enforce it
-   * ITSELF — verified against pinned 0.36.0 on darwin/arm64, the binary that
-   * ships: `drive ls` reaches Google and returns 4, and
-   * `--enable-commands=gmail,calendar drive ls` exits 2 with `command "drive
-   * ls" is not enabled` and no network call. `refuse` still checks the group,
-   * because it does so before the approval dialog and before the mint; this
-   * is the layer under it, and the one that still holds if the other is ever
-   * wrong. gog's last-wins parsing would let a caller append their own
-   * `--enable-commands` to widen it — confirmed reaching Google — which is
-   * exactly why that flag and its siblings are already in `RESERVED_EXACT`.
+   * ITSELF, before any network call. `refuse` still checks the group, because
+   * it does so before the approval dialog and before the mint; this is the
+   * layer under it, and the one that still holds if the other is ever wrong.
+   * gog's last-wins parsing would let a caller append their own
+   * `--enable-commands` to widen it, which is exactly why that flag and its
+   * siblings are in `RESERVED_EXACT`.
+   *
+   * The per-version verdicts behind all of that — what dispatches, what is
+   * refused pre-network, and that help is unaffected — are step 5 of the
+   * pin-bump checklist in `scripts/fetch-gog.mjs`, which is their only home.
    */
   readonly belt: readonly string[];
   /**
@@ -85,9 +86,10 @@ export interface VendoredProvider {
    * What differs is what each would have COST if nothing refused it, and two
    * of the four reach Google:
    *
-   *  - **An out-of-scope group.** gog tries it: verified at 0.36.0, `drive
-   *    search x` reaches Google and comes back 401. A spent call with nothing
-   *    to show for it.
+   *  - **An out-of-scope group.** Without the belt's scope bound gog tries it,
+   *    reaches Google and comes back 401 — a spent call with nothing to show
+   *    for it. The belt closes that too; this branch is what closes it before
+   *    the dialog and the mint.
    *  - **A leading global flag.** Worse: verified too, `--json gmail search x`
    *    parses `--json` as a global and **succeeds**. Nothing about the scope
    *    check reads `rest[0]` in that shape, so nothing would have checked the
@@ -128,13 +130,13 @@ export interface VendoredProvider {
  * written once, in `refuse`'s doc: a second account here is what produced
  * three rounds of one copy drifting out of step with another.
  */
-const GOG_GROUPS: ReadonlySet<string> = new Set([
-  "gmail",
-  "mail",
-  "email",
-  "calendar",
-  "cal",
-]);
+/** The canonical group names, and the ONLY source of the belt's scope bound. */
+const GOG_CANONICAL = ["gmail", "calendar"] as const;
+
+/** gog's own alias spellings for those two. Accepted; never sent to the belt. */
+const GOG_ALIASES = ["mail", "email", "cal"] as const;
+
+const GOG_GROUPS: ReadonlySet<string> = new Set<string>([...GOG_CANONICAL, ...GOG_ALIASES]);
 
 /**
  * `... --help`, which names no group and reaches nothing.
@@ -160,7 +162,9 @@ const GOG: VendoredProvider = {
   // lived there — the name is Plow's history, not a narrower grant.
   mintPrefix: "/v1/connectors/gmail/",
   tokenEnv: "GOG_ACCESS_TOKEN",
-  belt: ["--no-input", "--wrap-untrusted", "--enable-commands=gmail,calendar"],
+  // The bound is DERIVED from the same list the check reads, so the two
+  // cannot drift into disagreeing about what is in scope.
+  belt: ["--no-input", "--wrap-untrusted", `--enable-commands=${GOG_CANONICAL.join(",")}`],
   skill: GOG_SKILL,
   refuse: (argv) => {
     const rest = argv.slice(1);
@@ -174,9 +178,9 @@ const GOG: VendoredProvider = {
     // `gog gmail --help`, because a group is not a leaf — so the skill would
     // be teaching a command the gate rejects.
     //
-    // `-h` is verified to be gog's group help at 0.36.0, and gog itself
-    // refuses `--help` in a flag's value position (`--subject --help` →
-    // "expected string value"), so that shape needs no handling here.
+    // `-h` is gog's group help, and gog itself refuses `--help` in a flag's
+    // value position (`--subject --help` → "expected string value"), so that
+    // shape needs no handling here. Per-version verdicts: the checklist.
     if (isHelpInvocation(rest)) return null;
     // The group, and nothing finer — what that leaves to gog and what each
     // refused shape would otherwise cost are in `refuse`'s doc above.
