@@ -13,7 +13,7 @@
  *
  * Bump `VERSION` and both digests together. This script then asserts, against
  * the binary it just extracted, that no gog flag is negatable — the one
- * spelling `reservedFlags.ts` cannot see. The `--readonly` behaviour recorded
+ * spelling `gogFlags.ts` cannot see. The `--readonly` behaviour recorded
  * in that file is verified per version and is a HAND probe: re-run it on a
  * bump.
  */
@@ -76,7 +76,7 @@ try {
   }
   // The safety-flag assertion, at the one moment the binary is in hand.
   //
-  // reservedFlags.ts refuses a closed set of spellings; kong can mint a SECOND
+  // gogFlags.ts refuses a closed set of spellings; kong can mint a SECOND
   // long spelling for a boolean flag, `--no-<name>`, which would disarm a belt
   // flag while matching neither the set nor either rule. Zero flags are
   // negatable at 0.36.0 — asserted here so a pin bump fails the fetch rather
@@ -88,7 +88,11 @@ try {
   // that is perfectly good. The keys are deliberately Node's names.
   const arch = process.arch;
   const binary = path.join(root, "vendor/gog", arch, "gog");
-  if (!existsSync(binary)) throw new Error(`no gog for ${arch} at ${binary} — extraction failed?`);
+  // Reachable only on an unsupported host arch: both DIGESTS arches were
+  // extracted above and `tar` would have thrown otherwise.
+  if (!existsSync(binary)) {
+    throw new Error(`no pinned gog for ${arch} — supported: ${Object.keys(DIGESTS).join(", ")}`);
+  }
   const schema = JSON.parse(
     execFileSync(binary, ["--no-input", "schema", "--json"], {
       encoding: "utf8",
@@ -109,20 +113,21 @@ try {
   // schema key would otherwise certify zero negatable flags from a key nothing
   // reads. This walk counts globals again under every subcommand, so it sees
   // ~17k at 0.36.0 — far above the floor, which is set low deliberately: it is
-  // a did-we-parse-anything check, not a did-the-surface-change one.
+  // a did-we-parse-anything check. It catches a renamed `flags` key; it does
+  // NOT catch a renamed `negated` key, which is why gogFlags.ts keeps the hand
+  // probes written down as the thing to re-run on a bump.
   if (flagsSeen < 500) {
     throw new Error(`only ${flagsSeen} flags parsed from gog's schema — has its shape changed?`);
   }
   if (negatable.length > 0) {
     throw new Error(
-      `negatable flags found, which reservedFlags.ts cannot see: ${negatable.join(", ")}. ` +
+      `negatable flags found, which gogFlags.ts cannot see: ${negatable.join(", ")}. ` +
         `Canonicalise --no-X to --X there before bumping the pin.`,
     );
   }
   console.log(`${flagsSeen} flags checked, none negatable`);
 
-  // Record what is on disk so a stale tree is legible without re-hashing, and
-  // so the skill can name the version without a second hard-coded copy.
+  // Record what is on disk so a stale tree is legible without re-hashing.
   writeFileSync(path.join(root, "vendor/gog/VERSION"), `${VERSION}\n`);
 } finally {
   rmSync(staging, { recursive: true, force: true });
