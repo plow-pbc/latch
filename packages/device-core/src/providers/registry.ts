@@ -117,20 +117,21 @@ export interface VendoredProvider {
 }
 
 /**
- * The groups the minted token's four Google scopes actually reach, **with the
- * aliases gog answers to.** Its own usage line is `gog gmail (mail,email)` and
- * `gog calendar (cal)`, and all three of the alias spellings dispatch to the
- * real surface — verified against the pinned binary. Without them this refused
- * `gog mail search q` as out of scope when it is Gmail: a false negative, and
- * the sort a bumper should re-check, since the aliases are gog's to change.
+/**
+ * The groups this Mac accepts, and the one source of the belt's scope bound.
  *
- * The one check that decides whether a command is refused at all — every
+ * Two lists rather than one because they are not the same thing. The canonical
+ * names are what gog is TOLD to enable; the aliases are spellings it resolves
+ * itself, which this check has to accept or it refuses Gmail for being called
+ * `mail`. Sending an alias to `--enable-commands` would be asking gog to
+ * resolve its own alias twice.
+ *
+ * This is the check that decides whether a command is refused at all — every
  * wrong-command shape `refuse` enumerates fails it, and the other branches
  * only choose a better sentence. What each shape would otherwise cost is
- * written once, in `refuse`'s doc: a second account here is what produced
- * three rounds of one copy drifting out of step with another.
+ * written once, in `refuse`'s doc; the per-version verdicts behind the bound
+ * are step 5 of the pin-bump checklist in `scripts/fetch-gog.mjs`.
  */
-/** The canonical group names, and the ONLY source of the belt's scope bound. */
 const GOG_CANONICAL = ["gmail", "calendar"] as const;
 
 /** gog's own alias spellings for those two. Accepted; never sent to the belt. */

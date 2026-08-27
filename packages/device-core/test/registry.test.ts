@@ -138,7 +138,7 @@ describe("needsToken", () => {
     // Top level: as inert as any group help, and the first thing an agent
     // discovering the surface tries.
     { argv: ["gog", "--help"], refused: false, token: false },
-    // Verified against pinned 0.36.0: this PRINTS USAGE — kong takes --help
+    // This PRINTS USAGE — kong takes --help
     // wherever it appears in the flag stream. So the gate accepts it as a real
     // command and it gets a token it will not use. Fail-safe, and the cost is
     // a spent delegation rather than an unauthenticated run.
@@ -203,22 +203,29 @@ describe("impliesNetwork", () => {
 });
 
 describe("the scope bound", () => {
-  // gog enforces this ITSELF, before any network call — verified against
-  // pinned 0.36.0 on the darwin binary that ships: `drive ls` reaches Google
-  // and returns 4; with the flag it exits 2, `command "drive ls" is not
-  // enabled`. `refuse` still checks the group because it does so before the
-  // dialog and the mint; this is the layer beneath it.
-  it("rides the belt on every invocation, derived from the accepted groups", () => {
-    expect(gog.belt).toContain("--enable-commands=gmail,calendar");
-    // The canonical two only — an alias in the belt would be gog's problem to
-    // resolve, and the derivation is what keeps the two lists in step.
-    expect(gog.refuse(["gog", "gmail", "x"])).toBeNull();
-    expect(gog.refuse(["gog", "calendar", "x"])).toBeNull();
+  // gog enforces this ITSELF, before any network call. `refuse` still checks
+  // the group because it does so before the dialog and the mint; this is the
+  // layer beneath it. Per-version verdicts: step 5 of the checklist in
+  // `scripts/fetch-gog.mjs`.
+  it("rides the belt, naming groups this Mac would also accept", () => {
+    const bound = gog.belt.find((f) => f.startsWith("--enable-commands="));
+    expect(bound).toBeDefined();
+    const named = bound!.slice("--enable-commands=".length).split(",");
+    expect(named.length).toBeGreaterThan(0);
+    // The relationship, not the literal: a bound naming a group `refuse`
+    // rejects would enable in gog what this Mac blocks, and the reverse leaves
+    // an accepted group disabled inside gog. Either is a drift the derivation
+    // exists to prevent.
+    for (const group of named) expect(gog.refuse(["gog", group, "x"])).toBeNull();
+    // ...and only canonical names: gog resolves its own aliases, so sending
+    // one would ask it to do that twice.
+    expect(named).not.toContain("mail");
+    expect(named).not.toContain("cal");
   });
 
-  // gog answers to `gog gmail (mail,email)` and `gog calendar (cal)`, and all
-  // three dispatch to the real surface. Refusing them said a Gmail command was
-  // out of scope.
+  // gog answers to `gog gmail (mail,email)` and `gog calendar (cal)`. Refusing
+  // those said a Gmail command was out of scope. Which spellings dispatch is a
+  // per-version fact; step 5 of the checklist owns it.
   it.each([["mail"], ["email"], ["cal"]])("accepts the alias %s", (group) => {
     expect(gog.refuse(["gog", group, "search", "q"])).toBeNull();
   });

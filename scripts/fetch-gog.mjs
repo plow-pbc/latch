@@ -45,17 +45,22 @@
  *         calendar|cal list             exit 4 — dispatches
  *         drive ls, chat spaces list    exit 2 — refused BEFORE any network
  *
- *     And every help shape, since the belt rides those too — all exit 0 with
- *     full output at 0.36.0:
+ *     And that the bound constrains EXECUTION, not discovery — the shapes
+ *     that actually test it are the out-of-scope ones, since in-scope help was
+ *     never going to be refused. All exit 0 with full output at 0.36.0:
  *
- *         --help                        top level, still lists every group
- *         -h                            same
- *         calendar --help               group help
- *         gmail search -h               leaf help
+ *         --help, -h                    top level, still lists every group
+ *         drive --help, chat --help     out-of-scope GROUP help still prints
+ *         drive ls --help               out-of-scope LEAF help still prints
+ *         calendar --help, gmail search -h   in-scope help, for completeness
+ *
+ *     versus `drive ls`, which is refused. So an agent can read help for a
+ *     group it cannot run, which is what the skill's own scope paragraph is
+ *     for.
  *
  *     And that appending a second `--enable-commands` still widens it, which
  *     is what `RESERVED_EXACT` exists to refuse. The alias list is gog's to
- *     change, and `GOG_GROUPS` in `registry.ts` mirrors it.
+ *     change, and `GOG_ALIASES` in `registry.ts` mirrors it.
  */
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
