@@ -129,7 +129,7 @@ SCRIPT='NONCE="'"$NONCE"'"; LOG="'"$HOME_DIR"'/device/audit.ndjson"; SINCE="'"$S
 # nothing — the reassuring branch, in the case where the operator most needs to
 # keep looking. An empty value (both date forms unavailable) fails the other
 # way and matches everything. This catches both.
-case "$SINCE" in 2???-??-??T??:??:??) ;; *) echo "SINCE is not a timestamp - substitute the value Send printed"; exit 2;; esac
+case "$SINCE" in 2???-??-??T??:??:??) ;; *) echo "SINCE is not a timestamp - substitute Send's value, or supply one by hand"; exit 2;; esac
 # Read the intentId out of one JSON line. Once, not three times.
 intent_id() { python3 -c "import json,sys; print(json.load(sys.stdin).get(\"intentId\",\"\"))" 2>/dev/null; }
 # Every id lookup is anchored to the FIELD: an unanchored match finds the id
@@ -208,7 +208,8 @@ bash -c "$SCRIPT"                                                   # local inst
 # ssh -o ConnectTimeout=8 -o BatchMode=yes <user>@<host> "$SCRIPT"   # remote (host map: tailscale-ssh skill)
 ```
 
-Five outcomes; only success exits 0, and `exit 2` means nothing was checked:
+Four outcomes; only success exits 0. `exit 2` is not an outcome — it is an
+input refusal, listed last so the message has a home:
 
 | Output | Exit | Means |
 |---|---|---|
@@ -216,7 +217,7 @@ Five outcomes; only success exits 0, and `exit 2` means nothing was checked:
 | `DENIED` + `intent_decision` | 1 | the owner refused; the relay and device both worked. Usually within ~5s, or at the timeout when the decision landed in the last few seconds |
 | `ALLOWED but not yet started` | 1 | approved as the window closed — re-run Verify |
 | `TIMEOUT` (two variants) | 1 | arrived and is waiting on the dialog, or never arrived — the branch says which |
-| `SINCE is not a timestamp` | 2 | `SINCE` was not substituted, or `date` produced nothing — an input refusal, not a result. Re-copy the value Send printed |
+| `SINCE is not a timestamp` | 2 | nothing was checked. Either `SINCE` was not substituted — re-copy Send's value — or Send printed a bare `SINCE=` because `date` produced nothing, in which case supply one by hand: `date -u` minus a minute, as `YYYY-MM-DDTHH:MM:SS` |
 
 An `exec_start` with no `exec_end` means the run is still going or was reaped;
 an `exec_error` names why it failed.
