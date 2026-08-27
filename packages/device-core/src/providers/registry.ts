@@ -208,8 +208,9 @@ export function needsToken(argv: readonly string[]): boolean {
  * Whether this argv gets the network capability whether or not it asked.
  *
  * A provider reaches its service by definition, so the flag is not the agent's
- * to remember — but `--help` reaches nothing, for the same reason it mints
- * nothing. Spelled ONCE because it decides two different things in two
+ * to remember — but a TRAILING `--help`/`-h` reaches nothing, for the same
+ * reason it mints nothing. Trailing is the whole carve-out: `--help` anywhere
+ * else is a real invocation, and `gog gmail search --help q` runs a search. Spelled ONCE because it decides two different things in two
  * packages: what `mcp-server` puts in the capability set, and, through
  * `Executor.isReapable`, whether the run is exempt from the silent-run reaper.
  * Spelled twice, one of them drifted within a single commit.

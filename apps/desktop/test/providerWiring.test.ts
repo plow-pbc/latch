@@ -41,6 +41,16 @@ function tree(rel: string, name = "gog", base = newBase()): string {
   return base;
 }
 
+/** Capture what `vendorDirs` logs, restored with the rest of the cleanups. */
+function captureErrors(): string[] {
+  const logged: string[] = [];
+  const spy = vi.spyOn(console, "error").mockImplementation((...args: unknown[]) => {
+    logged.push(args.join(" "));
+  });
+  cleanups.push(() => spy.mockRestore());
+  return logged;
+}
+
 function newBase(): string {
   const base = fs.mkdtempSync(path.join(os.tmpdir(), "latch-vendor-"));
   cleanups.push(() => fs.rmSync(base, { recursive: true, force: true }));
@@ -137,11 +147,7 @@ describe("vendorDirs", () => {
   it("names that provider's own variable when the override points nowhere", () => {
     // The other half of the same point, and the entire operator-facing signal
     // for a mistyped override: composing the wrong name here is invisible.
-    const logged: string[] = [];
-    const spy = vi.spyOn(console, "error").mockImplementation((...args: unknown[]) => {
-      logged.push(args.join(" "));
-    });
-    cleanups.push(() => spy.mockRestore());
+    const logged = captureErrors();
     process.env.DOMO_SLACK = "/nonexistent/slack";
     expect(vendorDirs({}, [SLACK])).toEqual([]);
     expect(logged.join("\n")).toContain("DOMO_SLACK");
@@ -151,15 +157,13 @@ describe("vendorDirs", () => {
   it("says WHICH override problem it is, since the two have different fixes", () => {
     // "names no executable" sends an operator to check the path; a misnamed
     // one is already a path that exists, and the fix is a symlink.
-    const logged: string[] = [];
-    const spy = vi.spyOn(console, "error").mockImplementation((...args: unknown[]) => {
-      logged.push(args.join(" "));
-    });
-    cleanups.push(() => spy.mockRestore());
+    const logged = captureErrors();
     const staged = tree("misnamed", "slack-0.1");
     process.env.DOMO_SLACK = path.join(staged, "misnamed", process.arch, "slack-0.1");
     expect(vendorDirs({}, [SLACK])).toEqual([]);
-    expect(logged.join("\n")).toContain("must name a file called");
+    // The interpolated command, not just the prefix: composing the wrong one
+    // is the failure this line exists to make visible.
+    expect(logged.join("\n")).toContain("must name a file called `slack`");
     expect(logged.join("\n")).not.toContain("names no executable");
   });
 });

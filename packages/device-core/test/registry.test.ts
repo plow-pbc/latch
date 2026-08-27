@@ -184,6 +184,12 @@ describe("impliesNetwork", () => {
   it.each([
     [["gog", "gmail", "search", "q"], true],
     [["gog", "--help"], false],
+    [["gog", "gmail", "-h"], false],
+    // TRAILING only, which is the subtlety both the agent-facing sentence and
+    // `Executor.isReapable` now rest on: --help anywhere else is a real
+    // invocation, and this one runs a search.
+    [["gog", "gmail", "search", "--help", "q"], true],
+    [["gog", "gmail", "search", "--", "-h"], true],
     [["gog"], true],
     [["/bin/echo", "x"], false],
     [["/usr/local/bin/gog", "gmail", "search"], false],
@@ -192,5 +198,3 @@ describe("impliesNetwork", () => {
     expect(impliesNetwork(argv)).toBe(expected);
   });
 });
-
-

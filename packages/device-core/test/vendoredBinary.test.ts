@@ -3,22 +3,34 @@
  * Google tools at all, and neither had an assertion — which is exactly why a
  * from-source lookup that could never resolve went unnoticed.
  */
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { resolveVendoredBinary } from "../src/providers/vendoredBinary.js";
 
 const cleanups: (() => void)[] = [];
+// BEFORE as well as after: `DOMO_GOG` is a documented operator override for
+// driving a run against another Mac, so a developer with it exported would
+// otherwise get a red suite from their own shell.
+beforeEach(() => {
+  delete process.env.DOMO_GOG;
+  delete process.env.DOMO_SLACK;
+});
 afterEach(() => {
   while (cleanups.length) cleanups.pop()!();
   delete process.env.DOMO_GOG;
+  delete process.env.DOMO_SLACK;
 });
 
-/** A tree with an executable `<name>` at `<base>/<rel>/<arch>/<name>`. */
-function tree(rel: string, name = "gog"): string {
+function newBase(): string {
   const base = fs.mkdtempSync(path.join(os.tmpdir(), "gogbin-"));
   cleanups.push(() => fs.rmSync(base, { recursive: true, force: true }));
+  return base;
+}
+
+/** A tree with an executable `<name>` at `<base>/<rel>/<arch>/<name>`. */
+function tree(rel: string, name = "gog", base = newBase()): string {
   const dir = path.join(base, rel, process.arch);
   fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(path.join(dir, name), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
@@ -52,11 +64,22 @@ describe("resolveVendoredBinary", () => {
     // `X_OK` on a directory means traversable, not runnable — it satisfied
     // both the access check and the basename check, and put its parent on the
     // child's PATH.
-    const base = fs.mkdtempSync(path.join(os.tmpdir(), "gogbin-"));
-    cleanups.push(() => fs.rmSync(base, { recursive: true, force: true }));
+    const base = newBase();
     fs.mkdirSync(path.join(base, "gog"));
     process.env.DOMO_GOG = path.join(base, "gog");
     expect(resolveVendoredBinary("gog")).toEqual({ path: null, problem: "override-missing" });
+  });
+
+  it("accepts the symlink the misnamed message tells operators to make", () => {
+    // The advice rests on `statSync` FOLLOWING symlinks, so a link named `gog`
+    // pointing at `gog-0.36.0` passes both isFile() and the basename check.
+    // Unasserted, that advice is a guess.
+    const base = newBase();
+    const staged = tree("misnamed", "gog-0.36.0", base);
+    const link = path.join(base, "gog");
+    fs.symlinkSync(path.join(staged, "misnamed", process.arch, "gog-0.36.0"), link);
+    process.env.DOMO_GOG = link;
+    expect(resolveVendoredBinary("gog")).toEqual({ path: link });
   });
 
   it("takes its override from that command's own variable", () => {

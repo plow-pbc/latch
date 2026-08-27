@@ -75,6 +75,10 @@ export function resolveVendoredBinary(
     // Distinguished from "nothing is staged": the operator NAMED a path, so
     // telling them to run a fetch they have already run sends them the wrong
     // way. Reported, never thrown — see above.
+    // Covers a path that does not exist, one without the bit, and a DIRECTORY
+    // — which `X_OK` alone accepts, since on a directory it means traversable.
+    // The operator line says "no executable FILE" because that is the whole
+    // set, and the misnamed case below is the one worth telling apart.
     if (resolved === null) return { path: null, problem: "override-missing" };
     // The basename has to BE the command. A vendored provider is reached
     // through the PATH this Mac controls, so only the directory survives —

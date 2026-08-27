@@ -10,8 +10,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { JSONValue, jv, makeIntent } from "@domo/protocol";
-import { impliesNetwork } from "../src/providers/registry.js";
-import { DeviceAgent, HeadlessPolicy, MintError, type Minter } from "@domo/device-core";
+
+import { DeviceAgent, HeadlessPolicy, impliesNetwork, MintError, type Minter } from "@domo/device-core";
 
 /**
  * Only the tests that SPAWN need macOS — /usr/bin/sandbox-exec exists nowhere

@@ -76,7 +76,7 @@ export function vendorDirs(
       const name = overrideVar(provider.command);
       const why =
         located.problem === "override-missing"
-          ? "names no executable"
+          ? "names no executable file"
           : `must name a file called \`${provider.command}\` — only its directory reaches the child`;
       console.error(`[providers] ${name} ${why}: ${process.env[name]}`);
     }
