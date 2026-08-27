@@ -34,17 +34,22 @@ export const CODE_LENGTH = 8;
 export const CODE_TTL_MS = 5 * 60_000;
 
 /**
- * How long the app watches for the text.
+ * How long the screen counts down before it stalls and offers a fresh code.
  *
- * The server's code lives 30 minutes (`ACTIVATION_CODE_TTL` in
- * `api/plow/auth_routes/router.py`), but a screen that says "waiting" for half
- * an hour is a worse experience than one that gives up early and hands control
- * back. So we stop at five and offer a fresh code — and because the server
- * honours a completion that lands after we stopped looking, "get a new code"
- * re-polls the old secret before minting anything.
+ * A screen that says "waiting" for half an hour is a worse experience than one
+ * that hands control back early — but stalling the SCREEN is all that happens
+ * at five minutes. The server keeps the code live for thirty
+ * (`ACTIVATION_CODE_TTL` in `api/plow/auth_routes/router.py`) and hands the
+ * session token to the FIRST redeem that sees the completion, so a watch that
+ * stopped with the countdown left a text at minute fifteen completed
+ * server-side with nobody listening: the phone said "You're all set!" while the
+ * Mac said it hadn't heard. The poll therefore continues quietly for the code's
+ * whole server life, and stops on the server's own word — a 410, or this
+ * mirror of its TTL for a server that never answers.
  */
 export const ACTIVATION_POLL_WINDOW_MS = 5 * 60_000;
 export const ACTIVATION_POLL_INTERVAL_MS = 3_000;
+export const ACTIVATION_CODE_TTL_MS = 30 * 60_000;
 
 /**
  * The webhook matches `^Plow Activate:\s*(\S+)` case-insensitively
@@ -77,8 +82,9 @@ export interface OnboardingActivation {
   smsBody: string;
   /** `sms:` URL for the "Open Messages" button. */
   smsUrl: string;
-  /** Epoch ms we stop watching, so the screen can count down. Not the code's
-   * own deadline — the server keeps it live for 30 minutes after this. */
+  /** Epoch ms the screen's countdown ends and it offers a fresh code. Not the
+   * code's own deadline, and not the watch's: the poll runs on quietly until
+   * the server retires the code. */
   pollUntil: number;
 }
 
@@ -390,7 +396,8 @@ export class Onboarding {
   private startPolling(secret: string): void {
     this.pollGeneration += 1;
     const generation = this.pollGeneration;
-    void this.pollActivation(secret, generation).catch((error) => {
+    const codeDeadAt = this.now() + ACTIVATION_CODE_TTL_MS;
+    void this.pollActivation(secret, generation, codeDeadAt).catch((error) => {
       // Nothing above throws by design; if something does, the screen must not
       // be left on a countdown that no longer runs.
       if (generation !== this.pollGeneration) return;
@@ -403,7 +410,7 @@ export class Onboarding {
     this.pollGeneration += 1;
   }
 
-  private async pollActivation(secret: string, generation: number): Promise<void> {
+  private async pollActivation(secret: string, generation: number, codeDeadAt: number): Promise<void> {
     while (generation === this.pollGeneration) {
       await this.wait(ACTIVATION_POLL_INTERVAL_MS);
       if (generation !== this.pollGeneration) return;
@@ -463,27 +470,45 @@ export class Onboarding {
         return;
       }
 
-      // Pending, and our five minutes are up. The poll that just answered
-      // happened *after* the deadline, so a text racing it has already been
-      // caught; what is left is a genuine no-answer.
-      if (this.activation && this.now() > this.activation.pollUntil) {
-        this.giveUp("We haven't heard from your phone.");
+      // Pending past the server's own deadline. The poll that just answered
+      // happened *after* it, so a text racing it has already been caught; what
+      // is left is a genuine no-answer, and normally the server has already
+      // said so itself with the 410 above — this is the stop for one that
+      // never answers at all.
+      if (this.now() > codeDeadAt) {
+        this.giveUp("That code expired before your text arrived.");
         return;
+      }
+      // Pending, and the screen's five minutes are up: stall the countdown and
+      // offer a fresh code — once — but keep watching. The code is live for
+      // another twenty-five minutes and its completion is handed to the first
+      // redeem only, so a loop that stopped here stranded a text at minute
+      // fifteen: completed server-side, and nobody ever came for the token.
+      if (this.activation && this.now() > this.activation.pollUntil && !this.activationStale) {
+        this.stallWithHint("We haven't heard from your phone.");
+        this.publish();
       }
     }
   }
 
   /**
-   * Stop watching and hand control back. The code itself is still live for the
-   * rest of its 30 minutes, which is exactly why "Get a New Code" re-polls this
-   * secret before it mints anything.
+   * Stop watching for good — the server has retired the code, or never
+   * answered for its whole life. Even then "Get a New Code" re-polls this
+   * secret before it mints anything, because the server honours a completion
+   * it verified even after expiry.
    */
   private giveUp(reason: string): void {
     this.cancelPolling();
+    this.stallWithHint(reason);
+    this.publish();
+  }
+
+  /** The stall message, with the one hint that fixes the silent-failure case
+   * (a wrong prefix is answered with a 200, no SMS, and a code left live). */
+  private stallWithHint(reason: string): void {
     this.stall(
       `${reason} Send the message exactly as shown — it has to start with “${ACTIVATION_SMS_PREFIX}” — or get a new code.`,
     );
-    this.publish();
   }
 
   /**

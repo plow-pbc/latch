@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
+  ACTIVATION_CODE_TTL_MS,
   ACTIVATION_POLL_INTERVAL_MS,
   ACTIVATION_POLL_WINDOW_MS,
   CODE_TTL_MS,
@@ -149,6 +150,13 @@ function build(extra: Partial<OnboardingDeps> = {}): Onboarding {
 /** Let the detached poll loop run until it has nothing left to do. */
 async function settle(): Promise<void> {
   for (let i = 0; i < 5000; i += 1) await Promise.resolve();
+}
+
+/** Let the poll loop run just until a condition holds — for states the loop
+ * passes THROUGH rather than ends in, now that a stalled screen keeps polling. */
+async function settleUntil(check: () => boolean): Promise<void> {
+  for (let i = 0; i < 5000 && !check(); i += 1) await Promise.resolve();
+  expect(check()).toBe(true);
 }
 
 /** Start on the phone-code path, which is now behind a link rather than first. */
@@ -375,10 +383,11 @@ describe("activation — the path a brand-new user takes", () => {
     expect(plow.activations).toHaveLength(1);
   });
 
-  it("gives up after five minutes and says what to check, rather than spinning", async () => {
+  it("stalls the screen at five minutes but keeps watching, rather than spinning", async () => {
+    plow.redeems = [{ status: "pending" }];
     const onboarding = build();
     await onboarding.begin();
-    await settle();
+    await settleUntil(() => onboarding.state().activationStale);
 
     const state = onboarding.state();
     expect(state.activationStale).toBe(true);
@@ -387,11 +396,52 @@ describe("activation — the path a brand-new user takes", () => {
     // with the prefix gets a 200, no SMS, and a code left live.
     expect(state.message).toContain("Plow Activate:");
     expect(state.message).toContain("haven't heard from your phone");
-    // Five minutes of polling at the stated interval, and then it stopped.
-    expect(waits.length).toBeCloseTo(ACTIVATION_POLL_WINDOW_MS / ACTIVATION_POLL_INTERVAL_MS, -1);
+    // Five minutes of polling at the stated interval got it here…
+    expect(waits.length).toBeGreaterThanOrEqual(ACTIVATION_POLL_WINDOW_MS / ACTIVATION_POLL_INTERVAL_MS);
+    // …and the watch did NOT stop: the server honours the code for another
+    // twenty-five minutes, so neither may we.
+    const after = waits.length;
+    await settle();
+    expect(waits.length).toBeGreaterThan(after);
+  });
+
+  it("signs in a text that lands after the screen stalled — the live mba failure", async () => {
+    // Reported from a live run: code minted at 15:02, screen stalled at 15:07,
+    // text sent at 15:17. The server completed the activation and held the
+    // session token for the first redeem — which never came, because the old
+    // loop cancelled itself at five minutes. The Mac sat on "we haven't heard
+    // from your phone" while the phone said "You're all set!".
+    const onboarding = build();
+    await onboarding.begin();
+    await settleUntil(() => onboarding.state().activationStale);
+    expect(onboarding.state().step).toBe("waiting");
+
+    // Minute fifteen: the text arrives. No click, no new code — the next poll
+    // must catch it.
+    plow.redeems = [{ status: "verified", token: SESSION_TOKEN }];
+    await settleUntil(() => onboarding.state().step === "connected");
+
+    expect(onboarding.state().step).toBe("connected");
+    expect(loadSettings(home).relayCredential).toBe(DEVICE_TOKEN);
+    expect(plow.activations).toHaveLength(1);
+  });
+
+  it("stops for real once the server's own thirty minutes are spent", async () => {
+    // The 410 is the authoritative end, but a server that never answers with
+    // one must not be polled forever: the code's server-side life is the
+    // ceiling.
+    const onboarding = build();
+    await onboarding.begin();
+    await settle();
+    await settle();
+
+    expect(clock - 1_700_000_000_000).toBeLessThanOrEqual(
+      ACTIVATION_CODE_TTL_MS + ACTIVATION_POLL_INTERVAL_MS,
+    );
     const after = waits.length;
     await settle();
     expect(waits.length).toBe(after);
+    expect(onboarding.state().message).toContain("expired before your text arrived");
   });
 
   it("never strands the user on a screen with no way to re-check", async () => {
