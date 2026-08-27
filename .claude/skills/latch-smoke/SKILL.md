@@ -204,7 +204,7 @@ bash -c "$SCRIPT"                                                   # local inst
 # ssh -o ConnectTimeout=8 -o BatchMode=yes <user>@<host> "$SCRIPT"   # remote (host map: tailscale-ssh skill)
 ```
 
-Four outcomes; only success exits 0:
+Five outcomes; only success exits 0, and only `exit 2` means nothing ran:
 
 | Output | Exit | Means |
 |---|---|---|
@@ -212,6 +212,7 @@ Four outcomes; only success exits 0:
 | `DENIED` + `intent_decision` | 1 | the owner refused; the relay and device both worked. Usually within ~5s, or at the timeout when the decision landed in the last few seconds |
 | `ALLOWED but not yet started` | 1 | approved as the window closed — re-run Verify |
 | `TIMEOUT` (two variants) | 1 | arrived and is waiting on the dialog, or never arrived — the branch says which |
+| `SINCE is not a timestamp` | 2 | the Verify block was pasted without substituting `SINCE`; nothing was checked |
 
 An `exec_start` with no `exec_end` means the run is still going or was reaped;
 an `exec_error` names why it failed.
@@ -255,10 +256,10 @@ four Google scopes and refuses everything else by design.
   reached this Mac` → it arrived and is sitting unanswered at the approval
   dialog. Not a plumbing problem.
 - `ALLOWED but not yet started` → approved as the window closed. Re-run Verify.
-  If it stays that way the run never started, and there may be **no**
-  `exec_error` to read: that event is recorded only when the executor throws,
-  so a launch that fails another way leaves the pair unmatched. Check the app
-  is still running and look at the lines around the `intent_decision`.
+  If it stays that way the run never started, and there is **nothing further in
+  the log to read**: `exec_start` is written before the spawn, so its absence
+  means the executor was never reached, and `exec_error` only exists when it
+  threw. Check the app is still running.
 - Call returns, and *nothing* carries the nonce → three possibilities, and the
   Verify step's timeout branch enumerates them: a **different** install's log
   (check the instance home — branch-suffixed homes are the usual cause), a
