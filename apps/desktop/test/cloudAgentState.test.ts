@@ -54,7 +54,6 @@ function agent(
   return {
     agentId: "agent_1",
     chatUids: ["cht_1"],
-    chatUid: "cht_1",
     url: "https://agent.example/internal",
     provider: "exe:hermes",
     name: "Kitchen agent",
@@ -79,6 +78,7 @@ interface Fakes {
     calls: string[];
     created: Array<{ chatUids: string[]; name?: string; provider?: string | null }>;
     deleted: string[];
+    updated: Array<{ agentId: string; chatUids: string[] }>;
   };
   chats: CloudChatsApi;
 }
@@ -87,6 +87,7 @@ function fakes(opts: {
   list?: () => Promise<CloudAgentResource[]>;
   create?: () => Promise<CloudAgentResource>;
   remove?: (agentId: string) => Promise<void>;
+  update?: (agentId: string, chatUids: readonly string[]) => Promise<CloudAgentResource>;
   poll?: (
     receipt: CloudAgentResource,
     onTransition?: (a: CloudAgentResource) => void | Promise<void>,
@@ -97,11 +98,13 @@ function fakes(opts: {
   const calls: string[] = [];
   const created: Array<{ chatUids: string[]; name?: string; provider?: string | null }> = [];
   const deleted: string[] = [];
+  const updated: Array<{ agentId: string; chatUids: string[] }> = [];
   return {
     agents: {
       calls,
       created,
       deleted,
+      updated,
       async list(credential: string) {
         calls.push("list");
         expect(credential).toBe(CREDENTIAL);
@@ -122,6 +125,14 @@ function fakes(opts: {
         expect(credential).toBe(CREDENTIAL);
         deleted.push(agentId);
         if (opts.remove) await opts.remove(agentId);
+      },
+      async updateChats(credential: string, agentId: string, chatUids: readonly string[]) {
+        calls.push("updateChats");
+        expect(credential).toBe(CREDENTIAL);
+        updated.push({ agentId, chatUids: [...chatUids] });
+        return opts.update
+          ? opts.update(agentId, chatUids)
+          : agent({ chatUids: [...chatUids] });
       },
       async poll(credential: string, receipt, onTransition, signal) {
         calls.push("poll");
@@ -277,7 +288,7 @@ describe("the numbers a chat can be messaged on", () => {
     const state = build(
       tempHome(),
       fakes({
-        list: async () => [agent({ chatUids: ["cht_1"], chatUid: "cht_1" })],
+        list: async () => [agent({ chatUids: ["cht_1"] })],
         chats: async () => [
           {
             uid: "cht_1",
@@ -305,7 +316,7 @@ describe("the numbers a chat can be messaged on", () => {
       tempHome(),
       fakes({
         list: async () => [],
-        create: async () => agent({ chatUids: ["cht_1"], chatUid: "cht_1", status: "provisioning" }),
+        create: async () => agent({ chatUids: ["cht_1"], status: "provisioning" }),
         poll: async () => held.promise,
         chats: async () => [
           {
@@ -318,7 +329,7 @@ describe("the numbers a chat can be messaged on", () => {
     );
     await state.refresh();
 
-    await state.create("cht_1", "Kitchen agent");
+    await state.create(["cht_1"], "Kitchen agent");
 
     // The row goes on screen the moment the receipt lands, before any further
     // refresh — so it has to be addressable then, not one round trip later.
@@ -326,14 +337,14 @@ describe("the numbers a chat can be messaged on", () => {
       line: "+15550100",
       members: ["+15550111"],
     });
-    held.resolve(agent({ chatUids: ["cht_1"], chatUid: "cht_1" }));
+    held.resolve(agent({ chatUids: ["cht_1"] }));
   });
 
   it("says it does not know them rather than guessing from the label", async () => {
     const state = build(
       tempHome(),
       fakes({
-        list: async () => [agent({ chatUids: ["cht_1"], chatUid: "cht_1" })],
+        list: async () => [agent({ chatUids: ["cht_1"] })],
         chats: async () => {
           throw new PlowApiError("network", "Couldn't reach Plow.");
         },
@@ -353,7 +364,7 @@ describe("the numbers a chat can be messaged on", () => {
     const state = build(
       tempHome(),
       fakes({
-        list: async () => [agent({ chatUids: ["cht_1"], chatUid: "cht_1" })],
+        list: async () => [agent({ chatUids: ["cht_1"] })],
         chats: async () => {
           if (failing) throw new PlowApiError("network", "Couldn't reach Plow.");
           return [
@@ -374,7 +385,7 @@ describe("the numbers a chat can be messaged on", () => {
 
     // The label and the addresses go stale together and are fixed together —
     // a row must never name a chat it cannot message.
-    expect(state.state().cloudAgents[0].chatLabel).toBe("+15550100 · Ada");
+    expect(state.state().cloudAgents[0].chatLabels).toEqual(["+15550100 · Ada"]);
     expect(state.state().cloudAgents[0].recipients).toEqual({
       line: "+15550100",
       members: ["+15550111"],
@@ -509,7 +520,7 @@ describe("the activation chat fallback", () => {
       fakes({
         list: async () => {
           agentsLanded.resolve();
-          return [agent({ chatUids: ["cht_1"], chatUid: "cht_1" })];
+          return [agent({ chatUids: ["cht_1"] })];
         },
         // Held until the rows exist, so they are built with no labels at all —
         // which is the ordering that made a raw uid reach the screen.
@@ -523,7 +534,7 @@ describe("the activation chat fallback", () => {
 
     await state.refresh();
 
-    expect(state.state().cloudAgents[0].chatLabel).toBe("+15550100 · Ada");
+    expect(state.state().cloudAgents[0].chatLabels).toEqual(["+15550100 · Ada"]);
   });
 
   it("offers nothing on a Mac whose activation left no chat", async () => {
@@ -654,7 +665,7 @@ describe("provisioning", () => {
     const f = fakes({ create: async () => agent({ status: "provisioning" }) });
     const state = build(tempHome(), f);
 
-    await state.create("cht_1", "Kitchen agent");
+    await state.create(["cht_1"], "Kitchen agent");
 
     expect(f.agents.created[0].provider).toBe("exe:hermes");
   });
@@ -790,7 +801,7 @@ describe("a cancelled provision", () => {
       home,
     });
 
-    await state.create("cht_1", "Kitchen agent");
+    await state.create(["cht_1"], "Kitchen agent");
     await vi.waitFor(() => expect(waits).toBe(1));
     await state.remove("agent_1");
     parked.resolve();
@@ -809,7 +820,7 @@ describe("a cancelled provision", () => {
     const f = fakes({ create: async () => posting.promise, list: async () => [agent()] });
     const state = build(tempHome(), f);
 
-    const creating = state.create("cht_1", "Kitchen agent");
+    const creating = state.create(["cht_1"], "Kitchen agent");
     state.signedOut();
     posting.resolve(agent({ status: "provisioning" }));
     await creating;
@@ -843,7 +854,7 @@ describe("signing out", () => {
     // be waiting on screen for whoever signs in next.
     await state.refresh();
     expect(state.state().cloudChatsError).not.toBeNull();
-    await state.create("cht_1", "Kitchen agent");
+    await state.create(["cht_1"], "Kitchen agent");
 
     state.signedOut();
 
@@ -964,6 +975,149 @@ describe("a 403 from the real chat endpoint", () => {
     });
   });
 
+});
+
+describe("changing which chats an agent serves", () => {
+  it("sends the whole ordered set and rewrites the row from the answer", async () => {
+    // The listing follows the save, the way a real account does: an edit that
+    // succeeded is what the next GET reports.
+    let served = ["cht_1"];
+    const f = fakes({
+      list: async () => [agent({ chatUids: [...served] })],
+      update: async (_id, chatUids) => {
+        served = [...chatUids];
+        return agent({ chatUids: [...served] });
+      },
+      chats: async () => [
+        { uid: "cht_1", label: "+15550100 · Ada", recipients: null },
+        { uid: "cht_2", label: "+15550200 · Bo", recipients: null },
+      ],
+    });
+    const state = build(tempHome(), f);
+    await state.refresh();
+
+    await expect(state.editChats("agent_1", ["cht_2", "cht_1"])).resolves.toBe(true);
+
+    expect(f.agents.updated).toEqual([{ agentId: "agent_1", chatUids: ["cht_2", "cht_1"] }]);
+    // Home first, and the labels follow the same order — the row must not
+    // reorder what the server said the agent serves.
+    expect(state.state().cloudAgents[0]).toMatchObject({
+      chatUids: ["cht_2", "cht_1"],
+      chatLabels: ["+15550200 · Bo", "+15550100 · Ada"],
+    });
+  });
+
+  it("takes the server's set over the one that was asked for", async () => {
+    const f = fakes({
+      list: async () => [agent({ chatUids: ["cht_1"] })],
+      // The server dropped one. The row must show what the agent HAS.
+      update: async () => agent({ chatUids: ["cht_1"] }),
+    });
+    const state = build(tempHome(), f);
+    await state.refresh();
+
+    await state.editChats("agent_1", ["cht_1", "cht_2"]);
+
+    expect(state.state().cloudAgents[0].chatUids).toEqual(["cht_1"]);
+  });
+
+  it("cleans the set before deciding there is anything to send", async () => {
+    const f = fakes({ list: async () => [agent()] });
+    const state = build(tempHome(), f);
+    await state.refresh();
+
+    await expect(state.editChats("agent_1", [" ", ""])).resolves.toBe(false);
+
+    expect(f.agents.updated).toEqual([]);
+    expect(state.state().cloudActionError).toBe("An agent has to serve at least one chat.");
+  });
+
+  it("reports a failure in the action field and leaves the row alone", async () => {
+    const f = fakes({
+      list: async () => [agent({ chatUids: ["cht_1"] })],
+      update: async () => {
+        throw new PlowApiError("http", "Couldn't update the agent. Nothing changed — the old chats are still live. Try again.", 502);
+      },
+    });
+    const state = build(tempHome(), f);
+    await state.refresh();
+
+    await expect(state.editChats("agent_1", ["cht_2"])).resolves.toBe(false);
+
+    expect(state.state().cloudActionError).toContain("Nothing changed");
+    // The rollback is the whole point: the old set is still what it serves.
+    expect(state.state().cloudAgents[0].chatUids).toEqual(["cht_1"]);
+    expect(state.state().cloudAgentsError).toBeNull();
+  });
+
+  it("drops a save that lands after this Mac signed out", async () => {
+    const held = deferred<CloudAgentResource>();
+    const f = fakes({
+      list: async () => [agent({ chatUids: ["cht_1"] })],
+      update: async () => held.promise,
+    });
+    const state = build(tempHome(), f);
+    await state.refresh();
+
+    const saving = state.editChats("agent_1", ["cht_2"]);
+    state.signedOut();
+    held.resolve(agent({ chatUids: ["cht_2"] }));
+
+    await expect(saving).resolves.toBe(false);
+    await settle();
+    // The agent belongs to the account that went away; nothing from it may
+    // appear under the next one.
+    expect(state.state().cloudAgents).toEqual([]);
+    expect(state.state().cloudActionError).toBeNull();
+  });
+
+  it("makes a listing already in the air lose to the save that overtook it", async () => {
+    const listing = deferred<CloudAgentResource[]>();
+    let firstList = true;
+    const f = fakes({
+      list: async () => {
+        if (!firstList) return [agent({ chatUids: ["cht_2"] })];
+        firstList = false;
+        return listing.promise;
+      },
+      update: async () => agent({ chatUids: ["cht_2"] }),
+    });
+    const state = build(tempHome(), f);
+
+    const refreshing = state.refresh();
+    await state.editChats("agent_1", ["cht_2"]);
+    // The stale listing answers with the pre-save set. It is older than what
+    // the user just did, so applying it would undo the save on screen.
+    listing.resolve([agent({ chatUids: ["cht_1"] })]);
+    await refreshing;
+    await settle();
+
+    expect(state.state().cloudAgents[0].chatUids).toEqual(["cht_2"]);
+  });
+
+  it("treats a bare string as no chats rather than as its letters", async () => {
+    const f = fakes({ list: async () => [agent()] });
+    const state = build(tempHome(), f);
+    await state.refresh();
+
+    // The IPC boundary: a caller still passing the old singular argument must
+    // fail loudly here, not provision an agent across "c", "h", "t"…
+    await expect(state.create("cht_1" as unknown as string[], "Kitchen")).resolves.toBeNull();
+    await expect(state.editChats("agent_1", "cht_1" as unknown as string[])).resolves.toBe(false);
+
+    expect(f.agents.created).toEqual([]);
+    expect(f.agents.updated).toEqual([]);
+  });
+
+  it("refuses to act with no agent id, and asks Plow nothing", async () => {
+    const f = fakes({ list: async () => [agent()] });
+    const state = build(tempHome(), f);
+    await state.refresh();
+
+    await expect(state.editChats("  ", ["cht_1"])).resolves.toBe(false);
+
+    expect(f.agents.updated).toEqual([]);
+  });
 });
 
 describe("CloudChatsClient", () => {

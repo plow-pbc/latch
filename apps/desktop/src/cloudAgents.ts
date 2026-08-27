@@ -36,8 +36,6 @@ export interface CloudAgentResource {
    * several chats, and the first is where its unprompted output lands.
    */
   chatUids: string[];
-  /** The first of `chatUids` — what a single-chat screen shows. */
-  chatUid: string;
   url: string | null;
   provider: string | null;
   name: string | null;
@@ -87,7 +85,7 @@ export class CloudAgentsClient {
     request: CreateCloudAgentRequest,
   ): Promise<CloudAgentResource> {
     const body = {
-      chat_uids: request.chatUids,
+      chat_uids: normalizeChatUids(request.chatUids),
       ...(request.name === undefined ? {} : { name: request.name }),
       ...(request.provider === undefined ? {} : { provider: request.provider }),
       ...(request.scopes === undefined ? {} : { scopes: request.scopes }),
@@ -99,8 +97,39 @@ export class CloudAgentsClient {
       { token: deviceCredential, body, timeoutMs: CREATE_REQUEST_TIMEOUT_MS },
     );
     if (response.status === 409) {
-      throw conflictError(conflictCode(await decodeJson(response)));
+      throw conflictError(await decodeJson(response), deviceCredential);
     }
+
+    return this.resourceFor(response, deviceCredential);
+  }
+
+  /**
+   * Replace the whole set of chats an agent serves.
+   *
+   * A FULL REPLACEMENT, not a patch: the server takes the list it is given and
+   * the agent serves exactly that afterwards, so the caller sends every chat it
+   * wants kept — an omission is a detach. Home is first, as everywhere else.
+   *
+   * Done when the response lands. Unlike create there is no machine to boot, so
+   * there is no receipt to poll: a 200 carries the agent in its new shape and
+   * that is the end of it. A 5xx is a rollback — the agent still serves what it
+   * served before — and says so, because "it failed" and "it half-failed" send
+   * the reader to different places.
+   */
+  async updateChats(
+    deviceCredential: string,
+    agentId: string,
+    chatUids: readonly string[],
+  ): Promise<CloudAgentResource> {
+    const response = await this.api.request(
+      "PUT",
+      `/v1/agents/cloud/${encodeURIComponent(agentId)}/chats`,
+      { token: deviceCredential, body: { chat_uids: normalizeChatUids(chatUids) } },
+    );
+    if (response.status === 409) {
+      throw conflictError(await decodeJson(response), deviceCredential);
+    }
+    if (response.status >= 500) throw rolledBack(response.status);
 
     return this.resourceFor(response, deviceCredential);
   }
@@ -211,7 +240,6 @@ function parseResource(
   const resource: CloudAgentResource = {
     agentId: decoded.agent_id,
     chatUids,
-    chatUid: chatUids[0] ?? "",
     url: optionalString(decoded.url),
     provider: optionalString(decoded.provider),
     name: optionalString(decoded.name),
@@ -271,7 +299,28 @@ function conflictCode(decoded: unknown): string | null {
   return typeof decoded.detail.code === "string" ? decoded.detail.code : null;
 }
 
-function conflictError(code: string | null): PlowApiError {
+/**
+ * The server's own sentence for this conflict, if it wrote one.
+ *
+ * Only ever consulted for `CHAT_SET_CONFLICT`, and the reason is that this is
+ * the one conflict whose useful half is a fact only the server holds: WHICH
+ * agent already has the chat. Every other code is a situation we can describe
+ * ourselves, and a fixed sentence is the safer thing to put on screen.
+ *
+ * The credential check is not a formality. Server text is the one string here
+ * that we did not write, and it is about to be rendered — so a message that
+ * repeats the token back is dropped for our own words instead.
+ */
+function conflictDetail(decoded: unknown, credential: string): string | null {
+  if (!isRecord(decoded) || !isRecord(decoded.detail)) return null;
+  const message = decoded.detail.message;
+  if (typeof message !== "string") return null;
+  const trimmed = message.trim();
+  if (!trimmed || echoesCredential(trimmed, credential)) return null;
+  return trimmed;
+}
+
+function conflictError(decoded: unknown, credential: string): PlowApiError {
   const messages: Record<string, string> = {
     PENDING_TEARDOWN: "This chat's cloud agent is still being removed. Remove it before trying again.",
     PROVIDER_CONFLICT: "This chat already uses a different cloud-agent provider.",
@@ -279,9 +328,48 @@ function conflictError(code: string | null): PlowApiError {
     CHAT_DELETED: "That chat has been deleted.",
     OWNER_NO_ADDRESS: "Your Plow account has no address for that chat.",
     OWNER_NOT_IN_CHAT: "Your Plow account is not a member of that chat.",
+    // One chat belongs to one agent, so a set that overlaps another agent's is
+    // refused whole. The server names the holder; we say what to do about it.
+    CHAT_SET_CONFLICT: "One of those chats already belongs to another agent.",
+    AGENT_FAILED: "This agent failed to start, so its chats can't be changed. Remove it and set one up again.",
   };
+  const code = conflictCode(decoded);
+  if (code === "CHAT_SET_CONFLICT") {
+    const named = conflictDetail(decoded, credential);
+    if (named) return new PlowApiError("http", named, 409);
+  }
   const message = code && Object.hasOwn(messages, code) ? messages[code] : "Plow returned 409.";
   return new PlowApiError("http", message, 409);
+}
+
+/** A PUT the server could not complete. The old set is still the live one. */
+function rolledBack(status: number): PlowApiError {
+  return new PlowApiError(
+    "http",
+    "Couldn't update the agent. Nothing changed — the old chats are still live. Try again.",
+    status,
+  );
+}
+
+/**
+ * The chat set as it goes on the wire: trimmed, empty entries dropped, first
+ * occurrence wins.
+ *
+ * ORDER IS MEANING here — `chat_uids[0]` is home, where the agent's unprompted
+ * output lands — so this preserves it rather than sorting, and a duplicate
+ * keeps its FIRST position: a set listing home twice must not have home
+ * demoted by its own repeat.
+ */
+function normalizeChatUids(chatUids: readonly string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const raw of chatUids ?? []) {
+    const uid = (raw ?? "").trim();
+    if (!uid || seen.has(uid)) continue;
+    seen.add(uid);
+    out.push(uid);
+  }
+  return out;
 }
 
 function echoesCredential(text: string, credential: string): boolean {

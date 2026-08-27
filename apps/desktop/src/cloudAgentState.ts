@@ -118,6 +118,11 @@ export interface CloudAgentsApi {
   create(deviceCredential: string, request: CreateCloudAgentRequest): Promise<CloudAgentResource>;
   list(deviceCredential: string): Promise<CloudAgentResource[]>;
   delete(deviceCredential: string, agentId: string): Promise<void>;
+  updateChats(
+    deviceCredential: string,
+    agentId: string,
+    chatUids: readonly string[],
+  ): Promise<CloudAgentResource>;
   /**
    * The `signal` is how a provision in flight is called off — a sign-out, or a
    * delete of the very agent being polled. A client that does not take one yet
@@ -248,16 +253,16 @@ export class CloudAgentState {
   }
 
   /**
-   * Provision one agent in one chat.
+   * Provision one agent across one or more chats, home first.
    *
    * Returns once Plow has issued the receipt — the row is on screen in
    * `provisioning` at that moment — and leaves the poll running here. The new
    * `agent_id` comes back so `retry` can carry local settings onto it.
    */
-  async create(chatUid: string, name: string): Promise<string | null> {
+  async create(chatUids: readonly string[], name: string): Promise<string | null> {
     this.actionError = null;
-    const chat = (chatUid ?? "").trim();
-    if (!chat) return this.failAction("Pick the chat this agent will answer in.");
+    const chats = cleanChatUids(chatUids);
+    if (!chats.length) return this.failAction("Pick at least one chat this agent will answer in.");
     const credential = this.credential();
     if (!credential) return this.failAction("This Mac isn't signed in yet.");
 
@@ -266,9 +271,7 @@ export class CloudAgentState {
     let receipt: CloudAgentResource;
     try {
       receipt = await this.deps.agents.create(credential, {
-        // One chat, sent as the one-element set the API takes. The picker is
-        // single-select; the grant shape is a list either way.
-        chatUids: [chat],
+        chatUids: chats,
         provider: CLOUD_AGENT_PROVIDER,
         ...(requested ? { name: requested } : {}),
       });
@@ -287,6 +290,52 @@ export class CloudAgentState {
     this.polls.set(receipt.agentId, controller);
     void this.pollToTerminal(credential, receipt, requested, generation, controller.signal);
     return receipt.agentId;
+  }
+
+  /**
+   * Replace the set of chats an agent serves, home first.
+   *
+   * A full replacement and a single round trip: there is no machine to boot, so
+   * unlike `create` there is nothing to poll — the answer IS the new state, and
+   * the row is rewritten from it before the roster re-read confirms it.
+   *
+   * The staleness guards are `create`'s, for `create`'s reasons: a sign-out
+   * mid-flight belongs to the account that went away, and the mutation counter
+   * has to move so a listing already in the air cannot put the old set back on
+   * screen. Answers whether the save happened, because the modal that called it
+   * stays open on a failure and closes on a success.
+   */
+  async editChats(agentId: string, chatUids: readonly string[]): Promise<boolean> {
+    this.actionError = null;
+    const id = (agentId ?? "").trim();
+    if (!id) return false;
+    const chats = cleanChatUids(chatUids);
+    if (!chats.length) {
+      this.failAction("An agent has to serve at least one chat.");
+      return false;
+    }
+    const credential = this.credential();
+    if (!credential) {
+      this.failAction("This Mac isn't signed in yet.");
+      return false;
+    }
+
+    const generation = this.generation;
+    let updated: CloudAgentResource;
+    try {
+      updated = await this.deps.agents.updateChats(credential, id, chats);
+    } catch (error) {
+      if (generation === this.generation) this.failAction(messageOf(error));
+      return false;
+    }
+    if (generation !== this.generation) return false;
+    this.mutations += 1;
+    // The row goes to the answer, not to what was asked for: the server decides
+    // what the agent serves, and a set it normalised differently must show as
+    // what it actually is.
+    this.observe(updated, "");
+    await this.refresh();
+    return true;
   }
 
   /** Remove an agent — the machine and its hold on the chat, not just a key. */
@@ -502,30 +551,43 @@ export class CloudAgentState {
   }
 
   private rowFor(agent: CloudAgentResource, fallbackName?: string): CloudAgentDisplayRow {
-    const chat = this.chats.find((option) => option.uid === agent.chatUid);
+    // Recipients come from HOME and only home: it is the chat the Message
+    // button opens, and addressing the rest from this row is not on offer.
+    const home = this.chats.find((option) => option.uid === agent.chatUids[0]);
     return toCloudAgentDisplayRow(agent, {
-      ...(chat?.label ? { chatLabel: chat.label } : {}),
+      chatLabels: this.labelsByUid(),
       ...(fallbackName ? { fallbackName } : {}),
-      recipients: chat?.recipients ?? null,
+      recipients: home?.recipients ?? null,
     });
   }
 
+  /** Every label the chat list knows, by uid. Absent uids stay absent — the
+   * mapper falls back to the uid rather than inventing a name for it. */
+  private labelsByUid(): Record<string, string> {
+    const labels: Record<string, string> = {};
+    for (const chat of this.chats) if (chat.label) labels[chat.uid] = chat.label;
+    return labels;
+  }
+
   /**
-   * Re-resolve what the chat list knows about each row's chat.
+   * Re-resolve what the chat list knows about each row's chats.
    *
-   * The label and the recipients arrive together and go stale together: a row
-   * built before the chats landed has the uid for a label and no addresses, and
+   * The labels and the recipients arrive together and go stale together: a row
+   * built before the chats landed has uids for labels and no addresses, and
    * both are fixed from the same lookup. Relabelling one without the other is
    * how a row could name a chat it could not message.
    */
   private relabelRows(): void {
+    const labels = this.labelsByUid();
     for (const [agentId, row] of this.rows) {
-      const chat = this.chats.find((option) => option.uid === row.chatUid);
-      if (!chat) continue;
-      const label = chat.label || row.chatLabel;
-      const recipients = chat.recipients ?? null;
-      if (label === row.chatLabel && recipients === row.recipients) continue;
-      this.rows.set(agentId, { ...row, chatLabel: label, recipients });
+      const chatLabels = row.chatUids.map((uid) => labels[uid] || uid);
+      const home = this.chats.find((option) => option.uid === row.chatUids[0]);
+      const recipients = home?.recipients ?? null;
+      const sameLabels =
+        chatLabels.length === row.chatLabels.length &&
+        chatLabels.every((label, index) => label === row.chatLabels[index]);
+      if (sameLabels && recipients === row.recipients) continue;
+      this.rows.set(agentId, { ...row, chatLabels, recipients });
     }
   }
 
@@ -587,6 +649,32 @@ function isCredentialFailure(error: unknown): boolean {
   return (
     error instanceof PlowApiError && (error.kind === "forbidden" || error.kind === "unauthorized")
   );
+}
+
+/**
+ * A chat set as this side will act on it: trimmed, blanks dropped, first
+ * occurrence wins. Order is home-first and is preserved.
+ *
+ * The client normalises again before it sends. That is not duplication for its
+ * own sake: this one decides whether there is anything to send AT ALL — an
+ * "empty" set of three blank strings must fail here, with a sentence, rather
+ * than travel to Plow to be refused.
+ */
+function cleanChatUids(chatUids: readonly string[]): string[] {
+  // Anything that is not an array is nothing. This is the IPC boundary, and a
+  // bare string is the dangerous wrong shape: it iterates as its CHARACTERS, so
+  // a caller that has not caught up with the plural signature would otherwise
+  // ask Plow for one agent across five one-letter chats.
+  if (!Array.isArray(chatUids)) return [];
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const raw of chatUids) {
+    const uid = (raw ?? "").trim();
+    if (!uid || seen.has(uid)) continue;
+    seen.add(uid);
+    out.push(uid);
+  }
+  return out;
 }
 
 /** An abort surfaces as `AbortError` however the client raises it. */

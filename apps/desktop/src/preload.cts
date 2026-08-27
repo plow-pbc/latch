@@ -100,12 +100,16 @@ contextBridge.exposeInMainWorld("domo", {
   cloudRemove: (agentId: string) => ipcRenderer.invoke("cloud:remove", agentId),
   onConnectChanged: (cb: () => void) => ipcRenderer.on("connect:changed", cb),
 
-  // Cloud agents (same tab, same state shape, same change channel). Exactly
-  // four calls, and none of them is a poll: provisioning is watched in the main
-  // process, and the renderer just re-reads when told the state changed.
-  // `cloudCreate` answers as soon as the row is on screen in `provisioning`.
-  cloudCreate: (chatUid: string, name: string) =>
-    ipcRenderer.invoke("cloud:create", chatUid, name),
+  // Cloud agents (same tab, same state shape, same change channel). None of
+  // them is a poll: provisioning is watched in the main process, and the
+  // renderer just re-reads when told the state changed. `cloudCreate` answers
+  // as soon as the row is on screen in `provisioning`.
+  cloudCreate: (chatUids: string[], name: string) =>
+    ipcRenderer.invoke("cloud:create", chatUids, name),
+  // Replace the whole set of chats an agent serves. One round trip, no poll:
+  // it answers true when the agent really serves the new set.
+  cloudEditChats: (agentId: string, chatUids: string[]) =>
+    ipcRenderer.invoke("cloud:editChats", agentId, chatUids),
 
   // Any external destination the app links to. A KEY plus an optional
   // main-owned record id, never a URL: main decides what may be opened.

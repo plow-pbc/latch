@@ -14,15 +14,29 @@ const FAILURE_LABELS: Record<string, string> = {
 export interface CloudAgentDisplayRow {
   agentId: string;
   name: string;
-  chatUid: string;
-  chatLabel: string;
+  /**
+   * Every chat this agent serves, in the server's order. `chatUids[0]` is
+   * home — where the agent's unprompted output lands — and the screen shows it
+   * first for that reason, not because it happens to be first.
+   */
+  chatUids: string[];
+  /**
+   * A label per entry of `chatUids`, index for index.
+   *
+   * Two parallel arrays rather than a list of pairs because the uid is the join
+   * key and the label is a lookup that can fail: an unresolved label falls back
+   * to its own uid, so the arrays are always the same length and a row can
+   * never name fewer chats than it serves.
+   */
+  chatLabels: string[];
   provider: string;
   status: CloudAgentStatus;
   failureReason: string | null;
   createdAt: string;
   /**
-   * The numbers a message to this agent's chat goes to, or `null` when they
-   * are not known.
+   * The numbers a message to this agent's HOME chat goes to, or `null` when
+   * they are not known. Home is the one the Message button targets; the other
+   * chats are served, not addressed from here.
    *
    * Carried rather than derived: the label is prose and was being scraped for
    * digits, which produced an empty recipient list for a label with none and
@@ -33,9 +47,13 @@ export interface CloudAgentDisplayRow {
 }
 
 export interface CloudAgentDisplayContext {
-  /** Resolved from the separately fetched chat list. */
-  chatLabel?: string;
-  /** Resolved from the same place, and absent for the same reasons. */
+  /**
+   * Labels resolved from the separately fetched chat list, keyed by uid. A uid
+   * the list does not know is simply absent, and the row shows the uid.
+   */
+  chatLabels?: Readonly<Record<string, string>>;
+  /** The home chat's recipients, from the same place and absent for the same
+   * reasons. */
   recipients?: ChatRecipients | null;
   /** The submitted name fills the gap in the initial create receipt. */
   fallbackName?: string;
@@ -57,8 +75,8 @@ export function toCloudAgentDisplayRow(
   return {
     agentId: scrub(agent.agentId),
     name: scrub(agent.name ?? context.fallbackName ?? "cloud agent"),
-    chatUid: scrub(agent.chatUid),
-    chatLabel: scrub(context.chatLabel ?? agent.chatUid),
+    chatUids: agent.chatUids.map(scrub),
+    chatLabels: agent.chatUids.map((uid) => scrub(context.chatLabels?.[uid] || uid)),
     provider: scrub(agent.provider ?? ""),
     status: agent.status,
     failureReason: failureReason === null ? null : scrub(failureReason),

@@ -134,14 +134,13 @@ describe("CloudAgentsClient chat grant", () => {
     failure_code: null,
   };
 
-  it("reads a chat set, keeping the first as the single-chat view", async () => {
+  it("reads a chat set, home first, in the server's order", async () => {
     const { fetchImpl } = recordingFetch([{ status: 200, body: [LIVE] }]);
 
     const [agent] = await new CloudAgentsClient(new PlowApi("https://api.plow.co", fetchImpl))
       .list(CREDENTIAL);
 
     expect(agent.chatUids).toEqual(LIVE.chat_uids);
-    expect(agent.chatUid).toBe("cht_pnTWzzOSKeChIv0eE5MKyA");
     expect(agent.status).toBe("running");
     expect(agent.name).toBeNull();
     expect(agent.createdAt).toBeNull();
@@ -157,7 +156,6 @@ describe("CloudAgentsClient chat grant", () => {
       .list(CREDENTIAL);
 
     expect(agent.chatUids).toEqual(["cht_legacy"]);
-    expect(agent.chatUid).toBe("cht_legacy");
   });
 
   it("sends the chat set as a list", async () => {
@@ -300,7 +298,6 @@ function fromWire(value: Record<string, unknown>): CloudAgentResource {
   return {
     agentId: String(value.agent_id),
     chatUids: (value.chat_uids as string[]) ?? [],
-    chatUid: ((value.chat_uids as string[]) ?? [])[0] ?? "",
     url: typeof value.url === "string" ? value.url : null,
     provider: typeof value.provider === "string" ? value.provider : null,
     name: typeof value.name === "string" ? value.name : null,
@@ -310,3 +307,137 @@ function fromWire(value: Record<string, unknown>): CloudAgentResource {
     sessionId: typeof value.session_id === "string" ? value.session_id : null,
   };
 }
+
+describe("CloudAgentsClient chat-set replacement", () => {
+  it("PUTs the whole ordered set to the agent's chats endpoint", async () => {
+    const { calls, fetchImpl } = recordingFetch([{
+      status: 200,
+      body: resource("running", { chat_uids: ["cht_home", "cht_two"] }),
+    }]);
+
+    const updated = await new CloudAgentsClient(new PlowApi("https://api.plow.co", fetchImpl))
+      .updateChats(CREDENTIAL, "agent/with space", ["cht_home", "cht_two"]);
+
+    const [call] = calls;
+    expect([call.init.method, call.url]).toEqual([
+      "PUT",
+      "https://api.plow.co/v1/agents/cloud/agent%2Fwith%20space/chats",
+    ]);
+    expect(JSON.parse(String(call.init.body))).toEqual({ chat_uids: ["cht_home", "cht_two"] });
+    expect(updated.chatUids).toEqual(["cht_home", "cht_two"]);
+  });
+
+  it("keeps the caller's order rather than sorting: the first entry is home", async () => {
+    const { calls, fetchImpl } = recordingFetch([{ status: 200, body: resource("running") }]);
+
+    await new CloudAgentsClient(new PlowApi("https://api.plow.co", fetchImpl))
+      .updateChats(CREDENTIAL, "agent_123", ["cht_zeta", "cht_alpha", "cht_mid"]);
+
+    expect(JSON.parse(String(calls[0].init.body)).chat_uids)
+      .toEqual(["cht_zeta", "cht_alpha", "cht_mid"]);
+  });
+
+  it("drops blanks and repeats, and a repeat does not demote home", async () => {
+    const { calls, fetchImpl } = recordingFetch([
+      { status: 200, body: resource("running") },
+      { status: 202, body: resource("provisioning") },
+    ]);
+    const client = new CloudAgentsClient(new PlowApi("https://api.plow.co", fetchImpl));
+
+    await client.updateChats(CREDENTIAL, "agent_123", [" cht_home ", "cht_two", "", "cht_home"]);
+    await client.create(CREDENTIAL, { chatUids: ["cht_home", "cht_home", " "] });
+
+    expect(calls.map(({ init }) => JSON.parse(String(init.body)).chat_uids)).toEqual([
+      ["cht_home", "cht_two"],
+      ["cht_home"],
+    ]);
+  });
+
+  it("names the agent that already holds a chat, from the server's own message", async () => {
+    const { fetchImpl } = recordingFetch([{
+      status: 409,
+      body: {
+        detail: {
+          code: "CHAT_SET_CONFLICT",
+          message: "Groceries already belongs to Household helper.",
+        },
+      },
+    }]);
+
+    const error = await new CloudAgentsClient(new PlowApi("https://api.plow.co", fetchImpl))
+      .updateChats(CREDENTIAL, "agent_123", ["cht_taken"])
+      .catch((caught: unknown) => caught);
+
+    // The only 409 whose useful half — WHICH agent — only the server knows.
+    expect(String(error)).toContain("Groceries already belongs to Household helper.");
+    expect((error as PlowApiError).status).toBe(409);
+  });
+
+  it("falls back to our own words when that message is missing or echoes the credential", async () => {
+    const { fetchImpl } = recordingFetch([
+      { status: 409, body: { detail: { code: "CHAT_SET_CONFLICT" } } },
+      { status: 409, body: { detail: { code: "CHAT_SET_CONFLICT", message: `bad ${CREDENTIAL}` } } },
+    ]);
+    const client = new CloudAgentsClient(new PlowApi("https://api.plow.co", fetchImpl));
+
+    const missing = await client.updateChats(CREDENTIAL, "a", ["cht_1"]).catch((e: unknown) => e);
+    const echoed = await client.updateChats(CREDENTIAL, "a", ["cht_1"]).catch((e: unknown) => e);
+
+    for (const error of [missing, echoed]) {
+      expect(String(error)).toContain("already belongs to another agent");
+      expect(String(error)).not.toContain(CREDENTIAL);
+    }
+  });
+
+  it("says an agent that never started cannot have its chats changed", async () => {
+    const { fetchImpl } = recordingFetch([{
+      status: 409,
+      body: { detail: { code: "AGENT_FAILED", message: "unused" } },
+    }]);
+
+    const error = await new CloudAgentsClient(new PlowApi("https://api.plow.co", fetchImpl))
+      .updateChats(CREDENTIAL, "agent_123", ["cht_1"])
+      .catch((caught: unknown) => caught);
+
+    expect(String(error)).toContain("failed to start");
+    expect(String(error)).toContain("Remove it and set one up again");
+  });
+
+  it.each([500, 502, 503])("says nothing changed when the server rolls a %s back", async (status) => {
+    const { fetchImpl } = recordingFetch([{ status, body: { detail: "boom" } }]);
+
+    const error = await new CloudAgentsClient(new PlowApi("https://api.plow.co", fetchImpl))
+      .updateChats(CREDENTIAL, "agent_123", ["cht_1"])
+      .catch((caught: unknown) => caught);
+
+    // A rollback is not a plain failure: the old set is still serving, and the
+    // sentence has to say so or the reader goes looking for a broken agent.
+    expect(String(error)).toContain("Nothing changed — the old chats are still live.");
+    expect((error as PlowApiError).status).toBe(status);
+  });
+
+  it("reports a 4xx that is not a conflict as itself, not as a rollback", async () => {
+    const { fetchImpl } = recordingFetch([{ status: 403, body: {} }]);
+
+    const error = await new CloudAgentsClient(new PlowApi("https://api.plow.co", fetchImpl))
+      .updateChats(CREDENTIAL, "agent_123", ["cht_1"])
+      .catch((caught: unknown) => caught);
+
+    expect((error as PlowApiError).kind).toBe("forbidden");
+    expect(String(error)).not.toContain("Nothing changed");
+  });
+
+  it("refuses a response that repeats the credential back", async () => {
+    const { fetchImpl } = recordingFetch([{
+      status: 200,
+      body: resource("running", { chat_uids: [`cht_${CREDENTIAL}`] }),
+    }]);
+
+    const error = await new CloudAgentsClient(new PlowApi("https://api.plow.co", fetchImpl))
+      .updateChats(CREDENTIAL, "agent_123", ["cht_1"])
+      .catch((caught: unknown) => caught);
+
+    expect(String(error)).toBe("PlowApiError: Plow returned an unsafe cloud-agent response.");
+    expect(String(error)).not.toContain(CREDENTIAL);
+  });
+});
