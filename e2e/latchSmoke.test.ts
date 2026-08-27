@@ -104,8 +104,10 @@ describe.skipIf(!havePython())("latch-smoke, run for real", () => {
     expect(run.status).toBe(1);
     expect(out).toContain("UNVERIFIED");
     expect(out).toContain("TIMEOUT — nothing carrying");
-    // Both hints, which only this verdict may carry.
-    expect(out).toContain("The send itself failed");
+    // Both hints, which only this verdict may carry — and the send-side one is
+    // the branch's OWN, because a shared line blamed a send that had returned
+    // 200 the moment `isError` became non-terminal.
+    expect(out).toContain("The send never completed");
     expect(out).toContain("Nothing has ever been written at");
   });
 
@@ -113,6 +115,19 @@ describe.skipIf(!havePython())("latch-smoke, run for real", () => {
   // run, so the record is written from the outside once the script has printed
   // it — which is also the only way anything external can correlate with a
   // run, and worth having demonstrated.
+  it("points a pre-intent isError at cause 2, not at the send", () => {
+    // `isError` is ALSO how the MCP layer refuses before an intent exists, so
+    // nothing is written to the log and the run times out — with a 200 on
+    // record. Blaming the send there points away from the answer already on
+    // screen.
+    const file = path.join(tmp, "hint-token");
+    fs.writeFileSync(file, "t\n", { mode: 0o600 });
+    const sent = call({ call: "send", url: "https://relay.invalid/mcp", status: 0, token: "t", raises: "is-error" },
+      file) as { hint: string };
+    expect(sent.hint).toContain("Cause 2");
+    expect(sent.hint).not.toContain("never completed");
+  });
+
   it("does not blame the send when the verdict proves it arrived", async () => {
     const home = fs.mkdtempSync(path.join(tmp, "home-"));
     fs.mkdirSync(path.join(home, "device"));

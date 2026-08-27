@@ -33,13 +33,17 @@ export function havePython(): boolean {
  * spawn python3 directly.
  */
 export function runProbe<T>(script: string, args: string[] = [], env: NodeJS.ProcessEnv = {}): T {
-  const out = execFileSync("python3", [script, ...args], {
-    encoding: "utf8",
-    env: {
-      ...process.env,
-      PYTHONPYCACHEPREFIX: fs.mkdtempSync(path.join(os.tmpdir(), "domo-pyc-")),
-      ...env,
-    },
-  });
-  return JSON.parse(out) as T;
+  const cache = fs.mkdtempSync(path.join(os.tmpdir(), "domo-pyc-"));
+  try {
+    const out = execFileSync("python3", [script, ...args], {
+      encoding: "utf8",
+      env: { ...process.env, PYTHONPYCACHEPREFIX: cache, ...env },
+    });
+    return JSON.parse(out) as T;
+  } finally {
+    // A fresh prefix per run means one directory per CALL, and a table-driven
+    // suite makes dozens — they were accumulating under the system temp dir
+    // with nothing ever removing them.
+    fs.rmSync(cache, { recursive: true, force: true });
+  }
 }

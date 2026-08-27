@@ -46,9 +46,6 @@ else:
         def __init__(self, payload):
             self.payload = json.dumps(payload).encode()
 
-        def read(self, *_a):
-            return self.payload
-
         def __enter__(self):
             return io.BytesIO(self.payload)
 
@@ -96,5 +93,5 @@ else:
     sent = smoke.send(request["url"], sys.argv[3], ["/bin/echo", "x"], "goal")
     # `send` returns None when the call went through; the success path has to be
     # representable or the first test that stubs a 200 fails inside the harness.
-    print(json.dumps({"reason": None, "unknown": False} if sent is None
-                     else {"reason": sent[0], "unknown": sent[1]}))
+    print(json.dumps({"reason": None, "unknown": False, "hint": None} if sent is None
+                     else {"reason": sent[0], "unknown": sent[1], "hint": sent[2]}))
