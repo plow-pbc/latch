@@ -280,7 +280,11 @@ automated live-stack path either: the two scripts that drove a real plow stack
 deleted with the rest. Nothing in `npx vitest run` or in CI opens a socket to a
 real relay or tunnels an MCP call end to end. That whole path is verified
 **manually**: bring up a plow stack, run the app against it, drive it by hand.
-The procedure is in [docs/TESTING-THE-APP.md](docs/TESTING-THE-APP.md).
+The procedure is in [docs/TESTING-THE-APP.md](docs/TESTING-THE-APP.md), which
+also owns the one exception — `scripts/latch-smoke` drives a single real MCP
+call against an *installed* app and reads the verdict out of `audit.ndjson`.
+It needs an install and a client registration, so it does not make the walk
+above optional.
 
 What `packages/relay-client/test` still holds is the pure part of the wire
 contract — `stripHopByHop`, `Host` preservation, frame validation — plus the

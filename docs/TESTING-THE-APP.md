@@ -8,6 +8,11 @@ The *why* behind real-input verification is in
 procedure is in `/Users/plucas/.claude-kitchen/projects/domo-desktop/wiki/m4-screenshots.md` — the
 head chef wants that kept as prose, not as a maintained script.
 
+For the *installed* app rather than the code — what an unattended run can and
+cannot do to a real install, and the one real MCP call that proves one works —
+see [AUTONOMOUS-OPERATION.md](AUTONOMOUS-OPERATION.md) and the `latch-smoke`
+skill beside it.
+
 ---
 
 ## What changed, and why this file is short now
@@ -22,6 +27,11 @@ pointed at a **live** plow stack rather than at the stand-in. They went too, del
 same ruling — so **be clear about what that leaves: there is no automated live-stack path any more,
 in this repo or in CI.** The whole-flow walk against a real plow is a manual run, start to finish,
 by a person following the sections below.
+
+One leg of it is not, and it is the leg with no unit coverage at all: `scripts/latch-smoke` drives a
+real MCP call through the relay to an installed app and reads the verdict out of `audit.ndjson`. That
+proves the relay, the device socket, the MCP server and the exec path — it does not walk the UI, and
+it needs an install and a client registration, so it does not make the walk above optional.
 
 What went, and what it did:
 

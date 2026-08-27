@@ -180,7 +180,9 @@ release profile="domo-notary" s3_profile="plow": _main-only
 
 # Ship an uploaded candidate: copy its artifacts onto the stable keys installed
 # apps poll (domo/latest-mac.yml + zip, domo/Plow-Latch.dmg). In CI this runs
-# from the promote workflow when a draft GitHub release is published.
+# from the "App release" workflow, which a published draft release TRIGGERS —
+# that workflow then waits on the `release` environment's own approval, so
+# publishing is the first of two gates rather than the ship moment.
 promote version build s3_profile="plow":
     bash scripts/release-promote.sh --version "{{version}}" --build "{{build}}" --profile "{{s3_profile}}"
 
