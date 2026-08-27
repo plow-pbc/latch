@@ -37,6 +37,9 @@ A nonce makes the audit line unambiguous — a busy install has other traffic, a
 
 ```bash
 NONCE="latch-smoke-$(date -u +%Y%m%dT%H%M%SZ)"
+# Captured BEFORE the send: Verify filters for lines written during it, so a
+# bound taken afterwards excludes the very events it is looking for.
+SINCE=$(date -u +%Y-%m-%dT%H:%M:%S)
 # EXPORTED: the guards below set shell variables, and the heredoc reads the
 # ENVIRONMENT — without this an operator who satisfies the guard still dies on
 # a bare KeyError.
@@ -93,7 +96,7 @@ except urllib.error.HTTPError as e:
 print("status", r.status, "| error:", payload.get("error"),
       "| isError:", payload.get("result", {}).get("isError"))
 PYCALL
-echo "NONCE=$NONCE"   # print it -- Verify runs in a FRESH shell
+echo "NONCE=$NONCE"; echo "SINCE=$SINCE"   # Verify runs in a FRESH shell
 ```
 
 **This raises an approval dialog on the target Mac** unless a matching
@@ -110,10 +113,8 @@ install, and `Plow-Latch-<branch>` for a from-source run
 
 ```bash
 NONCE="<value printed by Send>"
+SINCE="<value printed by Send>"   # every audit line carries an ISO ts
 HOME_DIR="${HOME_DIR:-$HOME/Library/Application Support/Plow-Latch}"
-# Every audit line carries an ISO `ts`, so "since we started" is a real bound
-# rather than a guess at how many lines an install writes.
-SINCE=$(date -u +%Y-%m-%dT%H:%M:%S)
 SCRIPT='NONCE="'"$NONCE"'"; LOG="'"$HOME_DIR"'/device/audit.ndjson"; SINCE="'"$SINCE"'";
 # Read the intentId out of one JSON line. Once, not three times.
 intent_id() { python3 -c "import json,sys; print(json.load(sys.stdin).get(\"intentId\",\"\"))" 2>/dev/null; }
@@ -130,8 +131,8 @@ for i in $(seq 1 24); do
   LINE=$(grep "$NONCE" "$LOG" 2>/dev/null | grep -m1 "\"event\":\"exec_start\"") || true
   # A denial is written immediately after policy.decide, so there is nothing to
   # wait for — report it now rather than burning the full window.
-  DENY=$(grep "$NONCE" "$LOG" 2>/dev/null | head -1 | intent_id)
-  DECISION=$([ -n "$DENY" ] && lines_for "$DENY" | grep -F "\"event\":\"intent_decision\"" | head -1)
+  SEEN_ID=$(grep "$NONCE" "$LOG" 2>/dev/null | head -1 | intent_id)
+  DECISION=$([ -n "$SEEN_ID" ] && lines_for "$SEEN_ID" | grep -F "\"event\":\"intent_decision\"" | head -1)
   if printf %s "$DECISION" | grep -q "\"decision\":\"deny\""; then
     printf "%s\n" "$DECISION"
     echo "DENIED - the owner refused it. The relay and the device both worked."
@@ -139,7 +140,7 @@ for i in $(seq 1 24); do
   fi
   if [ -n "$LINE" ]; then
     echo "$LINE"
-    ID=$(printf %s "$LINE" | python3 -c "import json,sys; print(json.load(sys.stdin).get(\"intentId\",\"\"))")
+    ID=$(printf %s "$LINE" | intent_id)
     [ -n "$ID" ] && lines_for "$ID" | grep -E "\"event\":\"exec_(end|error)\"" | head -1
     exit 0
   fi
@@ -152,7 +153,7 @@ done
 ANY=$(grep "$NONCE" "$LOG" 2>/dev/null | tail -2) || true
 if [ -n "$ANY" ]; then
   echo "$ANY"
-  ID=$(printf %s "$ANY" | head -1 | python3 -c "import json,sys; print(json.load(sys.stdin).get(\"intentId\",\"\"))" 2>/dev/null)
+  ID=$(printf %s "$ANY" | intent_id)
   # Re-run the deny check rather than asserting the outcome: the early exit
   # only evaluates at the top of an iteration, so a decision written during the
   # final sleep lands here.
@@ -160,12 +161,14 @@ if [ -n "$ANY" ]; then
   [ -n "$D" ] && printf "%s\n" "$D"
   if printf %s "$D" | grep -q "\"decision\":\"deny\""; then
     echo "DENIED - decided in the last few seconds."
+  elif [ -n "$D" ]; then
+    # Allowed, but no exec_start yet: the decision landed as the window closed.
+    echo "ALLOWED but not yet started - decided as the window closed; re-run Verify."
   else
     echo "TIMEOUT - reached this Mac, never executed: waiting on the approval dialog"
   fi
 else
-  # Three causes, and only one of them is "never arrived". See the echo below,
-  # which is the copy that has to be right - do not restate it here.
+  # See the echo below, which is the copy that has to be right.
   echo "TIMEOUT - nothing carrying $NONCE. Three causes:"
   echo "  1. it never reached this install (wrong install, credential, or socket)"
   echo "  2. refused in the MCP layer before an intent existed (bad envelope,"
@@ -195,7 +198,8 @@ Three outcomes; only success exits 0:
 | Output | Exit | Means |
 |---|---|---|
 | `exec_start` + `exec_end` | 0 | it worked — quote both lines as the verification |
-| `DENIED` + `intent_decision` | 1 | the owner refused; the relay and device both worked. Reported within ~5s, not at the timeout |
+| `DENIED` + `intent_decision` | 1 | the owner refused; the relay and device both worked. Usually within ~5s, or at the timeout when the decision landed in the last few seconds |
+| `ALLOWED but not yet started` | 1 | approved as the window closed — re-run Verify |
 | `TIMEOUT` (two variants) | 1 | arrived and is waiting on the dialog, or never arrived — the branch says which |
 
 An `exec_start` with no `exec_end` means the run is still going or was reaped;
