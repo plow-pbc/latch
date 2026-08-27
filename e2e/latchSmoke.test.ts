@@ -8,7 +8,7 @@
  * `verdict` is pure over audit records, which is what makes both reachable
  * without standing anything up.
  */
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -90,6 +90,50 @@ describe.skipIf(!havePython())("latch-smoke verdict", () => {
     }
     expect(outcome?.code).toBe(code);
     expect(outcome?.text).toContain(contains);
+  });
+});
+
+// Everything above reaches one function. Nothing reached `main`, and a glue
+// bug — destructuring `verdict`'s tuple by the wrong arity — shipped as a
+// crash on every completed run because of it. One real invocation covers the
+// seam, and needs nothing stood up: a send that fails, a home with no log, and
+// a one-second window put the loop through a verdict and both of its hints.
+describe.skipIf(!havePython())("latch-smoke, run for real", () => {
+  it("reaches a verdict and annotates it, without a traceback", () => {
+    const home = fs.mkdtempSync(path.join(tmp, "home-"));
+    fs.mkdirSync(path.join(home, "device"));
+    const tokenFile = path.join(home, "token");
+    fs.writeFileSync(tokenFile, "t\n", { mode: 0o600 });
+    const run = spawnSync("python3", [script, "--url", "http://127.0.0.1:9/mcp",
+      "--token-file", tokenFile, "--home", home, "--timeout", "1"], { encoding: "utf8" });
+    const out = run.stdout + run.stderr;
+    expect(out).not.toContain("Traceback");
+    expect(run.status).toBe(1);
+    expect(out).toContain("UNVERIFIED");
+    expect(out).toContain("TIMEOUT — nothing carrying");
+    // Both hints, which only this verdict may carry.
+    expect(out).toContain("The send itself failed");
+    expect(out).toContain("Nothing has ever been written at");
+  });
+
+  it("does not blame the send when the verdict proves it arrived", () => {
+    // The same glue, with an audit log that already answers: the hints must
+    // stay off a DENIED, which is itself proof the call got there.
+    const home = fs.mkdtempSync(path.join(tmp, "home-"));
+    fs.mkdirSync(path.join(home, "device"));
+    const tokenFile = path.join(home, "token");
+    fs.writeFileSync(tokenFile, "t\n", { mode: 0o600 });
+    // The nonce is generated inside the run, so seed the log from the outside
+    // with a goal that cannot match: this asserts the no-match path stays
+    // clean, and the DENIED shape itself is covered by the verdict table.
+    fs.writeFileSync(path.join(home, "device", "audit.ndjson"),
+      `{"event":"intent_received","intentId":"z","goal":"someone else"}\n`);
+    const run = spawnSync("python3", [script, "--url", "http://127.0.0.1:9/mcp",
+      "--token-file", tokenFile, "--home", home, "--timeout", "1"], { encoding: "utf8" });
+    const out = run.stdout + run.stderr;
+    expect(out).not.toContain("Traceback");
+    // The log exists and has records, so this hint must not fire.
+    expect(out).not.toContain("Nothing has ever been written at");
   });
 });
 

@@ -230,9 +230,11 @@ def verdict(events, nonce, expired, since=0):
     flight and the window is still open. `arrived` is whether anything carrying
     the nonce was found at all, which is what the hints in `main` annotate —
     guarding those on a non-zero exit instead would print "the send failed"
-    under a `DENIED`, which is itself proof the send arrived. Pure on purpose: this is where every bug in the
-    two pasted shell blocks this script replaces actually lived, and a function
-    over a list of records is the only version of it a test can reach.
+    under a `DENIED`, which is itself proof the send arrived.
+
+    Pure on purpose: this is where every bug in the two pasted shell blocks
+    this script replaces actually lived, and a function over a list of records
+    is the only version of it a test can reach.
 
     `intent_received` is the correlation point — it carries the goal, and so
     the nonce. Everything after it is anchored to its `intentId`, so no other
@@ -356,10 +358,13 @@ def main():
     # look answers "did it get there?" from evidence rather than from the
     # exception's class. Extended to the full window the moment it appears.
     grace = sent is not None
+    # Never longer than what was asked for: `--timeout 1` means one second,
+    # grace included.
+    window = min(ARRIVAL_GRACE_S, args.timeout) if grace else args.timeout
     started = time.monotonic()
-    print(f"waiting up to {ARRIVAL_GRACE_S if grace else args.timeout}s"
+    print(f"waiting up to {window}s"
           f"{' for it to arrive at all' if grace else ' for a terminal event'}")
-    deadline = started + (ARRIVAL_GRACE_S if grace else args.timeout)
+    deadline = started + window
     # The baseline was read from the same path a moment ago; records in it are
     # evidence the path is right, which is all the hint below asserts against.
     saw_any = bool(baseline)
@@ -387,15 +392,18 @@ def main():
             expired = time.monotonic() >= deadline
             outcome = verdict(events, nonce, expired, since)
             if outcome is not None:
-                code, lines = outcome
+                code, lines, arrived = outcome
                 print("\n".join(lines))
+                # Both hints annotate the nothing-carrying-the-nonce verdict,
+                # so they hang off `arrived` — not off a non-zero exit, which
+                # a DENIED also has, and a DENIED is proof the send arrived.
+                if not arrived and sent is not None:
+                    print("  The send itself failed — see UNVERIFIED above, which is"
+                          " the likeliest cause of all three.")
                 # Folding ENOENT into "empty" is right, but it makes a wrong
                 # --home look exactly like a fresh install, and none of the
                 # three causes above names that.
-                if code != 0 and sent is not None:
-                    print("  The send itself failed — see UNVERIFIED above, which is"
-                          " the likeliest cause of all three.")
-                if code != 0 and not saw_any:
+                if not arrived and not saw_any:
                     print(f"  Nothing has ever been written at {log_path} — normal on a")
                     print("  fresh install with nothing approved, and also what a wrong --home")
                     print("  looks like (a from-source run is Plow-Latch-<branch>).")
