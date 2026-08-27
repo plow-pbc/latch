@@ -41,21 +41,20 @@ and **so does the relay** — in the `plow-pbc/plow` repository, where
 `api/plow/relay/` serves the MCP endpoint, the device WebSocket and an OAuth
 flow, covered by `api/tests/relay/`. **Agents reach Macs through this app
 today.** This line used to say the relay was "not built", which was true when
-written and cost a later reader a wrong assumption; check that repo rather than
-this sentence. What is gone is the in-repo stand-in that used to verify this
-side against the wire contract (head chef's call: a locally running plow API
-simulates plow). The scripts that drove a *live* stack went with it, so there
-is **no automated live-stack path** — not here, not in CI. What is manual is
-the leg against a REAL relay: bring up a plow stack, run the app against it,
-drive it. One exception, and `docs/TESTING-THE-APP.md` owns the account of it:
-`scripts/latch-smoke` drives a single real MCP call against an *installed* app
-and reads the verdict out of `audit.ndjson` — no UI walk, and it needs an
-install plus a client registration. `packages/relay-client/test` does cover the
-client's protocol
-behavior — the pure wire contract, plus the connection lifecycle over
-hand-written fakes; nothing in it opens a socket or tunnels an MCP call. See
-[README-ts.md](README-ts.md#integration-coverage) § Integration coverage, which
-owns that list.
+written and cost a later reader a wrong assumption; check that repo rather
+than this sentence. What is gone is the in-repo stand-in that used to verify
+this side against the wire contract (head chef's call: a locally running plow
+API simulates plow). The scripts that drove a *live* stack went with it, so
+there is **no automated live-stack path** — not here, not in CI. What is
+manual is the leg against a REAL relay: bring up a plow stack, run the app
+against it, drive it. One exception, and `docs/TESTING-THE-APP.md` owns the
+account of it: `scripts/latch-smoke` drives a single real MCP call against an
+*installed* app and reads the verdict out of `audit.ndjson` — no UI walk, and
+it needs an install plus a client registration. `packages/relay-client/test`
+does cover the client's protocol behavior — the pure wire contract, plus the
+connection lifecycle over hand-written fakes; nothing in it opens a socket or
+tunnels an MCP call. See [README-ts.md](README-ts.md#integration-coverage) §
+Integration coverage, which owns that list.
 
 - **A credential never goes in a URL, a log line, an error string, or the audit
   log.** Two transports carry it, and no third kind: the relay socket's

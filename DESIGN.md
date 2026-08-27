@@ -623,11 +623,10 @@ Decisions and their reasons:
   app looks; a human publishing the draft GitHub release fires the promote
   workflow; that workflow runs in GitHub's `release` environment, the same one
   the build ran in — so publishing is the trigger and the environment's
-  approval is the second gate — and then copies
-  artifacts onto the stable keys, feed last, because writing `latest-mac.yml`
-  is the ship moment. `just promote` is the manual
-  equivalent. Trust comes from the sha512 in the feed plus the Developer ID
-  signature; there is no Sparkle-style appcast key.
+  approval is the second gate — and then copies artifacts onto the stable
+  keys, feed last, because writing `latest-mac.yml` is the ship moment. `just
+  promote` is the manual equivalent. Trust comes from the sha512 in the feed
+  plus the Developer ID signature; there is no Sparkle-style appcast key.
 - The update controller is pure over injected seams (`updates.ts`,
   `updates.test.ts`) per the testing rule — updater, dialogs, and clock are
   all injectable.
