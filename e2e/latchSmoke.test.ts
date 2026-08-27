@@ -172,6 +172,21 @@ describe.skipIf(!havePython())("latch-smoke, run for real", () => {
     // `2` is the case that makes the bound exclusive: the baseline read always
     // consumes something, so exactly MIN_SEND_S leaves less than it.
     ["a window of exactly 2s", () => fixture("2").argv, 2, "--timeout must be more than", null, false],
+    // The credential read sits at the top of `send`, outside its own try, so
+    // these used to end in a traceback — after the nonce had printed and
+    // without the retraction it promises.
+    ["a token file that is not there", () => {
+      const argv = fixture("5", REAL_HOME).argv;
+      const i = argv.indexOf("--token-file");
+      return [...argv.slice(0, i + 1), "/nonexistent/token", ...argv.slice(i + 2)];
+    }, 1, "No such file or directory", REAL_HOME, true],
+    ["a token file that is empty", () => {
+      const empty = path.join(REAL_HOME, "empty-token");
+      fs.writeFileSync(empty, "", { mode: 0o600 });
+      const argv = fixture("5", REAL_HOME).argv;
+      const i = argv.indexOf("--token-file");
+      return [...argv.slice(0, i + 1), empty, ...argv.slice(i + 2)];
+    }, 1, "is empty", REAL_HOME, true],
     ["a URL that never reaches a socket", () => {
       const argv = fixture("5", REAL_HOME).argv;
       const i = argv.indexOf("--url");
@@ -183,6 +198,8 @@ describe.skipIf(!havePython())("latch-smoke, run for real", () => {
     const out = run.stdout + run.stderr;
     expect(run.status).toBe(status);
     expect(out).toContain(says);
+    // Never a traceback: this script refuses with sentences.
+    expect(out).not.toContain("Traceback");
     if (home === null) expect(out).not.toContain("home=");
     else expect(out).toContain(`home=${home}`);
     // Either it never offered a handle, or it took it back.

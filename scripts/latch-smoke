@@ -167,8 +167,18 @@ def send(url, token_file, argv, goal, budget):
     before the MCP handler is reached, and the handler's own refusals are 4xx
     from a server that already authenticated you.
     """
-    with open(token_file) as handle:
-        token = handle.read().strip()
+    try:
+        with open(token_file) as handle:
+            token = handle.read().strip()
+    except OSError as error:
+        # Terminal, and a sentence rather than a traceback: nothing can be
+        # sent, so no intent exists. The path is the operator's own, not a
+        # server's — and the FILE is named, never its contents.
+        return (f"{token_file}: {error.strerror}.\n"
+                "  Nothing was sent. That path is --token-file (or TOKEN_FILE).", False, None)
+    if not token:
+        return (f"{token_file} is empty.\n"
+                "  Nothing was sent. It must hold the bearer token, on one line.", False, None)
     # `.strip()` removes SURROUNDING whitespace only, so a token pasted across
     # two lines keeps its newline — and `putheader` refuses it with a message
     # that quotes the header value. Caught here, where the file can be named
