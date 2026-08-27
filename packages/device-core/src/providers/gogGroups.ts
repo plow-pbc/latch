@@ -37,13 +37,3 @@ export const GOG_GROUPS: ReadonlySet<string> = new Set<string>([
   ...GOG_CANONICAL,
   ...GOG_ALIASES,
 ]);
-
-/**
- * How to say "outside the scope bound" on the agent-facing page, once.
- *
- * The bound is stated in prose at two sites, and four review rounds went into
- * the two of them disagreeing about whether an alias counts — every rewrite
- * produced a new phrasing and a new way to be wrong. One clause, interpolated
- * at both, cannot drift.
- */
-export const GOG_OUT_OF_SCOPE = "that is not one of those or an alias for one";

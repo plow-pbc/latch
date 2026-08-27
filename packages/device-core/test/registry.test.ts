@@ -6,7 +6,7 @@
  * see by reading the command — the command itself looks legitimate.
  */
 import { describe, expect, it } from "vitest";
-import { GOG_ALIASES, GOG_CANONICAL, GOG_OUT_OF_SCOPE } from "../src/providers/gogGroups.js";
+import { GOG_ALIASES, GOG_CANONICAL } from "../src/providers/gogGroups.js";
 import {
   impliesNetwork,
   needsToken,
@@ -209,35 +209,22 @@ describe("the scope bound", () => {
   // `scripts/fetch-gog.mjs`.
   // Across the interpolation seam: the page an agent reads is built from the
   // same list, so an empty or doubled substitution shows up here rather than
-  // in someone's transcript.
-  it("is the same bound on the page the agent reads", () => {
+  // in someone's transcript. The scope is stated in prose at ONE site now —
+  // the other refers to it — so there is no wording to keep in step.
+  it("rides the belt, and the page names the same one", () => {
     const bound = `--enable-commands=${[...GOG_CANONICAL].join(",")}`;
     expect(gog.belt).toContain(bound);
-    // EVERY occurrence, not any: the page names it more than once, and
-    // `toContain` passes while one of them says something else.
-    // Same for the prose clause: two sites stated it in their own words and
-    // four review rounds went into them disagreeing about aliases. Counted
-    // against the constant itself — a regex here would pin the wording in a
-    // second place, which is the thing the constant exists to stop.
-    expect(gog.skill.body.split(GOG_OUT_OF_SCOPE).length - 1).toBe(2);
+    // Every naming on the page agrees, and there is at least one: an empty
+    // match set fails this too, since `[]` is not `[bound]`.
     const named = gog.skill.body.match(/--enable-commands=[^`\s]*/g) ?? [];
-    // Every naming agrees, and there is at least one: an empty match set
-    // fails this too, since `[]` is not `[bound]`.
     expect([...new Set(named)]).toEqual([bound]);
   });
 
-  it("rides the belt, and names exactly the canonical groups", () => {
-    const bound = gog.belt.find((f) => f.startsWith("--enable-commands="));
-    expect(bound).toBeDefined();
-    const named = bound!.slice("--enable-commands=".length).split(",");
-    // The derivation itself. Asserting only that each name is one `refuse`
-    // accepts cannot fail — `GOG_GROUPS` is a superset of `GOG_CANONICAL` by
-    // construction — so it has to be equality against the list the bound is
-    // built from, which a hand-written string can drift away from.
-    expect(named).toEqual([...GOG_CANONICAL]);
-    // ...and no alias, for ANY of them: gog resolves its own, so sending one
-    // asks it to do that twice.
-    for (const alias of GOG_ALIASES) expect(named).not.toContain(alias);
+  // The invariant behind the bound, asserted on the lists rather than by
+  // reparsing the string built from them: gog resolves its own aliases, so
+  // one in the canonical set would ask it to do that twice.
+  it("keeps the canonical names and the aliases disjoint", () => {
+    for (const alias of GOG_ALIASES) expect(GOG_CANONICAL).not.toContain(alias);
   });
 
   // gog answers to `gog gmail (mail,email)` and `gog calendar (cal)`. Refusing
