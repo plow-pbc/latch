@@ -514,6 +514,65 @@ describe("PlowApi", () => {
  * operation — an upstream body is not text we control. So this one returns the
  * status and lets the caller map it.
  */
+/**
+ * The provider mint. Its response side used to be covered by a device-core
+ * suite over a transport of its own; that transport is gone, so the coverage
+ * belongs here — on the seam that actually makes the call.
+ */
+describe("mintProviderToken", () => {
+  const TOKEN = "ya29.a0AfB_byExampleTokenValue0000000000";
+  const CRED = "plow-credential-value";
+  const mint = (responses: { status: number; body: unknown }[]) => {
+    const { calls, fetchImpl } = recordingFetch(responses);
+    return {
+      calls,
+      run: () =>
+        new PlowApi("https://api.plow.co", fetchImpl).mintProviderToken(
+          CRED,
+          "/v1/connectors/gmail/",
+          "access-token",
+        ),
+    };
+  };
+
+  it("posts to the provider's own route with the device credential, and no account", async () => {
+    const { calls, run } = mint([{ status: 200, body: { data: { access_token: TOKEN } } }]);
+    expect(await run()).toBe(TOKEN);
+    expect(calls[0].url).toBe("https://api.plow.co/v1/connectors/gmail/access-token");
+    expect((calls[0].init.headers as Record<string, string>).authorization).toBe(`Bearer ${CRED}`);
+    // Plow resolves the owner's default connected account server-side, so this
+    // Mac holds no second copy of a fact the server owns.
+    expect(calls[0].init.body).toBe("{}");
+  });
+
+  it.each([
+    ["no token in the body", { status: 200, body: { data: {} } }],
+    ["a blank token", { status: 200, body: { data: { access_token: "  " } } }],
+    ["no data at all", { status: 200, body: {} }],
+  ])("refuses %s rather than returning it", async (_why, response) => {
+    await expect(mint([response]).run()).rejects.toBeInstanceOf(PlowApiError);
+  });
+
+  it("refuses a non-2xx", async () => {
+    await expect(mint([{ status: 503, body: { detail: "nope" } }]).run()).rejects.toBeInstanceOf(
+      PlowApiError,
+    );
+  });
+
+  it("never quotes the response or the credential into the message it raises", async () => {
+    // This response carries a live credential by construction. `errorFor`
+    // drops a server `detail` outright on an AUTHENTICATED call, which is the
+    // rule this relies on rather than restates.
+    const error = await mint([
+      { status: 500, body: { detail: `echo ${CRED} and ${TOKEN}` } },
+    ])
+      .run()
+      .catch((e) => e as Error);
+    expect(error.message).not.toContain(CRED.slice(0, 12));
+    expect(error.message).not.toContain(TOKEN.slice(0, 12));
+  });
+});
+
 describe("chatCompletion returns outcomes instead of throwing them", () => {
   const HOSTILE = "Model '<script>alert(1)</script> plow_sk_leaked' is not allowed";
 

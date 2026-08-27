@@ -122,15 +122,9 @@ const GOG: VendoredProvider = {
     // `gog gmail --help`, because a group is not a leaf — so the skill would
     // be teaching a command the gate rejects.
     //
-    // Recognised STRUCTURALLY, not by scanning for the token: the words before
-    // it must themselves name a command path this Mac can reach. A scan would
-    // let `gog drive files list --help` walk past the leaf check entirely, so
-    // appending one flag would have turned the whole gate off.
-    //
-    // `-h` is included because it is verified to be gog's group help at
-    // 0.36.0. gog itself refuses `--help` in a flag's value position
-    // (`--subject --help` → "expected string value"), so that shape needs no
-    // handling here.
+    // `-h` is verified to be gog's group help at 0.36.0, and gog itself
+    // refuses `--help` in a flag's value position (`--subject --help` →
+    // "expected string value"), so that shape needs no handling here.
     if (isHelpInvocation(rest)) return null;
     // The group, and nothing finer. gog reports its own usage errors better
     // than a mirrored command list can — `unexpected argument serach, did you
@@ -140,8 +134,15 @@ const GOG: VendoredProvider = {
     // reaches Google and comes back 401, which is a spent delegation. So this
     // checks the one thing that is actually ours to check.
     const group = rest[0];
-    if (group === undefined || !GOG_GROUPS.has(group)) {
-      return "this Mac reaches only Gmail and Calendar through gog";
+    if (group === undefined) return "the command is missing: try [\"gog\", \"gmail\", \"search\", ...]";
+    // Two different mistakes, two different sentences. A leading global flag
+    // is the likelier one and has nothing to do with scope, so answering it
+    // with "only Gmail and Calendar" sends the reader to fix the wrong thing.
+    if (group.startsWith("-")) {
+      return `the command must come first, before any flags: put ${group} after it`;
+    }
+    if (!GOG_GROUPS.has(group)) {
+      return `this Mac reaches only Gmail and Calendar through gog, not ${group}`;
     }
     return null;
   },

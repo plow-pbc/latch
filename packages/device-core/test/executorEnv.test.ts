@@ -9,7 +9,7 @@ import os from "node:os";
 import path from "node:path";
 import { Executor } from "../src/executor.js";
 
-/** These spawn through /usr/bin/sandbox-exec, which only exists on macOS. */
+/** Every test here spawns; /usr/bin/sandbox-exec exists only on macOS. */
 const ON_MAC = process.platform === "darwin";
 
 const cleanups: (() => void)[] = [];

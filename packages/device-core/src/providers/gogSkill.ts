@@ -16,7 +16,7 @@ export const GOG_SKILL: Skill = {
     "through plow_run_command.",
   body: `# Google Workspace, through the gog CLI
 
-This Mac bundles \`gog\` (0.36.0) — a Google Workspace CLI — and runs it with a
+This Mac bundles \`gog\` — a Google Workspace CLI — and runs it with a
 short-lived token minted for the owner's connected Google account. You reach it
 through \`plow_run_command\`, like any other command. There is no Google tool in
 \`tools/list\` and there does not need to be.

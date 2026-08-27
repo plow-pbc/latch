@@ -382,8 +382,6 @@ export class PlowApi {
     await this.call<unknown>("POST", "/v1/relay/devices/self/revoke", { token });
   }
 
-  /** Mint an agent credential through the relay's own API (`relay:call` only,
-   * whatever we ask for — the server decides). */
   /**
    * A vendored provider CLI's short-lived token, for one connected account.
    *
@@ -407,6 +405,8 @@ export class PlowApi {
     return minted;
   }
 
+  /** Mint an agent credential through the relay's own API (`relay:call` only,
+   * whatever we ask for — the server decides). */
   async createAgent(token: string, name: string): Promise<MintedCredential> {
     const data = await this.call<{ token: string; key_prefix?: string; name?: string }>(
       "POST",

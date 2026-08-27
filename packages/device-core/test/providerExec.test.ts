@@ -12,8 +12,14 @@ import path from "node:path";
 import { JSONValue, jv, makeIntent } from "@domo/protocol";
 import { DeviceAgent, HeadlessPolicy, MintError, type Minter } from "@domo/device-core";
 
-/** These spawn through /usr/bin/sandbox-exec, which only exists on macOS. */
+/**
+ * Only the tests that SPAWN need macOS — /usr/bin/sandbox-exec exists nowhere
+ * else. The refusal and mint-failure paths never reach the executor, and they
+ * carry the token-leak assertions, so guarding the whole suite would have
+ * taken this PR's security coverage off CI entirely.
+ */
 const ON_MAC = process.platform === "darwin";
+const itSpawns = it.skipIf(!ON_MAC);
 
 const TOKEN = "ya29.a0AfB_byExampleTokenValue0000000000";
 /**
@@ -103,8 +109,8 @@ function run(d: DeviceAgent, argv: string[]): Promise<JSONValue> {
   );
 }
 
-describe.skipIf(!ON_MAC)("a vendored provider through the exec path", () => {
-  it("mints a token into the child's environment, and never into argv", async () => {
+describe("a vendored provider through the exec path", () => {
+  itSpawns("mints a token into the child's environment, and never into argv", async () => {
     const d = device(okMinter(), [vendorDir()]);
     const out = String(jv(await run(d, ["gog", "gmail", "search", "q"])).get("output").str ?? "");
     expect(out).toContain(`TOKEN=${TOKEN}`);
@@ -113,13 +119,13 @@ describe.skipIf(!ON_MAC)("a vendored provider through the exec path", () => {
     expect(out.split("ARGV=")[1]).not.toContain(TOKEN);
   });
 
-  it("puts the belt in front of the command path", async () => {
+  itSpawns("puts the belt in front of the command path", async () => {
     const d = device(okMinter(), [vendorDir()]);
     const out = String(jv(await run(d, ["gog", "gmail", "search", "q"])).get("output").str ?? "");
     expect(out).toContain("ARGV=--no-input --wrap-untrusted gmail search q");
   });
 
-  it("records the argv the OWNER approved, not the belted one", async () => {
+  itSpawns("records the argv the OWNER approved, not the belted one", async () => {
     // The belt only ever narrows, and it is not what the human read.
     const d = device(okMinter(), [vendorDir()]);
     await run(d, ["gog", "gmail", "search", "q"]);
@@ -181,7 +187,7 @@ describe.skipIf(!ON_MAC)("a vendored provider through the exec path", () => {
     expectNeverSpawned(d);
   });
 
-  it("runs --help without minting a token", async () => {
+  itSpawns("runs --help without minting a token", async () => {
     const mint = vi.fn(async () => TOKEN);
     const d = device({ mint }, [vendorDir()]);
     const out = String(jv(await run(d, ["gog", "gmail", "--help"])).get("output").str ?? "");
@@ -189,7 +195,7 @@ describe.skipIf(!ON_MAC)("a vendored provider through the exec path", () => {
     expect(mint).not.toHaveBeenCalled();
   });
 
-  it("leaves a non-provider command completely alone", async () => {
+  itSpawns("leaves a non-provider command completely alone", async () => {
     const mint = vi.fn(async () => TOKEN);
     const d = device({ mint }, [vendorDir()]);
     const out = String(jv(await run(d, ["/bin/echo", "hello"])).get("output").str ?? "");

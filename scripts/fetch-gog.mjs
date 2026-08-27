@@ -72,7 +72,46 @@ try {
     execFileSync("tar", ["xzf", tarball, "-C", dest, "gog"], { stdio: "inherit" });
     console.log(`  verified and extracted → vendor/gog/${arch}/gog`);
   }
-  // Record what is on disk so a stale tree is legible without re-hashing.
+  // The safety-flag assertion, at the one moment the binary is in hand.
+  //
+  // reservedFlags.ts refuses a closed set of spellings; kong can mint a SECOND
+  // long spelling for a boolean flag, `--no-<name>`, which would disarm a belt
+  // flag while matching neither the set nor either rule. Zero flags are
+  // negatable at 0.36.0 — asserted here so a pin bump fails the fetch rather
+  // than shipping a binary whose grammar the gate cannot see.
+  const arch = Object.keys(DIGESTS).find((a) => existsSync(path.join(root, "vendor/gog", a, "gog")));
+  const schema = JSON.parse(
+    execFileSync(path.join(root, "vendor/gog", arch, "gog"), ["--no-input", "schema", "--json"], {
+      encoding: "utf8",
+      maxBuffer: 64 * 1024 * 1024,
+    }),
+  );
+  const negatable = [];
+  let flagsSeen = 0;
+  const walk = (node) => {
+    for (const f of node.flags ?? []) {
+      flagsSeen++;
+      if (f.negated) negatable.push(f.name);
+    }
+    for (const sub of node.subcommands ?? []) walk(sub);
+  };
+  walk(schema.command ?? {});
+  // A floor, because the check is worthless if it never saw a flag: a renamed
+  // schema key would otherwise certify zero negatable flags from a key nothing
+  // reads. 3031 at 0.36.0.
+  if (flagsSeen < 500) {
+    throw new Error(`only ${flagsSeen} flags parsed from gog's schema — has its shape changed?`);
+  }
+  if (negatable.length > 0) {
+    throw new Error(
+      `negatable flags found, which reservedFlags.ts cannot see: ${negatable.join(", ")}. ` +
+        `Canonicalise --no-X to --X there before bumping the pin.`,
+    );
+  }
+  console.log(`${flagsSeen} flags checked, none negatable`);
+
+  // Record what is on disk so a stale tree is legible without re-hashing, and
+  // so the skill can name the version without a second hard-coded copy.
   writeFileSync(path.join(root, "vendor/gog/VERSION"), `${VERSION}\n`);
 } finally {
   rmSync(staging, { recursive: true, force: true });
