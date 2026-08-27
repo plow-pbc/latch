@@ -1,0 +1,250 @@
+#!/usr/bin/env python3
+"""Prove an installed Latch works: one real MCP call, verified in the audit log.
+
+The unit suite never opens a socket to a real relay (README-ts.md § Integration
+coverage). This is the leg that does — MCP client → Plow relay → device socket →
+`@domo/mcp-server` → the executor — and the audit log is the proof, not the
+client's reply. A reply can come from a deferred handle or a half-working path;
+an `exec_end` carrying our intent's id cannot.
+
+One process on purpose. Send and Verify used to be two pasted blocks bridged by
+copied shell variables across three interpreters, and every bug in them lived in
+that seam: a credential in an error body, a success declared at `exec_start`
+before any terminal event, and a wall-clock bound that could report "ruled out"
+having checked nothing. Here the correlation id is held in a variable, the
+baseline is a line count rather than a timestamp, and there is no quoting layer.
+
+The nonce rides `goal`, never argv. `RuleKey.compute` hashes the capability set
+and deliberately excludes goal text, so a fixed argv means one pre-seeded Always
+Allow rule matches every run — which is what makes an unattended smoke possible
+at all. A nonce in argv would mint a new rule key each time and raise a dialog
+forever.
+"""
+import argparse
+import json
+import os
+import shlex
+import subprocess
+import sys
+import time
+import urllib.error
+import urllib.request
+
+# The wire shape is NOT generic JSON-RPC: the server validates that the body's
+# method and tool name agree with headers declaring them, and every request
+# carries its envelope in `params._meta` — modern MCP is per-request, so there
+# is no initialize handshake and no session to open first.
+# `packages/mcp-server/test/client.ts` is the authority; keep this in step with
+# it and with `PROTOCOL_REVISION` in `handler.ts`.
+REVISION = "2026-07-28"
+DEFAULT_HOME = "~/Library/Application Support/Plow-Latch"
+
+
+def read_log(log_path, ssh):
+    """Every parseable audit record, in order. Missing or unreadable reads empty.
+
+    An unreadable log is indistinguishable from an empty one *for this script's
+    purpose* — both mean no evidence yet — and the timeout branch already names
+    the wrong-install case, which is what an unreadable log actually is.
+    """
+    if ssh:
+        proc = subprocess.run(
+            ["ssh", "-o", "ConnectTimeout=8", "-o", "BatchMode=yes", ssh,
+             f"cat -- {shlex.quote(log_path)}"],
+            capture_output=True, text=True,
+        )
+        raw = proc.stdout if proc.returncode == 0 else ""
+    else:
+        try:
+            with open(log_path, errors="replace") as handle:
+                raw = handle.read()
+        except OSError:
+            raw = ""
+    records = []
+    for line in raw.splitlines():
+        try:
+            records.append(json.loads(line))
+        except ValueError:
+            continue
+    return records
+
+
+def send(url, token_file, argv, goal):
+    """POST one `tools/call`. Returns None on success, or a reason to stop.
+
+    The error body is NEVER printed. An authenticated response can repeat the
+    bearer credential back, and this repo's contract (CLAUDE.md) is that such a
+    response never becomes a verdict or a log line in any encoding. The status
+    alone carries what the body was here for: the relay refuses with 401/403
+    before the MCP handler is reached, and the handler's own refusals are 4xx
+    from a server that already authenticated you.
+    """
+    with open(token_file) as handle:
+        token = handle.read().strip()
+    name = "plow_run_command"
+    body = json.dumps({
+        "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+        "params": {
+            "name": name,
+            "arguments": {"argv": list(argv), "goal": goal},
+            "_meta": {
+                "io.modelcontextprotocol/protocolVersion": REVISION,
+                "io.modelcontextprotocol/clientInfo": {"name": "latch-smoke", "version": "1"},
+                "io.modelcontextprotocol/clientCapabilities": {},
+            },
+        },
+    }).encode()
+    request = urllib.request.Request(url, data=body, method="POST", headers={
+        "Authorization": "Bearer " + token,
+        "Content-Type": "application/json",
+        "Accept": "application/json, text/event-stream",
+        "MCP-Protocol-Version": REVISION,
+        "MCP-Method": "tools/call",
+        "MCP-Name": name,
+    })
+    try:
+        with urllib.request.urlopen(request, timeout=90) as response:
+            payload = json.load(response)
+    except urllib.error.HTTPError as error:
+        return f"HTTP {error.code} — the call was refused before it became an intent"
+    except OSError as error:
+        return f"could not reach {url}: {error.__class__.__name__}"
+    # Neither absence is proof of success — that is the audit log — but either
+    # presence is proof of failure, and saying so now beats a 2-minute timeout.
+    if payload.get("error") is not None:
+        return f"JSON-RPC error: {json.dumps(payload['error'])[:200]}"
+    print("sent | isError:", payload.get("result", {}).get("isError"))
+    return None
+
+
+def split_command(raw):
+    """`(options, command)`, split at the first `--`.
+
+    Done by hand rather than with an `argparse` positional because the commands
+    worth smoking carry flags of their own — `gog gmail search q --json` — and
+    argparse rejects an option it does not recognise wherever it appears. A
+    separator also keeps a mistyped script flag an error instead of silently
+    becoming part of the command, which `parse_known_args` would not.
+    """
+    if "--" not in raw:
+        return raw, []
+    cut = raw.index("--")
+    return raw[:cut], raw[cut + 1:]
+
+
+def first(records, event):
+    return next((r for r in records if r.get("event") == event), None)
+
+
+def verdict(events, nonce, expired):
+    """The whole outcome table, pure over the audit records.
+
+    Returns `(exit_code, lines)`, or None while the call is still in flight and
+    the window is still open. Pure on purpose: this is where every bug in the
+    two pasted shell blocks this script replaces actually lived, and a function
+    over a list of records is the only version of it a test can reach.
+
+    `intent_received` is the correlation point — it carries the goal, and so
+    the nonce. Everything after it is anchored to its `intentId`, so no other
+    traffic on a busy install can satisfy one of these conditions on a
+    different call's record. Matching the nonce alone would not do: it is
+    written BEFORE the decision, so a call the owner denied still carries it.
+    """
+    received = next((r for r in events if r.get("event") == "intent_received"
+                     and nonce in str(r.get("goal", ""))), None)
+    if received is None:
+        if not expired:
+            return None
+        rejected = [r for r in events if r.get("event") == "intent_rejected"]
+        lines = [f"TIMEOUT — nothing carrying {nonce}. Three causes:",
+                 "  1. it never reached this install (wrong install, credential, or socket)",
+                 "  2. refused in the MCP layer before an intent existed — writes NO audit line",
+                 "  3. rejected at validate (wrong device / expired / replayed nonce), which",
+                 "     writes intent_rejected WITHOUT the nonce:"]
+        lines += ["     " + json.dumps(r) for r in rejected[-2:]]
+        if not rejected:
+            lines.append("     (none since this call started — cause 3 ruled out)")
+        return 1, lines
+
+    mine = [r for r in events if r.get("intentId") == received.get("intentId")]
+    decision = first(mine, "intent_decision")
+    if decision is not None and decision.get("decision") == "deny":
+        return 1, [json.dumps(decision),
+                   "DENIED — the owner refused it. The relay and the device both worked."]
+    end = first(mine, "exec_end")
+    if end is not None:
+        lines = [json.dumps(r) for r in (first(mine, "exec_start"), end) if r is not None]
+        # `exec_start` alone was never proof: it is written before the spawn.
+        # A run this Mac killed is not a command that succeeded either, and
+        # `reaped` is the only place that difference survives.
+        if end.get("exit_code") == 0 and not end.get("reaped"):
+            return 0, lines + ["OK — it executed and exited 0. The whole path works."]
+        what = "was reaped by this Mac" if end.get("reaped") else f"exited {end.get('exit_code')}"
+        return 1, lines + [f"FAILED — it ran and {what}."]
+    error = first(mine, "exec_error")
+    if error is not None:
+        return 1, [json.dumps(error), "FAILED — the executor threw before the command ran."]
+    if not expired:
+        return None
+    if decision is None:
+        return 1, ["TIMEOUT — it reached this Mac and is sitting unanswered at the approval dialog.",
+                   "  Not a plumbing problem. Seed an Always Allow rule for an unattended run."]
+    start = first(mine, "exec_start")
+    if start is None:
+        return 1, ["TIMEOUT — approved, never started. exec_start is written before the spawn,",
+                   "  so its absence means the executor was never reached. Check the app is running."]
+    return 1, [json.dumps(start),
+               "TIMEOUT — started, still running. Re-run to read its exec_end, or raise --timeout."]
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--url", default=os.environ.get("MCP_URL"),
+                        help="the install's mcpUrl (env: MCP_URL)")
+    parser.add_argument("--token-file", default=os.environ.get("TOKEN_FILE"),
+                        help="a 0600 file holding the bearer token (env: TOKEN_FILE)")
+    parser.add_argument("--home", default=os.environ.get("LATCH_HOME", DEFAULT_HOME),
+                        help=f"the instance home (default: {DEFAULT_HOME})")
+    parser.add_argument("--ssh", default=None, metavar="USER@HOST",
+                        help="read the audit log on another Mac over ssh")
+    parser.add_argument("--timeout", type=int, default=120,
+                        help="seconds to wait for a terminal event (default: 120)")
+    parser.epilog = "Everything after `--` is the command to run."
+    options, command = split_command(sys.argv[1:])
+    args = parser.parse_args(options)
+    if not args.url or not args.token_file:
+        parser.error("--url and --token-file are required (or MCP_URL / TOKEN_FILE)")
+    # A FIXED default, so one Always Allow rule covers every run. Passing a
+    # command is how the gog path is smoked; that one needs its own rule.
+    argv = command or ["/bin/echo", "latch-smoke"]
+
+    home = args.home if args.ssh else os.path.expanduser(args.home)
+    log_path = os.path.join(home, "device", "audit.ndjson")
+    nonce = f"latch-smoke-{time.strftime('%Y%m%dT%H%M%SZ', time.gmtime())}-{os.getpid()}"
+
+    # Positional, not temporal. Everything from here on was written after we
+    # started, and no clock is involved — the operator's clock and the target's
+    # are not the same clock on the ssh path, and a skewed bound reports "ruled
+    # out" having checked nothing, which tells someone to stop looking.
+    baseline = len(read_log(log_path, args.ssh))
+
+    refusal = send(args.url, args.token_file, argv, f"smoke test: {nonce}")
+    if refusal is not None:
+        print(f"REFUSED — {refusal}")
+        print("  No intent was created, so there is nothing in the audit log to read.")
+        return 1
+
+    print(f"waiting up to {args.timeout}s for a terminal event | nonce={nonce}")
+    deadline = time.monotonic() + args.timeout
+    while True:
+        expired = time.monotonic() >= deadline
+        outcome = verdict(read_log(log_path, args.ssh)[baseline:], nonce, expired)
+        if outcome is not None:
+            code, lines = outcome
+            print("\n".join(lines))
+            return code
+        time.sleep(5)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

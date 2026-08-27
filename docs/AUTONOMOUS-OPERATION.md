@@ -96,9 +96,11 @@ Until one of those exists, an unattended smoke stops here.
 ## Stop 4 — reading the result (already automatable)
 
 `audit.ndjson` under the instance home is append-only, one JSON object per line,
-and is this repo's designated test oracle. A smoke run's proof is a `tool_invoked`
-or `exec_start` line carrying the expected argv, followed by `exec_end`. No GUI,
-no screenshot. See `.claude/skills/latch-smoke/SKILL.md`.
+and is this repo's designated test oracle. A smoke run's proof is the
+`exec_end` keyed to its own intent — `exec_start` is written before the spawn,
+so on its own it proves only that the executor was reached. No GUI, no
+screenshot. `scripts/latch-smoke` does the whole exchange; the `latch-smoke`
+skill says how to read it.
 
 ---
 
