@@ -92,15 +92,20 @@ describe.skipIf(!havePython())("latch-smoke verdict", () => {
 // seam, and needs nothing stood up: a send that fails, a home with no log, and
 // a one-second window put the loop through a verdict and both of its hints.
 describe.skipIf(!havePython())("latch-smoke, run for real", () => {
-  /** A home with `device/` and a 0600 token, and the argv to run against it. */
-  /** `home` overrides the temp dir this creates — including with "". */
+  /**
+   * A home with `device/` and a 0600 token, and the argv to run against it.
+   *
+   * `home` overrides the temp dir this creates — including with "". `log`
+   * follows whichever home the run will actually use, so it never names a
+   * directory the run under test does not read.
+   */
   function fixture(timeout: string, home?: string): { log: string; argv: string[] } {
     const real = fs.mkdtempSync(path.join(tmp, "home-"));
     fs.mkdirSync(path.join(real, "device"));
     const tokenFile = path.join(real, "token");
     fs.writeFileSync(tokenFile, "t\n", { mode: 0o600 });
     return {
-      log: path.join(real, "device", "audit.ndjson"),
+      log: path.join(home ?? real, "device", "audit.ndjson"),
       argv: [script, "--url", "http://127.0.0.1:9/mcp", "--token-file", tokenFile,
         "--home", home ?? real, "--timeout", timeout],
     };
