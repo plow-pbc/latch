@@ -26,11 +26,10 @@
  * `scripts/fetch-gog.mjs` asserts that second one against the binary it just
  * extracted, so a pin bump that makes a flag negatable fails the FETCH — the
  * earliest point it can. It is not a full replacement for the probe, though:
- * it would not survive gog renaming the `negated` key itself. The count floor
- * there does NOT cover that — it catches a renamed `flags` key, which is a
- * different rename — so the hand probes stay the only check on this one:
- * re-run the three `--no-*` commands above, and the two single-dash ones, on
- * a pin bump.
+ * it would not survive gog renaming the `negated` key itself, which is why the
+ * `--no-*` probes above are not optional on a bump. (The fetch's count floor
+ * catches a renamed `flags` key — a different rename entirely.) Re-run those
+ * three, and the two single-dash ones, on a pin bump.
  */
 
 /**

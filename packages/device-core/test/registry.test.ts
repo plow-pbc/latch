@@ -45,21 +45,24 @@ describe("the gog provider's refusal", () => {
   });
 
   it.each([
-    ["a flag that would disarm the belt", ["gog", "gmail", "search", "q", "--wrap-untrusted=false"]],
-    ["a flag that reads a local file into an outbound message", ["gog", "gmail", "send", "--body-file", "/etc/passwd"]],
-    ["a flag that writes to a caller-chosen path", ["gog", "gmail", "attachment", "1", "2", "--out", "/tmp/x"]],
+    ["a flag that would disarm the belt", ["gog", "gmail", "search", "q", "--wrap-untrusted=false"], "--wrap-untrusted"],
+    ["a flag that reads a local file into an outbound message", ["gog", "gmail", "send", "--body-file", "/etc/passwd"], "a --*-file flag"],
+    ["a flag that writes to a caller-chosen path", ["gog", "gmail", "attachment", "1", "2", "--out", "/tmp/x"], "a --out* flag"],
     // The one command check this Mac makes. An out-of-scope group is the case
     // that SPENDS the token — verified: `gog drive search x` reaches Google
     // and returns 401, while every in-group usage mistake fails locally.
-    ["a group outside the token's scopes", ["gog", "drive", "search", "q"]],
-    ["a group that does not exist", ["gog", "nonsense", "x"]],
-    ["no group at all", ["gog"]],
+    // Each row pins WHICH sentence, not just that one came back. Collapsing
+    // the spelling branches into the scope branch — restoring "told its scope
+    // was wrong when its spelling was" — leaves a not-null assertion green.
+    ["a group outside the token's scopes", ["gog", "drive", "search", "q"], "only Gmail and Calendar"],
+    ["a group that does not exist", ["gog", "nonsense", "x"], "only Gmail and Calendar"],
+    ["no group at all", ["gog"], "command is missing"],
     // The two mistakes the skill flags as likeliest. gog never sees either as
     // a command, so its own error would not help — each needs its own sentence.
-    ["a leading global flag", ["gog", "--json", "gmail", "search", "q"]],
-    ["the dotted spelling", ["gog", "gmail.search", "q"]],
-  ])("refuses %s", (_why, argv) => {
-    expect(gog.refuse(argv)).not.toBeNull();
+    ["a leading global flag", ["gog", "--json", "gmail", "search", "q"], "before any flags"],
+    ["the dotted spelling", ["gog", "gmail.search", "q"], "separate words"],
+  ])("refuses %s", (_why, argv, expected) => {
+    expect(gog.refuse(argv)).toContain(expected);
   });
 
   it("leaves gog's own usage errors to gog", () => {

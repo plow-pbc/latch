@@ -88,10 +88,11 @@ try {
   // that is perfectly good. The keys are deliberately Node's names.
   const arch = process.arch;
   const binary = path.join(root, "vendor/gog", arch, "gog");
-  // Reachable only on an unsupported host arch: both DIGESTS arches were
-  // extracted above and `tar` would have thrown otherwise.
+  // Reachable only on an unsupported host ARCH: both DIGESTS arches were
+  // extracted above and `tar` would have thrown otherwise. A non-darwin host
+  // of a supported arch gets past this and fails later, at exec.
   if (!existsSync(binary)) {
-    throw new Error(`no pinned gog for ${arch} — supported: ${Object.keys(DIGESTS).join(", ")}`);
+    throw new Error(`no pinned gog for ${arch} — this script fetches darwin arm64/x64 only`);
   }
   const schema = JSON.parse(
     execFileSync(binary, ["--no-input", "schema", "--json"], {

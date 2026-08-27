@@ -61,8 +61,12 @@ export interface VendoredProvider {
    * Two jobs. It refuses arguments that would disarm the belt or read/write
    * local files through the CLI — hazards a human cannot see by reading the
    * command, because the command itself looks legitimate. And it refuses a
-   * command the vendored binary does not have, so a typo fails here instead
-   * of minting a live token and spending it on a usage error.
+   * group outside the minted token's scopes — the one mistake that SPENDS the
+   * delegation — plus the two spellings gog would not diagnose usefully,
+   * because it never sees them as a command at all.
+   *
+   * It deliberately does NOT mirror the binary's command grammar: gog reports
+   * its own usage mistakes locally, with no network call and nothing spent.
    */
   readonly refuse: (argv: readonly string[]) => string | null;
   /**
