@@ -1050,6 +1050,64 @@ describe("changing which chats an agent serves", () => {
     expect(state.state().cloudAgentsError).toBeNull();
   });
 
+  it("re-reads after a timeout, because the save it gave up on may have landed", async () => {
+    // The PUT went out and the answer never came. The agent may well be
+    // serving the new set; the app cannot tell by itself, so it asks.
+    let served = ["cht_1"];
+    const f = fakes({
+      list: async () => [agent({ chatUids: [...served] })],
+      update: async () => {
+        served = ["cht_2"];
+        throw new PlowApiError("network", "Plow didn't answer in time. Try again.");
+      },
+    });
+    const state = build(tempHome(), f);
+    await state.refresh();
+
+    await expect(state.editChats("agent_1", ["cht_2"])).resolves.toBe(false);
+
+    expect(f.agents.calls.filter((call) => call === "list")).toHaveLength(2);
+    expect(state.state().cloudAgents[0].chatUids).toEqual(["cht_2"]);
+    // Still a failure to the person who clicked: they do not know it worked,
+    // and the sentence is what tells them to look.
+    expect(state.state().cloudActionError).toContain("didn't answer in time");
+  });
+
+  it.each([
+    ["a 409 the server decided before anything moved", 409, "One of those chats already belongs to another agent."],
+    ["a 5xx the server rolled back", 502, "Couldn't update the agent. Nothing changed — the old chats are still live. Try again."],
+  ])("does not re-read after %s", async (_label, status, message) => {
+    const f = fakes({
+      list: async () => [agent({ chatUids: ["cht_1"] })],
+      update: async () => { throw new PlowApiError("http", message, status); },
+    });
+    const state = build(tempHome(), f);
+    await state.refresh();
+
+    await expect(state.editChats("agent_1", ["cht_2"])).resolves.toBe(false);
+
+    // The server said what happened — nothing. A second round trip could only
+    // confirm what we were already told.
+    expect(f.agents.calls.filter((call) => call === "list")).toHaveLength(1);
+    expect(state.state().cloudAgents[0].chatUids).toEqual(["cht_1"]);
+    expect(state.state().cloudActionError).toBe(message);
+  });
+
+  it("does not re-read when nothing was ever sent", async () => {
+    const f = fakes({ list: async () => [agent({ chatUids: ["cht_1"] })] });
+    const state = build(tempHome(), f);
+    await state.refresh();
+    const before = f.agents.calls.filter((call) => call === "list").length;
+
+    // No id and no chats never reach Plow at all, so there is nothing to
+    // reconcile with — the re-read is for a request that was actually sent.
+    await state.editChats("  ", ["cht_1"]);
+    await state.editChats("agent_1", []);
+
+    expect(f.agents.calls.filter((call) => call === "list")).toHaveLength(before);
+    expect(f.agents.updated).toEqual([]);
+  });
+
   it("drops a save that lands after this Mac signed out", async () => {
     const held = deferred<CloudAgentResource>();
     const f = fakes({

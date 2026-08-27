@@ -325,7 +325,20 @@ export class CloudAgentState {
     try {
       updated = await this.deps.agents.updateChats(credential, id, chats);
     } catch (error) {
-      if (generation === this.generation) this.failAction(messageOf(error));
+      if (generation !== this.generation) return false;
+      this.failAction(messageOf(error));
+      // A failure that is not the server's verdict says nothing about what the
+      // agent now serves. A timed-out PUT is the case that matters: the request
+      // may well have landed, and leaving the old set on screen would be the
+      // app asserting a rollback nobody performed. Ask.
+      //
+      // The counter moves even though we do not know whether anything did: a
+      // listing that was already in the air predates the attempt either way,
+      // and the refresh below is the one whose answer is worth having.
+      if (!isSettledFailure(error)) {
+        this.mutations += 1;
+        await this.refresh();
+      }
       return false;
     }
     if (generation !== this.generation) return false;
@@ -675,6 +688,20 @@ function cleanChatUids(chatUids: readonly string[]): string[] {
     out.push(uid);
   }
   return out;
+}
+
+/**
+ * Did the server tell us the change did NOT happen?
+ *
+ * Only two answers carry that: a 409, which is a refusal decided before
+ * anything moved, and a 5xx, which the API rolls back. Everything else — a
+ * timeout, a dropped connection, a response we could not read — leaves the
+ * outcome unknown, and unknown is not the same as unchanged.
+ */
+function isSettledFailure(error: unknown): boolean {
+  if (!(error instanceof PlowApiError)) return false;
+  const status = error.status ?? 0;
+  return status === 409 || status >= 500;
 }
 
 /** An abort surfaces as `AbortError` however the client raises it. */

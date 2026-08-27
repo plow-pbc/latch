@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { CloudAgentResource, CloudAgentsClient } from "../src/cloudAgents.js";
+import {
+  CREATE_REQUEST_TIMEOUT_MS,
+  CloudAgentResource,
+  CloudAgentsClient,
+} from "../src/cloudAgents.js";
 import { PlowApi, PlowApiError } from "../src/plowApi.js";
 
 const CREDENTIAL = "plow_sk_device_do_not_leak";
@@ -439,5 +443,53 @@ describe("CloudAgentsClient chat-set replacement", () => {
 
     expect(String(error)).toBe("PlowApiError: Plow returned an unsafe cloud-agent response.");
     expect(String(error)).not.toContain(CREDENTIAL);
+  });
+});
+
+describe("CloudAgentsClient request budgets", () => {
+  /** Watch what each call asks `PlowApi` for, without changing what it does. */
+  function watchedApi(fetchImpl: (url: string, init?: RequestInit) => Promise<Response>) {
+    const api = new PlowApi("https://api.plow.co", fetchImpl);
+    const asked: Array<{ method: string; path: string; timeoutMs?: number }> = [];
+    const real = api.request.bind(api);
+    api.request = ((method: string, path: string, opts: Parameters<typeof real>[2] = {}) => {
+      asked.push({ method, path, timeoutMs: opts.timeoutMs });
+      return real(method, path, opts);
+    }) as typeof api.request;
+    return { api, asked };
+  }
+
+  it("gives the chat-set PUT the same budget as a create", async () => {
+    const { fetchImpl } = recordingFetch([
+      { status: 202, body: resource("provisioning") },
+      { status: 200, body: resource("running") },
+    ]);
+    const { api, asked } = watchedApi(fetchImpl);
+    const client = new CloudAgentsClient(api);
+
+    await client.create(CREDENTIAL, { chatUids: ["cht_1"] });
+    await client.updateChats(CREDENTIAL, "agent_123", ["cht_1"]);
+
+    // The PUT restarts the agent, so it waits on the provider exactly as the
+    // create does. On the default budget a save that would have succeeded
+    // times out — and a timed-out PUT is the outcome with no knowable result.
+    expect(asked).toEqual([
+      { method: "POST", path: "/v1/agents/cloud", timeoutMs: CREATE_REQUEST_TIMEOUT_MS },
+      { method: "PUT", path: "/v1/agents/cloud/agent_123/chats", timeoutMs: CREATE_REQUEST_TIMEOUT_MS },
+    ]);
+  });
+
+  it("leaves the reads on the default budget", async () => {
+    const { fetchImpl } = recordingFetch([
+      { status: 200, body: { data: [] } },
+      { status: 204 },
+    ]);
+    const { api, asked } = watchedApi(fetchImpl);
+    const client = new CloudAgentsClient(api);
+
+    await client.list(CREDENTIAL);
+    await client.delete(CREDENTIAL, "agent_123");
+
+    expect(asked.map((call) => call.timeoutMs)).toEqual([undefined, undefined]);
   });
 });

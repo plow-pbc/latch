@@ -5,13 +5,20 @@ import {
 } from "./plowApi.js";
 
 /**
- * How long a create may take.
+ * How long a call that makes the provider do something may take.
  *
  * Longer than everything else here on purpose: prod's create is synchronous
  * and boots a VM before it answers, so the 15s every other call gets would
  * time out a request that was going to succeed. It is still nowhere near the
  * load balancer's 60s idle cut — this buys the VM its boot, not a licence to
  * block.
+ *
+ * The chat-set PUT gets the same budget for the same reason. It is not a
+ * metadata write: the agent restarts to pick its new chats up, so the answer
+ * waits on the provider exactly as a create does. On the default 15s a save
+ * that was going to succeed times out — and a timed-out PUT is the worst of
+ * all the outcomes, because the change may have landed and the app cannot
+ * tell.
  */
 export const CREATE_REQUEST_TIMEOUT_MS = 30_000;
 
@@ -124,7 +131,11 @@ export class CloudAgentsClient {
     const response = await this.api.request(
       "PUT",
       `/v1/agents/cloud/${encodeURIComponent(agentId)}/chats`,
-      { token: deviceCredential, body: { chat_uids: normalizeChatUids(chatUids) } },
+      {
+        token: deviceCredential,
+        body: { chat_uids: normalizeChatUids(chatUids) },
+        timeoutMs: CREATE_REQUEST_TIMEOUT_MS,
+      },
     );
     if (response.status === 409) {
       throw conflictError(await decodeJson(response), deviceCredential);
