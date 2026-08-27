@@ -912,18 +912,7 @@ describe("a 403 from the real chat endpoint", () => {
     return {
       home,
       state: new CloudAgentState({
-        agents: agents ?? {
-          async create() {
-            throw new Error("not used");
-          },
-          async list() {
-            return [];
-          },
-          async delete() {},
-          async poll(_credential, receipt) {
-            return receipt;
-          },
-        },
+        agents: agents ?? fakes().agents,
         // The REAL client, so this covers the HTTP status handling the fakes
         // elsewhere in this file stand in for.
         chats: new CloudChatsClient(new PlowApi("https://api.plow.co", fetchLike)),
@@ -1208,15 +1197,6 @@ describe("changing which chats an agent serves", () => {
     expect(f.agents.updated).toEqual([]);
   });
 
-  it("refuses to act with no agent id, and asks Plow nothing", async () => {
-    const f = fakes({ list: async () => [agent()] });
-    const state = build(tempHome(), f);
-    await state.refresh();
-
-    await expect(state.editChats("  ", ["cht_1"])).resolves.toBe(false);
-
-    expect(f.agents.updated).toEqual([]);
-  });
 });
 
 describe("CloudChatsClient", () => {

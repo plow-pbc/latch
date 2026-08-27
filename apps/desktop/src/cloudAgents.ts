@@ -361,10 +361,11 @@ function conflictError(decoded: unknown): PlowApiError {
  * keeps its FIRST position: a set listing home twice must not have home
  * demoted by its own repeat.
  */
-function normalizeChatUids(chatUids: readonly string[]): string[] {
+export function normalizeChatUids(chatUids: readonly string[]): string[] {
+  if (!Array.isArray(chatUids)) return [];
   const seen = new Set<string>();
   const out: string[] = [];
-  for (const raw of chatUids ?? []) {
+  for (const raw of chatUids) {
     const uid = (raw ?? "").trim();
     if (!uid || seen.has(uid)) continue;
     seen.add(uid);

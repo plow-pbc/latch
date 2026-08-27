@@ -907,35 +907,6 @@ app.whenReady().then(async () => {
   cloudEditReordered.retainedServerOrder = JSON.stringify(cloudCalls.editChats.at(-1)?.chatUids)
     === JSON.stringify([cloudChat.uid, "chat_book", "chat_family", "chat_new"]);
 
-  // The agent list failed and the credential roster did not. A chat another
-  // agent holds must still be off the table: indexing agents alone left every
-  // chat looking free and offered one whose only answer is a 409.
-  cloudProbe = {
-    ...cloudProbe,
-    cloudAgents: [],
-    cloudAgentsError: "Couldn't reach Plow.",
-    cloudChats: reorderedChats,
-    cloudChatsLoaded: true,
-  };
-  await win.webContents.executeJavaScript(`window.__domoSelectTab("audit")`);
-  await win.webContents.executeJavaScript(`window.__domoSelectTab("agents")`);
-  await waitFor(win, `[...document.querySelectorAll("#view button")].some((b) => b.textContent.trim() === "Set up cloud agent")`, "the setup action for the roster-only case");
-  await win.webContents.executeJavaScript(`[...document.querySelectorAll("#view button")].find((b) => b.textContent.trim() === "Set up cloud agent").click()`);
-  await waitFor(win, `document.querySelector(".cloud-modal .chat-list")`, "the checklist for the roster-only case");
-  const cloudHoldersFromRoster = await win.webContents.executeJavaScript(`(${() => {
-    const rows = [...document.querySelectorAll(".cloud-modal .chat-option")].map((row) => ({
-      name: row.querySelector(".chat-option-name").textContent,
-      disabled: row.classList.contains("disabled"),
-      note: row.querySelector(".chat-option-note")?.textContent ?? null,
-    }));
-    const held = rows.find((row) => row.disabled);
-    return { anyDisabled: !!held, note: held?.note ?? null, rows: rows.length };
-  }})()`);
-  await win.webContents.executeJavaScript(
-    `[...document.querySelectorAll(".cloud-modal button")].find((b) => b.textContent.trim() === "Cancel").click()`,
-  );
-  cloudProbe = { ...cloudProbe, cloudAgentsError: null, cloudAgents: [cloudAgent] };
-
   // And with the chat list not yet read, the editor is not offered at all: it
   // would open on the fallback, missing every chat this Mac has not been told
   // about.
@@ -1711,7 +1682,6 @@ app.whenReady().then(async () => {
     cloudEditReordered.liveAfterChange &&
     cloudEditReordered.deadAgain &&
     cloudEditReordered.retainedServerOrder &&
-    cloudHoldersFromRoster.anyDisabled &&
     cloudEditGateUnread.present &&
     cloudEditGateUnread.disabled &&
     cloudChatFailure.showsError &&
@@ -1802,7 +1772,7 @@ app.whenReady().then(async () => {
     errors.length === 0;
   console.log(
     "PROBE:" +
-      JSON.stringify({ main, settings, strandedOnDisk, settingsPane, connect, cloudRoster, cloudModalFocus, cloudModalGuard, cloudCreateWait, cloudCreateTransition, cloudRowActions, cloudEditGate, cloudEditSave, cloudEditStray, cloudEditReordered, cloudHoldersFromRoster, cloudEditGateUnread, cloudChatFailure, cloudForbidden, cloudServerDetail, agentsShot, approvalsReviewer, approvalsShot, purposeRoundTrip, approvalsAsk, askWithoutReviewer, approvalsShotAsk, agentsOpen, modalClosed, vaultLocked, vaultUnsaved, vaultShot, agentsOpenShot, staleSettingsPane, optimisticMode, settingsShot, approval, reviewerNote, consoleErrors: errors, ok }),
+      JSON.stringify({ main, settings, strandedOnDisk, settingsPane, connect, cloudRoster, cloudModalFocus, cloudModalGuard, cloudCreateWait, cloudCreateTransition, cloudRowActions, cloudEditGate, cloudEditSave, cloudEditStray, cloudEditReordered, cloudEditGateUnread, cloudChatFailure, cloudForbidden, cloudServerDetail, agentsShot, approvalsReviewer, approvalsShot, purposeRoundTrip, approvalsAsk, askWithoutReviewer, approvalsShotAsk, agentsOpen, modalClosed, vaultLocked, vaultUnsaved, vaultShot, agentsOpenShot, staleSettingsPane, optimisticMode, settingsShot, approval, reviewerNote, consoleErrors: errors, ok }),
   );
   app.exit(ok ? 0 : 1);
 }).catch((err) => {

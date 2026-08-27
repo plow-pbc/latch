@@ -26,6 +26,7 @@ import {
   ChatSetConflictError,
   CloudAgentResource,
   CreateCloudAgentRequest,
+  normalizeChatUids,
 } from "./cloudAgents.js";
 import {
   ChatRecipients,
@@ -265,7 +266,7 @@ export class CloudAgentState {
    */
   async create(chatUids: readonly string[], name: string): Promise<string | null> {
     this.actionError = null;
-    const chats = cleanChatUids(chatUids);
+    const chats = normalizeChatUids(chatUids);
     if (!chats.length) return this.failAction("Pick at least one chat this agent will answer in.");
     const credential = this.credential();
     if (!credential) return this.failAction("This Mac isn't signed in yet.");
@@ -315,7 +316,7 @@ export class CloudAgentState {
     this.actionError = null;
     const id = (agentId ?? "").trim();
     if (!id) return false;
-    const chats = cleanChatUids(chatUids);
+    const chats = normalizeChatUids(chatUids);
     if (!chats.length) {
       this.failAction("An agent has to serve at least one chat.");
       return false;
@@ -678,32 +679,6 @@ function isCredentialFailure(error: unknown): boolean {
   return (
     error instanceof PlowApiError && (error.kind === "forbidden" || error.kind === "unauthorized")
   );
-}
-
-/**
- * A chat set as this side will act on it: trimmed, blanks dropped, first
- * occurrence wins. Order is home-first and is preserved.
- *
- * The client normalises again before it sends. That is not duplication for its
- * own sake: this one decides whether there is anything to send AT ALL — an
- * "empty" set of three blank strings must fail here, with a sentence, rather
- * than travel to Plow to be refused.
- */
-function cleanChatUids(chatUids: readonly string[]): string[] {
-  // Anything that is not an array is nothing. This is the IPC boundary, and a
-  // bare string is the dangerous wrong shape: it iterates as its CHARACTERS, so
-  // a caller that has not caught up with the plural signature would otherwise
-  // ask Plow for one agent across five one-letter chats.
-  if (!Array.isArray(chatUids)) return [];
-  const seen = new Set<string>();
-  const out: string[] = [];
-  for (const raw of chatUids) {
-    const uid = (raw ?? "").trim();
-    if (!uid || seen.has(uid)) continue;
-    seen.add(uid);
-    out.push(uid);
-  }
-  return out;
 }
 
 /**

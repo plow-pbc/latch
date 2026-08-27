@@ -945,24 +945,9 @@ function cloudChatHolders(state, exceptAgentId = null) {
     if (!uid || holders.has(uid)) return;
     holders.set(uid, name || "another agent");
   };
-  // BOTH reads, because either can fail on its own. The agent list is the
-  // better source — it is the set the server enforces — but when it fails and
-  // the credential roster does not, indexing agents alone leaves every chat
-  // looking free, and the picker offers a chat whose only possible answer is a
-  // 409. The roster's `chatUids` is the credential's grant, which moves with
-  // the agent's set, so it says the same thing a moment later.
   for (const agent of visibleCloudAgents(state)) {
     if (agent.agentId === exceptAgentId) continue;
     for (const uid of agent.chatUids ?? []) claim(uid, agent.name);
-  }
-  for (const row of state.roster?.cloud ?? []) {
-    if (!row.agentId || row.agentId === exceptAgentId) continue;
-    for (const uid of row.chatUids ?? []) {
-      // A credential granted every chat says nothing about which one an agent
-      // serves, and disabling the whole list on it would be a wildcard read as
-      // a claim on everything.
-      if (uid !== "*") claim(uid, row.name);
-    }
   }
   return holders;
 }
