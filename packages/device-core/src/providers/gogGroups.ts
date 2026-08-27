@@ -33,3 +33,7 @@ export const GOG_ALIASES = ["mail", "email", "cal"] as const;
  * written once, in `refuse`'s doc; the per-version verdicts behind the bound
  * are step 5 of the pin-bump checklist in `scripts/fetch-gog.mjs`.
  */
+export const GOG_GROUPS: ReadonlySet<string> = new Set<string>([
+  ...GOG_CANONICAL,
+  ...GOG_ALIASES,
+]);

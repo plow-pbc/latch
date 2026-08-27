@@ -27,10 +27,10 @@ through \`plow_run_command\`, like any other command. There is no Google tool in
 ## What you can reach
 
 Most of Gmail and Calendar. **Drive, Docs, Sheets and the rest of gog are not
-connected at all** — this Mac refuses any group that is not Gmail or Calendar
-before approval, before the token is minted and before anything runs, and gog
-is additionally launched with \`--enable-commands=${GOG_CANONICAL.join(",")}\` so it refuses
-them itself. Either way they never reach Google.
+connected at all** — gog is launched with
+\`--enable-commands=${GOG_CANONICAL.join(",")}\`, and this Mac refuses any group
+outside that list before approval, before the token is minted and before
+anything runs. Either way they never reach Google.
 
 Their **help** still prints, though: \`["gog","drive","--help"]\` returns usage
 for a group you cannot actually run. Usage that prints cleanly is not a surface

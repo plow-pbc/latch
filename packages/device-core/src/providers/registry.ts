@@ -21,7 +21,7 @@
 
 import type { Skill } from "../skills.js";
 import { reservedFlagIn } from "./gogFlags.js";
-import { GOG_ALIASES, GOG_CANONICAL } from "./gogGroups.js";
+import { GOG_CANONICAL, GOG_GROUPS } from "./gogGroups.js";
 import { GOG_SKILL } from "./gogSkill.js";
 
 /** What one vendored CLI needs in order to run. */
@@ -116,8 +116,6 @@ export interface VendoredProvider {
    */
   readonly skill: Skill;
 }
-
-const GOG_GROUPS: ReadonlySet<string> = new Set<string>([...GOG_CANONICAL, ...GOG_ALIASES]);
 
 /**
  * `... --help`, which names no group and reaches nothing.

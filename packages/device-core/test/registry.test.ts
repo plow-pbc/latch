@@ -98,7 +98,6 @@ describe("the gog provider's refusal", () => {
     expect(gog.refuse(["gog", "gmail", "--help", "--home", "/tmp/evil"])).not.toBeNull();
   });
 
-
   it("names the rule, never the caller's argv", () => {
     // These reach the approval dialog and the append-only audit log, so the
     // same rule gogFlags follows applies here.
@@ -208,6 +207,19 @@ describe("the scope bound", () => {
   // the group because it does so before the dialog and the mint; this is the
   // layer beneath it. Per-version verdicts: step 5 of the checklist in
   // `scripts/fetch-gog.mjs`.
+  // Across the interpolation seam: the page an agent reads is built from the
+  // same list, so an empty or doubled substitution shows up here rather than
+  // in someone's transcript.
+  it("is the same bound on the page the agent reads", () => {
+    const bound = `--enable-commands=${[...GOG_CANONICAL].join(",")}`;
+    expect(gog.belt).toContain(bound);
+    // EVERY occurrence, not any: the page names it more than once, and
+    // `toContain` passes while one of them says something else.
+    const named = gog.skill.body.match(/--enable-commands=[^`\s]*/g) ?? [];
+    expect(named.length).toBeGreaterThan(1);
+    expect([...new Set(named)]).toEqual([bound]);
+  });
+
   it("rides the belt, and names exactly the canonical groups", () => {
     const bound = gog.belt.find((f) => f.startsWith("--enable-commands="));
     expect(bound).toBeDefined();
@@ -221,7 +233,6 @@ describe("the scope bound", () => {
     // asks it to do that twice.
     for (const alias of GOG_ALIASES) expect(named).not.toContain(alias);
   });
-
 
   // gog answers to `gog gmail (mail,email)` and `gog calendar (cal)`. Refusing
   // those said a Gmail command was out of scope. Which spellings dispatch is a
