@@ -5,6 +5,7 @@ functions worth pinning are `verdict` — the whole outcome table, pure over
 audit records — and `send`'s refusal string, which must never carry the
 credential the relay may have echoed back at it.
 """
+import importlib.machinery
 import importlib.util
 import io
 import json
@@ -20,10 +21,12 @@ spec.loader.exec_module(smoke)
 
 request = json.loads(sys.argv[2])
 
-if request["call"] == "split":
+if request["call"] == "remote":
+    print(json.dumps(smoke.remote_cat(request["path"])))
+elif request["call"] == "split":
     print(json.dumps(smoke.split_command(request["raw"])))
 elif request["call"] == "verdict":
-    outcome = smoke.verdict(request["events"], request["nonce"], request["expired"])
+    outcome = smoke.verdict(request["events"], request["nonce"], request["expired"], request["since"])
     print(json.dumps(None if outcome is None else {"code": outcome[0], "text": "\n".join(outcome[1])}))
 else:
     # The relay answered, and its body repeats the Authorization header back —

@@ -40,33 +40,50 @@ REVISION = "2026-07-28"
 DEFAULT_HOME = "~/Library/Application Support/Plow-Latch"
 
 
-def read_log(log_path, ssh):
-    """Every parseable audit record, in order. Missing or unreadable reads empty.
+def remote_cat(log_path):
+    """The shell command that reads the log on the far side.
 
-    An unreadable log is indistinguishable from an empty one *for this script's
-    purpose* — both mean no evidence yet — and the timeout branch already names
-    the wrong-install case, which is what an unreadable log actually is.
+    `$HOME` expands THERE. The default home starts with `~`, and `shlex.quote`
+    makes it a literal, so the remote shell would look for a directory actually
+    named `~` — the read fails, and a failed read is the shape that reports
+    "ruled out" having opened nothing.
+    """
+    if log_path.startswith("~/"):
+        return f'cat -- "$HOME"/{shlex.quote(log_path[2:])}'
+    return f"cat -- {shlex.quote(log_path)}"
+
+
+def read_log(log_path, ssh):
+    """`(records, problem)` — every parseable audit record, or why there are none.
+
+    A read that FAILED and a log with no evidence in it are different answers,
+    and collapsing them is how a checker reports "ruled out" having opened
+    nothing. Over ssh the failures are not even the same set: an unreachable
+    host, a `BatchMode` auth refusal and a wrong `--home` all land here, and
+    none of them is one of the three causes the timeout branch names.
     """
     if ssh:
         proc = subprocess.run(
-            ["ssh", "-o", "ConnectTimeout=8", "-o", "BatchMode=yes", ssh,
-             f"cat -- {shlex.quote(log_path)}"],
+            ["ssh", "-o", "ConnectTimeout=8", "-o", "BatchMode=yes", ssh, remote_cat(log_path)],
             capture_output=True, text=True,
         )
-        raw = proc.stdout if proc.returncode == 0 else ""
+        if proc.returncode != 0:
+            detail = proc.stderr.strip().splitlines()
+            return [], f"ssh {ssh}: {detail[0] if detail else 'exit ' + str(proc.returncode)}"
+        raw = proc.stdout
     else:
         try:
             with open(log_path, errors="replace") as handle:
                 raw = handle.read()
-        except OSError:
-            raw = ""
+        except OSError as error:
+            return [], f"{log_path}: {error.strerror}"
     records = []
     for line in raw.splitlines():
         try:
             records.append(json.loads(line))
         except ValueError:
             continue
-    return records
+    return records, None
 
 
 def send(url, token_file, argv, goal):
@@ -106,14 +123,26 @@ def send(url, token_file, argv, goal):
         with urllib.request.urlopen(request, timeout=90) as response:
             payload = json.load(response)
     except urllib.error.HTTPError as error:
-        return f"HTTP {error.code} — the call was refused before it became an intent"
+        return (f"HTTP {error.code} — refused before it became an intent.\n"
+                "  Nothing was written to the audit log. 401/403 is the relay or the"
+                " credential; another 4xx is the MCP handler.")
     except OSError as error:
-        return f"could not reach {url}: {error.__class__.__name__}"
+        # NOT the same claim. This branch covers urlopen's own 90s read
+        # timeout, where the request did reach the relay and an intent may well
+        # exist — so it must not tell an operator the log is empty.
+        return (f"could not reach {url}: {error.__class__.__name__}.\n"
+                "  Whether it arrived is UNKNOWN — search the log for the nonce above"
+                " before assuming it did not.")
     # Neither absence is proof of success — that is the audit log — but either
     # presence is proof of failure, and saying so now beats a 2-minute timeout.
     if payload.get("error") is not None:
-        return f"JSON-RPC error: {json.dumps(payload['error'])[:200]}"
-    print("sent | isError:", payload.get("result", {}).get("isError"))
+        return (f"JSON-RPC error: {json.dumps(payload['error'])[:200]}\n"
+                "  Refused before it became an intent; nothing was written to the log.")
+    # `or {}` because a present-but-null `result` is None, and `.get` on it
+    # raises rather than answering.
+    if (payload.get("result") or {}).get("isError"):
+        return ("the tool returned isError.\n"
+                "  Refused inside the MCP layer; no intent was created.")
     return None
 
 
@@ -136,7 +165,7 @@ def first(records, event):
     return next((r for r in records if r.get("event") == event), None)
 
 
-def verdict(events, nonce, expired):
+def verdict(events, nonce, expired, since=0):
     """The whole outcome table, pure over the audit records.
 
     Returns `(exit_code, lines)`, or None while the call is still in flight and
@@ -155,7 +184,15 @@ def verdict(events, nonce, expired):
     if received is None:
         if not expired:
             return None
-        rejected = [r for r in events if r.get("event") == "intent_rejected"]
+        # The ONE scan that needs bounding: an `intent_rejected` carries no
+        # nonce, so an old one is indistinguishable from this call's. Nothing
+        # else does — the nonce carries a timestamp AND this process's pid, so
+        # it identifies this call across the whole file. Slicing the records
+        # instead would put correlation itself at the mercy of a count taken by
+        # a separate read: a line still being appended when that read lands
+        # parses as garbage and is dropped, the count comes back one short, and
+        # the slice cuts off this call's own `intent_received`.
+        rejected = [r for r in events[since:] if r.get("event") == "intent_rejected"]
         lines = [f"TIMEOUT — nothing carrying {nonce}. Three causes:",
                  "  1. it never reached this install (wrong install, credential, or socket)",
                  "  2. refused in the MCP layer before an intent existed — writes NO audit line",
@@ -221,28 +258,47 @@ def main():
     home = args.home if args.ssh else os.path.expanduser(args.home)
     log_path = os.path.join(home, "device", "audit.ndjson")
     nonce = f"latch-smoke-{time.strftime('%Y%m%dT%H%M%SZ', time.gmtime())}-{os.getpid()}"
+    print(f"nonce={nonce}")
 
-    # Positional, not temporal. Everything from here on was written after we
-    # started, and no clock is involved — the operator's clock and the target's
-    # are not the same clock on the ssh path, and a skewed bound reports "ruled
+    # Read BEFORE sending, and refuse on a read that failed. This is the one
+    # moment where refusing costs nothing: past it, the call has raised a
+    # dialog on someone's Mac that nothing here can then verify. It is the same
+    # reasoning the send-side guards use, one layer down.
+    baseline, problem = read_log(log_path, args.ssh)
+    if problem is not None:
+        print(f"REFUSED — cannot read the audit log: {problem}")
+        print("  Not sending: a call this cannot verify would still raise a dialog.")
+        print("  Check --home (a from-source run is Plow-Latch-<branch>) and --ssh.")
+        return 1
+    # Positional, and it bounds ONE thing: the nonce-less `intent_rejected`
+    # scan. No clock is involved — the operator's clock and the target's are
+    # not the same clock on the ssh path, and a skewed bound reports "ruled
     # out" having checked nothing, which tells someone to stop looking.
-    baseline = len(read_log(log_path, args.ssh))
+    since = len(baseline)
 
     refusal = send(args.url, args.token_file, argv, f"smoke test: {nonce}")
     if refusal is not None:
         print(f"REFUSED — {refusal}")
-        print("  No intent was created, so there is nothing in the audit log to read.")
         return 1
 
-    print(f"waiting up to {args.timeout}s for a terminal event | nonce={nonce}")
+    print(f"waiting up to {args.timeout}s for a terminal event")
     deadline = time.monotonic() + args.timeout
     while True:
         expired = time.monotonic() >= deadline
-        outcome = verdict(read_log(log_path, args.ssh)[baseline:], nonce, expired)
-        if outcome is not None:
-            code, lines = outcome
-            print("\n".join(lines))
-            return code
+        events, problem = read_log(log_path, args.ssh)
+        if problem is not None:
+            # It was readable a moment ago, so this is transient. Never let it
+            # become a verdict about the call.
+            if expired:
+                print(f"TIMEOUT — the audit log stopped being readable: {problem}")
+                print(f"  The call WAS sent. Re-read the log for {nonce} once it is reachable.")
+                return 1
+        else:
+            outcome = verdict(events, nonce, expired, since)
+            if outcome is not None:
+                code, lines = outcome
+                print("\n".join(lines))
+                return code
         time.sleep(5)
 
 

@@ -70,7 +70,7 @@ describe.skipIf(!havePython())("latch-smoke verdict", () => {
   ];
 
   it.each(cases)("%s", (_name, events, expired, code, contains) => {
-    const outcome = call({ call: "verdict", events, nonce: NONCE, expired }) as
+    const outcome = call({ call: "verdict", events, nonce: NONCE, expired, since: 0 }) as
       | { code: number; text: string }
       | null;
     if (code === null) {
@@ -79,6 +79,43 @@ describe.skipIf(!havePython())("latch-smoke verdict", () => {
     }
     expect(outcome?.code).toBe(code);
     expect(outcome?.text).toContain(contains);
+  });
+});
+
+describe.skipIf(!havePython())("latch-smoke bounds only what carries no nonce", () => {
+  const older = { event: "intent_rejected", intentId: "old", reason: "expired long ago" };
+  const mine = { event: "intent_rejected", intentId: "new", reason: "replayed nonce" };
+
+  it("does not blame a rejection written before the send", () => {
+    const outcome = call({ call: "verdict", events: [older, mine], nonce: NONCE, expired: true, since: 1 }) as
+      { code: number; text: string };
+    expect(outcome.text).toContain("replayed nonce");
+    expect(outcome.text).not.toContain("expired long ago");
+  });
+
+  it("still correlates this call's own records from anywhere in the file", () => {
+    // The baseline is a count from a SEPARATE read, so it can be short. The
+    // nonce carries a timestamp and a pid, so correlation must not depend on it.
+    const outcome = call({
+      call: "verdict", expired: false, nonce: NONCE, since: 99,
+      events: log(allow, start, { event: "exec_end", intentId: ID, exit_code: 0 }),
+    }) as { code: number; text: string };
+    expect(outcome.code).toBe(0);
+  });
+});
+
+describe.skipIf(!havePython())("latch-smoke reads the log where it lives", () => {
+  // A tilde inside `shlex.quote` is a literal, and the remote shell would look
+  // for a directory actually named `~`. The read then fails, and a failed read
+  // is the shape that reports "ruled out" having opened nothing.
+  const cases: [string, string, string][] = [
+    ["~ expands on the FAR side", "~/Library/Application Support/Plow-Latch/device/audit.ndjson",
+      `cat -- "$HOME"/'Library/Application Support/Plow-Latch/device/audit.ndjson'`],
+    ["an absolute path is quoted whole", "/Users/x/L S/audit.ndjson", `cat -- '/Users/x/L S/audit.ndjson'`],
+    ["and a hostile one stays one argument", "/tmp/a; rm -rf ~", `cat -- '/tmp/a; rm -rf ~'`],
+  ];
+  it.each(cases)("%s", (_name, path, expected) => {
+    expect(call({ call: "remote", path })).toBe(expected);
   });
 });
 
