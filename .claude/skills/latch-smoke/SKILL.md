@@ -43,6 +43,10 @@ NONCE="latch-smoke-$(date -u +%Y%m%dT%H%M%SZ)"
 # is compared against is the TARGET's — and the failure that costs is a false
 # "ruled out", which tells someone to stop looking.
 SINCE=$(date -u -v-1M +%Y-%m-%dT%H:%M:%S 2>/dev/null || date -u -d '1 minute ago' +%Y-%m-%dT%H:%M:%S)
+# Refuse here rather than at Verify: the empty case is cheapest to catch on the
+# line that produces it, and by Verify the call has already raised a dialog on
+# someone's Mac.
+SINCE="${SINCE:?date produced no bound - neither -v nor -d is available}"
 # EXPORTED: the guards below set shell variables, and the heredoc reads the
 # ENVIRONMENT — without this an operator who satisfies the guard still dies on
 # a bare KeyError.
@@ -204,7 +208,7 @@ bash -c "$SCRIPT"                                                   # local inst
 # ssh -o ConnectTimeout=8 -o BatchMode=yes <user>@<host> "$SCRIPT"   # remote (host map: tailscale-ssh skill)
 ```
 
-Five outcomes; only success exits 0, and only `exit 2` means nothing ran:
+Five outcomes; only success exits 0, and `exit 2` means nothing was checked:
 
 | Output | Exit | Means |
 |---|---|---|
@@ -212,7 +216,7 @@ Five outcomes; only success exits 0, and only `exit 2` means nothing ran:
 | `DENIED` + `intent_decision` | 1 | the owner refused; the relay and device both worked. Usually within ~5s, or at the timeout when the decision landed in the last few seconds |
 | `ALLOWED but not yet started` | 1 | approved as the window closed — re-run Verify |
 | `TIMEOUT` (two variants) | 1 | arrived and is waiting on the dialog, or never arrived — the branch says which |
-| `SINCE is not a timestamp` | 2 | the Verify block was pasted without substituting `SINCE`; nothing was checked |
+| `SINCE is not a timestamp` | 2 | `SINCE` was not substituted, or `date` produced nothing — an input refusal, not a result. Re-copy the value Send printed |
 
 An `exec_start` with no `exec_end` means the run is still going or was reaped;
 an `exec_error` names why it failed.
