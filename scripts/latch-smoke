@@ -423,11 +423,6 @@ def main():
     # `--home "$(just --evaluate apphome)"` yields "" when that command fails,
     # which is the likeliest way the documented invocation breaks — and falling
     # through to the packaged install would read the wrong one silently.
-    token, token_problem = read_token(args.token_file)
-    if token_problem is not None:
-        print(f"REFUSED — {token_problem}.")
-        print("  Nothing was sent. That path is --token-file (or TOKEN_FILE).")
-        return 1
     if not args.home.strip():
         parser.error('--home was empty — did `just --evaluate apphome` fail?')
     # Below the send floor there is no run to have: the guard downstream would
@@ -435,6 +430,11 @@ def main():
     # `<=`, not `<`: the baseline read always consumes something, so exactly
     # MIN_SEND_S leaves less than that by the time the send is reached and the
     # downstream guard refuses every time.
+    token, token_problem = read_token(args.token_file)
+    if token_problem is not None:
+        print(f"REFUSED — {token_problem}.")
+        print("  Nothing was sent. That path is --token-file (or TOKEN_FILE).")
+        return 1
     if args.timeout <= MIN_SEND_S:
         parser.error(f"--timeout must be more than {MIN_SEND_S:.0f}s — at or below it the"
                      " log read leaves a call no time to answer, and nothing is sent")

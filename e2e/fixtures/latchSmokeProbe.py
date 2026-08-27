@@ -108,7 +108,12 @@ else:
     # `urllib.request.urlopen` — stubbing the latter would leave every row
     # below exercising nothing.
     smoke._OPENER.open = urlopen
-    token, _ = smoke.read_token(sys.argv[3])
+    token, token_problem = smoke.read_token(sys.argv[3])
+    if token_problem is not None:
+        # Exhaustive like the `raises` dispatch: a send row whose token file is
+        # unreadable would otherwise pass None into the Authorization header
+        # and fail somewhere unrelated.
+        raise SystemExit(token_problem)
     sent = smoke.send(request["url"], token, ["/bin/echo", "x"], "goal", 30)
     # `send` returns None when the call went through; the success path has to be
     # representable or the first test that stubs a 200 fails inside the harness.

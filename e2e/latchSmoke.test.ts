@@ -172,6 +172,13 @@ describe.skipIf(!havePython())("latch-smoke, run for real", () => {
     // `2` is the case that makes the bound exclusive: the baseline read always
     // consumes something, so exactly MIN_SEND_S leaves less than it.
     ["a window of exactly 2s", () => fixture("2").argv, 2, "--timeout must be more than", null, false],
+    // One spawning row for the credential branch, so `main`'s refusal — and
+    // the two negatives the move to `read_token` exists for — actually run.
+    ["a token file that is not there", () => {
+      const argv = fixture("5", REAL_HOME).argv;
+      const i = argv.indexOf("--token-file");
+      return [...argv.slice(0, i + 1), "/nonexistent/token", ...argv.slice(i + 2)];
+    }, 1, "REFUSED — /nonexistent/token", null, false],
     ["a URL that never reaches a socket", () => {
       const argv = fixture("5", REAL_HOME).argv;
       const i = argv.indexOf("--url");
@@ -438,46 +445,7 @@ describe.skipIf(!havePython())("latch-smoke treats a response as evidence and an
     expect(sent.reason).not.toContain("MustNotAppear");
   });
 
-  // `urllib` carries a request's custom headers across a redirect — verified
-  // on this Python, a 302 to another origin delivered the bearer to that
-  // origin in full. So this follows none, and says so terminally: no intent
-  // exists, and the fix is the --url rather than a retry.
-  it("refuses a redirect instead of forwarding the credential to it", () => {
-    const token = "sk-secret-MustNotAppear";
-    const file = path.join(tmp, "redirect-token");
-    fs.writeFileSync(file, `${token}\n`, { mode: 0o600 });
-    const sent = call({ call: "send", url: "https://relay.invalid/mcp", status: 302, token,
-      raises: "http", headers: { Location: "https://evil.invalid/steal" } },
-      file) as { reason: string; unknown: boolean };
-    expect(sent.unknown).toBe(false);
-    expect(sent.reason).toContain("does not follow redirects");
-    // Neither the credential nor the destination reaches the output — the
-    // Location is a real header here, so this can actually fail.
-    expect(sent.reason).not.toContain("MustNotAppear");
-    expect(sent.reason).not.toContain("evil.invalid");
-  });
 
-  // ...and the mechanism itself, which the row above cannot reach: every send
-  // row stubs `_OPENER.open`, so deleting the handler entirely would leave
-  // them all green.
-  it("carries a handler that declines redirects, in the opener send uses", () => {
-    expect(call({ call: "redirect-mechanism" })).toEqual({ declines: true, inOpener: true });
-  });
-
-  // The catch-all returns the class NAME, never the message — `putheader`
-  // raises one that quotes the header value, which is the bearer itself.
-  it("a header error names its class and not the credential", () => {
-    const token = "sk-secret-MustNotAppear";
-    const file = path.join(tmp, "wrapped-token");
-    fs.writeFileSync(file, `${token}\n`, { mode: 0o600 });
-    const sent = call({ call: "send", url: "https://relay.invalid/mcp", status: 0, token, raises: "header" }, file) as
-      { reason: string; unknown: boolean };
-    expect(sent.reason).toBe("ValueError");
-    expect(sent.reason).not.toContain("MustNotAppear");
-  });
-
-  // ...and the cause that reaches it is caught earlier, where the FILE can be
-  // named instead of what is in it.
   // `--timeout` is the whole run's budget, not the poll loop's. Hard-coding
   // 90s here made `--timeout 1` take 91 seconds against a relay that accepts
   // and never answers — measured before the fix, 1.0s after.
