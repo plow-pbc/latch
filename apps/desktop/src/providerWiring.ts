@@ -72,9 +72,13 @@ export function vendorDirs(
     // "nothing is staged", which would send them to run a fetch they have
     // already run. Logged rather than thrown — this runs inside the launch
     // chain, and a stale env var must not be able to take the app down.
-    if (located.problem === "override-missing") {
+    if (located.problem !== "not-staged") {
       const name = overrideVar(provider.command);
-      console.error(`[providers] ${name} names no executable: ${process.env[name]}`);
+      const why =
+        located.problem === "override-missing"
+          ? "names no executable"
+          : `must name a file called \`${provider.command}\` — only its directory reaches the child`;
+      console.error(`[providers] ${name} ${why}: ${process.env[name]}`);
     }
   }
   return dirs;

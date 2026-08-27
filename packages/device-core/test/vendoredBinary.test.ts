@@ -38,6 +38,16 @@ describe("resolveVendoredBinary", () => {
     expect(resolveVendoredBinary("gog", { resourcesDir }).path).toBeNull();
   });
 
+  it("refuses an override whose basename is not the command", () => {
+    // Only the DIRECTORY reaches the child, so `/tmp/gog-0.36.0` leaves it
+    // finding nothing under the name `gog` — or finding a different
+    // `/tmp/gog` and running that with a minted Google token. Loud beats
+    // handing the credential to the wrong binary.
+    const staged = tree("misnamed", "gog-0.36.0");
+    process.env.DOMO_GOG = path.join(staged, "misnamed", process.arch, "gog-0.36.0");
+    expect(resolveVendoredBinary("gog")).toEqual({ path: null, problem: "override-misnamed" });
+  });
+
   it("takes its override from that command's own variable", () => {
     const staged = tree("slack", "slack");
     process.env.DOMO_SLACK = path.join(staged, "slack", process.arch, "slack");

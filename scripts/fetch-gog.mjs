@@ -25,9 +25,28 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const VERSION = "0.36.0";
+// `sha256` pins the tarball; `binary` pins what comes OUT of it. Both are
+// needed and they answer different questions: the tarball pin is what makes a
+// download trustworthy, and the binary pin is what makes the CACHE
+// trustworthy — a tree that already carries this VERSION is never downloaded
+// again, so without it a modified `vendor/gog/<arch>/gog` is copied into the
+// app, signed, and handed users' minted Google tokens.
+//
+// The binary digests are derived from the pinned tarballs, not from whatever
+// happened to be on a disk: both tarballs were checked against these pins AND
+// against upstream's own `checksums.txt`, then extracted and hashed. Re-derive
+// them the same way on a bump.
 const DIGESTS = {
-  arm64: { asset: "darwin_arm64", sha256: "5cb5b5210879769bc6a02bd9cf39ed1b0de3f0713b397ecbddefe95dd2be618b" },
-  x64: { asset: "darwin_amd64", sha256: "7252cfc0a63d239912d0d57ca5f51e31ca58472b506834237e148704387902df" },
+  arm64: {
+    asset: "darwin_arm64",
+    sha256: "5cb5b5210879769bc6a02bd9cf39ed1b0de3f0713b397ecbddefe95dd2be618b",
+    binary: "61e973aa213d972a5af22cc89f5bd3a47974063cbec7343463101858373b3a5e",
+  },
+  x64: {
+    asset: "darwin_amd64",
+    sha256: "7252cfc0a63d239912d0d57ca5f51e31ca58472b506834237e148704387902df",
+    binary: "a5a1b2715d60c1112f0c06f79b919fe7cf58c9431e3fab27d50dd5d11be15ac8",
+  },
 };
 
 // fileURLToPath, not `.pathname`: the latter leaves percent-encoding in place,
@@ -43,13 +62,22 @@ const root = path.resolve(fileURLToPath(new URL("..", import.meta.url)));
 // binaries have to be there too, or the skip would be vacuous exactly when it
 // matters.
 const marker = path.join(root, "vendor/gog/VERSION");
-// A file WITH A SIZE, matching afterPack's gate exactly — otherwise a
-// zero-byte binary satisfies the fetch's skip and then fails the package,
-// which is the disagreement that makes a skip vacuous.
-const staged = Object.keys(DIGESTS).every((arch) => {
-  const binary = path.join(root, "vendor/gog", arch, "gog");
-  return existsSync(binary) && statSync(binary).size > 0;
-});
+
+/** The staged binary's path, and whether its bytes are the pinned ones. */
+function stagedBinary(arch) {
+  const file = path.join(root, "vendor/gog", arch, "gog");
+  if (!existsSync(file) || statSync(file).size === 0) return { file, ok: false };
+  const actual = createHash("sha256").update(readFileSync(file)).digest("hex");
+  return { file, ok: actual === DIGESTS[arch].binary, actual };
+}
+
+// CONTENT, not existence. Existence plus a size matched afterPack's gate and
+// nothing else: a cached binary that had been modified — by anything with
+// write access to the checkout — carried the current marker, skipped the
+// fetch, and went on to be signed and to receive minted Google tokens. Size
+// alone still matters for the case this skip exists for, a tree where one arch
+// is missing, and the hash subsumes it.
+const staged = Object.keys(DIGESTS).every((arch) => stagedBinary(arch).ok);
 if (staged && existsSync(marker) && readFileSync(marker, "utf8").trim() === VERSION) {
   console.log(`vendor/gog is already at ${VERSION}`);
   process.exit(0);
@@ -72,6 +100,17 @@ try {
     const dest = path.join(root, "vendor/gog", arch);
     mkdirSync(dest, { recursive: true });
     execFileSync("tar", ["xzf", tarball, "-C", dest, "gog"], { stdio: "inherit" });
+    // The same check the skip makes, at the one moment the alternative is
+    // knowable: a tarball whose digest is right but whose contents are not
+    // what this pin was derived from fails HERE rather than being cached and
+    // then trusted forever after by the skip above.
+    const extracted = stagedBinary(arch);
+    if (!extracted.ok) {
+      throw new Error(
+        `${extracted.file}: sha256 ${extracted.actual ?? "(missing)"} does not match the pinned ` +
+          `binary ${DIGESTS[arch].binary}`,
+      );
+    }
     console.log(`  verified and extracted → vendor/gog/${arch}/gog`);
   }
   // The safety-flag assertion, at the one moment the binary is in hand.

@@ -2,7 +2,7 @@
  * The two decisions this file exists to make testable with no display: which
  * credential leaves this Mac, and which binary a bare command name reaches.
  */
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -13,9 +13,17 @@ import { vendoredProvider } from "@domo/device-core";
 
 const GOG = vendoredProvider(["gog"])!;
 const cleanups: (() => void)[] = [];
+// BEFORE, not only after: `DOMO_GOG` is a documented operator override for
+// driving a run against another Mac, so a developer with it exported would
+// otherwise get a red suite from their own shell.
+beforeEach(() => {
+  delete process.env.DOMO_GOG;
+  delete process.env.DOMO_SLACK;
+});
 afterEach(() => {
   while (cleanups.length) cleanups.pop()!();
   delete process.env.DOMO_GOG;
+  delete process.env.DOMO_SLACK;
 });
 
 function homeWith(credential: string): string {
@@ -26,12 +34,16 @@ function homeWith(credential: string): string {
 }
 
 /** A staged vendor tree: <base>/<rel>/<arch>/<name>, executable. */
-function tree(rel: string, name = "gog"): string {
-  const base = fs.mkdtempSync(path.join(os.tmpdir(), "latch-vendor-"));
-  cleanups.push(() => fs.rmSync(base, { recursive: true, force: true }));
+function tree(rel: string, name = "gog", base = newBase()): string {
   const dir = path.join(base, rel, process.arch);
   fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(path.join(dir, name), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+  return base;
+}
+
+function newBase(): string {
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), "latch-vendor-"));
+  cleanups.push(() => fs.rmSync(base, { recursive: true, force: true }));
   return base;
 }
 
@@ -107,13 +119,8 @@ describe("vendorDirs", () => {
   // whether this walks or resolves the one — the same false generality the
   // resolver was just fixed for, one caller up. These need two.
   it("accumulates one directory per provider, in order", () => {
-    const base = fs.mkdtempSync(path.join(os.tmpdir(), "latch-vendor-"));
-    cleanups.push(() => fs.rmSync(base, { recursive: true, force: true }));
-    for (const name of ["gog", "slack"]) {
-      const dir = path.join(base, name, process.arch);
-      fs.mkdirSync(dir, { recursive: true });
-      fs.writeFileSync(path.join(dir, name), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
-    }
+    const base = newBase();
+    for (const name of ["gog", "slack"]) tree(name, name, base);
     expect(vendorDirs({ resourcesDir: base }, [GOG, SLACK])).toEqual([
       path.join(base, "gog", process.arch),
       path.join(base, "slack", process.arch),
@@ -127,14 +134,17 @@ describe("vendorDirs", () => {
     ]);
   });
 
-  it("reads each provider's OWN override variable", () => {
-    // Hard-coding `DOMO_GOG` back into `overrideVar` leaves every other
-    // assertion in this file green.
-    const staged = tree("slack", "slack");
-    process.env.DOMO_SLACK = path.join(staged, "slack", process.arch, "slack");
-    cleanups.push(() => delete process.env.DOMO_SLACK);
-    expect(vendorDirs({}, [SLACK])).toEqual([path.join(staged, "slack", process.arch)]);
-    // ...and gog, whose own variable is unset, stays unstaged.
-    expect(vendorDirs({}, [GOG])).toEqual([]);
+  it("names that provider's own variable when the override points nowhere", () => {
+    // The other half of the same point, and the entire operator-facing signal
+    // for a mistyped override: composing the wrong name here is invisible.
+    const logged: string[] = [];
+    const spy = vi.spyOn(console, "error").mockImplementation((...args: unknown[]) => {
+      logged.push(args.join(" "));
+    });
+    cleanups.push(() => spy.mockRestore());
+    process.env.DOMO_SLACK = "/nonexistent/slack";
+    expect(vendorDirs({}, [SLACK])).toEqual([]);
+    expect(logged.join("\n")).toContain("DOMO_SLACK");
+    expect(logged.join("\n")).not.toContain("DOMO_GOG");
   });
 });

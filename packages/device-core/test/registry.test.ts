@@ -6,7 +6,8 @@
  * see by reading the command — the command itself looks legitimate.
  */
 import { describe, expect, it } from "vitest";
-import { needsToken, vendoredProvider, VENDORED_COMMANDS } from "../src/providers/registry.js";
+import { needsToken, PROVIDERS, vendoredProvider, VENDORED_COMMANDS } from "../src/providers/registry.js";
+import { overrideVar } from "../src/providers/vendoredBinary.js";
 
 const gog = vendoredProvider(["gog"])!;
 
@@ -150,3 +151,23 @@ describe("needsToken", () => {
     expect(needsToken(argv)).toBe(token);
   });
 });
+
+describe("overrideVar", () => {
+  it("folds what a shell cannot export", () => {
+    // A name Node reads back through process.env[...] perfectly well and no
+    // shell can `export`, so an unfolded one fails for the human only — and
+    // only on the second provider, which is the whole failure this prevents.
+    expect(overrideVar("gog")).toBe("DOMO_GOG");
+    expect(overrideVar("gh-cli")).toBe("DOMO_GH_CLI");
+    expect(overrideVar("gh.cli")).toBe("DOMO_GH_CLI");
+  });
+
+  it("stays unique across PROVIDERS, because the fold is not injective", () => {
+    // Those last two collide on purpose. Two rows differing only in
+    // punctuation would silently share one override: the resolver returns a
+    // path, just the wrong one.
+    const names = PROVIDERS.map((p) => overrideVar(p.command));
+    expect(new Set(names).size).toBe(PROVIDERS.length);
+  });
+});
+

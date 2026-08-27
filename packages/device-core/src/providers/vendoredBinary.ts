@@ -28,6 +28,12 @@ function vendorDir(command: string): string {
  * perfectly well through `process.env[...]` and no shell can `export`, so the
  * override would fail for the human only, and only on the second provider —
  * which is the discovery-on-provider-two failure this file exists to prevent.
+ *
+ * It is NOT injective: `gh-cli`, `gh.cli` and `gh_cli` all fold to
+ * `DOMO_GH_CLI`. Two rows whose commands differ only in punctuation would
+ * silently share one override — the resolver returns a path, just the wrong
+ * one — so the derived name must stay unique across `PROVIDERS`, which
+ * `registry.test.ts` asserts rather than leaving to whoever adds the row.
  */
 export function overrideVar(command: string): string {
   return `DOMO_${command.toUpperCase().replace(/[^A-Z0-9]/g, "_")}`;
@@ -53,7 +59,7 @@ function executable(candidate: string): string | null {
  */
 export type VendoredLocation =
   | { path: string; problem?: undefined }
-  | { path: null; problem: "not-staged" | "override-missing" };
+  | { path: null; problem: "not-staged" | "override-missing" | "override-misnamed" };
 
 export function resolveVendoredBinary(
   command: string,
@@ -65,7 +71,16 @@ export function resolveVendoredBinary(
     // Distinguished from "nothing is staged": the operator NAMED a path, so
     // telling them to run a fetch they have already run sends them the wrong
     // way. Reported, never thrown — see above.
-    return resolved === null ? { path: null, problem: "override-missing" } : { path: resolved };
+    if (resolved === null) return { path: null, problem: "override-missing" };
+    // The basename has to BE the command. A vendored provider is reached
+    // through the PATH this Mac controls, so only the directory survives —
+    // point the override at `/tmp/gog-0.36.0` and the child looking for `gog`
+    // finds nothing, or worse finds a different `/tmp/gog` and runs THAT with
+    // a minted Google token. Refusing is the loud version of a failure whose
+    // quiet version hands the credential to the wrong binary; a symlink named
+    // `gog` is the fix, and it takes a second.
+    if (path.basename(resolved) !== command) return { path: null, problem: "override-misnamed" };
+    return { path: resolved };
   }
 
   if (opts.resourcesDir) {
