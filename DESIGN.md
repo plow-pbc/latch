@@ -621,8 +621,9 @@ Decisions and their reasons:
 - **Versioned-then-promote, human-gated** (mirrors Plow's Phoenix pipeline):
   `just release` uploads to `domo/releases/<version>-<build>/` where nobody's
   app looks; a human publishing the draft GitHub release fires the promote
-  workflow, which runs in the same `release` environment — so publishing is the
-  trigger and the environment's approval is the second gate — and then copies
+  workflow; that workflow runs in GitHub's `release` environment, the same one
+  the build ran in — so publishing is the trigger and the environment's
+  approval is the second gate — and then copies
   artifacts onto the stable keys, feed last, because writing `latest-mac.yml`
   is the ship moment. `just promote` is the manual
   equivalent. Trust comes from the sha512 in the feed plus the Developer ID

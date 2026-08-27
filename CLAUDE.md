@@ -50,8 +50,8 @@ the leg against a REAL relay: bring up a plow stack, run the app against it,
 drive it. One exception, and `docs/TESTING-THE-APP.md` owns the account of it:
 `scripts/latch-smoke` drives a single real MCP call against an *installed* app
 and reads the verdict out of `audit.ndjson` — no UI walk, and it needs an
-install plus a client registration.
-`packages/relay-client/test` does cover the client's protocol
+install plus a client registration. `packages/relay-client/test` does cover the
+client's protocol
 behavior — the pure wire contract, plus the connection lifecycle over
 hand-written fakes; nothing in it opens a socket or tunnels an MCP call. See
 [README-ts.md](README-ts.md#integration-coverage) § Integration coverage, which

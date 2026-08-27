@@ -79,7 +79,7 @@ Only success exits 0.
 | `TIMEOUT — started, still running` | 1 | re-run, or raise `--timeout` |
 | `TIMEOUT — nothing carrying …` | 1 | it never arrived; the output names the three causes |
 | `TIMEOUT — the audit log stopped being readable` | 1 | the call WAS sent — re-read the log for the nonce once the host is reachable |
-| `REFUSED — the relay answered with a JSON-RPC error` | 1 | refused before it became an intent; nothing was written to the log. A bad envelope or an unknown tool |
+| `REFUSED — the relay answered with a JSON-RPC error` | 1 | refused before it became an intent; nothing was written to the log. A bad envelope or an unknown tool. The relay's own text is deliberately **not** quoted — that response is authenticated and can reflect the credential back — so read the relay's logs for the detail |
 | `REFUSED — could not reach <url>` | 1 | the request never left this Mac — a URL with no scheme is rejected before any socket exists. Check `--url`; the message quotes what was wrong with it |
 | `REFUSED — <file> has a line break inside the token` | 1 | nothing was sent. A token pasted across two lines keeps its newline, and the header it would build is refused — rewrite the file as a single line |
 | `REFUSED — cannot read the audit log` | 1 | nothing was sent, deliberately: a call this cannot verify would still raise a dialog. Check `--ssh`, and that `--home` is readable — a *missing* log is not this |
