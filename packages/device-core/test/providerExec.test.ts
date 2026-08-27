@@ -10,6 +10,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { JSONValue, jv, makeIntent } from "@domo/protocol";
+import { needsToken } from "../src/providers/registry.js";
 import { DeviceAgent, HeadlessPolicy, MintError, type Minter } from "@domo/device-core";
 
 /**
@@ -101,7 +102,10 @@ function run(d: DeviceAgent, argv: string[]): Promise<JSONValue> {
       request: `run: ${argv.join(" ")}`,
       capabilities: [
         { kind: "process.exec", argv },
-        { kind: "network", allowed: false },
+        // What `mcp-server` actually builds for a provider command: it implies
+        // network for anything but --help, so `allowed: false` here would
+        // exercise a shape no caller can produce.
+        { kind: "network", allowed: needsToken(argv) },
       ],
       sessionId: "s1",
     }),

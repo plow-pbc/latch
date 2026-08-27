@@ -1030,7 +1030,9 @@ app.whenReady().then(async () => {
     // missing one through the approval dialog rather than throwing.
     buildMinter({ api: new PlowApi(apiBaseUrl), home }),
     // Packaged: Contents/Resources/<command>/<arch>. From source:
-    // vendor/<command>, which `just fetch-<command>` populates.
+    // vendor/<command>. The RESOLVER is keyed on the command; staging is not
+    // — each provider still needs its own `fetch-<command>` recipe and its own
+    // extraResources entry, and gog is the only one written today.
     // `app.getAppPath()` is <root>/apps/desktop
     // under `just app`, not the workspace root, so the from-source lookup has
     // to climb two levels or it can never resolve.

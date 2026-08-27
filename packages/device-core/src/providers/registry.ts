@@ -64,21 +64,24 @@ export interface VendoredProvider {
    * CLI — hazards a human cannot see by reading the command, because the
    * command itself looks legitimate.
    *
-   * And four shapes of a wrong command. TWO of them reach Google if nothing
-   * refuses them, and they are not equally bad — which is the axis, not "one
-   * costs a call and the rest are free":
+   * And four shapes of a wrong command. ONE check refuses all of them: a
+   * group that is not gmail or calendar, which `--json` and `gmail.search`
+   * and an absent group all fail. The other three branches exist only to say
+   * something an agent can act on — remove any of them and the command is
+   * still refused, with a sentence about scopes that is not its problem.
+   *
+   * What differs is what each would have COST if nothing refused it, and two
+   * of the four reach Google:
    *
    *  - **An out-of-scope group.** gog tries it: verified at 0.36.0, `drive
    *    search x` reaches Google and comes back 401. A spent call with nothing
    *    to show for it.
-   *  - **A leading global flag.** Worse, and the reason this branch exists at
-   *    all: verified too, `--json gmail search x` parses `--json` as a global
-   *    and **succeeds**. It is refused positionally — the scope check reads
-   *    `rest[0]`, so a flag sitting there means nothing checked the group.
-   *  - **A dotted spelling.** gog cannot see it as a command; its own error
-   *    calls it an unexpected argument, which does not tell an agent to use
-   *    separate words. Reaches nothing.
-   *  - **An empty argv**, which names nothing to run.
+   *  - **A leading global flag.** Worse: verified too, `--json gmail search x`
+   *    parses `--json` as a global and **succeeds**. Nothing about the scope
+   *    check reads `rest[0]` in that shape, so nothing would have checked the
+   *    group — which is why the message names the position rather than scopes.
+   *  - **A dotted spelling** and **an empty argv** reach nothing; gog cannot
+   *    see either as a command.
    *
    * It deliberately does NOT mirror the binary's command grammar. A misspelt
    * leaf is left to gog, which says `did you mean "search"?` — better than a
@@ -102,9 +105,11 @@ export interface VendoredProvider {
 /**
  * The groups the minted token's four Google scopes actually reach.
  *
- * The only command check this Mac makes. What each refused shape would
- * otherwise cost is written once, in `refuse`'s doc — a second account here is
- * what produced three rounds of one copy drifting out of step with another.
+ * The one check that decides whether a command is refused at all — every
+ * wrong-command shape `refuse` enumerates fails it, and the other branches
+ * only choose a better sentence. What each shape would otherwise cost is
+ * written once, in `refuse`'s doc: a second account here is what produced
+ * three rounds of one copy drifting out of step with another.
  */
 const GOG_GROUPS: ReadonlySet<string> = new Set(["gmail", "calendar"]);
 
@@ -159,9 +164,8 @@ const GOG: VendoredProvider = {
     // rule, never the caller's text. The rule is enough to self-correct from.
     if (group === undefined) return 'the command is missing: try ["gog", "gmail", "search", ...]';
     if (group.startsWith("-")) return "the command must come first, before any flags";
-    // gog never sees a dotted spelling as a command, so its own error would
-    // not help here — this is one of the two mistakes the skill flags as
-    // likeliest, and it needs its own sentence.
+    // Its own sentence, for the reason the doc above gives: the scope check
+    // below already refuses it, and says the wrong thing when it does.
     if (group.includes(".")) return 'the command must be separate words: ["gmail", "search"], not ["gmail.search"]';
     if (!GOG_GROUPS.has(group)) return "this Mac reaches only Gmail and Calendar through gog";
     return null;

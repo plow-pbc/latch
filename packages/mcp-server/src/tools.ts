@@ -278,7 +278,8 @@ export const TOOLS: ToolSpec[] = [
       "and in exchange its only writable place is `$TMPDIR`, a directory of its own that is deleted " +
       "when it is killed. Declare a write path (or " +
       "network) and it is never killed that way, because it could be mid-work and a truncated file " +
-      "is worse than the wait. " +
+      "is worse than the wait. A vendored provider command counts as having declared network even " +
+      "though you did not, so it is never killed that way either, and the `$TMPDIR` exchange is off. " +
       "A run ends when the command itself exits, and its stdout and stderr close with it — so a job " +
       "left running in the background will normally be killed by its next write unless it redirects " +
       "both (`>log 2>&1`), its output is not captured, and no handle tracks it. "  +
@@ -309,10 +310,10 @@ export const TOOLS: ToolSpec[] = [
         network: {
           type: "boolean",
           description:
-            "Whether the command needs network access (default false). A vendored " +
-            "provider command other than --help does not need this: it reaches its " +
-            "service by definition, so the capability is added for you and shown to " +
-            "the approver either way.",
+            "Whether the command needs network access (default false). Ignored for a " +
+            "vendored provider command other than --help: those reach their service by " +
+            "definition, so network is granted whether you omit this or set it false, " +
+            "and the approver sees it either way.",
         },
         wait_ms: {
           type: "integer",
@@ -358,6 +359,12 @@ export const TOOLS: ToolSpec[] = [
         // footgun a skill can only paper over. The human still sees it: it is
         // in the capability set they approve, like any other network grant.
         // `--help` is exempt for the same reason it mints nothing.
+        //
+        // NOT only a network grant. `Executor.isReapable` keys on this same
+        // flag, so a provider command is also exempt from the 15-minute
+        // silent-run reaper and gains the housekeeping write paths — the
+        // coupling is easy to miss from here, and the tool description above
+        // says so because it is the agent's account of when a run is killable.
         {
           kind: "network",
           allowed: (a.get("network").bool ?? false) || (provider !== null && needsToken(argv)),

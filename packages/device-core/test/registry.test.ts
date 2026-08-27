@@ -49,8 +49,8 @@ describe("the gog provider's refusal", () => {
     ["a flag that would disarm the belt", ["gog", "gmail", "search", "q", "--wrap-untrusted=false"], "--wrap-untrusted"],
     ["a flag that reads a local file into an outbound message", ["gog", "gmail", "send", "--body-file", "/etc/passwd"], "a --*-file flag"],
     ["a flag that writes to a caller-chosen path", ["gog", "gmail", "attachment", "1", "2", "--out", "/tmp/x"], "a --out* flag"],
-    // The one command check this Mac makes; `refuse`'s doc owns what each
-    // shape would otherwise cost.
+    // The check that refuses every wrong-command shape; the other branches
+    // only change the sentence. `refuse`'s doc owns the account.
     // Each row pins WHICH sentence, not just that one came back. Collapsing
     // the spelling branches into the scope branch — restoring "told its scope
     // was wrong when its spelling was" — leaves a not-null assertion green.
@@ -69,8 +69,7 @@ describe("the gog provider's refusal", () => {
     // gog reports these better than a mirrored command list can — "unexpected
     // argument serach, did you mean \"search\"?" — and reports them LOCALLY,
     // without reaching Google. Mirroring its command grammar bought a worse
-    // message for a case gog already handles; `refuse`'s doc has the cost,
-    // which is not nothing — the mint happens before exec.
+    // message for a case gog already handles; `refuse`'s doc has the cost.
     for (const argv of [
       ["gog", "gmail", "serach", "q"],
       ["gog", "gmail", "drafts"],

@@ -548,10 +548,6 @@ describe("review findings", () => {
       expect(cwd).toBe(canonicalize(realDir));
     });
 
-    // A vendored provider reaches its service by definition, so the network
-    // capability is not the agent's to remember. Without this the skill's own
-    // canonical example is approved with network denied and the sandbox
-    // refuses every Google request — the advertised flow, broken.
     async function networkFor(argv: string[], network?: boolean): Promise<boolean | undefined> {
       let allowed: boolean | undefined;
       const { server } = makeServer({
@@ -565,21 +561,20 @@ describe("review findings", () => {
       return allowed;
     }
 
+    // A vendored provider reaches its service by definition, so the network
+    // capability is not the agent's to remember. Without this the skill's own
+    // canonical example is approved with network denied and the sandbox
+    // refuses every Google request — the advertised flow, broken. An explicit
+    // `false` does not disarm it either: honouring that would approve a gog
+    // call the sandbox then denies, which is the same bug spelled out loud.
     it.each([
-      ["a gog command implies network", ["gog", "gmail", "search", "q"], true],
-      ["gog --help does not, like the mint it also skips", ["gog", "--help"], false],
-      ["and an ordinary command still asks", ["/bin/echo", "x"], false],
-    ])("%s", async (_name, argv, allowed) => {
-      expect(await networkFor(argv)).toBe(allowed);
-    });
-
-    // An explicit `false` does not turn it off, and the contract says so in
-    // three places — the tool schema, DESIGN.md § Network default, and the
-    // skill. Honouring it would approve a gog call the sandbox then denies,
-    // which is the bug this implication exists to remove.
-    it("an explicit network:false does not disarm a provider command", async () => {
-      expect(await networkFor(["gog", "gmail", "search", "q"], false)).toBe(true);
-      expect(await networkFor(["/bin/echo", "x"], false)).toBe(false);
+      ["a gog command implies network", ["gog", "gmail", "search", "q"], undefined, true],
+      ["and an explicit false does not disarm it", ["gog", "gmail", "search", "q"], false, true],
+      ["gog --help does not, like the mint it also skips", ["gog", "--help"], undefined, false],
+      ["and an ordinary command still asks", ["/bin/echo", "x"], undefined, false],
+      ["...and still means false when it says so", ["/bin/echo", "x"], false, false],
+    ])("%s", async (_name, argv, network, allowed) => {
+      expect(await networkFor(argv, network)).toBe(allowed);
     });
   });
 
