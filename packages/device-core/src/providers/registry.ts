@@ -97,7 +97,8 @@ export interface VendoredProvider {
  * The ONLY command check this Mac makes, and it exists for one reason: an
  * out-of-scope group is the case that SPENDS the token. Verified against
  * pinned 0.36.0 — `gog drive search x` reaches Google and returns 401, while
- * every in-group usage mistake fails locally with no network call at all.
+ * every in-group usage mistake fails locally — no Google call, though the mint
+ * has already happened by then (see `refuse`).
  */
 const GOG_GROUPS: ReadonlySet<string> = new Set(["gmail", "calendar"]);
 
@@ -145,11 +146,11 @@ const GOG: VendoredProvider = {
     if (isHelpInvocation(rest)) return null;
     // The group, and nothing finer. gog reports its own usage errors better
     // than a mirrored command list can — `unexpected argument serach, did you
-    // mean "search"?` against `not a command gog has` — and reports them
-    // LOCALLY, with no network call and nothing spent. What gog cannot do is
-    // decline a group this Mac's token has no scope for: `drive search x`
-    // reaches Google and comes back 401, which is a spent delegation. So this
-    // checks the one thing that is actually ours to check.
+    // mean "search"?` — and reports them without reaching Google. The mint has
+    // already happened by then; `refuse`'s doc has the full cost. What gog
+    // cannot do is decline a group this Mac's token has no scope for: `drive
+    // search x` reaches Google and comes back 401. So this checks the one
+    // thing that is actually ours to check.
     const group = rest[0];
     // Three different mistakes, three sentences — and NONE of them quotes the
     // argv back. These reach the approval dialog and the append-only audit

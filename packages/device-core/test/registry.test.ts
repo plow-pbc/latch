@@ -68,7 +68,7 @@ describe("the gog provider's refusal", () => {
   it("leaves gog's own usage errors to gog", () => {
     // gog reports these better than a mirrored command list can — "unexpected
     // argument serach, did you mean \"search\"?" — and reports them LOCALLY,
-    // with no network call and nothing spent. Mirroring its command grammar
+    // without reaching Google. Mirroring its command grammar
     // bought a worse message for a case that costs nothing.
     for (const argv of [
       ["gog", "gmail", "serach", "q"],
