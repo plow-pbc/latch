@@ -14,7 +14,7 @@
  * ## Bumping the pin — the whole checklist, and its only home
  *
  * Every bump runs through this script, so this is where the version-specific
- * contract lives. `gogFlags.ts`, `registry.ts` and `providers/gogGroups.ts`
+ * contract lives. `gogFlags.ts`, `registry.ts` and `gogGroups.ts`
  * keep only the invariants their own code depends on and point here.
  *
  *  1. Set `VERSION`, and set all four digests: each arch's `sha256` (the
@@ -60,7 +60,7 @@
  *
  *     And that appending a second `--enable-commands` still widens it, which
  *     is what `RESERVED_EXACT` exists to refuse. The alias list is gog's to
- *     change, and `GOG_ALIASES` in `providers/gogGroups.ts` mirrors it.
+ *     change, and `GOG_ALIASES` in `gogGroups.ts` mirrors it.
  */
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
