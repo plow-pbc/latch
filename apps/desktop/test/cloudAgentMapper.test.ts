@@ -56,6 +56,27 @@ describe("cloud-agent pure mappings", () => {
     expect(JSON.stringify(row)).not.toContain(sessionId);
   });
 
+  it("allows only known failure labels or legacy prose into the renderer", () => {
+    const row = toCloudAgentDisplayRow({
+      ...agent({ status: "failed", failureReason: "legacy reason" }),
+      failureCode: "validation_failed",
+    } as CloudAgentResource);
+
+    expect(row.failureReason).toMatch(/validation failed.*retrying will not help.*human/i);
+
+    const future = toCloudAgentDisplayRow({
+      ...agent({ status: "failed", failureReason: "Provider capacity is exhausted." }),
+      failureCode: "capacity_exhausted",
+    } as CloudAgentResource);
+    expect(future.failureReason).toBe("Provider capacity is exhausted.");
+
+    const encodedCredential = toCloudAgentDisplayRow({
+      ...agent({ status: "failed", failureReason: null }),
+      failureCode: "cGxvd19za19kZXZpY2VfZG9fbm90X2xlYWs=",
+    } as CloudAgentResource);
+    expect(encodedCredential.failureReason).toBeNull();
+  });
+
   it("does not invent transport recipients when chat metadata is unavailable", () => {
     expect(toCloudAgentDisplayRow(agent()).recipients).toBeNull();
   });

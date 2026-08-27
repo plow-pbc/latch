@@ -52,67 +52,98 @@ describe("CloudAgentsClient destructive actions", () => {
     ]);
   });
 
-  it("deletes only the unfinished id prescribed by a recoverable 409 and re-POSTs once", async () => {
-    const staleId = "dead_agent_456";
-    const { calls, fetchImpl } = recordingFetch([
-      {
-        status: 409,
-        body: {
-          detail: `This chat has an unfinished cloud agent (${staleId}). Delete it with DELETE /v1/agents/cloud/${staleId} and provision again.`,
-        },
-      },
-      { status: 204 },
-      { status: 202, body: resource("provisioning", { agent_id: "replacement" }) },
-    ]);
-
-    const created = await new CloudAgentsClient(
-      new PlowApi("https://api.plow.co", fetchImpl),
-    ).create(CREDENTIAL, { chatUid: "cht_123" });
-
-    expect(created.agentId).toBe("replacement");
-    expect(calls.map(({ url, init }) => [init.method, url])).toEqual([
-      ["POST", "https://api.plow.co/v1/agents/cloud"],
-      ["DELETE", `https://api.plow.co/v1/agents/cloud/${staleId}`],
-      ["POST", "https://api.plow.co/v1/agents/cloud"],
-    ]);
-    expect(calls[0].init.body).toBe(calls[2].init.body);
-  });
-
-  it("names the stuck agent when prescribed recovery cannot delete it", async () => {
-    const staleId = "dead_agent_456";
-    const { calls, fetchImpl } = recordingFetch([
-      {
-        status: 409,
-        body: {
-          detail: `This chat has an unfinished cloud agent (${staleId}). Delete it with DELETE /v1/agents/cloud/${staleId} and provision again.`,
-        },
-      },
-      { status: 500, body: { detail: "Database unavailable." } },
-    ]);
+  it.each([
+    ["PENDING_TEARDOWN", "still being removed"],
+    ["PROVIDER_CONFLICT", "different cloud-agent provider"],
+    ["PROVISION_IN_FLIGHT", "already in progress"],
+    ["CHAT_DELETED", "chat has been deleted"],
+    ["OWNER_NO_ADDRESS", "no address for that chat"],
+    ["OWNER_NOT_IN_CHAT", "not a member of that chat"],
+    ["A_NEW_CONFLICT", "Plow returned 409."],
+    ["constructor", "Plow returned 409."],
+  ])("surfaces structured 409 %s without deleting anything", async (code, message) => {
+    const { calls, fetchImpl } = recordingFetch([{
+      status: 409,
+      body: { detail: { code, message: "identical prose must not decide behavior" } },
+    }]);
 
     const error = await new CloudAgentsClient(new PlowApi("https://api.plow.co", fetchImpl))
       .create(CREDENTIAL, { chatUid: "cht_123" })
       .catch((caught: unknown) => caught);
 
-    expect(error).toBeInstanceOf(PlowApiError);
-    expect(String(error)).toBe(
-      `PlowApiError: Cloud agent ${staleId} could not be removed. This chat cannot be provisioned until that agent is removed.`,
-    );
-    expect(calls.map(({ init }) => init.method)).toEqual(["POST", "DELETE"]);
+    expect(String(error)).toContain(message);
+    expect(calls.map(({ init }) => init.method)).toEqual(["POST"]);
+  });
+});
+
+describe("CloudAgentsClient contract parsing", () => {
+  it("keeps a missing create status in provisioning", async () => {
+    const { fetchImpl } = recordingFetch([{
+      status: 202,
+      body: resource("provisioning", { status: undefined }),
+    }]);
+
+    const created = await new CloudAgentsClient(new PlowApi("https://api.plow.co", fetchImpl))
+      .create(CREDENTIAL, { chatUid: "cht_123" });
+
+    expect(created.status).toBe("provisioning");
   });
 
-  it("does not delete a live agent named by a provider-switch 409", async () => {
-    const liveId = "live_agent_789";
-    const detail = `This chat already has a hermes agent (${liveId}). Delete it with DELETE /v1/agents/cloud/${liveId} before provisioning a codex one.`;
-    const { calls, fetchImpl } = recordingFetch([{ status: 409, body: { detail } }]);
+  it.each([
+    "provider_unreachable",
+    "image_pull_timeout",
+    "setup_failed",
+    "validation_failed",
+    "unknown",
+    "provision_timeout",
+    "capacity_exhausted",
+  ])("preserves failure_code %s", async (failureCode) => {
+    const { fetchImpl } = recordingFetch([{
+      status: 200,
+      body: [resource("failed", { failure_code: failureCode })],
+    }]);
 
-    const error = await new CloudAgentsClient(new PlowApi("https://api.plow.co", fetchImpl))
-      .create(CREDENTIAL, { chatUid: "cht_123", provider: "exe:codex" })
-      .catch((caught: unknown) => caught);
+    const [failed] = await new CloudAgentsClient(new PlowApi("https://api.plow.co", fetchImpl))
+      .list(CREDENTIAL);
 
-    expect(error).toBeInstanceOf(PlowApiError);
-    expect(String(error)).toBe("PlowApiError: Plow returned 409.");
-    expect(calls.map(({ init }) => init.method)).toEqual(["POST"]);
+    expect(failed.failureCode).toBe(failureCode);
+  });
+
+  it("keeps failure_reason as a fallback", async () => {
+    const { fetchImpl } = recordingFetch([{
+      status: 200,
+      body: [resource("failed", { failure_reason: "legacy provider explanation" })],
+    }]);
+
+    const [failed] = await new CloudAgentsClient(new PlowApi("https://api.plow.co", fetchImpl))
+      .list(CREDENTIAL);
+
+    expect(failed.failureReason).toBe("legacy provider explanation");
+  });
+});
+
+describe("CloudAgentsClient polling identity", () => {
+  it("ignores a transient mismatched id and keeps polling the requested agent", async () => {
+    const { calls, fetchImpl } = recordingFetch([
+      { status: 200, body: resource("provisioning", { agent_id: "agent_OTHER" }) },
+      { status: 200, body: resource("running", { agent_id: "agent_A" }) },
+    ]);
+    const transitions: string[] = [];
+    const receipt = fromWire(resource("provisioning", { agent_id: "agent_A" }));
+
+    const final = await new CloudAgentsClient(
+      new PlowApi("https://api.plow.co", fetchImpl),
+      async () => undefined,
+    ).poll(CREDENTIAL, receipt, (agent) => {
+      transitions.push(`${agent.agentId}:${agent.status}`);
+    });
+
+    expect(final).toMatchObject({ agentId: "agent_A", status: "running" });
+    expect(calls.map(({ url }) => url)).toEqual([
+      "https://api.plow.co/v1/agents/cloud/agent_A",
+      "https://api.plow.co/v1/agents/cloud/agent_A",
+    ]);
+    expect(transitions).toEqual(["agent_A:provisioning", "agent_A:running"]);
   });
 });
 

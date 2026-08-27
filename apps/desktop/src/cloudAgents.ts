@@ -20,6 +20,7 @@ export const CLOUD_AGENT_POLL_INTERVAL_MS = 2_000;
 export type CloudAgentStatus =
   | "provisioning"
   | "running"
+  | "failed"
   | "teardown"
   | (string & {});
 
@@ -35,6 +36,7 @@ export interface CloudAgentResource {
   provider: string | null;
   name: string | null;
   status: CloudAgentStatus;
+  failureCode?: string | null;
   failureReason: string | null;
   createdAt: string | null;
   /** Credential identity only. Never use this as the agent's identity. */
@@ -84,30 +86,13 @@ export class CloudAgentsClient {
       ...(request.scopes === undefined ? {} : { scopes: request.scopes }),
     };
 
-    let response = await this.api.request(
+    const response = await this.api.request(
       "POST",
       "/v1/agents/cloud",
       { token: deviceCredential, body, timeoutMs: CREATE_REQUEST_TIMEOUT_MS },
     );
     if (response.status === 409) {
-      const failure = await decodeJson(response);
-      const staleAgentId = recoverableAgentId(failure);
-      if (!staleAgentId) throw errorFor(response.status);
-
-      try {
-        await this.delete(deviceCredential, staleAgentId);
-      } catch (error) {
-        throw new PlowApiError(
-          "http",
-          `Cloud agent ${staleAgentId} could not be removed. This chat cannot be provisioned until that agent is removed.`,
-          error instanceof PlowApiError ? error.status : undefined,
-        );
-      }
-      response = await this.api.request(
-        "POST",
-        "/v1/agents/cloud",
-        { token: deviceCredential, body, timeoutMs: CREATE_REQUEST_TIMEOUT_MS },
-      );
+      throw conflictError(conflictCode(await decodeJson(response)));
     }
 
     return this.resourceFor(response, deviceCredential);
@@ -168,7 +153,9 @@ export class CloudAgentsClient {
           callerAbortIsLifecycle: true,
         },
       );
-      current = await this.resourceFor(response, deviceCredential);
+      const next = await this.resourceFor(response, deviceCredential);
+      if (next.agentId !== current.agentId) continue;
+      current = next;
       signal?.throwIfAborted();
       await onTransition?.(current);
       signal?.throwIfAborted();
@@ -218,7 +205,8 @@ function parseResource(
     url: optionalString(decoded.url),
     provider: optionalString(decoded.provider),
     name: optionalString(decoded.name),
-    status: decoded.status ?? "running",
+    status: decoded.status ?? "provisioning",
+    failureCode: optionalString(decoded.failure_code),
     failureReason: optionalString(decoded.failure_reason),
     createdAt: optionalString(decoded.created_at),
     sessionId: optionalString(decoded.session_id),
@@ -251,13 +239,22 @@ function invalidResponse(status: number): PlowApiError {
   return new PlowApiError("http", "Plow returned an invalid cloud-agent response.", status);
 }
 
-function recoverableAgentId(decoded: unknown): string | null {
-  if (!isRecord(decoded) || typeof decoded.detail !== "string") return null;
-  return (
-    decoded.detail.match(
-      /^This chat has an unfinished cloud agent \(([A-Za-z0-9_-]+)\)\. Delete it with DELETE \/v1\/agents\/cloud\/\1 and provision again\.$/,
-    )?.[1] ?? null
-  );
+function conflictCode(decoded: unknown): string | null {
+  if (!isRecord(decoded) || !isRecord(decoded.detail)) return null;
+  return typeof decoded.detail.code === "string" ? decoded.detail.code : null;
+}
+
+function conflictError(code: string | null): PlowApiError {
+  const messages: Record<string, string> = {
+    PENDING_TEARDOWN: "This chat's cloud agent is still being removed. Remove it before trying again.",
+    PROVIDER_CONFLICT: "This chat already uses a different cloud-agent provider.",
+    PROVISION_IN_FLIGHT: "Cloud-agent setup is already in progress for this chat.",
+    CHAT_DELETED: "That chat has been deleted.",
+    OWNER_NO_ADDRESS: "Your Plow account has no address for that chat.",
+    OWNER_NOT_IN_CHAT: "Your Plow account is not a member of that chat.",
+  };
+  const message = code && Object.hasOwn(messages, code) ? messages[code] : "Plow returned 409.";
+  return new PlowApiError("http", message, 409);
 }
 
 function echoesCredential(text: string, credential: string): boolean {
