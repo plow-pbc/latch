@@ -18,13 +18,18 @@ import {
   CloudChatsApi,
   CloudChatsClient,
 } from "../src/cloudAgentState.js";
-import { CloudAgentResource, CloudAgentsClient } from "../src/cloudAgents.js";
+import {
+  ChatSetConflictError,
+  CloudAgentResource,
+  CloudAgentsClient,
+} from "../src/cloudAgents.js";
 import { PlowApi, PlowApiError, REQUEST_TIMEOUT_MS } from "../src/plowApi.js";
 import { loadSettings, saveSettings } from "../src/settings.js";
 import { deferred } from "./deferred.js";
 
 const CREDENTIAL = "plow_sk_device_do_not_leak";
 const SESSION = "session_rotates_and_is_never_the_identity";
+const HOLDER_ID = "0123456789abcdef0123456789abcdef";
 
 const cleanups: (() => void)[] = [];
 afterEach(() => {
@@ -1032,11 +1037,13 @@ describe("changing which chats an agent serves", () => {
     expect(state.state().cloudActionError).toBe("An agent has to serve at least one chat.");
   });
 
-  it("reports a failure in the action field and leaves the row alone", async () => {
+  it("re-reads after a 5xx because the save may have landed", async () => {
+    let served = ["cht_1"];
     const f = fakes({
-      list: async () => [agent({ chatUids: ["cht_1"] })],
+      list: async () => [agent({ chatUids: [...served] })],
       update: async () => {
-        throw new PlowApiError("http", "Couldn't update the agent. Nothing changed — the old chats are still live. Try again.", 502);
+        served = ["cht_2"];
+        throw new PlowApiError("http", "Couldn't update the agent. Try again.", 502);
       },
     });
     const state = build(tempHome(), f);
@@ -1044,10 +1051,48 @@ describe("changing which chats an agent serves", () => {
 
     await expect(state.editChats("agent_1", ["cht_2"])).resolves.toBe(false);
 
-    expect(state.state().cloudActionError).toContain("Nothing changed");
-    // The rollback is the whole point: the old set is still what it serves.
-    expect(state.state().cloudAgents[0].chatUids).toEqual(["cht_1"]);
+    expect(f.agents.calls.filter((call) => call === "list")).toHaveLength(2);
+    expect(state.state().cloudActionError).toBe("Couldn't update the agent. Try again.");
+    expect(state.state().cloudAgents[0].chatUids).toEqual(["cht_2"]);
     expect(state.state().cloudAgentsError).toBeNull();
+  });
+
+  it("names a conflicting agent only when a candidate id matches our list", async () => {
+    const f = fakes({
+      list: async () => [
+        agent(),
+        agent({ agentId: HOLDER_ID, name: "Book club", chatUids: ["cht_2"] }),
+      ],
+      update: async () => {
+        throw new ChatSetConflictError(["ffffffffffffffffffffffffffffffff", HOLDER_ID]);
+      },
+    });
+    const state = build(tempHome(), f);
+    await state.refresh();
+
+    await expect(state.editChats("agent_1", ["cht_2"])).resolves.toBe(false);
+
+    expect(state.state().cloudActionError).toBe(
+      "This chat already belongs to Book club — edit that agent's chats instead.",
+    );
+    expect(f.agents.calls.filter((call) => call === "list")).toHaveLength(1);
+  });
+
+  it("uses fixed words when no candidate id matches our list", async () => {
+    const f = fakes({
+      list: async () => [agent()],
+      update: async () => {
+        throw new ChatSetConflictError(["ffffffffffffffffffffffffffffffff"]);
+      },
+    });
+    const state = build(tempHome(), f);
+    await state.refresh();
+
+    await state.editChats("agent_1", ["cht_2"]);
+
+    expect(state.state().cloudActionError).toBe(
+      "This chat already belongs to another agent — edit that agent's chats instead.",
+    );
   });
 
   it("re-reads after a timeout, because the save it gave up on may have landed", async () => {
@@ -1073,21 +1118,17 @@ describe("changing which chats an agent serves", () => {
     expect(state.state().cloudActionError).toContain("didn't answer in time");
   });
 
-  it.each([
-    ["a 409 the server decided before anything moved", 409, "One of those chats already belongs to another agent."],
-    ["a 5xx the server rolled back", 502, "Couldn't update the agent. Nothing changed — the old chats are still live. Try again."],
-  ])("does not re-read after %s", async (_label, status, message) => {
+  it("does not re-read after a 409 refused the edit", async () => {
+    const message = "This chat already belongs to another agent — edit that agent's chats instead.";
     const f = fakes({
       list: async () => [agent({ chatUids: ["cht_1"] })],
-      update: async () => { throw new PlowApiError("http", message, status); },
+      update: async () => { throw new PlowApiError("http", message, 409); },
     });
     const state = build(tempHome(), f);
     await state.refresh();
 
     await expect(state.editChats("agent_1", ["cht_2"])).resolves.toBe(false);
 
-    // The server said what happened — nothing. A second round trip could only
-    // confirm what we were already told.
     expect(f.agents.calls.filter((call) => call === "list")).toHaveLength(1);
     expect(state.state().cloudAgents[0].chatUids).toEqual(["cht_1"]);
     expect(state.state().cloudActionError).toBe(message);

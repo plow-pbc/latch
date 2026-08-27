@@ -50,82 +50,29 @@ export function canEditChats(agent, chatsLoaded) {
   return !!chatsLoaded && agent?.status === "running" && !agent?.localPending;
 }
 
-/* ---- The checklist's selection, as data -------------------------------------
-
-   A chat set is two facts — which chats, and which of them is home — and the
-   rules that keep them consistent are small, total, and worth pinning down away
-   from checkboxes. Each of these takes a selection and answers a new one; the
-   checklist holds the result and repaints from it.
-
-   A selection is `{ chosen: string[], home: string | null }`. `chosen` carries
-   no order of its own: order is a question about a LIST, so every function that
-   needs it is handed one. */
-
-const selectionOf = (selection) => ({
-  chosen: [...new Set((selection?.chosen ?? []).filter(Boolean))],
-  home: selection?.home ?? null,
-});
-
-/**
- * The set as it goes on the wire: home first, then the rest.
- *
- * `order` is the list the person is looking at. `keepOrder` — the set the agent
- * already serves — comes first among the rest, in ITS order, so a save that
- * changes nothing sends back exactly what it was given: re-ordering chats
- * nobody touched would restart an agent to say the same thing.
- *
- * Home is prepended only if it is still chosen. Unchecking the home chat asks
- * this for the next one, and a version that trusted `home` blindly answered
- * with the chat that had just been removed.
- */
-export function orderedChats(selection, order = [], keepOrder = []) {
-  const { chosen, home } = selectionOf(selection);
-  const picked = new Set(chosen);
-  const out = home && picked.has(home) ? [home] : [];
-  const seen = new Set(out);
-  for (const uid of [...keepOrder, ...order]) {
-    if (!picked.has(uid) || seen.has(uid)) continue;
-    seen.add(uid);
-    out.push(uid);
-  }
-  // Anything the caller never listed still belongs to the person who picked it.
-  for (const uid of chosen) if (!seen.has(uid)) out.push(uid);
-  return out;
+/** Add a chat without moving the current home at position zero. */
+export function pickChat(chosen, uid) {
+  return chosen.includes(uid) ? chosen : [...chosen, uid];
 }
 
-/** Check a chat. The first chat chosen is home until someone says otherwise. */
-export function chooseChat(selection, uid) {
-  const { chosen, home } = selectionOf(selection);
-  if (!uid) return { chosen, home };
-  const next = chosen.includes(uid) ? chosen : [...chosen, uid];
-  return {
-    chosen: next,
-    home: home && next.includes(home) ? home : uid,
-  };
+/** Remove a chat, promoting the earliest remaining list entry when it was home. */
+export function dropChat(chosen, uid, order) {
+  const next = chosen.filter((item) => item !== uid);
+  return chosen[0] === uid ? next.sort((a, b) => order.indexOf(a) - order.indexOf(b)) : next;
 }
 
-/** Uncheck a chat. Home is always one of the chosen, so ★ is handed on. */
-export function dropChat(selection, uid, order = []) {
-  const { chosen, home } = selectionOf(selection);
-  const next = chosen.filter((candidate) => candidate !== uid);
-  if (home !== uid) return { chosen: next, home };
-  return { chosen: next, home: orderedChats({ chosen: next, home: null }, order)[0] ?? null };
-}
-
-/** Move ★. Only a chosen chat can be home, so an unchosen one is ignored. */
-export function makeHomeChat(selection, uid) {
-  const { chosen, home } = selectionOf(selection);
-  return { chosen, home: chosen.includes(uid) ? uid : home };
+/** Move a chosen chat to the home position. */
+export function makeHome(chosen, uid) {
+  return chosen.includes(uid) ? [uid, ...chosen.filter((item) => item !== uid)] : chosen;
 }
 
 /**
  * Do these two sets mean the same thing to the server?
  *
  * Home is `chat_uids[0]` and the rest is a set, so this compares home and
- * membership and NOT the order of the rest. Comparing index for index made a
- * three-chat agent open with Save alive — the checklist orders by the account's
- * chat list, the server answers in its own order, and the two agree only by
- * luck — one click from restarting an agent to tell it what it already knew.
+ * membership and NOT the order of the rest. Removing and re-adding a non-home
+ * chat moves it within the array without changing what the server serves, so
+ * comparing index for index would offer a restart for no actual change.
  */
 export function sameChatSet(a = [], b = []) {
   if (a.length !== b.length) return false;

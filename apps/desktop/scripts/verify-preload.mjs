@@ -674,7 +674,7 @@ app.whenReady().then(async () => {
   }})()`);
   // The checklist's rules, at the boundary the renderer actually enforces:
   // nothing chosen means nothing to create, the first box checked becomes home,
-  // and unchecking home hands the star to what is left.
+  // moving home changes position zero, and unchecking home promotes by list order.
   const cloudModalGuard = await win.webContents.executeJavaScript(`(${async () => {
     const boxes = () =>
       [...document.querySelectorAll(".cloud-modal .chat-option:not(.disabled) input")];
@@ -692,15 +692,20 @@ app.whenReady().then(async () => {
     boxes()[1].click();
     await settle();
     const secondDoesNotStealHome = homeLabels()[0] === homeAfterFirst;
-    // Uncheck home: the star must move rather than vanish.
-    boxes()[0].click();
+    const secondMakeHome = boxes()[1].closest(".chat-option").querySelector(".home-toggle");
+    secondMakeHome.click();
     await settle();
-    const homeMoved = homeLabels().length === 1 && homeLabels()[0] !== homeAfterFirst;
+    const homeAfterMake = homeLabels()[0];
+    const makeHomeMovesToZero = homeAfterMake !== homeAfterFirst;
+    // Uncheck home: the star must move rather than vanish.
+    boxes()[1].click();
+    await settle();
+    const homeMoved = homeLabels().length === 1 && homeLabels()[0] === homeAfterFirst;
     const warningCounts = document.querySelector(".cloud-modal .cloud-warning-title")
       .textContent.includes("1 chat");
     // Leave exactly one chosen for the create that follows.
     return {
-      emptyDisables, firstIsHome, secondDoesNotStealHome, homeMoved, warningCounts,
+      emptyDisables, firstIsHome, secondDoesNotStealHome, makeHomeMovesToZero, homeMoved, warningCounts,
       warningTitle: document.querySelector(".cloud-modal .cloud-warning-title").textContent,
       homeAfterFirst, homeNow: homeLabels()[0] ?? null,
       ignored: emptyDisables && firstIsHome && secondDoesNotStealHome,
@@ -851,20 +856,21 @@ app.whenReady().then(async () => {
   // A three-chat agent whose server order is not the account list's order. The
   // checklist orders by the list; index-for-index called that a change, so Save
   // opened alive and one click restarted the agent to tell it what it knew.
-  const threeChats = [
+  const reorderedChats = [
     cloudChat,
     { uid: "chat_family", label: "+1 (415) 555-0188 · Family group", recipients: { line: "+14155550188", members: [] } },
     { uid: "chat_book", label: "+1 (510) 555-0133 · Book club", recipients: { line: "+15105550133", members: [] } },
+    { uid: "chat_new", label: "+1 (510) 555-0144 · New chat", recipients: { line: "+15105550144", members: [] } },
   ];
   cloudProbe = {
     ...cloudProbe,
     cloudChatsLoaded: true,
-    cloudChats: threeChats,
+    cloudChats: reorderedChats,
     // Server order: home, then the two the list puts in the other order.
     cloudAgents: [{
       ...cloudAgent,
       chatUids: [cloudChat.uid, "chat_book", "chat_family"],
-      chatLabels: [cloudChat.label, threeChats[2].label, threeChats[1].label],
+      chatLabels: [cloudChat.label, reorderedChats[2].label, reorderedChats[1].label],
     }],
   };
   await win.webContents.executeJavaScript(`window.__domoSelectTab("audit")`);
@@ -883,7 +889,7 @@ app.whenReady().then(async () => {
     const save = () => [...document.querySelectorAll(".cloud-modal button")]
       .find((node) => node.textContent.trim() === "Save changes");
     const boxes = () => [...document.querySelectorAll(".cloud-modal .chat-option input")];
-    const allChecked = boxes().every((box) => box.checked);
+    const allChecked = boxes().slice(0, 3).every((box) => box.checked) && !boxes()[3].checked;
     const deadOnOpen = save().disabled;
     // A real change still wakes it, and undoing that change puts it back.
     boxes()[1].click();
@@ -891,11 +897,15 @@ app.whenReady().then(async () => {
     const liveAfterChange = !save().disabled;
     boxes()[1].click();
     await settle();
-    return { allChecked, deadOnOpen, liveAfterChange, deadAgain: save().disabled };
+    const deadAgain = save().disabled;
+    boxes()[3].click();
+    await settle();
+    save().click();
+    return { allChecked, deadOnOpen, liveAfterChange, deadAgain };
   }})()`);
-  await win.webContents.executeJavaScript(
-    `[...document.querySelectorAll(".cloud-modal button")].find((b) => b.textContent.trim() === "Cancel").click()`,
-  );
+  await waitFor(win, `!document.querySelector(".cloud-modal")`, "the reordered editor to save");
+  cloudEditReordered.retainedServerOrder = JSON.stringify(cloudCalls.editChats.at(-1)?.chatUids)
+    === JSON.stringify([cloudChat.uid, "chat_book", "chat_family", "chat_new"]);
 
   // The agent list failed and the credential roster did not. A chat another
   // agent holds must still be off the table: indexing agents alone left every
@@ -904,7 +914,7 @@ app.whenReady().then(async () => {
     ...cloudProbe,
     cloudAgents: [],
     cloudAgentsError: "Couldn't reach Plow.",
-    cloudChats: threeChats,
+    cloudChats: reorderedChats,
     cloudChatsLoaded: true,
   };
   await win.webContents.executeJavaScript(`window.__domoSelectTab("audit")`);
@@ -1672,6 +1682,7 @@ app.whenReady().then(async () => {
     cloudModalFocus.insideModal &&
     cloudModalFocus.usable &&
     cloudModalGuard.ignored &&
+    cloudModalGuard.makeHomeMovesToZero &&
     cloudModalGuard.keptOriginal &&
     cloudCreateWait.disabled &&
     cloudCreateWait.spinner &&
@@ -1699,6 +1710,7 @@ app.whenReady().then(async () => {
     cloudEditReordered.deadOnOpen &&
     cloudEditReordered.liveAfterChange &&
     cloudEditReordered.deadAgain &&
+    cloudEditReordered.retainedServerOrder &&
     cloudHoldersFromRoster.anyDisabled &&
     cloudEditGateUnread.present &&
     cloudEditGateUnread.disabled &&

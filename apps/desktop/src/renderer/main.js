@@ -10,11 +10,10 @@ import {
 
 import {
   canEditChats,
-  chooseChat,
   dropChat,
   editorChats,
-  makeHomeChat,
-  orderedChats,
+  makeHome,
+  pickChat,
   sameChatSet,
 } from "./chatSets.js";
 import { el, icon } from "./dom.js";
@@ -969,18 +968,6 @@ function cloudChatHolders(state, exceptAgentId = null) {
 }
 
 /**
- * The chat checklist both modals are built from.
- *
- * One shared control because create and edit ask the same question — which
- * chats, and which of them is home — and the rules that make the answer valid
- * (at least one chat; home is always one of the chosen) are the kind that go
- * wrong when they are written twice.
- *
- * ORDER IS THE ANSWER: `chosen()` returns home first, then the rest in list
- * order, which is exactly what `chat_uids` means on the wire. It also makes
- * "unchanged" a plain array comparison for the caller.
- */
-/**
  * What a modal built around a checklist should focus.
  *
  * Not simply the first checkbox: every chat in the list can be disabled — an
@@ -994,19 +981,19 @@ function firstUsableControl(panel) {
   return enabled("input:not([type=hidden])") ?? enabled("button") ?? null;
 }
 
+/**
+ * The chat checklist both modals are built from.
+ *
+ * Its one selection array is already the wire shape: home first, then every
+ * other chosen chat. An edit starts in server order, a new pick appends, and
+ * moving home moves that uid to position zero.
+ */
 function chatChecklist({ chats, holders, selected = [], onChange }) {
   const order = chats.map((chat) => chat.uid);
-  // What the agent already serves. Retained chats keep this order on the way
-  // out, so a set nobody changed is sent back exactly as it arrived.
-  const keepOrder = selected.filter((uid) => order.includes(uid));
-  // The rules live in `chatSets.js`, whole and tested; this holds the answer
-  // and repaints from it.
-  let selection = {
-    chosen: selected.filter((uid) => order.includes(uid)),
-    home: selected.find((uid) => order.includes(uid)) ?? null,
-  };
-  const chosenNow = () => new Set(selection.chosen);
-  const ordered = () => orderedChats(selection, order, keepOrder);
+  // Home is position zero. Starting from the server's own array preserves its
+  // order on edit; newly checked chats append after the retained ones.
+  let chosen = selected.filter((uid) => order.includes(uid));
+  const chosenNow = () => new Set(chosen);
 
   // Each row is built ONCE and updated in place. Rebuilding the list from a
   // checkbox's own change handler detaches the <label> that click is still
@@ -1014,16 +1001,16 @@ function chatChecklist({ chats, holders, selected = [], onChange }) {
   // checkbox and toggles it straight back.
   const rows = chats.map((chat) => {
     const heldBy = holders.get(chat.uid);
-    const taken = !!heldBy && !selection.chosen.includes(chat.uid);
+    const taken = !!heldBy && !chosen.includes(chat.uid);
     const row = el("label", { class: `chat-option${taken ? " disabled" : ""}` });
 
     const box = el("input", { attrs: { type: "checkbox" } });
-    box.checked = selection.chosen.includes(chat.uid);
+    box.checked = chosen.includes(chat.uid);
     box.disabled = taken;
     box.addEventListener("change", () => {
-      selection = box.checked
-        ? chooseChat(selection, chat.uid)
-        : dropChat(selection, chat.uid, order);
+      chosen = box.checked
+        ? pickChat(chosen, chat.uid)
+        : dropChat(chosen, chat.uid, order);
       paint();
       onChange?.();
     });
@@ -1047,7 +1034,7 @@ function chatChecklist({ chats, holders, selected = [], onChange }) {
       // Without this the click also activates the surrounding <label>, which
       // would toggle the very chat the user is promoting to home.
       event.preventDefault();
-      selection = makeHomeChat(selection, chat.uid);
+      chosen = makeHome(chosen, chat.uid);
       paint();
       onChange?.();
     });
@@ -1061,7 +1048,7 @@ function chatChecklist({ chats, holders, selected = [], onChange }) {
     for (const { chat, box, make } of rows) {
       box.checked = picked.has(chat.uid);
       make.hidden = !picked.has(chat.uid);
-      const isHome = picked.has(chat.uid) && selection.home === chat.uid;
+      const isHome = chosen[0] === chat.uid;
       make.classList.toggle("on", isHome);
       make.textContent = isHome ? "★ Home" : "Make home";
     }
@@ -1071,8 +1058,8 @@ function chatChecklist({ chats, holders, selected = [], onChange }) {
   paint();
   return {
     node: list,
-    chosen: ordered,
-    homeLabel: () => chats.find((chat) => chat.uid === selection.home)?.label ?? null,
+    chosen: () => [...chosen],
+    homeLabel: () => chats.find((chat) => chat.uid === chosen[0])?.label ?? null,
   };
 }
 
@@ -1248,8 +1235,7 @@ function openCloudPicker(trigger, state, redraw) {
  *
  * The same checklist as setup, pre-filled — the agent's own chats are its to
  * keep or drop, so they are never shown as taken by it. Save stays dead until
- * the answer differs from what the agent serves now, which is a plain array
- * comparison because `chosen()` puts home first and the rest in list order.
+ * the answer differs from what the agent serves now.
  */
 function openCloudEditor(trigger, agent, state, redraw) {
   const baseline = agent.chatUids ?? [];
@@ -1268,9 +1254,8 @@ function openCloudEditor(trigger, agent, state, redraw) {
     onChange: () => syncEditor(),
   });
 
-  // Home and membership, never index for index: the checklist orders by the
-  // account's chat list and the server answers in its own, so a three-chat
-  // agent opened with Save alive and one click restarted it for nothing.
+  // Home and membership, never index for index: removing and re-adding a
+  // non-home chat changes its array position, but not what the agent serves.
   const unchanged = () => sameChatSet(checklist.chosen(), baseline);
   const syncEditor = () => {
     const chosen = checklist.chosen();

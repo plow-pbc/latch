@@ -62,6 +62,16 @@ export interface CreateCloudAgentRequest {
   scopes?: string[];
 }
 
+export class ChatSetConflictError extends PlowApiError {
+  constructor(readonly conflictingAgentIds: string[]) {
+    super(
+      "http",
+      "This chat already belongs to another agent — edit that agent's chats instead.",
+      409,
+    );
+  }
+}
+
 export type CloudAgentTransition = (
   agent: CloudAgentResource,
 ) => void | Promise<void>;
@@ -104,7 +114,7 @@ export class CloudAgentsClient {
       { token: deviceCredential, body, timeoutMs: CREATE_REQUEST_TIMEOUT_MS },
     );
     if (response.status === 409) {
-      throw conflictError(await decodeJson(response), deviceCredential);
+      throw conflictError(await decodeJson(response));
     }
 
     return this.resourceFor(response, deviceCredential);
@@ -119,9 +129,9 @@ export class CloudAgentsClient {
    *
    * Done when the response lands. Unlike create there is no machine to boot, so
    * there is no receipt to poll: a 200 carries the agent in its new shape and
-   * that is the end of it. A 5xx is a rollback — the agent still serves what it
-   * served before — and says so, because "it failed" and "it half-failed" send
-   * the reader to different places.
+   * that is the end of it. A 5xx is not authoritative about whether the write
+   * landed, so the state owner re-reads server truth before accepting another
+   * answer.
    */
   async updateChats(
     deviceCredential: string,
@@ -138,9 +148,11 @@ export class CloudAgentsClient {
       },
     );
     if (response.status === 409) {
-      throw conflictError(await decodeJson(response), deviceCredential);
+      throw conflictError(await decodeJson(response));
     }
-    if (response.status >= 500) throw rolledBack(response.status);
+    if (response.status >= 500) {
+      throw new PlowApiError("http", "Couldn't update the agent. Try again.", response.status);
+    }
 
     return this.resourceFor(response, deviceCredential);
   }
@@ -310,28 +322,19 @@ function conflictCode(decoded: unknown): string | null {
   return typeof decoded.detail.code === "string" ? decoded.detail.code : null;
 }
 
-/**
- * The server's own sentence for this conflict, if it wrote one.
- *
- * Only ever consulted for `CHAT_SET_CONFLICT`, and the reason is that this is
- * the one conflict whose useful half is a fact only the server holds: WHICH
- * agent already has the chat. Every other code is a situation we can describe
- * ourselves, and a fixed sentence is the safer thing to put on screen.
- *
- * The credential check is not a formality. Server text is the one string here
- * that we did not write, and it is about to be rendered — so a message that
- * repeats the token back is dropped for our own words instead.
- */
-function conflictDetail(decoded: unknown, credential: string): string | null {
-  if (!isRecord(decoded) || !isRecord(decoded.detail)) return null;
+function conflictAgentIds(decoded: unknown): string[] {
+  if (!isRecord(decoded) || !isRecord(decoded.detail)) return [];
+  const candidates: string[] = [];
+  const agentId = decoded.detail.agent_id;
+  if (typeof agentId === "string" && agentId.trim()) candidates.push(agentId.trim());
   const message = decoded.detail.message;
-  if (typeof message !== "string") return null;
-  const trimmed = message.trim();
-  if (!trimmed || echoesCredential(trimmed, credential)) return null;
-  return trimmed;
+  if (typeof message === "string") {
+    for (const match of message.matchAll(/\b[0-9a-f]{32}\b/g)) candidates.push(match[0]);
+  }
+  return [...new Set(candidates)];
 }
 
-function conflictError(decoded: unknown, credential: string): PlowApiError {
+function conflictError(decoded: unknown): PlowApiError {
   const messages: Record<string, string> = {
     PENDING_TEARDOWN: "This chat's cloud agent is still being removed. Remove it before trying again.",
     PROVIDER_CONFLICT: "This chat already uses a different cloud-agent provider.",
@@ -339,27 +342,14 @@ function conflictError(decoded: unknown, credential: string): PlowApiError {
     CHAT_DELETED: "That chat has been deleted.",
     OWNER_NO_ADDRESS: "Your Plow account has no address for that chat.",
     OWNER_NOT_IN_CHAT: "Your Plow account is not a member of that chat.",
-    // One chat belongs to one agent, so a set that overlaps another agent's is
-    // refused whole. The server names the holder; we say what to do about it.
-    CHAT_SET_CONFLICT: "One of those chats already belongs to another agent.",
     AGENT_FAILED: "This agent failed to start, so its chats can't be changed. Remove it and set one up again.",
   };
   const code = conflictCode(decoded);
   if (code === "CHAT_SET_CONFLICT") {
-    const named = conflictDetail(decoded, credential);
-    if (named) return new PlowApiError("http", named, 409);
+    return new ChatSetConflictError(conflictAgentIds(decoded));
   }
   const message = code && Object.hasOwn(messages, code) ? messages[code] : "Plow returned 409.";
   return new PlowApiError("http", message, 409);
-}
-
-/** A PUT the server could not complete. The old set is still the live one. */
-function rolledBack(status: number): PlowApiError {
-  return new PlowApiError(
-    "http",
-    "Couldn't update the agent. Nothing changed — the old chats are still live. Try again.",
-    status,
-  );
 }
 
 /**

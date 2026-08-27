@@ -1,12 +1,14 @@
 import { describe, expect, it } from "vitest";
 import {
   CREATE_REQUEST_TIMEOUT_MS,
+  ChatSetConflictError,
   CloudAgentResource,
   CloudAgentsClient,
 } from "../src/cloudAgents.js";
 import { PlowApi, PlowApiError } from "../src/plowApi.js";
 
 const CREDENTIAL = "plow_sk_device_do_not_leak";
+const HOLDER_ID = "0123456789abcdef0123456789abcdef";
 
 function resource(
   status: CloudAgentResource["status"],
@@ -357,13 +359,14 @@ describe("CloudAgentsClient chat-set replacement", () => {
     ]);
   });
 
-  it("names the agent that already holds a chat, from the server's own message", async () => {
+  it("drops conflict prose and keeps only a structured holder id", async () => {
     const { fetchImpl } = recordingFetch([{
       status: 409,
       body: {
         detail: {
           code: "CHAT_SET_CONFLICT",
-          message: "Groceries already belongs to Household helper.",
+          agent_id: ` ${HOLDER_ID} `,
+          message: `untrusted ${CREDENTIAL.slice(-10)}`,
         },
       },
     }]);
@@ -372,25 +375,38 @@ describe("CloudAgentsClient chat-set replacement", () => {
       .updateChats(CREDENTIAL, "agent_123", ["cht_taken"])
       .catch((caught: unknown) => caught);
 
-    // The only 409 whose useful half — WHICH agent — only the server knows.
-    expect(String(error)).toContain("Groceries already belongs to Household helper.");
+    expect(error).toBeInstanceOf(ChatSetConflictError);
+    expect(String(error)).toBe(
+      "PlowApiError: This chat already belongs to another agent — edit that agent's chats instead.",
+    );
+    expect(String(error)).not.toContain(CREDENTIAL.slice(-10));
+    expect((error as ChatSetConflictError).conflictingAgentIds).toEqual([HOLDER_ID]);
     expect((error as PlowApiError).status).toBe(409);
   });
 
-  it("falls back to our own words when that message is missing or echoes the credential", async () => {
+  it("extracts a holder id from conflict prose without displaying the prose", async () => {
     const { fetchImpl } = recordingFetch([
-      { status: 409, body: { detail: { code: "CHAT_SET_CONFLICT" } } },
-      { status: 409, body: { detail: { code: "CHAT_SET_CONFLICT", message: `bad ${CREDENTIAL}` } } },
+      {
+        status: 409,
+        body: {
+          detail: {
+            code: "CHAT_SET_CONFLICT",
+            message: `These chats overlap cloud agent ${HOLDER_ID}. Secret ${CREDENTIAL.slice(-10)}.`,
+          },
+        },
+      },
     ]);
-    const client = new CloudAgentsClient(new PlowApi("https://api.plow.co", fetchImpl));
 
-    const missing = await client.updateChats(CREDENTIAL, "a", ["cht_1"]).catch((e: unknown) => e);
-    const echoed = await client.updateChats(CREDENTIAL, "a", ["cht_1"]).catch((e: unknown) => e);
+    const error = await new CloudAgentsClient(new PlowApi("https://api.plow.co", fetchImpl))
+      .updateChats(CREDENTIAL, "a", ["cht_1"])
+      .catch((caught: unknown) => caught);
 
-    for (const error of [missing, echoed]) {
-      expect(String(error)).toContain("already belongs to another agent");
-      expect(String(error)).not.toContain(CREDENTIAL);
-    }
+    expect(String(error)).toBe(
+      "PlowApiError: This chat already belongs to another agent — edit that agent's chats instead.",
+    );
+    expect(String(error)).not.toContain("These chats overlap");
+    expect(String(error)).not.toContain(CREDENTIAL.slice(-10));
+    expect((error as ChatSetConflictError).conflictingAgentIds).toEqual([HOLDER_ID]);
   });
 
   it("says an agent that never started cannot have its chats changed", async () => {
@@ -407,16 +423,14 @@ describe("CloudAgentsClient chat-set replacement", () => {
     expect(String(error)).toContain("Remove it and set one up again");
   });
 
-  it.each([500, 502, 503])("says nothing changed when the server rolls a %s back", async (status) => {
+  it.each([500, 502, 503])("uses plain failure wording for a %s", async (status) => {
     const { fetchImpl } = recordingFetch([{ status, body: { detail: "boom" } }]);
 
     const error = await new CloudAgentsClient(new PlowApi("https://api.plow.co", fetchImpl))
       .updateChats(CREDENTIAL, "agent_123", ["cht_1"])
       .catch((caught: unknown) => caught);
 
-    // A rollback is not a plain failure: the old set is still serving, and the
-    // sentence has to say so or the reader goes looking for a broken agent.
-    expect(String(error)).toContain("Nothing changed — the old chats are still live.");
+    expect(String(error)).toBe("PlowApiError: Couldn't update the agent. Try again.");
     expect((error as PlowApiError).status).toBe(status);
   });
 

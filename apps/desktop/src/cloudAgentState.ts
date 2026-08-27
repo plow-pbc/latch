@@ -22,7 +22,11 @@ import {
   CloudAgentDisplayRow,
   toCloudAgentDisplayRow,
 } from "./cloudAgentMapper.js";
-import { CloudAgentResource, CreateCloudAgentRequest } from "./cloudAgents.js";
+import {
+  ChatSetConflictError,
+  CloudAgentResource,
+  CreateCloudAgentRequest,
+} from "./cloudAgents.js";
 import {
   ChatRecipients,
   activationChatLabel,
@@ -279,7 +283,9 @@ export class CloudAgentState {
       // A cancelled create is something this side asked for, not a failure the
       // user needs to read. The agent may still exist on the account — the POST
       // can have landed with the receipt lost — and the next list recovers it.
-      if (generation === this.generation && !isAbort(error)) return this.failAction(messageOf(error));
+      if (generation === this.generation && !isAbort(error)) {
+        return this.failAction(this.actionMessage(error));
+      }
       return null;
     }
     if (generation !== this.generation) return null;
@@ -326,7 +332,7 @@ export class CloudAgentState {
       updated = await this.deps.agents.updateChats(credential, id, chats);
     } catch (error) {
       if (generation !== this.generation) return false;
-      this.failAction(messageOf(error));
+      this.failAction(this.actionMessage(error));
       // A failure that is not the server's verdict says nothing about what the
       // agent now serves. A timed-out PUT is the case that matters: the request
       // may well have landed, and leaving the old set on screen would be the
@@ -335,7 +341,7 @@ export class CloudAgentState {
       // The counter moves even though we do not know whether anything did: a
       // listing that was already in the air predates the attempt either way,
       // and the refresh below is the one whose answer is worth having.
-      if (!isSettledFailure(error)) {
+      if (!isRefusedEdit(error)) {
         this.mutations += 1;
         await this.refresh();
       }
@@ -608,6 +614,16 @@ export class CloudAgentState {
     return loadSettings(this.deps.home).relayCredential.trim();
   }
 
+  private actionMessage(error: unknown): string {
+    if (error instanceof ChatSetConflictError) {
+      const name = error.conflictingAgentIds
+        .map((agentId) => this.rows.get(agentId)?.name?.trim())
+        .find(Boolean);
+      if (name) return `This chat already belongs to ${name} — edit that agent's chats instead.`;
+    }
+    return messageOf(error);
+  }
+
   /** Report what the click could not do, and answer `null` to every caller
    * that was waiting on an id. */
   private failAction(message: string): null {
@@ -691,17 +707,15 @@ function cleanChatUids(chatUids: readonly string[]): string[] {
 }
 
 /**
- * Did the server tell us the change did NOT happen?
+ * Did the server refuse the edit before anything moved?
  *
- * Only two answers carry that: a 409, which is a refusal decided before
- * anything moved, and a 5xx, which the API rolls back. Everything else — a
- * timeout, a dropped connection, a response we could not read — leaves the
- * outcome unknown, and unknown is not the same as unchanged.
+ * Only a 409 carries that answer. A timeout, a dropped connection, a 5xx, or a
+ * response we could not read leaves the outcome unknown, and unknown is not
+ * the same as unchanged.
  */
-function isSettledFailure(error: unknown): boolean {
+function isRefusedEdit(error: unknown): boolean {
   if (!(error instanceof PlowApiError)) return false;
-  const status = error.status ?? 0;
-  return status === 409 || status >= 500;
+  return error.status === 409;
 }
 
 /** An abort surfaces as `AbortError` however the client raises it. */
