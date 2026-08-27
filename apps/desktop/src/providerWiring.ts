@@ -46,13 +46,22 @@ export function buildMinter(opts: { api: PlowApi; home: string }): Minter {
 /**
  * The directories holding vendored CLIs, for the child's PATH.
  *
- * Empty when nothing is staged, which is not an error: the exec path reports
- * a missing provider through the approval dialog rather than failing at
- * launch, and every non-provider command still runs.
+ * One entry per STAGED provider: a provider whose binary is missing is
+ * skipped, not fatal, and does not stop the others resolving. Empty when
+ * nothing is staged at all, which is not an error either — the exec path
+ * reports a missing provider through the approval dialog rather than failing
+ * at launch, and every non-provider command still runs.
+ *
+ * `providers` is a parameter so the loop itself can be tested. With one row in
+ * `PROVIDERS`, a walker and a single lookup are indistinguishable — which is
+ * the same false generality this seam was just fixed for, one caller up.
  */
-export function vendorDirs(opts: { resourcesDir?: string; repoRoot?: string }): string[] {
+export function vendorDirs(
+  opts: { resourcesDir?: string; repoRoot?: string },
+  providers: readonly VendoredProvider[] = PROVIDERS,
+): string[] {
   const dirs: string[] = [];
-  for (const provider of PROVIDERS) {
+  for (const provider of providers) {
     const located = resolveVendoredBinary(provider.command, opts);
     if (located.path !== null) {
       dirs.push(path.dirname(located.path));

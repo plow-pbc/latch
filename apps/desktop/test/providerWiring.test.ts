@@ -25,15 +25,18 @@ function homeWith(credential: string): string {
   return home;
 }
 
-/** A staged vendor tree: <base>/<rel>/<arch>/gog, executable. */
-function tree(rel: string): string {
+/** A staged vendor tree: <base>/<rel>/<arch>/<name>, executable. */
+function tree(rel: string, name = "gog"): string {
   const base = fs.mkdtempSync(path.join(os.tmpdir(), "latch-vendor-"));
   cleanups.push(() => fs.rmSync(base, { recursive: true, force: true }));
   const dir = path.join(base, rel, process.arch);
   fs.mkdirSync(dir, { recursive: true });
-  fs.writeFileSync(path.join(dir, "gog"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+  fs.writeFileSync(path.join(dir, name), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
   return base;
 }
+
+/** A second provider, so the walk is distinguishable from a single lookup. */
+const SLACK = { ...GOG, command: "slack" };
 
 describe("buildMinter", () => {
   it("reads the credential from home on EVERY call, not once at construction", async () => {
@@ -98,5 +101,40 @@ describe("vendorDirs", () => {
     process.env.DOMO_GOG = "/nonexistent/gog";
     expect(() => vendorDirs({})).not.toThrow();
     expect(vendorDirs({})).toEqual([]);
+  });
+
+  // `PROVIDERS` has one row, so every assertion above passes byte-identically
+  // whether this walks or resolves the one — the same false generality the
+  // resolver was just fixed for, one caller up. These need two.
+  it("accumulates one directory per provider, in order", () => {
+    const base = fs.mkdtempSync(path.join(os.tmpdir(), "latch-vendor-"));
+    cleanups.push(() => fs.rmSync(base, { recursive: true, force: true }));
+    for (const name of ["gog", "slack"]) {
+      const dir = path.join(base, name, process.arch);
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(path.join(dir, name), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+    }
+    expect(vendorDirs({ resourcesDir: base }, [GOG, SLACK])).toEqual([
+      path.join(base, "gog", process.arch),
+      path.join(base, "slack", process.arch),
+    ]);
+  });
+
+  it("skips an unstaged provider without stopping the next one", () => {
+    const resourcesDir = tree("slack", "slack");
+    expect(vendorDirs({ resourcesDir }, [GOG, SLACK])).toEqual([
+      path.join(resourcesDir, "slack", process.arch),
+    ]);
+  });
+
+  it("reads each provider's OWN override variable", () => {
+    // Hard-coding `DOMO_GOG` back into `overrideVar` leaves every other
+    // assertion in this file green.
+    const staged = tree("slack", "slack");
+    process.env.DOMO_SLACK = path.join(staged, "slack", process.arch, "slack");
+    cleanups.push(() => delete process.env.DOMO_SLACK);
+    expect(vendorDirs({}, [SLACK])).toEqual([path.join(staged, "slack", process.arch)]);
+    // ...and gog, whose own variable is unset, stays unstaged.
+    expect(vendorDirs({}, [GOG])).toEqual([]);
   });
 });

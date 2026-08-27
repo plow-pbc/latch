@@ -16,13 +16,21 @@ import fs from "node:fs";
 import path from "node:path";
 
 /** Where `just fetch-<command>` lands it, and electron-builder copies it from. */
-export function vendorDir(command: string): string {
+function vendorDir(command: string): string {
   return `vendor/${command}`;
 }
 
-/** The override, e.g. `DOMO_GOG`. Uppercase because env vars are. */
+/**
+ * The override, e.g. `DOMO_GOG`: the command uppercased, with every
+ * non-alphanumeric folded to `_`.
+ *
+ * The folding is not cosmetic. `DOMO_GH-CLI` is a name Node reads back
+ * perfectly well through `process.env[...]` and no shell can `export`, so the
+ * override would fail for the human only, and only on the second provider —
+ * which is the discovery-on-provider-two failure this file exists to prevent.
+ */
 export function overrideVar(command: string): string {
-  return `DOMO_${command.toUpperCase()}`;
+  return `DOMO_${command.toUpperCase().replace(/[^A-Z0-9]/g, "_")}`;
 }
 
 function executable(candidate: string): string | null {
