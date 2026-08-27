@@ -64,11 +64,16 @@ function executable(candidate: string): string | null {
 export type VendoredLocation =
   | { path: string; problem?: undefined }
   | { path: null; problem: "not-staged" }
-  // `tried` is the NORMALIZED path — the thing this actually looked at. The
-  // diagnostic used to re-read the environment and repeat the resolve, which
-  // is a second copy of the normalization rule sitting next to the one that
-  // decided, and the two can disagree.
-  | { path: null; problem: "override-missing" | "override-misnamed"; tried: string };
+  // `given` is what the operator set; `tried` is the normalized path this
+  // actually looked at. Both travel because the diagnostic needs both and had
+  // been re-reading the environment and repeating the resolve to get them —
+  // a second copy of the normalization rule beside the one that decided.
+  | {
+      path: null;
+      problem: "override-missing" | "override-misnamed";
+      given: string;
+      tried: string;
+    };
 
 export function resolveVendoredBinary(
   command: string,
@@ -82,7 +87,8 @@ export function resolveVendoredBinary(
     // entirely, or nowhere, and an ambient `gog` further along PATH takes the
     // token this Mac has already minted. Resolving against the desktop
     // process's cwd is what someone setting it in a shell meant.
-    const resolved = executable(path.resolve(override));
+    const attempted = path.resolve(override);
+    const resolved = executable(attempted);
     // Distinguished from "nothing is staged": the operator NAMED a path, so
     // telling them to run a fetch they have already run sends them the wrong
     // way. Reported, never thrown — see above.
@@ -90,8 +96,9 @@ export function resolveVendoredBinary(
     // — which `X_OK` alone accepts, since on a directory it means traversable.
     // The operator line says "no executable FILE" because that is the whole
     // set, and the misnamed case below is the one worth telling apart.
-    const attempted = path.resolve(override);
-    if (resolved === null) return { path: null, problem: "override-missing", tried: attempted };
+    if (resolved === null) {
+      return { path: null, problem: "override-missing", given: override, tried: attempted };
+    }
     // The basename has to BE the command. A vendored provider is reached
     // through the PATH this Mac controls, so only the directory survives —
     // point the override at `/tmp/gog-0.36.0` and the child looking for `gog`
@@ -100,7 +107,7 @@ export function resolveVendoredBinary(
     // quiet version hands the credential to the wrong binary; a symlink named
     // `gog` is the fix, and it takes a second.
     if (path.basename(resolved) !== command) {
-      return { path: null, problem: "override-misnamed", tried: resolved };
+      return { path: null, problem: "override-misnamed", given: override, tried: resolved };
     }
     return { path: resolved };
   }

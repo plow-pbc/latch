@@ -61,7 +61,7 @@ describe("resolveVendoredBinary", () => {
     // `tried` carries what this actually looked at, so the diagnostic does not
     // have to re-derive it from the environment.
     expect(resolveVendoredBinary("gog")).toEqual({
-      path: null, problem: "override-misnamed", tried: named,
+      path: null, problem: "override-misnamed", given: named, tried: named,
     });
   });
 
@@ -73,7 +73,8 @@ describe("resolveVendoredBinary", () => {
     fs.mkdirSync(path.join(base, "gog"));
     process.env.DOMO_GOG = path.join(base, "gog");
     expect(resolveVendoredBinary("gog")).toEqual({
-      path: null, problem: "override-missing", tried: path.join(base, "gog"),
+      path: null, problem: "override-missing",
+      given: path.join(base, "gog"), tried: path.join(base, "gog"),
     });
   });
 
@@ -110,7 +111,7 @@ describe("resolveVendoredBinary", () => {
     expect(resolveVendoredBinary("slack").path).toBe(process.env.DOMO_SLACK);
     // ...and gog still reads its own, which is missing.
     expect(resolveVendoredBinary("gog")).toEqual({
-      path: null, problem: "override-missing", tried: "/nonexistent",
+      path: null, problem: "override-missing", given: "/nonexistent", tried: "/nonexistent",
     });
   });
 
@@ -168,7 +169,7 @@ describe("resolveVendoredBinary", () => {
     // stale env var.
     process.env.DOMO_GOG = "/nonexistent/gog";
     expect(resolveVendoredBinary("gog")).toEqual({
-      path: null, problem: "override-missing", tried: "/nonexistent/gog",
+      path: null, problem: "override-missing", given: "/nonexistent/gog", tried: "/nonexistent/gog",
     });
   });
 });

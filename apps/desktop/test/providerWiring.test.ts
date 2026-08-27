@@ -167,9 +167,14 @@ describe("vendorDirs", () => {
       // Built from `process.cwd()` rather than by calling `path.resolve` — the
       // expression the implementation itself evaluates cannot tell "it named
       // what was checked" from "it named whatever resolve happened to return".
-      why: "logs what was looked for, not what was typed",
+      // BOTH halves: the operator matches the line against what they typed,
+      // and sees what was actually looked at. Built from `process.cwd()`
+      // rather than by calling `path.resolve` — the expression the
+      // implementation evaluates cannot tell "names what was checked" from
+      // "names whatever resolve returned".
+      why: "logs what was typed AND what was looked for",
       override: () => "relative/slack",
-      has: [`${process.cwd()}/relative/slack`],
+      has: ["relative/slack →", `${process.cwd()}/relative/slack`],
       lacks: [],
     },
     {

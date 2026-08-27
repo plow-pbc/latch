@@ -101,8 +101,9 @@ Design points:
   spin-up) become the intent's `plan_context`.
 - **Network default:** `run_command` denies network unless `network: true` was
   explicitly declared (and therefore approved). The one exception is a vendored
-  provider command (`packages/device-core/src/providers/registry.ts`, which owns the
-  account of what a provider is): anything but `--help` reaches its
+  provider command (`packages/device-core/src/providers/registry.ts`, which owns
+  the account of what a provider is): anything that is not a help invocation —
+  `--help`/`-h` last, with no `--` before it — reaches its
   service by definition, so the capability is added regardless of the field —
   omitted, or explicitly `false`. Nothing is hidden by this; it is in the
   capability set the human approves, and a provider call approved without it

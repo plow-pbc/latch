@@ -14,15 +14,15 @@
  *
  * **Double-dash only, and that is verified rather than assumed.** gog 0.36.0
  * parses with kong, which rejects the single-dash spelling of a long flag:
- * `gmail send … -readonly=false` and `… -readonly false` both fail with
- * `unknown flag -r, did you mean one of "-h", "-a", …` — kong reads `-r` as a
- * shorthand cluster, and none of these flags has a shorthand.
+ * kong reads `-r` as a shorthand cluster, and none of these flags has a
+ * shorthand. The other spelling kong can mint is the negated one,
+ * `--no-<name>`, which would disarm a boolean flag while matching neither the
+ * set nor either rule.
  *
- * The other spelling kong can mint is the negated one, `--no-<name>`, which
- * would disarm a boolean flag while matching neither the set nor either rule.
- * Also checked, both ways: `--no-readonly`, `--no-wrap-untrusted` and
- * `--no-gmail-no-send` are all `unknown flag` at 0.36.0, and the schema
- * reports ZERO negatable flags anywhere — globals or gmail/calendar.
+ * Which exact spellings were tried, and their verdicts, are step 3 of the
+ * pin-bump checklist in `scripts/fetch-gog.mjs` — one list, in the place a
+ * bumper is already standing. The schema also reports ZERO negatable flags
+ * anywhere — globals or gmail/calendar.
  * `scripts/fetch-gog.mjs` asserts that second one against the binary it just
  * extracted, so a pin bump that makes a flag negatable fails the FETCH — the
  * earliest point it can. It does NOT cover every way that assertion could go

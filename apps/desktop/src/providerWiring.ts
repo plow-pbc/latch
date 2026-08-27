@@ -80,11 +80,11 @@ export function vendorDirs(
           : `must name a file called \`${provider.command}\` — only its directory reaches the child`;
       // `tried` is what the resolver actually looked at — normalized once,
       // there, rather than re-derived here from the environment.
-      // Non-empty by construction: these two problems are only returned from
-      // inside the resolver's `if (override)`.
-      const raw = process.env[name]!;
-      const shown = raw === located.tried ? raw : `${raw} → ${located.tried}`;
-      console.error(`[providers] ${name} ${why}: ${shown}`);
+      // Both halves come off the result, so nothing here re-reads the
+      // environment or repeats the resolve: the operator can match the line
+      // against what they typed, and see what was actually looked at.
+      const { given, tried } = located;
+      console.error(`[providers] ${name} ${why}: ${given === tried ? given : `${given} → ${tried}`}`);
     }
   }
   return dirs;
