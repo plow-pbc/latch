@@ -897,10 +897,21 @@ function openCloudModal(trigger, children, focus) {
   return shell.panel;
 }
 
-function cloudStatus(status) {
+function cloudStatus(status, failureReason) {
   if (status === "running") return { tone: "green", label: "Ready" };
   if (status === "provisioning") return { tone: "amber", label: "Setting up…" };
   if (status === "teardown") return { tone: "amber", label: "Removing…" };
+  if (status === "failed") {
+    const reasons = {
+      provider_unreachable: "Provider unreachable",
+      image_pull_timeout: "Image pull timed out",
+      setup_failed: "Setup failed",
+      validation_failed: "Validation failed — retrying will not help; ask a human",
+      unknown: "Unknown failure",
+      provision_timeout: "Provision timed out",
+    };
+    return { tone: "red", label: `Failed · ${reasons[failureReason] ?? failureReason ?? "Reason unavailable"}` };
+  }
   return { tone: "amber", label: "Status unavailable" };
 }
 
@@ -1291,7 +1302,7 @@ function cloudContext(agent, row) {
 }
 
 function cloudStatusNode(agent) {
-  const status = cloudStatus(agent?.status);
+  const status = cloudStatus(agent?.status, agent?.failureReason);
   if (agent?.status === "provisioning") {
     return el("span", { class: "status-setting" }, [
       el("span", { class: "cloud-spinner", attrs: { "aria-hidden": "true" } }),

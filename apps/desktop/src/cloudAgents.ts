@@ -20,6 +20,7 @@ export const CLOUD_AGENT_POLL_INTERVAL_MS = 2_000;
 export type CloudAgentStatus =
   | "provisioning"
   | "running"
+  | "failed"
   | "teardown"
   | (string & {});
 
@@ -35,6 +36,7 @@ export interface CloudAgentResource {
   provider: string | null;
   name: string | null;
   status: CloudAgentStatus;
+  failureCode?: string | null;
   failureReason: string | null;
   createdAt: string | null;
   /** Credential identity only. Never use this as the agent's identity. */
@@ -91,8 +93,17 @@ export class CloudAgentsClient {
     );
     if (response.status === 409) {
       const failure = await decodeJson(response);
+      const conflict = conflictCode(failure);
+      if (conflict === "PROVISION_IN_FLIGHT") {
+        response = await this.api.request(
+          "POST",
+          "/v1/agents/cloud",
+          { token: deviceCredential, body, timeoutMs: CREATE_REQUEST_TIMEOUT_MS },
+        );
+        return this.resourceFor(response, deviceCredential);
+      }
       const staleAgentId = recoverableAgentId(failure);
-      if (!staleAgentId) throw errorFor(response.status);
+      if (!staleAgentId) throw conflictError(conflict);
 
       try {
         await this.delete(deviceCredential, staleAgentId);
@@ -168,7 +179,9 @@ export class CloudAgentsClient {
           callerAbortIsLifecycle: true,
         },
       );
-      current = await this.resourceFor(response, deviceCredential);
+      const next = await this.resourceFor(response, deviceCredential);
+      if (next.agentId !== current.agentId) throw unexpectedAgent(response.status);
+      current = next;
       signal?.throwIfAborted();
       await onTransition?.(current);
       signal?.throwIfAborted();
@@ -218,7 +231,8 @@ function parseResource(
     url: optionalString(decoded.url),
     provider: optionalString(decoded.provider),
     name: optionalString(decoded.name),
-    status: decoded.status ?? "running",
+    status: decoded.status ?? "provisioning",
+    failureCode: optionalString(decoded.failure_code),
     failureReason: optionalString(decoded.failure_reason),
     createdAt: optionalString(decoded.created_at),
     sessionId: optionalString(decoded.session_id),
@@ -249,6 +263,31 @@ function errorFor(status: number): PlowApiError {
 
 function invalidResponse(status: number): PlowApiError {
   return new PlowApiError("http", "Plow returned an invalid cloud-agent response.", status);
+}
+
+function unexpectedAgent(status: number): PlowApiError {
+  return new PlowApiError(
+    "http",
+    "Plow returned a cloud-agent response for an unexpected agent.",
+    status,
+  );
+}
+
+function conflictCode(decoded: unknown): string | null {
+  if (!isRecord(decoded) || !isRecord(decoded.detail)) return null;
+  return typeof decoded.detail.code === "string" ? decoded.detail.code : null;
+}
+
+function conflictError(code: string | null): PlowApiError {
+  const messages: Record<string, string> = {
+    PENDING_TEARDOWN: "This chat's cloud agent is still being removed. Remove it before trying again.",
+    PROVIDER_CONFLICT: "This chat already uses a different cloud-agent provider.",
+    PROVISION_IN_FLIGHT: "Cloud-agent setup is already in progress for this chat.",
+    CHAT_DELETED: "That chat has been deleted.",
+    OWNER_NO_ADDRESS: "Your Plow account has no address for that chat.",
+    OWNER_NOT_IN_CHAT: "Your Plow account is not a member of that chat.",
+  };
+  return new PlowApiError("http", (code && messages[code]) ?? "Plow returned 409.", 409);
 }
 
 function recoverableAgentId(decoded: unknown): string | null {

@@ -56,6 +56,15 @@ describe("cloud-agent pure mappings", () => {
     expect(JSON.stringify(row)).not.toContain(sessionId);
   });
 
+  it("carries a contract failure code into the renderer's reason field", () => {
+    const row = toCloudAgentDisplayRow({
+      ...agent({ status: "failed", failureReason: "legacy reason" }),
+      failureCode: "validation_failed",
+    } as CloudAgentResource);
+
+    expect(row.failureReason).toBe("validation_failed");
+  });
+
   it("does not invent transport recipients when chat metadata is unavailable", () => {
     expect(toCloudAgentDisplayRow(agent()).recipients).toBeNull();
   });

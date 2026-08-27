@@ -42,6 +42,7 @@ export function toCloudAgentDisplayRow(
   context: CloudAgentDisplayContext = {},
 ): CloudAgentDisplayRow {
   const scrub = (value: string): string => scrubSessionId(value, agent.sessionId);
+  const failureReason = agent.failureCode ?? agent.failureReason;
   return {
     agentId: scrub(agent.agentId),
     name: scrub(agent.name ?? context.fallbackName ?? "cloud agent"),
@@ -49,7 +50,7 @@ export function toCloudAgentDisplayRow(
     chatLabel: scrub(context.chatLabel ?? agent.chatUid),
     provider: scrub(agent.provider ?? ""),
     status: agent.status,
-    failureReason: agent.failureReason === null ? null : scrub(agent.failureReason),
+    failureReason: failureReason === null ? null : scrub(failureReason),
     createdAt: agent.createdAt === null ? "" : scrub(agent.createdAt),
     // Addresses, not prose: nothing to scrub a session id out of, and nothing
     // to invent when the chat list could not say.

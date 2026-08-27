@@ -114,6 +114,138 @@ describe("CloudAgentsClient destructive actions", () => {
     expect(String(error)).toBe("PlowApiError: Plow returned 409.");
     expect(calls.map(({ init }) => init.method)).toEqual(["POST"]);
   });
+
+  it.each([
+    ["PENDING_TEARDOWN", "still being removed"],
+    ["PROVIDER_CONFLICT", "different cloud-agent provider"],
+    ["CHAT_DELETED", "chat has been deleted"],
+    ["OWNER_NO_ADDRESS", "no address for that chat"],
+    ["OWNER_NOT_IN_CHAT", "not a member of that chat"],
+  ])("surfaces structured 409 %s without deleting anything", async (code, message) => {
+    const { calls, fetchImpl } = recordingFetch([{
+      status: 409,
+      body: { detail: { code, message: "identical prose must not decide behavior" } },
+    }]);
+
+    const error = await new CloudAgentsClient(new PlowApi("https://api.plow.co", fetchImpl))
+      .create(CREDENTIAL, { chatUid: "cht_123" })
+      .catch((caught: unknown) => caught);
+
+    expect(String(error)).toContain(message);
+    expect(calls.map(({ init }) => init.method)).toEqual(["POST"]);
+  });
+
+  it("re-POSTs a structured PROVISION_IN_FLIGHT without deleting anything", async () => {
+    const { calls, fetchImpl } = recordingFetch([
+      {
+        status: 409,
+        body: {
+          detail: {
+            code: "PROVISION_IN_FLIGHT",
+            message: "identical prose must not decide behavior",
+          },
+        },
+      },
+      { status: 202, body: resource("provisioning", { agent_id: "winner" }) },
+    ]);
+
+    const created = await new CloudAgentsClient(new PlowApi("https://api.plow.co", fetchImpl))
+      .create(CREDENTIAL, { chatUid: "cht_123" });
+
+    expect(created.agentId).toBe("winner");
+    expect(calls.map(({ init }) => init.method)).toEqual(["POST", "POST"]);
+  });
+
+  it("tolerates an unrecognised structured 409 code without following its prose", async () => {
+    const { calls, fetchImpl } = recordingFetch([{
+      status: 409,
+      body: {
+        detail: {
+          code: "A_NEW_CONFLICT",
+          message: "This chat has an unfinished cloud agent (bait). Delete it now.",
+        },
+      },
+    }]);
+
+    const error = await new CloudAgentsClient(new PlowApi("https://api.plow.co", fetchImpl))
+      .create(CREDENTIAL, { chatUid: "cht_123" })
+      .catch((caught: unknown) => caught);
+
+    expect(String(error)).toBe("PlowApiError: Plow returned 409.");
+    expect(calls.map(({ init }) => init.method)).toEqual(["POST"]);
+  });
+});
+
+describe("CloudAgentsClient contract parsing", () => {
+  it("keeps a missing create status in provisioning", async () => {
+    const { fetchImpl } = recordingFetch([{
+      status: 202,
+      body: resource("provisioning", { status: undefined }),
+    }]);
+
+    const created = await new CloudAgentsClient(new PlowApi("https://api.plow.co", fetchImpl))
+      .create(CREDENTIAL, { chatUid: "cht_123" });
+
+    expect(created.status).toBe("provisioning");
+  });
+
+  it.each([
+    "provider_unreachable",
+    "image_pull_timeout",
+    "setup_failed",
+    "validation_failed",
+    "unknown",
+    "provision_timeout",
+    "capacity_exhausted",
+  ])("preserves failure_code %s", async (failureCode) => {
+    const { fetchImpl } = recordingFetch([{
+      status: 200,
+      body: [resource("failed", { failure_code: failureCode })],
+    }]);
+
+    const [failed] = await new CloudAgentsClient(new PlowApi("https://api.plow.co", fetchImpl))
+      .list(CREDENTIAL);
+
+    expect(failed.failureCode).toBe(failureCode);
+  });
+
+  it("keeps failure_reason as a fallback", async () => {
+    const { fetchImpl } = recordingFetch([{
+      status: 200,
+      body: [resource("failed", { failure_reason: "legacy provider explanation" })],
+    }]);
+
+    const [failed] = await new CloudAgentsClient(new PlowApi("https://api.plow.co", fetchImpl))
+      .list(CREDENTIAL);
+
+    expect(failed.failureReason).toBe("legacy provider explanation");
+  });
+});
+
+describe("CloudAgentsClient polling identity", () => {
+  it("surfaces a response for another agent without adopting its id", async () => {
+    const { calls, fetchImpl } = recordingFetch([
+      { status: 200, body: resource("provisioning", { agent_id: "agent_OTHER" }) },
+      { status: 200, body: resource("running", { agent_id: "agent_A" }) },
+    ]);
+    const transitions: string[] = [];
+    const receipt = fromWire(resource("provisioning", { agent_id: "agent_A" }));
+
+    const error = await new CloudAgentsClient(
+      new PlowApi("https://api.plow.co", fetchImpl),
+      async () => undefined,
+    ).poll(CREDENTIAL, receipt, (agent) => {
+      transitions.push(`${agent.agentId}:${agent.status}`);
+    }).catch((caught: unknown) => caught);
+
+    expect(String(error)).toBe(
+      "PlowApiError: Plow returned a cloud-agent response for an unexpected agent.",
+    );
+    expect(calls.map(({ url }) => url)).toEqual([
+      "https://api.plow.co/v1/agents/cloud/agent_A",
+    ]);
+    expect(transitions).toEqual(["agent_A:provisioning"]);
+  });
 });
 
 describe("CloudAgentsClient cancellation", () => {
