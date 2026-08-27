@@ -57,8 +57,11 @@ describe("the gog provider's refusal", () => {
     ["a group outside the token's scopes", ["gog", "drive", "search", "q"], "only Gmail and Calendar"],
     ["a group that does not exist", ["gog", "nonsense", "x"], "only Gmail and Calendar"],
     ["no group at all", ["gog"], "command is missing"],
-    // The two mistakes the skill flags as likeliest. gog never sees either as
-    // a command, so its own error would not help — each needs its own sentence.
+    // The two mistakes the skill flags as likeliest, refused for DIFFERENT
+    // reasons: gog runs a leading global flag happily (verified — `--json
+    // gmail search x` reaches Google), so it is refused positionally because
+    // the scope check reads rest[0]; the dotted spelling gog cannot see as a
+    // command at all. Each needs its own sentence.
     ["a leading global flag", ["gog", "--json", "gmail", "search", "q"], "before any flags"],
     ["the dotted spelling", ["gog", "gmail.search", "q"], "separate words"],
   ])("refuses %s", (_why, argv, expected) => {

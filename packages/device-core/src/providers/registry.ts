@@ -58,19 +58,24 @@ export interface VendoredProvider {
    * Reject argv the human must not be asked to approve, before any intent
    * exists. Returns a reason, or null.
    *
-   * Four refusals, in two groups.
+   * Five refusals, in two groups.
    *
    * Arguments that would disarm the belt or read/write local files through the
    * CLI — hazards a human cannot see by reading the command, because the
    * command itself looks legitimate.
    *
-   * And three shapes of a wrong command: a group outside the minted token's
-   * scopes, a leading global flag, a dotted spelling — plus an empty argv.
-   * What those three have in common is that gog's own error would not help.
-   * An out-of-scope group is the only one it would even try: it reaches Google
-   * and returns 401. The other two it rejects, but for reasons that read as
-   * argument errors rather than "put the command first" or "use separate
-   * words", which are what the agent needs to hear.
+   * And four shapes of a wrong command, each refused for its own reason:
+   *
+   *  - **An out-of-scope group.** gog would try it — `drive search x` reaches
+   *    Google and returns 401 — so this is the one that spends a Google call.
+   *  - **A leading global flag.** gog runs this perfectly happily: verified at
+   *    0.36.0, `--json gmail search x` parses `--json` as a global and reaches
+   *    Google. It is refused positionally — the scope check reads `rest[0]`,
+   *    so a flag sitting there means nothing is checking the group at all.
+   *  - **A dotted spelling.** gog cannot see it as a command; its own error
+   *    calls it an unexpected argument, which does not tell an agent to use
+   *    separate words.
+   *  - **An empty argv**, which names nothing to run.
    *
    * It deliberately does NOT mirror the binary's command grammar. A misspelt
    * leaf is left to gog, which says `did you mean "search"?` — better than a
