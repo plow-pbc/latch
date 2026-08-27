@@ -504,17 +504,6 @@ describe("PlowApi", () => {
 });
 
 /**
- * `chatCompletion` shares the transport with every other call but NOT the error
- * policy, and that difference is the whole reason it exists.
- *
- * `errorFor` puts the server's `detail` verbatim into a thrown error's message.
- * That is right for onboarding, where `detail` is a sentence written for the
- * person reading it ("That code has expired"). It is wrong for the reviewer,
- * whose failure reasons are shown to a human deciding whether to trust an
- * operation — an upstream body is not text we control. So this one returns the
- * status and lets the caller map it.
- */
-/**
  * The provider mint. Its response side used to be covered by a device-core
  * suite over a transport of its own; that transport is gone, so the coverage
  * belongs here — on the seam that actually makes the call.
@@ -549,6 +538,9 @@ describe("mintProviderToken", () => {
     ["no token in the body", { status: 200, body: { data: {} } }],
     ["a blank token", { status: 200, body: { data: { access_token: "  " } } }],
     ["no data at all", { status: 200, body: {} }],
+    // Unvalidated JSON: without a typeof check this threw a raw TypeError
+    // past every caller that maps PlowApiError.
+    ["a non-string token", { status: 200, body: { data: { access_token: 7 } } }],
   ])("refuses %s rather than returning it", async (_why, response) => {
     await expect(mint([response]).run()).rejects.toBeInstanceOf(PlowApiError);
   });
@@ -573,6 +565,17 @@ describe("mintProviderToken", () => {
   });
 });
 
+/**
+ * `chatCompletion` shares the transport with every other call but NOT the error
+ * policy, and that difference is the whole reason it exists.
+ *
+ * `errorFor` puts the server's `detail` verbatim into a thrown error's message.
+ * That is right for onboarding, where `detail` is a sentence written for the
+ * person reading it ("That code has expired"). It is wrong for the reviewer,
+ * whose failure reasons are shown to a human deciding whether to trust an
+ * operation — an upstream body is not text we control. So this one returns the
+ * status and lets the caller map it.
+ */
 describe("chatCompletion returns outcomes instead of throwing them", () => {
   const HOSTILE = "Model '<script>alert(1)</script> plow_sk_leaked' is not allowed";
 

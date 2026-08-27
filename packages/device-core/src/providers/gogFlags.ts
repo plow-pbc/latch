@@ -85,7 +85,7 @@ function ruleLabelFor(flag: string): string | null {
  * which is one of the closed set above; a RULE match returns a fixed label,
  * because `--<anything>-file` matches whatever the caller spelled and this
  * string reaches an error message, the approval dialog and the append-only
- * audit log. `gogLeaf.ts` refuses to quote argv back for exactly that reason, and
+ * audit log. `registry.ts`'s refusal reasons name a rule and never the argv for exactly that reason, and
  * a gate that quoted it here would have reopened the hole one module over.
  *
  * Split on `=` so the joined spellings (`--readonly=false`) are caught

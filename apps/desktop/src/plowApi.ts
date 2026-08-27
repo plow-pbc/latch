@@ -400,7 +400,11 @@ export class PlowApi {
       `${prefix}${action}`,
       { token, body: {} },
     );
-    const minted = data.data?.access_token?.trim();
+    // typeof, not `?.trim()`: the body is unvalidated JSON, and a numeric or
+    // object token would throw a raw TypeError past every caller that maps
+    // PlowApiError.
+    const raw = data.data?.access_token;
+    const minted = typeof raw === "string" ? raw.trim() : "";
     if (!minted) throw new PlowApiError("http", "Plow did not return a usable provider token.");
     return minted;
   }

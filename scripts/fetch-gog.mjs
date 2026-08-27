@@ -81,12 +81,16 @@ try {
   // flag while matching neither the set nor either rule. Zero flags are
   // negatable at 0.36.0 — asserted here so a pin bump fails the fetch rather
   // than shipping a binary whose grammar the gate cannot see.
-  // THIS host's arch, not whichever key happens to be first: an x64 binary
-  // cannot be executed on an arm64 Mac, and `find` over the digest keys would
-  // pick one by object order.
+  // THIS host's arch. Picking by digest-key order would hand an Intel Mac the
+  // arm64 binary and die with `Bad CPU type in executable` — Rosetta
+  // translates x86 to arm, not the reverse — so the guard would hard-fail the
+  // fetch, and `just package` with it, on a supported build host for a pin
+  // that is perfectly good. The keys are deliberately Node's names.
   const arch = process.arch;
+  const binary = path.join(root, "vendor/gog", arch, "gog");
+  if (!existsSync(binary)) throw new Error(`no gog for ${arch} at ${binary} — extraction failed?`);
   const schema = JSON.parse(
-    execFileSync(path.join(root, "vendor/gog", arch, "gog"), ["--no-input", "schema", "--json"], {
+    execFileSync(binary, ["--no-input", "schema", "--json"], {
       encoding: "utf8",
       maxBuffer: 64 * 1024 * 1024,
     }),
@@ -103,7 +107,9 @@ try {
   walk(schema.command ?? {});
   // A floor, because the check is worthless if it never saw a flag: a renamed
   // schema key would otherwise certify zero negatable flags from a key nothing
-  // reads. 3031 at 0.36.0.
+  // reads. This walk counts globals again under every subcommand, so it sees
+  // ~17k at 0.36.0 — far above the floor, which is set low deliberately: it is
+  // a did-we-parse-anything check, not a did-the-surface-change one.
   if (flagsSeen < 500) {
     throw new Error(`only ${flagsSeen} flags parsed from gog's schema — has its shape changed?`);
   }
