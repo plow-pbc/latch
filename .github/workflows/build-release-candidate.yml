@@ -190,7 +190,7 @@ jobs:
                 echo ""
                 echo "1. Open the [release draft](${RELEASE_URL}) and review it."
                 echo "2. Confirm **Set as the latest release** is checked, then **Publish release**."
-                echo "3. Publishing triggers the **App release** workflow, which ALSO runs in the \`release\` environment — so it starts as *Waiting*. Open [that run](${PROMOTE_RUNS}) and use **Review deployments → Approve and deploy**."
+                echo "3. Publishing triggers the **App release** workflow, which ALSO runs in the \`release\` environment — so it starts as *Waiting*. The new run appears under [**App release** runs](${PROMOTE_RUNS}) — open it and use **Review deployments → Approve and deploy**."
                 echo ""
                 echo "Nothing reaches installed apps until that second approval: only then does the promote copy the versioned S3 artifacts onto the stable \`domo/latest-mac.yml\` + \`domo/Plow-Latch.dmg\` keys. Publishing and walking away leaves it waiting."
               fi
