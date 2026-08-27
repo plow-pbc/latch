@@ -360,7 +360,9 @@ const SCREENS = [
     },
     expect: [
       "Cloud agents", "2 agents", "Household helper", "Ready", "Trip planner", "Setting up…",
-      "Agent +1 (415) 555-0142, +1 (415) 555-0193, +1 (628) 555-0112",
+      // Every chat the agent serves, home starred and first. The old line named
+      // one chat and prefixed it "Agent"; an agent serves a set now.
+      `★ ${CHAT.label}`, FAMILY_CHAT.label,
       "Reads and replies in no chats", "Can reach this Mac", "Can spend inference", "Message",
       "MCP clients", "Claude Code on MacBook Pro", "Reads and replies in all chats",
       "Can reach this Mac", "Can spend inference", "Reads and replies in no chats",
