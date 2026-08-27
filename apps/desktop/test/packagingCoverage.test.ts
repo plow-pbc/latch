@@ -95,7 +95,10 @@ function ignoredByCommittedGitignore(command: string): { ok: boolean; why: strin
   }
   return {
     ok: status === 0 && stdout.startsWith(".gitignore:"),
-    why: status === 0 ? `ignored by ${stdout.split("\t")[0]}` : "not ignored by anything",
+    // Exit 1 is "not ignored", and git does not say why: a later negation and
+    // a line that was never added both print nothing (verified at 2.50.1 —
+    // even `-n` reports `::` for the negated case, not the negating pattern).
+    why: status === 0 ? `ignored by ${stdout.split("\t")[0]}` : "not ignored",
   };
 }
 
