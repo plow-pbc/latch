@@ -145,6 +145,38 @@ describe.skipIf(!havePython())("latch-smoke, run for real", () => {
     expect(out).toContain("Nothing has ever been written at");
   });
 
+  // The user-visible payload of the home work, which the resolver rows cannot
+  // reach: which home was chosen, and that a wrong one is a usage error rather
+  // than evidence of a fresh install.
+  it("names the home it chose, and refuses one that does not exist", () => {
+    const { argv } = fixture("5");
+    const missing = path.join(tmp, "not-a-home");
+    const i = argv.indexOf("--home");
+    const run = spawnSync("python3", [...argv.slice(0, i + 1), missing, ...argv.slice(i + 2)],
+      { encoding: "utf8", env });
+    const out = run.stdout + run.stderr;
+    expect(run.status).toBe(1);
+    expect(out).toContain(`home=${missing}`);
+    expect(out).toContain("REFUSED — no such home");
+    // Nothing was sent, so there is no call to correlate — a printed nonce
+    // would say otherwise.
+    expect(out).not.toContain("nonce=");
+  });
+
+  it("tells a missing remote HOME from a log that does not exist yet", () => {
+    // Remote is where the default is most likely wrong: the environment cannot
+    // answer there, so it falls back to the PACKAGED install.
+    const noHome = fakeSsh("exit 4");
+    const read = call({ call: "read", path: "/remote/home/device/audit.ndjson", ssh: "u@h", budget: 5 },
+      "", noHome) as { count: number; problem: string };
+    expect(read.problem).toContain("no such home on u@h");
+    expect(read.problem).toContain("/remote/home");
+    // ...while a missing LOG stays "no evidence yet", which is normal.
+    const noLog = fakeSsh("exit 3");
+    expect(call({ call: "read", path: "/remote/home/device/audit.ndjson", ssh: "u@h", budget: 5 },
+      "", noLog)).toEqual({ count: 0, problem: "" });
+  });
+
   it("rejects a window too short to answer in, at parse time", () => {
     // Below the floor the downstream guard refused every time, naming the
     // window rather than the flag that set it. `2` is unusable too — the
@@ -287,14 +319,20 @@ describe.skipIf(!havePython())("latch-smoke reads the log where it lives", () =>
   // is the shape that reports "ruled out" having opened nothing.
   const q = `"$HOME"/'Library/Application Support/Plow-Latch/device/audit.ndjson'`;
   const cases: [string, string, string][] = [
-    ["~ expands on the FAR side", "~/Library/Application Support/Plow-Latch/device/audit.ndjson",
-      `if [ -e ${q} ]; then cat -- ${q}; else exit 3; fi`],
+    // `<home>/device/audit.ndjson`, so the home is two levels up — checked
+    // FIRST, at exit 4, because a missing log (exit 3) is normal on a fresh
+    // install and collapsing the two makes a wrong --home silent.
+    ["~ expands on the FAR side, for both paths",
+      "~/Library/Application Support/Plow-Latch/device/audit.ndjson",
+      `if [ ! -d "$HOME"/'Library/Application Support/Plow-Latch' ]; then exit 4; ` +
+      `elif [ -e "$HOME"/'Library/Application Support/Plow-Latch/device/audit.ndjson' ]; ` +
+      `then cat -- "$HOME"/'Library/Application Support/Plow-Latch/device/audit.ndjson'; else exit 3; fi`],
     ["an absolute path is quoted whole", "/Users/x/L S/audit.ndjson",
-      `if [ -e '/Users/x/L S/audit.ndjson' ]; then cat -- '/Users/x/L S/audit.ndjson'; else exit 3; fi`],
-    // A missing file exits 3, distinctly from every other way cat can fail —
-    // that is what keeps a fresh install from reading as an unreachable host.
+      `if [ ! -d /Users/x ]; then exit 4; ` +
+      `elif [ -e '/Users/x/L S/audit.ndjson' ]; then cat -- '/Users/x/L S/audit.ndjson'; else exit 3; fi`],
     ["and a hostile one stays one argument", "/tmp/a; rm -rf ~",
-      `if [ -e '/tmp/a; rm -rf ~' ]; then cat -- '/tmp/a; rm -rf ~'; else exit 3; fi`],
+      `if [ ! -d / ]; then exit 4; ` +
+      `elif [ -e '/tmp/a; rm -rf ~' ]; then cat -- '/tmp/a; rm -rf ~'; else exit 3; fi`],
   ];
   it.each(cases)("%s", (_name, path, expected) => {
     expect(call({ call: "remote", path })).toBe(expected);
@@ -446,35 +484,26 @@ describe.skipIf(!havePython())("latch-smoke treats a response as evidence and an
   });
 });
 
-describe.skipIf(!havePython())("latch-smoke finds the same home the app uses", () => {
-  // `apps/desktop/src/paths.ts` owns the rule. An earlier version read a
-  // `LATCH_HOME` that nothing sets, so a from-source run with DOMO_HOME
-  // exported was checked against the PACKAGED install's log and reported a
-  // timeout for a call that had worked.
-  const cases: [string, Record<string, string>, string][] = [
-    ["DOMO_HOME wins", { DOMO_HOME: "/tmp/throwaway" }, "/tmp/throwaway"],
-    ["an empty DOMO_HOME reads as unset", { DOMO_HOME: "" },
-      "~/Library/Application Support/Plow-Latch"],
-    ["a branch suffixes the folder", { DOMO_BRANCH: "feature-x" },
-      "~/Library/Application Support/Plow-Latch-feature-x"],
-    ["and neither is the packaged default", {},
-      "~/Library/Application Support/Plow-Latch"],
-    ["DOMO_HOME beats DOMO_BRANCH, as it does in paths.ts",
-      { DOMO_HOME: "/tmp/wins", DOMO_BRANCH: "x" }, "/tmp/wins"],
+describe.skipIf(!havePython())("latch-smoke resolves only the homes it can know", () => {
+  // It deliberately does NOT work out a from-source home: `justfile:28` owns
+  // that and has a third input this cannot see — DOMO_API_BASE_URL selects a
+  // separate `-local` home — so a partial mirror picks the wrong install
+  // confidently. Two earlier attempts to mirror it were each wrong.
+  const PACKAGED = "~/Library/Application Support/Plow-Latch";
+  const cases: [string, Record<string, unknown>, string][] = [
+    ["--home wins outright", { explicit: "/tmp/named" }, "/tmp/named"],
+    ["DOMO_HOME answers locally", { env: { DOMO_HOME: "/tmp/throwaway" } }, "/tmp/throwaway"],
+    // Same reading as justfile:28; `paths.ts` is the outlier — latch#189.
+    ["an empty DOMO_HOME reads as unset", { env: { DOMO_HOME: "" } }, PACKAGED],
+    ["a branch is NOT guessed at", { env: { DOMO_BRANCH: "feature-x" } }, PACKAGED],
+    ["neither variable is the packaged default", {}, PACKAGED],
+    // The load-bearing one: those variables describe THIS Mac, so a remote run
+    // that adopted them would poll a path meaning something else there.
+    ["ssh ignores the environment entirely", { ssh: "u@h", env: { DOMO_HOME: "/tmp/mine" } }, PACKAGED],
+    ["...but an explicit remote home still wins", { ssh: "u@h", explicit: "/remote/home" }, "/remote/home"],
   ];
-  it.each(cases)("%s", (_name, envVars, expected) => {
-    expect(call({ call: "home", env: envVars })).toEqual({ home: expected });
-  });
-
-  // The load-bearing half, and the one the precedence rows above cannot see:
-  // those variables describe THIS Mac, so a remote run that adopted them would
-  // poll a path meaning something else there — a confident false timeout.
-  it("ignores the environment entirely over ssh", () => {
-    expect(call({ call: "home", ssh: "u@h", env: { DOMO_HOME: "/tmp/mine", DOMO_BRANCH: "x" } }))
-      .toEqual({ home: "~/Library/Application Support/Plow-Latch" });
-    // ...but an explicit --home still wins, since the operator named it.
-    expect(call({ call: "home", ssh: "u@h", explicit: "/remote/home", env: { DOMO_HOME: "/tmp/mine" } }))
-      .toEqual({ home: "/remote/home" });
+  it.each(cases)("%s", (_name, request, expected) => {
+    expect(call({ call: "home", ...request })).toEqual({ home: expected });
   });
 });
 

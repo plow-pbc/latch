@@ -43,17 +43,20 @@ repeat the credential back.
 scripts/latch-smoke --url <mcpUrl> --token-file <path>
 ```
 
-- `--home <dir>` — the instance home. Locally it defaults the way the app
-  resolves it (`apps/desktop/src/paths.ts`): `DOMO_HOME` if set, else
-  `~/Library/Application Support/Plow-Latch`, branch-suffixed when
-  `DOMO_BRANCH` is.
+- `--home <dir>` — the instance home. Defaults to `DOMO_HOME`, else the
+  packaged install at `~/Library/Application Support/Plow-Latch`.
 
-  **`just app` sets those two inside its own recipe**, so your shell does not
-  have them and a from-source run needs to say so:
+  **For a from-source run, ask the justfile — it owns the answer:**
 
   ```bash
-  DOMO_BRANCH=$(scripts/worktree-name.sh --branch) scripts/latch-smoke …
+  scripts/latch-smoke --home "$(just --evaluate apphome)" …
   ```
+
+  Do not try to build that path by hand. `justfile:28` picks between three
+  homes, and the input people forget is `DOMO_API_BASE_URL`: pointing at a
+  local relay selects a separate `Plow-Latch-<branch>-local`, so a credential
+  minted against one relay never lands in the other's home. A path assembled
+  from the branch alone silently reads the wrong install.
 
   Over `--ssh` the environment is ignored entirely — those variables describe
   *this* Mac — so pass `--home` explicitly for a from-source remote. A wrong

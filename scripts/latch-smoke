@@ -37,11 +37,6 @@ import urllib.request
 # `packages/mcp-server/test/client.ts` is the authority; keep this in step with
 # it and with `PROTOCOL_REVISION` in `handler.ts`.
 REVISION = "2026-07-28"
-# `apps/desktop/src/paths.ts` owns this: DOMO_HOME wins, else the appData
-# folder, branch-suffixed when DOMO_BRANCH is set. Mirrored rather than
-# reinvented — an earlier version read a `LATCH_HOME` that nothing sets, so a
-# from-source run with DOMO_HOME exported was silently checked against the
-# PACKAGED install's log and reported a timeout for a call that had worked.
 APP_DATA = "~/Library/Application Support"
 HOME_PREFIX = "Plow-Latch"
 # How long a call whose send RAISED is given to show up. `intent_received` is
@@ -77,27 +72,29 @@ _OPENER = urllib.request.build_opener(_NoRedirect)
 
 
 def resolve_home(explicit, ssh):
-    """The instance home to read, and whether the environment may answer.
+    """The instance home to read.
 
-    Over ssh it may NOT: those variables describe THIS Mac, and a remote run
-    that silently adopted them would poll a path that means something else
-    there — producing a confident false timeout, which is the failure this
-    whole script exists to avoid.
+    Three levels, and this deliberately implements only the unambiguous ones:
+    an explicit `--home`, then `DOMO_HOME`, then the packaged default. It does
+    NOT try to work out a from-source home. The justfile owns that decision and
+    it has a third input this cannot see — `DOMO_API_BASE_URL` selects a
+    separate `-local` home so a credential minted against one relay never
+    lands in the other's — so a partial mirror picks the wrong install
+    confidently. Ask the owner instead:
+
+        scripts/latch-smoke --home "$(just --evaluate apphome)" …
+
+    Over ssh even `DOMO_HOME` is ignored: those variables describe THIS Mac,
+    and a remote run that adopted them would poll a path meaning something
+    else there.
     """
     if explicit:
         return explicit
     if ssh:
         return f"{APP_DATA}/{HOME_PREFIX}"
-    # `paths.ts`'s rule, with one deliberate difference: an EMPTY `DOMO_HOME`
-    # reads as unset here. `paths.ts` uses `??`, so it would take "" as the
-    # home — and `DOMO_HOME= just clean` is a live idiom
-    # (`scripts/worktree-cleanup.sh`), which makes "" a value someone really
-    # sets. Filed as latch#189; treating it as unset is the useful reading.
-    override = os.environ.get("DOMO_HOME")
-    if override:
-        return override
-    branch = os.environ.get("DOMO_BRANCH", "").strip()
-    return os.path.join(APP_DATA, f"{HOME_PREFIX}-{branch}" if branch else HOME_PREFIX)
+    # Empty reads as unset, which is what `justfile:28` does too. `paths.ts`
+    # is the outlier and takes "" as the home — latch#189.
+    return os.environ.get("DOMO_HOME") or f"{APP_DATA}/{HOME_PREFIX}"
 
 
 def remote_cat(log_path):
@@ -111,9 +108,17 @@ def remote_cat(log_path):
     the case this script is written for, while a dead host and a permission
     refusal are not the same answer at all.
     """
-    quoted = (f'"$HOME"/{shlex.quote(log_path[2:])}' if log_path.startswith("~/")
-              else shlex.quote(log_path))
-    return f"if [ -e {quoted} ]; then cat -- {quoted}; else exit 3; fi"
+    def q(p):
+        return f'"$HOME"/{shlex.quote(p[2:])}' if p.startswith("~/") else shlex.quote(p)
+
+    quoted = q(log_path)
+    # The HOME too, at exit 4. A missing log is normal on a fresh install, so
+    # collapsing the two makes a wrong --home over ssh silent — and remote is
+    # where it is most likely wrong, since the environment cannot answer there
+    # and the default is the PACKAGED install.
+    home = q(os.path.dirname(os.path.dirname(log_path)))
+    return (f"if [ ! -d {home} ]; then exit 4; "
+            f"elif [ -e {quoted} ]; then cat -- {quoted}; else exit 3; fi")
 
 
 def read_log(log_path, ssh, budget):
@@ -139,6 +144,8 @@ def read_log(log_path, ssh, budget):
             )
         except subprocess.TimeoutExpired:
             return [], f"ssh {ssh}: read did not finish within the window"
+        if proc.returncode == 4:
+            return [], f"no such home on {ssh}: {os.path.dirname(os.path.dirname(log_path))}"
         if proc.returncode == 3:
             return [], None
         if proc.returncode != 0:
@@ -408,8 +415,9 @@ def main():
     parser.add_argument("--token-file", default=os.environ.get("TOKEN_FILE"),
                         help="a 0600 file holding the bearer token (env: TOKEN_FILE)")
     parser.add_argument("--home", default=None,
-                        help="the instance home (default: DOMO_HOME, else the appData "
-                             "folder, branch-suffixed when DOMO_BRANCH is set)")
+                        help="the instance home (default: DOMO_HOME, else the packaged "
+                             "install). For a from-source run pass "
+                             "--home \"$(just --evaluate apphome)\"")
     parser.add_argument("--ssh", default=None, metavar="USER@HOST",
                         help="read the audit log on another Mac over ssh")
     parser.add_argument("--timeout", type=int, default=120,
@@ -435,15 +443,14 @@ def main():
     home = home if args.ssh else os.path.expanduser(home)
     log_path = os.path.join(home, "device", "audit.ndjson")
     nonce = f"latch-smoke-{time.strftime('%Y%m%dT%H%M%SZ', time.gmtime())}-{os.getpid()}"
-    print(f"nonce={nonce}")
     # WHICH home, always. A missing `audit.ndjson` is deliberately not a
     # problem — a fresh install has none — so a wrong --home looks exactly like
     # one, and the run reports a confident timeout about the wrong install.
     print(f"home={home}")
     if not args.ssh and not os.path.isdir(home):
         print(f"REFUSED — no such home: {home}")
-        print("  Nothing was sent. A home that does not exist is a wrong --home (or a")
-        print("  DOMO_HOME/DOMO_BRANCH this shell does not have), not a fresh install.")
+        print("  Nothing was sent. A home that does not exist is a wrong --home, not a")
+        print('  fresh install. From source: --home "$(just --evaluate apphome)".')
         return 1
 
     # ONE deadline, started before any blocking call. `--timeout` is the whole
@@ -451,6 +458,11 @@ def main():
     # relay that accepts and never answers made `--timeout 1` take 91 seconds
     # (measured), and a stalled ssh read inside the loop was unbounded
     # entirely. Every blocking call below gets what is left of it.
+    # AFTER the refusals above: elsewhere a printed nonce means a call is in
+    # flight and is the handle for correlating it later, so printing one for a
+    # run that never sends is the wrong signal.
+    print(f"nonce={nonce}")
+
     full_deadline = time.monotonic() + args.timeout
     deadline = full_deadline
 
