@@ -216,10 +216,10 @@ describe("the scope bound", () => {
     // EVERY occurrence, not any: the page names it more than once, and
     // `toContain` passes while one of them says something else.
     // Same for the prose clause: two sites stated it in their own words and
-    // four review rounds went into them disagreeing about aliases.
-    const clauses = gog.skill.body.match(/that is not one of those[^.]*/g) ?? [];
-    expect(clauses).toHaveLength(2);
-    for (const clause of clauses) expect(clause).toContain(GOG_OUT_OF_SCOPE);
+    // four review rounds went into them disagreeing about aliases. Counted
+    // against the constant itself — a regex here would pin the wording in a
+    // second place, which is the thing the constant exists to stop.
+    expect(gog.skill.body.split(GOG_OUT_OF_SCOPE).length - 1).toBe(2);
     const named = gog.skill.body.match(/--enable-commands=[^`\s]*/g) ?? [];
     // Every naming agrees, and there is at least one: an empty match set
     // fails this too, since `[]` is not `[bound]`.
