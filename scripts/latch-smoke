@@ -21,6 +21,7 @@ at all. A nonce in argv would mint a new rule key each time and raise a dialog
 forever.
 """
 import argparse
+import http.client
 import json
 import os
 import shlex
@@ -129,14 +130,22 @@ def send(url, token_file, argv, goal):
             },
         },
     }).encode()
-    request = urllib.request.Request(url, data=body, method="POST", headers={
-        "Authorization": "Bearer " + token,
-        "Content-Type": "application/json",
-        "Accept": "application/json, text/event-stream",
-        "MCP-Protocol-Version": REVISION,
-        "MCP-Method": "tools/call",
-        "MCP-Name": name,
-    })
+    try:
+        request = urllib.request.Request(url, data=body, method="POST", headers={
+            "Authorization": "Bearer " + token,
+            "Content-Type": "application/json",
+            "Accept": "application/json, text/event-stream",
+            "MCP-Protocol-Version": REVISION,
+            "MCP-Method": "tools/call",
+            "MCP-Name": name,
+        })
+    except ValueError as error:
+        # Pre-send by construction — `full_url`'s setter rejects a URL with no
+        # scheme, which is the commonest way to mistype one, and it happens
+        # before any socket exists. Building the request outside the try is how
+        # that reached an operator as a traceback.
+        return (f"could not reach {url}: {error}.\n"
+                "  The request never left this Mac; nothing was written to the log.", False)
     try:
         with urllib.request.urlopen(request, timeout=90) as response:
             payload = json.load(response)
@@ -151,7 +160,15 @@ def send(url, token_file, argv, goal):
         return (f"HTTP {error.code} — refused before it became an intent.\n"
                 "  Nothing was written to the audit log. 401/403 is the relay or the"
                 " credential; another 4xx is the MCP handler.", False)
-    except OSError as error:
+    except (OSError, http.client.HTTPException, ValueError) as error:
+        # The clause is wide on purpose. `getresponse()` and the body read
+        # raise `http.client.HTTPException` subclasses — `IncompleteRead` when
+        # the relay closes mid-body, `BadStatusLine` on a truncated status line
+        # — and `json.load` raises `ValueError`. None is an `OSError`, so all
+        # three used to escape as a traceback, and every one of them is on the
+        # BARE side: the call went out. Widening the catch is what makes the
+        # test below total rather than nearly total.
+        #
         # ONE discriminator, structural rather than a list of exception
         # classes: `urllib`'s `do_open` wraps the connect/send leg in
         # `URLError` and nothing else. Wrapped means the request never
@@ -165,7 +182,13 @@ def send(url, token_file, argv, goal):
         # Enumerating classes is what made three rounds of this wrong, each
         # time for one more subclass.
         if isinstance(error, urllib.error.URLError):
-            return (f"could not reach {url}: {type(error.reason).__name__}.\n"
+            # The reason itself, not its class: `URLError` is routinely raised
+            # with a STRING reason (`unknown url type: htp`), which renders as
+            # `str`, and for the wrapped-errno cases the class name throws away
+            # the `[Errno 61] Connection refused` text that says which of a
+            # typo'd --url and a relay that is down it was. It carries no
+            # response body, so the credential contract is untouched.
+            return (f"could not reach {url}: {error.reason}.\n"
                     "  The request never left this Mac; nothing was written to the log.", False)
         return (f"no answer from {url}: {type(error).__name__}, so whether it"
                 " arrived is UNKNOWN.", True)

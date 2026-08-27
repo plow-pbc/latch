@@ -190,6 +190,11 @@ describe.skipIf(!havePython())("latch-smoke only calls a timeout unknown", () =>
     ["so does a relay that drops the socket", "reset", true, "UNKNOWN"],
     ["a refused connection is wrapped, and did not", "refused", false, "never left this Mac"],
     ["and so is a connect timeout", "connect-timeout", false, "never left this Mac"],
+    // Neither is an OSError, so both escaped as a traceback until the clause
+    // was widened — and both are on the bare side: the call went out.
+    ["a body that stops mid-read went out", "incomplete", true, "UNKNOWN"],
+    // A string reason renders as `str` if you print its class.
+    ["a mistyped scheme says what was wrong", "bad-scheme", false, "unknown url type: htp"],
   ];
   const tokenFile = path.join(tmp, "transport-token");
   fs.writeFileSync(tokenFile, "t\n", { mode: 0o600 });

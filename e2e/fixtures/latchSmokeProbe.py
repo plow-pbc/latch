@@ -7,6 +7,7 @@ credential the relay may have echoed back at it.
 """
 import importlib.machinery
 import importlib.util
+import http.client
 import io
 import json
 import sys
@@ -50,7 +51,16 @@ else:
             raise urllib.error.URLError(TimeoutError("timed out"))
         if raises == "refused":
             raise urllib.error.URLError(ConnectionRefusedError(61, "Connection refused"))
-        raise urllib.error.HTTPError(request["url"], request["status"], "no", {}, io.BytesIO(body))
+        if raises == "bad-scheme":
+            raise urllib.error.URLError("unknown url type: htp")
+        if raises == "incomplete":
+            raise http.client.IncompleteRead(b"")
+        if raises == "http":
+            raise urllib.error.HTTPError(request["url"], request["status"], "no", {}, io.BytesIO(body))
+        # Exhaustive: a misspelt or renamed `raises` used to fall through to the
+        # HTTPError branch with the transport rows' status of 0, which is not
+        # >= 500, so a row could pass for a reason unrelated to what it names.
+        raise SystemExit(f"unknown raises: {raises}")
 
     urllib.request.urlopen = urlopen
     sent = smoke.send(request["url"], sys.argv[3], ["/bin/echo", "x"], "goal")
