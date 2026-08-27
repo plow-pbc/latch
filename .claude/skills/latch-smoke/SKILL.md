@@ -56,7 +56,8 @@ scripts/latch-smoke --url <mcpUrl> --token-file <path>
   app` saw** — `branch` comes from `scripts/worktree-name.sh`, so it follows
   the checkout, and the `-local` suffix follows `DOMO_API_BASE_URL`. From a
   different worktree, or with that variable unset when the app had it, the
-  answer is a different install. If in doubt, use the `DOMO_HOME=` value `just app` echoes in its recipe line.
+  answer is a different install. If in doubt, use the `DOMO_HOME=` value `just
+  app` echoes in its recipe line.
 
   Do not try to build that path by hand. `justfile:28` picks between three
   homes, and the input people forget is `DOMO_API_BASE_URL`: pointing at a

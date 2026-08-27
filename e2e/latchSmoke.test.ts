@@ -93,15 +93,16 @@ describe.skipIf(!havePython())("latch-smoke verdict", () => {
 // a one-second window put the loop through a verdict and both of its hints.
 describe.skipIf(!havePython())("latch-smoke, run for real", () => {
   /** A home with `device/` and a 0600 token, and the argv to run against it. */
-  function fixture(timeout: string): { log: string; argv: string[] } {
-    const home = fs.mkdtempSync(path.join(tmp, "home-"));
-    fs.mkdirSync(path.join(home, "device"));
-    const tokenFile = path.join(home, "token");
+  /** `home` overrides the temp dir this creates — including with "". */
+  function fixture(timeout: string, home?: string): { log: string; argv: string[] } {
+    const real = fs.mkdtempSync(path.join(tmp, "home-"));
+    fs.mkdirSync(path.join(real, "device"));
+    const tokenFile = path.join(real, "token");
     fs.writeFileSync(tokenFile, "t\n", { mode: 0o600 });
     return {
-      log: path.join(home, "device", "audit.ndjson"),
+      log: path.join(real, "device", "audit.ndjson"),
       argv: [script, "--url", "http://127.0.0.1:9/mcp", "--token-file", tokenFile,
-        "--home", home, "--timeout", timeout],
+        "--home", home ?? real, "--timeout", timeout],
     };
   }
 
@@ -149,11 +150,8 @@ describe.skipIf(!havePython())("latch-smoke, run for real", () => {
   // reach: which home was chosen, and that a wrong one is a usage error rather
   // than evidence of a fresh install.
   it("names the home it chose, and refuses one that does not exist", () => {
-    const { argv } = fixture("5");
     const missing = path.join(tmp, "not-a-home");
-    const i = argv.indexOf("--home");
-    const run = spawnSync("python3", [...argv.slice(0, i + 1), missing, ...argv.slice(i + 2)],
-      { encoding: "utf8", env });
+    const run = spawnSync("python3", fixture("5", missing).argv, { encoding: "utf8", env });
     const out = run.stdout + run.stderr;
     expect(run.status).toBe(1);
     expect(out).toContain(`home=${missing}`);
@@ -181,11 +179,8 @@ describe.skipIf(!havePython())("latch-smoke, run for real", () => {
   // the CONSEQUENCE — nothing sent, and the run says which home — rather than
   // the string `read_log` returns.
   it("refuses a remote run whose home is not there", () => {
-    const { argv } = fixture("5");
     const noHome = fakeSsh("exit 4");
-    const i = argv.indexOf("--home");
-    const run = spawnSync("python3",
-      [...argv.slice(0, i + 1), "/remote/home", ...argv.slice(i + 2), "--ssh", "u@h"],
+    const run = spawnSync("python3", [...fixture("5", "/remote/home").argv, "--ssh", "u@h"],
       { encoding: "utf8", env: { ...env, PATH: `${noHome}:${process.env.PATH ?? ""}` } });
     const out = run.stdout + run.stderr;
     expect(run.status).toBe(1);
@@ -197,13 +192,11 @@ describe.skipIf(!havePython())("latch-smoke, run for real", () => {
   });
 
   it("refuses when the baseline read ate the window, without a nonce", () => {
-    // The third path that prints no nonce, and the only one reached at
-    // RUNTIME rather than in argument parsing.
-    const { argv } = fixture("3");
+    // The third path that prints no nonce, and the only one that depends on
+    // how long the baseline read took — so it is unreachable without a slow
+    // one, which is why it needs a fake ssh rather than a bad argument.
     const slow = fakeSsh("sleep 2\necho '{}'");
-    const i = argv.indexOf("--home");
-    const run = spawnSync("python3",
-      [...argv.slice(0, i + 1), "/remote/home", ...argv.slice(i + 2), "--ssh", "u@h"],
+    const run = spawnSync("python3", [...fixture("3", "/remote/home").argv, "--ssh", "u@h"],
       { encoding: "utf8", env: { ...env, PATH: `${slow}:${process.env.PATH ?? ""}` } });
     const out = run.stdout + run.stderr;
     expect(run.status).toBe(1);
@@ -214,10 +207,7 @@ describe.skipIf(!havePython())("latch-smoke, run for real", () => {
   it("rejects an empty --home rather than falling back", () => {
     // `--home "$(just --evaluate apphome)"` yields "" when that command fails,
     // which is the likeliest way the documented invocation breaks.
-    const { argv } = fixture("5");
-    const i = argv.indexOf("--home");
-    const run = spawnSync("python3", [...argv.slice(0, i + 1), "", ...argv.slice(i + 2)],
-      { encoding: "utf8", env });
+    const run = spawnSync("python3", fixture("5", "").argv, { encoding: "utf8", env });
     const out = run.stdout + run.stderr;
     expect(run.status).toBe(2);
     expect(out).toContain("--home was empty");
