@@ -23,8 +23,7 @@ spec.loader.exec_module(smoke)
 request = json.loads(sys.argv[2])
 
 if request["call"] == "token":
-    token, problem = smoke.read_token(request["path"])
-    print(json.dumps({"ok": token is not None, "problem": problem or ""}))
+    print(json.dumps(smoke.read_token(request["path"])))
 elif request["call"] == "redirect-mechanism":
     # The opener `send` uses must actually carry the refusing handler, and that
     # handler must decline. Stubbing `_OPENER.open` — which every other row

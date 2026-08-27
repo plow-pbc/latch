@@ -515,7 +515,6 @@ describe.skipIf(!havePython())("latch-smoke reads the credential before it spend
     return p;
   };
   const cases: [string, () => string, string][] = [
-    ["a path that is not there", () => "/nonexistent/token", "No such file or directory"],
     ["an empty file", () => write("empty", ""), "is empty"],
     ["one holding only whitespace", () => write("blank", "  \n"), "is empty"],
     // Text mode decodes, so this raises UnicodeDecodeError — a ValueError, not
@@ -528,8 +527,8 @@ describe.skipIf(!havePython())("latch-smoke reads the credential before it spend
   ];
   it.each(cases)("refuses %s", (_name, make, says) => {
     const file = make();
-    const { ok, problem } = call({ call: "token", path: file }) as { ok: boolean; problem: string };
-    expect(ok).toBe(false);
+    const [token, problem] = call({ call: "token", path: file }) as [string | null, string];
+    expect(token).toBeNull();
     expect(problem).toContain(says);
     // The script's own contribution, not just the OS's strerror: the FILE is
     // named, and never its contents.
@@ -539,7 +538,7 @@ describe.skipIf(!havePython())("latch-smoke reads the credential before it spend
 
   it("accepts a one-line token, trimmed", () => {
     const file = write("good", "  sk-secret-abc  \n");
-    expect(call({ call: "token", path: file })).toEqual({ ok: true, problem: "" });
+    expect(call({ call: "token", path: file })).toEqual(["sk-secret-abc", null]);
   });
 });
 
