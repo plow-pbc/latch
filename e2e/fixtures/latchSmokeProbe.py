@@ -31,7 +31,8 @@ elif request["call"] == "split":
     print(json.dumps(smoke.split_command(request["raw"])))
 elif request["call"] == "verdict":
     outcome = smoke.verdict(request["events"], request["nonce"], request["expired"], request["since"])
-    print(json.dumps(None if outcome is None else {"code": outcome[0], "text": "\n".join(outcome[1])}))
+    print(json.dumps(None if outcome is None else
+                     {"code": outcome[0], "text": "\n".join(outcome[1]), "arrived": outcome[2]}))
 else:
     # The relay answered, and its body repeats the Authorization header back —
     # the case the credential rule exists for. Function-level stub: no socket,
@@ -57,6 +58,10 @@ else:
             raise http.client.IncompleteRead(b"")
         if raises == "invalid-url":
             raise http.client.InvalidURL("URL can't contain control characters")
+        if raises == "header":
+            # What `putheader` actually raises, verified against a real
+            # urlopen: the message quotes the header VALUE, i.e. the bearer.
+            raise ValueError("Invalid header value %r" % (b"Bearer " + request["token"].encode(),))
         if raises == "http":
             raise urllib.error.HTTPError(request["url"], request["status"], "no", {}, io.BytesIO(body))
         # Exhaustive: a misspelt or renamed `raises` used to fall through to the

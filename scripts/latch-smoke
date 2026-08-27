@@ -120,6 +120,13 @@ def send(url, token_file, argv, goal):
     """
     with open(token_file) as handle:
         token = handle.read().strip()
+    # `.strip()` removes SURROUNDING whitespace only, so a token pasted across
+    # two lines keeps its newline — and `putheader` refuses it with a message
+    # that quotes the header value. Caught here, where the file can be named
+    # instead of its contents.
+    if "\r" in token or "\n" in token:
+        return (f"{token_file} has a line break inside the token.\n"
+                "  Nothing was sent. Rewrite it as a single line.", False)
     name = "plow_run_command"
     body = json.dumps({
         "jsonrpc": "2.0", "id": 1, "method": "tools/call",
@@ -142,6 +149,14 @@ def send(url, token_file, argv, goal):
             "MCP-Method": "tools/call",
             "MCP-Name": name,
         })
+    except ValueError as error:
+        # Its own branch, and its message is safe to quote: `full_url`'s setter
+        # rejects a URL with no scheme and names the URL, which the operator
+        # supplied and which this file already prints. Nothing has touched the
+        # headers yet, so the credential cannot be in it.
+        return (f"could not reach {url}: {error}.\n"
+                "  The request never left this Mac; nothing was written to the log.", False)
+    try:
         with urllib.request.urlopen(request, timeout=90) as response:
             payload = json.load(response)
     except urllib.error.HTTPError as error:
@@ -169,7 +184,13 @@ def send(url, token_file, argv, goal):
         # call that never left costs a short grace window, which is the cheap
         # error; asserting an intent does not exist while the dialog is up is
         # the expensive one.
-        return (f"{type(error).__name__}: {error}", True)
+        # The CLASS NAME, never the message. `putheader` raises
+        # `ValueError("Invalid header value %r" % value)` and the value here is
+        # `b"Bearer <token>"` — verified by driving a real `urlopen` with a
+        # newline in the token: the message carries the credential in full.
+        # This branch catches every exception there is, so no audit of which
+        # messages are safe could stay true; the class name always is.
+        return (type(error).__name__, True)
     # Neither absence is proof of success — that is the audit log — but either
     # presence is proof of failure, and saying so now beats a 2-minute timeout.
     if payload.get("error") is not None:
@@ -205,8 +226,11 @@ def first(records, event):
 def verdict(events, nonce, expired, since=0):
     """The whole outcome table, pure over the audit records.
 
-    Returns `(exit_code, lines)`, or None while the call is still in flight and
-    the window is still open. Pure on purpose: this is where every bug in the
+    Returns `(exit_code, lines, arrived)`, or None while the call is still in
+    flight and the window is still open. `arrived` is whether anything carrying
+    the nonce was found at all, which is what the hints in `main` annotate —
+    guarding those on a non-zero exit instead would print "the send failed"
+    under a `DENIED`, which is itself proof the send arrived. Pure on purpose: this is where every bug in the
     two pasted shell blocks this script replaces actually lived, and a function
     over a list of records is the only version of it a test can reach.
 
@@ -244,13 +268,13 @@ def verdict(events, nonce, expired, since=0):
         lines += ["     " + json.dumps(r) for r in rejected[-2:]]
         if not rejected:
             lines.append("     (none since this call started — cause 3 ruled out)")
-        return 1, lines
+        return 1, lines, False
 
     mine = [r for r in events if r.get("intentId") == received.get("intentId")]
     decision = first(mine, "intent_decision")
     if decision is not None and decision.get("decision") == "deny":
         return 1, [json.dumps(decision),
-                   "DENIED — the owner refused it. The relay and the device both worked."]
+                   "DENIED — the owner refused it. The relay and the device both worked."], True
     end = first(mine, "exec_end")
     if end is not None:
         lines = [json.dumps(r) for r in (first(mine, "exec_start"), end) if r is not None]
@@ -258,23 +282,23 @@ def verdict(events, nonce, expired, since=0):
         # A run this Mac killed is not a command that succeeded either, and
         # `reaped` is the only place that difference survives.
         if end.get("exit_code") == 0 and not end.get("reaped"):
-            return 0, lines + ["OK — it executed and exited 0. The whole path works."]
+            return 0, lines + ["OK — it executed and exited 0. The whole path works."], True
         what = "was reaped by this Mac" if end.get("reaped") else f"exited {end.get('exit_code')}"
-        return 1, lines + [f"FAILED — it ran and {what}."]
+        return 1, lines + [f"FAILED — it ran and {what}."], True
     error = first(mine, "exec_error")
     if error is not None:
-        return 1, [json.dumps(error), "FAILED — the executor threw before the command ran."]
+        return 1, [json.dumps(error), "FAILED — the executor threw before the command ran."], True
     if not expired:
         return None
     if decision is None:
         return 1, ["TIMEOUT — it reached this Mac and is sitting unanswered at the approval dialog.",
-                   "  Not a plumbing problem. Seed an Always Allow rule for an unattended run."]
+                   "  Not a plumbing problem. Seed an Always Allow rule for an unattended run."], True
     start = first(mine, "exec_start")
     if start is None:
         return 1, ["TIMEOUT — approved, never started. exec_start is written before the spawn,",
-                   "  so its absence means the executor was never reached. Check the app is running."]
+                   "  so its absence means the executor was never reached. Check the app is running."], True
     return 1, [json.dumps(start),
-               "TIMEOUT — started, still running. Re-run to read its exec_end, or raise --timeout."]
+               "TIMEOUT — started, still running. Re-run to read its exec_end, or raise --timeout."], True
 
 
 def main():
@@ -340,9 +364,9 @@ def main():
     # evidence the path is right, which is all the hint below asserts against.
     saw_any = bool(baseline)
     while True:
-        expired = time.monotonic() >= deadline
         events, problem = read_log(log_path, args.ssh)
         if problem is not None:
+            expired = time.monotonic() >= deadline
             # It was readable a moment ago, so this is transient. Never let it
             # become a verdict about the call.
             if expired:
@@ -356,6 +380,11 @@ def main():
                 grace = False
                 deadline = started + args.timeout
                 print(f"it arrived — waiting up to {args.timeout}s for a terminal event")
+            # AFTER the extension: computing it at the top of the loop meant an
+            # intent that first became visible on this very read was handed
+            # `expired=True` and reported as timed out one line below the
+            # message saying it had arrived.
+            expired = time.monotonic() >= deadline
             outcome = verdict(events, nonce, expired, since)
             if outcome is not None:
                 code, lines = outcome

@@ -82,7 +82,7 @@ describe.skipIf(!havePython())("latch-smoke verdict", () => {
 
   it.each(cases)("%s", (_name, events, expired, code, contains) => {
     const outcome = call({ call: "verdict", events, nonce: NONCE, expired, since: 0 }) as
-      | { code: number; text: string }
+      | { code: number; text: string; arrived: boolean }
       | null;
     if (code === null) {
       expect(outcome).toBeNull();
@@ -195,9 +195,6 @@ describe.skipIf(!havePython())("latch-smoke treats a response as evidence and an
     // Neither of these is an OSError; both escaped as a traceback once.
     ["a body that stops mid-read", "https://relay.invalid/mcp", "incomplete", "IncompleteRead"],
     ["a URL with a control character", "https://relay.invalid/mcp", "invalid-url", "InvalidURL"],
-    // The real production guard, not a stub: `Request()`'s own setter rejects
-    // this before any socket exists, and it used to escape as a traceback.
-    ["a URL with no scheme, from the constructor", "relay.plow.com/mcp", "http", "unknown url type"],
   ];
 
   it.each(cases)("%s", (_name, url, raises, contains) => {
@@ -205,6 +202,42 @@ describe.skipIf(!havePython())("latch-smoke treats a response as evidence and an
       { reason: string; unknown: boolean };
     expect(sent.unknown).toBe(true);
     expect(sent.reason).toContain(contains);
+  });
+
+  // The real production guard, not a stub: `Request()`'s own setter rejects
+  // this before any socket exists, and it used to escape as a traceback. Its
+  // own branch, because it can safely quote what was wrong — nothing has
+  // touched the headers at that point, so the credential cannot be in it.
+  it("a URL with no scheme never reaches the socket, and says why", () => {
+    const sent = call({ call: "send", url: "relay.plow.com/mcp", status: 0, token: "t", raises: "http" }, tokenFile) as
+      { reason: string; unknown: boolean };
+    expect(sent.unknown).toBe(false);
+    expect(sent.reason).toContain("unknown url type");
+  });
+
+  // The catch-all returns the class NAME, never the message — `putheader`
+  // raises one that quotes the header value, which is the bearer itself.
+  it("a header error names its class and not the credential", () => {
+    const token = "sk-secret-MustNotAppear";
+    const file = path.join(tmp, "wrapped-token");
+    fs.writeFileSync(file, `${token}\n`, { mode: 0o600 });
+    const sent = call({ call: "send", url: "https://relay.invalid/mcp", status: 0, token, raises: "header" }, file) as
+      { reason: string; unknown: boolean };
+    expect(sent.reason).toBe("ValueError");
+    expect(sent.reason).not.toContain("MustNotAppear");
+  });
+
+  // ...and the cause that reaches it is caught earlier, where the FILE can be
+  // named instead of what is in it.
+  it("a token split across lines is refused by name", () => {
+    const file = path.join(tmp, "split-token");
+    fs.writeFileSync(file, "sk-secret-Must\nNotAppear\n", { mode: 0o600 });
+    const sent = call({ call: "send", url: "https://relay.invalid/mcp", status: 0, token: "x", raises: "http" }, file) as
+      { reason: string; unknown: boolean };
+    expect(sent.reason).toContain("line break inside the token");
+    expect(sent.reason).toContain(path.basename(file));
+    expect(sent.reason).not.toContain("NotAppear");
+    expect(sent.unknown).toBe(false);
   });
 
   // The one branch that DOES know, because a response came back and said so.
