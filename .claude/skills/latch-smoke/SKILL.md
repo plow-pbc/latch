@@ -86,11 +86,13 @@ Only success exits 0.
 
 ## Smoke-testing the gog provider specifically
 
-> **Depends on plow-pbc/latch#183**, which vendors gog and adds `just fetch-gog`.
-> Until that merges there is no `gog` on any install's PATH.
+gog is vendored on `main` (plow-pbc/latch#183). A build has it on the agent's
+PATH; a from-source checkout needs `just fetch-gog` first. The mint also needs
+`gmail:access-token` in the device's scopes, which is plow-pbc/plow#1416 and is
+not landed — until it is, this section's commands reach gog and fail at the
+mint, not at the binary.
 
-Same command, its own argv — and it needs `gog` staged and `gmail:access-token`
-in the device's scopes:
+Same command, its own argv:
 
 ```bash
 scripts/latch-smoke --url <mcpUrl> --token-file <path> -- gog gmail search newer_than:1d --json
