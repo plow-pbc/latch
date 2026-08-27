@@ -18,8 +18,14 @@ times. Each stop below is a real one, with what it actually costs.
 build a signed artifact  →  install it on a target Mac  →  drive one real MCP call  →  read the audit log
 ```
 
-Three of those four are automatable today. The first is not, and it is the one
-that gates the rest.
+All four are further along than they look. Building a signed artifact is
+automatable **for `main`** — this repo ships the CI workflow that does it —
+and driving a call and reading the log are `scripts/latch-smoke`. What is left
+is one real gap and two deliberate gates: nothing installs a built artifact on
+a target Mac; the `release` environment asks a human to approve the deployment;
+and publishing the draft, which is what makes installed apps update, should
+stay a human decision. Building an *unmerged* branch is the one place the
+local-keychain wall is still real.
 
 ---
 
@@ -66,11 +72,12 @@ For an **unmerged** branch it is still local:
 so it does not lift this. It also produces an artifact Gatekeeper refuses on any
 other machine, so it is a local-check build only.
 
-## Stop 2 — installing on the target (soft, once Stop 1 is solved)
+## Stop 2 — installing on the target (the one real gap)
 
 `ditto`ing an app bundle over `/Applications` needs no GUI. Quitting a running
-Latch does not either. So this becomes automatable the moment a notarized
-artifact can be produced without a human — see plow's
+Latch does not either. And the artifact already exists: Stop 1's workflow
+notarizes one and uploads it. What is missing is the script that resolves the
+newest one and puts it on a target — see plow's
 `scripts/plow-install/install-latest-production-build.sh` for the shape,
 including the graceful-quit-then-escalate window.
 
@@ -131,7 +138,8 @@ Everything up to the artifact:
   `build-release-candidate.yml` — a human approves the `release` environment,
   and nothing else about it needs a local keychain
 - drive one real MCP call against an install and read the verdict out of its
-  audit log, locally or over SSH: `scripts/latch-smoke`
+  audit log, locally or over SSH: `scripts/latch-smoke` — **given a client
+  registration**, which is Stop 3 and still comes from a GUI tab
 - read any install's `audit.ndjson` over SSH, given access to the host
 
 That is most of the loop. What is left is narrower than it looks, and only one

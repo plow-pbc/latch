@@ -93,13 +93,12 @@ describe.skipIf(!havePython())("latch-smoke verdict", () => {
 // a one-second window put the loop through a verdict and both of its hints.
 describe.skipIf(!havePython())("latch-smoke, run for real", () => {
   /** A home with `device/` and a 0600 token, and the argv to run against it. */
-  function fixture(timeout: string): { home: string; log: string; argv: string[] } {
+  function fixture(timeout: string): { log: string; argv: string[] } {
     const home = fs.mkdtempSync(path.join(tmp, "home-"));
     fs.mkdirSync(path.join(home, "device"));
     const tokenFile = path.join(home, "token");
     fs.writeFileSync(tokenFile, "t\n", { mode: 0o600 });
     return {
-      home,
       log: path.join(home, "device", "audit.ndjson"),
       argv: [script, "--url", "http://127.0.0.1:9/mcp", "--token-file", tokenFile,
         "--home", home, "--timeout", timeout],
@@ -109,10 +108,21 @@ describe.skipIf(!havePython())("latch-smoke, run for real", () => {
   // These drive the real `urllib` stack, which reads `http_proxy` through
   // `getproxies()` — so a developer with one exported sends the loopback URL
   // to their proxy and gets a different failure than the row names.
-  const env = { ...process.env, http_proxy: "", https_proxy: "", no_proxy: "*" };
+  // Both cases: `getproxies_environment` makes a SECOND pass over the
+  // `_PROXY`-suffixed names that overwrites the lowercase result, so clearing
+  // only the lowercase ones leaves an exported `HTTP_PROXY` in force.
+  const env = {
+    ...process.env,
+    http_proxy: "", HTTP_PROXY: "", https_proxy: "", HTTPS_PROXY: "",
+    no_proxy: "*", NO_PROXY: "*",
+  };
 
   it("reaches a verdict and annotates it, without a traceback", () => {
+    const started = Date.now();
     const run = spawnSync("python3", fixture("1").argv, { encoding: "utf8", env });
+    // The window an operator asks for is the window they get: an unbounded
+    // `sleep(5)` overshot a 1s timeout fivefold, and nothing here saw it.
+    expect(Date.now() - started).toBeLessThan(4_000);
     const out = run.stdout + run.stderr;
     expect(out).not.toContain("Traceback");
     expect(run.status).toBe(1);
@@ -124,19 +134,6 @@ describe.skipIf(!havePython())("latch-smoke, run for real", () => {
     // here, so `not saw_any` and `not arrived` are both true.)
     expect(out).toContain("The send never completed");
     expect(out).toContain("Nothing has ever been written at");
-  });
-
-  it("points a pre-intent isError at cause 2, not at the send", () => {
-    // `isError` is ALSO how the MCP layer refuses before an intent exists, so
-    // nothing is written to the log and the run times out — with a 200 on
-    // record. Blaming the send there points away from the answer already on
-    // screen.
-    const file = path.join(tmp, "hint-token");
-    fs.writeFileSync(file, "t\n", { mode: 0o600 });
-    const sent = call({ call: "send", url: "https://relay.invalid/mcp", status: 0, token: "t", raises: "is-error" },
-      file) as { hint: string };
-    expect(sent.hint).toContain("Cause 2");
-    expect(sent.hint).not.toContain("never completed");
   });
 
   // The suppression case, reached for real. The nonce is generated inside the
@@ -325,17 +322,31 @@ describe.skipIf(!havePython())("latch-smoke treats a response as evidence and an
     expect(sent.unknown).toBe(false);
   });
 
+  it("points a pre-intent isError at cause 2, not at the send", () => {
+    // `isError` is ALSO how the MCP layer refuses before an intent exists, so
+    // nothing is written to the log and the run times out — with a 200 on
+    // record. Blaming the send there points away from the answer already on
+    // screen.
+    const file = path.join(tmp, "hint-token");
+    fs.writeFileSync(file, "t\n", { mode: 0o600 });
+    const sent = call({ call: "send", url: "https://relay.invalid/mcp", status: 0, token: "t", raises: "is-error" },
+      file) as { hint: string };
+    expect(sent.hint).toContain("Cause 2");
+    expect(sent.hint).not.toContain("never completed");
+  });
+
   // A 200 is still a response, and two of them are refusals — but only one is
   // terminal. `isError` is what an ordinary DENIAL comes back as, after its
   // audit records already exist, so exiting on it reported "nothing reached
   // this Mac" about a call the owner had just refused. And the relay's own
   // error text is server-authored on an authenticated response, so it can
   // reflect the request back.
-  it.each([
+  const responses: [string, string, boolean, string | null][] = [
     ["a JSON-RPC error is terminal", "rpc-error", false, "relay answered"],
     ["isError is not, because a denial looks like this", "is-error", true, "isError"],
     ["and a 200 that went through reports nothing", "ok", false, null],
-  ])("%s", (_name, raises, unknown, contains) => {
+  ];
+  it.each(responses)("%s", (_name, raises, unknown, contains) => {
     const token = "sk-secret-MustNotAppear";
     const file = path.join(tmp, `${raises}-token`);
     fs.writeFileSync(file, `${token}\n`, { mode: 0o600 });
