@@ -17,12 +17,14 @@ import path from "node:path";
  * The directory every provider's payload lives under, in the packaged app's
  * Resources and in a checkout's `vendor/` alike.
  *
- * Six spellings of one INVARIANT segment — here, `scripts/vendored-staging.mjs`
- * (which TypeScript that has to build cannot import), `electron-builder.yml`
- * twice (`to:` and the `x64ArchFiles` alternation), `afterPack.cjs`, and
- * `.gitignore`/`worktree-setup.sh`. That is the trade for those sites carrying
- * no PROVIDER names at all, and a good one: these never change, where the
- * per-provider literals they replaced changed on every provider.
+ * Spelled in every place a provider payload is named — here,
+ * `scripts/vendored-staging.mjs` (which TypeScript that has to build cannot
+ * import), `electron-builder.yml`'s `from:`, `to:` and arch glob,
+ * `afterPack.cjs`, `.gitignore` and `worktree-setup.sh`. Deliberately not
+ * counted: two attempts at a number in this sentence were both wrong, and a
+ * count is a second thing to maintain. That repetition is the trade for those
+ * sites carrying no PROVIDER names at all, and a good one — this segment never
+ * changes, where the per-provider literals it replaced changed every time.
  *
  * The consequential pair is this constant against the yml's `to:`. If they
  * drift, afterPack's gate uses its own literal, agrees with `to:`, stays green,

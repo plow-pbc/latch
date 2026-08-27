@@ -85,8 +85,8 @@ const GOG = {
   // needed and they answer different questions: the tarball pin makes a
   // DOWNLOAD trustworthy, the binary pin makes the CACHE trustworthy — a tree
   // already carrying this version is never downloaded again, so without it a
-  // modified `vendor/providers/gog/<arch>/gog` is copied into the app, signed, and handed
-  // users' minted Google tokens.
+  // modified `vendor/providers/gog/<arch>/gog` is copied into the app, signed,
+  // and handed users' minted Google tokens.
   arches: {
     arm64: {
       asset: "darwin_arm64",
