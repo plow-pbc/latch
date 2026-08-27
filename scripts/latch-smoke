@@ -76,8 +76,23 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
 _OPENER = urllib.request.build_opener(_NoRedirect)
 
 
-def default_home():
-    """Where this Mac's install keeps its home, by `paths.ts`'s rule."""
+def resolve_home(explicit, ssh):
+    """The instance home to read, and whether the environment may answer.
+
+    Over ssh it may NOT: those variables describe THIS Mac, and a remote run
+    that silently adopted them would poll a path that means something else
+    there — producing a confident false timeout, which is the failure this
+    whole script exists to avoid.
+    """
+    if explicit:
+        return explicit
+    if ssh:
+        return f"{APP_DATA}/{HOME_PREFIX}"
+    # `paths.ts`'s rule, with one deliberate difference: an EMPTY `DOMO_HOME`
+    # reads as unset here. `paths.ts` uses `??`, so it would take "" as the
+    # home — and `DOMO_HOME= just clean` is a live idiom
+    # (`scripts/worktree-cleanup.sh`), which makes "" a value someone really
+    # sets. Filed as latch#189; treating it as unset is the useful reading.
     override = os.environ.get("DOMO_HOME")
     if override:
         return override
@@ -416,14 +431,20 @@ def main():
     # command is how the gog path is smoked; that one needs its own rule.
     argv = command or ["/bin/echo", "latch-smoke"]
 
-    # Env only answers for THIS Mac. Over ssh the remote's DOMO_HOME is not
-    # ours to read, so an explicit --home or the packaged default is all there
-    # is — and `remote_cat` expands the `~` on the far side.
-    home = args.home or (default_home() if not args.ssh else f"{APP_DATA}/{HOME_PREFIX}")
+    home = resolve_home(args.home, args.ssh)
     home = home if args.ssh else os.path.expanduser(home)
     log_path = os.path.join(home, "device", "audit.ndjson")
     nonce = f"latch-smoke-{time.strftime('%Y%m%dT%H%M%SZ', time.gmtime())}-{os.getpid()}"
     print(f"nonce={nonce}")
+    # WHICH home, always. A missing `audit.ndjson` is deliberately not a
+    # problem — a fresh install has none — so a wrong --home looks exactly like
+    # one, and the run reports a confident timeout about the wrong install.
+    print(f"home={home}")
+    if not args.ssh and not os.path.isdir(home):
+        print(f"REFUSED — no such home: {home}")
+        print("  Nothing was sent. A home that does not exist is a wrong --home (or a")
+        print("  DOMO_HOME/DOMO_BRANCH this shell does not have), not a fresh install.")
+        return 1
 
     # ONE deadline, started before any blocking call. `--timeout` is the whole
     # run's budget, not the poll loop's: it used to start after the send, so a

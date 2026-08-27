@@ -453,6 +453,8 @@ describe.skipIf(!havePython())("latch-smoke finds the same home the app uses", (
   // timeout for a call that had worked.
   const cases: [string, Record<string, string>, string][] = [
     ["DOMO_HOME wins", { DOMO_HOME: "/tmp/throwaway" }, "/tmp/throwaway"],
+    ["an empty DOMO_HOME reads as unset", { DOMO_HOME: "" },
+      "~/Library/Application Support/Plow-Latch"],
     ["a branch suffixes the folder", { DOMO_BRANCH: "feature-x" },
       "~/Library/Application Support/Plow-Latch-feature-x"],
     ["and neither is the packaged default", {},
@@ -462,6 +464,17 @@ describe.skipIf(!havePython())("latch-smoke finds the same home the app uses", (
   ];
   it.each(cases)("%s", (_name, envVars, expected) => {
     expect(call({ call: "home", env: envVars })).toEqual({ home: expected });
+  });
+
+  // The load-bearing half, and the one the precedence rows above cannot see:
+  // those variables describe THIS Mac, so a remote run that adopted them would
+  // poll a path meaning something else there — a confident false timeout.
+  it("ignores the environment entirely over ssh", () => {
+    expect(call({ call: "home", ssh: "u@h", env: { DOMO_HOME: "/tmp/mine", DOMO_BRANCH: "x" } }))
+      .toEqual({ home: "~/Library/Application Support/Plow-Latch" });
+    // ...but an explicit --home still wins, since the operator named it.
+    expect(call({ call: "home", ssh: "u@h", explicit: "/remote/home", env: { DOMO_HOME: "/tmp/mine" } }))
+      .toEqual({ home: "/remote/home" });
   });
 });
 

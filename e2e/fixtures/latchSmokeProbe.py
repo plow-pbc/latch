@@ -27,7 +27,7 @@ if request["call"] == "home":
     for key in ("DOMO_HOME", "DOMO_BRANCH"):
         os.environ.pop(key, None)
     os.environ.update(request.get("env", {}))
-    print(json.dumps({"home": smoke.default_home()}))
+    print(json.dumps({"home": smoke.resolve_home(request.get("explicit"), request.get("ssh"))}))
 elif request["call"] == "redirect-mechanism":
     # The opener `send` uses must actually carry the refusing handler, and that
     # handler must decline. Stubbing `_OPENER.open` — which every other row
