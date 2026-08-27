@@ -131,7 +131,7 @@ describe.skipIf(!havePython())("latch-smoke, run for real", () => {
     const run = spawnSync("python3", fixture("3").argv, { encoding: "utf8", env });
     // The window an operator asks for is roughly the window they get: an
     // unbounded sleep overshot fivefold and nothing here saw it.
-    expect(Date.now() - started).toBeLessThan(9_000);
+    expect(Date.now() - started).toBeLessThan(4_500);
     const out = run.stdout + run.stderr;
     expect(out).not.toContain("Traceback");
     expect(run.status).toBe(1);
@@ -145,22 +145,39 @@ describe.skipIf(!havePython())("latch-smoke, run for real", () => {
     expect(out).toContain("Nothing has ever been written at");
   });
 
+  it("rejects a window too short to answer in, at parse time", () => {
+    // Below the floor the downstream guard refused every time, naming the
+    // window rather than the flag that set it. `--timeout 1` and `2` are both
+    // unusable, so this belongs in argument parsing.
+    const run = spawnSync("python3", fixture("1").argv, { encoding: "utf8", env });
+    const out = run.stdout + run.stderr;
+    expect(run.status).toBe(2);
+    expect(out).toContain("--timeout must be at least");
+    expect(out).not.toContain("nonce=");
+  });
+
+  // The regression the read floor exists for, end to end: at expiry the poll
+  // loop used to starve its own last read and report an unreadable log instead
+  // of the verdict it had the evidence for.
+  it("names the real cause when an ssh read outlives the window", () => {
+    const home = fs.mkdtempSync(path.join(tmp, "home-"));
+    fs.mkdirSync(path.join(home, "device"));
+    const tokenFile = path.join(home, "token");
+    fs.writeFileSync(tokenFile, "t\n", { mode: 0o600 });
+    const slow = fakeSsh("sleep 1\necho '{\"event\":\"intent_received\",\"intentId\":\"z\",\"goal\":\"other\"}'");
+    const run = spawnSync("python3", [script, "--url", "http://127.0.0.1:9/mcp",
+      "--token-file", tokenFile, "--home", "/remote", "--ssh", "u@h", "--timeout", "4"],
+      { encoding: "utf8", env: { ...env, PATH: `${slow}:${process.env.PATH ?? ""}` } });
+    const out = run.stdout + run.stderr;
+    expect(out).not.toContain("Traceback");
+    expect(out).toContain("TIMEOUT — nothing carrying");
+    expect(out).not.toContain("stopped being readable");
+  });
+
   // The suppression case, reached for real. The nonce is generated inside the
   // run, so the record is written from the outside once the script has printed
   // it — which is also the only way anything external can correlate with a
   // run, and worth having demonstrated.
-  it("refuses rather than send a call with no time to answer", () => {
-    // A baseline read that nearly consumed the window used to still fire a
-    // call with milliseconds to answer in — which raises a dialog on someone's
-    // Mac that nothing can then verify.
-    const run = spawnSync("python3", fixture("1").argv, { encoding: "utf8", env });
-    const out = run.stdout + run.stderr;
-    expect(run.status).toBe(1);
-    expect(out).toContain("REFUSED");
-    expect(out).toContain("left of the 1s window");
-    expect(out).not.toContain("UNVERIFIED");
-  });
-
   it("does not blame the send when the verdict proves it arrived", async () => {
     const { log, argv } = fixture("25");
     const child = spawn("python3", argv, { stdio: ["ignore", "pipe", "pipe"], env });
