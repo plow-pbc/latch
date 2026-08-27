@@ -360,7 +360,9 @@ describe.skipIf(!havePython())("latch-smoke treats a response as evidence and an
   // row stubs `_OPENER.open`, so deleting the handler entirely would leave
   // them all green.
   it("carries a handler that declines redirects, in the opener send uses", () => {
-    expect(call({ call: "redirect-mechanism" })).toEqual({ declines: true, inOpener: true });
+    expect(call({ call: "redirect-mechanism" })).toEqual({
+      declines: true, inOpener: true, headersAreCaseInsensitive: true,
+    });
   });
 
   // The catch-all returns the class NAME, never the message — `putheader`
