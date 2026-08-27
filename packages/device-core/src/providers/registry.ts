@@ -58,15 +58,28 @@ export interface VendoredProvider {
    * Reject argv the human must not be asked to approve, before any intent
    * exists. Returns a reason, or null.
    *
-   * Two jobs. It refuses arguments that would disarm the belt or read/write
-   * local files through the CLI — hazards a human cannot see by reading the
-   * command, because the command itself looks legitimate. And it refuses a
-   * group outside the minted token's scopes — the one mistake that SPENDS the
-   * delegation — plus the two spellings gog would not diagnose usefully,
-   * because it never sees them as a command at all.
+   * Four refusals, in two groups.
    *
-   * It deliberately does NOT mirror the binary's command grammar: gog reports
-   * its own usage mistakes locally, with no network call and nothing spent.
+   * Arguments that would disarm the belt or read/write local files through the
+   * CLI — hazards a human cannot see by reading the command, because the
+   * command itself looks legitimate.
+   *
+   * And three shapes of a wrong command: a group outside the minted token's
+   * scopes, a leading global flag, a dotted spelling — plus an empty argv.
+   * What those three have in common is that gog's own error would not help.
+   * An out-of-scope group is the only one it would even try: it reaches Google
+   * and returns 401. The other two it rejects, but for reasons that read as
+   * argument errors rather than "put the command first" or "use separate
+   * words", which are what the agent needs to hear.
+   *
+   * It deliberately does NOT mirror the binary's command grammar. A misspelt
+   * leaf is left to gog, which says `did you mean "search"?` — better than a
+   * mirrored list can — and says it without reaching Google. Note what that
+   * does still cost: this Mac mints BEFORE it execs, so a typo spends a mint
+   * even though nothing reaches Google. That is the accepted price of not
+   * carrying 101 leaf names, and it is cheap — Plow returns a cached token
+   * outside a 60s expiry buffer, so a wasted mint is usually not even a
+   * Google-facing refresh.
    */
   readonly refuse: (argv: readonly string[]) => string | null;
   /**
