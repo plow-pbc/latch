@@ -39,7 +39,7 @@ A nonce makes the audit line unambiguous — a busy install has other traffic, a
 NONCE="latch-smoke-$(date -u +%Y%m%dT%H%M%SZ)"
 # Captured BEFORE the send: Verify filters for lines written during it, so a
 # bound taken afterwards excludes the very events it is looking for.
-SINCE=$(date -u +%Y-%m-%dT%H:%M:%S)
+SINCE=$(date -u -v-1M +%Y-%m-%dT%H:%M:%S 2>/dev/null || date -u -d '1 minute ago' +%Y-%m-%dT%H:%M:%S)
 # EXPORTED: the guards below set shell variables, and the heredoc reads the
 # ENVIRONMENT — without this an operator who satisfies the guard still dies on
 # a bare KeyError.
@@ -114,6 +114,9 @@ install, and `Plow-Latch-<branch>` for a from-source run
 ```bash
 NONCE="<value printed by Send>"
 SINCE="<value printed by Send>"   # every audit line carries an ISO ts
+# On the ssh path SINCE is the OPERATOR's clock and `ts` is the TARGET's. A
+# target running behind can drop its own line; back the bound off a minute
+# rather than trusting two machines to agree.
 HOME_DIR="${HOME_DIR:-$HOME/Library/Application Support/Plow-Latch}"
 SCRIPT='NONCE="'"$NONCE"'"; LOG="'"$HOME_DIR"'/device/audit.ndjson"; SINCE="'"$SINCE"'";
 # Read the intentId out of one JSON line. Once, not three times.
@@ -122,16 +125,19 @@ intent_id() { python3 -c "import json,sys; print(json.load(sys.stdin).get(\"inte
 # anywhere on a line, and a second unanchored grep can satisfy its condition on
 # a different record entirely.
 lines_for() { grep -F "\"intentId\":\"$1\"" "$LOG" 2>/dev/null; }
+# The first line carrying the nonce. Spelled once so two sites cannot ask for
+# the same thing two ways.
+first_nonce_line() { grep -m1 "$NONCE" "$LOG" 2>/dev/null; }
 for i in $(seq 1 24); do
   # exec_start ONLY. intent_received records capabilityDisplay, which for a
   # process.exec includes the argv — so it carries the nonce too, and it is
   # written BEFORE the decision. Matching the nonce alone reports success on a
   # call the owner denied, which is the exact false positive this gate exists
   # to prevent. Its intentId keys the exec_end that follows.
-  LINE=$(grep "$NONCE" "$LOG" 2>/dev/null | grep -m1 "\"event\":\"exec_start\"") || true
+  LINE=$(grep "$NONCE" "$LOG" 2>/dev/null | grep -m1 "\"event\":\"exec_start\"")
   # A denial is written immediately after policy.decide, so there is nothing to
   # wait for — report it now rather than burning the full window.
-  SEEN_ID=$(grep "$NONCE" "$LOG" 2>/dev/null | head -1 | intent_id)
+  SEEN_ID=$(first_nonce_line | intent_id)
   DECISION=$([ -n "$SEEN_ID" ] && lines_for "$SEEN_ID" | grep -F "\"event\":\"intent_decision\"" | head -1)
   if printf %s "$DECISION" | grep -q "\"decision\":\"deny\""; then
     printf "%s\n" "$DECISION"
@@ -148,7 +154,7 @@ for i in $(seq 1 24); do
 done
 # Nonce present => it reached this Mac, and the branch reads the decision to say
 # which outcome. Nonce absent => the echo further down.
-ANY=$(grep -m1 "$NONCE" "$LOG" 2>/dev/null)
+ANY=$(first_nonce_line)
 if [ -n "$ANY" ]; then
   echo "$ANY"
   ID=$(printf %s "$ANY" | intent_id)
@@ -191,7 +197,7 @@ bash -c "$SCRIPT"                                                   # local inst
 # ssh -o ConnectTimeout=8 -o BatchMode=yes <user>@<host> "$SCRIPT"   # remote (host map: tailscale-ssh skill)
 ```
 
-Three outcomes; only success exits 0:
+Four outcomes; only success exits 0:
 
 | Output | Exit | Means |
 |---|---|---|
@@ -238,9 +244,11 @@ four Google scopes and refuses everything else by design.
   re-activate.
 - `DENIED` → the owner refused it. The relay and the device both worked; this
   is a product decision, not a fault.
-- Call returns, the log carries the nonce, no `exec_start` and no `DENIED` →
-  it arrived and is sitting unanswered at the approval dialog. Not a plumbing
-  problem.
+- Call returns, the log carries the nonce, and the script says `TIMEOUT -
+  reached this Mac` → it arrived and is sitting unanswered at the approval
+  dialog. Not a plumbing problem.
+- `ALLOWED but not yet started` → approved as the window closed. Re-run Verify;
+  if it stays that way, the exec failed to launch and `exec_error` says why.
 - Call returns, and *nothing* carries the nonce → three possibilities, and the
   Verify step's timeout branch enumerates them: a **different** install's log
   (check the instance home — branch-suffixed homes are the usual cause), a
