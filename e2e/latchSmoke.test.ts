@@ -151,31 +151,40 @@ describe.skipIf(!havePython())("latch-smoke, run for real", () => {
     expect(out).toContain("Nothing has ever been written at");
   });
 
-  // Every refusal that happens before anything is sent. The columns are what
-  // actually differs: the two argparse rows never reach the run, so they print
-  // no `home=` — and the one that reaches `send` has already printed a nonce
-  // by then, so it must RETRACT it rather than never having offered one.
-  const refusals: [string, () => string[], number, string, boolean, boolean][] = [
-    ["a local home that does not exist", () => fixture("5", path.join(tmp, "not-a-home")).argv,
-      1, "REFUSED — no such home", true, false],
+  // Every refusal that happens before an intent exists. The columns are what
+  // actually differs: the argparse rows never reach the run, so they print no
+  // `home=` — and a row that reaches `send` has already printed a nonce by
+  // then, so it must RETRACT it rather than never having offered one.
+  //
+  // The home column is the expected string, not a boolean: `home=` exists so a
+  // wrong one is visible, and asserting only that some home was named would
+  // not catch it naming the wrong one.
+  const NOT_A_HOME = path.join(tmp, "not-a-home");
+  // A real home for the row that gets far enough to name one.
+  const REAL_HOME = fs.mkdtempSync(path.join(tmp, "refusal-home-"));
+  fs.mkdirSync(path.join(REAL_HOME, "device"));
+  const refusals: [string, () => string[], number, string, string | null, boolean][] = [
+    ["a local home that does not exist", () => fixture("5", NOT_A_HOME).argv,
+      1, "REFUSED — no such home", NOT_A_HOME, false],
     ["an empty --home, which is a failed command substitution", () => fixture("5", "").argv,
-      2, "--home was empty", false, false],
-    ["a window of 1s", () => fixture("1").argv, 2, "--timeout must be more than", false, false],
+      2, "--home was empty", null, false],
+    ["a window of 1s", () => fixture("1").argv, 2, "--timeout must be more than", null, false],
     // `2` is the case that makes the bound exclusive: the baseline read always
     // consumes something, so exactly MIN_SEND_S leaves less than it.
-    ["a window of exactly 2s", () => fixture("2").argv, 2, "--timeout must be more than", false, false],
+    ["a window of exactly 2s", () => fixture("2").argv, 2, "--timeout must be more than", null, false],
     ["a URL that never reaches a socket", () => {
-      const argv = fixture("5").argv;
+      const argv = fixture("5", REAL_HOME).argv;
       const i = argv.indexOf("--url");
       return [...argv.slice(0, i + 1), "relay.plow.com/mcp", ...argv.slice(i + 2)];
-    }, 1, "The request never left this Mac", true, true],
+    }, 1, "The request never left this Mac", REAL_HOME, true],
   ];
-  it.each(refusals)("refuses %s", (_name, build, status, says, namesHome, retractsNonce) => {
+  it.each(refusals)("refuses %s", (_name, build, status, says, home, retractsNonce) => {
     const run = spawnSync("python3", build(), { encoding: "utf8", env });
     const out = run.stdout + run.stderr;
     expect(run.status).toBe(status);
     expect(out).toContain(says);
-    expect(out.includes("home=")).toBe(namesHome);
+    if (home === null) expect(out).not.toContain("home=");
+    else expect(out).toContain(`home=${home}`);
     // Either it never offered a handle, or it took it back.
     expect(out.includes("nonce=")).toBe(retractsNonce);
     if (retractsNonce) expect(out).toContain("corresponds to no call");

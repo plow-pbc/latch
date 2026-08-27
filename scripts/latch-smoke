@@ -477,7 +477,11 @@ def main():
         reason, unknown, _hint = sent
         if not unknown:
             print(f"REFUSED — {reason}")
-            print("  The nonce above corresponds to no call: nothing was sent.")
+            # "no intent was created" holds for all five terminal branches;
+            # "nothing was sent" is true of only two of them — a 4xx, a
+            # JSON-RPC error and a redirect all sent something and got an
+            # answer back.
+            print("  The nonce above corresponds to no call: no intent was created.")
             return 1
         print(f"UNVERIFIED — {reason}")
 
