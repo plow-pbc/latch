@@ -29,6 +29,13 @@ const PAYLOADS = [
  * Keyed by the piece the hook names when it is the one missing. */
 const VAULT_INTERIOR = ["arm64/vaultwarden", "x86_64/vaultwarden", "web-vault/index.html"];
 
+// @ts-expect-error — a build-time .mjs with no type declarations.
+import { VENDORED } from "../../../scripts/vendored-providers.mjs";
+
+/** Every vendored CLI the packed app must carry, and the arches it stages. */
+const PROVIDERS: { command: string; arches: Record<string, unknown> }[] = VENDORED;
+const COMMANDS = PROVIDERS.map((p) => p.command);
+
 const IDENTITY = "Developer ID Application: Nobody (TEAMID)";
 
 /** `mac` is electron-builder's resolved mac config. It defaults to carrying the
@@ -49,18 +56,20 @@ describe("the packaging hook refuses before it signs", () => {
   const resourcesDir = () => path.join(dir, "Plow Latch.app", "Contents", "Resources");
   const runtimeDir = () => path.join(resourcesDir(), "browser-runtime");
 
-  /** gog as production ships it: one thin binary per arch. */
-  const packGog = () => {
-    for (const arch of ["arm64", "x64"]) {
-      fs.mkdirSync(path.join(resourcesDir(), "gog", arch), { recursive: true });
-      fs.writeFileSync(path.join(resourcesDir(), "gog", arch, "gog"), "#!/bin/sh\n");
+  /** Every provider as production ships it: one thin binary per arch. */
+  const packProviders = () => {
+    for (const { command, arches } of PROVIDERS) {
+      for (const arch of Object.keys(arches)) {
+        fs.mkdirSync(path.join(resourcesDir(), command, arch), { recursive: true });
+        fs.writeFileSync(path.join(resourcesDir(), command, arch, command), "#!/bin/sh\n");
+      }
     }
   };
 
   /** A packed app whose payloads all carry something, minus `omit`. */
   const pack = (omit?: string) => {
     const runtime = runtimeDir();
-    packGog();
+    packProviders();
     for (const payload of PAYLOADS) {
       if (payload === omit) continue;
       fs.mkdirSync(path.join(runtime, payload), { recursive: true });
@@ -170,27 +179,47 @@ describe("the packaging hook refuses before it signs", () => {
     );
   });
 
-  it.each(["arm64", "x64"])("refuses a packed app with no gog for %s", async (arch) => {
-    // Silent half-install: a tree carrying only the packaging Mac's arch
-    // clears every other gate and reaches the other arch's users with nothing.
+  it.each(PROVIDERS.flatMap((p) => Object.keys(p.arches).map((arch) => [p.command, arch])))(
+    "refuses a packed app with no %s for %s",
+    async (command, arch) => {
+      // Silent half-install: a tree carrying only the packaging Mac's arch
+      // clears every other gate and reaches the other arch's users with nothing.
+      pack();
+      fs.rmSync(path.join(resourcesDir(), command, arch), { recursive: true, force: true });
+      await expect(afterPack(contextFor(dir))).rejects.toThrow(
+        new RegExp(`no ${command} for ${arch}`),
+      );
+    },
+  );
+
+  it.each(
+    COMMANDS.flatMap((command) =>
+      [
+        {
+          how: "a zero-byte binary",
+          damage: (d: string) => fs.writeFileSync(path.join(d, command), ""),
+        },
+        {
+          how: "an arch folder carrying only a stray file",
+          damage: (d: string) => {
+            fs.rmSync(path.join(d, command));
+            fs.writeFileSync(path.join(d, ".DS_Store"), "junk");
+          },
+        },
+      ].map((c) => ({ ...c, command })),
+    ),
+  )("refuses $command with $how, not just an absent directory", async ({ command, damage }) => {
     pack();
-    fs.rmSync(path.join(resourcesDir(), "gog", arch), { recursive: true, force: true });
-    await expect(afterPack(contextFor(dir))).rejects.toThrow(new RegExp(`no gog for ${arch}`));
+    damage(path.join(resourcesDir(), command, "arm64"));
+    await expect(afterPack(contextFor(dir))).rejects.toThrow(new RegExp(`no ${command} for arm64`));
   });
 
-  it.each([
-    { how: "a zero-byte gog", damage: (d: string) => fs.writeFileSync(path.join(d, "gog"), "") },
-    {
-      how: "an arch folder carrying only a stray file",
-      damage: (d: string) => {
-        fs.rmSync(path.join(d, "gog"));
-        fs.writeFileSync(path.join(d, ".DS_Store"), "junk");
-      },
-    },
-  ])("refuses $how, not just an absent directory", async ({ damage }) => {
+  it.each(COMMANDS)("names every arch %s is missing, not just the first", async (command) => {
+    // One run of `just fetch-vendored` fixes both; being told about one arch at
+    // a time means two package runs to learn that.
     pack();
-    damage(path.join(resourcesDir(), "gog", "arm64"));
-    await expect(afterPack(contextFor(dir))).rejects.toThrow(/no gog for arm64/);
+    fs.rmSync(path.join(resourcesDir(), command), { recursive: true, force: true });
+    await expect(afterPack(contextFor(dir))).rejects.toThrow(/arm64, x64/);
   });
 
   it("refuses a camoufox tree a fuse left without a bundle", async () => {
