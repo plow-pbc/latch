@@ -30,9 +30,9 @@ import { execFileSync } from "node:child_process";
  *  2. Run `just fetch-vendored gog`. It asserts, against the binary it just
  *     extracted, that no gog flag is negatable — the one spelling
  *     `gogFlags.ts` cannot see — and that the extracted bytes match `binary`.
- *  3. Re-run these five BY HAND against the new binary. Each is a spelling
- *     that would disarm a belt flag while matching neither the reserved set
- *     nor either rule, and all five are `unknown flag` at 0.36.0:
+ *  3. Re-run these six BY HAND against the new binary. The first five are
+ *     spellings that would disarm a belt flag while matching neither the
+ *     reserved set nor either rule; all five are `unknown flag` at 0.36.0:
  *
  *         gog gmail send … --no-readonly
  *         gog gmail send … --no-wrap-untrusted
@@ -40,10 +40,15 @@ import { execFileSync } from "node:child_process";
  *         gog gmail send … -readonly=false
  *         gog gmail send … -readonly false
  *
- *     And that `--help` in a flag's VALUE position is still refused by gog
- *     itself — `gog gmail send --subject --help` → `expected string value` at
- *     0.36.0. `refuse` lets that shape through without a group check, so gog's
- *     own refusal is what keeps the help allowance narrow enough.
+ *     The sixth is not a disarming spelling but the verdict the help allowance
+ *     RESTS on — `expected string value` at 0.36.0:
+ *
+ *         gog gmail send --to x@y --subject --help
+ *
+ *     `isHelpInvocation` accepts that shape, so `refuse` returns null with no
+ *     group check and nothing is minted. If a bump ever made kong take `--help`
+ *     there as a literal subject, a `gmail send` would run unrefused. Nothing
+ *     else on this list would catch it, which is why it is on this list.
  *
  *  4. Re-run the one that proves the gate is load-bearing: appending
  *     `--readonly=false` to an otherwise-refused `gmail send` must be refused

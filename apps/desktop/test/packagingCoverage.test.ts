@@ -12,14 +12,15 @@
  * tools for one arch, or a ~13 MB binary committed to git.
  *
  * Every assertion here is against the thing that actually decides — the glob
- * matched against a real packaged path, an ignore line resolved for a later
- * negation of itself, the clone list's own tokens. A substring check reads the
+ * matched against a real packaged path, the ignore rule asked of git itself,
+ * the clone list's own tokens. A substring check reads the
  * same and passes on edits that do not work: adding a provider to the INNER
  * alternation of the arch glob contains its name while matching none of its
  * paths, and a provider named `vault` is a substring of `vault-cli` at once.
  */
 import { describe, expect, it } from "vitest";
 import fs from "node:fs";
+import { spawnSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { minimatch } from "minimatch";
@@ -60,25 +61,22 @@ const clonedDirs = (() => {
   return tokens;
 })();
 
-/** `.gitignore`'s effective patterns, negations KEPT — see `isIgnored`. */
-const ignorePatterns = read(".gitignore")
-  .split("\n")
-  .map((l) => l.trim())
-  .filter((l) => l !== "" && !l.startsWith("#"));
-
 /**
- * Whether this EXACT pattern survives a later negation of itself, by git's
- * last-match-wins rule.
+ * Whether git ignores a path under this provider's vendor tree.
  *
- * Not a gitignore engine: git treats `/vendor/gog/`, `vendor/gog` and others as
- * the same pattern, and none of those spellings is resolved here. What it
- * catches is the one shape that made the old substring check wrong — a file
- * carrying `vendor/gog/` AND a later `!vendor/gog/` ignores nothing, while the
- * positive line is still present to be found.
+ * Asked of git, which is the thing that actually decides — matching the rest of
+ * this file. Parsing `.gitignore` here instead meant re-implementing its
+ * grammar badly: a hand-rolled last-match-wins over one exact spelling missed
+ * that `/vendor/gog/` and `vendor/gog` are the same pattern, so a later
+ * negation written either way left the check green with nothing ignored.
+ *
+ * `check-ignore` exits 0 when the path is ignored and 1 when it is not.
  */
-function isIgnored(pattern: string): boolean {
-  const last = ignorePatterns.filter((l) => l === pattern || l === `!${pattern}`).pop();
-  return last === pattern;
+function ignoresVendorTree(command: string): boolean {
+  const { status } = spawnSync("git", ["check-ignore", "-q", `vendor/${command}/probe`], {
+    cwd: repoRoot,
+  });
+  return status === 0;
 }
 
 describe.each(PROVIDERS)("packaging covers $command", ({ command, arches }) => {
@@ -117,7 +115,7 @@ describe.each(PROVIDERS)("packaging covers $command", ({ command, arches }) => {
     // Otherwise a multi-megabyte binary lands in a commit, and the pin stops
     // being the only thing deciding what ships. A commented-out or later-negated
     // line reads the same in the file and ignores nothing.
-    expect(isIgnored(`vendor/${command}/`)).toBe(true);
+    expect(ignoresVendorTree(command)).toBe(true);
   });
 
   it("is cloned into a new worktree", () => {

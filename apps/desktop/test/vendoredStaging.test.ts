@@ -97,14 +97,22 @@ describe("isStaged", () => {
  */
 describe("the fetcher's argv check", () => {
   const script = path.join(repoRoot, "scripts/fetch-vendored.mjs");
+  // A timeout because spawnSync blocks the thread, so vitest's own cannot
+  // preempt it: a regression that moved the argv check below the fetch would
+  // hang the suite rather than fail it, having run curl against the real
+  // checkout — the script takes its root from its own file URL, so nothing
+  // here can redirect it.
   const run = (args: string[]) =>
-    spawnSync(process.execPath, [script, ...args], { encoding: "utf8" });
+    spawnSync(process.execPath, [script, ...args], { encoding: "utf8", timeout: 15_000 });
 
   it.each([
     ["no provider named", []],
     ["one that is not in the manifest", ["not-a-provider"]],
   ])("exits 2 with usage when given %s", (_how, args) => {
-    const { status, stderr } = run(args as string[]);
+    const { status, stderr, error } = run(args as string[]);
+    // Named before the status check: a spawn that never ran surfaces as
+    // `expected null to be 2`, which points at neither cause.
+    expect(error).toBeUndefined();
     expect(status).toBe(2);
     expect(stderr).toContain("usage: fetch-vendored.mjs");
   });
