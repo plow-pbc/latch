@@ -308,7 +308,11 @@ export const TOOLS: ToolSpec[] = [
         },
         network: {
           type: "boolean",
-          description: "Whether the command needs network access (default false)",
+          description:
+            "Whether the command needs network access (default false). A vendored " +
+            "provider command other than --help does not need this: it reaches its " +
+            "service by definition, so the capability is added for you and shown to " +
+            "the approver either way.",
         },
         wait_ms: {
           type: "integer",

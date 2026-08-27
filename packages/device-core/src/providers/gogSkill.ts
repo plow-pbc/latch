@@ -51,9 +51,10 @@ Useful starting points:
 Each element is one argument. There is no shell here, so nothing is quoted or
 word-split: a query with spaces is a single element, exactly as written.
 
-You do not pass \`network\`. A gog command reaches Google by definition, so this
-Mac adds the network capability itself and the human sees it in the approval
-dialog. \`--help\` is the exception, and needs nothing: it prints and exits.
+You do not pass \`network\`, and passing \`false\` does not turn it off. A gog
+command reaches Google by definition, so this Mac adds the capability itself and
+the human sees it in the approval dialog either way. \`--help\` is the exception,
+and needs nothing: it prints and exits.
 
 Run \`["gog","--help"]\` for the top level and \`["gog","gmail","--help"]\` (or any
 group) for the rest; the binary is the authority, not this page. Help runs
