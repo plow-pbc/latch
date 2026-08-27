@@ -38,7 +38,7 @@ elif request["call"] == "redirect-mechanism":
         "inOpener": any(isinstance(h, smoke._NoRedirect) for h in smoke._OPENER.handlers),
     }))
 elif request["call"] == "read":
-    records, problem = smoke.read_log(request["path"], request.get("ssh"), request.get("budget", 30), request.get("home"))
+    records, problem = smoke.read_log(request["path"], request.get("ssh"), request.get("budget", 30), request["home"])
     print(json.dumps({"count": len(records), "problem": problem or ""}))
 elif request["call"] == "remote":
     print(json.dumps(smoke.remote_cat(request["path"], request["home"])))

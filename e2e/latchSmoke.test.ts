@@ -183,7 +183,9 @@ describe.skipIf(!havePython())("latch-smoke, run for real", () => {
   it("refuses a remote run whose home is not there", () => {
     const { argv } = fixture("5");
     const noHome = fakeSsh("exit 4");
-    const run = spawnSync("python3", [...argv, "--ssh", "u@h", "--home", "/remote/home"],
+    const i = argv.indexOf("--home");
+    const run = spawnSync("python3",
+      [...argv.slice(0, i + 1), "/remote/home", ...argv.slice(i + 2), "--ssh", "u@h"],
       { encoding: "utf8", env: { ...env, PATH: `${noHome}:${process.env.PATH ?? ""}` } });
     const out = run.stdout + run.stderr;
     expect(run.status).toBe(1);
@@ -191,6 +193,21 @@ describe.skipIf(!havePython())("latch-smoke, run for real", () => {
     expect(out).toContain("no such home on u@h");
     // Nothing was sent, so no window was ever opened and no nonce is in play.
     expect(out).not.toContain("waiting up to");
+    expect(out).not.toContain("nonce=");
+  });
+
+  it("refuses when the baseline read ate the window, without a nonce", () => {
+    // The third path that prints no nonce, and the only one reached at
+    // RUNTIME rather than in argument parsing.
+    const { argv } = fixture("3");
+    const slow = fakeSsh("sleep 2\necho '{}'");
+    const i = argv.indexOf("--home");
+    const run = spawnSync("python3",
+      [...argv.slice(0, i + 1), "/remote/home", ...argv.slice(i + 2), "--ssh", "u@h"],
+      { encoding: "utf8", env: { ...env, PATH: `${slow}:${process.env.PATH ?? ""}` } });
+    const out = run.stdout + run.stderr;
+    expect(run.status).toBe(1);
+    expect(out).toContain("REFUSED — under 2s left");
     expect(out).not.toContain("nonce=");
   });
 
@@ -311,8 +328,8 @@ describe.skipIf(!havePython())("latch-smoke reads the log where it lives", () =>
     fs.writeFileSync(populated, `{"event":"intent_received"}\nnot json\n{"event":"exec_end"}\n`);
     // Unparseable lines are skipped, not fatal — the log is append-only and a
     // record can be half-written when the read lands.
-    expect(call({ call: "read", path: populated })).toEqual({ count: 2, problem: "" });
-    expect(call({ call: "read", path: path.join(dir, "absent.ndjson") })).toEqual({ count: 0, problem: "" });
+    expect(call({ call: "read", path: populated, home: dir })).toEqual({ count: 2, problem: "" });
+    expect(call({ call: "read", path: path.join(dir, "absent.ndjson"), home: dir })).toEqual({ count: 0, problem: "" });
   });
 
   // Root bypasses the permission bits, so this row inverts rather than failing
@@ -322,7 +339,7 @@ describe.skipIf(!havePython())("latch-smoke reads the log where it lives", () =>
     const locked = path.join(dir, "locked.ndjson");
     fs.writeFileSync(locked, "{}\n");
     fs.chmodSync(locked, 0o000);
-    const read = call({ call: "read", path: locked }) as { count: number; problem: string };
+    const read = call({ call: "read", path: locked, home: dir }) as { count: number; problem: string };
     expect(read.count).toBe(0);
     expect(read.problem).not.toBe("");
   });
