@@ -184,8 +184,8 @@ try {
   // negatable flags from a key nothing reads.
   //
   // Does NOT cover: a renamed `negated` key. The count stays intact and
-  // `negatable` stays empty. Only the `--no-*` hand probes recorded in
-  // gogFlags.ts bear on that, which is why they are not optional on a bump.
+  // `negatable` stays empty. Only step 3's hand probes in this file's header
+  // bear on that, which is why they are not optional on a bump.
   if (flagsSeen < 500) {
     throw new Error(`only ${flagsSeen} flags parsed from gog's schema — has its shape changed?`);
   }

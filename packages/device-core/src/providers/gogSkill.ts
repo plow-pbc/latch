@@ -28,7 +28,11 @@ through \`plow_run_command\`, like any other command. There is no Google tool in
 Most of Gmail and Calendar. **Drive, Docs, Sheets and the rest of gog are not
 connected at all** — this Mac refuses any group other than \`gmail\` and
 \`calendar\` before approval, before the token is minted and before anything
-runs, so those never reach Google at all. The token carries four Google scopes
+runs, and gog is additionally launched with \`--enable-commands=gmail,calendar\`
+so it refuses them itself. Either way they never reach Google.
+
+gog's own aliases work: \`mail\` and \`email\` are \`gmail\`, and \`cal\` is
+\`calendar\`. The canonical spellings are the ones this page uses. The token carries four Google scopes
 (gmail.readonly, gmail.modify, calendar.readonly, calendar.events).
 
 Inside them the scopes are not total either: \`gmail settings\` (forwarding,
@@ -53,12 +57,15 @@ word-split: a query with spaces is a single element, exactly as written.
 
 You do not pass \`network\`, and passing \`false\` does not turn it off. A gog
 command reaches Google by definition, so this Mac adds the capability itself and
-the human sees it in the approval dialog either way. \`--help\` is the exception,
-and needs nothing: it prints and exits.
+the human sees it in the approval dialog either way. Asking for help is the
+exception and needs nothing — but only in its narrow form: \`--help\` or \`-h\`
+as the LAST argument, with no \`--\` before it.
+\`["gog","gmail","search","--help","q"]\` is a real search, not a help request.
 
 Run \`["gog","--help"]\` for the top level and \`["gog","gmail","--help"]\` (or any
 group) for the rest; the binary is the authority, not this page. Help runs
-without minting a token.
+without minting a token — again, only when the flag is LAST and no \`--\`
+precedes it.
 
 ## Rules that are enforced, not advice
 

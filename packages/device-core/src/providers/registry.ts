@@ -50,8 +50,20 @@ export interface VendoredProvider {
    * capability and enforced it with gog's `--readonly`; under this pattern the
    * capability IS the argv, so the human approves the literal command and
    * there is no claim left to enforce. What remains are the flags that are
-   * unconditionally right: no interactive prompting in a headless child, and
-   * the marker that keeps fetched message text from reading as instructions.
+   * unconditionally right: no interactive prompting in a headless child, the
+   * marker that keeps fetched message text from reading as instructions, and
+   * the scope bound.
+   *
+   * `--enable-commands` is the scope bound, and it makes gog enforce it
+   * ITSELF — verified against pinned 0.36.0 on darwin/arm64, the binary that
+   * ships: `drive ls` reaches Google and returns 4, and
+   * `--enable-commands=gmail,calendar drive ls` exits 2 with `command "drive
+   * ls" is not enabled` and no network call. `refuse` still checks the group,
+   * because it does so before the approval dialog and before the mint; this
+   * is the layer under it, and the one that still holds if the other is ever
+   * wrong. gog's last-wins parsing would let a caller append their own
+   * `--enable-commands` to widen it — confirmed reaching Google — which is
+   * exactly why that flag and its siblings are already in `RESERVED_EXACT`.
    */
   readonly belt: readonly string[];
   /**
@@ -103,7 +115,12 @@ export interface VendoredProvider {
 }
 
 /**
- * The groups the minted token's four Google scopes actually reach.
+ * The groups the minted token's four Google scopes actually reach, **with the
+ * aliases gog answers to.** Its own usage line is `gog gmail (mail,email)` and
+ * `gog calendar (cal)`, and all three of the alias spellings dispatch to the
+ * real surface — verified against the pinned binary. Without them this refused
+ * `gog mail search q` as out of scope when it is Gmail: a false negative, and
+ * the sort a bumper should re-check, since the aliases are gog's to change.
  *
  * The one check that decides whether a command is refused at all — every
  * wrong-command shape `refuse` enumerates fails it, and the other branches
@@ -111,7 +128,13 @@ export interface VendoredProvider {
  * written once, in `refuse`'s doc: a second account here is what produced
  * three rounds of one copy drifting out of step with another.
  */
-const GOG_GROUPS: ReadonlySet<string> = new Set(["gmail", "calendar"]);
+const GOG_GROUPS: ReadonlySet<string> = new Set([
+  "gmail",
+  "mail",
+  "email",
+  "calendar",
+  "cal",
+]);
 
 /**
  * `... --help`, which names no group and reaches nothing.
@@ -137,7 +160,7 @@ const GOG: VendoredProvider = {
   // lived there — the name is Plow's history, not a narrower grant.
   mintPrefix: "/v1/connectors/gmail/",
   tokenEnv: "GOG_ACCESS_TOKEN",
-  belt: ["--no-input", "--wrap-untrusted"],
+  belt: ["--no-input", "--wrap-untrusted", "--enable-commands=gmail,calendar"],
   skill: GOG_SKILL,
   refuse: (argv) => {
     const rest = argv.slice(1);

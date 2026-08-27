@@ -126,7 +126,7 @@ describe("a vendored provider through the exec path", () => {
   itSpawns("puts the belt in front of the command path", async () => {
     const d = device(okMinter(), [vendorDir()]);
     const out = String(jv(await run(d, ["gog", "gmail", "search", "q"])).get("output").str ?? "");
-    expect(out).toContain("ARGV=--no-input --wrap-untrusted gmail search q");
+    expect(out).toContain("ARGV=--no-input --wrap-untrusted --enable-commands=gmail,calendar gmail search q");
   });
 
   itSpawns("records the argv the OWNER approved, not the belted one", async () => {
@@ -195,7 +195,7 @@ describe("a vendored provider through the exec path", () => {
     const mint = vi.fn(async () => TOKEN);
     const d = device({ mint }, [vendorDir()]);
     const out = String(jv(await run(d, ["gog", "gmail", "--help"])).get("output").str ?? "");
-    expect(out).toContain("ARGV=--no-input --wrap-untrusted gmail --help");
+    expect(out).toContain("ARGV=--no-input --wrap-untrusted --enable-commands=gmail,calendar gmail --help");
     expect(mint).not.toHaveBeenCalled();
   });
 

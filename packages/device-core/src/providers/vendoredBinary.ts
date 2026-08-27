@@ -87,6 +87,10 @@ export function resolveVendoredBinary(
     // entirely, or nowhere, and an ambient `gog` further along PATH takes the
     // token this Mac has already minted. Resolving against the desktop
     // process's cwd is what someone setting it in a shell meant.
+    //
+    // `attempted` is then the ONE source of `tried` on both failures — they
+    // are the same path, and two expressions for it is two things to keep in
+    // step.
     const attempted = path.resolve(override);
     const resolved = executable(attempted);
     // Distinguished from "nothing is staged": the operator NAMED a path, so
@@ -107,7 +111,7 @@ export function resolveVendoredBinary(
     // quiet version hands the credential to the wrong binary; a symlink named
     // `gog` is the fix, and it takes a second.
     if (path.basename(resolved) !== command) {
-      return { path: null, problem: "override-misnamed", given: override, tried: resolved };
+      return { path: null, problem: "override-misnamed", given: override, tried: attempted };
     }
     return { path: resolved };
   }

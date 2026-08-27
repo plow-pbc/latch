@@ -196,3 +196,32 @@ describe("impliesNetwork", () => {
     expect(impliesNetwork(argv)).toBe(expected);
   });
 });
+
+describe("the scope bound", () => {
+  const gog = vendoredProvider(["gog"])!;
+
+  // gog enforces this ITSELF, before any network call — verified against
+  // pinned 0.36.0 on the darwin binary that ships: `drive ls` reaches Google
+  // and returns 4; with the flag it exits 2, `command "drive ls" is not
+  // enabled`. `refuse` still checks the group because it does so before the
+  // dialog and the mint; this is the layer beneath it.
+  it("rides the belt on every invocation", () => {
+    expect(gog.belt).toContain("--enable-commands=gmail,calendar");
+  });
+
+  // Last-wins parsing means an appended one widens it — confirmed reaching
+  // Google — so the flag has to stay unsupplyable.
+  it("cannot be widened by the caller", () => {
+    expect(gog.refuse(["gog", "drive", "ls", "--enable-commands=drive"])).toContain(
+      "--enable-commands",
+    );
+  });
+
+  // gog answers to `gog gmail (mail,email)` and `gog calendar (cal)`, and all
+  // three dispatch to the real surface. Refusing them said a Gmail command was
+  // out of scope.
+  it.each([["mail"], ["email"], ["cal"]])("accepts the alias %s", (group) => {
+    expect(gog.refuse(["gog", group, "search", "q"])).toBeNull();
+  });
+});
+
