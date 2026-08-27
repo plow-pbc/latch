@@ -12,11 +12,12 @@
  * tools for one arch, or a ~13 MB binary committed to git.
  *
  * Every assertion here is against the thing that actually decides — the glob
- * matched against a real packaged path, the ignore rule asked of git itself,
- * the clone list's own tokens. A substring check reads the
- * same and passes on edits that do not work: adding a provider to the INNER
- * alternation of the arch glob contains its name while matching none of its
- * paths, and a provider named `vault` is a substring of `vault-cli` at once.
+ * matched against a real packaged path, the ignore rule asked of git itself and
+ * attributed to the committed file, the clone list's own tokens. A substring
+ * check reads the same and passes on edits that do not work: adding a provider
+ * to the INNER alternation of the arch glob contains its name while matching
+ * none of its paths, and a provider named `vault` is a substring of
+ * `vault-cli` at once.
  */
 import { describe, expect, it } from "vitest";
 import fs from "node:fs";
@@ -62,21 +63,38 @@ const clonedDirs = (() => {
 })();
 
 /**
- * Whether git ignores a path under this provider's vendor tree.
+ * Whether the COMMITTED `.gitignore` is what makes git ignore this provider's
+ * vendor tree.
  *
- * Asked of git, which is the thing that actually decides — matching the rest of
- * this file. Parsing `.gitignore` here instead meant re-implementing its
- * grammar badly: a hand-rolled last-match-wins over one exact spelling missed
- * that `/vendor/gog/` and `vendor/gog` are the same pattern, so a later
- * negation written either way left the check green with nothing ignored.
+ * Git is asked, because it owns the grammar — a hand-rolled last-match-wins
+ * over one exact spelling did not know `/vendor/gog/` and `vendor/gog` are the
+ * same pattern, so a later negation written either way left the check green
+ * with nothing ignored.
  *
- * `check-ignore` exits 0 when the path is ignored and 1 when it is not.
+ * But git answers from every exclude source, and the answer has to be
+ * attributed or the test measures the wrong thing: with the line deleted from
+ * `.gitignore` and present only in this clone's untracked `.git/info/exclude`,
+ * the unattributed form passed — the exact forgot-a-site failure this file
+ * exists to name, green on the machine that forgot and a committed binary for
+ * everyone else. `-v` prints `<source>:<line>:<pattern>\t<path>`, so the source
+ * is checked too.
  */
-function ignoresVendorTree(command: string): boolean {
-  const { status } = spawnSync("git", ["check-ignore", "-q", `vendor/${command}/probe`], {
-    cwd: repoRoot,
-  });
-  return status === 0;
+function ignoredByCommittedGitignore(command: string): { ok: boolean; why: string } {
+  const { status, stdout, error } = spawnSync(
+    "git",
+    ["check-ignore", "-v", `vendor/${command}/probe`],
+    { cwd: repoRoot, encoding: "utf8", timeout: 15_000 },
+  );
+  // Named before the answer is read: git missing from PATH, or a run outside a
+  // work tree, otherwise reads as a missing .gitignore line that is right there.
+  if (error) return { ok: false, why: `could not run git check-ignore: ${error.message}` };
+  if (status !== 0 && status !== 1) {
+    return { ok: false, why: `git check-ignore exited ${status}: ${stdout}` };
+  }
+  return {
+    ok: status === 0 && stdout.startsWith(".gitignore:"),
+    why: status === 0 ? `ignored by ${stdout.split("\t")[0]}` : "not ignored by anything",
+  };
 }
 
 describe.each(PROVIDERS)("packaging covers $command", ({ command, arches }) => {
@@ -115,7 +133,8 @@ describe.each(PROVIDERS)("packaging covers $command", ({ command, arches }) => {
     // Otherwise a multi-megabyte binary lands in a commit, and the pin stops
     // being the only thing deciding what ships. A commented-out or later-negated
     // line reads the same in the file and ignores nothing.
-    expect(ignoresVendorTree(command)).toBe(true);
+    const { ok, why } = ignoredByCommittedGitignore(command);
+    expect(ok, why).toBe(true);
   });
 
   it("is cloned into a new worktree", () => {
