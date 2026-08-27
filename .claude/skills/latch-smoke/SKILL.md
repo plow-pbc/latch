@@ -73,12 +73,14 @@ Only success exits 0.
 | `FAILED — the executor threw` | 1 | `exec_error` names why; nothing ran |
 | `DENIED` | 1 | the owner refused it. The relay and the device both worked |
 | `REFUSED — HTTP 4xx` | 1 | refused before an intent existed, so there is no audit line. 401/403 is the relay or the credential; another 4xx is the MCP handler |
-| `UNVERIFIED — …` | — | not an outcome. The send did not settle the question: anything that is not a response (a timeout, a dropped socket, a malformed URL), a 5xx, or an `isError` — which is also how an ordinary **denial** comes back. So the script does not stop; it polls (20s to see it arrive, then the full window), and one of the rows above is still the answer |
+| `UNVERIFIED — …` | — | not an outcome. The send did not settle the question: anything that is not a response (a timeout, a dropped socket), a 5xx, or an `isError` — which is also how an ordinary **denial** comes back. So the script does not stop; it polls (20s to see it arrive, then the full window), and one of the rows above is still the answer |
 | `TIMEOUT — … approval dialog` | 1 | it arrived and is sitting unanswered. Not a plumbing problem |
 | `TIMEOUT — approved, never started` | 1 | `exec_start` is written before the spawn, so its absence means the executor was never reached. Check the app is running |
 | `TIMEOUT — started, still running` | 1 | re-run, or raise `--timeout` |
 | `TIMEOUT — nothing carrying …` | 1 | it never arrived; the output names the three causes |
 | `TIMEOUT — the audit log stopped being readable` | 1 | the call WAS sent — re-read the log for the nonce once the host is reachable |
+| `REFUSED — could not reach <url>` | 1 | the request never left this Mac — a URL with no scheme is rejected before any socket exists. Check `--url`; the message quotes what was wrong with it |
+| `REFUSED — <file> has a line break inside the token` | 1 | nothing was sent. A token pasted across two lines keeps its newline, and the header it would build is refused — rewrite the file as a single line |
 | `REFUSED — cannot read the audit log` | 1 | nothing was sent, deliberately: a call this cannot verify would still raise a dialog. Check `--ssh`, and that `--home` is readable — a *missing* log is not this |
 
 ## Smoke-testing the gog provider specifically
@@ -113,9 +115,10 @@ four Google scopes and refuses everything else by design.
 - `UNVERIFIED — …` → the send did not settle whether an intent exists, which is
   not something to guess at. The relay can abandon an exchange it has already
   forwarded (`RELAY_TIMEOUT_MS` is 25s, well under the executor's budget) as a
-  5xx or by dropping the socket; a bad `--url` looks the same from here; and an
-  `isError` is what an ordinary **denial** comes back as, after its audit
-  records already exist. The script reads the log instead — 20s for an
+  5xx or by dropping the socket; and an `isError` is what an ordinary
+  **denial** comes back as, after its audit records already exist. A URL with
+  no scheme is NOT this — it never reaches a socket, so it is a `REFUSED` and
+  the script stops rather than polling. The script reads the log instead — 20s for an
   `intent_received` to appear, then the full window. Read the row it lands on,
   not this line.
 - `TIMEOUT — nothing carrying …` → the three causes the output names, in

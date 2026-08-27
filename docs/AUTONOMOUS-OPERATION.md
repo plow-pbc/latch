@@ -20,12 +20,21 @@ build a signed artifact  →  install it on a target Mac  →  drive one real MC
 
 All four are further along than they look. Building a signed artifact is
 automatable **for `main`** — this repo ships the CI workflow that does it —
-and driving a call and reading the log are `scripts/latch-smoke`. What is left
-is one real gap and two deliberate gates: nothing installs a built artifact on
-a target Mac; the `release` environment asks a human to approve the deployment;
-and publishing the draft, which is what makes installed apps update, should
-stay a human decision. Building an *unmerged* branch is the one place the
-local-keychain wall is still real.
+and driving a call and reading the log are `scripts/latch-smoke`.
+
+**Two real gaps** remain, and they are the whole of what is worth building:
+nothing installs a built artifact onto a target Mac (Stop 2), and nothing
+records which credential addresses which install, so the smoke has no endpoint
+to aim at unattended (Stop 3).
+
+**Three deliberate gates** are not gaps and should stay: the `release`
+environment's approval before a signing runner starts, publishing the draft,
+and approving the promotion that publishing fires — those last two are separate
+decisions, not one.
+
+Building an *unmerged* branch is the one place the local-keychain wall is still
+real, and it is a consequence of the workflow being `main`-only rather than a
+gap of its own.
 
 ---
 
@@ -51,8 +60,11 @@ piece is worth naming separately:
    environment is what keeps a dispatch from an arbitrary branch away from the
    signing secret. A human approves the deployment before the runner starts.
 3. **Publishing the draft is a human gate** by design — it fires
-   `promote-app.yml`, which is the moment installed apps begin updating. This
-   one should stay a gate.
+   `promote-app.yml`. Note that publishing is not itself the moment installed
+   apps begin updating: `promote-app.yml` also runs `environment: release`, so
+   it waits for a SECOND approval before copying anything onto the stable keys.
+   Two gates, not one, and an operator who publishes and walks away leaves the
+   promotion pending indefinitely. Both should stay.
 4. **Nothing installs the result.** There is no `install-latest-*` script that
    resolves the newest artifact and puts it on a target Mac; plow's
    `plow-prod-install-auto` skill has that half. This is the piece worth
@@ -72,7 +84,7 @@ For an **unmerged** branch it is still local:
 so it does not lift this. It also produces an artifact Gatekeeper refuses on any
 other machine, so it is a local-check build only.
 
-## Stop 2 — installing on the target (the one real gap)
+## Stop 2 — installing on the target (a real gap)
 
 `ditto`ing an app bundle over `/Applications` needs no GUI. Quitting a running
 Latch does not either. And the artifact already exists: Stop 1's workflow
@@ -88,7 +100,7 @@ support two devices on one credential. So a *first* install on a new Mac has a
 one-time interactive step. A *re-install over an existing one* does not — the
 home survives, and that is the case an unattended run actually wants.
 
-## Stop 3 — driving a real MCP call (soft; the missing piece is written down nowhere)
+## Stop 3 — addressing an install as a client (a real gap: written down nowhere)
 
 To smoke-test an install you need to be the agent: an MCP client pointed at the
 relay, carrying a credential the relay accepts for this device.
@@ -142,8 +154,7 @@ Everything up to the artifact:
   registration**, which is Stop 3 and still comes from a GUI tab
 - read any install's `audit.ndjson` over SSH, given access to the host
 
-That is most of the loop. What is left is narrower than it looks, and only one
-piece of it is a real gap: **put a built artifact onto a target Mac, and know
-how to address an install as a client.** The signing wall is only a wall for an
-unmerged branch; the reviewer gates on `release` and on publishing the draft are
-deliberate, and should stay.
+That is most of the loop. What is left is the two gaps named at the top: **put
+a built artifact onto a target Mac, and record how to address an install as a
+client.** The signing wall is only a wall for an unmerged branch, and the three
+reviewer gates are deliberate.

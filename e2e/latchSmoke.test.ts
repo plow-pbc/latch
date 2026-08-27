@@ -108,14 +108,20 @@ describe.skipIf(!havePython())("latch-smoke, run for real", () => {
   // These drive the real `urllib` stack, which reads `http_proxy` through
   // `getproxies()` — so a developer with one exported sends the loopback URL
   // to their proxy and gets a different failure than the row names.
-  // Both cases: `getproxies_environment` makes a SECOND pass over the
-  // `_PROXY`-suffixed names that overwrites the lowercase result, so clearing
-  // only the lowercase ones leaves an exported `HTTP_PROXY` in force.
-  const env = {
-    ...process.env,
-    http_proxy: "", HTTP_PROXY: "", https_proxy: "", HTTPS_PROXY: "",
-    no_proxy: "*", NO_PROXY: "*",
-  };
+  // These drive the real `urllib` stack, which reads the environment through
+  // `getproxies_environment` — so a developer with a proxy exported sends the
+  // loopback URL to it and gets a different failure than the row names.
+  //
+  // The LOWERCASE empty string is what does the work, and it is enough for an
+  // uppercase one too: pass 1 lowercases every name and takes any case, pass 2
+  // matches only names already lowercase and POPS the entry when the value is
+  // empty. Verified against this Python rather than assumed — an earlier
+  // comment here claimed the opposite and added uppercase clears that did
+  // nothing:
+  //
+  //     HTTP_PROXY=http://evil:3128            -> {'http': 'http://evil:3128'}
+  //     ...plus http_proxy=""                  -> {}
+  const env = { ...process.env, http_proxy: "", https_proxy: "", no_proxy: "*" };
 
   it("reaches a verdict and annotates it, without a traceback", () => {
     const started = Date.now();
@@ -327,10 +333,8 @@ describe.skipIf(!havePython())("latch-smoke treats a response as evidence and an
     // nothing is written to the log and the run times out — with a 200 on
     // record. Blaming the send there points away from the answer already on
     // screen.
-    const file = path.join(tmp, "hint-token");
-    fs.writeFileSync(file, "t\n", { mode: 0o600 });
     const sent = call({ call: "send", url: "https://relay.invalid/mcp", status: 0, token: "t", raises: "is-error" },
-      file) as { hint: string };
+      tokenFile) as { hint: string };
     expect(sent.hint).toContain("Cause 2");
     expect(sent.hint).not.toContain("never completed");
   });
