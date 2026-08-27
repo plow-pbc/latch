@@ -7,6 +7,7 @@ credential the relay may have echoed back at it.
 """
 import importlib.machinery
 import importlib.util
+import email
 import http.client
 import io
 import json
@@ -89,8 +90,15 @@ else:
             # urlopen: the message quotes the header VALUE, i.e. the bearer.
             raise ValueError("Invalid header value %r" % (b"Bearer " + request["token"].encode(),))
         if raises == "http":
-            raise urllib.error.HTTPError(request["url"], request["status"], "no",
-                                         request.get("headers", {}), io.BytesIO(body))
+            # A real message, not a dict: `urllib` hands `HTTPError` an
+            # `http.client.HTTPMessage`, which is CASE-INSENSITIVE. A leak
+            # spelled `headers.get("location")` would find nothing in a dict,
+            # so the assertion against it would pass while production leaked.
+            raise urllib.error.HTTPError(
+                request["url"], request["status"], "no",
+                email.message_from_string(
+                    "".join(f"{k}: {v}\n" for k, v in request.get("headers", {}).items())),
+                io.BytesIO(body))
         # Exhaustive: a misspelt or renamed `raises` used to fall through to the
         # HTTPError branch with the transport rows' status of 0, which is not
         # >= 500, so a row could pass for a reason unrelated to what it names.
