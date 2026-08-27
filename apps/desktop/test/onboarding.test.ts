@@ -539,7 +539,7 @@ describe("activation — the path a brand-new user takes", () => {
     const state = onboarding.state();
     expect(state.step).not.toBe("connected");
     expect(state.activationStale).toBe(true);
-    expect(state.message).toBe("Plow verified this Mac but didn't hand back a login. Get a new code.");
+    expect(state.message).toBe("Plow verified this Mac but didn't hand back a login. Try again for a fresh code.");
     expect(plow.redeemCalls).toHaveLength(1);
 
     // The spent code is dropped, so the promised control actually works: the
@@ -649,7 +649,7 @@ describe("one code, however many callers ask for it", () => {
   });
 
   it("does not wedge the button once the mint has landed", async () => {
-    // Single-flight must not wedge the button: "Get a New Code" after the mint
+    // Single-flight must not wedge the button: "Try Again" after the mint
     // returns runs a real re-check rather than joining a spent flight — and
     // since the code is still live, the re-check re-arms it, not replaces it.
     const onboarding = build();
@@ -1030,68 +1030,50 @@ describe("signing out", () => {
     expect(loadSettings(home).relayCredential).toBe(credential);
   });
 
-  // The two ways a redeem can be on the wire when the user signs out. Both end
-  // in `finishWithSession`, and both must refuse — but they arrive by different
-  // callers, so each is driven on its own.
-  const inFlightRedeems = [
-    {
-      name: "the poll loop's own redeem",
-      // The loop is already running from `useActivation()`; nothing to start.
-      start: (_o: Onboarding) => null as Promise<unknown> | null,
-    },
-    {
-      name: "the re-poll 'Get a New Code' makes before minting",
-      start: (o: Onboarding) => o.newActivationCode(),
-    },
-  ];
+  it("a redeem in flight across the sign-out cannot mint", async () => {
+    // A verified answer is deliberately acted on even when its poll loop has
+    // been cancelled — the server hands the session token to the first redeem
+    // that sees the completion and never again, so dropping it would strand an
+    // activation the user really completed. The only thing that used to make
+    // it moot was already holding a credential, and SIGN-OUT CLEARS THE
+    // CREDENTIAL. The poll loop is the only redeemer there is, so its redeem
+    // is the only one that can be on the wire.
+    const onboarding = await signedIn();
+    expect((await onboarding.useActivation()).step).toBe("activate");
 
-  for (const entry of inFlightRedeems) {
-    it(`${entry.name}, in flight across the sign-out, cannot mint`, async () => {
-      // A verified answer is deliberately acted on even when its poll loop has
-      // been cancelled — the server hands the session token to the first redeem
-      // that sees the completion and never again, so dropping it would strand an
-      // activation the user really completed. The only thing that used to make
-      // it moot was already holding a credential, and SIGN-OUT CLEARS THE
-      // CREDENTIAL.
-      const onboarding = await signedIn();
-      expect((await onboarding.useActivation()).step).toBe("activate");
-
-      // Hold THIS activation's redeem mid-call — and only this one, so the
-      // fresh code the sign-out mints behaves like the untexted code it is.
-      const inFlight = `${ACTIVATION_SECRET}_1`;
-      let release = () => {};
-      const onTheWire = new Promise<void>((r) => {
-        release = () => r();
-      });
-      plow.redeemActivation = async (secret: string) => {
-        plow.redeemCalls.push(secret);
-        if (secret !== inFlight) return { status: "pending" };
-        await onTheWire;
-        return { status: "verified", token: SESSION_TOKEN };
-      };
-
-      const started = entry.start(onboarding);
-      await settle();
-      expect(plow.redeemCalls).toContain(inFlight);
-
-      // The user signs out while that call is still on the wire.
-      signOutOfPlow(home);
-      onboarding.reset();
-      const mintedBefore = plow.minted.length;
-
-      // …and only now does the server answer "verified".
-      release();
-      if (started) await started;
-      await settle();
-
-      // Nothing was minted, nothing was persisted, and the window did not slide
-      // back to the account the user just left.
-      expect(plow.minted.length).toBe(mintedBefore);
-      expect(loadSettings(home).relayCredential).toBe("");
-      expect(loadSettings(home).accountUid).toBe("");
-      expect(onboarding.state().step).not.toBe("connected");
+    // Hold THIS activation's redeem mid-call — and only this one, so the
+    // fresh code the sign-out mints behaves like the untexted code it is.
+    const inFlight = `${ACTIVATION_SECRET}_1`;
+    let release = () => {};
+    const onTheWire = new Promise<void>((r) => {
+      release = () => r();
     });
-  }
+    plow.redeemActivation = async (secret: string) => {
+      plow.redeemCalls.push(secret);
+      if (secret !== inFlight) return { status: "pending" };
+      await onTheWire;
+      return { status: "verified", token: SESSION_TOKEN };
+    };
+
+    await settle();
+    expect(plow.redeemCalls).toContain(inFlight);
+
+    // The user signs out while that call is still on the wire.
+    signOutOfPlow(home);
+    onboarding.reset();
+    const mintedBefore = plow.minted.length;
+
+    // …and only now does the server answer "verified".
+    release();
+    await settle();
+
+    // Nothing was minted, nothing was persisted, and the window did not slide
+    // back to the account the user just left.
+    expect(plow.minted.length).toBe(mintedBefore);
+    expect(loadSettings(home).relayCredential).toBe("");
+    expect(loadSettings(home).accountUid).toBe("");
+    expect(onboarding.state().step).not.toBe("connected");
+  });
 });
 
 describe("a sign-out while startRelay is dialling", () => {

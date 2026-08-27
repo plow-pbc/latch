@@ -289,8 +289,8 @@ export class Onboarding {
     if (this.pendingMint) return this.pendingMint;
 
     if (this.activationSecret && this.activation) {
-      // Same code, fresh clock. The screen said "get a new code", so say why
-      // it is looking at the old one.
+      // Same code, fresh clock — and one honest line about why "Try Again"
+      // is showing the code they already have.
       this.activation = { ...this.activation, pollUntil: this.now() + ACTIVATION_POLL_WINDOW_MS };
       this.activationStale = false;
       this.message =
@@ -376,7 +376,7 @@ export class Onboarding {
     void this.pollActivation(secret, generation).catch((error) => {
       // Nothing above throws by design; if something does, the screen must not
       // be left on a countdown that no longer runs — and the secret must not
-      // outlive its watcher, or "Get a New Code" would re-arm a code nothing
+      // outlive its watcher, or "Try Again" would re-arm a code nothing
       // is polling. Dropping it keeps the invariant: secret set ⇒ loop alive.
       if (generation !== this.pollGeneration) return;
       this.activationSecret = null;
@@ -437,6 +437,12 @@ export class Onboarding {
         !this.settings().relayCredential.trim()
       ) {
         this.cancelPolling();
+        // The redeem consumed the one-shot completion, so the code is spent
+        // whatever happens next: retire it BEFORE the handoff, whose network
+        // calls can fail. A failure then leaves the stalled screen minting
+        // fresh on "Try Again" — not re-arming a code nothing can complete.
+        this.activationSecret = null;
+        this.stall();
         await this.run(() => this.finishWithSession(result.token as string, result.chat));
         return;
       }
@@ -444,10 +450,10 @@ export class Onboarding {
 
       if (result.status === "verified") {
         // The token was handed to some earlier redeem and lost — the code is
-        // spent. Dropping the secret is what lets "Get a new code" mint.
+        // spent. Dropping the secret is what lets "Try Again" mint.
         this.cancelPolling();
         this.activationSecret = null;
-        this.stall("Plow verified this Mac but didn't hand back a login. Get a new code.");
+        this.stall("Plow verified this Mac but didn't hand back a login. Try again for a fresh code.");
         this.publish();
         return;
       }
@@ -468,7 +474,7 @@ export class Onboarding {
    * Stop watching for good — the server has retired the code. A 410 gates only
    * a code nobody completed, and once expired the webhook refuses its text, so
    * nothing can arrive for this secret any more. Dropping it is what lets
-   * "Get a New Code" mint.
+   * "Try Again" mint.
    */
   private giveUp(reason: string): void {
     this.cancelPolling();
@@ -481,7 +487,7 @@ export class Onboarding {
    * (a wrong prefix is answered with a 200, no SMS, and a code left live). */
   private stallWithHint(reason: string): void {
     this.stall(
-      `${reason} Send the message exactly as shown — it has to start with “${ACTIVATION_SMS_PREFIX}” — or get a new code.`,
+      `${reason} Send the message exactly as shown — it has to start with “${ACTIVATION_SMS_PREFIX}” — or try again.`,
     );
   }
 

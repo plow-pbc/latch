@@ -169,7 +169,7 @@ function waitingScreen() {
       // Re-polls the old code first: completed signs them straight in, and a
       // code the server still honours goes back on the clock instead of being
       // replaced — only a retired code mints a fresh one.
-      button("Get a New Code", "btn primary", async () =>
+      button("Try Again", "btn primary", async () =>
         apply(await window.domo.onboardingNewCode()),
       ),
     ]),
