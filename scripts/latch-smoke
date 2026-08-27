@@ -21,7 +21,6 @@ at all. A nonce in argv would mint a new rule key each time and raise a dialog
 forever.
 """
 import argparse
-import http.client
 import json
 import os
 import shlex
@@ -39,6 +38,10 @@ import urllib.request
 # it and with `PROTOCOL_REVISION` in `handler.ts`.
 REVISION = "2026-07-28"
 DEFAULT_HOME = "~/Library/Application Support/Plow-Latch"
+# How long a call whose send RAISED is given to show up. `intent_received` is
+# written the moment one arrives, so this is generous; it exists so a typo'd
+# --url does not cost the full window.
+ARRIVAL_GRACE_S = 20
 
 
 def remote_cat(log_path):
@@ -139,59 +142,34 @@ def send(url, token_file, argv, goal):
             "MCP-Method": "tools/call",
             "MCP-Name": name,
         })
-    except ValueError as error:
-        # Pre-send by construction — `full_url`'s setter rejects a URL with no
-        # scheme, which is the commonest way to mistype one, and it happens
-        # before any socket exists. Building the request outside the try is how
-        # that reached an operator as a traceback.
-        return (f"could not reach {url}: {error}.\n"
-                "  The request never left this Mac; nothing was written to the log.", False)
-    try:
         with urllib.request.urlopen(request, timeout=90) as response:
             payload = json.load(response)
     except urllib.error.HTTPError as error:
-        # A 5xx is not a refusal. RELAY_TIMEOUT_MS is the relay abandoning an
-        # exchange it has ALREADY forwarded — the device holds the intent and
-        # the dialog is up, so telling the operator the log is empty is the
-        # one thing that must not happen here.
+        # A RESPONSE arrived, so this branch actually knows something. A 4xx is
+        # the relay or the MCP handler saying it refused. A 5xx is neither —
+        # RELAY_TIMEOUT_MS is the relay abandoning an exchange it has ALREADY
+        # forwarded, with the device holding the intent and the dialog up.
         if error.code >= 500:
             return (f"HTTP {error.code} — the relay gave up on an exchange it may"
-                    " already have forwarded, so whether it arrived is UNKNOWN.", True)
+                    " already have forwarded.", True)
         return (f"HTTP {error.code} — refused before it became an intent.\n"
                 "  Nothing was written to the audit log. 401/403 is the relay or the"
                 " credential; another 4xx is the MCP handler.", False)
-    except (OSError, http.client.HTTPException, ValueError) as error:
-        # The clause is wide on purpose. `getresponse()` and the body read
-        # raise `http.client.HTTPException` subclasses — `IncompleteRead` when
-        # the relay closes mid-body, `BadStatusLine` on a truncated status line
-        # — and `json.load` raises `ValueError`. None is an `OSError`, so all
-        # three used to escape as a traceback, and every one of them is on the
-        # BARE side: the call went out. Widening the catch is what makes the
-        # test below total rather than nearly total.
+    except Exception as error:
+        # A RESPONSE is evidence. AN EXCEPTION IS NOT — and seven rounds of
+        # review went into learning that. Each one classified some exception as
+        # proof the call had or had not gone out, and each was wrong for one
+        # more subclass: a 5xx, then every transport error, then a bare
+        # `ConnectionResetError`, then `IncompleteRead`, then a scheme-less
+        # URL, then `InvalidURL` and a `UnicodeEncodeError` out of `putheader`.
         #
-        # ONE discriminator, structural rather than a list of exception
-        # classes: `urllib`'s `do_open` wraps the connect/send leg in
-        # `URLError` and nothing else. Wrapped means the request never
-        # completed, so no intent can exist. BARE means it went out and only
-        # the answer failed — a read timeout and a peer that drops the socket
-        # at the relay's 25s ceiling both land there, with the device holding
-        # the intent and the dialog up.
-        #
-        # Checked against urllib rather than reasoned about: refused and DNS
-        # failures arrive wrapped; a read timeout and a reset arrive bare.
-        # Enumerating classes is what made three rounds of this wrong, each
-        # time for one more subclass.
-        if isinstance(error, urllib.error.URLError):
-            # The reason itself, not its class: `URLError` is routinely raised
-            # with a STRING reason (`unknown url type: htp`), which renders as
-            # `str`, and for the wrapped-errno cases the class name throws away
-            # the `[Errno 61] Connection refused` text that says which of a
-            # typo'd --url and a relay that is down it was. It carries no
-            # response body, so the credential contract is untouched.
-            return (f"could not reach {url}: {error.reason}.\n"
-                    "  The request never left this Mac; nothing was written to the log.", False)
-        return (f"no answer from {url}: {type(error).__name__}, so whether it"
-                " arrived is UNKNOWN.", True)
+        # So this no longer asks. There are no sides to put an exception on:
+        # anything that is not a response means the call's fate is unknown, and
+        # the audit log — the one thing that actually knows — is read below. A
+        # call that never left costs a short grace window, which is the cheap
+        # error; asserting an intent does not exist while the dialog is up is
+        # the expensive one.
+        return (f"{type(error).__name__}: {error}", True)
     # Neither absence is proof of success — that is the audit log — but either
     # presence is proof of failure, and saying so now beats a 2-minute timeout.
     if payload.get("error") is not None:
@@ -350,8 +328,14 @@ def main():
             return 1
         print(f"UNVERIFIED — {reason}")
 
-    print(f"waiting up to {args.timeout}s for a terminal event")
-    deadline = time.monotonic() + args.timeout
+    # `intent_received` is written on arrival, before the dialog, so a short
+    # look answers "did it get there?" from evidence rather than from the
+    # exception's class. Extended to the full window the moment it appears.
+    grace = sent is not None
+    started = time.monotonic()
+    print(f"waiting up to {ARRIVAL_GRACE_S if grace else args.timeout}s"
+          f"{' for it to arrive at all' if grace else ' for a terminal event'}")
+    deadline = started + (ARRIVAL_GRACE_S if grace else args.timeout)
     # The baseline was read from the same path a moment ago; records in it are
     # evidence the path is right, which is all the hint below asserts against.
     saw_any = bool(baseline)
@@ -367,6 +351,11 @@ def main():
                 return 1
         else:
             saw_any = saw_any or bool(events)
+            if grace and any(r.get("event") == "intent_received"
+                             and nonce in str(r.get("goal", "")) for r in events):
+                grace = False
+                deadline = started + args.timeout
+                print(f"it arrived — waiting up to {args.timeout}s for a terminal event")
             outcome = verdict(events, nonce, expired, since)
             if outcome is not None:
                 code, lines = outcome
@@ -374,6 +363,9 @@ def main():
                 # Folding ENOENT into "empty" is right, but it makes a wrong
                 # --home look exactly like a fresh install, and none of the
                 # three causes above names that.
+                if code != 0 and sent is not None:
+                    print("  The send itself failed — see UNVERIFIED above, which is"
+                          " the likeliest cause of all three.")
                 if code != 0 and not saw_any:
                     print(f"  Nothing has ever been written at {log_path} — normal on a")
                     print("  fresh install with nothing approved, and also what a wrong --home")

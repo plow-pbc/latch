@@ -55,6 +55,8 @@ else:
             raise urllib.error.URLError("unknown url type: htp")
         if raises == "incomplete":
             raise http.client.IncompleteRead(b"")
+        if raises == "invalid-url":
+            raise http.client.InvalidURL("URL can't contain control characters")
         if raises == "http":
             raise urllib.error.HTTPError(request["url"], request["status"], "no", {}, io.BytesIO(body))
         # Exhaustive: a misspelt or renamed `raises` used to fall through to the

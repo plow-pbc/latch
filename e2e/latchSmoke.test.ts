@@ -179,34 +179,42 @@ describe.skipIf(!havePython())("latch-smoke reads the log where it lives", () =>
   });
 });
 
-describe.skipIf(!havePython())("latch-smoke only calls a timeout unknown", () => {
-  // Not a list of exception classes — the one structural fact: `urllib` wraps
-  // the connect/send leg in `URLError` and nothing else, so wrapped means the
-  // request never completed and bare means it went out and only the answer
-  // failed. Enumerating classes is what kept getting this wrong for one more
-  // subclass; these rows are the shapes urllib was observed to produce.
-  const cases: [string, string, boolean, string][] = [
-    ["a read timeout arrives bare, and may have landed", "read-timeout", true, "UNKNOWN"],
-    ["so does a relay that drops the socket", "reset", true, "UNKNOWN"],
-    ["a refused connection is wrapped, and did not", "refused", false, "never left this Mac"],
-    ["and so is a connect timeout", "connect-timeout", false, "never left this Mac"],
-    // Neither is an OSError, so both escaped as a traceback until the clause
-    // was widened — and both are on the bare side: the call went out.
-    ["a body that stops mid-read went out", "incomplete", true, "UNKNOWN"],
-    // A string reason renders as `str` if you print its class.
-    ["a mistyped scheme says what was wrong", "bad-scheme", false, "unknown url type: htp"],
-  ];
+describe.skipIf(!havePython())("latch-smoke treats a response as evidence and an exception as none", () => {
+  // Seven review rounds went into this table, each one classifying some
+  // exception as proof the call had or had not gone out, and each wrong for
+  // one more subclass. There are no sides now: only a RESPONSE decides, and
+  // every one of these rows is a call whose fate the audit log has to settle.
   const tokenFile = path.join(tmp, "transport-token");
   fs.writeFileSync(tokenFile, "t\n", { mode: 0o600 });
 
-  it.each(cases)("%s", (_name, raises, unknown, contains) => {
-    const sent = call(
-      { call: "send", url: "https://relay.invalid/mcp", status: 0, token: "t", raises },
-      tokenFile,
-    ) as { reason: string; unknown: boolean };
-    expect(sent.unknown).toBe(unknown);
+  const cases: [string, string, string, string][] = [
+    ["a read timeout arrives bare", "https://relay.invalid/mcp", "read-timeout", "TimeoutError"],
+    ["so does a relay that drops the socket", "https://relay.invalid/mcp", "reset", "ConnectionResetError"],
+    ["a refused connection is wrapped", "https://relay.invalid/mcp", "refused", "URLError"],
+    ["and so is a connect timeout", "https://relay.invalid/mcp", "connect-timeout", "URLError"],
+    // Neither of these is an OSError; both escaped as a traceback once.
+    ["a body that stops mid-read", "https://relay.invalid/mcp", "incomplete", "IncompleteRead"],
+    ["a URL with a control character", "https://relay.invalid/mcp", "invalid-url", "InvalidURL"],
+    // The real production guard, not a stub: `Request()`'s own setter rejects
+    // this before any socket exists, and it used to escape as a traceback.
+    ["a URL with no scheme, from the constructor", "relay.plow.com/mcp", "http", "unknown url type"],
+  ];
+
+  it.each(cases)("%s", (_name, url, raises, contains) => {
+    const sent = call({ call: "send", url, status: 0, token: "t", raises }, tokenFile) as
+      { reason: string; unknown: boolean };
+    expect(sent.unknown).toBe(true);
     expect(sent.reason).toContain(contains);
   });
+
+  // The one branch that DOES know, because a response came back and said so.
+  it.each([[401, false], [502, true]] as [number, boolean][])(
+    "a %i is a response, and decides", (status, unknown) => {
+      const sent = call({ call: "send", url: "https://relay.invalid/mcp", status, token: "t", raises: "http" }, tokenFile) as
+        { reason: string; unknown: boolean };
+      expect(sent.unknown).toBe(unknown);
+    },
+  );
 });
 
 describe.skipIf(!havePython())("latch-smoke command split", () => {
@@ -237,7 +245,7 @@ describe.skipIf(!havePython())("latch-smoke never repeats the credential", () =>
     expect(reason).toContain(String(status));
     // A 5xx is the relay abandoning an exchange it may already have forwarded.
     expect(unknown).toBe(status >= 500);
-    if (status >= 500) expect(reason).toContain("UNKNOWN");
+    if (status >= 500) expect(reason).toContain("already have forwarded");
     else expect(reason).toContain("Nothing was written");
     expect(reason).not.toContain(token);
     // Not just the literal: no fragment of it, and no encoding of it either.
