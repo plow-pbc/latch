@@ -218,4 +218,3 @@ export function needsToken(argv: readonly string[]): boolean {
 export function impliesNetwork(argv: readonly string[]): boolean {
   return vendoredProvider(argv) !== null && needsToken(argv);
 }
-

@@ -150,22 +150,32 @@ describe("vendorDirs", () => {
   // line, and composing the wrong provider's name is invisible without this.
   it.each([
     {
-      why: "an override that points nowhere",
+      why: "composes that provider's OWN variable name",
       override: () => "/nonexistent/slack",
       has: "DOMO_SLACK",
       lacks: "DOMO_GOG",
     },
     {
-      why: "an override that names the wrong file",
+      why: "says which of the two problems it is",
       override: () => path.join(tree("misnamed", "slack-0.1"), "misnamed", process.arch, "slack-0.1"),
       has: "must name a file called `slack`",
       lacks: "names no executable",
     },
-  ])("says which problem it is: $why", ({ override, has, lacks }) => {
+  ])("$why", ({ override, has, lacks }) => {
     const logged = captureErrors();
     process.env.DOMO_SLACK = override();
     expect(vendorDirs({}, [SLACK])).toEqual([]);
     expect(logged.join("\n")).toContain(has);
     expect(logged.join("\n")).not.toContain(lacks);
+  });
+
+  it("logs what was looked for, not what was typed", () => {
+    // The resolve happens inside the resolver, so echoing the raw value on a
+    // relative override — the case resolve exists for — names a path nothing
+    // checked.
+    const logged = captureErrors();
+    process.env.DOMO_SLACK = "relative/slack";
+    expect(vendorDirs({}, [SLACK])).toEqual([]);
+    expect(logged.join("\n")).toContain(path.resolve("relative/slack"));
   });
 });

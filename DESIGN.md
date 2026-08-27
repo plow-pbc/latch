@@ -465,10 +465,10 @@ denial, so its absence is the honest answer instead. Every probe runs once, in
 the `DeviceAgent` constructor — installing WhatsApp, or staging a provider,
 after launch needs a restart to publish the skill. A provider carries its skill
 on its registry row rather than being registered under a literal elsewhere, so
-the provider's name has one spelling and a rename cannot silently unpublish
-it. `whatsapp-history` is also
-why the registry takes a *built* skill and not only frozen constants: its body
-carries the store's resolved path, so no agent has to substitute one.
+the provider's name has one spelling and a rename cannot silently unpublish it.
+`whatsapp-history` is also why the registry takes a *built* skill and not only
+frozen constants: its body carries the store's resolved path, so no agent has
+to substitute one.
 Owner-authored skills in `$DOMO_HOME/device/skills` load **last** and win a
 name collision — a file the owner wrote is a deliberate act, and a built-in
 default should not silently replace it.
