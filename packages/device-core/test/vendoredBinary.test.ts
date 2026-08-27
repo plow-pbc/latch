@@ -56,8 +56,13 @@ describe("resolveVendoredBinary", () => {
     // `/tmp/gog` and running that with a minted Google token. Loud beats
     // handing the credential to the wrong binary.
     const staged = tree("misnamed", "gog-0.36.0");
-    process.env.DOMO_GOG = path.join(staged, "misnamed", process.arch, "gog-0.36.0");
-    expect(resolveVendoredBinary("gog")).toEqual({ path: null, problem: "override-misnamed" });
+    const named = path.join(staged, "misnamed", process.arch, "gog-0.36.0");
+    process.env.DOMO_GOG = named;
+    // `tried` carries what this actually looked at, so the diagnostic does not
+    // have to re-derive it from the environment.
+    expect(resolveVendoredBinary("gog")).toEqual({
+      path: null, problem: "override-misnamed", tried: named,
+    });
   });
 
   it("refuses a DIRECTORY named like the command", () => {
@@ -67,17 +72,21 @@ describe("resolveVendoredBinary", () => {
     const base = newBase();
     fs.mkdirSync(path.join(base, "gog"));
     process.env.DOMO_GOG = path.join(base, "gog");
-    expect(resolveVendoredBinary("gog")).toEqual({ path: null, problem: "override-missing" });
+    expect(resolveVendoredBinary("gog")).toEqual({
+      path: null, problem: "override-missing", tried: path.join(base, "gog"),
+    });
   });
 
   it("accepts the symlink the misnamed message tells operators to make", () => {
     // The advice rests on `statSync` FOLLOWING symlinks, so a link named `gog`
     // pointing at `gog-0.36.0` passes both isFile() and the basename check.
     // Unasserted, that advice is a guess.
+    // One base: the link sits beside the tree it points into, which is what
+    // an operator following the advice would do.
     const base = newBase();
-    const staged = tree("misnamed", "gog-0.36.0", base);
+    tree("misnamed", "gog-0.36.0", base);
     const link = path.join(base, "gog");
-    fs.symlinkSync(path.join(staged, "misnamed", process.arch, "gog-0.36.0"), link);
+    fs.symlinkSync(path.join(base, "misnamed", process.arch, "gog-0.36.0"), link);
     process.env.DOMO_GOG = link;
     expect(resolveVendoredBinary("gog")).toEqual({ path: link });
   });
@@ -100,7 +109,9 @@ describe("resolveVendoredBinary", () => {
     process.env.DOMO_GOG = "/nonexistent";
     expect(resolveVendoredBinary("slack").path).toBe(process.env.DOMO_SLACK);
     // ...and gog still reads its own, which is missing.
-    expect(resolveVendoredBinary("gog")).toEqual({ path: null, problem: "override-missing" });
+    expect(resolveVendoredBinary("gog")).toEqual({
+      path: null, problem: "override-missing", tried: "/nonexistent",
+    });
   });
 
   it("finds the binary a packaged app ships in Resources", () => {
@@ -156,6 +167,8 @@ describe("resolveVendoredBinary", () => {
     // would reject the launch chain — no windows, no tray, no relay — over a
     // stale env var.
     process.env.DOMO_GOG = "/nonexistent/gog";
-    expect(resolveVendoredBinary("gog")).toEqual({ path: null, problem: "override-missing" });
+    expect(resolveVendoredBinary("gog")).toEqual({
+      path: null, problem: "override-missing", tried: "/nonexistent/gog",
+    });
   });
 });

@@ -63,7 +63,12 @@ function executable(candidate: string): string | null {
  */
 export type VendoredLocation =
   | { path: string; problem?: undefined }
-  | { path: null; problem: "not-staged" | "override-missing" | "override-misnamed" };
+  | { path: null; problem: "not-staged" }
+  // `tried` is the NORMALIZED path — the thing this actually looked at. The
+  // diagnostic used to re-read the environment and repeat the resolve, which
+  // is a second copy of the normalization rule sitting next to the one that
+  // decided, and the two can disagree.
+  | { path: null; problem: "override-missing" | "override-misnamed"; tried: string };
 
 export function resolveVendoredBinary(
   command: string,
@@ -85,7 +90,8 @@ export function resolveVendoredBinary(
     // — which `X_OK` alone accepts, since on a directory it means traversable.
     // The operator line says "no executable FILE" because that is the whole
     // set, and the misnamed case below is the one worth telling apart.
-    if (resolved === null) return { path: null, problem: "override-missing" };
+    const attempted = path.resolve(override);
+    if (resolved === null) return { path: null, problem: "override-missing", tried: attempted };
     // The basename has to BE the command. A vendored provider is reached
     // through the PATH this Mac controls, so only the directory survives —
     // point the override at `/tmp/gog-0.36.0` and the child looking for `gog`
@@ -93,7 +99,9 @@ export function resolveVendoredBinary(
     // a minted Google token. Refusing is the loud version of a failure whose
     // quiet version hands the credential to the wrong binary; a symlink named
     // `gog` is the fix, and it takes a second.
-    if (path.basename(resolved) !== command) return { path: null, problem: "override-misnamed" };
+    if (path.basename(resolved) !== command) {
+      return { path: null, problem: "override-misnamed", tried: resolved };
+    }
     return { path: resolved };
   }
 

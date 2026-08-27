@@ -11,11 +11,33 @@
  * (`arm64`, `amd64`), because `resolveGogBinary` looks them up by
  * `process.arch` at runtime.
  *
- * Bump `VERSION` and both digests together. This script then asserts, against
- * the binary it just extracted, that no gog flag is negatable — the one
- * spelling `gogFlags.ts` cannot see. The `--readonly` behaviour recorded
- * in that file is verified per version and is a HAND probe: re-run it on a
- * bump.
+ * ## Bumping the pin — the whole checklist, and its only home
+ *
+ * Every bump runs through this script, so this is where the version-specific
+ * contract lives. `gogFlags.ts` and `registry.ts` keep only the invariants
+ * their own code depends on and point here.
+ *
+ *  1. Set `VERSION`, and set all four digests: each arch's `sha256` (the
+ *     tarball) and `binary` (what comes out of it). Derive them from the
+ *     release, not from a disk — check the tarball against upstream's
+ *     `checksums.txt`, then extract and hash.
+ *  2. Run this script. It asserts, against the binary it just extracted, that
+ *     no gog flag is negatable — the one spelling `gogFlags.ts` cannot see —
+ *     and that the extracted bytes match the `binary` pin.
+ *  3. Re-run these five BY HAND against the new binary. Each is a spelling
+ *     that would disarm a belt flag while matching neither the reserved set
+ *     nor either rule, and all five are `unknown flag` at 0.36.0:
+ *
+ *         gog gmail send … --no-readonly
+ *         gog gmail send … --no-wrap-untrusted
+ *         gog gmail send … --no-gmail-no-send
+ *         gog gmail send … -readonly=false
+ *         gog gmail send … -readonly false
+ *
+ *  4. Re-run the one that proves the gate is load-bearing: appending
+ *     `--readonly=false` to an otherwise-refused `gmail send` must be refused
+ *     by `gogFlags.ts` before it reaches gog. At 0.36.0, without the gate, it
+ *     reached Google.
  */
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
@@ -35,7 +57,7 @@ const VERSION = "0.36.0";
 // The binary digests are derived from the pinned tarballs, not from whatever
 // happened to be on a disk: both tarballs were checked against these pins AND
 // against upstream's own `checksums.txt`, then extracted and hashed. Re-derive
-// them the same way on a bump.
+// them the same way on a bump — step 1 of the checklist above.
 const DIGESTS = {
   arm64: {
     asset: "darwin_arm64",

@@ -147,35 +147,48 @@ describe("vendorDirs", () => {
   // The two override problems have different fixes — "names no executable
   // file" sends someone to check the path; a misnamed one IS a path that
   // exists and wants a symlink — so WHICH one it says is the value of the
-  // line, and composing the wrong provider's name is invisible without this.
+  // line. And it must show what the resolver actually looked at: on a
+  // relative override, the case the resolve exists for, echoing the raw value
+  // names a path nothing checked.
   it.each([
     {
       why: "composes that provider's OWN variable name",
       override: () => "/nonexistent/slack",
-      has: "DOMO_SLACK",
-      lacks: "DOMO_GOG",
+      has: ["DOMO_SLACK"],
+      lacks: ["DOMO_GOG"],
     },
     {
       why: "says which of the two problems it is",
       override: () => path.join(tree("misnamed", "slack-0.1"), "misnamed", process.arch, "slack-0.1"),
-      has: "must name a file called `slack`",
-      lacks: "names no executable",
+      has: ["must name a file called `slack`"],
+      lacks: ["names no executable"],
+    },
+    {
+      // Built from `process.cwd()` rather than by calling `path.resolve` — the
+      // expression the implementation itself evaluates cannot tell "it named
+      // what was checked" from "it named whatever resolve happened to return".
+      why: "logs what was looked for, not what was typed",
+      override: () => "relative/slack",
+      has: [`${process.cwd()}/relative/slack`],
+      lacks: [],
+    },
+    {
+      // The whole point of the "no executable FILE" wording: a directory named
+      // like the command exists, so "names no executable" read as wrong.
+      why: "calls a directory no executable FILE",
+      override: () => {
+        const base = newBase();
+        fs.mkdirSync(path.join(base, "slack"));
+        return path.join(base, "slack");
+      },
+      has: ["names no executable file"],
+      lacks: ["must name a file called"],
     },
   ])("$why", ({ override, has, lacks }) => {
     const logged = captureErrors();
     process.env.DOMO_SLACK = override();
     expect(vendorDirs({}, [SLACK])).toEqual([]);
-    expect(logged.join("\n")).toContain(has);
-    expect(logged.join("\n")).not.toContain(lacks);
-  });
-
-  it("logs what was looked for, not what was typed", () => {
-    // The resolve happens inside the resolver, so echoing the raw value on a
-    // relative override — the case resolve exists for — names a path nothing
-    // checked.
-    const logged = captureErrors();
-    process.env.DOMO_SLACK = "relative/slack";
-    expect(vendorDirs({}, [SLACK])).toEqual([]);
-    expect(logged.join("\n")).toContain(path.resolve("relative/slack"));
+    for (const text of has) expect(logged.join("\n")).toContain(text);
+    for (const text of lacks) expect(logged.join("\n")).not.toContain(text);
   });
 });

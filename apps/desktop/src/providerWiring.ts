@@ -78,13 +78,13 @@ export function vendorDirs(
         located.problem === "override-missing"
           ? "names no executable file"
           : `must name a file called \`${provider.command}\` — only its directory reaches the child`;
-      // What was actually looked for, not what was typed. The resolve happens
-      // inside the resolver, so echoing the raw value on a RELATIVE override —
-      // the case that resolve exists for — prints a path nothing checked, and
-      // sends the operator to look at the wrong one.
-      const raw = process.env[name] ?? "";
-      const resolved = path.resolve(raw);
-      console.error(`[providers] ${name} ${why}: ${raw === resolved ? raw : `${raw} → ${resolved}`}`);
+      // `tried` is what the resolver actually looked at — normalized once,
+      // there, rather than re-derived here from the environment.
+      // Non-empty by construction: these two problems are only returned from
+      // inside the resolver's `if (override)`.
+      const raw = process.env[name]!;
+      const shown = raw === located.tried ? raw : `${raw} → ${located.tried}`;
+      console.error(`[providers] ${name} ${why}: ${shown}`);
     }
   }
   return dirs;

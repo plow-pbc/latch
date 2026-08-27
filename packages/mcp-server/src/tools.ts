@@ -280,7 +280,7 @@ export const TOOLS: ToolSpec[] = [
       "network) and it is never killed that way, because it could be mid-work and a truncated file " +
       "is worse than the wait. A vendored provider command counts as having declared network even " +
       "though you did not — so it is never killed that way either, and the `$TMPDIR` exchange is " +
-      "off — unless it ENDS in --help or -h, which reaches nothing and is exempt. " +
+      "off — unless it is a help invocation, which reaches nothing and is exempt. " +
       "A run ends when the command itself exits, and its stdout and stderr close with it — so a job " +
       "left running in the background will normally be killed by its next write unless it redirects " +
       "both (`>log 2>&1`), its output is not captured, and no handle tracks it. "  +
@@ -312,9 +312,9 @@ export const TOOLS: ToolSpec[] = [
           type: "boolean",
           description:
             "Whether the command needs network access (default false). Ignored for a " +
-            "vendored provider command other than --help: those reach their service by " +
-            "definition, so network is granted whether you omit this or set it false, " +
-            "and the approver sees it either way.",
+            "vendored provider command that is not a help invocation: those reach their " +
+            "service by definition, so network is granted whether you omit this or set " +
+            "it false, and the approver sees it either way.",
         },
         wait_ms: {
           type: "integer",
