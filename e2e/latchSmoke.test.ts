@@ -105,22 +105,23 @@ describe.skipIf(!havePython())("latch-smoke, run for real", () => {
     };
   }
 
-  // These drive the real `urllib` stack, which reads `http_proxy` through
-  // `getproxies()` — so a developer with one exported sends the loopback URL
-  // to their proxy and gets a different failure than the row names.
   // These drive the real `urllib` stack, which reads the environment through
   // `getproxies_environment` — so a developer with a proxy exported sends the
   // loopback URL to it and gets a different failure than the row names.
   //
-  // The LOWERCASE empty string is what does the work, and it is enough for an
-  // uppercase one too: pass 1 lowercases every name and takes any case, pass 2
-  // matches only names already lowercase and POPS the entry when the value is
-  // empty. Verified against this Python rather than assumed — an earlier
-  // comment here claimed the opposite and added uppercase clears that did
-  // nothing:
+  // `no_proxy: "*"` is what actually protects this: it makes
+  // `getproxies_environment()` non-empty, so `proxy_bypass()` takes the
+  // environment branch and returns True for every host, whatever `http_proxy`
+  // resolved to. The empty lowercase pair is belt on top — CPython's second
+  // pass matches names that are ALREADY lowercase and pops the entry when the
+  // value is empty, which is why clearing the lowercase one also clears an
+  // uppercase one. Both checked against this Python rather than asserted; an
+  // earlier comment here had the pass backwards and added uppercase clears
+  // that did nothing:
   //
-  //     HTTP_PROXY=http://evil:3128            -> {'http': 'http://evil:3128'}
-  //     ...plus http_proxy=""                  -> {}
+  //     HTTP_PROXY set                     -> {'http': 'http://evil:3128'}
+  //     ...plus http_proxy=""              -> {}
+  //     HTTP_PROXY set, plus no_proxy="*"  -> proxy_bypass("127.0.0.1") is True
   const env = { ...process.env, http_proxy: "", https_proxy: "", no_proxy: "*" };
 
   it("reaches a verdict and annotates it, without a traceback", () => {
