@@ -63,6 +63,12 @@ describe("cloud-agent pure mappings", () => {
     } as CloudAgentResource);
 
     expect(row.failureReason).toBe("validation_failed");
+
+    const future = toCloudAgentDisplayRow({
+      ...agent({ status: "failed", failureReason: "Provider capacity is exhausted." }),
+      failureCode: "capacity_exhausted",
+    } as CloudAgentResource);
+    expect(future.failureReason).toBe("Provider capacity is exhausted.");
   });
 
   it("does not invent transport recipients when chat metadata is unavailable", () => {

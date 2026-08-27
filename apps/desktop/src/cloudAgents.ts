@@ -180,7 +180,7 @@ export class CloudAgentsClient {
         },
       );
       const next = await this.resourceFor(response, deviceCredential);
-      if (next.agentId !== current.agentId) throw unexpectedAgent(response.status);
+      if (next.agentId !== current.agentId) continue;
       current = next;
       signal?.throwIfAborted();
       await onTransition?.(current);
@@ -265,14 +265,6 @@ function invalidResponse(status: number): PlowApiError {
   return new PlowApiError("http", "Plow returned an invalid cloud-agent response.", status);
 }
 
-function unexpectedAgent(status: number): PlowApiError {
-  return new PlowApiError(
-    "http",
-    "Plow returned a cloud-agent response for an unexpected agent.",
-    status,
-  );
-}
-
 function conflictCode(decoded: unknown): string | null {
   if (!isRecord(decoded) || !isRecord(decoded.detail)) return null;
   return typeof decoded.detail.code === "string" ? decoded.detail.code : null;
@@ -287,7 +279,8 @@ function conflictError(code: string | null): PlowApiError {
     OWNER_NO_ADDRESS: "Your Plow account has no address for that chat.",
     OWNER_NOT_IN_CHAT: "Your Plow account is not a member of that chat.",
   };
-  return new PlowApiError("http", (code && messages[code]) ?? "Plow returned 409.", 409);
+  const message = code && Object.hasOwn(messages, code) ? messages[code] : "Plow returned 409.";
+  return new PlowApiError("http", message, 409);
 }
 
 function recoverableAgentId(decoded: unknown): string | null {

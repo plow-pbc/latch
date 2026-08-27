@@ -174,6 +174,19 @@ describe("CloudAgentsClient destructive actions", () => {
     expect(String(error)).toBe("PlowApiError: Plow returned 409.");
     expect(calls.map(({ init }) => init.method)).toEqual(["POST"]);
   });
+
+  it("does not inherit a conflict message from Object.prototype", async () => {
+    const { fetchImpl } = recordingFetch([{
+      status: 409,
+      body: { detail: { code: "constructor", message: "ignored" } },
+    }]);
+
+    const error = await new CloudAgentsClient(new PlowApi("https://api.plow.co", fetchImpl))
+      .create(CREDENTIAL, { chatUid: "cht_123" })
+      .catch((caught: unknown) => caught);
+
+    expect(String(error)).toBe("PlowApiError: Plow returned 409.");
+  });
 });
 
 describe("CloudAgentsClient contract parsing", () => {
@@ -223,7 +236,7 @@ describe("CloudAgentsClient contract parsing", () => {
 });
 
 describe("CloudAgentsClient polling identity", () => {
-  it("surfaces a response for another agent without adopting its id", async () => {
+  it("ignores a transient mismatched id and keeps polling the requested agent", async () => {
     const { calls, fetchImpl } = recordingFetch([
       { status: 200, body: resource("provisioning", { agent_id: "agent_OTHER" }) },
       { status: 200, body: resource("running", { agent_id: "agent_A" }) },
@@ -231,20 +244,19 @@ describe("CloudAgentsClient polling identity", () => {
     const transitions: string[] = [];
     const receipt = fromWire(resource("provisioning", { agent_id: "agent_A" }));
 
-    const error = await new CloudAgentsClient(
+    const final = await new CloudAgentsClient(
       new PlowApi("https://api.plow.co", fetchImpl),
       async () => undefined,
     ).poll(CREDENTIAL, receipt, (agent) => {
       transitions.push(`${agent.agentId}:${agent.status}`);
-    }).catch((caught: unknown) => caught);
+    });
 
-    expect(String(error)).toBe(
-      "PlowApiError: Plow returned a cloud-agent response for an unexpected agent.",
-    );
+    expect(final).toMatchObject({ agentId: "agent_A", status: "running" });
     expect(calls.map(({ url }) => url)).toEqual([
       "https://api.plow.co/v1/agents/cloud/agent_A",
+      "https://api.plow.co/v1/agents/cloud/agent_A",
     ]);
-    expect(transitions).toEqual(["agent_A:provisioning"]);
+    expect(transitions).toEqual(["agent_A:provisioning", "agent_A:running"]);
   });
 });
 

@@ -910,7 +910,10 @@ function cloudStatus(status, failureReason) {
       unknown: "Unknown failure",
       provision_timeout: "Provision timed out",
     };
-    return { tone: "red", label: `Failed · ${reasons[failureReason] ?? failureReason ?? "Reason unavailable"}` };
+    const reason = failureReason && Object.hasOwn(reasons, failureReason)
+      ? reasons[failureReason]
+      : failureReason ?? "Reason unavailable";
+    return { tone: "red", label: `Failed · ${reason}` };
   }
   return { tone: "amber", label: "Status unavailable" };
 }
