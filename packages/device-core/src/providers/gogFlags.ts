@@ -25,12 +25,12 @@
  * reports ZERO negatable flags anywhere — globals or gmail/calendar.
  * `scripts/fetch-gog.mjs` asserts that second one against the binary it just
  * extracted, so a pin bump that makes a flag negatable fails the FETCH — the
- * earliest point it can. It is not a full replacement for the probe, though:
- * it would not survive gog renaming the `negated` key itself, which is why the
- * three `--no-*` probes above are not optional on a bump. (The fetch's count
- * floor catches a renamed `flags` or `subcommands` key — a different rename
- * entirely.) Re-run the two single-dash probes on a bump as well; they cover
- * the other spelling, not this one.
+ * earliest point it can. It does NOT cover every way that assertion could go
+ * blind; the comment on the floor in that script is the single account of what
+ * it covers and what it does not, and is deliberately not restated here.
+ *
+ * What that leaves for a bumper: re-run every probe named above by hand — the
+ * three `--no-*` spellings and the two single-dash ones.
  */
 
 /**

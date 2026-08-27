@@ -110,13 +110,21 @@ try {
     for (const sub of node.subcommands ?? []) walk(sub);
   };
   walk(schema.command ?? {});
-  // A floor, because the check is worthless if it never saw a flag: a renamed
-  // schema key would otherwise certify zero negatable flags from a key nothing
-  // reads. This walk counts globals again under every subcommand, so it sees
-  // ~17k at 0.36.0 — far above the floor, which is set low deliberately: it is
-  // a did-we-parse-anything check. It catches a renamed `flags` key; it does
-  // NOT catch a renamed `negated` key, which is why gogFlags.ts keeps the hand
-  // probes written down as the thing to re-run on a bump.
+  // A floor, because the check above is worthless if it never saw a flag.
+  //
+  // THIS COMMENT IS THE ONLY ACCOUNT OF WHAT THE GUARD COVERS. gogFlags.ts
+  // points here rather than restating it — two files each carrying a full
+  // account is what produced four rounds of one drifting out of step with the
+  // other, every fix to one making the other the outlier.
+  //
+  // Covers: a renamed `flags` or `subcommands` key. Either drops the count far
+  // below the floor (this walk re-counts globals under every subcommand, so it
+  // sees ~17k at 0.36.0), so the fetch fails instead of certifying zero
+  // negatable flags from a key nothing reads.
+  //
+  // Does NOT cover: a renamed `negated` key. The count stays intact and
+  // `negatable` stays empty. Only the `--no-*` hand probes recorded in
+  // gogFlags.ts bear on that, which is why they are not optional on a bump.
   if (flagsSeen < 500) {
     throw new Error(`only ${flagsSeen} flags parsed from gog's schema — has its shape changed?`);
   }
