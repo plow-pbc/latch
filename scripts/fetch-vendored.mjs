@@ -92,8 +92,10 @@ function fetchProvider(provider) {
 }
 
 const arg = process.argv[2];
+// No `!arg` disjunct: `providerNamed(undefined)` is null like any unknown name,
+// so a missing argument and a wrong one reach this the same way.
 const wanted = arg === "--all" ? VENDORED : [providerNamed(arg)];
-if (!arg || wanted[0] == null) {
+if (wanted[0] == null) {
   const names = VENDORED.map((p) => p.command).join("|");
   console.error(`usage: fetch-vendored.mjs <${names}|--all>`);
   process.exit(2);
