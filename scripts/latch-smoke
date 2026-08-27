@@ -60,8 +60,12 @@ def remote_cat(log_path):
     return f"if [ -e {quoted} ]; then cat -- {quoted}; else exit 3; fi"
 
 
-def read_log(log_path, ssh):
+def read_log(log_path, ssh, budget):
     """`(records, problem)` — every parseable audit record, or why there are none.
+
+    `budget` is what is left of the run's single deadline. An ssh read that
+    stalls is otherwise unbounded, and it sits INSIDE the poll loop, so a
+    hung host meant `--timeout` bounded nothing at all.
 
     A read that FAILED and a log with no evidence in it are different answers,
     and collapsing them is how a checker reports "ruled out" having opened
@@ -72,10 +76,15 @@ def read_log(log_path, ssh):
     the set of causes the timeout branch names.
     """
     if ssh:
-        proc = subprocess.run(
-            ["ssh", "-o", "ConnectTimeout=8", "-o", "BatchMode=yes", ssh, remote_cat(log_path)],
-            capture_output=True, text=True,
-        )
+        if budget <= 0:
+            return [], f"ssh {ssh}: no time left in the window to read"
+        try:
+            proc = subprocess.run(
+                ["ssh", "-o", "ConnectTimeout=8", "-o", "BatchMode=yes", ssh, remote_cat(log_path)],
+                capture_output=True, text=True, timeout=budget,
+            )
+        except subprocess.TimeoutExpired:
+            return [], f"ssh {ssh}: read did not finish within the window"
         if proc.returncode == 3:
             return [], None
         if proc.returncode != 0:
@@ -102,8 +111,12 @@ def read_log(log_path, ssh):
     return records, None
 
 
-def send(url, token_file, argv, goal):
+def send(url, token_file, argv, goal, budget):
     """POST one `tools/call`. Returns None, or `(reason, unknown, hint)`.
+
+    `budget` is what is left of the run's deadline, and it bounds the read.
+    Hard-coding 90s here meant `--timeout 1` blocked for 91 seconds against a
+    relay that accepts and never answers — measured, not supposed.
 
     `unknown` is the difference between a call that was refused and one whose
     fate nobody knows. Only the first is a reason to stop: the second is
@@ -161,7 +174,7 @@ def send(url, token_file, argv, goal):
         return (f"could not reach {url}: {error}.\n"
                 "  The request never left this Mac; nothing was written to the log.", False, None)
     try:
-        with urllib.request.urlopen(request, timeout=90) as response:
+        with urllib.request.urlopen(request, timeout=budget) as response:
             payload = json.load(response)
     except urllib.error.HTTPError as error:
         # A RESPONSE arrived, so this branch actually knows something. A 4xx is
@@ -350,11 +363,22 @@ def main():
     nonce = f"latch-smoke-{time.strftime('%Y%m%dT%H%M%SZ', time.gmtime())}-{os.getpid()}"
     print(f"nonce={nonce}")
 
+    # ONE deadline, started before any blocking call. `--timeout` is the whole
+    # run's budget, not the poll loop's: it used to start after the send, so a
+    # relay that accepts and never answers made `--timeout 1` take 91 seconds
+    # (measured), and a stalled ssh read inside the loop was unbounded
+    # entirely. Every blocking call below gets what is left of it.
+    full_deadline = time.monotonic() + args.timeout
+    deadline = full_deadline
+
+    def remaining():
+        return max(0.0, deadline - time.monotonic())
+
     # Read BEFORE sending, and refuse on a read that failed. This is the one
     # moment where refusing costs nothing: past it, the call has raised a
     # dialog on someone's Mac that nothing here can then verify. It is the same
     # reasoning the send-side guards use, one layer down.
-    baseline, problem = read_log(log_path, args.ssh)
+    baseline, problem = read_log(log_path, args.ssh, remaining())
     if problem is not None:
         print(f"REFUSED — cannot read the audit log: {problem}")
         print("  Not sending: a call this cannot verify would still raise a dialog.")
@@ -367,7 +391,11 @@ def main():
     # out" having checked nothing, which tells someone to stop looking.
     since = len(baseline)
 
-    sent = send(args.url, args.token_file, argv, f"smoke test: {nonce}")
+    if remaining() <= 0:
+        print(f"REFUSED — the {args.timeout}s window closed while reading the log.")
+        print("  Nothing was sent. Raise --timeout.")
+        return 1
+    sent = send(args.url, args.token_file, argv, f"smoke test: {nonce}", remaining())
     if sent is not None:
         reason, unknown, _hint = sent
         if not unknown:
@@ -377,20 +405,19 @@ def main():
 
     # `intent_received` is written on arrival, before the dialog, so a short
     # look answers "did it get there?" from evidence rather than from the
-    # exception's class. Extended to the full window the moment it appears.
+    # exception's class. Extended to the rest of the window the moment it
+    # appears — and never PAST it: the grace is a floor on attention, not an
+    # extension of the budget.
     grace = sent is not None
-    # Never longer than what was asked for: `--timeout 1` means one second,
-    # grace included.
-    window = min(ARRIVAL_GRACE_S, args.timeout) if grace else args.timeout
-    started = time.monotonic()
-    print(f"waiting up to {window}s"
+    if grace:
+        deadline = min(full_deadline, time.monotonic() + ARRIVAL_GRACE_S)
+    print(f"waiting up to {remaining():.0f}s"
           f"{' for it to arrive at all' if grace else ' for a terminal event'}")
-    deadline = started + window
     # The baseline was read from the same path a moment ago; records in it are
     # evidence the path is right, which is all the hint below asserts against.
     saw_any = bool(baseline)
     while True:
-        events, problem = read_log(log_path, args.ssh)
+        events, problem = read_log(log_path, args.ssh, remaining())
         if problem is not None:
             expired = time.monotonic() >= deadline
             # It was readable a moment ago, so this is transient. Never let it
@@ -404,8 +431,10 @@ def main():
             if grace and any(r.get("event") == "intent_received"
                              and nonce in str(r.get("goal", "")) for r in events):
                 grace = False
-                deadline = started + args.timeout
-                print(f"it arrived — waiting up to {args.timeout}s for a terminal event")
+                # Back to the run's own deadline, never past it: the grace was
+                # a floor on attention, not extra budget.
+                deadline = full_deadline
+                print(f"it arrived — waiting up to {remaining():.0f}s for a terminal event")
             # AFTER the extension: computing it at the top of the loop meant an
             # intent that first became visible on this very read was handed
             # `expired=True` and reported as timed out one line below the
@@ -433,7 +462,7 @@ def main():
                 return code
         # Bounded by the deadline: `--timeout 1` slept five seconds, so the
         # window an operator asked for was never the window they got.
-        time.sleep(max(0.0, min(5.0, deadline - time.monotonic())))
+        time.sleep(min(5.0, remaining()))
 
 
 if __name__ == "__main__":

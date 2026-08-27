@@ -50,7 +50,10 @@ scripts/latch-smoke --url <mcpUrl> --token-file <path>
 - `--ssh <user@host>` — read that Mac's audit log over ssh instead of this
   one's. Host map: the `tailscale-ssh` skill. The call itself always goes over
   the relay, so only the log read is remote.
-- `--timeout <seconds>` — default 120.
+- `--timeout <seconds>` — default 120. It bounds the **whole run**, not just
+  the polling: the log read, the send, and every poll draw on one deadline. So
+  a relay that accepts and never answers costs what you asked for, not the
+  90 seconds a hard-coded socket timeout used to spend.
 - Everything after `--` replaces the command. The default is a **fixed**
   `/bin/echo latch-smoke`, and that is deliberate: the run's nonce rides `goal`,
   which `RuleKey.compute` excludes from the rule key, so one pre-seeded Always
@@ -73,7 +76,7 @@ Only success exits 0.
 | `FAILED — the executor threw` | 1 | `exec_error` names why; nothing ran |
 | `DENIED` | 1 | the owner refused it. The relay and the device both worked |
 | `REFUSED — HTTP 4xx` | 1 | refused before an intent existed, so there is no audit line. 401/403 is the relay or the credential; another 4xx is the MCP handler |
-| `UNVERIFIED — …` | — | not an outcome. The send did not settle the question: anything that is not a response (a timeout, a dropped socket), a 5xx, or an `isError` — which is also how an ordinary **denial** comes back. So the script does not stop; it polls (20s to see it arrive, then the full window), and one of the rows above is still the answer |
+| `UNVERIFIED — …` | — | not an outcome. The send did not settle the question: anything that is not a response (a timeout, a dropped socket), a 5xx, or an `isError` — which is also how an ordinary **denial** comes back. So the script does not stop; it polls (up to 20s to see it arrive, then the rest of the window), and one of the rows above is still the answer |
 | `TIMEOUT — … approval dialog` | 1 | it arrived and is sitting unanswered. Not a plumbing problem |
 | `TIMEOUT — approved, never started` | 1 | `exec_start` is written before the spawn, so its absence means the executor was never reached. Check the app is running |
 | `TIMEOUT — started, still running` | 1 | re-run, or raise `--timeout` |

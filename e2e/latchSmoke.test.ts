@@ -329,6 +329,29 @@ describe.skipIf(!havePython())("latch-smoke treats a response as evidence and an
     expect(sent.unknown).toBe(false);
   });
 
+  // `--timeout` is the whole run's budget, not the poll loop's. Hard-coding
+  // 90s here made `--timeout 1` take 91 seconds against a relay that accepts
+  // and never answers — measured before the fix, 1.0s after.
+  it("spends the run's remaining budget on the send, not a fixed 90s", () => {
+    const file = path.join(tmp, "budget-token");
+    fs.writeFileSync(file, "t\n", { mode: 0o600 });
+    const sent = call({ call: "send", url: "https://relay.invalid/mcp", status: 0, token: "t",
+      raises: "capture-budget" }, file) as { urlopenTimeout: number };
+    // The probe passes 30; a hard-coded 90 (or an unset timeout) fails here.
+    expect(sent.urlopenTimeout).toBe(30);
+  });
+
+  it("gives up on an ssh read that outlives the window", () => {
+    // The read sits INSIDE the poll loop, so an unbounded one meant a hung
+    // host made `--timeout` bound nothing at all.
+    const slow = fakeSsh("sleep 30");
+    const started = Date.now();
+    const read = call({ call: "read", path: "/x", ssh: "u@h", budget: 1 }, "", slow) as
+      { count: number; problem: string };
+    expect(Date.now() - started).toBeLessThan(10_000);
+    expect(read.problem).toContain("did not finish within the window");
+  });
+
   it("points a pre-intent isError at cause 2, not at the send", () => {
     // `isError` is ALSO how the MCP layer refuses before an intent exists, so
     // nothing is written to the log and the run times out — with a 200 on

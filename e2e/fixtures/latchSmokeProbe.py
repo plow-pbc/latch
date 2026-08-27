@@ -23,7 +23,7 @@ spec.loader.exec_module(smoke)
 request = json.loads(sys.argv[2])
 
 if request["call"] == "read":
-    records, problem = smoke.read_log(request["path"], request.get("ssh"))
+    records, problem = smoke.read_log(request["path"], request.get("ssh"), request.get("budget", 30))
     print(json.dumps({"count": len(records), "problem": problem or ""}))
 elif request["call"] == "remote":
     print(json.dumps(smoke.remote_cat(request["path"])))
@@ -45,7 +45,12 @@ else:
         # the entire contract `send`'s `with` needs.
         return io.BytesIO(json.dumps(payload).encode())
 
-    def urlopen(*_args, **_kwargs):
+    seen = {}
+
+    def urlopen(*_args, **kwargs):
+        seen["timeout"] = kwargs.get("timeout")
+        if raises == "capture-budget":
+            raise urllib.error.URLError(ConnectionRefusedError(61, "refused"))
         if raises == "rpc-error":
             # Server-authored text, and it reflects the request back.
             return response({"jsonrpc": "2.0", "id": 1,
@@ -83,8 +88,10 @@ else:
         raise SystemExit(f"unknown raises: {raises}")
 
     urllib.request.urlopen = urlopen
-    sent = smoke.send(request["url"], sys.argv[3], ["/bin/echo", "x"], "goal")
+    sent = smoke.send(request["url"], sys.argv[3], ["/bin/echo", "x"], "goal", 30)
     # `send` returns None when the call went through; the success path has to be
     # representable or the first test that stubs a 200 fails inside the harness.
-    print(json.dumps({"reason": None, "unknown": False, "hint": None} if sent is None
-                     else {"reason": sent[0], "unknown": sent[1], "hint": sent[2]}))
+    out = ({"reason": None, "unknown": False, "hint": None} if sent is None
+           else {"reason": sent[0], "unknown": sent[1], "hint": sent[2]})
+    out["urlopenTimeout"] = seen.get("timeout")
+    print(json.dumps(out))
