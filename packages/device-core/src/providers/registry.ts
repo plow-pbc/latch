@@ -134,16 +134,17 @@ const GOG: VendoredProvider = {
     // reaches Google and comes back 401, which is a spent delegation. So this
     // checks the one thing that is actually ours to check.
     const group = rest[0];
-    if (group === undefined) return "the command is missing: try [\"gog\", \"gmail\", \"search\", ...]";
-    // Two different mistakes, two different sentences. A leading global flag
-    // is the likelier one and has nothing to do with scope, so answering it
-    // with "only Gmail and Calendar" sends the reader to fix the wrong thing.
-    if (group.startsWith("-")) {
-      return `the command must come first, before any flags: put ${group} after it`;
-    }
-    if (!GOG_GROUPS.has(group)) {
-      return `this Mac reaches only Gmail and Calendar through gog, not ${group}`;
-    }
+    // Three different mistakes, three sentences — and NONE of them quotes the
+    // argv back. These reach the approval dialog and the append-only audit
+    // log, so the same rule `gogFlags` follows applies: a reason may name a
+    // rule, never the caller's text. The rule is enough to self-correct from.
+    if (group === undefined) return 'the command is missing: try ["gog", "gmail", "search", ...]';
+    if (group.startsWith("-")) return "the command must come first, before any flags";
+    // gog never sees a dotted spelling as a command, so its own error would
+    // not help here — this is one of the two mistakes the skill flags as
+    // likeliest, and it needs its own sentence.
+    if (group.includes(".")) return 'the command must be separate words: ["gmail", "search"], not ["gmail.search"]';
+    if (!GOG_GROUPS.has(group)) return "this Mac reaches only Gmail and Calendar through gog";
     return null;
   },
 };

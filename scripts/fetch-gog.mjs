@@ -11,9 +11,11 @@
  * (`arm64`, `amd64`), because `resolveGogBinary` looks them up by
  * `process.arch` at runtime.
  *
- * Bump `VERSION` and both digests together; then regenerate the leaf list
- * (`scripts/fetch-gog-schema.mjs`) and re-run the four --readonly checks the
- * design spec records, because that guard is verified per version.
+ * Bump `VERSION` and both digests together. This script then asserts, against
+ * the binary it just extracted, that no gog flag is negatable — the one
+ * spelling `reservedFlags.ts` cannot see. The `--readonly` behaviour recorded
+ * in that file is verified per version and is a HAND probe: re-run it on a
+ * bump.
  */
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
@@ -79,7 +81,10 @@ try {
   // flag while matching neither the set nor either rule. Zero flags are
   // negatable at 0.36.0 — asserted here so a pin bump fails the fetch rather
   // than shipping a binary whose grammar the gate cannot see.
-  const arch = Object.keys(DIGESTS).find((a) => existsSync(path.join(root, "vendor/gog", a, "gog")));
+  // THIS host's arch, not whichever key happens to be first: an x64 binary
+  // cannot be executed on an arm64 Mac, and `find` over the digest keys would
+  // pick one by object order.
+  const arch = process.arch;
   const schema = JSON.parse(
     execFileSync(path.join(root, "vendor/gog", arch, "gog"), ["--no-input", "schema", "--json"], {
       encoding: "utf8",

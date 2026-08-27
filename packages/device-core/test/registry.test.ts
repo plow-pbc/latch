@@ -54,6 +54,10 @@ describe("the gog provider's refusal", () => {
     ["a group outside the token's scopes", ["gog", "drive", "search", "q"]],
     ["a group that does not exist", ["gog", "nonsense", "x"]],
     ["no group at all", ["gog"]],
+    // The two mistakes the skill flags as likeliest. gog never sees either as
+    // a command, so its own error would not help — each needs its own sentence.
+    ["a leading global flag", ["gog", "--json", "gmail", "search", "q"]],
+    ["the dotted spelling", ["gog", "gmail.search", "q"]],
   ])("refuses %s", (_why, argv) => {
     expect(gog.refuse(argv)).not.toBeNull();
   });
@@ -81,6 +85,18 @@ describe("the gog provider's refusal", () => {
     expect(gog.refuse(["gog", "gmail", "--help", "--home", "/tmp/evil"])).not.toBeNull();
   });
 
+
+  it("names the rule, never the caller's argv", () => {
+    // These reach the approval dialog and the append-only audit log, so the
+    // same rule gogFlags follows applies here.
+    for (const argv of [
+      ["gog", "--sneaky-agent-text", "gmail", "search"],
+      ["gog", "sneaky.agent.text", "q"],
+      ["gog", "sneakyagenttext", "q"],
+    ]) {
+      expect(gog.refuse(argv)).not.toContain("sneaky");
+    }
+  });
 
   it("never reports a spelling the caller chose", () => {
     // The reason reaches an error, the approval dialog and the audit log.

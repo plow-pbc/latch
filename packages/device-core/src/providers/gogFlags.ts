@@ -23,11 +23,12 @@
  * Also checked, both ways: `--no-readonly`, `--no-wrap-untrusted` and
  * `--no-gmail-no-send` are all `unknown flag` at 0.36.0, and the schema
  * reports ZERO negatable flags anywhere — globals or gmail/calendar.
- * `scripts/fetch-gog-schema.mjs` asserts that second one at generation time,
- * so a pin bump that makes a flag negatable fails the generator. It is not a
- * full replacement for the probe, though: it would not survive gog renaming
- * the `negated` key itself. Re-run the three `--no-*` commands above, and the
- * two single-dash ones, on a pin bump.
+ * `scripts/fetch-gog.mjs` asserts that second one against the binary it just
+ * extracted, so a pin bump that makes a flag negatable fails the FETCH — the
+ * earliest point it can. It is not a full replacement for the probe, though:
+ * it would not survive gog renaming the `negated` key itself, which is why the
+ * count floor is there. Re-run the three `--no-*` commands above, and the two
+ * single-dash ones, on a pin bump.
  */
 
 /**
