@@ -12,6 +12,13 @@
  *
  *     node scripts/fetch-vendored.mjs gog     one provider
  *     node scripts/fetch-vendored.mjs --all   every provider (what `package` runs)
+ *
+ * **Exports nothing, and nothing may import it.** The CLI below runs at module
+ * scope, so an import fires it — downloading tarballs, writing into `vendor/`,
+ * or exiting 2 mid-import. That is the trade for having no run-only-if-invoked
+ * guard, which is what a symlinked checkout once turned into a silent no-op.
+ * The staging predicates live in `vendored-staging.mjs` for exactly this
+ * reason; anything else worth sharing goes there too, not here.
  */
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";

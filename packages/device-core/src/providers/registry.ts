@@ -73,9 +73,9 @@ export interface VendoredProvider {
    *  - **An out-of-scope group** — without the belt's bound gog tries it and
    *    comes back 401, a spent call. This branch closes it before the mint.
    *  - **A leading global flag** — worse, and verified: `--json gmail search x`
-   *    parses `--json` as a global and **succeeds**. Nothing reads `rest[0]` in
-   *    that shape, so nothing would have checked the group at all, which is why
-   *    the message names the position rather than scopes.
+   *    parses `--json` as a global and **succeeds**. `rest[0]` is not the group
+   *    in that shape, so the group check would inspect the flag and never see
+   *    one, which is why the message names the position rather than scopes.
    *  - **A dotted spelling** and **an empty argv** reach nothing.
    *
    * It deliberately does NOT mirror gog's command grammar. A misspelt leaf is
@@ -129,9 +129,15 @@ const GOG: VendoredProvider = {
       return `${reserved} may not be supplied: it would override this Mac's safety flags`;
     }
     // `--help` is inert — gog prints usage and exits — and is how the skill
-    // tells an agent to discover the surface. Without an allowance the group
-    // check refuses `gog gmail --help`, so the skill would teach a command the
-    // gate rejects.
+    // tells an agent to discover the surface. What the allowance rescues is
+    // `gog --help` and `gog -h`, which the flags-first branch below would
+    // otherwise refuse for leading with a flag; a group's own help
+    // (`gog gmail --help`) passes the group check without it.
+    //
+    // It also passes `gmail send --subject --help`, where `--help` is a flag's
+    // VALUE and the last word, with no group check reached. Safe because gog
+    // refuses `--help` there itself — `expected string value` at 0.36.0 — which
+    // is the only thing making this allowance narrow enough.
     if (isHelpInvocation(rest)) return null;
     const group = rest[0];
     // Four sentences, and NONE quotes the argv back: these reach the approval

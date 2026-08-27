@@ -7,11 +7,15 @@
  */
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { createHash } from "node:crypto";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 // @ts-expect-error — a build-time .mjs with no type declarations.
 import { isStaged } from "../../../scripts/vendored-staging.mjs";
+
+const repoRoot = fileURLToPath(new URL("../../..", import.meta.url));
 
 const sha = (b: string) => createHash("sha256").update(b).digest("hex");
 
@@ -79,5 +83,25 @@ describe("isStaged", () => {
 
   it("is false when nothing is staged at all", () => {
     expect(isStaged(provider(), root)).toBe(false);
+  });
+});
+
+/**
+ * `fetch-vendored.mjs` exports nothing and runs its CLI at module scope, so the
+ * only way to exercise it is to spawn it. Both cases below stop at the argv
+ * check and touch neither the network nor `vendor/`.
+ */
+describe("the fetcher's argv check", () => {
+  const script = path.join(repoRoot, "scripts/fetch-vendored.mjs");
+  const run = (args: string[]) =>
+    spawnSync(process.execPath, [script, ...args], { encoding: "utf8" });
+
+  it.each([
+    ["no provider named", []],
+    ["one that is not in the manifest", ["not-a-provider"]],
+  ])("exits 2 with usage when given %s", (_how, args) => {
+    const { status, stderr } = run(args as string[]);
+    expect(status).toBe(2);
+    expect(stderr).toContain("usage: fetch-vendored.mjs");
   });
 });

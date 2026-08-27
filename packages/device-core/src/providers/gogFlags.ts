@@ -84,6 +84,9 @@ function ruleLabelFor(flag: string): string | null {
 export function reservedFlagIn(argv: readonly string[]): string | null {
   for (const arg of argv) {
     if (!arg.startsWith("--")) continue;
+    // Split on `=` so the joined spelling is caught alongside the space-
+    // separated one — `--readonly=false` is the one verified to have reached
+    // Google.
     const flag = arg.split("=", 1)[0]!;
     if (RESERVED_EXACT.has(flag)) return flag;
     const label = ruleLabelFor(flag);
