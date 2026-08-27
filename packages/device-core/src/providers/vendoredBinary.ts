@@ -23,8 +23,10 @@ import path from "node:path";
  * `afterPack.cjs`, `.gitignore` and `worktree-setup.sh`. Deliberately not
  * counted: two attempts at a number in this sentence were both wrong, and a
  * count is a second thing to maintain. That repetition is the trade for those
- * sites carrying no PROVIDER names at all, and a good one — this segment never
- * changes, where the per-provider literals it replaced changed every time.
+ * sites carrying no PROVIDER names at all — modulo the transitional
+ * `vendor/gog/` line `.gitignore` keeps until no live checkout predates the
+ * move — and a good one: this segment never changes, where the per-provider
+ * literals it replaced changed every time.
  *
  * The consequential pair is this constant against the yml's `to:`. If they
  * drift, afterPack's gate uses its own literal, agrees with `to:`, stays green,
