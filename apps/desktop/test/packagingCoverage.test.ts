@@ -17,7 +17,7 @@
  * check reads the same and passes on edits that do not work: adding a provider
  * to the INNER alternation of the arch glob contains its name while matching
  * none of its paths, and a provider named `vault` is a substring of
- * `vault-cli` at once.
+ * `vault-cli` at all four sites at once.
  */
 import { describe, expect, it } from "vitest";
 import fs from "node:fs";
@@ -80,7 +80,7 @@ const clonedDirs = (() => {
  * is checked too.
  */
 function ignoredByCommittedGitignore(command: string): { ok: boolean; why: string } {
-  const { status, stdout, error } = spawnSync(
+  const { status, stdout, stderr, error } = spawnSync(
     "git",
     ["check-ignore", "-v", `vendor/${command}/probe`],
     { cwd: repoRoot, encoding: "utf8", timeout: 15_000 },
@@ -89,7 +89,9 @@ function ignoredByCommittedGitignore(command: string): { ok: boolean; why: strin
   // work tree, otherwise reads as a missing .gitignore line that is right there.
   if (error) return { ok: false, why: `could not run git check-ignore: ${error.message}` };
   if (status !== 0 && status !== 1) {
-    return { ok: false, why: `git check-ignore exited ${status}: ${stdout}` };
+    // stderr, not stdout: git writes fatal errors there, and stdout is empty
+    // for exactly the two cases this branch exists to name.
+    return { ok: false, why: `git check-ignore exited ${status}: ${stderr.trim()}` };
   }
   return {
     ok: status === 0 && stdout.startsWith(".gitignore:"),
