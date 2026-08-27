@@ -6,7 +6,7 @@
  * see by reading the command — the command itself looks legitimate.
  */
 import { describe, expect, it } from "vitest";
-import { GOG_ALIASES, GOG_CANONICAL } from "../src/providers/gogGroups.js";
+import { GOG_ALIASES, GOG_CANONICAL, GOG_OUT_OF_SCOPE } from "../src/providers/gogGroups.js";
 import {
   impliesNetwork,
   needsToken,
@@ -215,6 +215,11 @@ describe("the scope bound", () => {
     expect(gog.belt).toContain(bound);
     // EVERY occurrence, not any: the page names it more than once, and
     // `toContain` passes while one of them says something else.
+    // Same for the prose clause: two sites stated it in their own words and
+    // four review rounds went into them disagreeing about aliases.
+    const clauses = gog.skill.body.match(/that is not one of those[^.]*/g) ?? [];
+    expect(clauses).toHaveLength(2);
+    for (const clause of clauses) expect(clause).toContain(GOG_OUT_OF_SCOPE);
     const named = gog.skill.body.match(/--enable-commands=[^`\s]*/g) ?? [];
     // Every naming agrees, and there is at least one: an empty match set
     // fails this too, since `[]` is not `[bound]`.
