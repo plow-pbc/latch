@@ -8,6 +8,7 @@ import { CloudAgentResource, isTerminalCloudAgent } from "../src/cloudAgents.js"
 function agent(overrides: Partial<CloudAgentResource> = {}): CloudAgentResource {
   return {
     agentId: "agent_stable",
+    chatUids: ["cht_123"],
     chatUid: "cht_123",
     url: "https://provider.internal/secret-handle",
     provider: "exe:hermes",
@@ -42,6 +43,7 @@ describe("cloud-agent pure mappings", () => {
     const row = toCloudAgentDisplayRow(
       agent({
         agentId: `agent-${sessionId}`,
+        chatUids: [`chat-${sessionId}`],
         chatUid: `chat-${sessionId}`,
         name: `name ${sessionId}`,
         provider: `provider ${sessionId}`,

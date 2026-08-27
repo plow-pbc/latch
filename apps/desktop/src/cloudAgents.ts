@@ -31,6 +31,12 @@ export type CloudAgentStatus =
  */
 export interface CloudAgentResource {
   agentId: string;
+  /**
+   * Every chat this agent serves, in the server's order. One agent may serve
+   * several chats, and the first is where its unprompted output lands.
+   */
+  chatUids: string[];
+  /** The first of `chatUids` — what a single-chat screen shows. */
   chatUid: string;
   url: string | null;
   provider: string | null;
@@ -44,7 +50,8 @@ export interface CloudAgentResource {
 }
 
 export interface CreateCloudAgentRequest {
-  chatUid: string;
+  /** At least one chat; the first is the agent's default destination. */
+  chatUids: string[];
   name?: string;
   provider?: string | null;
   scopes?: string[];
@@ -80,7 +87,7 @@ export class CloudAgentsClient {
     request: CreateCloudAgentRequest,
   ): Promise<CloudAgentResource> {
     const body = {
-      chat_uid: request.chatUid,
+      chat_uids: request.chatUids,
       ...(request.name === undefined ? {} : { name: request.name }),
       ...(request.provider === undefined ? {} : { provider: request.provider }),
       ...(request.scopes === undefined ? {} : { scopes: request.scopes }),
@@ -190,22 +197,25 @@ function parseResource(
   if (
     !isRecord(decoded) ||
     typeof decoded.agent_id !== "string" ||
-    typeof decoded.chat_uid !== "string" ||
-    (decoded.status !== undefined && typeof decoded.status !== "string") ||
+    (decoded.status !== undefined && decoded.status !== null && typeof decoded.status !== "string") ||
     (decoded.created_at !== undefined && typeof decoded.created_at !== "string")
   ) {
     throw invalidResponse(statusCode);
   }
 
+  const chatUids = readChatUids(decoded);
+  if (chatUids === null) throw invalidResponse(statusCode);
+
   const optionalString = (value: unknown): string | null =>
     typeof value === "string" ? value : null;
   const resource: CloudAgentResource = {
     agentId: decoded.agent_id,
-    chatUid: decoded.chat_uid,
+    chatUids,
+    chatUid: chatUids[0] ?? "",
     url: optionalString(decoded.url),
     provider: optionalString(decoded.provider),
     name: optionalString(decoded.name),
-    status: decoded.status ?? "provisioning",
+    status: typeof decoded.status === "string" ? decoded.status : "provisioning",
     failureCode: optionalString(decoded.failure_code),
     failureReason: optionalString(decoded.failure_reason),
     createdAt: optionalString(decoded.created_at),
@@ -213,13 +223,30 @@ function parseResource(
   };
 
   if (
-    Object.values(resource).some(
-      (value) => typeof value === "string" && echoesCredential(value, deviceCredential),
-    )
+    Object.values(resource)
+      .flatMap((value) => (Array.isArray(value) ? value : [value]))
+      .some((value) => typeof value === "string" && echoesCredential(value, deviceCredential))
   ) {
     throw new PlowApiError("http", "Plow returned an unsafe cloud-agent response.", statusCode);
   }
   return resource;
+}
+
+/**
+ * The chat grant, from either shape the API has served: `chat_uids` is the
+ * multi-chat grant, and a lone `chat_uid` is the single-chat form that
+ * preceded it. `null` means neither was present and well-formed — a response
+ * we must not guess at.
+ */
+function readChatUids(decoded: Record<string, unknown>): string[] | null {
+  const many = decoded.chat_uids;
+  if (Array.isArray(many)) {
+    if (many.length === 0 || !many.every((uid) => typeof uid === "string")) return null;
+    return many as string[];
+  }
+  if (many !== undefined) return null;
+  if (typeof decoded.chat_uid === "string") return [decoded.chat_uid];
+  return null;
 }
 
 function errorFor(status: number): PlowApiError {

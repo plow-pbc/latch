@@ -10,7 +10,7 @@ function resource(
 ): Record<string, unknown> {
   return {
     agent_id: "agent_123",
-    chat_uid: "cht_123",
+    chat_uids: ["cht_123"],
     url: "https://agent.example",
     provider: "exe:hermes",
     name: "Kitchen agent",
@@ -68,7 +68,7 @@ describe("CloudAgentsClient destructive actions", () => {
     }]);
 
     const error = await new CloudAgentsClient(new PlowApi("https://api.plow.co", fetchImpl))
-      .create(CREDENTIAL, { chatUid: "cht_123" })
+      .create(CREDENTIAL, { chatUids: ["cht_123"] })
       .catch((caught: unknown) => caught);
 
     expect(String(error)).toContain(message);
@@ -84,7 +84,7 @@ describe("CloudAgentsClient contract parsing", () => {
     }]);
 
     const created = await new CloudAgentsClient(new PlowApi("https://api.plow.co", fetchImpl))
-      .create(CREDENTIAL, { chatUid: "cht_123" });
+      .create(CREDENTIAL, { chatUids: ["cht_123"] });
 
     expect(created.status).toBe("provisioning");
   });
@@ -119,6 +119,87 @@ describe("CloudAgentsClient contract parsing", () => {
       .list(CREDENTIAL);
 
     expect(failed.failureReason).toBe("legacy provider explanation");
+  });
+});
+
+describe("CloudAgentsClient chat grant", () => {
+  // The exact body prod serves: a chat set, no name, no created_at, no
+  // session_id, and a null failure_code.
+  const LIVE = {
+    agent_id: "ec94d2d3566685683c3223e2ada04f52",
+    chat_uids: ["cht_pnTWzzOSKeChIv0eE5MKyA", "cht_Ap3vD8sYqJ6nX1cF"],
+    url: "https://plow-agent-ec94d2d3566685683c3223e2ada04f52.exe.xyz",
+    provider: "exe:hermes",
+    status: "running",
+    failure_code: null,
+  };
+
+  it("reads a chat set, keeping the first as the single-chat view", async () => {
+    const { fetchImpl } = recordingFetch([{ status: 200, body: [LIVE] }]);
+
+    const [agent] = await new CloudAgentsClient(new PlowApi("https://api.plow.co", fetchImpl))
+      .list(CREDENTIAL);
+
+    expect(agent.chatUids).toEqual(LIVE.chat_uids);
+    expect(agent.chatUid).toBe("cht_pnTWzzOSKeChIv0eE5MKyA");
+    expect(agent.status).toBe("running");
+    expect(agent.name).toBeNull();
+    expect(agent.createdAt).toBeNull();
+  });
+
+  it("still reads the single chat_uid an older agent answers with", async () => {
+    const { fetchImpl } = recordingFetch([{
+      status: 200,
+      body: [{ ...LIVE, chat_uids: undefined, chat_uid: "cht_legacy" }],
+    }]);
+
+    const [agent] = await new CloudAgentsClient(new PlowApi("https://api.plow.co", fetchImpl))
+      .list(CREDENTIAL);
+
+    expect(agent.chatUids).toEqual(["cht_legacy"]);
+    expect(agent.chatUid).toBe("cht_legacy");
+  });
+
+  it("sends the chat set as a list", async () => {
+    const { calls, fetchImpl } = recordingFetch([{ status: 202, body: LIVE }]);
+
+    await new CloudAgentsClient(new PlowApi("https://api.plow.co", fetchImpl))
+      .create(CREDENTIAL, { chatUids: ["cht_one", "cht_two"] });
+
+    expect(JSON.parse(String(calls[0].init.body))).toMatchObject({
+      chat_uids: ["cht_one", "cht_two"],
+    });
+  });
+
+  it.each([
+    ["no grant at all", {}],
+    ["an empty set", { chat_uids: [] }],
+    ["a set holding a non-string", { chat_uids: ["cht_ok", 7] }],
+  ])("refuses a response with %s", async (_label, grant) => {
+    const { fetchImpl } = recordingFetch([{
+      status: 200,
+      body: [{ ...LIVE, chat_uids: undefined, ...grant }],
+    }]);
+
+    const error = await new CloudAgentsClient(new PlowApi("https://api.plow.co", fetchImpl))
+      .list(CREDENTIAL)
+      .catch((caught: unknown) => caught);
+
+    expect(String(error)).toBe("PlowApiError: Plow returned an invalid cloud-agent response.");
+  });
+
+  it("refuses a chat uid that repeats the credential", async () => {
+    const { fetchImpl } = recordingFetch([{
+      status: 200,
+      body: [{ ...LIVE, chat_uids: [`cht_${CREDENTIAL}`] }],
+    }]);
+
+    const error = await new CloudAgentsClient(new PlowApi("https://api.plow.co", fetchImpl))
+      .list(CREDENTIAL)
+      .catch((caught: unknown) => caught);
+
+    expect(String(error)).toBe("PlowApiError: Plow returned an unsafe cloud-agent response.");
+    expect(String(error)).not.toContain(CREDENTIAL);
   });
 });
 
@@ -218,7 +299,8 @@ describe("CloudAgentsClient credential boundary", () => {
 function fromWire(value: Record<string, unknown>): CloudAgentResource {
   return {
     agentId: String(value.agent_id),
-    chatUid: String(value.chat_uid),
+    chatUids: (value.chat_uids as string[]) ?? [],
+    chatUid: ((value.chat_uids as string[]) ?? [])[0] ?? "",
     url: typeof value.url === "string" ? value.url : null,
     provider: typeof value.provider === "string" ? value.provider : null,
     name: typeof value.name === "string" ? value.name : null,
