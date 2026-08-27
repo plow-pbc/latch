@@ -176,6 +176,7 @@ describe("before anything has been read", () => {
       cloudAgentsError: null,
       cloudChatsError: null,
       cloudActionError: null,
+      cloudAgentEditsPending: [],
       cloudChats: [],
       cloudChatsLoaded: false,
       cloudChatsNeedReactivation: false,
@@ -1026,24 +1027,38 @@ describe("changing which chats an agent serves", () => {
     expect(state.state().cloudActionError).toBe("An agent has to serve at least one chat.");
   });
 
-  it("re-reads after a 5xx because the save may have landed", async () => {
-    let served = ["cht_1"];
+  it.each([
+    ["a 5xx", new PlowApiError("http", "Couldn't update the agent. Try again.", 502), "Couldn't update"],
+    ["a timeout", new PlowApiError("network", "Plow didn't answer in time. Try again."), "didn't answer in time"],
+  ])("gates another edit and re-reads after %s because the save may have landed", async (_case, error, message) => {
+    const reconciliation = deferred<CloudAgentResource[]>();
+    let firstList = true;
     const f = fakes({
-      list: async () => [agent({ chatUids: [...served] })],
-      update: async () => {
-        served = ["cht_2"];
-        throw new PlowApiError("http", "Couldn't update the agent. Try again.", 502);
+      list: async () => {
+        if (!firstList) return reconciliation.promise;
+        firstList = false;
+        return [agent({ chatUids: ["cht_1"] })];
       },
+      update: async () => { throw error; },
     });
     const state = build(tempHome(), f);
     await state.refresh();
 
-    await expect(state.editChats("agent_1", ["cht_2"])).resolves.toBe(false);
+    const saving = state.editChats("agent_1", ["cht_2"]);
+    await vi.waitFor(() => {
+      expect(state.state().cloudAgentEditsPending).toEqual(["agent_1"]);
+    });
+    await expect(state.editChats("agent_1", ["cht_3"])).resolves.toBe(false);
+    expect(f.agents.updated).toEqual([{ agentId: "agent_1", chatUids: ["cht_2"] }]);
+
+    reconciliation.resolve([agent({ chatUids: ["cht_2"] })]);
+    await expect(saving).resolves.toBe(false);
 
     expect(f.agents.calls.filter((call) => call === "list")).toHaveLength(2);
-    expect(state.state().cloudActionError).toBe("Couldn't update the agent. Try again.");
+    expect(state.state().cloudActionError).toContain(message);
     expect(state.state().cloudAgents[0].chatUids).toEqual(["cht_2"]);
     expect(state.state().cloudAgentsError).toBeNull();
+    expect(state.state().cloudAgentEditsPending).toEqual([]);
   });
 
   it("names a conflicting agent only when a candidate id matches our list", async () => {
@@ -1082,29 +1097,6 @@ describe("changing which chats an agent serves", () => {
     expect(state.state().cloudActionError).toBe(
       "This chat already belongs to another agent — edit that agent's chats instead.",
     );
-  });
-
-  it("re-reads after a timeout, because the save it gave up on may have landed", async () => {
-    // The PUT went out and the answer never came. The agent may well be
-    // serving the new set; the app cannot tell by itself, so it asks.
-    let served = ["cht_1"];
-    const f = fakes({
-      list: async () => [agent({ chatUids: [...served] })],
-      update: async () => {
-        served = ["cht_2"];
-        throw new PlowApiError("network", "Plow didn't answer in time. Try again.");
-      },
-    });
-    const state = build(tempHome(), f);
-    await state.refresh();
-
-    await expect(state.editChats("agent_1", ["cht_2"])).resolves.toBe(false);
-
-    expect(f.agents.calls.filter((call) => call === "list")).toHaveLength(2);
-    expect(state.state().cloudAgents[0].chatUids).toEqual(["cht_2"]);
-    // Still a failure to the person who clicked: they do not know it worked,
-    // and the sentence is what tells them to look.
-    expect(state.state().cloudActionError).toContain("didn't answer in time");
   });
 
   it("does not re-read after a 409 refused the edit", async () => {

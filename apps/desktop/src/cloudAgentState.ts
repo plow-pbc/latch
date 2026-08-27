@@ -100,6 +100,8 @@ export interface CloudAgentsUiState {
   cloudChatsNeedReactivation: boolean;
   /** A create/delete/retry failure, and nothing else. */
   cloudActionError: string | null;
+  /** Agent ids whose indeterminate chat-set save is being reconciled. */
+  cloudAgentEditsPending: string[];
   cloudChats: CloudChatOption[];
   /**
    * A chat-list attempt SUCCEEDED — even if it returned nothing.
@@ -201,6 +203,7 @@ export class CloudAgentState {
    */
   private agentReads = 0;
   private actionError: string | null = null;
+  private editsPending = new Set<string>();
   private chats: CloudChatOption[] = [];
   private chatsLoaded = false;
   /**
@@ -232,6 +235,7 @@ export class CloudAgentState {
       cloudChatsError: this.chatsError,
       cloudChatsNeedReactivation: this.chatsNeedReactivation,
       cloudActionError: this.actionError,
+      cloudAgentEditsPending: [...this.editsPending],
       cloudChats: this.chats,
       cloudChatsLoaded: this.chatsLoaded,
       cloudSendTo: settings.activationSendTo.trim() || null,
@@ -313,8 +317,9 @@ export class CloudAgentState {
    * stays open on a failure and closes on a success.
    */
   async editChats(agentId: string, chatUids: readonly string[]): Promise<boolean> {
-    this.actionError = null;
     const id = (agentId ?? "").trim();
+    if (id && this.editsPending.has(id)) return false;
+    this.actionError = null;
     if (!id) return false;
     const chats = normalizeChatUids(chatUids);
     if (!chats.length) {
@@ -333,6 +338,8 @@ export class CloudAgentState {
       updated = await this.deps.agents.updateChats(credential, id, chats);
     } catch (error) {
       if (generation !== this.generation) return false;
+      const refused = isRefusedEdit(error);
+      if (!refused) this.editsPending.add(id);
       this.failAction(this.actionMessage(error));
       // A failure that is not the server's verdict says nothing about what the
       // agent now serves. A timed-out PUT is the case that matters: the request
@@ -342,9 +349,11 @@ export class CloudAgentState {
       // The counter moves even though we do not know whether anything did: a
       // listing that was already in the air predates the attempt either way,
       // and the refresh below is the one whose answer is worth having.
-      if (!isRefusedEdit(error)) {
+      if (!refused) {
         this.mutations += 1;
         await this.refresh();
+        this.editsPending.delete(id);
+        if (generation === this.generation) this.publish();
       }
       return false;
     }
@@ -401,6 +410,7 @@ export class CloudAgentState {
     for (const agentId of [...this.polls.keys()]) this.abortPoll(agentId);
     this.rows.clear();
     this.pending.clear();
+    this.editsPending.clear();
     this.chats = [];
     this.chatsLoaded = false;
     this.chatsError = null;

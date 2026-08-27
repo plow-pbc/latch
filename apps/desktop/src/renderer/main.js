@@ -893,11 +893,12 @@ function closeCloudModal() {
 }
 
 /** A modal for an ordinary, reversible cloud action. */
-function openCloudModal(trigger, children, focus) {
+function openCloudModal(trigger, children, focus, canDismiss) {
   const shell = openModal(trigger, {
     children,
     className: "cloud-modal",
     focus,
+    canDismiss,
     onDismiss: closeCloudModal,
   });
   if (!shell) return null;
@@ -1224,6 +1225,7 @@ function openCloudPicker(trigger, state, redraw) {
  */
 function openCloudEditor(trigger, agent, state, redraw) {
   const baseline = agent.chatUids ?? [];
+  let saving = false;
   const note = el("p", { class: "faint modal-note", text: "" });
   const cancel = el("button", { class: "btn", text: "Cancel" });
   const save = el("button", { class: "btn primary", text: "Save changes" });
@@ -1244,16 +1246,17 @@ function openCloudEditor(trigger, agent, state, redraw) {
   const unchanged = () => sameChatSet(checklist.chosen(), baseline);
   const syncEditor = () => {
     const chosen = checklist.chosen();
-    save.disabled = chosen.length === 0 || unchanged();
+    save.disabled = saving || chosen.length === 0 || unchanged();
   };
 
   cancel.addEventListener("click", closeCloudModal);
   save.addEventListener("click", async () => {
     const chatUids = checklist.chosen();
-    if (!chatUids.length || unchanged()) return;
+    if (saving || !chatUids.length || unchanged()) return;
+    saving = true;
     save.disabled = true;
+    save.textContent = "Saving…";
     cancel.disabled = true;
-    note.textContent = "Saving…";
     const answer = await window.domo.cloudEditChats(agent.agentId, chatUids);
     if (answer?.saved) {
       closeCloudModal();
@@ -1262,6 +1265,8 @@ function openCloudEditor(trigger, agent, state, redraw) {
     }
     // The edit is still on screen to retry or correct. The same sentence is in
     // the pane's callout behind this, for once it closes.
+    saving = false;
+    save.textContent = "Save changes";
     cancel.disabled = false;
     note.textContent = answer?.state?.cloudActionError ?? "That change did not finish.";
     syncEditor();
@@ -1284,7 +1289,7 @@ function openCloudEditor(trigger, agent, state, redraw) {
       cancel,
       save,
     ]),
-  ], null);
+  ], null, () => !saving);
   syncEditor();
   // After sync, so a control this pass disables is not the one taking focus.
   if (panel) firstUsableControl(panel)?.focus();
@@ -1550,6 +1555,7 @@ function cloudStatusNode(agent) {
 function cloudEntityRow(row, agent, state, redraw) {
   const name = rosterName(row, agent?.name || "Cloud agent");
   const provisioning = agent?.status === "provisioning";
+  const editPending = state.cloudAgentEditsPending?.includes(agent?.agentId) ?? false;
   const permissions = rosterPermissionCopy(row, provisioning);
   return el("div", { class: "entity-row cloud-agent-row", attrs: { "data-cloud-agent-id": agent?.agentId ?? row?.agentId ?? "" } }, [
     entityMark(name),
@@ -1583,8 +1589,10 @@ function cloudEntityRow(row, agent, state, redraw) {
         ? {
             agent,
             state,
-            enabled: canEditChats(agent, state.cloudChatsLoaded),
-            why: agent.status === "running"
+            enabled: !editPending && canEditChats(agent, state.cloudChatsLoaded),
+            why: editPending
+              ? "Checking which chats this agent serves"
+              : agent.status === "running"
               ? "Available once this Mac has read your chats"
               : "Available once the agent is running",
           }
