@@ -51,6 +51,9 @@ describe("the gog provider's refusal", () => {
 
   it.each([
     ["a flag that would disarm the belt", ["gog", "gmail", "search", "q", "--wrap-untrusted=false"], "--wrap-untrusted"],
+    // Last-wins parsing means an appended one WIDENS the scope bound —
+    // confirmed reaching Google — so it has to be unsupplyable like the rest.
+    ["a flag that would widen the scope bound", ["gog", "drive", "ls", "--enable-commands=drive"], "--enable-commands"],
     ["a flag that reads a local file into an outbound message", ["gog", "gmail", "send", "--body-file", "/etc/passwd"], "a --*-file flag"],
     ["a flag that writes to a caller-chosen path", ["gog", "gmail", "attachment", "1", "2", "--out", "/tmp/x"], "a --out* flag"],
     // The check that refuses every wrong-command shape; the other branches
@@ -198,8 +201,6 @@ describe("impliesNetwork", () => {
 });
 
 describe("the scope bound", () => {
-  const gog = vendoredProvider(["gog"])!;
-
   // gog enforces this ITSELF, before any network call — verified against
   // pinned 0.36.0 on the darwin binary that ships: `drive ls` reaches Google
   // and returns 4; with the flag it exits 2, `command "drive ls" is not
@@ -209,14 +210,6 @@ describe("the scope bound", () => {
     expect(gog.belt).toContain("--enable-commands=gmail,calendar");
   });
 
-  // Last-wins parsing means an appended one widens it — confirmed reaching
-  // Google — so the flag has to stay unsupplyable.
-  it("cannot be widened by the caller", () => {
-    expect(gog.refuse(["gog", "drive", "ls", "--enable-commands=drive"])).toContain(
-      "--enable-commands",
-    );
-  });
-
   // gog answers to `gog gmail (mail,email)` and `gog calendar (cal)`, and all
   // three dispatch to the real surface. Refusing them said a Gmail command was
   // out of scope.
@@ -224,4 +217,3 @@ describe("the scope bound", () => {
     expect(gog.refuse(["gog", group, "search", "q"])).toBeNull();
   });
 });
-

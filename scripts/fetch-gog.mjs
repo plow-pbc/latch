@@ -38,6 +38,17 @@
  *     `--readonly=false` to an otherwise-refused `gmail send` must be refused
  *     by `gogFlags.ts` before it reaches gog. At 0.36.0, without the gate, it
  *     reached Google.
+ *  5. Re-run the scope bound, which the belt now depends on. Against the
+ *     darwin binary, with `--enable-commands=gmail,calendar` in front:
+ *
+ *         gmail|mail|email search q     exit 4 — dispatches (aliases count)
+ *         calendar|cal list             exit 4 — dispatches
+ *         gmail --help                  exit 0 — discovery intact
+ *         drive ls, chat spaces list    exit 2 — refused BEFORE any network
+ *
+ *     And that appending a second `--enable-commands` still widens it, which
+ *     is what `RESERVED_EXACT` exists to refuse. The alias list is gog's to
+ *     change, and `GOG_GROUPS` in `registry.ts` mirrors it.
  */
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
