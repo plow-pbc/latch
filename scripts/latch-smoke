@@ -37,7 +37,13 @@ import urllib.request
 # `packages/mcp-server/test/client.ts` is the authority; keep this in step with
 # it and with `PROTOCOL_REVISION` in `handler.ts`.
 REVISION = "2026-07-28"
-DEFAULT_HOME = "~/Library/Application Support/Plow-Latch"
+# `apps/desktop/src/paths.ts` owns this: DOMO_HOME wins, else the appData
+# folder, branch-suffixed when DOMO_BRANCH is set. Mirrored rather than
+# reinvented — an earlier version read a `LATCH_HOME` that nothing sets, so a
+# from-source run with DOMO_HOME exported was silently checked against the
+# PACKAGED install's log and reported a timeout for a call that had worked.
+APP_DATA = "~/Library/Application Support"
+HOME_PREFIX = "Plow-Latch"
 # How long a call whose send RAISED is given to show up. `intent_received` is
 # written the moment one arrives, so this is generous; it exists so a typo'd
 # --url does not cost the full window.
@@ -68,6 +74,15 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
 
 
 _OPENER = urllib.request.build_opener(_NoRedirect)
+
+
+def default_home():
+    """Where this Mac's install keeps its home, by `paths.ts`'s rule."""
+    override = os.environ.get("DOMO_HOME")
+    if override:
+        return override
+    branch = os.environ.get("DOMO_BRANCH", "").strip()
+    return os.path.join(APP_DATA, f"{HOME_PREFIX}-{branch}" if branch else HOME_PREFIX)
 
 
 def remote_cat(log_path):
@@ -377,8 +392,9 @@ def main():
                         help="the install's mcpUrl (env: MCP_URL)")
     parser.add_argument("--token-file", default=os.environ.get("TOKEN_FILE"),
                         help="a 0600 file holding the bearer token (env: TOKEN_FILE)")
-    parser.add_argument("--home", default=os.environ.get("LATCH_HOME", DEFAULT_HOME),
-                        help=f"the instance home (default: {DEFAULT_HOME})")
+    parser.add_argument("--home", default=None,
+                        help="the instance home (default: DOMO_HOME, else the appData "
+                             "folder, branch-suffixed when DOMO_BRANCH is set)")
     parser.add_argument("--ssh", default=None, metavar="USER@HOST",
                         help="read the audit log on another Mac over ssh")
     parser.add_argument("--timeout", type=int, default=120,
@@ -400,7 +416,11 @@ def main():
     # command is how the gog path is smoked; that one needs its own rule.
     argv = command or ["/bin/echo", "latch-smoke"]
 
-    home = args.home if args.ssh else os.path.expanduser(args.home)
+    # Env only answers for THIS Mac. Over ssh the remote's DOMO_HOME is not
+    # ours to read, so an explicit --home or the packaged default is all there
+    # is — and `remote_cat` expands the `~` on the far side.
+    home = args.home or (default_home() if not args.ssh else f"{APP_DATA}/{HOME_PREFIX}")
+    home = home if args.ssh else os.path.expanduser(home)
     log_path = os.path.join(home, "device", "audit.ndjson")
     nonce = f"latch-smoke-{time.strftime('%Y%m%dT%H%M%SZ', time.gmtime())}-{os.getpid()}"
     print(f"nonce={nonce}")

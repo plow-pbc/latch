@@ -360,9 +360,7 @@ describe.skipIf(!havePython())("latch-smoke treats a response as evidence and an
   // row stubs `_OPENER.open`, so deleting the handler entirely would leave
   // them all green.
   it("carries a handler that declines redirects, in the opener send uses", () => {
-    expect(call({ call: "redirect-mechanism" })).toEqual({
-      declines: true, inOpener: true, headersAreCaseInsensitive: true,
-    });
+    expect(call({ call: "redirect-mechanism" })).toEqual({ declines: true, inOpener: true });
   });
 
   // The catch-all returns the class NAME, never the message — `putheader`
@@ -445,6 +443,25 @@ describe.skipIf(!havePython())("latch-smoke treats a response as evidence and an
     if (contains === null) expect(sent.reason).toBeNull();
     else expect(sent.reason).toContain(contains);
     expect(sent.reason ?? "").not.toMatch(/Bearer|MustNotAppear/);
+  });
+});
+
+describe.skipIf(!havePython())("latch-smoke finds the same home the app uses", () => {
+  // `apps/desktop/src/paths.ts` owns the rule. An earlier version read a
+  // `LATCH_HOME` that nothing sets, so a from-source run with DOMO_HOME
+  // exported was checked against the PACKAGED install's log and reported a
+  // timeout for a call that had worked.
+  const cases: [string, Record<string, string>, string][] = [
+    ["DOMO_HOME wins", { DOMO_HOME: "/tmp/throwaway" }, "/tmp/throwaway"],
+    ["a branch suffixes the folder", { DOMO_BRANCH: "feature-x" },
+      "~/Library/Application Support/Plow-Latch-feature-x"],
+    ["and neither is the packaged default", {},
+      "~/Library/Application Support/Plow-Latch"],
+    ["DOMO_HOME beats DOMO_BRANCH, as it does in paths.ts",
+      { DOMO_HOME: "/tmp/wins", DOMO_BRANCH: "x" }, "/tmp/wins"],
+  ];
+  it.each(cases)("%s", (_name, envVars, expected) => {
+    expect(call({ call: "home", env: envVars })).toEqual({ home: expected });
   });
 });
 

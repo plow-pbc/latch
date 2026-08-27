@@ -9,6 +9,7 @@ import importlib.machinery
 import importlib.util
 import http.client
 import io
+import os
 import json
 import sys
 import urllib.error
@@ -22,18 +23,12 @@ spec.loader.exec_module(smoke)
 
 request = json.loads(sys.argv[2])
 
-def http_headers(pairs):
-    """The real `http.client.HTTPMessage` that `urllib` hands `HTTPError`.
-
-    Not a dict, and not `email.message_from_string` either: the point is
-    CASE-INSENSITIVE lookup, so a leak spelled `headers.get("location")` — the
-    likelier spelling — is caught by an assertion written against `Location`.
-    """
-    raw = "".join(f"{k}: {v}\r\n" for k, v in pairs.items()) + "\r\n"
-    return http.client.parse_headers(io.BytesIO(raw.encode()))
-
-
-if request["call"] == "redirect-mechanism":
+if request["call"] == "home":
+    for key in ("DOMO_HOME", "DOMO_BRANCH"):
+        os.environ.pop(key, None)
+    os.environ.update(request.get("env", {}))
+    print(json.dumps({"home": smoke.default_home()}))
+elif request["call"] == "redirect-mechanism":
     # The opener `send` uses must actually carry the refusing handler, and that
     # handler must decline. Stubbing `_OPENER.open` — which every other row
     # does — exercises neither.
@@ -41,12 +36,6 @@ if request["call"] == "redirect-mechanism":
     print(json.dumps({
         "declines": handler.redirect_request(None, None, 302, "Found", {}, "http://evil.invalid/x") is None,
         "inOpener": any(isinstance(h, smoke._NoRedirect) for h in smoke._OPENER.handlers),
-        # The fixture's own shape. Reverting it to a plain dict reads as a
-        # simplification and would silently un-guard every casing assertion
-        # written against it.
-        "headersAreCaseInsensitive": (
-            http_headers({"Location": "x"}).get("location") == "x"
-        ),
     }))
 elif request["call"] == "read":
     records, problem = smoke.read_log(request["path"], request.get("ssh"), request.get("budget", 30))
@@ -106,8 +95,13 @@ else:
             # urlopen: the message quotes the header VALUE, i.e. the bearer.
             raise ValueError("Invalid header value %r" % (b"Bearer " + request["token"].encode(),))
         if raises == "http":
+            # A real `HTTPMessage`, which is what `urllib` hands `HTTPError`
+            # and is CASE-INSENSITIVE — a leak spelled `headers.get(
+            # "location")`, the likelier spelling, would slip a plain dict.
+            raw = "".join(f"{k}: {v}\r\n" for k, v in request.get("headers", {}).items()) + "\r\n"
             raise urllib.error.HTTPError(request["url"], request["status"], "no",
-                                         http_headers(request.get("headers", {})), io.BytesIO(body))
+                                         http.client.parse_headers(io.BytesIO(raw.encode())),
+                                         io.BytesIO(body))
         # Exhaustive: a misspelt or renamed `raises` used to fall through to the
         # HTTPError branch with the transport rows' status of 0, which is not
         # >= 500, so a row could pass for a reason unrelated to what it names.

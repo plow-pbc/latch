@@ -43,10 +43,13 @@ repeat the credential back.
 scripts/latch-smoke --url <mcpUrl> --token-file <path>
 ```
 
-- `--home <dir>` — the instance home, if it is not the packaged default
-  `~/Library/Application Support/Plow-Latch`. A from-source run is
-  `Plow-Latch-<branch>` (`scripts/worktree-name.sh --branch`); a wrong home
-  here is the usual cause of a `TIMEOUT` that found nothing.
+- `--home <dir>` — the instance home. Defaults the way the app resolves it
+  (`apps/desktop/src/paths.ts`): `DOMO_HOME` if set, else
+  `~/Library/Application Support/Plow-Latch`, branch-suffixed when
+  `DOMO_BRANCH` is. So a from-source run needs no flag if it is driven from the
+  same shell as `just app`. A wrong home is the usual cause of a `TIMEOUT` that
+  found nothing. Over `--ssh` the env cannot answer — that Mac's variables are
+  not this one's — so pass `--home` explicitly for a from-source remote.
 - `--ssh <user@host>` — read that Mac's audit log over ssh instead of this
   one's. Host map: the `tailscale-ssh` skill. The call itself always goes over
   the relay, so only the log read is remote.
