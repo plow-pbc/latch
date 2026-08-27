@@ -53,6 +53,23 @@ READ_FLOOR_S = 5.0
 MIN_SEND_S = 2.0
 
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """Never follow a redirect.
+
+    `urllib` carries a request's custom headers across one — verified on this
+    Python: a 302 to another origin delivered `Authorization: Bearer …` to that
+    origin in full. The relay endpoint is configured, so a 30x from it is not
+    something to follow silently; returning None here makes `urlopen` raise the
+    3xx as an `HTTPError` instead.
+    """
+
+    def redirect_request(self, *_args, **_kwargs):
+        return None
+
+
+_OPENER = urllib.request.build_opener(_NoRedirect)
+
+
 def remote_cat(log_path):
     """The shell command that reads the log on the far side.
 
@@ -181,9 +198,19 @@ def send(url, token_file, argv, goal, budget):
         return (f"could not reach {url}: {error}.\n"
                 "  The request never left this Mac; nothing was written to the log.", False, None)
     try:
-        with urllib.request.urlopen(request, timeout=budget) as response:
+        with _OPENER.open(request, timeout=budget) as response:
             payload = json.load(response)
     except urllib.error.HTTPError as error:
+        # A redirect, which this deliberately did not follow. Terminal: no
+        # intent exists, and the operator's fix is the --url, not a retry.
+        # The Location is NOT quoted — it is server-authored, and naming where
+        # something tried to send the credential is not worth putting the
+        # attacker's string on screen.
+        if 300 <= error.code < 400:
+            return (f"HTTP {error.code} — the relay tried to redirect, and this does not"
+                    " follow redirects.\n"
+                    "  Following one would hand the bearer token to wherever it pointed."
+                    " Check --url.", False, None)
         # A RESPONSE arrived, so this branch actually knows something. A 4xx is
         # the relay or the MCP handler saying it refused. A 5xx is neither —
         # RELAY_TIMEOUT_MS is the relay abandoning an exchange it has ALREADY
@@ -363,9 +390,12 @@ def main():
         parser.error("--url and --token-file are required (or MCP_URL / TOKEN_FILE)")
     # Below the send floor there is no run to have: the guard downstream would
     # refuse every time, naming the window rather than the flag that set it.
-    if args.timeout < MIN_SEND_S:
-        parser.error(f"--timeout must be at least {MIN_SEND_S:.0f}s — below that a call has"
-                     " no time to answer and nothing is sent")
+    # `<=`, not `<`: the baseline read always consumes something, so exactly
+    # MIN_SEND_S leaves less than that by the time the send is reached and the
+    # downstream guard refuses every time.
+    if args.timeout <= MIN_SEND_S:
+        parser.error(f"--timeout must be more than {MIN_SEND_S:.0f}s — at or below it the"
+                     " log read leaves a call no time to answer, and nothing is sent")
     # A FIXED default, so one Always Allow rule covers every run. Passing a
     # command is how the gog path is smoked; that one needs its own rule.
     argv = command or ["/bin/echo", "latch-smoke"]

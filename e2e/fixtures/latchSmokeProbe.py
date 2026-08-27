@@ -73,6 +73,8 @@ else:
             raise urllib.error.URLError("unknown url type: htp")
         if raises == "incomplete":
             raise http.client.IncompleteRead(b"")
+        if raises == "redirect":
+            raise urllib.error.HTTPError(request["url"], 302, "Found", {}, io.BytesIO(body))
         if raises == "invalid-url":
             raise http.client.InvalidURL("URL can't contain control characters")
         if raises == "header":
@@ -86,7 +88,10 @@ else:
         # >= 500, so a row could pass for a reason unrelated to what it names.
         raise SystemExit(f"unknown raises: {raises}")
 
-    urllib.request.urlopen = urlopen
+    # `send` goes through the module's redirect-refusing opener, not
+    # `urllib.request.urlopen` — stubbing the latter would leave every row
+    # below exercising nothing.
+    smoke._OPENER.open = urlopen
     sent = smoke.send(request["url"], sys.argv[3], ["/bin/echo", "x"], "goal", 30)
     # `send` returns None when the call went through; the success path has to be
     # representable or the first test that stubs a 200 fails inside the harness.

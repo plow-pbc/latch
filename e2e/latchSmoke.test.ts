@@ -147,13 +147,15 @@ describe.skipIf(!havePython())("latch-smoke, run for real", () => {
 
   it("rejects a window too short to answer in, at parse time", () => {
     // Below the floor the downstream guard refused every time, naming the
-    // window rather than the flag that set it. `--timeout 1` and `2` are both
-    // unusable, so this belongs in argument parsing.
-    const run = spawnSync("python3", fixture("1").argv, { encoding: "utf8", env });
-    const out = run.stdout + run.stderr;
-    expect(run.status).toBe(2);
-    expect(out).toContain("--timeout must be at least");
-    expect(out).not.toContain("nonce=");
+    // window rather than the flag that set it. `2` is unusable too — the
+    // baseline read always consumes something — so the bound is exclusive.
+    for (const t of ["1", "2"]) {
+      const run = spawnSync("python3", fixture(t).argv, { encoding: "utf8", env });
+      const out = run.stdout + run.stderr;
+      expect(run.status).toBe(2);
+      expect(out).toContain("--timeout must be more than");
+      expect(out).not.toContain("nonce=");
+    }
   });
 
   // The regression the read floor exists for, end to end: at expiry the poll
@@ -333,6 +335,23 @@ describe.skipIf(!havePython())("latch-smoke treats a response as evidence and an
       { reason: string; unknown: boolean };
     expect(sent.unknown).toBe(false);
     expect(sent.reason).toContain("unknown url type");
+  });
+
+  // `urllib` carries a request's custom headers across a redirect — verified
+  // on this Python, a 302 to another origin delivered the bearer to that
+  // origin in full. So this follows none, and says so terminally: no intent
+  // exists, and the fix is the --url rather than a retry.
+  it("refuses a redirect instead of forwarding the credential to it", () => {
+    const token = "sk-secret-MustNotAppear";
+    const file = path.join(tmp, "redirect-token");
+    fs.writeFileSync(file, `${token}\n`, { mode: 0o600 });
+    const sent = call({ call: "send", url: "https://relay.invalid/mcp", status: 0, token, raises: "redirect" },
+      file) as { reason: string; unknown: boolean };
+    expect(sent.unknown).toBe(false);
+    expect(sent.reason).toContain("does not follow redirects");
+    // Neither the credential nor the server's Location reaches the output.
+    expect(sent.reason).not.toContain("MustNotAppear");
+    expect(sent.reason).not.toContain("Location");
   });
 
   // The catch-all returns the class NAME, never the message — `putheader`

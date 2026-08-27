@@ -50,7 +50,7 @@ scripts/latch-smoke --url <mcpUrl> --token-file <path>
 - `--ssh <user@host>` — read that Mac's audit log over ssh instead of this
   one's. Host map: the `tailscale-ssh` skill. The call itself always goes over
   the relay, so only the log read is remote.
-- `--timeout <seconds>` — default 120, minimum 2 (below that a call has no time to answer, and the script says so rather than sending). One deadline covers the log read, the
+- `--timeout <seconds>` — default 120, and must be **more than 2**: the log read always consumes some of it, so at or below that a call has no time to answer and the script says so rather than sending. One deadline covers the log read, the
   send and every poll, rather than starting after the send: a relay that
   accepts and never answers costs roughly what you asked for instead of the
   90 seconds a hard-coded socket timeout used to spend. It is a bound on each
@@ -79,6 +79,7 @@ Only success exits 0.
 | `FAILED — it ran and …` | 1 | it executed and exited nonzero, or this Mac reaped it. Not a plumbing fault |
 | `FAILED — the executor threw` | 1 | `exec_error` names why; nothing ran |
 | `DENIED` | 1 | the owner refused it. The relay and the device both worked |
+| `REFUSED — HTTP 3xx` | 1 | the relay tried to redirect and this follows none — `urllib` carries the bearer across a redirect, so following one would hand it to wherever it pointed. Check `--url` |
 | `REFUSED — HTTP 4xx` | 1 | refused before an intent existed, so there is no audit line. 401/403 is the relay or the credential; another 4xx is the MCP handler |
 | `UNVERIFIED — …` | — | not an outcome. The send did not settle the question: anything that is not a response (a timeout, a dropped socket), a 5xx, or an `isError` — which is also how an ordinary **denial** comes back. So the script does not stop; it polls (up to 20s to see it arrive, then the rest of the window), and one of the rows above is still the answer |
 | `TIMEOUT — … approval dialog` | 1 | it arrived and is sitting unanswered. Not a plumbing problem |
@@ -122,15 +123,10 @@ four Google scopes and refuses everything else by design.
 - `REFUSED — HTTP 401/403` → the credential is wrong or the device was
   re-paired. Scopes freeze at mint; a Mac paired before a scope grant needs to
   re-activate.
-- `UNVERIFIED — …` → the send did not settle whether an intent exists, which is
-  not something to guess at. The relay can abandon an exchange it has already
-  forwarded (`RELAY_TIMEOUT_MS` is 25s, well under the executor's budget) as a
-  5xx or by dropping the socket; and an `isError` is what an ordinary
-  **denial** comes back as, after its audit records already exist. A URL with
-  no scheme is NOT this — it never reaches a socket, so it is a `REFUSED` and
-  the script stops rather than polling. The script reads the log instead — 20s for an
-  `intent_received` to appear, then the full window. Read the row it lands on,
-  not this line.
+- `UNVERIFIED — …` → not a result. **Read the row the script lands on
+  afterwards, not this line** — the table above says which outputs those are
+  and what waiting it does. The only thing worth adding here: this is the one
+  prefix that is not a verdict, so treating it as one is the mistake to avoid.
 - `TIMEOUT — nothing carrying …` → the three causes the output names, in
   likelihood order: a **different** install's log (check `--home`; a
   branch-suffixed home is the usual cause), a refusal in the MCP layer before
