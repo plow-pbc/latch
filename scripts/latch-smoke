@@ -152,17 +152,23 @@ def send(url, token_file, argv, goal):
                 "  Nothing was written to the audit log. 401/403 is the relay or the"
                 " credential; another 4xx is the MCP handler.", False)
     except OSError as error:
-        # Only a TIMEOUT is unknown: the request went out and the answer did
-        # not come back, so an intent may well exist. A refused connection or a
-        # DNS failure is a call that never left this Mac, and treating it as
-        # unknown burns the whole window before ending on a verdict about an
-        # audit log that was never the problem.
-        reason = getattr(error, "reason", None)
-        if isinstance(error, TimeoutError) or isinstance(reason, TimeoutError):
-            return (f"no answer from {url} within the read timeout, so whether it"
-                    " arrived is UNKNOWN.", True)
-        return (f"could not reach {url}: {error.__class__.__name__}.\n"
-                "  The request never left this Mac; nothing was written to the log.", False)
+        # ONE discriminator, structural rather than a list of exception
+        # classes: `urllib`'s `do_open` wraps the connect/send leg in
+        # `URLError` and nothing else. Wrapped means the request never
+        # completed, so no intent can exist. BARE means it went out and only
+        # the answer failed — a read timeout and a peer that drops the socket
+        # at the relay's 25s ceiling both land there, with the device holding
+        # the intent and the dialog up.
+        #
+        # Checked against urllib rather than reasoned about: refused and DNS
+        # failures arrive wrapped; a read timeout and a reset arrive bare.
+        # Enumerating classes is what made three rounds of this wrong, each
+        # time for one more subclass.
+        if isinstance(error, urllib.error.URLError):
+            return (f"could not reach {url}: {type(error.reason).__name__}.\n"
+                    "  The request never left this Mac; nothing was written to the log.", False)
+        return (f"no answer from {url}: {type(error).__name__}, so whether it"
+                " arrived is UNKNOWN.", True)
     # Neither absence is proof of success — that is the audit log — but either
     # presence is proof of failure, and saying so now beats a 2-minute timeout.
     if payload.get("error") is not None:

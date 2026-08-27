@@ -39,7 +39,14 @@ else:
     raises = request.get("raises", "http")
 
     def urlopen(*_args, **_kwargs):
-        if raises == "timeout":
+        # The shapes urllib actually produces, checked against it: a refused
+        # connection and a DNS failure come WRAPPED; a read timeout and a peer
+        # that drops the socket come BARE.
+        if raises == "read-timeout":
+            raise TimeoutError("timed out")
+        if raises == "reset":
+            raise ConnectionResetError(54, "Connection reset by peer")
+        if raises == "connect-timeout":
             raise urllib.error.URLError(TimeoutError("timed out"))
         if raises == "refused":
             raise urllib.error.URLError(ConnectionRefusedError(61, "Connection refused"))

@@ -180,12 +180,16 @@ describe.skipIf(!havePython())("latch-smoke reads the log where it lives", () =>
 });
 
 describe.skipIf(!havePython())("latch-smoke only calls a timeout unknown", () => {
-  // A refused connection or a DNS failure never left this Mac, so falling
-  // through to the poll loop burns the whole window and then ends on a verdict
-  // about an audit log that was never the problem.
+  // Not a list of exception classes — the one structural fact: `urllib` wraps
+  // the connect/send leg in `URLError` and nothing else, so wrapped means the
+  // request never completed and bare means it went out and only the answer
+  // failed. Enumerating classes is what kept getting this wrong for one more
+  // subclass; these rows are the shapes urllib was observed to produce.
   const cases: [string, string, boolean, string][] = [
-    ["a read timeout may have arrived", "timeout", true, "UNKNOWN"],
-    ["a refused connection did not", "refused", false, "never left this Mac"],
+    ["a read timeout arrives bare, and may have landed", "read-timeout", true, "UNKNOWN"],
+    ["so does a relay that drops the socket", "reset", true, "UNKNOWN"],
+    ["a refused connection is wrapped, and did not", "refused", false, "never left this Mac"],
+    ["and so is a connect timeout", "connect-timeout", false, "never left this Mac"],
   ];
   const tokenFile = path.join(tmp, "transport-token");
   fs.writeFileSync(tokenFile, "t\n", { mode: 0o600 });

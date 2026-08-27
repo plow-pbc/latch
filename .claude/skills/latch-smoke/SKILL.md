@@ -73,12 +73,13 @@ Only success exits 0.
 | `FAILED — the executor threw` | 1 | `exec_error` names why; nothing ran |
 | `DENIED` | 1 | the owner refused it. The relay and the device both worked |
 | `REFUSED — HTTP 4xx` | 1 | refused before an intent existed, so there is no audit line. 401/403 is the relay or the credential; another 4xx is the MCP handler |
-| `UNVERIFIED — …` | — | not an outcome. A 5xx, or a transport failure, means the relay may already have forwarded the exchange — so the script does **not** stop; it polls, and one of the rows above is still the answer |
+| `UNVERIFIED — …` | — | not an outcome. A 5xx, a read timeout, or a relay that drops the socket means the exchange may already have been forwarded — so the script does **not** stop; it polls, and one of the rows above is still the answer |
 | `TIMEOUT — … approval dialog` | 1 | it arrived and is sitting unanswered. Not a plumbing problem |
 | `TIMEOUT — approved, never started` | 1 | `exec_start` is written before the spawn, so its absence means the executor was never reached. Check the app is running |
 | `TIMEOUT — started, still running` | 1 | re-run, or raise `--timeout` |
 | `TIMEOUT — nothing carrying …` | 1 | it never arrived; the output names the three causes |
 | `TIMEOUT — the audit log stopped being readable` | 1 | the call WAS sent — re-read the log for the nonce once the host is reachable |
+| `REFUSED — could not reach <url>` | 1 | the request never left this Mac, so nothing was sent. Check `--url` and that the relay is up |
 | `REFUSED — cannot read the audit log` | 1 | nothing was sent, deliberately: a call this cannot verify would still raise a dialog. Check `--ssh`, and that `--home` is readable — a *missing* log is not this |
 
 ## Smoke-testing the gog provider specifically
@@ -110,10 +111,11 @@ four Google scopes and refuses everything else by design.
 - `REFUSED — HTTP 401/403` → the credential is wrong or the device was
   re-paired. Scopes freeze at mint; a Mac paired before a scope grant needs to
   re-activate.
-- `UNVERIFIED — HTTP 5xx` → the relay gave up on an exchange it may already
-  have forwarded (`RELAY_TIMEOUT_MS` is 25s, well under the executor's own
-  budget), so the intent may well exist and the dialog may be up. The script
-  keeps polling on its own; read the row it lands on, not this line.
+- `UNVERIFIED — …` → the relay may already have forwarded the exchange, so the
+  intent may well exist and the dialog may be up. `RELAY_TIMEOUT_MS` is 25s,
+  well under the executor's own budget, and the relay can hit it either as a
+  5xx or by dropping the socket. The script keeps polling on its own; read the
+  row it lands on, not this line.
 - `TIMEOUT — nothing carrying …` → the three causes the output names, in
   likelihood order: a **different** install's log (check `--home`; a
   branch-suffixed home is the usual cause), a refusal in the MCP layer before
