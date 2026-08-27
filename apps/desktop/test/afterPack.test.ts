@@ -191,46 +191,51 @@ describe("the packaging hook refuses before it signs", () => {
     },
   );
 
+  // One expectation over every way an arch can be unusable, for every arch of
+  // every row. Absent, empty and stray-file-only are the same failure to the
+  // gate — the binary is not there — and splitting them left one shape covering
+  // every arch and the others covering only the first.
   it.each(
-    PROVIDERS.flatMap(({ command, arches }) => {
-      // The row's own first arch, not a literal: a row staging a different set
-      // would fail these while the hook is right.
-      const arch = Object.keys(arches)[0];
-      return [
-        {
-          how: "a zero-byte binary",
-          damage: (d: string) => fs.writeFileSync(path.join(d, command), ""),
-        },
-        {
-          how: "an arch folder carrying only a stray file",
-          damage: (d: string) => {
-            fs.rmSync(path.join(d, command));
-            fs.writeFileSync(path.join(d, ".DS_Store"), "junk");
+    PROVIDERS.flatMap(({ command, arches }) =>
+      Object.keys(arches).flatMap((arch) =>
+        [
+          { how: "absent", damage: (d: string) => fs.rmSync(d, { recursive: true, force: true }) },
+          { how: "a zero-byte binary", damage: (d: string) => fs.writeFileSync(path.join(d, command), "") },
+          {
+            how: "an arch folder carrying only a stray file",
+            damage: (d: string) => {
+              fs.rmSync(path.join(d, command));
+              fs.writeFileSync(path.join(d, ".DS_Store"), "junk");
+            },
           },
-        },
-      ].map((c) => ({ ...c, command, arch }));
-    }),
-  )(
-    "refuses $command with $how, not just an absent directory",
-    async ({ command, arch, damage }) => {
-      pack();
-      damage(path.join(resourcesDir(), command, arch));
-      await expect(afterPack(contextFor(dir))).rejects.toThrow(
-        new RegExp(`no ${command} for ${arch}`),
-      );
-    },
-  );
+        ].map((c) => ({ ...c, command, arch })),
+      ),
+    ),
+  )("refuses $command/$arch when it is $how", async ({ command, arch, damage }) => {
+    // Silent half-install: a tree carrying only the packaging Mac's arch clears
+    // every other gate and reaches the other arch's users with nothing.
+    pack();
+    damage(path.join(resourcesDir(), command, arch));
+    await expect(afterPack(contextFor(dir))).rejects.toThrow(
+      new RegExp(`no ${command} for ${arch}`),
+    );
+  });
 
   it.each(PROVIDERS)("names every arch $command is missing, not just the first", async (p) => {
     // One run of `just fetch-vendored` fixes them all; being told about one
-    // arch at a time means one package run per arch to learn that. Built from
-    // the row, so this asserts neither the arch set nor the order the hook
-    // happens to iterate it in.
+    // arch at a time means one package run per arch to learn that.
+    //
+    // MEMBERSHIP, not a joined string. The claim is that every missing arch is
+    // named — a hook that sorted them, or listed them one per line, would still
+    // satisfy it. Asserting the join would pin the row's declaration order and
+    // the separator, and fail a correct hook.
     pack();
     fs.rmSync(path.join(resourcesDir(), p.command), { recursive: true, force: true });
-    await expect(afterPack(contextFor(dir))).rejects.toThrow(
-      new RegExp(Object.keys(p.arches).join(", ")),
-    );
+    const failure = await afterPack(contextFor(dir)).catch((e: Error) => e);
+    expect(failure).toBeInstanceOf(Error);
+    for (const arch of Object.keys(p.arches)) {
+      expect((failure as Error).message).toContain(arch);
+    }
   });
 
   it("refuses a camoufox tree a fuse left without a bundle", async () => {
