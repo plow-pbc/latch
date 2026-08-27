@@ -11,7 +11,6 @@ import {
   needsToken,
   PROVIDERS,
   vendoredProvider,
-  VENDORED_COMMANDS,
 } from "../src/providers/registry.js";
 import { overrideVar } from "../src/providers/vendoredBinary.js";
 
@@ -20,7 +19,6 @@ const gog = vendoredProvider(["gog"])!;
 describe("vendoredProvider", () => {
   it("matches a bare command name", () => {
     expect(vendoredProvider(["gog", "gmail", "search"])?.command).toBe("gog");
-    expect(VENDORED_COMMANDS).toContain("gog");
   });
 
   it("does NOT match a path", () => {

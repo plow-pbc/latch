@@ -219,5 +219,3 @@ export function impliesNetwork(argv: readonly string[]): boolean {
   return vendoredProvider(argv) !== null && needsToken(argv);
 }
 
-/** Every vendored command name, for the skill and for the tool description. */
-export const VENDORED_COMMANDS: readonly string[] = PROVIDERS.map((p) => p.command);

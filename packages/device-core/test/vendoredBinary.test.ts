@@ -82,6 +82,17 @@ describe("resolveVendoredBinary", () => {
     expect(resolveVendoredBinary("gog")).toEqual({ path: link });
   });
 
+  it("makes a relative override absolute, since only its directory travels", () => {
+    // The directory becomes a PATH entry and the child runs from a scratch
+    // cwd, so a relative one points somewhere else — and an ambient `gog`
+    // further along PATH would take the already-minted token.
+    const staged = tree("rel");
+    const absolute = path.join(staged, "rel", process.arch, "gog");
+    process.env.DOMO_GOG = path.relative(process.cwd(), absolute);
+    expect(process.env.DOMO_GOG.startsWith("/")).toBe(false);
+    expect(resolveVendoredBinary("gog")).toEqual({ path: absolute });
+  });
+
   it("takes its override from that command's own variable", () => {
     const staged = tree("slack", "slack");
     process.env.DOMO_SLACK = path.join(staged, "slack", process.arch, "slack");

@@ -144,26 +144,28 @@ describe("vendorDirs", () => {
     ]);
   });
 
-  it("names that provider's own variable when the override points nowhere", () => {
-    // The other half of the same point, and the entire operator-facing signal
-    // for a mistyped override: composing the wrong name here is invisible.
+  // The two override problems have different fixes — "names no executable
+  // file" sends someone to check the path; a misnamed one IS a path that
+  // exists and wants a symlink — so WHICH one it says is the value of the
+  // line, and composing the wrong provider's name is invisible without this.
+  it.each([
+    {
+      why: "an override that points nowhere",
+      override: () => "/nonexistent/slack",
+      has: "DOMO_SLACK",
+      lacks: "DOMO_GOG",
+    },
+    {
+      why: "an override that names the wrong file",
+      override: () => path.join(tree("misnamed", "slack-0.1"), "misnamed", process.arch, "slack-0.1"),
+      has: "must name a file called `slack`",
+      lacks: "names no executable",
+    },
+  ])("says which problem it is: $why", ({ override, has, lacks }) => {
     const logged = captureErrors();
-    process.env.DOMO_SLACK = "/nonexistent/slack";
+    process.env.DOMO_SLACK = override();
     expect(vendorDirs({}, [SLACK])).toEqual([]);
-    expect(logged.join("\n")).toContain("DOMO_SLACK");
-    expect(logged.join("\n")).not.toContain("DOMO_GOG");
-  });
-
-  it("says WHICH override problem it is, since the two have different fixes", () => {
-    // "names no executable" sends an operator to check the path; a misnamed
-    // one is already a path that exists, and the fix is a symlink.
-    const logged = captureErrors();
-    const staged = tree("misnamed", "slack-0.1");
-    process.env.DOMO_SLACK = path.join(staged, "misnamed", process.arch, "slack-0.1");
-    expect(vendorDirs({}, [SLACK])).toEqual([]);
-    // The interpolated command, not just the prefix: composing the wrong one
-    // is the failure this line exists to make visible.
-    expect(logged.join("\n")).toContain("must name a file called `slack`");
-    expect(logged.join("\n")).not.toContain("names no executable");
+    expect(logged.join("\n")).toContain(has);
+    expect(logged.join("\n")).not.toContain(lacks);
   });
 });

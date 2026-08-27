@@ -19,10 +19,8 @@ export * from "./deviceAgent.js";
 export * from "./executor.js";
 export {
   impliesNetwork,
-  needsToken,
   PROVIDERS,
   vendoredProvider,
-  VENDORED_COMMANDS,
 } from "./providers/registry.js";
 export type { VendoredProvider } from "./providers/registry.js";
 export { MintError } from "./providers/mint.js";

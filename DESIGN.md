@@ -454,14 +454,19 @@ it closes.
 
 **Skills.** Devices publish skills (name/description/markdown body,
 `SkillRegistry`); agents discover them via `plow_list_skills` and read them
-with `plow_read_skill`. Two ship built in, and **each registers only when the
-thing it describes is actually here, as of launch**: `camoufox-browsing`, the
-operator manual for this tool surface, when a browser runtime resolved;
+with `plow_read_skill`. Several ship built in, and **each registers only when
+the thing it describes is actually here, as of launch**: `camoufox-browsing`,
+the operator manual for this tool surface, when a browser runtime resolved;
 `whatsapp-history`, how to read the owner's own messages out of WhatsApp
-Desktop's local store, when that store exists. A skill naming a capability this
-Mac lacks is a guaranteed denial, so its absence is the honest answer instead.
-Both probes run once, in the `DeviceAgent` constructor — installing WhatsApp
-after launch needs a restart to publish the skill. `whatsapp-history` is also
+Desktop's local store, when that store exists; and one per vendored provider
+in `providers/registry.ts` — `google-workspace` today — when that provider's
+binary is staged. A skill naming a capability this Mac lacks is a guaranteed
+denial, so its absence is the honest answer instead. Every probe runs once, in
+the `DeviceAgent` constructor — installing WhatsApp, or staging a provider,
+after launch needs a restart to publish the skill. A provider carries its skill
+on its registry row rather than being registered under a literal elsewhere, so
+the provider's name has one spelling and a rename cannot silently unpublish
+it. `whatsapp-history` is also
 why the registry takes a *built* skill and not only frozen constants: its body
 carries the store's resolved path, so no agent has to substitute one.
 Owner-authored skills in `$DOMO_HOME/device/skills` load **last** and win a

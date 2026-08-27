@@ -71,7 +71,13 @@ export function resolveVendoredBinary(
 ): VendoredLocation {
   const override = process.env[overrideVar(command)];
   if (override) {
-    const resolved = executable(override);
+    // ABSOLUTE first. Only the DIRECTORY of this path reaches the child, as a
+    // PATH entry, and the child runs from a per-run scratch cwd — so a
+    // relative override becomes an entry that resolves somewhere else
+    // entirely, or nowhere, and an ambient `gog` further along PATH takes the
+    // token this Mac has already minted. Resolving against the desktop
+    // process's cwd is what someone setting it in a shell meant.
+    const resolved = executable(path.resolve(override));
     // Distinguished from "nothing is staged": the operator NAMED a path, so
     // telling them to run a fetch they have already run sends them the wrong
     // way. Reported, never thrown — see above.
