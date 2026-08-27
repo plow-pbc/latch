@@ -146,11 +146,9 @@ for i in $(seq 1 24); do
   fi
   sleep 5
 done
-# Two different failures, and they send you to different places. The nonce
-# reaching intent_received means the relay and the device both worked and the
-# call is sitting at the approval dialog; the nonce being absent entirely means
-# it never arrived — wrong install, wrong credential, or a dead socket.
-ANY=$(grep "$NONCE" "$LOG" 2>/dev/null | tail -2) || true
+# Nonce present => it reached this Mac, and the branch reads the decision to say
+# which outcome. Nonce absent => the echo further down.
+ANY=$(grep -m1 "$NONCE" "$LOG" 2>/dev/null)
 if [ -n "$ANY" ]; then
   echo "$ANY"
   ID=$(printf %s "$ANY" | intent_id)
