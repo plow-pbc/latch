@@ -84,7 +84,7 @@ function fetchProvider(provider) {
 
       const dest = path.join(repoRoot, "vendor", command, arch);
       mkdirSync(dest, { recursive: true });
-      execFileSync("tar", ["xzf", tarball, "-C", dest, provider.member], { stdio: "inherit" });
+      execFileSync("tar", ["xzf", tarball, "-C", dest, command], { stdio: "inherit" });
       // The same check the skip makes, at the one moment the alternative is
       // knowable: a tarball whose digest is right but whose contents are not
       // what this pin was derived from fails HERE, rather than being cached and

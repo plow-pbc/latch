@@ -62,8 +62,6 @@ import { execFileSync } from "node:child_process";
 const GOG = {
   command: "gog",
   version: "0.36.0",
-  /** The path inside the tarball to extract. */
-  member: "gog",
   // Keys are Node's `process.arch` names, not the release's (`amd64`), because
   // `resolveVendoredBinary` looks them up by `process.arch` at runtime.
   //
