@@ -18,8 +18,6 @@ export * from "./whatsappSkill.js";
 export * from "./deviceAgent.js";
 export * from "./executor.js";
 export {
-  GOG_ALIASES,
-  GOG_CANONICAL,
   impliesNetwork,
   PROVIDERS,
   vendoredProvider,

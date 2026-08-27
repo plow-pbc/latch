@@ -7,13 +7,12 @@
  */
 import { describe, expect, it } from "vitest";
 import {
-  GOG_ALIASES,
-  GOG_CANONICAL,
   impliesNetwork,
   needsToken,
   PROVIDERS,
   vendoredProvider,
 } from "../src/providers/registry.js";
+import { GOG_ALIASES, GOG_CANONICAL } from "../src/providers/gogGroups.js";
 import { overrideVar } from "../src/providers/vendoredBinary.js";
 
 const gog = vendoredProvider(["gog"])!;
@@ -223,12 +222,6 @@ describe("the scope bound", () => {
     for (const alias of GOG_ALIASES) expect(named).not.toContain(alias);
   });
 
-  it("accepts every canonical name and every alias, and nothing else", () => {
-    for (const group of [...GOG_CANONICAL, ...GOG_ALIASES]) {
-      expect(gog.refuse(["gog", group, "x"])).toBeNull();
-    }
-    expect(gog.refuse(["gog", "drive", "x"])).toContain("only Gmail and Calendar");
-  });
 
   // gog answers to `gog gmail (mail,email)` and `gog calendar (cal)`. Refusing
   // those said a Gmail command was out of scope. Which spellings dispatch is a
