@@ -151,28 +151,34 @@ describe.skipIf(!havePython())("latch-smoke, run for real", () => {
     expect(out).toContain("Nothing has ever been written at");
   });
 
-  // Every refusal that happens BEFORE anything is sent. Each says why, names
-  // the home it was going to read, and prints no nonce — a nonce is the handle
-  // for finding a call in the log, so offering one beside "nothing was sent"
-  // invites a search that cannot succeed.
-  const refusals: [string, () => string[], number, string][] = [
+  // Every refusal that happens before anything is sent. The columns are what
+  // actually differs: the two argparse rows never reach the run, so they print
+  // no `home=` — and the one that reaches `send` has already printed a nonce
+  // by then, so it must RETRACT it rather than never having offered one.
+  const refusals: [string, () => string[], number, string, boolean, boolean][] = [
     ["a local home that does not exist", () => fixture("5", path.join(tmp, "not-a-home")).argv,
-      1, "REFUSED — no such home"],
+      1, "REFUSED — no such home", true, false],
     ["an empty --home, which is a failed command substitution", () => fixture("5", "").argv,
-      2, "--home was empty"],
-    ["a window too short to answer in", () => fixture("1").argv, 2, "--timeout must be more than"],
+      2, "--home was empty", false, false],
+    ["a window of 1s", () => fixture("1").argv, 2, "--timeout must be more than", false, false],
+    // `2` is the case that makes the bound exclusive: the baseline read always
+    // consumes something, so exactly MIN_SEND_S leaves less than it.
+    ["a window of exactly 2s", () => fixture("2").argv, 2, "--timeout must be more than", false, false],
     ["a URL that never reaches a socket", () => {
       const argv = fixture("5").argv;
       const i = argv.indexOf("--url");
       return [...argv.slice(0, i + 1), "relay.plow.com/mcp", ...argv.slice(i + 2)];
-    }, 1, "The request never left this Mac"],
+    }, 1, "The request never left this Mac", true, true],
   ];
-  it.each(refusals)("refuses %s", (_name, build, status, says) => {
+  it.each(refusals)("refuses %s", (_name, build, status, says, namesHome, retractsNonce) => {
     const run = spawnSync("python3", build(), { encoding: "utf8", env });
     const out = run.stdout + run.stderr;
     expect(run.status).toBe(status);
     expect(out).toContain(says);
-    expect(out).not.toContain("nonce=");
+    expect(out.includes("home=")).toBe(namesHome);
+    // Either it never offered a handle, or it took it back.
+    expect(out.includes("nonce=")).toBe(retractsNonce);
+    if (retractsNonce) expect(out).toContain("corresponds to no call");
   });
 
   // The two that need a fake ssh, so they cannot be rows above.
@@ -186,6 +192,20 @@ describe.skipIf(!havePython())("latch-smoke, run for real", () => {
     expect(out).toContain("no such home on u@h");
     expect(out).not.toContain("waiting up to");
     expect(out).not.toContain("nonce=");
+  });
+
+  // The regression the read floor exists for: at expiry the poll loop used to
+  // starve its own last read and report an unreadable log instead of the
+  // verdict it had the evidence for. Deleted by accident in a table collapse;
+  // it is a fake-ssh case, so it cannot be a row above.
+  it("names the real cause when an ssh read outlives the window", () => {
+    const slow = fakeSsh("sleep 1\necho '{\"event\":\"intent_received\",\"intentId\":\"z\",\"goal\":\"other\"}'");
+    const run = spawnSync("python3", [...fixture("4", "/remote/home").argv, "--ssh", "u@h"],
+      { encoding: "utf8", env: { ...env, PATH: `${slow}:${process.env.PATH ?? ""}` } });
+    const out = run.stdout + run.stderr;
+    expect(out).not.toContain("Traceback");
+    expect(out).toContain("TIMEOUT — nothing carrying");
+    expect(out).not.toContain("stopped being readable");
   });
 
   it("refuses when the baseline read ate the window", () => {

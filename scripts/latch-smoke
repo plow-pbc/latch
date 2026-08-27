@@ -405,7 +405,7 @@ def main():
     # `--home "$(just --evaluate apphome)"` yields "" when that command fails,
     # which is the likeliest way the documented invocation breaks — and falling
     # through to the packaged install would read the wrong one silently.
-    if args.home is not None and not args.home.strip():
+    if not args.home.strip():
         parser.error('--home was empty — did `just --evaluate apphome` fail?')
     # Below the send floor there is no run to have: the guard downstream would
     # refuse every time, naming the window rather than the flag that set it.
@@ -466,19 +466,20 @@ def main():
         print("  Nothing was sent: a call with no time to answer still raises a dialog.")
         print("  Raise --timeout.")
         return 1
+    # BEFORE the send, because the send is when a handle is most wanted: it is
+    # given the whole remaining budget, so against a relay that accepts and
+    # never answers this is the only thing on screen for a long time. A
+    # terminal refusal retracts it rather than the print being delayed — an
+    # operator who has already scrolled past it needs to be told it is void.
+    print(f"nonce={nonce}")
     sent = send(args.url, args.token_file, argv, f"smoke test: {nonce}", remaining())
     if sent is not None:
         reason, unknown, _hint = sent
         if not unknown:
-            # No intent exists, so there is nothing to correlate — and the
-            # nonce has still not been printed. It is the handle for finding a
-            # call in the log, so printing one beside "nothing was written to
-            # the log" invites exactly the search that cannot succeed.
             print(f"REFUSED — {reason}")
+            print("  The nonce above corresponds to no call: nothing was sent.")
             return 1
         print(f"UNVERIFIED — {reason}")
-    # Something may be in flight now, so the handle is worth having.
-    print(f"nonce={nonce}")
 
     # `intent_received` is written on arrival, before the dialog, so a short
     # look answers "did it get there?" from evidence rather than from the
