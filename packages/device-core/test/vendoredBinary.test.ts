@@ -48,6 +48,17 @@ describe("resolveVendoredBinary", () => {
     expect(resolveVendoredBinary("gog")).toEqual({ path: null, problem: "override-misnamed" });
   });
 
+  it("refuses a DIRECTORY named like the command", () => {
+    // `X_OK` on a directory means traversable, not runnable — it satisfied
+    // both the access check and the basename check, and put its parent on the
+    // child's PATH.
+    const base = fs.mkdtempSync(path.join(os.tmpdir(), "gogbin-"));
+    cleanups.push(() => fs.rmSync(base, { recursive: true, force: true }));
+    fs.mkdirSync(path.join(base, "gog"));
+    process.env.DOMO_GOG = path.join(base, "gog");
+    expect(resolveVendoredBinary("gog")).toEqual({ path: null, problem: "override-missing" });
+  });
+
   it("takes its override from that command's own variable", () => {
     const staged = tree("slack", "slack");
     process.env.DOMO_SLACK = path.join(staged, "slack", process.arch, "slack");

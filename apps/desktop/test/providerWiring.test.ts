@@ -147,4 +147,19 @@ describe("vendorDirs", () => {
     expect(logged.join("\n")).toContain("DOMO_SLACK");
     expect(logged.join("\n")).not.toContain("DOMO_GOG");
   });
+
+  it("says WHICH override problem it is, since the two have different fixes", () => {
+    // "names no executable" sends an operator to check the path; a misnamed
+    // one is already a path that exists, and the fix is a symlink.
+    const logged: string[] = [];
+    const spy = vi.spyOn(console, "error").mockImplementation((...args: unknown[]) => {
+      logged.push(args.join(" "));
+    });
+    cleanups.push(() => spy.mockRestore());
+    const staged = tree("misnamed", "slack-0.1");
+    process.env.DOMO_SLACK = path.join(staged, "misnamed", process.arch, "slack-0.1");
+    expect(vendorDirs({}, [SLACK])).toEqual([]);
+    expect(logged.join("\n")).toContain("must name a file called");
+    expect(logged.join("\n")).not.toContain("names no executable");
+  });
 });

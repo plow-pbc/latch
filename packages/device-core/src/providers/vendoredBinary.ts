@@ -41,6 +41,10 @@ export function overrideVar(command: string): string {
 
 function executable(candidate: string): string | null {
   try {
+    // A FILE with the bit set. `X_OK` on a directory means traversable, not
+    // runnable, so a directory named `gog` satisfied both this and the
+    // basename check and put its parent on the child's PATH.
+    if (!fs.statSync(candidate).isFile()) return null;
     fs.accessSync(candidate, fs.constants.X_OK);
     return candidate;
   } catch {
