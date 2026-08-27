@@ -3,7 +3,6 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
-  ACTIVATION_CODE_TTL_MS,
   ACTIVATION_POLL_INTERVAL_MS,
   ACTIVATION_POLL_WINDOW_MS,
   CODE_TTL_MS,
@@ -138,6 +137,10 @@ function build(extra: Partial<OnboardingDeps> = {}): Onboarding {
     wait: async (ms) => {
       waits.push(ms);
       clock += ms;
+      // The server's 410 ends the real loop; a fake that only ever answers
+      // "pending" never gets one, and under this instant clock the loop would
+      // spin the worker to death. Park it well past anything a test asserts.
+      if (waits.length > 2_000) await new Promise(() => {});
     },
     onChange: () => {
       changes += 1;
@@ -383,28 +386,6 @@ describe("activation — the path a brand-new user takes", () => {
     expect(plow.activations).toHaveLength(1);
   });
 
-  it("stalls the screen at five minutes but keeps watching, rather than spinning", async () => {
-    plow.redeems = [{ status: "pending" }];
-    const onboarding = build();
-    await onboarding.begin();
-    await settleUntil(() => onboarding.state().activationStale);
-
-    const state = onboarding.state();
-    expect(state.activationStale).toBe(true);
-    expect(state.busy).toBe(false);
-    // The silent failure has no other feedback: a message that does not START
-    // with the prefix gets a 200, no SMS, and a code left live.
-    expect(state.message).toContain("Plow Activate:");
-    expect(state.message).toContain("haven't heard from your phone");
-    // Five minutes of polling at the stated interval got it here…
-    expect(waits.length).toBeGreaterThanOrEqual(ACTIVATION_POLL_WINDOW_MS / ACTIVATION_POLL_INTERVAL_MS);
-    // …and the watch did NOT stop: the server honours the code for another
-    // twenty-five minutes, so neither may we.
-    const after = waits.length;
-    await settle();
-    expect(waits.length).toBeGreaterThan(after);
-  });
-
   it("signs in a text that lands after the screen stalled — the live mba failure", async () => {
     // Reported from a live run: code minted at 15:02, screen stalled at 15:07,
     // text sent at 15:17. The server completed the activation and held the
@@ -415,33 +396,19 @@ describe("activation — the path a brand-new user takes", () => {
     await onboarding.begin();
     await settleUntil(() => onboarding.state().activationStale);
     expect(onboarding.state().step).toBe("waiting");
+    expect(onboarding.state().busy).toBe(false);
+    // The silent failure has no other feedback: a message that does not START
+    // with the prefix gets a 200, no SMS, and a code left live.
+    expect(onboarding.state().message).toContain("Plow Activate:");
+    expect(onboarding.state().message).toContain("haven't heard from your phone");
 
     // Minute fifteen: the text arrives. No click, no new code — the next poll
     // must catch it.
     plow.redeems = [{ status: "verified", token: SESSION_TOKEN }];
     await settleUntil(() => onboarding.state().step === "connected");
 
-    expect(onboarding.state().step).toBe("connected");
     expect(loadSettings(home).relayCredential).toBe(DEVICE_TOKEN);
     expect(plow.activations).toHaveLength(1);
-  });
-
-  it("stops for real once the server's own thirty minutes are spent", async () => {
-    // The 410 is the authoritative end, but a server that never answers with
-    // one must not be polled forever: the code's server-side life is the
-    // ceiling.
-    const onboarding = build();
-    await onboarding.begin();
-    await settle();
-    await settle();
-
-    expect(clock - 1_700_000_000_000).toBeLessThanOrEqual(
-      ACTIVATION_CODE_TTL_MS + ACTIVATION_POLL_INTERVAL_MS,
-    );
-    const after = waits.length;
-    await settle();
-    expect(waits.length).toBe(after);
-    expect(onboarding.state().message).toContain("expired before your text arrived");
   });
 
   it("never strands the user on a screen with no way to re-check", async () => {
@@ -504,11 +471,32 @@ describe("activation — the path a brand-new user takes", () => {
     expect(plow.activations).toHaveLength(1);
   });
 
-  it("mints a fresh code when that poll really does come back pending", async () => {
+  it("re-arms the SAME code while the server still honours it — a live code is never abandoned", async () => {
+    // Minting a replacement would leave the live old code with no watcher: its
+    // completion is handed out exactly once, so a user who texts the code they
+    // already copied would succeed on the phone and strand the Mac — the same
+    // stranding this PR exists to end.
     const onboarding = build();
     await onboarding.begin();
-    await settle();
+    await settleUntil(() => onboarding.state().activationStale);
 
+    const state = await onboarding.newActivationCode();
+    expect(plow.activations).toHaveLength(1);
+    expect(state.activation?.displayCode).toBe("CODE1");
+    expect(state.activationStale).toBe(false);
+    expect(state.message).toContain("still works");
+
+    // And the re-armed watch is real: a text now signs in.
+    plow.redeems = [{ status: "verified", token: SESSION_TOKEN }];
+    await settleUntil(() => onboarding.state().step === "connected");
+  });
+
+  it("mints a fresh code only once the server has retired the old one", async () => {
+    const onboarding = build();
+    await onboarding.begin();
+    await settleUntil(() => onboarding.state().activationStale);
+
+    plow.redeems = [new PlowApiError("expired", "Activation expired", 410)];
     const state = await onboarding.newActivationCode();
     expect(plow.activations).toHaveLength(2);
     expect(state.activation?.displayCode).toBe("CODE2");
@@ -642,16 +630,17 @@ describe("one code, however many callers ask for it", () => {
     onboarding.reset();
   });
 
-  it("still mints a fresh one once the first has landed", async () => {
+  it("does not wedge the button once the mint has landed", async () => {
     // Single-flight must not wedge the button: "Get a New Code" after the mint
-    // returns is a different ask, and gets a different code.
+    // returns runs a real re-check rather than joining a spent flight — and
+    // since the code is still live, the re-check re-arms it, not replaces it.
     const onboarding = build();
     await onboarding.begin();
     expect(plow.activations).toHaveLength(1);
 
     const state = await onboarding.newActivationCode();
-    expect(plow.activations).toHaveLength(2);
-    expect(state.activation?.displayCode).toBe("CODE2");
+    expect(state.activation?.displayCode).toBe("CODE1");
+    expect(plow.activations).toHaveLength(1);
     onboarding.reset();
   });
 

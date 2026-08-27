@@ -166,9 +166,9 @@ function waitingScreen() {
     el("div", { class: "oactions" }, [
       button("Open Messages…", "btn", async () => apply(await window.domo.onboardingOpenMessages())),
       el("div", { class: "spacer" }),
-      // Re-polls the old code first: the app stops watching at five minutes but
-      // the server honours it for thirty, so a text sent at minute six has
-      // already worked and this button signs them straight in.
+      // Re-polls the old code first: completed signs them straight in, and a
+      // code the server still honours goes back on the clock instead of being
+      // replaced — only a retired code mints a fresh one.
       button("Get a New Code", "btn primary", async () =>
         apply(await window.domo.onboardingNewCode()),
       ),

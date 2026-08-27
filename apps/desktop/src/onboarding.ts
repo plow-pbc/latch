@@ -44,12 +44,12 @@ export const CODE_TTL_MS = 5 * 60_000;
  * stopped with the countdown left a text at minute fifteen completed
  * server-side with nobody listening: the phone said "You're all set!" while the
  * Mac said it hadn't heard. The poll therefore continues quietly for the code's
- * whole server life, and stops on the server's own word — a 410, or this
- * mirror of its TTL for a server that never answers.
+ * whole server life, and stops only on the server's own word — the 410. No
+ * client-side clock seconds that judgment: the server owns the code's life,
+ * and a local mirror of its TTL would just be a second owner to drift.
  */
 export const ACTIVATION_POLL_WINDOW_MS = 5 * 60_000;
 export const ACTIVATION_POLL_INTERVAL_MS = 3_000;
-export const ACTIVATION_CODE_TTL_MS = 30 * 60_000;
 
 /**
  * The webhook matches `^Plow Activate:\s*(\S+)` case-insensitively
@@ -266,13 +266,14 @@ export class Onboarding {
   }
 
   /**
-   * A fresh code and a fresh clock — but only if the last one really did go
-   * unanswered.
+   * A fresh code — but only once the server has retired the old one.
    *
-   * We stop watching at five minutes and the server keeps the code live for
-   * thirty, so a user who texted at minute six has *already succeeded* and is
-   * looking at a screen that says otherwise. One poll on the old secret turns a
-   * pointless second code into an instant sign-in.
+   * One poll on the old secret decides: completed means an instant sign-in,
+   * and still-live means the SAME code goes back on the clock rather than a
+   * replacement being minted. A replacement would leave the live old code
+   * with no watcher — its completion is handed out exactly once, so a user
+   * who then texts the code they'd already copied succeeds on the phone and
+   * strands the Mac. Only a code the server says is dead gets replaced.
    */
   async newActivationCode(): Promise<OnboardingState> {
     // SINGLE-FLIGHT. A display code IS a credential — whoever texts it gets the
@@ -294,7 +295,20 @@ export class Onboarding {
     // detached poll loop run ahead of the caller. Same guarantee, no new tick.
     const flight = this.run(async () => {
       try {
-        if (previous && (await this.tryFinish(previous))) return;
+        if (previous) {
+          const outcome = await this.tryFinish(previous);
+          if (outcome === "done") return;
+          if (outcome === "live" && this.activation) {
+            // Same code, fresh clock. The screen said "get a new code", so
+            // say why it is looking at the old one.
+            this.activation = { ...this.activation, pollUntil: this.now() + ACTIVATION_POLL_WINDOW_MS };
+            this.activationStale = false;
+            this.startPolling(previous);
+            this.message =
+              "That code still works — send it exactly as shown and this screen will move on by itself.";
+            return;
+          }
+        }
         this.activation = null;
         this.activationSecret = null;
         this.activationStale = false;
@@ -326,37 +340,36 @@ export class Onboarding {
   }
 
   /**
-   * One redeem. Returns true if it was terminal — signed in, or verified with
-   * no token to hand back — and false if there is still nothing to act on.
+   * One redeem, answered as what it means for the code: "done" — signed in, or
+   * verified with no token to hand back; "live" — still pending, still the
+   * server's to honour; "dead" — the server retired it, or the call failed.
    *
-   * A failed call is `false` rather than a throw: this runs where the fallback
+   * A failed call is "dead" rather than a throw: this runs where the fallback
    * is "mint a fresh code", which will surface its own error honestly if the
    * API is genuinely down.
    */
-  private async tryFinish(secret: string): Promise<boolean> {
+  private async tryFinish(secret: string): Promise<"done" | "live" | "dead"> {
     let result;
     try {
       result = await this.deps.api.redeemActivation(secret);
     } catch {
-      return false;
+      return "dead";
     }
     // The same test the poll loop makes, for the same reason and against the
     // same race: this redeem is also a call in flight, and "Get a New Code"
     // during a sign-out would otherwise mint and persist a credential out of an
     // activation the sign-out had already abandoned. `activationSecret` is
     // still `secret` for the whole legitimate call — `newActivationCode` does
-    // not clear it until this returns false.
-    if (secret !== this.activationSecret) return false;
-    if (result.status !== "verified") return false;
-    if (!result.token) {
-      // The token is handed to the first redeem that sees the completion and
-      // the key is omitted on every one after, so this means it was already
-      // read and lost. A new code is the only way forward.
-      this.stall("Plow verified this Mac but didn't hand back a login. Get a new code.");
-      return true;
-    }
+    // not clear it while this answers "live" or "done".
+    if (secret !== this.activationSecret) return "dead";
+    if (result.status !== "verified") return "live";
+    // A verified answer with the token omitted was already read and lost — the
+    // code is spent. "dead" lets the caller mint the fresh code the stalled
+    // screen promised, instead of stalling again on a code that can never
+    // sign anyone in.
+    if (!result.token) return "dead";
     await this.finishWithSession(result.token, result.chat);
-    return true;
+    return "done";
   }
 
   /**
@@ -396,8 +409,7 @@ export class Onboarding {
   private startPolling(secret: string): void {
     this.pollGeneration += 1;
     const generation = this.pollGeneration;
-    const codeDeadAt = this.now() + ACTIVATION_CODE_TTL_MS;
-    void this.pollActivation(secret, generation, codeDeadAt).catch((error) => {
+    void this.pollActivation(secret, generation).catch((error) => {
       // Nothing above throws by design; if something does, the screen must not
       // be left on a countdown that no longer runs.
       if (generation !== this.pollGeneration) return;
@@ -410,7 +422,7 @@ export class Onboarding {
     this.pollGeneration += 1;
   }
 
-  private async pollActivation(secret: string, generation: number, codeDeadAt: number): Promise<void> {
+  private async pollActivation(secret: string, generation: number): Promise<void> {
     while (generation === this.pollGeneration) {
       await this.wait(ACTIVATION_POLL_INTERVAL_MS);
       if (generation !== this.pollGeneration) return;
@@ -470,15 +482,6 @@ export class Onboarding {
         return;
       }
 
-      // Pending past the server's own deadline. The poll that just answered
-      // happened *after* it, so a text racing it has already been caught; what
-      // is left is a genuine no-answer, and normally the server has already
-      // said so itself with the 410 above — this is the stop for one that
-      // never answers at all.
-      if (this.now() > codeDeadAt) {
-        this.giveUp("That code expired before your text arrived.");
-        return;
-      }
       // Pending, and the screen's five minutes are up: stall the countdown and
       // offer a fresh code — once — but keep watching. The code is live for
       // another twenty-five minutes and its completion is handed to the first
