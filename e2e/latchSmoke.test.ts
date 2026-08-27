@@ -8,7 +8,7 @@
  * `verdict` is pure over audit records, which is what makes both reachable
  * without standing anything up.
  */
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -116,23 +116,41 @@ describe.skipIf(!havePython())("latch-smoke, run for real", () => {
     expect(out).toContain("Nothing has ever been written at");
   });
 
-  it("does not blame the send when the verdict proves it arrived", () => {
-    // The same glue, with an audit log that already answers: the hints must
-    // stay off a DENIED, which is itself proof the call got there.
+  // The suppression case, reached for real. The nonce is generated inside the
+  // run, so the record is written from the outside once the script has printed
+  // it — which is also the only way anything external can correlate with a
+  // run, and worth having demonstrated.
+  it("does not blame the send when the verdict proves it arrived", async () => {
     const home = fs.mkdtempSync(path.join(tmp, "home-"));
     fs.mkdirSync(path.join(home, "device"));
+    const log = path.join(home, "device", "audit.ndjson");
     const tokenFile = path.join(home, "token");
     fs.writeFileSync(tokenFile, "t\n", { mode: 0o600 });
-    // The nonce is generated inside the run, so seed the log from the outside
-    // with a goal that cannot match: this asserts the no-match path stays
-    // clean, and the DENIED shape itself is covered by the verdict table.
-    fs.writeFileSync(path.join(home, "device", "audit.ndjson"),
-      `{"event":"intent_received","intentId":"z","goal":"someone else"}\n`);
-    const run = spawnSync("python3", [script, "--url", "http://127.0.0.1:9/mcp",
-      "--token-file", tokenFile, "--home", home, "--timeout", "1"], { encoding: "utf8" });
-    const out = run.stdout + run.stderr;
+
+    const child = spawn("python3", [script, "--url", "http://127.0.0.1:9/mcp",
+      "--token-file", tokenFile, "--home", home, "--timeout", "25"], { stdio: ["ignore", "pipe", "pipe"] });
+    let out = "";
+    const answer = (chunk: string) => {
+      out += chunk;
+      const nonce = /nonce=(\S+)/.exec(out)?.[1];
+      if (!nonce || fs.existsSync(log)) return;
+      // A denial: itself proof the send arrived, and the verdict both hints
+      // must stay off.
+      fs.writeFileSync(log,
+        `{"event":"intent_received","intentId":"seeded","goal":"smoke test: ${nonce}"}\n` +
+        `{"event":"intent_decision","intentId":"seeded","decision":"deny"}\n`);
+    };
+    child.stdout.on("data", (c: Buffer) => answer(c.toString()));
+    child.stderr.on("data", (c: Buffer) => { out += c.toString(); });
+    const code = await new Promise<number>((done) => child.on("close", (c) => done(c ?? -1)));
+
     expect(out).not.toContain("Traceback");
-    // The log exists and has records, so this hint must not fire.
+    expect(out).toContain("DENIED");
+    expect(code).toBe(1);
+    // The send DID fail here — and neither hint may fire, because the verdict
+    // is proof the call arrived anyway.
+    expect(out).toContain("UNVERIFIED");
+    expect(out).not.toContain("The send itself failed");
     expect(out).not.toContain("Nothing has ever been written at");
   });
 });

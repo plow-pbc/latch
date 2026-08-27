@@ -304,6 +304,10 @@ def verdict(events, nonce, expired, since=0):
 
 
 def main():
+    # Progress is the point of the waiting lines, and Python block-buffers
+    # stdout when it is a pipe — so `latch-smoke | tee run.log` showed nothing
+    # at all until the run ended, which is exactly when it stops mattering.
+    sys.stdout.reconfigure(line_buffering=True)
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--url", default=os.environ.get("MCP_URL"),
                         help="the install's mcpUrl (env: MCP_URL)")
