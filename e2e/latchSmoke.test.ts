@@ -167,14 +167,44 @@ describe.skipIf(!havePython())("latch-smoke, run for real", () => {
     // Remote is where the default is most likely wrong: the environment cannot
     // answer there, so it falls back to the PACKAGED install.
     const noHome = fakeSsh("exit 4");
-    const read = call({ call: "read", path: "/remote/home/device/audit.ndjson", ssh: "u@h", budget: 5 },
-      "", noHome) as { count: number; problem: string };
+    const read = call({ call: "read", path: "/remote/home/device/audit.ndjson", ssh: "u@h",
+      home: "/remote/home", budget: 5 }, "", noHome) as { count: number; problem: string };
     expect(read.problem).toContain("no such home on u@h");
     expect(read.problem).toContain("/remote/home");
     // ...while a missing LOG stays "no evidence yet", which is normal.
     const noLog = fakeSsh("exit 3");
-    expect(call({ call: "read", path: "/remote/home/device/audit.ndjson", ssh: "u@h", budget: 5 },
-      "", noLog)).toEqual({ count: 0, problem: "" });
+    expect(call({ call: "read", path: "/remote/home/device/audit.ndjson", ssh: "u@h",
+      home: "/remote/home", budget: 5 }, "", noLog)).toEqual({ count: 0, problem: "" });
+  });
+
+  // The remote twin of the local no-such-home row: what is asserted here is
+  // the CONSEQUENCE — nothing sent, and the run says which home — rather than
+  // the string `read_log` returns.
+  it("refuses a remote run whose home is not there", () => {
+    const { argv } = fixture("5");
+    const noHome = fakeSsh("exit 4");
+    const run = spawnSync("python3", [...argv, "--ssh", "u@h", "--home", "/remote/home"],
+      { encoding: "utf8", env: { ...env, PATH: `${noHome}:${process.env.PATH ?? ""}` } });
+    const out = run.stdout + run.stderr;
+    expect(run.status).toBe(1);
+    expect(out).toContain("home=/remote/home");
+    expect(out).toContain("no such home on u@h");
+    // Nothing was sent, so no window was ever opened and no nonce is in play.
+    expect(out).not.toContain("waiting up to");
+    expect(out).not.toContain("nonce=");
+  });
+
+  it("rejects an empty --home rather than falling back", () => {
+    // `--home "$(just --evaluate apphome)"` yields "" when that command fails,
+    // which is the likeliest way the documented invocation breaks.
+    const { argv } = fixture("5");
+    const i = argv.indexOf("--home");
+    const run = spawnSync("python3", [...argv.slice(0, i + 1), "", ...argv.slice(i + 2)],
+      { encoding: "utf8", env });
+    const out = run.stdout + run.stderr;
+    expect(run.status).toBe(2);
+    expect(out).toContain("--home was empty");
+    expect(out).not.toContain("home=");
   });
 
   it("rejects a window too short to answer in, at parse time", () => {
@@ -301,13 +331,13 @@ describe.skipIf(!havePython())("latch-smoke reads the log where it lives", () =>
   // moving it below would reinstate the fresh-install regression on the remote
   // path this is normally driven over, which a command-STRING test cannot see.
   it("a remote exit 3 is a fresh install, and any other failure refuses", () => {
-    expect(call({ call: "read", path: "/x", ssh: "u@h" }, "", fakeSsh("exit 3")))
+    expect(call({ call: "read", path: "/x", ssh: "u@h", home: "/h" }, "", fakeSsh("exit 3")))
       .toEqual({ count: 0, problem: "" });
     const noisy = fakeSsh(
       'echo "Warning: Permanently added \'h\' to the list of known hosts." >&2\n' +
       'echo "cat: /x: Permission denied" >&2\nexit 255',
     );
-    const { problem } = call({ call: "read", path: "/x", ssh: "u@h" }, "", noisy) as { problem: string };
+    const { problem } = call({ call: "read", path: "/x", ssh: "u@h", home: "/h" }, "", noisy) as { problem: string };
     // The LAST line: the warning is about a connection that succeeded.
     expect(problem).toContain("Permission denied");
     expect(problem).not.toContain("known hosts");
@@ -318,24 +348,26 @@ describe.skipIf(!havePython())("latch-smoke reads the log where it lives", () =>
   // for a directory actually named `~`. The read then fails, and a failed read
   // is the shape that reports "ruled out" having opened nothing.
   const q = `"$HOME"/'Library/Application Support/Plow-Latch/device/audit.ndjson'`;
-  const cases: [string, string, string][] = [
-    // `<home>/device/audit.ndjson`, so the home is two levels up — checked
-    // FIRST, at exit 4, because a missing log (exit 3) is normal on a fresh
-    // install and collapsing the two makes a wrong --home silent.
+  // The home travels alongside the log path — one expression owns the
+  // derivation — and is checked FIRST, at exit 4, because a missing log
+  // (exit 3) is normal on a fresh install and collapsing the two makes a wrong
+  // --home silent.
+  const cases: [string, [string, string], string][] = [
     ["~ expands on the FAR side, for both paths",
-      "~/Library/Application Support/Plow-Latch/device/audit.ndjson",
+      ["~/Library/Application Support/Plow-Latch/device/audit.ndjson",
+       "~/Library/Application Support/Plow-Latch"],
       `if [ ! -d "$HOME"/'Library/Application Support/Plow-Latch' ]; then exit 4; ` +
       `elif [ -e "$HOME"/'Library/Application Support/Plow-Latch/device/audit.ndjson' ]; ` +
       `then cat -- "$HOME"/'Library/Application Support/Plow-Latch/device/audit.ndjson'; else exit 3; fi`],
-    ["an absolute path is quoted whole", "/Users/x/L S/audit.ndjson",
+    ["an absolute path is quoted whole", ["/Users/x/L S/audit.ndjson", "/Users/x"],
       `if [ ! -d /Users/x ]; then exit 4; ` +
       `elif [ -e '/Users/x/L S/audit.ndjson' ]; then cat -- '/Users/x/L S/audit.ndjson'; else exit 3; fi`],
-    ["and a hostile one stays one argument", "/tmp/a; rm -rf ~",
-      `if [ ! -d / ]; then exit 4; ` +
+    ["and a hostile one stays one argument", ["/tmp/a; rm -rf ~", "/tmp/b; whoami"],
+      `if [ ! -d '/tmp/b; whoami' ]; then exit 4; ` +
       `elif [ -e '/tmp/a; rm -rf ~' ]; then cat -- '/tmp/a; rm -rf ~'; else exit 3; fi`],
   ];
-  it.each(cases)("%s", (_name, path, expected) => {
-    expect(call({ call: "remote", path })).toBe(expected);
+  it.each(cases)("%s", (_name, [logPath, home], expected) => {
+    expect(call({ call: "remote", path: logPath, home })).toBe(expected);
   });
 });
 
@@ -443,7 +475,7 @@ describe.skipIf(!havePython())("latch-smoke treats a response as evidence and an
     // host made `--timeout` bound nothing at all.
     const slow = fakeSsh("sleep 30");
     const started = Date.now();
-    const read = call({ call: "read", path: "/x", ssh: "u@h", budget: 1 }, "", slow) as
+    const read = call({ call: "read", path: "/x", ssh: "u@h", home: "/h", budget: 1 }, "", slow) as
       { count: number; problem: string };
     expect(Date.now() - started).toBeLessThan(10_000);
     expect(read.problem).toContain("did not finish within the window");

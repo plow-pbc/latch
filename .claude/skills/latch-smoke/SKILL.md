@@ -52,6 +52,12 @@ scripts/latch-smoke --url <mcpUrl> --token-file <path>
   scripts/latch-smoke --home "$(just --evaluate apphome)" …
   ```
 
+  Evaluate it **from the same checkout and the same shell environment `just
+  app` saw** — `branch` comes from `scripts/worktree-name.sh`, so it follows
+  the checkout, and the `-local` suffix follows `DOMO_API_BASE_URL`. From a
+  different worktree, or with that variable unset when the app had it, the
+  answer is a different install. If in doubt, use the path `just app` printed.
+
   Do not try to build that path by hand. `justfile:28` picks between three
   homes, and the input people forget is `DOMO_API_BASE_URL`: pointing at a
   local relay selects a separate `Plow-Latch-<branch>-local`, so a credential

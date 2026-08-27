@@ -97,10 +97,10 @@ def resolve_home(explicit, ssh):
     return os.environ.get("DOMO_HOME") or f"{APP_DATA}/{HOME_PREFIX}"
 
 
-def remote_cat(log_path):
+def remote_cat(log_path, home):
     """The shell command that reads the log on the far side.
 
-    Two jobs. `$HOME` expands THERE — the default home starts with `~`, and
+    Three jobs. `$HOME` expands THERE — the default home starts with `~`, and
     `shlex.quote` makes it a literal, so the remote shell would look for a
     directory actually named `~`. And a file that does not exist yet exits 3,
     distinctly from every other way `cat` can fail: a fresh install has no
@@ -112,16 +112,15 @@ def remote_cat(log_path):
         return f'"$HOME"/{shlex.quote(p[2:])}' if p.startswith("~/") else shlex.quote(p)
 
     quoted = q(log_path)
-    # The HOME too, at exit 4. A missing log is normal on a fresh install, so
-    # collapsing the two makes a wrong --home over ssh silent — and remote is
-    # where it is most likely wrong, since the environment cannot answer there
-    # and the default is the PACKAGED install.
-    home = q(os.path.dirname(os.path.dirname(log_path)))
-    return (f"if [ ! -d {home} ]; then exit 4; "
+    # And the HOME, at exit 4, ahead of both. A missing log is normal on a
+    # fresh install, so collapsing the two makes a wrong --home over ssh
+    # silent — and remote is where it is most likely wrong, since the
+    # environment cannot answer there and the default is the PACKAGED install.
+    return (f"if [ ! -d {q(home)} ]; then exit 4; "
             f"elif [ -e {quoted} ]; then cat -- {quoted}; else exit 3; fi")
 
 
-def read_log(log_path, ssh, budget):
+def read_log(log_path, ssh, budget, home=None):
     """`(records, problem)` — every parseable audit record, or why there are none.
 
     `budget` is what is left of the run's single deadline. An ssh read that
@@ -139,13 +138,13 @@ def read_log(log_path, ssh, budget):
     if ssh:
         try:
             proc = subprocess.run(
-                ["ssh", "-o", "ConnectTimeout=8", "-o", "BatchMode=yes", ssh, remote_cat(log_path)],
+                ["ssh", "-o", "ConnectTimeout=8", "-o", "BatchMode=yes", ssh, remote_cat(log_path, home)],
                 capture_output=True, text=True, timeout=budget,
             )
         except subprocess.TimeoutExpired:
             return [], f"ssh {ssh}: read did not finish within the window"
         if proc.returncode == 4:
-            return [], f"no such home on {ssh}: {os.path.dirname(os.path.dirname(log_path))}"
+            return [], f"no such home on {ssh}: {home}"
         if proc.returncode == 3:
             return [], None
         if proc.returncode != 0:
@@ -432,6 +431,11 @@ def main():
     # `<=`, not `<`: the baseline read always consumes something, so exactly
     # MIN_SEND_S leaves less than that by the time the send is reached and the
     # downstream guard refuses every time.
+    # `--home "$(just --evaluate apphome)"` yields "" when that command fails,
+    # which is the likeliest way the documented invocation breaks — and falling
+    # through to the packaged install would read the wrong one silently.
+    if args.home is not None and not args.home.strip():
+        parser.error('--home was empty — did `just --evaluate apphome` fail?')
     if args.timeout <= MIN_SEND_S:
         parser.error(f"--timeout must be more than {MIN_SEND_S:.0f}s — at or below it the"
                      " log read leaves a call no time to answer, and nothing is sent")
@@ -458,11 +462,6 @@ def main():
     # relay that accepts and never answers made `--timeout 1` take 91 seconds
     # (measured), and a stalled ssh read inside the loop was unbounded
     # entirely. Every blocking call below gets what is left of it.
-    # AFTER the refusals above: elsewhere a printed nonce means a call is in
-    # flight and is the handle for correlating it later, so printing one for a
-    # run that never sends is the wrong signal.
-    print(f"nonce={nonce}")
-
     full_deadline = time.monotonic() + args.timeout
     deadline = full_deadline
 
@@ -473,7 +472,7 @@ def main():
     # moment where refusing costs nothing: past it, the call has raised a
     # dialog on someone's Mac that nothing here can then verify. It is the same
     # reasoning the send-side guards use, one layer down.
-    baseline, problem = read_log(log_path, args.ssh, max(remaining(), READ_FLOOR_S))
+    baseline, problem = read_log(log_path, args.ssh, max(remaining(), READ_FLOOR_S), home)
     if problem is not None:
         print(f"REFUSED — cannot read the audit log: {problem}")
         print("  Not sending: a call this cannot verify would still raise a dialog.")
@@ -492,6 +491,11 @@ def main():
         print("  Nothing was sent: a call with no time to answer still raises a dialog.")
         print("  Raise --timeout.")
         return 1
+    # HERE, not earlier: elsewhere a printed nonce means a call is in flight
+    # and is the handle for correlating it later, so printing one for a run
+    # that refuses — a bad window, an unreadable home, either side of the ssh
+    # boundary — is the wrong signal.
+    print(f"nonce={nonce}")
     sent = send(args.url, args.token_file, argv, f"smoke test: {nonce}", remaining())
     if sent is not None:
         reason, unknown, _hint = sent
@@ -514,7 +518,7 @@ def main():
     # evidence the path is right, which is all the hint below asserts against.
     saw_any = bool(baseline)
     while True:
-        events, problem = read_log(log_path, args.ssh, max(remaining(), READ_FLOOR_S))
+        events, problem = read_log(log_path, args.ssh, max(remaining(), READ_FLOOR_S), home)
         if problem is not None:
             expired = time.monotonic() >= deadline
             # It was readable a moment ago, so this is transient. Never let it
