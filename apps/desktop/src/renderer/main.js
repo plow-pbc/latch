@@ -8,6 +8,7 @@ import {
   PURPOSE_PLACEHOLDER,
 } from "./approvals.js";
 
+import { canEditChats, editorChats } from "./chatSets.js";
 import { el, icon } from "./dom.js";
 import { renderVault, vaultConfirmLeave } from "./vault.js";
 
@@ -954,6 +955,20 @@ function cloudChatHolders(state, exceptAgentId = null) {
  * order, which is exactly what `chat_uids` means on the wire. It also makes
  * "unchanged" a plain array comparison for the caller.
  */
+/**
+ * What a modal built around a checklist should focus.
+ *
+ * Not simply the first checkbox: every chat in the list can be disabled — an
+ * account whose chats all belong to other agents — and focusing a disabled
+ * control focuses nothing at all, leaving the modal with no keyboard entry
+ * point and Escape as the only way out.
+ */
+function firstUsableControl(panel) {
+  const enabled = (selector) =>
+    [...panel.querySelectorAll(selector)].find((node) => !node.disabled) ?? null;
+  return enabled("input:not([type=hidden])") ?? enabled("button") ?? null;
+}
+
 function chatChecklist({ chats, holders, selected = [], onChange }) {
   const chosen = new Set(selected.filter((uid) => chats.some((chat) => chat.uid === uid)));
   let home = selected.find((uid) => chosen.has(uid)) ?? null;
@@ -992,16 +1007,13 @@ function chatChecklist({ chats, holders, selected = [], onChange }) {
       onChange?.();
     });
 
+    // The name is the whole row: a chat has no title, so its label already IS
+    // its numbers. The only second line worth printing is why it cannot be had.
     const main = el("div", { class: "chat-option-main" }, [
       el("div", { class: "chat-option-name", text: chat.label || chat.uid }),
     ]);
-    // The people line is skipped when it would only repeat the name: a chat
-    // has no title, so its label already IS its numbers most of the time.
-    const people = cloudChatPeople(chat);
     if (taken) {
       main.appendChild(el("div", { class: "chat-option-note", text: `Served by ${heldBy}` }));
-    } else if (people && people !== (chat.label || "").trim()) {
-      main.appendChild(el("div", { class: "chat-option-people", text: people }));
     }
 
     // Only a chosen chat can be home, so this is shown and hidden rather than
@@ -1043,23 +1055,6 @@ function chatChecklist({ chats, holders, selected = [], onChange }) {
   };
 }
 
-/** The numbers a chat runs on, for the line under its name. */
-function cloudChatPeople(chat) {
-  const recipients = chat?.recipients;
-  if (!recipients) return "";
-  return [recipients.line, ...(recipients.members ?? [])]
-    .map((number) => String(number ?? "").trim())
-    .filter((number, index, all) => number && all.indexOf(number) === index)
-    .join(", ");
-}
-
-/** "3 chats · ★ <home>", or what is missing. */
-function chatSummaryText(chosen, homeLabel) {
-  if (!chosen.length) return "No chats chosen";
-  const count = `${chosen.length} chat${chosen.length === 1 ? "" : "s"}`;
-  return homeLabel ? `${count} · ★ ${homeLabel}` : count;
-}
-
 function verifiedCloudLines(chats) {
   const seen = new Set();
   return chats.flatMap((chat) => {
@@ -1080,7 +1075,6 @@ function openCloudPicker(trigger, state, redraw) {
   const warningTitle = el("div", { class: "warn cloud-warning-title", text: "" });
   const warningBody = el("p", { class: "faint", text: "" });
   const warning = el("div", { class: "cloud-warning" }, [warningTitle, warningBody]);
-  const summary = el("span", { class: "faint chat-summary", text: "" });
   const cancel = el("button", { class: "btn", text: "Cancel" });
   const create = el("button", { class: "btn primary", text: "Set up agent" });
 
@@ -1094,7 +1088,6 @@ function openCloudPicker(trigger, state, redraw) {
   // do not come back, so the warning counts what was actually chosen.
   const syncPicker = () => {
     const chosen = checklist.chosen();
-    summary.textContent = chatSummaryText(chosen, checklist.homeLabel());
     create.disabled = chosen.length === 0;
     warning.hidden = chosen.length === 0;
     warningTitle.textContent =
@@ -1161,7 +1154,6 @@ function openCloudPicker(trigger, state, redraw) {
     el("div", { class: "field" }, [el("label", { text: "Name (optional)" }), name]),
     warning,
     el("div", { class: "row cloud-modal-actions" }, [
-      summary,
       el("div", { class: "spacer" }),
       cancel,
       create,
@@ -1172,7 +1164,7 @@ function openCloudPicker(trigger, state, redraw) {
     if (!panel) return;
     panel.replaceChildren(...pickerChildren);
     syncPicker();
-    checklist.node.querySelector("input")?.focus();
+    firstUsableControl(panel)?.focus();
   };
   const showExplainer = () => {
     if (!panel) return;
@@ -1223,9 +1215,11 @@ function openCloudPicker(trigger, state, redraw) {
     );
     back.focus();
   };
-  panel = openCloudModal(trigger, pickerChildren, checklist.node.querySelector("input"));
+  panel = openCloudModal(trigger, pickerChildren, null);
   if (!panel) return;
   syncPicker();
+  // After sync, so a control this pass disables is not the one taking focus.
+  firstUsableControl(panel)?.focus();
 }
 
 /**
@@ -1238,13 +1232,16 @@ function openCloudPicker(trigger, state, redraw) {
  */
 function openCloudEditor(trigger, agent, state, redraw) {
   const baseline = agent.chatUids ?? [];
-  const summary = el("span", { class: "faint chat-summary", text: "" });
   const note = el("p", { class: "faint modal-note", text: "" });
   const cancel = el("button", { class: "btn", text: "Cancel" });
   const save = el("button", { class: "btn primary", text: "Save changes" });
 
+  // Every chat the agent serves is in the list, whether or not the account's
+  // chat list mentions it — see `editorChats`. Without that the modal hides a
+  // served chat, `chosen()` omits it, and Save is live on open to detach a chat
+  // the person was never shown.
   const checklist = chatChecklist({
-    chats: state.cloudChats,
+    chats: editorChats(agent, state.cloudChats),
     holders: cloudChatHolders(state, agent.agentId),
     selected: baseline,
     onChange: () => syncEditor(),
@@ -1257,7 +1254,6 @@ function openCloudEditor(trigger, agent, state, redraw) {
   };
   const syncEditor = () => {
     const chosen = checklist.chosen();
-    summary.textContent = chatSummaryText(chosen, checklist.homeLabel());
     save.disabled = chosen.length === 0 || unchanged();
   };
 
@@ -1281,7 +1277,7 @@ function openCloudEditor(trigger, agent, state, redraw) {
     syncEditor();
   });
 
-  openCloudModal(trigger, [
+  const panel = openCloudModal(trigger, [
     el("div", { class: "group-title", text: `Edit chats — ${agent.name || "cloud agent"}` }),
     el("p", { class: "faint conn-note", text: "Add or remove the chats this agent reads and replies in." }),
     el("div", { class: "field" }, [el("label", { text: "Chats" }), checklist.node]),
@@ -1294,13 +1290,14 @@ function openCloudEditor(trigger, agent, state, redraw) {
     ]),
     note,
     el("div", { class: "row cloud-modal-actions" }, [
-      summary,
       el("div", { class: "spacer" }),
       cancel,
       save,
     ]),
-  ], checklist.node.querySelector("input"));
+  ], null);
   syncEditor();
+  // After sync, so a control this pass disables is not the one taking focus.
+  if (panel) firstUsableControl(panel)?.focus();
 }
 
 const cloudHttpReasons = new Set([
@@ -1502,7 +1499,7 @@ function rosterActions(
       attrs: { "aria-label": `Edit chats for ${name}` },
     });
     edit.disabled = !editAgent.enabled;
-    if (!editAgent.enabled) edit.title = "Available once the agent is running";
+    if (!editAgent.enabled) edit.title = editAgent.why;
     edit.addEventListener("click", () =>
       openCloudEditor(edit, editAgent.agent, editAgent.state, redraw));
     actions.push(edit);
@@ -1571,10 +1568,13 @@ function cloudEntityRow(row, agent, state, redraw) {
         el("span", { class: "entity-name", text: name }),
         cloudStatusNode(agent),
       ]),
+      // `.entity-context` is one ellipsised line, and two chats already run
+      // past it — so the tooltip carries the whole thing rather than a legend
+      // for a star the reader may not be able to see.
       el("div", {
         class: "entity-context",
         text: cloudContext(agent, row),
-        attrs: { title: "★ marks the home chat — the agent's own reminders land there" },
+        attrs: { title: `★ = home chat. ${cloudContext(agent, row)}` },
       }),
       el("div", { class: "entity-perms" }, permissions.map((text) => el("span", { text }))),
     ]),
@@ -1585,10 +1585,19 @@ function cloudEntityRow(row, agent, state, redraw) {
       // Only a real, running agent can be edited: a local pending row has no
       // agent id Plow knows, and one that failed or is being torn down has no
       // chats to move. Provisioning shows the button dead rather than hiding
-      // it, so it does not appear from nowhere a minute later.
+      // it, so it does not appear from nowhere a minute later — and so does an
+      // agent whose account chats have not been read, because a checklist built
+      // on the fallback list is missing most of what could be picked.
       editAgent: agent && !agent.localPending &&
         (agent.status === "running" || agent.status === "provisioning")
-        ? { agent, state, enabled: agent.status === "running" }
+        ? {
+            agent,
+            state,
+            enabled: canEditChats(agent, state.cloudChatsLoaded),
+            why: agent.status === "running"
+              ? "Available once this Mac has read your chats"
+              : "Available once the agent is running",
+          }
         : null,
     }),
   ]);

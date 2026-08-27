@@ -712,7 +712,7 @@ textarea.text { min-height: 70px; resize: vertical; }
 .chat-option input { margin: 0; flex: none; }
 .chat-option-main { flex: 1; min-width: 0; }
 .chat-option-name { font-weight: 600; }
-.chat-option-people, .chat-option-note {
+.chat-option-note {
   color: var(--muted); font-size: 11.5px;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
@@ -733,12 +733,6 @@ textarea.text { min-height: 70px; resize: vertical; }
   color: var(--blue-fg); font-weight: 600;
 }
 .chat-list-alt { margin: 8px 0 0; }
-/* A chat has no title, so this line is phone numbers and can run long. It
-   gives way to the buttons rather than pushing them off the modal. */
-.chat-summary {
-  font-size: 12px; min-width: 0; max-width: 46%;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
 /* The app had `.linkbtn` only inside the wizard and the connect group; the
    checklist's "New chat…" needs the same affordance in a modal. */
 .linkbtn {
