@@ -11,7 +11,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 // @ts-expect-error — a build-time .mjs with no type declarations.
-import { isStaged } from "../../../scripts/fetch-vendored.mjs";
+import { isStaged } from "../../../scripts/vendored-staging.mjs";
 
 const sha = (b: string) => createHash("sha256").update(b).digest("hex");
 
