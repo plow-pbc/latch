@@ -119,8 +119,11 @@ let clock: number;
 let waits: number[];
 /** How many times the instance told the window to re-read. */
 let changes: number;
+/** Bumped per test; a wait built under an older value parks — see `wait`. */
+let harnessGen = 0;
 
 function build(extra: Partial<OnboardingDeps> = {}): Onboarding {
+  const gen = harnessGen;
   return new Onboarding({
     api: plow.api(),
     home,
@@ -135,12 +138,14 @@ function build(extra: Partial<OnboardingDeps> = {}): Onboarding {
     // deadline is measured against, so a five-minute give-up takes microseconds
     // and is exact rather than approximately right.
     wait: async (ms) => {
+      // The server's 410 ends the real loop; a fake that only ever answers
+      // "pending" never gets one, so a loop can outlive its test. Under this
+      // instant clock it would spin the worker to death — and even short of
+      // that, it would keep mutating the next test's shared clock. Park any
+      // loop from a previous test the moment it comes up for air.
+      if (gen !== harnessGen) await new Promise(() => {});
       waits.push(ms);
       clock += ms;
-      // The server's 410 ends the real loop; a fake that only ever answers
-      // "pending" never gets one, and under this instant clock the loop would
-      // spin the worker to death. Park it well past anything a test asserts.
-      if (waits.length > 2_000) await new Promise(() => {});
     },
     onChange: () => {
       changes += 1;
@@ -170,6 +175,7 @@ function buildOnPhonePath(): Onboarding {
 }
 
 beforeEach(() => {
+  harnessGen += 1;
   home = fs.mkdtempSync(path.join(os.tmpdir(), "domo-onboarding-"));
   plow = new FakePlow();
   warnings = [];
@@ -430,10 +436,12 @@ describe("activation — the path a brand-new user takes", () => {
     // matters is that giving up never leaves them anywhere else.
     expect(state.step).toBe("waiting");
 
-    // And the control does what the message promises: the text landed after we
-    // stopped watching, so one poll on the old secret signs them straight in.
+    // And the screen's promise holds without the control even being needed:
+    // the watch never stopped, so a late text signs in on the next poll. The
+    // click just re-arms the countdown; it must not break the sign-in.
     plow.redeems = [{ status: "verified", token: SESSION_TOKEN }];
-    expect((await onboarding.newActivationCode()).step).toBe("connected");
+    await onboarding.newActivationCode();
+    await settleUntil(() => onboarding.state().step === "connected");
     expect(plow.activations).toHaveLength(1);
   });
 
@@ -454,21 +462,6 @@ describe("activation — the path a brand-new user takes", () => {
       expect(onboarding.state().activationStale).toBe(true);
       expect(onboarding.state().step).toBe("waiting");
     }
-  });
-
-  it("polls the old code before minting a new one, because completion beats expiry", async () => {
-    const onboarding = build();
-    await onboarding.begin();
-    await settle();
-    expect(onboarding.state().activationStale).toBe(true);
-
-    // They texted at minute six. The server honoured it; we had stopped looking.
-    plow.redeems = [{ status: "verified", token: SESSION_TOKEN }];
-    const state = await onboarding.newActivationCode();
-
-    expect(state.step).toBe("connected");
-    // And no second code was ever minted.
-    expect(plow.activations).toHaveLength(1);
   });
 
   it("re-arms the SAME code while the server still honours it — a live code is never abandoned", async () => {
@@ -496,7 +489,10 @@ describe("activation — the path a brand-new user takes", () => {
     await onboarding.begin();
     await settleUntil(() => onboarding.state().activationStale);
 
+    // The POLL receives the 410 — the button never redeems. Only then does a
+    // click mint.
     plow.redeems = [new PlowApiError("expired", "Activation expired", 410)];
+    await settleUntil(() => onboarding.state().message.includes("expired before your text arrived"));
     const state = await onboarding.newActivationCode();
     expect(plow.activations).toHaveLength(2);
     expect(state.activation?.displayCode).toBe("CODE2");
@@ -505,9 +501,9 @@ describe("activation — the path a brand-new user takes", () => {
   });
 
   it("keeps a live code through a transient failure — only a 410 says it is dead", async () => {
-    // A timeout or 5xx on the button's recheck says nothing about the code.
-    // Minting over it would abandon a code the server still honours — the
-    // stranding again, this time triggered by a blip.
+    // A timeout or 5xx says nothing about the code, and a click during the
+    // outage must not mint over it: the abandoned code's completion has no
+    // watcher — the stranding again, this time triggered by a blip.
     const onboarding = build();
     await onboarding.begin();
     await settleUntil(() => onboarding.state().activationStale);
@@ -545,6 +541,10 @@ describe("activation — the path a brand-new user takes", () => {
     expect(state.activationStale).toBe(true);
     expect(state.message).toBe("Plow verified this Mac but didn't hand back a login. Get a new code.");
     expect(plow.redeemCalls).toHaveLength(1);
+
+    // The spent code is dropped, so the promised control actually works: the
+    // next click mints instead of re-arming a code that can never sign in.
+    expect((await onboarding.newActivationCode()).activation?.displayCode).toBe("CODE2");
   });
 
   it("treats a 410 as authoritative and offers a fresh code", async () => {
