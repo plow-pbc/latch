@@ -60,7 +60,7 @@
  *
  *     And that appending a second `--enable-commands` still widens it, which
  *     is what `RESERVED_EXACT` exists to refuse. The alias list is gog's to
- *     change, and `GOG_ALIASES` in `registry.ts` mirrors it.
+ *     change, and `GOG_ALIASES` in `providers/gogGroups.ts` mirrors it.
  */
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";

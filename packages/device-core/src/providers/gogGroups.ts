@@ -1,6 +1,6 @@
 /**
- * Which gog groups this Mac reaches, in the two shapes that are not the same
- * thing.
+ * Which gog groups this Mac reaches: the canonical names, gog's own aliases
+ * for them, and the union the check reads.
  *
  * Its own module because both `registry.ts` and the skill it publishes need
  * them, and importing the registry from the skill it carries is a cycle.

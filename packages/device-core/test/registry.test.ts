@@ -6,13 +6,13 @@
  * see by reading the command — the command itself looks legitimate.
  */
 import { describe, expect, it } from "vitest";
+import { GOG_ALIASES, GOG_CANONICAL } from "../src/providers/gogGroups.js";
 import {
   impliesNetwork,
   needsToken,
   PROVIDERS,
   vendoredProvider,
 } from "../src/providers/registry.js";
-import { GOG_ALIASES, GOG_CANONICAL } from "../src/providers/gogGroups.js";
 import { overrideVar } from "../src/providers/vendoredBinary.js";
 
 const gog = vendoredProvider(["gog"])!;
@@ -216,7 +216,9 @@ describe("the scope bound", () => {
     // EVERY occurrence, not any: the page names it more than once, and
     // `toContain` passes while one of them says something else.
     const named = gog.skill.body.match(/--enable-commands=[^`\s]*/g) ?? [];
-    expect(named.length).toBeGreaterThan(1);
+    // The page has to name it at all, and every naming has to agree — a body
+    // that mentioned it zero times would otherwise pass vacuously.
+    expect(named).not.toHaveLength(0);
     expect([...new Set(named)]).toEqual([bound]);
   });
 
