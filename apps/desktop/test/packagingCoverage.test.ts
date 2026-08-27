@@ -12,8 +12,8 @@
  * tools for one arch, or a ~13 MB binary committed to git.
  *
  * Every assertion here is against the thing that actually decides — the glob
- * matched with the same matcher electron-builder uses, an ignore line parsed as
- * a line, the clone list's own tokens. A substring check reads the same and
+ * matched with minimatch against a real packaged path, `.gitignore` resolved by
+ * git's last-match-wins rule, the clone list's own tokens. A substring check reads the same and
  * passes on edits that do not work: adding a provider to the INNER alternation
  * of the arch glob contains its name while matching none of its paths, and a
  * provider named `vault` is a substring of `vault-cli` everywhere at once.
@@ -26,6 +26,8 @@ import { minimatch } from "minimatch";
 import { parse } from "yaml";
 // @ts-expect-error — a build-time .mjs with no type declarations.
 import { VENDORED } from "../../../scripts/vendored-providers.mjs";
+// @ts-expect-error — a build-time .mjs with no type declarations.
+import { MARKER } from "../../../scripts/vendored-staging.mjs";
 
 const repoRoot = fileURLToPath(new URL("../../..", import.meta.url));
 const read = (rel: string) => fs.readFileSync(path.join(repoRoot, rel), "utf8");
@@ -37,21 +39,45 @@ const builder = parse(read("apps/desktop/electron-builder.yml")) as {
   mac: { x64ArchFiles?: string };
 };
 
-/** The clone list `worktree-setup.sh` iterates, as its own tokens. */
+/**
+ * The clone list `worktree-setup.sh` iterates, as its own tokens.
+ *
+ * A mention in the header comment or in a `skipping` echo is not a clone, hence
+ * parsing the loop rather than the file. The parse assumes one line of literal
+ * words, so it is checked for having understood the script at all — a
+ * continued list, or one moved into an array, would otherwise yield too few
+ * tokens and report every provider as "not cloned" when they all are.
+ */
 const clonedDirs = (() => {
   const line = read("scripts/worktree-setup.sh")
     .split("\n")
     .find((l) => l.trimStart().startsWith("for dir in "));
-  // A mention in the header comment or in a `skipping` echo is not a clone.
   expect(line, "worktree-setup.sh has no `for dir in ...` clone list").toBeDefined();
-  return line!.trim().replace(/^for dir in /, "").replace(/;.*$/, "").split(/\s+/);
+  const tokens = line!.trim().replace(/^for dir in /, "").replace(/;.*$/, "").split(/\s+/);
+  expect(tokens.every((t) => /^vendor\/[\w.-]+$/.test(t)), `clone list not understood: ${line}`).toBe(
+    true,
+  );
+  return tokens;
 })();
 
-/** `.gitignore` as effective patterns: no blanks, no comments, no negations. */
-const ignored = read(".gitignore")
+/** `.gitignore`'s effective patterns, negations KEPT — see `isIgnored`. */
+const ignorePatterns = read(".gitignore")
   .split("\n")
   .map((l) => l.trim())
-  .filter((l) => l !== "" && !l.startsWith("#") && !l.startsWith("!"));
+  .filter((l) => l !== "" && !l.startsWith("#"));
+
+/**
+ * Whether git would ignore this pattern's paths, by git's own last-match-wins
+ * rule.
+ *
+ * Dropping the negations instead would discard exactly what decides it: a file
+ * carrying `vendor/gog/` AND a later `!vendor/gog/` ignores nothing, while the
+ * positive line is still present to be found.
+ */
+function isIgnored(pattern: string): boolean {
+  const last = ignorePatterns.filter((l) => l === pattern || l === `!${pattern}`).pop();
+  return last === pattern;
+}
 
 describe.each(PROVIDERS)("packaging covers $command", ({ command, arches }) => {
   const entry = () => builder.extraResources.find((r) => r.to === command);
@@ -67,15 +93,18 @@ describe.each(PROVIDERS)("packaging covers $command", ({ command, arches }) => {
     // `VERSION` is local bookkeeping, not payload. The entry the test above
     // demands can be written without a filter, which ships it into signed
     // Resources — the same line and the same forgetting, one field over.
-    expect(entry()?.filter ?? []).toContain("!VERSION");
+    expect(entry()?.filter ?? []).toContain(`!${MARKER}`);
   });
 
   it.each(Object.keys(arches))("passes its %s binary through the universal merge", (arch) => {
     // Two THIN per-arch binaries are copied identically into both electron
     // slices, so the merger would try to lipo a thin binary against its
-    // identical twin and fail. x64ArchFiles is what passes them through —
-    // matched here against the real packaged path, with the matcher
-    // electron-builder itself uses.
+    // identical twin and fail. x64ArchFiles is what passes them through.
+    //
+    // Matched against the real packaged path with minimatch, which is what
+    // @electron/universal uses — but deliberately WITHOUT its `matchBase`
+    // option, so only a path-form glob passes here. That is stricter than the
+    // merge, never looser: it cannot accept a glob the merge would reject.
     const glob = builder.mac.x64ArchFiles;
     expect(glob, "mac.x64ArchFiles is not set at all").toBeDefined();
     expect(minimatch(`Contents/Resources/${command}/${arch}/${command}`, glob!)).toBe(true);
@@ -83,9 +112,9 @@ describe.each(PROVIDERS)("packaging covers $command", ({ command, arches }) => {
 
   it("keeps its vendor tree out of git", () => {
     // Otherwise a multi-megabyte binary lands in a commit, and the pin stops
-    // being the only thing deciding what ships. A commented-out or negated
+    // being the only thing deciding what ships. A commented-out or later-negated
     // line reads the same in the file and ignores nothing.
-    expect(ignored).toContain(`vendor/${command}/`);
+    expect(isIgnored(`vendor/${command}/`)).toBe(true);
   });
 
   it("is cloned into a new worktree", () => {

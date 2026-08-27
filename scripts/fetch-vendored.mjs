@@ -27,7 +27,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { VENDORED, providerNamed } from "./vendored-providers.mjs";
-import { isStaged, stagedBinary } from "./vendored-staging.mjs";
+import { MARKER, isStaged, stagedBinary } from "./vendored-staging.mjs";
 
 // fileURLToPath, not `.pathname`: the latter leaves percent-encoding in place,
 // so a checkout under a path with a space resolves to a directory that does not
@@ -85,7 +85,7 @@ function fetchProvider(provider) {
     console.log(`  ${provider.probe(stagedBinary(provider, process.arch, repoRoot).file)}`);
 
     // Record what is on disk so a stale tree is legible without re-hashing.
-    writeFileSync(path.join(repoRoot, "vendor", command, "VERSION"), `${version}\n`);
+    writeFileSync(path.join(repoRoot, "vendor", command, MARKER), `${version}\n`);
   } finally {
     rmSync(staging, { recursive: true, force: true });
   }

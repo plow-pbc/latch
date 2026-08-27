@@ -12,6 +12,15 @@ import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 
+/**
+ * The staleness marker's filename, spelled once.
+ *
+ * The fetcher writes it, `isStaged` reads it, and electron-builder's
+ * `extraResources` filter excludes it from the bundle — so a rename that missed
+ * one would ship it into signed Resources.
+ */
+export const MARKER = "VERSION";
+
 /** The staged binary's path, and whether its bytes are the pinned ones. */
 export function stagedBinary(provider, arch, root) {
   const file = path.join(root, "vendor", provider.command, arch, provider.command);
@@ -33,7 +42,7 @@ export function stagedBinary(provider, arch, root) {
  * The marker alone is not enough either: it attests a version, not any bytes.
  */
 export function isStaged(provider, root) {
-  const marker = path.join(root, "vendor", provider.command, "VERSION");
+  const marker = path.join(root, "vendor", provider.command, MARKER);
   if (!existsSync(marker) || readFileSync(marker, "utf8").trim() !== provider.version) return false;
   return Object.keys(provider.arches).every((arch) => stagedBinary(provider, arch, root).ok);
 }
