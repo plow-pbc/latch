@@ -43,14 +43,17 @@ DEFAULT_HOME = "~/Library/Application Support/Plow-Latch"
 def remote_cat(log_path):
     """The shell command that reads the log on the far side.
 
-    `$HOME` expands THERE. The default home starts with `~`, and `shlex.quote`
-    makes it a literal, so the remote shell would look for a directory actually
-    named `~` — the read fails, and a failed read is the shape that reports
-    "ruled out" having opened nothing.
+    Two jobs. `$HOME` expands THERE — the default home starts with `~`, and
+    `shlex.quote` makes it a literal, so the remote shell would look for a
+    directory actually named `~`. And a file that does not exist yet exits 3,
+    distinctly from every other way `cat` can fail: a fresh install has no
+    audit log until something is approved (`just audit` says so), and that is
+    the case this script is written for, while a dead host and a permission
+    refusal are not the same answer at all.
     """
-    if log_path.startswith("~/"):
-        return f'cat -- "$HOME"/{shlex.quote(log_path[2:])}'
-    return f"cat -- {shlex.quote(log_path)}"
+    quoted = (f'"$HOME"/{shlex.quote(log_path[2:])}' if log_path.startswith("~/")
+              else shlex.quote(log_path))
+    return f"if [ -e {quoted} ]; then cat -- {quoted}; else exit 3; fi"
 
 
 def read_log(log_path, ssh):
@@ -58,23 +61,32 @@ def read_log(log_path, ssh):
 
     A read that FAILED and a log with no evidence in it are different answers,
     and collapsing them is how a checker reports "ruled out" having opened
-    nothing. Over ssh the failures are not even the same set: an unreachable
-    host, a `BatchMode` auth refusal and a wrong `--home` all land here, and
-    none of them is one of the three causes the timeout branch names.
+    nothing. A log that does not exist YET is the second kind: `AuditLog`
+    creates the file on its first record, so a freshly installed build has none
+    until something is approved. A permission error, a dead host and a
+    `BatchMode` refusal are the first kind, and over ssh they are not even in
+    the set of causes the timeout branch names.
     """
     if ssh:
         proc = subprocess.run(
             ["ssh", "-o", "ConnectTimeout=8", "-o", "BatchMode=yes", ssh, remote_cat(log_path)],
             capture_output=True, text=True,
         )
+        if proc.returncode == 3:
+            return [], None
         if proc.returncode != 0:
-            detail = proc.stderr.strip().splitlines()
-            return [], f"ssh {ssh}: {detail[0] if detail else 'exit ' + str(proc.returncode)}"
+            # The LAST line, not the first: a known-hosts warning or a login
+            # banner precedes the real error, and the one line that survives is
+            # the operator's only clue about which of --home or --ssh is wrong.
+            detail = [line for line in proc.stderr.strip().splitlines() if line.strip()]
+            return [], f"ssh {ssh}: {detail[-1] if detail else 'exit ' + str(proc.returncode)}"
         raw = proc.stdout
     else:
         try:
             with open(log_path, errors="replace") as handle:
                 raw = handle.read()
+        except FileNotFoundError:
+            raw = ""
         except OSError as error:
             return [], f"{log_path}: {error.strerror}"
     records = []
@@ -123,6 +135,14 @@ def send(url, token_file, argv, goal):
         with urllib.request.urlopen(request, timeout=90) as response:
             payload = json.load(response)
     except urllib.error.HTTPError as error:
+        # A 5xx is not a refusal. RELAY_TIMEOUT_MS is the relay abandoning an
+        # exchange it has ALREADY forwarded — the device holds the intent and
+        # the dialog is up, so telling the operator the log is empty is the
+        # one thing that must not happen here.
+        if error.code >= 500:
+            return (f"HTTP {error.code} — the relay gave up on the exchange.\n"
+                    "  Whether it arrived is UNKNOWN — search the log for the nonce above"
+                    " before assuming it did not.")
         return (f"HTTP {error.code} — refused before it became an intent.\n"
                 "  Nothing was written to the audit log. 401/403 is the relay or the"
                 " credential; another 4xx is the MCP handler.")
@@ -192,7 +212,13 @@ def verdict(events, nonce, expired, since=0):
         # a separate read: a line still being appended when that read lands
         # parses as garbage and is dropped, the count comes back one short, and
         # the slice cuts off this call's own `intent_received`.
-        rejected = [r for r in events[since:] if r.get("event") == "intent_rejected"]
+        # A log that SHRANK — `AuditLog.clear()` truncates — leaves `since`
+        # indexing past the end, and the slice would be empty: "ruled out"
+        # over records nothing examined, which is the shape this whole
+        # function exists to prevent. A baseline that no longer indexes
+        # anything bounds nothing, so scan it all.
+        bound = since if since <= len(events) else 0
+        rejected = [r for r in events[bound:] if r.get("event") == "intent_rejected"]
         lines = [f"TIMEOUT — nothing carrying {nonce}. Three causes:",
                  "  1. it never reached this install (wrong install, credential, or socket)",
                  "  2. refused in the MCP layer before an intent existed — writes NO audit line",
@@ -268,7 +294,8 @@ def main():
     if problem is not None:
         print(f"REFUSED — cannot read the audit log: {problem}")
         print("  Not sending: a call this cannot verify would still raise a dialog.")
-        print("  Check --home (a from-source run is Plow-Latch-<branch>) and --ssh.")
+        print("  A missing log is NOT this — that is normal on a fresh install and reads")
+        print("  as empty. This is a host, a permission, or an unreadable --home.")
         return 1
     # Positional, and it bounds ONE thing: the nonce-less `intent_rejected`
     # scan. No clock is involved — the operator's clock and the target's are

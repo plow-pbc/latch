@@ -21,7 +21,10 @@ spec.loader.exec_module(smoke)
 
 request = json.loads(sys.argv[2])
 
-if request["call"] == "remote":
+if request["call"] == "read":
+    records, problem = smoke.read_log(request["path"], None)
+    print(json.dumps({"count": len(records), "problem": problem is not None}))
+elif request["call"] == "remote":
     print(json.dumps(smoke.remote_cat(request["path"])))
 elif request["call"] == "split":
     print(json.dumps(smoke.split_command(request["raw"])))

@@ -105,14 +105,39 @@ describe.skipIf(!havePython())("latch-smoke bounds only what carries no nonce", 
 });
 
 describe.skipIf(!havePython())("latch-smoke reads the log where it lives", () => {
+  // The distinction the whole script turns on. A log that does not exist YET
+  // is no evidence — `AuditLog` creates the file on its first record, so a
+  // freshly installed build has none, and that is this skill's headline case.
+  // A log that could not be READ is a different answer and must refuse.
+  it("tells a not-yet-written log from an unreadable one", () => {
+    const dir = fs.mkdtempSync(path.join(tmp, "logs-"));
+    const populated = path.join(dir, "full.ndjson");
+    fs.writeFileSync(populated, `{"event":"intent_received"}\nnot json\n{"event":"exec_end"}\n`);
+    const locked = path.join(dir, "locked.ndjson");
+    fs.writeFileSync(locked, "{}\n");
+    fs.chmodSync(locked, 0o000);
+
+    // Unparseable lines are skipped, not fatal — the log is append-only and a
+    // record can be half-written when the read lands.
+    expect(call({ call: "read", path: populated })).toEqual({ count: 2, problem: false });
+    expect(call({ call: "read", path: path.join(dir, "absent.ndjson") })).toEqual({ count: 0, problem: false });
+    expect(call({ call: "read", path: locked })).toEqual({ count: 0, problem: true });
+  });
+
+
   // A tilde inside `shlex.quote` is a literal, and the remote shell would look
   // for a directory actually named `~`. The read then fails, and a failed read
   // is the shape that reports "ruled out" having opened nothing.
+  const q = `"$HOME"/'Library/Application Support/Plow-Latch/device/audit.ndjson'`;
   const cases: [string, string, string][] = [
     ["~ expands on the FAR side", "~/Library/Application Support/Plow-Latch/device/audit.ndjson",
-      `cat -- "$HOME"/'Library/Application Support/Plow-Latch/device/audit.ndjson'`],
-    ["an absolute path is quoted whole", "/Users/x/L S/audit.ndjson", `cat -- '/Users/x/L S/audit.ndjson'`],
-    ["and a hostile one stays one argument", "/tmp/a; rm -rf ~", `cat -- '/tmp/a; rm -rf ~'`],
+      `if [ -e ${q} ]; then cat -- ${q}; else exit 3; fi`],
+    ["an absolute path is quoted whole", "/Users/x/L S/audit.ndjson",
+      `if [ -e '/Users/x/L S/audit.ndjson' ]; then cat -- '/Users/x/L S/audit.ndjson'; else exit 3; fi`],
+    // A missing file exits 3, distinctly from every other way cat can fail —
+    // that is what keeps a fresh install from reading as an unreachable host.
+    ["and a hostile one stays one argument", "/tmp/a; rm -rf ~",
+      `if [ -e '/tmp/a; rm -rf ~' ]; then cat -- '/tmp/a; rm -rf ~'; else exit 3; fi`],
   ];
   it.each(cases)("%s", (_name, path, expected) => {
     expect(call({ call: "remote", path })).toBe(expected);
