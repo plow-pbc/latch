@@ -204,5 +204,19 @@ export function needsToken(argv: readonly string[]): boolean {
   return !isHelpInvocation(argv.slice(1));
 }
 
+/**
+ * Whether this argv gets the network capability whether or not it asked.
+ *
+ * A provider reaches its service by definition, so the flag is not the agent's
+ * to remember — but `--help` reaches nothing, for the same reason it mints
+ * nothing. Spelled ONCE because it decides two different things in two
+ * packages: what `mcp-server` puts in the capability set, and, through
+ * `Executor.isReapable`, whether the run is exempt from the silent-run reaper.
+ * Spelled twice, one of them drifted within a single commit.
+ */
+export function impliesNetwork(argv: readonly string[]): boolean {
+  return vendoredProvider(argv) !== null && needsToken(argv);
+}
+
 /** Every vendored command name, for the skill and for the tool description. */
 export const VENDORED_COMMANDS: readonly string[] = PROVIDERS.map((p) => p.command);

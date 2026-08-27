@@ -6,7 +6,13 @@
  * see by reading the command — the command itself looks legitimate.
  */
 import { describe, expect, it } from "vitest";
-import { needsToken, PROVIDERS, vendoredProvider, VENDORED_COMMANDS } from "../src/providers/registry.js";
+import {
+  impliesNetwork,
+  needsToken,
+  PROVIDERS,
+  vendoredProvider,
+  VENDORED_COMMANDS,
+} from "../src/providers/registry.js";
 import { overrideVar } from "../src/providers/vendoredBinary.js";
 
 const gog = vendoredProvider(["gog"])!;
@@ -169,4 +175,22 @@ describe("overrideVar", () => {
     expect(new Set(names).size).toBe(PROVIDERS.length);
   });
 });
+
+describe("impliesNetwork", () => {
+  // Decides two things in two packages — the capability `mcp-server` builds,
+  // and through `Executor.isReapable` whether the run escapes the silent-run
+  // reaper. Spelled twice, one copy dropped the provider gate inside a single
+  // commit and approved network for `/bin/echo`.
+  it.each([
+    [["gog", "gmail", "search", "q"], true],
+    [["gog", "--help"], false],
+    [["gog"], true],
+    [["/bin/echo", "x"], false],
+    [["/usr/local/bin/gog", "gmail", "search"], false],
+    [[], false],
+  ])("%j implies network: %s", (argv, expected) => {
+    expect(impliesNetwork(argv)).toBe(expected);
+  });
+});
+
 

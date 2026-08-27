@@ -17,7 +17,13 @@ export * from "./skills.js";
 export * from "./whatsappSkill.js";
 export * from "./deviceAgent.js";
 export * from "./executor.js";
-export { needsToken, PROVIDERS, vendoredProvider, VENDORED_COMMANDS } from "./providers/registry.js";
+export {
+  impliesNetwork,
+  needsToken,
+  PROVIDERS,
+  vendoredProvider,
+  VENDORED_COMMANDS,
+} from "./providers/registry.js";
 export type { VendoredProvider } from "./providers/registry.js";
 export { MintError } from "./providers/mint.js";
 export type { Minter } from "./providers/mint.js";

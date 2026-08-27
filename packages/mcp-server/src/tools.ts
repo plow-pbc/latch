@@ -30,7 +30,7 @@ import {
   LIVE_WEB_ROUTING,
   MAX_CLICK_TIMEOUT_MS,
   MAX_FILE_BYTES,
-  needsToken,
+  impliesNetwork,
   vendoredProvider,
 } from "@domo/device-core";
 import { DeferredResults, DeniedError, Progress } from "./deferred.js";
@@ -278,8 +278,9 @@ export const TOOLS: ToolSpec[] = [
       "and in exchange its only writable place is `$TMPDIR`, a directory of its own that is deleted " +
       "when it is killed. Declare a write path (or " +
       "network) and it is never killed that way, because it could be mid-work and a truncated file " +
-      "is worse than the wait. A vendored provider command counts as having declared network even " +
-      "though you did not, so it is never killed that way either, and the `$TMPDIR` exchange is off. " +
+      "is worse than the wait. A vendored provider command other than --help counts as having " +
+      "declared network even though you did not, so it is never killed that way either, and the " +
+      "`$TMPDIR` exchange is off. " +
       "A run ends when the command itself exits, and its stdout and stderr close with it — so a job " +
       "left running in the background will normally be killed by its next write unless it redirects " +
       "both (`>log 2>&1`), its output is not captured, and no handle tracks it. "  +
@@ -367,7 +368,7 @@ export const TOOLS: ToolSpec[] = [
         // says so because it is the agent's account of when a run is killable.
         {
           kind: "network",
-          allowed: (a.get("network").bool ?? false) || (provider !== null && needsToken(argv)),
+          allowed: (a.get("network").bool ?? false) || impliesNetwork(argv),
         },
       ];
       if (readPaths.length > 0) capabilities.push({ kind: "fs.read", paths: readPaths });
