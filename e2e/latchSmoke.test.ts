@@ -8,13 +8,13 @@
  * `verdict` is pure over audit records, which is what makes both reachable
  * without standing anything up.
  */
-import { execFileSync, spawn, spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, describe, expect, it } from "vitest";
-import { havePython } from "../packages/device-core/test/pythonProbe.js";
+import { havePython, runProbe } from "../packages/device-core/test/pythonProbe.js";
 
 const script = fileURLToPath(new URL("../scripts/latch-smoke", import.meta.url));
 const probe = fileURLToPath(new URL("./fixtures/latchSmokeProbe.py", import.meta.url));
@@ -41,15 +41,8 @@ const allow = { event: "intent_decision", intentId: ID, decision: "allow" };
 const start = { event: "exec_start", intentId: ID, argv: ["/bin/echo", "latch-smoke"] };
 
 function call(request: Record<string, unknown>, tokenFile = "", binDir?: string): unknown {
-  const out = execFileSync("python3", [probe, script, JSON.stringify(request), tokenFile], {
-    encoding: "utf8",
-    env: {
-      ...process.env,
-      PYTHONPYCACHEPREFIX: fs.mkdtempSync(path.join(tmp, "pyc-")),
-      ...(binDir ? { PATH: `${binDir}:${process.env.PATH ?? ""}` } : {}),
-    },
-  });
-  return JSON.parse(out) as unknown;
+  return runProbe<unknown>(probe, [script, JSON.stringify(request), tokenFile],
+    binDir ? { PATH: `${binDir}:${process.env.PATH ?? ""}` } : {});
 }
 
 /** A directory holding a fake `ssh` that behaves as told. */
@@ -302,14 +295,36 @@ describe.skipIf(!havePython())("latch-smoke treats a response as evidence and an
     expect(sent.unknown).toBe(false);
   });
 
-  // The one branch that DOES know, because a response came back and said so.
-  it.each([[401, false], [502, true]] as [number, boolean][])(
-    "a %i is a response, and decides", (status, unknown) => {
-      const sent = call({ call: "send", url: "https://relay.invalid/mcp", status, token: "t", raises: "http" }, tokenFile) as
-        { reason: string; unknown: boolean };
-      expect(sent.unknown).toBe(unknown);
-    },
-  );
+  // A 200 is still a response, and two of them are refusals — but only one is
+  // terminal. `isError` is what an ordinary DENIAL comes back as, after its
+  // audit records already exist, so exiting on it reported "nothing reached
+  // this Mac" about a call the owner had just refused.
+  it.each([
+    ["a JSON-RPC error is terminal", "rpc-error", false],
+    ["isError is not, because a denial looks like this", "is-error", true],
+  ])("%s", (_name, raises, unknown) => {
+    const sent = call({ call: "send", url: "https://relay.invalid/mcp", status: 0, token: "t", raises }, tokenFile) as
+      { reason: string; unknown: boolean };
+    expect(sent.unknown).toBe(unknown);
+  });
+
+  it("a 200 that went through returns nothing to report", () => {
+    const sent = call({ call: "send", url: "https://relay.invalid/mcp", status: 0, token: "t", raises: "ok" }, tokenFile) as
+      { reason: string | null };
+    expect(sent.reason).toBeNull();
+  });
+
+  // The relay's own error text is server-authored on an AUTHENTICATED
+  // response, so it can reflect the request back.
+  it("never repeats a JSON-RPC error's text", () => {
+    const token = "sk-secret-MustNotAppear";
+    const file = path.join(tmp, "rpc-token");
+    fs.writeFileSync(file, `${token}\n`, { mode: 0o600 });
+    const { reason } = call({ call: "send", url: "https://relay.invalid/mcp", status: 0, token, raises: "rpc-error" }, file) as
+      { reason: string };
+    expect(reason).not.toContain("MustNotAppear");
+    expect(reason).not.toContain("Bearer");
+  });
 });
 
 describe.skipIf(!havePython())("latch-smoke command split", () => {

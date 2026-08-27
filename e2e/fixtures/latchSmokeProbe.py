@@ -40,7 +40,30 @@ else:
     body = json.dumps({"error": "Bearer " + request["token"]}).encode()
     raises = request.get("raises", "http")
 
+    class Body:
+        """A 200 whose payload is what the row asked for."""
+
+        def __init__(self, payload):
+            self.payload = json.dumps(payload).encode()
+
+        def read(self, *_a):
+            return self.payload
+
+        def __enter__(self):
+            return io.BytesIO(self.payload)
+
+        def __exit__(self, *_a):
+            return False
+
     def urlopen(*_args, **_kwargs):
+        if raises == "rpc-error":
+            # Server-authored text, and it reflects the request back.
+            return Body({"jsonrpc": "2.0", "id": 1,
+                         "error": {"code": -32000, "message": "Bearer " + request["token"]}})
+        if raises == "is-error":
+            return Body({"jsonrpc": "2.0", "id": 1, "result": {"isError": True}})
+        if raises == "ok":
+            return Body({"jsonrpc": "2.0", "id": 1, "result": {"isError": False}})
         # The shapes urllib actually produces, checked against it: a refused
         # connection and a DNS failure come WRAPPED; a read timeout and a peer
         # that drops the socket come BARE.

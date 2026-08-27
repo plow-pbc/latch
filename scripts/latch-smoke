@@ -194,13 +194,20 @@ def send(url, token_file, argv, goal):
     # Neither absence is proof of success — that is the audit log — but either
     # presence is proof of failure, and saying so now beats a 2-minute timeout.
     if payload.get("error") is not None:
-        return (f"JSON-RPC error: {json.dumps(payload['error'])[:200]}\n"
+        # NOT the server's text. This is an AUTHENTICATED response, so its
+        # error field is server-authored and can reflect the request back —
+        # the same rule the catch-all follows, and it was missing here.
+        return ("the relay answered with a JSON-RPC error.\n"
                 "  Refused before it became an intent; nothing was written to the log.", False)
     # `or {}` because a present-but-null `result` is None, and `.get` on it
     # raises rather than answering.
     if (payload.get("result") or {}).get("isError"):
-        return ("the tool returned isError.\n"
-                "  Refused inside the MCP layer; no intent was created.", False)
+        # NOT terminal, and not a claim that no intent was created. An
+        # ordinary denial and an executor failure BOTH come back this way,
+        # after their audit records already exist — so exiting here reported
+        # "nothing reached this Mac" about a call the owner had just refused.
+        # Polling resolves it to the DENIED or FAILED it actually is.
+        return ("the tool returned isError, which an ordinary denial also does.", True)
     return None
 
 

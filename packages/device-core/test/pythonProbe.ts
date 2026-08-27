@@ -24,13 +24,21 @@ export function havePython(): boolean {
   }
 }
 
-/** Run a probe and parse what it printed. */
-export function runProbe<T>(script: string, args: string[] = []): T {
+/**
+ * Run a probe and parse what it printed.
+ *
+ * `env` overlays the default environment, for a probe that needs to see
+ * something particular — a `PATH` with a fake binary on it, say. The
+ * bytecode-cache policy above is the reason to come through here rather than
+ * spawn python3 directly.
+ */
+export function runProbe<T>(script: string, args: string[] = [], env: NodeJS.ProcessEnv = {}): T {
   const out = execFileSync("python3", [script, ...args], {
     encoding: "utf8",
     env: {
       ...process.env,
       PYTHONPYCACHEPREFIX: fs.mkdtempSync(path.join(os.tmpdir(), "domo-pyc-")),
+      ...env,
     },
   });
   return JSON.parse(out) as T;
