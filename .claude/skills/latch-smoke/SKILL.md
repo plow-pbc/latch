@@ -40,35 +40,35 @@ repeat the credential back.
 ## Run it
 
 ```bash
-scripts/latch-smoke --url <mcpUrl> --token-file <path>
+scripts/latch-smoke --url <mcpUrl> --token-file <path> \
+  --home "~/Library/Application Support/Plow-Latch"
 ```
 
-- `--home <dir>` — the instance home. Defaults to `DOMO_HOME`, else the
-  packaged install at `~/Library/Application Support/Plow-Latch`.
-
-  **For a from-source run, ask the justfile — it owns the answer:**
+- `--home <dir>` — **required.** The instance home to read. There is no
+  default: every wrong home this script has produced came from it choosing
+  one, and a chosen home that is wrong reads as a fresh install rather than as
+  an error.
 
   ```bash
-  scripts/latch-smoke --home "$(just --evaluate apphome)" …
+  --home "~/Library/Application Support/Plow-Latch"   # a packaged install
+  --home "$(just --evaluate apphome)"                 # from source
   ```
 
-  Evaluate it **from the same checkout and the same shell environment `just
-  app` saw** — `branch` comes from `scripts/worktree-name.sh`, so it follows
-  the checkout, and the `-local` suffix follows `DOMO_API_BASE_URL`. From a
-  different worktree, or with that variable unset when the app had it, the
-  answer is a different install. If in doubt, use the `DOMO_HOME=` value `just
-  app` echoes in its recipe line.
+  Evaluate `apphome` **from the same checkout and the same shell environment
+  `just app` saw** — `branch` comes from `scripts/worktree-name.sh`, so it
+  follows the checkout, and the `-local` suffix follows `DOMO_API_BASE_URL`.
+  From a different worktree, or with that variable unset when the app had it,
+  the answer is a different install. If in doubt, use the `DOMO_HOME=` value
+  `just app` echoes in its recipe line.
 
-  Do not try to build that path by hand. `justfile:28` picks between three
-  homes, and the input people forget is `DOMO_API_BASE_URL`: pointing at a
-  local relay selects a separate `Plow-Latch-<branch>-local`, so a credential
-  minted against one relay never lands in the other's home. A path assembled
-  from the branch alone silently reads the wrong install.
+  Do not build that path by hand. `justfile:28` picks between three homes and
+  the one people forget is the local-relay `Plow-Latch-<branch>-local`, which
+  exists so a credential minted against one relay never lands in the other's
+  home.
 
-  Over `--ssh` the environment is ignored entirely — those variables describe
-  *this* Mac — so pass `--home` explicitly for a from-source remote. A wrong
-  home is the usual cause of a `TIMEOUT` that found nothing, which is why the
-  run prints `home=` and refuses a local one that does not exist.
+  A wrong home is the usual cause of a `TIMEOUT` that found nothing, which is
+  why the run prints `home=` and refuses one that does not exist — on either
+  side of `--ssh`.
 
 - `--ssh <user@host>` — read that Mac's audit log over ssh instead of this
   one's. Host map: the `tailscale-ssh` skill. The call itself always goes over
@@ -129,7 +129,8 @@ mint, not at the binary.
 Same command, its own argv:
 
 ```bash
-scripts/latch-smoke --url <mcpUrl> --token-file <path> -- gog gmail search newer_than:1d --json
+scripts/latch-smoke --url <mcpUrl> --token-file <path> \
+  --home "~/Library/Application Support/Plow-Latch" -- gog gmail search newer_than:1d --json
 ```
 
 Three things distinguish a working provider path from a broken one, all visible

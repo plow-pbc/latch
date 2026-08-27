@@ -37,8 +37,6 @@ import urllib.request
 # `packages/mcp-server/test/client.ts` is the authority; keep this in step with
 # it and with `PROTOCOL_REVISION` in `handler.ts`.
 REVISION = "2026-07-28"
-APP_DATA = "~/Library/Application Support"
-HOME_PREFIX = "Plow-Latch"
 # How long a call whose send RAISED is given to show up. `intent_received` is
 # written the moment one arrives, so this is generous; it exists so a typo'd
 # --url does not cost the full window.
@@ -69,32 +67,6 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
 
 
 _OPENER = urllib.request.build_opener(_NoRedirect)
-
-
-def resolve_home(explicit, ssh):
-    """The instance home to read.
-
-    Three levels, and this deliberately implements only the unambiguous ones:
-    an explicit `--home`, then `DOMO_HOME`, then the packaged default. It does
-    NOT try to work out a from-source home. The justfile owns that decision and
-    it has a third input this cannot see — `DOMO_API_BASE_URL` selects a
-    separate `-local` home so a credential minted against one relay never
-    lands in the other's — so a partial mirror picks the wrong install
-    confidently. Ask the owner instead:
-
-        scripts/latch-smoke --home "$(just --evaluate apphome)" …
-
-    Over ssh even `DOMO_HOME` is ignored: those variables describe THIS Mac,
-    and a remote run that adopted them would poll a path meaning something
-    else there.
-    """
-    if explicit:
-        return explicit
-    if ssh:
-        return f"{APP_DATA}/{HOME_PREFIX}"
-    # Empty reads as unset, which is what `justfile:28` does too. `paths.ts`
-    # is the outlier and takes "" as the home — latch#189.
-    return os.environ.get("DOMO_HOME") or f"{APP_DATA}/{HOME_PREFIX}"
 
 
 def remote_cat(log_path, home):
@@ -413,10 +385,14 @@ def main():
                         help="the install's mcpUrl (env: MCP_URL)")
     parser.add_argument("--token-file", default=os.environ.get("TOKEN_FILE"),
                         help="a 0600 file holding the bearer token (env: TOKEN_FILE)")
-    parser.add_argument("--home", default=None,
-                        help="the instance home (default: DOMO_HOME, else the packaged "
-                             "install). For a from-source run pass "
-                             "--home \"$(just --evaluate apphome)\"")
+    # REQUIRED. There is no default and no environment fallback: every wrong
+    # home this script has produced came from it choosing one, and a chosen
+    # home that is wrong reads as a fresh install rather than an error. The
+    # justfile owns the from-source answer — `--home "$(just --evaluate
+    # apphome)"` — and the packaged one is a fixed path the skill spells out.
+    parser.add_argument("--home", required=True,
+                        help='the instance home. Packaged: "~/Library/Application '
+                             'Support/Plow-Latch". From source: "$(just --evaluate apphome)"')
     parser.add_argument("--ssh", default=None, metavar="USER@HOST",
                         help="read the audit log on another Mac over ssh")
     parser.add_argument("--timeout", type=int, default=120,
@@ -443,8 +419,7 @@ def main():
     # command is how the gog path is smoked; that one needs its own rule.
     argv = command or ["/bin/echo", "latch-smoke"]
 
-    home = resolve_home(args.home, args.ssh)
-    home = home if args.ssh else os.path.expanduser(home)
+    home = args.home if args.ssh else os.path.expanduser(args.home)
     log_path = os.path.join(home, "device", "audit.ndjson")
     nonce = f"latch-smoke-{time.strftime('%Y%m%dT%H%M%SZ', time.gmtime())}-{os.getpid()}"
     # WHICH home, always. A missing `audit.ndjson` is deliberately not a
@@ -491,18 +466,19 @@ def main():
         print("  Nothing was sent: a call with no time to answer still raises a dialog.")
         print("  Raise --timeout.")
         return 1
-    # HERE, not earlier: elsewhere a printed nonce means a call is in flight
-    # and is the handle for correlating it later, so printing one for a run
-    # that refuses — a bad window, an unreadable home, either side of the ssh
-    # boundary — is the wrong signal.
-    print(f"nonce={nonce}")
     sent = send(args.url, args.token_file, argv, f"smoke test: {nonce}", remaining())
     if sent is not None:
         reason, unknown, _hint = sent
         if not unknown:
+            # No intent exists, so there is nothing to correlate — and the
+            # nonce has still not been printed. It is the handle for finding a
+            # call in the log, so printing one beside "nothing was written to
+            # the log" invites exactly the search that cannot succeed.
             print(f"REFUSED — {reason}")
             return 1
         print(f"UNVERIFIED — {reason}")
+    # Something may be in flight now, so the handle is worth having.
+    print(f"nonce={nonce}")
 
     # `intent_received` is written on arrival, before the dialog, so a short
     # look answers "did it get there?" from evidence rather than from the
@@ -559,7 +535,7 @@ def main():
                 if not arrived and not saw_any:
                     print(f"  Nothing has ever been written at {log_path} — normal on a")
                     print("  fresh install with nothing approved, and also what a wrong --home")
-                    print("  looks like (a from-source run is Plow-Latch-<branch>).")
+                    print('  looks like. From source: --home "$(just --evaluate apphome)".')
                 return code
         # Bounded by the deadline: `--timeout 1` slept five seconds, so the
         # window an operator asked for was never the window they got.

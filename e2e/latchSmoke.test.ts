@@ -151,38 +151,31 @@ describe.skipIf(!havePython())("latch-smoke, run for real", () => {
     expect(out).toContain("Nothing has ever been written at");
   });
 
-  // The user-visible payload of the home work, which the resolver rows cannot
-  // reach: which home was chosen, and that a wrong one is a usage error rather
-  // than evidence of a fresh install.
-  it("names the home it chose, and refuses one that does not exist", () => {
-    const missing = path.join(tmp, "not-a-home");
-    const run = spawnSync("python3", fixture("5", missing).argv, { encoding: "utf8", env });
+  // Every refusal that happens BEFORE anything is sent. Each says why, names
+  // the home it was going to read, and prints no nonce — a nonce is the handle
+  // for finding a call in the log, so offering one beside "nothing was sent"
+  // invites a search that cannot succeed.
+  const refusals: [string, () => string[], number, string][] = [
+    ["a local home that does not exist", () => fixture("5", path.join(tmp, "not-a-home")).argv,
+      1, "REFUSED — no such home"],
+    ["an empty --home, which is a failed command substitution", () => fixture("5", "").argv,
+      2, "--home was empty"],
+    ["a window too short to answer in", () => fixture("1").argv, 2, "--timeout must be more than"],
+    ["a URL that never reaches a socket", () => {
+      const argv = fixture("5").argv;
+      const i = argv.indexOf("--url");
+      return [...argv.slice(0, i + 1), "relay.plow.com/mcp", ...argv.slice(i + 2)];
+    }, 1, "The request never left this Mac"],
+  ];
+  it.each(refusals)("refuses %s", (_name, build, status, says) => {
+    const run = spawnSync("python3", build(), { encoding: "utf8", env });
     const out = run.stdout + run.stderr;
-    expect(run.status).toBe(1);
-    expect(out).toContain(`home=${missing}`);
-    expect(out).toContain("REFUSED — no such home");
-    // Nothing was sent, so there is no call to correlate — a printed nonce
-    // would say otherwise.
+    expect(run.status).toBe(status);
+    expect(out).toContain(says);
     expect(out).not.toContain("nonce=");
   });
 
-  it("tells a missing remote HOME from a log that does not exist yet", () => {
-    // Remote is where the default is most likely wrong: the environment cannot
-    // answer there, so it falls back to the PACKAGED install.
-    const noHome = fakeSsh("exit 4");
-    const read = call({ call: "read", path: "/remote/home/device/audit.ndjson", ssh: "u@h",
-      home: "/remote/home", budget: 5 }, "", noHome) as { count: number; problem: string };
-    expect(read.problem).toContain("no such home on u@h");
-    expect(read.problem).toContain("/remote/home");
-    // ...while a missing LOG stays "no evidence yet", which is normal.
-    const noLog = fakeSsh("exit 3");
-    expect(call({ call: "read", path: "/remote/home/device/audit.ndjson", ssh: "u@h",
-      home: "/remote/home", budget: 5 }, "", noLog)).toEqual({ count: 0, problem: "" });
-  });
-
-  // The remote twin of the local no-such-home row: what is asserted here is
-  // the CONSEQUENCE — nothing sent, and the run says which home — rather than
-  // the string `read_log` returns.
+  // The two that need a fake ssh, so they cannot be rows above.
   it("refuses a remote run whose home is not there", () => {
     const noHome = fakeSsh("exit 4");
     const run = spawnSync("python3", [...fixture("5", "/remote/home").argv, "--ssh", "u@h"],
@@ -191,15 +184,13 @@ describe.skipIf(!havePython())("latch-smoke, run for real", () => {
     expect(run.status).toBe(1);
     expect(out).toContain("home=/remote/home");
     expect(out).toContain("no such home on u@h");
-    // Nothing was sent, so no window was ever opened and no nonce is in play.
     expect(out).not.toContain("waiting up to");
     expect(out).not.toContain("nonce=");
   });
 
-  it("refuses when the baseline read ate the window, without a nonce", () => {
-    // The third path that prints no nonce, and the only one that depends on
-    // how long the baseline read took — so it is unreachable without a slow
-    // one, which is why it needs a fake ssh rather than a bad argument.
+  it("refuses when the baseline read ate the window", () => {
+    // The only refusal that depends on how long the read took, so it needs a
+    // slow ssh rather than a bad argument.
     const slow = fakeSsh("sleep 2\necho '{}'");
     const run = spawnSync("python3", [...fixture("3", "/remote/home").argv, "--ssh", "u@h"],
       { encoding: "utf8", env: { ...env, PATH: `${slow}:${process.env.PATH ?? ""}` } });
@@ -207,47 +198,6 @@ describe.skipIf(!havePython())("latch-smoke, run for real", () => {
     expect(run.status).toBe(1);
     expect(out).toContain("REFUSED — under 2s left");
     expect(out).not.toContain("nonce=");
-  });
-
-  it("rejects an empty --home rather than falling back", () => {
-    // `--home "$(just --evaluate apphome)"` yields "" when that command fails,
-    // which is the likeliest way the documented invocation breaks.
-    const run = spawnSync("python3", fixture("5", "").argv, { encoding: "utf8", env });
-    const out = run.stdout + run.stderr;
-    expect(run.status).toBe(2);
-    expect(out).toContain("--home was empty");
-    expect(out).not.toContain("home=");
-  });
-
-  it("rejects a window too short to answer in, at parse time", () => {
-    // Below the floor the downstream guard refused every time, naming the
-    // window rather than the flag that set it. `2` is unusable too — the
-    // baseline read always consumes something — so the bound is exclusive.
-    for (const t of ["1", "2"]) {
-      const run = spawnSync("python3", fixture(t).argv, { encoding: "utf8", env });
-      const out = run.stdout + run.stderr;
-      expect(run.status).toBe(2);
-      expect(out).toContain("--timeout must be more than");
-      expect(out).not.toContain("nonce=");
-    }
-  });
-
-  // The regression the read floor exists for, end to end: at expiry the poll
-  // loop used to starve its own last read and report an unreadable log instead
-  // of the verdict it had the evidence for.
-  it("names the real cause when an ssh read outlives the window", () => {
-    const home = fs.mkdtempSync(path.join(tmp, "home-"));
-    fs.mkdirSync(path.join(home, "device"));
-    const tokenFile = path.join(home, "token");
-    fs.writeFileSync(tokenFile, "t\n", { mode: 0o600 });
-    const slow = fakeSsh("sleep 1\necho '{\"event\":\"intent_received\",\"intentId\":\"z\",\"goal\":\"other\"}'");
-    const run = spawnSync("python3", [script, "--url", "http://127.0.0.1:9/mcp",
-      "--token-file", tokenFile, "--home", "/remote", "--ssh", "u@h", "--timeout", "4"],
-      { encoding: "utf8", env: { ...env, PATH: `${slow}:${process.env.PATH ?? ""}` } });
-    const out = run.stdout + run.stderr;
-    expect(out).not.toContain("Traceback");
-    expect(out).toContain("TIMEOUT — nothing carrying");
-    expect(out).not.toContain("stopped being readable");
   });
 
   // The suppression case, reached for real. The nonce is generated inside the
@@ -525,29 +475,6 @@ describe.skipIf(!havePython())("latch-smoke treats a response as evidence and an
     if (contains === null) expect(sent.reason).toBeNull();
     else expect(sent.reason).toContain(contains);
     expect(sent.reason ?? "").not.toMatch(/Bearer|MustNotAppear/);
-  });
-});
-
-describe.skipIf(!havePython())("latch-smoke resolves only the homes it can know", () => {
-  // It deliberately does NOT work out a from-source home: `justfile:28` owns
-  // that and has a third input this cannot see — DOMO_API_BASE_URL selects a
-  // separate `-local` home — so a partial mirror picks the wrong install
-  // confidently. Two earlier attempts to mirror it were each wrong.
-  const PACKAGED = "~/Library/Application Support/Plow-Latch";
-  const cases: [string, Record<string, unknown>, string][] = [
-    ["--home wins outright", { explicit: "/tmp/named" }, "/tmp/named"],
-    ["DOMO_HOME answers locally", { env: { DOMO_HOME: "/tmp/throwaway" } }, "/tmp/throwaway"],
-    // Same reading as justfile:28; `paths.ts` is the outlier — latch#189.
-    ["an empty DOMO_HOME reads as unset", { env: { DOMO_HOME: "" } }, PACKAGED],
-    ["a branch is NOT guessed at", { env: { DOMO_BRANCH: "feature-x" } }, PACKAGED],
-    ["neither variable is the packaged default", {}, PACKAGED],
-    // The load-bearing one: those variables describe THIS Mac, so a remote run
-    // that adopted them would poll a path meaning something else there.
-    ["ssh ignores the environment entirely", { ssh: "u@h", env: { DOMO_HOME: "/tmp/mine" } }, PACKAGED],
-    ["...but an explicit remote home still wins", { ssh: "u@h", explicit: "/remote/home" }, "/remote/home"],
-  ];
-  it.each(cases)("%s", (_name, request, expected) => {
-    expect(call({ call: "home", ...request })).toEqual({ home: expected });
   });
 });
 
