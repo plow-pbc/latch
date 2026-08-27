@@ -38,7 +38,10 @@ A nonce makes the audit line unambiguous — a busy install has other traffic, a
 ```bash
 NONCE="latch-smoke-$(date -u +%Y%m%dT%H%M%SZ)"
 # Captured BEFORE the send: Verify filters for lines written during it, so a
-# bound taken afterwards excludes the very events it is looking for.
+# bound taken afterwards excludes the very events it is looking for. Backed off
+# a minute because on the ssh path this is the OPERATOR's clock and the `ts` it
+# is compared against is the TARGET's — and the failure that costs is a false
+# "ruled out", which tells someone to stop looking.
 SINCE=$(date -u -v-1M +%Y-%m-%dT%H:%M:%S 2>/dev/null || date -u -d '1 minute ago' +%Y-%m-%dT%H:%M:%S)
 # EXPORTED: the guards below set shell variables, and the heredoc reads the
 # ENVIRONMENT — without this an operator who satisfies the guard still dies on
@@ -114,11 +117,15 @@ install, and `Plow-Latch-<branch>` for a from-source run
 ```bash
 NONCE="<value printed by Send>"
 SINCE="<value printed by Send>"   # every audit line carries an ISO ts
-# On the ssh path SINCE is the OPERATOR's clock and `ts` is the TARGET's. A
-# target running behind can drop its own line; back the bound off a minute
-# rather than trusting two machines to agree.
 HOME_DIR="${HOME_DIR:-$HOME/Library/Application Support/Plow-Latch}"
 SCRIPT='NONCE="'"$NONCE"'"; LOG="'"$HOME_DIR"'/device/audit.ndjson"; SINCE="'"$SINCE"'";
+# SINCE has to be a real timestamp before anything filters on it. An
+# unsubstituted placeholder sorts ABOVE every real ts, so ts>=since would match
+# nothing and the script would print "cause 3 ruled out" having checked
+# nothing — the reassuring branch, in the case where the operator most needs to
+# keep looking. An empty value (both date forms unavailable) fails the other
+# way and matches everything. This catches both.
+case "$SINCE" in 2???-??-??T??:??:??) ;; *) echo "SINCE is not a timestamp - substitute the value Send printed"; exit 2;; esac
 # Read the intentId out of one JSON line. Once, not three times.
 intent_id() { python3 -c "import json,sys; print(json.load(sys.stdin).get(\"intentId\",\"\"))" 2>/dev/null; }
 # Every id lookup is anchored to the FIELD: an unanchored match finds the id
@@ -247,8 +254,11 @@ four Google scopes and refuses everything else by design.
 - Call returns, the log carries the nonce, and the script says `TIMEOUT -
   reached this Mac` → it arrived and is sitting unanswered at the approval
   dialog. Not a plumbing problem.
-- `ALLOWED but not yet started` → approved as the window closed. Re-run Verify;
-  if it stays that way, the exec failed to launch and `exec_error` says why.
+- `ALLOWED but not yet started` → approved as the window closed. Re-run Verify.
+  If it stays that way the run never started, and there may be **no**
+  `exec_error` to read: that event is recorded only when the executor throws,
+  so a launch that fails another way leaves the pair unmatched. Check the app
+  is still running and look at the lines around the `intent_decision`.
 - Call returns, and *nothing* carries the nonce → three possibilities, and the
   Verify step's timeout branch enumerates them: a **different** install's log
   (check the instance home — branch-suffixed homes are the usual cause), a
