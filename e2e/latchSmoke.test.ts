@@ -345,13 +345,22 @@ describe.skipIf(!havePython())("latch-smoke treats a response as evidence and an
     const token = "sk-secret-MustNotAppear";
     const file = path.join(tmp, "redirect-token");
     fs.writeFileSync(file, `${token}\n`, { mode: 0o600 });
-    const sent = call({ call: "send", url: "https://relay.invalid/mcp", status: 0, token, raises: "redirect" },
+    const sent = call({ call: "send", url: "https://relay.invalid/mcp", status: 302, token,
+      raises: "http", headers: { Location: "https://evil.invalid/steal" } },
       file) as { reason: string; unknown: boolean };
     expect(sent.unknown).toBe(false);
     expect(sent.reason).toContain("does not follow redirects");
-    // Neither the credential nor the server's Location reaches the output.
+    // Neither the credential nor the destination reaches the output — the
+    // Location is a real header here, so this can actually fail.
     expect(sent.reason).not.toContain("MustNotAppear");
-    expect(sent.reason).not.toContain("Location");
+    expect(sent.reason).not.toContain("evil.invalid");
+  });
+
+  // ...and the mechanism itself, which the row above cannot reach: every send
+  // row stubs `_OPENER.open`, so deleting the handler entirely would leave
+  // them all green.
+  it("carries a handler that declines redirects, in the opener send uses", () => {
+    expect(call({ call: "redirect-mechanism" })).toEqual({ declines: true, inOpener: true });
   });
 
   // The catch-all returns the class NAME, never the message — `putheader`

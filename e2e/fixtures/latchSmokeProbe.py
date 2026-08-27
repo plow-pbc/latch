@@ -22,7 +22,16 @@ spec.loader.exec_module(smoke)
 
 request = json.loads(sys.argv[2])
 
-if request["call"] == "read":
+if request["call"] == "redirect-mechanism":
+    # The opener `send` uses must actually carry the refusing handler, and that
+    # handler must decline. Stubbing `_OPENER.open` — which every other row
+    # does — exercises neither.
+    handler = smoke._NoRedirect()
+    print(json.dumps({
+        "declines": handler.redirect_request(None, None, 302, "Found", {}, "http://evil.invalid/x") is None,
+        "inOpener": any(isinstance(h, smoke._NoRedirect) for h in smoke._OPENER.handlers),
+    }))
+elif request["call"] == "read":
     records, problem = smoke.read_log(request["path"], request.get("ssh"), request.get("budget", 30))
     print(json.dumps({"count": len(records), "problem": problem or ""}))
 elif request["call"] == "remote":
@@ -73,8 +82,6 @@ else:
             raise urllib.error.URLError("unknown url type: htp")
         if raises == "incomplete":
             raise http.client.IncompleteRead(b"")
-        if raises == "redirect":
-            raise urllib.error.HTTPError(request["url"], 302, "Found", {}, io.BytesIO(body))
         if raises == "invalid-url":
             raise http.client.InvalidURL("URL can't contain control characters")
         if raises == "header":
@@ -82,7 +89,8 @@ else:
             # urlopen: the message quotes the header VALUE, i.e. the bearer.
             raise ValueError("Invalid header value %r" % (b"Bearer " + request["token"].encode(),))
         if raises == "http":
-            raise urllib.error.HTTPError(request["url"], request["status"], "no", {}, io.BytesIO(body))
+            raise urllib.error.HTTPError(request["url"], request["status"], "no",
+                                         request.get("headers", {}), io.BytesIO(body))
         # Exhaustive: a misspelt or renamed `raises` used to fall through to the
         # HTTPError branch with the transport rows' status of 0, which is not
         # >= 500, so a row could pass for a reason unrelated to what it names.
