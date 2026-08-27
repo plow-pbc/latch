@@ -13,6 +13,16 @@ import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 
 /**
+ * The directory every provider's payload lives under, in both trees.
+ *
+ * The namespace is what makes the packaging sites provider-INDEPENDENT: one
+ * `extraResources` entry, one arch glob, one ignore line and one worktree entry
+ * cover every present and future provider, so adding one edits none of them.
+ * Before this they were four literals per provider, kept in step by a test.
+ */
+export const PROVIDER_ROOT = "providers";
+
+/**
  * The staleness marker's filename.
  *
  * The fetcher writes it and `isStaged` reads it, both from here.
@@ -25,7 +35,7 @@ export const MARKER = "VERSION";
 
 /** The staged binary's path, and whether its bytes are the pinned ones. */
 export function stagedBinary(provider, arch, root) {
-  const file = path.join(root, "vendor", provider.command, arch, provider.command);
+  const file = path.join(root, "vendor", PROVIDER_ROOT, provider.command, arch, provider.command);
   if (!existsSync(file)) return { file, ok: false };
   const actual = createHash("sha256").update(readFileSync(file)).digest("hex");
   return { file, ok: actual === provider.arches[arch].binary, actual };
@@ -44,7 +54,7 @@ export function stagedBinary(provider, arch, root) {
  * The marker alone is not enough either: it attests a version, not any bytes.
  */
 export function isStaged(provider, root) {
-  const marker = path.join(root, "vendor", provider.command, MARKER);
+  const marker = path.join(root, "vendor", PROVIDER_ROOT, provider.command, MARKER);
   if (!existsSync(marker) || readFileSync(marker, "utf8").trim() !== provider.version) return false;
   return Object.keys(provider.arches).every((arch) => stagedBinary(provider, arch, root).ok);
 }

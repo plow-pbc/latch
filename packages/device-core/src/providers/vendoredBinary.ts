@@ -14,6 +14,16 @@ import fs from "node:fs";
 import path from "node:path";
 
 /**
+ * The directory every provider's payload lives under, in the packaged app's
+ * Resources and in a checkout's `vendor/` alike.
+ *
+ * Spelled here and in `scripts/vendored-staging.mjs`, which cannot be imported
+ * from TypeScript that has to build. Two spellings of one INVARIANT segment is
+ * the trade for the packaging sites carrying none per provider.
+ */
+const PROVIDER_ROOT = "providers";
+
+/**
  * The override, e.g. `DOMO_GOG`: the command uppercased, with every
  * non-alphanumeric folded to `_`.
  *
@@ -95,12 +105,16 @@ export function resolveVendoredBinary(
   }
 
   if (opts.resourcesDir) {
-    const packaged = executable(path.join(opts.resourcesDir, command, process.arch, command));
+    const packaged = executable(
+      path.join(opts.resourcesDir, PROVIDER_ROOT, command, process.arch, command),
+    );
     if (packaged) return { path: packaged };
   }
   if (opts.repoRoot) {
     // Where `just fetch-vendored` lands it, and electron-builder copies it from.
-    const vendored = executable(path.join(opts.repoRoot, "vendor", command, process.arch, command));
+    const vendored = executable(
+      path.join(opts.repoRoot, "vendor", PROVIDER_ROOT, command, process.arch, command),
+    );
     if (vendored) return { path: vendored };
   }
   return { path: null, problem: "not-staged" };

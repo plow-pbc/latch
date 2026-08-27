@@ -41,52 +41,41 @@ afterEach(() => {
   fs.rmSync(root, { recursive: true, force: true });
 });
 
-/** Write `<root>/vendor/demo/<arch>/demo` for both arches, plus the marker. */
+/** Write `<root>/vendor/providers/demo/<arch>/demo` for both arches, plus the marker. */
 function stage(opts: { arm64?: string; x64?: string; version?: string } = {}) {
   for (const [arch, fallback] of [
     ["arm64", "arm64-bytes"],
     ["x64", "x64-bytes"],
   ] as const) {
-    const dir = path.join(root, "vendor/demo", arch);
+    const dir = path.join(root, "vendor/providers/demo", arch);
     fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(path.join(dir, "demo"), opts[arch] ?? fallback);
   }
-  fs.writeFileSync(path.join(root, "vendor/demo/VERSION"), `${opts.version ?? "1.2.3"}\n`);
+  fs.writeFileSync(path.join(root, "vendor/providers/demo/VERSION"), `${opts.version ?? "1.2.3"}\n`);
 }
 
 describe("isStaged", () => {
-  it("is true when both arches carry the pinned bytes at the pinned version", () => {
-    stage();
-    expect(isStaged(provider(), root)).toBe(true);
-  });
-
-  it("is false when a cached binary's bytes changed, marker notwithstanding", () => {
+  it.each([
+    ["both arches carry the pinned bytes at the pinned version", () => stage(), true],
     // The case that matters: the marker still attests 1.2.3, so an
     // existence-only check skips the fetch and signs the tampered binary.
-    stage({ arm64: "tampered" });
-    expect(isStaged(provider(), root)).toBe(false);
-  });
-
-  it("is false when one arch is missing entirely", () => {
+    ["a cached binary's bytes changed, marker notwithstanding", () => stage({ arm64: "tampered" }), false],
     // The case the skip exists for. A tree carrying only the packaging Mac's
     // arch reaches the other arch's users with no provider at all.
-    stage();
-    fs.rmSync(path.join(root, "vendor/demo/x64/demo"));
-    expect(isStaged(provider(), root)).toBe(false);
-  });
-
-  it("is false when an arch's binary is empty", () => {
-    stage({ x64: "" });
-    expect(isStaged(provider(), root)).toBe(false);
-  });
-
-  it("is false when the marker names another version", () => {
-    stage({ version: "1.2.2" });
-    expect(isStaged(provider(), root)).toBe(false);
-  });
-
-  it("is false when nothing is staged at all", () => {
-    expect(isStaged(provider(), root)).toBe(false);
+    [
+      "one arch is missing entirely",
+      () => {
+        stage();
+        fs.rmSync(path.join(root, "vendor/providers/demo/x64/demo"));
+      },
+      false,
+    ],
+    ["an arch's binary is empty", () => stage({ x64: "" }), false],
+    ["the marker names another version", () => stage({ version: "1.2.2" }), false],
+    ["nothing is staged at all", () => {}, false],
+  ])("is %s → %s", (_case, arrange, expected) => {
+    arrange();
+    expect(isStaged(provider(), root)).toBe(expected);
   });
 });
 

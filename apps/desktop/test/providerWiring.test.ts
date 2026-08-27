@@ -100,15 +100,15 @@ describe("buildMinter", () => {
 
 describe("vendorDirs", () => {
   it("finds the directory a packaged app ships", () => {
-    const resourcesDir = tree("gog");
-    expect(vendorDirs({ resourcesDir })).toEqual([path.join(resourcesDir, "gog", process.arch)]);
+    const resourcesDir = tree("providers/gog");
+    expect(vendorDirs({ resourcesDir })).toEqual([path.join(resourcesDir, "providers/gog", process.arch)]);
   });
 
   it("finds the directory a from-source checkout fetched", () => {
-    // `just fetch-vendored` writes <root>/vendor/gog/<arch>/gog, so repoRoot must be
+    // `just fetch-vendored` writes <root>/vendor/providers/gog/<arch>/gog, so repoRoot must be
     // the WORKSPACE root — app.getAppPath() is <root>/apps/desktop.
-    const repoRoot = tree("vendor/gog");
-    expect(vendorDirs({ repoRoot })).toEqual([path.join(repoRoot, "vendor/gog", process.arch)]);
+    const repoRoot = tree("vendor/providers/gog");
+    expect(vendorDirs({ repoRoot })).toEqual([path.join(repoRoot, "vendor/providers/gog", process.arch)]);
   });
 
   it("is empty when nothing is staged, which is not an error", () => {
@@ -130,17 +130,17 @@ describe("vendorDirs", () => {
   // resolver was just fixed for, one caller up. These need two.
   it("accumulates one directory per provider, in order", () => {
     const base = newBase();
-    for (const name of ["gog", "slack"]) tree(name, name, base);
+    for (const name of ["gog", "slack"]) tree(`providers/${name}`, name, base);
     expect(vendorDirs({ resourcesDir: base }, [GOG, SLACK])).toEqual([
-      path.join(base, "gog", process.arch),
-      path.join(base, "slack", process.arch),
+      path.join(base, "providers/gog", process.arch),
+      path.join(base, "providers/slack", process.arch),
     ]);
   });
 
   it("skips an unstaged provider without stopping the next one", () => {
-    const resourcesDir = tree("slack", "slack");
+    const resourcesDir = tree("providers/slack", "slack");
     expect(vendorDirs({ resourcesDir }, [GOG, SLACK])).toEqual([
-      path.join(resourcesDir, "slack", process.arch),
+      path.join(resourcesDir, "providers/slack", process.arch),
     ]);
   });
 

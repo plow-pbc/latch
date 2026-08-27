@@ -122,7 +122,7 @@ module.exports = async function afterPack(context) {
   // one list of providers; a literal here was true of one and false of two.
   const { VENDORED } = await import("../../../scripts/vendored-providers.mjs");
   for (const { command, arches } of VENDORED) {
-    const dir = path.join(context.appOutDir, appName, "Contents", "Resources", command);
+    const dir = path.join(context.appOutDir, appName, "Contents", "Resources", "providers", command);
     const missingArches = Object.keys(arches).filter((a) => {
       const binary = path.join(dir, a, command);
       return !fs.existsSync(binary) || fs.statSync(binary).size === 0;

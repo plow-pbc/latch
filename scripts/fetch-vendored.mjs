@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Stage a pinned vendored CLI into `vendor/<command>/<arch>/<command>`.
+ * Stage a pinned vendored CLI into `vendor/providers/<command>/<arch>/<command>`.
  *
  * These ship as single static binaries, so unlike the browser runtime there is
  * no source tree and no dependency install: pin, verify, extract. The digest is
@@ -27,7 +27,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { VENDORED, providerNamed } from "./vendored-providers.mjs";
-import { MARKER, isStaged, stagedBinary } from "./vendored-staging.mjs";
+import { MARKER, PROVIDER_ROOT, isStaged, stagedBinary } from "./vendored-staging.mjs";
 
 // fileURLToPath, not `.pathname`: the latter leaves percent-encoding in place,
 // so a checkout under a path with a space resolves to a directory that does not
@@ -37,7 +37,7 @@ const repoRoot = path.resolve(fileURLToPath(new URL("..", import.meta.url)));
 function fetchProvider(provider) {
   const { command, version } = provider;
   if (isStaged(provider, repoRoot)) {
-    console.log(`vendor/${command} is already at ${version}`);
+    console.log(`vendor/${PROVIDER_ROOT}/${command} is already at ${version}`);
     return;
   }
   // THIS host's arch has to be one of the pinned ones, because the probe below
@@ -64,7 +64,7 @@ function fetchProvider(provider) {
         throw new Error(`${command} ${asset}: sha256 ${actual} does not match the pin ${sha256}`);
       }
 
-      const dest = path.join(repoRoot, "vendor", command, arch);
+      const dest = path.join(repoRoot, "vendor", PROVIDER_ROOT, command, arch);
       mkdirSync(dest, { recursive: true });
       execFileSync("tar", ["xzf", tarball, "-C", dest, command], { stdio: "inherit" });
       // The same check the skip makes, at the one moment the alternative is
@@ -78,14 +78,14 @@ function fetchProvider(provider) {
             `pinned binary ${provider.arches[arch].binary}`,
         );
       }
-      console.log(`  verified and extracted → vendor/${command}/${arch}/${command}`);
+      console.log(`  verified and extracted → vendor/${PROVIDER_ROOT}/${command}/${arch}/${command}`);
     }
     // The provider's own safety assertion, at the one moment its binary is in
     // hand. What each one covers is written on its row.
     console.log(`  ${provider.probe(stagedBinary(provider, process.arch, repoRoot).file)}`);
 
     // Record what is on disk so a stale tree is legible without re-hashing.
-    writeFileSync(path.join(repoRoot, "vendor", command, MARKER), `${version}\n`);
+    writeFileSync(path.join(repoRoot, "vendor", PROVIDER_ROOT, command, MARKER), `${version}\n`);
   } finally {
     rmSync(staging, { recursive: true, force: true });
   }

@@ -13,7 +13,7 @@ apps/desktop/release/
 docs/superpowers/specs/
 docs/superpowers/plans/
 
-vendor/gog/
+vendor/providers/
 vendor/python-runtime/
 vendor/camoufox-browser/
 vendor/vault-cli/

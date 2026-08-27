@@ -59,8 +59,8 @@ describe("the packaging hook refuses before it signs", () => {
   const packProviders = () => {
     for (const { command, arches } of PROVIDERS) {
       for (const arch of Object.keys(arches)) {
-        fs.mkdirSync(path.join(resourcesDir(), command, arch), { recursive: true });
-        fs.writeFileSync(path.join(resourcesDir(), command, arch, command), "#!/bin/sh\n");
+        fs.mkdirSync(path.join(resourcesDir(), "providers", command, arch), { recursive: true });
+        fs.writeFileSync(path.join(resourcesDir(), "providers", command, arch, command), "#!/bin/sh\n");
       }
     }
   };
@@ -201,7 +201,7 @@ describe("the packaging hook refuses before it signs", () => {
     // Silent half-install: a tree carrying only the packaging Mac's arch clears
     // every other gate and reaches the other arch's users with nothing.
     pack();
-    damage(path.join(resourcesDir(), command, arch));
+    damage(path.join(resourcesDir(), "providers", command, arch));
     await expect(afterPack(contextFor(dir))).rejects.toThrow(
       new RegExp(`no ${command} for ${arch}`),
     );
@@ -216,7 +216,7 @@ describe("the packaging hook refuses before it signs", () => {
     // satisfy it. Asserting the join would pin the row's declaration order and
     // the separator, and fail a correct hook.
     pack();
-    fs.rmSync(path.join(resourcesDir(), p.command), { recursive: true, force: true });
+    fs.rmSync(path.join(resourcesDir(), "providers", p.command), { recursive: true, force: true });
     const failure = await afterPack(contextFor(dir)).catch((e: Error) => e);
     expect(failure).toBeInstanceOf(Error);
     const message = (failure as Error).message;
