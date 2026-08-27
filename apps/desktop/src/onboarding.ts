@@ -342,18 +342,21 @@ export class Onboarding {
   /**
    * One redeem, answered as what it means for the code: "done" — signed in, or
    * verified with no token to hand back; "live" — still pending, still the
-   * server's to honour; "dead" — the server retired it, or the call failed.
+   * server's to honour; "dead" — the server retired it.
    *
-   * A failed call is "dead" rather than a throw: this runs where the fallback
-   * is "mint a fresh code", which will surface its own error honestly if the
-   * API is genuinely down.
+   * Only the server's own 410 is "dead". A timeout or a 5xx says nothing about
+   * the code — it may well still be live — and answering "dead" there would
+   * mint a replacement over it: the abandoned code's completion has no
+   * watcher, which is the exact stranding this file exists to end. So every
+   * other failure is "live": the code stays on screen, the watch restarts, and
+   * the poll loop reports what it sees until the server answers for real.
    */
   private async tryFinish(secret: string): Promise<"done" | "live" | "dead"> {
     let result;
     try {
       result = await this.deps.api.redeemActivation(secret);
-    } catch {
-      return "dead";
+    } catch (error) {
+      return error instanceof PlowApiError && error.kind === "expired" ? "dead" : "live";
     }
     // The same test the poll loop makes, for the same reason and against the
     // same race: this redeem is also a call in flight, and "Get a New Code"

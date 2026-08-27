@@ -504,6 +504,24 @@ describe("activation — the path a brand-new user takes", () => {
     expect(state.step).toBe("activate");
   });
 
+  it("keeps a live code through a transient failure — only a 410 says it is dead", async () => {
+    // A timeout or 5xx on the button's recheck says nothing about the code.
+    // Minting over it would abandon a code the server still honours — the
+    // stranding again, this time triggered by a blip.
+    const onboarding = build();
+    await onboarding.begin();
+    await settleUntil(() => onboarding.state().activationStale);
+
+    plow.redeems = [new PlowApiError("network", "Couldn't reach Plow.")];
+    await onboarding.newActivationCode();
+    expect(plow.activations).toHaveLength(1);
+    expect(onboarding.state().activation?.displayCode).toBe("CODE1");
+
+    // And the kept code still signs in when its text lands.
+    plow.redeems = [{ status: "verified", token: SESSION_TOKEN }];
+    await settleUntil(() => onboarding.state().step === "connected");
+  });
+
   it("reads a verified activation exactly once, and never re-reads it", async () => {
     plow.redeems = [{ status: "verified", token: SESSION_TOKEN }];
     const onboarding = build();
