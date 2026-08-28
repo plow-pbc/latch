@@ -37,6 +37,7 @@ async function output(exec: Executor, argv: string[], env?: Record<string, strin
     readPaths: [],
     writePaths: [],
     network: false,
+    appleEvents: false,
     waitMs: 8000,
     env,
   });
