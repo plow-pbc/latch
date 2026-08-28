@@ -498,6 +498,9 @@ export class CloudAgentState {
     try {
       const agents = await this.deps.agents.list(credential);
       if (generation !== this.generation || read !== this.agentReads) return;
+      for (const [agentId, failedAtRead] of this.editsPending) {
+        if (failedAtRead !== null && failedAtRead < read) this.editsPending.delete(agentId);
+      }
       // A create or a delete happened while this listing was in the air. It is
       // older than what the user just did, and applying it would put a deleted
       // agent back on screen. The mutation's own refresh follows it.
@@ -520,9 +523,6 @@ export class CloudAgentState {
       }
       this.rows = listed;
       this.agentsError = null;
-      for (const [agentId, failedAtRead] of this.editsPending) {
-        if (failedAtRead !== null && failedAtRead < read) this.editsPending.delete(agentId);
-      }
       // `teardown` is not a state an agent rests in — it is a delete that
       // failed provider-side and is waiting to be asked again. Nothing else
       // will ask, so this does, from whichever refresh sees it.

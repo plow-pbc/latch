@@ -1113,6 +1113,41 @@ describe("changing which chats an agent serves", () => {
     expect(state.state().cloudAgentsError).toBeNull();
   });
 
+  it("clears an indeterminate edit when a create overtakes its reconciliation read", async () => {
+    const reconciliation = deferred<CloudAgentResource[]>();
+    const polling = deferred<CloudAgentResource>();
+    let lists = 0;
+    const created = agent({ agentId: "agent_2", status: "provisioning" });
+    const f = fakes({
+      list: async () => {
+        lists += 1;
+        if (lists === 1) return [agent({ chatUids: ["cht_1"] })];
+        if (lists === 2) return reconciliation.promise;
+        return [agent({ chatUids: ["cht_2"] }), created];
+      },
+      create: async () => created,
+      update: async () => {
+        throw new PlowApiError("network", "Plow didn't answer in time. Try again.");
+      },
+      poll: async () => polling.promise,
+    });
+    const state = build(tempHome(), f);
+    await state.refresh();
+
+    const saving = state.editChats("agent_1", ["cht_2"]);
+    await vi.waitFor(() => {
+      expect(f.agents.calls.filter((call) => call === "list")).toHaveLength(2);
+    });
+    await state.create(["cht_1"], "New agent");
+
+    reconciliation.resolve([agent({ chatUids: ["cht_2"] })]);
+    await saving;
+
+    expect(state.state().cloudAgentEditsPending).toEqual([]);
+    polling.resolve(agent({ agentId: "agent_2", status: "running" }));
+    await settle();
+  });
+
   it("names a conflicting agent only when a candidate id matches our list", async () => {
     const f = fakes({
       list: async () => [
