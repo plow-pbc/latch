@@ -526,19 +526,14 @@ export class DeviceAgent {
       // dialog — but an intent can arrive from a replayed or hand-built
       // request that never passed through it.
       const refusal = provider.refuse(argv);
-      if (refusal !== null) {
-        this.audit.record("exec_error", { intentId: intent.intentId, error: refusal });
-        return { status: "error", error: refusal };
-      }
+      if (refusal !== null) return this.execError(intent.intentId, refusal);
       // A provider NAME with no staged binary is refused, never let through.
       // Falling through would run whatever `gog` the owner happens to have on
       // their own PATH — unbelted, unrefused, and against their own
       // credentials rather than a minted one. The name is this Mac's to
       // resolve; if it cannot, that is an answer, not a pass.
       if (!this.hasStaged(provider.binary)) {
-        const error = `${provider.command} is not installed on this Mac`;
-        this.audit.record("exec_error", { intentId: intent.intentId, error });
-        return { status: "error", error };
+        return this.execError(intent.intentId, `${provider.command} is not installed on this Mac`);
       }
       // plow-gog orchestrates N runs of the vendored gog rather than one run
       // of itself, so it leaves the single-spawn path here — after the same
@@ -551,8 +546,7 @@ export class DeviceAgent {
         if (needsToken(argv)) env = await this.mintFor(provider);
       } catch (e) {
         const message = e instanceof MintError ? e.message : `could not authorise ${provider.command}`;
-        this.audit.record("exec_error", { intentId: intent.intentId, error: message });
-        return { status: "error", error: message };
+        return this.execError(intent.intentId, message);
       }
       // The belt goes in front of the command path, where the CLI accepts
       // globals. It is not in the approved argv deliberately: the owner
@@ -575,9 +569,16 @@ export class DeviceAgent {
       return this.finishRun(intent.intentId, result);
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
-      this.audit.record("exec_error", { intentId: intent.intentId, error: message });
-      return { status: "error", error: message };
+      return this.execError(intent.intentId, message);
     }
+  }
+
+  /** Record an operation that errored before (or instead of) a run, and
+   * shape the answer. Every `error` here is already display-safe by the
+   * rules at its call site — a fixed sentence, a refusal, or a MintError. */
+  private execError(intentId: string, error: string): JSONValue {
+    this.audit.record("exec_error", { intentId, error });
+    return { status: "error", error };
   }
 
   /** Record a run's `exec_end` — now, or on exit for a deferred run — and
@@ -639,10 +640,7 @@ export class DeviceAgent {
     const plan = planPlowGog(argv);
     // `refuse` already rejected these before the dialog; a hand-built intent
     // reaches the same answer.
-    if (plan.kind === "refused") {
-      this.audit.record("exec_error", { intentId: intent.intentId, error: plan.reason });
-      return { status: "error", error: plan.reason };
-    }
+    if (plan.kind === "refused") return this.execError(intent.intentId, plan.reason);
     const runGog = (tail: readonly string[], token: string | null) =>
       this.executor.run({
         argv: [provider.binary, ...provider.belt, ...tail],
@@ -674,8 +672,7 @@ export class DeviceAgent {
       minted = await this.mintAllFor(provider);
     } catch (e) {
       const message = e instanceof MintError ? e.message : `could not authorise ${provider.command}`;
-      this.audit.record("exec_error", { intentId: intent.intentId, error: message });
-      return { status: "error", error: message };
+      return this.execError(intent.intentId, message);
     }
 
     if (plan.kind === "accounts") {
@@ -727,9 +724,7 @@ export class DeviceAgent {
     if (minted.accounts.length === 0) {
       // The real minter throws before this; a Minter that answers with only
       // degraded accounts still must not fall through to accounts[0].
-      const error = "every connected Google account needs re-auth";
-      this.audit.record("exec_error", { intentId: intent.intentId, error });
-      return { status: "error", error };
+      return this.execError(intent.intentId, "every connected Google account needs re-auth");
     }
     const connected = [
       ...minted.accounts.map((a) => (a.isDefault ? `${a.account} (default)` : a.account)),
@@ -743,19 +738,20 @@ export class DeviceAgent {
       if (healthy === undefined) {
         // A degraded account's reason is local/allowlisted text (see
         // mintAccountTokens), safe to repeat.
-        const error = unhealthy
-          ? `that account cannot be used right now: ${unhealthy.reason}. Re-connect it in Plow`
-          : `that --account is not a connected account. Connected: ${connected}`;
-        this.audit.record("exec_error", { intentId: intent.intentId, error });
-        return { status: "error", error };
+        return this.execError(
+          intent.intentId,
+          unhealthy
+            ? `that account cannot be used right now: ${unhealthy.reason}. Re-connect it in Plow`
+            : `that --account is not a connected account. Connected: ${connected}`,
+        );
       }
       target = healthy;
     } else if (minted.accounts.length + minted.degraded.length > 1) {
-      const error =
+      return this.execError(
+        intent.intentId,
         `this command runs on one account: pass --account <email>. Connected: ${connected}. ` +
-        "When replying, use the account that received the thread.";
-      this.audit.record("exec_error", { intentId: intent.intentId, error });
-      return { status: "error", error };
+          "When replying, use the account that received the thread.",
+      );
     } else {
       target = minted.accounts[0]!;
     }
@@ -785,21 +781,21 @@ export class DeviceAgent {
       if (!Array.isArray(conflicts)) {
         // Fail loud, with the override in hand: silently booking past a
         // broken check would make the gate's absence invisible.
-        const error =
+        return this.execError(
+          intent.intentId,
           "could not check the calendar for conflicts; re-send the same command " +
-          "with --confirm-conflict to book without the check";
-        this.audit.record("exec_error", { intentId: intent.intentId, error });
-        return { status: "error", error };
+            "with --confirm-conflict to book without the check",
+        );
       }
       if (conflicts.length > 0) {
         // The COUNT only. The records themselves are calendar content the
         // owner approved a CREATE for, not a read — returning them would be
         // an unapproved read riding a create argv.
-        const error =
+        return this.execError(
+          intent.intentId,
           `the slot is busy — ${conflicts.length} event(s) overlap this window. ` +
-          "Re-send the same command with --confirm-conflict to book anyway.";
-        this.audit.record("exec_error", { intentId: intent.intentId, error });
-        return { status: "error", error };
+            "Re-send the same command with --confirm-conflict to book anyway.",
+        );
       }
     }
     return this.finishRun(intent.intentId, await runGog(plan.gogArgv.slice(1), target.token));
