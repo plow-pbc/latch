@@ -135,7 +135,10 @@ probe_approvals() {
     return 0
   fi
   latest=$(ls -t "$dir"/*.json 2>/dev/null | head -1)
-  PROBE_EVIDENCE="$count records · latest: $(jq -r '"\(.agentName // "?") \(.decision // "?") via \(.source // "?")"' "$latest" 2>/dev/null || echo "?")"
+  # decision/source only — Latch-internal enums. agentName is relay-controlled
+  # display text; substituting it into the primer would hand a remote agent a
+  # line of prose in the next Claude session's context.
+  PROBE_EVIDENCE="$count records · latest: $(jq -r '"\(.decision // "?") via \(.source // "?")"' "$latest" 2>/dev/null || echo "?")"
   return 0
 }
 

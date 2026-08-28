@@ -51,7 +51,7 @@ Approval records pair each intent with the agent that asked and the decision:
 
 ```bash
 AS="$HOME/Library/Application Support/Plow-Latch"
-ls -t "$AS/device/approvals"/*.json | head -5 | xargs -I{} jq -c '{agentName, capabilities, decision, source, status, decidedAt}' {}
+ls -t "$AS/device/approvals"/*.json | head -5 | xargs -I{} jq -c '{agentId, capabilities, decision, source, status, decidedAt}' {}
 ```
 
 ### R3. Which agent binds this Mac?
@@ -74,7 +74,7 @@ ls -t "$AS/device/approvals"/*.json | head -5 | xargs -I{} jq -c '{agentName, ca
 
 ```bash
 # settings.json — presence/length only for the credential
-jq -r '{approvalMode, mcpUrl, relayCredLen: (.relayCredential|length), accountUidLast3: (.accountUid|tostring|.[-3:])}' "$HOME/Library/Application Support/Plow-Latch/app/settings.json"
+jq -r '{approvalMode, mcpHost: (.mcpUrl|sub("^https?://";"")|split("/")[0]), relayCredLen: (.relayCredential|length), accountUidLast3: (.accountUid|tostring|.[-3:])}' "$HOME/Library/Application Support/Plow-Latch/app/settings.json"
 # identity.json — deviceId first 8 chars; key length only
 jq -r '{deviceId8: (.deviceId[0:8]), name, keyLen: (.privateKeyBase64|length)}' "$HOME/Library/Application Support/Plow-Latch/device/identity.json"
 # client configs — host only, never headers
