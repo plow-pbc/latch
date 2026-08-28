@@ -716,7 +716,11 @@ export class DeviceAgent {
         // service-fetched text and stays out of every error string.
         if (result.exitCode !== 0) {
           failed.push({ account: a.account, reason: `gog exited ${result.exitCode ?? -1}` });
-        } else ok.push({ account: a.account, stdout: result.output.toString("utf8") });
+        } else {
+          // stdout ALONE: gog writes notes to stderr, and the merged stream
+          // would put them in front of the JSON this merges.
+          ok.push({ account: a.account, stdout: this.executor.stdout(result.handle).toString("utf8") });
+        }
       }
       const merged = mergeFanout(ok, plan.sort);
       this.audit.record("exec_end", { intentId: intent.intentId, exit_code: 0 });
@@ -783,7 +787,8 @@ export class DeviceAgent {
       let conflicts: unknown = null;
       if (probe.exitCode === 0) {
         try {
-          conflicts = JSON.parse(probe.output.toString("utf8"));
+          // stdout alone, for the reason the fan-out merge reads it that way.
+          conflicts = JSON.parse(this.executor.stdout(probe.handle).toString("utf8"));
         } catch {
           /* handled below: an unreadable probe is a failed check */
         }

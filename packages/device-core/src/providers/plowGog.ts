@@ -169,6 +169,11 @@ export function planPlowGog(argv: readonly string[]): PlowGogPlan {
  * per element), or any other JSON (one tagged item). Output that does not
  * parse goes into `unparsed` under a rule label — the text itself is
  * service-fetched content and never travels in an error string.
+ *
+ * STDOUT, strictly — never the merged stream the agent is shown. gog puts its
+ * JSON on stdout and its notes on stderr, so anything the caller merges in
+ * front (`Note: Using direct access token...`, whichever line the binary adds
+ * next) would make every account unparsable.
  */
 export function mergeFanout(
   perAccount: readonly { account: string; stdout: string }[],

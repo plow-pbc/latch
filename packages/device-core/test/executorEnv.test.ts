@@ -72,6 +72,30 @@ describe.skipIf(!ON_MAC)("Executor.run", () => {
     expect(await output(exec, ["echoenv"])).toContain("TOKEN=");
   });
 
+  it("keeps stdout retrievable on its own, while `output` stays the merged stream", async () => {
+    // Two views of one run: whoever READS a command's answer gets both
+    // streams in order, and whoever PARSES it gets the half the command
+    // meant as data. gog is the case — JSON on stdout, notes on stderr.
+    const dir = tmp();
+    const bin = path.join(dir, "twostream");
+    fs.writeFileSync(bin, '#!/bin/sh\necho "a note" >&2\necho \'{"ok":true}\'\n', { mode: 0o755 });
+    const exec = new Executor(tmp(), undefined, [dir]);
+    const result = await exec.run({
+      argv: ["twostream"],
+      readPaths: [],
+      writePaths: [],
+      network: false,
+      appleEvents: false,
+      waitMs: 8000,
+    });
+    expect(exec.stdout(result.handle).toString()).toBe('{"ok":true}\n');
+    // Unchanged for everyone else: the agent-facing output still carries both.
+    const merged = result.output.toString();
+    expect(merged).toContain("a note");
+    expect(merged).toContain('{"ok":true}');
+    expect(result.outputLength).toBe(merged.length);
+  });
+
   it("does not let the caller's env replace PATH or HOME", async () => {
     const dir = vendorDir();
     const exec = new Executor(tmp(), undefined, [dir]);

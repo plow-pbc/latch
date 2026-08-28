@@ -258,6 +258,7 @@ case "$*" in
     case "$GOG_ACCESS_TOKEN" in
       tok-a) echo '[{"summary":"Standup"}]' ;;
       tok-cbad) exit 9 ;;
+      tok-noisy) echo "Note: Using direct access token" >&2; echo '[]' ;;
       *) echo '[]' ;;
     esac ;;
   *"calendar create"*) echo '{"created":"evt-1"}' ;;
@@ -267,6 +268,10 @@ case "$*" in
       tok-b) echo '[{"id":"b1","date":"Wed, 18 Mar 2026 09:00:00 +0000"}]' ;;
       tok-slow) sleep 1; echo '[{"id":"s1","date":"Thu, 19 Mar 2026 09:00:00 +0000"}]' ;;
       tok-bad) echo "boom" >&2; exit 3 ;;
+      # Real gog writes its notes here whenever it runs on a supplied token.
+      tok-noisy) echo "Note: Using direct access token" >&2
+        echo '[{"id":"n1","date":"Tue, 17 Mar 2026 09:00:00 +0000"}]' ;;
+      tok-noisyjunk) echo "Note: Using direct access token" >&2; echo "not json" ;;
     esac ;;
   *) echo "TOKEN=$GOG_ACCESS_TOKEN ARGV=$*" ;;
 esac
@@ -306,6 +311,42 @@ esac
       // partial coverage instead of a false absence.
       degraded: [{ account: "c@example.com", reason: "needs_reauth" }],
     });
+  });
+
+  itSpawns("merges an account whose run wrote to stderr as well as stdout", async () => {
+    // The bug this guards: gog puts JSON on stdout and its notes on stderr,
+    // and parsing the MERGED capture made every such account unparsable —
+    // "output was not JSON", items [], on every fan-out that minted a token.
+    const d = device(
+      accountsMinter([AB[0]!, { account: "n@example.com", token: "tok-noisy", isDefault: false }]),
+      [plowVendorDir()],
+    );
+    const response = await run(d, ["plow-gog", "gmail", "search", "q"]);
+    expect(response).toMatchObject({
+      status: "completed",
+      items: [
+        { id: "n1", account: "n@example.com" },
+        { id: "a1", account: "a@example.com" },
+      ],
+      degraded: [],
+    });
+  });
+
+  itSpawns("still degrades an account whose STDOUT is not JSON, noise or no noise", async () => {
+    // Reading stdout alone is not a licence to accept anything: what the
+    // command answered on its data stream still has to parse.
+    const d = device(
+      accountsMinter([AB[0]!, { account: "j@example.com", token: "tok-noisyjunk", isDefault: false }]),
+      [plowVendorDir()],
+    );
+    const response = await run(d, ["plow-gog", "gmail", "search", "q"]);
+    expect(response).toMatchObject({
+      status: "completed",
+      items: [{ id: "a1", account: "a@example.com" }],
+      degraded: [{ account: "j@example.com", reason: "output was not JSON" }],
+    });
+    // The output itself is service-fetched text and never rides the reason.
+    expect(JSON.stringify(response)).not.toContain("not json");
   });
 
   itSpawns("degrades a failing account without losing the healthy one's items", async () => {
@@ -461,6 +502,20 @@ esac
     const events = d.audit.entries().map((e) => jv(e).get("event").str);
     expect(events).toContain("exec_error");
     expect(events).not.toContain("exec_end");
+  });
+
+  itSpawns("reads the conflict probe's stdout, not its notes", async () => {
+    // The same defect reached the conflict gate: a note in front of the
+    // probe's JSON made every timed create fail its check and refuse.
+    const d = device(
+      accountsMinter([{ account: "n@example.com", token: "tok-noisy", isDefault: true }]),
+      [plowVendorDir()],
+    );
+    const response = await run(d, [
+      "plow-gog", "calendar", "create", "primary", "--summary", "X",
+      "--from", "2026-08-28T10:00:00Z", "--to", "2026-08-28T11:00:00Z",
+    ]);
+    expect(String(jv(response).get("output").str ?? "")).toContain("evt-1");
   });
 
   itSpawns("books anyway with --confirm-conflict", async () => {

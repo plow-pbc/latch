@@ -196,15 +196,28 @@ export interface ExecResult {
 }
 
 class OutputBuffer {
-  private chunks: Buffer[] = [];
+  /**
+   * Every chunk, in arrival order, tagged with the stream it came from.
+   *
+   * ONE list, not two: the merged view has to keep the interleaving, and a
+   * second copy of stdout would double the memory a large run holds. The two
+   * views are built from this — merged is every chunk, `stdout()` is the
+   * tagged half.
+   */
+  private chunks: { buf: Buffer; stdout: boolean }[] = [];
   private length = 0;
   exitCode: number | null = null;
   reaped = false;
   private waiters: ((exitCode: number) => void)[] = [];
 
-  append(chunk: Buffer): void {
-    this.chunks.push(chunk);
+  append(chunk: Buffer, stdout: boolean): void {
+    this.chunks.push({ buf: chunk, stdout });
     this.length += chunk.length;
+  }
+
+  /** Just what the command wrote to stdout, whole. */
+  stdout(): Buffer {
+    return Buffer.concat(this.chunks.filter((c) => c.stdout).map((c) => c.buf));
   }
 
   /** Whether the command has written anything at all — the reaper's guard. */
@@ -232,7 +245,7 @@ class OutputBuffer {
     exitCode: number | null;
     reaped: boolean;
   } {
-    const all = Buffer.concat(this.chunks);
+    const all = Buffer.concat(this.chunks.map((c) => c.buf));
     const start = Math.min(Math.max(since, 0), all.length);
     return {
       output: all.subarray(start),
@@ -278,7 +291,9 @@ function shape(snap: ReturnType<OutputBuffer["snapshot"]>): Omit<ExecResult, "ha
 
 /**
  * Runs approved commands under /usr/bin/sandbox-exec with a per-run generated
- * profile, buffering merged stdout+stderr for the plow_get_output streaming path.
+ * profile, buffering merged stdout+stderr for the plow_get_output streaming
+ * path — and, for the callers that have to PARSE a run's answer, keeping
+ * enough to hand back stdout on its own (`stdout` below).
  */
 export class Executor {
   private buffers = new Map<string, OutputBuffer>();
@@ -520,8 +535,11 @@ export class Executor {
     // Optional throughout: a spawn that never got as far as its stdio — the
     // fd exhaustion this reaper exists to make rarer — leaves these null and
     // emits `error` on the next tick, where a throw is nobody's to catch.
-    for (const stream of [child.stdout, child.stderr]) {
-      stream?.on("data", (chunk: Buffer) => buffer.append(chunk));
+    for (const [stream, isStdout] of [
+      [child.stdout, true],
+      [child.stderr, false],
+    ] as const) {
+      stream?.on("data", (chunk: Buffer) => buffer.append(chunk, isStdout));
       // A pipe error ENDS the run rather than being swallowed: the stream is
       // auto-destroyed either way, so capture has stopped, and reporting the
       // command's own `exit 0` over a silently truncated answer is the worse
@@ -549,5 +567,23 @@ export class Executor {
     const buffer = this.buffers.get(handle);
     if (!buffer) throw new ExecutorError(`unknown output handle: ${handle}`);
     return { handle, ...shape(buffer.snapshot(since)) };
+  }
+
+  /**
+   * A run's stdout alone, whole — for the callers that PARSE what a command
+   * answered rather than showing it to someone.
+   *
+   * Separate from `output` rather than a field on `ExecResult`, because the
+   * two answer different questions: `output` is the merged, ordered stream an
+   * agent reads, sliced from `since` for streaming, and a stdout-only slice of
+   * that offset would mean nothing. Nothing about the merged view changes —
+   * a command's stderr still reaches whoever asked to see its output.
+   *
+   * Not sliced: every caller wants the whole answer to hand to a parser.
+   */
+  stdout(handle: string): Buffer {
+    const buffer = this.buffers.get(handle);
+    if (!buffer) throw new ExecutorError(`unknown output handle: ${handle}`);
+    return buffer.stdout();
   }
 }
