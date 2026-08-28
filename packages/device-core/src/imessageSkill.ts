@@ -65,7 +65,8 @@ export const IMESSAGE_QUERIES = {
   join chat_message_join j on j.chat_id = c.ROWID
   join message m on m.ROWID = j.message_id
   left join handle h on h.ROWID = m.handle_id
- where m.associated_message_type = 0 and m.item_type = 0
+ where c.chat_identifier not like 'chat%'
+   and m.associated_message_type = 0 and m.item_type = 0
    and m.ROWID = (select m2.ROWID from message m2
                     join chat_message_join j2 on j2.message_id = m2.ROWID
                    where j2.chat_id = c.ROWID
@@ -201,36 +202,60 @@ Sending is an Apple event to Messages.app, so every send needs \`apple_events: t
 \`plow_run_command\` call. **Without it the sandbox denies the event and the script exits 1** —
 that exit code is the tell, not a broken script.
 
+**Always \`/usr/bin/osascript\`, spelled out — never a bare \`osascript\`.** The executor's
+\`PATH\` puts user-writable directories (\`~/.local/bin\`, \`~/bin\`, the homebrew prefixes)
+ahead of \`/usr/bin\`, the same reason the read recipes above spell \`/usr/bin/sqlite3\`: a
+bare name lets a shadow binary sitting earlier on \`PATH\` receive the \`apple_events\` grant
+instead of the real Messages automation.
+
+**The text always arrives as an \`argv\` item, never pasted into the script string.** A
+message body is untrusted input (see the two rules, above) — a \`"\` or a \`\\\` in it would
+be a syntax error if interpolated into a double-quoted AppleScript literal, and
+\`" & (do shell script "…") & "\` is AppleScript injection: reachable the moment the owner
+asks you to relay something a stranger wrote. \`on run argv\` / \`item 1 of argv\` hands the
+script the text as a value it never parses — it stays visible to the approver (it is still
+plainly in the argv the approval card shows) but can never be read as AppleScript.
+
 **To a participant**, by phone number or email:
 
     plow_run_command {
-      argv: ["osascript", "-e",
-             "tell application \\"Messages\\" to send \\"<text>\\" to buddy \\"<phone or email>\\" of 1st service whose service type = iMessage"],
+      argv: ["/usr/bin/osascript",
+             "-e", "on run argv",
+             "-e", "tell application \\"Messages\\" to send (item 1 of argv) to participant \\"<phone or email>\\" of (first account whose service type = iMessage)",
+             "-e", "end run",
+             "<text>"],
       apple_events: true,
       goal: "<what the owner asked for, in one line>"
     }
 
 **To a chat**, using the \`guid\` from \`recentChats\` — this is the only form that reaches a
-group thread, since a group has no single buddy to address:
+group thread, since a group has no single participant to address:
 
     plow_run_command {
-      argv: ["osascript", "-e",
-             "tell application \\"Messages\\" to send \\"<text>\\" to chat id \\"<guid from recentChats>\\""],
+      argv: ["/usr/bin/osascript",
+             "-e", "on run argv",
+             "-e", "tell application \\"Messages\\" to send (item 1 of argv) to chat id \\"<guid from recentChats>\\"",
+             "-e", "end run",
+             "<text>"],
       apple_events: true,
       goal: "<what the owner asked for, in one line>"
     }
 
-**With a file attachment**, POSIX path to whatever the owner wants sent:
+**With a file attachment** — the same argv-item rule applies to the path, so a filename
+holding a quote cannot break the script either:
 
     plow_run_command {
-      argv: ["osascript", "-e",
-             "tell application \\"Messages\\" to send (POSIX file \\"<absolute path>\\") to buddy \\"<phone or email>\\" of 1st service whose service type = iMessage"],
+      argv: ["/usr/bin/osascript",
+             "-e", "on run argv",
+             "-e", "tell application \\"Messages\\" to send (POSIX file (item 1 of argv)) to participant \\"<phone or email>\\" of (first account whose service type = iMessage)",
+             "-e", "end run",
+             "<absolute path>"],
       apple_events: true,
       read_paths: ["<the file's directory>"],
       goal: "<what the owner asked for, in one line>"
     }
 
-The sending account is whichever service Messages.app itself is signed into — the owner's
+The sending account is whichever one Messages.app itself is signed into — the owner's
 Messages setting, not a script parameter, and not yours to choose. The first send may raise
 the one-time macOS "Latch would like to control Messages" consent dialog; that is the owner
 approving Latch as an automation client, separate from the per-call approval above.
