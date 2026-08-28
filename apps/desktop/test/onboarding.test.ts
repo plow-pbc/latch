@@ -365,33 +365,30 @@ describe("activation — the path a brand-new user takes", () => {
         { displayName: "Casey", role: "owner" as const },
       ],
     }, "Riley, Casey"],
-  ])("%s", (_case, fields, expected) => {
-    expect(activationChatLabel(parseActivationChat(wireChat(fields))!)).toBe(expected);
-  });
-
-  it("rejects a member display name that repeats its provider handle", () => {
-    const owner = "+15550003001";
-    const chat = parseActivationChat(wireChat({
+    ["rejects a member display name that repeats its provider handle", {
       line: "+15550003000",
-      members: [{ displayName: owner, providerKey: owner, role: "owner" }],
-    }))!;
-
-    expect(activationChatLabel(chat)).toBe("+15550003000, +15550003001");
-  });
-
-  it("rejects a top-level display name with no letters", () => {
-    const chat = parseActivationChat(wireChat({
-      displayName: "+15550004001, +15550004002",
+      members: [{ displayName: "+15550003001", providerKey: "+15550003001", role: "owner" as const }],
+    }, "+15550003000, +15550003001"],
+    ["rejects a phone-number-shaped top-level display name", {
+      displayName: "+1 (555) 000-4001, +1 (555) 000-4002",
       line: "+15550004000",
       members: [
-        { displayName: "+15550004001", providerKey: "+15550004001", role: "owner" },
-        { displayName: "+15550004002", providerKey: "+15550004002", role: "member" },
+        { displayName: "+15550004001", providerKey: "+15550004001", role: "owner" as const },
+        { displayName: "+15550004002", providerKey: "+15550004002", role: "member" as const },
       ],
-    }))!;
-
-    expect(activationChatLabel(chat)).toBe(
-      "+15550004000, +15550004001, +15550004002",
-    );
+    }, "+15550004000, +15550004001, +15550004002"],
+    ["keeps an emoji-only top-level display name", {
+      displayName: "🎉",
+      members: [{ displayName: "Riley", role: "member" as const }],
+    }, "🎉"],
+    ["uses each member's name or provider handle", {
+      members: [
+        { displayName: "Riley", role: "member" as const },
+        { displayName: "", providerKey: "+15550005002", role: "member" as const },
+      ],
+    }, "Riley, +15550005002"],
+  ])("%s", (_case, fields, expected) => {
+    expect(activationChatLabel(parseActivationChat(wireChat(fields))!)).toBe(expected);
   });
 
   it("falls back to numbers when the wire has no usable display names", () => {

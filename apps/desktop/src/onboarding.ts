@@ -118,12 +118,12 @@ export function storedActivationChat(settings: Settings): OnboardingChat | null 
 }
 
 /**
- * How a human recognises a chat: its title when present, otherwise its named
- * members with non-owners first. If the provider has no usable names, use the
- * number it runs on and each member's real handle in API owner-first order.
- * The first fallback number is the agent participant's line — never the
- * chat's own `provider_key`, which is the provider's thread id and would put
- * "chat_5" where the user is looking for something to text.
+ * How a human recognises a chat: its title when present, otherwise each
+ * member's usable name or real handle, with non-owners first. If the provider
+ * has no usable names, use the number it runs on and each member's handle in
+ * API owner-first order. The first fallback number is the agent participant's
+ * line — never the chat's own `provider_key`, which is the provider's thread id
+ * and would put "chat_5" where the user is looking for something to text.
  *
  * Both halves are optional in the data, so this never returns an empty string —
  * a chat with neither is still identified by its uid, which is ugly but true,
@@ -159,7 +159,8 @@ export function activationChatRecipients(chat: ActivationChat): ChatRecipients {
 function usableChatDisplayName(value: string | null, providerKey: string | null = null): string | null {
   const name = (value ?? "").trim();
   const handle = (providerKey ?? "").trim();
-  if (!name || name === "You" || name === handle || !/\p{L}/u.test(name)) return null;
+  const phoneNumberShaped = /[0-9]/.test(name) && /^[0-9+ (),-]+$/.test(name);
+  if (!name || name === handle || phoneNumberShaped) return null;
   return name;
 }
 
@@ -167,22 +168,27 @@ export function activationChatLabel(chat: ActivationChat): string {
   const displayName = usableChatDisplayName(chat.displayName);
   if (displayName) return displayName;
 
-  const named = chat.participants
+  const members = chat.participants
     .map((participant) => ({
       name: usableChatDisplayName(participant.displayName, participant.providerKey),
+      handle: (participant.providerKey ?? "").trim(),
       isOwner: participant.isOwner,
-    }))
-    .filter((participant): participant is { name: string; isOwner: boolean } =>
-      participant.name !== null);
-  const names = [
-    ...named.filter((participant) => !participant.isOwner),
-    ...named.filter((participant) => participant.isOwner),
-  ].map((participant) => participant.name);
-  if (names.length) return names.join(", ");
+      isSelf: (participant.displayName ?? "").trim() === "You",
+    }));
+  if (members.some((participant) => participant.name && !participant.isSelf)) {
+    const labels = [
+      ...members.filter((participant) => !participant.isOwner),
+      ...members.filter((participant) => participant.isOwner),
+    ]
+      .filter((participant) => !participant.isSelf)
+      .map((participant) => participant.name ?? participant.handle)
+      .filter(Boolean);
+    if (labels.length) return labels.join(", ");
+  }
 
   const line = (chat.line ?? "").trim();
-  const handles = chat.participants
-    .map((participant) => (participant.providerKey ?? "").trim())
+  const handles = members
+    .map((participant) => participant.handle)
     .filter((handle) => handle && handle !== line);
   const parts = [line, ...handles].filter(Boolean);
   return parts.length ? parts.join(", ") : chat.uid;
