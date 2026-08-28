@@ -186,19 +186,11 @@ export class CloudAgentState {
    * exists to provide, on an account whose chats we had just read fine.
    */
   private chatReads = 0;
-  /**
-   * Which agent-list read is the newest. The same guard as `chatReads`, for the
-   * same reason: `generation` moves on sign-out alone, so two reads in one
-   * session cannot tell which of them is stale.
-   *
-   * The fourth counter of this shape in this codebase. That is a smell, and the
-   * consolidation is deliberately not being done here — see the note on the PR.
-   */
-  private agentReads = 0;
   private actionError: string | null = null;
-  /** The latest roster read already started when an indeterminate PUT failed;
-   * `null` while the PUT itself is still in flight. */
-  private editsPending = new Map<string, number | null>();
+  /** Agents whose chat sets are being saved or reconciled with a roster read. */
+  private editsPending = new Set<string>();
+  /** The subset whose PUT has not answered yet. */
+  private editsSaving = new Set<string>();
   private chats: CloudChatOption[] = [];
   private chatsLoaded = false;
   /**
@@ -208,17 +200,20 @@ export class CloudAgentState {
    */
   private generation = 0;
   /**
-   * How many times the row set has been changed from here.
-   *
-   * The account generation is not enough: a list started before a delete can
-   * land after it and put the removed agent back on screen, which reads as a
-   * delete that silently failed. A refresh remembers the count it read at and
-   * drops its listing if anything changed underneath it — the mutation is
-   * newer, and it is the one the user just performed.
+   * Roster reads and changes apply in the order they were launched. A rejected
+   * step is swallowed only on the chain, so one failed request cannot stop the
+   * next refresh or click from running.
    */
-  private mutations = 0;
-  /** The chat read currently in flight, so a caller whose own read was
-   * superseded can wait on the one that replaced it. */
+  private currentAction: Promise<void> = Promise.resolve();
+  /**
+   * The chat read currently in flight, so a caller whose own read was
+   * superseded can wait on the one that replaced it.
+   *
+   * Separate from `currentAction`, and deliberately: that chain serialises the
+   * ROSTER against its mutations. Chat-list ordering is left independent (#224
+   * says so), so the picker's await needs its own answer to "has the newest
+   * read landed".
+   */
   private chatsSettled: Promise<void> = Promise.resolve();
   /** Agents whose stuck delete is being retried right now — one at a time each. */
   private tearingDown = new Set<string>();
@@ -233,8 +228,8 @@ export class CloudAgentState {
       cloudChatsError: this.chatsError,
       cloudChatsNeedReactivation: this.chatsNeedReactivation,
       cloudActionError: this.actionError,
-      cloudAgentEditsPending: [...this.editsPending.keys()],
-      cloudAgentEditsSaving: [...this.editsPending].flatMap(([id, read]) => read === null ? [id] : []),
+      cloudAgentEditsPending: [...this.editsPending],
+      cloudAgentEditsSaving: [...this.editsSaving],
       cloudChats: this.chats,
       cloudChatsLoaded: this.chatsLoaded,
       cloudSendTo: settings.activationSendTo.trim() || null,
@@ -252,16 +247,22 @@ export class CloudAgentState {
     const credential = this.credential();
     if (!credential) return;
     const generation = this.generation;
-    const mutations = this.mutations;
+    const pendingEdits = new Set(this.editsPending);
     let chats = this.refreshChats(credential, generation);
     this.chatsSettled = chats;
-    await Promise.all([this.refreshAgents(credential, generation, mutations), chats]);
+    await Promise.all([
+      this.sequence(() => this.refreshAgents(credential, generation, pendingEdits)),
+      chats,
+    ]);
     // A newer chat read started while ours was in flight. Ours DROPPED its own
     // answer on purpose — a superseded read says nothing about now — so
     // returning here would answer from before either of them. That is exactly
     // what a caller awaiting this must not be handed: the picker opens through
     // `cloud:refresh`, and would show the chat list from before the text that
     // sent the owner here. Join whatever replaced it, and whatever replaced that.
+    //
+    // Not `sequence`: that chain is the roster's, and #224 leaves chat-list
+    // ordering independent on purpose.
     while (this.chatsSettled !== chats) {
       chats = this.chatsSettled;
       await chats;
@@ -289,30 +290,33 @@ export class CloudAgentState {
 
     const generation = this.generation;
     const requested = (name ?? "").trim();
-    let receipt: CloudAgentResource;
-    try {
-      receipt = await this.deps.agents.create(credential, {
-        chatUids: chats,
-        provider,
-        ...(requested ? { name: requested } : {}),
-      });
-    } catch (error) {
-      // A cancelled create is something this side asked for, not a failure the
-      // user needs to read. The agent may still exist on the account — the POST
-      // can have landed with the receipt lost — and the next list recovers it.
-      if (generation === this.generation && !isAbort(error)) {
-        return this.failAction(this.actionMessage(error));
+    return this.sequence(async () => {
+      if (generation !== this.generation) return null;
+      this.actionError = null;
+      let receipt: CloudAgentResource;
+      try {
+        receipt = await this.deps.agents.create(credential, {
+          chatUids: chats,
+          provider,
+          ...(requested ? { name: requested } : {}),
+        });
+      } catch (error) {
+        // A cancelled create is something this side asked for, not a failure the
+        // user needs to read. The agent may still exist on the account — the POST
+        // can have landed with the receipt lost — and the next list recovers it.
+        if (generation === this.generation && !isAbort(error)) {
+          return this.failAction(this.actionMessage(error));
+        }
+        return null;
       }
-      return null;
-    }
-    if (generation !== this.generation) return null;
-    this.mutations += 1;
-    this.pending.add(receipt.agentId);
-    this.observe(receipt, requested);
-    const controller = new AbortController();
-    this.polls.set(receipt.agentId, controller);
-    void this.pollToTerminal(credential, receipt, requested, generation, controller.signal);
-    return receipt.agentId;
+      if (generation !== this.generation) return null;
+      this.pending.add(receipt.agentId);
+      this.observe(receipt, requested);
+      const controller = new AbortController();
+      this.polls.set(receipt.agentId, controller);
+      void this.pollToTerminal(credential, receipt, requested, generation, controller.signal);
+      return receipt.agentId;
+    });
   }
 
   /**
@@ -322,10 +326,8 @@ export class CloudAgentState {
    * unlike `create` there is nothing to poll — the answer IS the new state, and
    * the row is rewritten from it before the roster re-read confirms it.
    *
-   * The staleness guards are `create`'s, for `create`'s reasons: a sign-out
-   * mid-flight belongs to the account that went away, and the mutation counter
-   * has to move so a listing already in the air cannot put the old set back on
-   * screen.
+   * A sign-out mid-flight belongs to the account that went away. Roster reads
+   * cannot put the old set back because they apply through the same sequence.
    */
   async editChats(agentId: string, chatUids: readonly string[]): Promise<void> {
     const id = (agentId ?? "").trim();
@@ -344,39 +346,37 @@ export class CloudAgentState {
     }
 
     const generation = this.generation;
-    this.editsPending.set(id, null);
+    this.editsPending.add(id);
+    this.editsSaving.add(id);
     this.publish();
-    let updated: CloudAgentResource;
-    try {
-      updated = await this.deps.agents.updateChats(credential, id, chats);
-    } catch (error) {
-      if (generation !== this.generation) return;
-      const refused = isRefusedEdit(error);
-      if (refused) this.editsPending.delete(id);
-      else this.editsPending.set(id, this.agentReads);
-      this.failAction(this.actionMessage(error));
-      // A failure that is not the server's verdict says nothing about what the
-      // agent now serves. A timed-out PUT is the case that matters: the request
-      // may well have landed, and leaving the old set on screen would be the
-      // app asserting a rollback nobody performed. Ask.
-      //
-      // The counter moves even though we do not know whether anything did: a
-      // listing that was already in the air predates the attempt either way,
-      // and the refresh below is the one whose answer is worth having.
-      if (!refused) {
-        this.mutations += 1;
-        await this.refresh();
+    const refresh = await this.sequence(async () => {
+      if (generation !== this.generation) return false;
+      this.actionError = null;
+      let updated: CloudAgentResource;
+      try {
+        updated = await this.deps.agents.updateChats(credential, id, chats);
+      } catch (error) {
+        if (generation !== this.generation) return false;
+        this.editsSaving.delete(id);
+        const refused = isRefusedEdit(error);
+        if (refused) this.editsPending.delete(id);
+        this.failAction(this.actionMessage(error));
+        // A failure that is not the server's verdict says nothing about what the
+        // agent now serves. A timed-out PUT is the case that matters: the request
+        // may well have landed, and leaving the old set on screen would be the
+        // app asserting a rollback nobody performed. Ask.
+        return !refused;
       }
-      return;
-    }
-    if (generation !== this.generation) return;
-    if (!this.editsPending.delete(id)) return;
-    this.mutations += 1;
-    // The row goes to the answer, not to what was asked for: the server decides
-    // what the agent serves, and a set it normalised differently must show as
-    // what it actually is.
-    this.observe(updated, "");
-    await this.refresh();
+      if (generation !== this.generation) return false;
+      this.editsSaving.delete(id);
+      this.editsPending.delete(id);
+      // The row goes to the answer, not to what was asked for: the server decides
+      // what the agent serves, and a set it normalised differently must show as
+      // what it actually is.
+      this.observe(updated, "");
+      return true;
+    });
+    if (refresh) await this.refresh();
   }
 
   /** Remove an agent — the machine and its hold on the chat, not just a key. */
@@ -396,19 +396,24 @@ export class CloudAgentState {
     // torn down — and can publish a transition for an agent the user has
     // already removed.
     this.abortPoll(id);
-    try {
-      await this.deps.agents.delete(credential, id);
-    } catch (error) {
-      if (generation === this.generation) this.failAction(messageOf(error));
-      return;
-    }
-    if (generation !== this.generation) return;
-    this.mutations += 1;
-    this.editsPending.delete(id);
-    this.rows.delete(id);
-    this.pending.delete(id);
-    this.publish();
-    await this.refresh();
+    const refresh = await this.sequence(async () => {
+      if (generation !== this.generation) return false;
+      this.actionError = null;
+      try {
+        await this.deps.agents.delete(credential, id);
+      } catch (error) {
+        if (generation === this.generation) this.failAction(messageOf(error));
+        return false;
+      }
+      if (generation !== this.generation) return false;
+      this.editsPending.delete(id);
+      this.editsSaving.delete(id);
+      this.rows.delete(id);
+      this.pending.delete(id);
+      this.publish();
+      return true;
+    });
+    if (refresh) await this.refresh();
   }
 
   /**
@@ -424,13 +429,14 @@ export class CloudAgentState {
     this.rows.clear();
     this.pending.clear();
     this.editsPending.clear();
+    this.editsSaving.clear();
     this.chats = [];
     this.chatsLoaded = false;
     this.chatsError = null;
     this.chatsNeedReactivation = false;
     // Nothing in flight belongs to the next account either.
     this.chatReads += 1;
-    this.agentReads += 1;
+    this.currentAction = Promise.resolve();
     this.agentsError = null;
     this.actionError = null;
     this.publish();
@@ -477,11 +483,11 @@ export class CloudAgentState {
   private retryTeardown(credential: string, agentId: string, generation: number): void {
     if (this.tearingDown.has(agentId)) return;
     this.tearingDown.add(agentId);
-    void (async () => {
+    void this.sequence(async () => {
       try {
+        if (generation !== this.generation) return;
         await this.deps.agents.delete(credential, agentId);
         if (generation !== this.generation) return;
-        this.mutations += 1;
         this.rows.delete(agentId);
         this.pending.delete(agentId);
         this.publish();
@@ -490,7 +496,7 @@ export class CloudAgentState {
       } finally {
         this.tearingDown.delete(agentId);
       }
-    })();
+    });
   }
 
   private abortPoll(agentId: string): void {
@@ -503,26 +509,15 @@ export class CloudAgentState {
   private async refreshAgents(
     credential: string,
     generation: number,
-    mutations: number,
+    pendingEdits: ReadonlySet<string>,
   ): Promise<void> {
-    const read = ++this.agentReads;
+    if (generation !== this.generation) return;
     try {
       const agents = await this.deps.agents.list(credential);
-      if (generation !== this.generation || read !== this.agentReads) return;
+      if (generation !== this.generation) return;
       const listed = new Map(
         agents.map((agent) => [agent.agentId, this.rowFor(agent)] as const),
       );
-      for (const [agentId, failedAtRead] of this.editsPending) {
-        if (failedAtRead === null || failedAtRead >= read) continue;
-        const reconciled = listed.get(agentId);
-        if (reconciled) this.rows.set(agentId, reconciled);
-        else this.rows.delete(agentId);
-        this.editsPending.delete(agentId);
-      }
-      // A create or a delete happened while this listing was in the air. It is
-      // older than what the user just did, and applying all of it would put a
-      // deleted agent back on screen. The mutation's own refresh follows it.
-      if (mutations !== this.mutations) return;
       // A create whose poll is still running may not be in the account listing
       // yet. Its row stays until the poll finishes, so provisioning does not
       // flicker off the screen and back.
@@ -537,6 +532,7 @@ export class CloudAgentState {
         if (!listed.has(agentId) && this.pending.has(agentId)) listed.set(agentId, row);
       }
       this.rows = listed;
+      for (const agentId of pendingEdits) this.editsPending.delete(agentId);
       this.agentsError = null;
       // `teardown` is not a state an agent rests in — it is a delete that
       // failed provider-side and is waiting to be asked again. Nothing else
@@ -545,13 +541,20 @@ export class CloudAgentState {
         if (isTeardown(agent.status)) this.retryTeardown(credential, agent.agentId, generation);
       }
     } catch (error) {
-      // A superseded read says nothing about now, and a stale failure putting a
-      // banner over a newer good answer is the expensive direction of that.
-      if (generation !== this.generation || read !== this.agentReads) return;
+      if (generation !== this.generation) return;
       // The rows already on screen are kept: stale truth with a banner beats an
       // empty roster that reads as "you have no agents".
       this.agentsError = messageOf(error);
     }
+  }
+
+  private sequence<T>(action: () => Promise<T>): Promise<T> {
+    const result = this.currentAction.then(action);
+    this.currentAction = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    return result;
   }
 
   private async refreshChats(credential: string, generation: number): Promise<void> {
