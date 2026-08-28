@@ -329,7 +329,7 @@ export class Executor {
      * token-supplied run with a stderr note, and merged in, it made every
      * fan-out read "not JSON".
      */
-    stderr?: "capture" | "discard";
+    stderr?: "discard";
   }): Promise<ExecResult> {
     if (args.argv.length === 0) throw new ExecutorError("launch failed: empty argv");
     const handle = crypto.randomUUID().toUpperCase();
