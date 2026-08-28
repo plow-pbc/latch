@@ -521,7 +521,6 @@ export class CloudAgentState {
       }
     } catch (error) {
       if (generation !== this.generation) return;
-      for (const agentId of pendingEdits) this.editsPending.delete(agentId);
       // The rows already on screen are kept: stale truth with a banner beats an
       // empty roster that reads as "you have no agents".
       this.agentsError = messageOf(error);

@@ -1096,14 +1096,14 @@ describe("changing which chats an agent serves", () => {
     expect(state.state().cloudAgentEditsPending).toEqual([]);
   });
 
-  it("releases an indeterminate edit when its agent-list read fails", async () => {
+  it("keeps an indeterminate edit gated until an agent-list read succeeds", async () => {
     let lists = 0;
     const f = fakes({
       list: async () => {
         lists += 1;
         if (lists === 1) return [agent({ chatUids: ["cht_1"] })];
         if (lists === 2) throw new PlowApiError("http", "Plow returned 503.", 503);
-        return [agent({ chatUids: ["cht_3"] })];
+        return [agent({ chatUids: ["cht_2"] })];
       },
       update: async () => {
         throw new PlowApiError("network", "Plow didn't answer in time. Try again.");
@@ -1114,16 +1114,16 @@ describe("changing which chats an agent serves", () => {
 
     await state.editChats("agent_1", ["cht_2"]);
 
-    expect(state.state().cloudAgentEditsPending).toEqual([]);
+    expect(state.state().cloudAgentEditsPending).toEqual(["agent_1"]);
+    expect(state.state().cloudAgentEditsSaving).toEqual([]);
     expect(state.state().cloudAgentsError).toBe("Plow returned 503.");
     await state.editChats("agent_1", ["cht_3"]);
-    expect(f.agents.updated).toEqual([
-      { agentId: "agent_1", chatUids: ["cht_2"] },
-      { agentId: "agent_1", chatUids: ["cht_3"] },
-    ]);
+    expect(f.agents.updated).toEqual([{ agentId: "agent_1", chatUids: ["cht_2"] }]);
+
+    await state.refresh();
 
     expect(state.state().cloudAgentEditsPending).toEqual([]);
-    expect(state.state().cloudAgents[0].chatUids).toEqual(["cht_3"]);
+    expect(state.state().cloudAgents[0].chatUids).toEqual(["cht_2"]);
     expect(state.state().cloudAgentsError).toBeNull();
   });
 
