@@ -681,13 +681,11 @@ describe("provisioning", () => {
 describe("removing", () => {
   it("does not let a listing from before a delete put the row back", async () => {
     const listing = deferred<CloudAgentResource[]>();
-    let first = true;
+    let lists = 0;
     const f = fakes({
-      // Only the first listing is held open — the delete's own refresh must be
-      // free to answer, or nothing ever finishes.
+      update: async () => { throw new PlowApiError("network", "Plow didn't answer in time."); },
       list: async () => {
-        if (!first) return [];
-        first = false;
+        if (++lists !== 2) throw new PlowApiError("http", "Plow returned 503.", 503);
         return listing.promise;
       },
       chats: async () => CHATS,
@@ -695,6 +693,7 @@ describe("removing", () => {
     const state = build(tempHome(), f);
 
     // A refresh in the air, started before the user clicked Remove…
+    await state.editChats("agent_1", ["cht_2"]);
     const refreshing = state.refresh();
     await state.remove("agent_1");
     // …answering only now, with the agent still in it.
@@ -705,6 +704,7 @@ describe("removing", () => {
     // The delete is newer than the listing. A resurrected row reads as a delete
     // that silently failed.
     expect(state.state().cloudAgents).toEqual([]);
+    expect(state.state().cloudAgentEditsPending).toEqual([]);
   });
 
   it("reports a delete failure without dropping the row", async () => {

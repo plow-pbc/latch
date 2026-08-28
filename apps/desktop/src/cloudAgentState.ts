@@ -394,6 +394,7 @@ export class CloudAgentState {
     }
     if (generation !== this.generation) return;
     this.mutations += 1;
+    this.editsPending.delete(id);
     this.rows.delete(id);
     this.pending.delete(id);
     this.publish();
