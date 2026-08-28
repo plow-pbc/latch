@@ -374,7 +374,7 @@ export function normalizeChatUids(chatUids: readonly string[]): string[] {
   return out;
 }
 
-function echoesCredential(text: string, credential: string): boolean {
+export function echoesCredential(text: string, credential: string): boolean {
   const secret = credential.trim();
   if (!secret) return false;
   if (text.includes(secret)) return true;

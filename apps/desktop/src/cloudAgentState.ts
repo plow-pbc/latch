@@ -26,6 +26,7 @@ import {
   ChatSetConflictError,
   CloudAgentResource,
   CreateCloudAgentRequest,
+  echoesCredential,
   normalizeChatUids,
 } from "./cloudAgents.js";
 import {
@@ -771,10 +772,15 @@ export class CloudChatsClient implements CloudChatsApi {
     return rows
       .map((raw) => parseActivationChat(raw))
       .filter((chat): chat is NonNullable<typeof chat> => chat !== null)
-      .map((chat) => ({
-        uid: chat.uid,
-        label: activationChatLabel(chat),
-        recipients: activationChatRecipients(chat),
-      }));
+      .map((chat) => {
+        const safe = {
+          ...chat,
+          displayName: echoesCredential(chat.displayName ?? "", deviceCredential) ? null : chat.displayName,
+          participants: chat.participants.map((member) => echoesCredential(
+            member.displayName ?? "", deviceCredential,
+          ) ? { ...member, displayName: null } : member),
+        };
+        return { uid: chat.uid, label: activationChatLabel(safe), recipients: activationChatRecipients(safe) };
+      });
   }
 }

@@ -732,16 +732,24 @@ describe("removing", () => {
 
 describe("the credential boundary", () => {
   it("marshals no credential and no session id, in any field", async () => {
-    const state = build(
-      tempHome(),
-      fakes({
-        list: async () => [agent(), agent({ agentId: "agent_2", status: "provisioning" })],
-      }),
-    );
+    const home = tempHome();
+    const f = fakes({
+      list: async () => [agent(), agent({ agentId: "agent_2", status: "provisioning" })],
+    });
+    const fetchImpl = async () => new Response(JSON.stringify({ data: [{
+      uid: "cht_1", display_name: `Kitchen ${CREDENTIAL}`,
+      participants: [
+        { type: "agent", line: { provider_key: "+15550100" } },
+        { type: "member", display_name: CREDENTIAL, provider_key: "+15550111" },
+      ],
+    }] }));
+    const state = new CloudAgentState({ agents: f.agents,
+      chats: new CloudChatsClient(new PlowApi("https://api.plow.co", fetchImpl)), home });
 
     await state.refresh();
     const marshalled = JSON.stringify(state.state());
 
+    expect(state.state().cloudChats[0].label).toBe("+15550100, +15550111");
     expect(marshalled).not.toContain(CREDENTIAL);
     expect(marshalled).not.toContain(SESSION);
     expect(marshalled).not.toContain("sessionId");
