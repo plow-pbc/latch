@@ -21,26 +21,28 @@ that file to see exactly which records produce which exit code.
 ## Before you start: the credential
 
 You need an MCP client registration for the target install — endpoint plus
-bearer token. **This is not recorded anywhere an unattended run can read**,
-which is Stop 3 in `docs/AUTONOMOUS-OPERATION.md`. Today it comes from the
-app's Agents tab on the target Mac, which is a GUI step.
-
-It looks like the block `_mcpConfig` renders:
+bearer token. It is minted once, in the app's Agents tab on the target Mac
+(a GUI step), and then **recorded at a known path so no later run needs the
+GUI**: save the block `_mcpConfig` renders, verbatim, to
+`~/.latch/<install>.json` — `0600`, directory `0700`, one file per install
+(`docs/AUTONOMOUS-OPERATION.md` Stop 3 owns this convention). The block:
 
 ```json
 {"mcpServers":{"plow":{"type":"http","url":"<mcpUrl>","headers":{"Authorization":"Bearer <token>"}}}}
 ```
 
-Put the token in a `0600` file and pass the path. Treat it the way this repo
-treats every credential: never echo it, never put it in a log line or a commit,
-reference it by its last 3 characters only. The script prints an HTTP status on
+Pass it as `--config ~/.latch/<install>.json`, which supplies both url and
+token; `--url` + `--token-file` (token alone, one line, `0600`) remains for a
+credential that is not recorded. Treat the file the way this repo treats every
+credential: never echo it, never put it in a log line or a commit, reference
+the token by its last 3 characters only. The script prints an HTTP status on
 a refusal and never the response body, because an authenticated response can
 repeat the credential back.
 
 ## Run it
 
 ```bash
-scripts/latch-smoke --url <mcpUrl> --token-file <path> \
+scripts/latch-smoke --config ~/.latch/<install>.json \
   --home "~/Library/Application Support/Plow-Latch"
 ```
 
@@ -129,7 +131,7 @@ mint, not at the binary.
 Same command, its own argv:
 
 ```bash
-scripts/latch-smoke --url <mcpUrl> --token-file <path> \
+scripts/latch-smoke --config ~/.latch/<install>.json \
   --home "~/Library/Application Support/Plow-Latch" -- gog gmail search newer_than:1d --json
 ```
 

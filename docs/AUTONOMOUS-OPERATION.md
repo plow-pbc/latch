@@ -22,10 +22,11 @@ All four are further along than they look. Building a signed artifact is
 automatable **for `main`** — this repo ships the CI workflow that does it —
 and driving a call and reading the log are `scripts/latch-smoke`.
 
-**Two real gaps** remain, and they are the whole of what is worth building:
-nothing installs a built artifact onto a target Mac (Stop 2), and nothing
-records which credential addresses which install, so the smoke has no endpoint
-to aim at unattended (Stop 3).
+**One real gap** remains, and it is the whole of what is worth building:
+nothing installs a built artifact onto a target Mac (Stop 2). Addressing an
+install as a client (Stop 3) now has an interim answer — the recorded
+registration at `~/.latch/<install>.json` — with only its one-time mint
+still a GUI step.
 
 **Three deliberate gates** are not gaps and should stay: the `release`
 environment's approval before a signing runner starts, publishing the draft,
@@ -100,12 +101,12 @@ support two devices on one credential. So a *first* install on a new Mac has a
 one-time interactive step. A *re-install over an existing one* does not — the
 home survives, and that is the case an unattended run actually wants.
 
-## Stop 3 — addressing an install as a client (a real gap: written down nowhere)
+## Stop 3 — addressing an install as a client (interim fix in place: the recorded registration)
 
 To smoke-test an install you need to be the agent: an MCP client pointed at the
 relay, carrying a credential the relay accepts for this device.
 
-**That configuration is recorded nowhere.** Searched on the production Mac:
+**The app records that configuration nowhere.** Searched on the production Mac:
 `~/Library/Application Support/co.plow.app/` has `setup.json`, `plow-api-token`
 and the agent runtime's per-plugin `.mcp.json` files — none of which mention the
 relay MCP endpoint or a Latch device. Nothing under `agent-runtime/` matches
@@ -116,17 +117,24 @@ server-authoritative — the app never constructs it) and `relayCredential`, and
 the Agents tab renders a paste-ready client registration. But there is no
 file an unattended run can read to reach an install it did not just create.
 
-**What would fix it**, in rough order of cost:
+**The interim fix is in place**: the operator records the registration on
+their own machines, the way `plow-message` reads a target's own
+`plow-api-token` from a known path. The convention — one file per install,
+holding the `_mcpConfig` block the Agents tab renders, verbatim:
 
-1. A `latch mcp-config` style command, or a documented path, that emits the
-   `{mcpServers:{…}}` block the Agents tab already renders — so a smoke run can
-   read it rather than screenshot a GUI. The relay endpoint is not a secret; the
-   bearer token is, so this should print to stdout for capture, never to a log.
-2. Failing that, record on the operator's own machine which credential reaches
-   which install, the way `plow-message` reads a target's own
-   `plow-api-token` from a known path.
+```
+~/.latch/<install>.json        # 0600, directory 0700
+```
 
-Until one of those exists, an unattended smoke stops here.
+`scripts/latch-smoke --config ~/.latch/<install>.json` reads url and token
+from it, so an unattended run needs the GUI only once, at mint time. The
+relay endpoint inside is not a secret; the bearer token is — the file never
+gets echoed, committed, or copied into a checkout.
+
+What would still improve it: a `latch mcp-config` style command that emits
+that block from the app's own `settings.json`-adjacent state, so even the
+mint-time GUI copy step disappears. Until then, minting a registration
+remains the one GUI step; everything after it reads the recorded file.
 
 ## Stop 4 — reading the result (already automatable)
 
@@ -150,11 +158,11 @@ Everything up to the artifact:
   `build-release-candidate.yml` — a human approves the `release` environment,
   and nothing else about it needs a local keychain
 - drive one real MCP call against an install and read the verdict out of its
-  audit log, locally or over SSH: `scripts/latch-smoke` — **given a client
-  registration**, which is Stop 3 and still comes from a GUI tab
+  audit log, locally or over SSH: `scripts/latch-smoke` — **given a recorded
+  client registration** (`--config ~/.latch/<install>.json`, Stop 3), whose
+  mint is the one remaining GUI step
 - read any install's `audit.ndjson` over SSH, given access to the host
 
-That is most of the loop. What is left is the two gaps named at the top: **put
-a built artifact onto a target Mac, and record how to address an install as a
-client.** The signing wall is only a wall for an unmerged branch, and the three
-reviewer gates are deliberate.
+That is most of the loop. What is left is the gap named at the top: **put a
+built artifact onto a target Mac.** The signing wall is only a wall for an
+unmerged branch, and the three reviewer gates are deliberate.
