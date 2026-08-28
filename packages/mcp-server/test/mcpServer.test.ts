@@ -576,6 +576,35 @@ describe("review findings", () => {
     ])("%s", async (_name, argv, network, allowed) => {
       expect(await networkFor(argv, network)).toBe(allowed);
     });
+
+    async function appleEventsFor(appleEvents?: boolean): Promise<boolean | undefined> {
+      let allowed: boolean | undefined;
+      const { server } = makeServer({
+        async decideIntent(intent) {
+          allowed = intent.capabilities.find((c) => c.kind === "apple_events")?.allowed;
+          return "deny" as const;
+        },
+      });
+      await callTool(
+        server,
+        "plow_run_command",
+        { argv: ["/bin/echo", "x"], wait_ms: 1_000, ...(appleEvents === undefined ? {} : { apple_events: appleEvents }) },
+        AGENT,
+      );
+      return allowed;
+    }
+
+    // Unlike network, apple_events is opt-in only: there is no vendored
+    // command that implies it, so the capability is pushed only when the
+    // agent asks for it, and omitted (not sent as `allowed: false`) otherwise
+    // so an unrelated command's approval rule hash does not change.
+    it.each([
+      ["apple_events true grants it", true, true],
+      ["omitted means no apple_events capability at all", undefined, undefined],
+      ["explicit false also means no capability, not a denied one", false, undefined],
+    ])("%s", async (_name, appleEvents, allowed) => {
+      expect(await appleEventsFor(appleEvents)).toBe(allowed);
+    });
   });
 
   // 5 — the wait_ms cap does not produce a direct job handle. Pin what really

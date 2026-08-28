@@ -390,7 +390,12 @@ describe("what the agent-facing copy must and must not say", () => {
    * `LIVE_WEB_ROUTING`, which every surface interpolates, is asserted to make
    * it.
    */
-  const FORBIDDEN: { what: string; why: string; offends: (text: string) => boolean }[] = [
+  const FORBIDDEN: {
+    what: string;
+    why: string;
+    offends: (text: string) => boolean;
+    except?: string[];
+  }[] = [
     {
       what: "routes web reading to the agent's own tools",
       why: "the sentence this whole surface exists to remove; it had three homes",
@@ -403,6 +408,11 @@ describe("what the agent-facing copy must and must not say", () => {
       what: "prescribes tooling the sandbox denies",
       why: "(deny default) grants no appleevent-send and the app ships no automation entitlement",
       offends: (text) => /osascript|screencapture|shortcuts/i.test(text),
+      // The apple_events capability's own description is the one place
+      // osascript is meant to appear: it is exactly what grants appleevent-send
+      // when the approver allows it, so naming it here is honest, not a
+      // prescription the sandbox then denies.
+      except: ["plow_run_command.apple_events"],
     },
     {
       what: "names a tool without its plow_ prefix",
@@ -413,8 +423,9 @@ describe("what the agent-facing copy must and must not say", () => {
     },
   ];
 
-  it.each(FORBIDDEN)("no manifest string $what", ({ offends, why }) => {
+  it.each(FORBIDDEN)("no manifest string $what", ({ offends, why, except }) => {
     for (const { where, text } of manifestStrings()) {
+      if (except?.includes(where)) continue;
       expect(offends(text), `${where}: ${why}`).toBe(false);
     }
   });

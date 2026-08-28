@@ -318,6 +318,14 @@ export const TOOLS: ToolSpec[] = [
             "sees it either way. The exception is asking for help — `--help` or `-h` as " +
             "the LAST argument, with no `--` before it — which reaches nothing.",
         },
+        apple_events: {
+          type: "boolean",
+          description:
+            "Whether the command sends Apple events to control this Mac's apps — " +
+            "required for osascript that tells an application to do something " +
+            "(default false). Shown to the approver like any capability; without " +
+            "it the sandbox denies the event and the script fails.",
+        },
         wait_ms: {
           type: "integer",
           description:
@@ -373,6 +381,13 @@ export const TOOLS: ToolSpec[] = [
           allowed: (a.get("network").bool ?? false) || impliesNetwork(argv),
         },
       ];
+      // Unlike network, no vendored command implies this one, so it is pushed
+      // only when the agent explicitly asks — never as an `allowed: false`
+      // entry, which would change the approval rule hash of every command
+      // that doesn't touch Apple events at all.
+      if (a.get("apple_events").bool === true) {
+        capabilities.push({ kind: "apple_events", allowed: true });
+      }
       if (readPaths.length > 0) capabilities.push({ kind: "fs.read", paths: readPaths });
       if (writePaths.length > 0) capabilities.push({ kind: "fs.write", paths: writePaths });
 
