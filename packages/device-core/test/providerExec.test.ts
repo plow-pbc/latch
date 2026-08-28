@@ -98,6 +98,19 @@ function expectNeverSpawned(d: DeviceAgent): void {
   expect(events).not.toContain("exec_start");
 }
 
+/**
+ * The `exit_code` on the one `exec_end` a fan-out records.
+ *
+ * The audit is the oracle for this: a fan-out's per-account outcomes live in
+ * the returned envelope, so the single recorded code is all the approval
+ * history has to say whether the run answered at all.
+ */
+function execEnd(d: DeviceAgent): number | undefined {
+  const end = d.audit.entries().find((e) => jv(e).get("event").str === "exec_end");
+  expect(end, "no exec_end was recorded").toBeDefined();
+  return jv(end).get("exit_code").int ?? undefined;
+}
+
 /** A Minter that mints ONE account with whatever `mint` yields (or throws),
  * which is enough for every single-account test here. */
 function minterOf(mint: (provider: VendoredProvider) => Promise<string>): Minter {
@@ -281,7 +294,9 @@ case "$*" in
       tok-a) echo '[{"id":"a1","date":"Mon, 16 Mar 2026 10:00:00 +0000"}]' ;;
       tok-b) echo '[{"id":"b1","date":"Wed, 18 Mar 2026 09:00:00 +0000"}]' ;;
       tok-slow) sleep 1; echo '[{"id":"s1","date":"Thu, 19 Mar 2026 09:00:00 +0000"}]' ;;
-      tok-bad) echo "boom" >&2; exit 3 ;;
+      tok-bad) echo "boom" >&2; exit 1 ;;
+      tok-rejected) echo "sneakyagenttext" >&2; exit 2 ;;
+      tok-expired) exit 4 ;;
     esac ;;
   *) echo "TOKEN=$GOG_ACCESS_TOKEN ARGV=$*" ;;
 esac
@@ -329,10 +344,39 @@ esac
     expect(response).toMatchObject({
       status: "completed",
       items: [{ id: "a1", account: "a@example.com" }],
-      degraded: [{ account: "bad@example.com", reason: "gog exited 3" }],
+      degraded: [{ account: "bad@example.com", reason: "gog exited 1" }],
     });
     // The child's output is service-fetched text; only the exit code travels.
     expect(JSON.stringify(response)).not.toContain("boom");
+    // A partial failure is still a run that answered: the audit stays green,
+    // and the account that did not answer is named in the envelope.
+    expect(execEnd(d)).toBe(0);
+  });
+
+  itSpawns("names what each exit code meant, without quoting the child", async () => {
+    // gog maps Google's own failures onto its published exit table, so the
+    // number is the diagnosis. `gog exited 2` alone left an owner unable to
+    // tell a rejected request from an expired token.
+    const d = device(
+      accountsMinter([
+        { account: "rejected@example.com", token: "tok-rejected", isDefault: true },
+        { account: "expired@example.com", token: "tok-expired", isDefault: false },
+      ]),
+      [plowVendorDir()],
+    );
+    const response = await run(d, ["plow-gog", "gmail", "search", "q"]);
+    expect(response).toMatchObject({
+      status: "completed",
+      items: [],
+      degraded: [
+        { account: "rejected@example.com", reason: "gog rejected the request as invalid" },
+        { account: "expired@example.com", reason: "that account needs re-auth — re-connect it in Plow" },
+      ],
+    });
+    expect(JSON.stringify(response)).not.toContain("sneaky");
+    // Every account failed and nothing was retrieved: an exit-0 exec_end here
+    // showed the run as green in the approval history with no items at all.
+    expect(execEnd(d)).not.toBe(0);
   });
 
   itSpawns("waits out a fan-out child that outlives wait_ms instead of degrading it", async () => {

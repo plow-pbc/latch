@@ -14,7 +14,7 @@
 import { capabilityDisplay, Intent, intentIsExpired, JSONValue, jv } from "@domo/protocol";
 import { PROVIDERS, vendoredProvider, type VendoredProvider } from "./providers/registry.js";
 import { MintError, type MintedAccounts, type Minter } from "./providers/mint.js";
-import { mergeFanout, planPlowGog } from "./providers/plowGog.js";
+import { gogExitReason, mergeFanout, planPlowGog } from "./providers/plowGog.js";
 import os from "node:os";
 import fs from "node:fs";
 import path from "node:path";
@@ -707,13 +707,23 @@ export class DeviceAgent {
       const failed: { account: string; reason: string }[] = [];
       for (const { a, result } of runs) {
         // The reasons carry the exit disposition only: a child's output is
-        // service-fetched text and stays out of every error string.
+        // service-fetched text and stays out of every error string. The
+        // DISPOSITION is gog's published exit table, which says more than the
+        // number without quoting a word the service wrote.
         if (result.exitCode !== 0) {
-          failed.push({ account: a.account, reason: `gog exited ${result.exitCode ?? -1}` });
+          failed.push({ account: a.account, reason: gogExitReason(result.exitCode) });
         } else ok.push({ account: a.account, stdout: this.executor.stdout(result.handle).toString("utf8") });
       }
       const merged = mergeFanout(ok, plan.sort);
-      this.audit.record("exec_end", { intentId: intent.intentId, exit_code: 0 });
+      // One number for N children, so it can only answer "did any account
+      // answer?" — a partial failure stays exit 0 with its accounts named in
+      // `degraded`, and only a fan-out where every child failed is non-zero.
+      // Exit 0 there would have shown the run as green in the approval history
+      // (viewModel.ts) with nothing retrieved at all.
+      this.audit.record("exec_end", {
+        intentId: intent.intentId,
+        exit_code: runs.length > 0 && ok.length === 0 ? 1 : 0,
+      });
       return {
         status: "completed",
         items: merged.items,
