@@ -919,7 +919,7 @@ function fetchVaultCli(arch) {
   const marker = path.join(installRoot, ".sha256");
   // Keyed by recipe as well as payload (like the vault server's stamp), so a
   // cache from before the provenance file existed regenerates once.
-  const stamp = `${asset.sha256}:provenance-v2`;
+  const stamp = `${asset.sha256}:provenance-v3`;
   if (fs.existsSync(marker) && fs.readFileSync(marker, "utf8") === stamp) {
     log(`vault cli ${arch} up to date`);
     return;
@@ -938,7 +938,7 @@ function fetchVaultCli(arch) {
   fs.copyFileSync(path.join(repoRoot, "scripts/licenses/GPL-3.0.txt"), path.join(installRoot, "LICENSE.txt"));
   fs.writeFileSync(
     path.join(installRoot, "PROVENANCE.txt"),
-    `Bitwarden CLI (bw-oss) ${lock.vaultCli.version} (GPL-3.0)\nPrebuilt upstream release: ${asset.url}\n`,
+    `Bitwarden CLI (bw-oss) ${lock.vaultCli.version} (GPL-3.0)\nPrebuilt upstream release: ${asset.url}\nCorresponding source: https://github.com/bitwarden/clients/tree/cli-v${lock.vaultCli.version}\n`,
   );
   fs.writeFileSync(marker, stamp);
   log(`vault cli ${arch} ready at ${installRoot}`);
