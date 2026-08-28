@@ -5,22 +5,24 @@ ideas hold it up.
 
 ## 1. The boundary is owner-authorized capabilities, bound to an authenticated caller
 
-Every operation is a structured intent — a normalized capability set. Before it
-runs, it must be **authorized**, and the owner chooses *how* that decision is
-made: a fresh per-operation prompt (Ask), a stored always-allow rule keyed on
-that exact capability set, a blanket Approve mode, or a delegated AI reviewer
-(Adversarial mode). So a given operation may run without a fresh human dialog —
-and in Approve or Adversarial mode a human is not in the loop per operation at
-all; what is fixed is that it runs only with capabilities the owner's configured
-policy authorized. The relay authenticates the calling agent, and that identity
-is load-bearing — it is part of the rule key and it scopes always-allow rules,
-jobs, and deferred handles, so one agent cannot act on another's. The
-per-invocation seatbelt sandbox is *derived from* the authorized capabilities.
-The guarantee is therefore narrow and exact: an operation runs only with
-capabilities the owner's policy authorized, for that authenticated agent, inside
-a sandbox built from those capabilities — **not** that a human personally decides
-each one. `DESIGN.md` records how the intent, decision, and sandbox layers fit
-together; `docs/SANDBOX-BOUNDARY.md` records what the derived profile permits.
+An operation is described by a normalized **capability set**, and it runs only if
+the owner's configured policy authorizes that set. The owner chooses *how* each
+decision is made: a fresh per-operation prompt (Ask), a stored always-allow rule
+keyed on that exact set, a blanket Approve mode, or a delegated AI reviewer
+(Adversarial mode) — so an operation may run with no human in the loop for it;
+what is fixed is that it ran under an authorization the owner configured. The
+relay authenticates the calling agent, and that identity is load-bearing: it is
+part of the rule key and it scopes always-allow rules, jobs, and deferred
+handles, so one agent cannot act on another's.
+
+How that authorization is *enforced* differs by operation and is not uniform: a
+shell command runs under a seatbelt profile derived from its capabilities; file
+and browser operations enforce their own capability-specific checks; and a
+browser session's later commands ride the session's original grant rather than
+minting a fresh decision each time. This document states the security
+**posture**, not the pipeline — `DESIGN.md` is canonical for the intent,
+decision, and enforcement layers, and `docs/SANDBOX-BOUNDARY.md` for what a
+derived seatbelt profile permits.
 
 ## 2. The calling agent is trusted; the data it handles is not
 
@@ -51,10 +53,10 @@ The line that decides whether a hardening finding is load-bearing:
   rule key, or sandbox profile.
 - **A trusted caller's own arguments are defense-in-depth.** An identifier the
   agent chose — a phone number, a chat GUID it read from the local store — sits
-  in the literal `argv` the human sees and approves. Passing it positionally
-  rather than interpolating it is worth doing when it's free, but it defends the
-  caller against itself: it is **not blocking**, and it is never worth a worse
-  approval experience.
+  in the literal `argv` the owner's policy authorizes (and that a human sees in
+  Ask mode). Passing it positionally rather than interpolating it is worth doing
+  when it's free, but it defends the caller against itself: it is **not
+  blocking**, and it is never worth a worse approval experience.
 
 If you are reviewing and about to raise a caller-hardening finding as blocking,
 it belongs on the second list, not the first.
