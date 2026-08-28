@@ -1083,61 +1083,51 @@ describe("signing out", () => {
 });
 
 describe("a sign-out while the credential handoff is in the air", () => {
-  it("aborts before minting when sign-out lands during relayInfo", async () => {
-    let release = () => {};
-    const inAir = new Promise<void>((r) => {
-      release = () => r();
+  // The two sides of the credential-mint boundary a sign-out can race. Same
+  // arrange/act; what differs is which call is on the wire — and so whether a
+  // credential exists that must be retired (the sign-out's own revoke ran
+  // before it was minted; persisting it would silently undo the sign-out).
+  for (const race of [
+    { stage: "relayInfo", revoked: [] as string[] },
+    { stage: "mintDeviceCredential", revoked: [DEVICE_TOKEN] },
+  ] as const) {
+    it(`stays signed out when the sign-out lands during ${race.stage}`, async () => {
+      let release = () => {};
+      const inAir = new Promise<void>((r) => {
+        release = () => r();
+      });
+      plow.redeems = [{ status: "verified", token: SESSION_TOKEN }];
+      if (race.stage === "relayInfo") {
+        const original = plow.relayInfo.bind(plow);
+        plow.relayInfo = async (token: string) => {
+          await inAir;
+          return original(token);
+        };
+      } else {
+        const original = plow.mintDeviceCredential.bind(plow);
+        plow.mintDeviceCredential = async (token: string, name: string) => {
+          const minted = await original(token, name);
+          await inAir;
+          return minted;
+        };
+      }
+      const onboarding = build();
+      await onboarding.begin();
+      await settle();
+
+      signOutOfPlow(home);
+      onboarding.reset();
+      release();
+      await settle();
+
+      // A mint the sign-out beat never happens; one it raced is retired.
+      // Either way nothing is persisted and the window stays signed out.
+      expect(plow.minted).toHaveLength(race.revoked.length);
+      expect(plow.revoked).toEqual(race.revoked);
+      expect(loadSettings(home).relayCredential).toBe("");
+      expect(onboarding.state().step).not.toBe("connected");
     });
-    plow.redeems = [{ status: "verified", token: SESSION_TOKEN }];
-    const original = plow.relayInfo.bind(plow);
-    plow.relayInfo = async (token: string) => {
-      await inAir;
-      return original(token);
-    };
-    const onboarding = build();
-    await onboarding.begin();
-    await settle();
-
-    signOutOfPlow(home);
-    onboarding.reset();
-    release();
-    await settle();
-
-    // Nothing was minted, so there is nothing to revoke and nothing persisted.
-    expect(plow.minted).toHaveLength(0);
-    expect(loadSettings(home).relayCredential).toBe("");
-    expect(onboarding.state().step).not.toBe("connected");
-  });
-
-  it("revokes a credential minted under a sign-out that raced the mint itself", async () => {
-    // The sign-out's own revoke ran before this credential existed, so if the
-    // mint's response lands after the sign-out, the credential must be retired
-    // by the continuation — persisting it would silently undo the sign-out
-    // with a fresh spend-capable credential.
-    let release = () => {};
-    const inAir = new Promise<void>((r) => {
-      release = () => r();
-    });
-    plow.redeems = [{ status: "verified", token: SESSION_TOKEN }];
-    const original = plow.mintDeviceCredential.bind(plow);
-    plow.mintDeviceCredential = async (token: string, name: string) => {
-      const minted = await original(token, name);
-      await inAir;
-      return minted;
-    };
-    const onboarding = build();
-    await onboarding.begin();
-    await settle();
-
-    signOutOfPlow(home);
-    onboarding.reset();
-    release();
-    await settle();
-
-    expect(plow.revoked).toEqual([DEVICE_TOKEN]);
-    expect(loadSettings(home).relayCredential).toBe("");
-    expect(onboarding.state().step).not.toBe("connected");
-  });
+  }
 });
 
 describe("a sign-out while startRelay is dialling", () => {
