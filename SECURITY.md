@@ -5,15 +5,21 @@ ideas hold it up.
 
 ## 1. The boundary is owner-authorized capabilities, bound to an authenticated caller
 
-An operation is described by a normalized **capability set**, and it runs only if
-the owner's configured policy authorizes that set. The owner chooses *how* each
-decision is made: a fresh per-operation prompt (Ask), a stored always-allow rule
-keyed on that exact set, a blanket Approve mode, or a delegated AI reviewer
-(Adversarial mode) — so an operation may run with no human in the loop for it;
-what is fixed is that it ran under an authorization the owner configured. The
-relay authenticates the calling agent, and that identity is load-bearing: it is
-part of the rule key and it scopes always-allow rules, jobs, and deferred
-handles, so one agent cannot act on another's.
+An operation that **acts** on this Mac — a file write, a command, a browser
+origin or credential grant — is a normalized **capability set**, and it runs
+only if the owner's configured policy authorizes that set. The owner chooses
+*how* that decision is made: a fresh per-operation prompt (Ask), a stored
+always-allow rule keyed on the exact set, a blanket Approve mode, or a delegated
+AI reviewer (Adversarial mode) — so it may run with no human in the loop for it.
+
+Not everything the surface exposes goes through that gate, and the honest
+boundary says so: **read-only metadata is authenticated, not capability-gated.**
+`plow_vault` can return an item's title, site, username, and field labels to any
+relay-authenticated agent with no per-operation policy decision — the gate there
+is that the caller is an authenticated agent, not an approved capability. The
+relay authenticates the calling agent, and that identity is load-bearing
+throughout: it is part of the rule key and it scopes always-allow rules, jobs,
+and deferred handles, so one agent cannot act on another's.
 
 How that authorization is *enforced* differs by operation and is not uniform: a
 shell command runs under a seatbelt profile derived from its capabilities; file

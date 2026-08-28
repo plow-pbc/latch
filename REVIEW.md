@@ -114,7 +114,8 @@ manage a resource nobody has run out of?
 *untrusted data* — goal text, and the message/web/file *content* an agent reads —
 influencing a capability, profile, or action. They do **not** cover a finding
 that the *caller's own* structured, human-approved argument (a participant handle
-or chat GUID the agent chose, sitting in the `argv` the human sees and approves)
+or chat GUID the agent chose, sitting in the `argv` the owner's policy authorizes
+(and a human sees in Ask mode))
 is interpolated rather than passed positionally. Latch treats the calling agent
 as trusted (`SECURITY.md`); such caller-hardening is welcome when it costs the
 user nothing, but it is **not `[blocking]`** and is never traded against UX.
