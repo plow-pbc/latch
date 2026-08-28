@@ -219,15 +219,15 @@ export async function decideIntent(
     return { decision: "deny", source: DENIAL_SOURCE_REVIEWER_UNAVAILABLE };
   }
 
-  // Ask mode: show the dialog, optionally with the reviewer's hint when both
-  // the toggle and a credential are present. A 402 here costs only the hint —
-  // the human was always the decider.
+  // Ask mode: show the dialog, with the reviewer's hint whenever a credential
+  // is present. A 402 here costs only the hint — the human was always the
+  // decider.
   //
   // A hint is a nicety, so it is skipped when there is no credential:
   // running a review that cannot run would buy an audit pair and a null
   // suggestion. Not a gate — nothing the human chose is refused by it.
   const hint =
-    settings.showAgentSuggestions && reviewerAvailable(settings)
+    reviewerAvailable(settings)
       ? review().then((r) => ({
           decision:
             r.verdict === "allow"

@@ -23,8 +23,6 @@ contextBridge.exposeInMainWorld("domo", {
   relaySignOut: () => ipcRenderer.invoke("settings:signOut"),
   onboardingOpen: () => ipcRenderer.invoke("onboarding:open"),
   approvalModeSet: (mode: string) => ipcRenderer.invoke("settings:setApprovalMode", mode),
-  showSuggestionsGet: () => ipcRenderer.invoke("settings:getShowSuggestions"),
-  showSuggestionsSet: (on: boolean) => ipcRenderer.invoke("settings:setShowSuggestions", on),
   // The vault's own contents, edited here instead of on its web page.
   vaultItems: () => ipcRenderer.invoke("vault:items"),
   vaultItem: (itemId: string) => ipcRenderer.invoke("vault:item", itemId),

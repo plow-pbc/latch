@@ -413,19 +413,7 @@ async function renderRules() {
     ...PURPOSE_CAVEATS.map((text) => el("p", { class: "faint", text })),
   ]);
 
-  // Whether the reviewer may speak up in Ask mode. It sits in this card because
-  // the mode it depends on is set here: the suggestion is only ever shown when
-  // a human is being asked, and only a reviewer with a credential can produce
-  // one, so both of its conditions are one row above it.
-  const suggestCheck = el("input", { attrs: { type: "checkbox" } });
-  suggestCheck.checked = await window.domo.showSuggestionsGet();
-  const suggestLabel = el("label", { class: "check block" }, [
-    suggestCheck,
-    el("span", { text: "Let the reviewer suggest an answer when an approval window opens" }),
-  ]);
-  suggestCheck.addEventListener("change", () => window.domo.showSuggestionsSet(suggestCheck.checked));
-
-  // The four reads above can outlive a quick tab switch. Do not let the
+  // The reads above can outlive a quick tab switch. Do not let the
   // completed Rules render replace the pane the user switched to meanwhile.
   if (currentTab !== "rules") return;
 
@@ -447,12 +435,6 @@ async function renderRules() {
         ? `The AI Reviewer has no credential${remedy} ` +
           "Until then it denies every request."
         : "";
-    // The suggestion is only ever shown in Ask mode, and only by a reviewer
-    // that can run. Dead rather than hidden: a checkbox that vanished would
-    // read as a setting the app lost.
-    const suggestOn = mode === "ask" && hasKey;
-    suggestCheck.disabled = !suggestOn;
-    suggestLabel.classList.toggle("disabled", !suggestOn);
     const chip = (value, label) => {
       const chip = el("span", {
         class: "chip" + (mode === value ? " active" : ""),
@@ -474,9 +456,8 @@ async function renderRules() {
       chip("deny", "Deny everything"),
     );
     purposeBlock.hidden = mode !== "adversarial";
-    // Ask mode's hint points at the checkbox below it. With no credential that
-    // checkbox is dead, so pointing at it is an instruction that cannot be
-    // followed — say what is actually true instead.
+    // Ask mode always gets the reviewer's suggestion — when the reviewer can
+    // run. With no credential it can't, so say what is actually true instead.
     if (mode === "ask" && !hasKey) {
       modeHintLine.textContent =
         "Any request a rule doesn't already cover opens an approval window. " +
@@ -490,8 +471,8 @@ async function renderRules() {
     } else {
       // Unknown stored values keep the card useful by falling back to Ask.
       modeHintLine.textContent = mode === "adversarial" ? "" :
-        "Any request a rule doesn't already cover opens an approval window. " +
-        "The AI Reviewer can still suggest an answer — turn that on below.";
+        "Any request a rule doesn't already cover opens an approval window, " +
+        "and the AI Reviewer suggests an answer.";
     }
     modeHintLine.hidden = mode === "adversarial";
   };
@@ -526,7 +507,7 @@ async function renderRules() {
         "agent is asking, what it's asking to do, the exact bounds it would get, and the purpose " +
         "you wrote for it. It never sees your files, your history on this Mac, or anything the " +
         "agent hasn't asked for.",
-      [modeChips, modeNote, purposeBlock, modeHintLine, suggestLabel],
+      [modeChips, modeNote, purposeBlock, modeHintLine],
     ),
     el("div", { class: "section-label", text: "Always-allow rules" }),
     ...ruleItems,
