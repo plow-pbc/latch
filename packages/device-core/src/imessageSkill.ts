@@ -18,6 +18,13 @@ import { Skill, SkillRegistry } from "./skills.js";
 
 /** The handle the verify-after-send recipe tells the agent to replace. */
 export const IMESSAGE_HANDLE_PLACEHOLDER = "HANDLE_FROM_THE_QUERY_ABOVE";
+/** The chat guid the verify-after-send recipe tells the agent to replace —
+ *  a group send has no single handle, so this is how it stays verifiable. */
+export const IMESSAGE_CHAT_GUID_PLACEHOLDER = "CHAT_GUID_FROM_THE_QUERY_ABOVE";
+/** The pre-send max-ROWID snapshot the agent substitutes into verifySend, so
+ *  an older successful row at the same handle/chat can never be mistaken for
+ *  the delivery of the send that just happened. */
+export const IMESSAGE_SNAPSHOT_ROWID_PLACEHOLDER = "MAX_ROWID_BEFORE_THE_SEND";
 
 /**
  * The SQL this skill teaches, as text an agent runs verbatim.
@@ -76,12 +83,25 @@ export const IMESSAGE_QUERIES = {
    and m.date/1000000000 + 978307200 > strftime('%s','now') - 129600
  order by m.date desc;`,
 
-  /** Did my send land? Newest outbound rows for one handle. */
-  verifySend: `select m.ROWID, m.is_sent, m.is_delivered,
+  /** Snapshot the newest outbound ROWID BEFORE sending. Run this first; only
+   *  a row with a HIGHER ROWID than what this returns can be the send that
+   *  is about to happen — that is what makes verifySend, below, immune to an
+   *  older successful message at the same handle or chat. */
+  verifySendSnapshot: `select max(ROWID) from message where is_from_me = 1;`,
+
+  /** Did my send land? Newest outbound rows NEWER than the pre-send
+   *  snapshot, scoped to the handle you sent to (a participant send) or the
+   *  chat guid you sent to (a chat/group send has no single handle, so it
+   *  is only findable by guid). */
+  verifySend: `select m.ROWID, c.guid as chat_guid, h.id as handle, m.is_sent, m.is_delivered,
        datetime(m.date/1000000000 + 978307200, 'unixepoch', 'localtime') as at
   from message m
-  join handle h on h.ROWID = m.handle_id
- where h.id = 'HANDLE_FROM_THE_QUERY_ABOVE' and m.is_from_me = 1
+  join chat_message_join j on j.message_id = m.ROWID
+  join chat c on c.ROWID = j.chat_id
+  left join handle h on h.ROWID = m.handle_id
+ where m.is_from_me = 1
+   and m.ROWID > MAX_ROWID_BEFORE_THE_SEND
+   and (h.id = 'HANDLE_FROM_THE_QUERY_ABOVE' or c.guid = 'CHAT_GUID_FROM_THE_QUERY_ABOVE')
  order by m.date desc
  limit 3;`,
 } as const;
@@ -208,22 +228,25 @@ ahead of \`/usr/bin\`, the same reason the read recipes above spell \`/usr/bin/s
 bare name lets a shadow binary sitting earlier on \`PATH\` receive the \`apple_events\` grant
 instead of the real Messages automation.
 
-**The text always arrives as an \`argv\` item, never pasted into the script string.** A
-message body is untrusted input (see the two rules, above) — a \`"\` or a \`\\\` in it would
-be a syntax error if interpolated into a double-quoted AppleScript literal, and
-\`" & (do shell script "…") & "\` is AppleScript injection: reachable the moment the owner
-asks you to relay something a stranger wrote. \`on run argv\` / \`item 1 of argv\` hands the
-script the text as a value it never parses — it stays visible to the approver (it is still
-plainly in the argv the approval card shows) but can never be read as AppleScript.
+**The text — and the participant or chat identifier — always arrive as \`argv\` items, never
+pasted into the script string.** A message body is untrusted input (see the two rules,
+above) — a \`"\` or a \`\\\` in it would be a syntax error if interpolated into a
+double-quoted AppleScript literal, and \`" & (do shell script "…") & "\` is AppleScript
+injection: reachable the moment the owner asks you to relay something a stranger wrote. The
+identifier gets the same treatment even though it is a value you chose, not stranger text —
+one fewer thing that can break the script. \`on run argv\` / \`item 1 of argv\` hands the
+script the text, and \`item 2 of argv\` the identifier, as values the script never parses —
+both stay visible to the approver (plainly in the argv the approval card shows) but can
+never be read as AppleScript.
 
 **To a participant**, by phone number or email:
 
     plow_run_command {
       argv: ["/usr/bin/osascript",
              "-e", "on run argv",
-             "-e", "tell application \\"Messages\\" to send (item 1 of argv) to participant \\"<phone or email>\\" of (first account whose service type = iMessage)",
+             "-e", "tell application \\"Messages\\" to send (item 1 of argv) to participant (item 2 of argv) of (first account whose service type = iMessage)",
              "-e", "end run",
-             "<text>"],
+             "<text>", "<phone or email>"],
       apple_events: true,
       goal: "<what the owner asked for, in one line>"
     }
@@ -234,9 +257,9 @@ group thread, since a group has no single participant to address:
     plow_run_command {
       argv: ["/usr/bin/osascript",
              "-e", "on run argv",
-             "-e", "tell application \\"Messages\\" to send (item 1 of argv) to chat id \\"<guid from recentChats>\\"",
+             "-e", "tell application \\"Messages\\" to send (item 1 of argv) to chat id (item 2 of argv)",
              "-e", "end run",
-             "<text>"],
+             "<text>", "<guid from recentChats>"],
       apple_events: true,
       goal: "<what the owner asked for, in one line>"
     }
@@ -247,9 +270,9 @@ holding a quote cannot break the script either:
     plow_run_command {
       argv: ["/usr/bin/osascript",
              "-e", "on run argv",
-             "-e", "tell application \\"Messages\\" to send (POSIX file (item 1 of argv)) to participant \\"<phone or email>\\" of (first account whose service type = iMessage)",
+             "-e", "tell application \\"Messages\\" to send (POSIX file (item 1 of argv)) to participant (item 2 of argv) of (first account whose service type = iMessage)",
              "-e", "end run",
-             "<absolute path>"],
+             "<absolute path>", "<phone or email>"],
       apple_events: true,
       read_paths: ["<the file's directory>"],
       goal: "<what the owner asked for, in one line>"
@@ -268,14 +291,24 @@ approver; that defeats the approval, it does not satisfy it.
 ## Verify after send
 
 \`osascript\` returns as soon as Messages.app accepts the request — before delivery — and a
-send to an unrecognized or unreachable handle can fail silently with no error at all. Check
-what actually happened:
+send to an unrecognized or unreachable handle can fail silently with no error at all. Worse,
+a bare "newest row for this handle" query can hand back an OLDER successful send as if it
+were confirmation of the one that just (silently) failed — so snapshot first, **before**
+you send:
+
+${indented(IMESSAGE_QUERIES.verifySendSnapshot)}
+
+Then, after the send, check what actually happened:
 
 ${indented(IMESSAGE_QUERIES.verifySend)}
 
-Substitute the handle you sent to for \`${IMESSAGE_HANDLE_PLACEHOLDER}\`, then read
-\`is_sent\` and \`is_delivered\` on the newest row. A send that never shows up here did not go
-out, whatever \`osascript\` returned.
+Substitute the number the snapshot returned for \`${IMESSAGE_SNAPSHOT_ROWID_PLACEHOLDER}\`,
+and whichever you sent to for \`${IMESSAGE_HANDLE_PLACEHOLDER}\` (a participant send) or
+\`${IMESSAGE_CHAT_GUID_PLACEHOLDER}\` (a chat/group send — leave the other placeholder as
+text, it will simply never match). Then read \`is_sent\` and \`is_delivered\` on the newest
+row. A send that never shows up here did not go out, whatever \`osascript\` returned — and
+because every row is newer than the snapshot, an older success at the same handle or chat
+can never be mistaken for this send's delivery.
 
 ## Approval semantics
 

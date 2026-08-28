@@ -17,7 +17,13 @@ import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { IMESSAGE_HANDLE_PLACEHOLDER, IMESSAGE_QUERIES, imessageStorePath } from "@domo/device-core";
+import {
+  IMESSAGE_CHAT_GUID_PLACEHOLDER,
+  IMESSAGE_HANDLE_PLACEHOLDER,
+  IMESSAGE_QUERIES,
+  IMESSAGE_SNAPSHOT_ROWID_PLACEHOLDER,
+  imessageStorePath,
+} from "@domo/device-core";
 
 const SQLITE = "/usr/bin/sqlite3";
 /** Apple's epoch: message.date counts nanoseconds from here (2001-01-01). */
@@ -105,6 +111,12 @@ function makeStore(dir: string): string {
         " values (6, 'chat-guid-6', 'chat55555555', 'Group Six', 43);",
       "insert into chat (ROWID, guid, chat_identifier, display_name, style)" +
         " values (10, 'chat-guid-10', '+15559999999', NULL, 45);",
+      // verifySend: 20 is the direct chat behind handle 300's outbound rows;
+      // 21 is a group chat with no single participant to scope by handle.
+      "insert into chat (ROWID, guid, chat_identifier, display_name, style)" +
+        " values (20, 'chat-guid-20', '+15550009999', NULL, 45);",
+      "insert into chat (ROWID, guid, chat_identifier, display_name, style)" +
+        " values (21, 'chat-guid-21', 'chat88888888', 'Group Verify', 43);",
 
       "insert into handle (ROWID, id) values (100, '+15551111111');",
       "insert into handle (ROWID, id) values (101, 'sender-group@icloud.com');",
@@ -161,6 +173,7 @@ function makeStore(dir: string): string {
       // verifySend: four outbound rows for one handle (newest three are the
       // ones a `limit 3` should return) plus a newer INBOUND row that must
       // not appear despite being the most recent message for that handle.
+      // All four (plus the failed send below) sit in chat 20.
       `insert into message (ROWID, handle_id, date, is_from_me, is_sent, is_delivered)` +
         ` values (3001, 300, ${ns(100)}, 1, 1, 1);`,
       `insert into message (ROWID, handle_id, date, is_from_me, is_sent, is_delivered)` +
@@ -171,6 +184,27 @@ function makeStore(dir: string): string {
         ` values (3004, 300, ${ns(400)}, 1, 1, 1);`,
       `insert into message (ROWID, handle_id, date, is_from_me)` +
         ` values (3005, 300, ${ns(50)}, 0);`,
+      "insert into chat_message_join (chat_id, message_id) values (20, 3001);",
+      "insert into chat_message_join (chat_id, message_id) values (20, 3002);",
+      "insert into chat_message_join (chat_id, message_id) values (20, 3003);",
+      "insert into chat_message_join (chat_id, message_id) values (20, 3004);",
+      "insert into chat_message_join (chat_id, message_id) values (20, 3005);",
+
+      // verifySend probe-3 fix, scenario (a): a NEWER send that silently
+      // FAILED (is_sent=0, is_delivered=0), at ROWID 3010 — higher than
+      // every already-successful row above (3001..3004). A snapshot taken
+      // right before this send (ROWID 3004) must return ONLY 3010, never
+      // the older successful rows at the same handle.
+      `insert into message (ROWID, handle_id, date, is_from_me, is_sent, is_delivered)` +
+        ` values (3010, 300, ${ns(10)}, 1, 0, 0);`,
+      "insert into chat_message_join (chat_id, message_id) values (20, 3010);",
+
+      // verifySend probe-3 fix, scenario (b): a group send has no single
+      // handle (handle_id is NULL — "me" isn't a handle), so it must be
+      // verifiable by chat guid alone.
+      `insert into message (ROWID, handle_id, date, is_from_me, is_sent, is_delivered)` +
+        ` values (4001, NULL, ${ns(10)}, 1, 1, 1);`,
+      "insert into chat_message_join (chat_id, message_id) values (21, 4001);",
     ].join(" "),
   ]);
   return store;
@@ -230,19 +264,54 @@ describe("the imessage recipes the skill publishes", () => {
     expect(guids).not.toContain("chat-guid-6"); // newest inbound, but a GROUP chat
   });
 
-  it("verifies a send: newest outbound rows only, is_sent/is_delivered as stored", () => {
-    const q = IMESSAGE_QUERIES.verifySend.replace(
-      IMESSAGE_HANDLE_PLACEHOLDER,
-      "verify@example.com",
-    );
-    const rows = query(store, q);
-    // limit 3 of 4 outbound rows, newest first; the newer INBOUND row (3005)
-    // never appears even though it postdates every outbound row.
-    expect(rows.map((r) => Number(r[0]))).toEqual([3001, 3002, 3003]);
-    expect(rows.map((r) => [r[1], r[2]])).toEqual([
-      ["1", "1"],
-      ["1", "0"],
-      ["0", "0"],
+  it("snapshots the newest outbound ROWID before a send", () => {
+    const rows = query(store, IMESSAGE_QUERIES.verifySendSnapshot);
+    // The highest ROWID among every is_from_me=1 row seeded above.
+    expect(rows).toEqual([["4001"]]);
+  });
+
+  /** Build the verifySend query with all three placeholders substituted. */
+  const verifySendQuery = (snapshotRowid: number, handle: string, chatGuid: string): string =>
+    IMESSAGE_QUERIES.verifySend
+      .replace(IMESSAGE_SNAPSHOT_ROWID_PLACEHOLDER, String(snapshotRowid))
+      .replace(`'${IMESSAGE_HANDLE_PLACEHOLDER}'`, `'${handle}'`)
+      .replace(`'${IMESSAGE_CHAT_GUID_PLACEHOLDER}'`, `'${chatGuid}'`);
+
+  it("verifies a send: newest outbound rows within the snapshot, is_sent/is_delivered as stored", () => {
+    // Snapshot of 0 excludes nothing, so this is the "just sent, no older
+    // history to confuse it with" case — the ordering + column contract.
+    const rows = query(store, verifySendQuery(0, "verify@example.com", "no-such-chat-guid"));
+    // limit 3 of 5 outbound rows at this handle, newest first (3010 is the
+    // most recent by date); the newer INBOUND row (3005) never appears
+    // despite postdating every outbound row.
+    expect(rows.map((r) => Number(r[0]))).toEqual([3010, 3001, 3002]);
+    expect(rows.map((r) => [r[0], r[1], r[3], r[4]])).toEqual([
+      ["3010", "chat-guid-20", "0", "0"],
+      ["3001", "chat-guid-20", "1", "1"],
+      ["3002", "chat-guid-20", "1", "0"],
     ]);
+  });
+
+  it("verifySend probe-3 fix: a silently-failed send is never confirmed by an older success at the same handle", () => {
+    // Snapshot taken right before the failed send (ROWID 3010) — its value
+    // is the newest outbound ROWID that existed at that moment, 3004.
+    const rows = query(store, verifySendQuery(3004, "verify@example.com", "no-such-chat-guid"));
+    expect(rows.map((r) => Number(r[0]))).toEqual([3010]);
+    expect(rows[0][3]).toBe("0"); // is_sent
+    expect(rows[0][4]).toBe("0"); // is_delivered
+    // None of the older, already-successful sends leak through as if they
+    // confirmed this one.
+    expect(rows.some((r) => Number(r[0]) <= 3004)).toBe(false);
+  });
+
+  it("verifySend probe-3 fix: a group send has no single handle, so it verifies by chat guid", () => {
+    const rows = query(store, verifySendQuery(4000, "no-such-handle", "chat-guid-21"));
+    expect(rows.map((r) => Number(r[0]))).toEqual([4001]);
+    const [rowid, chatGuid, handle, isSent, isDelivered] = rows[0];
+    expect(rowid).toBe("4001");
+    expect(chatGuid).toBe("chat-guid-21");
+    expect(handle).toBe(""); // no handle: a group send has no single participant
+    expect(isSent).toBe("1");
+    expect(isDelivered).toBe("1");
   });
 });
