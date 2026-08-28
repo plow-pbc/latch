@@ -383,36 +383,8 @@ export class PlowApi {
   }
 
   /**
-   * A vendored provider CLI's short-lived token, for one connected account.
-   *
-   * On this seam rather than a transport of its own: the bearer header, the
-   * request bound, and the rule that a response repeating its own credential
-   * never reaches the screen are all `call`/`errorFor`'s, and a provider mint
-   * needs every one of them. The route comes from the provider's registry row
-   * — both halves literals, never composed from anything a caller supplied.
-   *
-   * No account is sent: Plow resolves the owner's default connected one, so
-   * this Mac holds no second copy of a fact the server owns.
-   */
-  async mintProviderToken(token: string, prefix: string, action: string): Promise<string> {
-    const data = await this.call<{ data?: { access_token?: string } }>(
-      "POST",
-      `${prefix}${action}`,
-      { token, body: {} },
-    );
-    // typeof, not `?.trim()`: the body is unvalidated JSON, and a numeric or
-    // object token would throw a raw TypeError past every caller that maps
-    // PlowApiError.
-    const raw = data.data?.access_token;
-    const minted = typeof raw === "string" ? raw.trim() : "";
-    if (!minted) throw new PlowApiError("http", "Plow did not return a usable provider token.");
-    return minted;
-  }
-
-  /**
-   * The batch form of `mintProviderToken`: one short-lived token per connected
-   * account, for a provider that fans out. Same route, same scope — the body
-   * says `all`.
+   * The provider mint: one short-lived token per connected account, for a
+   * provider that fans out. The body says `all`; the route is the provider's.
    *
    * This is THE trust-boundary parse of the batch envelope, complete on
    * purpose so no future field re-opens the class. Nothing server-authored
@@ -421,9 +393,8 @@ export class PlowApi {
    * non-email account, a named-but-tokenless row, an unknown reason —
    * becomes a FIXED local degraded entry. Both arrays are parsed before the
    * empty-envelope decision, because a degraded-only envelope is a valid
-   * answer ("all your accounts need re-auth"), not a failed mint; only a
-   * envelope with nothing in it at all reports like the single mint's
-   * missing token. What a zero-healthy result MEANS is the caller's call —
+   * answer ("all your accounts need re-auth"), not a failed mint; only an
+   * envelope with nothing in it at all reports as a failed mint. What a zero-healthy result MEANS is the caller's call —
    * deviceAgent fails a single command loudly on it.
    */
   async mintAccountTokens(

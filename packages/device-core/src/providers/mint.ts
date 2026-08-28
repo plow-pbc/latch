@@ -42,15 +42,9 @@ export interface MintedAccounts {
 
 export interface Minter {
   /**
-   * The provider's short-lived token for the owner's connected account.
-   *
-   * Which account stays Plow's answer: it resolves the default connected one
+   * One token per connected account, for the provider's fan-out. Which
+   * accounts stays Plow's answer: it resolves the owner's connected ones
    * server-side, so this Mac holds no second copy of a fact the server owns.
-   */
-  mint(provider: VendoredProvider): Promise<string>;
-  /**
-   * One token per connected account, for a multi-account provider's fan-out.
-   * Same scope, same route as `mint` — the request just says `all`.
    */
   mintAll(provider: VendoredProvider): Promise<MintedAccounts>;
 }

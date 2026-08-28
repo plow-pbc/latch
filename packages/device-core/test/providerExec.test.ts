@@ -11,7 +11,14 @@ import os from "node:os";
 import path from "node:path";
 import { JSONValue, jv, makeIntent } from "@domo/protocol";
 
-import { DeviceAgent, HeadlessPolicy, impliesNetwork, MintError, type Minter } from "@domo/device-core";
+import {
+  DeviceAgent,
+  HeadlessPolicy,
+  impliesNetwork,
+  MintError,
+  type Minter,
+  type VendoredProvider,
+} from "@domo/device-core";
 
 /**
  * Only the tests that SPAWN need macOS — /usr/bin/sandbox-exec exists nowhere
@@ -91,11 +98,10 @@ function expectNeverSpawned(d: DeviceAgent): void {
   expect(events).not.toContain("exec_start");
 }
 
-/** A Minter from just the single-mint arm: the batch arm mints the same
- * token for one account, which is enough for every gog-path test here. */
-function minterOf(mint: Minter["mint"]): Minter {
+/** A Minter that mints ONE account with whatever `mint` yields (or throws),
+ * which is enough for every single-account test here. */
+function minterOf(mint: (provider: VendoredProvider) => Promise<string>): Minter {
   return {
-    mint,
     mintAll: async (provider) => ({
       accounts: [{ account: "a@example.com", token: await mint(provider), isDefault: true }],
       degraded: [],
@@ -199,7 +205,7 @@ describe("a vendored provider through the exec path", () => {
     // Falling through to the ordinary exec path would run whatever `gog` the
     // owner has installed — unbelted, unrefused, against their credentials.
     const mint = vi.fn(async () => TOKEN);
-    const d = device({ mint }, []);
+    const d = device(minterOf(mint), []);
     const response = await run(d, ["gog", "gmail", "get", "1"]);
     expect(jv(response).get("error").str).toMatch(/not installed/);
     expect(mint).not.toHaveBeenCalled();
@@ -208,7 +214,7 @@ describe("a vendored provider through the exec path", () => {
 
   itSpawns("runs --help without minting a token", async () => {
     const mint = vi.fn(async () => TOKEN);
-    const d = device({ mint }, [vendorDir()]);
+    const d = device(minterOf(mint), [vendorDir()]);
     const out = String(jv(await run(d, ["gog", "gmail", "--help"])).get("output").str ?? "");
     expect(out).toContain("ARGV=--no-input --wrap-untrusted --enable-commands=gmail,calendar gmail --help");
     expect(mint).not.toHaveBeenCalled();
@@ -216,7 +222,7 @@ describe("a vendored provider through the exec path", () => {
 
   itSpawns("leaves a non-provider command completely alone", async () => {
     const mint = vi.fn(async () => TOKEN);
-    const d = device({ mint }, [vendorDir()]);
+    const d = device(minterOf(mint), [vendorDir()]);
     const out = String(jv(await run(d, ["/bin/echo", "hello"])).get("output").str ?? "");
     expect(out).toContain("hello");
     expect(mint).not.toHaveBeenCalled();
@@ -283,10 +289,7 @@ esac
     accounts: { account: string; token: string; isDefault: boolean }[],
     degraded: { account: string; reason: string }[] = [],
   ): Minter {
-    return {
-      mint: async () => TOKEN,
-      mintAll: async () => ({ accounts, degraded }),
-    };
+    return { mintAll: async () => ({ accounts, degraded }) };
   }
 
   const AB = [
@@ -504,7 +507,7 @@ esac
 
   itSpawns("runs help without minting for any account", async () => {
     const mintAll = vi.fn(async () => ({ accounts: AB, degraded: [] }));
-    const d = device({ mint: async () => TOKEN, mintAll }, [plowVendorDir()]);
+    const d = device({ mintAll }, [plowVendorDir()]);
     const out = String(jv(await run(d, ["plow-gog", "gmail", "--help"])).get("output").str ?? "");
     expect(out).toContain("ARGV=--no-input --wrap-untrusted --enable-commands=gmail,calendar gmail --help");
     expect(mintAll).not.toHaveBeenCalled();
@@ -513,7 +516,6 @@ esac
   it("reports a failed batch mint without spawning", async () => {
     const d = device(
       {
-        mint: async () => TOKEN,
         mintAll: async () => {
           throw MintError.failed("plow-gog", "could not reach Plow");
         },

@@ -506,9 +506,10 @@ describe("PlowApi", () => {
 /**
  * The provider mint. Its response side used to be covered by a device-core
  * suite over a transport of its own; that transport is gone, so the coverage
- * belongs here — on the seam that actually makes the call.
+ * belongs here — on the seam that actually makes the call. (The envelope's
+ * per-row parse is `providerWiring.test.ts`'s, one layer up.)
  */
-describe("mintProviderToken", () => {
+describe("mintAccountTokens", () => {
   const TOKEN = "ya29.a0AfB_byExampleTokenValue0000000000";
   const CRED = "plow-credential-value";
   const mint = (responses: { status: number; body: unknown }[]) => {
@@ -516,7 +517,7 @@ describe("mintProviderToken", () => {
     return {
       calls,
       run: () =>
-        new PlowApi("https://api.plow.co", fetchImpl).mintProviderToken(
+        new PlowApi("https://api.plow.co", fetchImpl).mintAccountTokens(
           CRED,
           "/v1/connectors/gmail/",
           "access-token",
@@ -524,23 +525,31 @@ describe("mintProviderToken", () => {
     };
   };
 
-  it("posts to the provider's own route with the device credential, and no account", async () => {
-    const { calls, run } = mint([{ status: 200, body: { data: { access_token: TOKEN } } }]);
-    expect(await run()).toBe(TOKEN);
+  it("posts to the provider's own route with the device credential, asking for every account", async () => {
+    const { calls, run } = mint([
+      {
+        status: 200,
+        body: { data: { accounts: [{ account: "a@example.com", access_token: TOKEN, is_default: true }] } },
+      },
+    ]);
+    expect(await run()).toEqual({
+      accounts: [{ account: "a@example.com", token: TOKEN, isDefault: true }],
+      degraded: [],
+    });
     expect(calls[0].url).toBe("https://api.plow.co/v1/connectors/gmail/access-token");
     expect((calls[0].init.headers as Record<string, string>).authorization).toBe(`Bearer ${CRED}`);
-    // Plow resolves the owner's default connected account server-side, so this
-    // Mac holds no second copy of a fact the server owns.
-    expect(calls[0].init.body).toBe("{}");
+    // Which accounts is Plow's answer: this Mac names none, so it holds no
+    // second copy of a fact the server owns.
+    expect(calls[0].init.body).toBe('{"all":true}');
   });
 
   it.each([
-    ["no token in the body", { status: 200, body: { data: {} } }],
-    ["a blank token", { status: 200, body: { data: { access_token: "  " } } }],
+    ["no accounts in the body", { status: 200, body: { data: {} } }],
+    ["an empty envelope", { status: 200, body: { data: { accounts: [], degraded: [] } } }],
     ["no data at all", { status: 200, body: {} }],
-    // Unvalidated JSON: without a typeof check this threw a raw TypeError
-    // past every caller that maps PlowApiError.
-    ["a non-string token", { status: 200, body: { data: { access_token: 7 } } }],
+    // Unvalidated JSON: a non-array here must map to PlowApiError, not throw
+    // a raw TypeError past every caller that maps it.
+    ["a non-array accounts field", { status: 200, body: { data: { accounts: 7 } } }],
   ])("refuses %s rather than returning it", async (_why, response) => {
     await expect(mint([response]).run()).rejects.toBeInstanceOf(PlowApiError);
   });

@@ -18,7 +18,7 @@
  */
 
 import type { Skill } from "../skills.js";
-import { isHelpInvocation, reservedRefusal, shapeRefusal } from "./gogGate.js";
+import { isHelpInvocation } from "./gogGate.js";
 import { GOG_CANONICAL } from "./gogGroups.js";
 import { GOG_SKILL } from "./gogSkill.js";
 import { planPlowGog } from "./plowGog.js";
@@ -103,43 +103,6 @@ export interface VendoredProvider {
 }
 
 /**
- * The vendored gog itself: what the binary needs, and what it refuses. Not a
- * row in `PROVIDERS` — every call reaches the binary through `PLOW_GOG` below,
- * which reads this for everything but its planner.
- */
-const GOG: VendoredProvider = {
-  command: "gog",
-  binary: "gog",
-  mintAction: "access-token",
-  // Not a Gmail-only scope, though the prefix says gmail: checked against
-  // plow's GMAIL_DEFAULT_SCOPES, the mint covers calendar.readonly and
-  // calendar.events too, which is what gog's ~40 calendar leaves are spent on.
-  // The route was mounted on this prefix because the calendar routes already
-  // lived there — the name is Plow's history, not a narrower grant.
-  mintPrefix: "/v1/connectors/gmail/",
-  tokenEnv: "GOG_ACCESS_TOKEN",
-  // The bound is DERIVED from the same list the check reads, so the two
-  // cannot drift into disagreeing about what is in scope.
-  belt: ["--no-input", "--wrap-untrusted", `--enable-commands=${GOG_CANONICAL.join(",")}`],
-  skill: GOG_SKILL,
-  refuse: (argv) => {
-    const rest = argv.slice(1);
-    // `--help` is inert — gog prints usage and exits — and is how the skill
-    // tells an agent to discover the surface. What the allowance rescues is
-    // `gog --help` and `gog -h`, which the flags-first shape check would
-    // otherwise refuse for leading with a flag; a group's own help
-    // (`gog gmail --help`) passes the group check without it.
-    //
-    // It also passes `gmail send --subject --help`, where `--help` is a flag's
-    // VALUE and the last word, so no group check is reached. What keeps that
-    // safe is gog refusing `--help` in a value position itself — a per-version
-    // verdict, so step 3 of the pin-bump checklist owns it, and the agreement
-    // table pins the shape.
-    return reservedRefusal(rest) ?? (isHelpInvocation(rest) ? null : shapeRefusal(rest, "gog"));
-  },
-};
-
-/**
  * The multi-account front for the vendored gog. One approved argv, N runs of
  * the binary — one per connected Google account — merged into one
  * account-tagged result; `deviceAgent.executePlowGog` is the orchestration.
@@ -154,14 +117,27 @@ const GOG: VendoredProvider = {
  */
 const PLOW_GOG: VendoredProvider = {
   command: "plow-gog",
-  binary: GOG.command,
-  mintAction: GOG.mintAction,
-  mintPrefix: GOG.mintPrefix,
-  tokenEnv: GOG.tokenEnv,
-  belt: GOG.belt,
+  binary: "gog",
+  mintAction: "access-token",
+  // Not a Gmail-only scope, though the prefix says gmail: checked against
+  // plow's GMAIL_DEFAULT_SCOPES, the mint covers calendar.readonly and
+  // calendar.events too, which is what gog's ~40 calendar leaves are spent on.
+  // The route was mounted on this prefix because the calendar routes already
+  // lived there — the name is Plow's history, not a narrower grant.
+  mintPrefix: "/v1/connectors/gmail/",
+  tokenEnv: "GOG_ACCESS_TOKEN",
+  // The bound is DERIVED from the same list the check reads, so the two
+  // cannot drift into disagreeing about what is in scope.
+  belt: ["--no-input", "--wrap-untrusted", `--enable-commands=${GOG_CANONICAL.join(",")}`],
   skill: GOG_SKILL,
   // The planner IS the gate: a refused plan and a refused argv are one
   // decision, so the dialog and the orchestrator cannot disagree about it.
+  // `--help` is inert — gog prints usage and exits — and is how the skill
+  // tells an agent to discover the surface; the planner passes it before the
+  // shape check, which would otherwise refuse `gog --help` for leading with a
+  // flag. `gmail send --subject --help`, where `--help` is a flag's VALUE and
+  // the last word, is kept safe by gog refusing `--help` in a value position
+  // itself — a per-version verdict, step 3 of the pin-bump checklist.
   refuse: (argv) => {
     const plan = planPlowGog(argv);
     return plan.kind === "refused" ? plan.reason : null;
