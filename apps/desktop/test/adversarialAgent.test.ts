@@ -341,6 +341,7 @@ describe("adversarialReview — every failure falls back to ask, never allow", (
   it("the answer is not JSON", async () => {
     answersWith("Sure! I think you should allow this.");
     await failsClosed(await review());
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it("the answer is JSON but not an object", async () => {
@@ -631,6 +632,7 @@ describe("the Plow provider", () => {
         expect(JSON.stringify(result)).not.toContain(prefix);
       }
 
+      expect(fetchMock, "one answer is one request").toHaveBeenCalledTimes(failures.length);
       expect(logs.join("\n")).not.toContain(PLOW_CREDENTIAL);
       expect(logs.join("\n")).not.toContain(prefix);
       vi.restoreAllMocks();
@@ -659,6 +661,7 @@ describe("the Plow provider", () => {
       const result = await plowReview();
       failsClosed(result, "no_credits");
       expect(result.reason).toContain("balance");
+      expect(fetchMock).toHaveBeenCalledTimes(1);
     });
 
 
@@ -675,10 +678,12 @@ describe("the Plow provider", () => {
         `Model '${PLOW_CREDENTIAL}' is not allowed`,
         "Something else entirely went wrong",
       ]) {
+        fetchMock.mockClear();
         fetchMock.mockResolvedValue(plowDetail(400, detail));
         const result = await plowReview();
         failsClosed(result);
         expect(result.reason).toBe("Plow rejected the request's model");
+        expect(fetchMock).toHaveBeenCalledTimes(1);
       }
     });
 
@@ -690,6 +695,7 @@ describe("the Plow provider", () => {
       failsClosed(result);
       expect(result.reason).toMatch(/upstream/i);
       expect(result.reason).not.toMatch(/sign in|auth|credential|token|key/i);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
     });
 
     it("any other status is reported with its code", async () => {
@@ -697,6 +703,7 @@ describe("the Plow provider", () => {
       const result = await plowReview();
       failsClosed(result);
       expect(result.reason).toContain("418");
+      expect(fetchMock).toHaveBeenCalledTimes(1);
     });
 
     it("a transport error", async () => {
