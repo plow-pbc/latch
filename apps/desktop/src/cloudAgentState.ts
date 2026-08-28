@@ -271,6 +271,7 @@ export class CloudAgentState {
     const requested = (name ?? "").trim();
     return this.sequence(async () => {
       if (generation !== this.generation) return null;
+      this.actionError = null;
       let receipt: CloudAgentResource;
       try {
         receipt = await this.deps.agents.create(credential, {
@@ -329,6 +330,7 @@ export class CloudAgentState {
     this.publish();
     const refresh = await this.sequence(async () => {
       if (generation !== this.generation) return false;
+      this.actionError = null;
       let updated: CloudAgentResource;
       try {
         updated = await this.deps.agents.updateChats(credential, id, chats);
@@ -375,6 +377,7 @@ export class CloudAgentState {
     this.abortPoll(id);
     const refresh = await this.sequence(async () => {
       if (generation !== this.generation) return false;
+      this.actionError = null;
       try {
         await this.deps.agents.delete(credential, id);
       } catch (error) {

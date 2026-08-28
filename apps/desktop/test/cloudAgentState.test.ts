@@ -666,6 +666,29 @@ describe("provisioning", () => {
     expect(f.agents.created[0].provider).toBe("exe:hermes");
   });
 
+  it("clears an earlier queued create failure when the next create succeeds", async () => {
+    const polling = deferred<CloudAgentResource>();
+    let creates = 0;
+    const f = fakes({
+      create: async () => {
+        if (++creates === 1) throw new PlowApiError("http", "The first create failed.", 500);
+        return agent({ agentId: "agent_2", status: "provisioning" });
+      },
+      poll: async () => polling.promise,
+    });
+    const state = build(tempHome(), f);
+
+    const first = state.create(["cht_1"], "First agent");
+    const second = state.create(["cht_1"], "Second agent");
+
+    await expect(first).resolves.toBeNull();
+    await expect(second).resolves.toBe("agent_2");
+    expect(state.state().cloudActionError).toBeNull();
+
+    polling.resolve(agent({ agentId: "agent_2" }));
+    await settle();
+  });
+
 });
 
 describe("removing", () => {
