@@ -81,6 +81,9 @@ def read_token(token_file):
     """
     try:
         with open(token_file) as handle:
+            permissive = _permissive(handle, token_file)
+            if permissive:
+                return None, permissive
             token = handle.read().strip()
     except OSError as error:
         return None, f"{token_file}: {error.strerror}"
@@ -96,6 +99,19 @@ def read_token(token_file):
     return token, None
 
 
+def _permissive(handle, path):
+    """The refusal for a credential file another account can read, or None.
+
+    `fstat` on the open handle, not `stat` on the path, so the mode checked is
+    the file actually being read. The 0600 contract is documented at every
+    site that says to create one of these files; enforcing it here is what
+    keeps a hand-made 0644 registration from silently sharing its bearer.
+    """
+    if os.fstat(handle.fileno()).st_mode & 0o077:
+        return f"{path} is readable by other accounts — chmod 600 it"
+    return None
+
+
 def read_config(config_file):
     """`(url, token, problem)` from a recorded client registration.
 
@@ -106,6 +122,9 @@ def read_config(config_file):
     """
     try:
         with open(config_file) as handle:
+            permissive = _permissive(handle, config_file)
+            if permissive:
+                return None, None, permissive
             parsed = json.load(handle)
     except OSError as error:
         return None, None, f"{config_file}: {error.strerror}"

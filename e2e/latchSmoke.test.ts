@@ -199,6 +199,17 @@ describe.skipIf(!havePython())("latch-smoke, run for real", () => {
       1, "REFUSED — /nonexistent/config", null, false],
     ["a config file that is not the rendered block", () => configArgv('{"mcpServers":{}}'),
       1, "exactly one entry", null, false],
+    // The 0600 contract is enforced, not just documented — for both credential files.
+    ["a config file another account can read", () => {
+      const argv = configArgv(registration("http://127.0.0.1:9/mcp"));
+      fs.chmodSync(argv[argv.indexOf("--config") + 1], 0o644);
+      return argv;
+    }, 1, "readable by other accounts", null, false],
+    ["a token file another account can read", () => {
+      const argv = fixture("5", REAL_HOME).argv;
+      fs.chmodSync(argv[argv.indexOf("--token-file") + 1], 0o644);
+      return argv;
+    }, 1, "readable by other accounts", null, false],
     // The same no-socket URL, read from the registration file — proving --config
     // actually supplies url and token to the send path, with no socket needed.
     ["a URL that never reaches a socket, from a recorded registration",
