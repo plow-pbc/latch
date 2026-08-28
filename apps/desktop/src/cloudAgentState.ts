@@ -36,6 +36,7 @@ import {
   storedActivationChat,
 } from "./onboarding.js";
 import { PlowApi, PlowApiError, parseActivationChat } from "./plowApi.js";
+import { ChatPerson, chatRowSubtitle, chatRowTitle } from "./chatRows.js";
 import { loadSettings } from "./settings.js";
 
 /**
@@ -72,6 +73,17 @@ export interface CloudLineOption {
   held: boolean;
 }
 
+/**
+ * A chat as the picker renders it: the option plus its two formatted lines.
+ *
+ * Built in `state()` rather than by the client, because the subtitle needs the
+ * LINE's persona name and only the line list carries that.
+ */
+export interface CloudChatRow extends CloudChatOption {
+  title: string;
+  subtitle: string;
+}
+
 export interface CloudChatOption {
   uid: string;
   label: string;
@@ -85,6 +97,10 @@ export interface CloudChatOption {
    * whatever it can find in the label.
    */
   recipients: ChatRecipients | null;
+  /** The humans in this chat, with names and which one is the owner — what
+   * `chatRows.ts` builds the title and subtitle from. Empty for the settings
+   * fallback chat, which persists no participants. */
+  people: ChatPerson[];
 }
 
 /**
@@ -115,7 +131,7 @@ export interface CloudAgentsUiState {
   /** Agent ids whose chat-set save is in flight or being reconciled. */
   cloudAgentEditsPending: string[];
   cloudAgentEditsSaving: string[];
-  cloudChats: CloudChatOption[];
+  cloudChats: CloudChatRow[];
   /**
    * A chat-list attempt SUCCEEDED — even if it returned nothing.
    *
@@ -258,7 +274,18 @@ export class CloudAgentState {
       cloudActionError: this.actionError,
       cloudAgentEditsPending: [...this.editsPending],
       cloudAgentEditsSaving: [...this.editsSaving],
-      cloudChats: this.chats,
+      // Rows are FORMATTED here, not in the renderer: naming a participant,
+      // spelling a number and deciding which one is the owner's are rules, and
+      // rules belong somewhere testable. `chatRows.ts` owns them.
+      cloudChats: this.chats.map((chat) => {
+        const line = chat.recipients?.line ?? null;
+        const named = this.lines?.find((row) => row.number === line) ?? null;
+        return {
+          ...chat,
+          title: chatRowTitle(chat.people ?? [], line, chat.label || chat.uid),
+          subtitle: chatRowSubtitle(line, named?.displayName ?? null, chat.people ?? []),
+        };
+      }),
       cloudChatsLoaded: this.chatsLoaded,
       // Computed HERE, on every read, from whichever chat list is current.
       // Storing it at fetch time raced: the chat read and the line read settle
@@ -758,7 +785,7 @@ function storedChats(home: string): CloudChatOption[] {
   const chat = storedActivationChat(loadSettings(home));
   // No recipients: settings keep a uid and a label, never the participants. The
   // chat is still offered so setup works, but it cannot be messaged.
-  return chat ? [{ ...chat, recipients: null }] : [];
+  return chat ? [{ ...chat, recipients: null, people: [] }] : [];
 }
 
 /**
@@ -855,7 +882,16 @@ export class CloudChatsClient implements CloudChatsApi {
             member.displayName ?? "", deviceCredential,
           ) ? { ...member, displayName: null } : member),
         };
-        return { uid: chat.uid, label: activationChatLabel(safe), recipients: activationChatRecipients(safe) };
+        return {
+          uid: chat.uid,
+          label: activationChatLabel(safe),
+          recipients: activationChatRecipients(safe),
+          people: safe.participants.flatMap((member) => {
+            const number = (member.providerKey ?? "").trim();
+            if (!number) return [];
+            return [{ number, name: member.displayName?.trim() || null, isOwner: member.isOwner }];
+          }),
+        };
       });
   }
 }

@@ -44,11 +44,22 @@ const CHAT = {
     line: "+14155550142",
     members: ["+14155550193", "+16285550112"],
   },
+  people: [
+    { number: "+14155550193", name: null, isOwner: true },
+    { number: "+16285550112", name: "Robin", isOwner: false },
+  ],
+  // Formatted by `chatRows.ts` in the real main process; the fixture carries
+  // the finished strings the same way it carries the finished label.
+  title: "You, Robin",
+  subtitle: "Willow · +1 415-555-0142 — You +1 415-555-0193, Robin +1 628-555-0112",
 };
 const FAMILY_CHAT = {
   uid: "chat_family",
   label: "+1 (415) 555-0188 · Family group",
   recipients: { line: "+14155550188", members: [] },
+  people: [],
+  title: "+1 (415) 555-0188 · Family group",
+  subtitle: "+1 415-555-0188",
 };
 const ACTIVE_AGENT = {
   agentId: "cag_groceries",
@@ -457,7 +468,9 @@ const SCREENS = [
       "Set up a cloud agent",
       "Choose the chats this agent will read and reply in",
       "Provider", "Hermes", "Life",
-      CHAT.label,
+      // The row names its people; the line lives once, in the subtitle.
+      CHAT.title,
+      CHAT.subtitle,
       "★ Home",
       "This changes 1 chat permanently",
       "Removing the agent later will not restore them",
@@ -479,14 +492,11 @@ const SCREENS = [
       "Create a new chat",
       // The whole instruction: a chat is made by texting a Plow number, not by
       // running activation again.
-      'Text "new agent" to one of these numbers',
+      "Message a number to create a thread",
       "reopen this window",
-      // Plow's own numbers, named where it names them, and the marker on one
-      // the account already has a chat on.
-      "Willow",
-      "+14155550142",
+      // Only the FREE number: +14155550142 is held, so it is absent here and
+      // present on the screen behind as its own chat.
       "+16285550177",
-      "You already have a chat here",
     ],
   },
   {
@@ -534,6 +544,7 @@ const SCREENS = [
       cloudAgents: [{
         ...ACTIVE_AGENT,
         recipients: { line: null, members: CHAT.recipients.members },
+    people: CHAT.people ?? [],
       }],
       cloudAgentsError: "Method Not Allowed",
       cloudChatsError: "This Mac cannot list chats yet. Try re-activating it, then try again.",

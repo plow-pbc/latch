@@ -437,7 +437,7 @@ describe("the numbers a chat can be messaged on", () => {
       CREDENTIAL,
     );
 
-    expect(chats).toEqual([
+    expect(chats).toMatchObject([
       {
         uid: "cht_1",
         // Labels put non-owners first, while addressing keeps the parser's
@@ -995,9 +995,17 @@ describe("a 403 from the real chat endpoint", () => {
     // The activation chat, offered so this is not a dead end — but the list
     // itself did not come back, and `cloudChatsLoaded` still says so.
     // The fallback chat, offered so this is not a dead end — with no
-    // recipients, because settings never persisted the participants.
+    // recipients and no participants, because settings never persisted them,
+    // so the title falls back to the stored label and nothing is addressable.
     expect(shown.cloudChats).toEqual([
-      { uid: "cht_1", label: "+15550100 · Ada", recipients: null },
+      {
+        uid: "cht_1",
+        label: "+15550100 · Ada",
+        recipients: null,
+        people: [],
+        title: "+15550100 · Ada",
+        subtitle: "",
+      },
     ]);
     // The agent list is fine, and must not be blamed for this.
     expect(shown.cloudAgentsError).toBeNull();

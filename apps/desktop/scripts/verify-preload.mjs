@@ -81,6 +81,12 @@ const cloudChat = {
     line: "+14155550142",
     members: ["+14155550193", "+16285550112"],
   },
+  people: [
+    { number: "+14155550193", name: null, isOwner: true },
+    { number: "+16285550112", name: "Robin", isOwner: false },
+  ],
+  title: "You, Robin",
+  subtitle: "Willow · +1 415-555-0142 — You +1 415-555-0193, Robin +1 628-555-0112",
 };
 const cloudAgent = {
   agentId: "cag_probe",
@@ -1026,7 +1032,7 @@ app.whenReady().then(async () => {
   await waitFor(win, `document.querySelector(".cloud-modal .chat-list")`, "the activation-chat fallback checklist");
   cloudForbidden.offersActivationChat = await win.webContents.executeJavaScript(
     `[...document.querySelectorAll(".cloud-modal .chat-option-name")]
-      .some((name) => name.textContent.trim() === ${JSON.stringify("+1 (415) 555-0142, +1 (415) 555-0193, +1 (628) 555-0112")})`,
+      .some((name) => name.textContent.trim() === "You, Robin")`,
   );
   await win.webContents.executeJavaScript(
     `[...document.querySelectorAll(".cloud-modal button")].find((button) => button.textContent.trim() === "Cancel").click()`,
@@ -1097,7 +1103,7 @@ app.whenReady().then(async () => {
     const labels = [...document.querySelectorAll(".cloud-modal button")]
       .map((button) => button.textContent.trim());
     return {
-      saysTextANumber: text.includes('Text "new agent" to one of these numbers'),
+      saysTextANumber: text.includes("Message a number to create a thread"),
       saysReopen: text.includes("reopen this window"),
       // The dead route is gone: it opened the setup window, which on a
       // signed-in Mac lands on "connected" and mints nothing.
@@ -1128,24 +1134,35 @@ app.whenReady().then(async () => {
   );
   await waitFor(win, `document.querySelector(".cloud-modal .chat-list")`, "the checklist after a chat arrived");
   cloudZeroChatGuidance.reopenAsked = cloudRefreshCalls > refreshesBefore;
+  // The chat that arrived, named by its PEOPLE — the line is deliberately not
+  // in the title any more, so this looks for the participants.
   cloudZeroChatGuidance.reopenShowsNewChat = await win.webContents.executeJavaScript(
-    `[...document.querySelectorAll(".cloud-modal .chat-option-name")].some((n) => n.textContent.includes("555-0142"))`,
+    `[...document.querySelectorAll(".cloud-modal .chat-option-name")].some((n) => n.textContent === "You, Robin")`,
   );
-  // Chunk 3: the row says which LINE it runs on, under the names.
-  cloudZeroChatGuidance.chatRowShowsLine = await win.webContents.executeJavaScript(
-    `[...document.querySelectorAll(".cloud-modal .chat-option-line")].some((n) => n.textContent.includes("Willow") && n.textContent.includes("+14155550142"))`,
-  );
+  // The row: participants in the title (owner as "You", line excluded), and
+  // ONE subtitle carrying the line and every number it reaches, formatted.
+  cloudZeroChatGuidance.chatRowShowsLine = await win.webContents.executeJavaScript(`(${() => {
+    const name = document.querySelector(".cloud-modal .chat-option-name")?.textContent ?? "";
+    const line = document.querySelector(".cloud-modal .chat-option-line")?.textContent ?? "";
+    return name === "You, Robin"
+      && !name.includes("415-555-0142")
+      && line === "Willow · +1 415-555-0142 — You +1 415-555-0193, Robin +1 628-555-0112"
+      // The line is printed once on the row, not in both halves.
+      && (name + " " + line).match(/415-555-0142/g).length === 1;
+  }})()`);
   // ...and that number is now held, so the explainer offers it no button.
   await win.webContents.executeJavaScript(
     `[...document.querySelectorAll(".cloud-modal button")].find((b) => b.textContent.trim() === "New chat…")?.click()`,
   );
-  cloudZeroChatGuidance.marksHeldLine = await win.webContents.executeJavaScript(`(${() => {
+  cloudZeroChatGuidance.dropsHeldLine = await win.webContents.executeJavaScript(`(${() => {
     const rows = [...document.querySelectorAll(".cloud-modal .cloud-route-number")];
-    const held = rows.find((r) => r.textContent.includes("+14155550142"));
-    const free = rows.find((r) => r.textContent.includes("+16285550177"));
-    return !!held?.textContent.includes("You already have a chat here")
-      && !held.querySelector("button")
-      && !!free?.querySelector("button");
+    // The held number is not listed at all — it is on the screen behind this
+    // one, as the chat itself. The free one is, with its one control.
+    return !rows.some((r) => r.textContent.includes("+14155550142"))
+      && rows.length === 1
+      && !!rows[0].textContent.includes("+16285550177")
+      && !!rows[0].querySelector("button")
+      && !document.querySelector(".cloud-modal").innerText.includes("already have a chat");
   }})()`);
   await win.webContents.executeJavaScript(
     `[...document.querySelectorAll(".cloud-modal button")].find((b) => b.textContent.trim() === "Back")?.click()`,
@@ -1846,7 +1863,7 @@ app.whenReady().then(async () => {
     cloudZeroChatGuidance.reopenAsked &&
     cloudZeroChatGuidance.reopenShowsNewChat &&
     cloudZeroChatGuidance.chatRowShowsLine &&
-    cloudZeroChatGuidance.marksHeldLine &&
+    cloudZeroChatGuidance.dropsHeldLine &&
     cloudServerDetail.preserved &&
     cloudServerDetail.notReplaced &&
     settings.hasAccountGroup &&

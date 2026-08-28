@@ -581,13 +581,13 @@ const EXTERNAL_URLS: Readonly<Record<string, string>> = Object.freeze({
  * The `sms:` draft for one of Plow's numbers, or "" when the renderer named a
  * number the server did not list.
  *
- * The body is `new agent` because that is what today's webhook makes a chat
- * from; a plain text to a line the account has no chat on is still dropped.
+ * The body is a greeting, not a command: the thread is what matters, and Plow
+ * makes it from the message arriving.
  */
 function smsLineUrl(lines: readonly { number: string }[], number: string): string {
   const wanted = number.trim();
   if (!wanted || !lines.some((line) => line.number === wanted)) return "";
-  return `sms:${wanted}?&body=${encodeURIComponent("new agent")}`;
+  return `sms:${wanted}?&body=${encodeURIComponent("Hi!")}`;
 }
 
 ipcMain.handle("external:open", async (_e, key: string, detail?: string) => {
