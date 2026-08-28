@@ -12,7 +12,8 @@
  * so this whole surface is testable offline.
  *
  * Three arguments are plow-gog's own and are stripped before anything reaches
- * gog: `--account <email>` (narrow to one account), `--confirm-conflict`
+ * gog: `--account <email>[,<email>…]` (one account, or the several to fan
+ * out to), `--confirm-conflict`
  * (override the conflict gate), and the `accounts` verb (list connected
  * accounts from the mint, no gog run at all). Refusal reasons follow the house
  * rule (`gogFlags.ts`): they may name a rule, never the caller's text.
