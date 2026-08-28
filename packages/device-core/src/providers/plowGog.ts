@@ -147,7 +147,7 @@ export function planPlowGog(argv: readonly string[]): PlowGogPlan {
     // the same events back N times, and a degraded row for every account
     // that cannot read them. Observed as an agent's default grammar, so it
     // is refused with the correction rather than merged into a wrong answer.
-    if (stripped.some((arg) => arg === "--calendars" || arg.startsWith("--calendars="))) {
+    if (group === "calendar" && stripped.some((arg) => arg === "--calendars" || arg.startsWith("--calendars="))) {
       return {
         kind: "refused",
         reason:
