@@ -124,8 +124,8 @@ describe("the skill contribution footer", () => {
   // contribution must respect: no message content, no real identifiers.
   it("names the user-specific write path, the universal-fix path, and the privacy bound", () => {
     const footer = skillFooter("/Users/example");
-    // The real absolute skills directory (built from the device home), not a
-    // shell variable that plow_write_file would not expand.
+    // The real skills directory (built from the device home), not a shell
+    // variable that plow_write_file would not expand.
     expect(footer).toMatch(/\/Users\/example\/device\/skills\//);
     expect(footer).not.toMatch(/\$DOMO_HOME/);
     // A written skill loads on restart, not immediately.
@@ -133,6 +133,15 @@ describe("the skill contribution footer", () => {
     expect(footer).toMatch(/github\.com\/plow-pbc\/latch/);
     expect(footer).toMatch(/message content/i);
     expect(bareToolNames(footer)).toHaveLength(0);
+  });
+
+  it("collapses a home under the user's directory to ~ so the account name never leaks", () => {
+    // A packaged Mac's device home is /Users/<name>/Library/...; printing the
+    // absolute path in every skill read would disclose the owner's account name
+    // — the owner-identifying PII this very footer says not to include.
+    const footer = skillFooter(path.join(os.homedir(), "Library/Application Support/Plow-Latch"));
+    expect(footer).toMatch(/~\/Library\/Application Support\/Plow-Latch\/device\/skills\//);
+    expect(footer).not.toContain(os.homedir());
   });
 });
 

@@ -24,6 +24,8 @@ import {
   jv,
   makeIntent,
 } from "@domo/protocol";
+import os from "node:os";
+import path from "node:path";
 import { ToolAnnotations } from "@modelcontextprotocol/server";
 import {
   DeviceAgent,
@@ -185,16 +187,27 @@ export const MACOS_TOOLING =
  * even as skills are added or edited.
  *
  * Built from the device home rather than a static string: the write target is
- * the real absolute directory `SkillRegistry.loadDir` reads (`<home>/device/
- * skills`), so an agent following it writes where the skills actually load —
- * `$DOMO_HOME` is a shell variable `plow_write_file` would not expand. And the
- * registry loads that directory once at `DeviceAgent` construction, so a
- * newly-written skill appears after a restart, not immediately; the copy says so.
+ * the directory `SkillRegistry.loadDir` reads (`<home>/device/skills`), so an
+ * agent following it writes where the skills actually load — `$DOMO_HOME` is a
+ * shell variable `plow_write_file` would not expand. The home is shown
+ * `~`-relative rather than absolute: on a packaged Mac the real home is
+ * `/Users/<name>/Library/...`, and printing the account name in every skill
+ * read would leak owner-identifying PII — the very thing this footer tells
+ * agents not to include. `plow_write_file` canonicalizes `~`, so the tilde form
+ * still resolves to the same directory. And the registry loads that directory
+ * once at `DeviceAgent` construction, so a newly-written skill appears after a
+ * restart, not immediately; the copy says so.
  */
+function homeRelative(p: string): string {
+  const h = os.homedir();
+  if (p === h) return "~";
+  return p.startsWith(h + path.sep) ? "~" + p.slice(h.length) : p;
+}
+
 export function skillFooter(home: string): string {
   return (
     "\n\n---\nImprove this skill: if a recipe here is wrong or you found a better way, " +
-    `propose it. User-specific fixes: write a skill into ${home}/device/skills/ (an ` +
+    `propose it. User-specific fixes: write a skill into ${homeRelative(home)}/device/skills/ (an ` +
     "ordinary approved file write); it loads the next time Plow Latch restarts. Universal " +
     "fixes (schema drift, query bugs): file an issue or PR at github.com/plow-pbc/latch " +
     "quoting the exact query and observed deviation. Never include message content, real " +
