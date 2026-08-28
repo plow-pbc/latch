@@ -56,7 +56,7 @@ const ACTIVE_AGENT = {
   chatUids: [CHAT.uid, FAMILY_CHAT.uid],
   chatLabels: [CHAT.label, FAMILY_CHAT.label],
   recipients: CHAT.recipients,
-  provider: "anthropic",
+  provider: "exe:hermes",
   status: "running",
   failureReason: null,
   createdAt: "2026-08-24T18:00:00.000Z",
@@ -67,7 +67,7 @@ const PROVISIONING_AGENT = {
   chatUids: ["chat_trip"],
   chatLabels: ["+1 (628) 555-0144, +1 (415) 555-0193"],
   recipients: { line: "+16285550144", members: ["+14155550193"] },
-  provider: "anthropic",
+  provider: "exe:life",
   status: "provisioning",
   failureReason: null,
   createdAt: new Date().toISOString(),
@@ -234,7 +234,7 @@ async function setUp() {
     resolveExternalOpen = null;
     return true;
   });
-  ipcMain.handle("cloud:create", async (_e, chatUids, name) => {
+  ipcMain.handle("cloud:create", async (_e, chatUids, name, provider) => {
     cloudCreateInFlight = true;
     try {
       if (holdCloudCreate) {
@@ -247,6 +247,7 @@ async function setUp() {
           chatUids,
           chatLabels: chatUids,
           name: name || "Cloud agent",
+          provider,
           status: "provisioning",
         }],
         cloudActionError: null,
@@ -359,6 +360,7 @@ const SCREENS = [
       // Every chat the agent serves, home starred and first. The old line named
       // one chat and prefixed it "Agent"; an agent serves a set now.
       `★ ${CHAT.label}`, FAMILY_CHAT.label,
+      "Provider Hermes", "Provider Life",
       "Reads and replies in no chats", "Can reach this Mac", "Can spend inference", "Message",
       "MCP clients", "Claude Code on MacBook Pro", "Reads and replies in all chats",
       "Can reach this Mac", "Can spend inference", "Reads and replies in no chats",
@@ -448,6 +450,7 @@ const SCREENS = [
     expect: [
       "Set up a cloud agent",
       "Choose the chats this agent will read and reply in",
+      "Provider", "Hermes", "Life",
       CHAT.label,
       "★ Home",
       "This changes 1 chat permanently",
@@ -513,6 +516,9 @@ const SCREENS = [
       await waitFor(win, `document.querySelector(".cloud-modal .chat-list")`, "the chat checklist");
       await chooseFirstChat(win);
       await type(win, `input[aria-label="Agent name"]`, "Household helper");
+      await win.webContents.executeJavaScript(
+        `document.querySelector('.cloud-modal select[aria-label="Provider"]').value = "exe:life"`,
+      );
       await clickText(win, "Set up agent", 0);
       await waitFor(win, `!document.querySelector(".cloud-modal")`, "the picker to close during create");
       await waitFor(win, `document.querySelector(".cloud-agent-row .cloud-spinner")`, "the pending agent row");
@@ -523,7 +529,7 @@ const SCREENS = [
       holdCloudCreate = false;
       releaseCloudCreate = null;
     },
-    expect: ["Household helper", "Setting up…", "No granted permissions known."],
+    expect: ["Household helper", "Provider Life", "Setting up…", "No granted permissions known."],
   },
   {
     name: "cloud-teardown",
