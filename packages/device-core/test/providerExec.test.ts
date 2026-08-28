@@ -256,12 +256,17 @@ describe("a vendored provider through the exec path", () => {
  * how, degraded how — never on spawn order.
  */
 describe("plow-gog through the exec path", () => {
-  /** A vendor dir whose `gog` answers canned JSON per GOG_ACCESS_TOKEN. */
+  /**
+   * A vendor dir whose `gog` answers canned JSON per GOG_ACCESS_TOKEN — and,
+   * like the real 0.36.0 binary on a supplied token, first writes a note to
+   * stderr. Every JSON-parsing path below runs against that note.
+   */
   function plowVendorDir(): string {
     const dir = tmp();
     fs.writeFileSync(
       path.join(dir, "gog"),
       `#!/bin/sh
+[ -n "$GOG_ACCESS_TOKEN" ] && echo "Note: Using direct access token (expires in ~1 hour; no auto-refresh)" >&2
 case "$*" in
   *"calendar conflicts"*)
     case "$GOG_ACCESS_TOKEN" in

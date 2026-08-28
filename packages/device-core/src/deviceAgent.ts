@@ -688,7 +688,7 @@ export class DeviceAgent {
         // service-fetched text and stays out of every error string.
         if (result.exitCode !== 0) {
           failed.push({ account: a.account, reason: `gog exited ${result.exitCode ?? -1}` });
-        } else ok.push({ account: a.account, stdout: result.output.toString("utf8") });
+        } else ok.push({ account: a.account, stdout: result.stdout.toString("utf8") });
       }
       const merged = mergeFanout(ok, plan.sort);
       this.audit.record("exec_end", { intentId: intent.intentId, exit_code: 0 });
@@ -755,7 +755,7 @@ export class DeviceAgent {
       let conflicts: unknown = null;
       if (probe.exitCode === 0) {
         try {
-          conflicts = JSON.parse(probe.output.toString("utf8"));
+          conflicts = JSON.parse(probe.stdout.toString("utf8"));
         } catch {
           /* handled below: an unreadable probe is a failed check */
         }

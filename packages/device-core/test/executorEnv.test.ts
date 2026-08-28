@@ -45,6 +45,20 @@ async function output(exec: Executor, argv: string[], env?: Record<string, strin
 }
 
 describe.skipIf(!ON_MAC)("Executor.run", () => {
+  it("merges stderr into output for the stream, and keeps stdout alone for a parser", async () => {
+    const exec = new Executor(tmp());
+    const result = await exec.run({
+      argv: ["/bin/sh", "-c", 'echo "note" >&2; echo \'{"ok":true}\''],
+      readPaths: [],
+      writePaths: [],
+      network: false,
+      appleEvents: false,
+      waitMs: 8000,
+    });
+    expect(result.output.toString()).toContain("note");
+    expect(JSON.parse(result.stdout.toString())).toEqual({ ok: true });
+  });
+
   it("passes extra environment to the child", async () => {
     const dir = vendorDir();
     const exec = new Executor(tmp(), undefined, [dir]);
