@@ -39,8 +39,9 @@ rather than reporting an absence you did not verify.
 
     ["plow-gog", "accounts"]
 
-lists the connected accounts and which is the default, from the mint — no
-Google call at all.
+lists the connected accounts, from the mint — no Google call at all. Which is
+the default is reported for USABLE accounts; an unavailable account is listed
+with its unavailability and nothing more.
 
 **Everything else runs on ONE account.** Pass \`--account <email>\` to pick
 it. With more than one account connected, EVERY non-fan-out command — reads
