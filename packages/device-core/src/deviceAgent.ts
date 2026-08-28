@@ -552,7 +552,7 @@ export class DeviceAgent {
       // of itself, so it leaves the single-spawn path here — after the same
       // refuse and staged gates, before any mint.
       if (provider.command === "plow-gog") {
-        return this.executePlowGog(intent, provider, argv, { readPaths, writePaths, network, waitMs });
+        return this.executePlowGog(intent, provider, argv, { readPaths, writePaths, network, appleEvents, waitMs });
       }
       try {
         // A help invocation touches no network, so it gets no token.
@@ -649,7 +649,7 @@ export class DeviceAgent {
     intent: Intent,
     provider: VendoredProvider,
     argv: string[],
-    opts: { readPaths: string[]; writePaths: string[]; network: boolean; waitMs: number },
+    opts: { readPaths: string[]; writePaths: string[]; network: boolean; appleEvents: boolean; waitMs: number },
   ): Promise<JSONValue> {
     const plan = planPlowGog(argv);
     // `refuse` already rejected these before the dialog; a hand-built intent
@@ -661,6 +661,7 @@ export class DeviceAgent {
         readPaths: opts.readPaths,
         writePaths: opts.writePaths,
         network: opts.network,
+        appleEvents: opts.appleEvents,
         waitMs: opts.waitMs,
         // A help run gets no token, same as the gog path.
         env: token === null ? undefined : { [provider.tokenEnv]: token },
