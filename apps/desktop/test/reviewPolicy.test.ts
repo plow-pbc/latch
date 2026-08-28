@@ -44,7 +44,6 @@ function settings(overrides: Partial<Settings> = {}): Settings {
     mcpUrl: "",
     selectedTab: "audit",
     approvalMode: "ask",
-    showAgentSuggestions: true,
     agentPurpose: "",
     ...overrides,
   };
@@ -195,7 +194,6 @@ describe("the reviewer is told whether anyone is behind it", () => {
       settings({
         approvalMode: "ask",
         relayCredential: PLOW_CREDENTIAL,
-        showAgentSuggestions: true,
       }),
       { verdict: "ask" },
     );
@@ -512,9 +510,9 @@ describe("decideIntent — adversarial mode", () => {
 });
 
 describe("decideIntent — ask mode and suggestions", () => {
-  it("suggests when the toggle is on and there is a credential", async () => {
+  it("suggests when there is a credential", async () => {
     const h = harness(
-      settings({ approvalMode: "ask", relayCredential: PLOW_CREDENTIAL, showAgentSuggestions: true }),
+      settings({ approvalMode: "ask", relayCredential: PLOW_CREDENTIAL }),
       { verdict: "allow", decision: "always_allow" },
     );
     expect(await h.run()).toEqual({ decision: "always_allow", source: "ask" });
@@ -536,17 +534,8 @@ describe("decideIntent — ask mode and suggestions", () => {
     }
   });
 
-  it("skips the review entirely when suggestions are off", async () => {
-    const h = harness(
-      settings({ approvalMode: "ask", relayCredential: PLOW_CREDENTIAL, showAgentSuggestions: false }),
-    );
-    await h.run();
-    expect(h.review).not.toHaveBeenCalled();
-    expect(h.dialogs).toEqual([null]);
-  });
-
   it("skips the review when there is no credential", async () => {
-    const h = harness(settings({ approvalMode: "ask", showAgentSuggestions: true }));
+    const h = harness(settings({ approvalMode: "ask" }));
     await h.run();
     expect(h.review).not.toHaveBeenCalled();
     expect(h.dialogs).toEqual([null]);
@@ -556,7 +545,7 @@ describe("decideIntent — ask mode and suggestions", () => {
     // The user did not delegate the decision here, so a billing problem must
     // not turn into a denial. The dialog opens exactly as it always does.
     const h = harness(
-      settings({ approvalMode: "ask", relayCredential: PLOW_CREDENTIAL, showAgentSuggestions: true }),
+      settings({ approvalMode: "ask", relayCredential: PLOW_CREDENTIAL }),
       { verdict: "ask", cause: "no_credits", reason: "insufficient Plow balance", decision: "allow_once" },
     );
     expect(await h.run()).toEqual({ decision: "allow_once", source: "ask" });
@@ -627,7 +616,6 @@ describe("the approval dialog's advice note carries no credential either", () =>
       settings: settings({
         approvalMode: "ask",
         relayCredential: PLOW_CREDENTIAL,
-        showAgentSuggestions: true,
       }),
       apiBaseUrl: "https://api.plow.co",
       plowRoot: PLOW_ROOT,
@@ -742,7 +730,7 @@ describe("the audit tells one coherent story about who decided", () => {
     // adversarial mode `ask` is not in the schema at all, so there is nothing
     // left to render for it.
     const h = harness(
-      settings({ relayCredential: PLOW_CREDENTIAL, showAgentSuggestions: true }),
+      settings({ relayCredential: PLOW_CREDENTIAL }),
       { verdict: "ask", reason: "genuinely ambiguous", decision: "allow_once" },
     );
     const decision = await h.run();

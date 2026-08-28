@@ -67,8 +67,6 @@ export interface Settings {
   windowBounds?: WindowBounds;
   /** How operation intents are decided. */
   approvalMode: ApprovalMode;
-  /** In Ask mode, highlight the button the adversarial agent suggests. */
-  showAgentSuggestions: boolean;
   /**
    * What the owner of this Mac says agents are for, in their own words.
    *
@@ -140,7 +138,6 @@ export function loadSettings(home: string): Settings {
     mcpUrl: "",
     selectedTab: "agents",
     approvalMode: "ask",
-    showAgentSuggestions: true,
     agentPurpose: "",
     provisionedChatUid: "",
     provisionedChatLabel: "",

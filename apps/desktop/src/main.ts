@@ -698,12 +698,6 @@ ipcMain.handle("onboarding:finish", async () => {
   gate.sync();
 });
 ipcMain.handle("settings:setApprovalMode", async (_e, mode: string) => setApprovalMode(home, mode));
-ipcMain.handle("settings:getShowSuggestions", async () => loadSettings(home).showAgentSuggestions ?? true);
-ipcMain.handle("settings:setShowSuggestions", async (_e, on: boolean) => {
-  const settings = loadSettings(home);
-  settings.showAgentSuggestions = !!on;
-  saveSettings(home, settings);
-});
 // What the owner says agents are for. This pair is the only way the text is
 // written or read on the renderer's behalf; nothing an agent can reach touches
 // it, which is what makes it trusted context for the reviewer.

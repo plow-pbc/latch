@@ -260,10 +260,6 @@ async function setUp() {
   ipcMain.handle("rules:remove", async () => {});
   ipcMain.handle("settings:getInference", async () => readInference(home));
   ipcMain.handle("settings:setApprovalMode", async (_e, mode) => setApprovalMode(home, mode));
-  // The Approvals card reads this for its suggestions checkbox. A missing
-  // handler rejects, and the pane throws before it paints anything.
-  ipcMain.handle("settings:getShowSuggestions", async () => true);
-  ipcMain.handle("settings:setShowSuggestions", async () => {});
   ipcMain.handle("settings:getAgentPurpose", async () => readAgentPurpose(home));
   ipcMain.handle("settings:setAgentPurpose", async (_e, purpose) => setAgentPurpose(home, purpose));
   ipcMain.handle("settings:signOut", async () => {});
@@ -633,7 +629,6 @@ const SCREENS = [
       // readily as it narrows it. This line used to pin the opposite promise.
       "it can widen what gets approved as easily as narrow it",
       "Requests that fit may be approved without asking you.",
-      "Let the reviewer suggest an answer when an approval window opens",
       "Always-allow rules",
       "Research assistant",
       "Ops helper",
