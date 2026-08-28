@@ -31,6 +31,7 @@ import { FileOps } from "./fileOps.js";
 import { DeviceIdentity, loadOrCreateIdentity } from "./identity.js";
 import { PolicyDelegate, PolicyEngine } from "./policyEngine.js";
 import { SkillRegistry } from "./skills.js";
+import { registerImessageSkill } from "./imessageSkill.js";
 import { registerWhatsappSkill } from "./whatsappSkill.js";
 
 /**
@@ -191,6 +192,7 @@ export class DeviceAgent {
     // same start-time answer `browserRuntime` gives, so installing WhatsApp
     // while the app is running needs a restart to publish the skill.
     registerWhatsappSkill(this.skills, ownerHome);
+    registerImessageSkill(this.skills, ownerHome);
     // Registered only when the CLI it documents is actually staged: a skill
     // for a binary this Mac does not have teaches an agent commands the exec
     // path refuses unconditionally. The SAME predicate that gate uses — two
