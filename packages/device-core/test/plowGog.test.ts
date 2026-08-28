@@ -481,7 +481,8 @@ describe("mergeFanout", () => {
 describe("gog exit reasons", () => {
   it.each<{ why: string; code: number | null; reason: string }>([
     { why: "usage — in practice Google rejecting the request", code: 2, reason: "gog rejected the request as invalid" },
-    { why: "empty results", code: 3, reason: "no results" },
+    // No row for 3: gog's "empty results" is an answer, and `deviceAgent`
+    // counts it as one before this is asked what went wrong.
     { why: "auth", code: 4, reason: "that account needs re-auth — re-connect it in Plow" },
     { why: "permission denied", code: 6, reason: "permission denied for that account" },
     { why: "rate limited", code: 7, reason: "rate limited by Google" },

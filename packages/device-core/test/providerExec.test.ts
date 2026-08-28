@@ -298,6 +298,7 @@ case "$*" in
       tok-rejected) echo "sneakyagenttext" >&2; exit 2 ;;
       tok-expired) exit 4 ;;
       tok-empty) echo '[]' ;;
+      tok-noresults) exit 3 ;;
       tok-quiet) ;;
     esac ;;
   *) echo "TOKEN=$GOG_ACCESS_TOKEN ARGV=$*" ;;
@@ -412,6 +413,16 @@ esac
       mintDegraded: [{ account: "b@example.com", reason: "needs_reauth" }],
       items: [],
       degraded: [{ account: "b@example.com", reason: "needs_reauth" }],
+      exitZero: true,
+    },
+    {
+      // gog's own "empty results" disposition, which `--fail-empty` asks for.
+      // Counting it a failure marked an all-empty search red — the same
+      // "nothing today" an exit-0 empty list carries, spelled as an exit code.
+      why: "an account exiting 3 answered with nothing, and is not degraded",
+      accounts: [{ account: "a@example.com", token: "tok-noresults", isDefault: true }],
+      items: [],
+      degraded: [],
       exitZero: true,
     },
     {

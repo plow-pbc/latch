@@ -113,7 +113,7 @@ function accountAt(
 }
 
 /**
- * What a non-zero gog exit means, as a fixed sentence.
+ * Why an account FAILED, as a fixed sentence.
  *
  * gog publishes its exit codes as a contract (`gog schema --json` →
  * `automation.exit_codes`) and maps Google's own failures onto that same
@@ -124,6 +124,10 @@ function accountAt(
  * Without this the only account-level diagnosis was `gog exited 2`, and a
  * fan-out that came back empty for every account could not be told apart from
  * one whose token had expired.
+ *
+ * Exit 3 is absent deliberately: gog's "empty results" is an ANSWER, and the
+ * caller counts it as one before asking this what went wrong. A sentence for
+ * it here would be a second, disagreeing opinion about the same code.
  *
  * The rest of gog's table (5 not found, 8 retryable, 10 config, 11 orphaned,
  * 130 interrupted) keeps the bare number on purpose: those say nothing an
@@ -136,8 +140,6 @@ export function gogExitReason(exitCode: number | null): string {
     // starts, so in practice this is Google rejecting the request itself.
     case 2:
       return "gog rejected the request as invalid";
-    case 3:
-      return "no results";
     case 4:
       return "that account needs re-auth — re-connect it in Plow";
     case 6:
