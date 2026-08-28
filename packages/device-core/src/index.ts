@@ -17,6 +17,7 @@ export * from "./skills.js";
 export * from "./whatsappSkill.js";
 export * from "./imessageSkill.js";
 export * from "./plowFolder.js";
+export * from "./contactsSkill.js";
 export * from "./deviceAgent.js";
 export * from "./executor.js";
 export {

@@ -32,6 +32,7 @@ import { FileOps } from "./fileOps.js";
 import { DeviceIdentity, loadOrCreateIdentity } from "./identity.js";
 import { PolicyDelegate, PolicyEngine } from "./policyEngine.js";
 import { SkillRegistry } from "./skills.js";
+import { registerContactsSkill } from "./contactsSkill.js";
 import { registerImessageSkill } from "./imessageSkill.js";
 import { ensurePlowFolder, registerPlowFolderSkill } from "./plowFolder.js";
 import { registerWhatsappSkill } from "./whatsappSkill.js";
@@ -201,6 +202,7 @@ export class DeviceAgent {
     // and a test's throwaway ownerHome keeps the suite off the developer's.
     ensurePlowFolder(ownerHome);
     registerPlowFolderSkill(this.skills, ownerHome);
+    registerContactsSkill(this.skills, ownerHome);
     // Registered only when the CLI it documents is actually staged: a skill
     // for a binary this Mac does not have teaches an agent commands the exec
     // path refuses unconditionally. The SAME predicate that gate uses — two
