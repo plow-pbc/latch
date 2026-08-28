@@ -1154,11 +1154,11 @@ app.whenReady().then(async () => {
     // handed to this — see Onboarding's callers of `warn`.
     warn: (message) => console.log(`[onboarding] ${message}`),
   });
-  // A login session an earlier run could not retire is still live on the
+  // Login sessions an earlier run could not retire are still live on the
   // account. Detached: the boot path must not wait on Plow, and a second
-  // failure just leaves the token on disk for the next launch or the next
+  // failure just leaves them on disk for the next launch or the next
   // activation to try again.
-  void onboarding.retryPendingRevocation();
+  void onboarding.retryPendingRevocations();
 
   // Built first: the roster's removal routing needs the cloud-agent client,
   // because a row with an `agent_id` must be deleted as an agent and never

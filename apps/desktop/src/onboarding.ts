@@ -339,7 +339,7 @@ export class Onboarding {
         // `retryPendingRevocation` swallows its own failure — but a second
         // failure does leave the warning on screen under the fresh code, which
         // is where the owner can act on it.
-        await this.retryPendingRevocation();
+        await this.retryPendingRevocations();
         const created = await this.deps.api.createActivation(this.deps.deviceName);
         this.activationSecret = created.activationSecret;
         this.activation = {
@@ -784,8 +784,8 @@ export class Onboarding {
    * — so from the moment it is in hand, this process is the only thing in the
    * world that can retire it. Every path that reaches a verified token and
    * does not persist it comes through here, and the token leaves memory in
-   * exactly two ways: the server confirmed the revoke, or it is on disk as
-   * `pendingRevocation` waiting for the next try. Never on the floor.
+   * exactly two ways: the server confirmed the revoke, or it is on disk in
+   * `pendingRevocations` waiting for the next try. Never on the floor.
    *
    * Best-effort was the bug, not the design: a swallowed revoke used to be
    * indistinguishable from a successful one, and the difference is a full
@@ -797,36 +797,59 @@ export class Onboarding {
     try {
       await this.deps.api.revokeDeviceCredential(token);
     } catch {
-      // Read fresh: this is the far side of a network call, and anything may
-      // have written settings while it was out.
-      const settings = this.settings();
-      settings.pendingRevocation = token;
-      this.save(settings);
+      this.hold(token);
       // No value: the only one in scope IS the session.
       this.deps.warn?.("could not revoke a login session; holding it to retry");
       this.message = LOOSE_SESSION_WARNING;
       this.publish();
       return false;
     }
-    const settings = this.settings();
-    if ((settings.pendingRevocation ?? "").trim() === token) {
-      settings.pendingRevocation = "";
-      this.save(settings);
-    }
+    this.release(token);
     return true;
   }
 
   /**
-   * Try again to retire a session an earlier revoke could not.
+   * Keep a token for a later revoke, ALONGSIDE any already held.
+   *
+   * Appended, never assigned. A single slot looked like it was doing this job
+   * and was not: a second failed revoke overwrote the first, which is the same
+   * orphaned session the list exists to prevent, reached one layer further in.
+   * Two Macs' worth of bad network is enough to produce that.
+   *
+   * Read fresh, because this is the far side of a network call and anything
+   * may have written settings while it was out; and de-duplicated, because
+   * every retry that fails comes back through here with a token already held.
+   */
+  private hold(token: string): void {
+    const settings = this.settings();
+    if (settings.pendingRevocations.includes(token)) return;
+    settings.pendingRevocations = [...settings.pendingRevocations, token];
+    this.save(settings);
+  }
+
+  /** Forget one confirmed-dead token, leaving the rest of the list alone. */
+  private release(token: string): void {
+    const settings = this.settings();
+    if (!settings.pendingRevocations.includes(token)) return;
+    settings.pendingRevocations = settings.pendingRevocations.filter((held) => held !== token);
+    this.save(settings);
+  }
+
+  /**
+   * Try again to retire EVERY session an earlier revoke could not.
    *
    * Called on launch (`main.ts`) and before every fresh activation, which are
    * the two moments a Mac that failed once is most likely to be able to reach
-   * Plow again. Never throws and never blocks what called it: a second failure
-   * just leaves the token where it was.
+   * Plow again. Never throws and never blocks what called it: whichever
+   * entries fail again stay exactly where they were.
+   *
+   * Over a snapshot, and one at a time: `retireOrRetain` writes settings on
+   * both outcomes, so walking the live list would skip entries as it shrank.
    */
-  async retryPendingRevocation(): Promise<void> {
-    const token = (this.settings().pendingRevocation ?? "").trim();
-    if (token) await this.retireOrRetain(token);
+  async retryPendingRevocations(): Promise<void> {
+    for (const token of [...this.settings().pendingRevocations]) {
+      await this.retireOrRetain(token);
+    }
   }
 
   /**

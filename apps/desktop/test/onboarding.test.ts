@@ -146,9 +146,13 @@ class FakePlow {
 
   /** Make every revoke fail, the way an unreachable Plow does. */
   revokeFails = false;
+  /** ...or only these, so a test can let one through and refuse the next. */
+  revokeRefuses: string[] = [];
 
   async revokeDeviceCredential(token: string): Promise<void> {
-    if (this.revokeFails) throw new PlowApiError("network", "unreachable");
+    if (this.revokeFails || this.revokeRefuses.includes(token)) {
+      throw new PlowApiError("network", "unreachable");
+    }
     this.revoked.push(token);
   }
 
@@ -1323,7 +1327,7 @@ describe("a verified session this Mac does not keep", () => {
 
     expect(plow.revoked).toEqual([SESSION_TOKEN]);
     // Confirmed, so nothing is held.
-    expect(loadSettings(home).pendingRevocation).toBe("");
+    expect(loadSettings(home).pendingRevocations).toEqual([]);
     expect(loadSettings(home).relayCredential).toBe("");
     expect(onboarding.state().step).not.toBe("connected");
   });
@@ -1337,7 +1341,7 @@ describe("a verified session this Mac does not keep", () => {
     await onboarding.begin();
     await settle();
 
-    expect(loadSettings(home).pendingRevocation).toBe(SESSION_TOKEN);
+    expect(loadSettings(home).pendingRevocations).toEqual([SESSION_TOKEN]);
     // The loose session outranks the timeout that caused it: a network blip is
     // retryable, an unretired account session is the owner's to act on.
     expect(onboarding.state().message).toBe(LOOSE_SESSION_WARNING);
@@ -1360,16 +1364,16 @@ describe("a verified session this Mac does not keep", () => {
 describe("a session held for a later revoke", () => {
   function heldSession(): void {
     const settings = loadSettings(home);
-    settings.pendingRevocation = SESSION_TOKEN;
+    settings.pendingRevocations = [SESSION_TOKEN];
     saveSettings(home, settings);
   }
 
   it("is retired on the next launch, and forgotten once Plow confirms", async () => {
     heldSession();
-    await build().retryPendingRevocation();
+    await build().retryPendingRevocations();
 
     expect(plow.revoked).toEqual([SESSION_TOKEN]);
-    expect(loadSettings(home).pendingRevocation).toBe("");
+    expect(loadSettings(home).pendingRevocations).toEqual([]);
   });
 
   it("is retried before a fresh code is minted", async () => {
@@ -1380,7 +1384,7 @@ describe("a session held for a later revoke", () => {
     await onboarding.begin();
 
     expect(plow.revoked).toEqual([SESSION_TOKEN]);
-    expect(loadSettings(home).pendingRevocation).toBe("");
+    expect(loadSettings(home).pendingRevocations).toEqual([]);
     // ...and the code was still minted.
     expect(onboarding.state().activation?.displayCode).toBe("CODE1");
   });
@@ -1391,7 +1395,7 @@ describe("a session held for a later revoke", () => {
     const onboarding = build();
     await onboarding.begin();
 
-    expect(loadSettings(home).pendingRevocation).toBe(SESSION_TOKEN);
+    expect(loadSettings(home).pendingRevocations).toEqual([SESSION_TOKEN]);
     expect(onboarding.state().activation?.displayCode).toBe("CODE1");
     expect(onboarding.state().message).toBe(LOOSE_SESSION_WARNING);
   });
@@ -1401,6 +1405,67 @@ describe("a session held for a later revoke", () => {
     // this field is a session sign-out's own revoke never saw.
     heldSession();
     signOutOfPlow(home);
-    expect(loadSettings(home).pendingRevocation).toBe(SESSION_TOKEN);
+    expect(loadSettings(home).pendingRevocations).toEqual([SESSION_TOKEN]);
+  });
+
+  it("keeps BOTH when two logins fail their revoke, rather than overwriting", async () => {
+    // The field was one slot, and a slot is a silent drop: the second failed
+    // revoke assigned over the first, and that first session — live on the
+    // account, its only handle now gone — was orphaned exactly the way the
+    // whole mechanism exists to prevent. Two bad-network logins is all it took,
+    // so this drives two, through the real activation path.
+    const FIRST = "plow_sk_first_orphan";
+    const SECOND = "plow_sk_second_orphan";
+    plow.relayInfo = async () => {
+      throw new PlowApiError("network", "Plow is unreachable.");
+    };
+    plow.revokeFails = true;
+
+    const onboarding = build();
+    plow.redeems = [{ status: "verified", token: FIRST }];
+    await onboarding.begin();
+    await settle();
+    expect(loadSettings(home).pendingRevocations).toEqual([FIRST]);
+
+    // A second go at signing in, and a second session Plow will not take back.
+    plow.redeems = [{ status: "verified", token: SECOND }];
+    await onboarding.newActivationCode();
+    await settle();
+
+    expect(loadSettings(home).pendingRevocations).toEqual([FIRST, SECOND]);
+  });
+
+  it("retries every held session, and keeps the ones that fail again", async () => {
+    const FIRST = "plow_sk_first_orphan";
+    const SECOND = "plow_sk_second_orphan";
+    const settings = loadSettings(home);
+    settings.pendingRevocations = [FIRST, SECOND];
+    saveSettings(home, settings);
+
+    // Plow takes the first and refuses the second: the confirmed one leaves,
+    // the refused one stays. A retry is not all-or-nothing.
+    const onboarding = build();
+    plow.revokeRefuses = [SECOND];
+    await onboarding.retryPendingRevocations();
+
+    expect(plow.revoked).toEqual([FIRST]);
+    expect(loadSettings(home).pendingRevocations).toEqual([SECOND]);
+
+    // ...and once Plow will take it, the list empties.
+    plow.revokeRefuses = [];
+    await onboarding.retryPendingRevocations();
+    expect(plow.revoked).toEqual([FIRST, SECOND]);
+    expect(loadSettings(home).pendingRevocations).toEqual([]);
+  });
+
+  it("holds one token once, however many times its retry fails", async () => {
+    heldSession();
+    plow.revokeFails = true;
+    const onboarding = build();
+    await onboarding.retryPendingRevocations();
+    await onboarding.retryPendingRevocations();
+    await onboarding.retryPendingRevocations();
+
+    expect(loadSettings(home).pendingRevocations).toEqual([SESSION_TOKEN]);
   });
 });

@@ -33,13 +33,20 @@ branch=$(sh scripts/worktree-name.sh --branch)
 appsupport="$HOME/Library/Application Support"
 echo "cleaning up worktree '$name'…"
 
-# REFUSE while a home still holds a credential.
+# REFUSE while a home still holds ANY live session token.
 #
 # The credential is the owner's Plow login SESSION now, not a scoped device key
 # minted for this checkout — and deleting the file does not retire it. Whatever
 # is in there stays live on the account for 180 days of disuse, with nothing
 # left on this Mac that could revoke it. So: sign out in the app first (that is
 # the only thing that calls `/v1/relay/devices/self/revoke`), then run this.
+#
+# `pendingRevocations` counts too, and a signed-OUT home is exactly where it
+# turns up: it holds sessions the app could not reach Plow to retire, and it is
+# the only remaining handle on them. Sign-out does not clear it — deliberately,
+# because sign-out's own revoke is what failed — so a refusal that read only
+# the credential would wave through the one home whose deletion strands a live
+# `*:*` session for good.
 #
 # `--force` is for a home whose session is already dead or deliberately
 # abandoned; it says so out loud rather than deleting quietly.
@@ -54,14 +61,23 @@ for home in \
   "$appsupport/Domo-$branch-local"; do
   settings="$home/app/settings.json"
   [ -f "$settings" ] || continue
-  # Either field: an older home stores it in the clear, a newer one sealed.
-  if grep -qE '"relayCredential(Enc)?": *"[^"]+"' "$settings" 2>/dev/null; then
+  # Either spelling of either field: a home stores a secret in the clear where
+  # the OS offered no keychain and sealed where it did, and `pendingRevocations`
+  # is a LIST (`pendingRevocation`, singular, is its first cut — still on disk in
+  # a home that has not been read since). Newlines and spaces come out first, so
+  # one expression covers the pretty-printed array as well as the scalars; an
+  # empty string and an empty list both fail to match, which is what "holds
+  # nothing" looks like.
+  if tr -d '\n ' < "$settings" \
+    | grep -qE '"(relayCredential|pendingRevocations?)(Enc)?":("[^"]+"|\["[^"]+")' 2>/dev/null; then
     if [ "${FORCE:-}" = "1" ]; then
       echo "WARNING: $settings still holds a credential; deleting it does NOT revoke the session." >&2
       echo "         Revoke it in Plow, or it stays live on the account." >&2
     else
       echo "refusing: $settings still holds a Plow login session." >&2
       echo "  Sign out in the app first — that revokes it server-side." >&2
+      echo "  If you already have, the app is still holding a session it could" >&2
+      echo "  not reach Plow to retire; reopen it while online and it retries." >&2
       echo "  Or re-run with FORCE=1 to delete anyway and revoke it in Plow yourself." >&2
       exit 1
     fi

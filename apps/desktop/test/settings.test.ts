@@ -271,34 +271,75 @@ describe("the credential at rest", () => {
   });
 
   it("seals the session held for a later revoke, exactly like the credential", () => {
-    // `pendingRevocation` is a live `*:*` session too — the only difference is
-    // that nothing USES it. It gets the same treatment at rest.
+    // A held session is a live `*:*` session too — the only difference is that
+    // nothing USES it. Each entry gets the same treatment at rest.
     useCredentialCodec(fakeCodec());
     const home = tempHome();
     const settings = loadSettings(home);
-    settings.pendingRevocation = "plow_sk_to_retire";
+    settings.pendingRevocations = ["plow_sk_to_retire", "plow_sk_also_retire"];
     saveSettings(home, settings);
 
-    expect(fs.readFileSync(path.join(home, "app/settings.json"), "utf8")).not.toContain(
+    const raw = fs.readFileSync(path.join(home, "app/settings.json"), "utf8");
+    expect(raw).not.toContain("plow_sk_to_retire");
+    expect(raw).not.toContain("plow_sk_also_retire");
+    expect(fileOf(home).pendingRevocations).toEqual([]);
+    // Entry by entry, not one blob: one unreadable seal costs one token.
+    expect(fileOf(home).pendingRevocationsEnc).toHaveLength(2);
+    expect(loadSettings(home).pendingRevocations).toEqual([
       "plow_sk_to_retire",
-    );
-    expect(fileOf(home).pendingRevocation).toBe("");
-    expect(fileOf(home).pendingRevocationEnc).toBeTruthy();
-    expect(loadSettings(home).pendingRevocation).toBe("plow_sk_to_retire");
+      "plow_sk_also_retire",
+    ]);
   });
 
   it("migrates a plaintext held session on the first read that can seal it", () => {
     const home = tempHome();
     const settings = loadSettings(home);
-    settings.pendingRevocation = "plow_sk_to_retire";
+    settings.pendingRevocations = ["plow_sk_to_retire"];
     saveSettings(home, settings);
-    expect(fileOf(home).pendingRevocation).toBe("plow_sk_to_retire");
+    expect(fileOf(home).pendingRevocations).toEqual(["plow_sk_to_retire"]);
 
     useCredentialCodec(fakeCodec());
-    expect(loadSettings(home).pendingRevocation).toBe("plow_sk_to_retire");
+    expect(loadSettings(home).pendingRevocations).toEqual(["plow_sk_to_retire"]);
     expect(fs.readFileSync(path.join(home, "app/settings.json"), "utf8")).not.toContain(
       "plow_sk_to_retire",
     );
+  });
+
+  it("folds a single-slot home's held session into the list", () => {
+    // The first cut of this field was one slot. A load that walked past the
+    // old key would orphan exactly the session the field exists to retire, so
+    // it is folded in and the old key leaves disk on that same read.
+    useCredentialCodec(fakeCodec());
+    const home = tempHome();
+    const settings = loadSettings(home);
+    settings.pendingRevocations = ["plow_sk_from_the_list"];
+    saveSettings(home, settings);
+
+    const file = path.join(home, "app/settings.json");
+    const onDisk = JSON.parse(fs.readFileSync(file, "utf8")) as Record<string, unknown>;
+    onDisk.pendingRevocationEnc = fakeCodec().encrypt("plow_sk_from_the_slot");
+    fs.writeFileSync(file, JSON.stringify(onDisk));
+
+    expect(loadSettings(home).pendingRevocations).toEqual([
+      "plow_sk_from_the_list",
+      "plow_sk_from_the_slot",
+    ]);
+    // ...and the old key is gone, sealed into the list on that read.
+    expect(fileOf(home).pendingRevocationEnc).toBeUndefined();
+    expect(fileOf(home).pendingRevocationsEnc).toHaveLength(2);
+  });
+
+  it("folds a single-slot PLAINTEXT home in, and takes the old key off disk", () => {
+    const home = tempHome();
+    fs.mkdirSync(path.join(home, "app"), { recursive: true });
+    fs.writeFileSync(
+      path.join(home, "app/settings.json"),
+      JSON.stringify({ relayCredential: "", pendingRevocation: "plow_sk_from_the_slot" }),
+    );
+
+    expect(loadSettings(home).pendingRevocations).toEqual(["plow_sk_from_the_slot"]);
+    expect(fileOf(home).pendingRevocation).toBeUndefined();
+    expect(fileOf(home).pendingRevocations).toEqual(["plow_sk_from_the_slot"]);
   });
 
   it("reads an unreadable held session as nothing to retry", () => {
@@ -307,15 +348,18 @@ describe("the credential at rest", () => {
     useCredentialCodec(fakeCodec());
     const home = tempHome();
     const settings = loadSettings(home);
-    settings.pendingRevocation = "plow_sk_to_retire";
+    settings.pendingRevocations = ["plow_sk_readable", "plow_sk_to_retire"];
     saveSettings(home, settings);
 
     const file = path.join(home, "app/settings.json");
     const onDisk = JSON.parse(fs.readFileSync(file, "utf8")) as Record<string, unknown>;
-    onDisk.pendingRevocationEnc = "garbage-from-another-keychain";
+    const sealedList = onDisk.pendingRevocationsEnc as string[];
+    onDisk.pendingRevocationsEnc = [sealedList[0], "garbage-from-another-keychain"];
     fs.writeFileSync(file, JSON.stringify(onDisk));
 
-    expect(loadSettings(home).pendingRevocation).toBe("");
+    // The unreadable entry costs ITSELF and nothing else — the whole point of
+    // sealing entry by entry rather than as one blob.
+    expect(loadSettings(home).pendingRevocations).toEqual(["plow_sk_readable"]);
   });
 
   it("falls back to plaintext 0600 when the OS offers no keychain", () => {
