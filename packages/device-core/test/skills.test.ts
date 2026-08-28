@@ -166,21 +166,24 @@ describe("the built-in imessage skill", () => {
     ["verifying delivery after send", /is_sent.*and.*is_delivered/i],
     ["byte-identical argv for unattended reads", /byte-identical/i],
   ])("publishes %s", (_what, pattern) => {
-    expect(imessageSkillFor("/Users/example").body).toMatch(pattern);
+    expect(imessageSkillFor().body).toMatch(pattern);
   });
 
   it("shows the recipes it publishes, not a paraphrase of them", () => {
-    const body = imessageSkillFor("/Users/example").body;
+    const body = imessageSkillFor().body;
     for (const sql of Object.values(IMESSAGE_QUERIES)) {
       expect(body).toContain(sql.split("\n")[0].trim());
     }
     expect(body).toContain(`'${IMESSAGE_HANDLE_PLACEHOLDER}'`);
   });
 
-  it("names this Mac's own store rather than a path the reader must fill in", () => {
-    const skill = imessageSkillFor("/Users/example");
+  it("names the store ~-relative so the owner's account name never leaks in a skill read", () => {
+    const skill = imessageSkillFor();
     expect(skill.name).toBe("imessage");
-    expect(skill.body).toContain("/Users/example/Library/Messages/chat.db");
+    // plow_read_skill returns this body to any authenticated agent with no
+    // approval, so a resolved /Users/<name>/... would disclose the account name.
+    expect(skill.body).toContain("~/Library/Messages/chat.db");
+    expect(skill.body).not.toMatch(/\/Users\//);
     expect(skill.body).not.toContain("<owner>");
     expect(skill.description).toMatch(/imessage/i);
   });
@@ -195,7 +198,9 @@ describe("the built-in imessage skill", () => {
     fs.writeFileSync(imessageStorePath(home), "");
     const present = new SkillRegistry();
     registerImessageSkill(present, home);
-    expect(present.skill("imessage")?.body).toContain(imessageStorePath(home));
+    // Registered because the archive exists; the body names it ~-relative so a
+    // skill read never discloses the account name in `home`.
+    expect(present.skill("imessage")?.body).toContain("~/Library/Messages/chat.db");
   });
 });
 
@@ -236,7 +241,7 @@ describe("the skills a DeviceAgent publishes", () => {
     fs.mkdirSync(path.dirname(imessageStorePath(ownerHome)), { recursive: true });
     fs.writeFileSync(imessageStorePath(ownerHome), "");
     expect(agentFor(ownerHome).skills.skill("imessage")?.body).toContain(
-      imessageStorePath(ownerHome),
+      "~/Library/Messages/chat.db",
     );
   });
 
