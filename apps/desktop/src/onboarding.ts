@@ -34,14 +34,19 @@ export const CODE_LENGTH = 8;
 export const CODE_TTL_MS = 5 * 60_000;
 
 /**
- * How long the app watches for the text.
+ * How long the screen counts down before it stalls and offers a fresh code.
  *
- * The server's code lives 30 minutes (`ACTIVATION_CODE_TTL` in
- * `api/plow/auth_routes/router.py`), but a screen that says "waiting" for half
- * an hour is a worse experience than one that gives up early and hands control
- * back. So we stop at five and offer a fresh code — and because the server
- * honours a completion that lands after we stopped looking, "get a new code"
- * re-polls the old secret before minting anything.
+ * A screen that says "waiting" for half an hour is a worse experience than one
+ * that hands control back early — but stalling the SCREEN is all that happens
+ * at five minutes. The server keeps the code live for thirty
+ * (`ACTIVATION_CODE_TTL` in `api/plow/auth_routes/router.py`) and hands the
+ * session token to the FIRST redeem that sees the completion, so a watch that
+ * stopped with the countdown left a text at minute fifteen completed
+ * server-side with nobody listening: the phone said "You're all set!" while the
+ * Mac said it hadn't heard. The poll therefore continues quietly for the code's
+ * whole server life, and stops only on the server's own word — the 410. No
+ * client-side clock seconds that judgment: the server owns the code's life,
+ * and a local mirror of its TTL would just be a second owner to drift.
  */
 export const ACTIVATION_POLL_WINDOW_MS = 5 * 60_000;
 export const ACTIVATION_POLL_INTERVAL_MS = 3_000;
@@ -77,8 +82,9 @@ export interface OnboardingActivation {
   smsBody: string;
   /** `sms:` URL for the "Open Messages" button. */
   smsUrl: string;
-  /** Epoch ms we stop watching, so the screen can count down. Not the code's
-   * own deadline — the server keeps it live for 30 minutes after this. */
+  /** Epoch ms the screen's countdown ends and it offers a fresh code. Not the
+   * code's own deadline, and not the watch's: the poll runs on quietly until
+   * the server retires the code. */
   pollUntil: number;
 }
 
@@ -260,13 +266,16 @@ export class Onboarding {
   }
 
   /**
-   * A fresh code and a fresh clock — but only if the last one really did go
-   * unanswered.
+   * A fresh code — but only once the server has retired the old one.
    *
-   * We stop watching at five minutes and the server keeps the code live for
-   * thirty, so a user who texted at minute six has *already succeeded* and is
-   * looking at a screen that says otherwise. One poll on the old secret turns a
-   * pointless second code into an instant sign-in.
+   * While a code is live, its poll loop is the ONLY redeemer, and this button
+   * just puts the same code back on the clock. The button must not redeem: a
+   * redeem racing the poll's own can split the one-shot completion — one
+   * request consumes the token, the other answers tokenless "verified" — and
+   * whichever way the responses land, a login gets discarded. The loop is
+   * guaranteed to be running whenever `activationSecret` is set, because every
+   * path that ends it clears the secret in the same breath; a cleared secret
+   * is what lets this mint.
    */
   async newActivationCode(): Promise<OnboardingState> {
     // SINGLE-FLIGHT. A display code IS a credential — whoever texts it gets the
@@ -279,7 +288,16 @@ export class Onboarding {
     // progress is the only place this can be closed.
     if (this.pendingMint) return this.pendingMint;
 
-    const previous = this.activationSecret;
+    if (this.activationSecret && this.activation) {
+      // Same code, fresh clock — and one honest line about why "Try Again"
+      // is showing the code they already have.
+      this.activation = { ...this.activation, pollUntil: this.now() + ACTIVATION_POLL_WINDOW_MS };
+      this.activationStale = false;
+      this.message =
+        "That code still works — send it exactly as shown and this screen will move on by itself.";
+      return this.publish();
+    }
+
     this.cancelPolling();
     const mintId = ++this.mints;
     // The handle is dropped inside the body rather than by chaining `.finally`
@@ -288,7 +306,6 @@ export class Onboarding {
     // detached poll loop run ahead of the caller. Same guarantee, no new tick.
     const flight = this.run(async () => {
       try {
-        if (previous && (await this.tryFinish(previous))) return;
         this.activation = null;
         this.activationSecret = null;
         this.activationStale = false;
@@ -317,40 +334,6 @@ export class Onboarding {
     this.pendingMint = flight;
     this.pendingMintId = mintId;
     return flight;
-  }
-
-  /**
-   * One redeem. Returns true if it was terminal — signed in, or verified with
-   * no token to hand back — and false if there is still nothing to act on.
-   *
-   * A failed call is `false` rather than a throw: this runs where the fallback
-   * is "mint a fresh code", which will surface its own error honestly if the
-   * API is genuinely down.
-   */
-  private async tryFinish(secret: string): Promise<boolean> {
-    let result;
-    try {
-      result = await this.deps.api.redeemActivation(secret);
-    } catch {
-      return false;
-    }
-    // The same test the poll loop makes, for the same reason and against the
-    // same race: this redeem is also a call in flight, and "Get a New Code"
-    // during a sign-out would otherwise mint and persist a credential out of an
-    // activation the sign-out had already abandoned. `activationSecret` is
-    // still `secret` for the whole legitimate call — `newActivationCode` does
-    // not clear it until this returns false.
-    if (secret !== this.activationSecret) return false;
-    if (result.status !== "verified") return false;
-    if (!result.token) {
-      // The token is handed to the first redeem that sees the completion and
-      // the key is omitted on every one after, so this means it was already
-      // read and lost. A new code is the only way forward.
-      this.stall("Plow verified this Mac but didn't hand back a login. Get a new code.");
-      return true;
-    }
-    await this.finishWithSession(result.token, result.chat);
-    return true;
   }
 
   /**
@@ -392,8 +375,11 @@ export class Onboarding {
     const generation = this.pollGeneration;
     void this.pollActivation(secret, generation).catch((error) => {
       // Nothing above throws by design; if something does, the screen must not
-      // be left on a countdown that no longer runs.
+      // be left on a countdown that no longer runs — and the secret must not
+      // outlive its watcher, or "Try Again" would re-arm a code nothing
+      // is polling. Dropping it keeps the invariant: secret set ⇒ loop alive.
       if (generation !== this.pollGeneration) return;
+      this.activationSecret = null;
       this.stall(messageOf(error));
       this.publish();
     });
@@ -440,9 +426,9 @@ export class Onboarding {
       // retired.
       //
       // `activationSecret` is nulled by every path that abandons an activation
-      // for good — sign-out, the phone-code fallback, a completed login — and
-      // deliberately KEPT by `giveUp`, which is the case this late accept exists
-      // for. So it says what "already holding a credential" was only guessing at.
+      // for good — sign-out, the phone-code fallback, a completed login, the
+      // server retiring the code — so it says what "already holding a
+      // credential" was only guessing at.
       const stillOurs = secret === this.activationSecret;
       if (
         result.status === "verified" &&
@@ -451,39 +437,58 @@ export class Onboarding {
         !this.settings().relayCredential.trim()
       ) {
         this.cancelPolling();
+        // The redeem consumed the one-shot completion, so the code is spent
+        // whatever happens next: retire it BEFORE the handoff, whose network
+        // calls can fail. A failure then leaves the stalled screen minting
+        // fresh on "Try Again" — not re-arming a code nothing can complete.
+        this.activationSecret = null;
+        this.stall();
         await this.run(() => this.finishWithSession(result.token as string, result.chat));
         return;
       }
       if (generation !== this.pollGeneration) return;
 
       if (result.status === "verified") {
+        // The token was handed to some earlier redeem and lost — the code is
+        // spent. Dropping the secret is what lets "Try Again" mint.
         this.cancelPolling();
-        this.stall("Plow verified this Mac but didn't hand back a login. Get a new code.");
+        this.activationSecret = null;
+        this.stall("Plow verified this Mac but didn't hand back a login. Try again for a fresh code.");
         this.publish();
         return;
       }
 
-      // Pending, and our five minutes are up. The poll that just answered
-      // happened *after* the deadline, so a text racing it has already been
-      // caught; what is left is a genuine no-answer.
-      if (this.activation && this.now() > this.activation.pollUntil) {
-        this.giveUp("We haven't heard from your phone.");
-        return;
+      // Pending, and the screen's five minutes are up: stall the countdown and
+      // offer a fresh code — once — but keep watching. The code is live for
+      // another twenty-five minutes and its completion is handed to the first
+      // redeem only, so a loop that stopped here stranded a text at minute
+      // fifteen: completed server-side, and nobody ever came for the token.
+      if (this.activation && this.now() > this.activation.pollUntil && !this.activationStale) {
+        this.stallWithHint("We haven't heard from your phone.");
+        this.publish();
       }
     }
   }
 
   /**
-   * Stop watching and hand control back. The code itself is still live for the
-   * rest of its 30 minutes, which is exactly why "Get a New Code" re-polls this
-   * secret before it mints anything.
+   * Stop watching for good — the server has retired the code. A 410 gates only
+   * a code nobody completed, and once expired the webhook refuses its text, so
+   * nothing can arrive for this secret any more. Dropping it is what lets
+   * "Try Again" mint.
    */
   private giveUp(reason: string): void {
     this.cancelPolling();
-    this.stall(
-      `${reason} Send the message exactly as shown — it has to start with “${ACTIVATION_SMS_PREFIX}” — or get a new code.`,
-    );
+    this.activationSecret = null;
+    this.stallWithHint(reason);
     this.publish();
+  }
+
+  /** The stall message, with the one hint that fixes the silent-failure case
+   * (a wrong prefix is answered with a 200, no SMS, and a code left live). */
+  private stallWithHint(reason: string): void {
+    this.stall(
+      `${reason} Send the message exactly as shown — it has to start with “${ACTIVATION_SMS_PREFIX}” — or try again.`,
+    );
   }
 
   /**
@@ -634,8 +639,22 @@ export class Onboarding {
     sessionToken: string,
     chat: ActivationChat | null = null,
   ): Promise<void> {
+    // A sign-out can land inside the awaits below, and it must stay signed
+    // out: minting and persisting past it would hand the account a live
+    // spend-capable credential its owner just retired. `pollGeneration` is
+    // bumped by every path that abandons this login — reset, the phone
+    // fallback, a fresh mint — so it is the epoch to check against.
+    const epoch = this.pollGeneration;
     const info = await this.deps.api.relayInfo(sessionToken);
+    if (epoch !== this.pollGeneration) return;
     const minted = await this.deps.api.mintDeviceCredential(sessionToken, this.deps.deviceName);
+    if (epoch !== this.pollGeneration) {
+      // The sign-out landed during the mint itself, so its revoke never saw
+      // this credential. Retire it before it is dropped — best effort, the
+      // same contract sign-out's own revoke keeps.
+      await this.deps.api.revokeDeviceCredential(minted.token).catch(() => {});
+      return;
+    }
 
     // Written 0600 by saveSettings. This is the only copy of the credential and
     // it is never handed to the renderer.

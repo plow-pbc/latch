@@ -24,14 +24,28 @@ export function havePython(): boolean {
   }
 }
 
-/** Run a probe and parse what it printed. */
-export function runProbe<T>(script: string, args: string[] = []): T {
-  const out = execFileSync("python3", [script, ...args], {
-    encoding: "utf8",
-    env: {
-      ...process.env,
-      PYTHONPYCACHEPREFIX: fs.mkdtempSync(path.join(os.tmpdir(), "domo-pyc-")),
-    },
-  });
-  return JSON.parse(out) as T;
+/**
+ * Run a probe and parse what it printed.
+ *
+ * `env` overlays the default environment, for a probe that needs to see
+ * something particular — a `PATH` with a fake binary on it, say. The
+ * bytecode-cache policy above is the reason to come through here rather than
+ * spawn python3 directly.
+ */
+export function runProbe<T>(script: string, args: string[] = [], env: NodeJS.ProcessEnv = {}): T {
+  const cache = fs.mkdtempSync(path.join(os.tmpdir(), "domo-pyc-"));
+  try {
+    const out = execFileSync("python3", [script, ...args], {
+      encoding: "utf8",
+      // The cache prefix wins: it is the one policy this helper exists to
+      // enforce, and the `finally` below removes exactly that directory.
+      env: { ...process.env, ...env, PYTHONPYCACHEPREFIX: cache },
+    });
+    return JSON.parse(out) as T;
+  } finally {
+    // A fresh prefix per run means one directory per CALL, and a table-driven
+    // suite makes dozens — they were accumulating under the system temp dir
+    // with nothing ever removing them.
+    fs.rmSync(cache, { recursive: true, force: true });
+  }
 }

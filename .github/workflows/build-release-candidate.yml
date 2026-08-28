@@ -4,8 +4,9 @@ run-name: Manual build — ${{ github.ref_name }}@${{ github.sha }}
 
 # Domo's port of Plow's build-release-candidate workflow: build, sign,
 # notarize, upload versioned artifacts to S3, and open a DRAFT GitHub release.
-# Publishing the draft is the human approval gate — it fires promote-app.yml,
-# which copies the artifacts to the stable keys installed apps poll.
+# Publishing the draft fires promote-app.yml, which copies the artifacts to the
+# stable keys installed apps poll — and which runs in the `release` environment
+# itself, so publishing is the first of TWO approvals, not the whole gate.
 #
 # Manual dispatch only (no nightly cron): the leg against a real relay has no
 # automated coverage and is verified by hand (README-ts.md § Integration
@@ -175,6 +176,7 @@ jobs:
           VERSION="${{ steps.version.outputs.version }}"
           BUILD="${{ steps.version.outputs.build }}"
           RELEASE_URL="${{ steps.draft_release.outputs.release_url }}"
+          PROMOTE_RUNS="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/workflows/promote-app.yml"
           if [[ -n "$VERSION" && -n "$BUILD" ]]; then
             DMG_URL="https://s3.us-west-2.amazonaws.com/releases.plow.co/domo/releases/${VERSION}-${BUILD}/Plow-Latch-${VERSION}.dmg"
             {
@@ -188,8 +190,9 @@ jobs:
                 echo ""
                 echo "1. Open the [release draft](${RELEASE_URL}) and review it."
                 echo "2. Confirm **Set as the latest release** is checked, then **Publish release**."
+                echo "3. Publishing triggers the **App release** workflow, which ALSO runs in the \`release\` environment — so it starts as *Waiting*. The new run appears under [**App release** runs](${PROMOTE_RUNS}) — open it and use **Review deployments → Approve and deploy**."
                 echo ""
-                echo "Publishing triggers \`promote-app.yml\`, which copies the versioned S3 artifacts onto the stable \`domo/latest-mac.yml\` + \`domo/Plow-Latch.dmg\` keys — that's the moment installed apps start updating."
+                echo "Nothing reaches installed apps until that second approval: only then does the promote copy the versioned S3 artifacts onto the stable \`domo/latest-mac.yml\` + \`domo/Plow-Latch.dmg\` keys. Publishing and walking away leaves it waiting."
               fi
             } >> "$GITHUB_STEP_SUMMARY"
           fi

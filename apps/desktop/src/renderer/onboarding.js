@@ -152,12 +152,15 @@ function waitingScreen() {
   return [
     el("div", { class: "orow" }, [
       el("span", { class: `status-dot${state.activationStale ? "" : " on"}` }),
-      el("h2", { text: state.activationStale ? "Still nothing" : "Waiting for your text" }),
+      el("h2", { text: state.activationStale ? "Not signed in yet" : "Waiting for your text" }),
     ]),
     el("p", {
       class: "faint lede",
+      // Reason-neutral: a stale screen can mean a text that never arrived, an
+      // expired code, or a handoff that failed AFTER the server verified the
+      // text — `state.message` below says which, so this must not guess.
       text: state.activationStale
-        ? "Plow never got the message. It has to start with the words below — anything before them and Plow ignores it silently."
+        ? "The message has to start with the words below — anything before them and Plow ignores it silently."
         : "Send the message from Messages and this screen will move on by itself. Nothing to type.",
     }),
     el("div", { class: "bigcode mono", text: activation ? activation.displayCode : "—" }),
@@ -166,10 +169,10 @@ function waitingScreen() {
     el("div", { class: "oactions" }, [
       button("Open Messages…", "btn", async () => apply(await window.domo.onboardingOpenMessages())),
       el("div", { class: "spacer" }),
-      // Re-polls the old code first: the app stops watching at five minutes but
-      // the server honours it for thirty, so a text sent at minute six has
-      // already worked and this button signs them straight in.
-      button("Get a New Code", "btn primary", async () =>
+      // Re-polls the old code first: completed signs them straight in, and a
+      // code the server still honours goes back on the clock instead of being
+      // replaced — only a retired code mints a fresh one.
+      button("Try Again", "btn primary", async () =>
         apply(await window.domo.onboardingNewCode()),
       ),
     ]),

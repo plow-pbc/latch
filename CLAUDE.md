@@ -37,21 +37,24 @@ npm workspaces. Libraries in `packages/`, executables/apps in `apps/`:
 stdio shim, connection-string/pinning concepts and pairing flow) has been
 removed. A Mac dials *out* to the Plow relay, which authenticates the calling
 agent and forwards MCP to `@domo/mcp-server`. Both halves of this side exist,
-and **so does the relay** — in the `plow-pbc/plow` repository, where
+and **so does the relay** — in the `plow-pbc/plow` repository (private), where
 `api/plow/relay/` serves the MCP endpoint, the device WebSocket and an OAuth
 flow, covered by `api/tests/relay/`. **Agents reach Macs through this app
 today.** This line used to say the relay was "not built", which was true when
-written and cost a later reader a wrong assumption; check that repo rather than
-this sentence. What is gone is the in-repo stand-in that used to verify this
-side against the wire contract (head chef's call: a locally running plow API
-simulates plow). The scripts that drove a *live* stack went with it, so there
-is **no automated live-stack path** — not here, not in CI. What is manual is
-the leg against a REAL relay: bring up a plow stack, run the app against it,
-drive it. `packages/relay-client/test` does cover the client's protocol
-behavior — the pure wire contract, plus the connection lifecycle over
-hand-written fakes; nothing in it opens a socket or tunnels an MCP call. See
-[README-ts.md](README-ts.md#integration-coverage) § Integration coverage, which
-owns that list.
+written and cost a later reader a wrong assumption; check that repo rather
+than this sentence. What is gone is the in-repo stand-in that used to verify
+this side against the wire contract (head chef's call: a locally running plow
+API simulates plow). The scripts that drove a *live* stack went with it, so
+there is **no automated live-stack path** — not here, not in CI. What is
+manual is the leg against a REAL relay: bring up a plow stack, run the app
+against it, drive it. One exception, and `docs/TESTING-THE-APP.md` owns the
+account of it: `scripts/latch-smoke` drives a single real MCP call against an
+*installed* app and reads the verdict out of `audit.ndjson` — no UI walk, and
+it needs an install plus a client registration. `packages/relay-client/test`
+does cover the client's protocol behavior — the pure wire contract, plus the
+connection lifecycle over hand-written fakes; nothing in it opens a socket or
+tunnels an MCP call. See [README-ts.md](README-ts.md#integration-coverage) §
+Integration coverage, which owns that list.
 
 - **A credential never goes in a URL, a log line, an error string, or the audit
   log.** Two transports carry it, and no third kind: the relay socket's
@@ -99,8 +102,8 @@ owns that list.
   removed, so anything needing one is a manual run instead.
 - **Never launch the app on this Mac.** Windows flash on the head chef's screen.
   Electron runs — the app, the screenshot scripts, `verify-preload` — happen on
-  the M4:
-  `/Users/plucas/.claude-kitchen/projects/domo-desktop/wiki/m4-screenshots.md`.
+  a dedicated test machine (the capture procedure lives in the maintainers'
+  private wiki).
 - **The audit log is the test oracle.** Assert on `audit.ndjson` events rather
   than internal state where possible. Keep events append-only and one-per-line.
 - **`fixtures/` is the frozen protocol spec.** The golden vectors were
