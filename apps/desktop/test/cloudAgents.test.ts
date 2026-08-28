@@ -1,8 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { CloudAgentResource, CloudAgentsClient } from "../src/cloudAgents.js";
+import {
+  CREATE_REQUEST_TIMEOUT_MS,
+  ChatSetConflictError,
+  CloudAgentResource,
+  CloudAgentsClient,
+} from "../src/cloudAgents.js";
 import { PlowApi, PlowApiError } from "../src/plowApi.js";
 
 const CREDENTIAL = "plow_sk_device_do_not_leak";
+const HOLDER_ID = "0123456789abcdef0123456789abcdef";
 
 function resource(
   status: CloudAgentResource["status"],
@@ -134,14 +140,13 @@ describe("CloudAgentsClient chat grant", () => {
     failure_code: null,
   };
 
-  it("reads a chat set, keeping the first as the single-chat view", async () => {
+  it("reads a chat set, home first, in the server's order", async () => {
     const { fetchImpl } = recordingFetch([{ status: 200, body: [LIVE] }]);
 
     const [agent] = await new CloudAgentsClient(new PlowApi("https://api.plow.co", fetchImpl))
       .list(CREDENTIAL);
 
     expect(agent.chatUids).toEqual(LIVE.chat_uids);
-    expect(agent.chatUid).toBe("cht_pnTWzzOSKeChIv0eE5MKyA");
     expect(agent.status).toBe("running");
     expect(agent.name).toBeNull();
     expect(agent.createdAt).toBeNull();
@@ -157,7 +162,6 @@ describe("CloudAgentsClient chat grant", () => {
       .list(CREDENTIAL);
 
     expect(agent.chatUids).toEqual(["cht_legacy"]);
-    expect(agent.chatUid).toBe("cht_legacy");
   });
 
   it("sends the chat set as a list", async () => {
@@ -300,7 +304,6 @@ function fromWire(value: Record<string, unknown>): CloudAgentResource {
   return {
     agentId: String(value.agent_id),
     chatUids: (value.chat_uids as string[]) ?? [],
-    chatUid: ((value.chat_uids as string[]) ?? [])[0] ?? "",
     url: typeof value.url === "string" ? value.url : null,
     provider: typeof value.provider === "string" ? value.provider : null,
     name: typeof value.name === "string" ? value.name : null,
@@ -310,3 +313,197 @@ function fromWire(value: Record<string, unknown>): CloudAgentResource {
     sessionId: typeof value.session_id === "string" ? value.session_id : null,
   };
 }
+
+describe("CloudAgentsClient chat-set replacement", () => {
+  it("PUTs the whole ordered set to the agent's chats endpoint", async () => {
+    const { calls, fetchImpl } = recordingFetch([{
+      status: 200,
+      body: resource("running", { chat_uids: ["cht_home", "cht_two"] }),
+    }]);
+
+    const updated = await new CloudAgentsClient(new PlowApi("https://api.plow.co", fetchImpl))
+      .updateChats(CREDENTIAL, "agent/with space", ["cht_home", "cht_two"]);
+
+    const [call] = calls;
+    expect([call.init.method, call.url]).toEqual([
+      "PUT",
+      "https://api.plow.co/v1/agents/cloud/agent%2Fwith%20space/chats",
+    ]);
+    expect(JSON.parse(String(call.init.body))).toEqual({ chat_uids: ["cht_home", "cht_two"] });
+    expect(updated.chatUids).toEqual(["cht_home", "cht_two"]);
+  });
+
+  it("keeps the caller's order rather than sorting: the first entry is home", async () => {
+    const { calls, fetchImpl } = recordingFetch([{ status: 200, body: resource("running") }]);
+
+    await new CloudAgentsClient(new PlowApi("https://api.plow.co", fetchImpl))
+      .updateChats(CREDENTIAL, "agent_123", ["cht_zeta", "cht_alpha", "cht_mid"]);
+
+    expect(JSON.parse(String(calls[0].init.body)).chat_uids)
+      .toEqual(["cht_zeta", "cht_alpha", "cht_mid"]);
+  });
+
+  it("drops blanks and repeats, and a repeat does not demote home", async () => {
+    const { calls, fetchImpl } = recordingFetch([
+      { status: 200, body: resource("running") },
+      { status: 202, body: resource("provisioning") },
+    ]);
+    const client = new CloudAgentsClient(new PlowApi("https://api.plow.co", fetchImpl));
+
+    await client.updateChats(CREDENTIAL, "agent_123", [" cht_home ", "cht_two", "", "cht_home"]);
+    await client.create(CREDENTIAL, { chatUids: ["cht_home", "cht_home", " "] });
+
+    expect(calls.map(({ init }) => JSON.parse(String(init.body)).chat_uids)).toEqual([
+      ["cht_home", "cht_two"],
+      ["cht_home"],
+    ]);
+  });
+
+  it("drops conflict prose and keeps only a structured holder id", async () => {
+    const { fetchImpl } = recordingFetch([{
+      status: 409,
+      body: {
+        detail: {
+          code: "CHAT_SET_CONFLICT",
+          agent_id: ` ${HOLDER_ID} `,
+          message: `untrusted ${CREDENTIAL.slice(-10)}`,
+        },
+      },
+    }]);
+
+    const error = await new CloudAgentsClient(new PlowApi("https://api.plow.co", fetchImpl))
+      .updateChats(CREDENTIAL, "agent_123", ["cht_taken"])
+      .catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(ChatSetConflictError);
+    expect(String(error)).toBe(
+      "PlowApiError: This chat already belongs to another agent — edit that agent's chats instead.",
+    );
+    expect(String(error)).not.toContain(CREDENTIAL.slice(-10));
+    expect((error as ChatSetConflictError).conflictingAgentIds).toEqual([HOLDER_ID]);
+    expect((error as PlowApiError).status).toBe(409);
+  });
+
+  it("extracts a holder id from conflict prose without displaying the prose", async () => {
+    const { fetchImpl } = recordingFetch([
+      {
+        status: 409,
+        body: {
+          detail: {
+            code: "CHAT_SET_CONFLICT",
+            message: `These chats overlap cloud agent ${HOLDER_ID}. Secret ${CREDENTIAL.slice(-10)}.`,
+          },
+        },
+      },
+    ]);
+
+    const error = await new CloudAgentsClient(new PlowApi("https://api.plow.co", fetchImpl))
+      .updateChats(CREDENTIAL, "a", ["cht_1"])
+      .catch((caught: unknown) => caught);
+
+    expect(String(error)).toBe(
+      "PlowApiError: This chat already belongs to another agent — edit that agent's chats instead.",
+    );
+    expect(String(error)).not.toContain("These chats overlap");
+    expect(String(error)).not.toContain(CREDENTIAL.slice(-10));
+    expect((error as ChatSetConflictError).conflictingAgentIds).toEqual([HOLDER_ID]);
+  });
+
+  it("says an agent that never started cannot have its chats changed", async () => {
+    const { fetchImpl } = recordingFetch([{
+      status: 409,
+      body: { detail: { code: "AGENT_FAILED", message: "unused" } },
+    }]);
+
+    const error = await new CloudAgentsClient(new PlowApi("https://api.plow.co", fetchImpl))
+      .updateChats(CREDENTIAL, "agent_123", ["cht_1"])
+      .catch((caught: unknown) => caught);
+
+    expect(String(error)).toContain("failed to start");
+    expect(String(error)).toContain("Remove it and set one up again");
+  });
+
+  it.each([500, 502, 503])("uses plain failure wording for a %s", async (status) => {
+    const { fetchImpl } = recordingFetch([{ status, body: { detail: "boom" } }]);
+
+    const error = await new CloudAgentsClient(new PlowApi("https://api.plow.co", fetchImpl))
+      .updateChats(CREDENTIAL, "agent_123", ["cht_1"])
+      .catch((caught: unknown) => caught);
+
+    expect(String(error)).toBe("PlowApiError: Couldn't update the agent. Try again.");
+    expect((error as PlowApiError).status).toBe(status);
+  });
+
+  it("reports a 4xx that is not a conflict as itself, not as a rollback", async () => {
+    const { fetchImpl } = recordingFetch([{ status: 403, body: {} }]);
+
+    const error = await new CloudAgentsClient(new PlowApi("https://api.plow.co", fetchImpl))
+      .updateChats(CREDENTIAL, "agent_123", ["cht_1"])
+      .catch((caught: unknown) => caught);
+
+    expect((error as PlowApiError).kind).toBe("forbidden");
+    expect(String(error)).not.toContain("Nothing changed");
+  });
+
+  it("refuses a response that repeats the credential back", async () => {
+    const { fetchImpl } = recordingFetch([{
+      status: 200,
+      body: resource("running", { chat_uids: [`cht_${CREDENTIAL}`] }),
+    }]);
+
+    const error = await new CloudAgentsClient(new PlowApi("https://api.plow.co", fetchImpl))
+      .updateChats(CREDENTIAL, "agent_123", ["cht_1"])
+      .catch((caught: unknown) => caught);
+
+    expect(String(error)).toBe("PlowApiError: Plow returned an unsafe cloud-agent response.");
+    expect(String(error)).not.toContain(CREDENTIAL);
+  });
+});
+
+describe("CloudAgentsClient request budgets", () => {
+  /** Watch what each call asks `PlowApi` for, without changing what it does. */
+  function watchedApi(fetchImpl: (url: string, init?: RequestInit) => Promise<Response>) {
+    const api = new PlowApi("https://api.plow.co", fetchImpl);
+    const asked: Array<{ method: string; path: string; timeoutMs?: number }> = [];
+    const real = api.request.bind(api);
+    api.request = ((method: string, path: string, opts: Parameters<typeof real>[2] = {}) => {
+      asked.push({ method, path, timeoutMs: opts.timeoutMs });
+      return real(method, path, opts);
+    }) as typeof api.request;
+    return { api, asked };
+  }
+
+  it("gives the chat-set PUT the same budget as a create", async () => {
+    const { fetchImpl } = recordingFetch([
+      { status: 202, body: resource("provisioning") },
+      { status: 200, body: resource("running") },
+    ]);
+    const { api, asked } = watchedApi(fetchImpl);
+    const client = new CloudAgentsClient(api);
+
+    await client.create(CREDENTIAL, { chatUids: ["cht_1"] });
+    await client.updateChats(CREDENTIAL, "agent_123", ["cht_1"]);
+
+    // The PUT restarts the agent, so it waits on the provider exactly as the
+    // create does. On the default budget a save that would have succeeded
+    // times out — and a timed-out PUT is the outcome with no knowable result.
+    expect(asked).toEqual([
+      { method: "POST", path: "/v1/agents/cloud", timeoutMs: CREATE_REQUEST_TIMEOUT_MS },
+      { method: "PUT", path: "/v1/agents/cloud/agent_123/chats", timeoutMs: CREATE_REQUEST_TIMEOUT_MS },
+    ]);
+  });
+
+  it("leaves the reads on the default budget", async () => {
+    const { fetchImpl } = recordingFetch([
+      { status: 200, body: { data: [] } },
+      { status: 204 },
+    ]);
+    const { api, asked } = watchedApi(fetchImpl);
+    const client = new CloudAgentsClient(api);
+
+    await client.list(CREDENTIAL);
+    await client.delete(CREDENTIAL, "agent_123");
+
+    expect(asked.map((call) => call.timeoutMs)).toEqual([undefined, undefined]);
+  });
+});

@@ -8,6 +8,14 @@ import {
   PURPOSE_PLACEHOLDER,
 } from "./approvals.js";
 
+import {
+  canEditChats,
+  dropChat,
+  editorChats,
+  makeHome,
+  pickChat,
+  sameChatSet,
+} from "./chatSets.js";
 import { el, icon } from "./dom.js";
 import { renderVault, vaultConfirmLeave } from "./vault.js";
 
@@ -911,11 +919,133 @@ const pendingCloudCreates = new Map();
 let pendingCloudCreateId = 0;
 
 function visibleCloudAgents(state) {
-  const serverChats = new Set(state.cloudAgents.map((agent) => agent.chatUid));
+  const serverChats = new Set(state.cloudAgents.flatMap((agent) => agent.chatUids ?? []));
   return [
-    ...[...pendingCloudCreates.values()].filter((agent) => !serverChats.has(agent.chatUid)),
+    // A local pending row survives only until the server has a row covering any
+    // of the chats it asked for — one overlap is enough, because a chat belongs
+    // to at most one agent and the server's row is the real one.
+    ...[...pendingCloudCreates.values()].filter(
+      (agent) => !(agent.chatUids ?? []).some((uid) => serverChats.has(uid)),
+    ),
     ...state.cloudAgents,
   ];
+}
+
+/**
+ * Which agent already serves each chat, by uid.
+ *
+ * The picker offers a chat only if nothing holds it — one chat belongs to one
+ * agent, so offering a taken one is offering a 409. Built from the agent rows
+ * rather than the credential roster because the answer wanted here is the
+ * agent's NAME, and the set on the agent is the one the server enforces.
+ */
+function cloudChatHolders(state, exceptAgentId = null) {
+  const holders = new Map();
+  const claim = (uid, name) => {
+    if (!uid || holders.has(uid)) return;
+    holders.set(uid, name || "another agent");
+  };
+  for (const agent of visibleCloudAgents(state)) {
+    if (agent.agentId === exceptAgentId) continue;
+    for (const uid of agent.chatUids ?? []) claim(uid, agent.name);
+  }
+  return holders;
+}
+
+/**
+ * What a modal built around a checklist should focus.
+ *
+ * Not simply the first checkbox: every chat in the list can be disabled — an
+ * account whose chats all belong to other agents — and focusing a disabled
+ * control focuses nothing at all, leaving the modal with no keyboard entry
+ * point and Escape as the only way out.
+ */
+function firstUsableControl(panel) {
+  const enabled = (selector) =>
+    [...panel.querySelectorAll(selector)].find((node) => !node.disabled) ?? null;
+  return enabled("input:not([type=hidden])") ?? enabled("button") ?? null;
+}
+
+/**
+ * The chat checklist both modals are built from.
+ *
+ * Its one selection array is already the wire shape: home first, then every
+ * other chosen chat. An edit starts in server order, a new pick appends, and
+ * moving home moves that uid to position zero.
+ */
+function chatChecklist({ chats, holders, selected = [], onChange }) {
+  const order = chats.map((chat) => chat.uid);
+  // Home is position zero. Starting from the server's own array preserves its
+  // order on edit; newly checked chats append after the retained ones.
+  let chosen = selected.filter((uid) => order.includes(uid));
+  const chosenNow = () => new Set(chosen);
+
+  // Each row is built ONCE and updated in place. Rebuilding the list from a
+  // checkbox's own change handler detaches the <label> that click is still
+  // travelling through, and the label's activation then lands on the fresh
+  // checkbox and toggles it straight back.
+  const rows = chats.map((chat) => {
+    const heldBy = holders.get(chat.uid);
+    const taken = !!heldBy && !chosen.includes(chat.uid);
+    const row = el("label", { class: `chat-option${taken ? " disabled" : ""}` });
+
+    const box = el("input", { attrs: { type: "checkbox" } });
+    box.checked = chosen.includes(chat.uid);
+    box.disabled = taken;
+    box.addEventListener("change", () => {
+      chosen = box.checked
+        ? pickChat(chosen, chat.uid)
+        : dropChat(chosen, chat.uid, order);
+      paint();
+      onChange?.();
+    });
+
+    // The name is the whole row: a chat has no title, so its label already IS
+    // its numbers. The only second line worth printing is why it cannot be had.
+    const main = el("div", { class: "chat-option-main" }, [
+      el("div", { class: "chat-option-name", text: chat.label || chat.uid }),
+    ]);
+    if (taken) {
+      main.appendChild(el("div", { class: "chat-option-note", text: `Served by ${heldBy}` }));
+    }
+
+    // Only a chosen chat can be home, so this is shown and hidden rather than
+    // built and destroyed — one more node that must not move under a click.
+    const make = el("button", {
+      class: "home-toggle",
+      attrs: { type: "button", title: "Reminders the agent schedules land in its home chat" },
+    });
+    make.addEventListener("click", (event) => {
+      // Without this the click also activates the surrounding <label>, which
+      // would toggle the very chat the user is promoting to home.
+      event.preventDefault();
+      chosen = makeHome(chosen, chat.uid);
+      paint();
+      onChange?.();
+    });
+
+    row.append(box, main, make);
+    return { chat, box, make };
+  });
+
+  const paint = () => {
+    const picked = chosenNow();
+    for (const { chat, box, make } of rows) {
+      box.checked = picked.has(chat.uid);
+      make.hidden = !picked.has(chat.uid);
+      const isHome = chosen[0] === chat.uid;
+      make.classList.toggle("on", isHome);
+      make.textContent = isHome ? "★ Home" : "Make home";
+    }
+  };
+
+  const list = el("div", { class: "chat-list" }, rows.map(({ box }) => box.parentElement));
+  paint();
+  return {
+    node: list,
+    chosen: () => [...chosen],
+    homeLabel: () => chats.find((chat) => chat.uid === chosen[0])?.label ?? null,
+  };
 }
 
 function verifiedCloudLines(chats) {
@@ -934,58 +1064,60 @@ function cloudPhoneDigits(number) {
 }
 
 function openCloudPicker(trigger, state, redraw) {
-  const newChatValue = "__new_chat__";
-  const select = el("select", { class: "text", attrs: { "aria-label": "Chat" } },
-    [
-      ...state.cloudChats.map((chat) => el("option", { text: chat.label, attrs: { value: chat.uid } })),
-      el("option", { text: "New chat…", attrs: { value: newChatValue } }),
-    ],
-  );
   const name = el("input", { class: "text", attrs: { placeholder: "Cloud agent", "aria-label": "Agent name" } });
-  const warning = el("div", { class: "cloud-warning" }, [
-    el("div", { class: "warn cloud-warning-title", text: "This changes the chat permanently" }),
-    el("p", {
-      class: "faint",
-      text: "This agent will take over notifications for the selected chat. Removing the agent later will not restore them.",
-    }),
-  ]);
-  const syncWarning = () => {
-    warning.hidden = select.value === newChatValue ||
-      visibleCloudAgents(state).some((agent) => agent.chatUid === select.value);
+  const warningTitle = el("div", { class: "warn cloud-warning-title", text: "" });
+  const warningBody = el("p", { class: "faint", text: "" });
+  const warning = el("div", { class: "cloud-warning" }, [warningTitle, warningBody]);
+  const cancel = el("button", { class: "btn", text: "Cancel" });
+  const create = el("button", { class: "btn primary", text: "Set up agent" });
+
+  const checklist = chatChecklist({
+    chats: state.cloudChats,
+    holders: cloudChatHolders(state),
+    onChange: () => syncPicker(),
+  });
+
+  // Every chat this agent takes over is a chat whose notifications change and
+  // do not come back, so the warning counts what was actually chosen.
+  const syncPicker = () => {
+    const chosen = checklist.chosen();
+    create.disabled = chosen.length === 0;
+    warning.hidden = chosen.length === 0;
+    warningTitle.textContent =
+      `This changes ${chosen.length} chat${chosen.length === 1 ? "" : "s"} permanently`;
+    warningBody.textContent =
+      "This agent will take over notifications for the chats you picked. Removing the agent later will not restore them.";
   };
 
-  const cancel = el("button", { class: "btn", text: "Cancel" });
   cancel.addEventListener("click", closeCloudModal);
-  const create = el("button", { class: "btn primary", text: "Set up agent" });
   create.addEventListener("click", async () => {
-    if (!select.value) return;
-    if (select.value === newChatValue) {
-      showExplainer();
-      return;
-    }
+    const chatUids = checklist.chosen();
+    if (!chatUids.length) return;
     create.disabled = true;
     cancel.disabled = true;
     create.replaceChildren(
       el("span", { class: "cloud-spinner", attrs: { "aria-hidden": "true" } }),
       el("span", { text: "Setting up…" }),
     );
-    const chatUid = select.value;
     const requestedName = name.value.trim();
-    const chat = state.cloudChats.find((option) => option.uid === chatUid);
+    const labelFor = (uid) =>
+      state.cloudChats.find((option) => option.uid === uid)?.label || uid;
+    const home = state.cloudChats.find((option) => option.uid === chatUids[0]);
     const pendingId = `pending-cloud-${++pendingCloudCreateId}`;
     pendingCloudCreates.set(pendingId, {
       agentId: pendingId,
       name: requestedName || "Cloud agent",
-      chatUid,
-      chatLabel: chat?.label || chatUid,
-      recipients: chat?.recipients ?? null,
+      chatUids,
+      chatLabels: chatUids.map(labelFor),
+      // Home's, like every other row: it is the chat Message opens.
+      recipients: home?.recipients ?? null,
       provider: "",
       status: "provisioning",
       failureReason: null,
       createdAt: "",
       localPending: true,
     });
-    const request = window.domo.cloudCreate(chatUid, requestedName);
+    const request = window.domo.cloudCreate(chatUids, requestedName);
     await new Promise((resolve) => requestAnimationFrame(resolve));
     closeCloudModal();
     await redraw();
@@ -996,20 +1128,36 @@ function openCloudPicker(trigger, state, redraw) {
       await redraw();
     }
   });
+
+  const newChatLink = el("button", {
+    class: "linkbtn",
+    text: "New chat…",
+    attrs: { type: "button" },
+  });
+  newChatLink.addEventListener("click", () => showExplainer());
+
   const pickerChildren = [
     el("div", { class: "group-title", text: "Set up a cloud agent" }),
-    el("p", { class: "faint conn-note", text: "Choose the chat where this agent will read and reply." }),
-    el("div", { class: "field" }, [el("label", { text: "Chat" }), select]),
+    el("p", { class: "faint conn-note", text: "Choose the chats this agent will read and reply in." }),
+    el("div", { class: "field" }, [
+      el("label", { text: "Chats" }),
+      checklist.node,
+      el("p", { class: "chat-list-alt" }, [newChatLink]),
+    ]),
     el("div", { class: "field" }, [el("label", { text: "Name (optional)" }), name]),
     warning,
-    el("div", { class: "row cloud-modal-actions" }, [cancel, el("div", { class: "spacer" }), create]),
+    el("div", { class: "row cloud-modal-actions" }, [
+      el("div", { class: "spacer" }),
+      cancel,
+      create,
+    ]),
   ];
   let panel = null;
   const showPicker = () => {
     if (!panel) return;
     panel.replaceChildren(...pickerChildren);
-    syncWarning();
-    select.focus();
+    syncPicker();
+    firstUsableControl(panel)?.focus();
   };
   const showExplainer = () => {
     if (!panel) return;
@@ -1060,13 +1208,73 @@ function openCloudPicker(trigger, state, redraw) {
     );
     back.focus();
   };
-  select.addEventListener("change", () => {
-    if (select.value === newChatValue) showExplainer();
-    else syncWarning();
-  });
-  panel = openCloudModal(trigger, pickerChildren, select);
+  panel = openCloudModal(trigger, pickerChildren, null);
   if (!panel) return;
-  syncWarning();
+  syncPicker();
+  // After sync, so a control this pass disables is not the one taking focus.
+  firstUsableControl(panel)?.focus();
+}
+
+/**
+ * Change which chats an existing agent serves.
+ *
+ * The same checklist as setup, pre-filled — the agent's own chats are its to
+ * keep or drop, so they are never shown as taken by it. Save stays dead until
+ * the answer differs from what the agent serves now.
+ */
+function openCloudEditor(trigger, agent, state, redraw) {
+  const baseline = agent.chatUids ?? [];
+  const cancel = el("button", { class: "btn", text: "Cancel" });
+  const save = el("button", { class: "btn primary", text: "Save changes" });
+
+  // Every chat the agent serves is in the list, whether or not the account's
+  // chat list mentions it — see `editorChats`. Without that the modal hides a
+  // served chat, `chosen()` omits it, and Save is live on open to detach a chat
+  // the person was never shown.
+  const checklist = chatChecklist({
+    chats: editorChats(agent, state.cloudChats),
+    holders: cloudChatHolders(state, agent.agentId),
+    selected: baseline,
+    onChange: () => syncEditor(),
+  });
+
+  // Home and membership, never index for index: removing and re-adding a
+  // non-home chat changes its array position, but not what the agent serves.
+  const unchanged = () => sameChatSet(checklist.chosen(), baseline);
+  const syncEditor = () => {
+    const chosen = checklist.chosen();
+    save.disabled = chosen.length === 0 || unchanged();
+  };
+
+  cancel.addEventListener("click", closeCloudModal);
+  save.addEventListener("click", async () => {
+    const chatUids = checklist.chosen();
+    if (!chatUids.length || unchanged()) return;
+    closeCloudModal();
+    await window.domo.cloudEditChats(agent.agentId, chatUids);
+    await redraw();
+  });
+
+  const panel = openCloudModal(trigger, [
+    el("div", { class: "group-title", text: `Edit chats — ${agent.name || "cloud agent"}` }),
+    el("p", { class: "faint conn-note", text: "Add or remove the chats this agent reads and replies in." }),
+    el("div", { class: "field" }, [el("label", { text: "Chats" }), checklist.node]),
+    el("div", { class: "cloud-warning" }, [
+      el("div", { class: "warn cloud-warning-title", text: "Saving restarts the agent" }),
+      el("p", {
+        class: "faint",
+        text: "Saving restarts the agent for a few seconds. Detached chats go quiet; attached ones get a greeting.",
+      }),
+    ]),
+    el("div", { class: "row cloud-modal-actions" }, [
+      el("div", { class: "spacer" }),
+      cancel,
+      save,
+    ]),
+  ], null);
+  syncEditor();
+  // After sync, so a control this pass disables is not the one taking focus.
+  if (panel) firstUsableControl(panel)?.focus();
 }
 
 const cloudHttpReasons = new Set([
@@ -1203,7 +1411,7 @@ function openRosterConfirm(row, section, trigger, redraw, cloudAgentId = null) {
   const destructive = section === "cloud" ? "Remove agent" : "Revoke";
   let title = section === "cloud" ? `Remove ${name}?` : `Revoke ${name}?`;
   let copy = section === "cloud"
-    ? "The agent will stop reading and replying in its chat. The chat's previous notification setup cannot be restored."
+    ? "The agent will stop reading and replying in all its chats. Their previous notification setup cannot be restored."
     : "Any client or session using this credential will stop working.";
   if (row.isThisMac) {
     title = "Sign this Mac out?";
@@ -1246,7 +1454,7 @@ function rosterActions(
   row,
   section,
   redraw,
-  { messageAgentId = null, messageDisabled = false, cloudAgentId = null } = {},
+  { messageAgentId = null, messageDisabled = false, cloudAgentId = null, editAgent = null, removeDisabled = false } = {},
 ) {
   const name = rosterName(row, section === "cloud" ? "Cloud agent" : "Unnamed session");
   const actions = [];
@@ -1261,11 +1469,24 @@ function rosterActions(
       window.domo.openExternal("cloudAgentMessages", messageAgentId));
     actions.push(message);
   }
+  if (editAgent) {
+    const edit = el("button", {
+      class: "btn small",
+      text: "Edit chats",
+      attrs: { "aria-label": `Edit chats for ${name}` },
+    });
+    edit.disabled = !editAgent.enabled;
+    if (!editAgent.enabled) edit.title = editAgent.why;
+    edit.addEventListener("click", () =>
+      openCloudEditor(edit, editAgent.agent, editAgent.state, redraw));
+    actions.push(edit);
+  }
   const more = el("button", {
     class: "btn more",
     text: "⋯",
     attrs: { "aria-label": `More actions for ${name}` },
   });
+  more.disabled = removeDisabled;
   const actionLabel = section === "cloud" ? "Remove" : "Revoke";
   const action = el("button", { text: actionLabel });
   const menu = el("div", { class: "more-menu", attrs: { role: "menu" } }, [action]);
@@ -1285,15 +1506,28 @@ function rosterActions(
   return el("div", { class: "entity-actions" }, actions);
 }
 
+/** Every chat the agent serves, home first and starred. */
+function cloudChatSummary(agent) {
+  const labels = (agent?.chatLabels ?? []).map((label) => String(label ?? "").trim()).filter(Boolean);
+  if (!labels.length) return "";
+  return labels.map((label, index) => (index === 0 ? `★ ${label}` : label)).join(" · ");
+}
+
 function cloudContext(agent, row) {
-  const handles = String(agent?.chatLabel ?? "").trim();
+  const chats = cloudChatSummary(agent);
   return [
-    handles ? `Agent ${handles}` : "Agent number unavailable",
+    chats || "Chats unavailable",
     rosterUse(row ?? { createdAt: agent?.createdAt, lastSeenAt: null }, "Used"),
   ].filter(Boolean).join(" · ");
 }
 
-function cloudStatusNode(agent) {
+function cloudStatusNode(agent, updating = false) {
+  if (updating) {
+    return el("span", { class: "status-setting" }, [
+      el("span", { class: "cloud-spinner", attrs: { "aria-hidden": "true" } }),
+      el("span", { text: "Updating chats…" }),
+    ]);
+  }
   const status = cloudStatus(agent?.status, agent?.failureReason);
   if (agent?.status === "provisioning") {
     return el("span", { class: "status-setting" }, [
@@ -1307,24 +1541,52 @@ function cloudStatusNode(agent) {
   return badge(status.tone, status.label);
 }
 
-function cloudEntityRow(row, agent, redraw) {
+function cloudEntityRow(row, agent, state, redraw) {
   const name = rosterName(row, agent?.name || "Cloud agent");
   const provisioning = agent?.status === "provisioning";
+  const editPending = state.cloudAgentEditsPending?.includes(agent?.agentId) ?? false;
   const permissions = rosterPermissionCopy(row, provisioning);
   return el("div", { class: "entity-row cloud-agent-row", attrs: { "data-cloud-agent-id": agent?.agentId ?? row?.agentId ?? "" } }, [
     entityMark(name),
     el("div", { class: "entity-main" }, [
       el("div", { class: "entity-top" }, [
         el("span", { class: "entity-name", text: name }),
-        cloudStatusNode(agent),
+        cloudStatusNode(agent, editPending),
       ]),
-      el("div", { class: "entity-context", text: cloudContext(agent, row) }),
+      // `.entity-context` is one ellipsised line, and two chats already run
+      // past it — so the tooltip carries the whole thing rather than a legend
+      // for a star the reader may not be able to see.
+      el("div", {
+        class: "entity-context",
+        text: cloudContext(agent, row),
+        attrs: { title: `★ = home chat. ${cloudContext(agent, row)}` },
+      }),
       el("div", { class: "entity-perms" }, permissions.map((text) => el("span", { text }))),
     ]),
     rosterActions(row ?? { name }, "cloud", redraw, {
       messageAgentId: agent?.agentId ?? row?.agentId,
-      messageDisabled: agent?.status !== "running" || !agent?.recipients?.line?.trim(),
+      messageDisabled: editPending || agent?.status !== "running" || !agent?.recipients?.line?.trim(),
       cloudAgentId: row ? null : agent?.agentId,
+      removeDisabled: state.cloudAgentEditsSaving?.includes(agent?.agentId) ?? false,
+      // Only a real, running agent can be edited: a local pending row has no
+      // agent id Plow knows, and one that failed or is being torn down has no
+      // chats to move. Provisioning shows the button dead rather than hiding
+      // it, so it does not appear from nowhere a minute later — and so does an
+      // agent whose account chats have not been read, because a checklist built
+      // on the fallback list is missing most of what could be picked.
+      editAgent: agent && !agent.localPending &&
+        (agent.status === "running" || agent.status === "provisioning")
+        ? {
+            agent,
+            state,
+            enabled: !editPending && canEditChats(agent, state.cloudChatsLoaded),
+            why: editPending
+              ? "Checking which chats this agent serves"
+              : agent.status === "running"
+              ? "Available once this Mac has read your chats"
+              : "Available once the agent is running",
+          }
+        : null,
     }),
   ]);
 }
@@ -1378,10 +1640,10 @@ function cloudSection(s, redraw) {
   const seen = new Set();
   const rows = rosterRows.map((row) => {
     seen.add(row.agentId);
-    return cloudEntityRow(row, byAgentId.get(row.agentId), redraw);
+    return cloudEntityRow(row, byAgentId.get(row.agentId), s, redraw);
   });
   for (const agent of agents) {
-    if (!seen.has(agent.agentId)) rows.push(cloudEntityRow(null, agent, redraw));
+    if (!seen.has(agent.agentId)) rows.push(cloudEntityRow(null, agent, s, redraw));
   }
   const notices = [];
   if (!s.cloudChatsLoaded) {

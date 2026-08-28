@@ -86,8 +86,8 @@ const cloudChat = {
 const cloudAgent = {
   agentId: "cag_probe",
   name: "Household helper",
-  chatUid: cloudChat.uid,
-  chatLabel: cloudChat.label,
+  chatUids: [cloudChat.uid],
+  chatLabels: [cloudChat.label],
   recipients: cloudChat.recipients,
   provider: "anthropic",
   status: "running",
@@ -130,11 +130,14 @@ let cloudProbe = {
   cloudChatsError: null,
   cloudChatsNeedReactivation: false,
   cloudActionError: null,
+  cloudAgentEditsPending: [],
   cloudChats: [cloudChat],
   cloudChatsLoaded: true,
   cloudSendTo: "+1 (415) 555-0199",
 };
-const cloudCalls = { create: [] };
+const cloudCalls = { create: [], editChats: [] };
+let cloudEditPending = false;
+let releaseCloudEdit = null;
 let releaseCloudCreate = null;
 let cloudCreatePending = false;
 let relaySignOutCalls = 0;
@@ -154,15 +157,47 @@ ipcMain.handle("connect:get", async () => ({
   removeError: null,
   ...cloudProbe,
 }));
-ipcMain.handle("cloud:create", async (_e, chatUid, name) => {
-  cloudCalls.create.push({ chatUid, name });
+ipcMain.handle("cloud:create", async (_e, chatUids, name) => {
+  cloudCalls.create.push({ chatUids, name });
   cloudCreatePending = true;
   await new Promise((resolve) => { releaseCloudCreate = resolve; });
   cloudProbe = {
     ...cloudProbe,
-    cloudAgents: [{ ...cloudAgent, chatUid, name: name || "Cloud agent", status: "provisioning" }],
+    cloudAgents: [{
+      ...cloudAgent,
+      chatUids,
+      chatLabels: chatUids.map(
+        (uid) => cloudProbe.cloudChats.find((chat) => chat.uid === uid)?.label ?? uid,
+      ),
+      name: name || "Cloud agent",
+      status: "provisioning",
+    }],
   };
   cloudCreatePending = false;
+});
+// Editing an agent's chats: the row has to come out carrying the new set.
+ipcMain.handle("cloud:editChats", async (_e, agentId, chatUids) => {
+  cloudCalls.editChats.push({ agentId, chatUids });
+  cloudProbe = { ...cloudProbe, cloudAgentEditsPending: [agentId] };
+  if (!releaseCloudEdit) {
+    cloudEditPending = true;
+    await new Promise((resolve) => { releaseCloudEdit = resolve; });
+    cloudEditPending = false;
+  }
+  cloudProbe = {
+    ...cloudProbe,
+    cloudActionError: null,
+    cloudAgentEditsPending: [],
+    cloudAgents: cloudProbe.cloudAgents.map((agent) => agent.agentId === agentId
+      ? {
+          ...agent,
+          chatUids,
+          chatLabels: chatUids.map(
+            (uid) => cloudProbe.cloudChats.find((chat) => chat.uid === uid)?.label ?? uid,
+          ),
+        }
+      : agent),
+  };
 });
 ipcMain.handle("settings:signOut", async () => { relaySignOutCalls += 1; });
 // A packaged-looking updater state so the Software Updates section renders
@@ -610,6 +645,10 @@ app.whenReady().then(async () => {
 
   // The warning is specific to the first agent on a chat. Remove the fixture
   // row, remount the pane, and open the picker through the exposed control.
+  //
+  // THREE chats, and the first is the one the credential roster says Household
+  // helper already holds: the rules below need two free chats to move ★
+  // between, and the roster's claim stands whether or not the agent list read.
   cloudProbe = {
     ...cloudProbe,
     cloudAgents: [],
@@ -617,56 +656,75 @@ app.whenReady().then(async () => {
       uid: "chat_family",
       label: "+1 (415) 555-0188 · Family group",
       recipients: { line: "+14155550188", members: [] },
+    }, {
+      uid: "chat_book",
+      label: "+1 (510) 555-0133 · Book club",
+      recipients: { line: "+15105550133", members: [] },
     }],
   };
   await win.webContents.executeJavaScript(`window.__domoSelectTab("audit")`);
   await win.webContents.executeJavaScript(`window.__domoSelectTab("agents")`);
   await waitFor(win, `[...document.querySelectorAll("#view button")].some((b) => b.textContent.trim() === "Set up cloud agent")`, "the cloud-agent setup action");
   await win.webContents.executeJavaScript(`[...document.querySelectorAll("#view button")].find((b) => b.textContent.trim() === "Set up cloud agent").click()`);
-  await waitFor(win, `document.querySelector(".cloud-modal .cloud-warning")`, "the first-agent warning");
-  const cloudModalGuard = await win.webContents.executeJavaScript(`(${async () => {
-    const visibleSelect = document.querySelector(".cloud-modal select");
-    const trigger = [...document.querySelectorAll("#view button")]
-      .find((button) => button.textContent.trim() === "Set up cloud agent");
-    const selectPrototype = HTMLSelectElement.prototype;
-    const addEventListener = selectPrototype.addEventListener;
-    let blockedSelect = null;
-    selectPrototype.addEventListener = function (type, ...args) {
-      if (type === "change" && this !== visibleSelect) blockedSelect = this;
-      return addEventListener.call(this, type, ...args);
-    };
-    try {
-      trigger.click();
-    } finally {
-      selectPrototype.addEventListener = addEventListener;
-    }
-    if (!blockedSelect) return { ignored: false, keptOriginal: false };
-    let error = null;
-    const onError = (event) => {
-      error = event.error ?? new Error(event.message);
-      event.preventDefault();
-    };
-    window.addEventListener("error", onError, { once: true });
-    blockedSelect.value = "__new_chat__";
-    blockedSelect.dispatchEvent(new Event("change"));
-    await new Promise((resolve) => setTimeout(resolve));
-    window.removeEventListener("error", onError);
+  await waitFor(win, `document.querySelector(".cloud-modal .chat-list")`, "the chat checklist");
+  const cloudModalFocus = await win.webContents.executeJavaScript(`(${() => {
+    const active = document.activeElement;
     return {
-      ignored: error === null,
-      keptOriginal: document.querySelector(".cloud-modal select") === visibleSelect,
+      insideModal: !!active?.closest(".cloud-modal"),
+      usable: !!active && !active.disabled,
+      tag: active?.tagName ?? null,
     };
   }})()`);
-  await win.webContents.executeJavaScript(`(() => {
-    const select = document.querySelector(".cloud-modal select");
-    select.value = "__new_chat__";
-    select.dispatchEvent(new Event("change"));
-  })()`);
+  // The checklist's rules, at the boundary the renderer actually enforces:
+  // nothing chosen means nothing to create, the first box checked becomes home,
+  // moving home changes position zero, and unchecking home promotes by list order.
+  const cloudModalGuard = await win.webContents.executeJavaScript(`(${async () => {
+    const boxes = () =>
+      [...document.querySelectorAll(".cloud-modal .chat-option:not(.disabled) input")];
+    const createButton = () => [...document.querySelectorAll(".cloud-modal button")]
+      .find((node) => node.textContent.trim() === "Set up agent");
+    const homeLabels = () => [...document.querySelectorAll(".cloud-modal .home-toggle.on")]
+      .map((node) => node.closest(".chat-option").querySelector(".chat-option-name").textContent);
+    const settle = () => new Promise((resolve) => setTimeout(resolve));
+
+    const emptyDisables = createButton().disabled;
+    boxes()[0].click();
+    await settle();
+    const firstIsHome = homeLabels().length === 1 && !createButton().disabled;
+    const homeAfterFirst = homeLabels()[0];
+    boxes()[1].click();
+    await settle();
+    const secondDoesNotStealHome = homeLabels()[0] === homeAfterFirst;
+    const secondMakeHome = boxes()[1].closest(".chat-option").querySelector(".home-toggle");
+    secondMakeHome.click();
+    await settle();
+    const homeAfterMake = homeLabels()[0];
+    const makeHomeMovesToZero = homeAfterMake !== homeAfterFirst;
+    // Uncheck home: the star must move rather than vanish.
+    boxes()[1].click();
+    await settle();
+    const homeMoved = homeLabels().length === 1 && homeLabels()[0] === homeAfterFirst;
+    const warningCounts = document.querySelector(".cloud-modal .cloud-warning-title")
+      .textContent.includes("1 chat");
+    // Leave exactly one chosen for the create that follows.
+    return {
+      emptyDisables, firstIsHome, secondDoesNotStealHome, makeHomeMovesToZero, homeMoved, warningCounts,
+      warningTitle: document.querySelector(".cloud-modal .cloud-warning-title").textContent,
+      homeAfterFirst, homeNow: homeLabels()[0] ?? null,
+      ignored: emptyDisables && firstIsHome && secondDoesNotStealHome,
+      keptOriginal: homeMoved && warningCounts,
+    };
+  }})()`);
+  await win.webContents.executeJavaScript(`[...document.querySelectorAll(".cloud-modal button")].find((b) => b.textContent.trim() === "New chat…").click()`);
   await waitFor(win, `document.querySelector(".cloud-modal .cloud-route")`, "the new-chat explainer");
   await win.webContents.executeJavaScript(`[...document.querySelectorAll(".cloud-modal button")].find((b) => b.textContent.trim() === "Back").click()`);
   await win.webContents.executeJavaScript(`[...document.querySelectorAll(".cloud-modal button")].find((b) => b.textContent.trim() === "Cancel").click()`);
 
   await win.webContents.executeJavaScript(`[...document.querySelectorAll("#view button")].find((b) => b.textContent.trim() === "Set up cloud agent").click()`);
-  await waitFor(win, `document.querySelector(".cloud-modal select")`, "the picker for the create wait");
+  await waitFor(win, `document.querySelector(".cloud-modal .chat-list")`, "the picker for the create wait");
+  await win.webContents.executeJavaScript(
+    `document.querySelector(".cloud-modal .chat-option:not(.disabled) input").click()`,
+  );
   const cloudCreateWait = await win.webContents.executeJavaScript(`(${() => {
     const button = [...document.querySelectorAll(".cloud-modal button")]
       .find((node) => node.textContent.trim() === "Set up agent");
@@ -701,6 +759,194 @@ app.whenReady().then(async () => {
     hasMenu: [...document.querySelectorAll(".cloud-agent-row button")]
       .some((button) => button.getAttribute("aria-label")?.startsWith("More actions for")),
   })})()`);
+
+  // Edit chats: dead while the agent is provisioning, and Save dead until the
+  // chosen set differs from what the agent already serves.
+  const cloudEditGate = await win.webContents.executeJavaScript(`(${() => {
+    const edit = [...document.querySelectorAll(".cloud-agent-row button")]
+      .find((button) => button.textContent.trim() === "Edit chats");
+    return { present: !!edit, disabledWhileProvisioning: !!edit?.disabled };
+  }})()`);
+  cloudProbe = { ...cloudProbe, cloudAgents: [cloudAgent] };
+  await win.webContents.executeJavaScript(`window.__domoSelectTab("audit")`);
+  await win.webContents.executeJavaScript(`window.__domoSelectTab("agents")`);
+  await waitFor(
+    win,
+    `[...document.querySelectorAll(".cloud-agent-row button")].some((b) => b.textContent.trim() === "Edit chats" && !b.disabled)`,
+    "Edit chats to come alive on a running agent",
+  );
+  await win.webContents.executeJavaScript(
+    `[...document.querySelectorAll(".cloud-agent-row button")].find((b) => b.textContent.trim() === "Edit chats").click()`,
+  );
+  await waitFor(win, `document.querySelector(".cloud-modal .chat-list")`, "the edit checklist");
+  const cloudEditSave = await win.webContents.executeJavaScript(`(${async () => {
+    const settle = () => new Promise((resolve) => setTimeout(resolve));
+    const saveButton = () => [...document.querySelectorAll(".cloud-modal button")]
+      .find((node) => node.textContent.trim() === "Save changes");
+    // Re-query every time: the checklist re-renders on each change, so a
+    // NodeList captured once is a list of detached nodes after the first click.
+    const boxes = () =>
+      [...document.querySelectorAll(".cloud-modal .chat-option:not(.disabled) input")];
+    const prefilled = boxes().filter((box) => box.checked).length === 1;
+    const deadWhenUnchanged = saveButton().disabled;
+    boxes()[1].click();
+    await settle();
+    const liveAfterChange = !saveButton().disabled;
+    // Put it back: unchanged again, so Save must die again.
+    boxes()[1].click();
+    await settle();
+    const deadAgain = saveButton().disabled;
+    boxes()[1].click();
+    await settle();
+    saveButton().click();
+    return { prefilled, deadWhenUnchanged, liveAfterChange, deadAgain };
+  }})()`);
+  await waitForNode(() => cloudEditPending, "the cloud edit request to stay in flight");
+  win.webContents.send("connect:changed");
+  await waitFor(
+    win,
+    `[...document.querySelectorAll(".cloud-agent-row button")].find((button) => button.textContent.trim() === "Edit chats")?.disabled === true`,
+    "the editing row to redraw as pending",
+  );
+  cloudEditSave.updatingRow = await win.webContents.executeJavaScript(`(${() => {
+    const row = document.querySelector(".cloud-agent-row");
+    const button = (text) => [...row.querySelectorAll("button")]
+      .find((item) => item.textContent.trim() === text);
+    return {
+      modalClosed: !document.querySelector(".cloud-modal"),
+      updating: row.textContent.includes("Updating chats…"),
+      spinner: !!row.querySelector(".status-setting .cloud-spinner"),
+      editDisabled: button("Edit chats")?.disabled === true,
+      messageDisabled: button("Message")?.disabled === true,
+    };
+  }})()`);
+  releaseCloudEdit();
+  await waitForNode(() => !cloudEditPending, "the cloud edit request to finish");
+  await waitFor(win, `!document.querySelector(".cloud-modal")`, "the editor to close on a saved change");
+  await waitFor(
+    win,
+    `document.querySelector(".cloud-agent-row .entity-context")?.textContent.includes("★")`,
+    "the row to name its home chat",
+  );
+  cloudEditSave.sentBothChats = cloudCalls.editChats.at(-1)?.chatUids.length === 2;
+  cloudEditSave.homeFirst =
+    cloudCalls.editChats.at(-1)?.chatUids[0] === cloudAgent.chatUids[0];
+
+  // A chat the agent serves that the account's chat list does not mention: the
+  // fallback list, or a chat the owner has since left. It must still be on the
+  // checklist, checked — a row that is not drawn is a chat the next Save
+  // detaches on behalf of someone who was never shown it.
+  cloudProbe = {
+    ...cloudProbe,
+    cloudChatsLoaded: true,
+    cloudChats: [cloudChat],
+    cloudAgents: [{
+      ...cloudAgent,
+      chatUids: [cloudChat.uid, "chat_departed"],
+      chatLabels: [cloudChat.label, "+1 (415) 555-0177 · Old thread"],
+    }],
+  };
+  await win.webContents.executeJavaScript(`window.__domoSelectTab("audit")`);
+  await win.webContents.executeJavaScript(`window.__domoSelectTab("agents")`);
+  await waitFor(
+    win,
+    `[...document.querySelectorAll(".cloud-agent-row button")].some((b) => b.textContent.trim() === "Edit chats" && !b.disabled)`,
+    "Edit chats for the stray-chat case",
+  );
+  await win.webContents.executeJavaScript(
+    `[...document.querySelectorAll(".cloud-agent-row button")].find((b) => b.textContent.trim() === "Edit chats").click()`,
+  );
+  await waitFor(win, `document.querySelector(".cloud-modal .chat-list")`, "the editor with a stray chat");
+  const cloudEditStray = await win.webContents.executeJavaScript(`(${() => {
+    const options = [...document.querySelectorAll(".cloud-modal .chat-option")].map((row) => ({
+      name: row.querySelector(".chat-option-name").textContent,
+      checked: row.querySelector("input").checked,
+    }));
+    const stray = options.find((option) => option.name.includes("Old thread"));
+    return {
+      shown: !!stray,
+      checked: !!stray?.checked,
+      allServedChecked: options.filter((option) => option.checked).length === 2,
+      // Nothing has been touched, so there is nothing to save — and the bug
+      // this replaces had Save live on open, one click from a silent detach.
+      saveDeadOnOpen: [...document.querySelectorAll(".cloud-modal button")]
+        .find((node) => node.textContent.trim() === "Save changes").disabled,
+    };
+  }})()`);
+  await win.webContents.executeJavaScript(
+    `[...document.querySelectorAll(".cloud-modal button")].find((b) => b.textContent.trim() === "Cancel").click()`,
+  );
+
+  // A three-chat agent whose server order is not the account list's order. The
+  // checklist orders by the list; index-for-index called that a change, so Save
+  // opened alive and one click restarted the agent to tell it what it knew.
+  const reorderedChats = [
+    cloudChat,
+    { uid: "chat_family", label: "+1 (415) 555-0188 · Family group", recipients: { line: "+14155550188", members: [] } },
+    { uid: "chat_book", label: "+1 (510) 555-0133 · Book club", recipients: { line: "+15105550133", members: [] } },
+    { uid: "chat_new", label: "+1 (510) 555-0144 · New chat", recipients: { line: "+15105550144", members: [] } },
+  ];
+  cloudProbe = {
+    ...cloudProbe,
+    cloudChatsLoaded: true,
+    cloudChats: reorderedChats,
+    // Server order: home, then the two the list puts in the other order.
+    cloudAgents: [{
+      ...cloudAgent,
+      chatUids: [cloudChat.uid, "chat_book", "chat_family"],
+      chatLabels: [cloudChat.label, reorderedChats[2].label, reorderedChats[1].label],
+    }],
+  };
+  await win.webContents.executeJavaScript(`window.__domoSelectTab("audit")`);
+  await win.webContents.executeJavaScript(`window.__domoSelectTab("agents")`);
+  await waitFor(
+    win,
+    `[...document.querySelectorAll(".cloud-agent-row button")].some((b) => b.textContent.trim() === "Edit chats" && !b.disabled)`,
+    "Edit chats for the reordered-set case",
+  );
+  await win.webContents.executeJavaScript(
+    `[...document.querySelectorAll(".cloud-agent-row button")].find((b) => b.textContent.trim() === "Edit chats").click()`,
+  );
+  await waitFor(win, `document.querySelector(".cloud-modal .chat-list")`, "the editor for the reordered set");
+  const cloudEditReordered = await win.webContents.executeJavaScript(`(${async () => {
+    const settle = () => new Promise((resolve) => setTimeout(resolve));
+    const save = () => [...document.querySelectorAll(".cloud-modal button")]
+      .find((node) => node.textContent.trim() === "Save changes");
+    const boxes = () => [...document.querySelectorAll(".cloud-modal .chat-option input")];
+    const allChecked = boxes().slice(0, 3).every((box) => box.checked) && !boxes()[3].checked;
+    const deadOnOpen = save().disabled;
+    // A real change still wakes it, and undoing that change puts it back.
+    boxes()[1].click();
+    await settle();
+    const liveAfterChange = !save().disabled;
+    boxes()[1].click();
+    await settle();
+    const deadAgain = save().disabled;
+    boxes()[3].click();
+    await settle();
+    save().click();
+    return { allChecked, deadOnOpen, liveAfterChange, deadAgain };
+  }})()`);
+  await waitFor(win, `!document.querySelector(".cloud-modal")`, "the reordered editor to save");
+  cloudEditReordered.retainedServerOrder = JSON.stringify(cloudCalls.editChats.at(-1)?.chatUids)
+    === JSON.stringify([cloudChat.uid, "chat_book", "chat_family", "chat_new"]);
+
+  // And with the chat list not yet read, the editor is not offered at all: it
+  // would open on the fallback, missing every chat this Mac has not been told
+  // about.
+  cloudProbe = { ...cloudProbe, cloudChatsLoaded: false, cloudChats: [] };
+  await win.webContents.executeJavaScript(`window.__domoSelectTab("audit")`);
+  await win.webContents.executeJavaScript(`window.__domoSelectTab("agents")`);
+  await waitFor(
+    win,
+    `[...document.querySelectorAll(".cloud-agent-row button")].some((b) => b.textContent.trim() === "Edit chats")`,
+    "the Edit chats button while the chat list is unread",
+  );
+  const cloudEditGateUnread = await win.webContents.executeJavaScript(`(${() => {
+    const edit = [...document.querySelectorAll(".cloud-agent-row button")]
+      .find((button) => button.textContent.trim() === "Edit chats");
+    return { present: !!edit, disabled: !!edit?.disabled, why: edit?.title ?? null };
+  }})()`);
 
   cloudProbe = {
     ...cloudProbe,
@@ -746,9 +992,10 @@ app.whenReady().then(async () => {
       notEmptyState: !document.querySelector(".list-section:first-child .entity-empty"),
     };
   }})()`);
-  await waitFor(win, `document.querySelector(".cloud-modal select")`, "the activation-chat fallback picker");
+  await waitFor(win, `document.querySelector(".cloud-modal .chat-list")`, "the activation-chat fallback checklist");
   cloudForbidden.offersActivationChat = await win.webContents.executeJavaScript(
-    `[...document.querySelectorAll(".cloud-modal option")].some((option) => option.value === "chat_probe")`,
+    `[...document.querySelectorAll(".cloud-modal .chat-option-name")]
+      .some((name) => name.textContent.trim() === ${JSON.stringify("+1 (415) 555-0142, +1 (415) 555-0193, +1 (628) 555-0112")})`,
   );
   await win.webContents.executeJavaScript(
     `[...document.querySelectorAll(".cloud-modal button")].find((button) => button.textContent.trim() === "Cancel").click()`,
@@ -1427,7 +1674,10 @@ app.whenReady().then(async () => {
     connect.clientNameNotBold &&
     connect.noConnectTab &&
     cloudRoster.noCredentialIdentity &&
+    cloudModalFocus.insideModal &&
+    cloudModalFocus.usable &&
     cloudModalGuard.ignored &&
+    cloudModalGuard.makeHomeMovesToZero &&
     cloudModalGuard.keptOriginal &&
     cloudCreateWait.disabled &&
     cloudCreateWait.spinner &&
@@ -1439,6 +1689,30 @@ app.whenReady().then(async () => {
     cloudRowActions.hasMessage &&
     cloudRowActions.noSettings &&
     cloudRowActions.hasMenu &&
+    cloudEditGate.present &&
+    cloudEditGate.disabledWhileProvisioning &&
+    cloudEditSave.prefilled &&
+    cloudEditSave.deadWhenUnchanged &&
+    cloudEditSave.liveAfterChange &&
+    cloudEditSave.deadAgain &&
+    cloudEditSave.sentBothChats &&
+    cloudEditSave.homeFirst &&
+    cloudEditSave.updatingRow.modalClosed &&
+    cloudEditSave.updatingRow.updating &&
+    cloudEditSave.updatingRow.spinner &&
+    cloudEditSave.updatingRow.editDisabled &&
+    cloudEditSave.updatingRow.messageDisabled &&
+    cloudEditStray.shown &&
+    cloudEditStray.checked &&
+    cloudEditStray.allServedChecked &&
+    cloudEditStray.saveDeadOnOpen &&
+    cloudEditReordered.allChecked &&
+    cloudEditReordered.deadOnOpen &&
+    cloudEditReordered.liveAfterChange &&
+    cloudEditReordered.deadAgain &&
+    cloudEditReordered.retainedServerOrder &&
+    cloudEditGateUnread.present &&
+    cloudEditGateUnread.disabled &&
     cloudChatFailure.showsError &&
     cloudChatFailure.setupDisabled &&
     cloudChatFailure.notEmptyState &&
@@ -1527,7 +1801,7 @@ app.whenReady().then(async () => {
     errors.length === 0;
   console.log(
     "PROBE:" +
-      JSON.stringify({ main, settings, strandedOnDisk, settingsPane, connect, cloudRoster, cloudModalGuard, cloudCreateWait, cloudCreateTransition, cloudRowActions, cloudChatFailure, cloudForbidden, cloudServerDetail, agentsShot, approvalsReviewer, approvalsShot, purposeRoundTrip, approvalsAsk, askWithoutReviewer, approvalsShotAsk, agentsOpen, modalClosed, vaultLocked, vaultUnsaved, vaultShot, agentsOpenShot, staleSettingsPane, optimisticMode, settingsShot, approval, reviewerNote, consoleErrors: errors, ok }),
+      JSON.stringify({ main, settings, strandedOnDisk, settingsPane, connect, cloudRoster, cloudModalFocus, cloudModalGuard, cloudCreateWait, cloudCreateTransition, cloudRowActions, cloudEditGate, cloudEditSave, cloudEditStray, cloudEditReordered, cloudEditGateUnread, cloudChatFailure, cloudForbidden, cloudServerDetail, agentsShot, approvalsReviewer, approvalsShot, purposeRoundTrip, approvalsAsk, askWithoutReviewer, approvalsShotAsk, agentsOpen, modalClosed, vaultLocked, vaultUnsaved, vaultShot, agentsOpenShot, staleSettingsPane, optimisticMode, settingsShot, approval, reviewerNote, consoleErrors: errors, ok }),
   );
   app.exit(ok ? 0 : 1);
 }).catch((err) => {

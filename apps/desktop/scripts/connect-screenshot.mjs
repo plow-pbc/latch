@@ -53,8 +53,8 @@ const FAMILY_CHAT = {
 const ACTIVE_AGENT = {
   agentId: "cag_groceries",
   name: "Household helper",
-  chatUid: CHAT.uid,
-  chatLabel: CHAT.label,
+  chatUids: [CHAT.uid, FAMILY_CHAT.uid],
+  chatLabels: [CHAT.label, FAMILY_CHAT.label],
   recipients: CHAT.recipients,
   provider: "anthropic",
   status: "running",
@@ -64,8 +64,8 @@ const ACTIVE_AGENT = {
 const PROVISIONING_AGENT = {
   agentId: "cag_trip",
   name: "Trip planner",
-  chatUid: "chat_trip",
-  chatLabel: "+1 (628) 555-0144, +1 (415) 555-0193",
+  chatUids: ["chat_trip"],
+  chatLabels: ["+1 (628) 555-0144, +1 (415) 555-0193"],
   recipients: { line: "+16285550144", members: ["+14155550193"] },
   provider: "anthropic",
   status: "provisioning",
@@ -85,7 +85,7 @@ const ROSTER = {
     {
       id: 202, name: PROVISIONING_AGENT.name, kind: "Agent",
       createdAt: new Date().toISOString(), lastSeenAt: null,
-      agentId: PROVISIONING_AGENT.agentId, chatUids: [PROVISIONING_AGENT.chatUid], chatAccess: "listed",
+      agentId: PROVISIONING_AGENT.agentId, chatUids: [...PROVISIONING_AGENT.chatUids], chatAccess: "listed",
       permissions: { canReadAndReply: true, canReachMac: false, canSpendInference: false },
       isActive: true, isThisMac: false,
     },
@@ -234,7 +234,7 @@ async function setUp() {
     resolveExternalOpen = null;
     return true;
   });
-  ipcMain.handle("cloud:create", async (_e, chatUid, name) => {
+  ipcMain.handle("cloud:create", async (_e, chatUids, name) => {
     cloudCreateInFlight = true;
     try {
       if (holdCloudCreate) {
@@ -242,7 +242,13 @@ async function setUp() {
       }
       cloudFixture = {
         ...cloudFixture,
-        cloudAgents: [{ ...ACTIVE_AGENT, chatUid, name: name || "Cloud agent", status: "provisioning" }],
+        cloudAgents: [{
+          ...ACTIVE_AGENT,
+          chatUids,
+          chatLabels: chatUids,
+          name: name || "Cloud agent",
+          status: "provisioning",
+        }],
         cloudActionError: null,
       };
     } finally {
@@ -289,8 +295,8 @@ const SCREENS = [
     cloud: {
       ...CLOUD_READY,
       cloudChats: [CHAT, {
-        uid: PROVISIONING_AGENT.chatUid,
-        label: PROVISIONING_AGENT.chatLabel,
+        uid: PROVISIONING_AGENT.chatUids[0],
+        label: PROVISIONING_AGENT.chatLabels[0],
         recipients: PROVISIONING_AGENT.recipients,
       }],
       cloudAgents: [ACTIVE_AGENT, PROVISIONING_AGENT],
@@ -354,7 +360,9 @@ const SCREENS = [
     },
     expect: [
       "Cloud agents", "2 agents", "Household helper", "Ready", "Trip planner", "Setting up…",
-      "Agent +1 (415) 555-0142, +1 (415) 555-0193, +1 (628) 555-0112",
+      // Every chat the agent serves, home starred and first. The old line named
+      // one chat and prefixed it "Agent"; an agent serves a set now.
+      `★ ${CHAT.label}`, FAMILY_CHAT.label,
       "Reads and replies in no chats", "Can reach this Mac", "Can spend inference", "Message",
       "MCP clients", "Claude Code on MacBook Pro", "Reads and replies in all chats",
       "Can reach this Mac", "Can spend inference", "Reads and replies in no chats",
@@ -374,7 +382,7 @@ const SCREENS = [
     },
     expect: [
       "Remove Household helper?",
-      "The agent will stop reading and replying in its chat",
+      "The agent will stop reading and replying in all its chats. Their previous notification setup cannot be restored.",
       "Remove agent",
     ],
     after: async (win) => {
@@ -400,7 +408,7 @@ const SCREENS = [
     },
     expect: [
       "Remove Household helper?",
-      "The agent will stop reading and replying in its chat",
+      "The agent will stop reading and replying in all its chats. Their previous notification setup cannot be restored.",
       "Remove agent",
     ],
     after: async (win) => {
@@ -418,8 +426,8 @@ const SCREENS = [
     cloud: {
       ...CLOUD_READY,
       cloudChats: [CHAT, {
-        uid: PROVISIONING_AGENT.chatUid,
-        label: PROVISIONING_AGENT.chatLabel,
+        uid: PROVISIONING_AGENT.chatUids[0],
+        label: PROVISIONING_AGENT.chatLabels[0],
         recipients: PROVISIONING_AGENT.recipients,
       }],
       cloudAgents: [ACTIVE_AGENT, PROVISIONING_AGENT],
@@ -437,13 +445,16 @@ const SCREENS = [
     },
     prepare: async (win) => {
       await clickText(win, "Set up cloud agent", 0);
-      await waitFor(win, `document.querySelector(".cloud-modal select")`, "the chat picker");
+      await waitFor(win, `document.querySelector(".cloud-modal .chat-list")`, "the chat checklist");
+      // With a chat chosen: the star lands on it and the warning counts it.
+      await chooseFirstChat(win);
     },
     expect: [
       "Set up a cloud agent",
-      "Choose the chat where this agent will read and reply",
+      "Choose the chats this agent will read and reply in",
       CHAT.label,
-      "This changes the chat permanently",
+      "★ Home",
+      "This changes 1 chat permanently",
       "Removing the agent later will not restore them",
     ],
   },
@@ -455,8 +466,8 @@ const SCREENS = [
     },
     prepare: async (win) => {
       await clickText(win, "Set up cloud agent", 0);
-      await waitFor(win, `document.querySelector(".cloud-modal select")`, "the chat picker");
-      await chooseLastChatOption(win);
+      await waitFor(win, `document.querySelector(".cloud-modal .chat-list")`, "the chat checklist");
+      await openNewChatExplainer(win);
       await waitFor(win, `document.querySelector(".cloud-modal .cloud-route")`, "the new-chat explainer");
     },
     expect: [
@@ -478,8 +489,8 @@ const SCREENS = [
     },
     prepare: async (win) => {
       await clickText(win, "Set up cloud agent", 0);
-      await waitFor(win, `document.querySelector(".cloud-modal select")`, "the chat picker");
-      await chooseLastChatOption(win);
+      await waitFor(win, `document.querySelector(".cloud-modal .chat-list")`, "the chat checklist");
+      await openNewChatExplainer(win);
       await waitFor(win, `document.querySelector(".cloud-modal .cloud-route")`, "the new-chat explainer");
       const routes = await win.webContents.executeJavaScript(`(${() => ({
         offersHeldNumber: [...document.querySelectorAll(".cloud-route-title")]
@@ -503,7 +514,8 @@ const SCREENS = [
     prepare: async (win) => {
       holdCloudCreate = true;
       await clickText(win, "Set up cloud agent", 0);
-      await waitFor(win, `document.querySelector(".cloud-modal select")`, "the chat picker");
+      await waitFor(win, `document.querySelector(".cloud-modal .chat-list")`, "the chat checklist");
+      await chooseFirstChat(win);
       await type(win, `input[aria-label="Agent name"]`, "Household helper");
       await clickText(win, "Set up agent", 0);
       await waitFor(win, `!document.querySelector(".cloud-modal")`, "the picker to close during create");
@@ -570,7 +582,7 @@ const SCREENS = [
     },
     prepare: async (win) => {
       await clickText(win, "Set up cloud agent", 0);
-      await waitFor(win, `document.querySelector(".cloud-modal select")`, "the fallback chat picker");
+      await waitFor(win, `document.querySelector(".cloud-modal .chat-list")`, "the fallback chat checklist");
     },
     expect: ["Set up a cloud agent", CHAT.label, "Set up agent"],
   },
@@ -703,15 +715,27 @@ async function clickElementText(win, selector, label) {
   win.webContents.sendInputEvent({ type: "mouseUp", ...point, button: "left", clickCount: 1 });
 }
 
-async function chooseLastChatOption(win) {
-  const changed = await win.webContents.executeJavaScript(`(() => {
-    const select = document.querySelector(".cloud-modal select");
-    if (!select) return false;
-    select.selectedIndex = select.options.length - 1;
-    select.dispatchEvent(new Event("change", { bubbles: true }));
+/** "New chat…" is a link under the checklist, not an entry inside it. */
+async function openNewChatExplainer(win) {
+  const clicked = await win.webContents.executeJavaScript(`(() => {
+    const link = [...document.querySelectorAll(".cloud-modal button")]
+      .find((button) => button.textContent.trim() === "New chat…");
+    if (!link) return false;
+    link.click();
     return true;
   })()`);
-  if (!changed) throw new Error("no chat picker to drive");
+  if (!clicked) throw new Error("no new-chat link to drive");
+}
+
+/** Check the first chat in the checklist — it becomes home by doing so. */
+async function chooseFirstChat(win) {
+  const checked = await win.webContents.executeJavaScript(`(() => {
+    const box = document.querySelector(".cloud-modal .chat-option input");
+    if (!box) return false;
+    box.click();
+    return true;
+  })()`);
+  if (!checked) throw new Error("no chat checklist to drive");
 }
 
 async function type(win, selector, text) {

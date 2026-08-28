@@ -135,6 +135,7 @@ export function decidedByLabel(source: string | null): string | null {
     case "approve": return "Auto-approved";
     case "adversarial": return "AI Reviewer";
     case "rule": return "Always-allow rule";
+    case "plow_folder": return "Plow folder (auto-approved)";
     case "policy": return "Policy (deny mode)";
     // Not internal labels in the human's view: the operation was denied because
     // the reviewer could not run, not because anyone chose. One cannot be paid

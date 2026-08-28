@@ -23,6 +23,7 @@ import { Intent } from "@domo/protocol";
 import {
   ApprovalStore,
   DeviceAgent,
+  plowFolderPath,
   PolicyDelegate,
   readCredentialsState,
   resolveBrowserRuntime,
@@ -176,6 +177,10 @@ class ElectronPolicy implements PolicyDelegate {
     return decideIntent(intent, {
       settings: loadSettings(home),
       apiBaseUrl,
+      // The real home, deliberately — same resolution the DeviceAgent below
+      // gets as ownerHome. A from-source run shares the packaged app's
+      // playground; the folder is the owner's, not the instance's.
+      plowRoot: plowFolderPath(os.homedir()),
       auditEntries: () => audit?.entries() ?? [],
       record: (event, fields) => audit?.record(event, fields),
       review: adversarialReview,
@@ -625,18 +630,30 @@ ipcMain.handle("connect:dismiss", async () => {
 });
 
 /**
- * The cloud-agent mutations. Exactly four, and none of them polls: `create`
- * answers as soon as Plow has issued the receipt and the row is on screen in
- * `provisioning`; the main process drives it to `active` from there.
+ * The cloud-agent mutations, and none of them polls: `create` answers as soon
+ * as Plow has issued the receipt and the row is on screen in `provisioning`;
+ * the main process drives it to `active` from there.
  */
-ipcMain.handle("cloud:create", async (_e, chatUid: string, name: string) => {
-  await cloudAgents?.create(chatUid, name);
+ipcMain.handle("cloud:create", async (_e, chatUids: string[], name: string) => {
+  await cloudAgents?.create(chatUids ?? [], name);
   // The new agent's credential row comes from the separately fetched roster,
   // which knows nothing about a create. Without this the screen shows the agent
   // with no row behind it, so Remove is disabled until the user leaves the tab
   // and comes back.
   await connectClient?.refreshRoster();
   return agentsTabState();
+});
+
+/**
+ * Change which chats an existing agent serves.
+ *
+ * The roster is re-read for the same reason a create re-reads it — a
+ * credential's chat grant moves with the agent's set, so the row's permission
+ * line is stale the moment this returns.
+ */
+ipcMain.handle("cloud:editChats", async (_e, agentId: string, chatUids: string[]) => {
+  await cloudAgents?.editChats(agentId, chatUids ?? []);
+  await connectClient?.refreshRoster();
 });
 /** Connect-a-client's state plus the cloud-agent group's, in one object. The
  * cloud half is present and empty when the flag is off, so the renderer reads
