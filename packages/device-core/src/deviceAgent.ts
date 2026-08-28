@@ -715,23 +715,28 @@ export class DeviceAgent {
         } else ok.push({ account: a.account, stdout: this.executor.stdout(result.handle).toString("utf8") });
       }
       const merged = mergeFanout(ok, plan.sort);
-      // One number for N children, so it can only answer "did any account
-      // answer?" — a partial failure stays exit 0 with its accounts named in
-      // `degraded`, and only a fan-out where every child failed is non-zero.
-      // Exit 0 there would have shown the run as green in the approval history
-      // (viewModel.ts) with nothing retrieved at all.
+      const allDegraded = [
+        ...degraded,
+        ...failed,
+        ...merged.unparsed.map((u) => ({ account: u.account, reason: u.error })),
+      ];
+      // One number for N accounts, so it can only answer "did this run retrieve
+      // anything?". Read off the ENVELOPE rather than the children, because an
+      // account can fail before a child exists — every account degraded at the
+      // mint runs nothing at all, and judging by exit codes alone called that
+      // green. Where it failed is not the audit's question.
+      //
+      // A partial failure stays exit 0, with the accounts that failed named in
+      // `degraded`; an empty result nobody failed for (no events today) is a
+      // true zero and stays one.
       this.audit.record("exec_end", {
         intentId: intent.intentId,
-        exit_code: runs.length > 0 && ok.length === 0 ? 1 : 0,
+        exit_code: merged.items.length === 0 && allDegraded.length > 0 ? 1 : 0,
       });
       return {
         status: "completed",
         items: merged.items,
-        degraded: [
-          ...degraded,
-          ...failed,
-          ...merged.unparsed.map((u) => ({ account: u.account, reason: u.error })),
-        ],
+        degraded: allDegraded,
       } as JSONValue;
     }
 

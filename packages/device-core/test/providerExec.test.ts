@@ -297,6 +297,8 @@ case "$*" in
       tok-bad) echo "boom" >&2; exit 1 ;;
       tok-rejected) echo "sneakyagenttext" >&2; exit 2 ;;
       tok-expired) exit 4 ;;
+      tok-empty) echo '[]' ;;
+      tok-quiet) ;;
     esac ;;
   *) echo "TOKEN=$GOG_ACCESS_TOKEN ARGV=$*" ;;
 esac
@@ -377,6 +379,58 @@ esac
     // Every account failed and nothing was retrieved: an exit-0 exec_end here
     // showed the run as green in the approval history with no items at all.
     expect(execEnd(d)).not.toBe(0);
+  });
+
+  itSpawns("marks a run that retrieved nothing non-zero even when no child ever ran", async () => {
+    // Every account degraded at the MINT, so there is no child and no exit
+    // code to read. Judging the run by its children called this green: the
+    // question the audit answers is whether anything was retrieved, not where
+    // the failure happened.
+    const d = device(
+      accountsMinter([], [
+        { account: "a@example.com", reason: "needs_reauth" },
+        { account: "b@example.com", reason: "needs_reauth" },
+      ]),
+      [plowVendorDir()],
+    );
+    const response = await run(d, ["plow-gog", "gmail", "search", "q"]);
+    expect(response).toMatchObject({
+      status: "completed",
+      items: [],
+      degraded: [
+        { account: "a@example.com", reason: "needs_reauth" },
+        { account: "b@example.com", reason: "needs_reauth" },
+      ],
+    });
+    expect(execEnd(d)).not.toBe(0);
+  });
+
+  itSpawns("marks a run non-zero when every child exited 0 but nothing parsed", async () => {
+    // The third way to retrieve nothing: the children ran and succeeded, and
+    // their output was not JSON. Same verdict, for the same reason.
+    const d = device(
+      accountsMinter([{ account: "quiet@example.com", token: "tok-quiet", isDefault: true }]),
+      [plowVendorDir()],
+    );
+    const response = await run(d, ["plow-gog", "gmail", "search", "q"]);
+    expect(response).toMatchObject({
+      status: "completed",
+      items: [],
+      degraded: [{ account: "quiet@example.com", reason: "output was not JSON" }],
+    });
+    expect(execEnd(d)).not.toBe(0);
+  });
+
+  itSpawns("leaves a genuinely empty result green: nothing failed, there was nothing to find", async () => {
+    // The branch the rule above must not swallow. No events today is a true
+    // zero, and marking it failed would train an owner to ignore the mark.
+    const d = device(
+      accountsMinter([{ account: "a@example.com", token: "tok-empty", isDefault: true }]),
+      [plowVendorDir()],
+    );
+    const response = await run(d, ["plow-gog", "gmail", "search", "q"]);
+    expect(response).toMatchObject({ status: "completed", items: [], degraded: [] });
+    expect(execEnd(d)).toBe(0);
   });
 
   itSpawns("waits out a fan-out child that outlives wait_ms instead of degrading it", async () => {
