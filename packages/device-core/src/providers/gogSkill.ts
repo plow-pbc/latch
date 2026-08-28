@@ -53,8 +53,8 @@ per-mailbox: a \`gmail get\` on an id from a fan-out result passes
 \`--account <that item's account>\`. When replying, use the
 account that received the thread.
 
-**Timed calendar creates are conflict-gated.** A \`calendar create\`/\`update\`
-with timed \`--from\`/\`--to\` first checks the window on the target account;
+**Timed calendar creates are conflict-gated.** A \`calendar create\` with
+timed \`--from\`/\`--to\` first checks the window on the target account;
 overlaps come back as an error carrying only the overlap count. Re-send the SAME
 command with \`--confirm-conflict\` to book anyway. All-day (date-only)
 events skip the check.

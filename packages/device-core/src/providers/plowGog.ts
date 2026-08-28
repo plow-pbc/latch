@@ -32,8 +32,8 @@ export type PlowGogPlan =
   /**
    * Everything else: ONE run, on ONE account. Which account is the runtime's
    * question — with more than one connected, `account` is required there —
-   * and `conflictCheck` marks the one shape (a timed calendar create/update)
-   * whose run is conflict-gated.
+   * and `conflictCheck` marks the one shape (a timed calendar create) whose
+   * run is conflict-gated.
    */
   | {
       kind: "single";
@@ -61,14 +61,16 @@ const FANOUT: Readonly<Record<string, Readonly<Record<string, PlowGogSort>>>> = 
 };
 
 /**
- * The one shape whose run is conflict-gated: `calendar create`/`update` and
- * their aliases (verified against the vendored binary's help at 0.36.0).
+ * The one shape whose run is conflict-gated: `calendar create` and its
+ * aliases (verified against the vendored binary's help at 0.36.0).
  * Deliberately the ONLY verb recognition outside the fan-out table — there is
  * no read-vs-write classification to mirror gog's grammar with, because with
  * more than one account connected EVERY single-account command requires
- * `--account`, whatever it does. Delete and respond never conflict-gate.
+ * `--account`, whatever it does. CREATE only: an update whose new window
+ * overlaps its own old one would self-conflict, since the probe cannot
+ * exclude the event being updated — and the gate exists for bookings.
  */
-const CONFLICT_GATED: ReadonlySet<string> = new Set(["create", "add", "new", "update", "edit", "set"]);
+const CONFLICT_GATED: ReadonlySet<string> = new Set(["create", "add", "new"]);
 
 /** The value of `--<name> v` / `--<name>=v` in an argv, or null. Last wins,
  * matching gog's own flag resolution. */

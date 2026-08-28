@@ -456,6 +456,13 @@ export class PlowApi {
         degraded.push({ account, reason: "token refresh failed" });
         continue;
       }
+      // The last field of the row: a provider token that CONTAINS the bearer
+      // credential is the credential echoed back, and it must not enter a
+      // child's environment as if Google minted it.
+      if (minted.includes(token)) {
+        degraded.push({ account, reason: "malformed entry" });
+        continue;
+      }
       accounts.push({ account, token: minted, isDefault: is_default === true });
     }
     for (const { account, reason } of rows(data.data?.degraded)) {

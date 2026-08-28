@@ -427,39 +427,37 @@ esac
     expect(String(jv(response).get("output").str ?? "")).toContain("TOKEN=tok-a");
   });
 
-  itSpawns("refuses a timed create over a busy slot with a count and the override", async () => {
-    const d = device(accountsMinter(AB), [plowVendorDir()]);
+  itSpawns.each([
+    {
+      why: "a busy slot",
+      accounts: () => AB,
+      extra: ["--account", "a@example.com"],
+      expected: "1 event(s) overlap",
+    },
+    {
+      why: "a probe that cannot answer",
+      accounts: () => [{ account: "a@example.com", token: "tok-cbad", isDefault: true }],
+      extra: [],
+      expected: "could not check",
+    },
+  ])("refuses a timed create over $why, recorded as an error", async ({ accounts, extra, expected }) => {
+    const d = device(accountsMinter(accounts()), [plowVendorDir()]);
     const response = await run(d, [
       "plow-gog", "calendar", "create", "primary", "--summary", "X",
-      "--from", "2026-08-28T10:00:00Z", "--to", "2026-08-28T11:00:00Z", "--account", "a@example.com",
+      "--from", "2026-08-28T10:00:00Z", "--to", "2026-08-28T11:00:00Z", ...extra,
     ]);
     expect(jv(response).get("status").str).toBe("error");
-    expect(String(jv(response).get("error").str)).toContain("1 event(s) overlap");
-    expect(String(jv(response).get("error").str)).toContain("--confirm-conflict");
+    const error = String(jv(response).get("error").str);
+    expect(error).toContain(expected);
+    expect(error).toContain("--confirm-conflict");
+    const body = JSON.stringify(response);
     // The records themselves stay on the Mac: the owner approved a CREATE,
     // and event summaries riding its refusal would be an unapproved read.
-    expect(JSON.stringify(response)).not.toContain("Standup");
+    expect(body).not.toContain("Standup");
     // The create itself never ran: its output would have been the response.
-    expect(JSON.stringify(response)).not.toContain("evt-1");
+    expect(body).not.toContain("evt-1");
     // And the audit says so: a refusal is an error row, never the zero-exit
     // exec_end the desktop renders green.
-    const events = d.audit.entries().map((e) => jv(e).get("event").str);
-    expect(events).toContain("exec_error");
-    expect(events).not.toContain("exec_end");
-  });
-
-  itSpawns("records a failed conflict probe as an error, not a green run", async () => {
-    const d = device(
-      accountsMinter([{ account: "a@example.com", token: "tok-cbad", isDefault: true }]),
-      [plowVendorDir()],
-    );
-    const response = await run(d, [
-      "plow-gog", "calendar", "create", "primary", "--summary", "X",
-      "--from", "2026-08-28T10:00:00Z", "--to", "2026-08-28T11:00:00Z",
-    ]);
-    expect(jv(response).get("status").str).toBe("error");
-    expect(String(jv(response).get("error").str)).toContain("could not check");
-    expect(JSON.stringify(response)).not.toContain("evt-1");
     const events = d.audit.entries().map((e) => jv(e).get("event").str);
     expect(events).toContain("exec_error");
     expect(events).not.toContain("exec_end");

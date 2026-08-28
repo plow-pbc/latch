@@ -158,6 +158,9 @@ describe("buildMinter", () => {
             { account: "a@example.com", access_token: "tok-a", is_default: true },
             { account: "broken@example.com" }, // named, no token
             { account: "Bearer sk-fragment-abc123", access_token: "tok-x" }, // not an email
+            // A "token" carrying the request's own bearer credential is the
+            // credential echoed back, not a mint.
+            { account: "echo@example.com", access_token: "echo-cred-echo" },
           ],
           degraded: [{ account: "error: sk-fragment-def456 rejected", reason: "boom" }],
         },
@@ -168,10 +171,12 @@ describe("buildMinter", () => {
         degraded: [
           { account: "broken@example.com", reason: "token refresh failed" },
           { account: "(unrecognized account)", reason: "malformed entry" },
+          { account: "echo@example.com", reason: "malformed entry" },
           { account: "(unrecognized account)", reason: "malformed entry" },
         ],
       });
       expect(JSON.stringify(minted)).not.toContain("sk-fragment");
+      expect(JSON.stringify(minted)).not.toContain("echo-cred-echo");
     });
 
     it("returns a degraded-only envelope as a valid answer, not a throw", async () => {

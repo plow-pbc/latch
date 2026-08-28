@@ -141,11 +141,25 @@ describe("planPlowGog", () => {
       },
     },
     {
-      why: "gates a timed update spelled with =",
+      // CREATE only: an update whose new window overlaps its own old one
+      // would self-conflict — the probe cannot exclude the event being
+      // updated. The gate exists for bookings.
+      why: "never gates an update, even a timed one",
       argv: ["plow-gog", "calendar", "update", "primary", "e1", "--from=2026-08-28T10:00:00Z", "--to=2026-08-28T11:00:00Z"],
       expected: {
         kind: "single",
         gogArgv: ["plow-gog", "calendar", "update", "primary", "e1", "--from=2026-08-28T10:00:00Z", "--to=2026-08-28T11:00:00Z"],
+        account: null,
+        confirmConflict: false,
+        conflictCheck: null,
+      },
+    },
+    {
+      why: "reads the joined --from=/--to= spelling for the gate",
+      argv: ["plow-gog", "calendar", "create", "primary", "--from=2026-08-28T10:00:00Z", "--to=2026-08-28T11:00:00Z"],
+      expected: {
+        kind: "single",
+        gogArgv: ["plow-gog", "calendar", "create", "primary", "--from=2026-08-28T10:00:00Z", "--to=2026-08-28T11:00:00Z"],
         account: null,
         confirmConflict: false,
         conflictCheck: { from: "2026-08-28T10:00:00Z", to: "2026-08-28T11:00:00Z" },
