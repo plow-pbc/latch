@@ -548,16 +548,21 @@ describe("review findings", () => {
       expect(cwd).toBe(canonicalize(realDir));
     });
 
-    async function networkFor(argv: string[], network?: boolean): Promise<boolean | undefined> {
+    // The `allowed` flag the policy sees for a given capability kind, when
+    // plow_run_command builds an intent from `argv` + the extra tool args.
+    async function allowedFor(
+      kind: string,
+      argv: string[],
+      extra: Record<string, unknown> = {},
+    ): Promise<boolean | undefined> {
       let allowed: boolean | undefined;
       const { server } = makeServer({
         async decideIntent(intent) {
-          allowed = intent.capabilities.find((c) => c.kind === "network")?.allowed;
+          allowed = intent.capabilities.find((c) => c.kind === kind)?.allowed;
           return "deny" as const;
         },
       });
-      await callTool(server, "plow_run_command",
-        { argv, wait_ms: 1_000, ...(network === undefined ? {} : { network }) }, AGENT);
+      await callTool(server, "plow_run_command", { argv, wait_ms: 1_000, ...extra }, AGENT);
       return allowed;
     }
 
@@ -574,7 +579,21 @@ describe("review findings", () => {
       ["and an ordinary command still asks", ["/bin/echo", "x"], undefined, false],
       ["...and still means false when it says so", ["/bin/echo", "x"], false, false],
     ])("%s", async (_name, argv, network, allowed) => {
-      expect(await networkFor(argv, network)).toBe(allowed);
+      expect(await allowedFor("network", argv, network === undefined ? {} : { network })).toBe(allowed);
+    });
+
+    // Unlike network, apple_events is opt-in only: there is no vendored
+    // command that implies it, so the capability is pushed only when the
+    // agent asks for it, and omitted (not sent as `allowed: false`) otherwise
+    // so an unrelated command's approval rule hash does not change.
+    it.each([
+      ["apple_events true grants it", true, true],
+      ["omitted means no apple_events capability at all", undefined, undefined],
+      ["explicit false also means no capability, not a denied one", false, undefined],
+    ])("%s", async (_name, appleEvents, allowed) => {
+      expect(
+        await allowedFor("apple_events", ["/bin/echo", "x"], appleEvents === undefined ? {} : { apple_events: appleEvents }),
+      ).toBe(allowed);
     });
   });
 

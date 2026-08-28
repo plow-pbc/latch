@@ -1718,6 +1718,7 @@ function capText(c) {
     case "fs.write": return "write: " + (c.paths || []).join(", ");
     case "process.exec": return "run " + (c.argv || []).join(" ");
     case "network": return c.allowed ? "network: allowed" : "network: denied";
+    case "apple_events": return c.allowed ? "apple events: may control this Mac's apps" : "apple events: denied";
     case "tool": return "tool: " + (c.tool || "?");
     case "browser": return "browse: " + (c.origins || []).join(", ");
     case "credential":

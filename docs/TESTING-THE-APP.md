@@ -271,6 +271,39 @@ does not collide with anyone else's. If the API 503s or a call times out mid-run
 
 ---
 
+## Release gate: apple_events under the hardened runtime
+
+The `apple_events` capability compiles to a Seatbelt `(allow appleevent-send)` rule
+(`packages/device-core/src/executor.ts`), but that rule only lets an *unhardened* process send
+Apple events. A notarized build additionally needs the automation entitlement
+(`com.apple.security.automation.apple-events` in `apps/desktop/build/entitlements.mac.plist`) and
+an `NSAppleEventsUsageDescription` in the packaged Info.plist (`apps/desktop/electron-builder.yml`
+`mac.extendInfo`) — without both, macOS silently denies the send even though the dev-app smoke
+(which runs unhardened) passes.
+
+This is a **manual release gate, not a CI check** — it requires a real notarized, signed build, and
+CI does not produce one. After cutting a notarized build:
+
+1. Grant the running app permission when macOS prompts for Apple Events / Automation access (or
+   pre-approve it in System Settings → Privacy & Security → Automation).
+2. Drive one real `apple_events:true` send through `scripts/latch-smoke` — the same script the
+   dev-app installed-app smoke uses, per `#184` — with its `--apple-events` flag, which is what
+   puts `apple_events: true` in the tool arguments so the send exercises the granted path rather
+   than the Seatbelt denial:
+
+   ```sh
+   scripts/latch-smoke --config <install-config> --home "~/Library/Application Support/Plow-Latch" \
+     --apple-events -- /usr/bin/osascript -e 'tell application "Messages" to send "release-gate" to participant "+1<your-number>" of (first account whose service type = iMessage)'
+   ```
+3. Confirm the corresponding `exec_end` line in `audit.ndjson` shows `exit 0`. A `-1743`
+   (`errAEEventNotPermitted`) or similar AppleScript error there means the entitlement or usage
+   string regressed in that build — check both before re-signing.
+
+Do this once per release candidate, not per PR — a Seatbelt-only smoke on the dev app cannot catch
+an entitlement/Info.plist regression, and this is the only place that can.
+
+---
+
 ## What a UI ticket owes
 
 1. **A description of what was actually driven** — what was typed and clicked, and what the app did

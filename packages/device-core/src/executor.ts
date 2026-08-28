@@ -32,6 +32,7 @@ export const SandboxProfile = {
     readPaths: string[];
     writePaths: string[];
     network: boolean;
+    appleEvents: boolean;
     scratch: string;
     /** Home override for golden tests; defaults to the real home. */
     home?: string;
@@ -106,6 +107,7 @@ export const SandboxProfile = {
     } else {
       lines.push("(deny network*)");
     }
+    if (args.appleEvents) lines.push("(allow appleevent-send)");
     return lines.join("\n");
   },
 };
@@ -120,8 +122,15 @@ export class ExecutorError extends Error {}
  * told: a profile that could be built "reapable" for a run the timer will
  * never touch, or the reverse, is a contradiction neither could detect.
  */
-function isReapable(args: { writePaths: string[]; network: boolean }): boolean {
-  return args.writePaths.length === 0 && !args.network;
+function isReapable(args: {
+  writePaths: string[];
+  network: boolean;
+  appleEvents: boolean;
+}): boolean {
+  // `appleEvents` joins writes and network as a side-effect capability: an
+  // osascript send changes another app's state, so a silent run must not be
+  // SIGKILLed at 15 minutes and reported failed after it has already sent.
+  return args.writePaths.length === 0 && !args.network && !args.appleEvents;
 }
 
 /**
@@ -298,6 +307,7 @@ export class Executor {
     readPaths: string[];
     writePaths: string[];
     network: boolean;
+    appleEvents: boolean;
     waitMs: number;
     /**
      * Extra environment for the child, merged over the curated set below.
@@ -331,6 +341,7 @@ export class Executor {
       readPaths: reads,
       writePaths: args.writePaths,
       network: args.network,
+      appleEvents: args.appleEvents,
       scratch,
     });
     if (process.env.DOMO_DEBUG_SANDBOX) {

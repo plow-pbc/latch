@@ -515,6 +515,8 @@ export class DeviceAgent {
     const readPaths = intent.capabilities.find((c) => c.kind === "fs.read")?.paths ?? [];
     const writePaths = intent.capabilities.find((c) => c.kind === "fs.write")?.paths ?? [];
     const network = intent.capabilities.find((c) => c.kind === "network")?.allowed ?? false;
+    const appleEvents =
+      intent.capabilities.find((c) => c.kind === "apple_events")?.allowed ?? false;
     // wait_ms is delivery detail, not an approved capability, so it rides in
     // the payload rather than the approved capability set.
     const waitMs = jv(payload).get("wait_ms").int ?? 10000;
@@ -570,6 +572,7 @@ export class DeviceAgent {
         readPaths,
         writePaths,
         network,
+        appleEvents,
         waitMs,
         env,
       });
