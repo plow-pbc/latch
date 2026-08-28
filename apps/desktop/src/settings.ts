@@ -104,17 +104,14 @@ export interface Settings {
   provisionedChatUid: string;
   provisionedChatLabel: string;
   /**
-   * The number this Mac's completed activation told it to text — the server's
-   * assigned pool line, **verbatim**.
+   * Legacy: a pool line an older build stored when pairing still asked for a
+   * chat. Nothing writes it any more — pairing's `send_to` is the managed
+   * phone, which is not a number anyone can be told to text for a chat.
    *
-   * Kept because there is no call that answers "which line is mine": the
-   * relationship exists only inside the activation that created it, so it is
-   * stored here or it is lost. The cloud-agent screen needs it to explain how a
-   * new chat comes to exist.
-   *
-   * NEVER a number chosen here. Empty means we do not know one, and a screen
-   * must say so rather than fill the gap — texting the right code to the wrong
-   * number activates the account and provisions no chat at all.
+   * Still READ, because a Mac that paired under the old build has a real line
+   * here and the cloud-agents screen can still name it. Empty on every Mac
+   * paired since, which is the ordinary case, so no screen may treat its
+   * absence as "this account has no numbers".
    */
   activationSendTo: string;
   /** The first-run launch-at-login default has been applied (main.ts's

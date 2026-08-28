@@ -268,17 +268,19 @@ describe("activation — the path a brand-new user takes", () => {
     expect(onboarding.state().chat?.uid).toBe("cht_ALREADY");
   });
 
-  it("keeps the number the server told the user to text, verbatim", async () => {
-    // A pool line is assigned per activation and no call answers "which line is
-    // mine", so the completed activation is the only place it ever appears. The
-    // cloud-agents screen tells a chatless account to text it.
+  it("stores no number: pairing's sendTo is the managed phone, not a line", async () => {
+    // Pairing asks for no chat, so the server answers with the number that
+    // takes an activation text — not a pool line anyone can be told to text
+    // afterwards to get a chat. Storing it put the managed phone where the
+    // cloud-agents screen says "text this to make a chat", which provisions
+    // nothing. A number for a chat is a pool line, reached by texting it.
     plow.redeems = [{ status: "verified", token: SESSION_TOKEN, chat: CHAT }];
     const onboarding = build();
     const shown = await onboarding.begin();
     await settle();
 
-    expect(loadSettings(home).activationSendTo).toBe(shown.activation?.sendTo);
-    expect(loadSettings(home).activationSendTo).toBe("+15550001111");
+    expect(shown.activation?.sendTo).toBe("+15550001111");
+    expect(loadSettings(home).activationSendTo).toBe("");
   });
 
   it("stores no number at all when the sign-in never had an activation", async () => {

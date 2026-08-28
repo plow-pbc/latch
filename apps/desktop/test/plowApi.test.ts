@@ -210,13 +210,11 @@ describe("PlowApi", () => {
     const activation = await new PlowApi("https://api.plow.co", fetchImpl).createActivation("This Mac");
 
     expect(calls[0].url).toBe("https://api.plow.co/v1/auth/activate");
-    // `provision_chat` is what makes the account have a chat at all: without it
-    // the server hands back the managed phone, which is not a pool line, so the
-    // activation text creates no chat and there is no second way to make one.
-    expect(JSON.parse(String(calls[0].init.body))).toEqual({
-      name: "This Mac",
-      provision_chat: true,
-    });
+    // `{ name }` EXACTLY — byte-identical to the request Plow's own app makes.
+    // No `provision_chat` in any form: it assigns one of the account's few
+    // pool lines, and an owner holding a chat on every line could not pair
+    // another Mac at all while signing in spent one.
+    expect(JSON.parse(String(calls[0].init.body))).toEqual({ name: "This Mac" });
     // Unauthenticated by design — this is how an account that does not exist yet
     // gets created.
     expect((calls[0].init.headers as Record<string, string>).authorization).toBeUndefined();

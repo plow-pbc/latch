@@ -1613,7 +1613,11 @@ function sectionHeader(title, count, unit, action) {
 
 function cloudSection(s, redraw) {
   const add = el("button", { class: "btn primary", text: "Set up cloud agent" });
-  add.disabled = !s.cloudChats.length;
+  // Disabled only while the chat list is still unknown. An account whose list
+  // came back EMPTY keeps the button: since pairing stopped spending a pool
+  // line that is the ordinary state of a freshly paired Mac, and a dead button
+  // there says nothing about what to do next.
+  add.disabled = !s.cloudChatsLoaded && !s.cloudChats.length;
   add.addEventListener("click", () => openCloudPicker(add, s, redraw));
   const rosterRows = s.roster?.cloud ?? [];
   const agents = visibleCloudAgents(s);
