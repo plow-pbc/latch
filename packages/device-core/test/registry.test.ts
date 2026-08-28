@@ -281,6 +281,34 @@ describe("the plow-gog provider's refusal", () => {
   });
 });
 
+describe("the google-workspace skill", () => {
+  const body = vendoredProvider(["plow-gog"])!.skill.body;
+
+  it("is the one skill both provider rows publish, under the stable name", () => {
+    expect(vendoredProvider(["plow-gog"])!.skill).toBe(gog.skill);
+    expect(gog.skill.name).toBe("google-workspace");
+  });
+
+  it("teaches the multi-account contract", () => {
+    // Key phrases, not prose: each names a rule an agent must not miss.
+    for (const phrase of [
+      "plow-gog", // the command
+      '"accounts"', // the accounts verb
+      "--account", // narrowing, and the write rule
+      "--confirm-conflict", // the conflict-gate override
+      "account that received the thread", // the reply rule
+      "deprecated", // the legacy gog form's status
+    ]) {
+      expect(body).toContain(phrase);
+    }
+  });
+
+  it("no longer claims there is one mailbox", () => {
+    expect(body).not.toContain("no account switch");
+    expect(body).not.toContain("## One mailbox");
+  });
+});
+
 describe("the runtime registry and the build-time manifest", () => {
   // A provider added to one side only is the failure this catches, and it is
   // the likeliest one: the two lists live in different halves of the repo
