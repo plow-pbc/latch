@@ -42,6 +42,7 @@ import { resolveInstancePaths } from "./paths.js";
 import { loadSettings, saveSettings, WindowBounds } from "./settings.js";
 import { PlowApi, relaySocketUrl, resolveApiBaseUrl } from "./plowApi.js";
 import { Onboarding } from "./onboarding.js";
+import { ClaimLine } from "./claimLine.js";
 import { ConnectClient } from "./connectClient.js";
 import { CloudAgentsClient } from "./cloudAgents.js";
 import { CloudAgentState, CloudChatsClient, tabShowsCloudAgents } from "./cloudAgentState.js";
@@ -152,6 +153,7 @@ let relay: RelayClient | null = null;
 let onboarding: Onboarding | null = null;
 let connectClient: ConnectClient | null = null;
 let cloudAgents: CloudAgentState | null = null;
+let claimLine: ClaimLine | null = null;
 let onboardingWindow: BrowserWindow | null = null;
 let updates: UpdateController | null = null;
 
@@ -491,6 +493,9 @@ function signOut(): void {
   // And the cloud group: its rows, its chat list and any provision still being
   // polled all belong to the account that just went away.
   cloudAgents?.signedOut();
+  // Including a claim in flight: its display code is a live credential against
+  // the account that was just signed out of.
+  claimLine?.signedOut();
   // The gate, not a bare `openOnboardingWindow`: with no credential this Mac is
   // not usable, so the main window goes away as the setup window arrives.
   // Opening it boots the renderer, which calls `begin` and mints the code the
@@ -662,7 +667,10 @@ function agentsTabState(): Record<string, unknown> | null {
   const connect = connectClient?.state() ?? null;
   const cloud = cloudAgents?.state() ?? null;
   if (!connect) return null;
-  return { ...connect, ...(cloud ?? {}) };
+  // The claim's own state rides the same shape, under one key rather than
+  // spread: it is a modal's flow, not a property of the tab, and a spread would
+  // put `busy` and `message` in a namespace three other things already use.
+  return { ...connect, ...(cloud ?? {}), claimLine: claimLine?.state() ?? null };
 }
 
 // MARK: IPC for the first-run setup window
@@ -697,6 +705,17 @@ ipcMain.handle("onboarding:submitCode", async (_e, code: string) => onboarding?.
 ipcMain.handle("onboarding:finish", async () => {
   gate.sync();
 });
+// MARK: IPC for claiming a Plow number (cloud-agents modal)
+//
+// Beside the setup window's handlers because it is the same activation
+// endpoint, and separate from them because it is a different flow: the Mac is
+// already signed in, no credential is minted, and the modal renders the code
+// inline rather than opening setup. `claimLine:get` is a pure read, for the
+// reason `onboarding:get` is.
+ipcMain.handle("claimLine:get", async () => claimLine?.state() ?? null);
+ipcMain.handle("claimLine:begin", async () => claimLine?.begin());
+ipcMain.handle("claimLine:newCode", async () => claimLine?.newCode());
+ipcMain.handle("claimLine:cancel", async () => claimLine?.cancel());
 ipcMain.handle("settings:setApprovalMode", async (_e, mode: string) => setApprovalMode(home, mode));
 // What the owner says agents are for. This pair is the only way the text is
 // written or read on the renderer's behalf; nothing an agent can reach touches
@@ -1117,6 +1136,18 @@ app.whenReady().then(async () => {
       await cloudAgents?.remove(agentId);
     },
     signOutThisMac,
+    onChange: () => notifyRenderer("connect:changed"),
+  });
+
+  // Claiming a number is reached from the cloud-agents modal, so it shares
+  // that tab's change channel too — its result is a row on the same screen.
+  claimLine = new ClaimLine({
+    api: new PlowApi(apiBaseUrl),
+    home,
+    deviceName: `Plow Latch (${hostName()})`,
+    refreshAgents: async () => {
+      await cloudAgents?.refresh();
+    },
     onChange: () => notifyRenderer("connect:changed"),
   });
 

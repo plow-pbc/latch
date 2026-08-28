@@ -80,10 +80,11 @@ function sendInstructions(activation) {
     ]),
     el("div", { class: "field" }, [
       el("label", { text: "To" }),
-      // Whatever /v1/auth/activate returned — the pool line assigned to THIS
-      // activation, never a number chosen here. The chat is only created if the
-      // code arrives on that line, so the right code sent to another Plow
-      // number signs in and quietly creates nothing.
+      // Whatever /v1/auth/activate returned for THIS activation, never a
+      // number chosen here. Pairing asks for no chat, so it is normally the
+      // managed phone; a claim's is the pool line it was assigned. Either way
+      // only that number completes this code — the right code sent to another
+      // Plow number signs in and quietly creates nothing.
       el("div", { class: "faint mono", text: activation.sendTo }),
       el("div", {
         class: "faint",

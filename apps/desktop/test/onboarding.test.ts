@@ -268,35 +268,25 @@ describe("activation — the path a brand-new user takes", () => {
     expect(onboarding.state().chat?.uid).toBe("cht_ALREADY");
   });
 
-  it("keeps the number the server told the user to text, verbatim", async () => {
-    // A pool line is assigned per activation and no call answers "which line is
-    // mine", so the completed activation is the only place it ever appears. The
-    // cloud-agents screen tells a chatless account to text it.
+  it("stores no number: pairing's sendTo is the managed phone, not a line", async () => {
+    // Pairing asks for no chat, so the server hands back the number that takes
+    // an activation text — not a pool line anyone can be told to text
+    // afterwards. Storing it would put the managed phone where the
+    // cloud-agents screen says "text this to make a chat", which provisions
+    // nothing. `claimLine.ts` is what fills this field.
     plow.redeems = [{ status: "verified", token: SESSION_TOKEN, chat: CHAT }];
     const onboarding = build();
     const shown = await onboarding.begin();
     await settle();
 
-    expect(loadSettings(home).activationSendTo).toBe(shown.activation?.sendTo);
-    expect(loadSettings(home).activationSendTo).toBe("+15550001111");
-  });
-
-  it("stores no number at all when the sign-in never had an activation", async () => {
-    // The phone-code path is texted no number, so there is none to remember —
-    // and an empty field must stay empty rather than be filled with a guess.
-    const onboarding = build();
-    await onboarding.requestCode("+15551110000");
-    await onboarding.submitCode("12345678");
-
-    expect(onboarding.state().step).toBe("connected");
+    expect(shown.activation?.sendTo).toBe("+15550001111");
     expect(loadSettings(home).activationSendTo).toBe("");
   });
 
-  it("leaves a stored number alone when a sign-in has no activation to name one", async () => {
-    // "This sign-in had no activation" is not "there is no line": the number
-    // came from the activation that made this account's chat, and the redeem
-    // that carried it cannot be asked twice. Blanking it here would leave the
-    // cloud-agents screen with nothing to tell the user to text.
+  it("leaves a stored number alone — a claim's line outlives a re-pair", async () => {
+    // The number came from the CLAIM that made this account's chat, and the
+    // redeem that carried it cannot be asked twice. Pairing again must not
+    // blank it, or the cloud-agents screen has nothing to tell the user to text.
     const seeded = loadSettings(home);
     seeded.activationSendTo = "+15559876543";
     saveSettings(home, seeded);
@@ -957,7 +947,7 @@ describe("signing out", () => {
     // screen of whatever account signs in next.
     expect(loadSettings(home).provisionedChatUid).toBe("");
     expect(loadSettings(home).provisionedChatLabel).toBe("");
-    // The line goes with it: it belongs to the activation of the account just
+    // The line goes with it: it belongs to the claim made on the account just
     // left, and the next account gets its own.
     expect(loadSettings(home).activationSendTo).toBe("");
     expect(onboarding.reset().chat).toBeNull();

@@ -671,15 +671,12 @@ export class Onboarding {
       settings.provisionedChatUid = chat.uid;
       settings.provisionedChatLabel = activationChatLabel(chat);
     }
-    // The line this activation was assigned, kept for the same reason as the
-    // chat: nothing on the account can be asked for it later. The server's
-    // value verbatim — the cloud-agents screen tells a chatless account to text
-    // it, and a number we made up there would be texted into the void.
-    //
-    // Written on the way in, so it is the line that actually completed. The
-    // phone-code path has no activation and leaves it alone.
-    const sendTo = this.activation?.sendTo?.trim();
-    if (sendTo) settings.activationSendTo = sendTo;
+    // `activationSendTo` is deliberately NOT written here. Pairing does not ask
+    // for a chat, so its `sendTo` is the managed phone — the number that takes
+    // an activation text, not a line anyone can be told to text afterwards.
+    // Storing it would put the managed phone where the cloud-agents screen
+    // says "text this to make a chat", which provisions nothing. `claimLine.ts`
+    // is the flow that asks for a pool line, and it is what writes the field.
     this.save(settings);
 
     // The activation is spent: drop the code and the secret rather than leave

@@ -138,11 +138,17 @@ export interface Activation {
   /** A SECRET: it is the poll credential. Never rendered, never logged. */
   activationSecret: string;
   /**
-   * The pool line this activation was assigned. **Render this and nothing
-   * else.** The chat is provisioned only if the code arrives *on the assigned
-   * line*, so texting the right code to a number the app picked activates the
-   * account and silently provisions no chat — a failure with no symptom until
-   * the cloud-agent screen has nothing to point at.
+   * Where the endpoint says to text this code. **Render this and nothing
+   * else.**
+   *
+   * WHICH number it is depends on what was asked for: the managed phone for an
+   * ordinary pairing, and the assigned pool line when `provisionChat` was set.
+   * The two are not interchangeable and the caller cannot tell them apart from
+   * here — only the server knows. A chat is provisioned only if the code
+   * arrives *on the assigned line*, so texting the right code to a number the
+   * app picked activates the account and silently provisions no chat — a
+   * failure with no symptom until the cloud-agent screen has nothing to point
+   * at. Hence: whatever came back, verbatim.
    */
   sendTo: string;
 }
@@ -270,7 +276,10 @@ export class PlowApi {
    * the owner a route to make one.
    *
    * `provisionChat` is for a caller that genuinely wants the pool line, and
-   * there is no such caller today.
+   * `claimLine.ts` is that caller: claiming a number is its own explicit step
+   * from the cloud-agents screen, where an exhausted pool is an honest "every
+   * number is in use" on an optional action rather than a wall in front of
+   * signing in.
    */
   async createActivation(
     name: string,

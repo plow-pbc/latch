@@ -201,19 +201,28 @@ describe("PlowApi", () => {
   });
 
   it("starts an activation and hands back the code, the secret and where to text it", async () => {
+    const body = {
+      display_code: "Z1SWY",
+      activation_secret: "act_secret_xyz",
+      send_to: "+15551230000",
+    };
     const { calls, fetchImpl } = recordingFetch([
-      {
-        status: 200,
-        body: { display_code: "Z1SWY", activation_secret: "act_secret_xyz", send_to: "+15551230000" },
-      },
+      { status: 200, body },
+      { status: 200, body },
     ]);
-    const activation = await new PlowApi("https://api.plow.co", fetchImpl).createActivation("This Mac");
+    const api = new PlowApi("https://api.plow.co", fetchImpl);
+    const activation = await api.createActivation("This Mac");
+    await api.createActivation("This Mac", { provisionChat: true });
 
     expect(calls[0].url).toBe("https://api.plow.co/v1/auth/activate");
-    // No `provision_chat`, and the key is ABSENT rather than false: pairing a
-    // Mac must not spend one of the account's few pool lines, and an owner
-    // holding a chat on every line could not sign in at all while it did.
-    expect(JSON.parse(String(calls[0].init.body))).toEqual({ name: "This Mac" });
+    // Pairing sends no `provision_chat`, and the key is ABSENT rather than
+    // false: pairing a Mac must not spend one of the account's few pool lines,
+    // and an owner holding a chat on every line could not sign in at all while
+    // it did. A caller that genuinely wants the line — claimLine.ts — asks.
+    expect(calls.map(({ init }) => JSON.parse(String(init.body)))).toEqual([
+      { name: "This Mac" },
+      { name: "This Mac", provision_chat: true },
+    ]);
     // Unauthenticated by design — this is how an account that does not exist yet
     // gets created.
     expect((calls[0].init.headers as Record<string, string>).authorization).toBeUndefined();
@@ -221,23 +230,6 @@ describe("PlowApi", () => {
       displayCode: "Z1SWY",
       activationSecret: "act_secret_xyz",
       sendTo: "+15551230000",
-    });
-  });
-
-  it("asks for a chat only when a caller says so", async () => {
-    const { calls, fetchImpl } = recordingFetch([
-      {
-        status: 200,
-        body: { display_code: "Z1SWY", activation_secret: "act_secret_xyz", send_to: "+15551230000" },
-      },
-    ]);
-    await new PlowApi("https://api.plow.co", fetchImpl).createActivation("This Mac", {
-      provisionChat: true,
-    });
-
-    expect(JSON.parse(String(calls[0].init.body))).toEqual({
-      name: "This Mac",
-      provision_chat: true,
     });
   });
 

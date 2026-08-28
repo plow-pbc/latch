@@ -1117,7 +1117,28 @@ function openCloudPicker(trigger, state, redraw) {
   });
   newChatLink.addEventListener("click", () => showExplainer());
 
-  const pickerChildren = [
+  // A signed-in Mac with no chats at all. Pairing no longer claims a line, so
+  // this is the ORDINARY state of a freshly paired Mac, not a failure — and an
+  // empty checklist above a disabled "Set up agent" says nothing about what to
+  // do next. The claim is the only useful action here, so it is the primary
+  // one, and the picker's own controls do not appear at all.
+  const noChats = state.cloudChatsLoaded && state.cloudChats.length === 0;
+  const claimPrimary = el("button", { class: "btn primary", text: "Verify a new Plow number" });
+  claimPrimary.addEventListener("click", async () => showClaim(await window.domo.claimLineBegin()));
+  const pickerChildren = noChats
+    ? [
+        el("div", { class: "group-title", text: "You don't have a Plow number yet" }),
+        el("p", {
+          class: "faint conn-note",
+          text: "A cloud agent answers in a chat, and a chat needs a Plow number. Verify one to get started.",
+        }),
+        el("div", { class: "row cloud-modal-actions" }, [
+          el("div", { class: "spacer" }),
+          cancel,
+          claimPrimary,
+        ]),
+      ]
+    : [
     el("div", { class: "group-title", text: "Set up a cloud agent" }),
     el("p", { class: "faint conn-note", text: "Choose the chats this agent will read and reply in." }),
     el("div", { class: "field" }, [
@@ -1134,7 +1155,88 @@ function openCloudPicker(trigger, state, redraw) {
     ]),
   ];
   let panel = null;
+  /**
+   * Claiming a Plow number, inline.
+   *
+   * `claim` is the whole state, as every `claimLine*` call returns it, so this
+   * renders from one shape. While a code is live the main process is polling,
+   * and its `connect:changed` does not rebuild this panel — so the view re-reads
+   * on its own short interval, the same way the browser thumbnail does. The
+   * timer is cleared by every path that leaves this view, including dismissal.
+   */
+  let claimTimer = null;
+  const stopClaimPolling = () => {
+    if (claimTimer !== null) clearInterval(claimTimer);
+    claimTimer = null;
+  };
+  const showClaim = (claim) => {
+    if (!panel || !claim) return;
+    stopClaimPolling();
+    const activation = claim.activation;
+    const done = !activation && claim.chat;
+
+    const children = [
+      el("div", { class: "group-title", text: "Verify a new Plow number" }),
+    ];
+    if (done) {
+      children.push(
+        el("p", { class: "faint conn-note", text: "That number is yours. The new chat is in the list." }),
+        // Agent-supplied text: `text:` sets textContent, never HTML.
+        el("p", { class: "cloud-route-number" }, [
+          document.createTextNode("New chat: "),
+          el("span", { class: "mono", text: claim.chat.label }),
+        ]),
+      );
+    } else if (activation) {
+      children.push(
+        el("p", { class: "faint conn-note", text: "Text this exact message from your phone." }),
+        el("div", { class: "field" }, [
+          el("label", { text: "Send this exact message" }),
+          copyRow(activation.smsBody, "Copy"),
+        ]),
+        el("div", { class: "field" }, [
+          el("label", { text: "To" }),
+          el("div", { class: "faint mono", text: activation.sendTo }),
+          el("div", {
+            class: "faint",
+            text: "This number is picked for this claim — send it there, not to any other Plow number.",
+          }),
+        ]),
+      );
+    }
+    if (claim.message) children.push(el("p", { class: "faint", text: claim.message }));
+
+    const actions = [el("div", { class: "spacer" })];
+    if (claim.activationStale || (!activation && !done)) {
+      const again = el("button", { class: "btn primary", text: "Get a new code" });
+      again.addEventListener("click", async () => showClaim(await window.domo.claimLineNewCode()));
+      again.disabled = !!claim.busy;
+      actions.push(again);
+    }
+    const leave = el("button", { class: "btn", text: done ? "Done" : "Cancel" });
+    leave.addEventListener("click", async () => {
+      stopClaimPolling();
+      await window.domo.claimLineCancel();
+      showExplainer();
+      await redraw();
+    });
+    actions.push(leave);
+
+    panel.replaceChildren(...children, el("div", { class: "row cloud-modal-actions" }, actions));
+    firstUsableControl(panel)?.focus();
+    // Only while a code is actually outstanding. A finished or cancelled claim
+    // has nothing left to watch.
+    if (activation && !claim.activationStale) {
+      claimTimer = setInterval(async () => {
+        const next = await window.domo.claimLineGet();
+        // The modal may have gone while this call was in flight.
+        if (!cloudModal || !panel.isConnected) return stopClaimPolling();
+        showClaim(next);
+      }, 2000);
+    }
+  };
   const showPicker = () => {
+    stopClaimPolling();
     if (!panel) return;
     panel.replaceChildren(...pickerChildren);
     syncPicker();
@@ -1142,6 +1244,7 @@ function openCloudPicker(trigger, state, redraw) {
   };
   const showExplainer = () => {
     if (!panel) return;
+    stopClaimPolling();
     const verifiedLines = verifiedCloudLines(state.cloudChats);
     const verifiedLineKeys = new Set(verifiedLines.map(cloudPhoneDigits));
     const sendTo = state.cloudSendTo?.trim() || null;
@@ -1149,10 +1252,11 @@ function openCloudPicker(trigger, state, redraw) {
     const back = el("button", { class: "btn", text: "Back" });
     back.addEventListener("click", showPicker);
     const verify = el("button", { class: "btn primary", text: "Verify a new Plow number" });
-    verify.addEventListener("click", async () => {
-      closeCloudModal();
-      await window.domo.onboardingOpen();
-    });
+    // Deliberately NOT `onboardingOpen`: this Mac is already signed in, so the
+    // setup window opens on its "connected" screen, mints nothing, and the
+    // owner never gets a code. Claiming a number is its own flow, and it runs
+    // here in the modal the owner is already looking at.
+    verify.addEventListener("click", async () => showClaim(await window.domo.claimLineBegin()));
     const number = sendTo
       ? el("p", { class: "cloud-route-number" }, [
           document.createTextNode("Number to text: "),

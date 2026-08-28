@@ -108,6 +108,15 @@ contextBridge.exposeInMainWorld("domo", {
   cloudEditChats: (agentId: string, chatUids: string[]) =>
     ipcRenderer.invoke("cloud:editChats", agentId, chatUids),
 
+  // Claim a Plow number (cloud-agents modal). Same whole-state-per-call shape
+  // as the wizard, and deliberately NOT `onboardingOpen`: this Mac is already
+  // signed in, so the setup window would open on its "connected" screen and
+  // mint nothing. The code and the number to text render inline in the modal.
+  claimLineGet: () => ipcRenderer.invoke("claimLine:get"),
+  claimLineBegin: () => ipcRenderer.invoke("claimLine:begin"),
+  claimLineNewCode: () => ipcRenderer.invoke("claimLine:newCode"),
+  claimLineCancel: () => ipcRenderer.invoke("claimLine:cancel"),
+
   // Any external destination the app links to. A KEY plus an optional
   // main-owned record id, never a URL: main decides what may be opened.
   openExternal: (key: string, detail?: string) => ipcRenderer.invoke("external:open", key, detail),

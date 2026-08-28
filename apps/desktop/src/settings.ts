@@ -97,24 +97,29 @@ export interface Settings {
    * that carried the chat answers exactly once: re-reading it is impossible, so
    * a setup window reopened later would otherwise have nothing to show.
    *
-   * Neither is a secret. Both are empty on a Mac that activated before
-   * `provision_chat`, which is why nothing may treat them as a signal that the
-   * account has no chat.
+   * Neither is a secret. Both are empty on any Mac that has only ever paired —
+   * pairing asks for no chat — which is why nothing may treat them as a signal
+   * that the account has no chat.
    */
   provisionedChatUid: string;
   provisionedChatLabel: string;
   /**
-   * The number this Mac's completed activation told it to text — the server's
-   * assigned pool line, **verbatim**.
+   * The pool line a completed CLAIM was assigned, **verbatim**.
+   *
+   * Written by `claimLine.ts` and by nothing else. Pairing does not write it:
+   * pairing asks for no chat, so its `send_to` is the managed phone — a number
+   * that takes an activation text and hands back no line, which is the opposite
+   * of what a screen saying "text this to make a chat" needs.
    *
    * Kept because there is no call that answers "which line is mine": the
    * relationship exists only inside the activation that created it, so it is
    * stored here or it is lost. The cloud-agent screen needs it to explain how a
    * new chat comes to exist.
    *
-   * NEVER a number chosen here. Empty means we do not know one, and a screen
-   * must say so rather than fill the gap — texting the right code to the wrong
-   * number activates the account and provisions no chat at all.
+   * NEVER a number chosen here. Empty means we do not know one — the ordinary
+   * state of a paired Mac that has never claimed — and a screen must say so
+   * rather than fill the gap: texting the right code to the wrong number
+   * activates the account and provisions no chat at all.
    */
   activationSendTo: string;
   /** The first-run launch-at-login default has been applied (main.ts's
