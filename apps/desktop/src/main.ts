@@ -716,6 +716,20 @@ ipcMain.handle("claimLine:get", async () => claimLine?.state() ?? null);
 ipcMain.handle("claimLine:begin", async () => claimLine?.begin());
 ipcMain.handle("claimLine:newCode", async () => claimLine?.newCode());
 ipcMain.handle("claimLine:cancel", async () => claimLine?.cancel());
+/**
+ * Open Messages with the claim's text drafted — the setup window's
+ * `onboarding:openMessages`, for the flow that does not open that window.
+ *
+ * Main builds nothing and is handed nothing: it reads the URL the claim
+ * composed from the server's own `send_to`, and refuses anything that is not
+ * an `sms:` one. The renderer cannot open a URL and never names this one, so
+ * the app's `openExternal` calls stay pinned to URLs the app composed itself.
+ */
+ipcMain.handle("claimLine:openMessages", async () => {
+  const url = claimLine?.smsUrl();
+  if (url && url.startsWith("sms:")) await shell.openExternal(url);
+  return claimLine?.state() ?? null;
+});
 ipcMain.handle("settings:setApprovalMode", async (_e, mode: string) => setApprovalMode(home, mode));
 // What the owner says agents are for. This pair is the only way the text is
 // written or read on the renderer's behalf; nothing an agent can reach touches

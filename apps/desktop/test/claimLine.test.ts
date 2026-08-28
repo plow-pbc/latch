@@ -91,7 +91,23 @@ class FakePlow {
     return { status: "verified" as const, token: next.token, chat: next.chat ?? null };
   }
 
+  private revokeGate: Promise<void> | null = null;
+  private openRevokes: (() => void) | null = null;
+  /** Hold the revoke in flight — it is an await like any other, and a
+   * sign-out can land inside it. */
+  holdRevokes(): void {
+    this.revokeGate = new Promise((resolve) => {
+      this.openRevokes = resolve;
+    });
+  }
+  releaseRevokes(): void {
+    this.openRevokes?.();
+    this.revokeGate = null;
+    this.openRevokes = null;
+  }
+
   async revokeDeviceCredential(token: string): Promise<void> {
+    if (this.revokeGate) await this.revokeGate;
     this.revoked.push(token);
   }
 
@@ -273,6 +289,76 @@ describe("claiming a Plow number", () => {
     expect(plow.revoked).toEqual([SESSION_TOKEN]);
   });
 
+  it("stays cancelled when the sign-out lands inside createActivation", async () => {
+    // The mint's continuation runs on the far side of an await the sign-out
+    // can land in. Without an epoch check it put the code back on screen and
+    // started polling it — a claim the owner had just cancelled, running
+    // against the account they had just left.
+    plow.holdActivations();
+    const claim = build();
+    const flight = claim.begin();
+    claim.signedOut();
+    plow.releaseActivations();
+    await flight;
+    await settle();
+
+    expect(claim.state().activation).toBeNull();
+    expect(claim.state().step).toBe("idle");
+    // Nothing is watching it either: no redeem was ever attempted.
+    expect(plow.revoked).toEqual([]);
+    expect(loadSettings(home).provisionedChatUid).toBe("");
+  });
+
+  it("stays cancelled when the sign-out lands inside the revoke", async () => {
+    // The revoke is an await too, and checking the epoch only before it left a
+    // window where the chat and the line were still written past a sign-out.
+    plow.redeems = [{ status: "verified", token: SESSION_TOKEN, chat: CHAT }];
+    plow.holdRevokes();
+    const claim = build();
+    await claim.begin();
+    await settleUntil(() => plow.revoked.length === 0 && claim.state().activation !== null);
+    // The loop is now parked inside the revoke.
+    claim.signedOut();
+    plow.releaseRevokes();
+    await settle();
+
+    // Retired anyway — that answer is the only one there will be.
+    expect(plow.revoked).toEqual([SESSION_TOKEN]);
+    // But nothing persisted, and nothing on screen.
+    expect(loadSettings(home).provisionedChatUid).toBe("");
+    expect(loadSettings(home).activationSendTo).toBe("");
+    expect(claim.state().chat).toBeNull();
+  });
+
+  it("offers a new code when the answer carries a chat but no token", async () => {
+    // A tokenless verified answer is an echo: an earlier redeem took the
+    // one-shot completion, so nothing in this one is this claim's to keep —
+    // the chat included.
+    plow.redeems = [{ status: "verified", token: null, chat: CHAT }];
+    const claim = build();
+    await claim.begin();
+    await settle();
+
+    expect(claim.state().chat).toBeNull();
+    expect(claim.state().activationStale).toBe(true);
+    expect(claim.state().message).toContain("didn't hand back a new chat");
+    expect(loadSettings(home).provisionedChatUid).toBe("");
+    expect(loadSettings(home).activationSendTo).toBe("");
+    // Nothing to revoke: there was no token.
+    expect(plow.revoked).toEqual([]);
+  });
+
+  it("hands main an sms: URL for the live code, and nothing when there is none", async () => {
+    // What the modal's "Open Messages" button opens. Composed from the
+    // server's own `send_to`, never from anything the renderer supplies.
+    const claim = build();
+    expect(claim.smsUrl()).toBeNull();
+    await claim.begin();
+    expect(claim.smsUrl()).toBe("sms:+15550001111?&body=Plow%20Activate%3A%20CODE1");
+    claim.cancel();
+    expect(claim.smsUrl()).toBeNull();
+  });
+
   it("cancels an in-flight claim without leaving the poll running", async () => {
     const claim = build();
     await claim.begin();
@@ -308,7 +394,7 @@ describe("claiming a Plow number", () => {
 
     expect(claim.state().chat).toBeNull();
     expect(claim.state().activationStale).toBe(true);
-    expect(claim.state().message).toContain("didn't hand back a chat");
+    expect(claim.state().message).toContain("didn't hand back a new chat");
     expect(loadSettings(home).provisionedChatUid).toBe("");
     // The token still gets retired: it is live whether or not a chat came with it.
     expect(plow.revoked).toEqual([SESSION_TOKEN]);

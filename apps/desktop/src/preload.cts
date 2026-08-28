@@ -116,6 +116,9 @@ contextBridge.exposeInMainWorld("domo", {
   claimLineBegin: () => ipcRenderer.invoke("claimLine:begin"),
   claimLineNewCode: () => ipcRenderer.invoke("claimLine:newCode"),
   claimLineCancel: () => ipcRenderer.invoke("claimLine:cancel"),
+  // As in the wizard: main owns the `sms:` URL, so the renderer never builds
+  // one or is trusted with one.
+  claimLineOpenMessages: () => ipcRenderer.invoke("claimLine:openMessages"),
 
   // Any external destination the app links to. A KEY plus an optional
   // main-owned record id, never a URL: main decides what may be opened.

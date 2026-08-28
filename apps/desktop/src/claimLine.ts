@@ -80,6 +80,17 @@ export class ClaimLine {
   /** Bumped whenever a claim stops being the one we care about. A poll loop
    * whose generation is stale returns instead of writing state. */
   private pollGeneration = 0;
+  /**
+   * Bumped ONLY by `cancel` — sign-out included — and never by this class's
+   * own bookkeeping, which is what separates it from `pollGeneration`.
+   *
+   * Every await here is a window a sign-out can land in, and the continuation
+   * on the far side runs against settings the sign-out has already cleared.
+   * So the rule is: capture this before an await, re-check it after, and write
+   * nothing if it moved. `pollGeneration` cannot serve — the verified branch
+   * bumps it itself, so "did it change" stops meaning "was this abandoned".
+   */
+  private abandons = 0;
   /** The mint in flight, if any, so a second click joins it rather than
    * burning a second code. `pendingMintId` says which flight it is. */
   private pendingMint: Promise<ClaimLineState> | null = null;
@@ -145,10 +156,18 @@ export class ClaimLine {
         this.activationStale = false;
         this.chat = null;
         this.step = "idle";
+        const abandonedAt = this.abandons;
         // The one caller in the app that asks for a pool line.
         const created = await this.deps.api.createActivation(this.deps.deviceName, {
           provisionChat: true,
         });
+        // A sign-out landing inside that call must STAY signed out. Without
+        // this the continuation put the code back on screen and started
+        // polling it — a claim the owner had just cancelled, running against
+        // the account they had just left. The code itself is already minted
+        // server-side and there is no route that un-mints one; leaving it
+        // unwatched is all this side can do, and it completes nothing here.
+        if (this.abandons !== abandonedAt) return;
         this.activationSecret = created.activationSecret;
         this.activation = {
           displayCode: created.displayCode,
@@ -174,6 +193,20 @@ export class ClaimLine {
   }
 
   /**
+   * The `sms:` URL for the live code, or null.
+   *
+   * Read by main for the "Open Messages" button: the renderer is sandboxed and
+   * cannot open a URL, and this keeps what gets opened to something the app
+   * composed from the server's own `send_to` — never a string a page handed
+   * over. `state().activation.smsUrl` holds the same value; this is the
+   * accessor main uses so the IPC handler has no reason to reach into the
+   * view model.
+   */
+  smsUrl(): string | null {
+    return this.activation?.smsUrl ?? null;
+  }
+
+  /**
    * Abandon whatever is in flight, and forget the code.
    *
    * The claim is optional and repeatable, so this leaves no wreckage to
@@ -181,6 +214,7 @@ export class ClaimLine {
    * the code belongs to the account that just went away.
    */
   cancel(): ClaimLineState {
+    this.abandons += 1;
     this.cancelPolling();
     this.activation = null;
     this.activationSecret = null;
@@ -251,30 +285,37 @@ export class ClaimLine {
         // while this call was in flight — leaving it unretired is the one
         // outcome nothing can come back for.
         //
-        // What is NOT unconditional is persisting. `activationSecret` is
-        // nulled by every path that abandons a claim, sign-out first among
-        // them, so it says whether this is still the claim we care about.
-        // Writing a chat and a line past a sign-out would name, on the next
-        // account's screen, a chat bought by the one that just left.
+        // What is NOT unconditional is persisting. The abandonment epoch is
+        // captured here and re-checked after the revoke, because the revoke is
+        // itself an await a sign-out can land in: checking once, before it,
+        // left a window where a chat and a line were still written past a
+        // sign-out — naming, on the next account's screen, a chat bought by
+        // the one that just left. `activationSecret` answers the same question
+        // for the moment the answer arrived, and is nulled below.
+        const abandonedAt = this.abandons;
         const stillOurs = secret === this.activationSecret;
         this.cancelPolling();
         this.activationSecret = null;
         // The token is a throwaway HERE and a live session token on the
         // account: it carries `keys:manage` and `relay:*`. Nothing in this
         // flow needs it — the Mac is already signed in — so it is retired and
-        // never stored. Best-effort: the app's only self-revoke route, and a
-        // server that refuses it leaves a short-lived session to expire on its
-        // own, which beats keeping one.
+        // never stored. `POST /v1/relay/devices/self/revoke` accepts it: its
+        // guard is `relay:device`, and a session's `relay:*` satisfies that
+        // wildcard, so the row the bearer resolves to is deactivated. It is
+        // the only self-retirement route the API has — `DELETE /api-keys/{id}`
+        // refuses the calling session outright — and it stays best-effort
+        // because a Mac that cannot reach Plow must still finish the claim.
         if (result.token) await this.deps.api.revokeDeviceCredential(result.token).catch(() => {});
-        if (!stillOurs) return;
-        // A verified answer with no chat is the one the wrong number produces:
-        // the account activates, the pool line is never asked for the code, and
-        // nothing was provisioned. Also what an earlier redeem having taken the
-        // completion looks like. Either way there is nothing to keep, and the
-        // fix is the same — a fresh code.
-        if (!result.chat) {
+        if (!stillOurs || this.abandons !== abandonedAt) return;
+        // Nothing usable came back, in either of the two shapes it takes: no
+        // chat (the code was texted to the wrong number, so the account
+        // activated and the assigned line never saw it), or no token (an
+        // earlier redeem took the one-shot completion, and this answer is its
+        // echo — nothing here can be trusted to be this claim's). A claim
+        // needs BOTH, and the fix for either is the same: a fresh code.
+        if (!result.chat || !result.token) {
           this.stall(
-            "Plow verified that text but didn't hand back a chat. Get a new code and send it to the number shown.",
+            "Plow verified that text but didn't hand back a new chat. Get a new code and send it to the number shown.",
           );
           this.publish();
           return;
@@ -340,7 +381,9 @@ export class ClaimLine {
     this.step = "idle";
     this.message = "";
     // The chat is a row on the cloud-agent screen, and the screen is already
-    // open behind this modal.
+    // open behind this modal. Last, and after every write above: a sign-out
+    // landing in this await has a fully-written claim behind it, and the
+    // refresh it races is `cloudAgentState`'s own to drop.
     await this.deps.refreshAgents();
   }
 

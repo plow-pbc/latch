@@ -1207,6 +1207,15 @@ function openCloudPicker(trigger, state, redraw) {
     if (claim.message) children.push(el("p", { class: "faint", text: claim.message }));
 
     const actions = [el("div", { class: "spacer" })];
+    if (activation) {
+      // The wizard's button, for the flow that never opens the wizard. Main
+      // owns the `sms:` URL; the renderer only asks.
+      const messages = el("button", { class: "btn", text: "Open Messages…" });
+      messages.addEventListener("click", async () =>
+        showClaim(await window.domo.claimLineOpenMessages()),
+      );
+      actions.push(messages);
+    }
     if (claim.activationStale || (!activation && !done)) {
       const again = el("button", { class: "btn primary", text: "Get a new code" });
       again.addEventListener("click", async () => showClaim(await window.domo.claimLineNewCode()));
