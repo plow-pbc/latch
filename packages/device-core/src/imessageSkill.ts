@@ -313,10 +313,16 @@ text, it will simply never match). The handle and guid go inside SQL string lite
 an un-doubled apostrophe ends the string early and the query fails to parse. Then read
 \`is_sent\` and \`is_delivered\` on the newest row. A send that never shows up here did not go
 out, whatever \`osascript\` returned — and because every row is newer than the snapshot, an
-older success at the same handle or chat can never be mistaken for this send's delivery. Run
-this **right after your send, before issuing another to the same destination**: the newest
-row (top) is your send, but a second send to the same handle in the same window would also
-sit above the snapshot, and the query cannot tell two same-destination sends apart.
+older success at the same handle or chat can never be mistaken for this send's delivery.
+
+This check is **best-effort, not an identity proof.** \`chat.db\` puts no per-sender marker on
+an outbound row, so any send to that destination after the snapshot — including one from a
+different agent driving this same Mac — sits above it and looks identical here. Run the check
+**right after your send and before issuing another to the same destination**, and take the
+newest row as yours; with one agent sending one message at a time (the normal case) that is
+exact. Two sends racing to the same destination in the same window genuinely cannot be told
+apart from \`chat.db\` alone — treat a same-destination race as unverifiable rather than
+trusting the top row.
 
 ## Approval semantics
 
