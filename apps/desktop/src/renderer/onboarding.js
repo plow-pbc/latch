@@ -259,10 +259,11 @@ function connectedScreen() {
       el("label", { text: "Account" }),
       el("div", { class: "faint mono", text: state.accountUid || "—" }),
     ]),
-    // A chat has no name, so it is shown by its line and its members. Absent on
-    // a Mac that signed in with a phone code, or one activated before chats
-    // existed — the row is simply not drawn rather than reading "none", which
-    // would claim something about the account this screen cannot know.
+    // The chat uses the best title, member names or numeric fallback available.
+    // It is absent on a Mac that signed in with a phone code, or one activated
+    // before chats existed — the row is simply not drawn rather than reading
+    // "none", which would claim something about the account this screen cannot
+    // know.
     ...(state.chat
       ? [
           el("div", { class: "field" }, [

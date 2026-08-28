@@ -106,8 +106,8 @@ contextBridge.exposeInMainWorld("domo", {
   // picker opens through this, because `connectGet` only re-reads what was
   // already fetched.
   cloudRefresh: () => ipcRenderer.invoke("cloud:refresh"),
-  cloudCreate: (chatUids: string[], name: string) =>
-    ipcRenderer.invoke("cloud:create", chatUids, name),
+  cloudCreate: (chatUids: string[], name: string, provider: string) =>
+    ipcRenderer.invoke("cloud:create", chatUids, name, provider),
   // Replace the whole set of chats an agent serves. One round trip, no poll.
   cloudEditChats: (agentId: string, chatUids: string[]) =>
     ipcRenderer.invoke("cloud:editChats", agentId, chatUids),

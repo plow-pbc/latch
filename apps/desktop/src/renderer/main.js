@@ -23,6 +23,10 @@ const view = document.getElementById("view");
 const seg = document.getElementById("seg");
 const statusDot = document.getElementById("statusDot");
 const statusText = document.getElementById("statusText");
+const CLOUD_PROVIDERS = [
+  { value: "exe:hermes", label: "Hermes" },
+  { value: "exe:life", label: "Life" },
+];
 
 // Null until boot() picks one: the HTML marks Audit active for the first paint,
 // but boot must still RENDER that pane, and "already on this tab" now returns
@@ -981,8 +985,8 @@ function chatChecklist({ chats, holders, selected = [], onChange }) {
       onChange?.();
     });
 
-    // The name is the whole row: a chat has no title, so its label already IS
-    // its numbers. The only second line worth printing is why it cannot be had.
+    // The label already holds the best available title, member names or
+    // numbers. The only second line worth printing is why it cannot be had.
     const main = el("div", { class: "chat-option-main" }, [
       el("div", { class: "chat-option-name", text: chat.label || chat.uid }),
     ]);
@@ -1046,6 +1050,8 @@ function cloudPhoneDigits(number) {
 
 function openCloudPicker(trigger, state, redraw) {
   const name = el("input", { class: "text", attrs: { placeholder: "Cloud agent", "aria-label": "Agent name" } });
+  const provider = el("select", { class: "text", attrs: { "aria-label": "Provider" } },
+    CLOUD_PROVIDERS.map(({ value, label }) => el("option", { text: label, attrs: { value } })));
   const warningTitle = el("div", { class: "warn cloud-warning-title", text: "" });
   const warningBody = el("p", { class: "faint", text: "" });
   const warning = el("div", { class: "cloud-warning" }, [warningTitle, warningBody]);
@@ -1092,13 +1098,13 @@ function openCloudPicker(trigger, state, redraw) {
       chatLabels: chatUids.map(labelFor),
       // Home's, like every other row: it is the chat Message opens.
       recipients: home?.recipients ?? null,
-      provider: "",
+      provider: provider.value,
       status: "provisioning",
       failureReason: null,
       createdAt: "",
       localPending: true,
     });
-    const request = window.domo.cloudCreate(chatUids, requestedName);
+    const request = window.domo.cloudCreate(chatUids, requestedName, provider.value);
     await new Promise((resolve) => requestAnimationFrame(resolve));
     closeCloudModal();
     await redraw();
@@ -1126,6 +1132,7 @@ function openCloudPicker(trigger, state, redraw) {
       el("p", { class: "chat-list-alt" }, [newChatLink]),
     ]),
     el("div", { class: "field" }, [el("label", { text: "Name (optional)" }), name]),
+    el("div", { class: "field" }, [el("label", { text: "Provider" }), provider]),
     warning,
     el("div", { class: "row cloud-modal-actions" }, [
       el("div", { class: "spacer" }),
@@ -1490,10 +1497,17 @@ function cloudChatSummary(agent) {
   return labels.map((label, index) => (index === 0 ? `★ ${label}` : label)).join(" · ");
 }
 
+function cloudProviderLabel(value) {
+  const provider = String(value ?? "").trim();
+  return CLOUD_PROVIDERS.find(({ value }) => value === provider)?.label ?? provider;
+}
+
 function cloudContext(agent, row) {
   const chats = cloudChatSummary(agent);
+  const provider = cloudProviderLabel(agent?.provider);
   return [
     chats || "Chats unavailable",
+    provider ? `Provider ${provider}` : null,
     rosterUse(row ?? { createdAt: agent?.createdAt, lastSeenAt: null }, "Used"),
   ].filter(Boolean).join(" · ");
 }
@@ -1616,12 +1630,11 @@ function cloudSection(s, redraw) {
   add.disabled = !s.cloudChatsLoaded && !s.cloudChats.length;
   // Opening ASKS PLOW first. `s` is whatever the last tab activation fetched,
   // and the explainer inside promises a new chat "appears here when you reopen
-  // this window" — a promise the captured state cannot keep. Falls back to `s`
-  // if the refresh answers nothing, so a Mac that cannot reach Plow still gets
-  // its picker.
+  // this window" — a promise the captured state cannot keep. `cloud:refresh`
+  // answers with the tab state whether or not the network read succeeded, so
+  // there is nothing to fall back to.
   add.addEventListener("click", async () => {
-    const fresh = (await window.domo.cloudRefresh()) ?? s;
-    openCloudPicker(add, fresh, redraw);
+    openCloudPicker(add, await window.domo.cloudRefresh(), redraw);
   });
   const rosterRows = s.roster?.cloud ?? [];
   const agents = visibleCloudAgents(s);

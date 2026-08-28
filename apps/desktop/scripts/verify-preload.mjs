@@ -88,7 +88,7 @@ const cloudAgent = {
   chatUids: [cloudChat.uid],
   chatLabels: [cloudChat.label],
   recipients: cloudChat.recipients,
-  provider: "anthropic",
+  provider: "exe:hermes",
   status: "running",
   failureReason: null,
   createdAt: "2026-08-24T18:00:00.000Z",
@@ -143,7 +143,10 @@ let relaySignOutCalls = 0;
 
 // Connect state also carries the cloud-agent display state. It contains no
 // credential, session id or worker URL.
-ipcMain.handle("connect:get", async () => ({
+/** The Agents tab's whole state, as main assembles it. ONE shape: `connect:get`
+ * and `cloud:refresh` both answer with it, so a field added to the tab is added
+ * here once rather than in two fixtures that drift. */
+const agentsTabProbeState = () => ({
   mcpUrl: "https://api.plow.co/v1/relay/devices/u_probe/mcp",
   accountUid: "u_probe",
   connected: true,
@@ -155,29 +158,18 @@ ipcMain.handle("connect:get", async () => ({
   rosterError: null,
   removeError: null,
   ...cloudProbe,
-}));
+});
+ipcMain.handle("connect:get", async () => agentsTabProbeState());
 let cloudRefreshCalls = 0;
 // The real one re-reads Plow, then answers with the tab state. The fake counts
 // the call and answers with whatever `cloudProbe` holds NOW — which is what
 // lets a test change the backing list and prove the reopen fetched it.
 ipcMain.handle("cloud:refresh", async () => {
   cloudRefreshCalls += 1;
-  return {
-    mcpUrl: "https://api.plow.co/v1/relay/devices/u_probe/mcp",
-    accountUid: "u_probe",
-    connected: true,
-    hasCredential: true,
-    busy: false,
-    message: "",
-    credential: null,
-    roster: rosterProbe,
-    rosterError: null,
-    removeError: null,
-    ...cloudProbe,
-  };
+  return agentsTabProbeState();
 });
-ipcMain.handle("cloud:create", async (_e, chatUids, name) => {
-  cloudCalls.create.push({ chatUids, name });
+ipcMain.handle("cloud:create", async (_e, chatUids, name, provider) => {
+  cloudCalls.create.push({ chatUids, name, provider });
   cloudCreatePending = true;
   await new Promise((resolve) => { releaseCloudCreate = resolve; });
   cloudProbe = {
@@ -189,6 +181,7 @@ ipcMain.handle("cloud:create", async (_e, chatUids, name) => {
         (uid) => cloudProbe.cloudChats.find((chat) => chat.uid === uid)?.label ?? uid,
       ),
       name: name || "Cloud agent",
+      provider,
       status: "provisioning",
     }],
   };
@@ -659,6 +652,7 @@ app.whenReady().then(async () => {
       .find((item) => item.querySelector("h2")?.textContent.trim() === "Cloud agents");
     return {
       noCredentialIdentity: !group?.textContent.includes("session") && !group?.textContent.includes("worker"),
+      showsProvider: group?.textContent.includes("Provider Hermes") === true,
     };
   }})()`);
 
@@ -707,6 +701,8 @@ app.whenReady().then(async () => {
     const settle = () => new Promise((resolve) => setTimeout(resolve));
 
     const emptyDisables = createButton().disabled;
+    const defaultProvider = document.querySelector('.cloud-modal select[aria-label="Provider"]')
+      ?.value === "exe:hermes";
     boxes()[0].click();
     await settle();
     const firstIsHome = homeLabels().length === 1 && !createButton().disabled;
@@ -727,7 +723,8 @@ app.whenReady().then(async () => {
       .textContent.includes("1 chat");
     // Leave exactly one chosen for the create that follows.
     return {
-      emptyDisables, firstIsHome, secondDoesNotStealHome, makeHomeMovesToZero, homeMoved, warningCounts,
+      emptyDisables, defaultProvider, firstIsHome, secondDoesNotStealHome, makeHomeMovesToZero,
+      homeMoved, warningCounts,
       warningTitle: document.querySelector(".cloud-modal .cloud-warning-title").textContent,
       homeAfterFirst, homeNow: homeLabels()[0] ?? null,
       ignored: emptyDisables && firstIsHome && secondDoesNotStealHome,
@@ -743,6 +740,9 @@ app.whenReady().then(async () => {
   await waitFor(win, `document.querySelector(".cloud-modal .chat-list")`, "the picker for the create wait");
   await win.webContents.executeJavaScript(
     `document.querySelector(".cloud-modal .chat-option:not(.disabled) input").click()`,
+  );
+  await win.webContents.executeJavaScript(
+    `document.querySelector('.cloud-modal select[aria-label="Provider"]').value = "exe:life"`,
   );
   const cloudCreateWait = await win.webContents.executeJavaScript(`(${() => {
     const button = [...document.querySelectorAll(".cloud-modal button")]
@@ -761,6 +761,7 @@ app.whenReady().then(async () => {
     pendingRow: !!document.querySelector('[data-cloud-agent-id^="pending-cloud-"]'),
   })})()`);
   cloudCreateTransition.requestPending = cloudCreatePending;
+  cloudCreateTransition.provider = cloudCalls.create.at(-1)?.provider;
   releaseCloudCreate();
   await waitFor(
     win,
@@ -1750,9 +1751,11 @@ app.whenReady().then(async () => {
     connect.clientNameNotBold &&
     connect.noConnectTab &&
     cloudRoster.noCredentialIdentity &&
+    cloudRoster.showsProvider &&
     cloudModalFocus.insideModal &&
     cloudModalFocus.usable &&
     cloudModalGuard.ignored &&
+    cloudModalGuard.defaultProvider &&
     cloudModalGuard.makeHomeMovesToZero &&
     cloudModalGuard.keptOriginal &&
     cloudCreateWait.disabled &&
@@ -1761,6 +1764,7 @@ app.whenReady().then(async () => {
     cloudCreateTransition.modalClosed &&
     cloudCreateTransition.requestPending &&
     cloudCreateTransition.pendingRow &&
+    cloudCreateTransition.provider === "exe:life" &&
     cloudCreateTransition.reconciled &&
     cloudRowActions.hasMessage &&
     cloudRowActions.noSettings &&

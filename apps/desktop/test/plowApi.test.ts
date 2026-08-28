@@ -289,6 +289,7 @@ describe("PlowApi", () => {
                 object: "chat_participant",
                 status: "active",
                 display_name: "Ada Lovelace",
+                role: "member",
                 provider_type: "linq",
                 provider_key: "+15557654321",
                 verified_at: "2026-08-24T18:02:11Z",
@@ -299,6 +300,7 @@ describe("PlowApi", () => {
                 object: "chat_participant",
                 status: "active",
                 display_name: "You",
+                role: "owner",
                 provider_type: "linq",
                 provider_key: "+15551230000",
                 verified_at: "2026-08-24T18:02:11Z",
@@ -316,15 +318,17 @@ describe("PlowApi", () => {
       chat: {
         uid: "cht_D7hfWNK",
         status: "active",
+        displayName: null,
         // The number, off the agent's line — NOT "chat_5".
         line: "+15559876543",
         createdAt: "2026-08-24T18:02:11Z",
         // Members only: the agent participant is not a human in the chat.
         // The owner is first even though the wire put another member first.
-        // Display names do not cross into the state.
+        // Names and ownership cross for labelling; phone handles stay
+        // alongside them for addressing.
         participants: [
-          { providerKey: "+15551230000" },
-          { providerKey: "+15557654321" },
+          { providerKey: "+15551230000", displayName: "You", isOwner: true },
+          { providerKey: "+15557654321", displayName: "Ada Lovelace", isOwner: false },
         ],
       },
     });
@@ -339,6 +343,7 @@ describe("PlowApi", () => {
     expect(parseActivationChat({ uid: "cht_x" })).toEqual({
       uid: "cht_x",
       status: "",
+      displayName: null,
       line: null,
       participants: [],
       createdAt: "",
@@ -347,7 +352,14 @@ describe("PlowApi", () => {
     // line comes off it, and it is not shown as a person.
     expect(
       parseActivationChat({ uid: "cht_x", participants: [null, 7, {}, { type: "ghost" }] }),
-    ).toEqual({ uid: "cht_x", status: "", line: null, participants: [], createdAt: "" });
+    ).toEqual({
+      uid: "cht_x",
+      status: "",
+      displayName: null,
+      line: null,
+      participants: [],
+      createdAt: "",
+    });
     // An agent participant with no line at all is still not the thread id.
     expect(
       parseActivationChat({ uid: "cht_x", provider_key: "chat_5", participants: [{ type: "agent" }] })
@@ -358,7 +370,7 @@ describe("PlowApi", () => {
         uid: "cht_x",
         participants: [{ type: "member", provider_key: "+15551230000" }],
       })?.participants,
-    ).toEqual([{ providerKey: "+15551230000" }]);
+    ).toEqual([{ providerKey: "+15551230000", displayName: null, isOwner: false }]);
     // No uid is no chat: there would be nothing to join on later.
     expect(parseActivationChat({ status: "active" })).toBeNull();
     expect(parseActivationChat(undefined)).toBeNull();
