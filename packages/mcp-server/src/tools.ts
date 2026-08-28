@@ -199,28 +199,31 @@ export const MACOS_TOOLING =
  * restart, not immediately; the copy says so.
  */
 /**
- * The local-write sentence in the footer — present only when the skills
- * directory can be named both **safely** and **usably**.
- *
- * A home under the user's own directory renders `~`-relative, which is safe (no
- * account name) and usable (`plow_write_file` canonicalizes `~`). An explicit
- * `DOMO_HOME` elsewhere — e.g. `/Volumes/Alice/...` — has neither property: the
- * absolute path would leak the operator's layout, and there is no MCP surface
- * that exposes the device home, so an agent could not resolve a home-agnostic
- * description into a real path (a relative one would resolve from `process.cwd()`).
- * In that case we advertise no local-write path at all and leave the agent the
- * upstream channel below, rather than an instruction it cannot follow.
+ * The one skills directory whose path is safe to print in the footer: the
+ * packaged default `DOMO_HOME` on macOS. It is identical on every Mac, so it
+ * discloses nothing owner-specific — unlike any custom home, which could reveal
+ * an account name (`/Users/<name>/…`), a client/project folder (`~/Clients/Acme/…`),
+ * or an off-home volume.
+ */
+const DEFAULT_SKILLS_PATH = "~/Library/Application Support/Plow-Latch/device/skills/";
+
+/**
+ * The local-write sentence in the footer — present only when the device home is
+ * the packaged default, so the single path we print reveals nothing about the
+ * owner. A branched dev home (`Plow-Latch-<branch>`) or any explicit `DOMO_HOME`
+ * gets no local-write path (its concrete path can't be both leak-free and
+ * agent-resolvable); the upstream channel below still applies. When we do print
+ * it, we name the exact file shape `SkillRegistry.loadDir` accepts — otherwise
+ * an agent writes a file the registry silently ignores on next launch.
  */
 function localWriteClause(home: string): string {
-  const h = os.homedir();
-  const rel =
-    home === h ? "~/device/skills/"
-    : home.startsWith(h + path.sep) ? "~" + home.slice(h.length) + "/device/skills/"
-    : null;
-  return rel === null
-    ? ""
-    : `User-specific fixes: write a skill into ${rel} (an ordinary approved file write); ` +
-      "it loads the next time Plow Latch restarts. ";
+  const isPackagedDefault = home === path.join(os.homedir(), "Library/Application Support/Plow-Latch");
+  if (!isPackagedDefault) return "";
+  return (
+    "User-specific fixes: write a `<name>.md` file — with `name:` and `description:` " +
+    `frontmatter — into ${DEFAULT_SKILLS_PATH} (an ordinary approved file write); it loads ` +
+    "the next time Plow Latch restarts. "
+  );
 }
 
 export function skillFooter(home: string): string {

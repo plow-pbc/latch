@@ -133,30 +133,30 @@ describe("the skill contribution footer", () => {
     }
   });
 
-  // The local-write path appears only when the skills directory can be named
-  // both safely (no account name) and usably (an agent can resolve it). One row
-  // per home shape, so the next variant is a row rather than a cloned test.
+  // The local-write path is printed ONLY for the packaged default home — the
+  // one path identical on every Mac, so it reveals nothing owner-specific. Any
+  // custom home (account name, client folder, off-home volume, dev branch) gets
+  // no local-write path. One row per home shape.
   it.each([
-    // [label, home, expected ~-path fragment or null when no local-write path]
-    ["home is os.homedir()", () => os.homedir(), "~/device/skills/"],
-    [
-      "a packaged home under the user's dir",
-      () => path.join(os.homedir(), "Library/Application Support/Plow-Latch"),
-      "~/Library/Application Support/Plow-Latch/device/skills/",
-    ],
-    ["an explicit DOMO_HOME outside the user's dir", () => "/Volumes/Alice/latch-home", null],
-  ])("offers a leak-free, usable local-write path for %s", (_label, homeFn, expected) => {
-    const home = homeFn();
-    const footer = skillFooter(home);
-    // Never an absolute owner-identifying path, whatever the home.
-    expect(footer).not.toContain(os.homedir());
+    ["the packaged default home", () => path.join(os.homedir(), "Library/Application Support/Plow-Latch"), true],
+    ["a client/project folder under home", () => path.join(os.homedir(), "Clients/Acme/latch"), false],
+    ["a branched dev home", () => path.join(os.homedir(), "Library/Application Support/Plow-Latch-feat-x"), false],
+    ["an off-home DOMO_HOME", () => "/Volumes/Alice/latch-home", false],
+  ])("prints a local-write path only for %s", (_label, homeFn, hasLocal) => {
+    const footer = skillFooter(homeFn());
+    // Never an owner-identifying path, whatever the home.
+    expect(footer).not.toContain("/Users/");
     expect(footer).not.toContain("/Volumes/Alice");
-    if (expected === null) {
-      // Off-home: no local-write clause an agent couldn't follow, only upstream.
-      expect(footer).not.toMatch(/write a skill into/i);
-    } else {
-      expect(footer).toContain(expected);
+    expect(footer).not.toContain("Clients/Acme");
+    if (hasLocal) {
+      // Only the universal default path, and the exact file shape loadDir accepts.
+      expect(footer).toContain("~/Library/Application Support/Plow-Latch/device/skills/");
+      expect(footer).toMatch(/<name>\.md/);
+      expect(footer).toMatch(/frontmatter/i);
       expect(footer).toMatch(/restart/i);
+    } else {
+      expect(footer).not.toMatch(/write a `?<name>/i);
+      expect(footer).not.toMatch(/device\/skills\//);
     }
   });
 });
