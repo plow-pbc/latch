@@ -33,25 +33,30 @@ if [[ -z "$name" ]]; then
 fi
 
 self=$(pwd -P)
-# Where a gitignored payload can be cloned FROM, best first.
+# ONE checkout supplies the payloads, and it is the one on `main`.
 #
-# The parent of the common git dir is the main checkout in the classic layout
-# (`<root>/.git` -> `<root>`) and is kept for it. It is NOT the main checkout
-# under a bare layout (`<container>/.bare` -> `<container>`), which is what
-# this repo uses: every checkout is a peer worktree, the container holds no
-# `vendor/` at all, and the whole loop below silently skipped — a new worktree
-# came up with no browser runtime and no provider binaries, and said so in a
-# note nobody read. So every other checkout is a candidate too, and the payload
-# is taken from whichever one actually has it.
-candidates=("$(dirname "$(git rev-parse --path-format=absolute --git-common-dir)")")
-while read -r line; do
-  [[ -n "$line" && "$line" != "$self" ]] && candidates+=("$line")
-done < <(git worktree list --porcelain | awk '/^worktree /{print substr($0,10)}')
+# Which checkout matters, because these are BUILD INPUTS: a feature worktree's
+# `vendor/` is whatever that branch's pin last fetched, so taking each payload
+# from the first checkout that happened to have it could assemble a runtime out
+# of two branches' pins — a mix nobody has ever run, and a bug report nobody can
+# reproduce.
+#
+# `main` first, then the classic layout's root (`<root>/.git` -> `<root>`),
+# which IS the main checkout there. Under the bare layout this repo uses
+# (`<container>/.bare` -> `<container>`) that path is the container, holds no
+# `vendor/` at all, and every payload was silently skipped — which is the bug
+# this fixes.
+primary=$(git worktree list --porcelain |
+  awk '/^worktree /{p=substr($0,10)} /^branch refs\/heads\/main$/{print p; exit}')
+if [[ -z "$primary" ]]; then
+  primary=$(dirname "$(git rev-parse --path-format=absolute --git-common-dir)")
+  echo "note: no checkout is on main — falling back to $primary"
+fi
 
 echo "worktree:      $name"
-echo "checkouts to clone payloads from: ${#candidates[@]}"
+echo "payload source: $primary"
 
-# --- gitignored payloads: clone from a checkout that already has them ------
+# --- gitignored payloads: clone them from that ONE checkout ----------------
 # The browser runtime (Python + Camoufox + download cache + vault server/CLI)
 # and the vendored provider CLIs alike: both are gitignored, both are expensive
 # to fetch again, and both are needed for a from-source run.
@@ -61,12 +66,22 @@ for dir in vendor/python-runtime vendor/camoufox-browser vendor/downloads vendor
     continue
   fi
   source_root=""
-  for candidate in "${candidates[@]}"; do
-    if [[ -d "$candidate/$dir" ]]; then
-      source_root="$candidate"
-      break
-    fi
-  done
+  if [[ -d "$primary/$dir" ]]; then
+    source_root="$primary"
+  else
+    # The source of record does not have this one. Falling back is better than
+    # sending someone off to re-fetch half a gigabyte, but it is a payload from
+    # ANOTHER branch's pin, so it is announced rather than done quietly.
+    # read, not word-splitting a `$(…)`: a checkout path may contain spaces.
+    while read -r candidate; do
+      [[ -z "$candidate" || "$candidate" == "$self" || "$candidate" == "$primary" ]] && continue
+      if [[ -d "$candidate/$dir" ]]; then
+        source_root="$candidate"
+        echo "note: $primary has no $dir — taking it from $candidate instead (another branch's pin)"
+        break
+      fi
+    done < <(git worktree list --porcelain | awk '/^worktree /{print substr($0,10)}')
+  fi
   if [[ -n "$source_root" ]]; then
     # Braced: the ellipsis that follows is not ASCII, and bash reads it as part
     # of an unbraced name.
