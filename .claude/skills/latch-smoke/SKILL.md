@@ -92,10 +92,13 @@ scripts/latch-smoke --config ~/.latch/<install>.json \
   Allow rule matches every run. A nonce in the argv would mint a new key each
   time and raise a dialog forever.
 
-**Without such a rule this raises an approval dialog on the target Mac.** That
-is the product working, not a failure — but a fully unattended smoke needs
-either a pre-seeded rule or `HeadlessPolicy`, and no shipped app exposes the
-latter. Say so in the report rather than waiting on a dialog nobody is watching.
+**What actually answers depends on the target's approval mode.** The default
+is adversarial: the AI reviewer decides without a dialog — unattended, but not
+deterministic, and stored Always Allow rules are deliberately vetoed in that
+mode. A pre-seeded rule makes the smoke deterministic only under Ask or Approve
+mode; Ask without one raises a dialog that an unattended run times out at. That
+is the product working, not a failure — say which mode the target is in rather
+than waiting on a dialog nobody is watching.
 
 ## Reading the result
 
