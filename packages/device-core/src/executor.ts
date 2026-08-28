@@ -322,6 +322,14 @@ export class Executor {
      * HOME of its choosing by way of this parameter — those are set after it.
      */
     env?: Readonly<Record<string, string>>;
+    /**
+     * Drop the child's stderr instead of capturing it. `output` is normally
+     * stdout and stderr merged, because an agent reading a command wants both.
+     * A caller that PARSES the output wants stdout alone: gog prefaces every
+     * token-supplied run with a stderr note, and merged in, it made every
+     * fan-out read "not JSON".
+     */
+    stderr?: "capture" | "discard";
   }): Promise<ExecResult> {
     if (args.argv.length === 0) throw new ExecutorError("launch failed: empty argv");
     const handle = crypto.randomUUID().toUpperCase();
@@ -377,7 +385,7 @@ export class Executor {
         TMPDIR: scratch,
         LANG: "en_US.UTF-8",
       },
-      stdio: ["ignore", "pipe", "pipe"],
+      stdio: ["ignore", "pipe", args.stderr === "discard" ? "ignore" : "pipe"],
       // Its own process group, purely so the reaper below can take the whole
       // run. `sandbox-exec` execs into the approved argv, and that argv is
       // routinely a shell: `/bin/sh -c 'a && b'` does NOT exec, so signalling
