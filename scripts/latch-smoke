@@ -96,6 +96,39 @@ def read_token(token_file):
     return token, None
 
 
+def read_config(config_file):
+    """`(url, token, problem)` from a recorded client registration.
+
+    The file is the `_mcpConfig` block the Agents tab renders, saved verbatim
+    at the known path `docs/AUTONOMOUS-OPERATION.md` (Stop 3) names:
+    `~/.latch/<install>.json`. Every refusal names keys and paths, never
+    values — an Authorization header is a credential.
+    """
+    try:
+        with open(config_file) as handle:
+            parsed = json.load(handle)
+    except OSError as error:
+        return None, None, f"{config_file}: {error.strerror}"
+    except (UnicodeDecodeError, ValueError):
+        return None, None, f"{config_file} is not the JSON block the Agents tab renders"
+    servers = parsed.get("mcpServers") if isinstance(parsed, dict) else None
+    if not isinstance(servers, dict) or len(servers) != 1:
+        return None, None, (f"{config_file} must hold exactly one entry under"
+                            " mcpServers — one file per install")
+    (server,) = servers.values()
+    url = server.get("url") if isinstance(server, dict) else None
+    auth = server.get("headers", {}).get("Authorization") if isinstance(server, dict) else None
+    if not url or not isinstance(url, str):
+        return None, None, f"{config_file} has no url under its mcpServers entry"
+    if not isinstance(auth, str) or not auth.startswith("Bearer "):
+        return None, None, (f"{config_file} has no `Bearer` Authorization header"
+                            " under its mcpServers entry")
+    token = auth[len("Bearer "):].strip()
+    if not token or "\r" in token or "\n" in token:
+        return None, None, f"{config_file}'s Authorization header holds no usable token"
+    return url, token, None
+
+
 def remote_cat(log_path, home):
     """The shell command that reads the log on the far side.
 
@@ -403,6 +436,10 @@ def main():
                         help="the install's mcpUrl (env: MCP_URL)")
     parser.add_argument("--token-file", default=os.environ.get("TOKEN_FILE"),
                         help="a 0600 file holding the bearer token (env: TOKEN_FILE)")
+    parser.add_argument("--config", default=os.environ.get("LATCH_CONFIG"),
+                        help="a 0600 file holding the Agents tab's _mcpConfig block —"
+                             " supplies url and token together; the recorded-registration"
+                             " convention is ~/.latch/<install>.json (env: LATCH_CONFIG)")
     # REQUIRED. There is no default and no environment fallback: every wrong
     # home this script has produced came from it choosing one, and a chosen
     # home that is wrong reads as a fresh install rather than an error. The
@@ -418,8 +455,12 @@ def main():
     parser.epilog = "Everything after `--` is the command to run."
     options, command = split_command(sys.argv[1:])
     args = parser.parse_args(options)
-    if not args.url or not args.token_file:
-        parser.error("--url and --token-file are required (or MCP_URL / TOKEN_FILE)")
+    if args.config and (args.url or args.token_file):
+        parser.error("--config supplies both url and token — drop --url/--token-file"
+                     " (and MCP_URL / TOKEN_FILE) or drop --config")
+    if not args.config and (not args.url or not args.token_file):
+        parser.error("pass --config (or LATCH_CONFIG), or both --url and --token-file"
+                     " (or MCP_URL / TOKEN_FILE)")
     # `--home "$(just --evaluate apphome)"` yields "" when that command fails,
     # which is the likeliest way the documented invocation breaks — and falling
     # through to the packaged install would read the wrong one silently.
@@ -430,10 +471,15 @@ def main():
     # `<=`, not `<`: the baseline read always consumes something, so exactly
     # MIN_SEND_S leaves less than that by the time the send is reached and the
     # downstream guard refuses every time.
-    token, token_problem = read_token(args.token_file)
+    if args.config:
+        args.url, token, token_problem = read_config(args.config)
+        credential_flag = "--config (or LATCH_CONFIG)"
+    else:
+        token, token_problem = read_token(args.token_file)
+        credential_flag = "--token-file (or TOKEN_FILE)"
     if token_problem is not None:
         print(f"REFUSED — {token_problem}.")
-        print("  Nothing was sent. That path is --token-file (or TOKEN_FILE).")
+        print(f"  Nothing was sent. That path is {credential_flag}.")
         return 1
     if args.timeout <= MIN_SEND_S:
         parser.error(f"--timeout must be more than {MIN_SEND_S:.0f}s — at or below it the"

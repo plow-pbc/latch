@@ -163,6 +163,14 @@ describe.skipIf(!havePython())("latch-smoke, run for real", () => {
   // A real home for the row that gets far enough to name one.
   const REAL_HOME = fs.mkdtempSync(path.join(tmp, "refusal-home-"));
   fs.mkdirSync(path.join(REAL_HOME, "device"));
+  // The recorded-registration credential: `--config` instead of --url/--token-file.
+  function configArgv(body: string): string[] {
+    const configFile = path.join(fs.mkdtempSync(path.join(tmp, "config-")), "install.json");
+    fs.writeFileSync(configFile, body, { mode: 0o600 });
+    return [script, "--config", configFile, "--home", REAL_HOME, "--timeout", "5"];
+  }
+  const registration = (url: string) => JSON.stringify(
+    { mcpServers: { plow: { type: "http", url, headers: { Authorization: "Bearer t" } } } });
   const refusals: [string, () => string[], number, string, string | null, boolean][] = [
     ["a local home that does not exist", () => fixture("5", NOT_A_HOME).argv,
       1, "REFUSED — no such home", NOT_A_HOME, false],
@@ -184,6 +192,18 @@ describe.skipIf(!havePython())("latch-smoke, run for real", () => {
       const i = argv.indexOf("--url");
       return [...argv.slice(0, i + 1), "relay.plow.com/mcp", ...argv.slice(i + 2)];
     }, 1, "The request never left this Mac", REAL_HOME, true],
+    ["--config combined with --url", () => [...fixture("5", REAL_HOME).argv, "--config", "/x"],
+      2, "--config supplies both url and token", null, false],
+    ["a config file that is not there",
+      () => [script, "--config", "/nonexistent/config", "--home", REAL_HOME, "--timeout", "5"],
+      1, "REFUSED — /nonexistent/config", null, false],
+    ["a config file that is not the rendered block", () => configArgv('{"mcpServers":{}}'),
+      1, "exactly one entry", null, false],
+    // The same no-socket URL, read from the registration file — proving --config
+    // actually supplies url and token to the send path, with no socket needed.
+    ["a URL that never reaches a socket, from a recorded registration",
+      () => configArgv(registration("relay.plow.com/mcp")),
+      1, "The request never left this Mac", REAL_HOME, true],
   ];
   it.each(refusals)("refuses %s", (_name, build, status, says, home, retractsNonce) => {
     const run = spawnSync("python3", build(), { encoding: "utf8", env });
