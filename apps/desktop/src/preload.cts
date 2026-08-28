@@ -102,8 +102,8 @@ contextBridge.exposeInMainWorld("domo", {
   // them is a poll: provisioning is watched in the main process, and the
   // renderer just re-reads when told the state changed. `cloudCreate` answers
   // as soon as the row is on screen in `provisioning`.
-  cloudCreate: (chatUids: string[], name: string) =>
-    ipcRenderer.invoke("cloud:create", chatUids, name),
+  cloudCreate: (chatUids: string[], name: string, provider: string) =>
+    ipcRenderer.invoke("cloud:create", chatUids, name, provider),
   // Replace the whole set of chats an agent serves. One round trip, no poll.
   cloudEditChats: (agentId: string, chatUids: string[]) =>
     ipcRenderer.invoke("cloud:editChats", agentId, chatUids),

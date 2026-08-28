@@ -168,10 +168,11 @@ describe("CloudAgentsClient chat grant", () => {
     const { calls, fetchImpl } = recordingFetch([{ status: 202, body: LIVE }]);
 
     await new CloudAgentsClient(new PlowApi("https://api.plow.co", fetchImpl))
-      .create(CREDENTIAL, { chatUids: ["cht_one", "cht_two"] });
+      .create(CREDENTIAL, { chatUids: ["cht_one", "cht_two"], provider: "exe:life" });
 
     expect(JSON.parse(String(calls[0].init.body))).toMatchObject({
       chat_uids: ["cht_one", "cht_two"],
+      provider: "exe:life",
     });
   });
 

@@ -276,8 +276,8 @@ describe("the numbers a chat can be messaged on", () => {
     created_at: "2026-08-20T10:00:00Z",
     participants: [
       { type: "agent", line: { provider_key: "+15550100" } },
-      { type: "member", display_name: "Ada", provider_key: "+15550111" },
-      { type: "member", display_name: "Grace", provider_key: "+15550122" },
+      { type: "member", display_name: "Ada", role: "member", provider_key: "+15550111" },
+      { type: "member", display_name: "Grace", role: "owner", provider_key: "+15550122" },
     ],
   };
 
@@ -326,7 +326,7 @@ describe("the numbers a chat can be messaged on", () => {
     );
     await state.refresh();
 
-    await state.create(["cht_1"], "Kitchen agent");
+    await state.create(["cht_1"], "Kitchen agent", "exe:hermes");
 
     // The row goes on screen the moment the receipt lands, before any further
     // refresh — so it has to be addressable then, not one round trip later.
@@ -405,8 +405,10 @@ describe("the numbers a chat can be messaged on", () => {
     expect(chats).toEqual([
       {
         uid: "cht_1",
-        label: "+15550100, +15550111, +15550122",
-        recipients: { line: "+15550100", members: ["+15550111", "+15550122"] },
+        // Labels put non-owners first, while addressing keeps the parser's
+        // owner-first participant order.
+        label: "Ada, Grace",
+        recipients: { line: "+15550100", members: ["+15550122", "+15550111"] },
       },
     ]);
   });
@@ -657,13 +659,13 @@ describe("a stuck teardown", () => {
 });
 
 describe("provisioning", () => {
-  it("names the provider, because plow's default one 503s in prod", async () => {
+  it("threads the chosen provider into the create request", async () => {
     const f = fakes({ create: async () => agent({ status: "provisioning" }) });
     const state = build(tempHome(), f);
 
-    await state.create(["cht_1"], "Kitchen agent");
+    await state.create(["cht_1"], "Kitchen agent", "exe:life");
 
-    expect(f.agents.created[0].provider).toBe("exe:hermes");
+    expect(f.agents.created[0].provider).toBe("exe:life");
   });
 
   it("clears an earlier queued create failure when the next create succeeds", async () => {
@@ -678,8 +680,8 @@ describe("provisioning", () => {
     });
     const state = build(tempHome(), f);
 
-    const first = state.create(["cht_1"], "First agent");
-    const second = state.create(["cht_1"], "Second agent");
+    const first = state.create(["cht_1"], "First agent", "exe:hermes");
+    const second = state.create(["cht_1"], "Second agent", "exe:life");
 
     await expect(first).resolves.toBeNull();
     await expect(second).resolves.toBe("agent_2");
@@ -741,16 +743,24 @@ describe("removing", () => {
 
 describe("the credential boundary", () => {
   it("marshals no credential and no session id, in any field", async () => {
-    const state = build(
-      tempHome(),
-      fakes({
-        list: async () => [agent(), agent({ agentId: "agent_2", status: "provisioning" })],
-      }),
-    );
+    const home = tempHome();
+    const f = fakes({
+      list: async () => [agent(), agent({ agentId: "agent_2", status: "provisioning" })],
+    });
+    const fetchImpl = async () => new Response(JSON.stringify({ data: [{
+      uid: "cht_1", display_name: `Kitchen ${CREDENTIAL}`,
+      participants: [
+        { type: "agent", line: { provider_key: "+15550100" } },
+        { type: "member", display_name: CREDENTIAL, provider_key: "+15550111" },
+      ],
+    }] }));
+    const state = new CloudAgentState({ agents: f.agents,
+      chats: new CloudChatsClient(new PlowApi("https://api.plow.co", fetchImpl)), home });
 
     await state.refresh();
     const marshalled = JSON.stringify(state.state());
 
+    expect(state.state().cloudChats[0].label).toBe("+15550100, +15550111");
     expect(marshalled).not.toContain(CREDENTIAL);
     expect(marshalled).not.toContain(SESSION);
     expect(marshalled).not.toContain("sessionId");
@@ -822,7 +832,7 @@ describe("a cancelled provision", () => {
       home,
     });
 
-    await state.create(["cht_1"], "Kitchen agent");
+    await state.create(["cht_1"], "Kitchen agent", "exe:hermes");
     await vi.waitFor(() => expect(waits).toBe(1));
     await state.remove("agent_1");
     parked.resolve();
@@ -841,7 +851,7 @@ describe("a cancelled provision", () => {
     const f = fakes({ create: async () => posting.promise, list: async () => [agent()] });
     const state = build(tempHome(), f);
 
-    const creating = state.create(["cht_1"], "Kitchen agent");
+    const creating = state.create(["cht_1"], "Kitchen agent", "exe:hermes");
     state.signedOut();
     posting.resolve(agent({ status: "provisioning" }));
     await creating;
@@ -875,7 +885,7 @@ describe("signing out", () => {
     // be waiting on screen for whoever signs in next.
     await state.refresh();
     expect(state.state().cloudChatsError).not.toBeNull();
-    await state.create(["cht_1"], "Kitchen agent");
+    await state.create(["cht_1"], "Kitchen agent", "exe:hermes");
 
     state.signedOut();
 
@@ -1257,7 +1267,7 @@ describe("changing which chats an agent serves", () => {
 
     // The IPC boundary: a caller still passing the old singular argument must
     // fail loudly here, not provision an agent across "c", "h", "t"…
-    await expect(state.create("cht_1" as unknown as string[], "Kitchen")).resolves.toBeNull();
+    await expect(state.create("cht_1" as unknown as string[], "Kitchen", "exe:hermes")).resolves.toBeNull();
     await state.editChats("agent_1", "cht_1" as unknown as string[]);
 
     expect(f.agents.created).toEqual([]);
