@@ -89,6 +89,19 @@ describe("planPlowGog", () => {
       },
     },
     {
+      // The flag the fan-out refuses is fine once one account is named:
+      // that account is asked for calendars it can name.
+      why: "narrows a --calendars read to the one account that owns them",
+      argv: ["plow-gog", "calendar", "events", "list", "--calendars=a,b", "--account", "a@example.com"],
+      expected: {
+        kind: "single",
+        gogArgv: ["plow-gog", "calendar", "events", "list", "--calendars=a,b"],
+        account: "a@example.com",
+        confirmConflict: false,
+        conflictCheck: null,
+      },
+    },
+    {
       why: "leaves everything uncurated a single-account command, resolved at run time",
       argv: ["plow-gog", "gmail", "get", "msg-1", "--json"],
       expected: {
@@ -265,6 +278,13 @@ describe("planPlowGog", () => {
       why: "refuses an --account with no value",
       argv: ["plow-gog", "gmail", "search", "q", "--account"],
       reason: "--account needs a value",
+    },
+    {
+      // Each account would be sent the others' calendar ids: the same events
+      // N times, plus a degraded row per account that cannot read them.
+      why: "refuses --calendars under a fan-out",
+      argv: ["plow-gog", "calendar", "events", "list", "--calendars=sneakyagenttext,b@x.co", "--from=now"],
+      reason: "drop --calendars",
     },
   ])("$why", ({ argv, reason }) => {
     const plan = planPlowGog(argv);

@@ -142,6 +142,18 @@ export function planPlowGog(argv: readonly string[]): PlowGogPlan {
 
   const sort = verb !== undefined ? FANOUT[group]?.[verb] : undefined;
   if (sort !== undefined && account === null) {
+    // A fan-out already asks every connected account for its own calendar.
+    // Naming calendars on top of that sends each account the OTHERS' ids —
+    // the same events back N times, and a degraded row for every account
+    // that cannot read them. Observed as an agent's default grammar, so it
+    // is refused with the correction rather than merged into a wrong answer.
+    if (stripped.some((arg) => arg === "--calendars" || arg.startsWith("--calendars="))) {
+      return {
+        kind: "refused",
+        reason:
+          "a fan-out already queries every connected account's calendar: drop --calendars, or add --account <email> to query one account's",
+      };
+    }
     // Merging requires JSON; add what the agent did not already ask for.
     const extras: string[] = [];
     if (!stripped.includes("--json") && !stripped.includes("-j")) extras.push("--json");
