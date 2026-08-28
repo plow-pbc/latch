@@ -25,7 +25,7 @@ import {
   MACOS_TOOLING,
   SERVER_IDENTITY,
   SERVER_INSTRUCTIONS,
-  skillFooter,
+  SKILL_FOOTER,
   TOOLS,
 } from "@domo/mcp-server";
 import { parse, rpc } from "./client.js";
@@ -120,44 +120,17 @@ describe("the server tells the agent what it is for", () => {
 });
 
 describe("the skill contribution footer", () => {
-  // Both write paths a fix can take, plus the boundary an agent's own
-  // contribution must respect: no message content, no real identifiers.
-  it("always carries the universal-fix path and the privacy bound, and no bare tool names", () => {
-    // These hold whatever the device home is.
-    for (const home of [os.homedir(), "/Volumes/Alice/latch-home"]) {
-      const footer = skillFooter(home);
-      expect(footer).toMatch(/github\.com\/plow-pbc\/latch/);
-      expect(footer).toMatch(/message content/i);
-      expect(footer).not.toMatch(/\$DOMO_HOME/);
-      expect(bareToolNames(footer)).toHaveLength(0);
-    }
-  });
-
-  // The local-write path is printed ONLY for the packaged default home — the
-  // one path identical on every Mac, so it reveals nothing owner-specific. Any
-  // custom home (account name, client folder, off-home volume, dev branch) gets
-  // no local-write path. One row per home shape.
-  it.each([
-    ["the packaged default home", () => path.join(os.homedir(), "Library/Application Support/Plow-Latch"), true],
-    ["a client/project folder under home", () => path.join(os.homedir(), "Clients/Acme/latch"), false],
-    ["a branched dev home", () => path.join(os.homedir(), "Library/Application Support/Plow-Latch-feat-x"), false],
-    ["an off-home DOMO_HOME", () => "/Volumes/Alice/latch-home", false],
-  ])("prints a local-write path only for %s", (_label, homeFn, hasLocal) => {
-    const footer = skillFooter(homeFn());
-    // Never an owner-identifying path, whatever the home.
-    expect(footer).not.toContain("/Users/");
-    expect(footer).not.toContain("/Volumes/Alice");
-    expect(footer).not.toContain("Clients/Acme");
-    if (hasLocal) {
-      // Only the universal default path, and the exact file shape loadDir accepts.
-      expect(footer).toContain("~/Library/Application Support/Plow-Latch/device/skills/");
-      expect(footer).toMatch(/<name>\.md/);
-      expect(footer).toMatch(/frontmatter/i);
-      expect(footer).toMatch(/restart/i);
-    } else {
-      expect(footer).not.toMatch(/write a `?<name>/i);
-      expect(footer).not.toMatch(/device\/skills\//);
-    }
+  it("carries the upstream-contribution path and the privacy bound, and leaks no path", () => {
+    // Static and upstream-only: the local-write nudge was cut because printing
+    // any device-home path in an approval-free response leaked owner layout, and
+    // there's no evidence alpha agents write skill fixes to disk. No home input,
+    // so there is nothing owner-specific to leak.
+    expect(SKILL_FOOTER).toMatch(/github\.com\/plow-pbc\/latch/);
+    expect(SKILL_FOOTER).toMatch(/message content/i);
+    expect(SKILL_FOOTER).not.toMatch(/\$DOMO_HOME/);
+    expect(SKILL_FOOTER).not.toMatch(/device\/skills\//);
+    expect(SKILL_FOOTER).not.toContain("/Users/");
+    expect(bareToolNames(SKILL_FOOTER)).toHaveLength(0);
   });
 });
 
@@ -284,7 +257,7 @@ function manifestStrings(): { where: string; text: string }[] {
   }
   out.push({ where: "skill.description", text: BROWSING_SKILL.description });
   out.push({ where: "skill.body", text: BROWSING_SKILL.body });
-  out.push({ where: "skill.footer", text: skillFooter(os.homedir()) });
+  out.push({ where: "skill.footer", text: SKILL_FOOTER });
   out.push({ where: "serverInfo.title", text: SERVER_IDENTITY.title });
   out.push({ where: "serverInfo.description", text: SERVER_IDENTITY.description });
   return out;

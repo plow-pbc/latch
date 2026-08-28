@@ -24,8 +24,6 @@ import {
   jv,
   makeIntent,
 } from "@domo/protocol";
-import os from "node:os";
-import path from "node:path";
 import { ToolAnnotations } from "@modelcontextprotocol/server";
 import {
   DeviceAgent,
@@ -183,62 +181,25 @@ export const MACOS_TOOLING =
 
 /**
  * Appended to every skill body `plow_read_skill` returns — one seam, not
- * per-skill prose, so the contribution path is stated once and stays true
- * even as skills are added or edited.
+ * per-skill prose, so the contribution path is stated once.
  *
- * Built from the device home rather than a static string: the write target is
- * the directory `SkillRegistry.loadDir` reads (`<home>/device/skills`), so an
- * agent following it writes where the skills actually load — `$DOMO_HOME` is a
- * shell variable `plow_write_file` would not expand. The home is shown
- * `~`-relative rather than absolute: on a packaged Mac the real home is
- * `/Users/<name>/Library/...`, and printing the account name in every skill
- * read would leak owner-identifying PII — the very thing this footer tells
- * agents not to include. `plow_write_file` canonicalizes `~`, so the tilde form
- * still resolves to the same directory. And the registry loads that directory
- * once at `DeviceAgent` construction, so a newly-written skill appears after a
- * restart, not immediately; the copy says so.
+ * Upstream-only, and deliberately static. An earlier version also advertised a
+ * *local* write path (`<home>/device/skills`), but printing any device-home
+ * path in an approval-free response kept leaking owner-identifying layout — the
+ * account name, a client folder, a volume — and the only leak-free path (the
+ * packaged default) needed host-sensitive branching to detect. At single-digit
+ * alpha users there's no evidence agents write skill fixes to disk, so that
+ * ~50-LOC branch isn't earning its keep. The local-override mechanism still
+ * exists (`SkillRegistry.loadDir` reads `$DOMO_HOME/device/skills/*.md`); the
+ * footer just no longer nudges agents at it. Re-add a local clause if a real
+ * need shows up.
  */
-/**
- * The one skills directory whose path is safe to print in the footer: the
- * packaged default `DOMO_HOME` on macOS. It is identical on every Mac, so it
- * discloses nothing owner-specific — unlike any custom home, which could reveal
- * an account name (`/Users/<name>/…`), a client/project folder (`~/Clients/Acme/…`),
- * or an off-home volume.
- */
-const DEFAULT_SKILLS_PATH = "~/Library/Application Support/Plow-Latch/device/skills/";
-
-/**
- * The local-write sentence in the footer — present only when the device home is
- * the packaged default, so the single path we print reveals nothing about the
- * owner. A branched dev home (`Plow-Latch-<branch>`) or any explicit `DOMO_HOME`
- * gets no local-write path (its concrete path can't be both leak-free and
- * agent-resolvable); the upstream channel below still applies. When we do print
- * it, we name the exact file shape `SkillRegistry.loadDir` accepts — otherwise
- * an agent writes a file the registry silently ignores on next launch.
- */
-function localWriteClause(home: string): string {
-  const isPackagedDefault = home === path.join(os.homedir(), "Library/Application Support/Plow-Latch");
-  if (!isPackagedDefault) return "";
-  return (
-    "User-specific fixes: write a `<name>.md` file — with `name:` and `description:` " +
-    `frontmatter — into ${DEFAULT_SKILLS_PATH} (an ordinary approved file write); it loads ` +
-    "the next time Plow Latch restarts. "
-  );
-}
-
-export function skillFooter(home: string): string {
-  return (
-    "\n\n---\nImprove this skill: if a recipe here is wrong or you found a better way, " +
-    "propose it. " +
-    localWriteClause(home) +
-    "Universal " +
-    "fixes (schema drift, query bugs): file an issue or PR at github.com/plow-pbc/latch " +
-    "quoting the exact query and observed deviation. Never include message content, real " +
-    "handles or names, or owner-identifying paths — reproduce with the schema shape, not " +
-    "the data. Contributions made with this Mac's own tools act as the owner and are " +
-    "approval-gated like any command."
-  );
-}
+export const SKILL_FOOTER =
+  "\n\n---\nImprove this skill: if a recipe here is wrong or you found a better way, " +
+  "propose it. File an issue or PR at github.com/plow-pbc/latch quoting the exact query " +
+  "and observed deviation. Never include message content, real handles or names, or " +
+  "owner-identifying paths — reproduce with the schema shape, not the data. Contributions " +
+  "made with this Mac's own tools act as the owner and are approval-gated like any command.";
 
 export const TOOLS: ToolSpec[] = [
   {
@@ -527,7 +488,7 @@ export const TOOLS: ToolSpec[] = [
       return {
         name: skill.name,
         description: skill.description,
-        body: skill.body + skillFooter(ctx.device.home),
+        body: skill.body + SKILL_FOOTER,
       };
     },
   },
