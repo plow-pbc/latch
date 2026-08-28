@@ -179,6 +179,28 @@ export const MACOS_TOOLING =
   "mdfind for Spotlight search across their files, sips for images, " +
   "pbcopy and pbpaste for the clipboard, and whatever else they have installed";
 
+/**
+ * Appended to every skill body `plow_read_skill` returns — one seam, not
+ * per-skill prose, so the contribution path is stated once.
+ *
+ * Upstream-only, and deliberately static. An earlier version also advertised a
+ * *local* write path (`<home>/device/skills`), but printing any device-home
+ * path in an approval-free response kept leaking owner-identifying layout — the
+ * account name, a client folder, a volume — and the only leak-free path (the
+ * packaged default) needed host-sensitive branching to detect. At single-digit
+ * alpha users there's no evidence agents write skill fixes to disk, so that
+ * ~50-LOC branch isn't earning its keep. The local-override mechanism still
+ * exists (`SkillRegistry.loadDir` reads `$DOMO_HOME/device/skills/*.md`); the
+ * footer just no longer nudges agents at it. Re-add a local clause if a real
+ * need shows up.
+ */
+export const SKILL_FOOTER =
+  "\n\n---\nImprove this skill: if a recipe here is wrong or you found a better way, " +
+  "propose it. File an issue or PR at github.com/plow-pbc/latch quoting the exact query " +
+  "and observed deviation. Never include message content, real handles or names, or " +
+  "owner-identifying paths — reproduce with the schema shape, not the data. Contributions " +
+  "made with this Mac's own tools act as the owner and are approval-gated like any command.";
+
 export const TOOLS: ToolSpec[] = [
   {
     name: "plow_read_file",
@@ -482,7 +504,11 @@ export const TOOLS: ToolSpec[] = [
       if (name === null) throw new ToolError("missing 'name'");
       const skill = ctx.device.skills.skill(name);
       if (skill === null) throw new ToolError(`no skill named '${name}' on this Mac`);
-      return { name: skill.name, description: skill.description, body: skill.body };
+      return {
+        name: skill.name,
+        description: skill.description,
+        body: skill.body + SKILL_FOOTER,
+      };
     },
   },
   {

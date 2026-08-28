@@ -25,6 +25,7 @@ import {
   MACOS_TOOLING,
   SERVER_IDENTITY,
   SERVER_INSTRUCTIONS,
+  SKILL_FOOTER,
   TOOLS,
 } from "@domo/mcp-server";
 import { parse, rpc } from "./client.js";
@@ -121,6 +122,21 @@ describe("the server tells the agent what it is for", () => {
   // — the discovery call has to be named, not just implied by its existence.
   it("the instructions route the agent to plow_list_skills", () => {
     expect(SERVER_INSTRUCTIONS).toMatch(/plow_list_skills/);
+  });
+});
+
+describe("the skill contribution footer", () => {
+  it("carries the upstream-contribution path and the privacy bound, and leaks no path", () => {
+    // Static and upstream-only: the local-write nudge was cut because printing
+    // any device-home path in an approval-free response leaked owner layout, and
+    // there's no evidence alpha agents write skill fixes to disk. No home input,
+    // so there is nothing owner-specific to leak.
+    expect(SKILL_FOOTER).toMatch(/github\.com\/plow-pbc\/latch/);
+    expect(SKILL_FOOTER).toMatch(/message content/i);
+    expect(SKILL_FOOTER).not.toMatch(/\$DOMO_HOME/);
+    expect(SKILL_FOOTER).not.toMatch(/device\/skills\//);
+    expect(SKILL_FOOTER).not.toContain("/Users/");
+    expect(bareToolNames(SKILL_FOOTER)).toHaveLength(0);
   });
 });
 
@@ -247,6 +263,7 @@ function manifestStrings(): { where: string; text: string }[] {
   }
   out.push({ where: "skill.description", text: BROWSING_SKILL.description });
   out.push({ where: "skill.body", text: BROWSING_SKILL.body });
+  out.push({ where: "skill.footer", text: SKILL_FOOTER });
   out.push({ where: "serverInfo.title", text: SERVER_IDENTITY.title });
   out.push({ where: "serverInfo.description", text: SERVER_IDENTITY.description });
   return out;
