@@ -1142,49 +1142,45 @@ function openCloudPicker(trigger, state, redraw) {
   };
   const showExplainer = () => {
     if (!panel) return;
-    const verifiedLines = verifiedCloudLines(state.cloudChats);
-    const verifiedLineKeys = new Set(verifiedLines.map(cloudPhoneDigits));
-    const sendTo = state.cloudSendTo?.trim() || null;
-    const sendToAlreadyHeld = sendTo && verifiedLineKeys.has(cloudPhoneDigits(sendTo));
     const back = el("button", { class: "btn", text: "Back" });
     back.addEventListener("click", showPicker);
-    const verify = el("button", { class: "btn primary", text: "Verify a new Plow number" });
-    verify.addEventListener("click", async () => {
-      closeCloudModal();
-      await window.domo.onboardingOpen();
-    });
-    const number = sendTo
-      ? el("p", { class: "cloud-route-number" }, [
-          document.createTextNode("Number to text: "),
-          el("span", { class: "mono", text: sendTo }),
-        ])
-      : null;
-    const routes = [];
-    if (!sendToAlreadyHeld) {
-      routes.push(el("div", { class: "cloud-route" }, [
-        el("div", { class: "cloud-route-title", text: "Verify a new Plow number" }),
-        el("p", { class: "faint", text: "Run activation again, then text the code to the number Plow provides." }),
-        number,
-        verify,
-      ]));
+    // Every number this Mac knows of: the lines its existing chats run on, and
+    // the one a pairing under an older build recorded. De-duplicated, because
+    // the two sources overlap on a Mac that has both.
+    const known = [];
+    const seen = new Set();
+    for (const number of [...verifiedCloudLines(state.cloudChats), state.cloudSendTo?.trim() || ""]) {
+      const key = cloudPhoneDigits(number);
+      if (!number || !key || seen.has(key)) continue;
+      seen.add(key);
+      known.push(number);
     }
-    if (verifiedLines.length) {
-      routes.push(el("div", { class: "cloud-route" }, [
-        el("div", { class: "cloud-route-title", text: "Start a group thread" }),
-        el("p", {
-          class: "faint",
-          text: "Add one of these verified Plow numbers to a group thread with other people:",
-        }),
-        el("ul", { class: "cloud-route-numbers" }, verifiedLines.map((line) =>
+    // There is deliberately NO "Verify a new Plow number" button here.
+    //
+    // It used to open the setup window, which on a Mac that is already signed
+    // in lands on its "connected" screen and mints nothing — the owner clicked
+    // it and got a confirmation of the sign-in they already had. Getting a chat
+    // does not go through activation at all: the user texts a Plow number and
+    // Plow makes the chat. So this screen says that, and offers a control only
+    // where there is a number to act on.
+    const body = [
+      el("p", { class: "faint conn-note", text: "Make another chat available here." }),
+      el("p", {
+        class: "faint",
+        text: 'From your phone, text "new agent" to a Plow number. Plow starts the chat, and it appears here when you reopen this window.',
+      }),
+    ];
+    if (known.length) {
+      body.push(
+        el("p", { class: "faint", text: "Numbers this Mac knows about:" }),
+        el("ul", { class: "cloud-route-numbers" }, known.map((line) =>
           el("li", { class: "cloud-route-number mono", text: line })
         )),
-        el("p", { class: "faint", text: "The chat appears here once someone speaks." }),
-      ]));
+      );
     }
     panel.replaceChildren(
       el("div", { class: "group-title", text: "Create a new chat" }),
-      el("p", { class: "faint conn-note", text: "Make another chat available here." }),
-      ...routes,
+      ...body,
       el("div", { class: "row cloud-modal-actions" }, [back]),
     );
     back.focus();

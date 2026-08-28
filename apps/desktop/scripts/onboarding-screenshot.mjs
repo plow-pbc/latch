@@ -61,7 +61,7 @@ const SCREENS = [
       SEND_TO,
       // The line is assigned per activation; the wrong Plow number activates
       // and silently provisions no chat.
-      "This number is picked for this setup",
+      "Plow's activation number",
       // Whoever texts the code gets the account, and the server cannot tell.
       "This code is a credential",
       "don't share it or post a screenshot",

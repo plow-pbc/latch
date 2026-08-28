@@ -464,16 +464,17 @@ const SCREENS = [
       await clickText(win, "Set up cloud agent", 0);
       await waitFor(win, `document.querySelector(".cloud-modal .chat-list")`, "the chat checklist");
       await openNewChatExplainer(win);
-      await waitFor(win, `document.querySelector(".cloud-modal .cloud-route")`, "the new-chat explainer");
+      await waitFor(win, `document.querySelector(".cloud-modal .cloud-route-numbers")`, "the new-chat explainer");
     },
     expect: [
       "Create a new chat",
-      "Verify a new Plow number",
-      "Number to text: +1 (415) 555-0199",
-      "Start a group thread",
+      // The whole instruction: a chat is made by texting a Plow number, not by
+      // running activation again.
+      'text "new agent" to a Plow number',
+      "reopen this window",
+      "Numbers this Mac knows about:",
       "+14155550142",
       "+14155550188",
-      "The chat appears here once someone speaks",
     ],
   },
   {
@@ -487,18 +488,21 @@ const SCREENS = [
       await clickText(win, "Set up cloud agent", 0);
       await waitFor(win, `document.querySelector(".cloud-modal .chat-list")`, "the chat checklist");
       await openNewChatExplainer(win);
-      await waitFor(win, `document.querySelector(".cloud-modal .cloud-route")`, "the new-chat explainer");
+      await waitFor(win, `document.querySelector(".cloud-modal .cloud-route-numbers")`, "the new-chat explainer");
       const routes = await win.webContents.executeJavaScript(`(${() => ({
-        offersHeldNumber: [...document.querySelectorAll(".cloud-route-title")]
-          .some((title) => title.textContent.trim() === "Verify a new Plow number"),
-        verifiedLines: [...document.querySelectorAll(".cloud-route-number")]
+        // The dead route is gone: it opened the setup window, which on a
+        // signed-in Mac lands on "connected" and mints nothing.
+        offersVerifyButton: [...document.querySelectorAll(".cloud-modal button")]
+          .some((button) => button.textContent.trim() === "Verify a new Plow number"),
+        // A held number that is also a chat's line is listed once, not twice.
+        numbers: [...document.querySelectorAll(".cloud-route-number")]
           .map((line) => line.textContent.trim()),
       })})()`);
-      if (routes.offersHeldNumber || routes.verifiedLines.join(",") !== "+14155550142,+14155550188") {
-        throw new Error(`new-chat routes used the wrong verified lines: ${JSON.stringify(routes)}`);
+      if (routes.offersVerifyButton || routes.numbers.join(",") !== "+14155550142,+14155550188") {
+        throw new Error(`new-chat explainer listed the wrong numbers: ${JSON.stringify(routes)}`);
       }
     },
-    expect: ["Create a new chat", "Start a group thread", "+14155550142", "+14155550188"],
+    expect: ["Create a new chat", "Numbers this Mac knows about:", "+14155550142", "+14155550188"],
   },
   {
     name: "cloud-provisioning",

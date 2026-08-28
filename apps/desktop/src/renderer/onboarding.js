@@ -80,14 +80,15 @@ function sendInstructions(activation) {
     ]),
     el("div", { class: "field" }, [
       el("label", { text: "To" }),
-      // Whatever /v1/auth/activate returned — the pool line assigned to THIS
-      // activation, never a number chosen here. The chat is only created if the
-      // code arrives on that line, so the right code sent to another Plow
-      // number signs in and quietly creates nothing.
+      // Whatever /v1/auth/activate returned, verbatim — never a number chosen
+      // here. Pairing asks for no chat, so this is Plow's managed activation
+      // phone: the number that takes sign-in codes. It is not a line anyone
+      // gets a chat on, and nothing is provisioned by texting it beyond the
+      // sign-in itself.
       el("div", { class: "faint mono", text: activation.sendTo }),
       el("div", {
         class: "faint",
-        text: "This number is picked for this setup — send it there, not to any other Plow number.",
+        text: "Plow's activation number — it signs this Mac in. It does not start a chat.",
       }),
     ]),
   ];
