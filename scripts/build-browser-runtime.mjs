@@ -856,6 +856,15 @@ function fetchVaultServer(arch) {
   fs.mkdirSync(installRoot, { recursive: true });
   fs.copyFileSync(built, path.join(installRoot, "vaultwarden"));
   fs.chmodSync(path.join(installRoot, "vaultwarden"), 0o755);
+  // AGPL-3.0: the license and corresponding-source pointer must travel with
+  // the binary. The clone we just built from carries the canonical text.
+  const licenseSrc = path.join(srcDir, "LICENSE.txt");
+  if (!fs.existsSync(licenseSrc)) throw new Error(`no LICENSE.txt in vaultwarden source at ${srcDir}`);
+  fs.copyFileSync(licenseSrc, path.join(installRoot, "LICENSE.txt"));
+  fs.writeFileSync(
+    path.join(installRoot, "PROVENANCE.txt"),
+    `Vaultwarden ${version} (AGPL-3.0-only)\nBuilt unmodified from ${repo} at commit ${commit}.\n`,
+  );
   fs.writeFileSync(marker, stamp);
   log(`vault server ${arch} ready at ${installRoot}`);
 }
@@ -921,6 +930,12 @@ function fetchVaultCli(arch) {
   const bw = path.join(installRoot, "bw");
   if (!fs.existsSync(bw)) throw new Error(`no bw binary in ${asset.url}`);
   fs.chmodSync(bw, 0o755); // the zip is built on CI; don't trust its mode bits
+  // Same mechanism as the vault server: a bare GPL binary needs its
+  // provenance shipped beside it (the OSS zip carries no license file).
+  fs.writeFileSync(
+    path.join(installRoot, "PROVENANCE.txt"),
+    `Bitwarden CLI (bw-oss) ${lock.vaultCli.version} (GPL-3.0)\nPrebuilt upstream release: ${asset.url}\n`,
+  );
   fs.writeFileSync(marker, asset.sha256);
   log(`vault cli ${arch} ready at ${installRoot}`);
 }

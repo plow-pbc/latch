@@ -71,8 +71,8 @@ credential — is written `0600`.
 
 Apache-2.0 — see [LICENSE](LICENSE) and [NOTICE](NOTICE). The vendored
 `vendor/browser-server/` directory carries its own MIT license from upstream.
-The browser runtime fetched at build time (`just fetch-browser-runtime`) pulls
-third-party components — a Python runtime (PSF), Camoufox (MPL-2.0),
+The browser runtime fetched at package time (`just package`; the Python-only
+`just fetch-browser-runtime` covers dev) pulls third-party components — a Python runtime (PSF), Camoufox (MPL-2.0),
 Vaultwarden (AGPL-3.0), and the Bitwarden CLI (GPL-3.0) — which are not part
 of this repository; their licenses
 govern redistribution of packaged builds that bundle them.

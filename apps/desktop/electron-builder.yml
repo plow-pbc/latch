@@ -61,6 +61,12 @@ electronLanguages:
 # arch passes, so the universal merge copies it through untouched. Runtime code
 # resolves it via process.resourcesPath ("browser-runtime/...").
 extraResources:
+  # The repo's own redistribution terms ride inside the bundle — recipients of
+  # the DMG/update ZIP get them, not just readers of the source tree.
+  - from: ../../LICENSE
+    to: LICENSE
+  - from: ../../NOTICE
+    to: NOTICE
   - from: ../../vendor/python-runtime
     to: browser-runtime/python
     filter: ["**/*", "!.stamp"]
