@@ -19,10 +19,11 @@ describe("planPlowGog", () => {
         kind: "fanout",
         gogArgv: ["plow-gog", "gmail", "search", "newer_than:7d", "--json", "--results-only"],
         sort: "gmail-date",
+        accounts: null,
       },
     },
     {
-      // The --calendars refusal is the calendar group's: elsewhere the flag
+      // The --calendars reading is the calendar group's: elsewhere the flag
       // is a usage error gog reports itself, like any other misspelling.
       why: "leaves a stray --calendars on a gmail fan-out to gog",
       argv: ["plow-gog", "gmail", "search", "q", "--calendars=a"],
@@ -30,6 +31,20 @@ describe("planPlowGog", () => {
         kind: "fanout",
         gogArgv: ["plow-gog", "gmail", "search", "q", "--calendars=a", "--json", "--results-only"],
         sort: "gmail-date",
+        accounts: null,
+      },
+    },
+    {
+      // What an agent means by "these calendars" is these accounts: the
+      // fan-out narrows to them and the flag never reaches gog, which would
+      // otherwise be sent each account the others' ids.
+      why: "reads --calendars=<emails> under a fan-out as the accounts to fan out to",
+      argv: ["plow-gog", "calendar", "events", "list", "--calendars=a@example.com,b@example.com", "--from=now"],
+      expected: {
+        kind: "fanout",
+        gogArgv: ["plow-gog", "calendar", "events", "list", "--from=now", "--json", "--results-only"],
+        sort: "cal-start",
+        accounts: ["a@example.com", "b@example.com"],
       },
     },
     {
@@ -39,6 +54,7 @@ describe("planPlowGog", () => {
         kind: "fanout",
         gogArgv: ["plow-gog", "mail", "search", "q", "--json", "--results-only"],
         sort: "gmail-date",
+        accounts: null,
       },
     },
     {
@@ -48,6 +64,7 @@ describe("planPlowGog", () => {
         kind: "fanout",
         gogArgv: ["plow-gog", "calendar", "events", "primary", "--json", "--results-only"],
         sort: "cal-start",
+        accounts: null,
       },
     },
     {
@@ -57,6 +74,7 @@ describe("planPlowGog", () => {
         kind: "fanout",
         gogArgv: ["plow-gog", "cal", "freebusy", "primary", "--json", "--results-only"],
         sort: "none",
+        accounts: null,
       },
     },
     {
@@ -66,6 +84,7 @@ describe("planPlowGog", () => {
         kind: "fanout",
         gogArgv: ["plow-gog", "calendar", "conflicts", "--from", "x", "--to", "y", "--json", "--results-only"],
         sort: "none",
+        accounts: null,
       },
     },
     {
@@ -75,6 +94,7 @@ describe("planPlowGog", () => {
         kind: "fanout",
         gogArgv: ["plow-gog", "gmail", "search", "q", "--json", "--results-only"],
         sort: "gmail-date",
+        accounts: null,
       },
     },
     {
@@ -291,11 +311,11 @@ describe("planPlowGog", () => {
       reason: "--account needs a value",
     },
     {
-      // Each account would be sent the others' calendar ids: the same events
-      // N times, plus a degraded row per account that cannot read them.
-      why: "refuses --calendars under a fan-out",
+      // A calendar id that is not an account's email cannot be attributed to
+      // an account under a fan-out; --account says whose it is.
+      why: "refuses a --calendars entry that is not a connected-account email under a fan-out",
       argv: ["plow-gog", "calendar", "events", "list", "--calendars=sneakyagenttext,b@x.co", "--from=now"],
-      reason: "drop --calendars",
+      reason: "add --account",
     },
   ])("$why", ({ argv, reason }) => {
     const plan = planPlowGog(argv);

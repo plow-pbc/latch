@@ -27,8 +27,12 @@ export type PlowGogPlan =
   /** `plow-gog accounts`: answered from the mint result, no gog run. */
   | { kind: "accounts" }
   | { kind: "help"; gogArgv: string[] }
-  /** A curated read, run once per connected account and merged. */
-  | { kind: "fanout"; gogArgv: string[]; sort: PlowGogSort }
+  /**
+   * A curated read, run once per connected account and merged. `accounts`
+   * narrows the fan-out to the named ones — what `--calendars=<emails>`
+   * means when the emails are connected accounts — or is null for all.
+   */
+  | { kind: "fanout"; gogArgv: string[]; sort: PlowGogSort; accounts: string[] | null }
   /**
    * Everything else: ONE run, on ONE account. Which account is the runtime's
    * question — with more than one connected, `account` is required there —
@@ -142,23 +146,44 @@ export function planPlowGog(argv: readonly string[]): PlowGogPlan {
 
   const sort = verb !== undefined ? FANOUT[group]?.[verb] : undefined;
   if (sort !== undefined && account === null) {
-    // A fan-out already asks every connected account for its own calendar.
-    // Naming calendars on top of that sends each account the OTHERS' ids —
-    // the same events back N times, and a degraded row for every account
-    // that cannot read them. Observed as an agent's default grammar, so it
-    // is refused with the correction rather than merged into a wrong answer.
-    if (group === "calendar" && stripped.some((arg) => arg === "--calendars" || arg.startsWith("--calendars="))) {
-      return {
-        kind: "refused",
-        reason:
-          "a fan-out already queries every connected account's calendar: drop --calendars, or add --account <email> to query one account's",
-      };
+    // A fan-out already asks every connected account for its own calendar,
+    // so `--calendars` under one means the ACCOUNTS — an agent's natural
+    // grammar for "these two calendars" is their emails. Honoured as a
+    // narrowing: those accounts, each asked for its own calendar, and the
+    // flag never reaches gog (forwarded, it sent each account the others'
+    // ids — the same events N times, plus a degraded row per account that
+    // could not read them). Anything that is not a connected-account email
+    // is a calendar id nobody here can attribute to an account: refused,
+    // with `--account` as the way to say whose it is.
+    let accounts: string[] | null = null;
+    let rest = stripped;
+    if (group === "calendar") {
+      const named: string[] = [];
+      rest = [];
+      for (let i = 0; i < stripped.length; i++) {
+        const arg = stripped[i]!;
+        if (arg === "--calendars") {
+          named.push(...(stripped[++i] ?? "").split(","));
+        } else if (arg.startsWith("--calendars=")) {
+          named.push(...arg.slice("--calendars=".length).split(","));
+        } else rest.push(arg);
+      }
+      if (named.length > 0) {
+        if (!named.every((n) => /^[^\s@]+@[^\s@]+$/.test(n))) {
+          return {
+            kind: "refused",
+            reason:
+              "under a fan-out, --calendars names connected accounts by email; for a calendar id, add --account <email> for the account that owns it",
+          };
+        }
+        accounts = named;
+      }
     }
     // Merging requires JSON; add what the agent did not already ask for.
     const extras: string[] = [];
-    if (!stripped.includes("--json") && !stripped.includes("-j")) extras.push("--json");
-    if (!stripped.includes("--results-only")) extras.push("--results-only");
-    return { kind: "fanout", gogArgv: [...gogArgv, ...extras], sort };
+    if (!rest.includes("--json") && !rest.includes("-j")) extras.push("--json");
+    if (!rest.includes("--results-only")) extras.push("--results-only");
+    return { kind: "fanout", gogArgv: ["plow-gog", ...rest, ...extras], sort, accounts };
   }
 
   let conflictCheck: { from: string; to: string } | null = null;

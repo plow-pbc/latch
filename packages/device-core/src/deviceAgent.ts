@@ -673,10 +673,32 @@ export class DeviceAgent {
       };
     }
 
+    // The emails listed in every sentence below are the mint's own, so they
+    // are safe for the audit log; the caller's spelling is never repeated.
+    const connected = [
+      ...minted.accounts.map((a) => (a.isDefault ? `${a.account} (default)` : a.account)),
+      ...minted.degraded.map((d) => `${d.account} (unavailable)`),
+    ].join(", ");
+
     if (plan.kind === "fanout") {
+      // Named accounts narrow the fan-out; one that is not connected at all
+      // is an error, not a silent drop — the agent asked for it by name.
+      let targets = minted.accounts;
+      let degraded = minted.degraded;
+      if (plan.accounts !== null) {
+        const wanted = new Set(plan.accounts.map((a) => a.toLowerCase()));
+        targets = minted.accounts.filter((a) => wanted.has(a.account.toLowerCase()));
+        degraded = minted.degraded.filter((d) => wanted.has(d.account.toLowerCase()));
+        if (targets.length + degraded.length < wanted.size) {
+          return this.execError(
+            intent.intentId,
+            `a --calendars entry is not a connected account. Connected: ${connected}`,
+          );
+        }
+      }
       this.audit.record("exec_start", { intentId: intent.intentId, argv });
       const runs = await Promise.all(
-        minted.accounts.map(async (a) => ({
+        targets.map(async (a) => ({
           a,
           result: await settled(await runGog(plan.gogArgv.slice(1), a.token)),
         })),
@@ -696,7 +718,7 @@ export class DeviceAgent {
         status: "completed",
         items: merged.items,
         degraded: [
-          ...minted.degraded,
+          ...degraded,
           ...failed,
           ...merged.unparsed.map((u) => ({ account: u.account, reason: u.error })),
         ],
@@ -705,18 +727,12 @@ export class DeviceAgent {
 
     // single: exactly one account, whatever the command does. CONNECTED means
     // healthy PLUS degraded — a degraded default must never let an accountless
-    // command silently run against a healthy non-default account. The emails
-    // listed are the mint's own, so the sentences are safe for the audit log;
-    // the caller's requested spelling deliberately is not repeated.
+    // command silently run against a healthy non-default account.
     if (minted.accounts.length === 0) {
       // The real minter throws before this; a Minter that answers with only
       // degraded accounts still must not fall through to accounts[0].
       return this.execError(intent.intentId, "every connected Google account needs re-auth");
     }
-    const connected = [
-      ...minted.accounts.map((a) => (a.isDefault ? `${a.account} (default)` : a.account)),
-      ...minted.degraded.map((d) => `${d.account} (unavailable)`),
-    ].join(", ");
     const requested = plan.account;
     let target: MintedAccounts["accounts"][number];
     if (requested !== null) {
