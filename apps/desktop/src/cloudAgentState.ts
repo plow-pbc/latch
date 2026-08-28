@@ -65,6 +65,10 @@ export interface CloudLineOption {
   displayName: string | null;
   /** The number to text. Rendered verbatim, never composed here. */
   number: string;
+  /** Whether one of THIS account's chats already runs on it. DERIVED in
+   * `state()` from the chats held at that moment — never stored, because the
+   * two reads settle independently and a stored answer is one of them being
+   * wrong. */
   held: boolean;
 }
 
@@ -164,7 +168,7 @@ export interface CloudAgentStateDeps {
   agents: CloudAgentsApi;
   chats: CloudChatsApi;
   /** Plow's pool numbers, for the "Create a new chat" view. */
-  lines?: { list(credential: string): Promise<CloudLineOption[]> };
+  lines?: { list(credential: string): Promise<Omit<CloudLineOption, "held">[]> };
   home: string;
   onChange?: () => void;
 }
@@ -236,7 +240,8 @@ export class CloudAgentState {
    * read landed".
    */
   private chatsSettled: Promise<void> = Promise.resolve();
-  private lines: CloudLineOption[] | null = null;
+  /** As the server listed them, with no `held` — see `CloudLineOption`. */
+  private lines: Omit<CloudLineOption, "held">[] | null = null;
   private linesError: string | null = null;
   /** Agents whose stuck delete is being retried right now — one at a time each. */
   private tearingDown = new Set<string>();
@@ -255,7 +260,12 @@ export class CloudAgentState {
       cloudAgentEditsSaving: [...this.editsSaving],
       cloudChats: this.chats,
       cloudChatsLoaded: this.chatsLoaded,
-      cloudLines: this.lines,
+      // Computed HERE, on every read, from whichever chat list is current.
+      // Storing it at fetch time raced: the chat read and the line read settle
+      // independently, so whichever landed second left the other's answer
+      // stale — lines fetched before the chats meant a number the owner
+      // already held was offered as free.
+      cloudLines: this.lines && markHeldLines(this.lines, this.chats),
       cloudLinesError: this.linesError,
     };
   }
@@ -306,7 +316,7 @@ export class CloudAgentState {
     try {
       const lines = await this.deps.lines.list(credential);
       if (generation !== this.generation) return;
-      this.lines = markHeldLines(lines, this.chats);
+      this.lines = lines;
       this.linesError = null;
     } catch (error) {
       if (generation !== this.generation) return;
@@ -859,10 +869,18 @@ export class CloudChatsClient implements CloudChatsApi {
  * credential older Macs still hold does not. That is what the 403 below is
  * about, and why its sentence names signing in again.
  */
+/**
+ * E.164, which is what plow's lines are: a leading `+`, a non-zero country
+ * digit, and at most fifteen digits total. Deliberately strict — this string
+ * ends up in an `sms:` URL, so anything that is not plainly a phone number is
+ * not a phone number.
+ */
+const E164 = /^\+[1-9]\d{1,14}$/;
+
 export class CloudLinesClient {
   constructor(private readonly api: PlowApi) {}
 
-  async list(credential: string): Promise<CloudLineOption[]> {
+  async list(credential: string): Promise<Omit<CloudLineOption, "held">[]> {
     const response = await this.api.request("GET", "/v1/lines", { token: credential });
 
     if (response.status === 403) {
@@ -888,20 +906,28 @@ export class CloudLinesClient {
         : null;
     if (!rows) throw new PlowApiError("http", "Plow returned an invalid number list.", response.status);
 
-    // FAILS CLOSED, row by row: a line with no number is one nobody can text,
-    // and rendering it would put a blank where the whole instruction lives. A
-    // malformed row is dropped, not defaulted — same rule the chat list keeps.
+    // FAILS CLOSED, row by row. A line with no number is one nobody can text,
+    // and rendering it would put a blank where the whole instruction lives; a
+    // malformed row is dropped, not defaulted — the rule the chat list keeps.
     return rows.flatMap((raw) => {
       if (!raw || typeof raw !== "object") return [];
       const row = raw as { uid?: unknown; provider_key?: unknown; display_name?: unknown };
       const uid = typeof row.uid === "string" ? row.uid.trim() : "";
       const number = typeof row.provider_key === "string" ? row.provider_key.trim() : "";
-      if (!uid || !number) return [];
       const name = typeof row.display_name === "string" ? row.display_name.trim() : "";
-      // The credential must not come back out through a server-authored field,
-      // in any encoding — the same rule the chat labels keep.
+      // The number is E.164 or the row is dropped. It is not only rendered —
+      // it is matched in `smsLineUrl` and becomes the recipient of an `sms:`
+      // URL, so an arbitrary server-authored string reaching here is a string
+      // reaching the user's Messages app. A shape check is what keeps "the
+      // server said so" from being the whole authorisation.
+      if (!uid || !E164.test(number)) return [];
+      // The credential must not come back out through ANY server-authored
+      // field, in any encoding. `uid` and `provider_key` are as server-authored
+      // as the name is; a row echoing one is refused outright rather than
+      // blanked, because there is nothing safe left to show of it.
+      if (echoesCredential(uid, credential) || echoesCredential(number, credential)) return [];
       const safeName = name && !echoesCredential(name, credential) ? name : null;
-      return [{ uid, displayName: safeName, number, held: false }];
+      return [{ uid, displayName: safeName, number }];
     });
   }
 }
@@ -909,7 +935,7 @@ export class CloudLinesClient {
 /** Which of these numbers the account already has a chat on. Matched on the
  * chat's own line, which is the only place the association is recorded. */
 export function markHeldLines(
-  lines: readonly CloudLineOption[],
+  lines: readonly Omit<CloudLineOption, "held">[],
   chats: readonly CloudChatOption[],
 ): CloudLineOption[] {
   const held = new Set(
