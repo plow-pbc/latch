@@ -91,7 +91,19 @@ function expectNeverSpawned(d: DeviceAgent): void {
   expect(events).not.toContain("exec_start");
 }
 
-const okMinter = (): Minter => ({ mint: async () => TOKEN });
+/** A Minter from just the single-mint arm: the batch arm mints the same
+ * token for one account, which is enough for every gog-path test here. */
+function minterOf(mint: Minter["mint"]): Minter {
+  return {
+    mint,
+    mintAll: async (provider) => ({
+      accounts: [{ account: "a@example.com", token: await mint(provider), isDefault: true }],
+      degraded: [],
+    }),
+  };
+}
+
+const okMinter = (): Minter => minterOf(async () => TOKEN);
 
 function run(d: DeviceAgent, argv: string[]): Promise<JSONValue> {
   return d.handleIntent(
@@ -140,7 +152,7 @@ describe("a vendored provider through the exec path", () => {
 
   it("refuses an argument that would disarm the belt, without minting or spawning", async () => {
     const mint = vi.fn(async () => TOKEN);
-    const d = device({ mint }, [vendorDir()]);
+    const d = device(minterOf(mint), [vendorDir()]);
     const response = await run(d, ["gog", "gmail", "search", "q", "--wrap-untrusted=false"]);
     expect(jv(response).get("status").str).toBe("error");
     expect(mint).not.toHaveBeenCalled();
@@ -150,7 +162,7 @@ describe("a vendored provider through the exec path", () => {
   it.each([
     [
       "a mint that failed",
-      (): Minter => ({ mint: async () => { throw MintError.failed("gog", "could not reach Plow"); } }),
+      (): Minter => minterOf(async () => { throw MintError.failed("gog", "could not reach Plow"); }),
       /could not reach Plow/,
     ],
     ["no minter wired at all", (): Minter | null => null, /not paired/],
@@ -160,7 +172,7 @@ describe("a vendored provider through the exec path", () => {
     // could reach the agent, so the row is worth its line.
     [
       "a minter that threw something else",
-      (): Minter => ({ mint: async () => { throw new Error(TOKEN); } }),
+      (): Minter => minterOf(async () => { throw new Error(TOKEN); }),
       /could not authorise gog/,
     ],
   ])("reports %s without spawning", async (_why, make, expected) => {

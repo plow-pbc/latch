@@ -96,6 +96,81 @@ describe("buildMinter", () => {
     await expect(buildMinter({ api, home: homeWith("   ") }).mint(GOG)).rejects.toThrow(/not paired/);
     expect(called).toBe(false);
   });
+
+  /** A PlowApi whose fetch records each request and answers with `body`. */
+  function apiAnswering(body: unknown, requests: { url: string; body: unknown }[] = []) {
+    const api = new PlowApi("https://api.example.com", async (url, init) => {
+      requests.push({ url: String(url), body: JSON.parse(String(init?.body)) });
+      return new Response(JSON.stringify(body), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    });
+    return { api, requests };
+  }
+
+  describe("mintAll", () => {
+    const BATCH = {
+      data: {
+        access_token: "tok-default",
+        accounts: [
+          { account: "a@example.com", access_token: "tok-a", is_default: true },
+          { account: "b@example.com", access_token: "tok-b", is_default: false },
+        ],
+        degraded: [{ account: "c@example.com", reason: "needs_reauth" }],
+      },
+    };
+
+    it("posts {all: true} to the provider's mint route and maps every account", async () => {
+      const requests: { url: string; body: unknown }[] = [];
+      const { api } = apiAnswering(BATCH, requests);
+      const minted = await buildMinter({ api, home: homeWith("cred") }).mintAll(GOG);
+      expect(requests).toEqual([
+        { url: "https://api.example.com/v1/connectors/gmail/access-token", body: { all: true } },
+      ]);
+      expect(minted).toEqual({
+        accounts: [
+          { account: "a@example.com", token: "tok-a", isDefault: true },
+          { account: "b@example.com", token: "tok-b", isDefault: false },
+        ],
+        degraded: [{ account: "c@example.com", reason: "needs_reauth" }],
+      });
+    });
+
+    it("treats an absent degraded list as empty and skips a malformed account row", async () => {
+      const { api } = apiAnswering({
+        data: {
+          access_token: "tok-a",
+          accounts: [
+            { account: "a@example.com", access_token: "tok-a", is_default: true },
+            { account: "broken@example.com" }, // no token — skipped, not thrown
+          ],
+        },
+      });
+      const minted = await buildMinter({ api, home: homeWith("cred") }).mintAll(GOG);
+      expect(minted).toEqual({
+        accounts: [{ account: "a@example.com", token: "tok-a", isDefault: true }],
+        degraded: [],
+      });
+    });
+
+    it("fails like the single mint when no usable account comes back", async () => {
+      const { api } = apiAnswering({ data: { access_token: "tok", accounts: [] } });
+      await expect(buildMinter({ api, home: homeWith("cred") }).mintAll(GOG)).rejects.toThrow(
+        /usable provider token/,
+      );
+    });
+
+    it("refuses before calling when this Mac is not paired", async () => {
+      let called = false;
+      const api = new PlowApi("https://api.example.com", async () => {
+        called = true;
+        return new Response("{}", { status: 200 });
+      });
+      await expect(buildMinter({ api, home: homeWith("") }).mintAll(GOG)).rejects.toThrow(/not paired/);
+      expect(called).toBe(false);
+    });
+  });
 });
 
 describe("vendorDirs", () => {

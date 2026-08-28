@@ -27,6 +27,19 @@ export class MintError extends Error {
   }
 }
 
+/**
+ * Every connected account's short-lived token, from one batch mint.
+ *
+ * `degraded` is the accounts Plow could not mint for (revoked refresh token,
+ * connector error) — listed so a fan-out can report partial coverage instead
+ * of a false absence. `reason` is server-composed under the same
+ * no-foreign-text rule as everything else that reaches a screen.
+ */
+export interface MintedAccounts {
+  accounts: { account: string; token: string; isDefault: boolean }[];
+  degraded: { account: string; reason: string }[];
+}
+
 export interface Minter {
   /**
    * The provider's short-lived token for the owner's connected account.
@@ -35,4 +48,9 @@ export interface Minter {
    * server-side, so this Mac holds no second copy of a fact the server owns.
    */
   mint(provider: VendoredProvider): Promise<string>;
+  /**
+   * One token per connected account, for a multi-account provider's fan-out.
+   * Same scope, same route as `mint` — the request just says `all`.
+   */
+  mintAll(provider: VendoredProvider): Promise<MintedAccounts>;
 }

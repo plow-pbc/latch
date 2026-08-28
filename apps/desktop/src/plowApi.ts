@@ -409,6 +409,44 @@ export class PlowApi {
     return minted;
   }
 
+  /**
+   * The batch form of `mintProviderToken`: one short-lived token per connected
+   * account, for a provider that fans out. Same route, same scope — the body
+   * says `all` — and the same validation posture: typeof per field on
+   * unvalidated JSON, a malformed entry skipped rather than thrown, and no
+   * usable entry at all reported exactly as the single mint reports no token.
+   */
+  async mintAccountTokens(
+    token: string,
+    prefix: string,
+    action: string,
+  ): Promise<{
+    accounts: { account: string; token: string; isDefault: boolean }[];
+    degraded: { account: string; reason: string }[];
+  }> {
+    const data = await this.call<{
+      data?: { accounts?: unknown; degraded?: unknown };
+    }>("POST", `${prefix}${action}`, { token, body: { all: true } });
+    const accounts: { account: string; token: string; isDefault: boolean }[] = [];
+    for (const row of Array.isArray(data.data?.accounts) ? data.data.accounts : []) {
+      const { account, access_token, is_default } = (row ?? {}) as Record<string, unknown>;
+      if (typeof account !== "string" || typeof access_token !== "string" || !access_token.trim()) {
+        continue;
+      }
+      accounts.push({ account, token: access_token.trim(), isDefault: is_default === true });
+    }
+    if (accounts.length === 0) {
+      throw new PlowApiError("http", "Plow did not return a usable provider token.");
+    }
+    const degraded: { account: string; reason: string }[] = [];
+    for (const row of Array.isArray(data.data?.degraded) ? data.data.degraded : []) {
+      const { account, reason } = (row ?? {}) as Record<string, unknown>;
+      if (typeof account !== "string") continue;
+      degraded.push({ account, reason: typeof reason === "string" ? reason : "" });
+    }
+    return { accounts, degraded };
+  }
+
   /** Mint an agent credential through the relay's own API (`relay:call` only,
    * whatever we ask for — the server decides). */
   async createAgent(token: string, name: string): Promise<MintedCredential> {

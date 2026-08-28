@@ -26,20 +26,27 @@ import { loadSettings } from "./settings.js";
  * places that can drift.
  */
 export function buildMinter(opts: { api: PlowApi; home: string }): Minter {
+  const authorised = async <T>(
+    provider: VendoredProvider,
+    call: (credential: string) => Promise<T>,
+  ): Promise<T> => {
+    // Read per call, never captured: re-pairing takes effect on the next
+    // command rather than the next launch.
+    const credential = loadSettings(opts.home).relayCredential.trim();
+    if (!credential) throw MintError.unpaired();
+    try {
+      return await call(credential);
+    } catch (e) {
+      // PlowApi composes its own messages under the same no-foreign-text
+      // rule, so this one is safe to carry into the audit log.
+      throw MintError.failed(provider.command, e instanceof Error ? e.message : "unknown error");
+    }
+  };
   return {
-    async mint(provider: VendoredProvider): Promise<string> {
-      // Read per call, never captured: re-pairing takes effect on the next
-      // command rather than the next launch.
-      const credential = loadSettings(opts.home).relayCredential.trim();
-      if (!credential) throw MintError.unpaired();
-      try {
-        return await opts.api.mintProviderToken(credential, provider.mintPrefix, provider.mintAction);
-      } catch (e) {
-        // PlowApi composes its own messages under the same no-foreign-text
-        // rule, so this one is safe to carry into the audit log.
-        throw MintError.failed(provider.command, e instanceof Error ? e.message : "unknown error");
-      }
-    },
+    mint: (provider) =>
+      authorised(provider, (c) => opts.api.mintProviderToken(c, provider.mintPrefix, provider.mintAction)),
+    mintAll: (provider) =>
+      authorised(provider, (c) => opts.api.mintAccountTokens(c, provider.mintPrefix, provider.mintAction)),
   };
 }
 
