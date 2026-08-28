@@ -13,6 +13,7 @@ export type CapabilityKind =
   | "fs.write"
   | "process.exec"
   | "network"
+  | "apple_events"
   | "tool"
   | "browser"
   | "credential";
@@ -22,7 +23,7 @@ export interface Capability {
   paths?: string[]; // fs.read / fs.write
   argv?: string[]; // process.exec (argv[0] is the executable)
   cwd?: string; // process.exec
-  allowed?: boolean; // network
+  allowed?: boolean; // network, apple_events
   tool?: string; // tool
   origins?: string[]; // browser: host patterns ("dominos.com", "*.dominos.com")
   access?: "fill"; // credential: type values into pages
@@ -57,6 +58,10 @@ export function capabilityDisplay(c: Capability): string {
     }
     case "network":
       return c.allowed ? "Network: allowed" : "Network: denied";
+    case "apple_events":
+      return c.allowed
+        ? "Apple events: may control this Mac's apps"
+        : "Apple events: denied";
     case "tool":
       return `Tool: ${c.tool ?? "?"}`;
     case "browser":
