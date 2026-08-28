@@ -60,8 +60,9 @@ export type PendingReason = "awaiting_approval" | "running";
  * `awaiting_approval` must not claim a dialog is on screen, because often
  * there is not one. It means "no decision yet", and that covers the work
  * before anyone is asked (path resolution, writing the approval record), the
- * adversarial reviewer thinking — a 30s budget against this 15s one, so in
- * that mode deferring while nobody has been asked is still commonplace — and the
+ * adversarial reviewer thinking — a budget of its own, minutes wide against this
+ * fifteen seconds, so in that mode deferring while nobody has been asked is
+ * still commonplace — and the
  * approve/deny modes, which never show a human anything at all.
  *
  * An earlier version of this note hedged on whether approval was *needed*,

@@ -453,7 +453,7 @@ export class PlowApi {
    * What IS shared with `call()`: the bearer header, the bounded request, and
    * the network-error sanitation in `request()`.
    *
-   * `signal` is the caller's own budget. The reviewer runs on a 30s budget and
+   * `signal` is the caller's own budget. The reviewer runs on its own budget and
    * passes the signal it aborts on timeout, so a call it has given up on does
    * not keep running (and keep billing) after the verdict.
    */

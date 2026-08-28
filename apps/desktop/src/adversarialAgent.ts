@@ -25,7 +25,19 @@ import { ApiBaseUrl, normalizeApiBaseUrl, PlowApi } from "./plowApi.js";
 export const REVIEWER_MODEL = "anthropic/claude-sonnet-4-6";
 export const REVIEWER_THINKING_BUDGET = 2048;
 export const REVIEWER_MAX_TOKENS = 4096;
-export const REVIEWER_TIMEOUT_MS = 30_000;
+/**
+ * How long a review may take before we give up on it.
+ *
+ * Nothing downstream wants this tight, and giving up early is the expensive
+ * answer: in adversarial mode a review that reaches no verdict is a DENY
+ * (`reviewPolicy.ts`), so a budget inside the spread of real reviews refuses
+ * operations the reviewer would have allowed. It was 30s, against a p90 of 16s
+ * and a slowest-observed 24s. The tunnelled call handed back a deferred handle
+ * long ago — `CALL_BUDGET_MS` is 15s — and both the handle and the approval
+ * record live fifteen minutes, so this still lands well inside the window there
+ * is to land in.
+ */
+export const REVIEWER_TIMEOUT_MS = 90_000;
 
 export type Verdict = "allow" | "deny" | "ask";
 
@@ -328,7 +340,8 @@ function parseVerdict(
  *
  * `onTimeout` fires from the SAME timer that rejects, so a call we have given
  * up on is cancelled at the instant we give up. Without it the race abandons
- * the promise but not the request: the reviewer returned `ask` at 30s while the
+ * the promise but not the request: the reviewer returned `ask` when the budget
+ * was spent while the
  * HTTP request stayed open and, on a paid endpoint, went on spending.
  */
 /** Our own giving-up, told apart from anything a provider threw. */
