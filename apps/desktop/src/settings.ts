@@ -21,14 +21,23 @@ export interface WindowBounds {
  * How operation intents are decided:
  *   - approve:     auto "allow once", no dialog
  *   - adversarial: a Claude-backed adversarial review decides, and nothing else
- *                  does — there is no human in this mode. It FAILS CLOSED: no
- *                  credential, an API error, a timeout, a refusal or an answer
- *                  that is not a verdict all deny the operation outright, each
- *                  with a source saying which it was.
- *   - ask:         always show the approval dialog (default)
+ *                  does — there is no human in this mode (default). It FAILS
+ *                  CLOSED: no credential, an API error, a timeout, a refusal or
+ *                  an answer that is not a verdict all deny the operation
+ *                  outright, each with a source saying which it was.
+ *   - ask:         always show the approval dialog
  *   - deny:        auto-deny, no dialog
  */
 export type ApprovalMode = "approve" | "adversarial" | "ask" | "deny";
+
+/**
+ * The mode a home gets before its owner has chosen one. Adversarial rather
+ * than Ask: the reviewer decides out of the box, and the owner opts INTO
+ * per-operation dialogs. Safe on a not-yet-signed-in Mac because adversarial
+ * fails closed — no credential means deny, and no agent can reach an
+ * unsigned-in Mac anyway.
+ */
+export const DEFAULT_APPROVAL_MODE: ApprovalMode = "adversarial";
 
 /**
  * What this Mac remembers about one cloud agent, on its own.
@@ -123,7 +132,7 @@ export function loadSettings(home: string): Settings {
     accountUid: "",
     mcpUrl: "",
     selectedTab: "agents",
-    approvalMode: "ask",
+    approvalMode: DEFAULT_APPROVAL_MODE,
     agentPurpose: "",
     provisionedChatUid: "",
     provisionedChatLabel: "",

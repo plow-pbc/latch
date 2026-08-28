@@ -21,7 +21,7 @@ import {
   ReviewFailureCause,
   Verdict,
 } from "./adversarialAgent.js";
-import { Settings } from "./settings.js";
+import { DEFAULT_APPROVAL_MODE, Settings } from "./settings.js";
 
 export type ApprovalDecision = "allow_once" | "always_allow" | "deny";
 
@@ -58,7 +58,7 @@ export interface InferenceStatus {
 export function inferenceStatus(settings: Settings): InferenceStatus {
   return {
     available: reviewerAvailable(settings),
-    approvalMode: settings.approvalMode ?? "ask",
+    approvalMode: settings.approvalMode ?? DEFAULT_APPROVAL_MODE,
   };
 }
 
@@ -83,7 +83,8 @@ export function reviewerAvailable(settings: Settings): boolean {
  * path, where `decideIntent` runs the review or denies as the mode requires.
  */
 export function storedRuleMayGrant(settings: Settings): boolean {
-  return settings.approvalMode !== "adversarial" && settings.approvalMode !== "deny";
+  const mode = settings.approvalMode ?? DEFAULT_APPROVAL_MODE;
+  return mode !== "adversarial" && mode !== "deny";
 }
 
 /** Everything `decideIntent` needs from the outside world, injected for tests. */
@@ -128,7 +129,7 @@ export async function decideIntent(
   deps: DecideDeps,
 ): Promise<{ decision: ApprovalDecision; source: string }> {
   const { settings } = deps;
-  const mode = settings.approvalMode ?? "ask";
+  const mode = settings.approvalMode ?? DEFAULT_APPROVAL_MODE;
 
   if (mode === "deny") return { decision: "deny", source: "policy" };
 

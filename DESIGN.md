@@ -137,7 +137,7 @@ from, the audit log stores, and the adversarial reviewer evaluates.
 - **Signing:** the intent carries none. It is never *received* over the wire —
   it is built on this Mac from an authenticated agent's tool call — so there is
   no third party's signature to verify. That is not a data-locality claim:
-  whenever the reviewer runs — adversarial mode's verdict and the default `ask`
+  whenever the reviewer runs — the default adversarial mode's verdict and `ask`
   mode's suggestion hint both call it — four things are posted to Plow's
   chat-completion endpoint (`apps/desktop/src/adversarialAgent.ts`): the
   agent's display name and id, the request composed on this Mac, the requested
