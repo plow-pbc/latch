@@ -317,7 +317,7 @@ describe("the runtime registry and the build-time manifest", () => {
     // BINARIES, not commands: plow-gog runs the vendored gog, so the manifest
     // stages one payload that two registry rows share.
     const staged = VENDORED.map((p) => p.command);
-    const binaries = [...new Set(PROVIDERS.map((p) => p.binary ?? p.command))];
+    const binaries = [...new Set(PROVIDERS.map((p) => p.binary))];
     expect([...staged].sort()).toEqual(binaries.sort());
   });
 

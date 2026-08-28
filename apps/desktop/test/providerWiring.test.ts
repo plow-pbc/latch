@@ -58,7 +58,7 @@ function newBase(): string {
 }
 
 /** A second provider, so the walk is distinguishable from a single lookup. */
-const SLACK = { ...GOG, command: "slack" };
+const SLACK = { ...GOG, command: "slack", binary: "slack" };
 
 describe("buildMinter", () => {
   it("reads the credential from home on EVERY call, not once at construction", async () => {
@@ -117,7 +117,13 @@ describe("buildMinter", () => {
           { account: "a@example.com", access_token: "tok-a", is_default: true },
           { account: "b@example.com", access_token: "tok-b", is_default: false },
         ],
-        degraded: [{ account: "c@example.com", reason: "needs_reauth" }],
+        degraded: [
+          { account: "c@example.com", reason: "needs_reauth" },
+          // Server-authored, off the allowlist: the reason reaches the remote
+          // agent, so anything but the machine value becomes fixed local text
+          // — the credential-echo rule at the one seam the response crosses.
+          { account: "d@example.com", reason: "refresh failed: Bearer sk-secret-fragment" },
+        ],
       },
     };
 
@@ -133,29 +139,11 @@ describe("buildMinter", () => {
           { account: "a@example.com", token: "tok-a", isDefault: true },
           { account: "b@example.com", token: "tok-b", isDefault: false },
         ],
-        degraded: [{ account: "c@example.com", reason: "needs_reauth" }],
+        degraded: [
+          { account: "c@example.com", reason: "needs_reauth" },
+          { account: "d@example.com", reason: "token refresh failed" },
+        ],
       });
-    });
-
-    it("never forwards a server-authored degraded reason verbatim", async () => {
-      // The reason reaches the remote agent; an upstream that echoed a
-      // credential fragment into it must be stopped HERE, at the one seam the
-      // response crosses. Only the machine value passes the allowlist.
-      const { api } = apiAnswering({
-        data: {
-          access_token: "tok-a",
-          accounts: [{ account: "a@example.com", access_token: "tok-a", is_default: true }],
-          degraded: [
-            { account: "b@example.com", reason: "needs_reauth" },
-            { account: "c@example.com", reason: "refresh failed: Bearer sk-secret-fragment" },
-          ],
-        },
-      });
-      const minted = await buildMinter({ api, home: homeWith("cred") }).mintAll(GOG);
-      expect(minted.degraded).toEqual([
-        { account: "b@example.com", reason: "needs_reauth" },
-        { account: "c@example.com", reason: "token refresh failed" },
-      ]);
     });
 
     it("treats an absent degraded list as empty and skips a malformed account row", async () => {

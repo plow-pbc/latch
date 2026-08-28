@@ -197,7 +197,7 @@ export class DeviceAgent {
     // path refuses unconditionally. The SAME predicate that gate uses — two
     // sites answering one question two ways is what produces that gap — and
     // driven off the registry, so a provider's name has one spelling.
-    for (const p of PROVIDERS) if (this.hasStaged(p.binary ?? p.command)) this.skills.register(p.skill);
+    for (const p of PROVIDERS) if (this.hasStaged(p.binary)) this.skills.register(p.skill);
     if (browserRuntime) {
       this.skills.register(BROWSING_SKILL);
       const browserDir = path.join(home, "device/browser");
@@ -535,7 +535,7 @@ export class DeviceAgent {
       // their own PATH — unbelted, unrefused, and against their own
       // credentials rather than a minted one. The name is this Mac's to
       // resolve; if it cannot, that is an answer, not a pass.
-      if (!this.hasStaged(provider.binary ?? provider.command)) {
+      if (!this.hasStaged(provider.binary)) {
         const error = `${provider.command} is not installed on this Mac`;
         this.audit.record("exec_error", { intentId: intent.intentId, error });
         return { status: "error", error };
@@ -645,7 +645,7 @@ export class DeviceAgent {
     }
     const runGog = (tail: readonly string[], token: string | null) =>
       this.executor.run({
-        argv: [provider.binary!, ...provider.belt, ...tail],
+        argv: [provider.binary, ...provider.belt, ...tail],
         readPaths: opts.readPaths,
         writePaths: opts.writePaths,
         network: opts.network,

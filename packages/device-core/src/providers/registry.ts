@@ -25,17 +25,15 @@ import { planPlowGog } from "./plowGog.js";
 
 /** What one vendored CLI needs in order to run. */
 export interface VendoredProvider {
-  /** `argv[0]`, and — unless `binary` says otherwise — the binary's name
-   * inside its vendor directory. */
+  /** `argv[0]`. */
   readonly command: string;
   /**
-   * The staged binary this provider execs, when it is not `command` itself.
-   *
-   * Exists for a provider that ORCHESTRATES another provider's CLI: plow-gog
-   * runs the vendored gog N times, so it stages no payload of its own and
-   * every staging/resolution site reads `binary ?? command`.
+   * The staged binary this provider execs — usually `command` itself, but a
+   * provider that ORCHESTRATES another provider's CLI names that one:
+   * plow-gog runs the vendored gog N times and stages no payload of its own.
+   * Every staging/resolution site reads this, never `command`.
    */
-  readonly binary?: string;
+  readonly binary: string;
   /** The connector action that mints this provider's token. */
   readonly mintAction: string;
   /** Where the mint's routes hang, e.g. `/v1/connectors/gmail/`. */
@@ -106,6 +104,7 @@ export interface VendoredProvider {
 
 const GOG: VendoredProvider = {
   command: "gog",
+  binary: "gog",
   mintAction: "access-token",
   // Not a Gmail-only scope, though the prefix says gmail: checked against
   // plow's GMAIL_DEFAULT_SCOPES, the mint covers calendar.readonly and

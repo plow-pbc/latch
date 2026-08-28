@@ -71,7 +71,7 @@ export function vendorDirs(
   for (const provider of providers) {
     // The staged payload, which is not always the command: plow-gog execs the
     // vendored gog, so two rows resolve one binary — and one PATH entry.
-    const binary = provider.binary ?? provider.command;
+    const binary = provider.binary;
     const located = resolveVendoredBinary(binary, opts);
     if (located.path !== null) {
       const dir = path.dirname(located.path);
