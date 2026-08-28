@@ -715,23 +715,32 @@ export class DeviceAgent {
         } else ok.push({ account: a.account, stdout: this.executor.stdout(result.handle).toString("utf8") });
       }
       const merged = mergeFanout(ok, plan.sort);
+      const unreadable = new Set(merged.unparsed.map((u) => u.account));
+      // An account ANSWERED: its child ran, exited 0, and its output parsed.
+      // Whether that answer had rows in it is the account's business — "no mail
+      // today" is an answer.
+      const answered = ok.filter((o) => !unreadable.has(o.account)).length;
       const allDegraded = [
         ...degraded,
         ...failed,
         ...merged.unparsed.map((u) => ({ account: u.account, reason: u.error })),
       ];
-      // One number for N accounts, so it can only answer "did this run retrieve
-      // anything?". Read off the ENVELOPE rather than the children, because an
-      // account can fail before a child exists — every account degraded at the
-      // mint runs nothing at all, and judging by exit codes alone called that
-      // green. Where it failed is not the audit's question.
+      // One number for N accounts, so it can only answer "did ANY account
+      // answer?" — counted over accounts, never over items. Counting items
+      // marked a healthy account that legitimately returned nothing as a
+      // failure the moment some OTHER account was degraded, which is a partial
+      // success wearing a failure's badge.
       //
-      // A partial failure stays exit 0, with the accounts that failed named in
-      // `degraded`; an empty result nobody failed for (no events today) is a
-      // true zero and stays one.
+      // Counted over accounts rather than over children, too: an account can
+      // fail before a child exists — every account degraded at the mint runs
+      // nothing at all — and reading exit codes alone called that green.
+      //
+      // So: a partial success is 0, with the accounts that failed named in
+      // `degraded`; a run where nobody answered and somebody failed is 1; and
+      // a fan-out with no accounts at all stays 0, having nothing to report.
       this.audit.record("exec_end", {
         intentId: intent.intentId,
-        exit_code: merged.items.length === 0 && allDegraded.length > 0 ? 1 : 0,
+        exit_code: answered === 0 && allDegraded.length > 0 ? 1 : 0,
       });
       return {
         status: "completed",

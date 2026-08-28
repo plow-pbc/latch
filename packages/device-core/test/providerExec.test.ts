@@ -337,100 +337,101 @@ esac
     });
   });
 
-  itSpawns("degrades a failing account without losing the healthy one's items", async () => {
-    const d = device(
-      accountsMinter([AB[0]!, { account: "bad@example.com", token: "tok-bad", isDefault: false }]),
-      [plowVendorDir()],
-    );
-    const response = await run(d, ["plow-gog", "gmail", "search", "q"]);
-    expect(response).toMatchObject({
-      status: "completed",
+  /**
+   * The fan-out's audit disposition, one row per way a run can end.
+   *
+   * `exec_end` carries ONE number for N accounts, so the only question it can
+   * answer is "did any account answer?" — counted over accounts, never over
+   * items, and never over children: an account can fail at the mint without a
+   * child existing, and a healthy account can answer with nothing in it.
+   */
+  itSpawns.each<{
+    why: string;
+    accounts: { account: string; token: string; isDefault: boolean }[];
+    mintDegraded?: { account: string; reason: string }[];
+    items: unknown[];
+    degraded: { account: string; reason: string }[];
+    exitZero: boolean;
+    /** A child's own output, which must reach neither response nor audit. */
+    forbidden?: string;
+  }>([
+    {
+      why: "a partial failure keeps the healthy account's items and stays green",
+      accounts: [AB[0]!, { account: "bad@example.com", token: "tok-bad", isDefault: false }],
       items: [{ id: "a1", account: "a@example.com" }],
       degraded: [{ account: "bad@example.com", reason: "gog exited 1" }],
-    });
-    // The child's output is service-fetched text; only the exit code travels.
-    expect(JSON.stringify(response)).not.toContain("boom");
-    // A partial failure is still a run that answered: the audit stays green,
-    // and the account that did not answer is named in the envelope.
-    expect(execEnd(d)).toBe(0);
-  });
-
-  itSpawns("names what each exit code meant, without quoting the child", async () => {
-    // gog maps Google's own failures onto its published exit table, so the
-    // number is the diagnosis. `gog exited 2` alone left an owner unable to
-    // tell a rejected request from an expired token.
-    const d = device(
-      accountsMinter([
+      exitZero: true,
+      forbidden: "boom",
+    },
+    {
+      // gog maps Google's own failures onto its published exit table, so the
+      // number is the diagnosis. `gog exited 2` alone left an owner unable to
+      // tell a rejected request from an expired token.
+      why: "every child failing names what each exit code meant, and is not green",
+      accounts: [
         { account: "rejected@example.com", token: "tok-rejected", isDefault: true },
         { account: "expired@example.com", token: "tok-expired", isDefault: false },
-      ]),
-      [plowVendorDir()],
-    );
-    const response = await run(d, ["plow-gog", "gmail", "search", "q"]);
-    expect(response).toMatchObject({
-      status: "completed",
+      ],
       items: [],
       degraded: [
         { account: "rejected@example.com", reason: "gog rejected the request as invalid" },
         { account: "expired@example.com", reason: "that account needs re-auth — re-connect it in Plow" },
       ],
-    });
-    expect(JSON.stringify(response)).not.toContain("sneaky");
-    // Every account failed and nothing was retrieved: an exit-0 exec_end here
-    // showed the run as green in the approval history with no items at all.
-    expect(execEnd(d)).not.toBe(0);
-  });
-
-  itSpawns("marks a run that retrieved nothing non-zero even when no child ever ran", async () => {
-    // Every account degraded at the MINT, so there is no child and no exit
-    // code to read. Judging the run by its children called this green: the
-    // question the audit answers is whether anything was retrieved, not where
-    // the failure happened.
-    const d = device(
-      accountsMinter([], [
+      exitZero: false,
+      forbidden: "sneakyagenttext",
+    },
+    {
+      // No child exists to read an exit code from; judging by children alone
+      // called this green.
+      why: "every account degraded at the mint is not green, though nothing ran",
+      accounts: [],
+      mintDegraded: [
         { account: "a@example.com", reason: "needs_reauth" },
         { account: "b@example.com", reason: "needs_reauth" },
-      ]),
-      [plowVendorDir()],
-    );
-    const response = await run(d, ["plow-gog", "gmail", "search", "q"]);
-    expect(response).toMatchObject({
-      status: "completed",
+      ],
       items: [],
       degraded: [
         { account: "a@example.com", reason: "needs_reauth" },
         { account: "b@example.com", reason: "needs_reauth" },
       ],
-    });
-    expect(execEnd(d)).not.toBe(0);
-  });
-
-  itSpawns("marks a run non-zero when every child exited 0 but nothing parsed", async () => {
-    // The third way to retrieve nothing: the children ran and succeeded, and
-    // their output was not JSON. Same verdict, for the same reason.
-    const d = device(
-      accountsMinter([{ account: "quiet@example.com", token: "tok-quiet", isDefault: true }]),
-      [plowVendorDir()],
-    );
-    const response = await run(d, ["plow-gog", "gmail", "search", "q"]);
-    expect(response).toMatchObject({
-      status: "completed",
+      exitZero: false,
+    },
+    {
+      why: "a child that exits 0 with output that does not parse is not an answer",
+      accounts: [{ account: "quiet@example.com", token: "tok-quiet", isDefault: true }],
       items: [],
       degraded: [{ account: "quiet@example.com", reason: "output was not JSON" }],
-    });
-    expect(execEnd(d)).not.toBe(0);
-  });
-
-  itSpawns("leaves a genuinely empty result green: nothing failed, there was nothing to find", async () => {
-    // The branch the rule above must not swallow. No events today is a true
-    // zero, and marking it failed would train an owner to ignore the mark.
-    const d = device(
-      accountsMinter([{ account: "a@example.com", token: "tok-empty", isDefault: true }]),
-      [plowVendorDir()],
-    );
+      exitZero: false,
+    },
+    {
+      // Counting items rather than accounts marked this a failure — a partial
+      // success wearing a failure's badge, and an empty calendar day is the
+      // common case.
+      why: "an account that answers with nothing is still an answer",
+      accounts: [{ account: "a@example.com", token: "tok-empty", isDefault: true }],
+      mintDegraded: [{ account: "b@example.com", reason: "needs_reauth" }],
+      items: [],
+      degraded: [{ account: "b@example.com", reason: "needs_reauth" }],
+      exitZero: true,
+    },
+    {
+      // The branch the rule must not swallow: a mark that fires on an honest
+      // empty answer is one an owner learns to ignore.
+      why: "nothing found and nothing failed is a true zero",
+      accounts: [{ account: "a@example.com", token: "tok-empty", isDefault: true }],
+      items: [],
+      degraded: [],
+      exitZero: true,
+    },
+  ])("$why", async ({ accounts, mintDegraded, items, degraded, exitZero, forbidden }) => {
+    const d = device(accountsMinter(accounts, mintDegraded ?? []), [plowVendorDir()]);
     const response = await run(d, ["plow-gog", "gmail", "search", "q"]);
-    expect(response).toMatchObject({ status: "completed", items: [], degraded: [] });
-    expect(execEnd(d)).toBe(0);
+    expect(response).toMatchObject({ status: "completed", items, degraded });
+    if (forbidden !== undefined) {
+      expect(JSON.stringify(response)).not.toContain(forbidden);
+      expect(JSON.stringify(d.audit.entries())).not.toContain(forbidden);
+    }
+    expect(execEnd(d) === 0).toBe(exitZero);
   });
 
   itSpawns("waits out a fan-out child that outlives wait_ms instead of degrading it", async () => {

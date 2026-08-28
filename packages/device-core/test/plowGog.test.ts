@@ -478,18 +478,13 @@ describe("mergeFanout", () => {
  * verified against the vendored binary at 0.36.0. The sentences are fixed:
  * the child's own output is service-fetched text and never reaches a reason.
  */
-describe("gogExitReason", () => {
-  it.each([
-    { code: 2, reason: "gog rejected the request as invalid" },
-    { code: 3, reason: "no results" },
-    { code: 4, reason: "that account needs re-auth — re-connect it in Plow" },
-    { code: 6, reason: "permission denied for that account" },
-    { code: 7, reason: "rate limited by Google" },
-  ])("names exit $code", ({ code, reason }) => {
-    expect(gogExitReason(code)).toBe(reason);
-  });
-
-  it.each([
+describe("gog exit reasons", () => {
+  it.each<{ why: string; code: number | null; reason: string }>([
+    { why: "usage — in practice Google rejecting the request", code: 2, reason: "gog rejected the request as invalid" },
+    { why: "empty results", code: 3, reason: "no results" },
+    { why: "auth", code: 4, reason: "that account needs re-auth — re-connect it in Plow" },
+    { why: "permission denied", code: 6, reason: "permission denied for that account" },
+    { why: "rate limited", code: 7, reason: "rate limited by Google" },
     { why: "an unmapped code keeps the number", code: 5, reason: "gog exited 5" },
     { why: "a signalled child has no code at all", code: null, reason: "gog exited -1" },
   ])("$why", ({ code, reason }) => {
