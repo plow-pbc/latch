@@ -23,6 +23,10 @@ const view = document.getElementById("view");
 const seg = document.getElementById("seg");
 const statusDot = document.getElementById("statusDot");
 const statusText = document.getElementById("statusText");
+const CLOUD_PROVIDERS = [
+  { value: "exe:hermes", label: "Hermes" },
+  { value: "exe:life", label: "Life" },
+];
 
 // Null until boot() picks one: the HTML marks Audit active for the first paint,
 // but boot must still RENDER that pane, and "already on this tab" now returns
@@ -1046,10 +1050,8 @@ function cloudPhoneDigits(number) {
 
 function openCloudPicker(trigger, state, redraw) {
   const name = el("input", { class: "text", attrs: { placeholder: "Cloud agent", "aria-label": "Agent name" } });
-  const provider = el("select", { class: "text", attrs: { "aria-label": "Provider" } }, [
-    el("option", { text: "Hermes", attrs: { value: "exe:hermes" } }),
-    el("option", { text: "Life", attrs: { value: "exe:life" } }),
-  ]);
+  const provider = el("select", { class: "text", attrs: { "aria-label": "Provider" } },
+    CLOUD_PROVIDERS.map(({ value, label }) => el("option", { text: label, attrs: { value } })));
   const warningTitle = el("div", { class: "warn cloud-warning-title", text: "" });
   const warningBody = el("p", { class: "faint", text: "" });
   const warning = el("div", { class: "cloud-warning" }, [warningTitle, warningBody]);
@@ -1501,9 +1503,7 @@ function cloudChatSummary(agent) {
 
 function cloudProviderLabel(value) {
   const provider = String(value ?? "").trim();
-  if (provider === "exe:hermes") return "Hermes";
-  if (provider === "exe:life") return "Life";
-  return provider;
+  return CLOUD_PROVIDERS.find(({ value }) => value === provider)?.label ?? provider;
 }
 
 function cloudContext(agent, row) {

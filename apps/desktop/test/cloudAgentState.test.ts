@@ -336,7 +336,7 @@ describe("the numbers a chat can be messaged on", () => {
     );
     await state.refresh();
 
-    await state.create(["cht_1"], "Kitchen agent");
+    await state.create(["cht_1"], "Kitchen agent", "exe:hermes");
 
     // The row goes on screen the moment the receipt lands, before any further
     // refresh — so it has to be addressable then, not one round trip later.
@@ -670,15 +670,6 @@ describe("a stuck teardown", () => {
 });
 
 describe("provisioning", () => {
-  it("defaults to Hermes, because plow's own default 503s in prod", async () => {
-    const f = fakes({ create: async () => agent({ status: "provisioning" }) });
-    const state = build(tempHome(), f);
-
-    await state.create(["cht_1"], "Kitchen agent");
-
-    expect(f.agents.created[0].provider).toBe("exe:hermes");
-  });
-
   it("threads the chosen provider into the create request", async () => {
     const f = fakes({ create: async () => agent({ status: "provisioning" }) });
     const state = build(tempHome(), f);
@@ -822,7 +813,7 @@ describe("a cancelled provision", () => {
       home,
     });
 
-    await state.create(["cht_1"], "Kitchen agent");
+    await state.create(["cht_1"], "Kitchen agent", "exe:hermes");
     await vi.waitFor(() => expect(waits).toBe(1));
     await state.remove("agent_1");
     parked.resolve();
@@ -841,7 +832,7 @@ describe("a cancelled provision", () => {
     const f = fakes({ create: async () => posting.promise, list: async () => [agent()] });
     const state = build(tempHome(), f);
 
-    const creating = state.create(["cht_1"], "Kitchen agent");
+    const creating = state.create(["cht_1"], "Kitchen agent", "exe:hermes");
     state.signedOut();
     posting.resolve(agent({ status: "provisioning" }));
     await creating;
@@ -875,7 +866,7 @@ describe("signing out", () => {
     // be waiting on screen for whoever signs in next.
     await state.refresh();
     expect(state.state().cloudChatsError).not.toBeNull();
-    await state.create(["cht_1"], "Kitchen agent");
+    await state.create(["cht_1"], "Kitchen agent", "exe:hermes");
 
     state.signedOut();
 
@@ -1153,7 +1144,7 @@ describe("changing which chats an agent serves", () => {
     await vi.waitFor(() => {
       expect(f.agents.calls.filter((call) => call === "list")).toHaveLength(2);
     });
-    await state.create(["cht_1"], "New agent");
+    await state.create(["cht_1"], "New agent", "exe:hermes");
 
     reconciliation.resolve([agent({ chatUids: ["cht_2"] })]);
     await saving;
@@ -1290,7 +1281,7 @@ describe("changing which chats an agent serves", () => {
 
     // The IPC boundary: a caller still passing the old singular argument must
     // fail loudly here, not provision an agent across "c", "h", "t"…
-    await expect(state.create("cht_1" as unknown as string[], "Kitchen")).resolves.toBeNull();
+    await expect(state.create("cht_1" as unknown as string[], "Kitchen", "exe:hermes")).resolves.toBeNull();
     await state.editChats("agent_1", "cht_1" as unknown as string[]);
 
     expect(f.agents.created).toEqual([]);

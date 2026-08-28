@@ -38,15 +38,6 @@ import { PlowApi, PlowApiError, parseActivationChat } from "./plowApi.js";
 import { loadSettings } from "./settings.js";
 
 /**
- * The provider used when create does not receive an explicit choice.
- *
- * Explicit, because plow's own default is `cloudflare` and prod 503s on it —
- * a missing `worker.mjs` bundle. Sending nothing is not "no opinion", it is an
- * opinion about a provider that does not currently work.
- */
-export const DEFAULT_CLOUD_AGENT_PROVIDER = "exe:hermes";
-
-/**
  * Does landing on this tab put the cloud group on screen?
  *
  * The renderer reaches the Agents tab two ways — a click, which persists the
@@ -275,7 +266,7 @@ export class CloudAgentState {
   async create(
     chatUids: readonly string[],
     name: string,
-    provider: string = DEFAULT_CLOUD_AGENT_PROVIDER,
+    provider: string,
   ): Promise<string | null> {
     this.actionError = null;
     const chats = normalizeChatUids(chatUids);

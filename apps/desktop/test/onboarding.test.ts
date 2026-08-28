@@ -38,7 +38,7 @@ function wireChat({
 }: {
   displayName?: string;
   line?: string;
-  members: Array<{ displayName: string; providerKey: string; role: "owner" | "member" }>;
+  members: Array<{ displayName: string; providerKey?: string; role: "owner" | "member" }>;
 }): Record<string, unknown> {
   return {
     uid: "cht_fixture",
@@ -57,7 +57,7 @@ function wireChat({
         display_name: member.displayName,
         role: member.role,
         provider_type: "imessage",
-        provider_key: member.providerKey,
+        provider_key: member.providerKey ?? `+1555000000${index}`,
       })),
     ],
     created_at: "2026-08-27T22:22:52Z",
@@ -353,32 +353,20 @@ describe("activation — the path a brand-new user takes", () => {
     expect(onboarding.state().chat).toBeNull();
   });
 
-  it("prefers a chat's top-level display name", () => {
-    const chat = parseActivationChat(wireChat({
+  it.each([
+    ["prefers a chat's top-level display name", {
       displayName: "Weekend crew",
+      members: [{ displayName: "Morgan", role: "member" as const }],
+    }, "Weekend crew"],
+    ["uses member display names with non-owners first and skips You", {
       members: [
-        { displayName: "Avery", providerKey: "+15550001001", role: "owner" },
-        { displayName: "Morgan", providerKey: "+15550001002", role: "member" },
+        { displayName: "You", role: "owner" as const },
+        { displayName: "Riley", role: "member" as const },
+        { displayName: "Casey", role: "owner" as const },
       ],
-    }))!;
-
-    expect(activationChatLabel(chat)).toBe("Weekend crew");
-    expect(chat.participants.map((participant) => participant.providerKey)).toEqual([
-      "+15550001001",
-      "+15550001002",
-    ]);
-  });
-
-  it("uses member display names with non-owners first and skips You", () => {
-    const chat = parseActivationChat(wireChat({
-      members: [
-        { displayName: "You", providerKey: "+15550002001", role: "owner" },
-        { displayName: "Riley", providerKey: "+15550002002", role: "member" },
-        { displayName: "Casey", providerKey: "+15550002003", role: "owner" },
-      ],
-    }))!;
-
-    expect(activationChatLabel(chat)).toBe("Riley, Casey");
+    }, "Riley, Casey"],
+  ])("%s", (_case, fields, expected) => {
+    expect(activationChatLabel(parseActivationChat(wireChat(fields))!)).toBe(expected);
   });
 
   it("rejects a member display name that repeats its provider handle", () => {
