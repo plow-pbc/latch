@@ -110,6 +110,15 @@ boundary. Keep the bar high there and low everywhere else. The tell for which
 side you are on: does the branch enforce a bound a human approved, or does it
 manage a resource nobody has run out of?
 
+**Trusted caller vs untrusted data.** The blocking cases above are about
+*untrusted data* — goal text, and the message/web/file *content* an agent reads —
+influencing a capability, profile, or action. They do **not** cover a finding
+that the *caller's own* structured, human-approved argument (a participant handle
+or chat GUID the agent chose, sitting in the `argv` the human sees and approves)
+is interpolated rather than passed positionally. Latch treats the calling agent
+as trusted (`SECURITY.md`); such caller-hardening is welcome when it costs the
+user nothing, but it is **not `[blocking]`** and is never traded against UX.
+
 | Scope creep — DON'T | Worth blocking on — DO |
 |---|---|
 | Accept a retention/eviction/capacity layer added to bound a resource with no observed pressure signal (PR #91's profile reaper — deleted, and its startup ordering was itself a data-loss bug). | An authorization gap: one agent acting on another's **job, deferred handle or always-allow rule** — the surfaces that key on `agent_id`. NOT a browser session reached with its own handle; see the exception above. |
