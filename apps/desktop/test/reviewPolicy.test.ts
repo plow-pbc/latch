@@ -864,46 +864,25 @@ describe("the ~/Plow playground carve-out", () => {
     return { result, review, openApproval };
   }
 
-  it("grants a confined write in adversarial mode without spending a review", async () => {
-    const { result, review, openApproval } = run("adversarial", [
-      { kind: "fs.write", paths: [path.join(PLOW_ROOT, "notes.md")] },
-    ]);
-    expect(await result).toEqual({ decision: "allow_once", source: "plow_folder" });
-    expect(review).not.toHaveBeenCalled();
-    expect(openApproval).not.toHaveBeenCalled();
-  });
+  const confinedWrite = () => [{ kind: "fs.write" as const, paths: [path.join(PLOW_ROOT, "notes.md")] }];
+  const confinedRead = () => [{ kind: "fs.read" as const, paths: [path.join(PLOW_ROOT, "a/b.txt")] }];
+  const outsideWrite = () => [{ kind: "fs.write" as const, paths: [path.join(os.tmpdir(), "outside.txt")] }];
+  const writeAndExec = () => [
+    { kind: "fs.write" as const, paths: [path.join(PLOW_ROOT, "notes.md")] },
+    { kind: "process.exec" as const, argv: ["ls"], cwd: PLOW_ROOT },
+  ];
 
-  it("grants a confined read in ask mode without a dialog", async () => {
-    const { result, openApproval } = run("ask", [
-      { kind: "fs.read", paths: [path.join(PLOW_ROOT, "a/b.txt")] },
-    ]);
-    expect(await result).toEqual({ decision: "allow_once", source: "plow_folder" });
-    expect(openApproval).not.toHaveBeenCalled();
-  });
-
-  it("deny mode still refuses the playground", async () => {
-    const { result, review, openApproval } = run("deny", [
-      { kind: "fs.write", paths: [path.join(PLOW_ROOT, "notes.md")] },
-    ]);
-    expect(await result).toEqual({ decision: "deny", source: "policy" });
-    expect(review).not.toHaveBeenCalled();
-    expect(openApproval).not.toHaveBeenCalled();
-  });
-
-  it("a path outside the folder keeps the normal path", async () => {
-    const { result, openApproval } = run("ask", [
-      { kind: "fs.write", paths: [path.join(os.tmpdir(), "outside.txt")] },
-    ]);
-    expect((await result).source).toBe("ask");
-    expect(openApproval).toHaveBeenCalled();
-  });
-
-  it("an exec capability disqualifies the whole set, even inside the folder", async () => {
-    const { result, openApproval } = run("ask", [
-      { kind: "fs.write", paths: [path.join(PLOW_ROOT, "notes.md")] },
-      { kind: "process.exec", argv: ["ls"], cwd: PLOW_ROOT },
-    ]);
-    expect((await result).source).toBe("ask");
-    expect(openApproval).toHaveBeenCalled();
+  it.each([
+    ["a confined write in adversarial mode grants, no review spent", "adversarial", confinedWrite, "plow_folder", 0, 0],
+    ["a confined read in ask mode grants, no dialog", "ask", confinedRead, "plow_folder", 0, 0],
+    ["deny mode still refuses the playground", "deny", confinedWrite, "policy", 0, 0],
+    // reviews=1 on the ask rows: suggestions are on, so the dialog gets a hint.
+    ["a path outside the folder keeps the normal path", "ask", outsideWrite, "ask", 1, 1],
+    ["exec disqualifies the whole set, even inside the folder", "ask", writeAndExec, "ask", 1, 1],
+  ] as const)("%s", async (_name, mode, caps, source, reviews, dialogs) => {
+    const { result, review, openApproval } = run(mode, caps());
+    expect((await result).source).toBe(source);
+    expect(review).toHaveBeenCalledTimes(reviews);
+    expect(openApproval).toHaveBeenCalledTimes(dialogs);
   });
 });

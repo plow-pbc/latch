@@ -11,8 +11,9 @@
  * and is the owner's kill switch for the carve-out too.
  */
 import fs from "node:fs";
+import fsp from "node:fs/promises";
 import path from "node:path";
-import { Capability, isWithin } from "@domo/protocol";
+import { Capability, isWithinAsync } from "@domo/protocol";
 import { Skill, SkillRegistry } from "./skills.js";
 
 /** Audit `source` for a grant the carve-out answered — no reviewer, no dialog. */
@@ -33,23 +34,38 @@ export function ensurePlowFolder(ownerHome: string): string {
 /**
  * May this capability set be granted without asking anyone?
  *
- * True only when there is at least one capability and EVERY one is a file
- * read or write whose every path canonicalizes to inside `~/Plow`. Anything
- * else — exec (a command run "in" the folder can touch the whole disk),
- * browser, credential, network, an empty path list, an empty set — keeps the
- * normal decision path. Canonicalization (realpath) is what defeats a
- * symlink planted inside the folder pointing out of it: the capability paths
- * are resolved before comparison, so `~/Plow/escape -> ~/.ssh` reads as
- * `~/.ssh` and fails the prefix test.
+ * True only when the root itself is a real directory — not a symlink — and
+ * there is at least one capability and EVERY one is a file read or write
+ * whose every path canonicalizes to inside `~/Plow`. Anything else — exec (a
+ * command run "in" the folder can touch the whole disk), browser, credential,
+ * network, an empty path list, an empty set — keeps the normal decision path.
+ * Canonicalization (realpath) is what defeats a symlink planted inside the
+ * folder pointing out of it: the capability paths are resolved before
+ * comparison, so `~/Plow/escape -> ~/.ssh` reads as `~/.ssh` and fails the
+ * prefix test. The root lstat closes the inverse: a `~/Plow -> ~` symlink
+ * would canonicalize the ROOT to the whole home and confine everything, so a
+ * link root refuses at decision time — no startup-check TOCTOU window.
+ *
+ * Async on purpose: this runs under the call budget, and path resolution is
+ * filesystem I/O — the sync variants block the event loop and stop the budget
+ * timer from firing (see `canonicalizeAsync`).
  */
-export function confinedToPlowFolder(capabilities: Capability[], plowRoot: string): boolean {
+export async function confinedToPlowFolder(
+  capabilities: Capability[],
+  plowRoot: string,
+): Promise<boolean> {
   if (capabilities.length === 0) return false;
-  return capabilities.every(
-    (c) =>
-      (c.kind === "fs.read" || c.kind === "fs.write") &&
-      (c.paths?.length ?? 0) > 0 &&
-      c.paths!.every((p) => isWithin(p, plowRoot)),
-  );
+  try {
+    if (!(await fsp.lstat(plowRoot)).isDirectory()) return false;
+  } catch {
+    return false;
+  }
+  for (const c of capabilities) {
+    if (c.kind !== "fs.read" && c.kind !== "fs.write") return false;
+    if ((c.paths?.length ?? 0) === 0) return false;
+    for (const p of c.paths!) if (!(await isWithinAsync(p, plowRoot))) return false;
+  }
+  return true;
 }
 
 /** The skill body names the real path, like the WhatsApp skill does. */
@@ -77,8 +93,8 @@ Ground rules:
   there (for example \`brain/\` or \`skills/\`); read them if relevant, do not
   reorganize or delete what you did not create.
 - The auto-approval covers file reads and writes only. Running commands,
-  browsing, and credentials are always reviewed, even when they mention this
-  folder.
+  browsing, and credentials follow this Mac's configured approval flow, even
+  when they mention this folder.
 - If the owner has set this Mac to deny everything, that includes this folder.`,
   };
 }

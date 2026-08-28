@@ -186,7 +186,8 @@ export const TOOLS: ToolSpec[] = [
     description:
       "Read a file on the user's own Mac — their real filesystem, not your workspace. " +
       "They may be asked to approve, so this can return a pending handle. Paths inside " +
-      "~/Plow (the shared Plow folder — see the plow-folder skill) approve automatically.",
+      "~/Plow (the shared Plow folder — see the plow-folder skill) approve automatically " +
+      "unless this Mac is set to deny everything.",
     inputSchema: {
       type: "object",
       required: ["path"],
@@ -227,7 +228,8 @@ export const TOOLS: ToolSpec[] = [
       "Write a file on the user's own Mac — use this when the file is for them to open or keep, " +
       "not for your own working files. They may be asked to approve, so this can return a " +
       "pending handle. Paths inside ~/Plow (the shared Plow folder — see the plow-folder " +
-      "skill) approve automatically; prefer it for files you produce for the user.",
+      "skill) approve automatically unless this Mac is set to deny everything; prefer it " +
+      "for files you produce for the user.",
     inputSchema: {
       type: "object",
       required: ["path", "content"],

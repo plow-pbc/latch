@@ -39,8 +39,8 @@ describe("ensurePlowFolder", () => {
 });
 
 describe("confinedToPlowFolder", () => {
-  it("accepts file reads and writes inside the folder", () => {
-    expect(
+  it("accepts file reads and writes inside the folder", async () => {
+    await expect(
       confinedToPlowFolder(
         [
           { kind: "fs.read", paths: [path.join(root, "a.txt")] },
@@ -48,64 +48,52 @@ describe("confinedToPlowFolder", () => {
         ],
         root,
       ),
-    ).toBe(true);
+    ).resolves.toBe(true);
   });
 
-  it("refuses an empty capability set — vacuous truth is not confinement", () => {
-    expect(confinedToPlowFolder([], root)).toBe(false);
+  // The refusal matrix: same question (input set → false), one row each.
+  // Capabilities are built lazily because `root`/`home` exist only per-test.
+  it.each<[string, () => Parameters<typeof confinedToPlowFolder>[0]]>([
+    ["an empty capability set — vacuous truth is not confinement", () => []],
+    ["a file capability with an empty path list", () => [{ kind: "fs.read", paths: [] }]],
+    ["a file capability with no paths at all", () => [{ kind: "fs.read" }]],
+    ["a sibling prefix look-alike", () => [{ kind: "fs.write", paths: [path.join(home, "Plowman/x")] }]],
+    [
+      "a confined write riding with an outside read",
+      () => [
+        { kind: "fs.write", paths: [path.join(root, "in.txt")] },
+        { kind: "fs.read", paths: [path.join(home, "out.txt")] },
+      ],
+    ],
+    ["a lexical .. traversal", () => [{ kind: "fs.read", paths: [path.join(root, "../out.txt")] }]],
+    ["exec, even run in the folder", () => [{ kind: "process.exec", argv: ["ls"], cwd: root }]],
+    [
+      "exec riding with a confined write",
+      () => [
+        { kind: "fs.write", paths: [path.join(root, "a.txt")] },
+        { kind: "process.exec", argv: ["ls"], cwd: root },
+      ],
+    ],
+    ["browser", () => [{ kind: "browser", origins: ["example.com"] }]],
+  ])("refuses %s", async (_name, caps) => {
+    await expect(confinedToPlowFolder(caps(), root)).resolves.toBe(false);
   });
 
-  it("refuses a file capability with no paths", () => {
-    expect(confinedToPlowFolder([{ kind: "fs.read", paths: [] }], root)).toBe(false);
-    expect(confinedToPlowFolder([{ kind: "fs.read" }], root)).toBe(false);
-  });
-
-  it("refuses any path outside, including a sibling prefix look-alike", () => {
-    fs.mkdirSync(path.join(home, "Plowman"), { recursive: true });
-    expect(
-      confinedToPlowFolder([{ kind: "fs.write", paths: [path.join(home, "Plowman/x")] }], root),
-    ).toBe(false);
-    expect(
-      confinedToPlowFolder(
-        [
-          { kind: "fs.write", paths: [path.join(root, "in.txt")] },
-          { kind: "fs.read", paths: [path.join(home, "out.txt")] },
-        ],
-        root,
-      ),
-    ).toBe(false);
-  });
-
-  it("refuses a symlink inside the folder that points out of it", () => {
+  it("refuses a symlink inside the folder that points out of it", async () => {
     const secret = path.join(home, "secret");
     fs.mkdirSync(secret);
     fs.symlinkSync(secret, path.join(root, "escape"));
-    expect(
+    await expect(
       confinedToPlowFolder([{ kind: "fs.read", paths: [path.join(root, "escape/key")] }], root),
-    ).toBe(false);
+    ).resolves.toBe(false);
   });
 
-  it("refuses a lexical .. traversal", () => {
-    expect(
-      confinedToPlowFolder([{ kind: "fs.read", paths: [path.join(root, "../out.txt")] }], root),
-    ).toBe(false);
-  });
-
-  it("refuses every non-file kind, even alongside confined file ops", () => {
-    const inside = path.join(root, "a.txt");
-    expect(
-      confinedToPlowFolder([{ kind: "process.exec", argv: ["ls"], cwd: root }], root),
-    ).toBe(false);
-    expect(
-      confinedToPlowFolder(
-        [
-          { kind: "fs.write", paths: [inside] },
-          { kind: "process.exec", argv: ["ls"], cwd: root },
-        ],
-        root,
-      ),
-    ).toBe(false);
-    expect(confinedToPlowFolder([{ kind: "browser", origins: ["example.com"] }], root)).toBe(false);
+  it("refuses a symlinked ROOT — ~/Plow -> ~ must not confine the whole home", async () => {
+    const link = path.join(home, "PlowLink");
+    fs.symlinkSync(home, link);
+    await expect(
+      confinedToPlowFolder([{ kind: "fs.read", paths: [path.join(link, "a.txt")] }], link),
+    ).resolves.toBe(false);
   });
 });
 

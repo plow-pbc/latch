@@ -136,7 +136,7 @@ export async function decideIntent(
   // every mode that grants anything — no review spent, no dialog raised. After
   // the deny return above ON PURPOSE: deny mode is the owner's kill switch,
   // and the carve-out must not outrank it.
-  if (confinedToPlowFolder(intent.capabilities, deps.plowRoot)) {
+  if (await confinedToPlowFolder(intent.capabilities, deps.plowRoot)) {
     return { decision: "allow_once", source: APPROVAL_SOURCE_PLOW_FOLDER };
   }
 
