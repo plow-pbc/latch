@@ -278,11 +278,6 @@ export class PlowApi {
       "/v1/auth/activate",
       {
         body: { name },
-        // 503 means something else here than it does on the OTP calls, so the
-        // shared "your texts are down" fallback would send the user to wait on
-        // the wrong thing. Only the fallback: a server that wrote a `detail`
-        // still wins, because it knows which 503 this was and we are guessing.
-        unavailableMessage: "Plow couldn't start setup right now. Try again in a minute.",
       },
     );
     return {
@@ -526,11 +521,11 @@ export class PlowApi {
   private async call<T>(
     method: string,
     path: string,
-    opts: { token?: string; body?: unknown; unavailableMessage?: string } = {},
+    opts: { token?: string; body?: unknown } = {},
   ): Promise<T> {
     const response = await this.request(method, path, opts);
 
-    if (!response.ok) throw await this.errorFor(response, opts.unavailableMessage, opts.token);
+    if (!response.ok) throw await this.errorFor(response, opts.token);
     if (response.status === 204) return undefined as T;
     try {
       return (await response.json()) as T;
@@ -598,17 +593,7 @@ export class PlowApi {
     }
   }
 
-  /**
-   * `unavailableMessage` replaces the 503 fallback for one call. A 503 means
-   * whatever the endpoint that sent it means by it, and only the caller knows
-   * that; the default reads as "the SMS provider is down" because that is what
-   * it is on the OTP calls, which are most of them.
-   */
-  private async errorFor(
-    response: Response,
-    unavailableMessage?: string,
-    credential?: string,
-  ): Promise<PlowApiError> {
+  private async errorFor(response: Response, credential?: string): Promise<PlowApiError> {
     // `detail` is the FastAPI convention, and it is server-authored. On an
     // AUTHENTICATED call it is dropped outright, whatever it says: a response
     // that repeats its bearer credential must never reach the screen, and the
@@ -632,7 +617,7 @@ export class PlowApi {
     if (response.status === 503) {
       return new PlowApiError(
         "provider_unavailable",
-        detail || unavailableMessage || "Plow can't send text messages right now.",
+        detail || "Plow can't send text messages right now.",
         503,
       );
     }

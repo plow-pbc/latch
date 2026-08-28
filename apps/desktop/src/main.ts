@@ -590,6 +590,19 @@ ipcMain.handle("external:open", async (_e, key: string, detail?: string) => {
 // group are two groups on one screen, and a renderer that had to reconcile two
 // asynchronous reads would render them disagreeing.
 ipcMain.handle("connect:get", async () => agentsTabState());
+/**
+ * Re-read the account's chats, then answer with the tab's state.
+ *
+ * `connect:get` is a pure read of what was last fetched, so a screen that
+ * opens on it shows whatever the last tab activation happened to see. The
+ * cloud-agent picker tells the owner their new chat "appears here when you
+ * reopen this window", which is only true if reopening asks the server — so
+ * the modal opens through this, and awaits it.
+ */
+ipcMain.handle("cloud:refresh", async () => {
+  await cloudAgents?.refresh();
+  return agentsTabState();
+});
 ipcMain.handle("connect:create", async (_e, name: string) => {
   await connectClient?.createCredential(name);
   // The credential it just minted is a roster row nobody has read yet — the

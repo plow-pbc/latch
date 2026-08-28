@@ -102,6 +102,10 @@ contextBridge.exposeInMainWorld("domo", {
   // them is a poll: provisioning is watched in the main process, and the
   // renderer just re-reads when told the state changed. `cloudCreate` answers
   // as soon as the row is on screen in `provisioning`.
+  // Re-read the chat list from Plow and answer with the whole tab state. The
+  // picker opens through this, because `connectGet` only re-reads what was
+  // already fetched.
+  cloudRefresh: () => ipcRenderer.invoke("cloud:refresh"),
   cloudCreate: (chatUids: string[], name: string) =>
     ipcRenderer.invoke("cloud:create", chatUids, name),
   // Replace the whole set of chats an agent serves. One round trip, no poll.

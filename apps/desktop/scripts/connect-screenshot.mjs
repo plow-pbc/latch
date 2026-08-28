@@ -234,6 +234,9 @@ async function setUp() {
     resolveExternalOpen = null;
     return true;
   });
+  // The picker opens through this: the real one re-reads Plow first. Answers
+  // with the same shape `connect:get` does, from whatever the scenario set.
+  ipcMain.handle("cloud:refresh", async () => state());
   ipcMain.handle("cloud:create", async (_e, chatUids, name) => {
     cloudCreateInFlight = true;
     try {

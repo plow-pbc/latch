@@ -156,6 +156,26 @@ ipcMain.handle("connect:get", async () => ({
   removeError: null,
   ...cloudProbe,
 }));
+let cloudRefreshCalls = 0;
+// The real one re-reads Plow, then answers with the tab state. The fake counts
+// the call and answers with whatever `cloudProbe` holds NOW — which is what
+// lets a test change the backing list and prove the reopen fetched it.
+ipcMain.handle("cloud:refresh", async () => {
+  cloudRefreshCalls += 1;
+  return {
+    mcpUrl: "https://api.plow.co/v1/relay/devices/u_probe/mcp",
+    accountUid: "u_probe",
+    connected: true,
+    hasCredential: true,
+    busy: false,
+    message: "",
+    credential: null,
+    roster: rosterProbe,
+    rosterError: null,
+    removeError: null,
+    ...cloudProbe,
+  };
+});
 ipcMain.handle("cloud:create", async (_e, chatUids, name) => {
   cloudCalls.create.push({ chatUids, name });
   cloudCreatePending = true;
@@ -1077,8 +1097,29 @@ app.whenReady().then(async () => {
       noNumbersList: !document.querySelector(".cloud-modal .cloud-route-numbers"),
     };
   }})()`);
+  // Back to the picker, then out: "Back" leaves the explainer, "Cancel" closes.
   await win.webContents.executeJavaScript(
-    `[...document.querySelectorAll(".cloud-modal button")].find((b) => b.textContent.trim() === "Cancel" || b.textContent.trim() === "Back")?.click()`,
+    `[...document.querySelectorAll(".cloud-modal button")].find((b) => b.textContent.trim() === "Back")?.click()`,
+  );
+  await win.webContents.executeJavaScript(
+    `[...document.querySelectorAll(".cloud-modal button")].find((b) => b.textContent.trim() === "Cancel")?.click()`,
+  );
+  await waitFor(win, `!document.querySelector(".cloud-modal")`, "the empty-list modal to close");
+  // The owner texted a number and Plow made the chat. The modal promises it
+  // "appears here when you reopen this window", so reopening must ASK — the
+  // state the button was rendered with cannot know about this.
+  const refreshesBefore = cloudRefreshCalls;
+  cloudProbe = { ...cloudProbe, cloudChats: [cloudChat] };
+  await win.webContents.executeJavaScript(
+    `[...document.querySelectorAll("#view button")].find((b) => b.textContent.trim() === "Set up cloud agent").click()`,
+  );
+  await waitFor(win, `document.querySelector(".cloud-modal .chat-list")`, "the checklist after a chat arrived");
+  cloudZeroChatGuidance.reopenAsked = cloudRefreshCalls > refreshesBefore;
+  cloudZeroChatGuidance.reopenShowsNewChat = await win.webContents.executeJavaScript(
+    `[...document.querySelectorAll(".cloud-modal .chat-option-name")].some((n) => n.textContent.includes("555-0142"))`,
+  );
+  await win.webContents.executeJavaScript(
+    `[...document.querySelectorAll(".cloud-modal button")].find((b) => b.textContent.trim() === "Cancel")?.click()`,
   );
 
   // Restore the roster for the screenshot and the existing Agents-pane probes.
@@ -1766,6 +1807,8 @@ app.whenReady().then(async () => {
     cloudZeroChatGuidance.saysReopen &&
     cloudZeroChatGuidance.noVerifyButton &&
     cloudZeroChatGuidance.noNumbersList &&
+    cloudZeroChatGuidance.reopenAsked &&
+    cloudZeroChatGuidance.reopenShowsNewChat &&
     cloudServerDetail.preserved &&
     cloudServerDetail.notReplaced &&
     settings.hasAccountGroup &&

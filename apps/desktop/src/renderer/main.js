@@ -1614,7 +1614,15 @@ function cloudSection(s, redraw) {
   // line that is the ordinary state of a freshly paired Mac, and a dead button
   // there says nothing about what to do next.
   add.disabled = !s.cloudChatsLoaded && !s.cloudChats.length;
-  add.addEventListener("click", () => openCloudPicker(add, s, redraw));
+  // Opening ASKS PLOW first. `s` is whatever the last tab activation fetched,
+  // and the explainer inside promises a new chat "appears here when you reopen
+  // this window" — a promise the captured state cannot keep. Falls back to `s`
+  // if the refresh answers nothing, so a Mac that cannot reach Plow still gets
+  // its picker.
+  add.addEventListener("click", async () => {
+    const fresh = (await window.domo.cloudRefresh()) ?? s;
+    openCloudPicker(add, fresh, redraw);
+  });
   const rosterRows = s.roster?.cloud ?? [];
   const agents = visibleCloudAgents(s);
   const byAgentId = new Map(agents.map((agent) => [agent.agentId, agent]));

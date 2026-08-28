@@ -20,8 +20,8 @@ const SESSION_TOKEN = "plow_ACTIVATIONsession_secret";
 const ACTIVATION_SECRET = "activation_secret_never_shown";
 const MCP_URL = "http://localhost:4242/v1/relay/devices/u_123/mcp";
 
-/** The chat a `provision_chat` activation creates, as `parseActivationChat`
- * hands it over: the assigned pool line, and the person who texted it. */
+/** A chat as `parseActivationChat` hands it over: the line it runs on, and the
+ * person on the other end. */
 const CHAT: ActivationChat = {
   uid: "cht_D7hfWNK",
   status: "active",
