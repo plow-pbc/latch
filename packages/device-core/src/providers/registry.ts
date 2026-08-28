@@ -18,14 +18,22 @@
  */
 
 import type { Skill } from "../skills.js";
-import { reservedFlagIn } from "./gogFlags.js";
-import { GOG_CANONICAL, GOG_GROUPS } from "./gogGroups.js";
+import { isHelpInvocation, reservedRefusal, shapeRefusal } from "./gogGate.js";
+import { GOG_CANONICAL } from "./gogGroups.js";
 import { GOG_SKILL } from "./gogSkill.js";
+import { planPlowGog } from "./plowGog.js";
 
 /** What one vendored CLI needs in order to run. */
 export interface VendoredProvider {
-  /** `argv[0]`, and the binary's name inside its vendor directory. */
+  /** `argv[0]`. */
   readonly command: string;
+  /**
+   * The staged binary this provider execs — usually `command` itself, but a
+   * provider that ORCHESTRATES another provider's CLI names that one:
+   * plow-gog runs the vendored gog N times and stages no payload of its own.
+   * Every staging/resolution site reads this, never `command`.
+   */
+  readonly binary: string;
   /** The connector action that mints this provider's token. */
   readonly mintAction: string;
   /** Where the mint's routes hang, e.g. `/v1/connectors/gmail/`. */
@@ -94,22 +102,9 @@ export interface VendoredProvider {
   readonly skill: Skill;
 }
 
-/**
- * `... --help`, which names no group and reaches nothing.
- *
- * A `--` terminator disqualifies it: after one, `-h` is the query itself, and
- * treating `gmail search -- -h` as help would run a real search with no minted
- * token. Fail-safe — it would simply fail — but wrong, and one condition
- * cheaper to prevent than to explain.
- */
-function isHelpInvocation(rest: readonly string[]): boolean {
-  if (rest.includes("--")) return false;
-  const last = rest[rest.length - 1];
-  return last === "--help" || last === "-h";
-}
-
 const GOG: VendoredProvider = {
   command: "gog",
+  binary: "gog",
   mintAction: "access-token",
   // Not a Gmail-only scope, though the prefix says gmail: checked against
   // plow's GMAIL_DEFAULT_SCOPES, the mint covers calendar.readonly and
@@ -124,13 +119,9 @@ const GOG: VendoredProvider = {
   skill: GOG_SKILL,
   refuse: (argv) => {
     const rest = argv.slice(1);
-    const reserved = reservedFlagIn(rest);
-    if (reserved !== null) {
-      return `${reserved} may not be supplied: it would override this Mac's safety flags`;
-    }
     // `--help` is inert — gog prints usage and exits — and is how the skill
     // tells an agent to discover the surface. What the allowance rescues is
-    // `gog --help` and `gog -h`, which the flags-first branch below would
+    // `gog --help` and `gog -h`, which the flags-first shape check would
     // otherwise refuse for leading with a flag; a group's own help
     // (`gog gmail --help`) passes the group check without it.
     //
@@ -139,22 +130,34 @@ const GOG: VendoredProvider = {
     // safe is gog refusing `--help` in a value position itself — a per-version
     // verdict, so step 3 of the pin-bump checklist owns it, and the agreement
     // table pins the shape.
-    if (isHelpInvocation(rest)) return null;
-    const group = rest[0];
-    // Four sentences, and NONE quotes the argv back: these reach the approval
-    // dialog and the append-only audit log, so the same rule `gogFlags` follows
-    // applies — a reason may name a rule, never the caller's text.
-    if (group === undefined) return 'the command is missing: try ["gog", "gmail", "search", ...]';
-    if (group.startsWith("-")) return "the command must come first, before any flags";
-    // Its own sentence because the group check below already refuses it, and
-    // says the wrong thing when it does.
-    if (group.includes(".")) return 'the command must be separate words: ["gmail", "search"], not ["gmail.search"]';
-    if (!GOG_GROUPS.has(group)) return "this Mac reaches only Gmail and Calendar through gog";
-    return null;
+    return reservedRefusal(rest) ?? (isHelpInvocation(rest) ? null : shapeRefusal(rest, "gog"));
   },
 };
 
-export const PROVIDERS: readonly VendoredProvider[] = [GOG];
+/**
+ * The multi-account front for the same vendored gog. One approved argv, N
+ * runs of the binary — one per connected Google account — merged into one
+ * account-tagged result; `deviceAgent.executePlowGog` is the orchestration.
+ * `gog` above stays registered (deprecated) so existing exact-argv approvals
+ * keep working; new work uses this row.
+ */
+const PLOW_GOG: VendoredProvider = {
+  command: "plow-gog",
+  binary: GOG.command,
+  mintAction: GOG.mintAction,
+  mintPrefix: GOG.mintPrefix,
+  tokenEnv: GOG.tokenEnv,
+  belt: GOG.belt,
+  skill: GOG_SKILL,
+  // The planner IS the gate: a refused plan and a refused argv are one
+  // decision, so the dialog and the orchestrator cannot disagree about it.
+  refuse: (argv) => {
+    const plan = planPlowGog(argv);
+    return plan.kind === "refused" ? plan.reason : null;
+  },
+};
+
+export const PROVIDERS: readonly VendoredProvider[] = [GOG, PLOW_GOG];
 
 /**
  * The provider an argv invokes, or null when it invokes none.

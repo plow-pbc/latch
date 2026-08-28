@@ -13,7 +13,8 @@
  */
 import { capabilityDisplay, Intent, intentIsExpired, JSONValue, jv } from "@domo/protocol";
 import { needsToken, PROVIDERS, vendoredProvider, type VendoredProvider } from "./providers/registry.js";
-import { MintError, type Minter } from "./providers/mint.js";
+import { MintError, type MintedAccounts, type Minter } from "./providers/mint.js";
+import { mergeFanout, planPlowGog } from "./providers/plowGog.js";
 import os from "node:os";
 import fs from "node:fs";
 import path from "node:path";
@@ -203,7 +204,7 @@ export class DeviceAgent {
     // path refuses unconditionally. The SAME predicate that gate uses — two
     // sites answering one question two ways is what produces that gap — and
     // driven off the registry, so a provider's name has one spelling.
-    for (const p of PROVIDERS) if (this.hasStaged(p.command)) this.skills.register(p.skill);
+    for (const p of PROVIDERS) if (this.hasStaged(p.binary)) this.skills.register(p.skill);
     if (browserRuntime) {
       this.skills.register(BROWSING_SKILL);
       const browserDir = path.join(home, "device/browser");
@@ -500,6 +501,12 @@ export class DeviceAgent {
     return { [provider.tokenEnv]: await this.minter.mint(provider) };
   }
 
+  /** The batch form, for a provider that fans out per account. */
+  private async mintAllFor(provider: VendoredProvider): Promise<MintedAccounts> {
+    if (this.minter === null) throw MintError.unpaired();
+    return this.minter.mintAll(provider);
+  }
+
   private async executeCommand(
     intent: Intent,
     exec: { argv?: string[]; cwd?: string },
@@ -526,27 +533,27 @@ export class DeviceAgent {
       // dialog — but an intent can arrive from a replayed or hand-built
       // request that never passed through it.
       const refusal = provider.refuse(argv);
-      if (refusal !== null) {
-        this.audit.record("exec_error", { intentId: intent.intentId, error: refusal });
-        return { status: "error", error: refusal };
-      }
+      if (refusal !== null) return this.execError(intent.intentId, refusal);
       // A provider NAME with no staged binary is refused, never let through.
       // Falling through would run whatever `gog` the owner happens to have on
       // their own PATH — unbelted, unrefused, and against their own
       // credentials rather than a minted one. The name is this Mac's to
       // resolve; if it cannot, that is an answer, not a pass.
-      if (!this.hasStaged(provider.command)) {
-        const error = `${provider.command} is not installed on this Mac`;
-        this.audit.record("exec_error", { intentId: intent.intentId, error });
-        return { status: "error", error };
+      if (!this.hasStaged(provider.binary)) {
+        return this.execError(intent.intentId, `${provider.command} is not installed on this Mac`);
+      }
+      // plow-gog orchestrates N runs of the vendored gog rather than one run
+      // of itself, so it leaves the single-spawn path here — after the same
+      // refuse and staged gates, before any mint.
+      if (provider.command === "plow-gog") {
+        return this.executePlowGog(intent, provider, argv, { readPaths, writePaths, network, waitMs });
       }
       try {
         // A help invocation touches no network, so it gets no token.
         if (needsToken(argv)) env = await this.mintFor(provider);
       } catch (e) {
         const message = e instanceof MintError ? e.message : `could not authorise ${provider.command}`;
-        this.audit.record("exec_error", { intentId: intent.intentId, error: message });
-        return { status: "error", error: message };
+        return this.execError(intent.intentId, message);
       }
       // The belt goes in front of the command path, where the CLI accepts
       // globals. It is not in the approved argv deliberately: the owner
@@ -566,42 +573,239 @@ export class DeviceAgent {
         waitMs,
         env,
       });
-      if (!result.running) {
-        this.audit.record("exec_end", {
-          intentId: intent.intentId,
-          exit_code: result.exitCode ?? -1,
-          ...(result.reaped ? { reaped: true } : {}),
-        });
-      } else {
-        // A deferred run's end is recorded when it actually ends, keyed to the
-        // intent — never from the polling path, which may run many times or
-        // not at all.
-        this.executor.onExit(result.handle, (exitCode, reaped) => {
-          // Fires from the child's exit event, possibly mid-shutdown; a failed
-          // append must not become an uncaught exception in the event loop.
-          try {
-            this.audit.record("exec_end", {
-              intentId: intent.intentId,
-              handle: result.handle,
-              exit_code: exitCode,
-              // A run this Mac killed is not a command that failed, and the
-              // log is where that difference has to survive: the unpaired
-              // exec_start was the only tell this failure ever had.
-              ...(reaped ? { reaped: true } : {}),
-            });
-          } catch (error) {
-            // Nowhere durable left to write it — the durable sink is what
-            // failed — but the loss should at least be visible in a terminal.
-            console.error(`[audit] exec_end lost for handle ${result.handle}:`, error);
-          }
-        });
-      }
-      return { ...runPayload(result), handle: result.handle };
+      return this.finishRun(intent.intentId, result);
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
-      this.audit.record("exec_error", { intentId: intent.intentId, error: message });
-      return { status: "error", error: message };
+      return this.execError(intent.intentId, message);
     }
+  }
+
+  /** Record an operation that errored before (or instead of) a run, and
+   * shape the answer. Every `error` here is already display-safe by the
+   * rules at its call site — a fixed sentence, a refusal, or a MintError. */
+  private execError(intentId: string, error: string): JSONValue {
+    this.audit.record("exec_error", { intentId, error });
+    return { status: "error", error };
+  }
+
+  /** Record a run's `exec_end` — now, or on exit for a deferred run — and
+   * shape its payload. One spelling for the single-spawn path and the
+   * orchestrated plow-gog runs that answer with a child's output. */
+  private finishRun(intentId: string, result: ExecResult): JSONValue {
+    if (!result.running) {
+      this.audit.record("exec_end", {
+        intentId,
+        exit_code: result.exitCode ?? -1,
+        ...(result.reaped ? { reaped: true } : {}),
+      });
+    } else {
+      // A deferred run's end is recorded when it actually ends, keyed to the
+      // intent — never from the polling path, which may run many times or
+      // not at all.
+      this.executor.onExit(result.handle, (exitCode, reaped) => {
+        // Fires from the child's exit event, possibly mid-shutdown; a failed
+        // append must not become an uncaught exception in the event loop.
+        try {
+          this.audit.record("exec_end", {
+            intentId,
+            handle: result.handle,
+            exit_code: exitCode,
+            // A run this Mac killed is not a command that failed, and the
+            // log is where that difference has to survive: the unpaired
+            // exec_start was the only tell this failure ever had.
+            ...(reaped ? { reaped: true } : {}),
+          });
+        } catch (error) {
+          // Nowhere durable left to write it — the durable sink is what
+          // failed — but the loss should at least be visible in a terminal.
+          console.error(`[audit] exec_end lost for handle ${result.handle}:`, error);
+        }
+      });
+    }
+    return { ...runPayload(result), handle: result.handle };
+  }
+
+  /**
+   * The plow-gog orchestration: one approved argv, N runs of the vendored gog
+   * — one per connected Google account. The plan is pure (`plowGog.ts`); what
+   * happens here is everything with a side effect: the batch mint, account
+   * resolution, the conflict precheck, the runs, and the audit.
+   *
+   * Audit shape: ONE `exec_start`/`exec_end` pair on the argv the owner
+   * approved — the per-account runs are implementation, and their failures
+   * travel inside the returned envelope (`degraded`), not as audit rows.
+   * Every error string below is composed here from mint-derived account
+   * emails and fixed sentences; caller argv text never reaches one (the
+   * gogFlags rule).
+   */
+  private async executePlowGog(
+    intent: Intent,
+    provider: VendoredProvider,
+    argv: string[],
+    opts: { readPaths: string[]; writePaths: string[]; network: boolean; waitMs: number },
+  ): Promise<JSONValue> {
+    const plan = planPlowGog(argv);
+    // `refuse` already rejected these before the dialog; a hand-built intent
+    // reaches the same answer.
+    if (plan.kind === "refused") return this.execError(intent.intentId, plan.reason);
+    const runGog = (tail: readonly string[], token: string | null) =>
+      this.executor.run({
+        argv: [provider.binary, ...provider.belt, ...tail],
+        readPaths: opts.readPaths,
+        writePaths: opts.writePaths,
+        network: opts.network,
+        waitMs: opts.waitMs,
+        // A help run gets no token, same as the gog path.
+        env: token === null ? undefined : { [provider.tokenEnv]: token },
+      });
+    // An inner run that outlives wait_ms is WAITED OUT, not abandoned: the
+    // per-account children have no public handle — the outer call owns the
+    // only one — so a result left running here would be unretrievable, its
+    // account wrongly degraded. `onExit` fires immediately for a child that
+    // has already exited.
+    const settled = async (result: ExecResult): Promise<ExecResult> => {
+      if (!result.running) return result;
+      await new Promise<void>((resolve) => this.executor.onExit(result.handle, () => resolve()));
+      return this.executor.output(result.handle, 0);
+    };
+
+    if (plan.kind === "help") {
+      this.audit.record("exec_start", { intentId: intent.intentId, argv });
+      return this.finishRun(intent.intentId, await runGog(plan.gogArgv.slice(1), null));
+    }
+
+    let minted: MintedAccounts;
+    try {
+      minted = await this.mintAllFor(provider);
+    } catch (e) {
+      const message = e instanceof MintError ? e.message : `could not authorise ${provider.command}`;
+      return this.execError(intent.intentId, message);
+    }
+
+    if (plan.kind === "accounts") {
+      // Answered from the mint — no gog run, no further network.
+      this.audit.record("exec_start", { intentId: intent.intentId, argv });
+      this.audit.record("exec_end", { intentId: intent.intentId, exit_code: 0 });
+      return {
+        status: "completed",
+        accounts: minted.accounts.map((a) => ({ account: a.account, is_default: a.isDefault })),
+        degraded: minted.degraded,
+      };
+    }
+
+    if (plan.kind === "fanout") {
+      this.audit.record("exec_start", { intentId: intent.intentId, argv });
+      const runs = await Promise.all(
+        minted.accounts.map(async (a) => ({
+          a,
+          result: await settled(await runGog(plan.gogArgv.slice(1), a.token)),
+        })),
+      );
+      const ok: { account: string; stdout: string }[] = [];
+      const failed: { account: string; reason: string }[] = [];
+      for (const { a, result } of runs) {
+        // The reasons carry the exit disposition only: a child's output is
+        // service-fetched text and stays out of every error string.
+        if (result.exitCode !== 0) {
+          failed.push({ account: a.account, reason: `gog exited ${result.exitCode ?? -1}` });
+        } else ok.push({ account: a.account, stdout: result.output.toString("utf8") });
+      }
+      const merged = mergeFanout(ok, plan.sort);
+      this.audit.record("exec_end", { intentId: intent.intentId, exit_code: 0 });
+      return {
+        status: "completed",
+        items: merged.items,
+        degraded: [
+          ...minted.degraded,
+          ...failed,
+          ...merged.unparsed.map((u) => ({ account: u.account, reason: u.error })),
+        ],
+      } as JSONValue;
+    }
+
+    // single: exactly one account, whatever the command does. CONNECTED means
+    // healthy PLUS degraded — a degraded default must never let an accountless
+    // command silently run against a healthy non-default account. The emails
+    // listed are the mint's own, so the sentences are safe for the audit log;
+    // the caller's requested spelling deliberately is not repeated.
+    if (minted.accounts.length === 0) {
+      // The real minter throws before this; a Minter that answers with only
+      // degraded accounts still must not fall through to accounts[0].
+      return this.execError(intent.intentId, "every connected Google account needs re-auth");
+    }
+    const connected = [
+      ...minted.accounts.map((a) => (a.isDefault ? `${a.account} (default)` : a.account)),
+      ...minted.degraded.map((d) => `${d.account} (unavailable)`),
+    ].join(", ");
+    const requested = plan.account;
+    let target: MintedAccounts["accounts"][number];
+    if (requested !== null) {
+      const healthy = minted.accounts.find((a) => a.account.toLowerCase() === requested.toLowerCase());
+      const unhealthy = minted.degraded.find((d) => d.account.toLowerCase() === requested.toLowerCase());
+      if (healthy === undefined) {
+        // A degraded account's reason is local/allowlisted text (see
+        // mintAccountTokens), safe to repeat.
+        return this.execError(
+          intent.intentId,
+          unhealthy
+            ? `that account cannot be used right now: ${unhealthy.reason}. Re-connect it in Plow`
+            : `that --account is not a connected account. Connected: ${connected}`,
+        );
+      }
+      target = healthy;
+    } else if (minted.accounts.length + minted.degraded.length > 1) {
+      return this.execError(
+        intent.intentId,
+        `this command runs on one account: pass --account <email>. Connected: ${connected}. ` +
+          "When replying, use the account that received the thread.",
+      );
+    } else {
+      target = minted.accounts[0]!;
+    }
+
+    this.audit.record("exec_start", { intentId: intent.intentId, argv });
+    if (plan.conflictCheck !== null && !plan.confirmConflict) {
+      const { from, to } = plan.conflictCheck;
+      const probe = await settled(
+        await runGog(
+          ["calendar", "conflicts", "--from", from, "--to", to, "--json", "--results-only"],
+          target.token,
+        ),
+      );
+      let conflicts: unknown = null;
+      if (probe.exitCode === 0) {
+        try {
+          conflicts = JSON.parse(probe.output.toString("utf8"));
+        } catch {
+          /* handled below: an unreadable probe is a failed check */
+        }
+      }
+      // Both refusals below record exec_error, never a zero-exit exec_end:
+      // the approved create did NOT happen, and the desktop renders an
+      // exit-0 exec_end green (viewModel.ts) — a refusal wearing a success
+      // badge. The create child's own outcome gets the one exec_end, in
+      // finishRun.
+      if (!Array.isArray(conflicts)) {
+        // Fail loud, with the override in hand: silently booking past a
+        // broken check would make the gate's absence invisible.
+        return this.execError(
+          intent.intentId,
+          "could not check the calendar for conflicts; re-send the same command " +
+            "with --confirm-conflict to book without the check",
+        );
+      }
+      if (conflicts.length > 0) {
+        // The COUNT only. The records themselves are calendar content the
+        // owner approved a CREATE for, not a read — returning them would be
+        // an unapproved read riding a create argv.
+        return this.execError(
+          intent.intentId,
+          `the slot is busy — ${conflicts.length} event(s) overlap this window. ` +
+            "Re-send the same command with --confirm-conflict to book anyway.",
+        );
+      }
+    }
+    return this.finishRun(intent.intentId, await runGog(plan.gogArgv.slice(1), target.token));
   }
 
   /** Read more output from a still-running (or finished) command. */

@@ -242,13 +242,83 @@ describe("the scope bound", () => {
   });
 });
 
+describe("the plow-gog provider's refusal", () => {
+  const plowGog = vendoredProvider(["plow-gog"])!;
+
+  it("resolves from argv[0], like any provider", () => {
+    expect(plowGog.command).toBe("plow-gog");
+    // Its binary is the SAME vendored gog — a provider module, not a second
+    // payload — which is what `binary` on the row exists to say.
+    expect(plowGog.binary).toBe("gog");
+  });
+
+  // Parity with gog: the same hazards refuse with the same sentences, because
+  // both gates are one module. One row per shared branch — the full sentence
+  // matrix lives on the gog rows above and in plowGog.test.ts.
+  it.each([
+    ["a flag that would disarm the belt", ["plow-gog", "gmail", "search", "q", "--wrap-untrusted=false"], "--wrap-untrusted"],
+    ["a flag that reads a local file into an outbound message", ["plow-gog", "gmail", "send", "--body-file", "/x"], "a --*-file flag"],
+    ["a group outside the token's scopes", ["plow-gog", "drive", "search", "q"], "only Gmail and Calendar"],
+    ["the dotted spelling", ["plow-gog", "gmail.search", "q"], "separate words"],
+    ["a leading global flag", ["plow-gog", "--json", "gmail", "search", "q"], "before any flags"],
+  ])("refuses %s, exactly as gog does", (_why, argv, expected) => {
+    expect(plowGog.refuse(argv)).toContain(expected);
+    expect(gog.refuse(["gog", ...argv.slice(1)])).toContain(expected);
+  });
+
+  it("accepts what gog accepts, plus its own arguments", () => {
+    expect(plowGog.refuse(["plow-gog", "gmail", "search", "q"])).toBeNull();
+    expect(plowGog.refuse(["plow-gog", "accounts"])).toBeNull();
+    expect(plowGog.refuse(["plow-gog", "gmail", "search", "q", "--account", "a@x.com"])).toBeNull();
+    expect(plowGog.refuse(["plow-gog", "gmail", "--help"])).toBeNull();
+  });
+
+  it("mints nothing for help, like gog", () => {
+    expect(needsToken(["plow-gog", "gmail", "--help"])).toBe(false);
+    expect(needsToken(["plow-gog", "gmail", "search", "q"])).toBe(true);
+    expect(impliesNetwork(["plow-gog", "gmail", "search", "q"])).toBe(true);
+    expect(impliesNetwork(["plow-gog", "--help"])).toBe(false);
+  });
+});
+
+describe("the google-workspace skill", () => {
+  const body = vendoredProvider(["plow-gog"])!.skill.body;
+
+  it("is the one skill both provider rows publish, under the stable name", () => {
+    expect(vendoredProvider(["plow-gog"])!.skill).toBe(gog.skill);
+    expect(gog.skill.name).toBe("google-workspace");
+  });
+
+  it("teaches the multi-account contract", () => {
+    // Key phrases, not prose: each names a rule an agent must not miss.
+    for (const phrase of [
+      "plow-gog", // the command
+      '"accounts"', // the accounts verb
+      "--account", // narrowing, and the write rule
+      "--confirm-conflict", // the conflict-gate override
+      "account that received the thread", // the reply rule
+      "deprecated", // the legacy gog form's status
+    ]) {
+      expect(body).toContain(phrase);
+    }
+  });
+
+  it("no longer claims there is one mailbox", () => {
+    expect(body).not.toContain("no account switch");
+    expect(body).not.toContain("## One mailbox");
+  });
+});
+
 describe("the runtime registry and the build-time manifest", () => {
   // A provider added to one side only is the failure this catches, and it is
   // the likeliest one: the two lists live in different halves of the repo
   // because one needs a build and the other must not.
-  it("name the same commands", () => {
+  it("name the same binaries", () => {
+    // BINARIES, not commands: plow-gog runs the vendored gog, so the manifest
+    // stages one payload that two registry rows share.
     const staged = VENDORED.map((p) => p.command);
-    expect([...staged].sort()).toEqual([...PROVIDERS.map((p) => p.command)].sort());
+    const binaries = [...new Set(PROVIDERS.map((p) => p.binary))];
+    expect([...staged].sort()).toEqual(binaries.sort());
   });
 
   // A row carrying one arch clears every other gate and reaches the other

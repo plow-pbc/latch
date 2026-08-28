@@ -409,6 +409,75 @@ export class PlowApi {
     return minted;
   }
 
+  /**
+   * The batch form of `mintProviderToken`: one short-lived token per connected
+   * account, for a provider that fans out. Same route, same scope — the body
+   * says `all`.
+   *
+   * This is THE trust-boundary parse of the batch envelope, complete on
+   * purpose so no future field re-opens the class. Nothing server-authored
+   * crosses it verbatim except an account that parses as a plausible email
+   * and the one allowlisted machine reason; every other shape — a
+   * non-email account, a named-but-tokenless row, an unknown reason —
+   * becomes a FIXED local degraded entry. Both arrays are parsed before the
+   * empty-envelope decision, because a degraded-only envelope is a valid
+   * answer ("all your accounts need re-auth"), not a failed mint; only a
+   * envelope with nothing in it at all reports like the single mint's
+   * missing token. What a zero-healthy result MEANS is the caller's call —
+   * deviceAgent fails a single command loudly on it.
+   */
+  async mintAccountTokens(
+    token: string,
+    prefix: string,
+    action: string,
+  ): Promise<{
+    accounts: { account: string; token: string; isDefault: boolean }[];
+    degraded: { account: string; reason: string }[];
+  }> {
+    const data = await this.call<{
+      data?: { accounts?: unknown; degraded?: unknown };
+    }>("POST", `${prefix}${action}`, { token, body: { all: true } });
+    // Bounded and shaped, not RFC-precise: the value reaches error strings,
+    // audit rows and the agent, so what matters is that a credential-shaped
+    // or free-text string cannot ride the account field.
+    const plausibleEmail = (v: unknown): v is string =>
+      typeof v === "string" && /^[^\s@]{1,64}@[^\s@]{1,255}$/.test(v);
+    const rows = (v: unknown): Record<string, unknown>[] =>
+      Array.isArray(v) ? v.map((row) => (row ?? {}) as Record<string, unknown>) : [];
+    const accounts: { account: string; token: string; isDefault: boolean }[] = [];
+    const degraded: { account: string; reason: string }[] = [];
+    for (const { account, access_token, is_default } of rows(data.data?.accounts)) {
+      if (!plausibleEmail(account)) {
+        degraded.push({ account: "(unrecognized account)", reason: "malformed entry" });
+        continue;
+      }
+      const minted = typeof access_token === "string" ? access_token.trim() : "";
+      if (!minted) {
+        degraded.push({ account, reason: "token refresh failed" });
+        continue;
+      }
+      // The last field of the row: a provider token that CONTAINS the bearer
+      // credential is the credential echoed back, and it must not enter a
+      // child's environment as if Google minted it.
+      if (minted.includes(token)) {
+        degraded.push({ account, reason: "malformed entry" });
+        continue;
+      }
+      accounts.push({ account, token: minted, isDefault: is_default === true });
+    }
+    for (const { account, reason } of rows(data.data?.degraded)) {
+      if (!plausibleEmail(account)) {
+        degraded.push({ account: "(unrecognized account)", reason: "malformed entry" });
+        continue;
+      }
+      degraded.push({ account, reason: reason === "needs_reauth" ? reason : "token refresh failed" });
+    }
+    if (accounts.length === 0 && degraded.length === 0) {
+      throw new PlowApiError("http", "Plow did not return a usable provider token.");
+    }
+    return { accounts, degraded };
+  }
+
   /** Mint an agent credential through the relay's own API (`relay:call` only,
    * whatever we ask for — the server decides). */
   async createAgent(token: string, name: string): Promise<MintedCredential> {

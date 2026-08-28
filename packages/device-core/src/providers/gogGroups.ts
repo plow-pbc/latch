@@ -15,12 +15,21 @@
 export const GOG_CANONICAL = ["gmail", "calendar"] as const;
 
 /**
- * gog's own alias spellings — `gog gmail (mail,email)`, `gog calendar (cal)`.
+ * gog's own alias spellings — `gog gmail (mail,email)`, `gog calendar (cal)`
+ * — each mapped to its canonical group.
  *
  * Accepted by the check, never sent to the belt: gog resolves them itself.
- * Without them this refused Gmail for being called `mail`.
+ * Without them this refused Gmail for being called `mail`. The mapping (not
+ * just the set) exists for `plow-gog`, which classifies a command by its
+ * canonical group while passing the agent's own spelling through.
  */
-export const GOG_ALIASES = ["mail", "email", "cal"] as const;
+export const GOG_ALIAS_OF: Readonly<Record<string, (typeof GOG_CANONICAL)[number]>> = {
+  mail: "gmail",
+  email: "gmail",
+  cal: "calendar",
+};
+
+export const GOG_ALIASES: readonly string[] = Object.keys(GOG_ALIAS_OF);
 
 /**
  * Every spelling this Mac accepts as a group — the check that decides whether a

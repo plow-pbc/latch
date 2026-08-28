@@ -26,20 +26,27 @@ import { loadSettings } from "./settings.js";
  * places that can drift.
  */
 export function buildMinter(opts: { api: PlowApi; home: string }): Minter {
+  const authorised = async <T>(
+    provider: VendoredProvider,
+    call: (credential: string) => Promise<T>,
+  ): Promise<T> => {
+    // Read per call, never captured: re-pairing takes effect on the next
+    // command rather than the next launch.
+    const credential = loadSettings(opts.home).relayCredential.trim();
+    if (!credential) throw MintError.unpaired();
+    try {
+      return await call(credential);
+    } catch (e) {
+      // PlowApi composes its own messages under the same no-foreign-text
+      // rule, so this one is safe to carry into the audit log.
+      throw MintError.failed(provider.command, e instanceof Error ? e.message : "unknown error");
+    }
+  };
   return {
-    async mint(provider: VendoredProvider): Promise<string> {
-      // Read per call, never captured: re-pairing takes effect on the next
-      // command rather than the next launch.
-      const credential = loadSettings(opts.home).relayCredential.trim();
-      if (!credential) throw MintError.unpaired();
-      try {
-        return await opts.api.mintProviderToken(credential, provider.mintPrefix, provider.mintAction);
-      } catch (e) {
-        // PlowApi composes its own messages under the same no-foreign-text
-        // rule, so this one is safe to carry into the audit log.
-        throw MintError.failed(provider.command, e instanceof Error ? e.message : "unknown error");
-      }
-    },
+    mint: (provider) =>
+      authorised(provider, (c) => opts.api.mintProviderToken(c, provider.mintPrefix, provider.mintAction)),
+    mintAll: (provider) =>
+      authorised(provider, (c) => opts.api.mintAccountTokens(c, provider.mintPrefix, provider.mintAction)),
   };
 }
 
@@ -62,9 +69,13 @@ export function vendorDirs(
 ): string[] {
   const dirs: string[] = [];
   for (const provider of providers) {
-    const located = resolveVendoredBinary(provider.command, opts);
+    // The staged payload, which is not always the command: plow-gog execs the
+    // vendored gog, so two rows resolve one binary — and one PATH entry.
+    const binary = provider.binary;
+    const located = resolveVendoredBinary(binary, opts);
     if (located.path !== null) {
-      dirs.push(path.dirname(located.path));
+      const dir = path.dirname(located.path);
+      if (!dirs.includes(dir)) dirs.push(dir);
       continue;
     }
     // The distinction `resolveVendoredBinary` draws is worth keeping: an
@@ -73,11 +84,11 @@ export function vendorDirs(
     // already run. Logged rather than thrown — this runs inside the launch
     // chain, and a stale env var must not be able to take the app down.
     if (located.problem !== "not-staged") {
-      const name = overrideVar(provider.command);
+      const name = overrideVar(binary);
       const why =
         located.problem === "override-missing"
           ? "names no executable file"
-          : `must name a file called \`${provider.command}\` — only its directory reaches the child`;
+          : `must name a file called \`${binary}\` — only its directory reaches the child`;
       // `tried` is what the resolver actually looked at — normalized once,
       // there, rather than re-derived here from the environment.
       // Both halves come off the result, so nothing here re-reads the
