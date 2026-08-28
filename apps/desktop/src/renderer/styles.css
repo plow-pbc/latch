@@ -815,3 +815,10 @@ textarea.text { min-height: 70px; resize: vertical; }
 .item .revealed p { margin: 6px 0 0; }
 /* What the selected mode does, where the purpose field would otherwise be. */
 .item p.mode-hint { margin: 10px 0 0; }
+
+.cloud-route-numbers li.cloud-route-number {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+}
+.cloud-line-name { display: flex; align-items: baseline; gap: 6px; }
+.cloud-route-number.held .cloud-line-name { color: var(--muted); }
+.chat-option-line { color: var(--muted); font-size: 11px; margin-top: 2px; }

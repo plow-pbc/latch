@@ -58,7 +58,7 @@ export interface RosterSectionRow {
   chatAccess: ChatAccess;
   permissions: RosterPermissions;
   /**
-   * This Mac's own device credential.
+   * This Mac's own stored credential.
    *
    * Revoking it signs this Mac out, so the screen has to say so before the
    * click. Matched on the key prefix, which is the only part of a credential

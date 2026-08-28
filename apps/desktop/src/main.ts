@@ -44,7 +44,7 @@ import { PlowApi, relaySocketUrl, resolveApiBaseUrl } from "./plowApi.js";
 import { Onboarding } from "./onboarding.js";
 import { ConnectClient } from "./connectClient.js";
 import { CloudAgentsClient } from "./cloudAgents.js";
-import { CloudAgentState, CloudChatsClient, tabShowsCloudAgents } from "./cloudAgentState.js";
+import { CloudAgentState, CloudChatsClient, CloudLinesClient, tabShowsCloudAgents } from "./cloudAgentState.js";
 import { cloudAgentMessagesUrl } from "./cloudAgentMessages.js";
 import { loggingFetch } from "./wireLog.js";
 import { WindowGate } from "./windowGate.js";
@@ -577,9 +577,28 @@ const EXTERNAL_URLS: Readonly<Record<string, string>> = Object.freeze({
   fullDiskSettings: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles",
 });
 
+/**
+ * The `sms:` draft for one of Plow's numbers, or "" when the renderer named a
+ * number the server did not list.
+ *
+ * The body is `new agent` because that is what today's webhook makes a chat
+ * from; a plain text to a line the account has no chat on is still dropped.
+ */
+function smsLineUrl(lines: readonly { number: string }[], number: string): string {
+  const wanted = number.trim();
+  if (!wanted || !lines.some((line) => line.number === wanted)) return "";
+  return `sms:${wanted}?&body=${encodeURIComponent("new agent")}`;
+}
+
 ipcMain.handle("external:open", async (_e, key: string, detail?: string) => {
   const url = key === "cloudAgentMessages"
     ? cloudAgentMessagesUrl(cloudAgents?.state().cloudAgents ?? [], detail ?? "")
+    // A Plow number, drafted with the text that makes a chat. Main composes
+    // the URL and will not take one: `detail` has to BE a number the server
+    // listed, matched against `cloudLines`, so the renderer names a row rather
+    // than handing over a destination.
+    : key === "smsLine"
+    ? smsLineUrl(cloudAgents?.state().cloudLines ?? [], detail ?? "")
     : EXTERNAL_URLS[key];
   if (!url) return false;
   await shell.openExternal(url);
@@ -600,7 +619,9 @@ ipcMain.handle("connect:get", async () => agentsTabState());
  * the modal opens through this, and awaits it.
  */
 ipcMain.handle("cloud:refresh", async () => {
-  await cloudAgents?.refresh();
+  // Both, and together: the modal shows the chat list AND the numbers to text
+  // when there is none, so opening it must have asked for each.
+  await Promise.all([cloudAgents?.refresh(), cloudAgents?.refreshLines()]);
   return agentsTabState();
 });
 ipcMain.handle("connect:create", async (_e, name: string) => {
@@ -1141,6 +1162,7 @@ app.whenReady().then(async () => {
     // that account is the only one there is.
     agents: cloudAgentsClient,
     chats: new CloudChatsClient(cloudApi),
+    lines: new CloudLinesClient(cloudApi),
     home,
     onChange: () => notifyRenderer("connect:changed"),
   });

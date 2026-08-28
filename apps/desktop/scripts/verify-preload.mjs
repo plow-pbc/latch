@@ -132,6 +132,11 @@ let cloudProbe = {
   cloudAgentEditsPending: [],
   cloudChats: [cloudChat],
   cloudChatsLoaded: true,
+  cloudLines: [
+    { uid: "lin_1", displayName: "Willow", number: "+14155550142", held: false },
+    { uid: "lin_2", displayName: null, number: "+16285550177", held: false },
+  ],
+  cloudLinesError: null,
 };
 const cloudCalls = { create: [], editChats: [] };
 let cloudEditPending = false;
@@ -165,6 +170,13 @@ let cloudRefreshCalls = 0;
 // lets a test change the backing list and prove the reopen fetched it.
 ipcMain.handle("cloud:refresh", async () => {
   cloudRefreshCalls += 1;
+  // Main marks held lines from the chats it just read; the fake does the same
+  // so the probe sees what the screen will.
+  const held = new Set(cloudProbe.cloudChats.flatMap((c) => (c.recipients?.line ? [c.recipients.line] : [])));
+  cloudProbe = {
+    ...cloudProbe,
+    cloudLines: (cloudProbe.cloudLines ?? []).map((l) => ({ ...l, held: held.has(l.number) })),
+  };
   return agentsTabProbeState();
 });
 ipcMain.handle("cloud:create", async (_e, chatUids, name, provider) => {
@@ -1085,13 +1097,17 @@ app.whenReady().then(async () => {
     const labels = [...document.querySelectorAll(".cloud-modal button")]
       .map((button) => button.textContent.trim());
     return {
-      saysTextANumber: text.includes('text "new agent" to a Plow number'),
+      saysTextANumber: text.includes('Text "new agent" to one of these numbers'),
       saysReopen: text.includes("reopen this window"),
       // The dead route is gone: it opened the setup window, which on a
       // signed-in Mac lands on "connected" and mints nothing.
       noVerifyButton: !labels.includes("Verify a new Plow number"),
-      // No number is known, so nothing is offered to act on.
-      noNumbersList: !document.querySelector(".cloud-modal .cloud-route-numbers"),
+      // Plow's numbers, with the persona name where there is one.
+      listsNamedLine: text.includes("Willow") && text.includes("+14155550142"),
+      listsUnnamedLine: text.includes("+16285550177"),
+      // Every free line gets the one control that acts on it.
+      opensMessages: [...document.querySelectorAll(".cloud-modal .cloud-route-number button")]
+        .filter((b) => b.textContent.trim() === "Open Messages…").length === 2,
     };
   }})()`);
   // Back to the picker, then out: "Back" leaves the explainer, "Cancel" closes.
@@ -1114,6 +1130,25 @@ app.whenReady().then(async () => {
   cloudZeroChatGuidance.reopenAsked = cloudRefreshCalls > refreshesBefore;
   cloudZeroChatGuidance.reopenShowsNewChat = await win.webContents.executeJavaScript(
     `[...document.querySelectorAll(".cloud-modal .chat-option-name")].some((n) => n.textContent.includes("555-0142"))`,
+  );
+  // Chunk 3: the row says which LINE it runs on, under the names.
+  cloudZeroChatGuidance.chatRowShowsLine = await win.webContents.executeJavaScript(
+    `[...document.querySelectorAll(".cloud-modal .chat-option-line")].some((n) => n.textContent.includes("Willow") && n.textContent.includes("+14155550142"))`,
+  );
+  // ...and that number is now held, so the explainer offers it no button.
+  await win.webContents.executeJavaScript(
+    `[...document.querySelectorAll(".cloud-modal button")].find((b) => b.textContent.trim() === "New chat…")?.click()`,
+  );
+  cloudZeroChatGuidance.marksHeldLine = await win.webContents.executeJavaScript(`(${() => {
+    const rows = [...document.querySelectorAll(".cloud-modal .cloud-route-number")];
+    const held = rows.find((r) => r.textContent.includes("+14155550142"));
+    const free = rows.find((r) => r.textContent.includes("+16285550177"));
+    return !!held?.textContent.includes("You already have a chat here")
+      && !held.querySelector("button")
+      && !!free?.querySelector("button");
+  }})()`);
+  await win.webContents.executeJavaScript(
+    `[...document.querySelectorAll(".cloud-modal button")].find((b) => b.textContent.trim() === "Back")?.click()`,
   );
   await win.webContents.executeJavaScript(
     `[...document.querySelectorAll(".cloud-modal button")].find((b) => b.textContent.trim() === "Cancel")?.click()`,
@@ -1805,9 +1840,13 @@ app.whenReady().then(async () => {
     cloudZeroChatGuidance.saysTextANumber &&
     cloudZeroChatGuidance.saysReopen &&
     cloudZeroChatGuidance.noVerifyButton &&
-    cloudZeroChatGuidance.noNumbersList &&
+    cloudZeroChatGuidance.listsNamedLine &&
+    cloudZeroChatGuidance.listsUnnamedLine &&
+    cloudZeroChatGuidance.opensMessages &&
     cloudZeroChatGuidance.reopenAsked &&
     cloudZeroChatGuidance.reopenShowsNewChat &&
+    cloudZeroChatGuidance.chatRowShowsLine &&
+    cloudZeroChatGuidance.marksHeldLine &&
     cloudServerDetail.preserved &&
     cloudServerDetail.notReplaced &&
     settings.hasAccountGroup &&

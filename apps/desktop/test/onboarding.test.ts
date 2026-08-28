@@ -136,10 +136,12 @@ class FakePlow {
     return { uid: "u_123", mcpUrl: MCP_URL, deviceConnected: this.connected };
   }
 
-  async mintDeviceCredential(token: string, name: string) {
-    expect([OTP_TOKEN, SESSION_TOKEN]).toContain(token);
-    this.minted.push({ token, name });
-    return { token: DEVICE_TOKEN, keyPrefix: DEVICE_TOKEN.slice(5, 13), name };
+  /** A tripwire, not a fake. Latch keeps the session it was given; a call to
+   * `POST /v1/relay/devices` here would be the second step this design
+   * deleted, and it must fail loudly rather than quietly succeed. */
+  async mintDeviceCredential(): Promise<never> {
+    this.minted.push({ token: "", name: "" });
+    throw new Error("Latch must not mint a device credential");
   }
 
   revoked: string[] = [];
@@ -253,7 +255,7 @@ describe("activation — the path a brand-new user takes", () => {
     expect(state.step).toBe("connected");
     expect(state.connected).toBe(true);
     expect(waits.every((ms) => ms === ACTIVATION_POLL_INTERVAL_MS)).toBe(true);
-    expect(loadSettings(home).relayCredential).toBe(DEVICE_TOKEN);
+    expect(loadSettings(home).relayCredential).toBe(SESSION_TOKEN);
     // The spent activation is dropped rather than left on a screen behind this.
     expect(state.activation).toBeNull();
   });
@@ -452,7 +454,7 @@ describe("activation — the path a brand-new user takes", () => {
     plow.redeems = [{ status: "verified", token: SESSION_TOKEN }];
     await settleUntil(() => onboarding.state().step === "connected");
 
-    expect(loadSettings(home).relayCredential).toBe(DEVICE_TOKEN);
+    expect(loadSettings(home).relayCredential).toBe(SESSION_TOKEN);
     expect(plow.activations).toHaveLength(1);
   });
 
@@ -829,19 +831,21 @@ describe("the phone-code fallback still works", () => {
 
     // The endpoint came from GET /v1/relay/info; the app never builds it.
     const settings = loadSettings(home);
-    expect(settings.relayCredential).toBe(DEVICE_TOKEN);
+    expect(settings.relayCredential).toBe(OTP_TOKEN);
     expect(settings.mcpUrl).toBe(MCP_URL);
   });
 
-  it("keeps the login session nowhere — the mint retires it server-side", async () => {
+  it("keeps the login session AS the credential, minting nothing", async () => {
+    // Latch is the owner's manager app, not an agent: the session it was just
+    // handed is what it holds. `POST /v1/relay/devices` — a narrow credential
+    // plus `revoke_calling_session` — is gone, and the fake throws if anything
+    // reaches for it.
     const onboarding = buildOnPhonePath();
     await onboarding.requestCode("+15551110000");
     await onboarding.submitCode("12345678");
 
-    // There is no client-side revoke left to get wrong: `mintDeviceCredential`
-    // passes `revoke_calling_session`, so the session dies in the same
-    // transaction as the mint. All the app has to do is not keep a copy.
-    expect(JSON.stringify(loadSettings(home))).not.toContain(OTP_TOKEN);
+    expect(loadSettings(home).relayCredential).toBe(OTP_TOKEN);
+    expect(plow.minted).toEqual([]);
     expect(warnings).toEqual([]);
   });
 
@@ -1113,34 +1117,22 @@ describe("signing out", () => {
 });
 
 describe("a sign-out while the credential handoff is in the air", () => {
-  // The two sides of the credential-mint boundary a sign-out can race. Same
-  // arrange/act; what differs is which call is on the wire — and so whether a
-  // credential exists that must be retired (the sign-out's own revoke ran
-  // before it was minted; persisting it would silently undo the sign-out).
-  for (const race of [
-    { stage: "relayInfo", revoked: [] as string[] },
-    { stage: "mintDeviceCredential", revoked: [DEVICE_TOKEN] },
-  ] as const) {
+  // One await now, not two: the mint that used to follow `relayInfo` is gone,
+  // so `relayInfo` is the whole window a sign-out can land in. Nothing needs
+  // retiring on that path — the session is the owner's own, created by their
+  // text, and sign-out's revoke is what retires it.
+  for (const race of [{ stage: "relayInfo", revoked: [] as string[] }] as const) {
     it(`stays signed out when the sign-out lands during ${race.stage}`, async () => {
       let release = () => {};
       const inAir = new Promise<void>((r) => {
         release = () => r();
       });
       plow.redeems = [{ status: "verified", token: SESSION_TOKEN }];
-      if (race.stage === "relayInfo") {
-        const original = plow.relayInfo.bind(plow);
-        plow.relayInfo = async (token: string) => {
-          await inAir;
-          return original(token);
-        };
-      } else {
-        const original = plow.mintDeviceCredential.bind(plow);
-        plow.mintDeviceCredential = async (token: string, name: string) => {
-          const minted = await original(token, name);
-          await inAir;
-          return minted;
-        };
-      }
+      const original = plow.relayInfo.bind(plow);
+      plow.relayInfo = async (token: string) => {
+        await inAir;
+        return original(token);
+      };
       const onboarding = build();
       await onboarding.begin();
       await settle();

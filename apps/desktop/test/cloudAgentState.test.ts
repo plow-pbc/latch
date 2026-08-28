@@ -17,6 +17,8 @@ import {
   CloudChatOption,
   CloudChatsApi,
   CloudChatsClient,
+  CloudLinesClient,
+  markHeldLines,
 } from "../src/cloudAgentState.js";
 import {
   ChatSetConflictError,
@@ -223,6 +225,8 @@ describe("before anything has been read", () => {
       cloudAgentEditsSaving: [],
       cloudChats: [],
       cloudChatsLoaded: false,
+      cloudLines: null,
+      cloudLinesError: null,
       cloudChatsNeedReactivation: false,
     });
   });
@@ -1319,5 +1323,80 @@ describe("CloudChatsClient", () => {
       kind: "network",
       message: "Couldn't reach Plow at https://api.plow.co.",
     });
+  });
+});
+
+describe("Plow's pool numbers", () => {
+  const lineRow = { uid: "lin_1", object: "line", provider_type: "imessage", provider_key: "+15550001111", display_name: "Willow" };
+  const linesClient = (body: unknown, status = 200) =>
+    new CloudLinesClient(
+      new PlowApi("https://api.plow.co", async () =>
+        new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } })),
+    );
+
+  it("reads the LineListResponse shape off the wire", async () => {
+    const lines = await linesClient({ data: [lineRow], has_more: false, url: "/v1/lines" }).list(CREDENTIAL);
+    expect(lines).toEqual([
+      { uid: "lin_1", displayName: "Willow", number: "+15550001111", held: false },
+    ]);
+  });
+
+  it("drops a row it cannot render rather than showing a blank", async () => {
+    // A line with no number is one nobody can text, and the number IS the
+    // instruction on that screen. An unnamed line is fine — plow allows it.
+    const lines = await linesClient({
+      data: [
+        lineRow,
+        { uid: "lin_2", provider_key: "" },
+        { uid: "", provider_key: "+15550002222" },
+        { uid: "lin_3", provider_key: 15550003333 },
+        "not an object",
+        null,
+        { uid: "lin_4", provider_key: "+15550004444" },
+      ],
+    }).list(CREDENTIAL);
+
+    expect(lines.map((l) => l.uid)).toEqual(["lin_1", "lin_4"]);
+    expect(lines[1]).toEqual({ uid: "lin_4", displayName: null, number: "+15550004444", held: false });
+  });
+
+  it("refuses a body that is not a list at all", async () => {
+    await expect(linesClient({ lines: [lineRow] }).list(CREDENTIAL)).rejects.toThrow(
+      /invalid number list/,
+    );
+  });
+
+  it("tells a Mac holding an older credential to sign in again", async () => {
+    // `GET /v1/lines` gates on `chats:use`. A session has it; the narrow device
+    // credential an older pairing minted does not, and scopes freeze at mint —
+    // so retrying never widens them and signing in again is the whole remedy.
+    const error = (await linesClient({ detail: "nope" }, 403).list(CREDENTIAL).catch((e) => e)) as PlowApiError;
+    expect(error.kind).toBe("forbidden");
+    expect(error.message).toBe("Sign in again to see Plow numbers.");
+  });
+
+  it("never lets a server-authored name echo the credential back", async () => {
+    const lines = await linesClient({
+      data: [{ ...lineRow, display_name: CREDENTIAL.slice(0, 12) }],
+    }).list(CREDENTIAL);
+    expect(lines[0]!.displayName).toBeNull();
+    expect(JSON.stringify(lines)).not.toContain(CREDENTIAL.slice(0, 12));
+  });
+
+  it("marks the numbers this account already has a chat on", async () => {
+    const marked = markHeldLines(
+      [
+        { uid: "lin_1", displayName: "Willow", number: "+15550001111", held: false },
+        { uid: "lin_2", displayName: null, number: "+15550002222", held: false },
+      ],
+      [
+        { uid: "cht_1", label: "x", recipients: { line: "+15550002222", members: [] } },
+        { uid: "cht_2", label: "y", recipients: null },
+      ],
+    );
+    expect(marked.map((l) => [l.number, l.held])).toEqual([
+      ["+15550001111", false],
+      ["+15550002222", true],
+    ]);
   });
 });

@@ -15,7 +15,7 @@
  * **Nothing here puts a credential in a message.** `state()` is what the
  * sandboxed renderer sees, and the only secret it ever carries is the one the
  * user is meant to read: the activation display code. The activation *secret*
- * and the device credential never appear in it at all.
+ * and the login session never appear in it at all.
  */
 import { ActivationChat, PlowApi, PlowApiError } from "./plowApi.js";
 import { loadSettings, saveSettings, Settings } from "./settings.js";
@@ -452,8 +452,7 @@ export class Onboarding {
       // sign-out: sign-out CLEARS the credential, so a redeem in flight when the
       // user signed out passed the test and minted — and persisted — a fresh
       // spend-capable credential that the sign-out's revoke had never seen. The
-      // account was left holding a live device credential its owner had just
-      // retired.
+      // account was left holding a live credential its owner had just retired.
       //
       // `activationSecret` is nulled by every path that abandons an activation
       // for good — sign-out, the phone-code fallback, a completed login, the
@@ -657,39 +656,40 @@ export class Onboarding {
   }
 
   /**
-   * Learn the account → mint this Mac's credential → connect.
+   * Learn the account → keep the session → connect.
    *
-   * `sessionToken` never leaves this function. It carries `keys:manage` and
-   * `relay:*` — it can mint *any* credential on the account — so the app holds
-   * it for the two calls it needs and not one longer. There is no client-side
-   * cleanup to get wrong: `mintDeviceCredential` retires the session
-   * server-side, in the same transaction as the mint.
+   * The session IS this Mac's credential. Latch is the owner's manager app,
+   * not an agent: it holds the socket, lists chats, mints agents, buys
+   * inference and mints connector tokens, and every surface added to it used
+   * to mean a plow scope change plus a fleet re-pair, because a device
+   * credential's scopes freeze at mint. A session carries `*:*` and expires
+   * only after 180 days unused, refreshed by every request it makes.
+   *
+   * So there is no second step. `POST /v1/relay/devices` — which minted a
+   * narrow credential and spent this session in the same transaction — is
+   * gone; the token the redeem handed back is what gets written.
    */
   private async finishWithSession(
     sessionToken: string,
     chat: ActivationChat | null = null,
   ): Promise<void> {
-    // A sign-out can land inside the awaits below, and it must stay signed
-    // out: minting and persisting past it would hand the account a live
-    // spend-capable credential its owner just retired. `pollGeneration` is
-    // bumped by every path that abandons this login — reset, the phone
-    // fallback, a fresh mint — so it is the epoch to check against.
+    // A sign-out can land inside the await below, and it must stay signed out:
+    // persisting past it would leave the account a live credential its owner
+    // just retired. `pollGeneration` is bumped by every path that abandons this
+    // login — reset, the phone fallback, a fresh mint — so it is the epoch to
+    // check against. One await now rather than two, so one check.
+    //
+    // The session is NOT revoked on that path. It is the credential the owner
+    // just created by texting, not one this app minted behind their back, and
+    // sign-out's own revoke is what retires it.
     const epoch = this.pollGeneration;
     const info = await this.deps.api.relayInfo(sessionToken);
     if (epoch !== this.pollGeneration) return;
-    const minted = await this.deps.api.mintDeviceCredential(sessionToken, this.deps.deviceName);
-    if (epoch !== this.pollGeneration) {
-      // The sign-out landed during the mint itself, so its revoke never saw
-      // this credential. Retire it before it is dropped — best effort, the
-      // same contract sign-out's own revoke keeps.
-      await this.deps.api.revokeDeviceCredential(minted.token).catch(() => {});
-      return;
-    }
 
     // Written 0600 by saveSettings. This is the only copy of the credential and
     // it is never handed to the renderer.
     const settings = this.settings();
-    settings.relayCredential = minted.token;
+    settings.relayCredential = sessionToken;
     settings.accountUid = info.uid;
     settings.mcpUrl = info.mcpUrl;
     // Kept, not read and dropped: the redeem that carried it answers once, so

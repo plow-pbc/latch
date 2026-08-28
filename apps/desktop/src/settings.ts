@@ -43,9 +43,11 @@ export interface Settings {
    * token silently meaningless and produce an auth error nobody could explain.
    * The old `relayUrl` WebSocket setting is gone with it; the socket is derived
    * from the build's base URL by `relaySocketUrl`. */
-  /** A `relay:device` key, minted by first-run login and never seen by the
-   * user. A SECRET: it is never sent to the renderer and never written to a log
-   * or an error string. */
+  /** The Plow login session this Mac holds, from first-run activation or the
+   * phone-code fallback. It carries the owner's full account authority — Latch
+   * is their manager app, not an agent — and is never seen by the user. A
+   * SECRET: never sent to the renderer, never written to a log or an error
+   * string. */
   relayCredential: string;
   /** The account this Mac is signed into, and the endpoint agents POST to.
    * Both come from `GET /v1/relay/info` — the server stays authoritative and

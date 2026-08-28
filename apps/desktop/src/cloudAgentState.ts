@@ -52,6 +52,22 @@ export function tabShowsCloudAgents(tab: string): boolean {
 }
 
 /** One pickable chat. Display data — the same shape setup already shows. */
+/**
+ * One of Plow's pool numbers, as the "Create a new chat" view shows it.
+ *
+ * `held` is whether one of THIS account's chats already runs on it: a number
+ * the owner has is not one they can start a second chat on, so the screen says
+ * so rather than offering a dead link.
+ */
+export interface CloudLineOption {
+  uid: string;
+  /** The line's persona name (`Willow`), or null for an unnamed line. */
+  displayName: string | null;
+  /** The number to text. Rendered verbatim, never composed here. */
+  number: string;
+  held: boolean;
+}
+
 export interface CloudChatOption {
   uid: string;
   label: string;
@@ -105,6 +121,10 @@ export interface CloudAgentsUiState {
    * its re-activate prompt; the second keeps the roster and shows the error.
    */
   cloudChatsLoaded: boolean;
+  /** Plow's numbers, once asked for. `null` until the modal asks — this is not
+   * fetched on tab activation, because only one screen shows it. */
+  cloudLines: CloudLineOption[] | null;
+  cloudLinesError: string | null;
   /**
    * The number to text, from this Mac's activation — the server's `send_to`,
    * never one the app chose. `null` on a Mac that activated before it was kept,
@@ -143,6 +163,8 @@ export interface CloudChatsApi {
 export interface CloudAgentStateDeps {
   agents: CloudAgentsApi;
   chats: CloudChatsApi;
+  /** Plow's pool numbers, for the "Create a new chat" view. */
+  lines?: { list(credential: string): Promise<CloudLineOption[]> };
   home: string;
   onChange?: () => void;
 }
@@ -214,6 +236,8 @@ export class CloudAgentState {
    * read landed".
    */
   private chatsSettled: Promise<void> = Promise.resolve();
+  private lines: CloudLineOption[] | null = null;
+  private linesError: string | null = null;
   /** Agents whose stuck delete is being retried right now — one at a time each. */
   private tearingDown = new Set<string>();
 
@@ -231,6 +255,8 @@ export class CloudAgentState {
       cloudAgentEditsSaving: [...this.editsSaving],
       cloudChats: this.chats,
       cloudChatsLoaded: this.chatsLoaded,
+      cloudLines: this.lines,
+      cloudLinesError: this.linesError,
     };
   }
 
@@ -266,6 +292,30 @@ export class CloudAgentState {
       await chats;
     }
     if (generation === this.generation) this.publish();
+  }
+
+  /**
+   * Ask Plow which numbers exist, for the screen that tells the owner to text
+   * one. Deliberately NOT part of `refresh`: one view needs it, and every tab
+   * activation would pay for it.
+   */
+  async refreshLines(): Promise<void> {
+    const credential = this.credential();
+    if (!credential || !this.deps.lines) return;
+    const generation = this.generation;
+    try {
+      const lines = await this.deps.lines.list(credential);
+      if (generation !== this.generation) return;
+      this.lines = markHeldLines(lines, this.chats);
+      this.linesError = null;
+    } catch (error) {
+      if (generation !== this.generation) return;
+      // The list is unknown, not empty: `cloudLines` stays null so the screen
+      // shows the error instead of "there are no numbers".
+      this.lines = null;
+      this.linesError = messageOf(error);
+    }
+    this.publish();
   }
 
   /**
@@ -419,6 +469,8 @@ export class CloudAgentState {
    * to the account that just went away.
    */
   signedOut(): void {
+    this.lines = null;
+    this.linesError = null;
     this.generation += 1;
     this.tearingDown.clear();
     // Before the rows go: these polls are authorised with a credential that is
@@ -796,4 +848,75 @@ export class CloudChatsClient implements CloudChatsApi {
         return { uid: chat.uid, label: activationChatLabel(safe), recipients: activationChatRecipients(safe) };
       });
   }
+}
+
+/**
+ * `GET /v1/lines` — every pool number the service has, so the owner can be
+ * told which one to text.
+ *
+ * Reachable because Latch stores the login session: the route gates on
+ * `chats:use`, which a session's `*:*` satisfies and the narrow device
+ * credential older Macs still hold does not. That is what the 403 below is
+ * about, and why its sentence names signing in again.
+ */
+export class CloudLinesClient {
+  constructor(private readonly api: PlowApi) {}
+
+  async list(credential: string): Promise<CloudLineOption[]> {
+    const response = await this.api.request("GET", "/v1/lines", { token: credential });
+
+    if (response.status === 403) {
+      // A Mac paired before this app kept the session holds a credential whose
+      // scopes froze at mint, and no amount of retrying widens them. Signing in
+      // again is the whole remedy, so the sentence says exactly that.
+      throw new PlowApiError("forbidden", "Sign in again to see Plow numbers.", 403);
+    }
+    if (response.status === 401) throw new PlowApiError("unauthorized", "Not authorized.", 401);
+    if (!response.ok) {
+      throw new PlowApiError("http", `Plow returned ${response.status}.`, response.status);
+    }
+
+    let decoded: unknown = null;
+    try {
+      decoded = await response.json();
+    } catch {
+      decoded = null;
+    }
+    const rows =
+      decoded && typeof decoded === "object" && Array.isArray((decoded as { data?: unknown }).data)
+        ? (decoded as { data: unknown[] }).data
+        : null;
+    if (!rows) throw new PlowApiError("http", "Plow returned an invalid number list.", response.status);
+
+    // FAILS CLOSED, row by row: a line with no number is one nobody can text,
+    // and rendering it would put a blank where the whole instruction lives. A
+    // malformed row is dropped, not defaulted — same rule the chat list keeps.
+    return rows.flatMap((raw) => {
+      if (!raw || typeof raw !== "object") return [];
+      const row = raw as { uid?: unknown; provider_key?: unknown; display_name?: unknown };
+      const uid = typeof row.uid === "string" ? row.uid.trim() : "";
+      const number = typeof row.provider_key === "string" ? row.provider_key.trim() : "";
+      if (!uid || !number) return [];
+      const name = typeof row.display_name === "string" ? row.display_name.trim() : "";
+      // The credential must not come back out through a server-authored field,
+      // in any encoding — the same rule the chat labels keep.
+      const safeName = name && !echoesCredential(name, credential) ? name : null;
+      return [{ uid, displayName: safeName, number, held: false }];
+    });
+  }
+}
+
+/** Which of these numbers the account already has a chat on. Matched on the
+ * chat's own line, which is the only place the association is recorded. */
+export function markHeldLines(
+  lines: readonly CloudLineOption[],
+  chats: readonly CloudChatOption[],
+): CloudLineOption[] {
+  const held = new Set(
+    chats.flatMap((chat) => {
+      const line = chat.recipients?.line?.trim();
+      return line ? [line] : [];
+    }),
+  );
+  return lines.map((line) => ({ ...line, held: held.has(line.number) }));
 }

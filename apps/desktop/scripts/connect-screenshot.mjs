@@ -139,6 +139,11 @@ const CLOUD_EMPTY = {
   cloudActionError: null,
   cloudChats: [],
   cloudChatsLoaded: true,
+  cloudLines: [
+    { uid: "lin_1", displayName: "Willow", number: "+14155550142", held: true },
+    { uid: "lin_2", displayName: null, number: "+16285550177", held: false },
+  ],
+  cloudLinesError: null,
 };
 const CLOUD_READY = {
   ...CLOUD_EMPTY,
@@ -474,11 +479,14 @@ const SCREENS = [
       "Create a new chat",
       // The whole instruction: a chat is made by texting a Plow number, not by
       // running activation again.
-      'text "new agent" to a Plow number',
+      'Text "new agent" to one of these numbers',
       "reopen this window",
-      "Numbers this Mac knows about:",
+      // Plow's own numbers, named where it names them, and the marker on one
+      // the account already has a chat on.
+      "Willow",
       "+14155550142",
-      "+14155550188",
+      "+16285550177",
+      "You already have a chat here",
     ],
   },
   {

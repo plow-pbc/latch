@@ -958,7 +958,18 @@ function firstUsableControl(panel) {
  * other chosen chat. An edit starts in server order, a new pick appends, and
  * moving home moves that uid to position zero.
  */
-function chatChecklist({ chats, holders, selected = [], onChange }) {
+/**
+ * The line a chat runs on, as `Willow +1 (628) 555-0177` — the name only when
+ * Plow's own list gives one for that number, never invented here.
+ */
+function chatLineLabel(chat, lines) {
+  const number = chat?.recipients?.line?.trim();
+  if (!number) return "";
+  const named = (lines ?? []).find((line) => line.number === number);
+  return named?.displayName ? `${named.displayName} ${number}` : number;
+}
+
+function chatChecklist({ chats, holders, selected = [], lines = [], onChange }) {
   const order = chats.map((chat) => chat.uid);
   // Home is position zero. Starting from the server's own array preserves its
   // order on edit; newly checked chats append after the retained ones.
@@ -986,10 +997,14 @@ function chatChecklist({ chats, holders, selected = [], onChange }) {
     });
 
     // The label already holds the best available title, member names or
-    // numbers. The only second line worth printing is why it cannot be had.
+    // numbers. Under it goes the LINE the chat runs on — which number an agent
+    // here would answer from — because two chats can carry the same names and
+    // only the line tells them apart.
     const main = el("div", { class: "chat-option-main" }, [
       el("div", { class: "chat-option-name", text: chat.label || chat.uid }),
     ]);
+    const line = chatLineLabel(chat, lines);
+    if (line) main.appendChild(el("div", { class: "chat-option-line mono", text: line }));
     if (taken) {
       main.appendChild(el("div", { class: "chat-option-note", text: `Served by ${heldBy}` }));
     }
@@ -1061,6 +1076,7 @@ function openCloudPicker(trigger, state, redraw) {
   const checklist = chatChecklist({
     chats: state.cloudChats,
     holders: cloudChatHolders(state),
+    lines: state.cloudLines ?? [],
     onChange: () => syncPicker(),
   });
 
@@ -1151,32 +1167,44 @@ function openCloudPicker(trigger, state, redraw) {
     if (!panel) return;
     const back = el("button", { class: "btn", text: "Back" });
     back.addEventListener("click", showPicker);
-    // Every number this Mac knows of: the lines its own chats run on, which is
-    // the only source that cannot be wrong. `verifiedCloudLines` already
-    // de-duplicates and drops the unusable.
-    const known = verifiedCloudLines(state.cloudChats);
     // There is deliberately NO "Verify a new Plow number" button here.
     //
     // It used to open the setup window, which on a Mac that is already signed
     // in lands on its "connected" screen and mints nothing — the owner clicked
     // it and got a confirmation of the sign-in they already had. Getting a chat
     // does not go through activation at all: the user texts a Plow number and
-    // Plow makes the chat. So this screen says that, and offers a control only
-    // where there is a number to act on.
+    // Plow makes the chat. So this screen says that, and lists the numbers.
     const body = [
-      el("p", { class: "faint conn-note", text: "Make another chat available here." }),
       el("p", {
-        class: "faint",
-        text: 'From your phone, text "new agent" to a Plow number. Plow starts the chat, and it appears here when you reopen this window.',
+        class: "faint conn-note",
+        text: 'Text "new agent" to one of these numbers from your phone. Plow starts the chat, and it appears here when you reopen this window.',
       }),
     ];
-    if (known.length) {
-      body.push(
-        el("p", { class: "faint", text: "Numbers this Mac knows about:" }),
-        el("ul", { class: "cloud-route-numbers" }, known.map((line) =>
-          el("li", { class: "cloud-route-number mono", text: line })
-        )),
-      );
+    if (state.cloudLinesError) {
+      body.push(el("p", { class: "cloud-error", text: state.cloudLinesError }));
+    } else if (!state.cloudLines) {
+      body.push(el("p", { class: "faint", text: "Loading numbers…" }));
+    } else if (!state.cloudLines.length) {
+      body.push(el("p", { class: "faint", text: "Plow has no numbers to show right now." }));
+    } else {
+      body.push(el("ul", { class: "cloud-route-numbers" }, state.cloudLines.map((line) => {
+        // Every string here is server-authored and set as textContent.
+        const label = el("div", { class: "cloud-line-name" }, [
+          ...(line.displayName ? [el("span", { text: line.displayName }), document.createTextNode(" ")] : []),
+          el("span", { class: "mono", text: line.number }),
+        ]);
+        const row = el("li", { class: `cloud-route-number${line.held ? " held" : ""}` }, [label]);
+        if (line.held) {
+          // A number the account already has a chat on cannot start a second
+          // one, so it is listed for recognition and offered no control.
+          row.appendChild(el("span", { class: "faint", text: "You already have a chat here" }));
+        } else {
+          const open = el("button", { class: "btn small", text: "Open Messages…" });
+          open.addEventListener("click", () => window.domo.openExternal("smsLine", line.number));
+          row.appendChild(open);
+        }
+        return row;
+      })));
     }
     panel.replaceChildren(
       el("div", { class: "group-title", text: "Create a new chat" }),
@@ -1212,6 +1240,7 @@ function openCloudEditor(trigger, agent, state, redraw) {
     chats: editorChats(agent, state.cloudChats),
     holders: cloudChatHolders(state, agent.agentId),
     selected: baseline,
+    lines: state.cloudLines ?? [],
     onChange: () => syncEditor(),
   });
 
