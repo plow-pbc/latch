@@ -191,19 +191,29 @@ export interface ExecResult {
   exitCode: number | null;
   output: Buffer;
   outputLength: number;
+  /**
+   * The child's stdout alone, whole. `output` merges stderr in because the
+   * `plow_get_output` stream needs one ordered transcript; a caller that
+   * PARSES a child's answer (the gog fan-out, the calendar conflict probe)
+   * needs the channel the CLI puts its JSON on, without the notes it puts on
+   * the other one.
+   */
+  stdout: Buffer;
   /** True when this Mac killed the run rather than the command ending. */
   reaped: boolean;
 }
 
 class OutputBuffer {
   private chunks: Buffer[] = [];
+  private stdoutChunks: Buffer[] = [];
   private length = 0;
   exitCode: number | null = null;
   reaped = false;
   private waiters: ((exitCode: number) => void)[] = [];
 
-  append(chunk: Buffer): void {
+  append(chunk: Buffer, fromStdout: boolean): void {
     this.chunks.push(chunk);
+    if (fromStdout) this.stdoutChunks.push(chunk);
     this.length += chunk.length;
   }
 
@@ -227,6 +237,7 @@ class OutputBuffer {
 
   snapshot(since: number): {
     output: Buffer;
+    stdout: Buffer;
     total: number;
     running: boolean;
     exitCode: number | null;
@@ -236,6 +247,7 @@ class OutputBuffer {
     const start = Math.min(Math.max(since, 0), all.length);
     return {
       output: all.subarray(start),
+      stdout: Buffer.concat(this.stdoutChunks),
       total: all.length,
       running: this.exitCode === null,
       exitCode: this.exitCode,
@@ -271,6 +283,7 @@ function shape(snap: ReturnType<OutputBuffer["snapshot"]>): Omit<ExecResult, "ha
     running: snap.running,
     exitCode: snap.exitCode,
     output: snap.output,
+    stdout: snap.stdout,
     outputLength: snap.total,
     reaped: snap.reaped,
   };
@@ -521,7 +534,7 @@ export class Executor {
     // fd exhaustion this reaper exists to make rarer — leaves these null and
     // emits `error` on the next tick, where a throw is nobody's to catch.
     for (const stream of [child.stdout, child.stderr]) {
-      stream?.on("data", (chunk: Buffer) => buffer.append(chunk));
+      stream?.on("data", (chunk: Buffer) => buffer.append(chunk, stream === child.stdout));
       // A pipe error ENDS the run rather than being swallowed: the stream is
       // auto-destroyed either way, so capture has stopped, and reporting the
       // command's own `exit 0` over a silently truncated answer is the worse
