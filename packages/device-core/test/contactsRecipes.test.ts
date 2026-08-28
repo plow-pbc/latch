@@ -90,28 +90,23 @@ afterAll(() => fs.rmSync(storeDir, { recursive: true, force: true }));
 const byName = (fragment: string): string[][] =>
   query(store, CONTACTS_QUERIES.searchByName.replaceAll(CONTACTS_NAME_PLACEHOLDER, fragment));
 
+const forRecord = (sql: string, id: string): string[][] =>
+  query(store, sql.replaceAll(CONTACTS_RECORD_PLACEHOLDER, id));
+
 describe("the contacts recipes the skill publishes", () => {
-  it("finds a record by a name fragment, address joined on", () => {
+  it("finds a record by a name fragment — identity columns only, ZNAME included", () => {
     const rows = byName("applese");
     expect(rows.length).toBe(1);
-    // record_id, first, last, nick, org, then the joined address columns.
-    expect(rows[0][0]).toBe("1");
-    expect(rows[0].slice(5)).toEqual([
-      HOME_LABEL,
-      "1 Infinite Loop",
-      "Cupertino",
-      "CA",
-      "95014",
-      "United States",
-    ]);
+    // record_id, first, last, ZNAME (the exact name a write matches on),
+    // nick, org — and nothing else: the search discloses no value tables.
+    expect(rows[0]).toEqual(["1", "John", "Appleseed", "John Appleseed", "", ""]);
   });
 
   it("finds a name with an apostrophe once the apostrophe is doubled", () => {
     const rows = byName("o''brien");
     expect(rows.length).toBe(1);
     expect(rows[0][0]).toBe("2");
-    // No address: the left join keeps her, with empty address cells.
-    expect(rows[0][7]).toBe("");
+    expect(rows[0][3]).toBe("Mia O'Brien");
   });
 
   it("finds an organization-only record by the company name", () => {
@@ -119,38 +114,25 @@ describe("the contacts recipes the skill publishes", () => {
     expect(rows.map((r) => r[0])).toEqual(["3"]);
   });
 
-  it("assembles a contact card: phones, emails, addresses, labels verbatim", () => {
-    const rows = query(
-      store,
-      CONTACTS_QUERIES.contactCard.replaceAll(CONTACTS_RECORD_PLACEHOLDER, "1"),
-    );
-    // Ordered by kind: address, email, phone.
-    expect(rows.map((r) => r[0])).toEqual(["address", "email", "phone"]);
+  it("pulls each value kind separately, labels verbatim", () => {
+    expect(forRecord(CONTACTS_QUERIES.phonesFor, "1")).toEqual([["mobile", "+15551234567"]]);
+    expect(forRecord(CONTACTS_QUERIES.emailsFor, "1")).toEqual([["work", "john@example.com"]]);
+    const addresses = forRecord(CONTACTS_QUERIES.addressesFor, "1");
     // The CoreData label constant comes back exactly as stored — the `$!`
     // survives the read; it is shells, not sqlite, that mangle it.
-    expect(rows[0][1]).toBe(HOME_LABEL);
-    expect(rows[0][2]).toContain("1 Infinite Loop");
-    expect(rows[1][2]).toBe("john@example.com");
-    expect(rows[2][2]).toBe("+15551234567");
+    expect(addresses).toEqual([
+      [HOME_LABEL, "1 Infinite Loop", "Cupertino", "CA", "95014", "United States"],
+    ]);
+    // A phone request touches no address rows: the kinds are separate queries.
+    expect(forRecord(CONTACTS_QUERIES.phonesFor, "2")).toEqual([]);
+    expect(forRecord(CONTACTS_QUERIES.emailsFor, "2")).toEqual([["home", "mia@example.com"]]);
   });
 
-  it("verifies an address after a save: the record's postal rows, or nothing", () => {
-    const saved = query(
-      store,
-      CONTACTS_QUERIES.verifyAddress.replaceAll(CONTACTS_RECORD_PLACEHOLDER, "1"),
-    );
-    expect(saved.length).toBe(1);
-    expect(saved[0]).toEqual([
-      HOME_LABEL,
-      "1 Infinite Loop",
-      "Cupertino",
-      "CA",
-      "95014",
-      "United States",
-    ]);
-    // A save that never landed shows up as an empty result, not an error.
-    expect(
-      query(store, CONTACTS_QUERIES.verifyAddress.replaceAll(CONTACTS_RECORD_PLACEHOLDER, "2")),
-    ).toEqual([]);
+  it("verify-after-save is the written kind's query: present for 1, empty for 2", () => {
+    // The skill verifies a save by re-running the query for the kind it wrote
+    // and comparing the value — a save that never landed is an empty result
+    // (or a missing value), not an error.
+    expect(forRecord(CONTACTS_QUERIES.addressesFor, "1").length).toBe(1);
+    expect(forRecord(CONTACTS_QUERIES.addressesFor, "2")).toEqual([]);
   });
 });

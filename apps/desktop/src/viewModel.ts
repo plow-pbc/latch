@@ -35,6 +35,9 @@ export interface ApprovalViewModel {
   runsCommand: boolean;
   usesBrowser: boolean;
   fillsCredentials: boolean;
+  /** Apple-event intents are non-idempotent mutations: the card offers no
+   * Always Allow for them (the policy engine would refuse the rule anyway). */
+  sendsAppleEvents: boolean;
   /** browser capability origins, for the card. */
   origins: string[];
   /** credential(fill) items with titles resolved ON-DEVICE (never from the
@@ -87,6 +90,7 @@ export function approvalViewModel(
     runsCommand: caps.some((c) => c.kind === "process.exec"),
     usesBrowser: caps.some((c) => c.kind === "browser"),
     fillsCredentials: caps.some((c) => c.kind === "credential" && c.access === "fill"),
+    sendsAppleEvents: caps.some((c) => c.kind === "apple_events" && c.allowed === true),
     origins: caps.find((c) => c.kind === "browser")?.origins ?? [],
     credentialItems,
   };

@@ -127,6 +127,27 @@ describe("PolicyEngine", () => {
     expect(second.source).toBe("rule");
   });
 
+  it("apple_events intents are never stored as rules, and never replayed from one", async () => {
+    const engine = new PolicyEngine(path.join(tempDir(), "rules.json"));
+    const always = new HeadlessPolicy({ intent: "always_allow" });
+    const caps: Capability[] = [
+      { kind: "process.exec", argv: ["/usr/bin/osascript", "-e", "on run argv"] },
+      { kind: "apple_events", allowed: true },
+    ];
+
+    // The grant still lands for THIS run — but nothing is cached.
+    const first = await engine.decide(intentWith(caps), always);
+    expect(first.decision).toBe("always_allow");
+    expect(engine.allRules()).toHaveLength(0);
+
+    // A byte-identical repeat goes back to the delegate, not to a rule; and a
+    // rule persisted by an older build cannot answer either (the match side
+    // checks eligibility too).
+    const denyAll = new HeadlessPolicy({ intent: "deny" });
+    const second = await engine.decide(intentWith(caps), denyAll);
+    expect(second.decision).toBe("deny");
+  });
+
   it("deny is never stored as a rule", async () => {
     const engine = new PolicyEngine(path.join(tempDir(), "rules.json"));
     const deny = new HeadlessPolicy({ intent: "deny" });

@@ -16,7 +16,7 @@
  */
 import fs from "node:fs";
 import path from "node:path";
-import { Skill, SkillRegistry } from "./skills.js";
+import { indentSkillCodeBlock as indented, Skill, SkillRegistry } from "./skills.js";
 
 /** The name fragment the search recipe tells the agent to replace. */
 export const CONTACTS_NAME_PLACEHOLDER = "NAME_FRAGMENT_FROM_THE_OWNER";
@@ -33,11 +33,14 @@ export const CONTACTS_RECORD_PLACEHOLDER = "RECORD_ID_FROM_THE_QUERY_ABOVE";
  * real schema rather than a paraphrase of them.
  */
 export const CONTACTS_QUERIES = {
-  /** Match the owner's spelling to real records — and to each one's Z_PK. */
-  searchByName: `select r.Z_PK as record_id, r.ZFIRSTNAME, r.ZLASTNAME, r.ZNICKNAME, r.ZORGANIZATION,
-       a.ZLABEL, a.ZSTREET, a.ZCITY, a.ZSTATE, a.ZZIPCODE, a.ZCOUNTRYNAME
+  /**
+   * Match the owner's spelling to real records — identity columns only.
+   * `ZNAME` is the exact composed name a write must match on, and no value
+   * tables are joined here: which kind of value to pull is the owner's
+   * question to answer, not the search's to presume.
+   */
+  searchByName: `select r.Z_PK as record_id, r.ZFIRSTNAME, r.ZLASTNAME, r.ZNAME, r.ZNICKNAME, r.ZORGANIZATION
   from ZABCDRECORD r
-  left join ZABCDPOSTALADDRESS a on a.ZOWNER = r.Z_PK
  where r.ZFIRSTNAME like '%${CONTACTS_NAME_PLACEHOLDER}%'
     or r.ZLASTNAME like '%${CONTACTS_NAME_PLACEHOLDER}%'
     or r.ZNAME like '%${CONTACTS_NAME_PLACEHOLDER}%'
@@ -46,24 +49,20 @@ export const CONTACTS_QUERIES = {
  order by r.ZLASTNAME, r.ZFIRSTNAME
  limit 40;`,
 
-  /** One record's phones, emails and addresses, labels as stored. */
-  contactCard: `select 'phone' as kind, ZLABEL as label, ZFULLNUMBER as value
+  /** One record's phone numbers, newest row first. */
+  phonesFor: `select ZLABEL as label, ZFULLNUMBER as value
   from ZABCDPHONENUMBER where ZOWNER = ${CONTACTS_RECORD_PLACEHOLDER}
-union all
-select 'email', ZLABEL, ZADDRESS
-  from ZABCDEMAILADDRESS where ZOWNER = ${CONTACTS_RECORD_PLACEHOLDER}
-union all
-select 'address', ZLABEL,
-       coalesce(ZSTREET,'') || ', ' || coalesce(ZCITY,'') || ' ' || coalesce(ZSTATE,'') ||
-       ' ' || coalesce(ZZIPCODE,'') || ', ' || coalesce(ZCOUNTRYNAME,'')
-  from ZABCDPOSTALADDRESS where ZOWNER = ${CONTACTS_RECORD_PLACEHOLDER}
- order by kind;`,
+ order by Z_PK desc;`,
 
-  /** Did my save land? A record's postal rows, straight off the disk. */
-  verifyAddress: `select a.ZLABEL, a.ZSTREET, a.ZCITY, a.ZSTATE, a.ZZIPCODE, a.ZCOUNTRYNAME
-  from ZABCDPOSTALADDRESS a
- where a.ZOWNER = ${CONTACTS_RECORD_PLACEHOLDER}
- order by a.Z_PK desc;`,
+  /** One record's email addresses, newest row first. */
+  emailsFor: `select ZLABEL as label, ZADDRESS as value
+  from ZABCDEMAILADDRESS where ZOWNER = ${CONTACTS_RECORD_PLACEHOLDER}
+ order by Z_PK desc;`,
+
+  /** One record's postal addresses, newest row first. */
+  addressesFor: `select ZLABEL, ZSTREET, ZCITY, ZSTATE, ZZIPCODE, ZCOUNTRYNAME
+  from ZABCDPOSTALADDRESS where ZOWNER = ${CONTACTS_RECORD_PLACEHOLDER}
+ order by Z_PK desc;`,
 } as const;
 
 /** The directory every store lives under — what `read_paths` declares and
@@ -89,13 +88,6 @@ export function contactsStorePath(home: string): string {
 export function contactsSkillFor(home: string): Skill {
   const store = contactsStorePath(home);
   const dir = contactsStoreDir(home);
-  // The recipes are stored unindented so a test can run them verbatim; the
-  // body wants them as four-space code blocks.
-  const indented = (sql: string): string =>
-    sql
-      .split("\n")
-      .map((line) => (line.trim() ? "    " + line : line))
-      .join("\n");
   return {
     name: "contacts",
     description:
@@ -172,9 +164,15 @@ O'Brien is \`o''brien\`, or the query is a syntax error that reads as "no such c
 
 ${indented(CONTACTS_QUERIES.searchByName)}
 
-**The whole card** for one record, using its \`record_id\`:
+**Then pull only the kind the owner asked for**, using the \`record_id\` — a phone request
+reads phones, not the person's home address. These are separate queries so the answer (and
+the audit trail) carries no more of the card than the question needed:
 
-${indented(CONTACTS_QUERIES.contactCard)}
+${indented(CONTACTS_QUERIES.phonesFor)}
+
+${indented(CONTACTS_QUERIES.emailsFor)}
+
+${indented(CONTACTS_QUERIES.addressesFor)}
 
 **Labels come back as Core Data constants**, \`_$!<Home>!$_\` for a home address and the
 same wrapping for Work, Mobile and the rest. Strip the wrapper when you show the owner;
@@ -212,26 +210,36 @@ constant.** \`_$!<Home>!$_\` contains \`$!\`, which zsh and bash mangle inside d
 (history expansion ate it in the incident's repair round). Contacts.app writes the constant
 for you; nothing you run should ever contain it.
 
-**Add a home address**, matching the contact by the exact name from your search:
+**Match by the exact \`ZNAME\` from your search, and require exactly one match.** Two cards
+can carry near-identical names (the incident's address book held a "Mark Mchugh" and a
+"Mark McHugh"); \`first person whose…\` would silently mutate whichever sorts first. The
+script refuses instead:
+
+**Add a home address:**
 
     plow_run_command {
       argv: ["/usr/bin/osascript",
              "-e", "on run argv",
              "-e", "tell application \\"Contacts\\"",
-             "-e", "set p to first person whose name = (item 1 of argv)",
+             "-e", "set ps to (people whose name = (item 1 of argv))",
+             "-e", "if (count of ps) is not 1 then error \\"matched \\" & (count of ps) & \\" people — refine with the owner, do not guess\\"",
+             "-e", "set p to item 1 of ps",
              "-e", "make new address at end of addresses of p with properties {label:home, street:item 2 of argv, city:item 3 of argv, state:item 4 of argv, zip:item 5 of argv, country:item 6 of argv}",
              "-e", "save",
              "-e", "end tell",
              "-e", "end run",
-             "<full name from searchByName>", "<street>", "<city>", "<state>", "<zip>", "<country>"],
+             "<exact ZNAME from searchByName>", "<street>", "<city>", "<state>", "<zip>", "<country>"],
       apple_events: true,
       goal: "<what the owner asked for, in one line>"
     }
 
-The same shape updates a field (\`set street of address 1 of p to item 2 of argv\`) or a
-phone or email (\`make new phone at end of phones of p with properties {label:mobile,
-value:item 2 of argv}\`). \`save\` is what commits — without it Contacts.app discards the
-change when it quits.
+The same shape adds a phone or email (\`make new phone at end of phones of p with
+properties {label:mobile, value:item 2 of argv}\`). **Updating an existing value selects by
+label the same way it selects the person — exactly one, or refuse:** \`set as to (addresses
+of p whose label = "home")\`, error unless \`(count of as) is 1\`, then set fields of
+\`item 1 of as\` — never \`address 1 of p\`, which on a two-address card mutates whichever
+happens to be first. \`save\` is what commits — without it Contacts.app discards the change
+when it quits.
 
 The first automation may raise the one-time macOS "Latch would like to control Contacts"
 consent dialog; that is the owner approving Latch as an automation client, separate from
@@ -240,22 +248,25 @@ the per-call approval above.
 ## Verify after save
 
 \`osascript\` returning zero means Contacts.app accepted the request, not that the row is on
-disk and syncing. Re-read the record's postal rows — newest first, so the row you just
-saved is on top:
-
-${indented(CONTACTS_QUERIES.verifyAddress)}
-
-Substitute the \`record_id\` you found before writing. A save that never shows up here did
-not land, whatever \`osascript\` returned — and \`contactsd\` can take a moment to flush, so
-an empty first read gets one retry before it is a failure.
+disk and syncing. Re-run the read query for **the kind you wrote** — \`addressesFor\` after
+an address save, \`phonesFor\` after a phone — with the \`record_id\` you found before
+writing, and compare the value you sent against the newest row. Matching on the kind and
+value is the check: an unrelated pre-existing row of the same kind is not confirmation, and
+a phone save must never be "verified" by an address row. \`contactsd\` can take a moment to
+flush, so a missing value on the first read gets one retry before it is a failure — and a
+failed verify means say so, never re-run the write on a hunch (a repeated \`make new\` is a
+duplicate, not a retry).
 
 ## Approval semantics
 
 An unattended read gets an always-allow rule only when the argv is byte-identical every
-time it runs — a fixed store path and a fixed query can qualify. A write never does: the
-name, street and city vary on every call, so no always-allow rule can match two writes the
-same way — the argv is the point. Do not fight this with a wrapper script that hides the
-variation from the approver; that defeats the approval, it does not satisfy it.`,
+time it runs — a fixed store path and a fixed query can qualify. **A write never does, and
+this is enforced, not etiquette:** every \`apple_events\` intent is decided fresh — the
+policy engine neither stores nor replays an always-allow rule for one, and the approval
+card offers no Always Allow — because \`make new address\` is not idempotent, so a repeated
+byte-identical write would duplicate owner data instead of confirming it. Do not fight
+this with a wrapper script that hides the variation from the approver; that defeats the
+approval, it does not satisfy it.`,
   };
 }
 

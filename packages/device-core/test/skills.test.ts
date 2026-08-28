@@ -232,8 +232,11 @@ describe("the built-in contacts skill", () => {
     ["labels set through AppleScript words, not the constant", /never the stored\s+constant/i],
     ["the mangled label constant an agent must not emit", /_\$!<Home>!\$_/],
     ["the one-time consent dialog", /control Contacts/],
-    ["verifying after a save", /re-read the record's postal rows/i],
+    ["verifying after a save with the written kind's query", /the kind you wrote/i],
+    ["requiring exactly one name match before a write", /require exactly one match/i],
+    ["refusing blind positional updates", /never `address 1 of p`/i],
     ["writes never qualifying for always-allow", /a write never does/i],
+    ["the always-allow refusal being enforced by the engine", /neither stores nor replays/i],
   ])("publishes %s", (_what, pattern) => {
     expect(contactsSkillFor("/Users/example").body).toMatch(pattern);
   });

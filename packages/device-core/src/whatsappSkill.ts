@@ -11,7 +11,7 @@
  */
 import fs from "node:fs";
 import path from "node:path";
-import { Skill, SkillRegistry } from "./skills.js";
+import { indentSkillCodeBlock as indented, Skill, SkillRegistry } from "./skills.js";
 
 /** The chat id the conversation recipe tells the agent to replace. */
 export const WHATSAPP_CHAT_PLACEHOLDER = "CHAT_ID_FROM_THE_QUERY_ABOVE";
@@ -142,13 +142,6 @@ export function whatsappStorePath(home: string): string {
 export function whatsappSkillFor(home: string): Skill {
   const store = whatsappStorePath(home);
   const dir = whatsappStoreDir(home);
-  // The recipes are stored unindented so a test can run them verbatim; the
-  // body wants them as four-space code blocks.
-  const indented = (sql: string): string =>
-    sql
-      .split("\n")
-      .map((line) => (line.trim() ? "    " + line : line))
-      .join("\n");
   return {
     name: "whatsapp-history",
     // Short on purpose. `skills.ts` keeps bodies out of the manifest so a long
