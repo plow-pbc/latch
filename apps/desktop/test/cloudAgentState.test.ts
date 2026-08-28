@@ -1019,27 +1019,22 @@ describe("changing which chats an agent serves", () => {
     expect(state.state().cloudActionError).toBe("An agent has to serve at least one chat.");
   });
 
-  it("keeps the edit spinner up until the save's roster read lands", async () => {
-    const reconciliation = deferred<CloudAgentResource[]>();
+  it("keeps a successful save usable when its confirming roster read fails", async () => {
     let lists = 0;
     const f = fakes({
-      list: async () => ++lists === 1
-        ? [agent({ chatUids: ["cht_1"] })]
-        : reconciliation.promise,
+      list: async () => {
+        if (++lists === 1) return [agent({ chatUids: ["cht_1"] })];
+        throw new PlowApiError("http", "Plow returned 503.", 503);
+      },
       update: async () => agent({ chatUids: ["cht_2"] }),
     });
     const state = build(tempHome(), f);
     await state.refresh();
 
-    const saving = state.editChats("agent_1", ["cht_2"]);
-    await vi.waitFor(() => {
-      expect(f.agents.calls.filter((call) => call === "list")).toHaveLength(2);
-    });
+    await state.editChats("agent_1", ["cht_2"]);
 
-    expect(state.state().cloudAgentEditsPending).toEqual(["agent_1"]);
-    expect(state.state().cloudAgentEditsSaving).toEqual([]);
-    reconciliation.resolve([agent({ chatUids: ["cht_2"] })]);
-    await saving;
+    expect(state.state().cloudAgents[0].chatUids).toEqual(["cht_2"]);
+    expect(state.state().cloudAgentsError).toBe("Plow returned 503.");
     expect(state.state().cloudAgentEditsPending).toEqual([]);
     expect(state.state().cloudAgentEditsSaving).toEqual([]);
   });
@@ -1078,14 +1073,14 @@ describe("changing which chats an agent serves", () => {
     expect(state.state().cloudAgentEditsPending).toEqual([]);
   });
 
-  it("keeps an indeterminate edit gated until an agent-list read succeeds", async () => {
+  it("releases an indeterminate edit when its agent-list read fails", async () => {
     let lists = 0;
     const f = fakes({
       list: async () => {
         lists += 1;
         if (lists === 1) return [agent({ chatUids: ["cht_1"] })];
         if (lists === 2) throw new PlowApiError("http", "Plow returned 503.", 503);
-        return [agent({ chatUids: ["cht_2"] })];
+        return [agent({ chatUids: ["cht_3"] })];
       },
       update: async () => {
         throw new PlowApiError("network", "Plow didn't answer in time. Try again.");
@@ -1096,15 +1091,16 @@ describe("changing which chats an agent serves", () => {
 
     await state.editChats("agent_1", ["cht_2"]);
 
-    expect(state.state().cloudAgentEditsPending).toEqual(["agent_1"]);
+    expect(state.state().cloudAgentEditsPending).toEqual([]);
     expect(state.state().cloudAgentsError).toBe("Plow returned 503.");
     await state.editChats("agent_1", ["cht_3"]);
-    expect(f.agents.updated).toEqual([{ agentId: "agent_1", chatUids: ["cht_2"] }]);
-
-    await state.refresh();
+    expect(f.agents.updated).toEqual([
+      { agentId: "agent_1", chatUids: ["cht_2"] },
+      { agentId: "agent_1", chatUids: ["cht_3"] },
+    ]);
 
     expect(state.state().cloudAgentEditsPending).toEqual([]);
-    expect(state.state().cloudAgents[0].chatUids).toEqual(["cht_2"]);
+    expect(state.state().cloudAgents[0].chatUids).toEqual(["cht_3"]);
     expect(state.state().cloudAgentsError).toBeNull();
   });
 
@@ -1224,7 +1220,7 @@ describe("changing which chats an agent serves", () => {
     await vi.waitFor(() => {
       expect(f.agents.calls.filter((call) => call === "list")).toHaveLength(2);
     });
-    expect(state.state().cloudAgentEditsPending).toEqual(["agent_1"]);
+    expect(state.state().cloudAgentEditsPending).toEqual([]);
     confirmation.resolve([agent({ chatUids: ["cht_2"] })]);
     await Promise.all([refreshing, saving]);
 

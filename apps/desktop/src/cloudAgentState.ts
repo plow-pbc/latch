@@ -346,6 +346,7 @@ export class CloudAgentState {
       }
       if (generation !== this.generation) return false;
       this.editsSaving.delete(id);
+      this.editsPending.delete(id);
       // The row goes to the answer, not to what was asked for: the server decides
       // what the agent serves, and a set it normalised differently must show as
       // what it actually is.
@@ -459,8 +460,8 @@ export class CloudAgentState {
     if (this.tearingDown.has(agentId)) return;
     this.tearingDown.add(agentId);
     void this.sequence(async () => {
-      if (generation !== this.generation) return;
       try {
+        if (generation !== this.generation) return;
         await this.deps.agents.delete(credential, agentId);
         if (generation !== this.generation) return;
         this.rows.delete(agentId);
@@ -517,6 +518,7 @@ export class CloudAgentState {
       }
     } catch (error) {
       if (generation !== this.generation) return;
+      for (const agentId of pendingEdits) this.editsPending.delete(agentId);
       // The rows already on screen are kept: stale truth with a banner beats an
       // empty roster that reads as "you have no agents".
       this.agentsError = messageOf(error);
