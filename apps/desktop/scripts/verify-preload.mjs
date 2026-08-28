@@ -1021,6 +1021,37 @@ app.whenReady().then(async () => {
     notReplaced: !document.body.innerText.includes("Plow couldn't complete that request. Try again."),
   })})()`);
 
+  // A chat list that came back EMPTY, and loaded. Distinct from the failure
+  // case above, which is also empty but NOT loaded: the setup button is the
+  // only route onward for a freshly paired Mac, and since pairing stopped
+  // claiming a pool line this is that Mac's ordinary state.
+  cloudProbe = {
+    ...cloudProbe,
+    cloudAgents: [],
+    cloudAgentsError: null,
+    cloudChatsError: null,
+    cloudChatsNeedReactivation: false,
+    cloudChats: [],
+    cloudChatsLoaded: true,
+  };
+  await win.webContents.executeJavaScript(`window.__domoSelectTab("audit")`);
+  await win.webContents.executeJavaScript(`window.__domoSelectTab("agents")`);
+  await waitFor(
+    win,
+    `[...document.querySelectorAll("#view button")].some((b) => b.textContent.trim() === "Set up cloud agent")`,
+    "the setup action with a loaded-but-empty chat list",
+  );
+  const cloudLoadedEmpty = await win.webContents.executeJavaScript(`(${() => {
+    const setup = [...document.querySelectorAll("#view button")]
+      .find((button) => button.textContent.trim() === "Set up cloud agent");
+    return {
+      setupEnabled: setup.disabled === false,
+      // Not the loading spinner, and not an error: the list really did arrive.
+      noLoadingNote: !document.body.innerText.includes("Loading chats…"),
+      noErrorBanner: !document.querySelector(".cloud-error"),
+    };
+  }})()`);
+
   // Restore the roster for the screenshot and the existing Agents-pane probes.
   cloudProbe = {
     ...cloudProbe,
@@ -1698,6 +1729,9 @@ app.whenReady().then(async () => {
     cloudForbidden.offersActivationChat &&
     cloudForbidden.reactivatesThroughSignOut &&
     cloudForbidden.notEmptyState &&
+    cloudLoadedEmpty.setupEnabled &&
+    cloudLoadedEmpty.noLoadingNote &&
+    cloudLoadedEmpty.noErrorBanner &&
     cloudServerDetail.preserved &&
     cloudServerDetail.notReplaced &&
     settings.hasAccountGroup &&
@@ -1773,7 +1807,7 @@ app.whenReady().then(async () => {
     errors.length === 0;
   console.log(
     "PROBE:" +
-      JSON.stringify({ main, settings, strandedOnDisk, settingsPane, connect, cloudRoster, cloudModalFocus, cloudModalGuard, cloudCreateWait, cloudCreateTransition, cloudRowActions, cloudEditGate, cloudEditSave, cloudEditStray, cloudEditReordered, cloudEditGateUnread, cloudChatFailure, cloudForbidden, cloudServerDetail, agentsShot, approvalsReviewer, approvalsShot, purposeRoundTrip, approvalsAsk, askWithoutReviewer, approvalsShotAsk, agentsOpen, modalClosed, vaultLocked, vaultUnsaved, vaultShot, agentsOpenShot, staleSettingsPane, optimisticMode, settingsShot, approval, reviewerNote, consoleErrors: errors, ok }),
+      JSON.stringify({ main, settings, strandedOnDisk, settingsPane, connect, cloudRoster, cloudModalFocus, cloudModalGuard, cloudCreateWait, cloudCreateTransition, cloudRowActions, cloudEditGate, cloudEditSave, cloudEditStray, cloudEditReordered, cloudEditGateUnread, cloudChatFailure, cloudForbidden, cloudLoadedEmpty, cloudServerDetail, agentsShot, approvalsReviewer, approvalsShot, purposeRoundTrip, approvalsAsk, askWithoutReviewer, approvalsShotAsk, agentsOpen, modalClosed, vaultLocked, vaultUnsaved, vaultShot, agentsOpenShot, staleSettingsPane, optimisticMode, settingsShot, approval, reviewerNote, consoleErrors: errors, ok }),
   );
   app.exit(ok ? 0 : 1);
 }).catch((err) => {
