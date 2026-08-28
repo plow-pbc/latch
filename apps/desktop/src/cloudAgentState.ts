@@ -36,7 +36,7 @@ import {
   storedActivationChat,
 } from "./onboarding.js";
 import { PlowApi, PlowApiError, parseActivationChat } from "./plowApi.js";
-import { ChatPerson, chatRowSubtitle, chatRowTitle } from "./chatRows.js";
+import { ChatPerson, chatPeople, chatRowSubtitle, chatRowTitle } from "./chatRows.js";
 import { loadSettings } from "./settings.js";
 
 /**
@@ -61,7 +61,6 @@ export function tabShowsCloudAgents(tab: string): boolean {
  * so rather than offering a dead link.
  */
 export interface CloudLineOption {
-  uid: string;
   /** The line's persona name (`Willow`), or null for an unnamed line. */
   displayName: string | null;
   /** The number to text. Rendered verbatim, never composed here. */
@@ -82,6 +81,10 @@ export interface CloudLineOption {
 export interface CloudChatRow extends CloudChatOption {
   title: string;
   subtitle: string;
+  /** The persona name of the line this chat runs on, when Plow's list names
+   * it. Sorting is by this first, so every chat on one number sits together
+   * without needing a group header to say so. */
+  lineName: string | null;
 }
 
 export interface CloudChatOption {
@@ -282,7 +285,8 @@ export class CloudAgentState {
         const named = this.lines?.find((row) => row.number === line) ?? null;
         return {
           ...chat,
-          title: chatRowTitle(chat.people ?? [], line, chat.label || chat.uid),
+          lineName: named?.displayName ?? null,
+          title: chatRowTitle(chat.people ?? [], line, chat.label || chat.uid, named?.displayName ?? null),
           subtitle: chatRowSubtitle(line, named?.displayName ?? null, chat.people ?? []),
         };
       }),
@@ -292,7 +296,12 @@ export class CloudAgentState {
       // independently, so whichever landed second left the other's answer
       // stale — lines fetched before the chats meant a number the owner
       // already held was offered as free.
-      cloudLines: this.lines && markHeldLines(this.lines, this.chats),
+      //
+      // And withheld entirely until the chats HAVE landed. `held` is a claim
+      // about this account's chats; with none read, every line looks free, and
+      // the screen would offer an Open Messages button for a number the owner
+      // already has a thread on. Unknown is not the same as none.
+      cloudLines: this.chatsLoaded && this.lines ? markHeldLines(this.lines, this.chats) : null,
       cloudLinesError: this.linesError,
     };
   }
@@ -833,6 +842,29 @@ function messageOf(error: unknown): string {
  * the activation redeem already returns, so the parse and the label are shared
  * with setup rather than written twice.
  */
+/**
+ * The `{ data: [...] }` envelope both list endpoints answer with, decoded.
+ *
+ * One reading, because they had two that differed only in the sentence: a body
+ * that is not JSON and a body whose `data` is not an array are the same
+ * failure — the server did not send a list — and a decoder that treats them
+ * differently in one place and not the other is a difference nobody chose.
+ */
+async function readListRows(response: Response, invalid: string): Promise<unknown[]> {
+  let decoded: unknown = null;
+  try {
+    decoded = await response.json();
+  } catch {
+    decoded = null;
+  }
+  const rows =
+    decoded && typeof decoded === "object" && Array.isArray((decoded as { data?: unknown }).data)
+      ? (decoded as { data: unknown[] }).data
+      : null;
+  if (!rows) throw new PlowApiError("http", invalid, response.status);
+  return rows;
+}
+
 export class CloudChatsClient implements CloudChatsApi {
   constructor(private readonly api: PlowApi) {}
 
@@ -859,17 +891,7 @@ export class CloudChatsClient implements CloudChatsApi {
       throw new PlowApiError("http", `Plow returned ${response.status}.`, response.status);
     }
 
-    let decoded: unknown = null;
-    try {
-      decoded = await response.json();
-    } catch {
-      decoded = null;
-    }
-    const rows =
-      decoded && typeof decoded === "object" && Array.isArray((decoded as { data?: unknown }).data)
-        ? ((decoded as { data: unknown[] }).data)
-        : null;
-    if (!rows) throw new PlowApiError("http", "Plow returned an invalid chat list.", response.status);
+    const rows = await readListRows(response, "Plow returned an invalid chat list.");
 
     return rows
       .map((raw) => parseActivationChat(raw))
@@ -900,11 +922,7 @@ export class CloudChatsClient implements CloudChatsApi {
           uid: chat.uid,
           label: activationChatLabel(safe),
           recipients: activationChatRecipients(safe),
-          people: safe.participants.flatMap((member) => {
-            const key = number(member.providerKey);
-            if (!key) return [];
-            return [{ number: key, name: member.displayName?.trim() || null, isOwner: member.isOwner }];
-          }),
+          people: chatPeople(safe),
         }];
       });
   }
@@ -944,25 +962,14 @@ export class CloudLinesClient {
       throw new PlowApiError("http", `Plow returned ${response.status}.`, response.status);
     }
 
-    let decoded: unknown = null;
-    try {
-      decoded = await response.json();
-    } catch {
-      decoded = null;
-    }
-    const rows =
-      decoded && typeof decoded === "object" && Array.isArray((decoded as { data?: unknown }).data)
-        ? (decoded as { data: unknown[] }).data
-        : null;
-    if (!rows) throw new PlowApiError("http", "Plow returned an invalid number list.", response.status);
+    const rows = await readListRows(response, "Plow returned an invalid number list.");
 
     // FAILS CLOSED, row by row. A line with no number is one nobody can text,
     // and rendering it would put a blank where the whole instruction lives; a
     // malformed row is dropped, not defaulted — the rule the chat list keeps.
     return rows.flatMap((raw) => {
       if (!raw || typeof raw !== "object") return [];
-      const row = raw as { uid?: unknown; provider_key?: unknown; display_name?: unknown };
-      const uid = typeof row.uid === "string" ? row.uid.trim() : "";
+      const row = raw as { provider_key?: unknown; display_name?: unknown };
       const number = typeof row.provider_key === "string" ? row.provider_key.trim() : "";
       const name = typeof row.display_name === "string" ? row.display_name.trim() : "";
       // The number is E.164 or the row is dropped. It is not only rendered —
@@ -970,14 +977,17 @@ export class CloudLinesClient {
       // URL, so an arbitrary server-authored string reaching here is a string
       // reaching the user's Messages app. A shape check is what keeps "the
       // server said so" from being the whole authorisation.
-      if (!uid || !E164.test(number)) return [];
+      // The NUMBER identifies a line here — it is what the row renders, what
+      // `smsLineUrl` matches, and what a held chat is compared against. `uid`
+      // was parsed, required and never read.
+      if (!E164.test(number)) return [];
       // The credential must not come back out through ANY server-authored
       // field, in any encoding. `uid` and `provider_key` are as server-authored
       // as the name is; a row echoing one is refused outright rather than
       // blanked, because there is nothing safe left to show of it.
-      if (echoesCredential(uid, credential) || echoesCredential(number, credential)) return [];
+      if (echoesCredential(number, credential)) return [];
       const safeName = name && !echoesCredential(name, credential) ? name : null;
-      return [{ uid, displayName: safeName, number }];
+      return [{ displayName: safeName, number }];
     });
   }
 }

@@ -26,86 +26,85 @@ describe("formatNumber", () => {
 });
 
 describe("the chat row's title", () => {
-  it("names the people, and the owner as You", () => {
-    // The owner comes from the API's own `role === "owner"` — not from a
-    // number that happens to recur, which is wrong for a one-chat account and
-    // for a household where the same second person is in every chat.
-    expect(
-      chatRowTitle(
-        [person({ isOwner: true }), person({ number: "+19165204946", name: "Ash" })],
-        LINE,
-        "fallback",
-      ),
-    ).toBe("You, Ash");
-  });
-
-  it("leaves the line out — it is Plow's number, not a participant", () => {
-    // Every chat on one line looked alike while the line was in the title.
-    const title = chatRowTitle(
-      [person({ number: LINE, name: "Ash" }), person({ number: "+19165204946", name: "Robin" })],
-      LINE,
-      "fallback",
-    );
-    expect(title).toBe("Robin");
-    expect(title).not.toContain("650");
-  });
-
-  it("falls back to the number when a member has no name", () => {
-    expect(chatRowTitle([person({ number: "+19165204946" })], LINE, "fallback")).toBe(
-      "+1 916-520-4946",
-    );
-  });
-
-  it("uses the fallback when dropping the line leaves nobody", () => {
-    // Real: a 1:1 between the owner and the line, and the settings fallback
-    // chat, which persists a label and no participants at all.
-    expect(chatRowTitle([person({ number: LINE })], LINE, "cht_abc")).toBe("cht_abc");
-    expect(chatRowTitle([], null, "cht_abc")).toBe("cht_abc");
+  it.each([
+    [
+      "leads with the line's name, then the people",
+      { line: LINE, lineName: "Willow", people: [person({ isOwner: true }), person({ number: "+12018051467", name: "Nina" })] },
+      "Willow, You, Nina",
+    ],
+    [
+      "stands a number in for anyone without a name",
+      { line: LINE, lineName: "Ash", people: [person({ isOwner: true }), person({ number: "+19165204946" })] },
+      "Ash, You, +1 916-520-4946",
+    ],
+    [
+      "uses the line's own number when Plow has not named it",
+      { line: LINE, lineName: null, people: [person({ isOwner: true })] },
+      "+1 650-315-6536, You",
+    ],
+    [
+      "names the owner You, from the API's own role",
+      { line: null, lineName: null, people: [person({ isOwner: true })] },
+      "You",
+    ],
+    [
+      "lists the line once, even when a participant is on it",
+      {
+        line: LINE,
+        lineName: "Willow",
+        people: [person({ number: LINE, name: "Willow" }), person({ number: "+19165204946", name: "Robin" })],
+      },
+      "Willow, Robin",
+    ],
+    ["falls back when there is nothing at all to name", { line: null, lineName: null, people: [] }, "cht_abc"],
+  ])("%s", (_case, { line, lineName, people }, expected) => {
+    expect(chatRowTitle(people, line, "cht_abc", lineName)).toBe(expected);
   });
 });
 
 describe("the chat row's subtitle", () => {
-  it("names the line once, then who it reaches", () => {
-    expect(
-      chatRowSubtitle(LINE, "Ash", [
-        person({ isOwner: true }),
-        person({ number: "+19165204946" }),
-      ]),
-    ).toBe("Ash · +1 650-315-6536 — You +1 330-554-1942, +1 916-520-4946");
+  it.each([
+    [
+      "is the title's entries as numbers, in the same order",
+      { line: LINE, lineName: "Willow", people: [person({ isOwner: true }), person({ number: "+12018051467", name: "Nina" })] },
+      "+1 650-315-6536, +1 330-554-1942, +1 201-805-1467",
+    ],
+    [
+      "stays positional for three participants",
+      {
+        line: LINE,
+        lineName: "Willow",
+        people: [
+          person({ isOwner: true }),
+          person({ number: "+19165204946", name: "Robin" }),
+          person({ number: "+14155550188" }),
+        ],
+      },
+      "+1 650-315-6536, +1 330-554-1942, +1 916-520-4946, +1 415-555-0188",
+    ],
+    [
+      "says only the line when it reaches nobody else",
+      { line: LINE, lineName: "Willow", people: [person({ number: LINE })] },
+      "+1 650-315-6536",
+    ],
+    ["is empty when there is no line and nobody to name", { line: null, lineName: null, people: [] }, ""],
+  ])("%s", (_case, { line, lineName, people }, expected) => {
+    expect(chatRowSubtitle(line, lineName, people)).toBe(expected);
   });
 
-  it("prints the line exactly once, and never in the title", () => {
-    // A number printed twice on one row reads as two numbers.
-    const people = [person({ number: LINE }), person({ isOwner: true })];
-    const subtitle = chatRowSubtitle(LINE, "Ash", people);
-    expect(subtitle.match(/650-315-6536/g)).toHaveLength(1);
-    expect(chatRowTitle(people, LINE, "x")).not.toContain("650");
-  });
-
-  it("stays one line for three participants", () => {
-    const subtitle = chatRowSubtitle(LINE, "Ash", [
+  it("carries no names at all — the title is where those live", () => {
+    const subtitle = chatRowSubtitle(LINE, "Willow", [
       person({ isOwner: true }),
-      person({ number: "+19165204946", name: "Robin" }),
-      person({ number: "+14155550188" }),
+      person({ number: "+12018051467", name: "Nina" }),
     ]);
-    expect(subtitle).toBe(
-      "Ash · +1 650-315-6536 — You +1 330-554-1942, Robin +1 916-520-4946, +1 415-555-0188",
-    );
-    expect(subtitle).not.toContain("\n");
+    expect(subtitle).not.toMatch(/[A-Za-z]/);
   });
 
-  it("drops the unnamed line's separator rather than printing a bare dot", () => {
-    expect(chatRowSubtitle(LINE, null, [person({ isOwner: true })])).toBe(
-      "+1 650-315-6536 — You +1 330-554-1942",
-    );
-  });
-
-  it("says only the line when it reaches nobody else", () => {
-    expect(chatRowSubtitle(LINE, "Ash", [person({ number: LINE })])).toBe("Ash · +1 650-315-6536");
-  });
-
-  it("is empty when there is no line and nobody to name", () => {
-    // The settings fallback chat: a uid and a label, and nothing to address.
-    expect(chatRowSubtitle(null, null, [])).toBe("");
+  it("pairs with the title by position, entry for entry", () => {
+    // The reader joins the two lines BY POSITION, so nothing here may filter
+    // or reorder what the title kept.
+    const people = [person({ isOwner: true }), person({ number: "+19165204946", name: "Robin" })];
+    expect(chatRowTitle(people, LINE, "x", "Willow").split(", ")).toHaveLength(3);
+    expect(chatRowSubtitle(LINE, "Willow", people).split(", ")).toHaveLength(3);
   });
 });

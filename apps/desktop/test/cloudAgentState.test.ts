@@ -442,7 +442,8 @@ describe("the numbers a chat can be messaged on", () => {
         uid: "cht_1",
         // Labels put non-owners first, while addressing keeps the parser's
         // owner-first participant order.
-        label: "Ada, Grace",
+        // The label is the row title now: the line, then the people.
+        label: "+15550100, You, Ada",
         recipients: { line: "+15550100", members: ["+15550122", "+15550111"] },
       },
     ]);
@@ -1045,6 +1046,7 @@ describe("a 403 from the real chat endpoint", () => {
         people: [],
         title: "+15550100 · Ada",
         subtitle: "",
+        lineName: null,
       },
     ]);
     // The agent list is fine, and must not be blamed for this.
@@ -1386,7 +1388,7 @@ describe("Plow's pool numbers", () => {
     const lines = await linesClient({ data: [lineRow], has_more: false, url: "/v1/lines" }).list(CREDENTIAL);
     // No `held`: it is derived at read time from whichever chat list is
     // current, never stored beside the line.
-    expect(lines).toEqual([{ uid: "lin_1", displayName: "Willow", number: "+15550001111" }]);
+    expect(lines).toEqual([{ displayName: "Willow", number: "+15550001111" }]);
   });
 
   it("drops a row it cannot render rather than showing a blank", async () => {
@@ -1395,17 +1397,16 @@ describe("Plow's pool numbers", () => {
     const lines = await linesClient({
       data: [
         lineRow,
-        { uid: "lin_2", provider_key: "" },
-        { uid: "", provider_key: "+15550002222" },
-        { uid: "lin_3", provider_key: 15550003333 },
+        { provider_key: "" },
+        { provider_key: 15550003333 },
         "not an object",
         null,
-        { uid: "lin_4", provider_key: "+15550004444" },
+        { provider_key: "+15550004444" },
       ],
     }).list(CREDENTIAL);
 
-    expect(lines.map((l) => l.uid)).toEqual(["lin_1", "lin_4"]);
-    expect(lines[1]).toEqual({ uid: "lin_4", displayName: null, number: "+15550004444" });
+    expect(lines.map((l) => l.number)).toEqual(["+15550001111", "+15550004444"]);
+    expect(lines[1]).toEqual({ displayName: null, number: "+15550004444" });
   });
 
   it.each([
@@ -1421,7 +1422,7 @@ describe("Plow's pool numbers", () => {
     // This string is not only rendered — `smsLineUrl` matches it and it becomes
     // the RECIPIENT of an sms: URL in the owner's Messages app. "The server
     // said so" is not the whole authorisation; the shape check is.
-    const lines = await linesClient({ data: [{ uid: "lin_x", provider_key }] }).list(CREDENTIAL);
+    const lines = await linesClient({ data: [{ provider_key }] }).list(CREDENTIAL);
     expect(lines).toEqual([]);
   });
 
@@ -1448,24 +1449,35 @@ describe("Plow's pool numbers", () => {
     expect(JSON.stringify(lines)).not.toContain(CREDENTIAL.slice(0, 12));
   });
 
-  it("refuses a whole row whose uid echoes the credential", async () => {
-    // `uid` is as server-authored as the name is. Blanking is not an option —
-    // it is the row's identity — so the row goes.
-    const lines = await linesClient({
-      data: [{ ...lineRow, uid: `lin_${CREDENTIAL.slice(0, 12)}` }, { uid: "lin_ok", provider_key: "+15550009999" }],
-    }).list(CREDENTIAL);
-    expect(lines.map((l) => l.uid)).toEqual(["lin_ok"]);
-    expect(JSON.stringify(lines)).not.toContain(CREDENTIAL.slice(0, 12));
-  });
 
   it("refuses a whole row whose number echoes the credential", async () => {
     // Belt and braces behind the E.164 check: a credential cannot BE a phone
     // number, so this row would already be dropped — but the echo rule is the
     // one that must not depend on another check happening to fire first.
     const echoed = `+1${CREDENTIAL.slice(0, 12)}`;
-    const lines = await linesClient({ data: [{ uid: "lin_e", provider_key: echoed }] }).list(CREDENTIAL);
+    const lines = await linesClient({ data: [{ provider_key: echoed }] }).list(CREDENTIAL);
     expect(lines).toEqual([]);
     expect(JSON.stringify(lines)).not.toContain(CREDENTIAL.slice(0, 12));
+  });
+
+  it("withholds the numbers until the chat list has landed", async () => {
+    // `held` is a claim about THIS account's chats. With none read, every line
+    // looks free, and the screen would offer an Open Messages button for a
+    // number the owner already has a thread on. Unknown is not none.
+    const f = fakes({ list: async () => [], chats: () => { throw new Error("no chats"); } });
+    const state = new CloudAgentState({
+      agents: f.agents,
+      chats: f.chats,
+      lines: { list: async () => [{ displayName: "Willow", number: "+15550001111" }] },
+      home: tempHome(),
+    });
+
+    await state.refreshLines();
+    expect(state.state().cloudLines).toBeNull();
+
+    await state.refresh();
+    expect(state.state().cloudChatsLoaded).toBe(false);
+    expect(state.state().cloudLines).toBeNull();
   });
 
   it("marks held numbers whichever read lands last", async () => {
@@ -1481,29 +1493,28 @@ describe("Plow's pool numbers", () => {
     const state = new CloudAgentState({
       agents: f.agents,
       chats: f.chats,
-      lines: { list: async () => [{ uid: "lin_1", displayName: "Willow", number: "+15550001111" }] },
+      lines: { list: async () => [{ displayName: "Willow", number: "+15550001111" }] },
       home,
     });
 
-    // Lines FIRST, with no chats read yet: nothing is held, honestly.
+    // Lines FIRST, with no chats read yet: withheld, because "held" is a claim
+    // about chats nobody has read.
     await state.refreshLines();
-    expect(state.state().cloudLines).toEqual([
-      { uid: "lin_1", displayName: "Willow", number: "+15550001111", held: false },
-    ]);
+    expect(state.state().cloudLines).toBeNull();
 
     // The chats land second and the SAME line is now held — without a second
     // line fetch, because the answer is derived rather than stored.
     await state.refresh();
     expect(state.state().cloudLines).toEqual([
-      { uid: "lin_1", displayName: "Willow", number: "+15550001111", held: true },
+      { displayName: "Willow", number: "+15550001111", held: true },
     ]);
   });
 
   it("marks the numbers this account already has a chat on", async () => {
     const marked = markHeldLines(
       [
-        { uid: "lin_1", displayName: "Willow", number: "+15550001111" },
-        { uid: "lin_2", displayName: null, number: "+15550002222" },
+        { displayName: "Willow", number: "+15550001111" },
+        { displayName: null, number: "+15550002222" },
       ],
       [
         { uid: "cht_1", label: "x", recipients: { line: "+15550002222", members: [] } },

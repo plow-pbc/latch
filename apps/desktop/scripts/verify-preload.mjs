@@ -85,8 +85,8 @@ const cloudChat = {
     { number: "+14155550193", name: null, isOwner: true },
     { number: "+16285550112", name: "Robin", isOwner: false },
   ],
-  title: "You, Robin",
-  subtitle: "Willow · +1 415-555-0142 — You +1 415-555-0193, Robin +1 628-555-0112",
+  title: "Willow, You, Robin",
+  subtitle: "+1 415-555-0142, +1 415-555-0193, +1 628-555-0112",
 };
 const cloudAgent = {
   agentId: "cag_probe",
@@ -139,8 +139,8 @@ let cloudProbe = {
   cloudChats: [cloudChat],
   cloudChatsLoaded: true,
   cloudLines: [
-    { uid: "lin_1", displayName: "Willow", number: "+14155550142", held: false },
-    { uid: "lin_2", displayName: null, number: "+16285550177", held: false },
+    { displayName: "Willow", number: "+14155550142", held: false },
+    { displayName: null, number: "+16285550177", held: false },
   ],
   cloudLinesError: null,
 };
@@ -917,11 +917,13 @@ app.whenReady().then(async () => {
   // A three-chat agent whose server order is not the account list's order. The
   // checklist orders by the list; index-for-index called that a change, so Save
   // opened alive and one click restarted the agent to tell it what it knew.
+  // Titles as `state()` would build them, because the rows are now SORTED for
+  // display and the checkbox order is no longer the fixture's array order.
   const reorderedChats = [
     cloudChat,
-    { uid: "chat_family", label: "+1 (415) 555-0188 · Family group", recipients: { line: "+14155550188", members: [] } },
-    { uid: "chat_book", label: "+1 (510) 555-0133 · Book club", recipients: { line: "+15105550133", members: [] } },
-    { uid: "chat_new", label: "+1 (510) 555-0144 · New chat", recipients: { line: "+15105550144", members: [] } },
+    { uid: "chat_family", label: "+1 (415) 555-0188 · Family group", title: "Family group", subtitle: "", lineName: null, people: [], recipients: { line: "+14155550188", members: [] } },
+    { uid: "chat_book", label: "+1 (510) 555-0133 · Book club", title: "Book club", subtitle: "", lineName: null, people: [], recipients: { line: "+15105550133", members: [] } },
+    { uid: "chat_new", label: "+1 (510) 555-0144 · New chat", title: "New chat", subtitle: "", lineName: null, people: [], recipients: { line: "+15105550144", members: [] } },
   ];
   cloudProbe = {
     ...cloudProbe,
@@ -949,17 +951,26 @@ app.whenReady().then(async () => {
     const settle = () => new Promise((resolve) => setTimeout(resolve));
     const save = () => [...document.querySelectorAll(".cloud-modal button")]
       .find((node) => node.textContent.trim() === "Save changes");
-    const boxes = () => [...document.querySelectorAll(".cloud-modal .chat-option input")];
-    const allChecked = boxes().slice(0, 3).every((box) => box.checked) && !boxes()[3].checked;
+    // Rows are SORTED for display, so a box is found by the chat it belongs to
+    // rather than by position — the two orders are deliberately independent.
+    const boxFor = (title) => [...document.querySelectorAll(".cloud-modal .chat-option")]
+      .find((row) => row.querySelector(".chat-option-name")?.textContent.trim() === title)
+      ?.querySelector("input");
+    const served = ["Willow, You, Robin", "Book club", "Family group"];
+    const allChecked = served.every((title) => boxFor(title)?.checked === true)
+      && boxFor("New chat")?.checked === false;
     const deadOnOpen = save().disabled;
     // A real change still wakes it, and undoing that change puts it back.
-    boxes()[1].click();
+    // Family group specifically: unchecking and rechecking APPENDS it (that is
+    // `pickChat`), so the saved order becomes home, book, family — which is
+    // what `retainedServerOrder` below pins.
+    boxFor("Family group").click();
     await settle();
     const liveAfterChange = !save().disabled;
-    boxes()[1].click();
+    boxFor("Family group").click();
     await settle();
     const deadAgain = save().disabled;
-    boxes()[3].click();
+    boxFor("New chat").click();
     await settle();
     save().click();
     return { allChecked, deadOnOpen, liveAfterChange, deadAgain };
@@ -1032,7 +1043,7 @@ app.whenReady().then(async () => {
   await waitFor(win, `document.querySelector(".cloud-modal .chat-list")`, "the activation-chat fallback checklist");
   cloudForbidden.offersActivationChat = await win.webContents.executeJavaScript(
     `[...document.querySelectorAll(".cloud-modal .chat-option-name")]
-      .some((name) => name.textContent.trim() === "You, Robin")`,
+      .some((name) => name.textContent.trim() === "Willow, You, Robin")`,
   );
   await win.webContents.executeJavaScript(
     `[...document.querySelectorAll(".cloud-modal button")].find((button) => button.textContent.trim() === "Cancel").click()`,
@@ -1137,18 +1148,23 @@ app.whenReady().then(async () => {
   // The chat that arrived, named by its PEOPLE — the line is deliberately not
   // in the title any more, so this looks for the participants.
   cloudZeroChatGuidance.reopenShowsNewChat = await win.webContents.executeJavaScript(
-    `[...document.querySelectorAll(".cloud-modal .chat-option-name")].some((n) => n.textContent === "You, Robin")`,
+    `[...document.querySelectorAll(".cloud-modal .chat-option-name")].some((n) => n.textContent === "Willow, You, Robin")`,
   );
   // The row: participants in the title (owner as "You", line excluded), and
-  // ONE subtitle carrying the line and every number it reaches, formatted.
+  // The pair, read BY POSITION: the line's name leads the title and its number
+  // leads the subtitle, and the two lists are the same length.
   cloudZeroChatGuidance.chatRowShowsLine = await win.webContents.executeJavaScript(`(${() => {
     const name = document.querySelector(".cloud-modal .chat-option-name")?.textContent ?? "";
     const line = document.querySelector(".cloud-modal .chat-option-line")?.textContent ?? "";
-    return name === "You, Robin"
-      && !name.includes("415-555-0142")
-      && line === "Willow · +1 415-555-0142 — You +1 415-555-0193, Robin +1 628-555-0112"
-      // The line is printed once on the row, not in both halves.
-      && (name + " " + line).match(/415-555-0142/g).length === 1;
+    const names = name.split(", ");
+    const numbers = line.split(", ");
+    return name === "Willow, You, Robin"
+      && line === "+1 415-555-0142, +1 415-555-0193, +1 628-555-0112"
+      // Same length, so the nth name belongs to the nth number.
+      && names.length === numbers.length
+      // The subtitle carries no names, and the title no raw numbers.
+      && !/[A-Za-z]/.test(line.replace(/[^A-Za-z]/g, ""))
+      && !name.includes("+1 415-555-0142");
   }})()`);
   // ...and that number is now held, so the explainer offers it no button.
   await win.webContents.executeJavaScript(

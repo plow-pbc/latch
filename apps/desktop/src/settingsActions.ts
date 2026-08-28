@@ -110,16 +110,21 @@ export function isSignedIn(home: string): boolean {
 export async function revokeAndSignOut(
   home: string,
   revoke: (credential: string) => Promise<unknown>,
-): Promise<void> {
+): Promise<boolean> {
   const credential = (loadSettings(home).relayCredential ?? "").trim();
   signOutOfPlow(home);
-  if (!credential) return;
+  if (!credential) return true;
   try {
     await revoke(credential);
+    return true;
   } catch {
-    // Deliberately swallowed, and deliberately not logged: the failure is not
-    // actionable here, and the only interesting value in scope is the
-    // credential itself.
+    // Still not logged — the only interesting value in scope is the credential
+    // itself — but no longer silent. The stored credential is the owner's login
+    // session now, so a failed revoke leaves a live session on the account that
+    // this Mac has just forgotten how to reach: nothing here can retire it any
+    // more, and the owner is the only one who can. Saying so is the difference
+    // between a signed-out Mac and a signed-out Mac plus a loose session.
+    return false;
   }
 }
 

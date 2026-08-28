@@ -183,11 +183,13 @@ describe("signing out retires the credential server-side, best effort", () => {
     // the local copy gone.
     const home = homeSignedIn();
 
+    // ...and reports the failure rather than swallowing it: the credential is
+    // the owner's login session, so one left live is theirs to retire.
     await expect(
       revokeAndSignOut(home, async () => {
         throw new Error("ENOTFOUND api.plow.co");
       }),
-    ).resolves.toBeUndefined();
+    ).resolves.toBe(false);
 
     expectSignedOutWithAdversarial(home);
   });
@@ -316,4 +318,32 @@ describe("the purpose statement is owner-authored data", () => {
       expect(stored(home).approvalMode).toBe("adversarial");
     });
   }
+});
+
+describe("what sign-out reports", () => {
+  it("says it succeeded when the revoke did", async () => {
+    const home = homeWith({ relayCredential: "plow_sk_live" });
+
+    expect(await revokeAndSignOut(home, async () => undefined)).toBe(true);
+    expect(loadSettings(home).relayCredential).toBe("");
+  });
+
+  it("says it FAILED when the revoke threw, having signed out anyway", async () => {
+    // The stored credential is the owner's login session. A failed revoke
+    // leaves it live on the account with this Mac no longer able to reach it,
+    // so the screen has to say so — the owner is the only one who can retire
+    // it now.
+    const home = homeWith({ relayCredential: "plow_sk_live" });
+
+    expect(await revokeAndSignOut(home, async () => {
+      throw new Error("offline");
+    })).toBe(false);
+    expect(loadSettings(home).relayCredential).toBe("");
+  });
+
+  it("has nothing to revoke, and says so, when no credential is stored", async () => {
+    expect(await revokeAndSignOut(homeWith(), async () => {
+      throw new Error("must not be called");
+    })).toBe(true);
+  });
 });

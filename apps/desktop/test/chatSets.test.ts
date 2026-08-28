@@ -12,6 +12,7 @@ import {
   canEditChats,
   dropChat,
   editorChats,
+  sortChatRows,
   makeHome,
   pickChat,
   sameChatSet,
@@ -56,18 +57,36 @@ describe("the chats an editor may show", () => {
 
     expect(shown.map((option: Chat) => option.uid)).toEqual(["cht_1", "cht_gone"]);
     // Labelled from the row's own labels, so it reads as a chat rather than as
-    // a blank line; and with no recipients, because we do not know them.
+    // a blank line; with no recipients, because we do not know them; and
+    // carrying the same `title`/`subtitle` every other row has, so the row
+    // renderer reads two fields for all of them rather than falling through to
+    // `label` for some. The subtitle is empty: a chat the account list did not
+    // return has no participants and no line to format.
     expect(shown[1]).toEqual({
       uid: "cht_gone",
       label: "+15559999 · Old thread",
       recipients: null,
+      people: [],
+      title: "+15559999 · Old thread",
+      subtitle: "",
+      lineName: null,
     });
   });
 
   it("falls back to the raw uid when the row has no label for it either", () => {
     const shown = editorChats(agent(["cht_bare"], [""]), []);
 
-    expect(shown).toEqual([{ uid: "cht_bare", label: "cht_bare", recipients: null }]);
+    expect(shown).toEqual([
+      {
+        uid: "cht_bare",
+        label: "cht_bare",
+        recipients: null,
+        people: [],
+        title: "cht_bare",
+        subtitle: "",
+        lineName: null,
+      },
+    ]);
   });
 
   it("never shows a chat twice, whichever side it came from", () => {
@@ -150,5 +169,67 @@ describe("whether two chat sets say the same thing", () => {
     expect(sameChatSet(["a", "b"], ["a", "c"])).toBe(false);
     expect(sameChatSet([], [])).toBe(true);
     expect(sameChatSet([], ["a"])).toBe(false);
+  });
+});
+
+describe("the order chat rows are shown in", () => {
+  const row = (over: Record<string, unknown>) => ({
+    uid: "u",
+    label: "l",
+    recipients: null,
+    people: [],
+    title: "t",
+    subtitle: "",
+    lineName: null,
+    ...over,
+  });
+
+  it("groups by line without a header, then orders by title", () => {
+    const shown = sortChatRows([
+      row({ uid: "c1", lineName: "Willow", title: "Willow, Nina" }),
+      row({ uid: "c2", lineName: "Ash", title: "Ash, You, Robin" }),
+      row({ uid: "c3", lineName: "Willow", title: "Willow, Ada" }),
+    ]);
+
+    expect(shown.map((chat) => chat.uid)).toEqual(["c2", "c3", "c1"]);
+  });
+
+  it("compares the way a reader does, not by code unit", () => {
+    // Locale-aware: an accented name sorts beside its plain form rather than
+    // after every unaccented name on the account.
+    const shown = sortChatRows([
+      row({ uid: "c1", lineName: "Zoe" }),
+      row({ uid: "c2", lineName: "Ámbar" }),
+      row({ uid: "c3", lineName: "Ana" }),
+    ]);
+
+    expect(shown.map((chat) => chat.uid)).toEqual(["c2", "c3", "c1"]);
+  });
+
+  it("puts a chat whose line is unnamed last, not first", () => {
+    // An empty string sorts before everything, which would put the least
+    // identifiable rows at the top of the list.
+    const shown = sortChatRows([
+      row({ uid: "c1", lineName: null, title: "Aardvark" }),
+      row({ uid: "c2", lineName: "Willow", title: "Zebra" }),
+    ]);
+
+    expect(shown.map((chat) => chat.uid)).toEqual(["c2", "c1"]);
+  });
+
+  it("is stable: equal rows keep the order the server sent", () => {
+    const shown = sortChatRows([
+      row({ uid: "c1", lineName: "Ash", title: "same" }),
+      row({ uid: "c2", lineName: "Ash", title: "same" }),
+      row({ uid: "c3", lineName: "Ash", title: "same" }),
+    ]);
+
+    expect(shown.map((chat) => chat.uid)).toEqual(["c1", "c2", "c3"]);
+  });
+
+  it("does not mutate what it was given", () => {
+    const chats = [row({ uid: "c1", lineName: "Zoe" }), row({ uid: "c2", lineName: "Ash" })];
+    sortChatRows(chats);
+    expect(chats.map((chat) => chat.uid)).toEqual(["c1", "c2"]);
   });
 });

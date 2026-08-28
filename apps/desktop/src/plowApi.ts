@@ -232,7 +232,11 @@ export function parseActivationChat(raw: unknown): ActivationChat | null {
     return {
       providerKey: typeof participant.provider_key === "string" ? participant.provider_key : null,
       displayName,
-      isOwner: participant.role === "owner" || displayName?.trim() === "You",
+      // ROLE only. A provider that labels the owner "You" was a second answer
+      // to the same question, and a member who happens to be named "You" is
+      // not the account holder — the server says which participant owns the
+      // chat, and nothing here has to infer it.
+      isOwner: participant.role === "owner",
     };
   });
   // Keep the owner-first participant order used by addressing and the numeric

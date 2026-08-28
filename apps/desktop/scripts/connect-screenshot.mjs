@@ -50,8 +50,8 @@ const CHAT = {
   ],
   // Formatted by `chatRows.ts` in the real main process; the fixture carries
   // the finished strings the same way it carries the finished label.
-  title: "You, Robin",
-  subtitle: "Willow · +1 415-555-0142 — You +1 415-555-0193, Robin +1 628-555-0112",
+  title: "Willow, You, Robin",
+  subtitle: "+1 415-555-0142, +1 415-555-0193, +1 628-555-0112",
 };
 const FAMILY_CHAT = {
   uid: "chat_family",
@@ -151,8 +151,8 @@ const CLOUD_EMPTY = {
   cloudChats: [],
   cloudChatsLoaded: true,
   cloudLines: [
-    { uid: "lin_1", displayName: "Willow", number: "+14155550142", held: true },
-    { uid: "lin_2", displayName: null, number: "+16285550177", held: false },
+    { displayName: "Willow", number: "+14155550142", held: true },
+    { displayName: null, number: "+16285550177", held: false },
   ],
   cloudLinesError: null,
 };
@@ -467,7 +467,7 @@ const SCREENS = [
     expect: [
       "Set up a cloud agent",
       "Choose the chats this agent will read and reply in",
-      "Provider", "Hermes", "Life",
+      "Provider", "Hermes", "Life", "Pirate",
       // The row names its people; the line lives once, in the subtitle.
       CHAT.title,
       CHAT.subtitle,

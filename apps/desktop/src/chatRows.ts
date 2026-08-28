@@ -30,6 +30,45 @@ export interface ChatPerson {
 }
 
 /**
+ * A display name worth showing, or null.
+ *
+ * Rejects a name that merely repeats the handle beside it and a name that is
+ * just a phone number: both put a number where a reader is looking for a
+ * person, and the number has a place of its own on the row.
+ */
+export function usableChatDisplayName(
+  value: string | null,
+  providerKey: string | null = null,
+): string | null {
+  const name = (value ?? "").trim();
+  const handle = (providerKey ?? "").trim();
+  const phoneNumberShaped = /[0-9]/.test(name) && /^[0-9+ (),-]+$/.test(name);
+  if (!name || name === handle || phoneNumberShaped) return null;
+  return name;
+}
+
+/**
+ * The participants of a chat, as everything that PRESENTS them sees them.
+ *
+ * The one place the API's participant shape becomes people: the picker's rows,
+ * the setup window's label and the cloud-agent state all read this, so "who is
+ * in this chat, and which of them is the owner" is answered once.
+ */
+export function chatPeople(chat: {
+  participants: readonly { providerKey: string | null; displayName: string | null; isOwner: boolean }[];
+}): ChatPerson[] {
+  return chat.participants.flatMap((member) => {
+    const number = (member.providerKey ?? "").trim();
+    if (!number) return [];
+    return [{
+      number,
+      name: usableChatDisplayName(member.displayName, member.providerKey),
+      isOwner: member.isOwner,
+    }];
+  });
+}
+
+/**
  * `+16503156536` → `+1 650-315-6536`.
  *
  * NANP only, because that is the shape plow's lines and their members take.
@@ -42,57 +81,71 @@ export function formatNumber(number: string): string {
   return nanp ? `+1 ${nanp[1]}-${nanp[2]}-${nanp[3]}` : raw;
 }
 
-/** That person, as the title names them: their name, "You", or their number. */
-function personLabel(person: ChatPerson): string {
-  if (person.isOwner) return "You";
-  return person.name?.trim() || formatNumber(person.number);
-}
-
 /**
- * The chat's title: who is in it.
+ * The row's entries, in the ONE order both lines use: the line this chat runs
+ * on, then its participants as the API listed them.
  *
- * The LINE is excluded. It is Plow's own number, not a participant anyone
- * thinks of themselves as talking to, and it is named in the subtitle — a
- * title that repeated it made every chat on one line look alike.
- *
- * `fallback` is used when nothing is left to name, which is a real state: a
- * 1:1 between the owner and the line has one participant, and dropping the
- * line from a chat the parser gave no members at all leaves none.
+ * Built once and mapped twice, because the title and the subtitle are the same
+ * list said two ways — a name per entry above, a number per entry below — and
+ * the whole value of the pair is that the third name belongs to the third
+ * number. Two functions walking the participants separately would be two
+ * chances for that to stop being true.
  */
-export function chatRowTitle(people: readonly ChatPerson[], line: string | null, fallback: string): string {
-  const others = people.filter((person) => person.number !== (line ?? ""));
-  const named = others.map(personLabel).filter((label) => label.length > 0);
-  return named.length ? named.join(", ") : fallback;
+function rowEntries(
+  line: string | null,
+  lineName: string | null,
+  people: readonly ChatPerson[],
+): { label: string; number: string }[] {
+  const lineNumber = (line ?? "").trim();
+  const entries: { label: string; number: string }[] = [];
+  if (lineNumber) {
+    // The line leads. It is the number the chat runs on — the one an agent
+    // here answers from — and naming it first is what tells two chats with the
+    // same people apart.
+    entries.push({
+      label: lineName?.trim() || formatNumber(lineNumber),
+      number: formatNumber(lineNumber),
+    });
+  }
+  for (const person of people) {
+    if (person.number === lineNumber) continue;
+    const label = person.isOwner ? "You" : person.name?.trim() || formatNumber(person.number);
+    entries.push({ label, number: formatNumber(person.number) });
+  }
+  return entries;
 }
 
 /**
- * The one line under the title: which number this chat runs on, then the
- * numbers it reaches.
+ * The chat's title: the line's name, then who is in it.
  *
- * `Ash · +1 650-315-6536 — You +1 330-554-1942, +1 916 520-4946`
+ * `Willow, You, Nina` — and where a participant has no name, their number
+ * stands in for it: `Ash, You, +1 916-520-4946`. The owner is always "You".
  *
- * The line appears ONCE, here, and never in the title — a number printed twice
- * on one row reads as two numbers. Participants keep their names beside their
- * numbers so a three-person thread stays readable left to right; the row
- * ellipsises rather than wraps, and carries the whole string as its tooltip.
+ * `fallback` covers the row with nothing to name at all: the settings fallback
+ * chat, which persists a label and no participants and no line.
+ */
+export function chatRowTitle(
+  people: readonly ChatPerson[],
+  line: string | null,
+  fallback: string,
+  lineName: string | null = null,
+): string {
+  const labels = rowEntries(line, lineName, people).map((entry) => entry.label);
+  return labels.length ? labels.join(", ") : fallback;
+}
+
+/**
+ * The numbers under the title, in the SAME ORDER and with no names:
+ * `+1 650-346-6610, +1 330-554-1942, +1 201-805-1467`.
+ *
+ * Positional on purpose. The title says who, this says which number each of
+ * them is, and the reader joins them by position — so nothing here may filter
+ * or reorder what the title kept.
  */
 export function chatRowSubtitle(
   line: string | null,
   lineName: string | null,
   people: readonly ChatPerson[],
 ): string {
-  const number = (line ?? "").trim();
-  const head = number
-    ? [lineName?.trim(), formatNumber(number)].filter(Boolean).join(" · ")
-    : "";
-  const others = people
-    .filter((person) => person.number !== number)
-    .map((person) => {
-      const label = person.isOwner ? "You" : person.name?.trim() || "";
-      const formatted = formatNumber(person.number);
-      return label ? `${label} ${formatted}` : formatted;
-    })
-    .filter((entry) => entry.trim().length > 0);
-  if (!head) return others.join(", ");
-  return others.length ? `${head} — ${others.join(", ")}` : head;
+  return rowEntries(line, lineName, people).map((entry) => entry.number).join(", ");
 }

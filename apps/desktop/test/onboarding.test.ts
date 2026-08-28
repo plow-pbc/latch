@@ -71,7 +71,6 @@ type FakeRedeem =
 /** A stand-in Plow: records what was called, answers what the real one does. */
 class FakePlow {
   requested: string[] = [];
-  minted: Array<{ token: string; name: string }> = [];
   connected = false;
   verifyFails: "unauthorized" | "network" | null = null;
   requestFails: "provider_unavailable" | "network" | null = null;
@@ -134,14 +133,6 @@ class FakePlow {
     // The login session, whichever path minted it — never the device credential.
     expect([OTP_TOKEN, SESSION_TOKEN]).toContain(token);
     return { uid: "u_123", mcpUrl: MCP_URL, deviceConnected: this.connected };
-  }
-
-  /** A tripwire, not a fake. Latch keeps the session it was given; a call to
-   * `POST /v1/relay/devices` here would be the second step this design
-   * deleted, and it must fail loudly rather than quietly succeed. */
-  async mintDeviceCredential(): Promise<never> {
-    this.minted.push({ token: "", name: "" });
-    throw new Error("Latch must not mint a device credential");
   }
 
   revoked: string[] = [];
@@ -275,10 +266,10 @@ describe("activation — the path a brand-new user takes", () => {
     // later window has no way to ask for it again.
     const settings = loadSettings(home);
     expect(settings.provisionedChatUid).toBe("cht_D7hfWNK");
-    expect(settings.provisionedChatLabel).toBe("+15559876543, +15551230000");
+    expect(settings.provisionedChatLabel).toBe("+1 555-987-6543, You");
     expect(onboarding.state().chat).toEqual({
       uid: "cht_D7hfWNK",
-      label: "+15559876543, +15551230000",
+      label: "+1 555-987-6543, You",
     });
     // A fresh window on the same home still knows about it.
     expect(build().state().chat?.uid).toBe("cht_D7hfWNK");
@@ -328,40 +319,45 @@ describe("activation — the path a brand-new user takes", () => {
     expect(onboarding.state().chat).toBeNull();
   });
 
+  // The label is `chatRows`' title now — the ONE place participants become
+  // people. It leads with the line, names the owner "You", and stands a
+  // formatted number in for anyone without a usable name. A top-level chat
+  // title still wins outright when the provider gives one.
   it.each([
     ["prefers a chat's top-level display name", {
       displayName: "Weekend crew",
-      members: [{ displayName: "Morgan", role: "member" as const }],
+      members: [{ displayName: "Morgan", providerKey: "+15550001001", role: "member" as const }],
     }, "Weekend crew"],
-    ["uses member display names with non-owners first and skips You", {
-      members: [
-        { displayName: "You", role: "owner" as const },
-        { displayName: "Riley", role: "member" as const },
-        { displayName: "Casey", role: "owner" as const },
-      ],
-    }, "Riley, Casey"],
-    ["rejects a member display name that repeats its provider handle", {
-      line: "+15550003000",
-      members: [{ displayName: "+15550003001", providerKey: "+15550003001", role: "owner" as const }],
-    }, "+15550003000, +15550003001"],
-    ["rejects a phone-number-shaped top-level display name", {
+    ["keeps an emoji-only top-level display name", {
+      displayName: "🎉",
+      members: [{ displayName: "Riley", providerKey: "+15550002001", role: "member" as const }],
+    }, "🎉"],
+    ["rejects a phone-number-shaped top-level display name and names the people", {
       displayName: "+1 (555) 000-4001, +1 (555) 000-4002",
       line: "+15550004000",
       members: [
-        { displayName: "+15550004001", providerKey: "+15550004001", role: "owner" as const },
-        { displayName: "+15550004002", providerKey: "+15550004002", role: "member" as const },
+        { displayName: "Riley", providerKey: "+15550004001", role: "owner" as const },
+        { displayName: "Casey", providerKey: "+15550004002", role: "member" as const },
       ],
-    }, "+15550004000, +15550004001, +15550004002"],
-    ["keeps an emoji-only top-level display name", {
-      displayName: "🎉",
-      members: [{ displayName: "Riley", role: "member" as const }],
-    }, "🎉"],
-    ["uses each member's name or provider handle", {
+    }, "+1 555-000-4000, You, Casey"],
+    ["names the owner You and everyone else by name", {
+      line: "+15550005000",
       members: [
-        { displayName: "Riley", role: "member" as const },
-        { displayName: "", providerKey: "+15550005002", role: "member" as const },
+        { displayName: "Whoever", providerKey: "+15550005001", role: "owner" as const },
+        { displayName: "Riley", providerKey: "+15550005002", role: "member" as const },
       ],
-    }, "Riley, +15550005002"],
+    }, "+1 555-000-5000, You, Riley"],
+    ["stands a number in for a name that just repeats the handle", {
+      line: "+15550003000",
+      members: [{ displayName: "+15550003001", providerKey: "+15550003001", role: "member" as const }],
+    }, "+1 555-000-3000, +1 555-000-3001"],
+    ["lists the line once when a member is on it", {
+      line: "+15550006000",
+      members: [
+        { displayName: "Riley", providerKey: "+15550006000", role: "member" as const },
+        { displayName: "Casey", providerKey: "+15550006002", role: "member" as const },
+      ],
+    }, "+1 555-000-6000, Casey"],
   ])("%s", (_case, fields, expected) => {
     expect(activationChatLabel(parseActivationChat(wireChat(fields))!)).toBe(expected);
   });
@@ -379,8 +375,11 @@ describe("activation — the path a brand-new user takes", () => {
       ],
     }))!;
 
+    // The owner reads as "You" and the line is formatted; what this pins is
+    // that the LINE is the number shown, never the chat's own `provider_key`.
     const label = activationChatLabel(chat);
-    expect(label).toBe("+15559876543, +15551230000");
+    expect(label).toBe("+1 555-987-6543, You");
+    expect(label).not.toContain("thread_fixture");
     expect(label).not.toContain("thread_fixture");
   });
 
@@ -391,7 +390,7 @@ describe("activation — the path a brand-new user takes", () => {
         { providerKey: "+15551230000", displayName: null, isOwner: true },
         { providerKey: "+15557654321", displayName: null, isOwner: false },
       ],
-    })).toBe("+15559876543, +15551230000, +15557654321");
+    })).toBe("+1 555-987-6543, You, +1 555-765-4321");
     // A member whose address IS the line is not said twice.
     expect(
       activationChatLabel({
@@ -401,8 +400,8 @@ describe("activation — the path a brand-new user takes", () => {
           { providerKey: "+15559876543", displayName: null, isOwner: false },
         ],
       }),
-    ).toBe("+15559876543, +15551230000");
-    expect(activationChatLabel({ ...CHAT, participants: [] })).toBe("+15559876543");
+    ).toBe("+1 555-987-6543, You");
+    expect(activationChatLabel({ ...CHAT, participants: [] })).toBe("+1 555-987-6543");
     // A member without a usable display name is identified by its real handle.
     expect(
       activationChatLabel({
@@ -410,7 +409,7 @@ describe("activation — the path a brand-new user takes", () => {
         line: null,
         participants: [{ providerKey: "+15551230000", displayName: null, isOwner: false }],
       }),
-    ).toBe("+15551230000");
+    ).toBe("+1 555-123-0000");
     // Nothing to say but the uid beats an empty line on the last setup screen.
     expect(activationChatLabel({ ...CHAT, line: null, participants: [] })).toBe("cht_D7hfWNK");
   });
@@ -844,8 +843,10 @@ describe("the phone-code fallback still works", () => {
     await onboarding.requestCode("+15551110000");
     await onboarding.submitCode("12345678");
 
+    // `PlowApi` has no `mintDeviceCredential` to reach for: the method is
+    // deleted, so this cannot regress into a second step without a compile
+    // error first.
     expect(loadSettings(home).relayCredential).toBe(OTP_TOKEN);
-    expect(plow.minted).toEqual([]);
     expect(warnings).toEqual([]);
   });
 
@@ -1060,13 +1061,13 @@ describe("signing out", () => {
     // to the only thing that could revoke it.
     const onboarding = await signedIn();
     expect((await onboarding.useActivation()).step).toBe("activate");
-    const mintedBefore = plow.minted.length;
     const credential = loadSettings(home).relayCredential;
 
     plow.redeems = [{ status: "verified", token: SESSION_TOKEN }];
     await settle();
 
-    expect(plow.minted.length).toBe(mintedBefore);
+    // The credential this Mac already holds is not overwritten by a redeem it
+    // did not ask for. (Nothing is minted either — there is no mint left.)
     expect(loadSettings(home).relayCredential).toBe(credential);
   });
 
@@ -1101,15 +1102,13 @@ describe("signing out", () => {
     // The user signs out while that call is still on the wire.
     signOutOfPlow(home);
     onboarding.reset();
-    const mintedBefore = plow.minted.length;
 
     // …and only now does the server answer "verified".
     release();
     await settle();
 
-    // Nothing was minted, nothing was persisted, and the window did not slide
-    // back to the account the user just left.
-    expect(plow.minted.length).toBe(mintedBefore);
+    // Nothing was persisted, and the window did not slide back to the account
+    // the user just left.
     expect(loadSettings(home).relayCredential).toBe("");
     expect(loadSettings(home).accountUid).toBe("");
     expect(onboarding.state().step).not.toBe("connected");
@@ -1142,9 +1141,9 @@ describe("a sign-out while the credential handoff is in the air", () => {
       release();
       await settle();
 
-      // A mint the sign-out beat never happens; one it raced is retired.
-      // Either way nothing is persisted and the window stays signed out.
-      expect(plow.minted).toHaveLength(race.revoked.length);
+      // Nothing is persisted and the window stays signed out. Nothing is
+      // retired either: the session is the owner's own, and sign-out's revoke
+      // is what retires it.
       expect(plow.revoked).toEqual(race.revoked);
       expect(loadSettings(home).relayCredential).toBe("");
       expect(onboarding.state().step).not.toBe("connected");

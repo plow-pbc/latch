@@ -17,6 +17,7 @@
  * user is meant to read: the activation display code. The activation *secret*
  * and the login session never appear in it at all.
  */
+import { chatPeople, chatRowTitle, usableChatDisplayName } from "./chatRows.js";
 import { ActivationChat, PlowApi, PlowApiError } from "./plowApi.js";
 import { loadSettings, saveSettings, Settings } from "./settings.js";
 
@@ -156,42 +157,15 @@ export function activationChatRecipients(chat: ActivationChat): ChatRecipients {
   };
 }
 
-function usableChatDisplayName(value: string | null, providerKey: string | null = null): string | null {
-  const name = (value ?? "").trim();
-  const handle = (providerKey ?? "").trim();
-  const phoneNumberShaped = /[0-9]/.test(name) && /^[0-9+ (),-]+$/.test(name);
-  if (!name || name === handle || phoneNumberShaped) return null;
-  return name;
-}
 
 export function activationChatLabel(chat: ActivationChat): string {
   const displayName = usableChatDisplayName(chat.displayName);
   if (displayName) return displayName;
-
-  const members = chat.participants
-    .map((participant) => ({
-      name: usableChatDisplayName(participant.displayName, participant.providerKey),
-      handle: (participant.providerKey ?? "").trim(),
-      isOwner: participant.isOwner,
-      isSelf: (participant.displayName ?? "").trim() === "You",
-    }));
-  if (members.some((participant) => participant.name && !participant.isSelf)) {
-    const labels = [
-      ...members.filter((participant) => !participant.isOwner),
-      ...members.filter((participant) => participant.isOwner),
-    ]
-      .filter((participant) => !participant.isSelf)
-      .map((participant) => participant.name ?? participant.handle)
-      .filter(Boolean);
-    if (labels.length) return labels.join(", ");
-  }
-
-  const line = (chat.line ?? "").trim();
-  const handles = members
-    .map((participant) => participant.handle)
-    .filter((handle) => handle && handle !== line);
-  const parts = [line, ...handles].filter(Boolean);
-  return parts.length ? parts.join(", ") : chat.uid;
+  // Presentation is `chatRows`', not this file's: it decides who counts as a
+  // participant, which of them is the owner, and how a number is spelled. This
+  // used to keep a second answer to all three, and the two drifted — the label
+  // dropped the owner while the picker's row named them "You".
+  return chatRowTitle(chatPeople(chat), (chat.line ?? "").trim() || null, chat.uid);
 }
 
 export interface OnboardingState {
@@ -373,6 +347,20 @@ export class Onboarding {
   messagesOpened(): OnboardingState {
     if (this.step === "activate" && this.activation) this.step = "waiting";
     return this.publish();
+  }
+
+  /**
+   * Say something on the setup screen that did not come from a step this
+   * object ran — today, that a sign-out could not retire its session.
+   *
+   * `reset()` has already put this instance back on `activate`, so the message
+   * has a screen to land on; it is cleared by the next thing that runs, which
+   * is the point. Nothing secret ever reaches here: the caller composes a fixed
+   * sentence, never the credential.
+   */
+  warnSignOut(message: string): void {
+    this.message = message;
+    this.publish();
   }
 
   /** The quiet fallback: sign in with a phone code instead. */

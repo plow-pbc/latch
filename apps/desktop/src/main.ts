@@ -526,7 +526,14 @@ async function signOutThisMac(): Promise<void> {
   // which a click has exactly as much reason to clear as a revocation does.
   signOut();
   await startRelay();
-  await revoking;
+  // The outcome is the owner's to know: a Mac that could not reach Plow is
+  // signed out locally either way, but the session it was holding is still
+  // live on the account and only they can retire it now.
+  if (!(await revoking)) {
+    onboarding?.warnSignOut(
+      "Signed out on this Mac; the session could not be revoked — revoke it in Plow.",
+    );
+  }
 }
 
 ipcMain.handle("settings:signOut", async () => signOutThisMac());

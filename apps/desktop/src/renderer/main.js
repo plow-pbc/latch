@@ -15,6 +15,7 @@ import {
   makeHome,
   pickChat,
   sameChatSet,
+  sortChatRows,
 } from "./chatSets.js";
 import { el, icon } from "./dom.js";
 import { renderVault, vaultConfirmLeave } from "./vault.js";
@@ -26,6 +27,7 @@ const statusText = document.getElementById("statusText");
 const CLOUD_PROVIDERS = [
   { value: "exe:hermes", label: "Hermes" },
   { value: "exe:life", label: "Life" },
+  { value: "exe:pirate", label: "Pirate" },
 ];
 
 // Null until boot() picks one: the HTML marks Audit active for the first paint,
@@ -1044,20 +1046,6 @@ function chatChecklist({ chats, holders, selected = [], onChange }) {
   };
 }
 
-function verifiedCloudLines(chats) {
-  const seen = new Set();
-  return chats.flatMap((chat) => {
-    const line = chat?.recipients?.line?.trim();
-    const key = cloudPhoneDigits(line);
-    if (!line || !key || seen.has(key)) return [];
-    seen.add(key);
-    return [line];
-  });
-}
-
-function cloudPhoneDigits(number) {
-  return String(number ?? "").replace(/\D/g, "");
-}
 
 function openCloudPicker(trigger, state, redraw) {
   const name = el("input", { class: "text", attrs: { placeholder: "Cloud agent", "aria-label": "Agent name" } });
@@ -1070,7 +1058,7 @@ function openCloudPicker(trigger, state, redraw) {
   const create = el("button", { class: "btn primary", text: "Set up agent" });
 
   const checklist = chatChecklist({
-    chats: state.cloudChats,
+    chats: sortChatRows(state.cloudChats),
     holders: cloudChatHolders(state),
     onChange: () => syncPicker(),
   });
@@ -1182,6 +1170,11 @@ function openCloudPicker(trigger, state, redraw) {
     ];
     if (state.cloudLinesError) {
       body.push(el("p", { class: "cloud-error", text: state.cloudLinesError }));
+    } else if (state.cloudChatsError) {
+      // The numbers are withheld until the chat list lands, because "held" is a
+      // claim about this account's chats. Saying why beats a spinner that never
+      // resolves.
+      body.push(el("p", { class: "cloud-error", text: state.cloudChatsError }));
     } else if (!state.cloudLines) {
       body.push(el("p", { class: "faint", text: "Loading numbers…" }));
     } else if (!free.length) {
@@ -1239,7 +1232,7 @@ function openCloudEditor(trigger, agent, state, redraw) {
   // served chat, `chosen()` omits it, and Save is live on open to detach a chat
   // the person was never shown.
   const checklist = chatChecklist({
-    chats: editorChats(agent, state.cloudChats),
+    chats: sortChatRows(editorChats(agent, state.cloudChats)),
     holders: cloudChatHolders(state, agent.agentId),
     selected: baseline,
     onChange: () => syncEditor(),
