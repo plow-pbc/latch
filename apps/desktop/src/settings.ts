@@ -103,20 +103,6 @@ export interface Settings {
    */
   provisionedChatUid: string;
   provisionedChatLabel: string;
-  /**
-   * The number this Mac's completed activation told it to text — the server's
-   * assigned pool line, **verbatim**.
-   *
-   * Kept because there is no call that answers "which line is mine": the
-   * relationship exists only inside the activation that created it, so it is
-   * stored here or it is lost. The cloud-agent screen needs it to explain how a
-   * new chat comes to exist.
-   *
-   * NEVER a number chosen here. Empty means we do not know one, and a screen
-   * must say so rather than fill the gap — texting the right code to the wrong
-   * number activates the account and provisions no chat at all.
-   */
-  activationSendTo: string;
   /** The first-run launch-at-login default has been applied (main.ts's
    * `applyFirstRunLaunchAtLogin`). NOT a mirror of the OS's login-item bit —
    * loginItem.ts explains why none exists — only the record that the one-time
@@ -141,7 +127,6 @@ export function loadSettings(home: string): Settings {
     agentPurpose: "",
     provisionedChatUid: "",
     provisionedChatLabel: "",
-    activationSendTo: "",
     autoCheckUpdates: true,
     autoInstallUpdates: true,
     launchAtLoginDefaulted: false,

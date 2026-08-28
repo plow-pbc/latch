@@ -110,7 +110,6 @@ export interface CloudAgentsUiState {
    * never one the app chose. `null` on a Mac that activated before it was kept,
    * and the empty state falls back to re-activate copy.
    */
-  cloudSendTo: string | null;
 }
 
 /** The slice of `CloudAgentsClient` this state needs. */
@@ -205,6 +204,16 @@ export class CloudAgentState {
    * next refresh or click from running.
    */
   private currentAction: Promise<void> = Promise.resolve();
+  /**
+   * The chat read currently in flight, so a caller whose own read was
+   * superseded can wait on the one that replaced it.
+   *
+   * Separate from `currentAction`, and deliberately: that chain serialises the
+   * ROSTER against its mutations. Chat-list ordering is left independent (#224
+   * says so), so the picker's await needs its own answer to "has the newest
+   * read landed".
+   */
+  private chatsSettled: Promise<void> = Promise.resolve();
   /** Agents whose stuck delete is being retried right now — one at a time each. */
   private tearingDown = new Set<string>();
 
@@ -222,7 +231,6 @@ export class CloudAgentState {
       cloudAgentEditsSaving: [...this.editsSaving],
       cloudChats: this.chats,
       cloudChatsLoaded: this.chatsLoaded,
-      cloudSendTo: settings.activationSendTo.trim() || null,
     };
   }
 
@@ -238,10 +246,25 @@ export class CloudAgentState {
     if (!credential) return;
     const generation = this.generation;
     const pendingEdits = new Set(this.editsPending);
+    let chats = this.refreshChats(credential, generation);
+    this.chatsSettled = chats;
     await Promise.all([
       this.sequence(() => this.refreshAgents(credential, generation, pendingEdits)),
-      this.refreshChats(credential, generation),
+      chats,
     ]);
+    // A newer chat read started while ours was in flight. Ours DROPPED its own
+    // answer on purpose — a superseded read says nothing about now — so
+    // returning here would answer from before either of them. That is exactly
+    // what a caller awaiting this must not be handed: the picker opens through
+    // `cloud:refresh`, and would show the chat list from before the text that
+    // sent the owner here. Join whatever replaced it, and whatever replaced that.
+    //
+    // Not `sequence`: that chain is the roster's, and #224 leaves chat-list
+    // ordering independent on purpose.
+    while (this.chatsSettled !== chats) {
+      chats = this.chatsSettled;
+      await chats;
+    }
     if (generation === this.generation) this.publish();
   }
 

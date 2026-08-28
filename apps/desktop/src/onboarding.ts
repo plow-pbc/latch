@@ -701,15 +701,11 @@ export class Onboarding {
       settings.provisionedChatUid = chat.uid;
       settings.provisionedChatLabel = activationChatLabel(chat);
     }
-    // The line this activation was assigned, kept for the same reason as the
-    // chat: nothing on the account can be asked for it later. The server's
-    // value verbatim — the cloud-agents screen tells a chatless account to text
-    // it, and a number we made up there would be texted into the void.
-    //
-    // Written on the way in, so it is the line that actually completed. The
-    // phone-code path has no activation and leaves it alone.
-    const sendTo = this.activation?.sendTo?.trim();
-    if (sendTo) settings.activationSendTo = sendTo;
+    // Nothing records `sendTo`. Pairing asks for no chat, so it is the managed
+    // phone — the number that takes an activation text, not one anyone can be
+    // told to text afterwards to get a chat. The cloud-agents screen names the
+    // lines the account's own chats run on, which is the only source that
+    // cannot be wrong.
     this.save(settings);
 
     // The activation is spent: drop the code and the secret rather than leave

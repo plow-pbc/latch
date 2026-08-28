@@ -132,7 +132,6 @@ let cloudProbe = {
   cloudAgentEditsPending: [],
   cloudChats: [cloudChat],
   cloudChatsLoaded: true,
-  cloudSendTo: "+1 (415) 555-0199",
 };
 const cloudCalls = { create: [], editChats: [] };
 let cloudEditPending = false;
@@ -143,7 +142,10 @@ let relaySignOutCalls = 0;
 
 // Connect state also carries the cloud-agent display state. It contains no
 // credential, session id or worker URL.
-ipcMain.handle("connect:get", async () => ({
+/** The Agents tab's whole state, as main assembles it. ONE shape: `connect:get`
+ * and `cloud:refresh` both answer with it, so a field added to the tab is added
+ * here once rather than in two fixtures that drift. */
+const agentsTabProbeState = () => ({
   mcpUrl: "https://api.plow.co/v1/relay/devices/u_probe/mcp",
   accountUid: "u_probe",
   connected: true,
@@ -155,7 +157,16 @@ ipcMain.handle("connect:get", async () => ({
   rosterError: null,
   removeError: null,
   ...cloudProbe,
-}));
+});
+ipcMain.handle("connect:get", async () => agentsTabProbeState());
+let cloudRefreshCalls = 0;
+// The real one re-reads Plow, then answers with the tab state. The fake counts
+// the call and answers with whatever `cloudProbe` holds NOW — which is what
+// lets a test change the backing list and prove the reopen fetched it.
+ipcMain.handle("cloud:refresh", async () => {
+  cloudRefreshCalls += 1;
+  return agentsTabProbeState();
+});
 ipcMain.handle("cloud:create", async (_e, chatUids, name, provider) => {
   cloudCalls.create.push({ chatUids, name, provider });
   cloudCreatePending = true;
@@ -720,7 +731,7 @@ app.whenReady().then(async () => {
     };
   }})()`);
   await win.webContents.executeJavaScript(`[...document.querySelectorAll(".cloud-modal button")].find((b) => b.textContent.trim() === "New chat…").click()`);
-  await waitFor(win, `document.querySelector(".cloud-modal .cloud-route")`, "the new-chat explainer");
+  await waitFor(win, `document.querySelector(".cloud-modal .cloud-route-numbers")`, "the new-chat explainer");
   await win.webContents.executeJavaScript(`[...document.querySelectorAll(".cloud-modal button")].find((b) => b.textContent.trim() === "Back").click()`);
   await win.webContents.executeJavaScript(`[...document.querySelectorAll(".cloud-modal button")].find((b) => b.textContent.trim() === "Cancel").click()`);
 
@@ -1030,10 +1041,88 @@ app.whenReady().then(async () => {
     notReplaced: !document.body.innerText.includes("Plow couldn't complete that request. Try again."),
   })})()`);
 
+  // A chat list that came back EMPTY, and loaded. Distinct from the failure
+  // case above, which is also empty but NOT loaded: the setup button is the
+  // only route onward for a freshly paired Mac, and since pairing stopped
+  // claiming a pool line this is that Mac's ordinary state.
+  cloudProbe = {
+    ...cloudProbe,
+    cloudAgents: [],
+    cloudAgentsError: null,
+    cloudChatsError: null,
+    cloudChatsNeedReactivation: false,
+    cloudChats: [],
+    cloudChatsLoaded: true,
+  };
+  await win.webContents.executeJavaScript(`window.__domoSelectTab("audit")`);
+  await win.webContents.executeJavaScript(`window.__domoSelectTab("agents")`);
+  await waitFor(
+    win,
+    `[...document.querySelectorAll("#view button")].some((b) => b.textContent.trim() === "Set up cloud agent")`,
+    "the setup action with a loaded-but-empty chat list",
+  );
+  const cloudLoadedEmpty = await win.webContents.executeJavaScript(`(${() => {
+    const setup = [...document.querySelectorAll("#view button")]
+      .find((button) => button.textContent.trim() === "Set up cloud agent");
+    return {
+      setupEnabled: setup.disabled === false,
+      // Not the loading spinner, and not an error: the list really did arrive.
+      noLoadingNote: !document.body.innerText.includes("Loading chats…"),
+      noErrorBanner: !document.querySelector(".cloud-error"),
+    };
+  }})()`);
+  // ...and what that button leads to with no chats and no number known: the
+  // instruction, and NO control, because there is nothing here to act on.
+  await win.webContents.executeJavaScript(
+    `[...document.querySelectorAll("#view button")].find((b) => b.textContent.trim() === "Set up cloud agent").click()`,
+  );
+  await waitFor(win, `document.querySelector(".cloud-modal")`, "the modal over an empty chat list");
+  await win.webContents.executeJavaScript(
+    `[...document.querySelectorAll(".cloud-modal button")].find((b) => b.textContent.trim() === "New chat…")?.click()`,
+  );
+  const cloudZeroChatGuidance = await win.webContents.executeJavaScript(`(${() => {
+    const text = document.querySelector(".cloud-modal").innerText;
+    const labels = [...document.querySelectorAll(".cloud-modal button")]
+      .map((button) => button.textContent.trim());
+    return {
+      saysTextANumber: text.includes('text "new agent" to a Plow number'),
+      saysReopen: text.includes("reopen this window"),
+      // The dead route is gone: it opened the setup window, which on a
+      // signed-in Mac lands on "connected" and mints nothing.
+      noVerifyButton: !labels.includes("Verify a new Plow number"),
+      // No number is known, so nothing is offered to act on.
+      noNumbersList: !document.querySelector(".cloud-modal .cloud-route-numbers"),
+    };
+  }})()`);
+  // Back to the picker, then out: "Back" leaves the explainer, "Cancel" closes.
+  await win.webContents.executeJavaScript(
+    `[...document.querySelectorAll(".cloud-modal button")].find((b) => b.textContent.trim() === "Back")?.click()`,
+  );
+  await win.webContents.executeJavaScript(
+    `[...document.querySelectorAll(".cloud-modal button")].find((b) => b.textContent.trim() === "Cancel")?.click()`,
+  );
+  await waitFor(win, `!document.querySelector(".cloud-modal")`, "the empty-list modal to close");
+  // The owner texted a number and Plow made the chat. The modal promises it
+  // "appears here when you reopen this window", so reopening must ASK — the
+  // state the button was rendered with cannot know about this.
+  const refreshesBefore = cloudRefreshCalls;
+  cloudProbe = { ...cloudProbe, cloudChats: [cloudChat] };
+  await win.webContents.executeJavaScript(
+    `[...document.querySelectorAll("#view button")].find((b) => b.textContent.trim() === "Set up cloud agent").click()`,
+  );
+  await waitFor(win, `document.querySelector(".cloud-modal .chat-list")`, "the checklist after a chat arrived");
+  cloudZeroChatGuidance.reopenAsked = cloudRefreshCalls > refreshesBefore;
+  cloudZeroChatGuidance.reopenShowsNewChat = await win.webContents.executeJavaScript(
+    `[...document.querySelectorAll(".cloud-modal .chat-option-name")].some((n) => n.textContent.includes("555-0142"))`,
+  );
+  await win.webContents.executeJavaScript(
+    `[...document.querySelectorAll(".cloud-modal button")].find((b) => b.textContent.trim() === "Cancel")?.click()`,
+  );
+
   // Restore the roster for the screenshot and the existing Agents-pane probes.
   cloudProbe = {
     ...cloudProbe,
-    cloudAgents: [cloudAgent],
+      cloudAgents: [cloudAgent],
     cloudChats: [cloudChat],
     cloudAgentsError: null,
     cloudChatsError: null,
@@ -1710,6 +1799,15 @@ app.whenReady().then(async () => {
     cloudForbidden.offersActivationChat &&
     cloudForbidden.reactivatesThroughSignOut &&
     cloudForbidden.notEmptyState &&
+    cloudLoadedEmpty.setupEnabled &&
+    cloudLoadedEmpty.noLoadingNote &&
+    cloudLoadedEmpty.noErrorBanner &&
+    cloudZeroChatGuidance.saysTextANumber &&
+    cloudZeroChatGuidance.saysReopen &&
+    cloudZeroChatGuidance.noVerifyButton &&
+    cloudZeroChatGuidance.noNumbersList &&
+    cloudZeroChatGuidance.reopenAsked &&
+    cloudZeroChatGuidance.reopenShowsNewChat &&
     cloudServerDetail.preserved &&
     cloudServerDetail.notReplaced &&
     settings.hasAccountGroup &&
@@ -1785,7 +1883,7 @@ app.whenReady().then(async () => {
     errors.length === 0;
   console.log(
     "PROBE:" +
-      JSON.stringify({ main, settings, strandedOnDisk, settingsPane, connect, cloudRoster, cloudModalFocus, cloudModalGuard, cloudCreateWait, cloudCreateTransition, cloudRowActions, cloudEditGate, cloudEditSave, cloudEditStray, cloudEditReordered, cloudEditGateUnread, cloudChatFailure, cloudForbidden, cloudServerDetail, agentsShot, approvalsReviewer, approvalsShot, purposeRoundTrip, approvalsAsk, askWithoutReviewer, approvalsShotAsk, agentsOpen, modalClosed, vaultLocked, vaultUnsaved, vaultShot, agentsOpenShot, staleSettingsPane, optimisticMode, settingsShot, approval, reviewerNote, consoleErrors: errors, ok }),
+      JSON.stringify({ main, settings, strandedOnDisk, settingsPane, connect, cloudRoster, cloudModalFocus, cloudModalGuard, cloudCreateWait, cloudCreateTransition, cloudRowActions, cloudEditGate, cloudEditSave, cloudEditStray, cloudEditReordered, cloudEditGateUnread, cloudChatFailure, cloudForbidden, cloudLoadedEmpty, cloudZeroChatGuidance, cloudServerDetail, agentsShot, approvalsReviewer, approvalsShot, purposeRoundTrip, approvalsAsk, askWithoutReviewer, approvalsShotAsk, agentsOpen, modalClosed, vaultLocked, vaultUnsaved, vaultShot, agentsOpenShot, staleSettingsPane, optimisticMode, settingsShot, approval, reviewerNote, consoleErrors: errors, ok }),
   );
   app.exit(ok ? 0 : 1);
 }).catch((err) => {

@@ -1149,49 +1149,38 @@ function openCloudPicker(trigger, state, redraw) {
   };
   const showExplainer = () => {
     if (!panel) return;
-    const verifiedLines = verifiedCloudLines(state.cloudChats);
-    const verifiedLineKeys = new Set(verifiedLines.map(cloudPhoneDigits));
-    const sendTo = state.cloudSendTo?.trim() || null;
-    const sendToAlreadyHeld = sendTo && verifiedLineKeys.has(cloudPhoneDigits(sendTo));
     const back = el("button", { class: "btn", text: "Back" });
     back.addEventListener("click", showPicker);
-    const verify = el("button", { class: "btn primary", text: "Verify a new Plow number" });
-    verify.addEventListener("click", async () => {
-      closeCloudModal();
-      await window.domo.onboardingOpen();
-    });
-    const number = sendTo
-      ? el("p", { class: "cloud-route-number" }, [
-          document.createTextNode("Number to text: "),
-          el("span", { class: "mono", text: sendTo }),
-        ])
-      : null;
-    const routes = [];
-    if (!sendToAlreadyHeld) {
-      routes.push(el("div", { class: "cloud-route" }, [
-        el("div", { class: "cloud-route-title", text: "Verify a new Plow number" }),
-        el("p", { class: "faint", text: "Run activation again, then text the code to the number Plow provides." }),
-        number,
-        verify,
-      ]));
-    }
-    if (verifiedLines.length) {
-      routes.push(el("div", { class: "cloud-route" }, [
-        el("div", { class: "cloud-route-title", text: "Start a group thread" }),
-        el("p", {
-          class: "faint",
-          text: "Add one of these verified Plow numbers to a group thread with other people:",
-        }),
-        el("ul", { class: "cloud-route-numbers" }, verifiedLines.map((line) =>
+    // Every number this Mac knows of: the lines its own chats run on, which is
+    // the only source that cannot be wrong. `verifiedCloudLines` already
+    // de-duplicates and drops the unusable.
+    const known = verifiedCloudLines(state.cloudChats);
+    // There is deliberately NO "Verify a new Plow number" button here.
+    //
+    // It used to open the setup window, which on a Mac that is already signed
+    // in lands on its "connected" screen and mints nothing — the owner clicked
+    // it and got a confirmation of the sign-in they already had. Getting a chat
+    // does not go through activation at all: the user texts a Plow number and
+    // Plow makes the chat. So this screen says that, and offers a control only
+    // where there is a number to act on.
+    const body = [
+      el("p", { class: "faint conn-note", text: "Make another chat available here." }),
+      el("p", {
+        class: "faint",
+        text: 'From your phone, text "new agent" to a Plow number. Plow starts the chat, and it appears here when you reopen this window.',
+      }),
+    ];
+    if (known.length) {
+      body.push(
+        el("p", { class: "faint", text: "Numbers this Mac knows about:" }),
+        el("ul", { class: "cloud-route-numbers" }, known.map((line) =>
           el("li", { class: "cloud-route-number mono", text: line })
         )),
-        el("p", { class: "faint", text: "The chat appears here once someone speaks." }),
-      ]));
+      );
     }
     panel.replaceChildren(
       el("div", { class: "group-title", text: "Create a new chat" }),
-      el("p", { class: "faint conn-note", text: "Make another chat available here." }),
-      ...routes,
+      ...body,
       el("div", { class: "row cloud-modal-actions" }, [back]),
     );
     back.focus();
@@ -1627,8 +1616,19 @@ function sectionHeader(title, count, unit, action) {
 
 function cloudSection(s, redraw) {
   const add = el("button", { class: "btn primary", text: "Set up cloud agent" });
-  add.disabled = !s.cloudChats.length;
-  add.addEventListener("click", () => openCloudPicker(add, s, redraw));
+  // Disabled only while the chat list is still unknown. An account whose list
+  // came back EMPTY keeps the button: since pairing stopped spending a pool
+  // line that is the ordinary state of a freshly paired Mac, and a dead button
+  // there says nothing about what to do next.
+  add.disabled = !s.cloudChatsLoaded && !s.cloudChats.length;
+  // Opening ASKS PLOW first. `s` is whatever the last tab activation fetched,
+  // and the explainer inside promises a new chat "appears here when you reopen
+  // this window" — a promise the captured state cannot keep. `cloud:refresh`
+  // answers with the tab state whether or not the network read succeeded, so
+  // there is nothing to fall back to.
+  add.addEventListener("click", async () => {
+    openCloudPicker(add, await window.domo.cloudRefresh(), redraw);
+  });
   const rosterRows = s.roster?.cloud ?? [];
   const agents = visibleCloudAgents(s);
   const byAgentId = new Map(agents.map((agent) => [agent.agentId, agent]));

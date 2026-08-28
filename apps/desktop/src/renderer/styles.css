@@ -741,15 +741,6 @@ textarea.text { min-height: 70px; resize: vertical; }
 }
 .linkbtn:hover { color: var(--fg); }
 
-.cloud-route {
-  padding: 11px 12px; border: 1px solid var(--border);
-  border-radius: var(--radius-sm); background: var(--bg);
-}
-.cloud-route + .cloud-route { margin-top: 10px; }
-.cloud-route-title { font-weight: 600; }
-.cloud-route p { margin: 4px 0 0; }
-.cloud-route .btn { margin-top: 10px; }
-.cloud-route .cloud-route-number { color: var(--fg); }
 .cloud-route-numbers { margin: 6px 0 0; padding-left: 22px; }
 .cloud-route-numbers li + li { margin-top: 3px; }
 .roster-confirm-loud { border-color: var(--red-bd); }

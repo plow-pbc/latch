@@ -138,11 +138,14 @@ export interface Activation {
   /** A SECRET: it is the poll credential. Never rendered, never logged. */
   activationSecret: string;
   /**
-   * The pool line this activation was assigned. **Render this and nothing
-   * else.** The chat is provisioned only if the code arrives *on the assigned
-   * line*, so texting the right code to a number the app picked activates the
-   * account and silently provisions no chat — a failure with no symptom until
-   * the cloud-agent screen has nothing to point at.
+   * Where the endpoint says to text this code — **render this and nothing
+   * else**, verbatim.
+   *
+   * The managed phone, not a pool line: this request asks for no chat, so the
+   * server answers with the number that takes an activation text. Nothing is
+   * provisioned on it, and nobody can be told to text it afterwards to get a
+   * chat — that is a pool line's job, and a pool line is reached by texting it
+   * directly rather than through an activation.
    */
   sendTo: string;
 }
@@ -267,27 +270,25 @@ export class PlowApi {
    * account is created from that text. Outbound, so it works for a phone number
    * that has never touched Plow and cannot be used to probe who has an account.
    *
-   * `provision_chat` is what makes the account have a chat at all. Without it
-   * the server falls back to the managed phone, which is not a pool line, so
-   * the text activates and creates nothing — and a 1:1 sent to a pool line with
-   * no chat behind it is dropped, so there is no second way in later. With it,
-   * a pool line is assigned, comes back as `send_to`, and the webhook
-   * provisions the chat when the code lands there.
+   * **`{ name }` and nothing else — byte-identical to the request Plow's own
+   * app makes.** `provision_chat` used to ride along, which assigned one of the
+   * account's few pool lines on every sign-in: an owner already holding a chat
+   * on every line had none left to give, the endpoint answered 503, and they
+   * could not pair another Mac at all. Signing in is not the moment to spend a
+   * scarce resource on something sign-in does not need.
+   *
+   * A chat on a Plow number is got by TEXTING that number — the user sends it a
+   * message and Plow makes the chat — not by an activation. Nothing downstream
+   * needs one from here: the redeem's `chat` is nullable, and
+   * `finishWithSession` already leaves stored chat state alone when a redeem
+   * carries none.
    */
   async createActivation(name: string): Promise<Activation> {
     const data = await this.call<{ display_code: string; activation_secret: string; send_to: string }>(
       "POST",
       "/v1/auth/activate",
       {
-        body: { name, provision_chat: true },
-        // 503 means something else here than it does on the OTP calls. Asking
-        // for a chat makes this endpoint assign a pool line, and an exhausted
-        // pool answers 503 — nothing to do with the SMS provider. The shared
-        // fallback would tell the user their texts are down and send them to
-        // wait on the wrong thing, so this call brings its own sentence. Only
-        // the fallback: a server that wrote a `detail` still wins, because it
-        // knows which 503 this was and we are guessing.
-        unavailableMessage: "Plow couldn't start setup right now. Try again in a minute.",
+        body: { name },
       },
     );
     return {
@@ -531,11 +532,11 @@ export class PlowApi {
   private async call<T>(
     method: string,
     path: string,
-    opts: { token?: string; body?: unknown; unavailableMessage?: string } = {},
+    opts: { token?: string; body?: unknown } = {},
   ): Promise<T> {
     const response = await this.request(method, path, opts);
 
-    if (!response.ok) throw await this.errorFor(response, opts.unavailableMessage, opts.token);
+    if (!response.ok) throw await this.errorFor(response, opts.token);
     if (response.status === 204) return undefined as T;
     try {
       return (await response.json()) as T;
@@ -603,17 +604,7 @@ export class PlowApi {
     }
   }
 
-  /**
-   * `unavailableMessage` replaces the 503 fallback for one call. A 503 means
-   * whatever the endpoint that sent it means by it, and only the caller knows
-   * that; the default reads as "the SMS provider is down" because that is what
-   * it is on the OTP calls, which are most of them.
-   */
-  private async errorFor(
-    response: Response,
-    unavailableMessage?: string,
-    credential?: string,
-  ): Promise<PlowApiError> {
+  private async errorFor(response: Response, credential?: string): Promise<PlowApiError> {
     // `detail` is the FastAPI convention, and it is server-authored. On an
     // AUTHENTICATED call it is dropped outright, whatever it says: a response
     // that repeats its bearer credential must never reach the screen, and the
@@ -637,7 +628,7 @@ export class PlowApi {
     if (response.status === 503) {
       return new PlowApiError(
         "provider_unavailable",
-        detail || unavailableMessage || "Plow can't send text messages right now.",
+        detail || "Plow can't send text messages right now.",
         503,
       );
     }

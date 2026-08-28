@@ -161,6 +161,49 @@ function build(home: string, f: Fakes): CloudAgentState {
   return new CloudAgentState({ agents: f.agents, chats: f.chats, home });
 }
 
+describe("a refresh whose chat read is superseded", () => {
+  it("does not answer until the read that replaced it has landed", async () => {
+    // The picker opens through `cloud:refresh`, which AWAITS this. A second
+    // refresh starting mid-flight makes the first drop its own answer — a
+    // superseded read says nothing about now — so a first refresh that
+    // returned there would hand its caller the list from before the text that
+    // sent the owner to this screen, and the modal would show no new chat.
+    const gates: Array<() => void> = [];
+    const answers = [[], [{ uid: "cht_new", label: "+15550001111" }]];
+    const f = fakes({
+      list: async () => [],
+      chats: () =>
+        new Promise((resolve) => {
+          const which = gates.length;
+          gates.push(() => resolve(answers[which] as never));
+        }) as never,
+    });
+    const state = build(tempHome(), f);
+
+    const first = state.refresh();
+    let firstAnswered = false;
+    void first.then(() => {
+      firstAnswered = true;
+    });
+    await Promise.resolve();
+    const second = state.refresh();
+    await Promise.resolve();
+    expect(gates).toHaveLength(2);
+
+    // The first read lands, and is superseded: it writes nothing, so the first
+    // refresh has no settled list to answer from yet.
+    gates[0]!();
+    for (let i = 0; i < 50; i += 1) await Promise.resolve();
+    expect(firstAnswered).toBe(false);
+
+    gates[1]!();
+    await Promise.all([first, second]);
+    expect(firstAnswered).toBe(true);
+    expect(state.state().cloudChats.map((c) => c.uid)).toEqual(["cht_new"]);
+    expect(state.state().cloudChatsLoaded).toBe(true);
+  });
+});
+
 describe("before anything has been read", () => {
   it("claims nothing about the account rather than reporting it empty", async () => {
     const f = fakes({ list: async () => [agent()] });
@@ -181,7 +224,6 @@ describe("before anything has been read", () => {
       cloudChats: [],
       cloudChatsLoaded: false,
       cloudChatsNeedReactivation: false,
-      cloudSendTo: null,
     });
   });
 });
@@ -231,17 +273,6 @@ describe("refresh", () => {
     });
   });
 
-  it("shows the number this Mac's activation assigned, and nothing else", async () => {
-    const home = tempHome();
-    const state = build(home, fakes());
-    expect(state.state().cloudSendTo).toBeNull();
-
-    const settings = loadSettings(home);
-    settings.activationSendTo = "+15550100";
-    saveSettings(home, settings);
-
-    expect(state.state().cloudSendTo).toBe("+15550100");
-  });
 
   it("applies roster reads in launch order", async () => {
     const first = deferred<CloudAgentResource[]>();

@@ -210,13 +210,11 @@ describe("PlowApi", () => {
     const activation = await new PlowApi("https://api.plow.co", fetchImpl).createActivation("This Mac");
 
     expect(calls[0].url).toBe("https://api.plow.co/v1/auth/activate");
-    // `provision_chat` is what makes the account have a chat at all: without it
-    // the server hands back the managed phone, which is not a pool line, so the
-    // activation text creates no chat and there is no second way to make one.
-    expect(JSON.parse(String(calls[0].init.body))).toEqual({
-      name: "This Mac",
-      provision_chat: true,
-    });
+    // `{ name }` EXACTLY — byte-identical to the request Plow's own app makes.
+    // No `provision_chat` in any form: it assigns one of the account's few
+    // pool lines, and an owner holding a chat on every line could not pair
+    // another Mac at all while signing in spent one.
+    expect(JSON.parse(String(calls[0].init.body))).toEqual({ name: "This Mac" });
     // Unauthenticated by design — this is how an account that does not exist yet
     // gets created.
     expect((calls[0].init.headers as Record<string, string>).authorization).toBeUndefined();
@@ -246,34 +244,13 @@ describe("PlowApi", () => {
     });
   });
 
-  it("does not blame the SMS provider when activation 503s with no line to assign", async () => {
-    // Asking for a chat makes this endpoint assign a pool line, so an exhausted
-    // pool 503s here — the same status the OTP calls use for "texts are down".
-    // The OTP sentence would send the user to wait on the wrong thing.
-    const { fetchImpl } = recordingFetch([{ status: 503, body: {} }]);
-    const error = (await new PlowApi("https://api.plow.co", fetchImpl)
-      .createActivation("This Mac")
-      .catch((e) => e)) as PlowApiError;
-
-    expect(error.kind).toBe("provider_unavailable");
-    expect(error.message).toBe("Plow couldn't start setup right now. Try again in a minute.");
-    expect(error.message).not.toContain("text messages");
-  });
-
-  it("still prefers the server's own reason for that 503", async () => {
-    // The server knows which 503 this was; we are guessing.
-    const { fetchImpl } = recordingFetch([
-      { status: 503, body: { detail: "No phone lines are available." } },
-    ]);
-    const error = (await new PlowApi("https://api.plow.co", fetchImpl)
-      .createActivation("This Mac")
-      .catch((e) => e)) as PlowApiError;
-
-    expect(error.message).toBe("No phone lines are available.");
-  });
-
-  it("leaves the OTP 503 saying what it has always said", async () => {
-    // The override is one call's, not a change to what 503 means everywhere.
+  it("says what a 503 has always said — one sentence, no per-call override", async () => {
+    // Activation used to carry its own 503 sentence, because asking for a chat
+    // made that endpoint assign a pool line and an exhausted pool 503'd there.
+    // It asks for no chat now, so that branch cannot run
+    // (`api/plow/auth_routes/router.py` raises it only under `provision_chat`)
+    // and the override went with it. A server that writes its own `detail`
+    // still wins on every call.
     const { fetchImpl } = recordingFetch([{ status: 503, body: {} }]);
     const error = (await new PlowApi("https://api.plow.co", fetchImpl)
       .requestOtp("+15551110000")

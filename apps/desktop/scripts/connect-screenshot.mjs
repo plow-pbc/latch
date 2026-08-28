@@ -139,11 +139,9 @@ const CLOUD_EMPTY = {
   cloudActionError: null,
   cloudChats: [],
   cloudChatsLoaded: true,
-  cloudSendTo: null,
 };
 const CLOUD_READY = {
   ...CLOUD_EMPTY,
-  cloudSendTo: "+1 (415) 555-0199",
 };
 const RULES = [
   {
@@ -234,6 +232,9 @@ async function setUp() {
     resolveExternalOpen = null;
     return true;
   });
+  // The picker opens through this: the real one re-reads Plow first. Answers
+  // with the same shape `connect:get` does, from whatever the scenario set.
+  ipcMain.handle("cloud:refresh", async () => state());
   ipcMain.handle("cloud:create", async (_e, chatUids, name, provider) => {
     cloudCreateInFlight = true;
     try {
@@ -467,41 +468,18 @@ const SCREENS = [
       await clickText(win, "Set up cloud agent", 0);
       await waitFor(win, `document.querySelector(".cloud-modal .chat-list")`, "the chat checklist");
       await openNewChatExplainer(win);
-      await waitFor(win, `document.querySelector(".cloud-modal .cloud-route")`, "the new-chat explainer");
+      await waitFor(win, `document.querySelector(".cloud-modal .cloud-route-numbers")`, "the new-chat explainer");
     },
     expect: [
       "Create a new chat",
-      "Verify a new Plow number",
-      "Number to text: +1 (415) 555-0199",
-      "Start a group thread",
+      // The whole instruction: a chat is made by texting a Plow number, not by
+      // running activation again.
+      'text "new agent" to a Plow number',
+      "reopen this window",
+      "Numbers this Mac knows about:",
       "+14155550142",
       "+14155550188",
-      "The chat appears here once someone speaks",
     ],
-  },
-  {
-    name: "cloud-new-chat-held-number",
-    cloud: {
-      ...CLOUD_READY,
-      cloudSendTo: "+1 (415) 555-0142",
-      cloudChats: [CHAT, FAMILY_CHAT],
-    },
-    prepare: async (win) => {
-      await clickText(win, "Set up cloud agent", 0);
-      await waitFor(win, `document.querySelector(".cloud-modal .chat-list")`, "the chat checklist");
-      await openNewChatExplainer(win);
-      await waitFor(win, `document.querySelector(".cloud-modal .cloud-route")`, "the new-chat explainer");
-      const routes = await win.webContents.executeJavaScript(`(${() => ({
-        offersHeldNumber: [...document.querySelectorAll(".cloud-route-title")]
-          .some((title) => title.textContent.trim() === "Verify a new Plow number"),
-        verifiedLines: [...document.querySelectorAll(".cloud-route-number")]
-          .map((line) => line.textContent.trim()),
-      })})()`);
-      if (routes.offersHeldNumber || routes.verifiedLines.join(",") !== "+14155550142,+14155550188") {
-        throw new Error(`new-chat routes used the wrong verified lines: ${JSON.stringify(routes)}`);
-      }
-    },
-    expect: ["Create a new chat", "Start a group thread", "+14155550142", "+14155550188"],
   },
   {
     name: "cloud-provisioning",
