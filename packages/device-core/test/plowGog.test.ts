@@ -73,6 +73,8 @@ describe("planPlowGog", () => {
         kind: "single",
         gogArgv: ["plow-gog", "gmail", "search", "q"],
         account: "a@example.com",
+        confirmConflict: false,
+        conflictCheck: null,
       },
     },
     {
@@ -82,22 +84,28 @@ describe("planPlowGog", () => {
         kind: "single",
         gogArgv: ["plow-gog", "gmail", "search", "q"],
         account: "b@example.com",
+        confirmConflict: false,
+        conflictCheck: null,
       },
     },
     {
-      why: "passes an uncurated read through to the default account",
+      why: "leaves everything uncurated a single-account command, resolved at run time",
       argv: ["plow-gog", "gmail", "get", "msg-1", "--json"],
       expected: {
         kind: "single",
         gogArgv: ["plow-gog", "gmail", "get", "msg-1", "--json"],
         account: null,
+        confirmConflict: false,
+        conflictCheck: null,
       },
     },
     {
-      why: "classifies a send as a write",
+      // No write classification exists: a send is a single like any other, and
+      // the more-than-one-account --account requirement is the runtime's.
+      why: "leaves a send a single-account command",
       argv: ["plow-gog", "gmail", "send", "--to", "x@y.com", "--subject", "s", "--body", "b"],
       expected: {
-        kind: "write",
+        kind: "single",
         gogArgv: ["plow-gog", "gmail", "send", "--to", "x@y.com", "--subject", "s", "--body", "b"],
         account: null,
         confirmConflict: false,
@@ -105,85 +113,12 @@ describe("planPlowGog", () => {
       },
     },
     {
-      why: "carries --account on a write",
+      why: "carries --account on any single",
       argv: ["plow-gog", "gmail", "drafts", "reply", "m1", "--body", "b", "--account", "b@example.com"],
       expected: {
-        kind: "write",
+        kind: "single",
         gogArgv: ["plow-gog", "gmail", "drafts", "reply", "m1", "--body", "b"],
         account: "b@example.com",
-        confirmConflict: false,
-        conflictCheck: null,
-      },
-    },
-    {
-      why: "classifies a nested mutating leaf (messages modify) as a write",
-      argv: ["plow-gog", "gmail", "messages", "modify", "m1", "--add-labels", "x"],
-      expected: {
-        kind: "write",
-        gogArgv: ["plow-gog", "gmail", "messages", "modify", "m1", "--add-labels", "x"],
-        account: null,
-        confirmConflict: false,
-        conflictCheck: null,
-      },
-    },
-    {
-      why: "classifies batch delete as a write",
-      argv: ["plow-gog", "gmail", "batch", "delete", "m1", "m2"],
-      expected: {
-        kind: "write",
-        gogArgv: ["plow-gog", "gmail", "batch", "delete", "m1", "m2"],
-        account: null,
-        confirmConflict: false,
-        conflictCheck: null,
-      },
-    },
-    {
-      why: "classifies labels delete as a write, through the subtree alias",
-      argv: ["plow-gog", "gmail", "label", "delete", "old-label"],
-      expected: {
-        kind: "write",
-        gogArgv: ["plow-gog", "gmail", "label", "delete", "old-label"],
-        account: null,
-        confirmConflict: false,
-        conflictCheck: null,
-      },
-    },
-    {
-      why: "classifies thread modify as a write",
-      argv: ["plow-gog", "gmail", "thread", "modify", "t1", "--add-labels", "x"],
-      expected: {
-        kind: "write",
-        gogArgv: ["plow-gog", "gmail", "thread", "modify", "t1", "--add-labels", "x"],
-        account: null,
-        confirmConflict: false,
-        conflictCheck: null,
-      },
-    },
-    {
-      why: "leaves a read leaf of a mixed subtree on the default account",
-      argv: ["plow-gog", "gmail", "labels", "list"],
-      expected: {
-        kind: "single",
-        gogArgv: ["plow-gog", "gmail", "labels", "list"],
-        account: null,
-      },
-    },
-    {
-      why: "leaves drafts list a read while drafts send is a write",
-      argv: ["plow-gog", "gmail", "drafts", "list"],
-      expected: {
-        kind: "single",
-        gogArgv: ["plow-gog", "gmail", "drafts", "list"],
-        account: null,
-      },
-    },
-    {
-      why: "classifies drafts send as a write",
-      argv: ["plow-gog", "gmail", "drafts", "send", "d1"],
-      expected: {
-        kind: "write",
-        gogArgv: ["plow-gog", "gmail", "drafts", "send", "d1"],
-        account: null,
         confirmConflict: false,
         conflictCheck: null,
       },
@@ -195,7 +130,7 @@ describe("planPlowGog", () => {
         "--from", "2026-08-28T10:00:00-07:00", "--to", "2026-08-28T11:00:00-07:00",
       ],
       expected: {
-        kind: "write",
+        kind: "single",
         gogArgv: [
           "plow-gog", "calendar", "create", "primary", "--summary", "X",
           "--from", "2026-08-28T10:00:00-07:00", "--to", "2026-08-28T11:00:00-07:00",
@@ -209,7 +144,7 @@ describe("planPlowGog", () => {
       why: "gates a timed update spelled with =",
       argv: ["plow-gog", "calendar", "update", "primary", "e1", "--from=2026-08-28T10:00:00Z", "--to=2026-08-28T11:00:00Z"],
       expected: {
-        kind: "write",
+        kind: "single",
         gogArgv: ["plow-gog", "calendar", "update", "primary", "e1", "--from=2026-08-28T10:00:00Z", "--to=2026-08-28T11:00:00Z"],
         account: null,
         confirmConflict: false,
@@ -220,7 +155,7 @@ describe("planPlowGog", () => {
       why: "lets an all-day create (date-only bounds) skip the gate",
       argv: ["plow-gog", "calendar", "create", "primary", "--summary", "X", "--from", "2026-08-28", "--to", "2026-08-29"],
       expected: {
-        kind: "write",
+        kind: "single",
         gogArgv: ["plow-gog", "calendar", "create", "primary", "--summary", "X", "--from", "2026-08-28", "--to", "2026-08-29"],
         account: null,
         confirmConflict: false,
@@ -231,7 +166,7 @@ describe("planPlowGog", () => {
       why: "never gates a delete, timed window or not",
       argv: ["plow-gog", "calendar", "delete", "primary", "e1"],
       expected: {
-        kind: "write",
+        kind: "single",
         gogArgv: ["plow-gog", "calendar", "delete", "primary", "e1"],
         account: null,
         confirmConflict: false,
@@ -245,7 +180,7 @@ describe("planPlowGog", () => {
         "--from", "2026-08-28T10:00:00Z", "--to", "2026-08-28T11:00:00Z", "--confirm-conflict",
       ],
       expected: {
-        kind: "write",
+        kind: "single",
         gogArgv: [
           "plow-gog", "calendar", "create", "primary", "--summary", "X",
           "--from", "2026-08-28T10:00:00Z", "--to", "2026-08-28T11:00:00Z",

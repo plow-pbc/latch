@@ -2,9 +2,11 @@
  * plow-gog: the multi-account front for the vendored gog binary.
  *
  * Same argv grammar, same gate, same belt — the difference is account reach.
- * Reads fan out across every connected Google account and come back as one
- * merged, account-tagged result; writes name exactly one account; timed
- * calendar creates are conflict-gated. The functions here are the PURE half:
+ * Curated reads fan out across every connected Google account and come back
+ * as one merged, account-tagged result; everything else runs on exactly one
+ * account — named with `--account` whenever more than one is connected — and
+ * timed calendar creates are conflict-gated. The functions here are the PURE
+ * half:
  * classify an argv into a plan, and merge per-account output. Everything with
  * a side effect — minting, spawning, account resolution — is `deviceAgent`'s,
  * so this whole surface is testable offline.
@@ -27,11 +29,14 @@ export type PlowGogPlan =
   | { kind: "help"; gogArgv: string[] }
   /** A curated read, run once per connected account and merged. */
   | { kind: "fanout"; gogArgv: string[]; sort: PlowGogSort }
-  /** Pass-through: one run, `account` or the default when null. */
-  | { kind: "single"; gogArgv: string[]; account: string | null }
-  /** A mutation: exactly one account, conflict-gated when `conflictCheck`. */
+  /**
+   * Everything else: ONE run, on ONE account. Which account is the runtime's
+   * question — with more than one connected, `account` is required there —
+   * and `conflictCheck` marks the one shape (a timed calendar create/update)
+   * whose run is conflict-gated.
+   */
   | {
-      kind: "write";
+      kind: "single";
       gogArgv: string[];
       account: string | null;
       confirmConflict: boolean;
@@ -56,70 +61,13 @@ const FANOUT: Readonly<Record<string, Readonly<Record<string, PlowGogSort>>>> = 
 };
 
 /**
- * The mutating verbs, by canonical group — the ones that must name ONE account
- * when several are connected. Verified against the vendored binary's help at
- * 0.36.0, aliases included (the plan's `untrash` does not exist there and was
- * dropped). Gmail subtrees that mix reads and writes are classified per leaf
- * in `GMAIL_NESTED_WRITES` below. Deliberately fail-open beyond both tables: an
- * unlisted READ verb — `settings`, `track`, and whatever a pin bump adds —
- * falls through to `single`, i.e. the default account, which is exactly
- * today's gog behavior; the real write gate is Google's scopes plus the
- * approval dialog, not this list.
+ * The one shape whose run is conflict-gated: `calendar create`/`update` and
+ * their aliases (verified against the vendored binary's help at 0.36.0).
+ * Deliberately the ONLY verb recognition outside the fan-out table — there is
+ * no read-vs-write classification to mirror gog's grammar with, because with
+ * more than one account connected EVERY single-account command requires
+ * `--account`, whatever it does. Delete and respond never conflict-gate.
  */
-const WRITES: Readonly<Record<string, ReadonlySet<string>>> = {
-  gmail: new Set([
-    "send", "reply", "reply-all", "replyall", "forward", "fwd",
-    "trash", "archive",
-    "mark-read", "read-messages", "unread", "mark-unread", "import", "autoreply",
-  ]),
-  calendar: new Set([
-    "create", "add", "new", "update", "edit", "set",
-    "delete", "rm", "del", "remove", "respond", "rsvp", "reply",
-    "move", "transfer", "subscribe", "sub", "add-calendar", "unsubscribe", "unsub",
-    "create-calendar", "new-calendar", "delete-calendar", "acl",
-    "propose-time", "focus-time", "focus", "out-of-office", "ooo", "working-location", "wl",
-  ]),
-};
-
-/** Alias spellings for one gmail subtree, each mapped to the same leaf set. */
-function subtree(
-  names: readonly string[],
-  writes: readonly string[],
-): [string, ReadonlySet<string>][] {
-  const set: ReadonlySet<string> = new Set(writes);
-  return names.map((name) => [name, set]);
-}
-
-/**
- * Gmail's mutating leaves one level down — `gmail messages modify`, `gmail
- * batch delete` and kin — verified against the vendored binary's per-subtree
- * help at 0.36.0, aliases included on both levels. Classified by the
- * (subtree, leaf) pair because every subtree here mixes reads and writes:
- * `labels list` stays a single-account read while `labels delete` demands an
- * account. A leaf not listed is a read and falls through to `single`.
- */
-const GMAIL_NESTED_WRITES: ReadonlyMap<string, ReadonlySet<string>> = new Map([
-  ...subtree(["messages", "message", "msg", "msgs"], ["modify", "update", "edit", "set"]),
-  ...subtree(["thread", "threads", "read"], ["modify", "update", "edit", "set"]),
-  ...subtree(["batch"], ["delete", "rm", "del", "remove", "modify", "update", "edit", "set"]),
-  ...subtree(
-    ["labels", "label"],
-    [
-      "create", "add", "new", "rename", "mv", "style", "color", "colour",
-      "modify", "update", "edit", "set", "delete", "rm", "del",
-    ],
-  ),
-  ...subtree(
-    ["drafts", "draft"],
-    [
-      "create", "add", "new", "update", "edit", "set", "delete", "rm", "del", "remove",
-      "send", "post", "reply", "reply-all", "replyall", "forward", "fwd",
-    ],
-  ),
-]);
-
-/** The writes whose timed window gets a conflict precheck: calendar
- * create/update and their aliases. Delete and respond never conflict-gate. */
 const CONFLICT_GATED: ReadonlySet<string> = new Set(["create", "add", "new", "update", "edit", "set"]);
 
 /** The value of `--<name> v` / `--<name>=v` in an argv, or null. Last wins,
@@ -190,27 +138,6 @@ export function planPlowGog(argv: readonly string[]): PlowGogPlan {
   const group = GOG_ALIAS_OF[stripped[0]!] ?? stripped[0]!;
   const verb = stripped[1];
 
-  const leaf = stripped[2];
-  if (
-    verb !== undefined &&
-    (WRITES[group]?.has(verb) === true ||
-      (group === "gmail" &&
-        leaf !== undefined &&
-        GMAIL_NESTED_WRITES.get(verb)?.has(leaf) === true))
-  ) {
-    let conflictCheck: { from: string; to: string } | null = null;
-    if (group === "calendar" && CONFLICT_GATED.has(verb)) {
-      const from = flagValue(stripped, "from");
-      const to = flagValue(stripped, "to");
-      // Timed bounds only: a date with no "T" is an all-day event, which
-      // skips the gate (the retired relay contract).
-      if (from !== null && to !== null && from.includes("T") && to.includes("T")) {
-        conflictCheck = { from, to };
-      }
-    }
-    return { kind: "write", gogArgv, account, confirmConflict, conflictCheck };
-  }
-
   const sort = verb !== undefined ? FANOUT[group]?.[verb] : undefined;
   if (sort !== undefined && account === null) {
     // Merging requires JSON; add what the agent did not already ask for.
@@ -220,7 +147,17 @@ export function planPlowGog(argv: readonly string[]): PlowGogPlan {
     return { kind: "fanout", gogArgv: [...gogArgv, ...extras], sort };
   }
 
-  return { kind: "single", gogArgv, account };
+  let conflictCheck: { from: string; to: string } | null = null;
+  if (group === "calendar" && verb !== undefined && CONFLICT_GATED.has(verb)) {
+    const from = flagValue(stripped, "from");
+    const to = flagValue(stripped, "to");
+    // Timed bounds only: a date with no "T" is an all-day event, which skips
+    // the gate (the retired relay contract).
+    if (from !== null && to !== null && from.includes("T") && to.includes("T")) {
+      conflictCheck = { from, to };
+    }
+  }
+  return { kind: "single", gogArgv, account, confirmConflict, conflictCheck };
 }
 
 /**

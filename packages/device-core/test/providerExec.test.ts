@@ -360,14 +360,52 @@ esac
     expectNeverSpawned(d);
   });
 
-  it("refuses a write with several accounts connected and no --account, stating the reply rule", async () => {
+  it("refuses ANY accountless single with several accounts connected, stating the reply rule", async () => {
     const d = device(accountsMinter(AB), [plowVendorDir()]);
-    const response = await run(d, ["plow-gog", "gmail", "send", "--to", "x@y.com", "--subject", "s", "--body", "b"]);
+    // A send and an uncurated read alike: with more than one account there is
+    // no silent default.
+    for (const argv of [
+      ["plow-gog", "gmail", "send", "--to", "x@y.com", "--subject", "s", "--body", "b"],
+      ["plow-gog", "gmail", "get", "m1", "--json"],
+    ]) {
+      const response = await run(d, argv);
+      const error = String(jv(response).get("error").str);
+      expect(error).toContain("pass --account");
+      expect(error).toContain("a@example.com (default)");
+      expect(error).toContain("b@example.com");
+      expect(error).toContain("received the thread");
+    }
+    expectNeverSpawned(d);
+  });
+
+  it("counts a degraded account as connected: an accountless op is refused, not rerouted", async () => {
+    // The DEFAULT is degraded; the only healthy account is the secondary. An
+    // accountless op silently running against it would answer from the wrong
+    // mailbox — refuse, naming both.
+    const d = device(
+      accountsMinter(
+        [{ account: "b@example.com", token: "tok-b", isDefault: false }],
+        [{ account: "a@example.com", reason: "needs_reauth" }],
+      ),
+      [plowVendorDir()],
+    );
+    const response = await run(d, ["plow-gog", "gmail", "get", "m1"]);
     const error = String(jv(response).get("error").str);
     expect(error).toContain("pass --account");
-    expect(error).toContain("a@example.com (default)");
     expect(error).toContain("b@example.com");
-    expect(error).toContain("received the thread");
+    expect(error).toContain("a@example.com (unavailable)");
+    expectNeverSpawned(d);
+  });
+
+  it("rejects --account naming a degraded account with its reason, running nothing", async () => {
+    const d = device(
+      accountsMinter(AB, [{ account: "c@example.com", reason: "needs_reauth" }]),
+      [plowVendorDir()],
+    );
+    const response = await run(d, ["plow-gog", "gmail", "get", "m1", "--account", "c@example.com"]);
+    const error = String(jv(response).get("error").str);
+    expect(error).toContain("cannot be used right now");
+    expect(error).toContain("needs_reauth");
     expectNeverSpawned(d);
   });
 
@@ -388,15 +426,18 @@ esac
     expect(String(jv(response).get("output").str ?? "")).toContain("TOKEN=tok-a");
   });
 
-  itSpawns("refuses a timed create over a busy slot, returning the conflicts and the override", async () => {
+  itSpawns("refuses a timed create over a busy slot with a count and the override", async () => {
     const d = device(accountsMinter(AB), [plowVendorDir()]);
     const response = await run(d, [
       "plow-gog", "calendar", "create", "primary", "--summary", "X",
       "--from", "2026-08-28T10:00:00Z", "--to", "2026-08-28T11:00:00Z", "--account", "a@example.com",
     ]);
     expect(jv(response).get("status").str).toBe("error");
+    expect(String(jv(response).get("error").str)).toContain("1 event(s) overlap");
     expect(String(jv(response).get("error").str)).toContain("--confirm-conflict");
-    expect(response).toMatchObject({ conflicts: [{ summary: "Standup" }] });
+    // The records themselves stay on the Mac: the owner approved a CREATE,
+    // and event summaries riding its refusal would be an unapproved read.
+    expect(JSON.stringify(response)).not.toContain("Standup");
     // The create itself never ran: its output would have been the response.
     expect(JSON.stringify(response)).not.toContain("evt-1");
   });

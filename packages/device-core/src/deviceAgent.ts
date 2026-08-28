@@ -719,33 +719,49 @@ export class DeviceAgent {
       } as JSONValue;
     }
 
-    // single / write: exactly one account. The emails listed are the mint's
-    // own, so the sentence is safe for the audit log; the caller's requested
-    // spelling deliberately is not repeated.
-    const connected = minted.accounts
-      .map((a) => (a.isDefault ? `${a.account} (default)` : a.account))
-      .join(", ");
+    // single: exactly one account, whatever the command does. CONNECTED means
+    // healthy PLUS degraded — a degraded default must never let an accountless
+    // command silently run against a healthy non-default account. The emails
+    // listed are the mint's own, so the sentences are safe for the audit log;
+    // the caller's requested spelling deliberately is not repeated.
+    if (minted.accounts.length === 0) {
+      // The real minter throws before this; a Minter that answers with only
+      // degraded accounts still must not fall through to accounts[0].
+      const error = "every connected Google account needs re-auth";
+      this.audit.record("exec_error", { intentId: intent.intentId, error });
+      return { status: "error", error };
+    }
+    const connected = [
+      ...minted.accounts.map((a) => (a.isDefault ? `${a.account} (default)` : a.account)),
+      ...minted.degraded.map((d) => `${d.account} (unavailable)`),
+    ].join(", ");
     const requested = plan.account;
-    let target: MintedAccounts["accounts"][number] | undefined;
+    let target: MintedAccounts["accounts"][number];
     if (requested !== null) {
-      target = minted.accounts.find((a) => a.account.toLowerCase() === requested.toLowerCase());
-      if (target === undefined) {
-        const error = `that --account is not a connected account. Connected: ${connected}`;
+      const healthy = minted.accounts.find((a) => a.account.toLowerCase() === requested.toLowerCase());
+      const unhealthy = minted.degraded.find((d) => d.account.toLowerCase() === requested.toLowerCase());
+      if (healthy === undefined) {
+        // A degraded account's reason is local/allowlisted text (see
+        // mintAccountTokens), safe to repeat.
+        const error = unhealthy
+          ? `that account cannot be used right now: ${unhealthy.reason}. Re-connect it in Plow`
+          : `that --account is not a connected account. Connected: ${connected}`;
         this.audit.record("exec_error", { intentId: intent.intentId, error });
         return { status: "error", error };
       }
-    } else if (plan.kind === "write" && minted.accounts.length > 1) {
+      target = healthy;
+    } else if (minted.accounts.length + minted.degraded.length > 1) {
       const error =
-        `this command acts on one mailbox: pass --account <email>. Connected: ${connected}. ` +
+        `this command runs on one account: pass --account <email>. Connected: ${connected}. ` +
         "When replying, use the account that received the thread.";
       this.audit.record("exec_error", { intentId: intent.intentId, error });
       return { status: "error", error };
     } else {
-      target = minted.accounts.find((a) => a.isDefault) ?? minted.accounts[0]!;
+      target = minted.accounts[0]!;
     }
 
     this.audit.record("exec_start", { intentId: intent.intentId, argv });
-    if (plan.kind === "write" && plan.conflictCheck !== null && !plan.confirmConflict) {
+    if (plan.conflictCheck !== null && !plan.confirmConflict) {
       const { from, to } = plan.conflictCheck;
       const probe = await settled(
         await runGog(
@@ -771,14 +787,16 @@ export class DeviceAgent {
         return { status: "error", error };
       }
       if (conflicts.length > 0) {
+        // The COUNT only. The records themselves are calendar content the
+        // owner approved a CREATE for, not a read — returning them would be
+        // an unapproved read riding a create argv.
         this.audit.record("exec_end", { intentId: intent.intentId, exit_code: 0 });
         return {
           status: "error",
           error:
             `the slot is busy — ${conflicts.length} event(s) overlap this window. ` +
             "Re-send the same command with --confirm-conflict to book anyway.",
-          conflicts,
-        } as JSONValue;
+        };
       }
     }
     return this.finishRun(intent.intentId, await runGog(plan.gogArgv.slice(1), target.token));

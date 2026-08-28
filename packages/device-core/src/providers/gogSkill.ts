@@ -42,14 +42,16 @@ rather than reporting an absence you did not verify.
 lists the connected accounts and which is the default, from the mint — no
 Google call at all.
 
-**Everything else runs on ONE account.** Pass \`--account <email>\` to pick it;
-without the flag, an uncurated read runs on the default account, and a write
-with several accounts connected is refused until you name one.
+**Everything else runs on ONE account.** Pass \`--account <email>\` to pick
+it. With more than one account connected, EVERY non-fan-out command — reads
+included — requires \`--account\` and is refused with the connected list until
+you name one; with exactly one account connected, it runs there without the
+flag.
 
 **Follow-ups carry the item's account.** Message and event IDs are
-per-mailbox: a \`gmail get\` on an id from a fan-out result MUST pass
-\`--account <that item's account>\`, or it runs against the default mailbox and
-will miss. When replying, use the account that received the thread.
+per-mailbox: a \`gmail get\` on an id from a fan-out result passes
+\`--account <that item's account>\`. When replying, use the
+account that received the thread.
 
 **Timed calendar creates are conflict-gated.** A \`calendar create\`/\`update\`
 with timed \`--from\`/\`--to\` first checks the window on the target account;
