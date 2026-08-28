@@ -102,6 +102,11 @@ export interface VendoredProvider {
   readonly skill: Skill;
 }
 
+/**
+ * The vendored gog itself: what the binary needs, and what it refuses. Not a
+ * row in `PROVIDERS` — every call reaches the binary through `PLOW_GOG` below,
+ * which reads this for everything but its planner.
+ */
 const GOG: VendoredProvider = {
   command: "gog",
   binary: "gog",
@@ -135,11 +140,17 @@ const GOG: VendoredProvider = {
 };
 
 /**
- * The multi-account front for the same vendored gog. One approved argv, N
- * runs of the binary — one per connected Google account — merged into one
+ * The multi-account front for the vendored gog. One approved argv, N runs of
+ * the binary — one per connected Google account — merged into one
  * account-tagged result; `deviceAgent.executePlowGog` is the orchestration.
- * `gog` above stays registered (deprecated) so existing exact-argv approvals
- * keep working; new work uses this row.
+ *
+ * A bare `gog` argv is this row too (`vendoredProvider` matches the binary's
+ * name as well as the command's). Nothing advertises that spelling — the skill
+ * teaches `plow-gog` — but an agent that learned `gog` before this row existed
+ * keeps working, and gets the fan-out rather than a second, single-account
+ * path beside it. The alternative, a registered `gog` row of its own, was what
+ * let an agent that probed `command -v plow-gog` (no such binary: this row
+ * stages none) conclude that `gog` was the one that existed.
  */
 const PLOW_GOG: VendoredProvider = {
   command: "plow-gog",
@@ -157,19 +168,21 @@ const PLOW_GOG: VendoredProvider = {
   },
 };
 
-export const PROVIDERS: readonly VendoredProvider[] = [GOG, PLOW_GOG];
+export const PROVIDERS: readonly VendoredProvider[] = [PLOW_GOG];
 
 /**
  * The provider an argv invokes, or null when it invokes none.
  *
- * Matched on `argv[0]` exactly. A path (`/usr/local/bin/gog`) is deliberately
- * NOT a match: honouring a caller-supplied one would let an agent point the
- * mint at a binary of its choosing.
+ * Matched on `argv[0]` exactly, against the command OR the binary it stages —
+ * naming the bundled binary directly is naming the provider that fronts it.
+ * A path (`/usr/local/bin/gog`) is deliberately NOT a match: honouring a
+ * caller-supplied one would let an agent point the mint at a binary of its
+ * choosing.
  */
 export function vendoredProvider(argv: readonly string[]): VendoredProvider | null {
   const head = argv[0];
   if (head === undefined) return null;
-  return PROVIDERS.find((p) => p.command === head) ?? null;
+  return PROVIDERS.find((p) => p.command === head || p.binary === head) ?? null;
 }
 
 /**

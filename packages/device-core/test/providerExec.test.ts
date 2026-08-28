@@ -126,9 +126,12 @@ function run(d: DeviceAgent, argv: string[], waitMs = 8000): Promise<JSONValue> 
 }
 
 describe("a vendored provider through the exec path", () => {
+  // Bare `gog` is the plow-gog provider (registry.ts); `gmail get` is a
+  // single-account verb, so one account means one run and the child's own
+  // output comes back — what these assert on.
   itSpawns("mints a token into the child's environment, and never into argv", async () => {
     const d = device(okMinter(), [vendorDir()]);
-    const out = String(jv(await run(d, ["gog", "gmail", "search", "q"])).get("output").str ?? "");
+    const out = String(jv(await run(d, ["gog", "gmail", "get", "1"])).get("output").str ?? "");
     expect(out).toContain(`TOKEN=${TOKEN}`);
     // argv is world-readable through ps; the child's environment is not.
     expect(out).toContain("ARGV=");
@@ -137,14 +140,14 @@ describe("a vendored provider through the exec path", () => {
 
   itSpawns("puts the belt in front of the command path", async () => {
     const d = device(okMinter(), [vendorDir()]);
-    const out = String(jv(await run(d, ["gog", "gmail", "search", "q"])).get("output").str ?? "");
-    expect(out).toContain("ARGV=--no-input --wrap-untrusted --enable-commands=gmail,calendar gmail search q");
+    const out = String(jv(await run(d, ["gog", "gmail", "get", "1"])).get("output").str ?? "");
+    expect(out).toContain("ARGV=--no-input --wrap-untrusted --enable-commands=gmail,calendar gmail get 1");
   });
 
   itSpawns("records the argv the OWNER approved, not the belted one", async () => {
     // The belt only ever narrows, and it is not what the human read.
     const d = device(okMinter(), [vendorDir()]);
-    await run(d, ["gog", "gmail", "search", "q"]);
+    await run(d, ["gog", "gmail", "get", "1"]);
     const start = d.audit.entries().map((e) => JSON.stringify(e)).find((l) => l.includes("exec_start"))!;
     expect(start).toContain("gmail");
     expect(start).not.toContain("--wrap-untrusted");
@@ -173,11 +176,11 @@ describe("a vendored provider through the exec path", () => {
     [
       "a minter that threw something else",
       (): Minter => minterOf(async () => { throw new Error(TOKEN); }),
-      /could not authorise gog/,
+      /could not authorise plow-gog/,
     ],
   ])("reports %s without spawning", async (_why, make, expected) => {
     const d = device(make(), [vendorDir()]);
-    const response = await run(d, ["gog", "gmail", "search", "q"]);
+    const response = await run(d, ["gog", "gmail", "get", "1"]);
     const message = jv(response).get("error").str;
     expect(message).toMatch(expected);
     // Whatever was thrown, the token reaches neither the agent NOR the
@@ -197,7 +200,7 @@ describe("a vendored provider through the exec path", () => {
     // owner has installed — unbelted, unrefused, against their credentials.
     const mint = vi.fn(async () => TOKEN);
     const d = device({ mint }, []);
-    const response = await run(d, ["gog", "gmail", "search", "q"]);
+    const response = await run(d, ["gog", "gmail", "get", "1"]);
     expect(jv(response).get("error").str).toMatch(/not installed/);
     expect(mint).not.toHaveBeenCalled();
     expectNeverSpawned(d);

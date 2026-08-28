@@ -21,7 +21,15 @@ const gog = vendoredProvider(["gog"])!;
 
 describe("vendoredProvider", () => {
   it("matches a bare command name", () => {
-    expect(vendoredProvider(["gog", "gmail", "search"])?.command).toBe("gog");
+    expect(vendoredProvider(["plow-gog", "gmail", "search"])?.command).toBe("plow-gog");
+  });
+
+  it("routes the bundled binary's own name to the provider that fronts it", () => {
+    // An agent that learned `gog` before plow-gog existed keeps working and
+    // gets the multi-account fan-out — one provider, whichever spelling. The
+    // skill advertises only `plow-gog`; there is no `gog` row to find.
+    expect(vendoredProvider(["gog", "gmail", "search"])).toBe(vendoredProvider(["plow-gog"]));
+    expect(PROVIDERS.map((p) => p.command)).toEqual(["plow-gog"]);
   });
 
   it("does NOT match a path", () => {
@@ -43,7 +51,7 @@ describe("vendoredProvider", () => {
     // through to the ordinary exec path and run whatever `gog` the owner
     // happens to have on their own PATH — unbelted, unrefused, against their
     // own credentials. The device turns this into a refusal instead.
-    expect(vendoredProvider(["gog", "gmail", "search", "q"])?.command).toBe("gog");
+    expect(vendoredProvider(["gog", "gmail", "search", "q"])).not.toBeNull();
   });
 });
 
