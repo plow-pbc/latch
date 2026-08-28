@@ -818,7 +818,7 @@ function fetchVaultServer(arch) {
   // way produced a binary linked against the build machine's OpenSSL, and a
   // marker that only knew the commit would keep serving it from cache.
   const marker = path.join(installRoot, ".commit");
-  const stamp = `${commit}:vendored-openssl`;
+  const stamp = `${commit}:vendored-openssl:license-v1`;
   if (fs.existsSync(marker) && fs.readFileSync(marker, "utf8") === stamp) {
     log(`vault server ${arch} up to date`);
     return;
@@ -917,7 +917,10 @@ function fetchVaultCli(arch) {
   const asset = lock.vaultCli.assets[arch === "arm64" ? "arm64" : "x64"];
   const installRoot = path.join(vaultCliDir, arch);
   const marker = path.join(installRoot, ".sha256");
-  if (fs.existsSync(marker) && fs.readFileSync(marker, "utf8") === asset.sha256) {
+  // Keyed by recipe as well as payload (like the vault server's stamp), so a
+  // cache from before the provenance file existed regenerates once.
+  const stamp = `${asset.sha256}:provenance-v1`;
+  if (fs.existsSync(marker) && fs.readFileSync(marker, "utf8") === stamp) {
     log(`vault cli ${arch} up to date`);
     return;
   }
@@ -936,7 +939,7 @@ function fetchVaultCli(arch) {
     path.join(installRoot, "PROVENANCE.txt"),
     `Bitwarden CLI (bw-oss) ${lock.vaultCli.version} (GPL-3.0)\nPrebuilt upstream release: ${asset.url}\n`,
   );
-  fs.writeFileSync(marker, asset.sha256);
+  fs.writeFileSync(marker, stamp);
   log(`vault cli ${arch} ready at ${installRoot}`);
 }
 
