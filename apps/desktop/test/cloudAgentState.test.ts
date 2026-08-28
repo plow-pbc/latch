@@ -177,6 +177,7 @@ describe("before anything has been read", () => {
       cloudChatsError: null,
       cloudActionError: null,
       cloudAgentEditsPending: [],
+      cloudAgentEditsSaving: [],
       cloudChats: [],
       cloudChatsLoaded: false,
       cloudChatsNeedReactivation: false,
@@ -679,11 +680,11 @@ describe("provisioning", () => {
 });
 
 describe("removing", () => {
-  it("does not let a listing from before a delete put the row back", async () => {
-    const listing = deferred<CloudAgentResource[]>();
+  it("does not let a live PUT or pre-delete listing put the row back", async () => {
+    const update = deferred<CloudAgentResource>(), listing = deferred<CloudAgentResource[]>();
     let lists = 0;
     const f = fakes({
-      update: async () => { throw new PlowApiError("network", "Plow didn't answer in time."); },
+      update: async () => update.promise,
       list: async () => {
         if (++lists !== 2) throw new PlowApiError("http", "Plow returned 503.", 503);
         return listing.promise;
@@ -692,10 +693,13 @@ describe("removing", () => {
     });
     const state = build(tempHome(), f);
 
+    await state.refresh();
+    const saving = state.editChats("agent_1", ["cht_2"]);
     // A refresh in the air, started before the user clicked Remove…
-    await state.editChats("agent_1", ["cht_2"]);
     const refreshing = state.refresh();
     await state.remove("agent_1");
+    update.resolve(agent({ chatUids: ["cht_2"] }));
+    await saving;
     // …answering only now, with the agent still in it.
     listing.resolve([agent()]);
     await refreshing;

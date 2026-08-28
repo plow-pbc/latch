@@ -1454,7 +1454,7 @@ function rosterActions(
   row,
   section,
   redraw,
-  { messageAgentId = null, messageDisabled = false, cloudAgentId = null, editAgent = null } = {},
+  { messageAgentId = null, messageDisabled = false, cloudAgentId = null, editAgent = null, removeDisabled = false } = {},
 ) {
   const name = rosterName(row, section === "cloud" ? "Cloud agent" : "Unnamed session");
   const actions = [];
@@ -1486,6 +1486,7 @@ function rosterActions(
     text: "⋯",
     attrs: { "aria-label": `More actions for ${name}` },
   });
+  more.disabled = removeDisabled;
   const actionLabel = section === "cloud" ? "Remove" : "Revoke";
   const action = el("button", { text: actionLabel });
   const menu = el("div", { class: "more-menu", attrs: { role: "menu" } }, [action]);
@@ -1566,6 +1567,7 @@ function cloudEntityRow(row, agent, state, redraw) {
       messageAgentId: agent?.agentId ?? row?.agentId,
       messageDisabled: editPending || agent?.status !== "running" || !agent?.recipients?.line?.trim(),
       cloudAgentId: row ? null : agent?.agentId,
+      removeDisabled: state.cloudAgentEditsSaving?.includes(agent?.agentId) ?? false,
       // Only a real, running agent can be edited: a local pending row has no
       // agent id Plow knows, and one that failed or is being torn down has no
       // chats to move. Provisioning shows the button dead rather than hiding

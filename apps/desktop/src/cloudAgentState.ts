@@ -102,6 +102,7 @@ export interface CloudAgentsUiState {
   cloudActionError: string | null;
   /** Agent ids whose chat-set save is in flight or being reconciled. */
   cloudAgentEditsPending: string[];
+  cloudAgentEditsSaving: string[];
   cloudChats: CloudChatOption[];
   /**
    * A chat-list attempt SUCCEEDED — even if it returned nothing.
@@ -238,6 +239,7 @@ export class CloudAgentState {
       cloudChatsNeedReactivation: this.chatsNeedReactivation,
       cloudActionError: this.actionError,
       cloudAgentEditsPending: [...this.editsPending.keys()],
+      cloudAgentEditsSaving: [...this.editsPending].flatMap(([id, read]) => read === null ? [id] : []),
       cloudChats: this.chats,
       cloudChatsLoaded: this.chatsLoaded,
       cloudSendTo: settings.activationSendTo.trim() || null,
@@ -360,7 +362,7 @@ export class CloudAgentState {
       return;
     }
     if (generation !== this.generation) return;
-    this.editsPending.delete(id);
+    if (!this.editsPending.delete(id)) return;
     this.mutations += 1;
     // The row goes to the answer, not to what was asked for: the server decides
     // what the agent serves, and a set it normalised differently must show as
