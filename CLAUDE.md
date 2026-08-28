@@ -121,7 +121,10 @@ Integration coverage, which owns that list.
   because seatbelt enforces against physical paths. `fs.realpathSync` is
   `realpath(3)` and preserves `/private` — don't swap in anything that
   normalizes differently.
-- **Everything honors `DOMO_HOME`** so tests use throwaway roots.
+- **Everything honors `DOMO_HOME`** so tests use throwaway roots. One deliberate
+  exception: a launched app creates the owner's real `~/Plow` (the agent
+  playground) whatever `DOMO_HOME` says — the folder is the owner's, not the
+  instance's. Tests stay hermetic because `DeviceAgent` keys it on `ownerHome`.
 - `DOMO_DEBUG_SANDBOX=1` dumps generated seatbelt profiles to stderr.
 - **Canonical JSON is signature-critical.** Object keys sort by code unit (ASCII
   only — never introduce non-ASCII keys), slashes are not escaped, integral

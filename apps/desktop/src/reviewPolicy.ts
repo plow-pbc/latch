@@ -9,6 +9,8 @@
  */
 import { Intent, JSONValue } from "@domo/protocol";
 import {
+  APPROVAL_SOURCE_PLOW_FOLDER,
+  confinedToPlowFolder,
   DENIAL_SOURCE_NO_CREDITS,
   DENIAL_SOURCE_NO_REVIEWER,
   DENIAL_SOURCE_REVIEWER_UNAVAILABLE,
@@ -90,6 +92,12 @@ export interface DecideDeps {
   /** Plow API origin. Baked into the build, never a setting. */
   apiBaseUrl: string;
   /**
+   * The owner's `~/Plow` folder — the playground. File operations confined to
+   * it are granted without a reviewer or a dialog (see `confinedToPlowFolder`
+   * for what "confined" refuses). Deny mode outranks it.
+   */
+  plowRoot: string;
+  /**
    * The audit log's current entries. NOT review context any more — nothing
    * below reads this, and the reviewer is handed `history: []` (DESIGN.md
    * §4). It comes out with `ReviewArgs.history` (#140).
@@ -123,6 +131,14 @@ export async function decideIntent(
   const mode = settings.approvalMode ?? "ask";
 
   if (mode === "deny") return { decision: "deny", source: "policy" };
+
+  // The playground: file operations confined to ~/Plow are granted here, in
+  // every mode that grants anything — no review spent, no dialog raised. After
+  // the deny return above ON PURPOSE: deny mode is the owner's kill switch,
+  // and the carve-out must not outrank it.
+  if (await confinedToPlowFolder(intent.capabilities, deps.plowRoot)) {
+    return { decision: "allow_once", source: APPROVAL_SOURCE_PLOW_FOLDER };
+  }
 
   /** Is the reviewer the decider for this intent? */
   // Approve: the whole point of the mode. Above the reviewer, because by here

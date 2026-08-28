@@ -34,6 +34,9 @@ import { REVIEWER_MODEL } from "../src/adversarialAgent.js";
 
 const PLOW_CREDENTIAL = "plow_sk_do_not_leak_me";
 
+// A real directory, because confinement canonicalizes (realpath) both sides.
+const PLOW_ROOT = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), "plow-root-"));
+
 function settings(overrides: Partial<Settings> = {}): Settings {
   return {
     relayCredential: "",
@@ -87,6 +90,7 @@ function harness(
     decideIntent(intent(), {
       settings: s,
       apiBaseUrl: "https://api.plow.co",
+      plowRoot: PLOW_ROOT,
       auditEntries: () => [],
       record: (event, fields) => records.push({ event, fields }),
       review,
@@ -123,6 +127,7 @@ describe("nothing about the past reaches the reviewer", () => {
     await decideIntent(intent(), {
       settings: settings({ approvalMode: "adversarial", relayCredential: PLOW_CREDENTIAL }),
       apiBaseUrl: "https://api.plow.co",
+      plowRoot: PLOW_ROOT,
       auditEntries: () => soaked,
       record: () => {},
       review,
@@ -244,6 +249,7 @@ describe("a stored rule cannot stand in for a required review", () => {
         return decideIntent(i, {
           settings: s,
           apiBaseUrl: "https://api.plow.co",
+      plowRoot: PLOW_ROOT,
           auditEntries: () => [],
           record: () => {},
           review: async () => ({ verdict: await answer(), reason: "because" }),
@@ -624,6 +630,7 @@ describe("the approval dialog's advice note carries no credential either", () =>
         showAgentSuggestions: true,
       }),
       apiBaseUrl: "https://api.plow.co",
+      plowRoot: PLOW_ROOT,
       auditEntries: () => [],
       record: () => {},
       review: adversarialReview, // the REAL one, guard included
@@ -822,5 +829,60 @@ describe("what the reviewer is told about the owner's purpose", () => {
 
     expect(JSON.stringify(h.records)).not.toContain("Groceries");
     expect(JSON.stringify(h.records)).not.toContain("~/Developer");
+  });
+});
+
+/**
+ * The ~/Plow playground: file operations confined to it are granted with no
+ * reviewer and no dialog — in every mode except deny, which is the owner's
+ * kill switch and must keep outranking the carve-out.
+ */
+describe("the ~/Plow playground carve-out", () => {
+  function plowIntent(caps: Parameters<typeof makeIntent>[0]["capabilities"]): Intent {
+    return makeIntent({
+      agentId: "agent-1",
+      agentDisplay: "Agent One",
+      deviceId: "device-1",
+      request: "write file",
+      capabilities: caps,
+      sessionId: "s1",
+    });
+  }
+
+  function run(mode: Settings["approvalMode"], caps: Parameters<typeof makeIntent>[0]["capabilities"]) {
+    const review = vi.fn(async () => ({ verdict: "deny" as const, reason: "no" }));
+    const openApproval = vi.fn(async () => "deny" as const);
+    const result = decideIntent(plowIntent(caps), {
+      settings: settings({ approvalMode: mode, relayCredential: PLOW_CREDENTIAL }),
+      apiBaseUrl: "https://api.plow.co",
+      plowRoot: PLOW_ROOT,
+      auditEntries: () => [],
+      record: () => {},
+      review,
+      openApproval,
+    });
+    return { result, review, openApproval };
+  }
+
+  const confinedWrite = () => [{ kind: "fs.write" as const, paths: [path.join(PLOW_ROOT, "notes.md")] }];
+  const confinedRead = () => [{ kind: "fs.read" as const, paths: [path.join(PLOW_ROOT, "a/b.txt")] }];
+  const outsideWrite = () => [{ kind: "fs.write" as const, paths: [path.join(os.tmpdir(), "outside.txt")] }];
+  const writeAndExec = () => [
+    { kind: "fs.write" as const, paths: [path.join(PLOW_ROOT, "notes.md")] },
+    { kind: "process.exec" as const, argv: ["ls"], cwd: PLOW_ROOT },
+  ];
+
+  it.each([
+    ["a confined write in adversarial mode grants, no review spent", "adversarial", confinedWrite, "plow_folder", 0, 0],
+    ["a confined read in ask mode grants, no dialog", "ask", confinedRead, "plow_folder", 0, 0],
+    ["deny mode still refuses the playground", "deny", confinedWrite, "policy", 0, 0],
+    // reviews=1 on the ask rows: suggestions are on, so the dialog gets a hint.
+    ["a path outside the folder keeps the normal path", "ask", outsideWrite, "ask", 1, 1],
+    ["exec disqualifies the whole set, even inside the folder", "ask", writeAndExec, "ask", 1, 1],
+  ] as const)("%s", async (_name, mode, caps, source, reviews, dialogs) => {
+    const { result, review, openApproval } = run(mode, caps());
+    expect((await result).source).toBe(source);
+    expect(review).toHaveBeenCalledTimes(reviews);
+    expect(openApproval).toHaveBeenCalledTimes(dialogs);
   });
 });

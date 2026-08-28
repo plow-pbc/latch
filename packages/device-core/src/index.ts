@@ -15,6 +15,7 @@ export * from "./browser/vaultKeychain.js";
 export * from "./browser/browsingSkill.js";
 export * from "./skills.js";
 export * from "./whatsappSkill.js";
+export * from "./plowFolder.js";
 export * from "./deviceAgent.js";
 export * from "./executor.js";
 export {

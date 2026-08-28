@@ -23,6 +23,7 @@ import { Intent } from "@domo/protocol";
 import {
   ApprovalStore,
   DeviceAgent,
+  plowFolderPath,
   PolicyDelegate,
   readCredentialsState,
   resolveBrowserRuntime,
@@ -176,6 +177,10 @@ class ElectronPolicy implements PolicyDelegate {
     return decideIntent(intent, {
       settings: loadSettings(home),
       apiBaseUrl,
+      // The real home, deliberately — same resolution the DeviceAgent below
+      // gets as ownerHome. A from-source run shares the packaged app's
+      // playground; the folder is the owner's, not the instance's.
+      plowRoot: plowFolderPath(os.homedir()),
       auditEntries: () => audit?.entries() ?? [],
       record: (event, fields) => audit?.record(event, fields),
       review: adversarialReview,

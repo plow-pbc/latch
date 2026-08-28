@@ -185,7 +185,7 @@ DOMO_HOME=/tmp/plow-latch-local DOMO_API_BASE_URL=http://localhost:4242 npx elec
 is, and there is no main window until the wizard's last button hands over:
 
 ```bash
-DOMO_HOME=$(mktemp -d) just app                                    # a clean first run, your real state untouched
+DOMO_HOME=$(mktemp -d) just app                                    # a clean first run; real state untouched, except ~/Plow (created deliberately — the playground is the owner's)
 rm ~/Library/Application\ Support/Plow-Latch-<branch>/app/settings.json  # or reset the real one
 ```
 
