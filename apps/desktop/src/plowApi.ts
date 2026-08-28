@@ -159,8 +159,8 @@ export interface ActivationChatParticipant {
   providerKey: string | null;
   /** A human-readable member name, when the provider supplied one. */
   displayName: string | null;
-  /** `owner` or `member` today; kept as a string for future provider roles. */
-  role: string;
+  /** Whether this member owns the chat. */
+  isOwner: boolean;
 }
 
 /**
@@ -222,21 +222,23 @@ export function parseActivationChat(raw: unknown): ActivationChat | null {
   const agent = all.find((p) => p.type === "agent");
   const line = (agent?.line ?? null) as Record<string, unknown> | null;
   const members = all.filter((p) => p.type === "member");
-  const isOwner = (participant: Record<string, unknown>) =>
-    participant.role === "owner" ||
-    (typeof participant.display_name === "string" && participant.display_name.trim() === "You");
+  const parsedMembers = members.map((participant) => {
+    const displayName = typeof participant.display_name === "string"
+      ? participant.display_name
+      : null;
+    return {
+      providerKey: typeof participant.provider_key === "string" ? participant.provider_key : null,
+      displayName,
+      isOwner: participant.role === "owner" || displayName?.trim() === "You",
+    };
+  });
   // Keep the owner-first participant order used by addressing and the numeric
   // fallback. Labels can order the same members differently without changing
   // who a message is sent to.
   const participants = [
-    ...members.filter(isOwner),
-    ...members.filter((participant) => !isOwner(participant)),
-  ]
-    .map((p) => ({
-      providerKey: typeof p.provider_key === "string" ? p.provider_key : null,
-      displayName: typeof p.display_name === "string" ? p.display_name : null,
-      role: typeof p.role === "string" ? p.role : "",
-    }));
+    ...parsedMembers.filter((participant) => participant.isOwner),
+    ...parsedMembers.filter((participant) => !participant.isOwner),
+  ];
   return {
     uid,
     status: typeof chat.status === "string" ? chat.status : "",

@@ -345,11 +345,11 @@ describe("PlowApi", () => {
         createdAt: "2026-08-24T18:02:11Z",
         // Members only: the agent participant is not a human in the chat.
         // The owner is first even though the wire put another member first.
-        // Names and roles cross for labelling; phone handles stay alongside
-        // them for addressing.
+        // Names and ownership cross for labelling; phone handles stay
+        // alongside them for addressing.
         participants: [
-          { providerKey: "+15551230000", displayName: "You", role: "" },
-          { providerKey: "+15557654321", displayName: "Ada Lovelace", role: "" },
+          { providerKey: "+15551230000", displayName: "You", isOwner: true },
+          { providerKey: "+15557654321", displayName: "Ada Lovelace", isOwner: false },
         ],
       },
     });
@@ -391,7 +391,7 @@ describe("PlowApi", () => {
         uid: "cht_x",
         participants: [{ type: "member", provider_key: "+15551230000" }],
       })?.participants,
-    ).toEqual([{ providerKey: "+15551230000", displayName: null, role: "" }]);
+    ).toEqual([{ providerKey: "+15551230000", displayName: null, isOwner: false }]);
     // No uid is no chat: there would be nothing to join on later.
     expect(parseActivationChat({ status: "active" })).toBeNull();
     expect(parseActivationChat(undefined)).toBeNull();

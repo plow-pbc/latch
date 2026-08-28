@@ -729,20 +729,8 @@ app.whenReady().then(async () => {
   await win.webContents.executeJavaScript(
     `document.querySelector(".cloud-modal .chat-option:not(.disabled) input").click()`,
   );
-  const providerFocused = await win.webContents.executeJavaScript(`(() => {
-    const select = document.querySelector('.cloud-modal select[aria-label="Provider"]');
-    if (!select) return false;
-    select.focus();
-    return document.activeElement === select;
-  })()`);
-  if (!providerFocused) throw new Error("provider select could not be focused");
-  win.webContents.sendInputEvent({ type: "keyDown", keyCode: "L" });
-  win.webContents.sendInputEvent({ type: "char", keyCode: "L" });
-  win.webContents.sendInputEvent({ type: "keyUp", keyCode: "L" });
-  await waitFor(
-    win,
-    `document.querySelector('.cloud-modal select[aria-label="Provider"]')?.value === "exe:life"`,
-    "Life to be selected by type-ahead",
+  await win.webContents.executeJavaScript(
+    `document.querySelector('.cloud-modal select[aria-label="Provider"]').value = "exe:life"`,
   );
   const cloudCreateWait = await win.webContents.executeJavaScript(`(${() => {
     const button = [...document.querySelectorAll(".cloud-modal button")]

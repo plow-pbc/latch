@@ -156,18 +156,28 @@ export function activationChatRecipients(chat: ActivationChat): ChatRecipients {
   };
 }
 
+function usableChatDisplayName(value: string | null, providerKey: string | null = null): string | null {
+  const name = (value ?? "").trim();
+  const handle = (providerKey ?? "").trim();
+  if (!name || name === "You" || name === handle || !/\p{L}/u.test(name)) return null;
+  return name;
+}
+
 export function activationChatLabel(chat: ActivationChat): string {
-  const displayName = (chat.displayName ?? "").trim();
+  const displayName = usableChatDisplayName(chat.displayName);
   if (displayName) return displayName;
 
-  const named = chat.participants.filter((participant) => {
-    const name = (participant.displayName ?? "").trim();
-    return name && name !== "You";
-  });
+  const named = chat.participants
+    .map((participant) => ({
+      name: usableChatDisplayName(participant.displayName, participant.providerKey),
+      isOwner: participant.isOwner,
+    }))
+    .filter((participant): participant is { name: string; isOwner: boolean } =>
+      participant.name !== null);
   const names = [
-    ...named.filter((participant) => participant.role !== "owner"),
-    ...named.filter((participant) => participant.role === "owner"),
-  ].map((participant) => participant.displayName!.trim());
+    ...named.filter((participant) => !participant.isOwner),
+    ...named.filter((participant) => participant.isOwner),
+  ].map((participant) => participant.name);
   if (names.length) return names.join(", ");
 
   const line = (chat.line ?? "").trim();

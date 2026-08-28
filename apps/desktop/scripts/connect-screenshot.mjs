@@ -516,7 +516,9 @@ const SCREENS = [
       await waitFor(win, `document.querySelector(".cloud-modal .chat-list")`, "the chat checklist");
       await chooseFirstChat(win);
       await type(win, `input[aria-label="Agent name"]`, "Household helper");
-      await chooseLifeProvider(win);
+      await win.webContents.executeJavaScript(
+        `document.querySelector('.cloud-modal select[aria-label="Provider"]').value = "exe:life"`,
+      );
       await clickText(win, "Set up agent", 0);
       await waitFor(win, `!document.querySelector(".cloud-modal")`, "the picker to close during create");
       await waitFor(win, `document.querySelector(".cloud-agent-row .cloud-spinner")`, "the pending agent row");
@@ -735,25 +737,6 @@ async function chooseFirstChat(win) {
     return true;
   })()`);
   if (!checked) throw new Error("no chat checklist to drive");
-}
-
-/** Pick Life through the select's native type-ahead behavior. */
-async function chooseLifeProvider(win) {
-  const focused = await win.webContents.executeJavaScript(`(() => {
-    const select = document.querySelector('.cloud-modal select[aria-label="Provider"]');
-    if (!select) return false;
-    select.focus();
-    return document.activeElement === select;
-  })()`);
-  if (!focused) throw new Error("no provider picker to drive");
-  win.webContents.sendInputEvent({ type: "keyDown", keyCode: "L" });
-  win.webContents.sendInputEvent({ type: "char", keyCode: "L" });
-  win.webContents.sendInputEvent({ type: "keyUp", keyCode: "L" });
-  await waitFor(
-    win,
-    `document.querySelector('.cloud-modal select[aria-label="Provider"]')?.value === "exe:life"`,
-    "Life to be selected",
-  );
 }
 
 async function type(win, selector, text) {

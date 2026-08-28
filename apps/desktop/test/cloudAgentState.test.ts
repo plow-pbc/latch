@@ -286,8 +286,8 @@ describe("the numbers a chat can be messaged on", () => {
     created_at: "2026-08-20T10:00:00Z",
     participants: [
       { type: "agent", line: { provider_key: "+15550100" } },
-      { type: "member", display_name: "Ada", provider_key: "+15550111" },
-      { type: "member", display_name: "Grace", provider_key: "+15550122" },
+      { type: "member", display_name: "Ada", role: "member", provider_key: "+15550111" },
+      { type: "member", display_name: "Grace", role: "owner", provider_key: "+15550122" },
     ],
   };
 
@@ -415,8 +415,10 @@ describe("the numbers a chat can be messaged on", () => {
     expect(chats).toEqual([
       {
         uid: "cht_1",
+        // Labels put non-owners first, while addressing keeps the parser's
+        // owner-first participant order.
         label: "Ada, Grace",
-        recipients: { line: "+15550100", members: ["+15550111", "+15550122"] },
+        recipients: { line: "+15550100", members: ["+15550122", "+15550111"] },
       },
     ]);
   });

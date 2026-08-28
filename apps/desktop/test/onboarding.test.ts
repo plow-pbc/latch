@@ -28,8 +28,41 @@ const CHAT: ActivationChat = {
   displayName: null,
   line: "+15559876543",
   createdAt: "2026-08-24T18:02:11Z",
-  participants: [{ providerKey: "+15551230000", displayName: null, role: "" }],
+  participants: [{ providerKey: "+15551230000", displayName: null, isOwner: true }],
 };
+
+function wireChat({
+  displayName,
+  line = "+15550000000",
+  members,
+}: {
+  displayName?: string;
+  line?: string;
+  members: Array<{ displayName: string; providerKey: string; role: "owner" | "member" }>;
+}): Record<string, unknown> {
+  return {
+    uid: "cht_fixture",
+    object: "chat",
+    status: "active",
+    provider_key: "thread_fixture",
+    ...(displayName === undefined ? {} : { display_name: displayName }),
+    participants: [
+      {
+        type: "agent",
+        line: { uid: "ln_fixture", provider_type: "imessage", provider_key: line },
+      },
+      ...members.map((member, index) => ({
+        type: "member",
+        uid: `cp_${index}`,
+        display_name: member.displayName,
+        role: member.role,
+        provider_type: "imessage",
+        provider_key: member.providerKey,
+      })),
+    ],
+    created_at: "2026-08-27T22:22:52Z",
+  };
+}
 
 type FakeRedeem =
   | { status: "pending" }
@@ -321,36 +354,13 @@ describe("activation — the path a brand-new user takes", () => {
   });
 
   it("prefers a chat's top-level display name", () => {
-    const chat = parseActivationChat({
-      uid: "cht_weekend",
-      object: "chat",
-      status: "active",
-      provider_key: "thread_weekend",
-      display_name: "Weekend crew",
-      participants: [
-        {
-          type: "agent",
-          line: { uid: "ln_weekend", provider_type: "imessage", provider_key: "+15550001000" },
-        },
-        {
-          type: "member",
-          uid: "cp_owner",
-          display_name: "Avery",
-          role: "owner",
-          provider_type: "imessage",
-          provider_key: "+15550001001",
-        },
-        {
-          type: "member",
-          uid: "cp_friend",
-          display_name: "Morgan",
-          role: "member",
-          provider_type: "imessage",
-          provider_key: "+15550001002",
-        },
+    const chat = parseActivationChat(wireChat({
+      displayName: "Weekend crew",
+      members: [
+        { displayName: "Avery", providerKey: "+15550001001", role: "owner" },
+        { displayName: "Morgan", providerKey: "+15550001002", role: "member" },
       ],
-      created_at: "2026-08-27T22:22:52Z",
-    })!;
+    }))!;
 
     expect(activationChatLabel(chat)).toBe("Weekend crew");
     expect(chat.participants.map((participant) => participant.providerKey)).toEqual([
@@ -360,45 +370,40 @@ describe("activation — the path a brand-new user takes", () => {
   });
 
   it("uses member display names with non-owners first and skips You", () => {
-    const chat = parseActivationChat({
-      uid: "cht_friends",
-      object: "chat",
-      status: "active",
-      provider_key: "thread_friends",
-      participants: [
-        {
-          type: "agent",
-          line: { uid: "ln_friends", provider_type: "imessage", provider_key: "+15550002000" },
-        },
-        {
-          type: "member",
-          uid: "cp_owner",
-          display_name: "You",
-          role: "owner",
-          provider_type: "imessage",
-          provider_key: "+15550002001",
-        },
-        {
-          type: "member",
-          uid: "cp_friend",
-          display_name: "Riley",
-          role: "member",
-          provider_type: "imessage",
-          provider_key: "+15550002002",
-        },
-        {
-          type: "member",
-          uid: "cp_coowner",
-          display_name: "Casey",
-          role: "owner",
-          provider_type: "imessage",
-          provider_key: "+15550002003",
-        },
+    const chat = parseActivationChat(wireChat({
+      members: [
+        { displayName: "You", providerKey: "+15550002001", role: "owner" },
+        { displayName: "Riley", providerKey: "+15550002002", role: "member" },
+        { displayName: "Casey", providerKey: "+15550002003", role: "owner" },
       ],
-      created_at: "2026-08-25T18:36:43Z",
-    })!;
+    }))!;
 
     expect(activationChatLabel(chat)).toBe("Riley, Casey");
+  });
+
+  it("rejects a member display name that repeats its provider handle", () => {
+    const owner = "+15550003001";
+    const chat = parseActivationChat(wireChat({
+      line: "+15550003000",
+      members: [{ displayName: owner, providerKey: owner, role: "owner" }],
+    }))!;
+
+    expect(activationChatLabel(chat)).toBe("+15550003000, +15550003001");
+  });
+
+  it("rejects a top-level display name with no letters", () => {
+    const chat = parseActivationChat(wireChat({
+      displayName: "+15550004001, +15550004002",
+      line: "+15550004000",
+      members: [
+        { displayName: "+15550004001", providerKey: "+15550004001", role: "owner" },
+        { displayName: "+15550004002", providerKey: "+15550004002", role: "member" },
+      ],
+    }))!;
+
+    expect(activationChatLabel(chat)).toBe(
+      "+15550004000, +15550004001, +15550004002",
+    );
   });
 
   it("falls back to numbers when the wire has no usable display names", () => {
@@ -407,40 +412,24 @@ describe("activation — the path a brand-new user takes", () => {
     // Reading the wrong one put an opaque id where the user looks for something
     // to text. Parsed from the real shape rather than a hand-made
     // `ActivationChat`, because the two halves are only wrong together.
-    const chat = parseActivationChat({
-      uid: "cht_D7hfWNK",
-      object: "chat",
-      status: "active",
-      provider_key: "chat_5",
-      created_at: "2026-08-24T18:02:11Z",
-      participants: [
-        {
-          type: "agent",
-          uid: "cpt_agent",
-          line: { uid: "lin_7", provider_type: "linq", provider_key: "+15559876543" },
-        },
-        {
-          type: "member",
-          uid: "cpt_ada",
-          status: "active",
-          display_name: "You",
-          role: "owner",
-          provider_key: "+15551230000",
-        },
+    const chat = parseActivationChat(wireChat({
+      line: "+15559876543",
+      members: [
+        { displayName: "You", providerKey: "+15551230000", role: "owner" },
       ],
-    })!;
+    }))!;
 
     const label = activationChatLabel(chat);
     expect(label).toBe("+15559876543, +15551230000");
-    expect(label).not.toContain("chat_5");
+    expect(label).not.toContain("thread_fixture");
   });
 
   it("falls back to its line, owner handle and remaining handles", () => {
     expect(activationChatLabel({
       ...CHAT,
       participants: [
-        { providerKey: "+15551230000", displayName: null, role: "" },
-        { providerKey: "+15557654321", displayName: null, role: "" },
+        { providerKey: "+15551230000", displayName: null, isOwner: true },
+        { providerKey: "+15557654321", displayName: null, isOwner: false },
       ],
     })).toBe("+15559876543, +15551230000, +15557654321");
     // A member whose address IS the line is not said twice.
@@ -449,7 +438,7 @@ describe("activation — the path a brand-new user takes", () => {
         ...CHAT,
         participants: [
           ...CHAT.participants,
-          { providerKey: "+15559876543", displayName: null, role: "" },
+          { providerKey: "+15559876543", displayName: null, isOwner: false },
         ],
       }),
     ).toBe("+15559876543, +15551230000");
@@ -459,7 +448,7 @@ describe("activation — the path a brand-new user takes", () => {
       activationChatLabel({
         ...CHAT,
         line: null,
-        participants: [{ providerKey: "+15551230000", displayName: null, role: "" }],
+        participants: [{ providerKey: "+15551230000", displayName: null, isOwner: false }],
       }),
     ).toBe("+15551230000");
     // Nothing to say but the uid beats an empty line on the last setup screen.
