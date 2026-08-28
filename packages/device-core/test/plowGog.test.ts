@@ -19,6 +19,31 @@ describe("planPlowGog", () => {
         kind: "fanout",
         gogArgv: ["plow-gog", "gmail", "search", "newer_than:7d", "--json", "--results-only"],
         sort: "gmail-date",
+        accounts: null,
+      },
+    },
+    {
+      // The --calendars reading is the calendar group's: elsewhere the flag
+      // is a usage error gog reports itself, like any other misspelling.
+      why: "leaves a stray --calendars on a gmail fan-out to gog",
+      argv: ["plow-gog", "gmail", "search", "q", "--calendars=a"],
+      expected: {
+        kind: "fanout",
+        gogArgv: ["plow-gog", "gmail", "search", "q", "--calendars=a", "--json", "--results-only"],
+        sort: "gmail-date",
+        accounts: null,
+      },
+    },
+    {
+      // gog's --account takes one email; plow-gog's takes several, and on a
+      // fan-out read that is the accounts to fan out to — gmail or calendar.
+      why: "narrows a fan-out to the several accounts --account names",
+      argv: ["plow-gog", "gmail", "search", "q", "--account", "a@example.com,b@example.com"],
+      expected: {
+        kind: "fanout",
+        gogArgv: ["plow-gog", "gmail", "search", "q", "--json", "--results-only"],
+        sort: "gmail-date",
+        accounts: ["a@example.com", "b@example.com"],
       },
     },
     {
@@ -28,6 +53,7 @@ describe("planPlowGog", () => {
         kind: "fanout",
         gogArgv: ["plow-gog", "mail", "search", "q", "--json", "--results-only"],
         sort: "gmail-date",
+        accounts: null,
       },
     },
     {
@@ -37,6 +63,7 @@ describe("planPlowGog", () => {
         kind: "fanout",
         gogArgv: ["plow-gog", "calendar", "events", "primary", "--json", "--results-only"],
         sort: "cal-start",
+        accounts: null,
       },
     },
     {
@@ -46,6 +73,7 @@ describe("planPlowGog", () => {
         kind: "fanout",
         gogArgv: ["plow-gog", "cal", "freebusy", "primary", "--json", "--results-only"],
         sort: "none",
+        accounts: null,
       },
     },
     {
@@ -55,6 +83,7 @@ describe("planPlowGog", () => {
         kind: "fanout",
         gogArgv: ["plow-gog", "calendar", "conflicts", "--from", "x", "--to", "y", "--json", "--results-only"],
         sort: "none",
+        accounts: null,
       },
     },
     {
@@ -64,6 +93,7 @@ describe("planPlowGog", () => {
         kind: "fanout",
         gogArgv: ["plow-gog", "gmail", "search", "q", "--json", "--results-only"],
         sort: "gmail-date",
+        accounts: null,
       },
     },
     {
@@ -84,6 +114,19 @@ describe("planPlowGog", () => {
         kind: "single",
         gogArgv: ["plow-gog", "gmail", "search", "q"],
         account: "b@example.com",
+        confirmConflict: false,
+        conflictCheck: null,
+      },
+    },
+    {
+      // The flag the fan-out refuses is fine once one account is named:
+      // that account is asked for calendars it can name.
+      why: "narrows a --calendars read to the one account that owns them",
+      argv: ["plow-gog", "calendar", "events", "list", "--calendars=a,b", "--account", "a@example.com"],
+      expected: {
+        kind: "single",
+        gogArgv: ["plow-gog", "calendar", "events", "list", "--calendars=a,b"],
+        account: "a@example.com",
         confirmConflict: false,
         conflictCheck: null,
       },
@@ -265,6 +308,18 @@ describe("planPlowGog", () => {
       why: "refuses an --account with no value",
       argv: ["plow-gog", "gmail", "search", "q", "--account"],
       reason: "--account needs a value",
+    },
+    {
+      // A calendar id has an owner; under a fan-out there is no account to
+      // send it to. The sentence carries both corrections.
+      why: "refuses --calendars under a fan-out",
+      argv: ["plow-gog", "calendar", "events", "list", "--calendars=sneakyagenttext", "--from=now"],
+      reason: "--account a@x,b@y",
+    },
+    {
+      why: "refuses several --account emails on a single-account command",
+      argv: ["plow-gog", "gmail", "get", "msg-1", "--account=a@example.com,sneakyagenttext"],
+      reason: "one email",
     },
   ])("$why", ({ argv, reason }) => {
     const plan = planPlowGog(argv);
