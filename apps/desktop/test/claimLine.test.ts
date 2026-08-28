@@ -84,8 +84,17 @@ class FakePlow {
     this.openRedeems = null;
   }
 
-  async redeemActivation(_secret: string) {
+  /** An answer pinned to ONE code, for tests where two are in flight and it
+   * matters which one is being answered. Falls back to `redeems`. */
+  answerFor: Record<string, FakeRedeem> = {};
+
+  async redeemActivation(secret: string) {
     if (this.redeemGate) await this.redeemGate;
+    const pinned = this.answerFor[secret];
+    if (pinned) {
+      if (pinned.status === "pending") return pinned;
+      return { status: "verified" as const, token: pinned.token, chat: pinned.chat ?? null };
+    }
     const next = this.redeems.length > 1 ? this.redeems.shift()! : this.redeems[0];
     if (next instanceof PlowApiError) throw next;
     if (next.status === "pending") return next;
@@ -105,6 +114,18 @@ class FakePlow {
     this.openRevokes?.();
     this.revokeGate = null;
     this.openRevokes = null;
+  }
+
+  /** Who the server says completed a code. The account that texted it — NOT
+   * whichever Mac minted it, which is the whole point of the check. */
+  completedBy = "u_123";
+  relayInfoCalls: string[] = [];
+  relayInfoFails = false;
+
+  async relayInfo(token: string) {
+    this.relayInfoCalls.push(token);
+    if (this.relayInfoFails) throw new PlowApiError("network", "no route");
+    return { uid: this.completedBy, mcpUrl: "http://localhost/mcp", deviceConnected: true };
   }
 
   async revokeDeviceCredential(token: string): Promise<void> {
@@ -168,11 +189,16 @@ describe("claiming a Plow number", () => {
     const state = await claim.begin();
 
     expect(plow.activations).toEqual([{ name: "Plow Latch (test)", provisionChat: true }]);
+    // Derived from the live code, not stored beside it.
     expect(state.step).toBe("waiting");
+    expect(claim.cancel().step).toBe("idle");
     expect(state.activation?.displayCode).toBe("CODE1");
     // The number the server assigned, verbatim, and the exact body to send.
     expect(state.activation?.sendTo).toBe("+15550001111");
     expect(state.activation?.smsBody).toBe("Plow Activate: CODE1");
+    // NOT busy: the modal disables its controls on `busy`, so a snapshot taken
+    // before the mint released the flag hands back a claim nobody can act on.
+    expect(state.busy).toBe(false);
   });
 
   it("keeps the chat and the line, mints nothing, and retires the token", async () => {
@@ -306,6 +332,107 @@ describe("claiming a Plow number", () => {
     expect(claim.cancel().activation).toBeNull();
   });
 
+  it.each([
+    {
+      why: "the text came from another account's phone",
+      setup: () => {
+        plow.completedBy = "u_someone_else";
+      },
+      says: "came from a different Plow account",
+    },
+    {
+      why: "the account behind the text could not be read",
+      setup: () => {
+        plow.relayInfoFails = true;
+      },
+      says: "couldn't confirm which account",
+    },
+  ])("refuses to store a chat when $why", async ({ setup, says }) => {
+    // A code is a bearer credential the server binds to WHOEVER texts it. A
+    // Mac paired as A whose code is sent from B's phone gets B's session and
+    // B's chat back — and used to store B's chat and B's line under A, having
+    // spent one of B's numbers. Fails closed: an account we cannot read is one
+    // we cannot say this chat belongs to.
+    plow.redeems = [{ status: "verified", token: SESSION_TOKEN, chat: CHAT }];
+    setup();
+    const claim = build();
+    await claim.begin();
+    await settle();
+
+    expect(claim.state().chat).toBeNull();
+    expect(claim.state().activationStale).toBe(true);
+    expect(claim.state().message).toContain(says);
+    // Nothing of the other account's is kept.
+    expect(loadSettings(home).provisionedChatUid).toBe("");
+    expect(loadSettings(home).provisionedChatLabel).toBe("");
+    expect(loadSettings(home).activationSendTo).toBe("");
+    expect(refreshes).toBe(0);
+    // The stray session is retired either way — it is live whoever owns it.
+    expect(plow.revoked).toEqual([SESSION_TOKEN]);
+  });
+
+  it("asks who completed the code before retiring the token that can answer", async () => {
+    plow.redeems = [{ status: "verified", token: SESSION_TOKEN, chat: CHAT }];
+    const claim = build();
+    await claim.begin();
+    await settle();
+
+    expect(plow.relayInfoCalls).toEqual([SESSION_TOKEN]);
+    expect(loadSettings(home).provisionedChatUid).toBe("cht_D7hfWNK");
+  });
+
+  it("a retired code's answer does not disturb the code that replaced it", async () => {
+    // The old loop's redeem is still in the air when the owner gives up and
+    // asks again. Its answer is real and its token needs retiring, but
+    // cancelling polling, dropping the secret or stalling on its behalf would
+    // kill the watch on the code now on screen — a claim that could never
+    // complete, with nothing saying so.
+    // Pinned to the FIRST code: both loops are parked on the same gate, so an
+    // answer taken off a shared queue would be handed to whichever resumed
+    // first rather than to the code it belongs to.
+    plow.answerFor[`${ACTIVATION_SECRET}_0`] = { status: "verified", token: SESSION_TOKEN, chat: CHAT };
+    plow.holdRedeems();
+    const claim = build();
+    await claim.begin();
+
+    claim.cancel();
+    const replacement = await claim.begin();
+    expect(plow.activations).toHaveLength(2);
+    expect(replacement.activation?.displayCode).toBe("CODE2");
+
+    plow.releaseRedeems();
+    // Settled only as far as the old answer being dealt with — `settle()`
+    // would run the replacement's own poll past its five-minute window on the
+    // fake clock and stall it for an honest reason, hiding the one under test.
+    await settleUntil(() => plow.revoked.length === 1);
+
+    // The replacement is untouched: still live, still watched, not stalled.
+    expect(claim.state().activation?.displayCode).toBe("CODE2");
+    expect(claim.state().activationStale).toBe(false);
+    expect(claim.state().chat).toBeNull();
+    expect(loadSettings(home).provisionedChatUid).toBe("");
+    // ...and the stray session from the abandoned code is still retired.
+    expect(plow.revoked).toEqual([SESSION_TOKEN]);
+  });
+
+  it("mints a replacement rather than joining a mint abandoned mid-flight", async () => {
+    // The abandoned flight's own continuation writes nothing (it checks the
+    // same epoch), so a caller that joined it got a snapshot with no code in
+    // it and no mint: the owner clicks, and the screen sits empty.
+    plow.holdActivations();
+    const claim = build();
+    const abandoned = claim.begin();
+    claim.cancel();
+
+    const fresh = claim.begin();
+    plow.releaseActivations();
+    await Promise.all([abandoned, fresh]);
+
+    expect(plow.activations).toHaveLength(2);
+    expect((await fresh).activation?.displayCode).toBe("CODE2");
+    expect(claim.state().activation?.displayCode).toBe("CODE2");
+  });
+
   it("cancels an in-flight claim without leaving the poll running", async () => {
     const claim = build();
     await claim.begin();
@@ -327,7 +454,7 @@ describe("claiming a Plow number", () => {
     expect(claim.state().message).toContain("expired before your text arrived");
     // A retired code is done with, so the next request mints rather than
     // putting the same dead code back on the clock.
-    await claim.newCode();
+    await claim.begin();
     expect(plow.activations).toHaveLength(2);
   });
 
@@ -380,7 +507,7 @@ describe("claiming a Plow number", () => {
     // would strand the one the owner may have already texted.
     const claim = build();
     const first = await claim.begin();
-    const again = await claim.newCode();
+    const again = await claim.begin();
 
     expect(plow.activations).toHaveLength(1);
     expect(again.activation?.displayCode).toBe(first.activation?.displayCode);

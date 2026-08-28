@@ -138,7 +138,7 @@ let cloudProbe = {
 // `connect:get` like the rest of the cloud group, because that is how the real
 // main process publishes it.
 let claimProbe = { step: "idle", busy: false, message: "", activation: null, activationStale: false, chat: null };
-const claimCalls = { begin: 0, newCode: 0, cancel: 0, openMessages: 0 };
+const claimCalls = { begin: 0, cancel: 0, openMessages: 0 };
 const claimActivation = {
   displayCode: "Q7RM2",
   sendTo: "+1 (628) 555-0177",
@@ -149,10 +149,6 @@ const claimActivation = {
 ipcMain.handle("claimLine:begin", async () => {
   claimCalls.begin += 1;
   claimProbe = { ...claimProbe, step: "waiting", activation: claimActivation };
-  return claimProbe;
-});
-ipcMain.handle("claimLine:newCode", async () => {
-  claimCalls.newCode += 1;
   return claimProbe;
 });
 ipcMain.handle("claimLine:cancel", async () => {

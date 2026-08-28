@@ -1252,7 +1252,7 @@ function openCloudPicker(trigger, state, redraw) {
     }
     if (claim.activationStale || (!activation && !done)) {
       const again = el("button", { class: "btn primary", text: "Get a new code" });
-      again.addEventListener("click", async () => showClaim(await window.domo.claimLineNewCode()));
+      again.addEventListener("click", async () => showClaim(await window.domo.claimLineBegin()));
       again.disabled = !!claim.busy;
       actions.push(again);
     }

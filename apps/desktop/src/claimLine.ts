@@ -37,6 +37,10 @@ import { loadSettings, saveSettings } from "./settings.js";
  * `idle` is both ends of the flow: before a code exists and after the claim
  * landed. What separates them for the screen is `chat` — the claim's result —
  * so there is no "done" step to clear on the next open.
+ *
+ * DERIVED from whether a code is live, never stored: a second copy of that
+ * fact needs a hook on every path that mints, cancels or finishes, and the one
+ * that gets missed is a screen saying "waiting" at nothing.
  */
 export type ClaimLineStep = "idle" | "waiting";
 
@@ -66,7 +70,6 @@ export interface ClaimLineDeps {
 }
 
 export class ClaimLine {
-  private step: ClaimLineStep = "idle";
   private chat: ActivationChatView | null = null;
   private readonly activation: Activation;
 
@@ -81,10 +84,6 @@ export class ClaimLine {
       publish: () => deps.onChange?.(),
       onReset: () => {
         this.chat = null;
-        this.step = "idle";
-      },
-      onMinted: () => {
-        this.step = "waiting";
       },
       onVerified: (result, stillOurs) => this.verified(result, stillOurs),
       hint: (reason) =>
@@ -100,18 +99,18 @@ export class ClaimLine {
   }
 
   state(): ClaimLineState {
-    return { step: this.step, ...this.activation.view(), chat: this.chat };
+    const view = this.activation.view();
+    return { step: view.activation ? "waiting" : "idle", ...view, chat: this.chat };
   }
 
-  /** Start a claim, or hand back the one already on screen. */
+  /**
+   * Start a claim, hand back the one already on screen, or replace one the
+   * server has retired — `begin` is all three, because the engine already has
+   * to tell them apart and a second entry point was a second name for one
+   * behaviour.
+   */
   begin(): Promise<ClaimLineState> {
     return this.activation.begin(() => this.state());
-  }
-
-  /** A fresh code — or the same one back on the clock, which is `begin`'s job
-   * to tell apart. */
-  async newCode(): Promise<ClaimLineState> {
-    return this.begin();
   }
 
   /**
@@ -122,7 +121,6 @@ export class ClaimLine {
    */
   cancel(): ClaimLineState {
     this.activation.abandon();
-    this.step = "idle";
     this.deps.onChange?.();
     return this.state();
   }
@@ -142,6 +140,30 @@ export class ClaimLine {
    */
   private async verified(result: VerifiedRedeem, stillOurs: boolean): Promise<Terminal> {
     const epoch = this.activation.epoch();
+    // WHO completed this code, before the token that can answer is retired.
+    //
+    // The code is a bearer credential and the server binds it to whoever texts
+    // it, not to the Mac that minted it. So a Mac paired as account A whose
+    // code is texted from B's phone gets a verified answer carrying B's
+    // session and B's chat — and, before this check, stored B's chat and B's
+    // line under A, having spent one of B's numbers. `relayInfo` is the same
+    // call pairing uses to learn `accountUid`, and the redeem itself carries
+    // no account id (`ActivationRedeemVerifiedResponse` is `status` + `token`
+    // + `chat`), so this is the only way to ask from here.
+    //
+    // Client-side only, and therefore a guard rather than a guarantee: the
+    // server is what should refuse a redeem from another account, and that is
+    // a plow change. This stops the Mac from PERSISTING a mismatch, which is
+    // the part that is ours.
+    let completedBy: string | null = null;
+    if (result.token) {
+      // Before the revoke: retiring the session first would leave nothing
+      // authorised to ask.
+      completedBy = await this.deps.api
+        .relayInfo(result.token)
+        .then((info) => info.uid)
+        .catch(() => null);
+    }
     // The token is a throwaway HERE and a live session token on the account:
     // it carries `keys:manage` and `relay:*`. Nothing in this flow needs it —
     // the Mac is already signed in — so it is retired and never stored.
@@ -151,8 +173,8 @@ export class ClaimLine {
     // refuses the calling session — and stays best-effort because a Mac that
     // cannot reach Plow must still finish the claim.
     if (result.token) await this.deps.api.revokeDeviceCredential(result.token).catch(() => {});
-    // Re-checked AFTER the revoke, not only before it: the revoke is an await
-    // a sign-out can land in, and writing past one would name, on the next
+    // Re-checked AFTER those awaits, not only before them: each is a window a
+    // sign-out can land in, and writing past one would name, on the next
     // account's screen, a chat bought by the one that just left.
     if (!stillOurs || this.activation.abandonedSince(epoch)) return FINISHED;
     // Nothing usable came back, in either shape it takes: no chat (texted to
@@ -162,6 +184,18 @@ export class ClaimLine {
     if (!result.chat || !result.token) {
       return stallWith(
         "Plow verified that text but didn't hand back a new chat. Get a new code and send it to the number shown.",
+      );
+    }
+    // FAILS CLOSED. An account we could not read, or a Mac with no account
+    // recorded, is one we cannot say this chat belongs to — and storing a
+    // chat under the wrong owner is exactly the failure this exists to stop.
+    const pairedTo = loadSettings(this.deps.home).accountUid.trim();
+    if (!pairedTo || !completedBy || completedBy !== pairedTo) {
+      return stallWith(
+        completedBy && pairedTo
+          ? "That text came from a different Plow account, so the number was not added here. " +
+            "Get a new code and send it from the phone signed in to this Mac's account."
+          : "Plow couldn't confirm which account that text came from, so nothing was saved. Get a new code and try again.",
       );
     }
 
@@ -180,7 +214,6 @@ export class ClaimLine {
       saveSettings(this.deps.home, settings);
 
       this.chat = { uid: chat.uid, label: activationChatLabel(chat) };
-      this.step = "idle";
       this.activation.settled();
       // The chat is a row on the cloud-agent screen, already open behind this
       // modal. Last, and after every write above: a sign-out landing in this

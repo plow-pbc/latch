@@ -209,6 +209,16 @@ export class Activation {
    * second code. `flightId` says which flight it is. */
   private flight: Promise<unknown> | null = null;
   private flightId = 0;
+  /**
+   * The abandonment epoch the in-flight mint belongs to.
+   *
+   * A flight from before an `abandon` is not one a later caller may join: its
+   * own continuation refuses to write anything (it checks the same epoch), so
+   * joining it returns a snapshot with no code in it and mints nothing — the
+   * owner clicks, and the screen sits empty. A request made after abandonment
+   * gets a replacement instead.
+   */
+  private flightEpoch = 0;
   private mints = 0;
 
   constructor(private readonly host: ActivationHost) {}
@@ -262,7 +272,7 @@ export class Activation {
     // caller's side is one the loop can spend receiving an answer, and the
     // caller then reports a state one event newer than the action it just
     // performed. Under a test clock that gap is a whole poll.
-    if (this.flight) {
+    if (this.flight && this.flightEpoch === this.abandons) {
       await this.flight;
       return snapshot();
     }
@@ -282,7 +292,7 @@ export class Activation {
     // a chained one adds a turn before the caller resumes, and `wait` is
     // injectable — under a test clock that extra turn lets the detached poll
     // loop run ahead of the caller.
-    const flight = this.run<T>(async () => {
+    const flight: Promise<T> = this.run(async () => {
       try {
         const abandonedAt = this.abandons;
         this.view_ = null;
@@ -298,7 +308,7 @@ export class Activation {
         // against the account they had just left. The code is already minted
         // server-side and nothing un-mints one; leaving it unwatched is all
         // this side can do, and it completes nothing here.
-        if (this.abandons !== abandonedAt) return snapshot();
+        if (this.abandons !== abandonedAt) return;
         this.secret = created.activationSecret;
         this.view_ = {
           displayCode: created.displayCode,
@@ -311,12 +321,6 @@ export class Activation {
         // Polling starts here, not when the user taps "Open Messages": someone
         // who types the message by hand never taps it, and must still get in.
         this.startPolling(created.activationSecret);
-        // Taken INSIDE the flight, before it resolves. The loop just started
-        // runs detached, and every turn between here and the caller is one it
-        // can spend receiving an answer — so a snapshot taken on the far side
-        // of an extra `await` reports a state one event newer than the action
-        // the caller performed. Under a test clock that gap is a whole poll.
-        return snapshot();
       } finally {
         // Only if this flight still owns the handle: nothing else clears it,
         // but a later mint may already own it by the time this one lands.
@@ -325,14 +329,12 @@ export class Activation {
           this.flightId = 0;
         }
       }
-    });
+    }, snapshot) as Promise<T>;
     this.flight = flight;
     this.flightId = id;
-    // Returned, not awaited: an extra hop here is the very gap described above.
-    // The body answers with a snapshot on every path, including the abandoned
-    // one, so the only way `run` yields undefined is a throw it already turned
-    // into a message — and the screen still needs a state to render.
-    return flight.then((answer) => answer ?? snapshot());
+    this.flightEpoch = this.abandons;
+    // Returned, not awaited: an extra hop here is the gap `run` describes.
+    return flight;
   }
 
   /**
@@ -366,23 +368,29 @@ export class Activation {
   /**
    * Run one step with a busy flag, turning any failure into readable text.
    *
-   * Generic in what the body answers so a caller that needs the state as of
-   * the step's end gets it from inside, rather than reading it a turn later.
+   * `snapshot` is taken HERE, and the position is load-bearing at both ends.
+   * After the `finally`, so the state handed back says `busy: false` like the
+   * step that just finished — a snapshot taken inside the body is taken while
+   * the flag is still set, and a renderer that disables its buttons on `busy`
+   * (`renderer/onboarding.js`) then paints the first-run screen with every
+   * control dead. And inside this function rather than by an awaiting caller,
+   * because the poll loop a step starts is detached: an extra turn on the
+   * caller's side is one the loop can spend receiving an answer, so the state
+   * would come back one event newer than the action that asked for it.
    */
-  async run<T>(body: () => Promise<T>): Promise<T | undefined> {
+  async run<T>(body: () => Promise<void>, snapshot?: () => T): Promise<T | undefined> {
     this.busy = true;
     this.message = "";
     this.host.publish();
-    let answer: T | undefined;
     try {
-      answer = await body();
+      await body();
     } catch (error) {
       this.message = messageOf(error);
     } finally {
       this.busy = false;
     }
     this.host.publish();
-    return answer;
+    return snapshot?.();
   }
 
   private cancelPolling(): void {
@@ -435,18 +443,29 @@ export class Activation {
         // Acted on even if this loop was cancelled while the call was in
         // flight: the server hands the completion to the FIRST redeem that
         // sees it and omits it ever after, so dropping this answer would
-        // strand an activation the user actually completed. Whether it is
-        // still OURS is a different question, and the policy's to weigh.
-        const stillOurs = secret === this.secret;
-        this.cancelPolling();
-        this.secret = null;
-        // Stalled BEFORE the handoff, whose own network calls can fail: a
-        // failure then leaves a screen that mints fresh on "Try Again", not
-        // one re-arming a code nothing can complete. A policy that finishes
-        // clears it with `settled`.
-        this.stall();
+        // strand an activation the user actually completed.
+        //
+        // But acting on it must not touch a REPLACEMENT. `mine` is whether
+        // this loop is still the current watcher; when it is not, a code the
+        // owner has since asked for is on screen with its own loop running,
+        // and cancelling polling, dropping `secret` or stalling here would
+        // kill that one on behalf of an activation nobody is waiting for.
+        // The policy still hears about the answer — with `stillOurs` false, so
+        // it persists nothing — because the token in it is real and needs
+        // retiring.
+        const mine = generation === this.generation;
+        const stillOurs = mine && secret === this.secret;
+        if (mine) {
+          this.cancelPolling();
+          this.secret = null;
+          // Stalled BEFORE the handoff, whose own network calls can fail: a
+          // failure then leaves a screen that mints fresh on "Try Again", not
+          // one re-arming a code nothing can complete. A policy that finishes
+          // clears it with `settled`.
+          this.stall();
+        }
         const outcome = await this.host.onVerified(result, stillOurs);
-        if (!outcome.done) {
+        if (!outcome.done && mine) {
           this.stall(outcome.message);
           this.host.publish();
         }

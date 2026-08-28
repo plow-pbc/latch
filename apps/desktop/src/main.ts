@@ -712,12 +712,15 @@ ipcMain.handle("onboarding:finish", async () => {
 // already signed in, no credential is minted, and the modal renders the code
 // inline rather than opening setup.
 //
+// There is deliberately no `claimLine:newCode` either: `begin` already has to
+// tell a first code from a live one from a retired one, so a second channel
+// was a second name for one behaviour.
+//
 // There is deliberately no `claimLine:get`. The claim's state rides
 // `agentsTabState`, which the renderer re-reads on every `connect:changed` —
 // and this machine publishes on every change — so a getter would be a second
 // way to ask one question, and the one the renderer had to poll to use.
 ipcMain.handle("claimLine:begin", async () => claimLine?.begin());
-ipcMain.handle("claimLine:newCode", async () => claimLine?.newCode());
 ipcMain.handle("claimLine:cancel", async () => claimLine?.cancel());
 /**
  * Open Messages with the claim's text drafted — the setup window's

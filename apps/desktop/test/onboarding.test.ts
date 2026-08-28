@@ -184,6 +184,11 @@ describe("activation — the path a brand-new user takes", () => {
     expect(shown.activation?.smsUrl).toBe("sms:+15550001111?&body=Plow%20Activate%3A%20CODE1");
     // The Mac names itself in the activation, so the session is identifiable.
     expect(plow.activations).toEqual(["Plow Latch (test)"]);
+    // NOT busy. The mint has finished, and the screen this state paints
+    // disables every button while `busy` is set — a first run that returned
+    // true here rendered its code above "Open Messages" and the phone-code
+    // fallback, both dead, with nothing left to publish a correction.
+    expect(shown.busy).toBe(false);
 
     // The user types nothing. Polling was already running before they tapped.
     expect(onboarding.messagesOpened().step).toBe("waiting");
