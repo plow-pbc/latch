@@ -102,8 +102,8 @@ describe("what a run that may be killed is allowed to write", () => {
     // Both profiles come from the capabilities alone — the same derivation the
     // reaper's own guard makes — so the two cannot be set against each other.
     const args = { readPaths: [], scratch: "/s", home: "/h" };
-    const reapable = SandboxProfile.generate({ ...args, writePaths: [], network: false });
-    const networked = SandboxProfile.generate({ ...args, writePaths: [], network: true });
+    const reapable = SandboxProfile.generate({ ...args, writePaths: [], network: false, appleEvents: false });
+    const networked = SandboxProfile.generate({ ...args, writePaths: [], network: true, appleEvents: false });
 
     // The housekeeping grant is what makes "declared no writes" not mean "writes
     // nothing": every profile hands it out, so a run could be updating a config
@@ -132,6 +132,7 @@ describe.skipIf(!ON_MAC)("a run that produces nothing and never exits", () => {
       readPaths: [dir],
       writePaths: [],
       network: false,
+      appleEvents: false,
       waitMs: 50,
     });
     cleanups.push(() => killAll(fifo));
@@ -167,6 +168,7 @@ describe.skipIf(!ON_MAC)("a run that produces nothing and never exits", () => {
       readPaths: [dir],
       writePaths: write ? [dir] : [],
       network,
+      appleEvents: false,
       waitMs: 50,
     });
     cleanups.push(() => killAll(fifo));
@@ -190,6 +192,7 @@ describe.skipIf(!ON_MAC)("a run that produces nothing and never exits", () => {
       readPaths: [dir],
       writePaths: [],
       network: false,
+      appleEvents: false,
       waitMs: 1000,
     });
     expect(started.output.toString()).toContain("working");
@@ -224,6 +227,7 @@ describe.skipIf(!ON_MAC)("a run that produces nothing and never exits", () => {
       readPaths: [dir],
       writePaths: [],
       network: false,
+      appleEvents: false,
       waitMs: 3_000,
     });
     cleanups.push(() => killAll(marker));
@@ -258,6 +262,7 @@ describe.skipIf(!ON_MAC)("a run that produces nothing and never exits", () => {
       readPaths: [dir],
       writePaths: [],
       network: false,
+      appleEvents: false,
       waitMs: 3_000,
     });
     cleanups.push(() => killAll(marker));

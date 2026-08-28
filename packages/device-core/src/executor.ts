@@ -32,6 +32,7 @@ export const SandboxProfile = {
     readPaths: string[];
     writePaths: string[];
     network: boolean;
+    appleEvents: boolean;
     scratch: string;
     /** Home override for golden tests; defaults to the real home. */
     home?: string;
@@ -106,6 +107,7 @@ export const SandboxProfile = {
     } else {
       lines.push("(deny network*)");
     }
+    if (args.appleEvents) lines.push("(allow appleevent-send)");
     return lines.join("\n");
   },
 };
@@ -298,6 +300,7 @@ export class Executor {
     readPaths: string[];
     writePaths: string[];
     network: boolean;
+    appleEvents: boolean;
     waitMs: number;
     /**
      * Extra environment for the child, merged over the curated set below.
@@ -331,6 +334,7 @@ export class Executor {
       readPaths: reads,
       writePaths: args.writePaths,
       network: args.network,
+      appleEvents: args.appleEvents,
       scratch,
     });
     if (process.env.DOMO_DEBUG_SANDBOX) {
