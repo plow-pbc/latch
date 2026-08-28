@@ -122,8 +122,15 @@ export class ExecutorError extends Error {}
  * told: a profile that could be built "reapable" for a run the timer will
  * never touch, or the reverse, is a contradiction neither could detect.
  */
-function isReapable(args: { writePaths: string[]; network: boolean }): boolean {
-  return args.writePaths.length === 0 && !args.network;
+function isReapable(args: {
+  writePaths: string[];
+  network: boolean;
+  appleEvents: boolean;
+}): boolean {
+  // `appleEvents` joins writes and network as a side-effect capability: an
+  // osascript send changes another app's state, so a silent run must not be
+  // SIGKILLed at 15 minutes and reported failed after it has already sent.
+  return args.writePaths.length === 0 && !args.network && !args.appleEvents;
 }
 
 /**

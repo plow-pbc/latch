@@ -277,8 +277,8 @@ export const TOOLS: ToolSpec[] = [
       "output at all after 15 minutes — so if long silent work is expected, have it print progress — " +
       "and in exchange its only writable place is `$TMPDIR`, a directory of its own that is deleted " +
       "when it is killed. Declare a write path (or " +
-      "network) and it is never killed that way, because it could be mid-work and a truncated file " +
-      "is worse than the wait. A vendored provider command counts as having declared network even " +
+      "network, or apple_events) and it is never killed that way, because it could be mid-work and a " +
+      "truncated file — or a message already sent — is worse than the wait. A vendored provider command counts as having declared network even " +
       "though you did not — so it is never killed that way either, and the `$TMPDIR` exchange is " +
       "off — unless it asks for help (`--help`/`-h` last, no `--` before it), which " +
       "reaches nothing and is exempt. " +
