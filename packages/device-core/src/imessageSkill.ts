@@ -247,10 +247,14 @@ each chat's numeric \`chat_id\` and its \`guid\` (the \`guid\` is what a send ta
 
 ${indented(IMESSAGE_QUERIES.recentChats)}
 
-**When the owner named someone, read ONLY that chat.** Match their name against \`recentChats\`,
-then gather that one chat by its \`chat_id\` — never the all-chat query below. Reading every
-chat to answer a question about one person hands the agent far more of the owner's private
-messages than the task needs; scope to the chat:
+**When the owner asks about one person, read ONLY that chat.** \`recentChats\` names a **direct**
+chat by its \`chat_identifier\` — a phone number or email — and a **group** by \`display_name\`; a
+direct chat's \`display_name\` is NULL, because \`chat.db\` stores handles, not names. So match on
+the **handle**: the phone or email of the person the owner means. A bare first name is not in
+\`chat.db\` (names live in Contacts) — if the owner gave only a name and you do not already have
+their handle, say so rather than guessing a \`chat_id\`. With the row in hand, gather that one
+chat by its \`chat_id\` — never the all-chat query below, which hands the agent far more of the
+owner's private messages than a question about one person needs:
 
 ${indented(IMESSAGE_QUERIES.gatherChat)}
 
