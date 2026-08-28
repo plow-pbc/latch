@@ -354,7 +354,7 @@ esac
     });
   });
 
-  itSpawns("narrows a calendar fan-out to the accounts --calendars names, and never forwards the flag", async () => {
+  itSpawns("narrows a fan-out to the accounts --account names, and never forwards the flag", async () => {
     // AB plus a third account that is NOT named: it must not be queried, and
     // must not appear as degraded either — the agent did not ask about it.
     const d = device(
@@ -362,20 +362,20 @@ esac
       [plowVendorDir()],
     );
     const response = await run(d, [
-      "plow-gog", "calendar", "events", "list", "--calendars=a@example.com,b@example.com", "--from=now",
+      "plow-gog", "calendar", "events", "list", "--account", "a@example.com,b@example.com", "--from=now",
     ]);
     expect(response).toMatchObject({ status: "completed", degraded: [] });
     const items = (response as { items: { account: string }[] }).items;
     expect(new Set(items.map((i) => i.account))).toEqual(new Set(["a@example.com", "b@example.com"]));
     // The fake echoes its argv for calendar events; the flag is not in it.
-    expect(JSON.stringify(response)).not.toContain("--calendars");
+    expect(JSON.stringify(response)).not.toContain("--account");
   });
 
   itSpawns("carries a named-but-degraded account as degraded, and queries only the healthy one", async () => {
     const d = device(accountsMinter([AB[0]!], [{ account: "b@example.com", reason: "needs_reauth" }]), [
       plowVendorDir(),
     ]);
-    const response = await run(d, ["plow-gog", "calendar", "events", "list", "--calendars=a@example.com,b@example.com"]);
+    const response = await run(d, ["plow-gog", "calendar", "events", "list", "--account=a@example.com,b@example.com"]);
     expect(response).toMatchObject({
       status: "completed",
       items: [{ account: "a@example.com" }],
@@ -383,9 +383,9 @@ esac
     });
   });
 
-  it("rejects a --calendars entry that names no connected account, running nothing", async () => {
+  it("rejects an --account entry that names no connected account, running nothing", async () => {
     const d = device(accountsMinter(AB), [plowVendorDir()]);
-    const response = await run(d, ["plow-gog", "calendar", "events", "list", "--calendars=z@example.com"]);
+    const response = await run(d, ["plow-gog", "gmail", "search", "q", "--account=a@example.com,z@example.com"]);
     expect(jv(response).get("error").str).toMatch(/not a connected account/);
     expect(jv(response).get("error").str).toContain("a@example.com (default)");
     expectNeverSpawned(d);

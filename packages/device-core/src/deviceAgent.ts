@@ -692,7 +692,7 @@ export class DeviceAgent {
         if (targets.length + degraded.length < wanted.size) {
           return this.execError(
             intent.intentId,
-            `a --calendars entry is not a connected account. Connected: ${connected}`,
+            `an --account entry is not a connected account. Connected: ${connected}`,
           );
         }
       }

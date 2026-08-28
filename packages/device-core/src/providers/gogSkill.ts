@@ -34,10 +34,10 @@ through \`plow_run_command\`, like any other command. There is no Google tool in
 and come back as ONE merged JSON result: \`{items, degraded}\`, every item
 tagged with \`"account"\` (gmail sorted by date, newest first; calendar by
 start). \`degraded\` lists accounts that could not be reached — mention them
-rather than reporting an absence you did not verify. Under a fan-out,
-\`--calendars=<email>,<email>\` names connected ACCOUNTS and narrows the
-fan-out to them (each is asked for its own calendar); for a calendar that is
-not an account's primary, add \`--account\` for the account that owns it.
+rather than reporting an absence you did not verify. To read some of the
+accounts rather than all, name them: \`--account a@x,b@y\`. A calendar id
+(\`--calendars\`) needs its owner, so under a fan-out it is refused — add
+\`--account\` for the one account whose calendar it is.
 
     ["plow-gog", "accounts"]
 

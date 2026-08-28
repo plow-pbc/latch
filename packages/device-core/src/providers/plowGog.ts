@@ -29,8 +29,8 @@ export type PlowGogPlan =
   | { kind: "help"; gogArgv: string[] }
   /**
    * A curated read, run once per connected account and merged. `accounts`
-   * narrows the fan-out to the named ones — what `--calendars=<emails>`
-   * means when the emails are connected accounts — or is null for all.
+   * narrows the fan-out to the ones `--account a@x,b@y` named, or is null
+   * for all of them.
    */
   | { kind: "fanout"; gogArgv: string[]; sort: PlowGogSort; accounts: string[] | null }
   /**
@@ -92,26 +92,19 @@ export function planPlowGog(argv: readonly string[]): PlowGogPlan {
   // Strip plow-gog's own flags first: they are this Mac's to interpret, and a
   // spelling that reached gog would collide with gog's own `--account` — which
   // is inert under a supplied token, but only when nothing forwards it.
+  // `--account` is gog's own flag, one email; plow-gog's takes several
+  // (`--account a@x,b@y`), which on a fan-out read means those accounts.
   const stripped: string[] = [];
-  let account: string | null = null;
+  let accounts: string[] = [];
   let confirmConflict = false;
   for (let i = 1; i < argv.length; i++) {
     const arg = argv[i]!;
-    if (arg === "--account") {
-      const value = argv[i + 1];
-      if (value === undefined || value === "") {
+    if (arg === "--account" || arg.startsWith("--account=")) {
+      const value = arg === "--account" ? argv[++i] : arg.slice("--account=".length);
+      accounts = (value ?? "").split(",").filter((a) => a !== "");
+      if (accounts.length === 0) {
         return { kind: "refused", reason: "--account needs a value: the account's email address" };
       }
-      account = value;
-      i++;
-      continue;
-    }
-    if (arg.startsWith("--account=")) {
-      const value = arg.slice("--account=".length);
-      if (value === "") {
-        return { kind: "refused", reason: "--account needs a value: the account's email address" };
-      }
-      account = value;
       continue;
     }
     if (arg === "--confirm-conflict") {
@@ -124,10 +117,11 @@ export function planPlowGog(argv: readonly string[]): PlowGogPlan {
   const reserved = reservedRefusal(stripped);
   if (reserved !== null) return { kind: "refused", reason: reserved };
 
+  const account = accounts.length === 1 ? accounts[0]! : null;
   if (stripped[0] === "accounts") {
     // From the mint result, so nothing may ride along — an extra token here
     // would be silently dropped, which reads as it having worked.
-    if (stripped.length > 1 || account !== null || confirmConflict) {
+    if (stripped.length > 1 || accounts.length > 0 || confirmConflict) {
       return { kind: "refused", reason: "accounts takes no arguments" };
     }
     return { kind: "accounts" };
@@ -146,44 +140,25 @@ export function planPlowGog(argv: readonly string[]): PlowGogPlan {
 
   const sort = verb !== undefined ? FANOUT[group]?.[verb] : undefined;
   if (sort !== undefined && account === null) {
-    // A fan-out already asks every connected account for its own calendar,
-    // so `--calendars` under one means the ACCOUNTS — an agent's natural
-    // grammar for "these two calendars" is their emails. Honoured as a
-    // narrowing: those accounts, each asked for its own calendar, and the
-    // flag never reaches gog (forwarded, it sent each account the others'
-    // ids — the same events N times, plus a degraded row per account that
-    // could not read them). Anything that is not a connected-account email
-    // is a calendar id nobody here can attribute to an account: refused,
-    // with `--account` as the way to say whose it is.
-    let accounts: string[] | null = null;
-    let rest = stripped;
-    if (group === "calendar") {
-      const named: string[] = [];
-      rest = [];
-      for (let i = 0; i < stripped.length; i++) {
-        const arg = stripped[i]!;
-        if (arg === "--calendars") {
-          named.push(...(stripped[++i] ?? "").split(","));
-        } else if (arg.startsWith("--calendars=")) {
-          named.push(...arg.slice("--calendars=".length).split(","));
-        } else rest.push(arg);
-      }
-      if (named.length > 0) {
-        if (!named.every((n) => /^[^\s@]+@[^\s@]+$/.test(n))) {
-          return {
-            kind: "refused",
-            reason:
-              "under a fan-out, --calendars names connected accounts by email; for a calendar id, add --account <email> for the account that owns it",
-          };
-        }
-        accounts = named;
-      }
+    // Every account asked, or the several named. A calendar id under that
+    // has no owner to send it to — forwarded, it reached every account, the
+    // same events N times plus a degraded row per account that could not
+    // read it — so it needs `--account` for the one account whose it is.
+    if (group === "calendar" && stripped.some((arg) => arg === "--calendars" || arg.startsWith("--calendars="))) {
+      return {
+        kind: "refused",
+        reason:
+          "a calendar id needs its account: add --account <email> for the account that owns it, or drop --calendars and name the accounts to read with --account a@x,b@y",
+      };
     }
     // Merging requires JSON; add what the agent did not already ask for.
     const extras: string[] = [];
-    if (!rest.includes("--json") && !rest.includes("-j")) extras.push("--json");
-    if (!rest.includes("--results-only")) extras.push("--results-only");
-    return { kind: "fanout", gogArgv: ["plow-gog", ...rest, ...extras], sort, accounts };
+    if (!stripped.includes("--json") && !stripped.includes("-j")) extras.push("--json");
+    if (!stripped.includes("--results-only")) extras.push("--results-only");
+    return { kind: "fanout", gogArgv: [...gogArgv, ...extras], sort, accounts: accounts.length > 1 ? accounts : null };
+  }
+  if (accounts.length > 1) {
+    return { kind: "refused", reason: "this command runs on one account: --account takes one email here" };
   }
 
   let conflictCheck: { from: string; to: string } | null = null;

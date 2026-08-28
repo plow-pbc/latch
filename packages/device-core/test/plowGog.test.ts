@@ -35,15 +35,14 @@ describe("planPlowGog", () => {
       },
     },
     {
-      // What an agent means by "these calendars" is these accounts: the
-      // fan-out narrows to them and the flag never reaches gog, which would
-      // otherwise be sent each account the others' ids.
-      why: "reads --calendars=<emails> under a fan-out as the accounts to fan out to",
-      argv: ["plow-gog", "calendar", "events", "list", "--calendars=a@example.com,b@example.com", "--from=now"],
+      // gog's --account takes one email; plow-gog's takes several, and on a
+      // fan-out read that is the accounts to fan out to — gmail or calendar.
+      why: "narrows a fan-out to the several accounts --account names",
+      argv: ["plow-gog", "gmail", "search", "q", "--account", "a@example.com,b@example.com"],
       expected: {
         kind: "fanout",
-        gogArgv: ["plow-gog", "calendar", "events", "list", "--from=now", "--json", "--results-only"],
-        sort: "cal-start",
+        gogArgv: ["plow-gog", "gmail", "search", "q", "--json", "--results-only"],
+        sort: "gmail-date",
         accounts: ["a@example.com", "b@example.com"],
       },
     },
@@ -311,11 +310,16 @@ describe("planPlowGog", () => {
       reason: "--account needs a value",
     },
     {
-      // A calendar id that is not an account's email cannot be attributed to
-      // an account under a fan-out; --account says whose it is.
-      why: "refuses a --calendars entry that is not a connected-account email under a fan-out",
-      argv: ["plow-gog", "calendar", "events", "list", "--calendars=sneakyagenttext,b@x.co", "--from=now"],
-      reason: "add --account",
+      // A calendar id has an owner; under a fan-out there is no account to
+      // send it to. The sentence carries both corrections.
+      why: "refuses --calendars under a fan-out",
+      argv: ["plow-gog", "calendar", "events", "list", "--calendars=sneakyagenttext", "--from=now"],
+      reason: "--account a@x,b@y",
+    },
+    {
+      why: "refuses several --account emails on a single-account command",
+      argv: ["plow-gog", "gmail", "get", "msg-1", "--account=a@example.com,sneakyagenttext"],
+      reason: "one email",
     },
   ])("$why", ({ argv, reason }) => {
     const plan = planPlowGog(argv);
