@@ -238,22 +238,23 @@ describe("the built-in contacts skill", () => {
     ["writes never qualifying for always-allow", /a write never does/i],
     ["the always-allow refusal being enforced by the engine", /neither stores nor replays/i],
   ])("publishes %s", (_what, pattern) => {
-    expect(contactsSkillFor("/Users/example").body).toMatch(pattern);
+    expect(contactsSkillFor().body).toMatch(pattern);
   });
 
   it("shows the recipes it publishes, not a paraphrase of them", () => {
-    const body = contactsSkillFor("/Users/example").body;
+    const body = contactsSkillFor().body;
     for (const sql of Object.values(CONTACTS_QUERIES)) {
       expect(body).toContain(sql.split("\n")[0].trim());
     }
   });
 
-  it("names this Mac's own store rather than a path the reader must fill in", () => {
-    const skill = contactsSkillFor("/Users/example");
+  it("names the store ~-relative so the owner's account name never leaks in a skill read", () => {
+    const skill = contactsSkillFor();
     expect(skill.name).toBe("contacts");
-    expect(skill.body).toContain(
-      "/Users/example/Library/Application Support/AddressBook/AddressBook-v22.abcddb",
-    );
+    // Same contract as the imessage skill: plow_read_skill returns this body
+    // to any authenticated agent with no approval.
+    expect(skill.body).toContain("~/Library/Application Support/AddressBook/AddressBook-v22.abcddb");
+    expect(skill.body).not.toMatch(/\/Users\//);
     expect(skill.body).not.toContain("<owner>");
     expect(skill.description).toMatch(/contacts/i);
   });
@@ -269,7 +270,7 @@ describe("the built-in contacts skill", () => {
     fs.mkdirSync(path.dirname(contactsStorePath(home)), { recursive: true });
     const present = new SkillRegistry();
     registerContactsSkill(present, home);
-    expect(present.skill("contacts")?.body).toContain(contactsStorePath(home));
+    expect(present.skill("contacts")?.body).toContain("~/Library/Application Support/AddressBook");
   });
 });
 
@@ -320,7 +321,7 @@ describe("the skills a DeviceAgent publishes", () => {
 
     fs.mkdirSync(path.dirname(contactsStorePath(ownerHome)), { recursive: true });
     expect(agentFor(ownerHome).skills.skill("contacts")?.body).toContain(
-      contactsStorePath(ownerHome),
+      "~/Library/Application Support/AddressBook",
     );
   });
 
