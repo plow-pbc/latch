@@ -87,7 +87,7 @@ export const IMESSAGE_QUERIES = {
    *  a row with a HIGHER ROWID than what this returns can be the send that
    *  is about to happen — that is what makes verifySend, below, immune to an
    *  older successful message at the same handle or chat. */
-  verifySendSnapshot: `select max(ROWID) from message where is_from_me = 1;`,
+  verifySendSnapshot: `select coalesce(max(ROWID), 0) from message where is_from_me = 1;`,
 
   /** Did my send land? Newest outbound rows NEWER than the pre-send
    *  snapshot, scoped to the handle you sent to (a participant send) or the
@@ -237,7 +237,10 @@ identifier gets the same treatment even though it is a value you chose, not stra
 one fewer thing that can break the script. \`on run argv\` / \`item 1 of argv\` hands the
 script the text, and \`item 2 of argv\` the identifier, as values the script never parses —
 both stay visible to the approver (plainly in the argv the approval card shows) but can
-never be read as AppleScript.
+never be read as AppleScript. The \`--\` before them is load-bearing: without it, a relayed
+body that begins with \`-e\` (or any \`-\`) is consumed by \`osascript\` as another option
+rather than as \`argv\`, which drops the body and shifts the recipient into its place. \`--\`
+ends option parsing so every following token is positional \`argv\`, whatever it starts with.
 
 **To a participant**, by phone number or email:
 
@@ -246,7 +249,7 @@ never be read as AppleScript.
              "-e", "on run argv",
              "-e", "tell application \\"Messages\\" to send (item 1 of argv) to participant (item 2 of argv) of (first account whose service type = iMessage)",
              "-e", "end run",
-             "<text>", "<phone or email>"],
+             "--", "<text>", "<phone or email>"],
       apple_events: true,
       goal: "<what the owner asked for, in one line>"
     }
@@ -259,7 +262,7 @@ group thread, since a group has no single participant to address:
              "-e", "on run argv",
              "-e", "tell application \\"Messages\\" to send (item 1 of argv) to chat id (item 2 of argv)",
              "-e", "end run",
-             "<text>", "<guid from recentChats>"],
+             "--", "<text>", "<guid from recentChats>"],
       apple_events: true,
       goal: "<what the owner asked for, in one line>"
     }
@@ -272,7 +275,7 @@ holding a quote cannot break the script either:
              "-e", "on run argv",
              "-e", "tell application \\"Messages\\" to send (POSIX file (item 1 of argv)) to participant (item 2 of argv) of (first account whose service type = iMessage)",
              "-e", "end run",
-             "<absolute path>", "<phone or email>"],
+             "--", "<absolute path>", "<phone or email>"],
       apple_events: true,
       read_paths: ["<the file's directory>"],
       goal: "<what the owner asked for, in one line>"
@@ -305,10 +308,15 @@ ${indented(IMESSAGE_QUERIES.verifySend)}
 Substitute the number the snapshot returned for \`${IMESSAGE_SNAPSHOT_ROWID_PLACEHOLDER}\`,
 and whichever you sent to for \`${IMESSAGE_HANDLE_PLACEHOLDER}\` (a participant send) or
 \`${IMESSAGE_CHAT_GUID_PLACEHOLDER}\` (a chat/group send — leave the other placeholder as
-text, it will simply never match). Then read \`is_sent\` and \`is_delivered\` on the newest
-row. A send that never shows up here did not go out, whatever \`osascript\` returned — and
-because every row is newer than the snapshot, an older success at the same handle or chat
-can never be mistaken for this send's delivery.
+text, it will simply never match). The handle and guid go inside SQL string literals, so
+**double every \`'\` in the value you substitute** (\`o'brien@x.com\` → \`o''brien@x.com\`);
+an un-doubled apostrophe ends the string early and the query fails to parse. Then read
+\`is_sent\` and \`is_delivered\` on the newest row. A send that never shows up here did not go
+out, whatever \`osascript\` returned — and because every row is newer than the snapshot, an
+older success at the same handle or chat can never be mistaken for this send's delivery. Run
+this **right after your send, before issuing another to the same destination**: the newest
+row (top) is your send, but a second send to the same handle in the same window would also
+sit above the snapshot, and the query cannot tell two same-destination sends apart.
 
 ## Approval semantics
 

@@ -76,6 +76,29 @@ function query(store: string, sql: string): string[][] {
  * Dates are computed relative to "now" with `ns()` because `gather` and
  * `unreplied` both filter on a 36h window measured off `strftime('%s','now')`.
  */
+/** The chat.db-shaped schema, from a real `pragma table_info` dump — only the
+ *  columns the recipes touch. Shared so an empty store and a seeded one agree. */
+const SCHEMA = [
+  "create table handle (ROWID integer primary key, id text);",
+  "create table chat (ROWID integer primary key, guid text, chat_identifier text," +
+    " display_name text, style integer);",
+  "create table message (ROWID integer primary key, guid text, text text," +
+    " attributedBody blob, handle_id integer, date integer," +
+    " is_from_me integer default 0, is_sent integer default 0," +
+    " is_delivered integer default 0," +
+    " associated_message_type integer default 0," +
+    " item_type integer default 0);",
+  "create table chat_message_join (chat_id integer, message_id integer, message_date integer);",
+];
+
+/** A store with the schema and nothing in it — for the empty-archive cases. */
+function makeEmptyStore(dir: string): string {
+  const store = imessageStorePath(dir);
+  fs.mkdirSync(path.dirname(store), { recursive: true });
+  sqlite([store, SCHEMA.join(" ")]);
+  return store;
+}
+
 function makeStore(dir: string): string {
   const home = dir;
   const store = imessageStorePath(home);
@@ -83,16 +106,7 @@ function makeStore(dir: string): string {
   sqlite([
     store,
     [
-      "create table handle (ROWID integer primary key, id text);",
-      "create table chat (ROWID integer primary key, guid text, chat_identifier text," +
-        " display_name text, style integer);",
-      "create table message (ROWID integer primary key, guid text, text text," +
-        " attributedBody blob, handle_id integer, date integer," +
-        " is_from_me integer default 0, is_sent integer default 0," +
-        " is_delivered integer default 0," +
-        " associated_message_type integer default 0," +
-        " item_type integer default 0);",
-      "create table chat_message_join (chat_id integer, message_id integer, message_date integer);",
+      ...SCHEMA,
 
       // Chats. 1/2 exist for the recentChats ordering + kind test; 3/4/5/6
       // for unreplied; 10 for gather. A chat_identifier starting with 'chat'
@@ -268,6 +282,15 @@ describe("the imessage recipes the skill publishes", () => {
     const rows = query(store, IMESSAGE_QUERIES.verifySendSnapshot);
     // The highest ROWID among every is_from_me=1 row seeded above.
     expect(rows).toEqual([["4001"]]);
+  });
+
+  it("the snapshot on an empty archive is 0, not NULL (the first-ever send is verifiable)", () => {
+    // probe 6: a fresh Mac has sent nothing, so `max(ROWID)` is NULL; without
+    // the coalesce the substituted verifySend SQL would read `ROWID > ` and
+    // fail to parse. coalesce(..., 0) gives a number the first send exceeds.
+    const emptyDir = tempDir();
+    const empty = makeEmptyStore(emptyDir);
+    expect(query(empty, IMESSAGE_QUERIES.verifySendSnapshot)).toEqual([["0"]]);
   });
 
   /** Build the verifySend query with all three placeholders substituted. */
