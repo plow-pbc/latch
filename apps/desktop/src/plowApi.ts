@@ -442,7 +442,15 @@ export class PlowApi {
     for (const row of Array.isArray(data.data?.degraded) ? data.data.degraded : []) {
       const { account, reason } = (row ?? {}) as Record<string, unknown>;
       if (typeof account !== "string") continue;
-      degraded.push({ account, reason: typeof reason === "string" ? reason : "" });
+      // The reason rides to the remote agent, so the credential-echo rule
+      // applies: a server-authored string from an authenticated response is
+      // never forwarded verbatim. A closed allowlist, not a scan — only the
+      // one machine value the agent can act on passes; everything else
+      // becomes fixed local text.
+      degraded.push({
+        account,
+        reason: reason === "needs_reauth" ? reason : "token refresh failed",
+      });
     }
     return { accounts, degraded };
   }

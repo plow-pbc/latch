@@ -105,7 +105,7 @@ function minterOf(mint: Minter["mint"]): Minter {
 
 const okMinter = (): Minter => minterOf(async () => TOKEN);
 
-function run(d: DeviceAgent, argv: string[]): Promise<JSONValue> {
+function run(d: DeviceAgent, argv: string[], waitMs = 8000): Promise<JSONValue> {
   return d.handleIntent(
     makeIntent({
       agentId: "a1",
@@ -121,7 +121,7 @@ function run(d: DeviceAgent, argv: string[]): Promise<JSONValue> {
       ],
       sessionId: "s1",
     }),
-    { wait_ms: 8000 },
+    { wait_ms: waitMs },
   );
 }
 
@@ -264,6 +264,7 @@ case "$*" in
     case "$GOG_ACCESS_TOKEN" in
       tok-a) echo '[{"id":"a1","date":"Mon, 16 Mar 2026 10:00:00 +0000"}]' ;;
       tok-b) echo '[{"id":"b1","date":"Wed, 18 Mar 2026 09:00:00 +0000"}]' ;;
+      tok-slow) sleep 1; echo '[{"id":"s1","date":"Thu, 19 Mar 2026 09:00:00 +0000"}]' ;;
       tok-bad) echo "boom" >&2; exit 3 ;;
     esac ;;
   *) echo "TOKEN=$GOG_ACCESS_TOKEN ARGV=$*" ;;
@@ -319,6 +320,25 @@ esac
     });
     // The child's output is service-fetched text; only the exit code travels.
     expect(JSON.stringify(response)).not.toContain("boom");
+  });
+
+  itSpawns("waits out a fan-out child that outlives wait_ms instead of degrading it", async () => {
+    // The per-account children have no public handle — the outer call owns
+    // the only one — so a child left running at wait_ms must be waited out,
+    // not converted to a degraded account with its output unretrievable.
+    const d = device(
+      accountsMinter([AB[0]!, { account: "slow@example.com", token: "tok-slow", isDefault: false }]),
+      [plowVendorDir()],
+    );
+    const response = await run(d, ["plow-gog", "gmail", "search", "q"], 100);
+    expect(response).toMatchObject({
+      status: "completed",
+      items: [
+        { id: "s1", account: "slow@example.com" },
+        { id: "a1", account: "a@example.com" },
+      ],
+      degraded: [],
+    });
   });
 
   itSpawns("narrows a fan-out read to one account with --account", async () => {

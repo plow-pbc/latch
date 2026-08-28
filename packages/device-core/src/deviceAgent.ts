@@ -653,6 +653,16 @@ export class DeviceAgent {
         // A help run gets no token, same as the gog path.
         env: token === null ? undefined : { [provider.tokenEnv]: token },
       });
+    // An inner run that outlives wait_ms is WAITED OUT, not abandoned: the
+    // per-account children have no public handle — the outer call owns the
+    // only one — so a result left running here would be unretrievable, its
+    // account wrongly degraded. `onExit` fires immediately for a child that
+    // has already exited.
+    const settled = async (result: ExecResult): Promise<ExecResult> => {
+      if (!result.running) return result;
+      await new Promise<void>((resolve) => this.executor.onExit(result.handle, () => resolve()));
+      return this.executor.output(result.handle, 0);
+    };
 
     if (plan.kind === "help") {
       this.audit.record("exec_start", { intentId: intent.intentId, argv });
@@ -682,15 +692,17 @@ export class DeviceAgent {
     if (plan.kind === "fanout") {
       this.audit.record("exec_start", { intentId: intent.intentId, argv });
       const runs = await Promise.all(
-        minted.accounts.map(async (a) => ({ a, result: await runGog(plan.gogArgv.slice(1), a.token) })),
+        minted.accounts.map(async (a) => ({
+          a,
+          result: await settled(await runGog(plan.gogArgv.slice(1), a.token)),
+        })),
       );
       const ok: { account: string; stdout: string }[] = [];
       const failed: { account: string; reason: string }[] = [];
       for (const { a, result } of runs) {
         // The reasons carry the exit disposition only: a child's output is
         // service-fetched text and stays out of every error string.
-        if (result.running) failed.push({ account: a.account, reason: "gog did not finish in time" });
-        else if (result.exitCode !== 0) {
+        if (result.exitCode !== 0) {
           failed.push({ account: a.account, reason: `gog exited ${result.exitCode ?? -1}` });
         } else ok.push({ account: a.account, stdout: result.output.toString("utf8") });
       }
@@ -735,12 +747,14 @@ export class DeviceAgent {
     this.audit.record("exec_start", { intentId: intent.intentId, argv });
     if (plan.kind === "write" && plan.conflictCheck !== null && !plan.confirmConflict) {
       const { from, to } = plan.conflictCheck;
-      const probe = await runGog(
-        ["calendar", "conflicts", "--from", from, "--to", to, "--json", "--results-only"],
-        target.token,
+      const probe = await settled(
+        await runGog(
+          ["calendar", "conflicts", "--from", from, "--to", to, "--json", "--results-only"],
+          target.token,
+        ),
       );
       let conflicts: unknown = null;
-      if (!probe.running && probe.exitCode === 0) {
+      if (probe.exitCode === 0) {
         try {
           conflicts = JSON.parse(probe.output.toString("utf8"));
         } catch {

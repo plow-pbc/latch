@@ -137,6 +137,27 @@ describe("buildMinter", () => {
       });
     });
 
+    it("never forwards a server-authored degraded reason verbatim", async () => {
+      // The reason reaches the remote agent; an upstream that echoed a
+      // credential fragment into it must be stopped HERE, at the one seam the
+      // response crosses. Only the machine value passes the allowlist.
+      const { api } = apiAnswering({
+        data: {
+          access_token: "tok-a",
+          accounts: [{ account: "a@example.com", access_token: "tok-a", is_default: true }],
+          degraded: [
+            { account: "b@example.com", reason: "needs_reauth" },
+            { account: "c@example.com", reason: "refresh failed: Bearer sk-secret-fragment" },
+          ],
+        },
+      });
+      const minted = await buildMinter({ api, home: homeWith("cred") }).mintAll(GOG);
+      expect(minted.degraded).toEqual([
+        { account: "b@example.com", reason: "needs_reauth" },
+        { account: "c@example.com", reason: "token refresh failed" },
+      ]);
+    });
+
     it("treats an absent degraded list as empty and skips a malformed account row", async () => {
       const { api } = apiAnswering({
         data: {

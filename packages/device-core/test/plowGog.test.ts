@@ -116,6 +116,79 @@ describe("planPlowGog", () => {
       },
     },
     {
+      why: "classifies a nested mutating leaf (messages modify) as a write",
+      argv: ["plow-gog", "gmail", "messages", "modify", "m1", "--add-labels", "x"],
+      expected: {
+        kind: "write",
+        gogArgv: ["plow-gog", "gmail", "messages", "modify", "m1", "--add-labels", "x"],
+        account: null,
+        confirmConflict: false,
+        conflictCheck: null,
+      },
+    },
+    {
+      why: "classifies batch delete as a write",
+      argv: ["plow-gog", "gmail", "batch", "delete", "m1", "m2"],
+      expected: {
+        kind: "write",
+        gogArgv: ["plow-gog", "gmail", "batch", "delete", "m1", "m2"],
+        account: null,
+        confirmConflict: false,
+        conflictCheck: null,
+      },
+    },
+    {
+      why: "classifies labels delete as a write, through the subtree alias",
+      argv: ["plow-gog", "gmail", "label", "delete", "old-label"],
+      expected: {
+        kind: "write",
+        gogArgv: ["plow-gog", "gmail", "label", "delete", "old-label"],
+        account: null,
+        confirmConflict: false,
+        conflictCheck: null,
+      },
+    },
+    {
+      why: "classifies thread modify as a write",
+      argv: ["plow-gog", "gmail", "thread", "modify", "t1", "--add-labels", "x"],
+      expected: {
+        kind: "write",
+        gogArgv: ["plow-gog", "gmail", "thread", "modify", "t1", "--add-labels", "x"],
+        account: null,
+        confirmConflict: false,
+        conflictCheck: null,
+      },
+    },
+    {
+      why: "leaves a read leaf of a mixed subtree on the default account",
+      argv: ["plow-gog", "gmail", "labels", "list"],
+      expected: {
+        kind: "single",
+        gogArgv: ["plow-gog", "gmail", "labels", "list"],
+        account: null,
+      },
+    },
+    {
+      why: "leaves drafts list a read while drafts send is a write",
+      argv: ["plow-gog", "gmail", "drafts", "list"],
+      expected: {
+        kind: "single",
+        gogArgv: ["plow-gog", "gmail", "drafts", "list"],
+        account: null,
+      },
+    },
+    {
+      why: "classifies drafts send as a write",
+      argv: ["plow-gog", "gmail", "drafts", "send", "d1"],
+      expected: {
+        kind: "write",
+        gogArgv: ["plow-gog", "gmail", "drafts", "send", "d1"],
+        account: null,
+        confirmConflict: false,
+        conflictCheck: null,
+      },
+    },
+    {
       why: "gates a timed calendar create on a conflict check",
       argv: [
         "plow-gog", "calendar", "create", "primary", "--summary", "X",

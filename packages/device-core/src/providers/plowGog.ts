@@ -59,15 +59,17 @@ const FANOUT: Readonly<Record<string, Readonly<Record<string, PlowGogSort>>>> = 
  * The mutating verbs, by canonical group — the ones that must name ONE account
  * when several are connected. Verified against the vendored binary's help at
  * 0.36.0, aliases included (the plan's `untrash` does not exist there and was
- * dropped). Deliberately fail-open: a verb not listed — including the nested
- * `messages`/`thread`/`batch`/`settings` subtrees — falls through to `single`,
- * i.e. the default account, which is exactly today's gog behavior; the real
- * write gate is Google's scopes plus the approval dialog, not this list.
+ * dropped). Gmail subtrees that mix reads and writes are classified per leaf
+ * in `GMAIL_NESTED_WRITES` below. Deliberately fail-open beyond both tables: an
+ * unlisted READ verb — `settings`, `track`, and whatever a pin bump adds —
+ * falls through to `single`, i.e. the default account, which is exactly
+ * today's gog behavior; the real write gate is Google's scopes plus the
+ * approval dialog, not this list.
  */
 const WRITES: Readonly<Record<string, ReadonlySet<string>>> = {
   gmail: new Set([
     "send", "reply", "reply-all", "replyall", "forward", "fwd",
-    "drafts", "draft", "labels", "label", "trash", "archive",
+    "trash", "archive",
     "mark-read", "read-messages", "unread", "mark-unread", "import", "autoreply",
   ]),
   calendar: new Set([
@@ -78,6 +80,43 @@ const WRITES: Readonly<Record<string, ReadonlySet<string>>> = {
     "propose-time", "focus-time", "focus", "out-of-office", "ooo", "working-location", "wl",
   ]),
 };
+
+/** Alias spellings for one gmail subtree, each mapped to the same leaf set. */
+function subtree(
+  names: readonly string[],
+  writes: readonly string[],
+): [string, ReadonlySet<string>][] {
+  const set: ReadonlySet<string> = new Set(writes);
+  return names.map((name) => [name, set]);
+}
+
+/**
+ * Gmail's mutating leaves one level down — `gmail messages modify`, `gmail
+ * batch delete` and kin — verified against the vendored binary's per-subtree
+ * help at 0.36.0, aliases included on both levels. Classified by the
+ * (subtree, leaf) pair because every subtree here mixes reads and writes:
+ * `labels list` stays a single-account read while `labels delete` demands an
+ * account. A leaf not listed is a read and falls through to `single`.
+ */
+const GMAIL_NESTED_WRITES: ReadonlyMap<string, ReadonlySet<string>> = new Map([
+  ...subtree(["messages", "message", "msg", "msgs"], ["modify", "update", "edit", "set"]),
+  ...subtree(["thread", "threads", "read"], ["modify", "update", "edit", "set"]),
+  ...subtree(["batch"], ["delete", "rm", "del", "remove", "modify", "update", "edit", "set"]),
+  ...subtree(
+    ["labels", "label"],
+    [
+      "create", "add", "new", "rename", "mv", "style", "color", "colour",
+      "modify", "update", "edit", "set", "delete", "rm", "del",
+    ],
+  ),
+  ...subtree(
+    ["drafts", "draft"],
+    [
+      "create", "add", "new", "update", "edit", "set", "delete", "rm", "del", "remove",
+      "send", "post", "reply", "reply-all", "replyall", "forward", "fwd",
+    ],
+  ),
+]);
 
 /** The writes whose timed window gets a conflict precheck: calendar
  * create/update and their aliases. Delete and respond never conflict-gate. */
@@ -151,7 +190,14 @@ export function planPlowGog(argv: readonly string[]): PlowGogPlan {
   const group = GOG_ALIAS_OF[stripped[0]!] ?? stripped[0]!;
   const verb = stripped[1];
 
-  if (verb !== undefined && WRITES[group]?.has(verb)) {
+  const leaf = stripped[2];
+  if (
+    verb !== undefined &&
+    (WRITES[group]?.has(verb) === true ||
+      (group === "gmail" &&
+        leaf !== undefined &&
+        GMAIL_NESTED_WRITES.get(verb)?.has(leaf) === true))
+  ) {
     let conflictCheck: { from: string; to: string } | null = null;
     if (group === "calendar" && CONFLICT_GATED.has(verb)) {
       const from = flagValue(stripped, "from");
