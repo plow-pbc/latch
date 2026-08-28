@@ -3,10 +3,10 @@
 How this app is verified now that the in-repo stand-in Plow is gone: `npx vitest run` locally, and
 anything that needs a running app driven by hand against a **locally running plow API**.
 
-The *why* behind real-input verification is in
-`/Users/plucas/.claude-kitchen/projects/plow/wiki/ui-verification.md`. Read it once. The capture
-procedure is in `/Users/plucas/.claude-kitchen/projects/domo-desktop/wiki/m4-screenshots.md` — the
-head chef wants that kept as prose, not as a maintained script.
+The *why* behind real-input verification, and the screenshot-capture procedure,
+live in the maintainers' private wiki (`ui-verification.md` and
+`m4-screenshots.md`) — the head chef wants those kept as prose, not as
+maintained scripts.
 
 For the *installed* app rather than the code — what an unattended run can and
 cannot do to a real install, and the one real MCP call that proves one works —

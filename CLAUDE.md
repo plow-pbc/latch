@@ -37,7 +37,7 @@ npm workspaces. Libraries in `packages/`, executables/apps in `apps/`:
 stdio shim, connection-string/pinning concepts and pairing flow) has been
 removed. A Mac dials *out* to the Plow relay, which authenticates the calling
 agent and forwards MCP to `@domo/mcp-server`. Both halves of this side exist,
-and **so does the relay** — in the `plow-pbc/plow` repository, where
+and **so does the relay** — in the `plow-pbc/plow` repository (private), where
 `api/plow/relay/` serves the MCP endpoint, the device WebSocket and an OAuth
 flow, covered by `api/tests/relay/`. **Agents reach Macs through this app
 today.** This line used to say the relay was "not built", which was true when
@@ -102,8 +102,8 @@ Integration coverage, which owns that list.
   removed, so anything needing one is a manual run instead.
 - **Never launch the app on this Mac.** Windows flash on the head chef's screen.
   Electron runs — the app, the screenshot scripts, `verify-preload` — happen on
-  the M4:
-  `/Users/plucas/.claude-kitchen/projects/domo-desktop/wiki/m4-screenshots.md`.
+  a dedicated test machine (the capture procedure lives in the maintainers'
+  private wiki).
 - **The audit log is the test oracle.** Assert on `audit.ndjson` events rather
   than internal state where possible. Keep events append-only and one-per-line.
 - **`fixtures/` is the frozen protocol spec.** The golden vectors were
