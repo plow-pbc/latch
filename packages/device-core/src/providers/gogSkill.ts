@@ -62,10 +62,6 @@ events skip the check.
 \`--account\` and \`--confirm-conflict\` are plow-gog's own arguments and never
 reach Google; everything else is the CLI's ordinary grammar.
 
-The legacy single-account form \`["gog", ...]\` still runs but is
-**deprecated** — it reaches only the default account. New work uses
-\`plow-gog\`.
-
 ## What you can reach
 
 Most of Gmail and Calendar. **Drive, Docs, Sheets and the rest of the CLI are

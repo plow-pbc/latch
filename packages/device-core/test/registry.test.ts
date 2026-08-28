@@ -305,13 +305,15 @@ describe("the google-workspace skill", () => {
       "--account", // narrowing, and the write rule
       "--confirm-conflict", // the conflict-gate override
       "account that received the thread", // the reply rule
-      "deprecated", // the legacy gog form's status
     ]) {
       expect(body).toContain(phrase);
     }
   });
 
   it("no longer claims there is one mailbox", () => {
+    // Nor advertises a second spelling: bare `gog` reaches the same provider
+    // and is deliberately left out of the page.
+    expect(body).not.toContain("deprecated");
     expect(body).not.toContain("no account switch");
     expect(body).not.toContain("## One mailbox");
   });
