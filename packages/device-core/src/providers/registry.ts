@@ -18,7 +18,7 @@
  */
 
 import type { Skill } from "../skills.js";
-import { isHelpInvocation, reservedRefusal, shapeRefusal } from "./gogGate.js";
+import { isHelpInvocation } from "./gogGate.js";
 import { GOG_CANONICAL } from "./gogGroups.js";
 import { GOG_SKILL } from "./gogSkill.js";
 import { planPlowGog } from "./plowGog.js";
@@ -102,8 +102,21 @@ export interface VendoredProvider {
   readonly skill: Skill;
 }
 
-const GOG: VendoredProvider = {
-  command: "gog",
+/**
+ * The multi-account front for the vendored gog. One approved argv, N runs of
+ * the binary — one per connected Google account — merged into one
+ * account-tagged result; `deviceAgent.executePlowGog` is the orchestration.
+ *
+ * A bare `gog` argv is this row too (`vendoredProvider` matches the binary's
+ * name as well as the command's). Nothing advertises that spelling — the skill
+ * teaches `plow-gog` — but an agent that learned `gog` before this row existed
+ * keeps working, and gets the fan-out rather than a second, single-account
+ * path beside it. The alternative, a registered `gog` row of its own, was what
+ * let an agent that probed `command -v plow-gog` (no such binary: this row
+ * stages none) conclude that `gog` was the one that existed.
+ */
+const PLOW_GOG: VendoredProvider = {
+  command: "plow-gog",
   binary: "gog",
   mintAction: "access-token",
   // Not a Gmail-only scope, though the prefix says gmail: checked against
@@ -117,59 +130,35 @@ const GOG: VendoredProvider = {
   // cannot drift into disagreeing about what is in scope.
   belt: ["--no-input", "--wrap-untrusted", `--enable-commands=${GOG_CANONICAL.join(",")}`],
   skill: GOG_SKILL,
-  refuse: (argv) => {
-    const rest = argv.slice(1);
-    // `--help` is inert — gog prints usage and exits — and is how the skill
-    // tells an agent to discover the surface. What the allowance rescues is
-    // `gog --help` and `gog -h`, which the flags-first shape check would
-    // otherwise refuse for leading with a flag; a group's own help
-    // (`gog gmail --help`) passes the group check without it.
-    //
-    // It also passes `gmail send --subject --help`, where `--help` is a flag's
-    // VALUE and the last word, so no group check is reached. What keeps that
-    // safe is gog refusing `--help` in a value position itself — a per-version
-    // verdict, so step 3 of the pin-bump checklist owns it, and the agreement
-    // table pins the shape.
-    return reservedRefusal(rest) ?? (isHelpInvocation(rest) ? null : shapeRefusal(rest, "gog"));
-  },
-};
-
-/**
- * The multi-account front for the same vendored gog. One approved argv, N
- * runs of the binary — one per connected Google account — merged into one
- * account-tagged result; `deviceAgent.executePlowGog` is the orchestration.
- * `gog` above stays registered (deprecated) so existing exact-argv approvals
- * keep working; new work uses this row.
- */
-const PLOW_GOG: VendoredProvider = {
-  command: "plow-gog",
-  binary: GOG.command,
-  mintAction: GOG.mintAction,
-  mintPrefix: GOG.mintPrefix,
-  tokenEnv: GOG.tokenEnv,
-  belt: GOG.belt,
-  skill: GOG_SKILL,
   // The planner IS the gate: a refused plan and a refused argv are one
   // decision, so the dialog and the orchestrator cannot disagree about it.
+  // `--help` is inert — gog prints usage and exits — and is how the skill
+  // tells an agent to discover the surface; the planner passes it before the
+  // shape check, which would otherwise refuse `gog --help` for leading with a
+  // flag. `gmail send --subject --help`, where `--help` is a flag's VALUE and
+  // the last word, is kept safe by gog refusing `--help` in a value position
+  // itself — a per-version verdict, step 3 of the pin-bump checklist.
   refuse: (argv) => {
     const plan = planPlowGog(argv);
     return plan.kind === "refused" ? plan.reason : null;
   },
 };
 
-export const PROVIDERS: readonly VendoredProvider[] = [GOG, PLOW_GOG];
+export const PROVIDERS: readonly VendoredProvider[] = [PLOW_GOG];
 
 /**
  * The provider an argv invokes, or null when it invokes none.
  *
- * Matched on `argv[0]` exactly. A path (`/usr/local/bin/gog`) is deliberately
- * NOT a match: honouring a caller-supplied one would let an agent point the
- * mint at a binary of its choosing.
+ * Matched on `argv[0]` exactly, against the command OR the binary it stages —
+ * naming the bundled binary directly is naming the provider that fronts it.
+ * A path (`/usr/local/bin/gog`) is deliberately NOT a match: honouring a
+ * caller-supplied one would let an agent point the mint at a binary of its
+ * choosing.
  */
 export function vendoredProvider(argv: readonly string[]): VendoredProvider | null {
   const head = argv[0];
   if (head === undefined) return null;
-  return PROVIDERS.find((p) => p.command === head) ?? null;
+  return PROVIDERS.find((p) => p.command === head || p.binary === head) ?? null;
 }
 
 /**

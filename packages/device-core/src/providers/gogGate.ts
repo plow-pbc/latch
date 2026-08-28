@@ -1,9 +1,8 @@
 /**
- * The argv gate the two Google providers share — `gog` (deprecated,
- * single-account) and `plow-gog` (multi-account) refuse the same shapes with
- * the same sentences, and this module is the one spelling of both. `refuse`'s
- * doc in `registry.ts` owns WHY each shape is refused; the sentences live here
- * so the two providers cannot drift into disagreeing about them.
+ * The argv gate for the vendored gog, whichever spelling reaches it —
+ * `plow-gog`, or the bare `gog` that resolves to the same provider. `refuse`'s
+ * doc in `registry.ts` owns WHY each shape is refused; the sentences live here,
+ * beside the planner that also reads them, so one spelling of each exists.
  *
  * Every string returned reaches the approval dialog and the append-only audit
  * log, so the rule `gogFlags` follows applies throughout: a reason may name a

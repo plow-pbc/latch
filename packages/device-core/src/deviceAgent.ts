@@ -12,7 +12,7 @@
  * object* owns where an intent's contents go.
  */
 import { capabilityDisplay, Intent, intentIsExpired, JSONValue, jv } from "@domo/protocol";
-import { needsToken, PROVIDERS, vendoredProvider, type VendoredProvider } from "./providers/registry.js";
+import { PROVIDERS, vendoredProvider, type VendoredProvider } from "./providers/registry.js";
 import { MintError, type MintedAccounts, type Minter } from "./providers/mint.js";
 import { mergeFanout, planPlowGog } from "./providers/plowGog.js";
 import os from "node:os";
@@ -496,16 +496,7 @@ export class DeviceAgent {
     return this.vendorDirs.some((d) => fs.existsSync(path.join(d, command)));
   }
 
-  /**
-   * The environment a vendored provider's child runs with: its token, and
-   * nothing else.
-   */
-  private async mintFor(provider: VendoredProvider): Promise<Record<string, string>> {
-    if (this.minter === null) throw MintError.unpaired();
-    return { [provider.tokenEnv]: await this.minter.mint(provider) };
-  }
-
-  /** The batch form, for a provider that fans out per account. */
+  /** Every connected account's token, for the provider's fan-out. */
   private async mintAllFor(provider: VendoredProvider): Promise<MintedAccounts> {
     if (this.minter === null) throw MintError.unpaired();
     return this.minter.mintAll(provider);
@@ -526,13 +517,12 @@ export class DeviceAgent {
     const waitMs = jv(payload).get("wait_ms").int ?? 10000;
     const argv = exec.argv ?? [];
 
-    // A vendored provider CLI gets its token minted into the child's
-    // environment. Everything below this is the ordinary exec path — the
-    // capability the owner approved is the argv, the sandbox profile and the
-    // audit are unchanged, and `tools/list` never grew a tool for it.
+    // A vendored provider CLI gets its tokens minted into its children's
+    // environment and is orchestrated per account. Everything else is the
+    // ordinary exec path — the capability the owner approved is the argv, the
+    // sandbox profile and the audit are unchanged, and `tools/list` never
+    // grew a tool for it.
     const provider = vendoredProvider(argv);
-    let env: Record<string, string> | undefined;
-    let belted = argv;
     if (provider !== null) {
       // The device is the chokepoint and cannot rely on its caller having
       // checked. The tool checks too, so a refusal never reaches an approval
@@ -548,37 +538,19 @@ export class DeviceAgent {
       if (!this.hasStaged(provider.binary)) {
         return this.execError(intent.intentId, `${provider.command} is not installed on this Mac`);
       }
-      // plow-gog orchestrates N runs of the vendored gog rather than one run
-      // of itself, so it leaves the single-spawn path here — after the same
-      // refuse and staged gates, before any mint.
-      if (provider.command === "plow-gog") {
-        return this.executePlowGog(intent, provider, argv, { readPaths, writePaths, network, appleEvents, waitMs });
-      }
-      try {
-        // A help invocation touches no network, so it gets no token.
-        if (needsToken(argv)) env = await this.mintFor(provider);
-      } catch (e) {
-        const message = e instanceof MintError ? e.message : `could not authorise ${provider.command}`;
-        return this.execError(intent.intentId, message);
-      }
-      // The belt goes in front of the command path, where the CLI accepts
-      // globals. It is not in the approved argv deliberately: the owner
-      // approved the command they read, and these only ever narrow it — the
-      // same reason the sandbox profile is not in the argv either.
-      belted = [argv[0]!, ...provider.belt, ...argv.slice(1)];
+      return this.executePlowGog(intent, provider, argv, { readPaths, writePaths, network, appleEvents, waitMs });
     }
 
     this.audit.record("exec_start", { intentId: intent.intentId, argv });
     try {
       const result = await this.executor.run({
-        argv: belted,
+        argv,
         cwd: exec.cwd,
         readPaths,
         writePaths,
         network,
         appleEvents,
         waitMs,
-        env,
       });
       return this.finishRun(intent.intentId, result);
     } catch (error: unknown) {

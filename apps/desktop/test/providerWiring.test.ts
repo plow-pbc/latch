@@ -69,32 +69,24 @@ describe("buildMinter", () => {
         auth: String((init?.headers as Record<string, string>).authorization),
         url: String(url),
       });
-      return new Response(JSON.stringify({ data: { access_token: "ya29.token-value-here" } }), {
-        status: 200,
-        headers: { "content-type": "application/json" },
-      });
+      return new Response(
+        JSON.stringify({
+          data: { accounts: [{ account: "a@example.com", access_token: "ya29.token-value-here", is_default: true }] },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
     });
     const minter = buildMinter({ api, home });
 
-    await minter.mint(GOG);
+    await minter.mintAll(GOG);
     // The route comes from the provider's registry row — both halves literals.
     expect(sent[0]!.url).toBe("https://api.example.com/v1/connectors/gmail/access-token");
     // Re-pairing takes effect on the next command, not the next launch; a
     // captured credential keeps sending a stale one until the app relaunches,
     // which reads as a server problem rather than a not-yet-re-paired Mac.
     saveSettings(home, { relayCredential: "cred-secondsecond" });
-    await minter.mint(GOG);
+    await minter.mintAll(GOG);
     expect(sent.map((c) => c.auth)).toEqual(["Bearer cred-firstfirst", "Bearer cred-secondsecond"]);
-  });
-
-  it("refuses before calling when this Mac is not paired", async () => {
-    let called = false;
-    const api = new PlowApi("https://api.example.com", async () => {
-      called = true;
-      return new Response("{}", { status: 200 });
-    });
-    await expect(buildMinter({ api, home: homeWith("   ") }).mint(GOG)).rejects.toThrow(/not paired/);
-    expect(called).toBe(false);
   });
 
   /** A PlowApi whose fetch records each request and answers with `body`. */

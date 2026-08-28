@@ -43,8 +43,6 @@ export function buildMinter(opts: { api: PlowApi; home: string }): Minter {
     }
   };
   return {
-    mint: (provider) =>
-      authorised(provider, (c) => opts.api.mintProviderToken(c, provider.mintPrefix, provider.mintAction)),
     mintAll: (provider) =>
       authorised(provider, (c) => opts.api.mintAccountTokens(c, provider.mintPrefix, provider.mintAction)),
   };

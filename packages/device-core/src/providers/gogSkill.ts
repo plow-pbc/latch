@@ -7,9 +7,8 @@
  * versioned with the vendored binary — which is what lets a provider be added
  * without `tools/list` changing at all.
  *
- * ONE skill for both provider rows (`plow-gog`, and the deprecated `gog`):
- * they are one surface with two spellings, and two pages would be two copies
- * of every rule below.
+ * Teaches `plow-gog` only. A bare `gog` argv reaches the same provider
+ * (`registry.ts`), unadvertised: one surface, and one page for it.
  */
 import type { Skill } from "../skills.js";
 import { GOG_CANONICAL } from "./gogGroups.js";
@@ -62,10 +61,6 @@ events skip the check.
 
 \`--account\` and \`--confirm-conflict\` are plow-gog's own arguments and never
 reach Google; everything else is the CLI's ordinary grammar.
-
-The legacy single-account form \`["gog", ...]\` still runs but is
-**deprecated** — it reaches only the default account. New work uses
-\`plow-gog\`.
 
 ## What you can reach
 
