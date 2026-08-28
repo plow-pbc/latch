@@ -36,7 +36,14 @@ import {
   storedActivationChat,
 } from "./onboarding.js";
 import { PlowApi, PlowApiError, parseActivationChat } from "./plowApi.js";
-import { ChatPerson, chatPeople, chatRowSubtitle, chatRowTitle } from "./chatRows.js";
+import {
+  ChatPerson,
+  chatEchoesCredential,
+  chatPeople,
+  chatRowSubtitle,
+  chatRowTitle,
+  withoutCredentialEchoes,
+} from "./chatRows.js";
 import { loadSettings } from "./settings.js";
 
 /**
@@ -897,27 +904,18 @@ export class CloudChatsClient implements CloudChatsApi {
       .map((raw) => parseActivationChat(raw))
       .filter((chat): chat is NonNullable<typeof chat> => chat !== null)
       .flatMap((chat) => {
-        // EVERY server-authored string on this row is scanned, not just the
-        // names: a uid, a phone number and a line are as server-authored as a
-        // display name, and all of them cross into the renderer through
-        // `state()`. A name can be blanked and the row still means something;
-        // a uid or a number cannot, so a row echoing the credential in one of
-        // those is DROPPED whole rather than partly shown.
-        const number = (value: string | null) => (value ?? "").trim();
-        const identifiers = [
-          chat.uid,
-          number(chat.line),
-          ...chat.participants.map((member) => number(member.providerKey)),
-        ];
-        if (identifiers.some((value) => echoesCredential(value, deviceCredential))) return [];
+        // EVERY server-authored string on this row is scanned — the uid, the
+        // line, each participant's number and name — not just the names: all
+        // of them cross into the renderer through `state()`, as a row title, a
+        // subtitle and an `sms:` target. A name can be blanked and the row
+        // still means something; an identifier cannot, so the row is DROPPED.
+        //
+        // `chatEchoesCredential` is the one rule, shared with the redeem that
+        // persists the label — which had no check at all until it was the same
+        // function.
+        if (chatEchoesCredential(chat, deviceCredential)) return [];
 
-        const safe = {
-          ...chat,
-          displayName: echoesCredential(chat.displayName ?? "", deviceCredential) ? null : chat.displayName,
-          participants: chat.participants.map((member) => echoesCredential(
-            member.displayName ?? "", deviceCredential,
-          ) ? { ...member, displayName: null } : member),
-        };
+        const safe = withoutCredentialEchoes(chat, deviceCredential);
         return [{
           uid: chat.uid,
           label: activationChatLabel(safe),

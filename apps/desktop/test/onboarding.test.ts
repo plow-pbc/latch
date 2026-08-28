@@ -309,6 +309,53 @@ describe("activation — the path a brand-new user takes", () => {
     expect(shown.activation?.sendTo).toBe("+15550001111");
   });
 
+  it.each([
+    ["its line", (token: string) => ({ ...CHAT, line: token.slice(0, 12) })],
+    ["a participant's number", (token: string) => ({
+      ...CHAT,
+      participants: [{ providerKey: token.slice(0, 12), displayName: "Ada", isOwner: false }],
+    })],
+    ["its uid", (token: string) => ({ ...CHAT, uid: `cht_${token.slice(0, 12)}` })],
+  ])("never writes a chat to disk when %s echoes the session token", async (_why, make) => {
+    // The label is built from the line, the uids, the numbers and the names,
+    // and THIS is the one place they are written to disk. The redeem carries
+    // the session token in the same breath, so a server that echoed it here
+    // would have persisted it and rendered it.
+    plow.redeems = [{ status: "verified", token: SESSION_TOKEN, chat: make(SESSION_TOKEN) }];
+    const onboarding = build();
+    await onboarding.begin();
+    await settle();
+
+    // The sign-in still completes — the chat is what is dropped, and the
+    // account's list is re-read on the Agents tab anyway.
+    expect(loadSettings(home).relayCredential).toBe(SESSION_TOKEN);
+    expect(loadSettings(home).provisionedChatUid).toBe("");
+    expect(loadSettings(home).provisionedChatLabel).toBe("");
+    const persisted = JSON.stringify(loadSettings(home));
+    expect(persisted.split(SESSION_TOKEN).length - 1).toBe(1); // the credential, and nothing else
+    expect(JSON.stringify(onboarding.state())).not.toContain(SESSION_TOKEN.slice(0, 12));
+    // Said, without repeating any of the fields that triggered it.
+    expect(warnings.join(" ")).toContain("echoed the credential");
+    expect(warnings.join(" ")).not.toContain(SESSION_TOKEN.slice(0, 12));
+  });
+
+  it("keeps a chat whose NAME echoes, with the name removed", async () => {
+    // A name can be blanked and the row still means something; dropping it
+    // would lose a chat the owner actually has.
+    plow.redeems = [{
+      status: "verified",
+      token: SESSION_TOKEN,
+      chat: { ...CHAT, displayName: SESSION_TOKEN.slice(0, 12) },
+    }];
+    const onboarding = build();
+    await onboarding.begin();
+    await settle();
+
+    expect(loadSettings(home).provisionedChatUid).toBe(CHAT.uid);
+    expect(loadSettings(home).provisionedChatLabel).not.toContain(SESSION_TOKEN.slice(0, 12));
+    expect(loadSettings(home).provisionedChatLabel).toBeTruthy();
+  });
+
   it("has no chat to show on a Mac whose activation never made one", async () => {
     plow.redeems = [{ status: "verified", token: SESSION_TOKEN }];
     const onboarding = build();

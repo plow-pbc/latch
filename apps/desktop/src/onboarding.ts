@@ -17,7 +17,13 @@
  * user is meant to read: the activation display code. The activation *secret*
  * and the login session never appear in it at all.
  */
-import { chatPeople, chatRowTitle, usableChatDisplayName } from "./chatRows.js";
+import {
+  chatEchoesCredential,
+  chatPeople,
+  chatRowTitle,
+  usableChatDisplayName,
+  withoutCredentialEchoes,
+} from "./chatRows.js";
 import { ActivationChat, PlowApi, PlowApiError } from "./plowApi.js";
 import { loadSettings, saveSettings, Settings } from "./settings.js";
 
@@ -685,9 +691,18 @@ export class Onboarding {
     // sign-in with no chat — the phone-code path, or a Mac activated before
     // `provision_chat` — leaves whatever was there alone rather than blanking
     // it, because "this redeem carried no chat" is not "the account has none".
-    if (chat) {
+    // The label is built from the chat's line, uids, numbers and names — all
+    // server-authored, and this is the one place they are written to DISK. A
+    // chat echoing the session token is dropped whole: the sign-in still
+    // completes, and the account's chat list is re-read on the Agents tab
+    // anyway, so nothing is lost but a row nobody could have trusted.
+    if (chat && !chatEchoesCredential(chat, sessionToken)) {
       settings.provisionedChatUid = chat.uid;
-      settings.provisionedChatLabel = activationChatLabel(chat);
+      settings.provisionedChatLabel = activationChatLabel(withoutCredentialEchoes(chat, sessionToken));
+    } else if (chat) {
+      // No detail, and no field values: the point of the check is that one of
+      // them is the credential.
+      this.deps.warn?.("dropped a provisioned chat whose fields echoed the credential");
     }
     // Nothing records `sendTo`. Pairing asks for no chat, so it is the managed
     // phone — the number that takes an activation text, not one anyone can be

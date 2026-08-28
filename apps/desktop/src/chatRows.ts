@@ -1,3 +1,5 @@
+import { echoesCredential } from "./cloudAgents.js";
+
 /**
  * How a chat reads in the picker: a title of the people in it, and one
  * subtitle line naming the number it runs on and the numbers it reaches.
@@ -27,6 +29,54 @@ export interface ChatPerson {
    * chat; nothing here has to guess.
    */
   isOwner: boolean;
+}
+
+/**
+ * Does an IDENTIFIER on this chat repeat the credential?
+ *
+ * The uid, the line, and each participant's number — the fields that cannot be
+ * blanked and still mean anything. A chat that answers true is dropped whole by
+ * its callers.
+ *
+ * Names are the other half and are handled by `withoutCredentialEchoes`: a
+ * chat whose NAME echoes is still a real chat with real numbers, and blanking
+ * the name is both safe and useful, where dropping the row would lose a chat
+ * the owner has.
+ *
+ * One rule, because two callers hold the credential: the chat-list client, and
+ * the redeem that persists `provisionedChatLabel`. The second had no check at
+ * all, so a `line` echoing the session token was written to disk and rendered.
+ */
+export function chatEchoesCredential(
+  chat: {
+    uid: string;
+    line: string | null;
+    participants: readonly { providerKey: string | null }[];
+  },
+  credential: string,
+): boolean {
+  const identifiers = [
+    chat.uid,
+    chat.line ?? "",
+    ...chat.participants.map((member) => member.providerKey ?? ""),
+  ];
+  return identifiers.some((value) => echoesCredential(value.trim(), credential));
+}
+
+/** The same chat with any name that echoes the credential removed. */
+export function withoutCredentialEchoes<
+  T extends {
+    displayName: string | null;
+    participants: readonly { displayName: string | null }[];
+  },
+>(chat: T, credential: string): T {
+  return {
+    ...chat,
+    displayName: echoesCredential(chat.displayName ?? "", credential) ? null : chat.displayName,
+    participants: chat.participants.map((member) =>
+      echoesCredential(member.displayName ?? "", credential) ? { ...member, displayName: null } : member,
+    ),
+  };
 }
 
 /**
