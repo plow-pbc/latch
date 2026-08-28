@@ -123,10 +123,10 @@ describe("the skill contribution footer", () => {
   // Both write paths a fix can take, plus the boundary an agent's own
   // contribution must respect: no message content, no real identifiers.
   it("names the user-specific write path, the universal-fix path, and the privacy bound", () => {
-    const footer = skillFooter("/Users/example");
-    // The real skills directory (built from the device home), not a shell
-    // variable that plow_write_file would not expand.
-    expect(footer).toMatch(/\/Users\/example\/device\/skills\//);
+    const footer = skillFooter(os.homedir());
+    // The real skills directory, ~-relative (plow_write_file expands ~), not a
+    // shell variable that plow_write_file would not expand.
+    expect(footer).toMatch(/~\/device\/skills\//);
     expect(footer).not.toMatch(/\$DOMO_HOME/);
     // A written skill loads on restart, not immediately.
     expect(footer).toMatch(/restart/i);
@@ -142,6 +142,15 @@ describe("the skill contribution footer", () => {
     const footer = skillFooter(path.join(os.homedir(), "Library/Application Support/Plow-Latch"));
     expect(footer).toMatch(/~\/Library\/Application Support\/Plow-Latch\/device\/skills\//);
     expect(footer).not.toContain(os.homedir());
+  });
+
+  it("never prints an absolute path for a DOMO_HOME outside the user's directory", () => {
+    // An explicit DOMO_HOME on another volume can't collapse to ~, and printing
+    // it would leak that owner-identifying path. The footer describes the
+    // directory home-agnostically instead — no absolute path, ever.
+    const footer = skillFooter("/Volumes/Alice/latch-home");
+    expect(footer).not.toContain("/Volumes/Alice");
+    expect(footer).toMatch(/device\/skills\//);
   });
 });
 
@@ -268,7 +277,7 @@ function manifestStrings(): { where: string; text: string }[] {
   }
   out.push({ where: "skill.description", text: BROWSING_SKILL.description });
   out.push({ where: "skill.body", text: BROWSING_SKILL.body });
-  out.push({ where: "skill.footer", text: skillFooter("/Users/example") });
+  out.push({ where: "skill.footer", text: skillFooter(os.homedir()) });
   out.push({ where: "serverInfo.title", text: SERVER_IDENTITY.title });
   out.push({ where: "serverInfo.description", text: SERVER_IDENTITY.description });
   return out;

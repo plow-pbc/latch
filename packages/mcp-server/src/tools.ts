@@ -198,16 +198,25 @@ export const MACOS_TOOLING =
  * once at `DeviceAgent` construction, so a newly-written skill appears after a
  * restart, not immediately; the copy says so.
  */
-function homeRelative(p: string): string {
+/**
+ * The write target shown in the footer, guaranteed **never** to be an
+ * owner-identifying absolute path. A home under the user's own directory
+ * collapses to `~` (which `plow_write_file` canonicalizes, so it stays a usable
+ * path); an explicit `DOMO_HOME` somewhere else — e.g. `/Volumes/Alice/...` —
+ * would still leak that absolute path, so it is described home-agnostically
+ * instead. Either branch keeps the account name off every skill read.
+ */
+function skillsDirPhrase(home: string): string {
   const h = os.homedir();
-  if (p === h) return "~";
-  return p.startsWith(h + path.sep) ? "~" + p.slice(h.length) : p;
+  if (home === h) return "~/device/skills/";
+  if (home.startsWith(h + path.sep)) return "~" + home.slice(h.length) + "/device/skills/";
+  return "the device/skills/ directory under this Mac's Plow Latch home";
 }
 
 export function skillFooter(home: string): string {
   return (
     "\n\n---\nImprove this skill: if a recipe here is wrong or you found a better way, " +
-    `propose it. User-specific fixes: write a skill into ${homeRelative(home)}/device/skills/ (an ` +
+    `propose it. User-specific fixes: write a skill into ${skillsDirPhrase(home)} (an ` +
     "ordinary approved file write); it loads the next time Plow Latch restarts. Universal " +
     "fixes (schema drift, query bugs): file an issue or PR at github.com/plow-pbc/latch " +
     "quoting the exact query and observed deviation. Never include message content, real " +
