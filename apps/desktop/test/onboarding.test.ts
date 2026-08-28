@@ -148,8 +148,33 @@ class FakePlow {
   revokeFails = false;
   /** ...or only these, so a test can let one through and refuse the next. */
   revokeRefuses: string[] = [];
+  /** Tokens the server says are already gone — what a 401 on
+   * `/v1/relay/devices/self/revoke` means, since the token authenticates it. */
+  revokeUnauthorized: string[] = [];
+
+  private revokeGate: Promise<void> | null = null;
+  private openRevokes: (() => void) | null = null;
+  /** Hold every revoke open, so a test can start a second caller while the
+   * first is still on the wire. */
+  holdRevokes(): void {
+    this.revokeGate = new Promise((resolve) => {
+      this.openRevokes = resolve;
+    });
+  }
+  releaseRevokes(): void {
+    this.openRevokes?.();
+    this.revokeGate = null;
+    this.openRevokes = null;
+  }
 
   async revokeDeviceCredential(token: string): Promise<void> {
+    // Counted before the gate, so a test can wait for the call to be IN
+    // FLIGHT rather than for it to finish.
+    this.revokeCalls.push(token);
+    if (this.revokeGate) await this.revokeGate;
+    if (this.revokeUnauthorized.includes(token)) {
+      throw new PlowApiError("unauthorized", "Not authorized.", 401);
+    }
     if (this.revokeFails || this.revokeRefuses.includes(token)) {
       throw new PlowApiError("network", "unreachable");
     }
@@ -1467,5 +1492,72 @@ describe("a session held for a later revoke", () => {
     await onboarding.retryPendingRevocations();
 
     expect(loadSettings(home).pendingRevocations).toEqual([SESSION_TOKEN]);
+  });
+
+  it("sweeps ONCE when launch and an activation both ask at the same time", async () => {
+    // Launch starts a sweep and the first activation starts another; on a slow
+    // network they overlap, both read the same list, and both revoke the same
+    // token. The second call then gets a 401 — because the first one worked —
+    // and the token went back on the list as a session that no longer exists.
+    heldSession();
+    plow.holdRevokes();
+    const onboarding = build();
+
+    const fromLaunch = onboarding.retryPendingRevocations();
+    const fromActivation = onboarding.retryPendingRevocations();
+    await settleUntil(() => plow.revokeCalls.length >= 1);
+    plow.releaseRevokes();
+    await Promise.all([fromLaunch, fromActivation]);
+
+    // One call, not two: the second caller joined the flight in progress.
+    expect(plow.revokeCalls).toEqual([SESSION_TOKEN]);
+    expect(plow.revoked).toEqual([SESSION_TOKEN]);
+    expect(loadSettings(home).pendingRevocations).toEqual([]);
+  });
+
+  it("starts a fresh sweep once the last one has finished", async () => {
+    // Single-flight is not once-per-process: the handle is dropped when the
+    // sweep ends, so the next launch or activation really does try again.
+    heldSession();
+    plow.revokeRefuses = [SESSION_TOKEN];
+    const onboarding = build();
+    await onboarding.retryPendingRevocations();
+    expect(loadSettings(home).pendingRevocations).toEqual([SESSION_TOKEN]);
+
+    plow.revokeRefuses = [];
+    await onboarding.retryPendingRevocations();
+    expect(plow.revoked).toEqual([SESSION_TOKEN]);
+    expect(loadSettings(home).pendingRevocations).toEqual([]);
+  });
+
+  it("drops a token Plow says is already revoked, rather than holding it forever", async () => {
+    // A 401 here is the token saying it no longer works — the revoke
+    // authenticates WITH the token it retires. Treating that as a failure put
+    // it back on the list, so a session that was already gone warned on every
+    // screen and made worktree cleanup refuse for as long as the home lived.
+    heldSession();
+    plow.revokeUnauthorized = [SESSION_TOKEN];
+    const onboarding = build();
+    await onboarding.retryPendingRevocations();
+
+    expect(loadSettings(home).pendingRevocations).toEqual([]);
+    // Nothing is loose, so nothing is warned about.
+    expect(onboarding.state().message).not.toBe(LOOSE_SESSION_WARNING);
+  });
+
+  it("keeps holding the ones that failed for a reason a retry could fix", async () => {
+    // The 401 release must not become "give up on anything that errors": a
+    // network failure is still a session this Mac has to come back for.
+    const DEAD = "plow_sk_already_revoked";
+    const LIVE = "plow_sk_still_live";
+    const settings = loadSettings(home);
+    settings.pendingRevocations = [DEAD, LIVE];
+    saveSettings(home, settings);
+    plow.revokeUnauthorized = [DEAD];
+    plow.revokeRefuses = [LIVE];
+
+    await build().retryPendingRevocations();
+
+    expect(loadSettings(home).pendingRevocations).toEqual([LIVE]);
   });
 });

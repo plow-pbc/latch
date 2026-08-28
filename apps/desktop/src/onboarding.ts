@@ -251,6 +251,10 @@ export class Onboarding {
    * burning a second code — see `newActivationCode`. `pendingMintId` says which
    * flight it is, so a finishing mint only drops the handle if it is its own.
    */
+  /** The retry sweep in flight, if any. Held so a second caller joins it
+   * rather than racing it onto the same tokens — see
+   * `retryPendingRevocations`. */
+  private retrying: Promise<void> | null = null;
   private pendingMint: Promise<OnboardingState> | null = null;
   private pendingMintId = 0;
   private mints = 0;
@@ -802,7 +806,17 @@ export class Onboarding {
   private async retireOrRetain(token: string): Promise<boolean> {
     try {
       await this.deps.api.revokeDeviceCredential(token);
-    } catch {
+    } catch (error) {
+      if (alreadyDead(error)) {
+        // The revoke authenticates WITH the token being revoked
+        // (`/v1/relay/devices/self/revoke` — the server knows which credential
+        // is calling), so a 401 is that token saying it no longer works. There
+        // is nothing left to retire, and holding it anyway is not caution: it
+        // is a permanent warning on the setup screen and a worktree cleanup
+        // that refuses for good, over a session that is already gone.
+        releaseRevocation(this.deps.home, token);
+        return true;
+      }
       holdForRevocation(this.deps.home, token);
       // No value: the only one in scope IS the session.
       this.deps.warn?.("could not revoke a login session; holding it to retry");
@@ -826,9 +840,31 @@ export class Onboarding {
    * both outcomes, so walking the live list would skip entries as it shrank.
    */
   async retryPendingRevocations(): Promise<void> {
-    for (const token of [...this.settings().pendingRevocations]) {
-      await this.retireOrRetain(token);
-    }
+    // SINGLE-FLIGHT. Launch starts one of these and the first activation
+    // starts another, and on a slow network they overlap — so both read the
+    // same list and both revoke the same token. The second call gets a 401,
+    // because the first one worked. Before this the 401 was just another
+    // failure and the token went back on the list: a session that no longer
+    // existed, warned about on every screen and refused by worktree cleanup
+    // for as long as the home lived. Joining the flight in progress is where
+    // that closes; the 401 handling above is the belt to this braces, because
+    // the same collision can happen across two processes.
+    if (this.retrying) return this.retrying;
+    // The handle is dropped inside the body rather than by chaining `.finally`
+    // — same reason as `newActivationCode`: a chained one adds a turn before
+    // the caller resumes, and under a test clock that turn lets the detached
+    // poll loop run ahead of the caller.
+    const flight = (async () => {
+      try {
+        for (const token of [...this.settings().pendingRevocations]) {
+          await this.retireOrRetain(token);
+        }
+      } finally {
+        this.retrying = null;
+      }
+    })();
+    this.retrying = flight;
+    return flight;
   }
 
   /**
@@ -887,6 +923,23 @@ export class Onboarding {
     this.deps.onChange?.();
     return this.state();
   }
+}
+
+/**
+ * Is this failure the token telling us it is already gone?
+ *
+ * `unauthorized` is the API's own word for "a wrong or expired code, or a
+ * revoked token", and the revoke call authenticates with the very token it
+ * retires — so a 401 here is not a failure to revoke, it is a revoke that has
+ * already happened. `forbidden` joins it because a token this Mac is not
+ * permitted to retire is one no retry can ever retire either, and holding it
+ * forever tells the owner nothing they can act on that the first warning did
+ * not already say.
+ */
+function alreadyDead(error: unknown): boolean {
+  return (
+    error instanceof PlowApiError && (error.kind === "unauthorized" || error.kind === "forbidden")
+  );
 }
 
 function messageOf(error: unknown): string {
