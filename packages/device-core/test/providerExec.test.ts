@@ -371,6 +371,18 @@ esac
     expect(JSON.stringify(response)).not.toContain("--calendars");
   });
 
+  itSpawns("carries a named-but-degraded account as degraded, and queries only the healthy one", async () => {
+    const d = device(accountsMinter([AB[0]!], [{ account: "b@example.com", reason: "needs_reauth" }]), [
+      plowVendorDir(),
+    ]);
+    const response = await run(d, ["plow-gog", "calendar", "events", "list", "--calendars=a@example.com,b@example.com"]);
+    expect(response).toMatchObject({
+      status: "completed",
+      items: [{ account: "a@example.com" }],
+      degraded: [{ account: "b@example.com", reason: "needs_reauth" }],
+    });
+  });
+
   it("rejects a --calendars entry that names no connected account, running nothing", async () => {
     const d = device(accountsMinter(AB), [plowVendorDir()]);
     const response = await run(d, ["plow-gog", "calendar", "events", "list", "--calendars=z@example.com"]);
