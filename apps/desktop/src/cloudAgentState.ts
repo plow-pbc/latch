@@ -498,16 +498,20 @@ export class CloudAgentState {
     try {
       const agents = await this.deps.agents.list(credential);
       if (generation !== this.generation || read !== this.agentReads) return;
-      for (const [agentId, failedAtRead] of this.editsPending) {
-        if (failedAtRead !== null && failedAtRead < read) this.editsPending.delete(agentId);
-      }
-      // A create or a delete happened while this listing was in the air. It is
-      // older than what the user just did, and applying it would put a deleted
-      // agent back on screen. The mutation's own refresh follows it.
-      if (mutations !== this.mutations) return;
       const listed = new Map(
         agents.map((agent) => [agent.agentId, this.rowFor(agent)] as const),
       );
+      for (const [agentId, failedAtRead] of this.editsPending) {
+        if (failedAtRead === null || failedAtRead >= read) continue;
+        const reconciled = listed.get(agentId);
+        if (reconciled) this.rows.set(agentId, reconciled);
+        else this.rows.delete(agentId);
+        this.editsPending.delete(agentId);
+      }
+      // A create or a delete happened while this listing was in the air. It is
+      // older than what the user just did, and applying all of it would put a
+      // deleted agent back on screen. The mutation's own refresh follows it.
+      if (mutations !== this.mutations) return;
       // A create whose poll is still running may not be in the account listing
       // yet. Its row stays until the poll finishes, so provisioning does not
       // flicker off the screen and back.

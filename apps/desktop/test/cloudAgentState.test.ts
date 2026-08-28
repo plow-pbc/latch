@@ -1144,6 +1144,8 @@ describe("changing which chats an agent serves", () => {
     await saving;
 
     expect(state.state().cloudAgentEditsPending).toEqual([]);
+    expect(state.state().cloudAgents.find((row) => row.agentId === "agent_1")?.chatUids)
+      .toEqual(["cht_2"]);
     polling.resolve(agent({ agentId: "agent_2", status: "running" }));
     await settle();
   });
