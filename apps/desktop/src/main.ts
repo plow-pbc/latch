@@ -642,16 +642,13 @@ ipcMain.handle("cloud:create", async (_e, chatUids: string[], name: string) => {
 /**
  * Change which chats an existing agent serves.
  *
- * Answers whether it happened, and the whole state with it: the modal needs the
- * verdict to know whether to close, and the pane behind it needs the rows. The
- * roster is re-read for the same reason a create re-reads it — a credential's
- * chat grant moves with the agent's set, so the row's permission line is stale
- * the moment this returns.
+ * The roster is re-read for the same reason a create re-reads it — a
+ * credential's chat grant moves with the agent's set, so the row's permission
+ * line is stale the moment this returns.
  */
 ipcMain.handle("cloud:editChats", async (_e, agentId: string, chatUids: string[]) => {
-  const saved = (await cloudAgents?.editChats(agentId, chatUids ?? [])) ?? false;
+  await cloudAgents?.editChats(agentId, chatUids ?? []);
   await connectClient?.refreshRoster();
-  return { saved, state: agentsTabState() };
 });
 /** Connect-a-client's state plus the cloud-agent group's, in one object. The
  * cloud half is present and empty when the flag is off, so the renderer reads

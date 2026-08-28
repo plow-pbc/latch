@@ -106,8 +106,7 @@ contextBridge.exposeInMainWorld("domo", {
   // as soon as the row is on screen in `provisioning`.
   cloudCreate: (chatUids: string[], name: string) =>
     ipcRenderer.invoke("cloud:create", chatUids, name),
-  // Replace the whole set of chats an agent serves. One round trip, no poll:
-  // it answers true when the agent really serves the new set.
+  // Replace the whole set of chats an agent serves. One round trip, no poll.
   cloudEditChats: (agentId: string, chatUids: string[]) =>
     ipcRenderer.invoke("cloud:editChats", agentId, chatUids),
 

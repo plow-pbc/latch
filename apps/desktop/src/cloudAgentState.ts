@@ -100,7 +100,7 @@ export interface CloudAgentsUiState {
   cloudChatsNeedReactivation: boolean;
   /** A create/delete/retry failure, and nothing else. */
   cloudActionError: string | null;
-  /** Agent ids whose indeterminate chat-set save is being reconciled. */
+  /** Agent ids whose chat-set save is in flight or being reconciled. */
   cloudAgentEditsPending: string[];
   cloudChats: CloudChatOption[];
   /**
@@ -203,7 +203,9 @@ export class CloudAgentState {
    */
   private agentReads = 0;
   private actionError: string | null = null;
-  private editsPending = new Set<string>();
+  /** The latest roster read already started when an indeterminate PUT failed;
+   * `null` while the PUT itself is still in flight. */
+  private editsPending = new Map<string, number | null>();
   private chats: CloudChatOption[] = [];
   private chatsLoaded = false;
   /**
@@ -235,7 +237,7 @@ export class CloudAgentState {
       cloudChatsError: this.chatsError,
       cloudChatsNeedReactivation: this.chatsNeedReactivation,
       cloudActionError: this.actionError,
-      cloudAgentEditsPending: [...this.editsPending],
+      cloudAgentEditsPending: [...this.editsPending.keys()],
       cloudChats: this.chats,
       cloudChatsLoaded: this.chatsLoaded,
       cloudSendTo: settings.activationSendTo.trim() || null,
@@ -313,35 +315,35 @@ export class CloudAgentState {
    * The staleness guards are `create`'s, for `create`'s reasons: a sign-out
    * mid-flight belongs to the account that went away, and the mutation counter
    * has to move so a listing already in the air cannot put the old set back on
-   * screen. Answers whether the save happened, because the modal that called it
-   * stays open on a failure and closes on a success.
+   * screen.
    */
-  async editChats(agentId: string, chatUids: readonly string[]): Promise<boolean> {
+  async editChats(agentId: string, chatUids: readonly string[]): Promise<void> {
     const id = (agentId ?? "").trim();
-    if (id && this.editsPending.has(id)) return false;
+    if (id && this.editsPending.has(id)) return;
     this.actionError = null;
-    if (!id) return false;
+    if (!id) return;
     const chats = normalizeChatUids(chatUids);
     if (!chats.length) {
       this.failAction("An agent has to serve at least one chat.");
-      return false;
+      return;
     }
     const credential = this.credential();
     if (!credential) {
       this.failAction("This Mac isn't signed in yet.");
-      return false;
+      return;
     }
 
     const generation = this.generation;
-    this.editsPending.add(id);
+    this.editsPending.set(id, null);
     this.publish();
     let updated: CloudAgentResource;
     try {
       updated = await this.deps.agents.updateChats(credential, id, chats);
     } catch (error) {
-      if (generation !== this.generation) return false;
+      if (generation !== this.generation) return;
       const refused = isRefusedEdit(error);
       if (refused) this.editsPending.delete(id);
+      else this.editsPending.set(id, this.agentReads);
       this.failAction(this.actionMessage(error));
       // A failure that is not the server's verdict says nothing about what the
       // agent now serves. A timed-out PUT is the case that matters: the request
@@ -355,16 +357,16 @@ export class CloudAgentState {
         this.mutations += 1;
         await this.refresh();
       }
-      return false;
+      return;
     }
-    if (generation !== this.generation) return false;
+    if (generation !== this.generation) return;
+    this.editsPending.delete(id);
     this.mutations += 1;
     // The row goes to the answer, not to what was asked for: the server decides
     // what the agent serves, and a set it normalised differently must show as
     // what it actually is.
     this.observe(updated, "");
     await this.refresh();
-    return true;
   }
 
   /** Remove an agent — the machine and its hold on the chat, not just a key. */
@@ -518,7 +520,9 @@ export class CloudAgentState {
       }
       this.rows = listed;
       this.agentsError = null;
-      this.editsPending.clear();
+      for (const [agentId, failedAtRead] of this.editsPending) {
+        if (failedAtRead !== null && failedAtRead < read) this.editsPending.delete(agentId);
+      }
       // `teardown` is not a state an agent rests in — it is a delete that
       // failed provider-side and is waiting to be asked again. Nothing else
       // will ask, so this does, from whichever refresh sees it.

@@ -991,7 +991,7 @@ describe("changing which chats an agent serves", () => {
     const state = build(tempHome(), f);
     await state.refresh();
 
-    await expect(state.editChats("agent_1", ["cht_2", "cht_1"])).resolves.toBe(true);
+    await state.editChats("agent_1", ["cht_2", "cht_1"]);
 
     expect(f.agents.updated).toEqual([{ agentId: "agent_1", chatUids: ["cht_2", "cht_1"] }]);
     // Home first, and the labels follow the same order — the row must not
@@ -1021,10 +1021,32 @@ describe("changing which chats an agent serves", () => {
     const state = build(tempHome(), f);
     await state.refresh();
 
-    await expect(state.editChats("agent_1", [" ", ""])).resolves.toBe(false);
+    await state.editChats("agent_1", [" ", ""]);
 
     expect(f.agents.updated).toEqual([]);
     expect(state.state().cloudActionError).toBe("An agent has to serve at least one chat.");
+  });
+
+  it("keeps an edit pending when a roster refresh finishes during its PUT", async () => {
+    const update = deferred<CloudAgentResource>();
+    const f = fakes({
+      list: async () => [agent({ chatUids: ["cht_1"] })],
+      update: async () => update.promise,
+    });
+    const state = build(tempHome(), f);
+    await state.refresh();
+
+    const saving = state.editChats("agent_1", ["cht_2"]);
+    await vi.waitFor(() => {
+      expect(state.state().cloudAgentEditsPending).toEqual(["agent_1"]);
+    });
+
+    await state.refresh();
+
+    expect(state.state().cloudAgentEditsPending).toEqual(["agent_1"]);
+    update.resolve(agent({ chatUids: ["cht_2"] }));
+    await saving;
+    expect(state.state().cloudAgentEditsPending).toEqual([]);
   });
 
   it.each([
@@ -1048,11 +1070,11 @@ describe("changing which chats an agent serves", () => {
     await vi.waitFor(() => {
       expect(state.state().cloudAgentEditsPending).toEqual(["agent_1"]);
     });
-    await expect(state.editChats("agent_1", ["cht_3"])).resolves.toBe(false);
+    await state.editChats("agent_1", ["cht_3"]);
     expect(f.agents.updated).toEqual([{ agentId: "agent_1", chatUids: ["cht_2"] }]);
 
     reconciliation.resolve([agent({ chatUids: ["cht_2"] })]);
-    await expect(saving).resolves.toBe(false);
+    await saving;
 
     expect(f.agents.calls.filter((call) => call === "list")).toHaveLength(2);
     expect(state.state().cloudActionError).toContain(message);
@@ -1077,11 +1099,11 @@ describe("changing which chats an agent serves", () => {
     const state = build(tempHome(), f);
     await state.refresh();
 
-    await expect(state.editChats("agent_1", ["cht_2"])).resolves.toBe(false);
+    await state.editChats("agent_1", ["cht_2"]);
 
     expect(state.state().cloudAgentEditsPending).toEqual(["agent_1"]);
     expect(state.state().cloudAgentsError).toBe("Plow returned 503.");
-    await expect(state.editChats("agent_1", ["cht_3"])).resolves.toBe(false);
+    await state.editChats("agent_1", ["cht_3"]);
     expect(f.agents.updated).toEqual([{ agentId: "agent_1", chatUids: ["cht_2"] }]);
 
     await state.refresh();
@@ -1104,7 +1126,7 @@ describe("changing which chats an agent serves", () => {
     const state = build(tempHome(), f);
     await state.refresh();
 
-    await expect(state.editChats("agent_1", ["cht_2"])).resolves.toBe(false);
+    await state.editChats("agent_1", ["cht_2"]);
 
     expect(state.state().cloudActionError).toBe(
       "This chat already belongs to Book club — edit that agent's chats instead.",
@@ -1138,9 +1160,10 @@ describe("changing which chats an agent serves", () => {
     const state = build(tempHome(), f);
     await state.refresh();
 
-    await expect(state.editChats("agent_1", ["cht_2"])).resolves.toBe(false);
+    await state.editChats("agent_1", ["cht_2"]);
 
     expect(f.agents.calls.filter((call) => call === "list")).toHaveLength(1);
+    expect(state.state().cloudAgentEditsPending).toEqual([]);
     expect(state.state().cloudAgents[0].chatUids).toEqual(["cht_1"]);
     expect(state.state().cloudActionError).toBe(message);
   });
@@ -1176,7 +1199,7 @@ describe("changing which chats an agent serves", () => {
     state.signedOut();
     held.resolve(agent({ chatUids: ["cht_2"] }));
 
-    await expect(saving).resolves.toBe(false);
+    await saving;
     await settle();
     // The agent belongs to the account that went away; nothing from it may
     // appear under the next one.
@@ -1216,7 +1239,7 @@ describe("changing which chats an agent serves", () => {
     // The IPC boundary: a caller still passing the old singular argument must
     // fail loudly here, not provision an agent across "c", "h", "t"…
     await expect(state.create("cht_1" as unknown as string[], "Kitchen")).resolves.toBeNull();
-    await expect(state.editChats("agent_1", "cht_1" as unknown as string[])).resolves.toBe(false);
+    await state.editChats("agent_1", "cht_1" as unknown as string[]);
 
     expect(f.agents.created).toEqual([]);
     expect(f.agents.updated).toEqual([]);

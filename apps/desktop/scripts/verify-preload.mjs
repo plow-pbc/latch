@@ -136,7 +136,6 @@ let cloudProbe = {
   cloudSendTo: "+1 (415) 555-0199",
 };
 const cloudCalls = { create: [], editChats: [] };
-let cloudEditFails = false;
 let cloudEditPending = false;
 let releaseCloudEdit = null;
 let releaseCloudCreate = null;
@@ -176,8 +175,7 @@ ipcMain.handle("cloud:create", async (_e, chatUids, name) => {
   };
   cloudCreatePending = false;
 });
-// Editing an agent's chats: the renderer needs the {saved, state} shape back,
-// and the row has to come out carrying the new set.
+// Editing an agent's chats: the row has to come out carrying the new set.
 ipcMain.handle("cloud:editChats", async (_e, agentId, chatUids) => {
   cloudCalls.editChats.push({ agentId, chatUids });
   cloudProbe = { ...cloudProbe, cloudAgentEditsPending: [agentId] };
@@ -185,14 +183,6 @@ ipcMain.handle("cloud:editChats", async (_e, agentId, chatUids) => {
     cloudEditPending = true;
     await new Promise((resolve) => { releaseCloudEdit = resolve; });
     cloudEditPending = false;
-  }
-  if (cloudEditFails) {
-    cloudProbe = {
-      ...cloudProbe,
-      cloudActionError: "Groceries already belongs to Household helper.",
-      cloudAgentEditsPending: [],
-    };
-    return { saved: false, state: { ...cloudProbe } };
   }
   cloudProbe = {
     ...cloudProbe,
@@ -208,7 +198,6 @@ ipcMain.handle("cloud:editChats", async (_e, agentId, chatUids) => {
         }
       : agent),
   };
-  return { saved: true, state: { ...cloudProbe } };
 });
 ipcMain.handle("settings:signOut", async () => { relaySignOutCalls += 1; });
 // A packaged-looking updater state so the Software Updates section renders
