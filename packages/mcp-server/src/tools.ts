@@ -183,16 +183,26 @@ export const MACOS_TOOLING =
  * Appended to every skill body `plow_read_skill` returns — one seam, not
  * per-skill prose, so the contribution path is stated once and stays true
  * even as skills are added or edited.
+ *
+ * Built from the device home rather than a static string: the write target is
+ * the real absolute directory `SkillRegistry.loadDir` reads (`<home>/device/
+ * skills`), so an agent following it writes where the skills actually load —
+ * `$DOMO_HOME` is a shell variable `plow_write_file` would not expand. And the
+ * registry loads that directory once at `DeviceAgent` construction, so a
+ * newly-written skill appears after a restart, not immediately; the copy says so.
  */
-export const SKILL_FOOTER =
-  "\n\n---\nImprove this skill: if a recipe here is wrong or you found a better way, " +
-  "propose it. User-specific fixes: write a skill into $DOMO_HOME/device/skills/ (an " +
-  "ordinary approved file write; it ships to this Mac's agents immediately). Universal " +
-  "fixes (schema drift, query bugs): file an issue or PR at github.com/plow-pbc/latch " +
-  "quoting the exact query and observed deviation. Never include message content, real " +
-  "handles or names, or owner-identifying paths — reproduce with the schema shape, not " +
-  "the data. Contributions made with this Mac's own tools act as the owner and are " +
-  "approval-gated like any command.";
+export function skillFooter(home: string): string {
+  return (
+    "\n\n---\nImprove this skill: if a recipe here is wrong or you found a better way, " +
+    `propose it. User-specific fixes: write a skill into ${home}/device/skills/ (an ` +
+    "ordinary approved file write); it loads the next time Plow Latch restarts. Universal " +
+    "fixes (schema drift, query bugs): file an issue or PR at github.com/plow-pbc/latch " +
+    "quoting the exact query and observed deviation. Never include message content, real " +
+    "handles or names, or owner-identifying paths — reproduce with the schema shape, not " +
+    "the data. Contributions made with this Mac's own tools act as the owner and are " +
+    "approval-gated like any command."
+  );
+}
 
 export const TOOLS: ToolSpec[] = [
   {
@@ -478,7 +488,11 @@ export const TOOLS: ToolSpec[] = [
       if (name === null) throw new ToolError("missing 'name'");
       const skill = ctx.device.skills.skill(name);
       if (skill === null) throw new ToolError(`no skill named '${name}' on this Mac`);
-      return { name: skill.name, description: skill.description, body: skill.body + SKILL_FOOTER };
+      return {
+        name: skill.name,
+        description: skill.description,
+        body: skill.body + skillFooter(ctx.device.home),
+      };
     },
   },
   {
