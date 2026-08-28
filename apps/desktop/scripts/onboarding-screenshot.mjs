@@ -80,9 +80,9 @@ const SCREENS = [
       DISPLAY_CODE,
       `Plow Activate: ${DISPLAY_CODE}`,
       "Listening for 4:",
-      "Get a New Code",
+      "Try Again",
     ],
-    expectFocus: "Get a New Code",
+    expectFocus: "Try Again",
   },
   {
     name: "waiting-gave-up",
@@ -93,12 +93,12 @@ const SCREENS = [
       activation: ACTIVATION,
       activationStale: true,
       message:
-        "We haven't heard from your phone. Send the message exactly as shown — it has to start with “Plow Activate:” — or get a new code.",
+        "We haven't heard from your phone. Send the message exactly as shown — it has to start with “Plow Activate:” — or try again.",
     },
     // The one failure the user gets no other signal about: a wrong prefix is
     // answered with silence on both channels.
-    expect: ["Still nothing", "it has to start with", "Plow Activate:", "Get a New Code"],
-    expectFocus: "Get a New Code",
+    expect: ["Not signed in yet", "it has to start with", "Plow Activate:", "Try Again"],
+    expectFocus: "Try Again",
   },
   {
     name: "phone",

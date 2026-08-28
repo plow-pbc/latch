@@ -108,6 +108,12 @@ class FakePlow {
     return { token: DEVICE_TOKEN, keyPrefix: DEVICE_TOKEN.slice(5, 13), name };
   }
 
+  revoked: string[] = [];
+
+  async revokeDeviceCredential(token: string): Promise<void> {
+    this.revoked.push(token);
+  }
+
 }
 
 let home: string;
@@ -119,8 +125,11 @@ let clock: number;
 let waits: number[];
 /** How many times the instance told the window to re-read. */
 let changes: number;
+/** Bumped per test; a wait built under an older value parks — see `wait`. */
+let harnessGen = 0;
 
 function build(extra: Partial<OnboardingDeps> = {}): Onboarding {
+  const gen = harnessGen;
   return new Onboarding({
     api: plow.api(),
     home,
@@ -135,6 +144,12 @@ function build(extra: Partial<OnboardingDeps> = {}): Onboarding {
     // deadline is measured against, so a five-minute give-up takes microseconds
     // and is exact rather than approximately right.
     wait: async (ms) => {
+      // The server's 410 ends the real loop; a fake that only ever answers
+      // "pending" never gets one, so a loop can outlive its test. Under this
+      // instant clock it would spin the worker to death — and even short of
+      // that, it would keep mutating the next test's shared clock. Park any
+      // loop from a previous test the moment it comes up for air.
+      if (gen !== harnessGen) await new Promise(() => {});
       waits.push(ms);
       clock += ms;
     },
@@ -151,6 +166,13 @@ async function settle(): Promise<void> {
   for (let i = 0; i < 5000; i += 1) await Promise.resolve();
 }
 
+/** Let the poll loop run just until a condition holds — for states the loop
+ * passes THROUGH rather than ends in, now that a stalled screen keeps polling. */
+async function settleUntil(check: () => boolean): Promise<void> {
+  for (let i = 0; i < 5000 && !check(); i += 1) await Promise.resolve();
+  expect(check()).toBe(true);
+}
+
 /** Start on the phone-code path, which is now behind a link rather than first. */
 function buildOnPhonePath(): Onboarding {
   const onboarding = build();
@@ -159,6 +181,7 @@ function buildOnPhonePath(): Onboarding {
 }
 
 beforeEach(() => {
+  harnessGen += 1;
   home = fs.mkdtempSync(path.join(os.tmpdir(), "domo-onboarding-"));
   plow = new FakePlow();
   warnings = [];
@@ -375,23 +398,29 @@ describe("activation — the path a brand-new user takes", () => {
     expect(plow.activations).toHaveLength(1);
   });
 
-  it("gives up after five minutes and says what to check, rather than spinning", async () => {
+  it("signs in a text that lands after the screen stalled — the live mba failure", async () => {
+    // Reported from a live run: code minted at 15:02, screen stalled at 15:07,
+    // text sent at 15:17. The server completed the activation and held the
+    // session token for the first redeem — which never came, because the old
+    // loop cancelled itself at five minutes. The Mac sat on "we haven't heard
+    // from your phone" while the phone said "You're all set!".
     const onboarding = build();
     await onboarding.begin();
-    await settle();
-
-    const state = onboarding.state();
-    expect(state.activationStale).toBe(true);
-    expect(state.busy).toBe(false);
+    await settleUntil(() => onboarding.state().activationStale);
+    expect(onboarding.state().step).toBe("waiting");
+    expect(onboarding.state().busy).toBe(false);
     // The silent failure has no other feedback: a message that does not START
     // with the prefix gets a 200, no SMS, and a code left live.
-    expect(state.message).toContain("Plow Activate:");
-    expect(state.message).toContain("haven't heard from your phone");
-    // Five minutes of polling at the stated interval, and then it stopped.
-    expect(waits.length).toBeCloseTo(ACTIVATION_POLL_WINDOW_MS / ACTIVATION_POLL_INTERVAL_MS, -1);
-    const after = waits.length;
-    await settle();
-    expect(waits.length).toBe(after);
+    expect(onboarding.state().message).toContain("Plow Activate:");
+    expect(onboarding.state().message).toContain("haven't heard from your phone");
+
+    // Minute fifteen: the text arrives. No click, no new code — the next poll
+    // must catch it.
+    plow.redeems = [{ status: "verified", token: SESSION_TOKEN }];
+    await settleUntil(() => onboarding.state().step === "connected");
+
+    expect(loadSettings(home).relayCredential).toBe(DEVICE_TOKEN);
+    expect(plow.activations).toHaveLength(1);
   });
 
   it("never strands the user on a screen with no way to re-check", async () => {
@@ -413,10 +442,12 @@ describe("activation — the path a brand-new user takes", () => {
     // matters is that giving up never leaves them anywhere else.
     expect(state.step).toBe("waiting");
 
-    // And the control does what the message promises: the text landed after we
-    // stopped watching, so one poll on the old secret signs them straight in.
+    // And the screen's promise holds without the control even being needed:
+    // the watch never stopped, so a late text signs in on the next poll. The
+    // click just re-arms the countdown; it must not break the sign-in.
     plow.redeems = [{ status: "verified", token: SESSION_TOKEN }];
-    expect((await onboarding.newActivationCode()).step).toBe("connected");
+    await onboarding.newActivationCode();
+    await settleUntil(() => onboarding.state().step === "connected");
     expect(plow.activations).toHaveLength(1);
   });
 
@@ -439,31 +470,58 @@ describe("activation — the path a brand-new user takes", () => {
     }
   });
 
-  it("polls the old code before minting a new one, because completion beats expiry", async () => {
+  it("re-arms the SAME code while the server still honours it — a live code is never abandoned", async () => {
+    // Minting a replacement would leave the live old code with no watcher: its
+    // completion is handed out exactly once, so a user who texts the code they
+    // already copied would succeed on the phone and strand the Mac — the same
+    // stranding this PR exists to end.
     const onboarding = build();
     await onboarding.begin();
-    await settle();
-    expect(onboarding.state().activationStale).toBe(true);
+    await settleUntil(() => onboarding.state().activationStale);
 
-    // They texted at minute six. The server honoured it; we had stopped looking.
-    plow.redeems = [{ status: "verified", token: SESSION_TOKEN }];
     const state = await onboarding.newActivationCode();
-
-    expect(state.step).toBe("connected");
-    // And no second code was ever minted.
     expect(plow.activations).toHaveLength(1);
+    expect(state.activation?.displayCode).toBe("CODE1");
+    expect(state.activationStale).toBe(false);
+    expect(state.message).toContain("still works");
+
+    // And the re-armed watch is real: a text now signs in.
+    plow.redeems = [{ status: "verified", token: SESSION_TOKEN }];
+    await settleUntil(() => onboarding.state().step === "connected");
   });
 
-  it("mints a fresh code when that poll really does come back pending", async () => {
+  it("mints a fresh code only once the server has retired the old one", async () => {
     const onboarding = build();
     await onboarding.begin();
-    await settle();
+    await settleUntil(() => onboarding.state().activationStale);
 
+    // The POLL receives the 410 — the button never redeems. Only then does a
+    // click mint.
+    plow.redeems = [new PlowApiError("expired", "Activation expired", 410)];
+    await settleUntil(() => onboarding.state().message.includes("expired before your text arrived"));
     const state = await onboarding.newActivationCode();
     expect(plow.activations).toHaveLength(2);
     expect(state.activation?.displayCode).toBe("CODE2");
     expect(state.activationStale).toBe(false);
     expect(state.step).toBe("activate");
+  });
+
+  it("keeps a live code through a transient failure — only a 410 says it is dead", async () => {
+    // A timeout or 5xx says nothing about the code, and a click during the
+    // outage must not mint over it: the abandoned code's completion has no
+    // watcher — the stranding again, this time triggered by a blip.
+    const onboarding = build();
+    await onboarding.begin();
+    await settleUntil(() => onboarding.state().activationStale);
+
+    plow.redeems = [new PlowApiError("network", "Couldn't reach Plow.")];
+    await onboarding.newActivationCode();
+    expect(plow.activations).toHaveLength(1);
+    expect(onboarding.state().activation?.displayCode).toBe("CODE1");
+
+    // And the kept code still signs in when its text lands.
+    plow.redeems = [{ status: "verified", token: SESSION_TOKEN }];
+    await settleUntil(() => onboarding.state().step === "connected");
   });
 
   it("reads a verified activation exactly once, and never re-reads it", async () => {
@@ -487,8 +545,12 @@ describe("activation — the path a brand-new user takes", () => {
     const state = onboarding.state();
     expect(state.step).not.toBe("connected");
     expect(state.activationStale).toBe(true);
-    expect(state.message).toBe("Plow verified this Mac but didn't hand back a login. Get a new code.");
+    expect(state.message).toBe("Plow verified this Mac but didn't hand back a login. Try again for a fresh code.");
     expect(plow.redeemCalls).toHaveLength(1);
+
+    // The spent code is dropped, so the promised control actually works: the
+    // next click mints instead of re-arming a code that can never sign in.
+    expect((await onboarding.newActivationCode()).activation?.displayCode).toBe("CODE2");
   });
 
   it("treats a 410 as authoritative and offers a fresh code", async () => {
@@ -592,16 +654,17 @@ describe("one code, however many callers ask for it", () => {
     onboarding.reset();
   });
 
-  it("still mints a fresh one once the first has landed", async () => {
-    // Single-flight must not wedge the button: "Get a New Code" after the mint
-    // returns is a different ask, and gets a different code.
+  it("does not wedge the button once the mint has landed", async () => {
+    // Single-flight must not wedge the button: "Try Again" after the mint
+    // returns runs a real re-check rather than joining a spent flight — and
+    // since the code is still live, the re-check re-arms it, not replaces it.
     const onboarding = build();
     await onboarding.begin();
     expect(plow.activations).toHaveLength(1);
 
     const state = await onboarding.newActivationCode();
-    expect(plow.activations).toHaveLength(2);
-    expect(state.activation?.displayCode).toBe("CODE2");
+    expect(state.activation?.displayCode).toBe("CODE1");
+    expect(plow.activations).toHaveLength(1);
     onboarding.reset();
   });
 
@@ -973,65 +1036,95 @@ describe("signing out", () => {
     expect(loadSettings(home).relayCredential).toBe(credential);
   });
 
-  // The two ways a redeem can be on the wire when the user signs out. Both end
-  // in `finishWithSession`, and both must refuse — but they arrive by different
-  // callers, so each is driven on its own.
-  const inFlightRedeems = [
-    {
-      name: "the poll loop's own redeem",
-      // The loop is already running from `useActivation()`; nothing to start.
-      start: (_o: Onboarding) => null as Promise<unknown> | null,
-    },
-    {
-      name: "the re-poll 'Get a New Code' makes before minting",
-      start: (o: Onboarding) => o.newActivationCode(),
-    },
-  ];
+  it("a redeem in flight across the sign-out cannot mint", async () => {
+    // A verified answer is deliberately acted on even when its poll loop has
+    // been cancelled — the server hands the session token to the first redeem
+    // that sees the completion and never again, so dropping it would strand an
+    // activation the user really completed. The only thing that used to make
+    // it moot was already holding a credential, and SIGN-OUT CLEARS THE
+    // CREDENTIAL. The poll loop is the only redeemer there is, so its redeem
+    // is the only one that can be on the wire.
+    const onboarding = await signedIn();
+    expect((await onboarding.useActivation()).step).toBe("activate");
 
-  for (const entry of inFlightRedeems) {
-    it(`${entry.name}, in flight across the sign-out, cannot mint`, async () => {
-      // A verified answer is deliberately acted on even when its poll loop has
-      // been cancelled — the server hands the session token to the first redeem
-      // that sees the completion and never again, so dropping it would strand an
-      // activation the user really completed. The only thing that used to make
-      // it moot was already holding a credential, and SIGN-OUT CLEARS THE
-      // CREDENTIAL.
-      const onboarding = await signedIn();
-      expect((await onboarding.useActivation()).step).toBe("activate");
+    // Hold THIS activation's redeem mid-call — and only this one, so the
+    // fresh code the sign-out mints behaves like the untexted code it is.
+    const inFlight = `${ACTIVATION_SECRET}_1`;
+    let release = () => {};
+    const onTheWire = new Promise<void>((r) => {
+      release = () => r();
+    });
+    plow.redeemActivation = async (secret: string) => {
+      plow.redeemCalls.push(secret);
+      if (secret !== inFlight) return { status: "pending" };
+      await onTheWire;
+      return { status: "verified", token: SESSION_TOKEN };
+    };
 
-      // Hold THIS activation's redeem mid-call — and only this one, so the
-      // fresh code the sign-out mints behaves like the untexted code it is.
-      const inFlight = `${ACTIVATION_SECRET}_1`;
+    await settle();
+    expect(plow.redeemCalls).toContain(inFlight);
+
+    // The user signs out while that call is still on the wire.
+    signOutOfPlow(home);
+    onboarding.reset();
+    const mintedBefore = plow.minted.length;
+
+    // …and only now does the server answer "verified".
+    release();
+    await settle();
+
+    // Nothing was minted, nothing was persisted, and the window did not slide
+    // back to the account the user just left.
+    expect(plow.minted.length).toBe(mintedBefore);
+    expect(loadSettings(home).relayCredential).toBe("");
+    expect(loadSettings(home).accountUid).toBe("");
+    expect(onboarding.state().step).not.toBe("connected");
+  });
+});
+
+describe("a sign-out while the credential handoff is in the air", () => {
+  // The two sides of the credential-mint boundary a sign-out can race. Same
+  // arrange/act; what differs is which call is on the wire — and so whether a
+  // credential exists that must be retired (the sign-out's own revoke ran
+  // before it was minted; persisting it would silently undo the sign-out).
+  for (const race of [
+    { stage: "relayInfo", revoked: [] as string[] },
+    { stage: "mintDeviceCredential", revoked: [DEVICE_TOKEN] },
+  ] as const) {
+    it(`stays signed out when the sign-out lands during ${race.stage}`, async () => {
       let release = () => {};
-      const onTheWire = new Promise<void>((r) => {
+      const inAir = new Promise<void>((r) => {
         release = () => r();
       });
-      plow.redeemActivation = async (secret: string) => {
-        plow.redeemCalls.push(secret);
-        if (secret !== inFlight) return { status: "pending" };
-        await onTheWire;
-        return { status: "verified", token: SESSION_TOKEN };
-      };
-
-      const started = entry.start(onboarding);
+      plow.redeems = [{ status: "verified", token: SESSION_TOKEN }];
+      if (race.stage === "relayInfo") {
+        const original = plow.relayInfo.bind(plow);
+        plow.relayInfo = async (token: string) => {
+          await inAir;
+          return original(token);
+        };
+      } else {
+        const original = plow.mintDeviceCredential.bind(plow);
+        plow.mintDeviceCredential = async (token: string, name: string) => {
+          const minted = await original(token, name);
+          await inAir;
+          return minted;
+        };
+      }
+      const onboarding = build();
+      await onboarding.begin();
       await settle();
-      expect(plow.redeemCalls).toContain(inFlight);
 
-      // The user signs out while that call is still on the wire.
       signOutOfPlow(home);
       onboarding.reset();
-      const mintedBefore = plow.minted.length;
-
-      // …and only now does the server answer "verified".
       release();
-      if (started) await started;
       await settle();
 
-      // Nothing was minted, nothing was persisted, and the window did not slide
-      // back to the account the user just left.
-      expect(plow.minted.length).toBe(mintedBefore);
+      // A mint the sign-out beat never happens; one it raced is retired.
+      // Either way nothing is persisted and the window stays signed out.
+      expect(plow.minted).toHaveLength(race.revoked.length);
+      expect(plow.revoked).toEqual(race.revoked);
       expect(loadSettings(home).relayCredential).toBe("");
-      expect(loadSettings(home).accountUid).toBe("");
       expect(onboarding.state().step).not.toBe("connected");
     });
   }
