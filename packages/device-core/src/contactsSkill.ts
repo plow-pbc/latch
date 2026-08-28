@@ -235,10 +235,11 @@ script refuses instead:
 
 The same shape adds a phone or email (\`make new phone at end of phones of p with
 properties {label:mobile, value:item 2 of argv}\`). **Updating an existing value selects by
-label the same way it selects the person — exactly one, or refuse:** \`set as to (addresses
-of p whose label = "home")\`, error unless \`(count of as) is 1\`, then set fields of
-\`item 1 of as\` — never \`address 1 of p\`, which on a two-address card mutates whichever
-happens to be first. \`save\` is what commits — without it Contacts.app discards the change
+label the same way it selects the person — exactly one, or refuse — and the label arrives
+as an argv item like every other value** (labels are contact-controlled text too): \`set as
+to (addresses of p whose label = (item 2 of argv))\`, error unless \`(count of as) is 1\`,
+then set fields of \`item 1 of as\` — never \`address 1 of p\`, which on a two-address card
+mutates whichever happens to be first, and never a label pasted into the script string. \`save\` is what commits — without it Contacts.app discards the change
 when it quits.
 
 The first automation may raise the one-time macOS "Latch would like to control Contacts"
@@ -250,9 +251,10 @@ the per-call approval above.
 \`osascript\` returning zero means Contacts.app accepted the request, not that the row is on
 disk and syncing. Re-run the read query for **the kind you wrote** — \`addressesFor\` after
 an address save, \`phonesFor\` after a phone — with the \`record_id\` you found before
-writing, and compare the value you sent against the newest row. Matching on the kind and
-value is the check: an unrelated pre-existing row of the same kind is not confirmation, and
-a phone save must never be "verified" by an address row. \`contactsd\` can take a moment to
+writing, and look for the value you sent in **any** returned row — an update to an existing
+row keeps that row's old position, so "newest row" proves nothing either way. Matching on
+the kind, the target label and the value is the check: an unrelated pre-existing row of the
+same kind is not confirmation, and a phone save must never be "verified" by an address row. \`contactsd\` can take a moment to
 flush, so a missing value on the first read gets one retry before it is a failure — and a
 failed verify means say so, never re-run the write on a hunch (a repeated \`make new\` is a
 duplicate, not a retry).
