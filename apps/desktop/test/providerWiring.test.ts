@@ -146,24 +146,52 @@ describe("buildMinter", () => {
       });
     });
 
-    it("treats an absent degraded list as empty and skips a malformed account row", async () => {
+    it("turns every malformed row into a fixed degraded entry, echoing nothing", async () => {
+      // The complete boundary parse: a named-but-tokenless row degrades under
+      // its (validated) email; a row whose account is not a plausible email —
+      // credential-shaped or free text — degrades under a FIXED label, so no
+      // server-authored string rides the account field to the agent.
       const { api } = apiAnswering({
         data: {
           access_token: "tok-a",
           accounts: [
             { account: "a@example.com", access_token: "tok-a", is_default: true },
-            { account: "broken@example.com" }, // no token — skipped, not thrown
+            { account: "broken@example.com" }, // named, no token
+            { account: "Bearer sk-fragment-abc123", access_token: "tok-x" }, // not an email
           ],
+          degraded: [{ account: "error: sk-fragment-def456 rejected", reason: "boom" }],
         },
       });
       const minted = await buildMinter({ api, home: homeWith("cred") }).mintAll(GOG);
       expect(minted).toEqual({
         accounts: [{ account: "a@example.com", token: "tok-a", isDefault: true }],
-        degraded: [],
+        degraded: [
+          { account: "broken@example.com", reason: "token refresh failed" },
+          { account: "(unrecognized account)", reason: "malformed entry" },
+          { account: "(unrecognized account)", reason: "malformed entry" },
+        ],
+      });
+      expect(JSON.stringify(minted)).not.toContain("sk-fragment");
+    });
+
+    it("returns a degraded-only envelope as a valid answer, not a throw", async () => {
+      // "Every account needs re-auth" is an answer the caller must be able to
+      // relay; only an envelope with nothing in it reports a failed mint.
+      const { api } = apiAnswering({
+        data: {
+          access_token: "",
+          accounts: [],
+          degraded: [{ account: "a@example.com", reason: "needs_reauth" }],
+        },
+      });
+      const minted = await buildMinter({ api, home: homeWith("cred") }).mintAll(GOG);
+      expect(minted).toEqual({
+        accounts: [],
+        degraded: [{ account: "a@example.com", reason: "needs_reauth" }],
       });
     });
 
-    it("fails like the single mint when no usable account comes back", async () => {
+    it("fails like the single mint when the envelope is empty", async () => {
       const { api } = apiAnswering({ data: { access_token: "tok", accounts: [] } });
       await expect(buildMinter({ api, home: homeWith("cred") }).mintAll(GOG)).rejects.toThrow(
         /usable provider token/,

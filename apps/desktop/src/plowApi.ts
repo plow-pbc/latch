@@ -412,9 +412,19 @@ export class PlowApi {
   /**
    * The batch form of `mintProviderToken`: one short-lived token per connected
    * account, for a provider that fans out. Same route, same scope — the body
-   * says `all` — and the same validation posture: typeof per field on
-   * unvalidated JSON, a malformed entry skipped rather than thrown, and no
-   * usable entry at all reported exactly as the single mint reports no token.
+   * says `all`.
+   *
+   * This is THE trust-boundary parse of the batch envelope, complete on
+   * purpose so no future field re-opens the class. Nothing server-authored
+   * crosses it verbatim except an account that parses as a plausible email
+   * and the one allowlisted machine reason; every other shape — a
+   * non-email account, a named-but-tokenless row, an unknown reason —
+   * becomes a FIXED local degraded entry. Both arrays are parsed before the
+   * empty-envelope decision, because a degraded-only envelope is a valid
+   * answer ("all your accounts need re-auth"), not a failed mint; only a
+   * envelope with nothing in it at all reports like the single mint's
+   * missing token. What a zero-healthy result MEANS is the caller's call —
+   * deviceAgent fails a single command loudly on it.
    */
   async mintAccountTokens(
     token: string,
@@ -427,30 +437,36 @@ export class PlowApi {
     const data = await this.call<{
       data?: { accounts?: unknown; degraded?: unknown };
     }>("POST", `${prefix}${action}`, { token, body: { all: true } });
+    // Bounded and shaped, not RFC-precise: the value reaches error strings,
+    // audit rows and the agent, so what matters is that a credential-shaped
+    // or free-text string cannot ride the account field.
+    const plausibleEmail = (v: unknown): v is string =>
+      typeof v === "string" && /^[^\s@]{1,64}@[^\s@]{1,255}$/.test(v);
+    const rows = (v: unknown): Record<string, unknown>[] =>
+      Array.isArray(v) ? v.map((row) => (row ?? {}) as Record<string, unknown>) : [];
     const accounts: { account: string; token: string; isDefault: boolean }[] = [];
-    for (const row of Array.isArray(data.data?.accounts) ? data.data.accounts : []) {
-      const { account, access_token, is_default } = (row ?? {}) as Record<string, unknown>;
-      if (typeof account !== "string" || typeof access_token !== "string" || !access_token.trim()) {
+    const degraded: { account: string; reason: string }[] = [];
+    for (const { account, access_token, is_default } of rows(data.data?.accounts)) {
+      if (!plausibleEmail(account)) {
+        degraded.push({ account: "(unrecognized account)", reason: "malformed entry" });
         continue;
       }
-      accounts.push({ account, token: access_token.trim(), isDefault: is_default === true });
+      const minted = typeof access_token === "string" ? access_token.trim() : "";
+      if (!minted) {
+        degraded.push({ account, reason: "token refresh failed" });
+        continue;
+      }
+      accounts.push({ account, token: minted, isDefault: is_default === true });
     }
-    if (accounts.length === 0) {
+    for (const { account, reason } of rows(data.data?.degraded)) {
+      if (!plausibleEmail(account)) {
+        degraded.push({ account: "(unrecognized account)", reason: "malformed entry" });
+        continue;
+      }
+      degraded.push({ account, reason: reason === "needs_reauth" ? reason : "token refresh failed" });
+    }
+    if (accounts.length === 0 && degraded.length === 0) {
       throw new PlowApiError("http", "Plow did not return a usable provider token.");
-    }
-    const degraded: { account: string; reason: string }[] = [];
-    for (const row of Array.isArray(data.data?.degraded) ? data.data.degraded : []) {
-      const { account, reason } = (row ?? {}) as Record<string, unknown>;
-      if (typeof account !== "string") continue;
-      // The reason rides to the remote agent, so the credential-echo rule
-      // applies: a server-authored string from an authenticated response is
-      // never forwarded verbatim. A closed allowlist, not a scan — only the
-      // one machine value the agent can act on passes; everything else
-      // becomes fixed local text.
-      degraded.push({
-        account,
-        reason: reason === "needs_reauth" ? reason : "token refresh failed",
-      });
     }
     return { accounts, degraded };
   }

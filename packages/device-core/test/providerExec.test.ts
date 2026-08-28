@@ -257,6 +257,7 @@ case "$*" in
   *"calendar conflicts"*)
     case "$GOG_ACCESS_TOKEN" in
       tok-a) echo '[{"summary":"Standup"}]' ;;
+      tok-cbad) exit 9 ;;
       *) echo '[]' ;;
     esac ;;
   *"calendar create"*) echo '{"created":"evt-1"}' ;;
@@ -440,6 +441,28 @@ esac
     expect(JSON.stringify(response)).not.toContain("Standup");
     // The create itself never ran: its output would have been the response.
     expect(JSON.stringify(response)).not.toContain("evt-1");
+    // And the audit says so: a refusal is an error row, never the zero-exit
+    // exec_end the desktop renders green.
+    const events = d.audit.entries().map((e) => jv(e).get("event").str);
+    expect(events).toContain("exec_error");
+    expect(events).not.toContain("exec_end");
+  });
+
+  itSpawns("records a failed conflict probe as an error, not a green run", async () => {
+    const d = device(
+      accountsMinter([{ account: "a@example.com", token: "tok-cbad", isDefault: true }]),
+      [plowVendorDir()],
+    );
+    const response = await run(d, [
+      "plow-gog", "calendar", "create", "primary", "--summary", "X",
+      "--from", "2026-08-28T10:00:00Z", "--to", "2026-08-28T11:00:00Z",
+    ]);
+    expect(jv(response).get("status").str).toBe("error");
+    expect(String(jv(response).get("error").str)).toContain("could not check");
+    expect(JSON.stringify(response)).not.toContain("evt-1");
+    const events = d.audit.entries().map((e) => jv(e).get("event").str);
+    expect(events).toContain("exec_error");
+    expect(events).not.toContain("exec_end");
   });
 
   itSpawns("books anyway with --confirm-conflict", async () => {

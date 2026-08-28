@@ -777,26 +777,29 @@ export class DeviceAgent {
           /* handled below: an unreadable probe is a failed check */
         }
       }
+      // Both refusals below record exec_error, never a zero-exit exec_end:
+      // the approved create did NOT happen, and the desktop renders an
+      // exit-0 exec_end green (viewModel.ts) — a refusal wearing a success
+      // badge. The create child's own outcome gets the one exec_end, in
+      // finishRun.
       if (!Array.isArray(conflicts)) {
         // Fail loud, with the override in hand: silently booking past a
         // broken check would make the gate's absence invisible.
         const error =
           "could not check the calendar for conflicts; re-send the same command " +
           "with --confirm-conflict to book without the check";
-        this.audit.record("exec_end", { intentId: intent.intentId, exit_code: 0 });
+        this.audit.record("exec_error", { intentId: intent.intentId, error });
         return { status: "error", error };
       }
       if (conflicts.length > 0) {
         // The COUNT only. The records themselves are calendar content the
         // owner approved a CREATE for, not a read — returning them would be
         // an unapproved read riding a create argv.
-        this.audit.record("exec_end", { intentId: intent.intentId, exit_code: 0 });
-        return {
-          status: "error",
-          error:
-            `the slot is busy — ${conflicts.length} event(s) overlap this window. ` +
-            "Re-send the same command with --confirm-conflict to book anyway.",
-        };
+        const error =
+          `the slot is busy — ${conflicts.length} event(s) overlap this window. ` +
+          "Re-send the same command with --confirm-conflict to book anyway.";
+        this.audit.record("exec_error", { intentId: intent.intentId, error });
+        return { status: "error", error };
       }
     }
     return this.finishRun(intent.intentId, await runGog(plan.gogArgv.slice(1), target.token));
