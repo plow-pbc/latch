@@ -56,7 +56,7 @@ describe.skipIf(!ON_MAC)("Executor.run", () => {
       waitMs: 8000,
     });
     expect(result.output.toString()).toContain("note");
-    expect(JSON.parse(result.stdout.toString())).toEqual({ ok: true });
+    expect(JSON.parse(exec.stdout(result.handle).toString())).toEqual({ ok: true });
   });
 
   it("passes extra environment to the child", async () => {

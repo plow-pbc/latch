@@ -191,30 +191,26 @@ export interface ExecResult {
   exitCode: number | null;
   output: Buffer;
   outputLength: number;
-  /**
-   * The child's stdout alone, whole. `output` merges stderr in because the
-   * `plow_get_output` stream needs one ordered transcript; a caller that
-   * PARSES a child's answer (the gog fan-out, the calendar conflict probe)
-   * needs the channel the CLI puts its JSON on, without the notes it puts on
-   * the other one.
-   */
-  stdout: Buffer;
   /** True when this Mac killed the run rather than the command ending. */
   reaped: boolean;
 }
 
 class OutputBuffer {
-  private chunks: Buffer[] = [];
-  private stdoutChunks: Buffer[] = [];
+  /** Every chunk in arrival order, tagged by stream, so one list serves both views. */
+  private chunks: { buf: Buffer; stdout: boolean }[] = [];
   private length = 0;
   exitCode: number | null = null;
   reaped = false;
   private waiters: ((exitCode: number) => void)[] = [];
 
-  append(chunk: Buffer, fromStdout: boolean): void {
-    this.chunks.push(chunk);
-    if (fromStdout) this.stdoutChunks.push(chunk);
-    this.length += chunk.length;
+  append(buf: Buffer, stdout: boolean): void {
+    this.chunks.push({ buf, stdout });
+    this.length += buf.length;
+  }
+
+  /** Just what the command wrote to stdout, whole. */
+  stdout(): Buffer {
+    return Buffer.concat(this.chunks.filter((c) => c.stdout).map((c) => c.buf));
   }
 
   /** Whether the command has written anything at all — the reaper's guard. */
@@ -237,17 +233,15 @@ class OutputBuffer {
 
   snapshot(since: number): {
     output: Buffer;
-    stdout: Buffer;
     total: number;
     running: boolean;
     exitCode: number | null;
     reaped: boolean;
   } {
-    const all = Buffer.concat(this.chunks);
+    const all = Buffer.concat(this.chunks.map((c) => c.buf));
     const start = Math.min(Math.max(since, 0), all.length);
     return {
       output: all.subarray(start),
-      stdout: Buffer.concat(this.stdoutChunks),
       total: all.length,
       running: this.exitCode === null,
       exitCode: this.exitCode,
@@ -283,7 +277,6 @@ function shape(snap: ReturnType<OutputBuffer["snapshot"]>): Omit<ExecResult, "ha
     running: snap.running,
     exitCode: snap.exitCode,
     output: snap.output,
-    stdout: snap.stdout,
     outputLength: snap.total,
     reaped: snap.reaped,
   };
@@ -553,14 +546,27 @@ export class Executor {
 
   /** Invoke cb when the run exits — immediately if it already has. */
   onExit(handle: string, cb: (exitCode: number, reaped: boolean) => void): void {
-    const buffer = this.buffers.get(handle);
-    if (!buffer) throw new ExecutorError(`unknown output handle: ${handle}`);
-    buffer.onExit(cb);
+    this.buffer(handle).onExit(cb);
   }
 
   output(handle: string, since: number): ExecResult {
+    return { handle, ...shape(this.buffer(handle).snapshot(since)) };
+  }
+
+  /**
+   * A run's stdout alone, whole — for the callers that PARSE a command's
+   * answer (the gog fan-out, the calendar conflict probe) rather than show
+   * it. `output` merges stderr in because the `plow_get_output` stream needs
+   * one ordered transcript, and is sliced from `since`; a stdout slice at
+   * that offset would mean nothing, so this is an accessor, not a field.
+   */
+  stdout(handle: string): Buffer {
+    return this.buffer(handle).stdout();
+  }
+
+  private buffer(handle: string): OutputBuffer {
     const buffer = this.buffers.get(handle);
     if (!buffer) throw new ExecutorError(`unknown output handle: ${handle}`);
-    return { handle, ...shape(buffer.snapshot(since)) };
+    return buffer;
   }
 }
