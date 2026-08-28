@@ -25,6 +25,7 @@ import {
   MACOS_TOOLING,
   SERVER_IDENTITY,
   SERVER_INSTRUCTIONS,
+  SKILL_FOOTER,
   TOOLS,
 } from "@domo/mcp-server";
 import { parse, rpc } from "./client.js";
@@ -115,6 +116,17 @@ describe("the server tells the agent what it is for", () => {
   // nicely and the bound widens" — the capability set is the bound.
   it("the instructions promise no capability", () => {
     expect(SERVER_INSTRUCTIONS).not.toMatch(/without approval|no approval|always allowed/i);
+  });
+});
+
+describe("the skill contribution footer", () => {
+  // Both write paths a fix can take, plus the boundary an agent's own
+  // contribution must respect: no message content, no real identifiers.
+  it("names the user-specific write path, the universal-fix path, and the privacy bound", () => {
+    expect(SKILL_FOOTER).toMatch(/\$DOMO_HOME\/device\/skills/);
+    expect(SKILL_FOOTER).toMatch(/github\.com\/plow-pbc\/latch/);
+    expect(SKILL_FOOTER).toMatch(/message content/i);
+    expect(bareToolNames(SKILL_FOOTER)).toHaveLength(0);
   });
 });
 
@@ -241,6 +253,7 @@ function manifestStrings(): { where: string; text: string }[] {
   }
   out.push({ where: "skill.description", text: BROWSING_SKILL.description });
   out.push({ where: "skill.body", text: BROWSING_SKILL.body });
+  out.push({ where: "skill.footer", text: SKILL_FOOTER });
   out.push({ where: "serverInfo.title", text: SERVER_IDENTITY.title });
   out.push({ where: "serverInfo.description", text: SERVER_IDENTITY.description });
   return out;

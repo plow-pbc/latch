@@ -179,6 +179,21 @@ export const MACOS_TOOLING =
   "mdfind for Spotlight search across their files, sips for images, " +
   "pbcopy and pbpaste for the clipboard, and whatever else they have installed";
 
+/**
+ * Appended to every skill body `plow_read_skill` returns — one seam, not
+ * per-skill prose, so the contribution path is stated once and stays true
+ * even as skills are added or edited.
+ */
+export const SKILL_FOOTER =
+  "\n\n---\nImprove this skill: if a recipe here is wrong or you found a better way, " +
+  "propose it. User-specific fixes: write a skill into $DOMO_HOME/device/skills/ (an " +
+  "ordinary approved file write; it ships to this Mac's agents immediately). Universal " +
+  "fixes (schema drift, query bugs): file an issue or PR at github.com/plow-pbc/latch " +
+  "quoting the exact query and observed deviation. Never include message content, real " +
+  "handles or names, or owner-identifying paths — reproduce with the schema shape, not " +
+  "the data. Contributions made with this Mac's own tools act as the owner and are " +
+  "approval-gated like any command.";
+
 export const TOOLS: ToolSpec[] = [
   {
     name: "plow_read_file",
@@ -463,7 +478,7 @@ export const TOOLS: ToolSpec[] = [
       if (name === null) throw new ToolError("missing 'name'");
       const skill = ctx.device.skills.skill(name);
       if (skill === null) throw new ToolError(`no skill named '${name}' on this Mac`);
-      return { name: skill.name, description: skill.description, body: skill.body };
+      return { name: skill.name, description: skill.description, body: skill.body + SKILL_FOOTER };
     },
   },
   {
