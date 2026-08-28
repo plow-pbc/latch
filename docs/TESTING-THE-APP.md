@@ -287,8 +287,14 @@ CI does not produce one. After cutting a notarized build:
 1. Grant the running app permission when macOS prompts for Apple Events / Automation access (or
    pre-approve it in System Settings → Privacy & Security → Automation).
 2. Drive one real `apple_events:true` send through `scripts/latch-smoke` — the same script the
-   dev-app installed-app smoke uses, per `#184` — which sends via `osascript` through the relay and
-   checks the result against the audit log.
+   dev-app installed-app smoke uses, per `#184` — with its `--apple-events` flag, which is what
+   puts `apple_events: true` in the tool arguments so the send exercises the granted path rather
+   than the Seatbelt denial:
+
+   ```sh
+   scripts/latch-smoke --config <install-config> --home "~/Library/Application Support/Plow-Latch" \
+     --apple-events -- /usr/bin/osascript -e 'tell application "Messages" to send "release-gate" to participant "+1<your-number>" of (first account whose service type = iMessage)'
+   ```
 3. Confirm the corresponding `exec_end` line in `audit.ndjson` shows `exit 0`. A `-1743`
    (`errAEEventNotPermitted`) or similar AppleScript error there means the entitlement or usage
    string regressed in that build — check both before re-signing.

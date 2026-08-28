@@ -14,15 +14,13 @@ describe("capabilityDisplay", () => {
 });
 
 describe("apple_events capability rule key", () => {
-  it("adding apple_events changes the rule key; its absence leaves old keys intact", () => {
+  it("adding apple_events changes the rule key", () => {
     const base: Capability[] = [
       { kind: "process.exec", argv: ["/usr/bin/osascript", "-e", "x"] },
       { kind: "network", allowed: false },
     ];
-    const before = RuleKey.compute("a", "d", base);
-    expect(RuleKey.compute("a", "d", base)).toBe(before); // stable
     expect(
       RuleKey.compute("a", "d", [...base, { kind: "apple_events", allowed: true }]),
-    ).not.toBe(before);
+    ).not.toBe(RuleKey.compute("a", "d", base));
   });
 });

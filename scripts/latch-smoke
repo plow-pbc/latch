@@ -222,7 +222,7 @@ def read_log(log_path, ssh, budget, home):
     return records, None
 
 
-def send(url, token, argv, goal, budget):
+def send(url, token, argv, goal, budget, apple_events=False):
     """POST one `tools/call`. Returns None, or `(reason, unknown, hint)`.
 
     `budget` is what is left of the run's deadline, and it bounds the read.
@@ -247,11 +247,17 @@ def send(url, token, argv, goal, budget):
     from a server that already authenticated you.
     """
     name = "plow_run_command"
+    # apple_events rides the tool arguments only when asked: it is the grant the
+    # packaged-app send gate needs, and without it a `send`-shaped argv reaches
+    # the sandbox's appleevent-send denial instead of exercising the real path.
+    tool_args = {"argv": list(argv), "goal": goal}
+    if apple_events:
+        tool_args["apple_events"] = True
     body = json.dumps({
         "jsonrpc": "2.0", "id": 1, "method": "tools/call",
         "params": {
             "name": name,
-            "arguments": {"argv": list(argv), "goal": goal},
+            "arguments": tool_args,
             "_meta": {
                 "io.modelcontextprotocol/protocolVersion": REVISION,
                 "io.modelcontextprotocol/clientInfo": {"name": "latch-smoke", "version": "1"},
@@ -471,6 +477,9 @@ def main():
                         help="read the audit log on another Mac over ssh")
     parser.add_argument("--timeout", type=int, default=120,
                         help="seconds to wait for a terminal event (default: 120)")
+    parser.add_argument("--apple-events", action="store_true",
+                        help="request the apple_events capability — the packaged-app send gate, "
+                             "so an osascript-send argv exercises the real path instead of the denial")
     parser.epilog = "Everything after `--` is the command to run."
     options, command = split_command(sys.argv[1:])
     args = parser.parse_args(options)
@@ -560,7 +569,7 @@ def main():
     # terminal refusal retracts it rather than the print being delayed — an
     # operator who has already scrolled past it needs to be told it is void.
     print(f"nonce={nonce}")
-    sent = send(args.url, token, argv, f"smoke test: {nonce}", remaining())
+    sent = send(args.url, token, argv, f"smoke test: {nonce}", remaining(), apple_events=args.apple_events)
     if sent is not None:
         reason, unknown, _hint = sent
         if not unknown:
