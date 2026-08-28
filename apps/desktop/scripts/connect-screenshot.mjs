@@ -49,17 +49,29 @@ const CHAT = {
     { number: "+16285550112", name: "Robin", isOwner: false },
   ],
   // Formatted by `chatRows.ts` in the real main process; the fixture carries
-  // the finished strings the same way it carries the finished label.
+  // the finished entries the same way it carries the finished label. One per
+  // position, name and number together — the row draws them as paired spans.
   title: "Willow · You · Robin",
-  subtitle: "+1 415-555-0142 · +1 415-555-0193 · +1 628-555-0112",
+  entries: [
+    { label: "Willow", number: "+1 415-555-0142" },
+    { label: "You", number: "+1 415-555-0193" },
+    { label: "Robin", number: "+1 628-555-0112" },
+  ],
 };
 const FAMILY_CHAT = {
   uid: "chat_family",
   label: "+1 (415) 555-0188 · Family group",
-  recipients: { line: "+14155550188", members: [] },
-  people: [],
-  title: "+1 (415) 555-0188 · Family group",
-  subtitle: "+1 415-555-0188",
+  recipients: { line: "+14155550188", members: ["+14155550193"] },
+  // A real chat always has the owner in it. A line with nobody on it is a
+  // shape the API does not hand over, and a fixture that invents one draws a
+  // row the app cannot produce — the number printed twice, once as its own
+  // stand-in name.
+  people: [{ number: "+14155550193", name: null, isOwner: true }],
+  title: "+1 415-555-0188 · You",
+  entries: [
+    { label: "+1 415-555-0188", number: "+1 415-555-0188" },
+    { label: "You", number: "+1 415-555-0193" },
+  ],
 };
 const ACTIVE_AGENT = {
   agentId: "cag_groceries",
@@ -468,9 +480,9 @@ const SCREENS = [
       "Set up a cloud agent",
       "Choose the chats this agent will read and reply in",
       "Provider", "Hermes", "Life", "Pirate",
-      // The row names its people; the line lives once, in the subtitle.
-      CHAT.title,
-      CHAT.subtitle,
+      // The row names its people, each over the number they are — so the text
+      // is the entries' own halves, not two joined strings.
+      ...CHAT.entries.flatMap((entry) => [entry.label, entry.number]),
       "★ Home",
       "This changes 1 chat permanently",
       "Removing the agent later will not restore them",

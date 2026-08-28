@@ -45,6 +45,60 @@ function activeCodec(): CredentialCodec | null {
   }
 }
 
+/**
+ * One sealed secret read back, or `""` when nothing here can read it.
+ *
+ * A decrypt that fails is not a crash: the keychain entry can be gone (a
+ * restored backup, a new login keychain), and there is no codec at all under
+ * the tests and `latch-smoke`. The honest answer in both cases is that this
+ * Mac does not hold the secret.
+ */
+function unseal(sealed: string): string {
+  const active = activeCodec();
+  if (!active) return "";
+  try {
+    return active.decrypt(sealed);
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * Put one secret into the record on its way to disk: sealed where the OS can
+ * seal it, in the clear where it cannot. Returns whether it went out in the
+ * clear, which is the only case worth a warning.
+ *
+ * `available()` answering yes is not a promise that `encrypt` works — the
+ * keychain can lock between the two calls — and a throw escaping here used to
+ * escape `saveSettings`, so a sign-in that had just spent its one-shot redeem
+ * wrote nothing at all and the session it was handed was live on the account
+ * with no copy anywhere. Falling back to the plaintext this Mac wrote until
+ * yesterday keeps the secret; 0600 is the floor that holds either way.
+ */
+function storeSecret(
+  stored: Record<string, unknown>,
+  plainKey: string,
+  sealedKey: string,
+  active: CredentialCodec | null,
+): boolean {
+  const value = String(stored[plainKey] ?? "").trim();
+  let sealed = "";
+  if (value && active) {
+    try {
+      sealed = active.encrypt(value);
+    } catch {
+      sealed = "";
+    }
+  }
+  if (sealed) {
+    stored[sealedKey] = sealed;
+    stored[plainKey] = "";
+    return false;
+  }
+  delete stored[sealedKey];
+  return value !== "";
+}
+
 export interface WindowBounds {
   x: number;
   y: number;
@@ -89,6 +143,24 @@ export interface Settings {
    * SECRET: never sent to the renderer, never written to a log or an error
    * string. */
   relayCredential: string;
+  /**
+   * A login session this Mac holds ONLY so it can be retired.
+   *
+   * A verified session it will not keep — a sign-out that landed mid-login, a
+   * handoff that failed — has to be revoked, and the redeem that produced it
+   * answers exactly once. When that revoke fails there is nowhere else the
+   * token exists: dropping it leaves the owner's account carrying a live
+   * `*:*` session for 180 days with nothing anywhere able to retire it. So it
+   * is kept here, retried before the next activation and on the next launch,
+   * and cleared the moment the server confirms.
+   *
+   * A SECRET, sealed and never shown, exactly like `relayCredential`. It is
+   * never a credential this Mac USES — nothing reads it but the retry.
+   */
+  pendingRevocation: string;
+  /** `pendingRevocation`, ENCRYPTED, when the OS offered a way. Only one of
+   * this and `pendingRevocation` is ever on disk. */
+  pendingRevocationEnc?: string;
   /** The account this Mac is signed into, and the endpoint agents POST to.
    * Both come from `GET /v1/relay/info` — the server stays authoritative and
    * the app never constructs the MCP URL itself. Cached only for display. */
@@ -162,6 +234,7 @@ function settingsPath(home: string): string {
 export function loadSettings(home: string): Settings {
   const defaults: Settings = {
     relayCredential: "",
+    pendingRevocation: "",
     accountUid: "",
     mcpUrl: "",
     selectedTab: "agents",
@@ -199,16 +272,25 @@ export function loadSettings(home: string): Settings {
   // setup rather than into an auth error nobody can explain.
   const sealed = typeof loaded.relayCredentialEnc === "string" ? loaded.relayCredentialEnc : "";
   if (sealed) {
-    const active = activeCodec();
-    loaded.relayCredential = "";
-    if (active) {
-      try {
-        loaded.relayCredential = active.decrypt(sealed);
-      } catch {
-        /* unreadable: signed out, honestly */
-      }
+    loaded.relayCredential = unseal(sealed);
+    if (!loaded.relayCredential) {
+      // Signed out, and signed out means ALL of it. Blanking the credential
+      // alone left the account uid, the endpoint and the provisioned chat
+      // behind, so the next login — possibly a different account — inherited a
+      // chat label naming a thread it cannot reach. `signOutOfPlow` clears the
+      // same set for the same reason; this is that state arrived at sideways.
+      loaded.accountUid = "";
+      loaded.mcpUrl = "";
+      loaded.provisionedChatUid = "";
+      loaded.provisionedChatLabel = "";
     }
   }
+  // A seal nobody can open is nothing to retry — the token inside it is
+  // unreachable either way, and reporting the ciphertext as a bearer would put
+  // a value the server has never seen into a revoke.
+  const sealedPending =
+    typeof loaded.pendingRevocationEnc === "string" ? loaded.pendingRevocationEnc : "";
+  if (sealedPending) loaded.pendingRevocation = unseal(sealedPending);
   // The spread above copies whatever the file held, and a hand-edited or
   // truncated file can put a non-object — or a `null` — where a record belongs.
   // Every reader of this map indexes it, so normalising once here is what keeps
@@ -235,7 +317,10 @@ export function loadSettings(home: string): Settings {
   // sealed on the first read that can — the same one-off shape the retired-key
   // scrub uses, and for the same reason: waiting for some unrelated write
   // leaves the plaintext on disk for as long as nobody changes a setting.
-  const needsSealing = !sealed && loaded.relayCredential.trim() !== "" && activeCodec() !== null;
+  const needsSealing =
+    activeCodec() !== null &&
+    ((!sealed && loaded.relayCredential.trim() !== "") ||
+      (!sealedPending && loaded.pendingRevocation.trim() !== ""));
   if (retired || needsSealing) saveSettings(home, loaded);
   return loaded;
 }
@@ -246,17 +331,12 @@ export function saveSettings(home: string, settings: Settings): void {
   // 0600 either way, which is what it has always been, so an unavailable
   // keychain is no worse than yesterday rather than a Mac that cannot sign in.
   const active = activeCodec();
-  const credential = (settings.relayCredential ?? "").trim();
   const stored: Record<string, unknown> = { ...settings };
-  if (credential && active) {
-    stored.relayCredentialEnc = active.encrypt(credential);
-    stored.relayCredential = "";
-  } else {
-    delete stored.relayCredentialEnc;
-    if (credential && codec && !warnedUnavailable) {
-      warnedUnavailable = true;
-      console.log("[settings] no OS keychain available; credential stored unencrypted (0600)");
-    }
+  const credentialInClear = storeSecret(stored, "relayCredential", "relayCredentialEnc", active);
+  const pendingInClear = storeSecret(stored, "pendingRevocation", "pendingRevocationEnc", active);
+  if ((credentialInClear || pendingInClear) && codec && !warnedUnavailable) {
+    warnedUnavailable = true;
+    console.log("[settings] no OS keychain available; credential stored unencrypted (0600)");
   }
   fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
   // mode on writeFileSync only applies when the file is created, so chmod

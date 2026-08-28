@@ -987,22 +987,32 @@ function chatChecklist({ chats, holders, selected = [], onChange }) {
       onChange?.();
     });
 
-    // The label already holds the best available title, member names or
-    // numbers. Under it goes the LINE the chat runs on — which number an agent
-    // here would answer from — because two chats can carry the same names and
-    // only the line tells them apart.
-    const main = el("div", { class: "chat-option-main" }, [
-      el("div", { class: "chat-option-name", text: chat.title || chat.label || chat.uid }),
-    ]);
-    if (chat.subtitle) {
-      // One line, ellipsised — the whole string is the tooltip, so a
-      // three-person thread stays readable without wrapping the row.
-      main.appendChild(el("div", {
-        class: "chat-option-line",
-        text: chat.subtitle,
-        attrs: { title: chat.subtitle },
-      }));
+    // One column per entry: the name on top, the number it belongs to
+    // directly under it. The pairing is structural — each is one <span> — so
+    // nothing here depends on two strings having the same number of positions,
+    // which is what a server-supplied name containing the separator broke.
+    // The line leads, because two chats can carry the same names and only the
+    // number an agent here would answer from tells them apart.
+    const flat = chat.title || chat.label || chat.uid;
+    const name = el("div", {
+      class: "chat-option-name chat-row-entries",
+      attrs: { title: flat },
+    });
+    const entries = chat.entries || [];
+    if (entries.length) {
+      entries.forEach((entry, index) => {
+        if (index) name.appendChild(el("span", { class: "chat-entry-sep", text: "·" }));
+        name.appendChild(el("span", { class: "chat-entry" }, [
+          el("span", { class: "chat-entry-label", text: entry.label }),
+          el("span", { class: "chat-entry-number", text: entry.number }),
+        ]));
+      });
+    } else {
+      // Nothing to pair: the settings fallback chat persists a label and
+      // neither a line nor participants.
+      name.appendChild(el("span", { class: "chat-entry-label", text: flat }));
     }
+    const main = el("div", { class: "chat-option-main" }, [name]);
     if (taken) {
       main.appendChild(el("div", { class: "chat-option-note", text: `Served by ${heldBy}` }));
     }

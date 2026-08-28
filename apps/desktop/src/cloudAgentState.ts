@@ -38,9 +38,10 @@ import {
 import { PlowApi, PlowApiError, parseActivationChat } from "./plowApi.js";
 import {
   ChatPerson,
+  ChatRowEntry,
   chatEchoesCredential,
   chatPeople,
-  chatRowSubtitle,
+  chatRowEntries,
   chatRowTitle,
   withoutCredentialEchoes,
 } from "./chatRows.js";
@@ -80,14 +81,18 @@ export interface CloudLineOption {
 }
 
 /**
- * A chat as the picker renders it: the option plus its two formatted lines.
+ * A chat as the picker renders it: the option plus its formatted row.
  *
- * Built in `state()` rather than by the client, because the subtitle needs the
- * LINE's persona name and only the line list carries that.
+ * Built in `state()` rather than by the client, because an entry's label needs
+ * the LINE's persona name and only the line list carries that.
  */
 export interface CloudChatRow extends CloudChatOption {
+  /** One position per entry, name and number together — what the renderer
+   * draws. Empty for a chat with neither a line nor participants. */
+  entries: ChatRowEntry[];
+  /** The same row as one string, for the tooltip and for the fallback chat,
+   * which has no entries to draw. */
   title: string;
-  subtitle: string;
   /** The persona name of the line this chat runs on, when Plow's list names
    * it. Sorting is by this first, so every chat on one number sits together
    * without needing a group header to say so. */
@@ -293,8 +298,8 @@ export class CloudAgentState {
         return {
           ...chat,
           lineName: named?.displayName ?? null,
+          entries: chatRowEntries(line, named?.displayName ?? null, chat.people ?? []),
           title: chatRowTitle(chat.people ?? [], line, chat.label || chat.uid, named?.displayName ?? null),
-          subtitle: chatRowSubtitle(line, named?.displayName ?? null, chat.people ?? []),
         };
       }),
       cloudChatsLoaded: this.chatsLoaded,

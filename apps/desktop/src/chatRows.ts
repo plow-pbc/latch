@@ -1,8 +1,8 @@
 import { echoesCredential } from "./cloudAgents.js";
 
 /**
- * How a chat reads in the picker: a title of the people in it, and one
- * subtitle line naming the number it runs on and the numbers it reaches.
+ * How a chat reads in the picker: one entry per position — the number it runs
+ * on, then the people in it — each carrying the name and the number together.
  *
  * Pure, and separate from `cloudAgentState` for the reason `viewModel.ts` is
  * separate from the approval window: this is the part with rules in it — who
@@ -80,15 +80,15 @@ export function withoutCredentialEchoes<
 }
 
 /**
- * What separates one entry from the next, on both lines.
+ * What separates one entry from the next in a FLAT label.
  *
- * Not a comma: a display name may contain one — "Smith, Jane" is a name a
- * provider will hand over — and a comma-joined title then reads as one more
- * participant than there are, with the subtitle's numbers no longer lining up
- * against it. The two lines are read BY POSITION, so the separator has to be
- * something a name cannot be.
+ * Only where a row has to collapse to a single string with no numbers beside
+ * it — the activation label on disk, and the picker's fallback. Nothing reads
+ * it back: the row a human sees is built from `chatRowEntries`, where a name
+ * and its number are one object, so a display name that happens to contain
+ * this separator is just a name.
  */
-export const ENTRY_SEPARATOR = " · ";
+const ENTRY_SEPARATOR = " · ";
 
 /**
  * A display name worth showing, or null.
@@ -142,23 +142,33 @@ export function formatNumber(number: string): string {
   return nanp ? `+1 ${nanp[1]}-${nanp[2]}-${nanp[3]}` : raw;
 }
 
+/** One position on a chat row: who, and which number they are. */
+export interface ChatRowEntry {
+  /** "You" for the owner, the line's or the person's name where there is a
+   * usable one, and their formatted number where there is not. */
+  label: string;
+  /** The same entry's number, formatted. */
+  number: string;
+}
+
 /**
- * The row's entries, in the ONE order both lines use: the line this chat runs
- * on, then its participants as the API listed them.
+ * The row, as the picker draws it: the line this chat runs on, then its
+ * participants as the API listed them.
  *
- * Built once and mapped twice, because the title and the subtitle are the same
- * list said two ways — a name per entry above, a number per entry below — and
- * the whole value of the pair is that the third name belongs to the third
- * number. Two functions walking the participants separately would be two
- * chances for that to stop being true.
+ * A name and its number are ONE object all the way to the DOM, so a reader
+ * never has to line up two strings by counting. They used to be exactly that
+ * — a title and a subtitle joined on a separator a display name cannot
+ * contain — and "cannot contain" is a promise about server-authored text that
+ * nothing here can keep: `Willow · Home` is a line name a provider will hand
+ * over, and it added a position to the top line with no number under it.
  */
-function rowEntries(
+export function chatRowEntries(
   line: string | null,
   lineName: string | null,
   people: readonly ChatPerson[],
-): { label: string; number: string }[] {
+): ChatRowEntry[] {
   const lineNumber = (line ?? "").trim();
-  const entries: { label: string; number: string }[] = [];
+  const entries: ChatRowEntry[] = [];
   if (lineNumber) {
     // The line leads. It is the number the chat runs on — the one an agent
     // here answers from — and naming it first is what tells two chats with the
@@ -177,10 +187,12 @@ function rowEntries(
 }
 
 /**
- * The chat's title: the line's name, then who is in it.
+ * The same row flattened to ONE string: `Willow · You · Nina`.
  *
- * `Willow, You, Nina` — and where a participant has no name, their number
- * stands in for it: `Ash, You, +1 916-520-4946`. The owner is always "You".
+ * For the two places that have room for a row and not for its numbers — the
+ * activation label persisted in settings, and the picker's own tooltip and
+ * accessible name. Where a participant has no name their number stands in for
+ * it (`Ash · You · +1 916-520-4946`); the owner is always "You".
  *
  * `fallback` covers the row with nothing to name at all: the settings fallback
  * chat, which persists a label and no participants and no line.
@@ -191,22 +203,6 @@ export function chatRowTitle(
   fallback: string,
   lineName: string | null = null,
 ): string {
-  const labels = rowEntries(line, lineName, people).map((entry) => entry.label);
+  const labels = chatRowEntries(line, lineName, people).map((entry) => entry.label);
   return labels.length ? labels.join(ENTRY_SEPARATOR) : fallback;
-}
-
-/**
- * The numbers under the title, in the SAME ORDER and with no names:
- * `+1 650-346-6610, +1 330-554-1942, +1 201-805-1467`.
- *
- * Positional on purpose. The title says who, this says which number each of
- * them is, and the reader joins them by position — so nothing here may filter
- * or reorder what the title kept.
- */
-export function chatRowSubtitle(
-  line: string | null,
-  lineName: string | null,
-  people: readonly ChatPerson[],
-): string {
-  return rowEntries(line, lineName, people).map((entry) => entry.number).join(ENTRY_SEPARATOR);
 }

@@ -43,7 +43,15 @@ echo "cleaning up worktree '$name'…"
 #
 # `--force` is for a home whose session is already dead or deliberately
 # abandoned; it says so out loud rather than deleting quietly.
-for home in "$appsupport/Plow-Latch-$branch" "$appsupport/Plow-Latch-$branch-local"; do
+# EVERY home this script deletes, including the pre-rename "Domo…" ones below:
+# a home the refusal does not scan is a home whose session it silently takes
+# the only means of revoking. The list here and the `rm -rf` list are the same
+# list, deliberately.
+for home in \
+  "$appsupport/Plow-Latch-$branch" \
+  "$appsupport/Plow-Latch-$branch-local" \
+  "$appsupport/Domo-$branch" \
+  "$appsupport/Domo-$branch-local"; do
   settings="$home/app/settings.json"
   [ -f "$settings" ] || continue
   # Either field: an older home stores it in the clear, a newer one sealed.

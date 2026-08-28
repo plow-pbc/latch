@@ -1045,7 +1045,7 @@ describe("a 403 from the real chat endpoint", () => {
         recipients: null,
         people: [],
         title: "+15550100 · Ada",
-        subtitle: "",
+        entries: [],
         lineName: null,
       },
     ]);

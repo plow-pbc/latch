@@ -15,7 +15,7 @@ You are working against the production Plow Latch install on this Mac (`/Applica
 
 **App support root** — `~/Library/Application Support/Plow-Latch/`:
 
-- `app/settings.json` — `relayCredential` (**SECRET — never print**), `accountUid`, `mcpUrl`, `approvalMode` (e.g. `adversarial`), `agentPurpose` (free text), `provisionedChatUid`, `autoCheckUpdates`, `windowBounds.*`.
+- `app/settings.json` — `relayCredentialEnc` (**SECRET — never print**; the login session sealed with the OS keychain, which is where a signed-in Mac keeps it) or `relayCredential` (**SECRET — never print**; the plaintext floor, used where no keychain is available and in homes written before sealing). Exactly one of the two is ever present, so **signed-in means either one is nonempty** — an empty `relayCredential` alone is not "not activated". `pendingRevocationEnc`/`pendingRevocation` (**SECRET**) hold a session Latch is still trying to retire. Also `accountUid`, `mcpUrl`, `approvalMode` (e.g. `adversarial`), `agentPurpose` (free text), `provisionedChatUid`, `autoCheckUpdates`, `windowBounds.*`.
 - `device/identity.json` — `deviceId`, `name`, `privateKeyBase64` (**SECRET — never print**).
 - `device/audit.ndjson` — NDJSON records keyed by `event`: `intent_decision` (`decision`, `source`, `intentId`), `exec_start` (`argv`), `exec_end` (`exit_code`).
 - `device/approvals/*.json` — one per intent: `intentId`, `agentId`, `agentName`, `capabilities[]`, `status`, `decision`, `source`, `createdAt`, `decidedAt`.
@@ -74,14 +74,14 @@ ls -t "$AS/device/approvals"/*.json | head -5 | xargs -I{} jq -c '{agentId, capa
 
 ```bash
 # settings.json — presence/length only for the credential
-jq -r '{approvalMode, mcpHost: (.mcpUrl|sub("^https?://";"")|split("/")[0]), relayCredLen: (.relayCredential|length), accountUidLast3: (.accountUid|tostring|.[-3:])}' "$HOME/Library/Application Support/Plow-Latch/app/settings.json"
+jq -r '{approvalMode, mcpHost: (.mcpUrl|sub("^https?://";"")|split("/")[0]), signedIn: (((.relayCredentialEnc // "") + (.relayCredential // "")) | length > 0), relayCredLen: (((.relayCredentialEnc // "") | length) + ((.relayCredential // "") | length)), accountUidLast3: (.accountUid|tostring|.[-3:])}' "$HOME/Library/Application Support/Plow-Latch/app/settings.json"
 # identity.json — deviceId first 8 chars; key length only
 jq -r '{deviceId8: (.deviceId[0:8]), name, keyLen: (.privateKeyBase64|length)}' "$HOME/Library/Application Support/Plow-Latch/device/identity.json"
 # client configs — host only, never headers
 jq -r '.mcpServers.plow.url | sub("^https?://";"") | split("/")[0]' ~/.latch/*.json
 ```
 
-Conventions: `relayCredential` / `privateKeyBase64` / `Authorization` — presence/length only, never the value. `deviceId` — first 8 chars. `accountUid` — last 3 chars.
+Conventions: `relayCredentialEnc` / `relayCredential` / `pendingRevocationEnc` / `pendingRevocation` / `privateKeyBase64` / `Authorization` — presence/length only, never the value. `deviceId` — first 8 chars. `accountUid` — last 3 chars.
 
 ## 4 — Boundary
 

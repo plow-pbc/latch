@@ -79,13 +79,24 @@ probe_settings() {
     PROBE_EVIDENCE="settings.json unreadable (bad JSON)"
     return 1
   fi
-  cred_len=$(jq -r '.relayCredential // "" | length' "$f")
+  # Either field. A signed-in Mac stores the session SEALED in
+  # `relayCredentialEnc` and leaves `relayCredential` empty wherever the OS
+  # keychain can serve; `relayCredential` is the plaintext floor, which is what
+  # an older home and a keychain-less Mac still hold. Reading only the legacy
+  # field called a normally signed-in Mac "not activated".
+  local cred_field
+  cred_len=$(jq -r '(.relayCredentialEnc // "") | length' "$f")
+  cred_field="relayCredentialEnc"
+  if (( cred_len == 0 )); then
+    cred_len=$(jq -r '(.relayCredential // "") | length' "$f")
+    cred_field="relayCredential"
+  fi
   uid3=$(jq -r '.accountUid // "" | tostring | .[-3:]' "$f")
   if (( cred_len == 0 )); then
-    PROBE_EVIDENCE="relayCredential empty — device not activated"
+    PROBE_EVIDENCE="no relayCredentialEnc or relayCredential — device not activated"
     return 1
   fi
-  PROBE_EVIDENCE="approvalMode=$mode · relayCredential present ($cred_len chars) · account …$uid3"
+  PROBE_EVIDENCE="approvalMode=$mode · $cred_field present ($cred_len chars) · account …$uid3"
   return 0
 }
 

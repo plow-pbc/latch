@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { chatRowSubtitle, chatRowTitle, formatNumber, type ChatPerson } from "../src/chatRows.js";
+import { chatRowEntries, chatRowTitle, formatNumber, type ChatPerson } from "../src/chatRows.js";
 
 const LINE = "+16503156536";
 const person = (over: Partial<ChatPerson> = {}): ChatPerson => ({
@@ -62,49 +62,45 @@ describe("the chat row's title", () => {
   });
 });
 
-describe("the chat row's subtitle", () => {
+describe("the chat row's entries", () => {
   it.each([
     [
-      "is the title's entries as numbers, in the same order",
+      "pairs each name with its own number, the line first",
       { line: LINE, lineName: "Willow", people: [person({ isOwner: true }), person({ number: "+12018051467", name: "Nina" })] },
-      "+1 650-315-6536 · +1 330-554-1942 · +1 201-805-1467",
+      [
+        { label: "Willow", number: "+1 650-315-6536" },
+        { label: "You", number: "+1 330-554-1942" },
+        { label: "Nina", number: "+1 201-805-1467" },
+      ],
     ],
     [
-      "stays positional for three participants",
-      {
-        line: LINE,
-        lineName: "Willow",
-        people: [
-          person({ isOwner: true }),
-          person({ number: "+19165204946", name: "Robin" }),
-          person({ number: "+14155550188" }),
-        ],
-      },
-      "+1 650-315-6536 · +1 330-554-1942 · +1 916-520-4946 · +1 415-555-0188",
+      "stands a number in for anyone without a name, on both halves",
+      { line: LINE, lineName: null, people: [person({ number: "+19165204946" })] },
+      [
+        { label: "+1 650-315-6536", number: "+1 650-315-6536" },
+        { label: "+1 916-520-4946", number: "+1 916-520-4946" },
+      ],
     ],
     [
-      "says only the line when it reaches nobody else",
+      "lists the line once, even when a participant is on it",
       { line: LINE, lineName: "Willow", people: [person({ number: LINE })] },
-      "+1 650-315-6536",
+      [{ label: "Willow", number: "+1 650-315-6536" }],
     ],
-    ["is empty when there is no line and nobody to name", { line: null, lineName: null, people: [] }, ""],
+    ["is empty when there is no line and nobody to name", { line: null, lineName: null, people: [] }, []],
   ])("%s", (_case, { line, lineName, people }, expected) => {
-    expect(chatRowSubtitle(line, lineName, people)).toBe(expected);
+    expect(chatRowEntries(line, lineName, people)).toEqual(expected);
   });
 
-  it("carries no names at all — the title is where those live", () => {
-    const subtitle = chatRowSubtitle(LINE, "Willow", [
+  it("keeps a name containing the flat separator in ONE entry", () => {
+    // The row used to be two strings joined on " · " and read by position, so
+    // a line Plow names "Willow · Home" added a fourth apparent name above
+    // three numbers. An entry is an object: a separator in a name is a name.
+    const entries = chatRowEntries(LINE, "Willow · Home", [
       person({ isOwner: true }),
-      person({ number: "+12018051467", name: "Nina" }),
+      person({ number: "+12018051467", name: "Smith · John" }),
     ]);
-    expect(subtitle).not.toMatch(/[A-Za-z]/);
-  });
-
-  it("pairs with the title by position, entry for entry", () => {
-    // The reader joins the two lines BY POSITION, so nothing here may filter
-    // or reorder what the title kept.
-    const people = [person({ isOwner: true }), person({ number: "+19165204946", name: "Robin" })];
-    expect(chatRowTitle(people, LINE, "x", "Willow").split(" · ")).toHaveLength(3);
-    expect(chatRowSubtitle(LINE, "Willow", people).split(" · ")).toHaveLength(3);
+    expect(entries).toHaveLength(3);
+    expect(entries[0]).toEqual({ label: "Willow · Home", number: "+1 650-315-6536" });
+    expect(entries[2]).toEqual({ label: "Smith · John", number: "+1 201-805-1467" });
   });
 });

@@ -270,6 +270,54 @@ describe("the credential at rest", () => {
     expect(fileOf(home).relayCredentialEnc).toBeTruthy();
   });
 
+  it("seals the session held for a later revoke, exactly like the credential", () => {
+    // `pendingRevocation` is a live `*:*` session too — the only difference is
+    // that nothing USES it. It gets the same treatment at rest.
+    useCredentialCodec(fakeCodec());
+    const home = tempHome();
+    const settings = loadSettings(home);
+    settings.pendingRevocation = "plow_sk_to_retire";
+    saveSettings(home, settings);
+
+    expect(fs.readFileSync(path.join(home, "app/settings.json"), "utf8")).not.toContain(
+      "plow_sk_to_retire",
+    );
+    expect(fileOf(home).pendingRevocation).toBe("");
+    expect(fileOf(home).pendingRevocationEnc).toBeTruthy();
+    expect(loadSettings(home).pendingRevocation).toBe("plow_sk_to_retire");
+  });
+
+  it("migrates a plaintext held session on the first read that can seal it", () => {
+    const home = tempHome();
+    const settings = loadSettings(home);
+    settings.pendingRevocation = "plow_sk_to_retire";
+    saveSettings(home, settings);
+    expect(fileOf(home).pendingRevocation).toBe("plow_sk_to_retire");
+
+    useCredentialCodec(fakeCodec());
+    expect(loadSettings(home).pendingRevocation).toBe("plow_sk_to_retire");
+    expect(fs.readFileSync(path.join(home, "app/settings.json"), "utf8")).not.toContain(
+      "plow_sk_to_retire",
+    );
+  });
+
+  it("reads an unreadable held session as nothing to retry", () => {
+    // A seal nobody can open holds a token nothing can revoke. Reporting the
+    // ciphertext would send the server a bearer it has never seen.
+    useCredentialCodec(fakeCodec());
+    const home = tempHome();
+    const settings = loadSettings(home);
+    settings.pendingRevocation = "plow_sk_to_retire";
+    saveSettings(home, settings);
+
+    const file = path.join(home, "app/settings.json");
+    const onDisk = JSON.parse(fs.readFileSync(file, "utf8")) as Record<string, unknown>;
+    onDisk.pendingRevocationEnc = "garbage-from-another-keychain";
+    fs.writeFileSync(file, JSON.stringify(onDisk));
+
+    expect(loadSettings(home).pendingRevocation).toBe("");
+  });
+
   it("falls back to plaintext 0600 when the OS offers no keychain", () => {
     // No regression against what shipped: the file has always been 0600, so an
     // unavailable keychain must not be a Mac that cannot sign in.
@@ -283,6 +331,30 @@ describe("the credential at rest", () => {
     expect(fileOf(home).relayCredentialEnc).toBeUndefined();
     expect(fs.statSync(path.join(home, "app/settings.json")).mode & 0o777).toBe(0o600);
     expect(loadSettings(home).relayCredential).toBe("plow_sk_unsealed");
+  });
+
+  it("keeps the credential in the clear when sealing THROWS", () => {
+    // `available()` saying yes is not a promise that `encryptString` works —
+    // the keychain can be locked between the two calls. A throw escaping
+    // `saveSettings` wrote nothing at all, and a sign-in that had just spent
+    // its one-shot redeem lost the session it was handed, live on the account
+    // with no copy anywhere.
+    useCredentialCodec({
+      available: () => true,
+      encrypt: () => {
+        throw new Error("keychain locked");
+      },
+      decrypt: () => "unused",
+    });
+    const home = tempHome();
+    const settings = loadSettings(home);
+    settings.relayCredential = "plow_sk_must_survive";
+    saveSettings(home, settings);
+
+    expect(fileOf(home).relayCredential).toBe("plow_sk_must_survive");
+    expect(fileOf(home).relayCredentialEnc).toBeUndefined();
+    expect(fs.statSync(path.join(home, "app/settings.json")).mode & 0o777).toBe(0o600);
+    expect(loadSettings(home).relayCredential).toBe("plow_sk_must_survive");
   });
 
   it("reads an unreadable seal as signed out rather than throwing", () => {
@@ -300,6 +372,42 @@ describe("the credential at rest", () => {
     fs.writeFileSync(file, JSON.stringify(onDisk));
 
     expect(loadSettings(home).relayCredential).toBe("");
+  });
+
+  it("clears everything sign-out clears when the seal cannot be read", () => {
+    // Signed out means ALL of it. Blanking the credential alone left the
+    // account uid, the endpoint and the provisioned chat behind, so the next
+    // login — possibly a DIFFERENT account — inherited a chat label naming a
+    // thread it cannot reach.
+    useCredentialCodec(fakeCodec());
+    const home = tempHome();
+    const settings = loadSettings(home);
+    settings.relayCredential = "plow_sk_sealed";
+    settings.accountUid = "u_first";
+    settings.mcpUrl = "https://api.plow.co/v1/relay/devices/u_first/mcp";
+    settings.provisionedChatUid = "cht_first";
+    settings.provisionedChatLabel = "Willow · You · Nina";
+    saveSettings(home, settings);
+
+    const file = path.join(home, "app/settings.json");
+    const onDisk = JSON.parse(fs.readFileSync(file, "utf8")) as Record<string, unknown>;
+    onDisk.relayCredentialEnc = "garbage-from-another-keychain";
+    fs.writeFileSync(file, JSON.stringify(onDisk));
+
+    const read = loadSettings(home);
+    expect(read.relayCredential).toBe("");
+    expect(read.accountUid).toBe("");
+    expect(read.mcpUrl).toBe("");
+    expect(read.provisionedChatUid).toBe("");
+    expect(read.provisionedChatLabel).toBe("");
+
+    // ...and a later login to another account inherits none of it.
+    read.relayCredential = "plow_sk_second";
+    read.accountUid = "u_second";
+    saveSettings(home, read);
+    const after = loadSettings(home);
+    expect(after.accountUid).toBe("u_second");
+    expect(after.provisionedChatLabel).toBe("");
   });
 
   it("does not hand back a sealed credential when no codec is installed", () => {
