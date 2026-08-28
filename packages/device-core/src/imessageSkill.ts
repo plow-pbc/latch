@@ -18,6 +18,9 @@ import fs from "node:fs";
 import path from "node:path";
 import { Skill, SkillRegistry } from "./skills.js";
 
+/** The numeric chat_id (from recentChats) the per-contact gather scopes to, so
+ *  a "what did Alice say" request reads only Alice's chat, not every chat. */
+export const IMESSAGE_CHAT_ID_PLACEHOLDER = "CHAT_ID_FROM_RECENTCHATS";
 /** The handle the verify-after-send recipe tells the agent to replace. */
 export const IMESSAGE_HANDLE_PLACEHOLDER = "HANDLE_FROM_THE_QUERY_ABOVE";
 /** The chat guid the verify-after-send recipe tells the agent to replace —
@@ -62,6 +65,23 @@ export const IMESSAGE_QUERIES = {
   join chat c on c.ROWID = j.chat_id
   left join handle h on h.ROWID = m.handle_id
  where m.date/1000000000 + 978307200 > strftime('%s','now') - 129600
+   and m.associated_message_type = 0
+   and m.item_type = 0
+ order by m.date;`,
+
+  /** Like `gather`, but ONLY the named contact's chat — pass the numeric
+   *  `chat_id` from `recentChats`. This is the default when the owner names
+   *  someone; the all-chat `gather` is only for an explicitly broad request, so
+   *  a "what did Alice say" question never pulls back every chat's messages. */
+  gatherChat: `select m.ROWID, c.guid as chat_guid, h.id as sender, m.is_from_me,
+       datetime(m.date/1000000000 + 978307200, 'unixepoch', 'localtime') as at,
+       m.text, hex(m.attributedBody) as body_hex
+  from message m
+  join chat_message_join j on j.message_id = m.ROWID
+  join chat c on c.ROWID = j.chat_id
+  left join handle h on h.ROWID = m.handle_id
+ where j.chat_id = CHAT_ID_FROM_RECENTCHATS
+   and m.date/1000000000 + 978307200 > strftime('%s','now') - 129600
    and m.associated_message_type = 0
    and m.item_type = 0
  order by m.date;`,
@@ -118,6 +138,34 @@ function imessageStoreDir(home: string): string {
 /** The chat database itself — what a query opens. */
 export function imessageStorePath(home: string): string {
   return path.join(imessageStoreDir(home), "chat.db");
+}
+
+/**
+ * The three send recipes differ only in the AppleScript `tell` line and their
+ * two positional `argv` labels; everything else — `/usr/bin/osascript`, the
+ * `on run argv` wrapper, the `--` option terminator, `apple_events: true` — is
+ * shared and load-bearing. Built from one shape so a change to that scaffolding
+ * cannot drift across three copies (which it did, twice, before this helper).
+ * `\\"` in a `tell` string renders to the `\"` the argv JSON needs.
+ */
+const TELL_PARTICIPANT =
+  'tell application \\"Messages\\" to send (item 1 of argv) to participant (item 2 of argv) of (first account whose service type = iMessage)';
+const TELL_CHAT = 'tell application \\"Messages\\" to send (item 1 of argv) to chat id (item 2 of argv)';
+const TELL_ATTACHMENT =
+  'tell application \\"Messages\\" to send (POSIX file (item 1 of argv)) to participant (item 2 of argv) of (first account whose service type = iMessage)';
+
+function sendRecipe(tell: string, arg1: string, arg2: string, extra = ""): string {
+  return (
+    `    plow_run_command {\n` +
+    `      argv: ["/usr/bin/osascript",\n` +
+    `             "-e", "on run argv",\n` +
+    `             "-e", "${tell}",\n` +
+    `             "-e", "end run",\n` +
+    `             "--", "${arg1}", "${arg2}"],\n` +
+    `      apple_events: true,${extra}\n` +
+    `      goal: "<what the owner asked for, in one line>"\n` +
+    `    }`
+  );
 }
 
 /**
@@ -195,15 +243,25 @@ owner sees in the approval dialog and what the audit log records — declare the
 above and nothing wider.
 
 **Which chats, most recent first** — start here when the owner names someone. This hands you
-each chat's \`guid\`, which a send targets directly:
+each chat's numeric \`chat_id\` and its \`guid\` (the \`guid\` is what a send targets directly):
 
 ${indented(IMESSAGE_QUERIES.recentChats)}
 
-**Gather the last 36 hours of real messages** across every chat:
+**When the owner named someone, read ONLY that chat.** Match their name against \`recentChats\`,
+then gather that one chat by its \`chat_id\` — never the all-chat query below. Reading every
+chat to answer a question about one person hands the agent far more of the owner's private
+messages than the task needs; scope to the chat:
+
+${indented(IMESSAGE_QUERIES.gatherChat)}
+
+Substitute the numeric \`chat_id\` from \`recentChats\` for \`${IMESSAGE_CHAT_ID_PLACEHOLDER}\`.
+
+**Only for an explicitly broad request** — "what's happened across all my texts lately" —
+gather the last 36 hours across every chat:
 
 ${indented(IMESSAGE_QUERIES.gather)}
 
-Both filter \`associated_message_type = 0 and item_type = 0\` — that excludes tapbacks,
+All three filter \`associated_message_type = 0 and item_type = 0\` — that excludes tapbacks,
 reply threads and system rows (someone joining a group, a name change) so what comes back
 is real message text, not the archive's bookkeeping.
 
@@ -255,42 +313,17 @@ ends option parsing so every following token is positional \`argv\`, whatever it
 
 **To a participant**, by phone number or email:
 
-    plow_run_command {
-      argv: ["/usr/bin/osascript",
-             "-e", "on run argv",
-             "-e", "tell application \\"Messages\\" to send (item 1 of argv) to participant (item 2 of argv) of (first account whose service type = iMessage)",
-             "-e", "end run",
-             "--", "<text>", "<phone or email>"],
-      apple_events: true,
-      goal: "<what the owner asked for, in one line>"
-    }
+${sendRecipe(TELL_PARTICIPANT, "<text>", "<phone or email>")}
 
 **To a chat**, using the \`guid\` from \`recentChats\` — this is the only form that reaches a
 group thread, since a group has no single participant to address:
 
-    plow_run_command {
-      argv: ["/usr/bin/osascript",
-             "-e", "on run argv",
-             "-e", "tell application \\"Messages\\" to send (item 1 of argv) to chat id (item 2 of argv)",
-             "-e", "end run",
-             "--", "<text>", "<guid from recentChats>"],
-      apple_events: true,
-      goal: "<what the owner asked for, in one line>"
-    }
+${sendRecipe(TELL_CHAT, "<text>", "<guid from recentChats>")}
 
 **With a file attachment** — the same argv-item rule applies to the path, so a filename
 holding a quote cannot break the script either:
 
-    plow_run_command {
-      argv: ["/usr/bin/osascript",
-             "-e", "on run argv",
-             "-e", "tell application \\"Messages\\" to send (POSIX file (item 1 of argv)) to participant (item 2 of argv) of (first account whose service type = iMessage)",
-             "-e", "end run",
-             "--", "<absolute path>", "<phone or email>"],
-      apple_events: true,
-      read_paths: ["<the file's directory>"],
-      goal: "<what the owner asked for, in one line>"
-    }
+${sendRecipe(TELL_ATTACHMENT, "<absolute path>", "<phone or email>", `\n      read_paths: ["<the file's directory>"],`)}
 
 The sending account is whichever one Messages.app itself is signed into — the owner's
 Messages setting, not a script parameter, and not yours to choose. The first send may raise

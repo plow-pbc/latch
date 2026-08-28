@@ -19,6 +19,7 @@ import os from "node:os";
 import path from "node:path";
 import {
   IMESSAGE_CHAT_GUID_PLACEHOLDER,
+  IMESSAGE_CHAT_ID_PLACEHOLDER,
   IMESSAGE_HANDLE_PLACEHOLDER,
   IMESSAGE_QUERIES,
   IMESSAGE_SNAPSHOT_ROWID_PLACEHOLDER,
@@ -267,6 +268,18 @@ describe("the imessage recipes the skill publishes", () => {
     expect(rows.some((r) => Number(r[0]) === 2003)).toBe(false);
     expect(rows.some((r) => Number(r[0]) === 2004)).toBe(false);
     expect(rows.some((r) => Number(r[0]) === 2005)).toBe(false);
+  });
+
+  it("gatherChat reads ONLY the named contact's chat, never every chat (over-disclosure fix)", () => {
+    const sql = IMESSAGE_QUERIES.gatherChat.replace(IMESSAGE_CHAT_ID_PLACEHOLDER, "10");
+    const rows = query(store, sql);
+    // Chat 10's in-window real rows, oldest-first — and nothing from any other
+    // chat, unlike the all-chat gather.
+    expect(rows.map((r) => Number(r[0]))).toEqual([2001, 2002]);
+    expect(rows.every((r) => r[1] === "chat-guid-10")).toBe(true);
+    // The all-chat gather returns other chats' recent messages too; scoping is
+    // the whole point, so it must return strictly more than the per-chat read.
+    expect(query(store, IMESSAGE_QUERIES.gather).length).toBeGreaterThan(rows.length);
   });
 
   it("finds the unreplied set: inbound direct chats only, not outbound, not tapback-only, not group", () => {
