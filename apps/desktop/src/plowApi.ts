@@ -157,15 +157,18 @@ export interface Activation {
 export interface ActivationChatParticipant {
   /** The member's own address — a phone number, when the server has one. */
   providerKey: string | null;
+  /** A human-readable member name, when the provider supplied one. */
+  displayName: string | null;
+  /** `owner` or `member` today; kept as a string for future provider roles. */
+  role: string;
 }
 
 /**
  * The chat the activation created.
  *
- * A chat has no title and no last-activity field, so what identifies it to a
- * human is the number it runs on plus its members' handles. Nothing here is a
- * secret: it is the same data `GET /v1/chats` hands back, and the renderer may
- * see it.
+ * A chat may have its own title; otherwise its members' names identify it, with
+ * phone-number handles as a last fallback. Nothing here is a secret: it is the
+ * same data `GET /v1/chats` hands back, and the renderer may see it.
  *
  * **The chat's top-level `provider_key` is deliberately not read.** It is the
  * provider's own thread id — "chat_5" and the like — not a phone number, and a
@@ -176,6 +179,8 @@ export interface ActivationChat {
   uid: string;
   /** `pending` until the member verifies; `active` after. */
   status: string;
+  /** A title chosen for the whole chat, when it has one. */
+  displayName: string | null;
   /** The number the chat runs on: the pool line the user texted. */
   line: string | null;
   /** Members only — the humans in the chat. */
@@ -218,20 +223,24 @@ export function parseActivationChat(raw: unknown): ActivationChat | null {
   const line = (agent?.line ?? null) as Record<string, unknown> | null;
   const members = all.filter((p) => p.type === "member");
   const isOwner = (participant: Record<string, unknown>) =>
-    typeof participant.display_name === "string" && participant.display_name.trim() === "You";
-  // The provider marks the account owner as "You". Use that marker only to
-  // establish the promised order, then discard it: rows show real handles,
-  // never that placeholder or any other display name.
+    participant.role === "owner" ||
+    (typeof participant.display_name === "string" && participant.display_name.trim() === "You");
+  // Keep the owner-first participant order used by addressing and the numeric
+  // fallback. Labels can order the same members differently without changing
+  // who a message is sent to.
   const participants = [
     ...members.filter(isOwner),
     ...members.filter((participant) => !isOwner(participant)),
   ]
     .map((p) => ({
       providerKey: typeof p.provider_key === "string" ? p.provider_key : null,
+      displayName: typeof p.display_name === "string" ? p.display_name : null,
+      role: typeof p.role === "string" ? p.role : "",
     }));
   return {
     uid,
     status: typeof chat.status === "string" ? chat.status : "",
+    displayName: typeof chat.display_name === "string" ? chat.display_name : null,
     line: line && typeof line.provider_key === "string" ? line.provider_key : null,
     participants,
     createdAt: typeof chat.created_at === "string" ? chat.created_at : "",

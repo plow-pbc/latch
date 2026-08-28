@@ -634,8 +634,8 @@ ipcMain.handle("connect:dismiss", async () => {
  * as Plow has issued the receipt and the row is on screen in `provisioning`;
  * the main process drives it to `active` from there.
  */
-ipcMain.handle("cloud:create", async (_e, chatUids: string[], name: string) => {
-  await cloudAgents?.create(chatUids ?? [], name);
+ipcMain.handle("cloud:create", async (_e, chatUids: string[], name: string, provider: string) => {
+  await cloudAgents?.create(chatUids ?? [], name, provider);
   // The new agent's credential row comes from the separately fetched roster,
   // which knows nothing about a create. Without this the screen shows the agent
   // with no row behind it, so Remove is disabled until the user leaves the tab

@@ -175,6 +175,18 @@ describe("CloudAgentsClient chat grant", () => {
     });
   });
 
+  it("sends the chosen provider in the create body", async () => {
+    const { calls, fetchImpl } = recordingFetch([{ status: 202, body: LIVE }]);
+
+    await new CloudAgentsClient(new PlowApi("https://api.plow.co", fetchImpl))
+      .create(CREDENTIAL, { chatUids: ["cht_one"], provider: "exe:life" });
+
+    expect(JSON.parse(String(calls[0].init.body))).toMatchObject({
+      chat_uids: ["cht_one"],
+      provider: "exe:life",
+    });
+  });
+
   it.each([
     ["no grant at all", {}],
     ["an empty set", { chat_uids: [] }],

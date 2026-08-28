@@ -91,8 +91,8 @@ export interface OnboardingActivation {
 /**
  * The chat the activation provisioned, as the screen says it.
  *
- * A chat has no title, so the label is its line number and its members' names —
- * see `activationChatLabel`. `uid` is what everything else joins on.
+ * The label is its title, its members' names or its numbers — see
+ * `activationChatLabel`. `uid` is what everything else joins on.
  */
 export interface OnboardingChat {
   uid: string;
@@ -118,11 +118,12 @@ export function storedActivationChat(settings: Settings): OnboardingChat | null 
 }
 
 /**
- * How a human recognises a chat that has no name: the number it runs on, then
- * each member's real handle in the API's owner-first order. The first number
- * is the agent participant's line — never the chat's
- * own `provider_key`, which is the provider's thread id and would put "chat_5"
- * where the user is looking for something to text.
+ * How a human recognises a chat: its title when present, otherwise its named
+ * members with non-owners first. If the provider has no usable names, use the
+ * number it runs on and each member's real handle in API owner-first order.
+ * The first fallback number is the agent participant's line — never the
+ * chat's own `provider_key`, which is the provider's thread id and would put
+ * "chat_5" where the user is looking for something to text.
  *
  * Both halves are optional in the data, so this never returns an empty string —
  * a chat with neither is still identified by its uid, which is ugly but true,
@@ -156,6 +157,19 @@ export function activationChatRecipients(chat: ActivationChat): ChatRecipients {
 }
 
 export function activationChatLabel(chat: ActivationChat): string {
+  const displayName = (chat.displayName ?? "").trim();
+  if (displayName) return displayName;
+
+  const named = chat.participants.filter((participant) => {
+    const name = (participant.displayName ?? "").trim();
+    return name && name !== "You";
+  });
+  const names = [
+    ...named.filter((participant) => participant.role !== "owner"),
+    ...named.filter((participant) => participant.role === "owner"),
+  ].map((participant) => participant.displayName!.trim());
+  if (names.length) return names.join(", ");
+
   const line = (chat.line ?? "").trim();
   const handles = chat.participants
     .map((participant) => (participant.providerKey ?? "").trim())

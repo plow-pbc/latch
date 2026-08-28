@@ -88,7 +88,7 @@ const cloudAgent = {
   chatUids: [cloudChat.uid],
   chatLabels: [cloudChat.label],
   recipients: cloudChat.recipients,
-  provider: "anthropic",
+  provider: "exe:hermes",
   status: "running",
   failureReason: null,
   createdAt: "2026-08-24T18:00:00.000Z",
@@ -156,8 +156,8 @@ ipcMain.handle("connect:get", async () => ({
   removeError: null,
   ...cloudProbe,
 }));
-ipcMain.handle("cloud:create", async (_e, chatUids, name) => {
-  cloudCalls.create.push({ chatUids, name });
+ipcMain.handle("cloud:create", async (_e, chatUids, name, provider) => {
+  cloudCalls.create.push({ chatUids, name, provider });
   cloudCreatePending = true;
   await new Promise((resolve) => { releaseCloudCreate = resolve; });
   cloudProbe = {
@@ -169,6 +169,7 @@ ipcMain.handle("cloud:create", async (_e, chatUids, name) => {
         (uid) => cloudProbe.cloudChats.find((chat) => chat.uid === uid)?.label ?? uid,
       ),
       name: name || "Cloud agent",
+      provider,
       status: "provisioning",
     }],
   };
@@ -639,6 +640,7 @@ app.whenReady().then(async () => {
       .find((item) => item.querySelector("h2")?.textContent.trim() === "Cloud agents");
     return {
       noCredentialIdentity: !group?.textContent.includes("session") && !group?.textContent.includes("worker"),
+      showsProvider: group?.textContent.includes("Provider Hermes") === true,
     };
   }})()`);
 
@@ -687,6 +689,8 @@ app.whenReady().then(async () => {
     const settle = () => new Promise((resolve) => setTimeout(resolve));
 
     const emptyDisables = createButton().disabled;
+    const defaultProvider = document.querySelector('.cloud-modal select[aria-label="Provider"]')
+      ?.value === "exe:hermes";
     boxes()[0].click();
     await settle();
     const firstIsHome = homeLabels().length === 1 && !createButton().disabled;
@@ -707,7 +711,8 @@ app.whenReady().then(async () => {
       .textContent.includes("1 chat");
     // Leave exactly one chosen for the create that follows.
     return {
-      emptyDisables, firstIsHome, secondDoesNotStealHome, makeHomeMovesToZero, homeMoved, warningCounts,
+      emptyDisables, defaultProvider, firstIsHome, secondDoesNotStealHome, makeHomeMovesToZero,
+      homeMoved, warningCounts,
       warningTitle: document.querySelector(".cloud-modal .cloud-warning-title").textContent,
       homeAfterFirst, homeNow: homeLabels()[0] ?? null,
       ignored: emptyDisables && firstIsHome && secondDoesNotStealHome,
@@ -723,6 +728,21 @@ app.whenReady().then(async () => {
   await waitFor(win, `document.querySelector(".cloud-modal .chat-list")`, "the picker for the create wait");
   await win.webContents.executeJavaScript(
     `document.querySelector(".cloud-modal .chat-option:not(.disabled) input").click()`,
+  );
+  const providerFocused = await win.webContents.executeJavaScript(`(() => {
+    const select = document.querySelector('.cloud-modal select[aria-label="Provider"]');
+    if (!select) return false;
+    select.focus();
+    return document.activeElement === select;
+  })()`);
+  if (!providerFocused) throw new Error("provider select could not be focused");
+  win.webContents.sendInputEvent({ type: "keyDown", keyCode: "L" });
+  win.webContents.sendInputEvent({ type: "char", keyCode: "L" });
+  win.webContents.sendInputEvent({ type: "keyUp", keyCode: "L" });
+  await waitFor(
+    win,
+    `document.querySelector('.cloud-modal select[aria-label="Provider"]')?.value === "exe:life"`,
+    "Life to be selected by type-ahead",
   );
   const cloudCreateWait = await win.webContents.executeJavaScript(`(${() => {
     const button = [...document.querySelectorAll(".cloud-modal button")]
@@ -741,6 +761,7 @@ app.whenReady().then(async () => {
     pendingRow: !!document.querySelector('[data-cloud-agent-id^="pending-cloud-"]'),
   })})()`);
   cloudCreateTransition.requestPending = cloudCreatePending;
+  cloudCreateTransition.provider = cloudCalls.create.at(-1)?.provider;
   releaseCloudCreate();
   await waitFor(
     win,
@@ -1648,9 +1669,11 @@ app.whenReady().then(async () => {
     connect.clientNameNotBold &&
     connect.noConnectTab &&
     cloudRoster.noCredentialIdentity &&
+    cloudRoster.showsProvider &&
     cloudModalFocus.insideModal &&
     cloudModalFocus.usable &&
     cloudModalGuard.ignored &&
+    cloudModalGuard.defaultProvider &&
     cloudModalGuard.makeHomeMovesToZero &&
     cloudModalGuard.keptOriginal &&
     cloudCreateWait.disabled &&
@@ -1659,6 +1682,7 @@ app.whenReady().then(async () => {
     cloudCreateTransition.modalClosed &&
     cloudCreateTransition.requestPending &&
     cloudCreateTransition.pendingRow &&
+    cloudCreateTransition.provider === "exe:life" &&
     cloudCreateTransition.reconciled &&
     cloudRowActions.hasMessage &&
     cloudRowActions.noSettings &&

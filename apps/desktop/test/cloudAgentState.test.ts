@@ -415,7 +415,7 @@ describe("the numbers a chat can be messaged on", () => {
     expect(chats).toEqual([
       {
         uid: "cht_1",
-        label: "+15550100, +15550111, +15550122",
+        label: "Ada, Grace",
         recipients: { line: "+15550100", members: ["+15550111", "+15550122"] },
       },
     ]);
@@ -668,13 +668,22 @@ describe("a stuck teardown", () => {
 });
 
 describe("provisioning", () => {
-  it("names the provider, because plow's default one 503s in prod", async () => {
+  it("defaults to Hermes, because plow's own default 503s in prod", async () => {
     const f = fakes({ create: async () => agent({ status: "provisioning" }) });
     const state = build(tempHome(), f);
 
     await state.create(["cht_1"], "Kitchen agent");
 
     expect(f.agents.created[0].provider).toBe("exe:hermes");
+  });
+
+  it("threads the chosen provider into the create request", async () => {
+    const f = fakes({ create: async () => agent({ status: "provisioning" }) });
+    const state = build(tempHome(), f);
+
+    await state.create(["cht_1"], "Kitchen agent", "exe:life");
+
+    expect(f.agents.created[0].provider).toBe("exe:life");
   });
 
 });

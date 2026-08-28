@@ -38,13 +38,13 @@ import { PlowApi, PlowApiError, parseActivationChat } from "./plowApi.js";
 import { loadSettings } from "./settings.js";
 
 /**
- * The provider every cloud agent is created on.
+ * The provider used when create does not receive an explicit choice.
  *
  * Explicit, because plow's own default is `cloudflare` and prod 503s on it —
  * a missing `worker.mjs` bundle. Sending nothing is not "no opinion", it is an
  * opinion about a provider that does not currently work.
  */
-export const CLOUD_AGENT_PROVIDER = "exe:hermes";
+export const DEFAULT_CLOUD_AGENT_PROVIDER = "exe:hermes";
 
 /**
  * Does landing on this tab put the cloud group on screen?
@@ -272,7 +272,11 @@ export class CloudAgentState {
    * `provisioning` at that moment — and leaves the poll running here. The new
    * `agent_id` comes back so `retry` can carry local settings onto it.
    */
-  async create(chatUids: readonly string[], name: string): Promise<string | null> {
+  async create(
+    chatUids: readonly string[],
+    name: string,
+    provider: string = DEFAULT_CLOUD_AGENT_PROVIDER,
+  ): Promise<string | null> {
     this.actionError = null;
     const chats = normalizeChatUids(chatUids);
     if (!chats.length) return this.failAction("Pick at least one chat this agent will answer in.");
@@ -285,7 +289,7 @@ export class CloudAgentState {
     try {
       receipt = await this.deps.agents.create(credential, {
         chatUids: chats,
-        provider: CLOUD_AGENT_PROVIDER,
+        provider,
         ...(requested ? { name: requested } : {}),
       });
     } catch (error) {
@@ -731,9 +735,9 @@ function messageOf(error: unknown): string {
 /**
  * `GET /v1/chats` — every chat the account has, for the picker.
  *
- * A chat has no title, so what identifies it is the line it runs on and who is
- * in it; the shape is the one the activation redeem already returns, so the
- * parse and the label are shared with setup rather than written twice.
+ * A chat is identified by its title, members or numbers; the shape is the one
+ * the activation redeem already returns, so the parse and the label are shared
+ * with setup rather than written twice.
  */
 export class CloudChatsClient implements CloudChatsApi {
   constructor(private readonly api: PlowApi) {}

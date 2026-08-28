@@ -25,9 +25,10 @@ const MCP_URL = "http://localhost:4242/v1/relay/devices/u_123/mcp";
 const CHAT: ActivationChat = {
   uid: "cht_D7hfWNK",
   status: "active",
+  displayName: null,
   line: "+15559876543",
   createdAt: "2026-08-24T18:02:11Z",
-  participants: [{ providerKey: "+15551230000" }],
+  participants: [{ providerKey: "+15551230000", displayName: null, role: "" }],
 };
 
 type FakeRedeem =
@@ -319,7 +320,88 @@ describe("activation — the path a brand-new user takes", () => {
     expect(onboarding.state().chat).toBeNull();
   });
 
-  it("labels a chat off the wire with the phone number, never the thread id", () => {
+  it("prefers a chat's top-level display name", () => {
+    const chat = parseActivationChat({
+      uid: "cht_weekend",
+      object: "chat",
+      status: "active",
+      provider_key: "thread_weekend",
+      display_name: "Weekend crew",
+      participants: [
+        {
+          type: "agent",
+          line: { uid: "ln_weekend", provider_type: "imessage", provider_key: "+15550001000" },
+        },
+        {
+          type: "member",
+          uid: "cp_owner",
+          display_name: "Avery",
+          role: "owner",
+          provider_type: "imessage",
+          provider_key: "+15550001001",
+        },
+        {
+          type: "member",
+          uid: "cp_friend",
+          display_name: "Morgan",
+          role: "member",
+          provider_type: "imessage",
+          provider_key: "+15550001002",
+        },
+      ],
+      created_at: "2026-08-27T22:22:52Z",
+    })!;
+
+    expect(activationChatLabel(chat)).toBe("Weekend crew");
+    expect(chat.participants.map((participant) => participant.providerKey)).toEqual([
+      "+15550001001",
+      "+15550001002",
+    ]);
+  });
+
+  it("uses member display names with non-owners first and skips You", () => {
+    const chat = parseActivationChat({
+      uid: "cht_friends",
+      object: "chat",
+      status: "active",
+      provider_key: "thread_friends",
+      participants: [
+        {
+          type: "agent",
+          line: { uid: "ln_friends", provider_type: "imessage", provider_key: "+15550002000" },
+        },
+        {
+          type: "member",
+          uid: "cp_owner",
+          display_name: "You",
+          role: "owner",
+          provider_type: "imessage",
+          provider_key: "+15550002001",
+        },
+        {
+          type: "member",
+          uid: "cp_friend",
+          display_name: "Riley",
+          role: "member",
+          provider_type: "imessage",
+          provider_key: "+15550002002",
+        },
+        {
+          type: "member",
+          uid: "cp_coowner",
+          display_name: "Casey",
+          role: "owner",
+          provider_type: "imessage",
+          provider_key: "+15550002003",
+        },
+      ],
+      created_at: "2026-08-25T18:36:43Z",
+    })!;
+
+    expect(activationChatLabel(chat)).toBe("Riley, Casey");
+  });
+
+  it("falls back to numbers when the wire has no usable display names", () => {
     // The bug this pins: the chat's own `provider_key` is the provider's THREAD
     // ID ("chat_5"), and the number lives on the agent participant's line.
     // Reading the wrong one put an opaque id where the user looks for something
@@ -341,7 +423,8 @@ describe("activation — the path a brand-new user takes", () => {
           type: "member",
           uid: "cpt_ada",
           status: "active",
-          display_name: "Ada Lovelace",
+          display_name: "You",
+          role: "owner",
           provider_key: "+15551230000",
         },
       ],
@@ -352,28 +435,31 @@ describe("activation — the path a brand-new user takes", () => {
     expect(label).not.toContain("chat_5");
   });
 
-  it("names a chat by its line, owner handle and remaining handles — a chat has no title", () => {
+  it("falls back to its line, owner handle and remaining handles", () => {
     expect(activationChatLabel({
       ...CHAT,
       participants: [
-        { providerKey: "+15551230000" },
-        { providerKey: "+15557654321" },
+        { providerKey: "+15551230000", displayName: null, role: "" },
+        { providerKey: "+15557654321", displayName: null, role: "" },
       ],
     })).toBe("+15559876543, +15551230000, +15557654321");
     // A member whose address IS the line is not said twice.
     expect(
       activationChatLabel({
         ...CHAT,
-        participants: [...CHAT.participants, { providerKey: "+15559876543" }],
+        participants: [
+          ...CHAT.participants,
+          { providerKey: "+15559876543", displayName: null, role: "" },
+        ],
       }),
     ).toBe("+15559876543, +15551230000");
     expect(activationChatLabel({ ...CHAT, participants: [] })).toBe("+15559876543");
-    // A member is identified by the real handle, never a display name.
+    // A member without a usable display name is identified by its real handle.
     expect(
       activationChatLabel({
         ...CHAT,
         line: null,
-        participants: [{ providerKey: "+15551230000" }],
+        participants: [{ providerKey: "+15551230000", displayName: null, role: "" }],
       }),
     ).toBe("+15551230000");
     // Nothing to say but the uid beats an empty line on the last setup screen.
