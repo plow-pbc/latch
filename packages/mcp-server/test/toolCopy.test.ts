@@ -122,35 +122,42 @@ describe("the server tells the agent what it is for", () => {
 describe("the skill contribution footer", () => {
   // Both write paths a fix can take, plus the boundary an agent's own
   // contribution must respect: no message content, no real identifiers.
-  it("names the user-specific write path, the universal-fix path, and the privacy bound", () => {
-    const footer = skillFooter(os.homedir());
-    // The real skills directory, ~-relative (plow_write_file expands ~), not a
-    // shell variable that plow_write_file would not expand.
-    expect(footer).toMatch(/~\/device\/skills\//);
-    expect(footer).not.toMatch(/\$DOMO_HOME/);
-    // A written skill loads on restart, not immediately.
-    expect(footer).toMatch(/restart/i);
-    expect(footer).toMatch(/github\.com\/plow-pbc\/latch/);
-    expect(footer).toMatch(/message content/i);
-    expect(bareToolNames(footer)).toHaveLength(0);
+  it("always carries the universal-fix path and the privacy bound, and no bare tool names", () => {
+    // These hold whatever the device home is.
+    for (const home of [os.homedir(), "/Volumes/Alice/latch-home"]) {
+      const footer = skillFooter(home);
+      expect(footer).toMatch(/github\.com\/plow-pbc\/latch/);
+      expect(footer).toMatch(/message content/i);
+      expect(footer).not.toMatch(/\$DOMO_HOME/);
+      expect(bareToolNames(footer)).toHaveLength(0);
+    }
   });
 
-  it("collapses a home under the user's directory to ~ so the account name never leaks", () => {
-    // A packaged Mac's device home is /Users/<name>/Library/...; printing the
-    // absolute path in every skill read would disclose the owner's account name
-    // — the owner-identifying PII this very footer says not to include.
-    const footer = skillFooter(path.join(os.homedir(), "Library/Application Support/Plow-Latch"));
-    expect(footer).toMatch(/~\/Library\/Application Support\/Plow-Latch\/device\/skills\//);
+  // The local-write path appears only when the skills directory can be named
+  // both safely (no account name) and usably (an agent can resolve it). One row
+  // per home shape, so the next variant is a row rather than a cloned test.
+  it.each([
+    // [label, home, expected ~-path fragment or null when no local-write path]
+    ["home is os.homedir()", () => os.homedir(), "~/device/skills/"],
+    [
+      "a packaged home under the user's dir",
+      () => path.join(os.homedir(), "Library/Application Support/Plow-Latch"),
+      "~/Library/Application Support/Plow-Latch/device/skills/",
+    ],
+    ["an explicit DOMO_HOME outside the user's dir", () => "/Volumes/Alice/latch-home", null],
+  ])("offers a leak-free, usable local-write path for %s", (_label, homeFn, expected) => {
+    const home = homeFn();
+    const footer = skillFooter(home);
+    // Never an absolute owner-identifying path, whatever the home.
     expect(footer).not.toContain(os.homedir());
-  });
-
-  it("never prints an absolute path for a DOMO_HOME outside the user's directory", () => {
-    // An explicit DOMO_HOME on another volume can't collapse to ~, and printing
-    // it would leak that owner-identifying path. The footer describes the
-    // directory home-agnostically instead — no absolute path, ever.
-    const footer = skillFooter("/Volumes/Alice/latch-home");
     expect(footer).not.toContain("/Volumes/Alice");
-    expect(footer).toMatch(/device\/skills\//);
+    if (expected === null) {
+      // Off-home: no local-write clause an agent couldn't follow, only upstream.
+      expect(footer).not.toMatch(/write a skill into/i);
+    } else {
+      expect(footer).toContain(expected);
+      expect(footer).toMatch(/restart/i);
+    }
   });
 });
 

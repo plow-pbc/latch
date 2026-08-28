@@ -199,25 +199,36 @@ export const MACOS_TOOLING =
  * restart, not immediately; the copy says so.
  */
 /**
- * The write target shown in the footer, guaranteed **never** to be an
- * owner-identifying absolute path. A home under the user's own directory
- * collapses to `~` (which `plow_write_file` canonicalizes, so it stays a usable
- * path); an explicit `DOMO_HOME` somewhere else — e.g. `/Volumes/Alice/...` —
- * would still leak that absolute path, so it is described home-agnostically
- * instead. Either branch keeps the account name off every skill read.
+ * The local-write sentence in the footer — present only when the skills
+ * directory can be named both **safely** and **usably**.
+ *
+ * A home under the user's own directory renders `~`-relative, which is safe (no
+ * account name) and usable (`plow_write_file` canonicalizes `~`). An explicit
+ * `DOMO_HOME` elsewhere — e.g. `/Volumes/Alice/...` — has neither property: the
+ * absolute path would leak the operator's layout, and there is no MCP surface
+ * that exposes the device home, so an agent could not resolve a home-agnostic
+ * description into a real path (a relative one would resolve from `process.cwd()`).
+ * In that case we advertise no local-write path at all and leave the agent the
+ * upstream channel below, rather than an instruction it cannot follow.
  */
-function skillsDirPhrase(home: string): string {
+function localWriteClause(home: string): string {
   const h = os.homedir();
-  if (home === h) return "~/device/skills/";
-  if (home.startsWith(h + path.sep)) return "~" + home.slice(h.length) + "/device/skills/";
-  return "the device/skills/ directory under this Mac's Plow Latch home";
+  const rel =
+    home === h ? "~/device/skills/"
+    : home.startsWith(h + path.sep) ? "~" + home.slice(h.length) + "/device/skills/"
+    : null;
+  return rel === null
+    ? ""
+    : `User-specific fixes: write a skill into ${rel} (an ordinary approved file write); ` +
+      "it loads the next time Plow Latch restarts. ";
 }
 
 export function skillFooter(home: string): string {
   return (
     "\n\n---\nImprove this skill: if a recipe here is wrong or you found a better way, " +
-    `propose it. User-specific fixes: write a skill into ${skillsDirPhrase(home)} (an ` +
-    "ordinary approved file write); it loads the next time Plow Latch restarts. Universal " +
+    "propose it. " +
+    localWriteClause(home) +
+    "Universal " +
     "fixes (schema drift, query bugs): file an issue or PR at github.com/plow-pbc/latch " +
     "quoting the exact query and observed deviation. Never include message content, real " +
     "handles or names, or owner-identifying paths — reproduce with the schema shape, not " +
