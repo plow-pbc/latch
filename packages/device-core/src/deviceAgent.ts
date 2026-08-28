@@ -31,6 +31,7 @@ import { FileOps } from "./fileOps.js";
 import { DeviceIdentity, loadOrCreateIdentity } from "./identity.js";
 import { PolicyDelegate, PolicyEngine } from "./policyEngine.js";
 import { SkillRegistry } from "./skills.js";
+import { ensurePlowFolder, registerPlowFolderSkill } from "./plowFolder.js";
 import { registerWhatsappSkill } from "./whatsappSkill.js";
 
 /**
@@ -191,6 +192,12 @@ export class DeviceAgent {
     // same start-time answer `browserRuntime` gives, so installing WhatsApp
     // while the app is running needs a restart to publish the skill.
     registerWhatsappSkill(this.skills, ownerHome);
+    // The playground exists before any agent asks about it, and the skill can
+    // therefore name a folder that is really there. `ownerHome` for the same
+    // reason as WhatsApp above: the folder belongs to the owner's real home,
+    // and a test's throwaway ownerHome keeps the suite off the developer's.
+    ensurePlowFolder(ownerHome);
+    registerPlowFolderSkill(this.skills, ownerHome);
     // Registered only when the CLI it documents is actually staged: a skill
     // for a binary this Mac does not have teaches an agent commands the exec
     // path refuses unconditionally. The SAME predicate that gate uses — two
