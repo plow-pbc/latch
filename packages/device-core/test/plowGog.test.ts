@@ -22,6 +22,17 @@ describe("planPlowGog", () => {
       },
     },
     {
+      // The --calendars refusal is the calendar group's: elsewhere the flag
+      // is a usage error gog reports itself, like any other misspelling.
+      why: "leaves a stray --calendars on a gmail fan-out to gog",
+      argv: ["plow-gog", "gmail", "search", "q", "--calendars=a"],
+      expected: {
+        kind: "fanout",
+        gogArgv: ["plow-gog", "gmail", "search", "q", "--calendars=a", "--json", "--results-only"],
+        sort: "gmail-date",
+      },
+    },
+    {
       why: "classifies through gog's own aliases but keeps the agent's spelling",
       argv: ["plow-gog", "mail", "search", "q"],
       expected: {
