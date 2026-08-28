@@ -333,13 +333,15 @@ export class CloudAgentState {
     }
 
     const generation = this.generation;
+    this.editsPending.add(id);
+    this.publish();
     let updated: CloudAgentResource;
     try {
       updated = await this.deps.agents.updateChats(credential, id, chats);
     } catch (error) {
       if (generation !== this.generation) return false;
       const refused = isRefusedEdit(error);
-      if (!refused) this.editsPending.add(id);
+      if (refused) this.editsPending.delete(id);
       this.failAction(this.actionMessage(error));
       // A failure that is not the server's verdict says nothing about what the
       // agent now serves. A timed-out PUT is the case that matters: the request

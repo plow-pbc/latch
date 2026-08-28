@@ -893,12 +893,11 @@ function closeCloudModal() {
 }
 
 /** A modal for an ordinary, reversible cloud action. */
-function openCloudModal(trigger, children, focus, canDismiss) {
+function openCloudModal(trigger, children, focus) {
   const shell = openModal(trigger, {
     children,
     className: "cloud-modal",
     focus,
-    canDismiss,
     onDismiss: closeCloudModal,
   });
   if (!shell) return null;
@@ -1225,8 +1224,6 @@ function openCloudPicker(trigger, state, redraw) {
  */
 function openCloudEditor(trigger, agent, state, redraw) {
   const baseline = agent.chatUids ?? [];
-  let saving = false;
-  const note = el("p", { class: "faint modal-note", text: "" });
   const cancel = el("button", { class: "btn", text: "Cancel" });
   const save = el("button", { class: "btn primary", text: "Save changes" });
 
@@ -1246,30 +1243,16 @@ function openCloudEditor(trigger, agent, state, redraw) {
   const unchanged = () => sameChatSet(checklist.chosen(), baseline);
   const syncEditor = () => {
     const chosen = checklist.chosen();
-    save.disabled = saving || chosen.length === 0 || unchanged();
+    save.disabled = chosen.length === 0 || unchanged();
   };
 
   cancel.addEventListener("click", closeCloudModal);
   save.addEventListener("click", async () => {
     const chatUids = checklist.chosen();
-    if (saving || !chatUids.length || unchanged()) return;
-    saving = true;
-    save.disabled = true;
-    save.textContent = "Saving…";
-    cancel.disabled = true;
-    const answer = await window.domo.cloudEditChats(agent.agentId, chatUids);
-    if (answer?.saved) {
-      closeCloudModal();
-      await redraw();
-      return;
-    }
-    // The edit is still on screen to retry or correct. The same sentence is in
-    // the pane's callout behind this, for once it closes.
-    saving = false;
-    save.textContent = "Save changes";
-    cancel.disabled = false;
-    note.textContent = answer?.state?.cloudActionError ?? "That change did not finish.";
-    syncEditor();
+    if (!chatUids.length || unchanged()) return;
+    closeCloudModal();
+    await window.domo.cloudEditChats(agent.agentId, chatUids);
+    await redraw();
   });
 
   const panel = openCloudModal(trigger, [
@@ -1283,13 +1266,12 @@ function openCloudEditor(trigger, agent, state, redraw) {
         text: "Saving restarts the agent for a few seconds. Detached chats go quiet; attached ones get a greeting.",
       }),
     ]),
-    note,
     el("div", { class: "row cloud-modal-actions" }, [
       el("div", { class: "spacer" }),
       cancel,
       save,
     ]),
-  ], null, () => !saving);
+  ], null);
   syncEditor();
   // After sync, so a control this pass disables is not the one taking focus.
   if (panel) firstUsableControl(panel)?.focus();
@@ -1538,7 +1520,13 @@ function cloudContext(agent, row) {
   ].filter(Boolean).join(" · ");
 }
 
-function cloudStatusNode(agent) {
+function cloudStatusNode(agent, updating = false) {
+  if (updating) {
+    return el("span", { class: "status-setting" }, [
+      el("span", { class: "cloud-spinner", attrs: { "aria-hidden": "true" } }),
+      el("span", { text: "Updating chats…" }),
+    ]);
+  }
   const status = cloudStatus(agent?.status, agent?.failureReason);
   if (agent?.status === "provisioning") {
     return el("span", { class: "status-setting" }, [
@@ -1562,7 +1550,7 @@ function cloudEntityRow(row, agent, state, redraw) {
     el("div", { class: "entity-main" }, [
       el("div", { class: "entity-top" }, [
         el("span", { class: "entity-name", text: name }),
-        cloudStatusNode(agent),
+        cloudStatusNode(agent, editPending),
       ]),
       // `.entity-context` is one ellipsised line, and two chats already run
       // past it — so the tooltip carries the whole thing rather than a legend
@@ -1576,7 +1564,7 @@ function cloudEntityRow(row, agent, state, redraw) {
     ]),
     rosterActions(row ?? { name }, "cloud", redraw, {
       messageAgentId: agent?.agentId ?? row?.agentId,
-      messageDisabled: agent?.status !== "running" || !agent?.recipients?.line?.trim(),
+      messageDisabled: editPending || agent?.status !== "running" || !agent?.recipients?.line?.trim(),
       cloudAgentId: row ? null : agent?.agentId,
       // Only a real, running agent can be edited: a local pending row has no
       // agent id Plow knows, and one that failed or is being torn down has no

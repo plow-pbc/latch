@@ -180,18 +180,24 @@ ipcMain.handle("cloud:create", async (_e, chatUids, name) => {
 // and the row has to come out carrying the new set.
 ipcMain.handle("cloud:editChats", async (_e, agentId, chatUids) => {
   cloudCalls.editChats.push({ agentId, chatUids });
+  cloudProbe = { ...cloudProbe, cloudAgentEditsPending: [agentId] };
   if (!releaseCloudEdit) {
     cloudEditPending = true;
     await new Promise((resolve) => { releaseCloudEdit = resolve; });
     cloudEditPending = false;
   }
   if (cloudEditFails) {
-    cloudProbe = { ...cloudProbe, cloudActionError: "Groceries already belongs to Household helper." };
+    cloudProbe = {
+      ...cloudProbe,
+      cloudActionError: "Groceries already belongs to Household helper.",
+      cloudAgentEditsPending: [],
+    };
     return { saved: false, state: { ...cloudProbe } };
   }
   cloudProbe = {
     ...cloudProbe,
     cloudActionError: null,
+    cloudAgentEditsPending: [],
     cloudAgents: cloudProbe.cloudAgents.map((agent) => agent.agentId === agentId
       ? {
           ...agent,
@@ -807,22 +813,22 @@ app.whenReady().then(async () => {
     return { prefilled, deadWhenUnchanged, liveAfterChange, deadAgain };
   }})()`);
   await waitForNode(() => cloudEditPending, "the cloud edit request to stay in flight");
-  cloudEditSave.savingGuard = await win.webContents.executeJavaScript(`(${() => {
-    const modal = document.querySelector(".cloud-modal");
-    const buttons = [...modal.querySelectorAll("button")];
-    const cancel = buttons.find((button) => button.textContent.trim() === "Cancel");
-    const save = buttons.find((button) => button.classList.contains("primary"));
-    cancel.click();
-    const cancelKeptOpen = modal.isConnected;
-    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
-    const escapeKeptOpen = modal.isConnected;
-    modal.parentElement.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+  win.webContents.send("connect:changed");
+  await waitFor(
+    win,
+    `[...document.querySelectorAll(".cloud-agent-row button")].find((button) => button.textContent.trim() === "Edit chats")?.disabled === true`,
+    "the editing row to redraw as pending",
+  );
+  cloudEditSave.updatingRow = await win.webContents.executeJavaScript(`(${() => {
+    const row = document.querySelector(".cloud-agent-row");
+    const button = (text) => [...row.querySelectorAll("button")]
+      .find((item) => item.textContent.trim() === text);
     return {
-      cancelDisabled: cancel.disabled,
-      savingLabel: save.textContent.trim() === "Saving…",
-      cancelKeptOpen,
-      escapeKeptOpen,
-      backdropKeptOpen: modal.isConnected,
+      modalClosed: !document.querySelector(".cloud-modal"),
+      updating: row.textContent.includes("Updating chats…"),
+      spinner: !!row.querySelector(".status-setting .cloud-spinner"),
+      editDisabled: button("Edit chats")?.disabled === true,
+      messageDisabled: button("Message")?.disabled === true,
     };
   }})()`);
   releaseCloudEdit();
@@ -1702,11 +1708,11 @@ app.whenReady().then(async () => {
     cloudEditSave.deadAgain &&
     cloudEditSave.sentBothChats &&
     cloudEditSave.homeFirst &&
-    cloudEditSave.savingGuard.cancelDisabled &&
-    cloudEditSave.savingGuard.savingLabel &&
-    cloudEditSave.savingGuard.cancelKeptOpen &&
-    cloudEditSave.savingGuard.escapeKeptOpen &&
-    cloudEditSave.savingGuard.backdropKeptOpen &&
+    cloudEditSave.updatingRow.modalClosed &&
+    cloudEditSave.updatingRow.updating &&
+    cloudEditSave.updatingRow.spinner &&
+    cloudEditSave.updatingRow.editDisabled &&
+    cloudEditSave.updatingRow.messageDisabled &&
     cloudEditStray.shown &&
     cloudEditStray.checked &&
     cloudEditStray.allServedChecked &&

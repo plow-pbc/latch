@@ -1170,6 +1170,9 @@ describe("changing which chats an agent serves", () => {
     await state.refresh();
 
     const saving = state.editChats("agent_1", ["cht_2"]);
+    await vi.waitFor(() => {
+      expect(state.state().cloudAgentEditsPending).toEqual(["agent_1"]);
+    });
     state.signedOut();
     held.resolve(agent({ chatUids: ["cht_2"] }));
 
