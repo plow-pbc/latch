@@ -72,7 +72,21 @@ function agent(
   } as CloudAgentResource;
 }
 
-const CHATS: CloudChatOption[] = [{ uid: "cht_1", label: "+15550100 · Ada" }];
+/**
+ * One pickable chat, typed. `recipients: null` and `people: []` are what the
+ * fallback chat really carries, so the defaults are a real shape rather than a
+ * convenient one — and the factory is what keeps a literal from quietly
+ * omitting a required field and forcing a `?? []` in production code.
+ */
+const chat = (overrides: Partial<CloudChatOption> = {}): CloudChatOption => ({
+  uid: "cht_1",
+  label: "+15550100 · Ada",
+  recipients: null,
+  people: [],
+  ...overrides,
+});
+
+const CHATS: CloudChatOption[] = [chat()];
 
 /** Let every already-scheduled continuation run — a cancelled poll rejects a
  * turn after the call that cancelled it returns. */
@@ -171,7 +185,7 @@ describe("a refresh whose chat read is superseded", () => {
     // returned there would hand its caller the list from before the text that
     // sent the owner to this screen, and the modal would show no new chat.
     const gates: Array<() => void> = [];
-    const answers = [[], [{ uid: "cht_new", label: "+15550001111" }]];
+    const answers = [[], [chat({ uid: "cht_new", label: "+15550001111" })]];
     const f = fakes({
       list: async () => [],
       chats: () =>
@@ -322,11 +336,10 @@ describe("the numbers a chat can be messaged on", () => {
       fakes({
         list: async () => [agent({ chatUids: ["cht_1"] })],
         chats: async () => [
-          {
-            uid: "cht_1",
+          chat({
             label: "+15550100, +15550111, +15550122",
             recipients: { line: "+15550100", members: ["+15550111", "+15550122"] },
-          },
+          }),
         ],
       }),
     );
@@ -351,11 +364,10 @@ describe("the numbers a chat can be messaged on", () => {
         create: async () => agent({ chatUids: ["cht_1"], status: "provisioning" }),
         poll: async () => held.promise,
         chats: async () => [
-          {
-            uid: "cht_1",
+          chat({
             label: "+15550100 · +15550111",
             recipients: { line: "+15550100", members: ["+15550111"] },
-          },
+          }),
         ],
       }),
     );
@@ -400,11 +412,7 @@ describe("the numbers a chat can be messaged on", () => {
         chats: async () => {
           if (failing) throw new PlowApiError("network", "Couldn't reach Plow.");
           return [
-            {
-              uid: "cht_1",
-              label: "+15550100 · Ada",
-              recipients: { line: "+15550100", members: ["+15550111"] },
-            },
+            chat({ recipients: { line: "+15550100", members: ["+15550111"] } }),
           ];
         },
       }),
@@ -504,7 +512,7 @@ describe("the activation chat fallback", () => {
       d.reject(new PlowApiError("network", "Couldn't reach Plow."))],
     ["success", (d: ReturnType<typeof deferred<CloudChatOption[]>>) => d.resolve(CHATS)],
   ])("a late %s never displaces the newer read", async (_ending, finish) => {
-    const newest = [{ uid: "cht_2", label: "+15550188 · Family" }];
+    const newest = [chat({ uid: "cht_2", label: "+15550188 · Family" })];
     const slow = deferred<CloudChatOption[]>();
     let first = true;
     const state = build(
@@ -642,8 +650,8 @@ describe("the activation chat fallback", () => {
         chats: async () => {
           if (failing) throw new PlowApiError("http", "Plow returned 500.", 500);
           return [
-            { uid: "cht_1", label: "+15550100 · Ada" },
-            { uid: "cht_2", label: "+15550188 · Family" },
+            chat(),
+            chat({ uid: "cht_2", label: "+15550188 · Family" }),
           ];
         },
       }),
@@ -1093,10 +1101,7 @@ describe("changing which chats an agent serves", () => {
         served = [...chatUids];
         return agent({ chatUids: [...served] });
       },
-      chats: async () => [
-        { uid: "cht_1", label: "+15550100 · Ada", recipients: null },
-        { uid: "cht_2", label: "+15550200 · Bo", recipients: null },
-      ],
+      chats: async () => [chat(), chat({ uid: "cht_2", label: "+15550200 · Bo" })],
     });
     const state = build(tempHome(), f);
     await state.refresh();
@@ -1488,7 +1493,9 @@ describe("Plow's pool numbers", () => {
     const home = tempHome();
     const f = fakes({
       list: async () => [],
-      chats: () => [{ uid: "cht_1", label: "x", recipients: { line: "+15550001111", members: [] } }] as never,
+      chats: async () => [
+        chat({ label: "x", recipients: { line: "+15550001111", members: [] } }),
+      ],
     });
     const state = new CloudAgentState({
       agents: f.agents,
@@ -1517,8 +1524,8 @@ describe("Plow's pool numbers", () => {
         { displayName: null, number: "+15550002222" },
       ],
       [
-        { uid: "cht_1", label: "x", recipients: { line: "+15550002222", members: [] } },
-        { uid: "cht_2", label: "y", recipients: null },
+        chat({ label: "x", recipients: { line: "+15550002222", members: [] } }),
+        chat({ uid: "cht_2", label: "y" }),
       ],
     );
     expect(marked.map((l) => [l.number, l.held])).toEqual([

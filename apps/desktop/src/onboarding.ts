@@ -25,7 +25,13 @@ import {
   withoutCredentialEchoes,
 } from "./chatRows.js";
 import { ActivationChat, PlowApi, PlowApiError } from "./plowApi.js";
-import { loadSettings, saveSettings, Settings } from "./settings.js";
+import {
+  holdForRevocation,
+  loadSettings,
+  releaseRevocation,
+  saveSettings,
+  Settings,
+} from "./settings.js";
 
 /**
  * The wizard ends at `connected`, a confirmation with one button into the app.
@@ -797,42 +803,15 @@ export class Onboarding {
     try {
       await this.deps.api.revokeDeviceCredential(token);
     } catch {
-      this.hold(token);
+      holdForRevocation(this.deps.home, token);
       // No value: the only one in scope IS the session.
       this.deps.warn?.("could not revoke a login session; holding it to retry");
       this.message = LOOSE_SESSION_WARNING;
       this.publish();
       return false;
     }
-    this.release(token);
+    releaseRevocation(this.deps.home, token);
     return true;
-  }
-
-  /**
-   * Keep a token for a later revoke, ALONGSIDE any already held.
-   *
-   * Appended, never assigned. A single slot looked like it was doing this job
-   * and was not: a second failed revoke overwrote the first, which is the same
-   * orphaned session the list exists to prevent, reached one layer further in.
-   * Two Macs' worth of bad network is enough to produce that.
-   *
-   * Read fresh, because this is the far side of a network call and anything
-   * may have written settings while it was out; and de-duplicated, because
-   * every retry that fails comes back through here with a token already held.
-   */
-  private hold(token: string): void {
-    const settings = this.settings();
-    if (settings.pendingRevocations.includes(token)) return;
-    settings.pendingRevocations = [...settings.pendingRevocations, token];
-    this.save(settings);
-  }
-
-  /** Forget one confirmed-dead token, leaving the rest of the list alone. */
-  private release(token: string): void {
-    const settings = this.settings();
-    if (!settings.pendingRevocations.includes(token)) return;
-    settings.pendingRevocations = settings.pendingRevocations.filter((held) => held !== token);
-    this.save(settings);
   }
 
   /**

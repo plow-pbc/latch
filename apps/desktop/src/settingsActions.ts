@@ -9,7 +9,7 @@
  * Every one of these reads and writes the on-disk settings under `DOMO_HOME`,
  * so what a test observes is what actually survives a relaunch.
  */
-import { loadSettings, saveSettings, Settings } from "./settings.js";
+import { holdForRevocation, loadSettings, saveSettings, Settings } from "./settings.js";
 import { InferenceStatus, inferenceStatus } from "./reviewPolicy.js";
 
 /** Read-modify-write. What the user chose is what stays on disk. */
@@ -119,11 +119,15 @@ export async function revokeAndSignOut(
     return true;
   } catch {
     // Still not logged — the only interesting value in scope is the credential
-    // itself — but no longer silent. The stored credential is the owner's login
-    // session now, so a failed revoke leaves a live session on the account that
-    // this Mac has just forgotten how to reach: nothing here can retire it any
-    // more, and the owner is the only one who can. Saying so is the difference
-    // between a signed-out Mac and a signed-out Mac plus a loose session.
+    // itself. But no longer DROPPED either: the stored credential is the
+    // owner's login session now, and sign-out has just erased the only copy of
+    // it, so a failed revoke used to leave a live `*:*` session on the account
+    // with nothing anywhere able to retire it. It goes back on disk as a
+    // pending revocation — through the same owner `Onboarding` uses, because
+    // this is the same problem — and the app retries it on the next launch and
+    // the next activation. Sign-out still reports failure, because the session
+    // IS still live and the owner may not want to wait for a retry.
+    holdForRevocation(home, credential);
     return false;
   }
 }

@@ -420,3 +420,37 @@ export function saveSettings(home: string, settings: Settings): void {
   fs.writeFileSync(file, JSON.stringify(stored, null, 2) + "\n", { mode: 0o600 });
   fs.chmodSync(file, 0o600);
 }
+
+/**
+ * Keep a session token for a later revoke, ALONGSIDE any already held.
+ *
+ * THE one place a failed revocation is retained, and it is here rather than in
+ * either caller because both of them have the same problem and only one of
+ * them used to know it: `Onboarding` holds tokens a login never persisted, and
+ * sign-out holds the credential whose revoke did not land. A retention that
+ * lived in one of them left the other silently dropping a live `*:*` session.
+ *
+ * Appended, never assigned. A single slot looked like it was doing this job
+ * and was not: a second failure overwrote the first, which is the same
+ * orphaned session, reached one layer further in. De-duplicated, because every
+ * retry that fails comes back holding a token already on the list.
+ *
+ * Read fresh: every caller reaches this on the far side of a network call, and
+ * anything may have written settings while it was out.
+ */
+export function holdForRevocation(home: string, token: string): void {
+  const value = (token ?? "").trim();
+  if (!value) return;
+  const settings = loadSettings(home);
+  if (settings.pendingRevocations.includes(value)) return;
+  settings.pendingRevocations = [...settings.pendingRevocations, value];
+  saveSettings(home, settings);
+}
+
+/** Forget one token the server has confirmed dead, leaving the rest alone. */
+export function releaseRevocation(home: string, token: string): void {
+  const settings = loadSettings(home);
+  if (!settings.pendingRevocations.includes(token)) return;
+  settings.pendingRevocations = settings.pendingRevocations.filter((held) => held !== token);
+  saveSettings(home, settings);
+}

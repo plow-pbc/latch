@@ -298,8 +298,8 @@ export class CloudAgentState {
         return {
           ...chat,
           lineName: named?.displayName ?? null,
-          entries: chatRowEntries(line, named?.displayName ?? null, chat.people ?? []),
-          title: chatRowTitle(chat.people ?? [], line, chat.label || chat.uid, named?.displayName ?? null),
+          entries: chatRowEntries(line, named?.displayName ?? null, chat.people),
+          title: chatRowTitle(chat.people, line, chat.label || chat.uid, named?.displayName ?? null),
         };
       }),
       cloudChatsLoaded: this.chatsLoaded,

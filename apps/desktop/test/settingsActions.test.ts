@@ -197,6 +197,32 @@ describe("signing out retires the credential server-side, best effort", () => {
     ).resolves.toBe(false);
 
     expectSignedOutWithAdversarial(home);
+    // ...and KEEPS the session it could not retire. Sign-out has just erased
+    // the only copy of a live `*:*` bearer, so dropping it here left the
+    // account holding one for 180 days with nothing anywhere able to revoke
+    // it. It goes to the same pending list `Onboarding` uses, and the app
+    // retries it on the next launch and the next activation.
+    expect(stored(home).pendingRevocations).toEqual([PLOW_CREDENTIAL]);
+  });
+
+  it("holds one session once, however many failed sign-outs it takes", async () => {
+    // The list is appended to, never assigned: a second failure must not
+    // overwrite the first, and the SAME token must not pile up.
+    const home = homeSignedIn();
+    const refuse = async () => {
+      throw new Error("ENOTFOUND api.plow.co");
+    };
+    await revokeAndSignOut(home, refuse);
+    // A second sign-out has nothing left to revoke and must not disturb it.
+    await revokeAndSignOut(home, refuse);
+
+    expect(stored(home).pendingRevocations).toEqual([PLOW_CREDENTIAL]);
+  });
+
+  it("keeps nothing when the revoke lands", async () => {
+    const home = homeSignedIn();
+    expect(await revokeAndSignOut(home, async () => undefined)).toBe(true);
+    expect(stored(home).pendingRevocations).toEqual([]);
   });
 
   it("clears locally for every shape of failure", async () => {

@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { loadSettings, saveSettings, useCredentialCodec } from "../src/settings.js";
+import { loadSettings, saveSettings, Settings, useCredentialCodec } from "../src/settings.js";
 
 const cleanups: (() => void)[] = [];
 afterEach(() => {
@@ -236,73 +236,82 @@ describe("the credential at rest", () => {
   const fileOf = (home: string) =>
     JSON.parse(fs.readFileSync(path.join(home, "app/settings.json"), "utf8")) as Record<string, unknown>;
 
-  it("writes the credential sealed and never in the clear", () => {
+  /**
+   * The two secrets in this file, and how to put values into each and read
+   * them back.
+   *
+   * They are one contract with two spellings — the credential is one value and
+   * the held sessions are a list — and the contract, not the spelling, is what
+   * these tests are about: sealed on write, never in the clear on disk, back
+   * through the port on read, and a plaintext home migrated by the first read
+   * that can seal it. Two parallel copies of that is how one of them drifts.
+   */
+  const secrets = [
+    {
+      name: "the credential",
+      plainKey: "relayCredential",
+      sealedKey: "relayCredentialEnc",
+      emptyOnDisk: "",
+      values: ["plow_sk_secret_value"],
+      set: (settings: Settings, values: string[]) => {
+        settings.relayCredential = values[0];
+      },
+      read: (settings: Settings) => (settings.relayCredential ? [settings.relayCredential] : []),
+    },
+    {
+      name: "the sessions held for a later revoke",
+      plainKey: "pendingRevocations",
+      sealedKey: "pendingRevocationsEnc",
+      emptyOnDisk: [] as unknown,
+      // Two, because the list is sealed entry by entry rather than as one
+      // blob: one unreadable seal has to cost one token, not all of them.
+      values: ["plow_sk_to_retire", "plow_sk_also_retire"],
+      set: (settings: Settings, values: string[]) => {
+        settings.pendingRevocations = [...values];
+      },
+      read: (settings: Settings) => settings.pendingRevocations,
+    },
+  ];
+
+  /** Whatever the sealed key holds, as a list — a string for one secret, an
+   * array for a list of them. */
+  const sealedEntries = (home: string, key: string): unknown[] =>
+    [fileOf(home)[key]].flat().filter((entry) => entry !== undefined);
+
+  it.each(secrets)("writes $name sealed and never in the clear", (secret) => {
     useCredentialCodec(fakeCodec());
     const home = tempHome();
     const settings = loadSettings(home);
-    settings.relayCredential = "plow_sk_secret_value";
+    secret.set(settings, secret.values);
     saveSettings(home, settings);
 
     const raw = fs.readFileSync(path.join(home, "app/settings.json"), "utf8");
-    expect(raw).not.toContain("plow_sk_secret_value");
-    expect(fileOf(home).relayCredentialEnc).toBe(
-      `sealed:${Buffer.from("plow_sk_secret_value").toString("base64")}`,
+    for (const value of secret.values) expect(raw).not.toContain(value);
+    // One seal per value, and the exact bytes — a seal nobody can check is a
+    // seal that could be the plaintext with a prefix on it.
+    expect(sealedEntries(home, secret.sealedKey)).toEqual(
+      secret.values.map((value) => `sealed:${Buffer.from(value).toString("base64")}`),
     );
-    expect(fileOf(home).relayCredential).toBe("");
+    expect(fileOf(home)[secret.plainKey]).toEqual(secret.emptyOnDisk);
     // ...and it comes back through the port.
-    expect(loadSettings(home).relayCredential).toBe("plow_sk_secret_value");
+    expect(secret.read(loadSettings(home))).toEqual(secret.values);
   });
 
-  it("migrates a plaintext home on the first read that can seal it", () => {
+  it.each(secrets)("migrates a plaintext home's $name on the first read that can seal it", (secret) => {
     const home = tempHome();
     const settings = loadSettings(home);
-    settings.relayCredential = "plow_sk_from_before";
+    secret.set(settings, secret.values);
     saveSettings(home, settings);
-    expect(fileOf(home).relayCredential).toBe("plow_sk_from_before");
+    // Written in the clear, because no codec was installed yet.
+    expect(secret.read(loadSettings(home))).toEqual(secret.values);
 
     useCredentialCodec(fakeCodec());
-    expect(loadSettings(home).relayCredential).toBe("plow_sk_from_before");
+    expect(secret.read(loadSettings(home))).toEqual(secret.values);
 
     // Rewritten on that read, not left for some later unrelated write.
-    expect(fs.readFileSync(path.join(home, "app/settings.json"), "utf8")).not.toContain(
-      "plow_sk_from_before",
-    );
-    expect(fileOf(home).relayCredentialEnc).toBeTruthy();
-  });
-
-  it("seals the session held for a later revoke, exactly like the credential", () => {
-    // A held session is a live `*:*` session too — the only difference is that
-    // nothing USES it. Each entry gets the same treatment at rest.
-    useCredentialCodec(fakeCodec());
-    const home = tempHome();
-    const settings = loadSettings(home);
-    settings.pendingRevocations = ["plow_sk_to_retire", "plow_sk_also_retire"];
-    saveSettings(home, settings);
-
     const raw = fs.readFileSync(path.join(home, "app/settings.json"), "utf8");
-    expect(raw).not.toContain("plow_sk_to_retire");
-    expect(raw).not.toContain("plow_sk_also_retire");
-    expect(fileOf(home).pendingRevocations).toEqual([]);
-    // Entry by entry, not one blob: one unreadable seal costs one token.
-    expect(fileOf(home).pendingRevocationsEnc).toHaveLength(2);
-    expect(loadSettings(home).pendingRevocations).toEqual([
-      "plow_sk_to_retire",
-      "plow_sk_also_retire",
-    ]);
-  });
-
-  it("migrates a plaintext held session on the first read that can seal it", () => {
-    const home = tempHome();
-    const settings = loadSettings(home);
-    settings.pendingRevocations = ["plow_sk_to_retire"];
-    saveSettings(home, settings);
-    expect(fileOf(home).pendingRevocations).toEqual(["plow_sk_to_retire"]);
-
-    useCredentialCodec(fakeCodec());
-    expect(loadSettings(home).pendingRevocations).toEqual(["plow_sk_to_retire"]);
-    expect(fs.readFileSync(path.join(home, "app/settings.json"), "utf8")).not.toContain(
-      "plow_sk_to_retire",
-    );
+    for (const value of secret.values) expect(raw).not.toContain(value);
+    expect(sealedEntries(home, secret.sealedKey)).toHaveLength(secret.values.length);
   });
 
   it("folds a single-slot home's held session into the list", () => {
