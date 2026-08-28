@@ -116,6 +116,12 @@ describe("the server tells the agent what it is for", () => {
   it("the instructions promise no capability", () => {
     expect(SERVER_INSTRUCTIONS).not.toMatch(/without approval|no approval|always allowed/i);
   });
+
+  // Skills are per-user, per-Mac how-to guides an agent cannot otherwise know
+  // — the discovery call has to be named, not just implied by its existence.
+  it("the instructions route the agent to plow_list_skills", () => {
+    expect(SERVER_INSTRUCTIONS).toMatch(/plow_list_skills/);
+  });
 });
 
 describe("every tool with a strong built-in alternative says whose Mac this is", () => {
