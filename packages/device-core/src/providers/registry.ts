@@ -18,8 +18,8 @@
  */
 
 import type { Skill } from "../skills.js";
-import { reservedFlagIn } from "./gogFlags.js";
-import { GOG_CANONICAL, GOG_GROUPS } from "./gogGroups.js";
+import { isHelpInvocation, reservedRefusal, shapeRefusal } from "./gogGate.js";
+import { GOG_CANONICAL } from "./gogGroups.js";
 import { GOG_SKILL } from "./gogSkill.js";
 
 /** What one vendored CLI needs in order to run. */
@@ -94,20 +94,6 @@ export interface VendoredProvider {
   readonly skill: Skill;
 }
 
-/**
- * `... --help`, which names no group and reaches nothing.
- *
- * A `--` terminator disqualifies it: after one, `-h` is the query itself, and
- * treating `gmail search -- -h` as help would run a real search with no minted
- * token. Fail-safe — it would simply fail — but wrong, and one condition
- * cheaper to prevent than to explain.
- */
-function isHelpInvocation(rest: readonly string[]): boolean {
-  if (rest.includes("--")) return false;
-  const last = rest[rest.length - 1];
-  return last === "--help" || last === "-h";
-}
-
 const GOG: VendoredProvider = {
   command: "gog",
   mintAction: "access-token",
@@ -124,13 +110,9 @@ const GOG: VendoredProvider = {
   skill: GOG_SKILL,
   refuse: (argv) => {
     const rest = argv.slice(1);
-    const reserved = reservedFlagIn(rest);
-    if (reserved !== null) {
-      return `${reserved} may not be supplied: it would override this Mac's safety flags`;
-    }
     // `--help` is inert — gog prints usage and exits — and is how the skill
     // tells an agent to discover the surface. What the allowance rescues is
-    // `gog --help` and `gog -h`, which the flags-first branch below would
+    // `gog --help` and `gog -h`, which the flags-first shape check would
     // otherwise refuse for leading with a flag; a group's own help
     // (`gog gmail --help`) passes the group check without it.
     //
@@ -139,18 +121,7 @@ const GOG: VendoredProvider = {
     // safe is gog refusing `--help` in a value position itself — a per-version
     // verdict, so step 3 of the pin-bump checklist owns it, and the agreement
     // table pins the shape.
-    if (isHelpInvocation(rest)) return null;
-    const group = rest[0];
-    // Four sentences, and NONE quotes the argv back: these reach the approval
-    // dialog and the append-only audit log, so the same rule `gogFlags` follows
-    // applies — a reason may name a rule, never the caller's text.
-    if (group === undefined) return 'the command is missing: try ["gog", "gmail", "search", ...]';
-    if (group.startsWith("-")) return "the command must come first, before any flags";
-    // Its own sentence because the group check below already refuses it, and
-    // says the wrong thing when it does.
-    if (group.includes(".")) return 'the command must be separate words: ["gmail", "search"], not ["gmail.search"]';
-    if (!GOG_GROUPS.has(group)) return "this Mac reaches only Gmail and Calendar through gog";
-    return null;
+    return reservedRefusal(rest) ?? (isHelpInvocation(rest) ? null : shapeRefusal(rest, "gog"));
   },
 };
 
