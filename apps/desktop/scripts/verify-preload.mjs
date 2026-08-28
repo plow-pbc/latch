@@ -52,7 +52,6 @@ ipcMain.handle("settings:getRelay", async () => {
   };
 });
 ipcMain.handle("settings:setApprovalMode", async (_e, m) => setApprovalMode(probeHome, m));
-ipcMain.handle("settings:getShowSuggestions", async () => true);
 // A Mac that has NOT granted Full Disk Access — the state the Capabilities
 // section exists to explain.
 ipcMain.handle("capabilities:get", async () => ({ fullDiskAccess: false }));
@@ -843,19 +842,9 @@ app.whenReady().then(async () => {
       noHintLineTakingItsPlace: !pane.innerText.includes("Any request a rule doesn't already cover opens an approval window"),
       noFalseReviewerInputs: !pane.innerText.includes("goal and plan") &&
         !pane.innerText.includes("recent activity on this Mac"),
-      // The suggestions checkbox came here from Settings when that pane's
-      // reviewer section went away. In this mode nobody is being asked, so
-      // there is no suggestion to show: on screen, and dead.
-      hasSuggestionsCheckbox: pane.innerText.includes(
-        "Let the reviewer suggest an answer when an approval window opens",
-      ),
-      suggestionsDeadInReviewerMode: (() => {
-        const box = [...pane.querySelectorAll("input")].find(
-          (i) => i.type === "checkbox" &&
-            (i.closest("label")?.textContent ?? "").includes("Let the reviewer suggest"),
-        );
-        return !!box && box.disabled && !!box.closest("label")?.classList.contains("disabled");
-      })(),
+      // The suggestions checkbox is gone: in Ask mode the reviewer always
+      // suggests, so there is no toggle to show in any mode.
+      noSuggestionsCheckbox: !pane.innerText.includes("Let the reviewer suggest"),
     };
   }})()`);
   const scrollToApprovals = () => win.webContents.executeJavaScript(`(() => {
@@ -919,24 +908,15 @@ app.whenReady().then(async () => {
       stillDisclosesPurposeIsSent: pane.innerText.includes("the purpose you wrote for it"),
       // …and the card still says what this mode does.
       showsHint: pane.innerText.includes("Any request a rule doesn't already cover opens an approval window"),
-      // The hint used to send people to Settings for the suggestions toggle.
-      // The toggle is in this card now, so the sentence points at it and not at
-      // a pane that no longer has one.
-      pointsAtTheCheckboxBelow: pane.innerText.includes("turn that on below"),
+      // The suggestion is no longer a toggle: with a credentialled reviewer
+      // the card says it just happens, and no checkbox exists to point at.
+      saysReviewerSuggests: pane.innerText.includes("the AI Reviewer suggests an answer"),
+      noSuggestionsCheckbox: !pane.innerText.includes("Let the reviewer suggest"),
       noPointerToSettings: !pane.innerText.includes("turn that on in Settings"),
-      // Ask mode with a credentialled reviewer: the one state where a
-      // suggestion can actually be shown, so the box is live.
-      suggestionsLive: (() => {
-        const box = [...pane.querySelectorAll("input")].find(
-          (i) => i.type === "checkbox" &&
-            (i.closest("label")?.textContent ?? "").includes("Let the reviewer suggest"),
-        );
-        return !!box && !box.disabled && box.checked;
-      })(),
     };
   }})()`);
-  // Ask mode on a Mac whose reviewer CANNOT run. The card must not tell anyone
-  // to turn on the checkbox one row down, because that checkbox is dead.
+  // Ask mode on a Mac whose reviewer CANNOT run. The card must not promise a
+  // suggestion, because no review can produce one.
   saveSettings(probeHome, { ...loadSettings(probeHome), relayCredential: "" });
   win.webContents.send("status:changed");
   await waitFor(
@@ -946,16 +926,10 @@ app.whenReady().then(async () => {
   );
   const askWithoutReviewer = await win.webContents.executeJavaScript(`(${() => {
     const pane = document.querySelector("#view");
-    const box = [...pane.querySelectorAll("input")].find(
-      (i) => i.type === "checkbox" &&
-        (i.closest("label")?.textContent ?? "").includes("Let the reviewer suggest"),
-    );
     return {
-      // The dead-end sentence is gone…
-      noDeadInstruction: !pane.innerText.includes("turn that on below"),
-      // …replaced by the reason, and the checkbox it described really is dead.
+      // The promise is gone, replaced by the reason…
+      noPromise: !pane.innerText.includes("the AI Reviewer suggests an answer"),
       explainsWhy: pane.innerText.includes("cannot suggest an answer"),
-      checkboxIsDead: !!box && box.disabled,
       // …and it names the one remedy there is, which is a control that exists.
       namesTheRemedy: pane.innerText.includes("sign in to Plow in Settings"),
       // Ask mode still says what Ask mode does.
@@ -969,7 +943,7 @@ app.whenReady().then(async () => {
     relayCredential: "plow_sk_probe_credential",
   });
   win.webContents.send("status:changed");
-  await waitFor(win, `document.querySelector("#view").innerText.includes("turn that on below")`,
+  await waitFor(win, `document.querySelector("#view").innerText.includes("the AI Reviewer suggests an answer")`,
     "the Ask card to go back to offering the suggestion");
 
   await scrollToApprovals();
@@ -1494,20 +1468,18 @@ app.whenReady().then(async () => {
     approvalsReviewer.noAdversarialWord &&
     approvalsReviewer.noHintLineTakingItsPlace &&
     approvalsReviewer.noFalseReviewerInputs &&
-    approvalsReviewer.hasSuggestionsCheckbox &&
-    approvalsReviewer.suggestionsDeadInReviewerMode &&
+    approvalsReviewer.noSuggestionsCheckbox &&
     purposeRoundTrip.stored &&
     purposeRoundTrip.fieldShowsWhatWasStored &&
     approvalsAsk.fieldGone &&
     approvalsAsk.purposeTextGone &&
     approvalsAsk.showsHint &&
-    approvalsAsk.pointsAtTheCheckboxBelow &&
+    approvalsAsk.saysReviewerSuggests &&
+    approvalsAsk.noSuggestionsCheckbox &&
     approvalsAsk.noPointerToSettings &&
-    approvalsAsk.suggestionsLive &&
     approvalsAsk.stillDisclosesPurposeIsSent &&
-    askWithoutReviewer.noDeadInstruction &&
+    askWithoutReviewer.noPromise &&
     askWithoutReviewer.explainsWhy &&
-    askWithoutReviewer.checkboxIsDead &&
     askWithoutReviewer.namesTheRemedy &&
     askWithoutReviewer.stillSaysWhatAskDoes &&
     settings.noApprovalModeGroup &&
