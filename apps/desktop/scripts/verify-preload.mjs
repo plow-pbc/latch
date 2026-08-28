@@ -132,7 +132,6 @@ let cloudProbe = {
   cloudAgentEditsPending: [],
   cloudChats: [cloudChat],
   cloudChatsLoaded: true,
-  cloudSendTo: "+1 (415) 555-0199",
 };
 const cloudCalls = { create: [], editChats: [] };
 let cloudEditPending = false;
@@ -1054,9 +1053,6 @@ app.whenReady().then(async () => {
     cloudChatsNeedReactivation: false,
     cloudChats: [],
     cloudChatsLoaded: true,
-    // A Mac paired since pairing stopped claiming a line: nothing recorded a
-    // number, so there is none to know.
-    cloudSendTo: null,
   };
   await win.webContents.executeJavaScript(`window.__domoSelectTab("audit")`);
   await win.webContents.executeJavaScript(`window.__domoSelectTab("agents")`);
@@ -1126,8 +1122,7 @@ app.whenReady().then(async () => {
   // Restore the roster for the screenshot and the existing Agents-pane probes.
   cloudProbe = {
     ...cloudProbe,
-    cloudSendTo: "+1 (415) 555-0199",
-    cloudAgents: [cloudAgent],
+      cloudAgents: [cloudAgent],
     cloudChats: [cloudChat],
     cloudAgentsError: null,
     cloudChatsError: null,

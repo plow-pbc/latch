@@ -701,11 +701,11 @@ export class Onboarding {
       settings.provisionedChatUid = chat.uid;
       settings.provisionedChatLabel = activationChatLabel(chat);
     }
-    // `activationSendTo` is deliberately NOT written here. Pairing asks for no
-    // chat, so its `sendTo` is the managed phone — the number that takes an
-    // activation text, not one anyone can be told to text afterwards to get a
-    // chat. Storing it put the managed phone where the cloud-agents screen
-    // says "text this to make a chat", which provisions nothing.
+    // Nothing records `sendTo`. Pairing asks for no chat, so it is the managed
+    // phone — the number that takes an activation text, not one anyone can be
+    // told to text afterwards to get a chat. The cloud-agents screen names the
+    // lines the account's own chats run on, which is the only source that
+    // cannot be wrong.
     this.save(settings);
 
     // The activation is spent: drop the code and the secret rather than leave

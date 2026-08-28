@@ -224,7 +224,6 @@ describe("before anything has been read", () => {
       cloudChats: [],
       cloudChatsLoaded: false,
       cloudChatsNeedReactivation: false,
-      cloudSendTo: null,
     });
   });
 });
@@ -274,17 +273,6 @@ describe("refresh", () => {
     });
   });
 
-  it("shows the number this Mac's activation assigned, and nothing else", async () => {
-    const home = tempHome();
-    const state = build(home, fakes());
-    expect(state.state().cloudSendTo).toBeNull();
-
-    const settings = loadSettings(home);
-    settings.activationSendTo = "+15550100";
-    saveSettings(home, settings);
-
-    expect(state.state().cloudSendTo).toBe("+15550100");
-  });
 
   it("applies roster reads in launch order", async () => {
     const first = deferred<CloudAgentResource[]>();

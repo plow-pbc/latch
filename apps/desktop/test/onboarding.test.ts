@@ -314,35 +314,6 @@ describe("activation — the path a brand-new user takes", () => {
     await settle();
 
     expect(shown.activation?.sendTo).toBe("+15550001111");
-    expect(loadSettings(home).activationSendTo).toBe("");
-  });
-
-  it("stores no number at all when the sign-in never had an activation", async () => {
-    // The phone-code path is texted no number, so there is none to remember —
-    // and an empty field must stay empty rather than be filled with a guess.
-    const onboarding = build();
-    await onboarding.requestCode("+15551110000");
-    await onboarding.submitCode("12345678");
-
-    expect(onboarding.state().step).toBe("connected");
-    expect(loadSettings(home).activationSendTo).toBe("");
-  });
-
-  it("leaves a stored number alone when a sign-in has no activation to name one", async () => {
-    // "This sign-in had no activation" is not "there is no line": the number
-    // came from the activation that made this account's chat, and the redeem
-    // that carried it cannot be asked twice. Blanking it here would leave the
-    // cloud-agents screen with nothing to tell the user to text.
-    const seeded = loadSettings(home);
-    seeded.activationSendTo = "+15559876543";
-    saveSettings(home, seeded);
-
-    const onboarding = build();
-    await onboarding.requestCode("+15551110000");
-    await onboarding.submitCode("12345678");
-
-    expect(onboarding.state().step).toBe("connected");
-    expect(loadSettings(home).activationSendTo).toBe("+15559876543");
   });
 
   it("has no chat to show on a Mac whose activation never made one", async () => {
@@ -1019,9 +990,6 @@ describe("signing out", () => {
     // screen of whatever account signs in next.
     expect(loadSettings(home).provisionedChatUid).toBe("");
     expect(loadSettings(home).provisionedChatLabel).toBe("");
-    // The line goes with it: it belongs to the activation of the account just
-    // left, and the next account gets its own.
-    expect(loadSettings(home).activationSendTo).toBe("");
     expect(onboarding.reset().chat).toBeNull();
   });
 

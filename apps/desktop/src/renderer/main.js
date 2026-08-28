@@ -1151,17 +1151,10 @@ function openCloudPicker(trigger, state, redraw) {
     if (!panel) return;
     const back = el("button", { class: "btn", text: "Back" });
     back.addEventListener("click", showPicker);
-    // Every number this Mac knows of: the lines its existing chats run on, and
-    // the one a pairing under an older build recorded. De-duplicated, because
-    // the two sources overlap on a Mac that has both.
-    const known = [];
-    const seen = new Set();
-    for (const number of [...verifiedCloudLines(state.cloudChats), state.cloudSendTo?.trim() || ""]) {
-      const key = cloudPhoneDigits(number);
-      if (!number || !key || seen.has(key)) continue;
-      seen.add(key);
-      known.push(number);
-    }
+    // Every number this Mac knows of: the lines its own chats run on, which is
+    // the only source that cannot be wrong. `verifiedCloudLines` already
+    // de-duplicates and drops the unusable.
+    const known = verifiedCloudLines(state.cloudChats);
     // There is deliberately NO "Verify a new Plow number" button here.
     //
     // It used to open the setup window, which on a Mac that is already signed

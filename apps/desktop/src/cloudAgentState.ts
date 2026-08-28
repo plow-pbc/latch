@@ -110,7 +110,6 @@ export interface CloudAgentsUiState {
    * never one the app chose. `null` on a Mac that activated before it was kept,
    * and the empty state falls back to re-activate copy.
    */
-  cloudSendTo: string | null;
 }
 
 /** The slice of `CloudAgentsClient` this state needs. */
@@ -232,7 +231,6 @@ export class CloudAgentState {
       cloudAgentEditsSaving: [...this.editsSaving],
       cloudChats: this.chats,
       cloudChatsLoaded: this.chatsLoaded,
-      cloudSendTo: settings.activationSendTo.trim() || null,
     };
   }
 

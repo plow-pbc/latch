@@ -103,17 +103,6 @@ export interface Settings {
    */
   provisionedChatUid: string;
   provisionedChatLabel: string;
-  /**
-   * Legacy: a pool line an older build stored when pairing still asked for a
-   * chat. Nothing writes it any more — pairing's `send_to` is the managed
-   * phone, which is not a number anyone can be told to text for a chat.
-   *
-   * Still READ, because a Mac that paired under the old build has a real line
-   * here and the cloud-agents screen can still name it. Empty on every Mac
-   * paired since, which is the ordinary case, so no screen may treat its
-   * absence as "this account has no numbers".
-   */
-  activationSendTo: string;
   /** The first-run launch-at-login default has been applied (main.ts's
    * `applyFirstRunLaunchAtLogin`). NOT a mirror of the OS's login-item bit —
    * loginItem.ts explains why none exists — only the record that the one-time
@@ -138,7 +127,6 @@ export function loadSettings(home: string): Settings {
     agentPurpose: "",
     provisionedChatUid: "",
     provisionedChatLabel: "",
-    activationSendTo: "",
     autoCheckUpdates: true,
     autoInstallUpdates: true,
     launchAtLoginDefaulted: false,

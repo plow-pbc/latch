@@ -139,11 +139,9 @@ const CLOUD_EMPTY = {
   cloudActionError: null,
   cloudChats: [],
   cloudChatsLoaded: true,
-  cloudSendTo: null,
 };
 const CLOUD_READY = {
   ...CLOUD_EMPTY,
-  cloudSendTo: "+1 (415) 555-0199",
 };
 const RULES = [
   {
@@ -482,33 +480,6 @@ const SCREENS = [
       "+14155550142",
       "+14155550188",
     ],
-  },
-  {
-    name: "cloud-new-chat-held-number",
-    cloud: {
-      ...CLOUD_READY,
-      cloudSendTo: "+1 (415) 555-0142",
-      cloudChats: [CHAT, FAMILY_CHAT],
-    },
-    prepare: async (win) => {
-      await clickText(win, "Set up cloud agent", 0);
-      await waitFor(win, `document.querySelector(".cloud-modal .chat-list")`, "the chat checklist");
-      await openNewChatExplainer(win);
-      await waitFor(win, `document.querySelector(".cloud-modal .cloud-route-numbers")`, "the new-chat explainer");
-      const routes = await win.webContents.executeJavaScript(`(${() => ({
-        // The dead route is gone: it opened the setup window, which on a
-        // signed-in Mac lands on "connected" and mints nothing.
-        offersVerifyButton: [...document.querySelectorAll(".cloud-modal button")]
-          .some((button) => button.textContent.trim() === "Verify a new Plow number"),
-        // A held number that is also a chat's line is listed once, not twice.
-        numbers: [...document.querySelectorAll(".cloud-route-number")]
-          .map((line) => line.textContent.trim()),
-      })})()`);
-      if (routes.offersVerifyButton || routes.numbers.join(",") !== "+14155550142,+14155550188") {
-        throw new Error(`new-chat explainer listed the wrong numbers: ${JSON.stringify(routes)}`);
-      }
-    },
-    expect: ["Create a new chat", "Numbers this Mac knows about:", "+14155550142", "+14155550188"],
   },
   {
     name: "cloud-provisioning",

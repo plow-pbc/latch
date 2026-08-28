@@ -221,7 +221,6 @@ describe("the retired bring-your-own-key fields are scrubbed on read", () => {
 
 describe("the activation's assigned number", () => {
   it("is empty until an activation has told us one", () => {
-    expect(loadSettings(tempHome()).activationSendTo).toBe("");
   });
 
 });
