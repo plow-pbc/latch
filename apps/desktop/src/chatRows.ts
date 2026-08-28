@@ -80,6 +80,17 @@ export function withoutCredentialEchoes<
 }
 
 /**
+ * What separates one entry from the next, on both lines.
+ *
+ * Not a comma: a display name may contain one — "Smith, Jane" is a name a
+ * provider will hand over — and a comma-joined title then reads as one more
+ * participant than there are, with the subtitle's numbers no longer lining up
+ * against it. The two lines are read BY POSITION, so the separator has to be
+ * something a name cannot be.
+ */
+export const ENTRY_SEPARATOR = " · ";
+
+/**
  * A display name worth showing, or null.
  *
  * Rejects a name that merely repeats the handle beside it and a name that is
@@ -181,7 +192,7 @@ export function chatRowTitle(
   lineName: string | null = null,
 ): string {
   const labels = rowEntries(line, lineName, people).map((entry) => entry.label);
-  return labels.length ? labels.join(", ") : fallback;
+  return labels.length ? labels.join(ENTRY_SEPARATOR) : fallback;
 }
 
 /**
@@ -197,5 +208,5 @@ export function chatRowSubtitle(
   lineName: string | null,
   people: readonly ChatPerson[],
 ): string {
-  return rowEntries(line, lineName, people).map((entry) => entry.number).join(", ");
+  return rowEntries(line, lineName, people).map((entry) => entry.number).join(ENTRY_SEPARATOR);
 }

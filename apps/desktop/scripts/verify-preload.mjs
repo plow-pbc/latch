@@ -85,8 +85,8 @@ const cloudChat = {
     { number: "+14155550193", name: null, isOwner: true },
     { number: "+16285550112", name: "Robin", isOwner: false },
   ],
-  title: "Willow, You, Robin",
-  subtitle: "+1 415-555-0142, +1 415-555-0193, +1 628-555-0112",
+  title: "Willow · You · Robin",
+  subtitle: "+1 415-555-0142 · +1 415-555-0193 · +1 628-555-0112",
 };
 const cloudAgent = {
   agentId: "cag_probe",
@@ -956,7 +956,7 @@ app.whenReady().then(async () => {
     const boxFor = (title) => [...document.querySelectorAll(".cloud-modal .chat-option")]
       .find((row) => row.querySelector(".chat-option-name")?.textContent.trim() === title)
       ?.querySelector("input");
-    const served = ["Willow, You, Robin", "Book club", "Family group"];
+    const served = ["Willow · You · Robin", "Book club", "Family group"];
     const allChecked = served.every((title) => boxFor(title)?.checked === true)
       && boxFor("New chat")?.checked === false;
     const deadOnOpen = save().disabled;
@@ -1043,7 +1043,7 @@ app.whenReady().then(async () => {
   await waitFor(win, `document.querySelector(".cloud-modal .chat-list")`, "the activation-chat fallback checklist");
   cloudForbidden.offersActivationChat = await win.webContents.executeJavaScript(
     `[...document.querySelectorAll(".cloud-modal .chat-option-name")]
-      .some((name) => name.textContent.trim() === "Willow, You, Robin")`,
+      .some((name) => name.textContent.trim() === "Willow · You · Robin")`,
   );
   await win.webContents.executeJavaScript(
     `[...document.querySelectorAll(".cloud-modal button")].find((button) => button.textContent.trim() === "Cancel").click()`,
@@ -1148,7 +1148,7 @@ app.whenReady().then(async () => {
   // The chat that arrived, named by its PEOPLE — the line is deliberately not
   // in the title any more, so this looks for the participants.
   cloudZeroChatGuidance.reopenShowsNewChat = await win.webContents.executeJavaScript(
-    `[...document.querySelectorAll(".cloud-modal .chat-option-name")].some((n) => n.textContent === "Willow, You, Robin")`,
+    `[...document.querySelectorAll(".cloud-modal .chat-option-name")].some((n) => n.textContent === "Willow · You · Robin")`,
   );
   // The row: participants in the title (owner as "You", line excluded), and
   // The pair, read BY POSITION: the line's name leads the title and its number
@@ -1156,10 +1156,10 @@ app.whenReady().then(async () => {
   cloudZeroChatGuidance.chatRowShowsLine = await win.webContents.executeJavaScript(`(${() => {
     const name = document.querySelector(".cloud-modal .chat-option-name")?.textContent ?? "";
     const line = document.querySelector(".cloud-modal .chat-option-line")?.textContent ?? "";
-    const names = name.split(", ");
-    const numbers = line.split(", ");
-    return name === "Willow, You, Robin"
-      && line === "+1 415-555-0142, +1 415-555-0193, +1 628-555-0112"
+    const names = name.split(" · ");
+    const numbers = line.split(" · ");
+    return name === "Willow · You · Robin"
+      && line === "+1 415-555-0142 · +1 415-555-0193 · +1 628-555-0112"
       // Same length, so the nth name belongs to the nth number.
       && names.length === numbers.length
       // The subtitle carries no names, and the title no raw numbers.

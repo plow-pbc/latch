@@ -353,7 +353,7 @@ describe("the numbers a chat can be messaged on", () => {
         chats: async () => [
           {
             uid: "cht_1",
-            label: "+15550100, +15550111",
+            label: "+15550100 · +15550111",
             recipients: { line: "+15550100", members: ["+15550111"] },
           },
         ],
@@ -443,7 +443,7 @@ describe("the numbers a chat can be messaged on", () => {
         // Labels put non-owners first, while addressing keeps the parser's
         // owner-first participant order.
         // The label is the row title now: the line, then the people.
-        label: "+15550100, You, Ada",
+        label: "+15550100 · You · Ada",
         recipients: { line: "+15550100", members: ["+15550122", "+15550111"] },
       },
     ]);
@@ -836,7 +836,7 @@ describe("the credential boundary", () => {
     await state.refresh();
     const marshalled = JSON.stringify(state.state());
 
-    expect(state.state().cloudChats[0].label).toBe("+15550100, +15550111");
+    expect(state.state().cloudChats[0].label).toBe("+15550100 · +15550111");
     expect(marshalled).not.toContain(CREDENTIAL);
     expect(marshalled).not.toContain(SESSION);
     expect(marshalled).not.toContain("sessionId");

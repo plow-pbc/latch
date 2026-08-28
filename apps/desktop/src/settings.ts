@@ -10,6 +10,41 @@
 import fs from "node:fs";
 import path from "node:path";
 
+/**
+ * How the credential is encrypted at rest, when the OS offers a way.
+ *
+ * Injected rather than imported: `safeStorage` is Electron's, and this module
+ * is read by the test suite and by `latch-smoke`, neither of which runs
+ * Electron. `main.ts` installs the real one at boot.
+ */
+export interface CredentialCodec {
+  /** Whether the OS keychain can serve right now. False before `app.ready`,
+   * and on a Linux box with no keyring. */
+  available(): boolean;
+  /** Plaintext in, base64 ciphertext out. */
+  encrypt(plain: string): string;
+  /** Base64 ciphertext in, plaintext out. Throws if it cannot. */
+  decrypt(cipher: string): string;
+}
+
+let codec: CredentialCodec | null = null;
+let warnedUnavailable = false;
+
+/** Install the codec. `null` restores plaintext, which is what tests want. */
+export function useCredentialCodec(next: CredentialCodec | null): void {
+  codec = next;
+  warnedUnavailable = false;
+}
+
+function activeCodec(): CredentialCodec | null {
+  if (!codec) return null;
+  try {
+    return codec.available() ? codec : null;
+  } catch {
+    return null;
+  }
+}
+
 export interface WindowBounds {
   x: number;
   y: number;
@@ -43,6 +78,11 @@ export interface Settings {
    * token silently meaningless and produce an auth error nobody could explain.
    * The old `relayUrl` WebSocket setting is gone with it; the socket is derived
    * from the build's base URL by `relaySocketUrl`. */
+  /**
+   * The credential, ENCRYPTED, when the OS offered a way to encrypt it. Only
+   * one of this and `relayCredential` is ever on disk.
+   */
+  relayCredentialEnc?: string;
   /** The Plow login session this Mac holds, from first-run activation or the
    * phone-code fallback. It carries the owner's full account authority — Latch
    * is their manager app, not an agent — and is never seen by the user. A
@@ -152,6 +192,23 @@ export function loadSettings(home: string): Settings {
   delete settings.inferenceProvider;
 
   const loaded = { ...defaults, ...settings };
+  // The encrypted field wins where it exists. A decrypt that fails is treated
+  // as no credential rather than as a crash: the keychain entry can be gone
+  // (a restored backup, a new login keychain), and the honest answer to "what
+  // is this Mac signed in as" is then nothing — which sends the owner through
+  // setup rather than into an auth error nobody can explain.
+  const sealed = typeof loaded.relayCredentialEnc === "string" ? loaded.relayCredentialEnc : "";
+  if (sealed) {
+    const active = activeCodec();
+    loaded.relayCredential = "";
+    if (active) {
+      try {
+        loaded.relayCredential = active.decrypt(sealed);
+      } catch {
+        /* unreadable: signed out, honestly */
+      }
+    }
+  }
   // The spread above copies whatever the file held, and a hand-edited or
   // truncated file can put a non-object — or a `null` — where a record belongs.
   // Every reader of this map indexes it, so normalising once here is what keeps
@@ -174,16 +231,37 @@ export function loadSettings(home: string): Settings {
   // outcome this exists to prevent; every other write in this module propagates
   // too. It happens at most once, because the second read finds nothing to
   // remove.
-  if (retired) saveSettings(home, loaded);
+  // A home written before the codec existed carries plaintext. Rewrite it
+  // sealed on the first read that can — the same one-off shape the retired-key
+  // scrub uses, and for the same reason: waiting for some unrelated write
+  // leaves the plaintext on disk for as long as nobody changes a setting.
+  const needsSealing = !sealed && loaded.relayCredential.trim() !== "" && activeCodec() !== null;
+  if (retired || needsSealing) saveSettings(home, loaded);
   return loaded;
 }
 
 export function saveSettings(home: string, settings: Settings): void {
   const file = settingsPath(home);
+  // Encrypted where the OS allows, plaintext where it does not — the file is
+  // 0600 either way, which is what it has always been, so an unavailable
+  // keychain is no worse than yesterday rather than a Mac that cannot sign in.
+  const active = activeCodec();
+  const credential = (settings.relayCredential ?? "").trim();
+  const stored: Record<string, unknown> = { ...settings };
+  if (credential && active) {
+    stored.relayCredentialEnc = active.encrypt(credential);
+    stored.relayCredential = "";
+  } else {
+    delete stored.relayCredentialEnc;
+    if (credential && codec && !warnedUnavailable) {
+      warnedUnavailable = true;
+      console.log("[settings] no OS keychain available; credential stored unencrypted (0600)");
+    }
+  }
   fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
   // mode on writeFileSync only applies when the file is created, so chmod
   // unconditionally — otherwise a file that predates this change keeps its
   // old permissions forever.
-  fs.writeFileSync(file, JSON.stringify(settings, null, 2) + "\n", { mode: 0o600 });
+  fs.writeFileSync(file, JSON.stringify(stored, null, 2) + "\n", { mode: 0o600 });
   fs.chmodSync(file, 0o600);
 }

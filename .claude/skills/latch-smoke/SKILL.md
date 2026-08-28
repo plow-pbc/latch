@@ -141,7 +141,7 @@ without touching Google:
 | Output | Means |
 |---|---|
 | `FAILED — the executor threw` … `not installed` | no vendored binary — run `just fetch-gog` and repackage |
-| `FAILED — the executor threw` … `could not reach Plow` / `returned 4xx` | the mint failed; check the device credential's scopes |
+| `FAILED — the executor threw` … `could not reach Plow` / `returned 4xx` | the mint failed; the stored credential is the owner's Plow login session, so check that it is still live rather than its scopes — a session carries them all |
 | `OK` | the whole path works |
 
 A `403` *inside* gog's own output is not a Latch failure — the token carries

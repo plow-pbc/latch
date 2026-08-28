@@ -184,47 +184,49 @@ describe("the order chat rows are shown in", () => {
     ...over,
   });
 
-  it("groups by line without a header, then orders by title", () => {
-    const shown = sortChatRows([
-      row({ uid: "c1", lineName: "Willow", title: "Willow, Nina" }),
-      row({ uid: "c2", lineName: "Ash", title: "Ash, You, Robin" }),
-      row({ uid: "c3", lineName: "Willow", title: "Willow, Ada" }),
-    ]);
-
-    expect(shown.map((chat) => chat.uid)).toEqual(["c2", "c3", "c1"]);
-  });
-
-  it("compares the way a reader does, not by code unit", () => {
-    // Locale-aware: an accented name sorts beside its plain form rather than
-    // after every unaccented name on the account.
-    const shown = sortChatRows([
-      row({ uid: "c1", lineName: "Zoe" }),
-      row({ uid: "c2", lineName: "Ámbar" }),
-      row({ uid: "c3", lineName: "Ana" }),
-    ]);
-
-    expect(shown.map((chat) => chat.uid)).toEqual(["c2", "c3", "c1"]);
-  });
-
-  it("puts a chat whose line is unnamed last, not first", () => {
-    // An empty string sorts before everything, which would put the least
-    // identifiable rows at the top of the list.
-    const shown = sortChatRows([
-      row({ uid: "c1", lineName: null, title: "Aardvark" }),
-      row({ uid: "c2", lineName: "Willow", title: "Zebra" }),
-    ]);
-
-    expect(shown.map((chat) => chat.uid)).toEqual(["c2", "c1"]);
-  });
-
-  it("is stable: equal rows keep the order the server sent", () => {
-    const shown = sortChatRows([
-      row({ uid: "c1", lineName: "Ash", title: "same" }),
-      row({ uid: "c2", lineName: "Ash", title: "same" }),
-      row({ uid: "c3", lineName: "Ash", title: "same" }),
-    ]);
-
-    expect(shown.map((chat) => chat.uid)).toEqual(["c1", "c2", "c3"]);
+  it.each([
+    [
+      "line first, then title",
+      [
+        { uid: "c1", lineName: "Willow", title: "Willow · Nina" },
+        { uid: "c2", lineName: "Ash", title: "Ash · You · Robin" },
+        { uid: "c3", lineName: "Willow", title: "Willow · Ada" },
+      ],
+      ["c2", "c3", "c1"],
+    ],
+    [
+      // Locale-aware: an accented name sorts beside its plain form rather than
+      // after every unaccented name on the account.
+      "the way a reader collates, not by code unit",
+      [
+        { uid: "c1", lineName: "Zoe" },
+        { uid: "c2", lineName: "Ámbar" },
+        { uid: "c3", lineName: "Ana" },
+      ],
+      ["c2", "c3", "c1"],
+    ],
+    [
+      // An empty string sorts before everything, which would put the least
+      // identifiable rows at the top.
+      "an unnamed line last, not first",
+      [
+        { uid: "c1", lineName: null, title: "Aardvark" },
+        { uid: "c2", lineName: "Willow", title: "Zebra" },
+      ],
+      ["c2", "c1"],
+    ],
+    [
+      // Stable, so the server's order is the tiebreak we already trust.
+      "equal rows in the order the server sent",
+      [
+        { uid: "c1", lineName: "Ash", title: "same" },
+        { uid: "c2", lineName: "Ash", title: "same" },
+        { uid: "c3", lineName: "Ash", title: "same" },
+      ],
+      ["c1", "c2", "c3"],
+    ],
+  ])("orders by %s", (_case, rows, expected) => {
+    expect(sortChatRows(rows.map((over) => row(over))).map((chat) => chat.uid)).toEqual(expected);
   });
 
   it("does not mutate what it was given", () => {

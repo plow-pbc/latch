@@ -266,10 +266,10 @@ describe("activation — the path a brand-new user takes", () => {
     // later window has no way to ask for it again.
     const settings = loadSettings(home);
     expect(settings.provisionedChatUid).toBe("cht_D7hfWNK");
-    expect(settings.provisionedChatLabel).toBe("+1 555-987-6543, You");
+    expect(settings.provisionedChatLabel).toBe("+1 555-987-6543 · You");
     expect(onboarding.state().chat).toEqual({
       uid: "cht_D7hfWNK",
-      label: "+1 555-987-6543, You",
+      label: "+1 555-987-6543 · You",
     });
     // A fresh window on the same home still knows about it.
     expect(build().state().chat?.uid).toBe("cht_D7hfWNK");
@@ -386,25 +386,25 @@ describe("activation — the path a brand-new user takes", () => {
         { displayName: "Riley", providerKey: "+15550004001", role: "owner" as const },
         { displayName: "Casey", providerKey: "+15550004002", role: "member" as const },
       ],
-    }, "+1 555-000-4000, You, Casey"],
+    }, "+1 555-000-4000 · You · Casey"],
     ["names the owner You and everyone else by name", {
       line: "+15550005000",
       members: [
         { displayName: "Whoever", providerKey: "+15550005001", role: "owner" as const },
         { displayName: "Riley", providerKey: "+15550005002", role: "member" as const },
       ],
-    }, "+1 555-000-5000, You, Riley"],
+    }, "+1 555-000-5000 · You · Riley"],
     ["stands a number in for a name that just repeats the handle", {
       line: "+15550003000",
       members: [{ displayName: "+15550003001", providerKey: "+15550003001", role: "member" as const }],
-    }, "+1 555-000-3000, +1 555-000-3001"],
+    }, "+1 555-000-3000 · +1 555-000-3001"],
     ["lists the line once when a member is on it", {
       line: "+15550006000",
       members: [
         { displayName: "Riley", providerKey: "+15550006000", role: "member" as const },
         { displayName: "Casey", providerKey: "+15550006002", role: "member" as const },
       ],
-    }, "+1 555-000-6000, Casey"],
+    }, "+1 555-000-6000 · Casey"],
   ])("%s", (_case, fields, expected) => {
     expect(activationChatLabel(parseActivationChat(wireChat(fields))!)).toBe(expected);
   });
@@ -425,7 +425,7 @@ describe("activation — the path a brand-new user takes", () => {
     // The owner reads as "You" and the line is formatted; what this pins is
     // that the LINE is the number shown, never the chat's own `provider_key`.
     const label = activationChatLabel(chat);
-    expect(label).toBe("+1 555-987-6543, You");
+    expect(label).toBe("+1 555-987-6543 · You");
     expect(label).not.toContain("thread_fixture");
     expect(label).not.toContain("thread_fixture");
   });
@@ -437,7 +437,7 @@ describe("activation — the path a brand-new user takes", () => {
         { providerKey: "+15551230000", displayName: null, isOwner: true },
         { providerKey: "+15557654321", displayName: null, isOwner: false },
       ],
-    })).toBe("+1 555-987-6543, You, +1 555-765-4321");
+    })).toBe("+1 555-987-6543 · You · +1 555-765-4321");
     // A member whose address IS the line is not said twice.
     expect(
       activationChatLabel({
@@ -447,7 +447,7 @@ describe("activation — the path a brand-new user takes", () => {
           { providerKey: "+15559876543", displayName: null, isOwner: false },
         ],
       }),
-    ).toBe("+1 555-987-6543, You");
+    ).toBe("+1 555-987-6543 · You");
     expect(activationChatLabel({ ...CHAT, participants: [] })).toBe("+1 555-987-6543");
     // A member without a usable display name is identified by its real handle.
     expect(
@@ -1114,8 +1114,12 @@ describe("signing out", () => {
     await settle();
 
     // The credential this Mac already holds is not overwritten by a redeem it
-    // did not ask for. (Nothing is minted either — there is no mint left.)
+    // did not ask for — and the session that redeem carried is RETIRED rather
+    // than dropped. The redeem answers once, so a token declined here is a live
+    // session on the account that nothing holds a reference to: not sign-out,
+    // not the next launch. Nobody could ever retire it.
     expect(loadSettings(home).relayCredential).toBe(credential);
+    expect(plow.revoked).toContain(SESSION_TOKEN);
   });
 
   it("a redeem in flight across the sign-out cannot mint", async () => {
@@ -1167,7 +1171,10 @@ describe("a sign-out while the credential handoff is in the air", () => {
   // so `relayInfo` is the whole window a sign-out can land in. Nothing needs
   // retiring on that path — the session is the owner's own, created by their
   // text, and sign-out's revoke is what retires it.
-  for (const race of [{ stage: "relayInfo", revoked: [] as string[] }] as const) {
+  // The session IS revoked on this path now. It exists on the account, the
+  // sign-out's own revoke ran before it did, and the redeem that carried it
+  // answers once — so a token dropped here is one nobody can ever retire.
+  for (const race of [{ stage: "relayInfo", revoked: [SESSION_TOKEN] }] as const) {
     it(`stays signed out when the sign-out lands during ${race.stage}`, async () => {
       let release = () => {};
       const inAir = new Promise<void>((r) => {

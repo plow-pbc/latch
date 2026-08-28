@@ -50,8 +50,8 @@ const CHAT = {
   ],
   // Formatted by `chatRows.ts` in the real main process; the fixture carries
   // the finished strings the same way it carries the finished label.
-  title: "Willow, You, Robin",
-  subtitle: "+1 415-555-0142, +1 415-555-0193, +1 628-555-0112",
+  title: "Willow · You · Robin",
+  subtitle: "+1 415-555-0142 · +1 415-555-0193 · +1 628-555-0112",
 };
 const FAMILY_CHAT = {
   uid: "chat_family",

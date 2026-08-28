@@ -453,6 +453,13 @@ export class Onboarding {
       // server retiring the code — so it says what "already holding a
       // credential" was only guessing at.
       const stillOurs = secret === this.activationSecret;
+      // A verified token this Mac will NOT keep is a live session on the
+      // owner's account that nothing else knows about: the redeem answers once,
+      // so if it is dropped here nobody can ever retire it. Every branch below
+      // either persists it or revokes it.
+      if (result.status === "verified" && result.token && !(stillOurs && !this.settings().relayCredential.trim())) {
+        await this.deps.api.revokeDeviceCredential(result.token).catch(() => {});
+      }
       if (
         result.status === "verified" &&
         result.token &&
@@ -673,12 +680,16 @@ export class Onboarding {
     // login — reset, the phone fallback, a fresh mint — so it is the epoch to
     // check against. One await now rather than two, so one check.
     //
-    // The session is NOT revoked on that path. It is the credential the owner
-    // just created by texting, not one this app minted behind their back, and
-    // sign-out's own revoke is what retires it.
+    // A sign-out landing inside it takes the session WITH it. Dropping the
+    // token there orphaned it: the redeem answers once, sign-out's own revoke
+    // ran before this session existed on disk, and nothing afterwards holds a
+    // reference to retire it by. Best-effort, the same contract sign-out keeps.
     const epoch = this.pollGeneration;
     const info = await this.deps.api.relayInfo(sessionToken);
-    if (epoch !== this.pollGeneration) return;
+    if (epoch !== this.pollGeneration) {
+      await this.deps.api.revokeDeviceCredential(sessionToken).catch(() => {});
+      return;
+    }
 
     // Written 0600 by saveSettings. This is the only copy of the credential and
     // it is never handed to the renderer.

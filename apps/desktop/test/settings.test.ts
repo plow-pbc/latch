@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { loadSettings, saveSettings } from "../src/settings.js";
+import { loadSettings, saveSettings, useCredentialCodec } from "../src/settings.js";
 
 const cleanups: (() => void)[] = [];
 afterEach(() => {
@@ -216,5 +216,102 @@ describe("the retired bring-your-own-key fields are scrubbed on read", () => {
     expect(JSON.parse(raw).launchAtLoginDefaulted).toBe(true);
     // The second load, which finds nothing to scrub, agrees with the first.
     expect(loadSettings(home).launchAtLoginDefaulted).toBe(true);
+  });
+});
+
+describe("the credential at rest", () => {
+  /** A codec that is obviously not encryption — the point is the SHAPE: one
+   * value in the file, decrypted only through the port, never the plaintext. */
+  const fakeCodec = (available = true) => ({
+    available: () => available,
+    encrypt: (plain: string) => `sealed:${Buffer.from(plain).toString("base64")}`,
+    decrypt: (cipher: string) => {
+      if (!cipher.startsWith("sealed:")) throw new Error("not ours");
+      return Buffer.from(cipher.slice("sealed:".length), "base64").toString();
+    },
+  });
+
+  afterEach(() => useCredentialCodec(null));
+
+  const fileOf = (home: string) =>
+    JSON.parse(fs.readFileSync(path.join(home, "app/settings.json"), "utf8")) as Record<string, unknown>;
+
+  it("writes the credential sealed and never in the clear", () => {
+    useCredentialCodec(fakeCodec());
+    const home = tempHome();
+    const settings = loadSettings(home);
+    settings.relayCredential = "plow_sk_secret_value";
+    saveSettings(home, settings);
+
+    const raw = fs.readFileSync(path.join(home, "app/settings.json"), "utf8");
+    expect(raw).not.toContain("plow_sk_secret_value");
+    expect(fileOf(home).relayCredentialEnc).toBe(
+      `sealed:${Buffer.from("plow_sk_secret_value").toString("base64")}`,
+    );
+    expect(fileOf(home).relayCredential).toBe("");
+    // ...and it comes back through the port.
+    expect(loadSettings(home).relayCredential).toBe("plow_sk_secret_value");
+  });
+
+  it("migrates a plaintext home on the first read that can seal it", () => {
+    const home = tempHome();
+    const settings = loadSettings(home);
+    settings.relayCredential = "plow_sk_from_before";
+    saveSettings(home, settings);
+    expect(fileOf(home).relayCredential).toBe("plow_sk_from_before");
+
+    useCredentialCodec(fakeCodec());
+    expect(loadSettings(home).relayCredential).toBe("plow_sk_from_before");
+
+    // Rewritten on that read, not left for some later unrelated write.
+    expect(fs.readFileSync(path.join(home, "app/settings.json"), "utf8")).not.toContain(
+      "plow_sk_from_before",
+    );
+    expect(fileOf(home).relayCredentialEnc).toBeTruthy();
+  });
+
+  it("falls back to plaintext 0600 when the OS offers no keychain", () => {
+    // No regression against what shipped: the file has always been 0600, so an
+    // unavailable keychain must not be a Mac that cannot sign in.
+    useCredentialCodec(fakeCodec(false));
+    const home = tempHome();
+    const settings = loadSettings(home);
+    settings.relayCredential = "plow_sk_unsealed";
+    saveSettings(home, settings);
+
+    expect(fileOf(home).relayCredential).toBe("plow_sk_unsealed");
+    expect(fileOf(home).relayCredentialEnc).toBeUndefined();
+    expect(fs.statSync(path.join(home, "app/settings.json")).mode & 0o777).toBe(0o600);
+    expect(loadSettings(home).relayCredential).toBe("plow_sk_unsealed");
+  });
+
+  it("reads an unreadable seal as signed out rather than throwing", () => {
+    // A restored backup, or a new login keychain: the entry is gone. "Signed
+    // out" sends the owner through setup; a throw sends them nowhere.
+    useCredentialCodec(fakeCodec());
+    const home = tempHome();
+    const settings = loadSettings(home);
+    settings.relayCredential = "plow_sk_sealed";
+    saveSettings(home, settings);
+
+    const file = path.join(home, "app/settings.json");
+    const onDisk = JSON.parse(fs.readFileSync(file, "utf8")) as Record<string, unknown>;
+    onDisk.relayCredentialEnc = "garbage-from-another-keychain";
+    fs.writeFileSync(file, JSON.stringify(onDisk));
+
+    expect(loadSettings(home).relayCredential).toBe("");
+  });
+
+  it("does not hand back a sealed credential when no codec is installed", () => {
+    // `latch-smoke` and the tests read settings without Electron. Reporting the
+    // ciphertext as the credential would put a useless value in a bearer header.
+    useCredentialCodec(fakeCodec());
+    const home = tempHome();
+    const settings = loadSettings(home);
+    settings.relayCredential = "plow_sk_sealed";
+    saveSettings(home, settings);
+
+    useCredentialCodec(null);
+    expect(loadSettings(home).relayCredential).toBe("");
   });
 });

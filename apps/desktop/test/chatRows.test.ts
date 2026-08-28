@@ -30,17 +30,17 @@ describe("the chat row's title", () => {
     [
       "leads with the line's name, then the people",
       { line: LINE, lineName: "Willow", people: [person({ isOwner: true }), person({ number: "+12018051467", name: "Nina" })] },
-      "Willow, You, Nina",
+      "Willow · You · Nina",
     ],
     [
       "stands a number in for anyone without a name",
       { line: LINE, lineName: "Ash", people: [person({ isOwner: true }), person({ number: "+19165204946" })] },
-      "Ash, You, +1 916-520-4946",
+      "Ash · You · +1 916-520-4946",
     ],
     [
       "uses the line's own number when Plow has not named it",
       { line: LINE, lineName: null, people: [person({ isOwner: true })] },
-      "+1 650-315-6536, You",
+      "+1 650-315-6536 · You",
     ],
     [
       "names the owner You, from the API's own role",
@@ -54,7 +54,7 @@ describe("the chat row's title", () => {
         lineName: "Willow",
         people: [person({ number: LINE, name: "Willow" }), person({ number: "+19165204946", name: "Robin" })],
       },
-      "Willow, Robin",
+      "Willow · Robin",
     ],
     ["falls back when there is nothing at all to name", { line: null, lineName: null, people: [] }, "cht_abc"],
   ])("%s", (_case, { line, lineName, people }, expected) => {
@@ -67,7 +67,7 @@ describe("the chat row's subtitle", () => {
     [
       "is the title's entries as numbers, in the same order",
       { line: LINE, lineName: "Willow", people: [person({ isOwner: true }), person({ number: "+12018051467", name: "Nina" })] },
-      "+1 650-315-6536, +1 330-554-1942, +1 201-805-1467",
+      "+1 650-315-6536 · +1 330-554-1942 · +1 201-805-1467",
     ],
     [
       "stays positional for three participants",
@@ -80,7 +80,7 @@ describe("the chat row's subtitle", () => {
           person({ number: "+14155550188" }),
         ],
       },
-      "+1 650-315-6536, +1 330-554-1942, +1 916-520-4946, +1 415-555-0188",
+      "+1 650-315-6536 · +1 330-554-1942 · +1 916-520-4946 · +1 415-555-0188",
     ],
     [
       "says only the line when it reaches nobody else",
@@ -104,7 +104,7 @@ describe("the chat row's subtitle", () => {
     // The reader joins the two lines BY POSITION, so nothing here may filter
     // or reorder what the title kept.
     const people = [person({ isOwner: true }), person({ number: "+19165204946", name: "Robin" })];
-    expect(chatRowTitle(people, LINE, "x", "Willow").split(", ")).toHaveLength(3);
-    expect(chatRowSubtitle(LINE, "Willow", people).split(", ")).toHaveLength(3);
+    expect(chatRowTitle(people, LINE, "x", "Willow").split(" · ")).toHaveLength(3);
+    expect(chatRowSubtitle(LINE, "Willow", people).split(" · ")).toHaveLength(3);
   });
 });
