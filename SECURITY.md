@@ -3,25 +3,29 @@
 Latch lets a remote agent operate this Mac through an approval boundary. Two
 ideas hold it up.
 
-## 1. The boundary is human-approved capabilities, bound to an authenticated caller
+## 1. The boundary is owner-authorized capabilities, bound to an authenticated caller
 
-Every operation is a structured intent — a normalized capability set — that a
-human approves. Approval is of the **capability set**, and it need not be a fresh
-prompt each time: it can be pre-granted by an always-allow rule keyed on that
-exact set, or blanket-granted in Approve mode. The relay authenticates the
-calling agent, and that identity is load-bearing — it is part of the rule key and
-it scopes always-allow rules, jobs, and deferred handles, so one agent cannot act
-on another's. The per-invocation seatbelt sandbox is *derived from* the approved
-capabilities. So the guarantee is narrow and exact: an operation runs only with
-capabilities a human approved, for that authenticated agent — **not** that every
-operation raises a fresh dialog. `DESIGN.md` records how the intent, decision, and
-sandbox layers fit together; `docs/SANDBOX-BOUNDARY.md` records what the derived
-profile actually permits.
+Every operation is a structured intent — a normalized capability set. Before it
+runs, it must be **authorized**, and the owner chooses *how* that decision is
+made: a fresh per-operation prompt (Ask), a stored always-allow rule keyed on
+that exact capability set, a blanket Approve mode, or a delegated AI reviewer
+(Adversarial mode). So a given operation may run without a fresh human dialog —
+and in Approve or Adversarial mode a human is not in the loop per operation at
+all; what is fixed is that it runs only with capabilities the owner's configured
+policy authorized. The relay authenticates the calling agent, and that identity
+is load-bearing — it is part of the rule key and it scopes always-allow rules,
+jobs, and deferred handles, so one agent cannot act on another's. The
+per-invocation seatbelt sandbox is *derived from* the authorized capabilities.
+The guarantee is therefore narrow and exact: an operation runs only with
+capabilities the owner's policy authorized, for that authenticated agent, inside
+a sandbox built from those capabilities — **not** that a human personally decides
+each one. `DESIGN.md` records how the intent, decision, and sandbox layers fit
+together; `docs/SANDBOX-BOUNDARY.md` records what the derived profile permits.
 
 ## 2. The calling agent is trusted; the data it handles is not
 
 An agent reaching this Mac through the relay is authenticated and treated as a
-**trusted principal** — it already holds whatever the human approved. The
+**trusted principal** — it already holds whatever the owner's policy authorized. The
 genuinely untrusted surface is the **data** that flows through operations: message
 bodies, web page text, file contents — a stranger's words the agent reads while
 holding the user's shell, vault, and browser. That data is treated as data, never
