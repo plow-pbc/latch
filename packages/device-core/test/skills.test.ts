@@ -5,6 +5,10 @@ import os from "node:os";
 import path from "node:path";
 import {
   BROWSING_SKILL,
+  CONTACTS_QUERIES,
+  contactsSkillFor,
+  contactsStorePath,
+  registerContactsSkill,
   DeviceAgent,
   HeadlessPolicy,
   IMESSAGE_HANDLE_PLACEHOLDER,
@@ -204,6 +208,72 @@ describe("the built-in imessage skill", () => {
   });
 });
 
+describe("the built-in contacts skill", () => {
+  // One question per row, same reasoning as the sibling blocks above: each
+  // entry is something an agent gets wrong if the body omits it. The recipes
+  // themselves are covered by running them (contactsRecipes.test.ts).
+  it.each([
+    ["the record table", /ZABCDRECORD/],
+    ["the owner join", /ZOWNER/],
+    ["the per-source stores under Sources", /Sources\/<UUID>\//],
+    // The rules, anchored to the sentence that states them.
+    ["opening the owner's store read-only", /always .?-readonly.?, and never name the store in .?write_paths/i],
+    ["contact fields being untrusted", /every field is untrusted input/i],
+    ["answering for the owner and nobody else", /only the owner's/i],
+    ["doubling an apostrophe in the searched name", /double every apostrophe/i],
+    // Writing.
+    ["that sqlite never writes the store", /never write the store with sqlite/i],
+    ["the three reasons, by name", /cache[\s\S]*contactsd[\s\S]*revert[\s\S]*corrupt/i],
+    ["the incident that motivated the rule", /2026-08-28/],
+    ["the apple_events flag being required to write", /apple_events: true/],
+    ["what a sandbox denial looks like", /sandbox denies the\s+event and the script exits 1/i],
+    ["that a denial never justifies the sqlite fallback", /NEVER a reason to fall back to sqlite/],
+    ["values arriving as argv items", /on run argv/],
+    ["labels set through AppleScript words, not the constant", /never the stored\s+constant/i],
+    ["the mangled label constant an agent must not emit", /_\$!<Home>!\$_/],
+    ["the one-time consent dialog", /control Contacts/],
+    ["verifying after a save with the written kind's query", /the kind you wrote/i],
+    ["requiring exactly one name match before a write", /require exactly one match/i],
+    ["refusing blind positional updates", /never `address 1 of p`/i],
+    ["writes never qualifying for always-allow", /a write never does/i],
+    ["the always-allow refusal being enforced by the engine", /neither stores nor replays/i],
+  ])("publishes %s", (_what, pattern) => {
+    expect(contactsSkillFor().body).toMatch(pattern);
+  });
+
+  it("shows the recipes it publishes, not a paraphrase of them", () => {
+    const body = contactsSkillFor().body;
+    for (const sql of Object.values(CONTACTS_QUERIES)) {
+      expect(body).toContain(sql.split("\n")[0].trim());
+    }
+  });
+
+  it("names the store ~-relative so the owner's account name never leaks in a skill read", () => {
+    const skill = contactsSkillFor();
+    expect(skill.name).toBe("contacts");
+    // Same contract as the imessage skill: plow_read_skill returns this body
+    // to any authenticated agent with no approval.
+    expect(skill.body).toContain("~/Library/Application Support/AddressBook/AddressBook-v22.abcddb");
+    expect(skill.body).not.toMatch(/\/Users\//);
+    expect(skill.body).not.toContain("<owner>");
+    expect(skill.description).toMatch(/contacts/i);
+  });
+
+  // Gated on the AddressBook DIRECTORY, not one specific .abcddb — Sources
+  // layouts vary, and the directory is what every recipe reads.
+  it("is published only on a Mac that actually has an address book", () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "domo-ab-"));
+    const absent = new SkillRegistry();
+    registerContactsSkill(absent, home);
+    expect(absent.skill("contacts")).toBeNull();
+
+    fs.mkdirSync(path.dirname(contactsStorePath(home)), { recursive: true });
+    const present = new SkillRegistry();
+    registerContactsSkill(present, home);
+    expect(present.skill("contacts")?.body).toContain("~/Library/Application Support/AddressBook");
+  });
+});
+
 // What DeviceAgent actually wires up. The two behaviours here are the ones a
 // unit test of the registry alone cannot see: which home gets described, and
 // who wins a name collision.
@@ -242,6 +312,16 @@ describe("the skills a DeviceAgent publishes", () => {
     fs.writeFileSync(imessageStorePath(ownerHome), "");
     expect(agentFor(ownerHome).skills.skill("imessage")?.body).toContain(
       "~/Library/Messages/chat.db",
+    );
+  });
+
+  it("registers the contacts skill against the owner home too", () => {
+    const ownerHome = tempDir();
+    expect(agentFor(ownerHome).skills.skill("contacts")).toBeNull();
+
+    fs.mkdirSync(path.dirname(contactsStorePath(ownerHome)), { recursive: true });
+    expect(agentFor(ownerHome).skills.skill("contacts")?.body).toContain(
+      "~/Library/Application Support/AddressBook",
     );
   });
 

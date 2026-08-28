@@ -16,6 +16,19 @@ export interface Skill {
   body: string;
 }
 
+/**
+ * Render a recipe stored unindented (so tests can run it verbatim) as the
+ * four-space code block a skill body wants. One formatting contract, one site
+ * — the whatsapp/imessage/contacts skills all format their hoisted SQL with
+ * this.
+ */
+export function indentSkillCodeBlock(text: string): string {
+  return text
+    .split("\n")
+    .map((line) => (line.trim() ? "    " + line : line))
+    .join("\n");
+}
+
 export class SkillRegistry {
   private skills = new Map<string, Skill>();
 

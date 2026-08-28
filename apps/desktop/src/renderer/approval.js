@@ -82,16 +82,22 @@ async function render() {
   if (v.needsNetwork) warnings.push("uses the network");
   if (v.usesBrowser) warnings.push("browses the web as you");
   if (v.fillsCredentials) warnings.push("types saved credentials into those sites");
+  if (v.sendsAppleEvents) warnings.push("controls an app via Apple events");
 
   // "Allow Once" is the default (primary, rightmost, focused); "Always Allow"
   // is the more permissive option and sits in the middle.
   const deny = button("Deny", "btn danger", () => decide(v.intentId, "deny"));
-  const alwaysAllow = button("Always Allow", "btn", () => decide(v.intentId, "always_allow"));
+  // No Always Allow on an Apple-event intent: it's a non-idempotent mutation
+  // (a repeated byte-identical `make new address` duplicates data), and the
+  // policy engine refuses to store or replay such a rule regardless.
+  const alwaysAllow = v.sendsAppleEvents
+    ? null
+    : button("Always Allow", "btn", () => decide(v.intentId, "always_allow"));
   const allowOnce = button("Allow Once", "btn primary", () => decide(v.intentId, "allow_once"));
   // Each button lives in a slot; the agent-suggestion glow goes on the slot
   // (behind the button) so its blur isn't clipped.
   const denySlot = el("div", { class: "action-slot" }, [deny]);
-  const alwaysSlot = el("div", { class: "action-slot" }, [alwaysAllow]);
+  const alwaysSlot = alwaysAllow ? el("div", { class: "action-slot" }, [alwaysAllow]) : null;
   const allowSlot = el("div", { class: "action-slot" }, [allowOnce]);
   const slotByDecision = { deny: denySlot, always_allow: alwaysSlot, allow_once: allowSlot };
 
@@ -127,7 +133,7 @@ async function render() {
   );
   if (reviewing) document.body.appendChild(reviewing);
   // Keyboard default: Return activates Allow Once — but only once armed.
-  armActions([deny, alwaysAllow, allowOnce], allowOnce);
+  armActions([deny, alwaysAllow, allowOnce].filter(Boolean), allowOnce);
 
   // When the adversarial agent responds, clear the indicator and (if it made a
   // recommendation) highlight the button it suggests. A null decision means it

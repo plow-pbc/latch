@@ -75,18 +75,30 @@ export class PolicyEngine {
 
   async decide(intent: Intent, delegate: PolicyDelegate): Promise<Grant> {
     const key = intentRuleKey(intent);
-    if (this.rules.has(key) && (await mayGrantFromStoredRule(intent, delegate))) {
+    const eligible = ruleEligible(intent);
+    if (eligible && this.rules.has(key) && (await mayGrantFromStoredRule(intent, delegate))) {
       return makeGrant(intent, "always_allow", "rule");
     }
     const result = await delegate.decideIntent(intent);
     const decision = typeof result === "string" ? result : result.decision;
     const source = typeof result === "string" ? "prompt" : (result.source ?? "prompt");
-    if (decision === "always_allow") {
+    if (decision === "always_allow" && eligible) {
       this.rules.set(key, makeAlwaysAllowRule(intent));
       this.persist();
     }
     return makeGrant(intent, decision, source);
   }
+}
+
+/**
+ * An Apple-event intent is a mutation with no idempotence guarantee — a
+ * byte-identical `make new address` repeated duplicates owner data. So it is
+ * never answered by a stored rule and never stored as one: an `always_allow`
+ * answer still grants THIS run, it just isn't cached. Checked on both sides
+ * so a rule persisted by an older build cannot replay either.
+ */
+function ruleEligible(intent: Intent): boolean {
+  return !intent.capabilities.some((c) => c.kind === "apple_events" && c.allowed === true);
 }
 
 /**

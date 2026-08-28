@@ -16,7 +16,7 @@
  */
 import fs from "node:fs";
 import path from "node:path";
-import { Skill, SkillRegistry } from "./skills.js";
+import { indentSkillCodeBlock as indented, Skill, SkillRegistry } from "./skills.js";
 
 /** The numeric chat_id (from recentChats) the per-contact gather scopes to, so
  *  a "what did Alice say" request reads only Alice's chat, not every chat. */
@@ -179,13 +179,6 @@ function sendRecipe(tell: string, arg1: string, arg2: string, extra = ""): strin
  * exec path, which is why the directory rides `cwd` rather than the filename.)
  */
 export function imessageSkillFor(): Skill {
-  // The recipes are stored unindented so a test can run them verbatim; the
-  // body wants them as four-space code blocks.
-  const indented = (sql: string): string =>
-    sql
-      .split("\n")
-      .map((line) => (line.trim() ? "    " + line : line))
-      .join("\n");
   return {
     name: "imessage",
     description:
