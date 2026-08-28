@@ -134,6 +134,37 @@ let cloudProbe = {
   cloudChatsLoaded: true,
   cloudSendTo: "+1 (415) 555-0199",
 };
+// The claim flow's own state, shaped exactly as `ClaimLine.state()`. It rides
+// `connect:get` like the rest of the cloud group, because that is how the real
+// main process publishes it.
+let claimProbe = { step: "idle", busy: false, message: "", activation: null, activationStale: false, chat: null };
+const claimCalls = { begin: 0, newCode: 0, cancel: 0, openMessages: 0 };
+const claimActivation = {
+  displayCode: "Q7RM2",
+  sendTo: "+1 (628) 555-0177",
+  smsBody: "Plow Activate: Q7RM2",
+  smsUrl: "sms:+1 (628) 555-0177?&body=Plow%20Activate%3A%20Q7RM2",
+  pollUntil: 4102444800000,
+};
+ipcMain.handle("claimLine:begin", async () => {
+  claimCalls.begin += 1;
+  claimProbe = { ...claimProbe, step: "waiting", activation: claimActivation };
+  return claimProbe;
+});
+ipcMain.handle("claimLine:newCode", async () => {
+  claimCalls.newCode += 1;
+  return claimProbe;
+});
+ipcMain.handle("claimLine:cancel", async () => {
+  claimCalls.cancel += 1;
+  claimProbe = { step: "idle", busy: false, message: "", activation: null, activationStale: false, chat: null };
+  return claimProbe;
+});
+ipcMain.handle("claimLine:openMessages", async () => {
+  claimCalls.openMessages += 1;
+  return claimProbe;
+});
+
 const cloudCalls = { create: [], editChats: [] };
 let cloudEditPending = false;
 let releaseCloudEdit = null;
@@ -155,6 +186,7 @@ ipcMain.handle("connect:get", async () => ({
   rosterError: null,
   removeError: null,
   ...cloudProbe,
+  claimLine: claimProbe,
 }));
 ipcMain.handle("cloud:create", async (_e, chatUids, name) => {
   cloudCalls.create.push({ chatUids, name });
@@ -1021,6 +1053,68 @@ app.whenReady().then(async () => {
     notReplaced: !document.body.innerText.includes("Plow couldn't complete that request. Try again."),
   })})()`);
 
+  // An account with NO chats — the ordinary state of a freshly paired Mac now
+  // that pairing spends no pool line. The setup button must stay alive (it is
+  // the only route to claiming a number), the modal must open on the claim
+  // empty state rather than an empty checklist, and the claim must render the
+  // code and the number to text.
+  cloudProbe = {
+    ...cloudProbe,
+    cloudAgents: [],
+    cloudAgentsError: null,
+    cloudChatsError: null,
+    cloudChats: [],
+    cloudChatsLoaded: true,
+  };
+  await win.webContents.executeJavaScript(`window.__domoSelectTab("audit")`);
+  await win.webContents.executeJavaScript(`window.__domoSelectTab("agents")`);
+  await waitFor(
+    win,
+    `[...document.querySelectorAll("#view button")].some((b) => b.textContent.trim() === "Set up cloud agent" && !b.disabled)`,
+    "the setup action to stay alive with no chats",
+  );
+  const claimEmptyState = await win.webContents.executeJavaScript(`(${() => {
+    const setup = [...document.querySelectorAll("#view button")]
+      .find((button) => button.textContent.trim() === "Set up cloud agent");
+    const enabledWithNoChats = setup.disabled === false;
+    setup.click();
+    return {
+      enabledWithNoChats,
+      saysNoNumber: document.body.innerText.includes("You don't have a Plow number yet"),
+      // The claim is the primary action, and the dead checklist is not shown.
+      claimIsPrimary: !![...document.querySelectorAll(".cloud-modal button.primary")]
+        .find((button) => button.textContent.trim() === "Verify a new Plow number"),
+      noChecklist: !document.querySelector(".cloud-modal .chat-list"),
+    };
+  }})()`);
+  await win.webContents.executeJavaScript(
+    `[...document.querySelectorAll(".cloud-modal button")].find((b) => b.textContent.trim() === "Verify a new Plow number").click()`,
+  );
+  await waitFor(win, `document.querySelector(".cloud-modal .copyrow")`, "the claim's code");
+  const claimRendered = await win.webContents.executeJavaScript(`(${() => {
+    const text = document.querySelector(".cloud-modal").innerText;
+    return {
+      // The exact body the owner has to send, and the server's own number.
+      showsBody: text.includes("Plow Activate: Q7RM2"),
+      showsSendTo: text.includes("+1 (628) 555-0177"),
+      offersMessages: [...document.querySelectorAll(".cloud-modal button")]
+        .some((button) => button.textContent.trim() === "Open Messages…"),
+      // The wizard was NOT opened: this renders in place.
+      inModal: !!document.querySelector(".cloud-modal"),
+    };
+  }})()`);
+  claimRendered.begunOnce = claimCalls.begin === 1;
+  // Escape must end the claim in the main process, not just take the modal
+  // away: a live display code is a credential against the account's pool.
+  await win.webContents.executeJavaScript(
+    `document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }))`,
+  );
+  await waitForNode(() => claimCalls.cancel >= 1, "Escape to cancel the claim in main");
+  const claimDismissCancels = {
+    cancelled: claimCalls.cancel >= 1,
+    modalGone: await win.webContents.executeJavaScript(`!document.querySelector(".cloud-modal")`),
+  };
+
   // Restore the roster for the screenshot and the existing Agents-pane probes.
   cloudProbe = {
     ...cloudProbe,
@@ -1698,6 +1792,17 @@ app.whenReady().then(async () => {
     cloudForbidden.offersActivationChat &&
     cloudForbidden.reactivatesThroughSignOut &&
     cloudForbidden.notEmptyState &&
+    claimEmptyState.enabledWithNoChats &&
+    claimEmptyState.saysNoNumber &&
+    claimEmptyState.claimIsPrimary &&
+    claimEmptyState.noChecklist &&
+    claimRendered.showsBody &&
+    claimRendered.showsSendTo &&
+    claimRendered.offersMessages &&
+    claimRendered.inModal &&
+    claimRendered.begunOnce &&
+    claimDismissCancels.cancelled &&
+    claimDismissCancels.modalGone &&
     cloudServerDetail.preserved &&
     cloudServerDetail.notReplaced &&
     settings.hasAccountGroup &&
@@ -1773,7 +1878,7 @@ app.whenReady().then(async () => {
     errors.length === 0;
   console.log(
     "PROBE:" +
-      JSON.stringify({ main, settings, strandedOnDisk, settingsPane, connect, cloudRoster, cloudModalFocus, cloudModalGuard, cloudCreateWait, cloudCreateTransition, cloudRowActions, cloudEditGate, cloudEditSave, cloudEditStray, cloudEditReordered, cloudEditGateUnread, cloudChatFailure, cloudForbidden, cloudServerDetail, agentsShot, approvalsReviewer, approvalsShot, purposeRoundTrip, approvalsAsk, askWithoutReviewer, approvalsShotAsk, agentsOpen, modalClosed, vaultLocked, vaultUnsaved, vaultShot, agentsOpenShot, staleSettingsPane, optimisticMode, settingsShot, approval, reviewerNote, consoleErrors: errors, ok }),
+      JSON.stringify({ main, settings, strandedOnDisk, settingsPane, connect, cloudRoster, cloudModalFocus, cloudModalGuard, cloudCreateWait, cloudCreateTransition, cloudRowActions, cloudEditGate, cloudEditSave, cloudEditStray, cloudEditReordered, cloudEditGateUnread, cloudChatFailure, cloudForbidden, cloudServerDetail, claimEmptyState, claimRendered, claimDismissCancels, agentsShot, approvalsReviewer, approvalsShot, purposeRoundTrip, approvalsAsk, askWithoutReviewer, approvalsShotAsk, agentsOpen, modalClosed, vaultLocked, vaultUnsaved, vaultShot, agentsOpenShot, staleSettingsPane, optimisticMode, settingsShot, approval, reviewerNote, consoleErrors: errors, ok }),
   );
   app.exit(ok ? 0 : 1);
 }).catch((err) => {

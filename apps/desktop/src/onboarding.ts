@@ -17,6 +17,19 @@
  * user is meant to read: the activation display code. The activation *secret*
  * and the device credential never appear in it at all.
  */
+import {
+  Activation,
+  ActivationChatView,
+  ActivationView,
+  activationChatLabel,
+  ACTIVATION_SMS_PREFIX,
+  CODE_LENGTH,
+  CODE_TTL_MS,
+  FINISHED,
+  stallWith,
+  Terminal,
+  VerifiedRedeem,
+} from "./activation.js";
 import { ActivationChat, PlowApi, PlowApiError } from "./plowApi.js";
 import { loadSettings, saveSettings, Settings } from "./settings.js";
 
@@ -28,76 +41,6 @@ import { loadSettings, saveSettings, Settings } from "./settings.js";
  * optional — see `connectClient.ts`, which is reached from the main window.
  */
 export type OnboardingStep = "activate" | "waiting" | "phone" | "code" | "connected";
-
-/** Codes are 8 digits with a 5-minute life (`api/plow/auth_routes/otp.py`). */
-export const CODE_LENGTH = 8;
-export const CODE_TTL_MS = 5 * 60_000;
-
-/**
- * How long the screen counts down before it stalls and offers a fresh code.
- *
- * A screen that says "waiting" for half an hour is a worse experience than one
- * that hands control back early — but stalling the SCREEN is all that happens
- * at five minutes. The server keeps the code live for thirty
- * (`ACTIVATION_CODE_TTL` in `api/plow/auth_routes/router.py`) and hands the
- * session token to the FIRST redeem that sees the completion, so a watch that
- * stopped with the countdown left a text at minute fifteen completed
- * server-side with nobody listening: the phone said "You're all set!" while the
- * Mac said it hadn't heard. The poll therefore continues quietly for the code's
- * whole server life, and stops only on the server's own word — the 410. No
- * client-side clock seconds that judgment: the server owns the code's life,
- * and a local mirror of its TTL would just be a second owner to drift.
- */
-export const ACTIVATION_POLL_WINDOW_MS = 5 * 60_000;
-export const ACTIVATION_POLL_INTERVAL_MS = 3_000;
-
-/**
- * The webhook matches `^Plow Activate:\s*(\S+)` case-insensitively
- * (`api/plow/channels/linq/routes/webhook.py:65`). Leading whitespace and case
- * are forgiven; a *prefix* is not — `Hi, Plow Activate: X` does not match, and
- * the API answers 200, sends no SMS and leaves the code live, so the user gets
- * silence on both channels. That is why the screen shows the exact body to send
- * rather than describing it.
- */
-export const ACTIVATION_SMS_PREFIX = "Plow Activate:";
-
-export function activationSmsBody(displayCode: string): string {
-  return `${ACTIVATION_SMS_PREFIX} ${displayCode}`;
-}
-
-/** The draft Messages opens with, in the form the shipping Plow app uses
- * (`app/Phoenix/DaemonClient.swift`): `sms:<phone>?&body=<encoded>`. */
-export function activationSmsUrl(sendTo: string, displayCode: string): string {
-  return `sms:${sendTo}?&body=${encodeURIComponent(activationSmsBody(displayCode))}`;
-}
-
-export interface OnboardingActivation {
-  /** Shown large. A credential in its own right — whoever texts it gets the
-   * account, and the server cannot tell them apart. The screen says so. */
-  displayCode: string;
-  /** Whatever the API returned. Never a hardcoded number: it is per-environment
-   * config and may be a pool line rather than the managed phone. */
-  sendTo: string;
-  /** The exact message body, so the user can copy it rather than retype it. */
-  smsBody: string;
-  /** `sms:` URL for the "Open Messages" button. */
-  smsUrl: string;
-  /** Epoch ms the screen's countdown ends and it offers a fresh code. Not the
-   * code's own deadline, and not the watch's: the poll runs on quietly until
-   * the server retires the code. */
-  pollUntil: number;
-}
-
-/**
- * The chat the activation provisioned, as the screen says it.
- *
- * A chat has no title, so the label is its line number and its members' names —
- * see `activationChatLabel`. `uid` is what everything else joins on.
- */
-export interface OnboardingChat {
-  uid: string;
-  label: string;
-}
 
 /**
  * The chat activation provisioned, as the app remembers it.
@@ -111,57 +54,10 @@ export interface OnboardingChat {
  * the uid because a chat with neither a line nor members is still a real chat,
  * and an empty row is worse than an ugly one.
  */
-export function storedActivationChat(settings: Settings): OnboardingChat | null {
+export function storedActivationChat(settings: Settings): ActivationChatView | null {
   const uid = settings.provisionedChatUid.trim();
   if (!uid) return null;
   return { uid, label: settings.provisionedChatLabel.trim() || uid };
-}
-
-/**
- * How a human recognises a chat that has no name: the number it runs on, then
- * each member's real handle in the API's owner-first order. The first number
- * is the agent participant's line — never the chat's
- * own `provider_key`, which is the provider's thread id and would put "chat_5"
- * where the user is looking for something to text.
- *
- * Both halves are optional in the data, so this never returns an empty string —
- * a chat with neither is still identified by its uid, which is ugly but true,
- * and beats a blank line on the last screen of setup.
- */
-/**
- * The numbers a message to this chat would go to.
- *
- * Structured, and separate from the label, because they are two different
- * jobs: the label is prose for a human to recognise a chat by, and these are
- * addresses. Scraping the one for the other is how a label with no digits — a
- * bare uid from the fallback — produced an empty recipient list, and how an
- * upgraded home's `"<line> · <display name>"` produced an incomplete one.
- *
- * `line` is the pool line the chat runs on, which is the agent's own number.
- * `members` are the humans, in the order the server listed them; ordering them
- * for display is the screen's business, not this function's.
- */
-export interface ChatRecipients {
-  line: string | null;
-  members: string[];
-}
-
-export function activationChatRecipients(chat: ActivationChat): ChatRecipients {
-  return {
-    line: (chat.line ?? "").trim() || null,
-    members: chat.participants
-      .map((p) => (p.providerKey ?? "").trim())
-      .filter((number) => number.length > 0),
-  };
-}
-
-export function activationChatLabel(chat: ActivationChat): string {
-  const line = (chat.line ?? "").trim();
-  const handles = chat.participants
-    .map((participant) => (participant.providerKey ?? "").trim())
-    .filter((handle) => handle && handle !== line);
-  const parts = [line, ...handles].filter(Boolean);
-  return parts.length ? parts.join(", ") : chat.uid;
 }
 
 export interface OnboardingState {
@@ -173,10 +69,10 @@ export interface OnboardingState {
   busy: boolean;
   /** Epoch ms the entered OTP code stops working. */
   codeExpiresAt: number | null;
-  activation: OnboardingActivation | null;
+  activation: ActivationView | null;
   /** The chat the account now has, or null on a Mac activated before there was
    * one. Display data — no secret, and nothing here is authoritative. */
-  chat: OnboardingChat | null;
+  chat: ActivationChatView | null;
   /** We have stopped watching this activation. The screen stops counting down
    * and offers a fresh code. */
   activationStale: boolean;
@@ -206,30 +102,45 @@ export interface OnboardingDeps {
 export class Onboarding {
   private step: OnboardingStep;
   private phone = "";
-  private message = "";
-  private busy = false;
   private codeExpiresAt: number | null = null;
-  private activation: OnboardingActivation | null = null;
-  private activationStale = false;
-  /** SECRET. Held here for the life of one activation and nowhere else — never
-   * in `state()`, never on disk, never in a log line. */
-  private activationSecret: string | null = null;
-  /** Bumped whenever an activation stops being the one we care about. A poll
-   * loop whose generation is stale returns instead of writing state. */
-  private pollGeneration = 0;
-  /**
-   * The mint in flight, if any. Held so a second request joins it rather than
-   * burning a second code — see `newActivationCode`. `pendingMintId` says which
-   * flight it is, so a finishing mint only drops the handle if it is its own.
-   */
-  private pendingMint: Promise<OnboardingState> | null = null;
-  private pendingMintId = 0;
-  private mints = 0;
+  /** The mint, the poll, the 410, the countdown and the epochs — one copy,
+   * shared with the claim flow. What stays here is the terminal policy. */
+  private readonly activation: Activation;
 
   constructor(private readonly deps: OnboardingDeps) {
     // A Mac that already holds a credential is past all of this; it opens on
     // the connected screen, whose one button hands over to the app.
     this.step = this.settings().relayCredential.trim() ? "connected" : "activate";
+    this.activation = new Activation({
+      api: deps.api,
+      deviceName: deps.deviceName,
+      // Pairing asks for NO chat: `provision_chat` assigns one of the account's
+      // few pool lines, and an owner holding a chat on every line could not
+      // pair another Mac at all while signing in spent one. `claimLine.ts` is
+      // the flow that asks.
+      provisionChat: false,
+      now: () => this.now(),
+      wait: (ms) => this.wait(ms),
+      publish: () => this.deps.onChange?.(),
+      onReset: () => {
+        this.step = "activate";
+      },
+      onStall: () => {
+        // The step move is the point. "Connect this Mac" has no "Get a New
+        // Code" button — it is the screen you are on BEFORE anything has gone
+        // wrong — and a user who reads the code off the screen and types it
+        // into Messages never taps "Open Messages", so they never leave it.
+        // Going stale without moving them says "or get a new code" next to no
+        // such control: a dead end, and the one this screen exists to prevent.
+        if (this.step === "activate" || this.step === "waiting") this.step = "waiting";
+      },
+      onVerified: (result, stillOurs) => this.verified(result, stillOurs),
+      // The one hint that fixes the silent-failure case: a wrong prefix is
+      // answered with a 200, no SMS, and a code left live.
+      hint: (reason) =>
+        `${reason} Send the message exactly as shown — it has to start with “${ACTIVATION_SMS_PREFIX}” — or try again.`,
+      expiredReason: "That code expired before your text arrived.",
+    });
   }
 
   state(): OnboardingState {
@@ -237,12 +148,9 @@ export class Onboarding {
     return {
       step: this.step,
       phone: this.phone,
-      message: this.message,
-      busy: this.busy,
       codeExpiresAt: this.codeExpiresAt,
-      activation: this.activation,
+      ...this.activation.view(),
       chat: storedActivationChat(settings),
-      activationStale: this.activationStale,
       accountUid: settings.accountUid,
       mcpUrl: settings.mcpUrl,
       connected: this.deps.isConnected(),
@@ -255,85 +163,47 @@ export class Onboarding {
    * Mint the code the user texts, and start polling immediately.
    *
    * Idempotent: opening the window twice must not burn a second code and leave
-   * two live activations on the account. The check below covers a second call
-   * once a code is on screen; the window *before* that — where the API has been
-   * asked and has not answered — is covered by the single flight in
-   * `newActivationCode`, which is the only thing here that mints.
+   * two live activations on the account. The engine's single flight covers the
+   * window where the API has been asked and has not answered — two callers
+   * race there for real, since `settings:signOut` calls this and, in the same
+   * breath, opens the setup window whose renderer calls it again on boot.
    */
   async begin(): Promise<OnboardingState> {
-    if (this.step !== "activate" || this.activation) return this.publish();
+    if (this.step !== "activate" || this.activation.view().activation) return this.publish();
     return this.newActivationCode();
   }
 
   /**
    * A fresh code — but only once the server has retired the old one.
    *
-   * While a code is live, its poll loop is the ONLY redeemer, and this button
-   * just puts the same code back on the clock. The button must not redeem: a
-   * redeem racing the poll's own can split the one-shot completion — one
-   * request consumes the token, the other answers tokenless "verified" — and
-   * whichever way the responses land, a login gets discarded. The loop is
-   * guaranteed to be running whenever `activationSecret` is set, because every
-   * path that ends it clears the secret in the same breath; a cleared secret
-   * is what lets this mint.
+   * While a code is live its poll loop is the ONLY redeemer, and this puts the
+   * same code back on the clock. It must not redeem: a redeem racing the poll's
+   * own can split the one-shot completion, and whichever way the responses land
+   * a login gets discarded. The engine decides which of the two this is.
    */
-  async newActivationCode(): Promise<OnboardingState> {
-    // SINGLE-FLIGHT. A display code IS a credential — whoever texts it gets the
-    // account — so a second mint nobody is shown is a live credential loose on
-    // the account, and the screen can only ever show one of them. Two callers
-    // race here for real: `settings:signOut` calls `begin` and, in the same
-    // breath, opens the setup window whose renderer calls `begin` on boot.
-    // `activation` is not set until the API answers, so on a slow
-    // `/v1/auth/activate` both sail past that check. Joining the flight in
-    // progress is the only place this can be closed.
-    if (this.pendingMint) return this.pendingMint;
+  newActivationCode(): Promise<OnboardingState> {
+    return this.activation.begin(() => this.state());
+  }
 
-    if (this.activationSecret && this.activation) {
-      // Same code, fresh clock — and one honest line about why "Try Again"
-      // is showing the code they already have.
-      this.activation = { ...this.activation, pollUntil: this.now() + ACTIVATION_POLL_WINDOW_MS };
-      this.activationStale = false;
-      this.message =
-        "That code still works — send it exactly as shown and this screen will move on by itself.";
-      return this.publish();
+  /**
+   * The verified answer, and what pairing does with it.
+   *
+   * The token is the ONLY copy of the session — the server hands it to the
+   * first redeem that sees the completion and omits it ever after — so this is
+   * reached even when the loop was cancelled mid-call. What decides is
+   * `stillOurs`: refusing on "already holding a credential" alone was exactly
+   * backwards across a sign-out, which CLEARS the credential, so a redeem in
+   * flight when the user signed out passed that test and minted — and
+   * persisted — a fresh spend-capable credential the sign-out's revoke had
+   * never seen.
+   */
+  private async verified(result: VerifiedRedeem, stillOurs: boolean): Promise<Terminal> {
+    if (result.token && stillOurs && !this.settings().relayCredential.trim()) {
+      await this.activation.run(() => this.finishWithSession(result.token as string, result.chat));
+      return FINISHED;
     }
-
-    this.cancelPolling();
-    const mintId = ++this.mints;
-    // The handle is dropped inside the body rather than by chaining `.finally`
-    // onto the result: a chained one adds a turn before the caller resumes, and
-    // `wait` here is injectable — under a test clock that extra turn lets the
-    // detached poll loop run ahead of the caller. Same guarantee, no new tick.
-    const flight = this.run(async () => {
-      try {
-        this.activation = null;
-        this.activationSecret = null;
-        this.activationStale = false;
-        this.step = "activate";
-        const created = await this.deps.api.createActivation(this.deps.deviceName);
-        this.activationSecret = created.activationSecret;
-        this.activation = {
-          displayCode: created.displayCode,
-          sendTo: created.sendTo,
-          smsBody: activationSmsBody(created.displayCode),
-          smsUrl: activationSmsUrl(created.sendTo, created.displayCode),
-          pollUntil: this.now() + ACTIVATION_POLL_WINDOW_MS,
-        };
-        // Polling starts here, not when the user taps the button: a user who
-        // types the message by hand never taps it, and must still get in.
-        this.startPolling(created.activationSecret);
-      } finally {
-        // Only if this flight still owns the handle: nothing else clears it,
-        // but a later mint may already own it by the time this one lands.
-        if (this.pendingMintId === mintId) {
-          this.pendingMint = null;
-          this.pendingMintId = 0;
-        }
-      }
-    });
-    this.pendingMint = flight;
-    this.pendingMintId = mintId;
-    return flight;
+    // The token was handed to some earlier redeem and lost — the code is spent.
+    return stallWith("Plow verified this Mac but didn't hand back a login. Try again for a fresh code.");
   }
 
   /**
@@ -341,173 +211,23 @@ export class Onboarding {
    * than leave them staring at a screen that still reads like a to-do.
    */
   messagesOpened(): OnboardingState {
-    if (this.step === "activate" && this.activation) this.step = "waiting";
+    if (this.step === "activate" && this.activation.view().activation) this.step = "waiting";
     return this.publish();
   }
 
   /** The quiet fallback: sign in with a phone code instead. */
   usePhoneCode(): OnboardingState {
-    this.cancelPolling();
-    this.activation = null;
-    this.activationSecret = null;
-    this.activationStale = false;
+    this.activation.abandon();
     this.step = "phone";
-    this.message = "";
     return this.publish();
   }
 
   /** ...and back, so the fallback is not a one-way door. */
   async useActivation(): Promise<OnboardingState> {
     this.codeExpiresAt = null;
-    this.message = "";
+    this.activation.setMessage("");
     this.step = "activate";
     return this.begin();
-  }
-
-  /**
-   * Ask the server whether the text has arrived, until it has.
-   *
-   * Runs detached: every branch ends in `publish()`, so the screen follows
-   * along, and no caller awaits it.
-   */
-  private startPolling(secret: string): void {
-    this.pollGeneration += 1;
-    const generation = this.pollGeneration;
-    void this.pollActivation(secret, generation).catch((error) => {
-      // Nothing above throws by design; if something does, the screen must not
-      // be left on a countdown that no longer runs — and the secret must not
-      // outlive its watcher, or "Try Again" would re-arm a code nothing
-      // is polling. Dropping it keeps the invariant: secret set ⇒ loop alive.
-      if (generation !== this.pollGeneration) return;
-      this.activationSecret = null;
-      this.stall(messageOf(error));
-      this.publish();
-    });
-  }
-
-  private cancelPolling(): void {
-    this.pollGeneration += 1;
-  }
-
-  private async pollActivation(secret: string, generation: number): Promise<void> {
-    while (generation === this.pollGeneration) {
-      await this.wait(ACTIVATION_POLL_INTERVAL_MS);
-      if (generation !== this.pollGeneration) return;
-
-      let result;
-      try {
-        result = await this.deps.api.redeemActivation(secret);
-      } catch (error) {
-        if (generation !== this.pollGeneration) return;
-        if (error instanceof PlowApiError && error.kind === "expired") {
-          // 410 only ever gates a code nobody completed — the server returns the
-          // token for one completed past the deadline — so this is authoritative.
-          this.giveUp("That code expired before your text arrived.");
-          return;
-        }
-        // A blip must not end the wait. Say what we saw and keep polling.
-        this.message = messageOf(error);
-        this.publish();
-        continue;
-      }
-      // A verified answer carries the ONLY copy of the session token — the
-      // server hands it to the first redeem that sees the completion and omits
-      // the key entirely ever after. So it is acted on even if this loop was
-      // cancelled while the call was in flight: dropping it on the floor would
-      // strand an activation the user actually completed, unrecoverably. That
-      // is why a stale generation is not enough to refuse it.
-      //
-      // What decides instead is whether this is still OUR activation. Refusing
-      // on "already holding a credential" alone was exactly backwards across a
-      // sign-out: sign-out CLEARS the credential, so a redeem in flight when the
-      // user signed out passed the test and minted — and persisted — a fresh
-      // spend-capable credential that the sign-out's revoke had never seen. The
-      // account was left holding a live device credential its owner had just
-      // retired.
-      //
-      // `activationSecret` is nulled by every path that abandons an activation
-      // for good — sign-out, the phone-code fallback, a completed login, the
-      // server retiring the code — so it says what "already holding a
-      // credential" was only guessing at.
-      const stillOurs = secret === this.activationSecret;
-      if (
-        result.status === "verified" &&
-        result.token &&
-        stillOurs &&
-        !this.settings().relayCredential.trim()
-      ) {
-        this.cancelPolling();
-        // The redeem consumed the one-shot completion, so the code is spent
-        // whatever happens next: retire it BEFORE the handoff, whose network
-        // calls can fail. A failure then leaves the stalled screen minting
-        // fresh on "Try Again" — not re-arming a code nothing can complete.
-        this.activationSecret = null;
-        this.stall();
-        await this.run(() => this.finishWithSession(result.token as string, result.chat));
-        return;
-      }
-      if (generation !== this.pollGeneration) return;
-
-      if (result.status === "verified") {
-        // The token was handed to some earlier redeem and lost — the code is
-        // spent. Dropping the secret is what lets "Try Again" mint.
-        this.cancelPolling();
-        this.activationSecret = null;
-        this.stall("Plow verified this Mac but didn't hand back a login. Try again for a fresh code.");
-        this.publish();
-        return;
-      }
-
-      // Pending, and the screen's five minutes are up: stall the countdown and
-      // offer a fresh code — once — but keep watching. The code is live for
-      // another twenty-five minutes and its completion is handed to the first
-      // redeem only, so a loop that stopped here stranded a text at minute
-      // fifteen: completed server-side, and nobody ever came for the token.
-      if (this.activation && this.now() > this.activation.pollUntil && !this.activationStale) {
-        this.stallWithHint("We haven't heard from your phone.");
-        this.publish();
-      }
-    }
-  }
-
-  /**
-   * Stop watching for good — the server has retired the code. A 410 gates only
-   * a code nobody completed, and once expired the webhook refuses its text, so
-   * nothing can arrive for this secret any more. Dropping it is what lets
-   * "Try Again" mint.
-   */
-  private giveUp(reason: string): void {
-    this.cancelPolling();
-    this.activationSecret = null;
-    this.stallWithHint(reason);
-    this.publish();
-  }
-
-  /** The stall message, with the one hint that fixes the silent-failure case
-   * (a wrong prefix is answered with a 200, no SMS, and a code left live). */
-  private stallWithHint(reason: string): void {
-    this.stall(
-      `${reason} Send the message exactly as shown — it has to start with “${ACTIVATION_SMS_PREFIX}” — or try again.`,
-    );
-  }
-
-  /**
-   * Mark this activation as no longer being watched, and put the user on the
-   * screen that can do something about it.
-   *
-   * The step move is the whole point. "Connect this Mac" has no "Get a New
-   * Code" button — it is the screen you are on *before* anything has gone
-   * wrong — and a user who reads the code off the screen and types it into
-   * Messages themselves never taps "Open Messages", so they never leave it. Set
-   * `activationStale` without moving them and the message says "or get a new
-   * code" next to no such control: a dead end, and precisely the one this
-   * screen exists to prevent. Every path that stops polling comes through here
-   * so that cannot drift apart again.
-   */
-  private stall(message?: string): void {
-    if (this.step === "activate" || this.step === "waiting") this.step = "waiting";
-    this.activationStale = true;
-    if (message !== undefined) this.message = message;
   }
 
   // MARK: the phone-code fallback
@@ -530,7 +250,7 @@ export class Onboarding {
       this.codeExpiresAt = this.now() + CODE_TTL_MS;
       // The code screen's own copy says what to do; `message` stays free for
       // things that screen cannot say on its own.
-      this.message = note;
+      this.activation.setMessage(note);
     });
   }
 
@@ -549,7 +269,7 @@ export class Onboarding {
   editPhone(): OnboardingState {
     this.step = "phone";
     this.codeExpiresAt = null;
-    this.message = "";
+    this.activation.setMessage("");
     return this.publish();
   }
 
@@ -583,14 +303,9 @@ export class Onboarding {
    * this is honest whichever way the credential went.
    */
   reset(): OnboardingState {
-    this.cancelPolling();
-    this.activation = null;
-    this.activationSecret = null;
-    this.activationStale = false;
+    this.activation.abandon();
     this.phone = "";
     this.codeExpiresAt = null;
-    this.message = "";
-    this.busy = false;
     this.step = this.settings().relayCredential.trim() ? "connected" : "activate";
     return this.publish();
   }
@@ -641,14 +356,14 @@ export class Onboarding {
   ): Promise<void> {
     // A sign-out can land inside the awaits below, and it must stay signed
     // out: minting and persisting past it would hand the account a live
-    // spend-capable credential its owner just retired. `pollGeneration` is
-    // bumped by every path that abandons this login — reset, the phone
-    // fallback, a fresh mint — so it is the epoch to check against.
-    const epoch = this.pollGeneration;
+    // spend-capable credential its owner just retired. The engine's
+    // abandonment epoch is bumped by every path that abandons this login —
+    // reset, the phone fallback, a fresh mint — so it is what to check.
+    const epoch = this.activation.epoch();
     const info = await this.deps.api.relayInfo(sessionToken);
-    if (epoch !== this.pollGeneration) return;
+    if (this.activation.abandonedSince(epoch)) return;
     const minted = await this.deps.api.mintDeviceCredential(sessionToken, this.deps.deviceName);
-    if (epoch !== this.pollGeneration) {
+    if (this.activation.abandonedSince(epoch)) {
       // The sign-out landed during the mint itself, so its revoke never saw
       // this credential. Retire it before it is dropped — best effort, the
       // same contract sign-out's own revoke keeps.
@@ -687,13 +402,9 @@ export class Onboarding {
     // continuation then overwrote with `connected`, leaving a window reporting
     // a session that had just been signed out of. Everything here is derived
     // from the save above; none of it needs the socket to be up.
-    this.cancelPolling();
-    this.activation = null;
-    this.activationSecret = null;
-    this.activationStale = false;
+    this.activation.settled();
     this.step = "connected";
     this.codeExpiresAt = null;
-    this.message = "";
 
     await this.deps.startRelay();
   }
@@ -719,21 +430,12 @@ export class Onboarding {
 
   /** Run one step with a busy flag, turning any failure into readable text. */
   private async run(body: () => Promise<void>): Promise<OnboardingState> {
-    this.busy = true;
-    this.message = "";
-    this.publish();
-    try {
-      await body();
-    } catch (error) {
-      this.message = messageOf(error);
-    } finally {
-      this.busy = false;
-    }
-    return this.publish();
+    await this.activation.run(body);
+    return this.state();
   }
 
   private fail(message: string): OnboardingState {
-    this.message = message;
+    this.activation.setMessage(message);
     return this.publish();
   }
 
@@ -741,10 +443,4 @@ export class Onboarding {
     this.deps.onChange?.();
     return this.state();
   }
-}
-
-function messageOf(error: unknown): string {
-  if (error instanceof PlowApiError) return error.message;
-  // Anything else is ours and unexpected; say so rather than showing a stack.
-  return "Something went wrong. Try again.";
 }

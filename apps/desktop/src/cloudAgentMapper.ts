@@ -1,5 +1,5 @@
 import { CloudAgentResource, CloudAgentStatus } from "./cloudAgents.js";
-import type { ChatRecipients } from "./onboarding.js";
+import type { ChatRecipients } from "./activation.js";
 
 const FAILURE_LABELS: Record<string, string> = {
   provider_unreachable: "Provider unreachable",

@@ -7,11 +7,11 @@ import {
   ACTIVATION_POLL_WINDOW_MS,
   CODE_TTL_MS,
   activationChatLabel,
-  Onboarding,
-  OnboardingDeps,
-} from "../src/onboarding.js";
+} from "../src/activation.js";
+import { Onboarding, OnboardingDeps } from "../src/onboarding.js";
 import { ActivationChat, PlowApi, PlowApiError, parseActivationChat } from "../src/plowApi.js";
 import { loadSettings, saveSettings } from "../src/settings.js";
+import { FakeClock, settle, settleUntil } from "./activationHarness.js";
 import { signOutOfPlow } from "../src/settingsActions.js";
 
 const DEVICE_TOKEN = "plow_DEVICEtok_secret";
@@ -120,16 +120,12 @@ let home: string;
 let plow: FakePlow;
 let warnings: string[];
 let started: number;
-let clock: number;
+const clock = new FakeClock();
 /** Every `wait` the poll loop made, so a test can prove the interval. */
-let waits: number[];
 /** How many times the instance told the window to re-read. */
 let changes: number;
-/** Bumped per test; a wait built under an older value parks — see `wait`. */
-let harnessGen = 0;
 
 function build(extra: Partial<OnboardingDeps> = {}): Onboarding {
-  const gen = harnessGen;
   return new Onboarding({
     api: plow.api(),
     home,
@@ -139,38 +135,14 @@ function build(extra: Partial<OnboardingDeps> = {}): Onboarding {
     },
     isConnected: () => plow.connected,
     deviceName: "Plow Latch (test)",
-    now: () => clock,
-    // No real timers: the poll loop's wait advances the same fake clock the
-    // deadline is measured against, so a five-minute give-up takes microseconds
-    // and is exact rather than approximately right.
-    wait: async (ms) => {
-      // The server's 410 ends the real loop; a fake that only ever answers
-      // "pending" never gets one, so a loop can outlive its test. Under this
-      // instant clock it would spin the worker to death — and even short of
-      // that, it would keep mutating the next test's shared clock. Park any
-      // loop from a previous test the moment it comes up for air.
-      if (gen !== harnessGen) await new Promise(() => {});
-      waits.push(ms);
-      clock += ms;
-    },
+    now: () => clock.now,
+    wait: clock.waiter(),
     onChange: () => {
       changes += 1;
     },
     warn: (m) => warnings.push(m),
     ...extra,
   });
-}
-
-/** Let the detached poll loop run until it has nothing left to do. */
-async function settle(): Promise<void> {
-  for (let i = 0; i < 5000; i += 1) await Promise.resolve();
-}
-
-/** Let the poll loop run just until a condition holds — for states the loop
- * passes THROUGH rather than ends in, now that a stalled screen keeps polling. */
-async function settleUntil(check: () => boolean): Promise<void> {
-  for (let i = 0; i < 5000 && !check(); i += 1) await Promise.resolve();
-  expect(check()).toBe(true);
 }
 
 /** Start on the phone-code path, which is now behind a link rather than first. */
@@ -181,17 +153,19 @@ function buildOnPhonePath(): Onboarding {
 }
 
 beforeEach(() => {
-  harnessGen += 1;
   home = fs.mkdtempSync(path.join(os.tmpdir(), "domo-onboarding-"));
   plow = new FakePlow();
   warnings = [];
   started = 0;
-  waits = [];
   changes = 0;
-  clock = 1_700_000_000_000;
+  clock.reset();
 });
 
 afterEach(() => {
+  // Park every loop this test left running BEFORE the next test exists — and
+  // after the file's last one, where nothing else would. `FakeClock.reset`
+  // owns the why.
+  clock.reset();
   fs.rmSync(home, { recursive: true, force: true });
 });
 
@@ -218,7 +192,7 @@ describe("activation — the path a brand-new user takes", () => {
     const state = onboarding.state();
     expect(state.step).toBe("connected");
     expect(state.connected).toBe(true);
-    expect(waits.every((ms) => ms === ACTIVATION_POLL_INTERVAL_MS)).toBe(true);
+    expect(clock.waits.every((ms) => ms === ACTIVATION_POLL_INTERVAL_MS)).toBe(true);
     expect(loadSettings(home).relayCredential).toBe(DEVICE_TOKEN);
     // The spent activation is dropped rather than left on a screen behind this.
     expect(state.activation).toBeNull();
@@ -772,7 +746,7 @@ describe("the phone-code fallback still works", () => {
     let state = await onboarding.requestCode(" +1 555 111 0000 ");
     expect(plow.requested).toEqual(["+1 555 111 0000"]);
     expect(state.step).toBe("code");
-    expect(state.codeExpiresAt).toBe(clock + CODE_TTL_MS);
+    expect(state.codeExpiresAt).toBe(clock.now + CODE_TTL_MS);
     // The copy cannot promise a code was sent — the API answers the same for an
     // unknown number, an unparseable one and a failed send — so the first ask
     // leaves the message line to the screen's own wording.
@@ -839,7 +813,7 @@ describe("honest messages instead of a spinner", () => {
   it("distinguishes an expired code, which the server cannot", async () => {
     const onboarding = buildOnPhonePath();
     await onboarding.requestCode("+15551110000");
-    clock += CODE_TTL_MS + 1;
+    clock.now += CODE_TTL_MS + 1;
     const state = await onboarding.submitCode("12345678");
 
     expect(state.message).toBe("That code has expired. Send a new one.");
@@ -848,11 +822,11 @@ describe("honest messages instead of a spinner", () => {
   it("resends with a fresh clock", async () => {
     const onboarding = buildOnPhonePath();
     await onboarding.requestCode("+15551110000");
-    clock += 60_000;
+    clock.now += 60_000;
     const state = await onboarding.resendCode();
 
     expect(plow.requested).toEqual(["+15551110000", "+15551110000"]);
-    expect(state.codeExpiresAt).toBe(clock + CODE_TTL_MS);
+    expect(state.codeExpiresAt).toBe(clock.now + CODE_TTL_MS);
     // "Asked", never "sent" — the API cannot tell us which.
     expect(state.message).toBe("Asked Plow for a new code.");
   });

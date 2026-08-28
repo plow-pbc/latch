@@ -112,7 +112,6 @@ contextBridge.exposeInMainWorld("domo", {
   // as the wizard, and deliberately NOT `onboardingOpen`: this Mac is already
   // signed in, so the setup window would open on its "connected" screen and
   // mint nothing. The code and the number to text render inline in the modal.
-  claimLineGet: () => ipcRenderer.invoke("claimLine:get"),
   claimLineBegin: () => ipcRenderer.invoke("claimLine:begin"),
   claimLineNewCode: () => ipcRenderer.invoke("claimLine:newCode"),
   claimLineCancel: () => ipcRenderer.invoke("claimLine:cancel"),

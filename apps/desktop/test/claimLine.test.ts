@@ -11,9 +11,10 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ClaimLine, ClaimLineDeps } from "../src/claimLine.js";
-import { ACTIVATION_POLL_INTERVAL_MS, ACTIVATION_POLL_WINDOW_MS } from "../src/onboarding.js";
+import { ACTIVATION_POLL_INTERVAL_MS, ACTIVATION_POLL_WINDOW_MS } from "../src/activation.js";
 import { ActivationChat, PlowApi, PlowApiError } from "../src/plowApi.js";
 import { loadSettings, saveSettings } from "../src/settings.js";
+import { FakeClock, settle, settleUntil } from "./activationHarness.js";
 
 const DEVICE_TOKEN = "plow_DEVICEtok_alreadysignedin";
 const SESSION_TOKEN = "plow_ACTIVATIONsession_secret";
@@ -119,13 +120,10 @@ class FakePlow {
 
 let home: string;
 let plow: FakePlow;
-let clock: number;
-let waits: number[];
 let refreshes: number;
-let harnessGen = 0;
+const clock = new FakeClock();
 
 function build(extra: Partial<ClaimLineDeps> = {}): ClaimLine {
-  const gen = harnessGen;
   return new ClaimLine({
     api: plow.api(),
     home,
@@ -133,28 +131,10 @@ function build(extra: Partial<ClaimLineDeps> = {}): ClaimLine {
     refreshAgents: async () => {
       refreshes += 1;
     },
-    now: () => clock,
-    // No real timers: the loop's wait advances the same fake clock the
-    // deadline is measured against.
-    wait: async (ms) => {
-      // A fake that only answers "pending" never ends its loop, so park any
-      // loop left over from an earlier test before it touches this one's clock.
-      if (gen !== harnessGen) await new Promise(() => {});
-      waits.push(ms);
-      clock += ms;
-    },
+    now: () => clock.now,
+    wait: clock.waiter(),
     ...extra,
   });
-}
-
-/** Let the detached poll loop run until it has nothing left to do. */
-async function settle(): Promise<void> {
-  for (let i = 0; i < 5000; i += 1) await Promise.resolve();
-}
-
-async function settleUntil(check: () => boolean): Promise<void> {
-  for (let i = 0; i < 5000 && !check(); i += 1) await Promise.resolve();
-  expect(check()).toBe(true);
 }
 
 /** A signed-in Mac: claiming is only ever reached from one. */
@@ -168,23 +148,17 @@ function signedInHome(): string {
 }
 
 beforeEach(() => {
-  harnessGen += 1;
   home = signedInHome();
   plow = new FakePlow();
-  clock = 1_700_000_000_000;
-  waits = [];
   refreshes = 0;
+  clock.reset();
 });
 
 afterEach(() => {
-  // Park every poll loop this test left running, BEFORE the next test exists.
-  // A claim that never completes polls forever, and `wait` resolves instantly
-  // under the fake clock — so a loop still live when the file's last test ends
-  // has nothing left to slow or stop it, and spins until its `waits` array hits
-  // V8's element limit and takes the worker with it. That is a fatal crash, not
-  // a failing test: the file reports nothing at all. Bumping here (as well as
-  // in `beforeEach`) is what makes the park unconditional.
-  harnessGen += 1;
+  // Park every loop this test left running, on both edges. `FakeClock.reset`
+  // owns the why — after the file's last test there is no next `beforeEach`,
+  // and an unparked loop takes the worker down.
+  clock.reset();
   fs.rmSync(home, { recursive: true, force: true });
 });
 
@@ -201,18 +175,21 @@ describe("claiming a Plow number", () => {
     expect(state.activation?.smsBody).toBe("Plow Activate: CODE1");
   });
 
-  it("keeps the chat and the line once the text lands", async () => {
+  it("keeps the chat and the line, mints nothing, and retires the token", async () => {
+    // One completed claim, and the three things that have to be true of it.
+    // Separate `it`s here were three copies of one arrange asserting on the
+    // same end state, so a change to the flow broke them in triplicate.
     plow.redeems = [{ status: "verified", token: SESSION_TOKEN, chat: CHAT }];
     const claim = build();
     await claim.begin();
     await settle();
 
     const settings = loadSettings(home);
+    // KEPT: the chat, labelled as `activationChatLabel` builds it — the line
+    // then the members — and the line this claim was assigned. No call answers
+    // "which line is mine", so this moment is the only place it appears.
     expect(settings.provisionedChatUid).toBe("cht_D7hfWNK");
-    // Label is the line then the members, as `activationChatLabel` builds it.
     expect(settings.provisionedChatLabel).toBe("+15559876543, +15551230000");
-    // The line THIS claim was assigned — there is no call that answers "which
-    // line is mine", so this moment is the only place it appears.
     expect(settings.activationSendTo).toBe("+15550001111");
     expect(claim.state().chat).toEqual({
       uid: "cht_D7hfWNK",
@@ -220,32 +197,19 @@ describe("claiming a Plow number", () => {
     });
     // The new chat is a row on the screen behind the modal.
     expect(refreshes).toBe(1);
-  });
 
-  it("mints nothing and leaves this Mac's credential exactly as it was", async () => {
-    // The whole reason this is a second flow. A device credential minted here
-    // would be a live, spend-capable key on an already-paired Mac.
-    plow.redeems = [{ status: "verified", token: SESSION_TOKEN, chat: CHAT }];
-    const claim = build();
-    await claim.begin();
-    await settle();
-
+    // MINTED: nothing. The whole reason this is a second flow — a device
+    // credential minted here would be a live, spend-capable key on a Mac that
+    // already has one.
     expect(plow.minted).toEqual([]);
-    expect(loadSettings(home).relayCredential).toBe(DEVICE_TOKEN);
-    expect(loadSettings(home).accountUid).toBe("u_123");
-  });
+    expect(settings.relayCredential).toBe(DEVICE_TOKEN);
+    expect(settings.accountUid).toBe("u_123");
 
-  it("retires the redeem's session token instead of keeping it", async () => {
-    // It carries `keys:manage` and `relay:*` — it can mint any credential on
-    // the account — and nothing in this flow needs it.
-    plow.redeems = [{ status: "verified", token: SESSION_TOKEN, chat: CHAT }];
-    const claim = build();
-    await claim.begin();
-    await settle();
-
+    // RETIRED: the redeem's session token carries `keys:manage` and `relay:*`,
+    // so it can mint any credential on the account. It is retired, never
+    // stored, and never shown.
     expect(plow.revoked).toEqual([SESSION_TOKEN]);
-    expect(JSON.stringify(loadSettings(home))).not.toContain(SESSION_TOKEN);
-    // ...and it never reaches the screen either.
+    expect(JSON.stringify(settings)).not.toContain(SESSION_TOKEN);
     expect(JSON.stringify(claim.state())).not.toContain(SESSION_TOKEN);
   });
 
@@ -330,44 +294,27 @@ describe("claiming a Plow number", () => {
     expect(claim.state().chat).toBeNull();
   });
 
-  it("offers a new code when the answer carries a chat but no token", async () => {
-    // A tokenless verified answer is an echo: an earlier redeem took the
-    // one-shot completion, so nothing in this one is this claim's to keep —
-    // the chat included.
-    plow.redeems = [{ status: "verified", token: null, chat: CHAT }];
-    const claim = build();
-    await claim.begin();
-    await settle();
-
-    expect(claim.state().chat).toBeNull();
-    expect(claim.state().activationStale).toBe(true);
-    expect(claim.state().message).toContain("didn't hand back a new chat");
-    expect(loadSettings(home).provisionedChatUid).toBe("");
-    expect(loadSettings(home).activationSendTo).toBe("");
-    // Nothing to revoke: there was no token.
-    expect(plow.revoked).toEqual([]);
-  });
-
-  it("hands main an sms: URL for the live code, and nothing when there is none", async () => {
+  it("carries the sms: URL on the state, for main to open", async () => {
     // What the modal's "Open Messages" button opens. Composed from the
-    // server's own `send_to`, never from anything the renderer supplies.
+    // server's own `send_to`, never from anything the renderer supplies — and
+    // read off the state every other reader already has, rather than through
+    // an accessor mirroring one field of it.
     const claim = build();
-    expect(claim.smsUrl()).toBeNull();
-    await claim.begin();
-    expect(claim.smsUrl()).toBe("sms:+15550001111?&body=Plow%20Activate%3A%20CODE1");
-    claim.cancel();
-    expect(claim.smsUrl()).toBeNull();
+    expect(claim.state().activation).toBeNull();
+    const shown = await claim.begin();
+    expect(shown.activation?.smsUrl).toBe("sms:+15550001111?&body=Plow%20Activate%3A%20CODE1");
+    expect(claim.cancel().activation).toBeNull();
   });
 
   it("cancels an in-flight claim without leaving the poll running", async () => {
     const claim = build();
     await claim.begin();
-    const waitsBefore = waits.length;
+    const waitsBefore = clock.waits.length;
     claim.cancel();
     await settle();
 
     // The loop parked rather than kept polling on a cancelled claim.
-    expect(waits.length).toBeLessThanOrEqual(waitsBefore + 1);
+    expect(clock.waits.length).toBeLessThanOrEqual(waitsBefore + 1);
     expect(claim.state().activation).toBeNull();
   });
 
@@ -384,10 +331,24 @@ describe("claiming a Plow number", () => {
     expect(plow.activations).toHaveLength(2);
   });
 
-  it("offers a new code when the text lands but no chat comes back", async () => {
-    // What texting the code to the wrong number produces: the account
-    // activates, the assigned line never sees it, and nothing is provisioned.
-    plow.redeems = [{ status: "verified", token: SESSION_TOKEN, chat: null }];
+  // A verified answer with nothing usable in it, in both shapes it takes. The
+  // outcome is identical — nothing persisted, a fresh code offered — so the
+  // difference worth naming is which one leaves a token to retire.
+  it.each([
+    {
+      why: "the code was texted to the wrong number, so nothing was provisioned",
+      redeem: { status: "verified" as const, token: SESSION_TOKEN, chat: null },
+      // Live whether or not a chat came with it.
+      revoked: [SESSION_TOKEN],
+    },
+    {
+      why: "an earlier redeem took the one-shot completion, so this is its echo",
+      redeem: { status: "verified" as const, token: null, chat: CHAT },
+      // Nothing to retire: there was no token.
+      revoked: [],
+    },
+  ])("offers a new code when $why", async ({ redeem, revoked }) => {
+    plow.redeems = [redeem];
     const claim = build();
     await claim.begin();
     await settle();
@@ -396,8 +357,8 @@ describe("claiming a Plow number", () => {
     expect(claim.state().activationStale).toBe(true);
     expect(claim.state().message).toContain("didn't hand back a new chat");
     expect(loadSettings(home).provisionedChatUid).toBe("");
-    // The token still gets retired: it is live whether or not a chat came with it.
-    expect(plow.revoked).toEqual([SESSION_TOKEN]);
+    expect(loadSettings(home).activationSendTo).toBe("");
+    expect(plow.revoked).toEqual(revoked);
   });
 
   it("names the exhausted pool when the wait runs out", async () => {
@@ -408,10 +369,10 @@ describe("claiming a Plow number", () => {
     await claim.begin();
     await settleUntil(() => claim.state().activationStale);
 
-    expect(clock).toBeGreaterThan(claim.state().activation?.pollUntil ?? Infinity);
+    expect(clock.now).toBeGreaterThan(claim.state().activation?.pollUntil ?? Infinity);
     expect(claim.state().message).toContain("every number is in use");
-    expect(waits.every((ms) => ms === ACTIVATION_POLL_INTERVAL_MS)).toBe(true);
-    expect(waits.length).toBeGreaterThanOrEqual(ACTIVATION_POLL_WINDOW_MS / ACTIVATION_POLL_INTERVAL_MS);
+    expect(clock.waits.every((ms) => ms === ACTIVATION_POLL_INTERVAL_MS)).toBe(true);
+    expect(clock.waits.length).toBeGreaterThanOrEqual(ACTIVATION_POLL_WINDOW_MS / ACTIVATION_POLL_INTERVAL_MS);
   });
 
   it("puts the same code back on the clock rather than burning another", async () => {

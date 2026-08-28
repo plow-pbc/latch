@@ -1,4 +1,4 @@
-import type { ChatRecipients } from "./onboarding.js";
+import type { ChatRecipients } from "./activation.js";
 
 interface MessageableCloudAgent {
   agentId: string;

@@ -710,9 +710,12 @@ ipcMain.handle("onboarding:finish", async () => {
 // Beside the setup window's handlers because it is the same activation
 // endpoint, and separate from them because it is a different flow: the Mac is
 // already signed in, no credential is minted, and the modal renders the code
-// inline rather than opening setup. `claimLine:get` is a pure read, for the
-// reason `onboarding:get` is.
-ipcMain.handle("claimLine:get", async () => claimLine?.state() ?? null);
+// inline rather than opening setup.
+//
+// There is deliberately no `claimLine:get`. The claim's state rides
+// `agentsTabState`, which the renderer re-reads on every `connect:changed` —
+// and this machine publishes on every change — so a getter would be a second
+// way to ask one question, and the one the renderer had to poll to use.
 ipcMain.handle("claimLine:begin", async () => claimLine?.begin());
 ipcMain.handle("claimLine:newCode", async () => claimLine?.newCode());
 ipcMain.handle("claimLine:cancel", async () => claimLine?.cancel());
@@ -726,7 +729,7 @@ ipcMain.handle("claimLine:cancel", async () => claimLine?.cancel());
  * the app's `openExternal` calls stay pinned to URLs the app composed itself.
  */
 ipcMain.handle("claimLine:openMessages", async () => {
-  const url = claimLine?.smsUrl();
+  const url = claimLine?.state().activation?.smsUrl;
   if (url && url.startsWith("sms:")) await shell.openExternal(url);
   return claimLine?.state() ?? null;
 });

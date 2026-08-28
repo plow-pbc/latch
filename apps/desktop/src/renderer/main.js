@@ -867,8 +867,42 @@ function openMcpModal(trigger, s, redraw) {
     refresh can redraw the roster without taking an in-progress choice away. */
 let cloudModal = null;
 
+/**
+ * Set while the modal is showing a claim, so closing it can end the claim in
+ * the main process.
+ *
+ * The modal has four ways out — Cancel, Escape, a backdrop click, and leaving
+ * the Agents tab — and only the first went through a handler that told main.
+ * The other three left a live display code minting against the pool with
+ * nothing on screen: a credential loose on the account, and a poll running for
+ * a screen that no longer exists. `closeCloudModal` is the one funnel all four
+ * already share, so the cancel belongs here rather than on each of them.
+ */
+let cloudClaimOpen = false;
+
+/**
+ * Re-render the open claim view from a fresh state, or null when none is open.
+ *
+ * How the claim follows the main process: it publishes on every change, which
+ * lands here as `connect:changed`. Set alongside `cloudClaimOpen` and cleared
+ * with it, so there is one answer to "is a claim on screen".
+ */
+let cloudClaimSync = null;
+
+/** The claim half of `refreshConnect`, beside `syncMcpModal`/`syncStaticModal`. */
+function syncCloudClaim(s) {
+  if (cloudClaimSync && s?.claimLine) cloudClaimSync(s.claimLine);
+}
+
 function closeCloudModal() {
   if (!cloudModal) return;
+  if (cloudClaimOpen) {
+    cloudClaimOpen = false;
+    cloudClaimSync = null;
+    // Fire-and-forget: the modal is going either way, and main's `cancel` is
+    // idempotent.
+    void window.domo.claimLineCancel();
+  }
   closeModal(cloudModal);
   cloudModal = null;
 }
@@ -1159,19 +1193,19 @@ function openCloudPicker(trigger, state, redraw) {
    * Claiming a Plow number, inline.
    *
    * `claim` is the whole state, as every `claimLine*` call returns it, so this
-   * renders from one shape. While a code is live the main process is polling,
-   * and its `connect:changed` does not rebuild this panel — so the view re-reads
-   * on its own short interval, the same way the browser thumbnail does. The
-   * timer is cleared by every path that leaves this view, including dismissal.
+   * renders from one shape. The main process publishes on every change of that
+   * shape, which arrives here as `connect:changed` → `refreshConnect` →
+   * `syncCloudClaim` — the same push the MCP and static modals already ride.
+   * There is deliberately no timer: a poll asked main a question it had already
+   * answered, and its answer could land after the modal was gone.
+   *
+   * `refocus` is false on a push, so a re-render underneath someone's hands
+   * does not move focus out of the control they are using.
    */
-  let claimTimer = null;
-  const stopClaimPolling = () => {
-    if (claimTimer !== null) clearInterval(claimTimer);
-    claimTimer = null;
-  };
-  const showClaim = (claim) => {
+  const showClaim = (claim, { refocus = true } = {}) => {
     if (!panel || !claim) return;
-    stopClaimPolling();
+    cloudClaimOpen = true;
+    cloudClaimSync = (next) => showClaim(next, { refocus: false });
     const activation = claim.activation;
     const done = !activation && claim.chat;
 
@@ -1224,7 +1258,7 @@ function openCloudPicker(trigger, state, redraw) {
     }
     const leave = el("button", { class: "btn", text: done ? "Done" : "Cancel" });
     leave.addEventListener("click", async () => {
-      stopClaimPolling();
+      leaveClaim();
       await window.domo.claimLineCancel();
       showExplainer();
       await redraw();
@@ -1232,20 +1266,16 @@ function openCloudPicker(trigger, state, redraw) {
     actions.push(leave);
 
     panel.replaceChildren(...children, el("div", { class: "row cloud-modal-actions" }, actions));
-    firstUsableControl(panel)?.focus();
-    // Only while a code is actually outstanding. A finished or cancelled claim
-    // has nothing left to watch.
-    if (activation && !claim.activationStale) {
-      claimTimer = setInterval(async () => {
-        const next = await window.domo.claimLineGet();
-        // The modal may have gone while this call was in flight.
-        if (!cloudModal || !panel.isConnected) return stopClaimPolling();
-        showClaim(next);
-      }, 2000);
-    }
+    if (refocus) firstUsableControl(panel)?.focus();
+  };
+  /** Leaving the claim view for another view of the same modal: the panel
+   * stays, so `closeCloudModal`'s cancel must not fire for it later. */
+  const leaveClaim = () => {
+    cloudClaimOpen = false;
+    cloudClaimSync = null;
   };
   const showPicker = () => {
-    stopClaimPolling();
+    leaveClaim();
     if (!panel) return;
     panel.replaceChildren(...pickerChildren);
     syncPicker();
@@ -1253,7 +1283,7 @@ function openCloudPicker(trigger, state, redraw) {
   };
   const showExplainer = () => {
     if (!panel) return;
-    stopClaimPolling();
+    leaveClaim();
     const verifiedLines = verifiedCloudLines(state.cloudChats);
     const verifiedLineKeys = new Set(verifiedLines.map(cloudPhoneDigits));
     const sendTo = state.cloudSendTo?.trim() || null;
@@ -1726,7 +1756,12 @@ function sectionHeader(title, count, unit, action) {
 
 function cloudSection(s, redraw) {
   const add = el("button", { class: "btn primary", text: "Set up cloud agent" });
-  add.disabled = !s.cloudChats.length;
+  // Disabled only while the chat list is still unknown. An account whose list
+  // came back EMPTY keeps the button, because the modal is the only route to
+  // claiming a number — and since pairing stopped spending a pool line, an
+  // empty list is the ordinary state of a freshly paired Mac. Disabling it
+  // there left the owner with a dead button and no way to get a chat at all.
+  add.disabled = !s.cloudChatsLoaded && !s.cloudChats.length;
   add.addEventListener("click", () => openCloudPicker(add, s, redraw));
   const rosterRows = s.roster?.cloud ?? [];
   const agents = visibleCloudAgents(s);
@@ -1813,6 +1848,7 @@ async function renderAgents() {
     ].filter(Boolean));
     syncMcpModal(s, refreshConnect);
     syncStaticModal(s, refreshConnect);
+    syncCloudClaim(s);
     return s;
   };
   agentsMounted = { refreshConnect };

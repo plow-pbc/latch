@@ -28,12 +28,8 @@ import {
   CreateCloudAgentRequest,
   normalizeChatUids,
 } from "./cloudAgents.js";
-import {
-  ChatRecipients,
-  activationChatLabel,
-  activationChatRecipients,
-  storedActivationChat,
-} from "./onboarding.js";
+import { ChatRecipients, activationChatLabel, activationChatRecipients } from "./activation.js";
+import { storedActivationChat } from "./onboarding.js";
 import { PlowApi, PlowApiError, parseActivationChat } from "./plowApi.js";
 import { loadSettings } from "./settings.js";
 
