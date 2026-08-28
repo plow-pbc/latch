@@ -49,11 +49,13 @@ exactly the approved capabilities**".
   ```
 
   With one exception, and it is the only place a declaration narrows this profile rather than
-  widening it: a **reapable** run — one that declared no write paths and no network, and so may be
-  killed for going silent (the reap window in `executor.ts`) — does not get them. A run that can be
-  shot mid-write must have nowhere persistent to write; its scratch, which the reaper deletes with
-  it, stays writable, and the broad home grant above still covers reading those five wherever they
-  resolve under home.
+  widening it: a **reapable** run — one that declared no write paths, no network, and no
+  `apple_events`, and so may be killed for going silent (the reap window in `executor.ts`) — does
+  not get them. A run that can be shot mid-write must have nowhere persistent to write; its scratch,
+  which the reaper deletes with it, stays writable, and the broad home grant above still covers
+  reading those five wherever they resolve under home. (`apple_events` lifts reapability for the
+  same reason writes and network do: an Apple event is a side effect — a sent message — that a
+  15-minute kill must not truncate, so such a run is never reaped and keeps the housekeeping writes.)
 
 - **the declared-read loop** — the agent's declared `read_paths` are appended *after* the above. They can only
   ever widen an already-broad grant; they never narrow it.
