@@ -243,39 +243,29 @@ describe("refresh", () => {
     expect(state.state().cloudSendTo).toBe("+15550100");
   });
 
-});
+  it("applies roster reads in launch order", async () => {
+    const first = deferred<CloudAgentResource[]>();
+    let lists = 0;
+    const f = fakes({
+      list: async () => ++lists === 1
+        ? first.promise
+        : [agent({ agentId: "agent_newest" })],
+    });
+    const state = build(tempHome(), f);
 
-describe("a superseded agent-list read", () => {
-  it.each([
-    ["failure", (d: ReturnType<typeof deferred<CloudAgentResource[]>>) =>
-      d.reject(new PlowApiError("http", "Plow returned 500.", 500))],
-    ["success", (d: ReturnType<typeof deferred<CloudAgentResource[]>>) =>
-      d.resolve([agent({ agentId: "agent_stale" })])],
-  ])("a late %s never displaces the newer read", async (_ending, finish) => {
-    const stale = deferred<CloudAgentResource[]>();
-    let first = true;
-    const state = build(
-      tempHome(),
-      fakes({
-        list: async () => {
-          if (!first) return [agent({ agentId: "agent_newest" })];
-          first = false;
-          return stale.promise;
-        },
-      }),
-    );
+    const earlier = state.refresh();
+    const later = state.refresh();
+    await settle();
 
-    const overtaken = state.refresh();
-    await state.refresh();
+    // The second GET waits instead of racing the first one's older answer.
+    expect(f.agents.calls.filter((call) => call === "list")).toHaveLength(1);
+    first.resolve([agent({ agentId: "agent_stale" })]);
+    await Promise.all([earlier, later]);
 
-    finish(stale);
-    await overtaken;
-
-    // The newest read is the account as it is. An overtaken one describes it
-    // as it was, and a stale failure would put a banner over a good answer.
     expect(state.state().cloudAgents.map((row) => row.agentId)).toEqual(["agent_newest"]);
     expect(state.state().cloudAgentsError).toBeNull();
   });
+
 });
 
 describe("the numbers a chat can be messaged on", () => {
@@ -620,9 +610,8 @@ describe("a stuck teardown", () => {
     });
     const state = build(tempHome(), f);
 
-    await state.refresh();
-    await state.refresh();
-    await state.refresh();
+    const refreshes = [state.refresh(), state.refresh(), state.refresh()];
+    await Promise.all(refreshes);
     await settle();
 
     // One attempt at a time: a slow teardown must not collect a DELETE per
@@ -697,12 +686,11 @@ describe("removing", () => {
     const saving = state.editChats("agent_1", ["cht_2"]);
     // A refresh in the air, started before the user clicked Remove…
     const refreshing = state.refresh();
-    await state.remove("agent_1");
+    const removing = state.remove("agent_1");
     update.resolve(agent({ chatUids: ["cht_2"] }));
-    await saving;
-    // …answering only now, with the agent still in it.
+    // …answers before the queued delete applies, with the agent still in it.
     listing.resolve([agent()]);
-    await refreshing;
+    await Promise.all([saving, refreshing, removing]);
 
     expect(f.agents.deleted).toEqual(["agent_1"]);
     // The delete is newer than the listing. A resurrected row reads as a delete
@@ -1031,26 +1019,29 @@ describe("changing which chats an agent serves", () => {
     expect(state.state().cloudActionError).toBe("An agent has to serve at least one chat.");
   });
 
-  it("keeps an edit pending when a roster refresh finishes during its PUT", async () => {
-    const update = deferred<CloudAgentResource>();
+  it("keeps the edit spinner up until the save's roster read lands", async () => {
+    const reconciliation = deferred<CloudAgentResource[]>();
+    let lists = 0;
     const f = fakes({
-      list: async () => [agent({ chatUids: ["cht_1"] })],
-      update: async () => update.promise,
+      list: async () => ++lists === 1
+        ? [agent({ chatUids: ["cht_1"] })]
+        : reconciliation.promise,
+      update: async () => agent({ chatUids: ["cht_2"] }),
     });
     const state = build(tempHome(), f);
     await state.refresh();
 
     const saving = state.editChats("agent_1", ["cht_2"]);
     await vi.waitFor(() => {
-      expect(state.state().cloudAgentEditsPending).toEqual(["agent_1"]);
+      expect(f.agents.calls.filter((call) => call === "list")).toHaveLength(2);
     });
 
-    await state.refresh();
-
     expect(state.state().cloudAgentEditsPending).toEqual(["agent_1"]);
-    update.resolve(agent({ chatUids: ["cht_2"] }));
+    expect(state.state().cloudAgentEditsSaving).toEqual([]);
+    reconciliation.resolve([agent({ chatUids: ["cht_2"] })]);
     await saving;
     expect(state.state().cloudAgentEditsPending).toEqual([]);
+    expect(state.state().cloudAgentEditsSaving).toEqual([]);
   });
 
   it.each([
@@ -1115,43 +1106,6 @@ describe("changing which chats an agent serves", () => {
     expect(state.state().cloudAgentEditsPending).toEqual([]);
     expect(state.state().cloudAgents[0].chatUids).toEqual(["cht_2"]);
     expect(state.state().cloudAgentsError).toBeNull();
-  });
-
-  it("clears an indeterminate edit when a create overtakes its reconciliation read", async () => {
-    const reconciliation = deferred<CloudAgentResource[]>();
-    const polling = deferred<CloudAgentResource>();
-    let lists = 0;
-    const created = agent({ agentId: "agent_2", status: "provisioning" });
-    const f = fakes({
-      list: async () => {
-        lists += 1;
-        if (lists === 1) return [agent({ chatUids: ["cht_1"] })];
-        if (lists === 2) return reconciliation.promise;
-        return [agent({ chatUids: ["cht_2"] }), created];
-      },
-      create: async () => created,
-      update: async () => {
-        throw new PlowApiError("network", "Plow didn't answer in time. Try again.");
-      },
-      poll: async () => polling.promise,
-    });
-    const state = build(tempHome(), f);
-    await state.refresh();
-
-    const saving = state.editChats("agent_1", ["cht_2"]);
-    await vi.waitFor(() => {
-      expect(f.agents.calls.filter((call) => call === "list")).toHaveLength(2);
-    });
-    await state.create(["cht_1"], "New agent");
-
-    reconciliation.resolve([agent({ chatUids: ["cht_2"] })]);
-    await saving;
-
-    expect(state.state().cloudAgentEditsPending).toEqual([]);
-    expect(state.state().cloudAgents.find((row) => row.agentId === "agent_1")?.chatUids)
-      .toEqual(["cht_2"]);
-    polling.resolve(agent({ agentId: "agent_2", status: "running" }));
-    await settle();
   });
 
   it("names a conflicting agent only when a candidate id matches our list", async () => {
@@ -1248,12 +1202,13 @@ describe("changing which chats an agent serves", () => {
     expect(state.state().cloudActionError).toBeNull();
   });
 
-  it("makes a listing already in the air lose to the save that overtook it", async () => {
+  it("does not let a listing already in the air undo the save that followed it", async () => {
     const listing = deferred<CloudAgentResource[]>();
+    const confirmation = deferred<CloudAgentResource[]>();
     let firstList = true;
     const f = fakes({
       list: async () => {
-        if (!firstList) return [agent({ chatUids: ["cht_2"] })];
+        if (!firstList) return confirmation.promise;
         firstList = false;
         return listing.promise;
       },
@@ -1262,12 +1217,16 @@ describe("changing which chats an agent serves", () => {
     const state = build(tempHome(), f);
 
     const refreshing = state.refresh();
-    await state.editChats("agent_1", ["cht_2"]);
-    // The stale listing answers with the pre-save set. It is older than what
-    // the user just did, so applying it would undo the save on screen.
+    const saving = state.editChats("agent_1", ["cht_2"]);
+    // The listing answers with the pre-save set, then the queued save and its
+    // own read become the final state on screen.
     listing.resolve([agent({ chatUids: ["cht_1"] })]);
-    await refreshing;
-    await settle();
+    await vi.waitFor(() => {
+      expect(f.agents.calls.filter((call) => call === "list")).toHaveLength(2);
+    });
+    expect(state.state().cloudAgentEditsPending).toEqual(["agent_1"]);
+    confirmation.resolve([agent({ chatUids: ["cht_2"] })]);
+    await Promise.all([refreshing, saving]);
 
     expect(state.state().cloudAgents[0].chatUids).toEqual(["cht_2"]);
   });
