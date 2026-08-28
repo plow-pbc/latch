@@ -5,13 +5,20 @@ import {
 } from "./plowApi.js";
 
 /**
- * How long a create may take.
+ * How long a call that makes the provider do something may take.
  *
  * Longer than everything else here on purpose: prod's create is synchronous
  * and boots a VM before it answers, so the 15s every other call gets would
  * time out a request that was going to succeed. It is still nowhere near the
  * load balancer's 60s idle cut — this buys the VM its boot, not a licence to
  * block.
+ *
+ * The chat-set PUT gets the same budget for the same reason. It is not a
+ * metadata write: the agent restarts to pick its new chats up, so the answer
+ * waits on the provider exactly as a create does. On the default 15s a save
+ * that was going to succeed times out — and a timed-out PUT is the worst of
+ * all the outcomes, because the change may have landed and the app cannot
+ * tell.
  */
 export const CREATE_REQUEST_TIMEOUT_MS = 30_000;
 
@@ -36,8 +43,6 @@ export interface CloudAgentResource {
    * several chats, and the first is where its unprompted output lands.
    */
   chatUids: string[];
-  /** The first of `chatUids` — what a single-chat screen shows. */
-  chatUid: string;
   url: string | null;
   provider: string | null;
   name: string | null;
@@ -55,6 +60,16 @@ export interface CreateCloudAgentRequest {
   name?: string;
   provider?: string | null;
   scopes?: string[];
+}
+
+export class ChatSetConflictError extends PlowApiError {
+  constructor(readonly conflictingAgentIds: string[]) {
+    super(
+      "http",
+      "This chat already belongs to another agent — edit that agent's chats instead.",
+      409,
+    );
+  }
 }
 
 export type CloudAgentTransition = (
@@ -87,7 +102,7 @@ export class CloudAgentsClient {
     request: CreateCloudAgentRequest,
   ): Promise<CloudAgentResource> {
     const body = {
-      chat_uids: request.chatUids,
+      chat_uids: normalizeChatUids(request.chatUids),
       ...(request.name === undefined ? {} : { name: request.name }),
       ...(request.provider === undefined ? {} : { provider: request.provider }),
       ...(request.scopes === undefined ? {} : { scopes: request.scopes }),
@@ -99,7 +114,44 @@ export class CloudAgentsClient {
       { token: deviceCredential, body, timeoutMs: CREATE_REQUEST_TIMEOUT_MS },
     );
     if (response.status === 409) {
-      throw conflictError(conflictCode(await decodeJson(response)));
+      throw conflictError(await decodeJson(response));
+    }
+
+    return this.resourceFor(response, deviceCredential);
+  }
+
+  /**
+   * Replace the whole set of chats an agent serves.
+   *
+   * A FULL REPLACEMENT, not a patch: the server takes the list it is given and
+   * the agent serves exactly that afterwards, so the caller sends every chat it
+   * wants kept — an omission is a detach. Home is first, as everywhere else.
+   *
+   * Done when the response lands. Unlike create there is no machine to boot, so
+   * there is no receipt to poll: a 200 carries the agent in its new shape and
+   * that is the end of it. A 5xx is not authoritative about whether the write
+   * landed, so the state owner re-reads server truth before accepting another
+   * answer.
+   */
+  async updateChats(
+    deviceCredential: string,
+    agentId: string,
+    chatUids: readonly string[],
+  ): Promise<CloudAgentResource> {
+    const response = await this.api.request(
+      "PUT",
+      `/v1/agents/cloud/${encodeURIComponent(agentId)}/chats`,
+      {
+        token: deviceCredential,
+        body: { chat_uids: normalizeChatUids(chatUids) },
+        timeoutMs: CREATE_REQUEST_TIMEOUT_MS,
+      },
+    );
+    if (response.status === 409) {
+      throw conflictError(await decodeJson(response));
+    }
+    if (response.status >= 500) {
+      throw new PlowApiError("http", "Couldn't update the agent. Try again.", response.status);
     }
 
     return this.resourceFor(response, deviceCredential);
@@ -211,7 +263,6 @@ function parseResource(
   const resource: CloudAgentResource = {
     agentId: decoded.agent_id,
     chatUids,
-    chatUid: chatUids[0] ?? "",
     url: optionalString(decoded.url),
     provider: optionalString(decoded.provider),
     name: optionalString(decoded.name),
@@ -271,7 +322,19 @@ function conflictCode(decoded: unknown): string | null {
   return typeof decoded.detail.code === "string" ? decoded.detail.code : null;
 }
 
-function conflictError(code: string | null): PlowApiError {
+function conflictAgentIds(decoded: unknown): string[] {
+  if (!isRecord(decoded) || !isRecord(decoded.detail)) return [];
+  const candidates: string[] = [];
+  const agentId = decoded.detail.agent_id;
+  if (typeof agentId === "string" && agentId.trim()) candidates.push(agentId.trim());
+  const message = decoded.detail.message;
+  if (typeof message === "string") {
+    for (const match of message.matchAll(/\b[0-9a-f]{32}\b/g)) candidates.push(match[0]);
+  }
+  return [...new Set(candidates)];
+}
+
+function conflictError(decoded: unknown): PlowApiError {
   const messages: Record<string, string> = {
     PENDING_TEARDOWN: "This chat's cloud agent is still being removed. Remove it before trying again.",
     PROVIDER_CONFLICT: "This chat already uses a different cloud-agent provider.",
@@ -279,9 +342,36 @@ function conflictError(code: string | null): PlowApiError {
     CHAT_DELETED: "That chat has been deleted.",
     OWNER_NO_ADDRESS: "Your Plow account has no address for that chat.",
     OWNER_NOT_IN_CHAT: "Your Plow account is not a member of that chat.",
+    AGENT_FAILED: "This agent failed to start, so its chats can't be changed. Remove it and set one up again.",
   };
+  const code = conflictCode(decoded);
+  if (code === "CHAT_SET_CONFLICT") {
+    return new ChatSetConflictError(conflictAgentIds(decoded));
+  }
   const message = code && Object.hasOwn(messages, code) ? messages[code] : "Plow returned 409.";
   return new PlowApiError("http", message, 409);
+}
+
+/**
+ * The chat set as it goes on the wire: trimmed, empty entries dropped, first
+ * occurrence wins.
+ *
+ * ORDER IS MEANING here — `chat_uids[0]` is home, where the agent's unprompted
+ * output lands — so this preserves it rather than sorting, and a duplicate
+ * keeps its FIRST position: a set listing home twice must not have home
+ * demoted by its own repeat.
+ */
+export function normalizeChatUids(chatUids: readonly string[]): string[] {
+  if (!Array.isArray(chatUids)) return [];
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const raw of chatUids) {
+    const uid = (raw ?? "").trim();
+    if (!uid || seen.has(uid)) continue;
+    seen.add(uid);
+    out.push(uid);
+  }
+  return out;
 }
 
 function echoesCredential(text: string, credential: string): boolean {

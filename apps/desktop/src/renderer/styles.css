@@ -696,6 +696,51 @@ textarea.text { min-height: 70px; resize: vertical; }
 .cloud-modal .field { margin-bottom: 12px; }
 .cloud-modal .cloud-warning { margin-top: 4px; border-color: var(--amber-bd); background: var(--amber-bg); }
 .cloud-modal-actions { margin-top: 18px; }
+/* The chat checklist, in the set-up and edit-chats modals. The row IS a
+   <label>, and `.field label { display: block }` above outranks a bare class,
+   so the layout rule has to be scoped under `.field` to reach it. */
+.chat-list {
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  background: var(--bg); overflow: hidden;
+}
+.field .chat-option {
+  display: flex; align-items: center; gap: 9px;
+  padding: 7px 10px; margin-bottom: 0; cursor: pointer; color: var(--fg);
+}
+.chat-option + .chat-option { border-top: 1px solid var(--border); }
+.chat-option:hover { background: var(--hover); }
+.chat-option input { margin: 0; flex: none; }
+.chat-option-main { flex: 1; min-width: 0; }
+.chat-option-name { font-weight: 600; }
+.chat-option-note {
+  color: var(--muted); font-size: 11.5px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* A chat another agent already serves. One chat belongs to one agent, so this
+   is not a choice being discouraged — it is one that is not on offer. */
+.chat-option.disabled { cursor: default; opacity: 0.55; }
+.chat-option.disabled:hover { background: none; }
+.chat-option.disabled .chat-option-note { color: var(--amber-fg); opacity: 1; }
+/* Only a chosen chat can be home, so this shows only on a checked row. */
+.home-toggle {
+  flex: none; border: 1px solid var(--border-strong); background: var(--card);
+  color: var(--muted); border-radius: 999px; padding: 1px 9px;
+  font: inherit; font-size: 11px; cursor: pointer; white-space: nowrap;
+}
+.home-toggle:hover { background: var(--hover); }
+.home-toggle.on {
+  border-color: var(--blue-bd); background: var(--blue-bg);
+  color: var(--blue-fg); font-weight: 600;
+}
+.chat-list-alt { margin: 8px 0 0; }
+/* The app had `.linkbtn` only inside the wizard and the connect group; the
+   checklist's "New chat…" needs the same affordance in a modal. */
+.linkbtn {
+  border: 0; background: none; padding: 0; font: inherit;
+  color: var(--muted); text-decoration: underline; cursor: pointer;
+}
+.linkbtn:hover { color: var(--fg); }
+
 .cloud-route {
   padding: 11px 12px; border: 1px solid var(--border);
   border-radius: var(--radius-sm); background: var(--bg);

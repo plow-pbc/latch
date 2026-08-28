@@ -9,7 +9,6 @@ function agent(overrides: Partial<CloudAgentResource> = {}): CloudAgentResource 
   return {
     agentId: "agent_stable",
     chatUids: ["cht_123"],
-    chatUid: "cht_123",
     url: "https://provider.internal/secret-handle",
     provider: "exe:hermes",
     name: null,
@@ -25,13 +24,14 @@ describe("cloud-agent pure mappings", () => {
   it("keeps provider URL and session identity out of renderer state", () => {
     const row = toCloudAgentDisplayRow(agent(), {
       fallbackName: "Kitchen agent",
-      chatLabel: "+1 415 555 0100 · Pat, Lee",
+      chatLabels: { cht_123: "+1 415 555 0100 · Pat, Lee" },
       recipients: { line: "+14155550100", members: ["+14155550101"] },
     });
 
     expect(row).toMatchObject({
       agentId: "agent_stable",
-      chatUid: "cht_123",
+      chatUids: ["cht_123"],
+      chatLabels: ["+1 415 555 0100 · Pat, Lee"],
       recipients: { line: "+14155550100", members: ["+14155550101"] },
     });
     expect(JSON.stringify(row)).not.toContain("session_old");
@@ -44,14 +44,13 @@ describe("cloud-agent pure mappings", () => {
       agent({
         agentId: `agent-${sessionId}`,
         chatUids: [`chat-${sessionId}`],
-        chatUid: `chat-${sessionId}`,
         name: `name ${sessionId}`,
         provider: `provider ${sessionId}`,
         failureReason: `credential ${sessionId} rejected`,
         createdAt: `created ${sessionId}`,
         sessionId,
       }),
-      { chatLabel: `chat label ${sessionId}` },
+      { chatLabels: { [`chat-${sessionId}`]: `chat label ${sessionId}` } },
     );
 
     expect(row.failureReason).toBe("credential [credential] rejected");

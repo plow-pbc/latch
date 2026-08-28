@@ -22,7 +22,12 @@ import {
   CloudAgentDisplayRow,
   toCloudAgentDisplayRow,
 } from "./cloudAgentMapper.js";
-import { CloudAgentResource, CreateCloudAgentRequest } from "./cloudAgents.js";
+import {
+  ChatSetConflictError,
+  CloudAgentResource,
+  CreateCloudAgentRequest,
+  normalizeChatUids,
+} from "./cloudAgents.js";
 import {
   ChatRecipients,
   activationChatLabel,
@@ -95,6 +100,9 @@ export interface CloudAgentsUiState {
   cloudChatsNeedReactivation: boolean;
   /** A create/delete/retry failure, and nothing else. */
   cloudActionError: string | null;
+  /** Agent ids whose chat-set save is in flight or being reconciled. */
+  cloudAgentEditsPending: string[];
+  cloudAgentEditsSaving: string[];
   cloudChats: CloudChatOption[];
   /**
    * A chat-list attempt SUCCEEDED — even if it returned nothing.
@@ -118,6 +126,11 @@ export interface CloudAgentsApi {
   create(deviceCredential: string, request: CreateCloudAgentRequest): Promise<CloudAgentResource>;
   list(deviceCredential: string): Promise<CloudAgentResource[]>;
   delete(deviceCredential: string, agentId: string): Promise<void>;
+  updateChats(
+    deviceCredential: string,
+    agentId: string,
+    chatUids: readonly string[],
+  ): Promise<CloudAgentResource>;
   /**
    * The `signal` is how a provision in flight is called off — a sign-out, or a
    * delete of the very agent being polled. A client that does not take one yet
@@ -191,6 +204,9 @@ export class CloudAgentState {
    */
   private agentReads = 0;
   private actionError: string | null = null;
+  /** The latest roster read already started when an indeterminate PUT failed;
+   * `null` while the PUT itself is still in flight. */
+  private editsPending = new Map<string, number | null>();
   private chats: CloudChatOption[] = [];
   private chatsLoaded = false;
   /**
@@ -222,6 +238,8 @@ export class CloudAgentState {
       cloudChatsError: this.chatsError,
       cloudChatsNeedReactivation: this.chatsNeedReactivation,
       cloudActionError: this.actionError,
+      cloudAgentEditsPending: [...this.editsPending.keys()],
+      cloudAgentEditsSaving: [...this.editsPending].flatMap(([id, read]) => read === null ? [id] : []),
       cloudChats: this.chats,
       cloudChatsLoaded: this.chatsLoaded,
       cloudSendTo: settings.activationSendTo.trim() || null,
@@ -248,16 +266,16 @@ export class CloudAgentState {
   }
 
   /**
-   * Provision one agent in one chat.
+   * Provision one agent across one or more chats, home first.
    *
    * Returns once Plow has issued the receipt — the row is on screen in
    * `provisioning` at that moment — and leaves the poll running here. The new
    * `agent_id` comes back so `retry` can carry local settings onto it.
    */
-  async create(chatUid: string, name: string): Promise<string | null> {
+  async create(chatUids: readonly string[], name: string): Promise<string | null> {
     this.actionError = null;
-    const chat = (chatUid ?? "").trim();
-    if (!chat) return this.failAction("Pick the chat this agent will answer in.");
+    const chats = normalizeChatUids(chatUids);
+    if (!chats.length) return this.failAction("Pick at least one chat this agent will answer in.");
     const credential = this.credential();
     if (!credential) return this.failAction("This Mac isn't signed in yet.");
 
@@ -266,9 +284,7 @@ export class CloudAgentState {
     let receipt: CloudAgentResource;
     try {
       receipt = await this.deps.agents.create(credential, {
-        // One chat, sent as the one-element set the API takes. The picker is
-        // single-select; the grant shape is a list either way.
-        chatUids: [chat],
+        chatUids: chats,
         provider: CLOUD_AGENT_PROVIDER,
         ...(requested ? { name: requested } : {}),
       });
@@ -276,7 +292,9 @@ export class CloudAgentState {
       // A cancelled create is something this side asked for, not a failure the
       // user needs to read. The agent may still exist on the account — the POST
       // can have landed with the receipt lost — and the next list recovers it.
-      if (generation === this.generation && !isAbort(error)) return this.failAction(messageOf(error));
+      if (generation === this.generation && !isAbort(error)) {
+        return this.failAction(this.actionMessage(error));
+      }
       return null;
     }
     if (generation !== this.generation) return null;
@@ -287,6 +305,70 @@ export class CloudAgentState {
     this.polls.set(receipt.agentId, controller);
     void this.pollToTerminal(credential, receipt, requested, generation, controller.signal);
     return receipt.agentId;
+  }
+
+  /**
+   * Replace the set of chats an agent serves, home first.
+   *
+   * A full replacement and a single round trip: there is no machine to boot, so
+   * unlike `create` there is nothing to poll — the answer IS the new state, and
+   * the row is rewritten from it before the roster re-read confirms it.
+   *
+   * The staleness guards are `create`'s, for `create`'s reasons: a sign-out
+   * mid-flight belongs to the account that went away, and the mutation counter
+   * has to move so a listing already in the air cannot put the old set back on
+   * screen.
+   */
+  async editChats(agentId: string, chatUids: readonly string[]): Promise<void> {
+    const id = (agentId ?? "").trim();
+    if (id && this.editsPending.has(id)) return;
+    this.actionError = null;
+    if (!id) return;
+    const chats = normalizeChatUids(chatUids);
+    if (!chats.length) {
+      this.failAction("An agent has to serve at least one chat.");
+      return;
+    }
+    const credential = this.credential();
+    if (!credential) {
+      this.failAction("This Mac isn't signed in yet.");
+      return;
+    }
+
+    const generation = this.generation;
+    this.editsPending.set(id, null);
+    this.publish();
+    let updated: CloudAgentResource;
+    try {
+      updated = await this.deps.agents.updateChats(credential, id, chats);
+    } catch (error) {
+      if (generation !== this.generation) return;
+      const refused = isRefusedEdit(error);
+      if (refused) this.editsPending.delete(id);
+      else this.editsPending.set(id, this.agentReads);
+      this.failAction(this.actionMessage(error));
+      // A failure that is not the server's verdict says nothing about what the
+      // agent now serves. A timed-out PUT is the case that matters: the request
+      // may well have landed, and leaving the old set on screen would be the
+      // app asserting a rollback nobody performed. Ask.
+      //
+      // The counter moves even though we do not know whether anything did: a
+      // listing that was already in the air predates the attempt either way,
+      // and the refresh below is the one whose answer is worth having.
+      if (!refused) {
+        this.mutations += 1;
+        await this.refresh();
+      }
+      return;
+    }
+    if (generation !== this.generation) return;
+    if (!this.editsPending.delete(id)) return;
+    this.mutations += 1;
+    // The row goes to the answer, not to what was asked for: the server decides
+    // what the agent serves, and a set it normalised differently must show as
+    // what it actually is.
+    this.observe(updated, "");
+    await this.refresh();
   }
 
   /** Remove an agent — the machine and its hold on the chat, not just a key. */
@@ -314,6 +396,7 @@ export class CloudAgentState {
     }
     if (generation !== this.generation) return;
     this.mutations += 1;
+    this.editsPending.delete(id);
     this.rows.delete(id);
     this.pending.delete(id);
     this.publish();
@@ -332,6 +415,7 @@ export class CloudAgentState {
     for (const agentId of [...this.polls.keys()]) this.abortPoll(agentId);
     this.rows.clear();
     this.pending.clear();
+    this.editsPending.clear();
     this.chats = [];
     this.chatsLoaded = false;
     this.chatsError = null;
@@ -417,13 +501,20 @@ export class CloudAgentState {
     try {
       const agents = await this.deps.agents.list(credential);
       if (generation !== this.generation || read !== this.agentReads) return;
-      // A create or a delete happened while this listing was in the air. It is
-      // older than what the user just did, and applying it would put a deleted
-      // agent back on screen. The mutation's own refresh follows it.
-      if (mutations !== this.mutations) return;
       const listed = new Map(
         agents.map((agent) => [agent.agentId, this.rowFor(agent)] as const),
       );
+      for (const [agentId, failedAtRead] of this.editsPending) {
+        if (failedAtRead === null || failedAtRead >= read) continue;
+        const reconciled = listed.get(agentId);
+        if (reconciled) this.rows.set(agentId, reconciled);
+        else this.rows.delete(agentId);
+        this.editsPending.delete(agentId);
+      }
+      // A create or a delete happened while this listing was in the air. It is
+      // older than what the user just did, and applying all of it would put a
+      // deleted agent back on screen. The mutation's own refresh follows it.
+      if (mutations !== this.mutations) return;
       // A create whose poll is still running may not be in the account listing
       // yet. Its row stays until the poll finishes, so provisioning does not
       // flicker off the screen and back.
@@ -502,35 +593,58 @@ export class CloudAgentState {
   }
 
   private rowFor(agent: CloudAgentResource, fallbackName?: string): CloudAgentDisplayRow {
-    const chat = this.chats.find((option) => option.uid === agent.chatUid);
+    // Recipients come from HOME and only home: it is the chat the Message
+    // button opens, and addressing the rest from this row is not on offer.
+    const home = this.chats.find((option) => option.uid === agent.chatUids[0]);
     return toCloudAgentDisplayRow(agent, {
-      ...(chat?.label ? { chatLabel: chat.label } : {}),
+      chatLabels: this.labelsByUid(),
       ...(fallbackName ? { fallbackName } : {}),
-      recipients: chat?.recipients ?? null,
+      recipients: home?.recipients ?? null,
     });
   }
 
+  /** Every label the chat list knows, by uid. Absent uids stay absent — the
+   * mapper falls back to the uid rather than inventing a name for it. */
+  private labelsByUid(): Record<string, string> {
+    const labels: Record<string, string> = {};
+    for (const chat of this.chats) if (chat.label) labels[chat.uid] = chat.label;
+    return labels;
+  }
+
   /**
-   * Re-resolve what the chat list knows about each row's chat.
+   * Re-resolve what the chat list knows about each row's chats.
    *
-   * The label and the recipients arrive together and go stale together: a row
-   * built before the chats landed has the uid for a label and no addresses, and
+   * The labels and the recipients arrive together and go stale together: a row
+   * built before the chats landed has uids for labels and no addresses, and
    * both are fixed from the same lookup. Relabelling one without the other is
    * how a row could name a chat it could not message.
    */
   private relabelRows(): void {
+    const labels = this.labelsByUid();
     for (const [agentId, row] of this.rows) {
-      const chat = this.chats.find((option) => option.uid === row.chatUid);
-      if (!chat) continue;
-      const label = chat.label || row.chatLabel;
-      const recipients = chat.recipients ?? null;
-      if (label === row.chatLabel && recipients === row.recipients) continue;
-      this.rows.set(agentId, { ...row, chatLabel: label, recipients });
+      const chatLabels = row.chatUids.map((uid) => labels[uid] || uid);
+      const home = this.chats.find((option) => option.uid === row.chatUids[0]);
+      const recipients = home?.recipients ?? null;
+      const sameLabels =
+        chatLabels.length === row.chatLabels.length &&
+        chatLabels.every((label, index) => label === row.chatLabels[index]);
+      if (sameLabels && recipients === row.recipients) continue;
+      this.rows.set(agentId, { ...row, chatLabels, recipients });
     }
   }
 
   private credential(): string {
     return loadSettings(this.deps.home).relayCredential.trim();
+  }
+
+  private actionMessage(error: unknown): string {
+    if (error instanceof ChatSetConflictError) {
+      const name = error.conflictingAgentIds
+        .map((agentId) => this.rows.get(agentId)?.name?.trim())
+        .find(Boolean);
+      if (name) return `This chat already belongs to ${name} — edit that agent's chats instead.`;
+    }
+    return messageOf(error);
   }
 
   /** Report what the click could not do, and answer `null` to every caller
@@ -587,6 +701,18 @@ function isCredentialFailure(error: unknown): boolean {
   return (
     error instanceof PlowApiError && (error.kind === "forbidden" || error.kind === "unauthorized")
   );
+}
+
+/**
+ * Did the server refuse the edit before anything moved?
+ *
+ * Only a 409 carries that answer. A timeout, a dropped connection, a 5xx, or a
+ * response we could not read leaves the outcome unknown, and unknown is not
+ * the same as unchanged.
+ */
+function isRefusedEdit(error: unknown): boolean {
+  if (!(error instanceof PlowApiError)) return false;
+  return error.status === 409;
 }
 
 /** An abort surfaces as `AbortError` however the client raises it. */
