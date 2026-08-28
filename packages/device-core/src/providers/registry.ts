@@ -21,11 +21,21 @@ import type { Skill } from "../skills.js";
 import { isHelpInvocation, reservedRefusal, shapeRefusal } from "./gogGate.js";
 import { GOG_CANONICAL } from "./gogGroups.js";
 import { GOG_SKILL } from "./gogSkill.js";
+import { planPlowGog } from "./plowGog.js";
 
 /** What one vendored CLI needs in order to run. */
 export interface VendoredProvider {
-  /** `argv[0]`, and the binary's name inside its vendor directory. */
+  /** `argv[0]`, and — unless `binary` says otherwise — the binary's name
+   * inside its vendor directory. */
   readonly command: string;
+  /**
+   * The staged binary this provider execs, when it is not `command` itself.
+   *
+   * Exists for a provider that ORCHESTRATES another provider's CLI: plow-gog
+   * runs the vendored gog N times, so it stages no payload of its own and
+   * every staging/resolution site reads `binary ?? command`.
+   */
+  readonly binary?: string;
   /** The connector action that mints this provider's token. */
   readonly mintAction: string;
   /** Where the mint's routes hang, e.g. `/v1/connectors/gmail/`. */
@@ -125,7 +135,30 @@ const GOG: VendoredProvider = {
   },
 };
 
-export const PROVIDERS: readonly VendoredProvider[] = [GOG];
+/**
+ * The multi-account front for the same vendored gog. One approved argv, N
+ * runs of the binary — one per connected Google account — merged into one
+ * account-tagged result; `deviceAgent.executePlowGog` is the orchestration.
+ * `gog` above stays registered (deprecated) so existing exact-argv approvals
+ * keep working; new work uses this row.
+ */
+const PLOW_GOG: VendoredProvider = {
+  command: "plow-gog",
+  binary: GOG.command,
+  mintAction: GOG.mintAction,
+  mintPrefix: GOG.mintPrefix,
+  tokenEnv: GOG.tokenEnv,
+  belt: GOG.belt,
+  skill: GOG_SKILL,
+  // The planner IS the gate: a refused plan and a refused argv are one
+  // decision, so the dialog and the orchestrator cannot disagree about it.
+  refuse: (argv) => {
+    const plan = planPlowGog(argv);
+    return plan.kind === "refused" ? plan.reason : null;
+  },
+};
+
+export const PROVIDERS: readonly VendoredProvider[] = [GOG, PLOW_GOG];
 
 /**
  * The provider an argv invokes, or null when it invokes none.

@@ -212,6 +212,16 @@ describe("vendorDirs", () => {
     ]);
   });
 
+  it("resolves a provider's named binary, without repeating a directory two rows share", () => {
+    // plow-gog's shape: its own command, gog's binary. One staged payload,
+    // one PATH entry.
+    const resourcesDir = tree("providers/gog");
+    const plowGog = { ...GOG, command: "plow-gog", binary: "gog" };
+    expect(vendorDirs({ resourcesDir }, [GOG, plowGog])).toEqual([
+      path.join(resourcesDir, "providers/gog", process.arch),
+    ]);
+  });
+
   it("skips an unstaged provider without stopping the next one", () => {
     const resourcesDir = tree("providers/slack", "slack");
     expect(vendorDirs({ resourcesDir }, [GOG, SLACK])).toEqual([

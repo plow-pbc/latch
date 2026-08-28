@@ -219,7 +219,7 @@ describe("a vendored provider through the exec path", () => {
     expect(mint).not.toHaveBeenCalled();
   });
 
-  it("publishes the skill only when a CLI is staged", () => {
+  it("publishes the skill only when the CLI it documents is staged", () => {
     expect(device(okMinter(), [vendorDir()]).skills.manifest().map((s) => s.name)).toContain(
       "google-workspace",
     );
@@ -235,5 +235,208 @@ describe("a vendored provider through the exec path", () => {
     expect(device(okMinter(), [tmp()]).skills.manifest().map((s) => s.name)).not.toContain(
       "google-workspace",
     );
+  });
+});
+
+/**
+ * The multi-account provider, end to end through the same exec path.
+ *
+ * The vendored `gog` stands in for the real one: a script answering canned
+ * `--json --results-only` output PER TOKEN, so every assertion is on the
+ * merged JSON the agent gets back — which account's items arrived, tagged
+ * how, degraded how — never on spawn order.
+ */
+describe("plow-gog through the exec path", () => {
+  /** A vendor dir whose `gog` answers canned JSON per GOG_ACCESS_TOKEN. */
+  function plowVendorDir(): string {
+    const dir = tmp();
+    fs.writeFileSync(
+      path.join(dir, "gog"),
+      `#!/bin/sh
+case "$*" in
+  *"calendar conflicts"*)
+    case "$GOG_ACCESS_TOKEN" in
+      tok-a) echo '[{"summary":"Standup"}]' ;;
+      *) echo '[]' ;;
+    esac ;;
+  *"calendar create"*) echo '{"created":"evt-1"}' ;;
+  *"gmail search"*)
+    case "$GOG_ACCESS_TOKEN" in
+      tok-a) echo '[{"id":"a1","date":"Mon, 16 Mar 2026 10:00:00 +0000"}]' ;;
+      tok-b) echo '[{"id":"b1","date":"Wed, 18 Mar 2026 09:00:00 +0000"}]' ;;
+      tok-bad) echo "boom" >&2; exit 3 ;;
+    esac ;;
+  *) echo "TOKEN=$GOG_ACCESS_TOKEN ARGV=$*" ;;
+esac
+`,
+      { mode: 0o755 },
+    );
+    return dir;
+  }
+
+  function accountsMinter(
+    accounts: { account: string; token: string; isDefault: boolean }[],
+    degraded: { account: string; reason: string }[] = [],
+  ): Minter {
+    return {
+      mint: async () => TOKEN,
+      mintAll: async () => ({ accounts, degraded }),
+    };
+  }
+
+  const AB = [
+    { account: "a@example.com", token: "tok-a", isDefault: true },
+    { account: "b@example.com", token: "tok-b", isDefault: false },
+  ];
+
+  itSpawns("fans a read out across accounts and returns one merged, tagged, sorted result", async () => {
+    const d = device(accountsMinter(AB, [{ account: "c@example.com", reason: "needs_reauth" }]), [
+      plowVendorDir(),
+    ]);
+    const response = await run(d, ["plow-gog", "gmail", "search", "q"]);
+    expect(jv(response).get("status").str).toBe("completed");
+    expect(response).toMatchObject({
+      items: [
+        { id: "b1", date: "Wed, 18 Mar 2026 09:00:00 +0000", account: "b@example.com" },
+        { id: "a1", date: "Mon, 16 Mar 2026 10:00:00 +0000", account: "a@example.com" },
+      ],
+      // The mint's degraded accounts ride the result, so the agent can report
+      // partial coverage instead of a false absence.
+      degraded: [{ account: "c@example.com", reason: "needs_reauth" }],
+    });
+  });
+
+  itSpawns("degrades a failing account without losing the healthy one's items", async () => {
+    const d = device(
+      accountsMinter([AB[0]!, { account: "bad@example.com", token: "tok-bad", isDefault: false }]),
+      [plowVendorDir()],
+    );
+    const response = await run(d, ["plow-gog", "gmail", "search", "q"]);
+    expect(response).toMatchObject({
+      status: "completed",
+      items: [{ id: "a1", account: "a@example.com" }],
+      degraded: [{ account: "bad@example.com", reason: "gog exited 3" }],
+    });
+    // The child's output is service-fetched text; only the exit code travels.
+    expect(JSON.stringify(response)).not.toContain("boom");
+  });
+
+  itSpawns("narrows a fan-out read to one account with --account", async () => {
+    const d = device(accountsMinter(AB), [plowVendorDir()]);
+    const out = String(
+      jv(await run(d, ["plow-gog", "gmail", "search", "q", "--account", "b@example.com"])).get("output").str ?? "",
+    );
+    expect(out).toContain("b1");
+    expect(out).not.toContain("a1");
+  });
+
+  it("rejects an unknown --account, naming the connected accounts and never the caller's spelling", async () => {
+    const d = device(accountsMinter(AB), [plowVendorDir()]);
+    const response = await run(d, ["plow-gog", "gmail", "get", "m1", "--account", "z@example.com"]);
+    const error = String(jv(response).get("error").str);
+    expect(error).toContain("a@example.com");
+    expect(error).toContain("b@example.com");
+    expect(error).not.toContain("z@example.com");
+    expectNeverSpawned(d);
+  });
+
+  it("refuses a write with several accounts connected and no --account, stating the reply rule", async () => {
+    const d = device(accountsMinter(AB), [plowVendorDir()]);
+    const response = await run(d, ["plow-gog", "gmail", "send", "--to", "x@y.com", "--subject", "s", "--body", "b"]);
+    const error = String(jv(response).get("error").str);
+    expect(error).toContain("pass --account");
+    expect(error).toContain("a@example.com (default)");
+    expect(error).toContain("b@example.com");
+    expect(error).toContain("received the thread");
+    expectNeverSpawned(d);
+  });
+
+  itSpawns("runs a write against the one named account, with --account stripped from gog's argv", async () => {
+    const d = device(accountsMinter(AB), [plowVendorDir()]);
+    const response = await run(d, [
+      "plow-gog", "gmail", "send", "--to", "x@y.com", "--subject", "s", "--body", "b",
+      "--account", "b@example.com",
+    ]);
+    const out = String(jv(response).get("output").str ?? "");
+    expect(out).toContain("TOKEN=tok-b");
+    expect(out).not.toContain("--account");
+  });
+
+  itSpawns("runs a write on the default account when it is the only one", async () => {
+    const d = device(accountsMinter([AB[0]!]), [plowVendorDir()]);
+    const response = await run(d, ["plow-gog", "gmail", "send", "--to", "x@y.com", "--subject", "s", "--body", "b"]);
+    expect(String(jv(response).get("output").str ?? "")).toContain("TOKEN=tok-a");
+  });
+
+  itSpawns("refuses a timed create over a busy slot, returning the conflicts and the override", async () => {
+    const d = device(accountsMinter(AB), [plowVendorDir()]);
+    const response = await run(d, [
+      "plow-gog", "calendar", "create", "primary", "--summary", "X",
+      "--from", "2026-08-28T10:00:00Z", "--to", "2026-08-28T11:00:00Z", "--account", "a@example.com",
+    ]);
+    expect(jv(response).get("status").str).toBe("error");
+    expect(String(jv(response).get("error").str)).toContain("--confirm-conflict");
+    expect(response).toMatchObject({ conflicts: [{ summary: "Standup" }] });
+    // The create itself never ran: its output would have been the response.
+    expect(JSON.stringify(response)).not.toContain("evt-1");
+  });
+
+  itSpawns("books anyway with --confirm-conflict", async () => {
+    const d = device(accountsMinter(AB), [plowVendorDir()]);
+    const response = await run(d, [
+      "plow-gog", "calendar", "create", "primary", "--summary", "X",
+      "--from", "2026-08-28T10:00:00Z", "--to", "2026-08-28T11:00:00Z",
+      "--account", "a@example.com", "--confirm-conflict",
+    ]);
+    expect(String(jv(response).get("output").str ?? "")).toContain("evt-1");
+  });
+
+  itSpawns("skips the conflict check for an all-day create", async () => {
+    // tok-a's conflicts answer is non-empty, so reaching the create at all
+    // proves no probe ran.
+    const d = device(accountsMinter(AB), [plowVendorDir()]);
+    const response = await run(d, [
+      "plow-gog", "calendar", "create", "primary", "--summary", "X",
+      "--from", "2026-08-28", "--to", "2026-08-29", "--account", "a@example.com",
+    ]);
+    expect(String(jv(response).get("output").str ?? "")).toContain("evt-1");
+  });
+
+  it("answers the accounts verb from the mint, running nothing", async () => {
+    const d = device(accountsMinter(AB, [{ account: "c@example.com", reason: "needs_reauth" }]), [
+      plowVendorDir(),
+    ]);
+    const response = await run(d, ["plow-gog", "accounts"]);
+    expect(response).toMatchObject({
+      status: "completed",
+      accounts: [
+        { account: "a@example.com", is_default: true },
+        { account: "b@example.com", is_default: false },
+      ],
+      degraded: [{ account: "c@example.com", reason: "needs_reauth" }],
+    });
+  });
+
+  itSpawns("runs help without minting for any account", async () => {
+    const mintAll = vi.fn(async () => ({ accounts: AB, degraded: [] }));
+    const d = device({ mint: async () => TOKEN, mintAll }, [plowVendorDir()]);
+    const out = String(jv(await run(d, ["plow-gog", "gmail", "--help"])).get("output").str ?? "");
+    expect(out).toContain("ARGV=--no-input --wrap-untrusted --enable-commands=gmail,calendar gmail --help");
+    expect(mintAll).not.toHaveBeenCalled();
+  });
+
+  it("reports a failed batch mint without spawning", async () => {
+    const d = device(
+      {
+        mint: async () => TOKEN,
+        mintAll: async () => {
+          throw MintError.failed("plow-gog", "could not reach Plow");
+        },
+      },
+      [plowVendorDir()],
+    );
+    const response = await run(d, ["plow-gog", "gmail", "search", "q"]);
+    expect(jv(response).get("error").str).toMatch(/could not reach Plow/);
+    expectNeverSpawned(d);
   });
 });
