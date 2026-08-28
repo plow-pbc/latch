@@ -121,6 +121,8 @@ mac:
   # identical twin and fail. One `providers` alternation covers all of them.
   x64ArchFiles: "**/{browser-runtime/{vault-cli,vault-server},providers}/**"
   notarize: true
+  extendInfo:
+    NSAppleEventsUsageDescription: "Plow Latch sends the Messages and automation commands you approve on this Mac."
 
 # Re-sign browser-runtime after the universal merge (which rewrites nested
 # Info.plists and breaks their seals) and before signing/notarization.
