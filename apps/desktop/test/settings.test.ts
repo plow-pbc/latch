@@ -218,9 +218,3 @@ describe("the retired bring-your-own-key fields are scrubbed on read", () => {
     expect(loadSettings(home).launchAtLoginDefaulted).toBe(true);
   });
 });
-
-describe("the activation's assigned number", () => {
-  it("is empty until an activation has told us one", () => {
-  });
-
-});
