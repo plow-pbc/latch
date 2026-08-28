@@ -233,7 +233,10 @@ SHA-256 over { agent: agentId, device: deviceId, caps: normalized(capabilities).
 
 (`packages/protocol/src/capability.ts:58`). Goal text is excluded — wording is free. Everything else
 is not, so an unattended run needs **the same agent credential, the same device, and the same exact
-capability shape** every time. Three traps, all confirmed the hard way:
+capability shape** every time. One carve-out: an `apple_events` intent — a Contacts or Messages
+write — shows only `["Deny", "Allow Once"]` and is decided fresh every time; the engine neither
+stores nor replays a rule for it (`policyEngine.ts`'s `ruleEligible`), so there is no unattended
+replay to test on that path. Three traps, all confirmed the hard way:
 
 - **`agentId` is the agent credential's session id.** A chain that mints a fresh agent credential
   per run gets a different key every run: Always Allow then persists *within* a run and never across

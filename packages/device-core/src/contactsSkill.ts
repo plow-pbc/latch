@@ -253,7 +253,9 @@ disk and syncing. Re-run the read query for **the kind you wrote** — \`address
 an address save, \`phonesFor\` after a phone — with the \`record_id\` you found before
 writing, and look for the value you sent in **any** returned row — an update to an existing
 row keeps that row's old position, so "newest row" proves nothing either way. Matching on
-the kind, the target label and the value is the check: an unrelated pre-existing row of the
+the kind, the target label and the value is the check — remembering that the store wraps
+the label you wrote: you said \`home\`, the row says \`_$!<Home>!$_\`, so compare the word
+inside the wrapper, case-insensitively. An unrelated pre-existing row of the
 same kind is not confirmation, and a phone save must never be "verified" by an address row. \`contactsd\` can take a moment to
 flush, so a missing value on the first read gets one retry before it is a failure — and a
 failed verify means say so, never re-run the write on a hunch (a repeated \`make new\` is a
