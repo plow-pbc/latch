@@ -106,7 +106,7 @@ export interface OnboardingChat {
  * cloud-agent picker's — with different ideas about whitespace and a blank
  * label, so the same Mac could show a chat here and a bare uid there.
  *
- * `null` on a Mac that activated before `provision_chat`, which is why nothing
+ * `null` on most Macs — pairing does not ask for a chat — which is why nothing
  * may treat its absence as "this account has no chats". The label falls back to
  * the uid because a chat with neither a line nor members is still a real chat,
  * and an empty row is worse than an ugly one.
@@ -664,9 +664,9 @@ export class Onboarding {
     settings.mcpUrl = info.mcpUrl;
     // Kept, not read and dropped: the redeem that carried it answers once, so
     // this is the only moment the app ever sees the chat it just created. A
-    // sign-in with no chat — the phone-code path, or a Mac activated before
-    // `provision_chat` — leaves whatever was there alone rather than blanking
-    // it, because "this redeem carried no chat" is not "the account has none".
+    // sign-in with no chat — which is the ordinary one, since pairing does not
+    // ask for a chat — leaves whatever was there alone rather than blanking it,
+    // because "this redeem carried no chat" is not "the account has none".
     if (chat) {
       settings.provisionedChatUid = chat.uid;
       settings.provisionedChatLabel = activationChatLabel(chat);

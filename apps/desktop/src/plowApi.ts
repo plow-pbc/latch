@@ -256,19 +256,31 @@ export class PlowApi {
    * account is created from that text. Outbound, so it works for a phone number
    * that has never touched Plow and cannot be used to probe who has an account.
    *
-   * `provision_chat` is what makes the account have a chat at all. Without it
-   * the server falls back to the managed phone, which is not a pool line, so
-   * the text activates and creates nothing — and a 1:1 sent to a pool line with
-   * no chat behind it is dropped, so there is no second way in later. With it,
-   * a pool line is assigned, comes back as `send_to`, and the webhook
-   * provisions the chat when the code lands there.
+   * **Pairing a Mac does not ask for a chat.** `provision_chat` assigns one of
+   * the account's pool lines, and the pool is small: an owner who already holds
+   * a chat on every line cannot pair another Mac at all — the endpoint has no
+   * line left to give and answers 503. Signing in is not the moment to spend a
+   * scarce resource on something sign-in does not need.
+   *
+   * Omitted rather than sent as `false`, so the request is byte-identical to
+   * the one Plow's own app makes. The server then falls back to the managed
+   * phone, which comes back as `send_to` and takes the activation text the same
+   * way; the account simply gets no chat out of it. Nothing downstream needs
+   * one — the redeem's `chat` is nullable and the cloud-agents screen offers
+   * the owner a route to make one.
+   *
+   * `provisionChat` is for a caller that genuinely wants the pool line, and
+   * there is no such caller today.
    */
-  async createActivation(name: string): Promise<Activation> {
+  async createActivation(
+    name: string,
+    opts: { provisionChat?: boolean } = {},
+  ): Promise<Activation> {
     const data = await this.call<{ display_code: string; activation_secret: string; send_to: string }>(
       "POST",
       "/v1/auth/activate",
       {
-        body: { name, provision_chat: true },
+        body: opts.provisionChat ? { name, provision_chat: true } : { name },
         // 503 means something else here than it does on the OTP calls. Asking
         // for a chat makes this endpoint assign a pool line, and an exhausted
         // pool answers 503 — nothing to do with the SMS provider. The shared
