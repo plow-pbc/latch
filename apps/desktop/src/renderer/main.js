@@ -1189,7 +1189,12 @@ function openCloudPicker(trigger, state, redraw) {
       // and the remedy is the owner's to take on the screen behind this one.
       body.push(el("p", {
         class: "faint",
-        text: "All Plow numbers are in use — remove an agent to free one.",
+        // NOT "remove an agent": an agent and its chat are different things,
+        // and removing the agent leaves the chat — and so the line — exactly
+        // as spoken for. Plow's own `DELETE /v1/chats/{uid}` even refuses
+        // while an agent still points at the chat. Latch has no delete-a-chat
+        // surface, so the remedy names where one is.
+        text: "All Plow numbers are in use. Deactivate a chat in Plow to free one.",
       }));
     } else {
       body.push(el("ul", { class: "cloud-route-numbers" }, free.map((line) => {

@@ -447,6 +447,46 @@ describe("the numbers a chat can be messaged on", () => {
       },
     ]);
   });
+
+  it("drops a CHAT row whose participant number echoes the credential", async () => {
+    // A number is as server-authored as a name, and it crosses into the
+    // renderer through `state()` — as a title, a subtitle and an sms: target.
+    // Blanking is not an option for an identifier, so the row goes.
+    const echoing = {
+      uid: "cht_bad",
+      line: "+15550100",
+      status: "active",
+      created_at: "2026-08-24T18:02:11Z",
+      participants: [
+        { type: "member", provider_key: CREDENTIAL.slice(0, 12), display_name: "Ada", role: "member" },
+      ],
+    };
+    const fetchImpl = async () =>
+      new Response(JSON.stringify({ data: [echoing, chatRow] }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+
+    const chats = await new CloudChatsClient(new PlowApi("https://api.plow.co", fetchImpl)).list(
+      CREDENTIAL,
+    );
+
+    expect(chats.map((c) => c.uid)).toEqual(["cht_1"]);
+    expect(JSON.stringify(chats)).not.toContain(CREDENTIAL.slice(0, 10));
+  });
+
+  it("drops a CHAT row whose own uid echoes the credential", async () => {
+    const fetchImpl = async () =>
+      new Response(JSON.stringify({ data: [{ ...chatRow, uid: `cht_${CREDENTIAL.slice(0, 12)}` }] }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    const chats = await new CloudChatsClient(new PlowApi("https://api.plow.co", fetchImpl)).list(
+      CREDENTIAL,
+    );
+    expect(chats).toEqual([]);
+  });
+
 });
 
 describe("the activation chat fallback", () => {

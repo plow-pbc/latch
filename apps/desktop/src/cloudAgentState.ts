@@ -874,7 +874,21 @@ export class CloudChatsClient implements CloudChatsApi {
     return rows
       .map((raw) => parseActivationChat(raw))
       .filter((chat): chat is NonNullable<typeof chat> => chat !== null)
-      .map((chat) => {
+      .flatMap((chat) => {
+        // EVERY server-authored string on this row is scanned, not just the
+        // names: a uid, a phone number and a line are as server-authored as a
+        // display name, and all of them cross into the renderer through
+        // `state()`. A name can be blanked and the row still means something;
+        // a uid or a number cannot, so a row echoing the credential in one of
+        // those is DROPPED whole rather than partly shown.
+        const number = (value: string | null) => (value ?? "").trim();
+        const identifiers = [
+          chat.uid,
+          number(chat.line),
+          ...chat.participants.map((member) => number(member.providerKey)),
+        ];
+        if (identifiers.some((value) => echoesCredential(value, deviceCredential))) return [];
+
         const safe = {
           ...chat,
           displayName: echoesCredential(chat.displayName ?? "", deviceCredential) ? null : chat.displayName,
@@ -882,16 +896,16 @@ export class CloudChatsClient implements CloudChatsApi {
             member.displayName ?? "", deviceCredential,
           ) ? { ...member, displayName: null } : member),
         };
-        return {
+        return [{
           uid: chat.uid,
           label: activationChatLabel(safe),
           recipients: activationChatRecipients(safe),
           people: safe.participants.flatMap((member) => {
-            const number = (member.providerKey ?? "").trim();
-            if (!number) return [];
-            return [{ number, name: member.displayName?.trim() || null, isOwner: member.isOwner }];
+            const key = number(member.providerKey);
+            if (!key) return [];
+            return [{ number: key, name: member.displayName?.trim() || null, isOwner: member.isOwner }];
           }),
-        };
+        }];
       });
   }
 }
