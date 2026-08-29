@@ -755,7 +755,10 @@ export const TOOLS: ToolSpec[] = [
       // existing per-agent deferred contract, while screenshots and every
       // ordinary interactive action continue returning directly.
       return action === "fill_secret"
-        ? ctx.deferred.run(ctx.agent.agentId, async () => execute())
+        ? ctx.deferred.run(ctx.agent.agentId, async (progress) => {
+            progress.decided();
+            return execute();
+          })
         : execute();
     },
   },

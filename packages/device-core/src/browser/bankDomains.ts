@@ -1,24 +1,20 @@
 /**
- * A STARTER list of financial-institution registrable domains (eTLD+1).
+ * The accepted v1 registry of financial-institution registrable domains
+ * (eTLD+1).
  *
- * This is the SUPPLEMENT signal for the fail-closed banking-credential gate:
+ * This is the detection signal for the banking-credential gate:
  * when the browser is about to type a credential into one of these sites (or a
  * subdomain of one), the release is treated as financial and must carry an
  * owner-approved payment approval first. See `financialGate.ts`.
  *
- * ── INTERIM, and it fails open for a bank not on it ─────────────────────────
- * This list is deliberately NOT exhaustive and CANNOT be: a bank it has never
- * heard of (and a credit card on an arbitrary merchant site) is not gated, so
- * the domain match is a best-effort TRIGGER, not the security boundary. The
- * reliable primitive is the OWNER-TAGGED-ITEM registry (an owner flag on the
- * vault item itself; see the metadata gap in `financialGate.ts` and the note in
- * `DESIGN.md`) — and, whichever way a release is triggered, the per-payment
- * owner approval consumed from plow is the real BACKSTOP: nothing is released on
- * the strength of this list alone. So do NOT treat "it's on the list" as the
- * guarantee; treat the owner approval as the guarantee and this as one way to
- * demand it. Over-matching here is the SAFE error — an extra approval prompt on
- * a non-bank costs a round-trip; a missed bank silently releases a banking
- * credential. When in doubt, ADD the domain.
+ * ── Accepted residual ────────────────────────────────────────────────────────
+ * This list is deliberately not exhaustive. An unlisted institution, or a
+ * credit card filled on an arbitrary merchant site, does not trigger the gate.
+ * That fail-open gap is accepted for v1. For every listed exact domain and
+ * subdomain, the per-payment owner approval remains mandatory and fail-closed.
+ * Over-matching costs an extra approval prompt; a missed institution remains
+ * outside this v1 gate. Add a domain when real usage exposes a gap, without
+ * adding a second registry or item-tagging system.
  *
  * Extend by appending the registrable domain (eTLD+1) only — no scheme, no
  * subdomain, no path. `financialGate.ts` generates BOTH the exact `domain` and

@@ -18,32 +18,14 @@
  * try/catch in `fillSecret` around this call — the transport (PlowApi) owns its
  * own request timeout, so there is no separate timeout state machine here.
  *
- * ── DETECTION signal, and the metadata gap ──────────────────────────────────
- * The spec's PRIMARY signal is "the vault item is owner-flagged financial". No
- * such clean flag is available from the broker:
- *   - vaultwarden rejects the bank-account / passport / driving-licence cipher
- *     types (see `cli.py` `_CATEGORY_BY_TYPE`), so a bank login is stored as an
- *     ordinary LOGIN — indistinguishable, by category, from any other login.
- *   - `describe-item` / `whats-here` expose no folder, tag, or collection.
- *   - The only inherently-financial category is CREDIT_CARD, but reading it in
- *     the release path would need a `describe-item` call, and that path is
- *     contractually a single reading of the item with no describe (see
- *     `fillSecretMasking.test.ts` "asks the vault once per fill …").
- *
- * So detection here relies on the SUPPLEMENT signal: the device-observed
- * destination host matches a bundled bank-domain list (`bankDomains.ts`). That
- * host is what the browser actually resolved for the field, so it is the
- * unspoofable "am I about to type a credential into a bank?" question. The
- * domain list is an INTERIM trigger and fails open for an unlisted bank; the
- * reliable primitive is the OWNER-TAGGED-ITEM registry described in
- * `DESIGN.md`, and the per-payment owner approval is the real backstop. See
- * `bankDomains.ts` for how to extend the interim list.
- *
- * TODO(owner-tagged-item registry): add an owner-flag signal once available.
- * The cheapest shape that does not break the single-reading contract is to have
- * the broker's `get-field` return the item CATEGORY (and/or an owner "financial"
- * folder/tag) alongside `value`+`hidden`, so a CREDIT_CARD or owner-flagged item
- * is gated with no extra round-trip and no time-of-check/time-of-use window.
+ * ── DETECTION signal ─────────────────────────────────────────────────────────
+ * Detection uses the accepted v1 bank-domain registry in `bankDomains.ts`.
+ * The device-observed destination host is what the browser actually resolved
+ * for the field, so an agent cannot spoof the host checked here. A listed exact
+ * domain or subdomain fails closed through the owner-approval consume step.
+ * Unlisted institutions and cards filled on arbitrary merchant sites are an
+ * accepted v1 residual: they do not trigger this gate. See `bankDomains.ts` for
+ * the deliberately simple process for maintaining the registry.
  */
 import { originMatches } from "@domo/protocol";
 import { BANK_ETLD1_DOMAINS } from "./bankDomains.js";
