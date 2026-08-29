@@ -8,6 +8,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { loadSettings, saveSettings, Settings, useCredentialCodec } from "../src/settings.js";
+import { signOutOfPlow } from "../src/settingsActions.js";
 
 const cleanups: (() => void)[] = [];
 afterEach(() => {
@@ -314,43 +315,6 @@ describe("the credential at rest", () => {
     expect(sealedEntries(home, secret.sealedKey)).toHaveLength(secret.values.length);
   });
 
-  it("folds a single-slot home's held session into the list", () => {
-    // The first cut of this field was one slot. A load that walked past the
-    // old key would orphan exactly the session the field exists to retire, so
-    // it is folded in and the old key leaves disk on that same read.
-    useCredentialCodec(fakeCodec());
-    const home = tempHome();
-    const settings = loadSettings(home);
-    settings.pendingRevocations = ["plow_sk_from_the_list"];
-    saveSettings(home, settings);
-
-    const file = path.join(home, "app/settings.json");
-    const onDisk = JSON.parse(fs.readFileSync(file, "utf8")) as Record<string, unknown>;
-    onDisk.pendingRevocationEnc = fakeCodec().encrypt("plow_sk_from_the_slot");
-    fs.writeFileSync(file, JSON.stringify(onDisk));
-
-    expect(loadSettings(home).pendingRevocations).toEqual([
-      "plow_sk_from_the_list",
-      "plow_sk_from_the_slot",
-    ]);
-    // ...and the old key is gone, sealed into the list on that read.
-    expect(fileOf(home).pendingRevocationEnc).toBeUndefined();
-    expect(fileOf(home).pendingRevocationsEnc).toHaveLength(2);
-  });
-
-  it("folds a single-slot PLAINTEXT home in, and takes the old key off disk", () => {
-    const home = tempHome();
-    fs.mkdirSync(path.join(home, "app"), { recursive: true });
-    fs.writeFileSync(
-      path.join(home, "app/settings.json"),
-      JSON.stringify({ relayCredential: "", pendingRevocation: "plow_sk_from_the_slot" }),
-    );
-
-    expect(loadSettings(home).pendingRevocations).toEqual(["plow_sk_from_the_slot"]);
-    expect(fileOf(home).pendingRevocation).toBeUndefined();
-    expect(fileOf(home).pendingRevocations).toEqual(["plow_sk_from_the_slot"]);
-  });
-
   it("reads an unreadable held session as nothing to retry", () => {
     // A seal nobody can open holds a token nothing can revoke. Reporting the
     // ciphertext would send the server a bearer it has never seen.
@@ -427,40 +391,87 @@ describe("the credential at rest", () => {
     expect(loadSettings(home).relayCredential).toBe("");
   });
 
-  it("clears everything sign-out clears when the seal cannot be read", () => {
-    // Signed out means ALL of it. Blanking the credential alone left the
-    // account uid, the endpoint and the provisioned chat behind, so the next
-    // login — possibly a DIFFERENT account — inherited a chat label naming a
-    // thread it cannot reach.
+  it("keeps a seal it cannot open, through a routine save", () => {
+    // THE dangerous one, and an ordinary window move was enough to reach it: a
+    // locked keychain made the credential read as `""`, `""` looked exactly
+    // like "there is no credential", and the next save deleted the only copy
+    // of a live 180-day session. An unread secret is not an absent one.
+    useCredentialCodec(fakeCodec());
+    const home = tempHome();
+    const settings = loadSettings(home);
+    settings.relayCredential = "plow_sk_sealed";
+    settings.pendingRevocations = ["plow_sk_held"];
+    settings.accountUid = "u_first";
+    saveSettings(home, settings);
+    const sealedCredential = fileOf(home).relayCredentialEnc;
+    const sealedHeld = fileOf(home).pendingRevocationsEnc;
+
+    // The keychain goes away — a locked login keychain, a Mac before
+    // `app.ready`. Both secrets read as nothing...
+    useCredentialCodec(fakeCodec(false));
+    const blind = loadSettings(home);
+    expect(blind.relayCredential).toBe("");
+    expect(blind.pendingRevocations).toEqual([]);
+
+    // ...and then the window gets moved, which saves settings.
+    blind.windowBounds = { x: 10, y: 10, width: 900, height: 700 };
+    saveSettings(home, blind);
+
+    // The ciphertext is still there, byte for byte.
+    expect(fileOf(home).relayCredentialEnc).toBe(sealedCredential);
+    expect(fileOf(home).pendingRevocationsEnc).toEqual(sealedHeld);
+
+    // ...and everything comes back when the keychain does.
+    useCredentialCodec(fakeCodec());
+    const recovered = loadSettings(home);
+    expect(recovered.relayCredential).toBe("plow_sk_sealed");
+    expect(recovered.pendingRevocations).toEqual(["plow_sk_held"]);
+    expect(recovered.accountUid).toBe("u_first");
+  });
+
+  it("keeps unopened held sessions when a readable one is added beside them", () => {
+    // Half a list readable is the awkward shape: the new token has to be
+    // sealed and written WITHOUT dropping the entries this Mac cannot read.
+    useCredentialCodec(fakeCodec());
+    const home = tempHome();
+    const first = loadSettings(home);
+    first.pendingRevocations = ["plow_sk_older"];
+    saveSettings(home, first);
+
+    const file = path.join(home, "app/settings.json");
+    const onDisk = JSON.parse(fs.readFileSync(file, "utf8")) as Record<string, unknown>;
+    const stranger = "sealed-by-another-keychain";
+    onDisk.pendingRevocationsEnc = [...(onDisk.pendingRevocationsEnc as string[]), stranger];
+    fs.writeFileSync(file, JSON.stringify(onDisk));
+
+    const read = loadSettings(home);
+    expect(read.pendingRevocations).toEqual(["plow_sk_older"]);
+    read.pendingRevocations = [...read.pendingRevocations, "plow_sk_newer"];
+    saveSettings(home, read);
+
+    // The unopened entry survived, and both readable ones are there.
+    expect(fileOf(home).pendingRevocationsEnc).toContain(stranger);
+    expect(loadSettings(home).pendingRevocations).toEqual(["plow_sk_older", "plow_sk_newer"]);
+  });
+
+  it("lets sign-out delete a seal nobody can open", () => {
+    // Carrying ciphertext forward must not outlive the sign-out meant to end
+    // it, so sign-out clears BOTH spellings explicitly.
     useCredentialCodec(fakeCodec());
     const home = tempHome();
     const settings = loadSettings(home);
     settings.relayCredential = "plow_sk_sealed";
     settings.accountUid = "u_first";
-    settings.mcpUrl = "https://api.plow.co/v1/relay/devices/u_first/mcp";
-    settings.provisionedChatUid = "cht_first";
-    settings.provisionedChatLabel = "Willow · You · Nina";
+    settings.provisionedChatLabel = "Willow · You";
     saveSettings(home, settings);
 
-    const file = path.join(home, "app/settings.json");
-    const onDisk = JSON.parse(fs.readFileSync(file, "utf8")) as Record<string, unknown>;
-    onDisk.relayCredentialEnc = "garbage-from-another-keychain";
-    fs.writeFileSync(file, JSON.stringify(onDisk));
+    useCredentialCodec(fakeCodec(false));
+    signOutOfPlow(home);
 
-    const read = loadSettings(home);
-    expect(read.relayCredential).toBe("");
-    expect(read.accountUid).toBe("");
-    expect(read.mcpUrl).toBe("");
-    expect(read.provisionedChatUid).toBe("");
-    expect(read.provisionedChatLabel).toBe("");
-
-    // ...and a later login to another account inherits none of it.
-    read.relayCredential = "plow_sk_second";
-    read.accountUid = "u_second";
-    saveSettings(home, read);
-    const after = loadSettings(home);
-    expect(after.accountUid).toBe("u_second");
-    expect(after.provisionedChatLabel).toBe("");
+    expect(fileOf(home).relayCredentialEnc).toBeUndefined();
+    expect(fileOf(home).relayCredential).toBe("");
+    expect(fileOf(home).accountUid).toBe("");
+    expect(fileOf(home).provisionedChatLabel).toBe("");
   });
 
   it("does not hand back a sealed credential when no codec is installed", () => {

@@ -12,11 +12,10 @@
 #                                                            app never migrated)
 #   /tmp/plow-latch-<branch> (and pre-rename /tmp/domo-<branch>)  (evidence screenshots)
 #
-# What it cannot do: revoke this worktree's relay credential. Sign-out only
-# forgets the credential locally — revocation needs the account's own key
-# list, which this Mac deliberately cannot reach (apps/desktop/src/main.ts).
-# Deleting the home orphans the device registration on the relay; retire it
-# from the account console if it matters.
+# It cannot revoke anything itself. It does not have to: the app revokes on
+# sign-out and retries whatever that could not retire, so a home this script
+# will delete is one with nothing left to retire — which is exactly what the
+# refusal below checks.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -61,15 +60,13 @@ for home in \
   "$appsupport/Domo-$branch-local"; do
   settings="$home/app/settings.json"
   [ -f "$settings" ] || continue
-  # Either spelling of either field: a home stores a secret in the clear where
-  # the OS offered no keychain and sealed where it did, and `pendingRevocations`
-  # is a LIST (`pendingRevocation`, singular, is its first cut — still on disk in
-  # a home that has not been read since). Newlines and spaces come out first, so
-  # one expression covers the pretty-printed array as well as the scalars; an
-  # empty string and an empty list both fail to match, which is what "holds
-  # nothing" looks like.
+  # Either field, sealed or not: a home stores a secret in the clear where the
+  # OS offered no keychain and sealed where it did. Newlines and spaces come
+  # out first, so one expression covers the pretty-printed `pendingRevocations`
+  # array as well as the scalar credential; an empty string and an empty list
+  # both fail to match, which is what "holds nothing" looks like.
   if tr -d '\n ' < "$settings" \
-    | grep -qE '"(relayCredential|pendingRevocations?)(Enc)?":("[^"]+"|\["[^"]+")' 2>/dev/null; then
+    | grep -qE '"(relayCredential|pendingRevocations)(Enc)?":("[^"]+"|\["[^"]+")' 2>/dev/null; then
     if [ "${FORCE:-}" = "1" ]; then
       echo "WARNING: $settings still holds a credential; deleting it does NOT revoke the session." >&2
       echo "         Revoke it in Plow, or it stays live on the account." >&2
@@ -99,6 +96,4 @@ echo "wiped $appsupport/Plow-Latch-$branch-local"
 echo "wiped /tmp/plow-latch-$branch"
 
 echo ""
-echo "Worktree '$name' state is gone. If this worktree had signed in, its"
-echo "relay credential is now orphaned — revoke the device from the account"
-echo "console if you want it retired server-side."
+echo "Worktree '$name' state is gone."

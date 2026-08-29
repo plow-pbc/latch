@@ -94,9 +94,22 @@ function storeSecret(
   active: CredentialCodec | null,
 ): boolean {
   const value = String(stored[plainKey] ?? "").trim();
+  // Ciphertext `loadSettings` could not open, carried back verbatim. THE
+  // dangerous case, and it took an ordinary window resize to reach: a locked
+  // keychain made the secret read as `""`, `""` looked exactly like "there is
+  // no secret", and the next save — a window move, a tab change, anything —
+  // deleted the only copy of a live 180-day session. An unread secret is not
+  // an absent one. Only sign-out and release, which know what they are
+  // throwing away, clear these.
+  const carried = String(stored[sealedKey] ?? "");
   const sealed = seal(value, active);
   if (sealed) {
     stored[sealedKey] = sealed;
+    stored[plainKey] = "";
+    return false;
+  }
+  if (!value && carried) {
+    stored[sealedKey] = carried;
     stored[plainKey] = "";
     return false;
   }
@@ -121,13 +134,24 @@ function storeSecretList(
   active: CredentialCodec | null,
 ): boolean {
   const values = readSecretList(stored[plainKey]);
+  // Entries `loadSettings` could not open. Kept ahead of the ones written
+  // here, blind and untouched: this Mac does not know which sessions they are,
+  // and "cannot read it" is the one thing that must never mean "throw it away"
+  // — those tokens are live on the owner's account either way.
+  const carried = readSecretList(stored[sealedKey]);
   const sealedAll = values.map((value) => seal(value, active));
   if (values.length && sealedAll.every((entry) => entry !== "")) {
-    stored[sealedKey] = sealedAll;
+    stored[sealedKey] = [...carried, ...sealedAll];
     stored[plainKey] = [];
     return false;
   }
-  delete stored[sealedKey];
+  if (!values.length && carried.length) {
+    stored[sealedKey] = carried;
+    stored[plainKey] = [];
+    return false;
+  }
+  if (carried.length) stored[sealedKey] = carried;
+  else delete stored[sealedKey];
   stored[plainKey] = values;
   return values.length > 0;
 }
@@ -309,9 +333,6 @@ export function loadSettings(home: string): Settings {
   // still a secret. Delete these three lines once the fleet has turned over:
   // they are a one-off, not a migration framework.
   const retired = "anthropicApiKey" in settings || "inferenceProvider" in settings;
-  // The single-slot spelling of `pendingRevocations`, folded in and taken off
-  // disk below on the first read either way — sealed or not.
-  const singleSlot = "pendingRevocation" in settings || "pendingRevocationEnc" in settings;
   delete settings.anthropicApiKey;
   delete settings.inferenceProvider;
 
@@ -321,46 +342,38 @@ export function loadSettings(home: string): Settings {
   // (a restored backup, a new login keychain), and the honest answer to "what
   // is this Mac signed in as" is then nothing — which sends the owner through
   // setup rather than into an auth error nobody can explain.
+  // A seal that opens becomes the plaintext and the ciphertext is dropped from
+  // the object, because `saveSettings` will write it again from that plaintext.
+  // A seal that does NOT open is carried instead — this Mac cannot read the
+  // secret right now, which is not the same as not having one, and the whole
+  // of `storeSecret` depends on telling those apart.
+  //
+  // This deliberately no longer reads as "signed out". It used to blank the
+  // account uid, the endpoint and the provisioned chat here, on the theory
+  // that an unopenable seal meant a home that had lost its credential for
+  // good — and a locked keychain is a Tuesday, not a lost credential. The
+  // fields come back on the first read that can open the seal. `signOutOfPlow`
+  // still clears the same set, which is where clearing them belongs.
   const sealed = typeof loaded.relayCredentialEnc === "string" ? loaded.relayCredentialEnc : "";
   if (sealed) {
     loaded.relayCredential = unseal(sealed);
-    if (!loaded.relayCredential) {
-      // Signed out, and signed out means ALL of it. Blanking the credential
-      // alone left the account uid, the endpoint and the provisioned chat
-      // behind, so the next login — possibly a different account — inherited a
-      // chat label naming a thread it cannot reach. `signOutOfPlow` clears the
-      // same set for the same reason; this is that state arrived at sideways.
-      loaded.accountUid = "";
-      loaded.mcpUrl = "";
-      loaded.provisionedChatUid = "";
-      loaded.provisionedChatLabel = "";
-    }
+    loaded.relayCredentialEnc = loaded.relayCredential ? undefined : sealed;
   }
-  // A seal nobody can open is nothing to retry — the token inside it is
-  // unreachable either way, and reporting the ciphertext as a bearer would put
-  // a value the server has never seen into a revoke.
+  // Entry by entry, and the same rule: the ones that open become tokens the
+  // retry can use, the ones that do not are carried back as ciphertext for
+  // `saveSettings` to write again untouched. Reporting an unopened entry as a
+  // token would put a value the server has never seen into a revoke; dropping
+  // it would strand a live session. It is neither.
   const sealedPending = readSecretList(loaded.pendingRevocationsEnc);
   if (sealedPending.length) {
-    loaded.pendingRevocations = sealedPending.map(unseal).filter((token) => token !== "");
+    const opened = sealedPending.map((entry) => ({ entry, token: unseal(entry) }));
+    loaded.pendingRevocations = opened.filter((o) => o.token).map((o) => o.token);
+    const unopened = opened.filter((o) => !o.token).map((o) => o.entry);
+    loaded.pendingRevocationsEnc = unopened.length ? unopened : undefined;
   } else {
     loaded.pendingRevocations = readSecretList(loaded.pendingRevocations);
+    loaded.pendingRevocationsEnc = undefined;
   }
-  // A home written by the first cut of this field, which held ONE token in a
-  // single slot. Folded in rather than ignored: the whole point of the list is
-  // that a token it is holding is the only handle on a live account session,
-  // and a load that walked past the old key would orphan exactly the session
-  // the field exists to retire. The next save writes the list form and the old
-  // keys go; delete these lines once no home can still carry them.
-  const legacySealed = settings.pendingRevocationEnc;
-  const legacyPending =
-    typeof legacySealed === "string" && legacySealed
-      ? unseal(legacySealed)
-      : String(settings.pendingRevocation ?? "").trim();
-  if (legacyPending && !loaded.pendingRevocations.includes(legacyPending)) {
-    loaded.pendingRevocations = [...loaded.pendingRevocations, legacyPending];
-  }
-  delete (loaded as Record<string, unknown>).pendingRevocation;
-  delete (loaded as Record<string, unknown>).pendingRevocationEnc;
   // The spread above copies whatever the file held, and a hand-edited or
   // truncated file can put a non-object — or a `null` — where a record belongs.
   // Every reader of this map indexes it, so normalising once here is what keeps
@@ -391,7 +404,7 @@ export function loadSettings(home: string): Settings {
     activeCodec() !== null &&
     ((!sealed && loaded.relayCredential.trim() !== "") ||
       (!sealedPending.length && loaded.pendingRevocations.length > 0));
-  if (retired || singleSlot || needsSealing) saveSettings(home, loaded);
+  if (retired || needsSealing) saveSettings(home, loaded);
   return loaded;
 }
 

@@ -205,23 +205,21 @@ describe("signing out retires the credential server-side, best effort", () => {
     expect(stored(home).pendingRevocations).toEqual([PLOW_CREDENTIAL]);
   });
 
-  it("holds one session once, however many failed sign-outs it takes", async () => {
-    // The list is appended to, never assigned: a second failure must not
-    // overwrite the first, and the SAME token must not pile up.
+  it("stages the session BEFORE the revoke, so a quit mid-flight survives it", async () => {
+    // Sign-out clears the credential synchronously and then waits on the
+    // network. Staging only after that call failed left a window with the
+    // token nowhere on disk — and quitting inside it is indistinguishable from
+    // a failed revoke, except that nothing was left to retry with.
     const home = homeSignedIn();
-    const refuse = async () => {
-      throw new Error("ENOTFOUND api.plow.co");
-    };
-    await revokeAndSignOut(home, refuse);
-    // A second sign-out has nothing left to revoke and must not disturb it.
-    await revokeAndSignOut(home, refuse);
+    let staged: string[] = [];
+    await revokeAndSignOut(home, async () => {
+      // Mid-flight: the app could be quit right here.
+      staged = [...stored(home).pendingRevocations];
+      expect(stored(home).relayCredential).toBe("");
+    });
 
-    expect(stored(home).pendingRevocations).toEqual([PLOW_CREDENTIAL]);
-  });
-
-  it("keeps nothing when the revoke lands", async () => {
-    const home = homeSignedIn();
-    expect(await revokeAndSignOut(home, async () => undefined)).toBe(true);
+    expect(staged).toEqual([PLOW_CREDENTIAL]);
+    // ...and a revoke that lands releases it again.
     expect(stored(home).pendingRevocations).toEqual([]);
   });
 

@@ -9,7 +9,7 @@
  * Every one of these reads and writes the on-disk settings under `DOMO_HOME`,
  * so what a test observes is what actually survives a relaunch.
  */
-import { holdForRevocation, loadSettings, saveSettings, Settings } from "./settings.js";
+import { loadSettings, releaseRevocation, saveSettings, Settings } from "./settings.js";
 import { InferenceStatus, inferenceStatus } from "./reviewPolicy.js";
 
 /** Read-modify-write. What the user chose is what stays on disk. */
@@ -58,9 +58,24 @@ export function setAgentPurpose(home: string, purpose: unknown): string {
  * legal state that denies legibly, and rewriting the owner's choice behind
  * their back on sign-out was never the honest way to say so.
  */
-export function signOutOfPlow(home: string): void {
+export function signOutOfPlow(home: string, stageForRevocation = ""): void {
   update(home, (s) => {
+    const token = (stageForRevocation ?? "").trim();
+    // ONE write. The credential is erased and, when the caller is about to try
+    // to revoke it, staged for retry in the same breath — because between two
+    // writes there is a moment where the token exists nowhere, and quitting in
+    // that moment leaves a live `*:*` session with no handle. Staging BEFORE
+    // the network call rather than after it fails is the whole point: a quit
+    // during the revoke is indistinguishable from a revoke that failed, and
+    // both have to be survivable.
+    if (token && !s.pendingRevocations.includes(token)) {
+      s.pendingRevocations = [...s.pendingRevocations, token];
+    }
     s.relayCredential = "";
+    // Both spellings. `storeSecret` keeps ciphertext it could not read, on
+    // purpose — so signing out has to say so explicitly, or a seal nobody can
+    // open would outlive the sign-out that was meant to end it.
+    s.relayCredentialEnc = undefined;
     s.accountUid = "";
     s.mcpUrl = "";
     // Account data, not device data: the next sign-in may be a different
@@ -112,22 +127,22 @@ export async function revokeAndSignOut(
   revoke: (credential: string) => Promise<unknown>,
 ): Promise<boolean> {
   const credential = (loadSettings(home).relayCredential ?? "").trim();
-  signOutOfPlow(home);
+  // Staged in the same synchronous write that clears it — see `signOutOfPlow`.
+  signOutOfPlow(home, credential);
   if (!credential) return true;
   try {
     await revoke(credential);
+    // Confirmed dead: stop holding it.
+    releaseRevocation(home, credential);
     return true;
   } catch {
     // Still not logged — the only interesting value in scope is the credential
-    // itself. But no longer DROPPED either: the stored credential is the
-    // owner's login session now, and sign-out has just erased the only copy of
-    // it, so a failed revoke used to leave a live `*:*` session on the account
-    // with nothing anywhere able to retire it. It goes back on disk as a
-    // pending revocation — through the same owner `Onboarding` uses, because
-    // this is the same problem — and the app retries it on the next launch and
-    // the next activation. Sign-out still reports failure, because the session
-    // IS still live and the owner may not want to wait for a retry.
-    holdForRevocation(home, credential);
+    // itself. Nothing to do here but report: the token was staged on disk
+    // BEFORE this call, in the same write that cleared it, so a failed revoke
+    // and a quit mid-flight both leave the same recoverable state. The app
+    // retries it on the next launch and the next activation. Sign-out still
+    // reports failure, because the session IS still live and the owner may not
+    // want to wait for a retry.
     return false;
   }
 }
