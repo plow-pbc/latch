@@ -1,5 +1,4 @@
 import { CloudAgentResource, CloudAgentStatus } from "./cloudAgents.js";
-import type { ChatRecipients } from "./onboarding.js";
 
 const FAILURE_LABELS: Record<string, string> = {
   provider_unreachable: "Provider unreachable",
@@ -11,52 +10,25 @@ const FAILURE_LABELS: Record<string, string> = {
 };
 
 /** The complete cloud-agent shape allowed to cross into the renderer. */
+export interface CloudAgentThread {
+  uid: string;
+  label: string;
+}
+
 export interface CloudAgentDisplayRow {
   agentId: string;
   name: string;
-  /**
-   * Every chat this agent serves, in the server's order. `chatUids[0]` is
-   * home — where the agent's unprompted output lands — and the screen shows it
-   * first for that reason, not because it happens to be first.
-   */
-  chatUids: string[];
-  /**
-   * A label per entry of `chatUids`, index for index.
-   *
-   * Two parallel arrays rather than a list of pairs because the uid is the join
-   * key and the label is a lookup that can fail: an unresolved label falls back
-   * to its own uid, so the arrays are always the same length and a row can
-   * never name fewer chats than it serves.
-   */
-  chatLabels: string[];
-  provider: string;
+  lineUid: string | null;
+  /** Read-only threads on the line, or the fixed grant for a legacy agent. */
+  threads: CloudAgentThread[];
   status: CloudAgentStatus;
   failureReason: string | null;
   createdAt: string;
-  /**
-   * The numbers a message to this agent's HOME chat goes to, or `null` when
-   * they are not known. Home is the one the Message button targets; the other
-   * chats are served, not addressed from here.
-   *
-   * Carried rather than derived: the label is prose and was being scraped for
-   * digits, which produced an empty recipient list for a label with none and
-   * an incomplete one for a label that showed a display name. `null` means the
-   * screen must not offer to message the chat at all.
-   */
-  recipients: ChatRecipients | null;
 }
 
 export interface CloudAgentDisplayContext {
-  /**
-   * Labels resolved from the separately fetched chat list, keyed by uid. A uid
-   * the list does not know is simply absent, and the row shows the uid.
-   */
-  chatLabels?: Readonly<Record<string, string>>;
-  /** The home chat's recipients, from the same place and absent for the same
-   * reasons. */
-  recipients?: ChatRecipients | null;
-  /** The submitted name fills the gap in the initial create receipt. */
-  fallbackName?: string;
+  /** Threads resolved from the separately fetched chat list. */
+  threads?: readonly CloudAgentThread[];
 }
 
 /**
@@ -74,16 +46,16 @@ export function toCloudAgentDisplayRow(
     : agent.failureReason;
   return {
     agentId: scrub(agent.agentId),
-    name: scrub(agent.name ?? context.fallbackName ?? "cloud agent"),
-    chatUids: agent.chatUids.map(scrub),
-    chatLabels: agent.chatUids.map((uid) => scrub(context.chatLabels?.[uid] || uid)),
-    provider: scrub(agent.provider ?? ""),
+    name: scrub(agent.name ?? "cloud agent"),
+    lineUid: agent.lineUid === null ? null : scrub(agent.lineUid),
+    threads: (context.threads ?? (
+      agent.lineUid === null
+        ? agent.chatUids.map((uid) => ({ uid, label: uid }))
+        : []
+    )).map((thread) => ({ uid: scrub(thread.uid), label: scrub(thread.label) })),
     status: agent.status,
     failureReason: failureReason === null ? null : scrub(failureReason),
     createdAt: agent.createdAt === null ? "" : scrub(agent.createdAt),
-    // Addresses, not prose: nothing to scrub a session id out of, and nothing
-    // to invent when the chat list could not say.
-    recipients: context.recipients ?? null,
   };
 }
 

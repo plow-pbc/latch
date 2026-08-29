@@ -47,7 +47,6 @@ import { Onboarding } from "./onboarding.js";
 import { ConnectClient } from "./connectClient.js";
 import { CloudAgentsClient } from "./cloudAgents.js";
 import { CloudAgentState, CloudChatsClient, CloudLinesClient, tabShowsCloudAgents } from "./cloudAgentState.js";
-import { cloudAgentMessagesUrl } from "./cloudAgentMessages.js";
 import { loggingFetch } from "./wireLog.js";
 import { WindowGate } from "./windowGate.js";
 import { SimulatedScenario, SimulatedUpdater, UpdateController } from "./updates.js";
@@ -569,8 +568,8 @@ ipcMain.handle("onboarding:open", async () => openOnboardingWindow());
  * Every web page the renderer may ask to open, in one table.
  *
  * The renderer names a KEY, never a URL. `openExternal` is pinned to URLs the
- * app composed itself — the `sms:` one, the vault's own address, and this
- * table — because a renderer that can hand main an arbitrary URL to open is a
+ * app composed itself — the vault's own address and this table — because a
+ * renderer that can hand main an arbitrary URL to open is a
  * renderer that can open anything. An unknown key opens nothing.
  *
  * `claude` deep-links into that client's "add a custom MCP connector" screen,
@@ -591,11 +590,6 @@ ipcMain.handle("onboarding:open", async () => openOnboardingWindow());
  * sending the person to the switch IS the whole grant flow (see
  * fullDiskAccess.ts), so the deep link belongs in this table like any other
  * page the app may open.
- *
- * `cloudAgentMessages` is the dynamic exception: the renderer supplies only
- * an agent id. Main requires that agent to be running and derives the `sms:`
- * recipients from its current display row, so the sandboxed page still cannot
- * choose an arbitrary external URL or phone number.
  */
 const EXTERNAL_URLS: Readonly<Record<string, string>> = Object.freeze({
   account: `${apiBaseUrl}/app/`,
@@ -605,29 +599,8 @@ const EXTERNAL_URLS: Readonly<Record<string, string>> = Object.freeze({
   fullDiskSettings: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles",
 });
 
-/**
- * The `sms:` draft for one of Plow's numbers, or "" when the renderer named a
- * number the server did not list.
- *
- * The body is a greeting, not a command: the thread is what matters, and Plow
- * makes it from the message arriving.
- */
-function smsLineUrl(lines: readonly { number: string }[], number: string): string {
-  const wanted = number.trim();
-  if (!wanted || !lines.some((line) => line.number === wanted)) return "";
-  return `sms:${wanted}?&body=${encodeURIComponent("Hi!")}`;
-}
-
-ipcMain.handle("external:open", async (_e, key: string, detail?: string) => {
-  const url = key === "cloudAgentMessages"
-    ? cloudAgentMessagesUrl(cloudAgents?.state().cloudAgents ?? [], detail ?? "")
-    // A Plow number, drafted with the text that makes a chat. Main composes
-    // the URL and will not take one: `detail` has to BE a number the server
-    // listed, matched against `cloudLines`, so the renderer names a row rather
-    // than handing over a destination.
-    : key === "smsLine"
-    ? smsLineUrl(cloudAgents?.state().cloudLines ?? [], detail ?? "")
-    : EXTERNAL_URLS[key];
+ipcMain.handle("external:open", async (_e, key: string) => {
+  const url = EXTERNAL_URLS[key];
   if (!url) return false;
   await shell.openExternal(url);
   return true;
@@ -637,25 +610,9 @@ ipcMain.handle("external:open", async (_e, key: string, detail?: string) => {
 // group are two groups on one screen, and a renderer that had to reconcile two
 // asynchronous reads would render them disagreeing.
 ipcMain.handle("connect:get", async () => agentsTabState());
-/**
- * Re-read the account's chats, then answer with the tab's state.
- *
- * `connect:get` is a pure read of what was last fetched, so a screen that
- * opens on it shows whatever the last tab activation happened to see. The
- * cloud-agent picker tells the owner their new chat "appears here when you
- * reopen this window", which is only true if reopening asks the server — so
- * the modal opens through this, and awaits it.
- */
-ipcMain.handle("cloud:refresh", async () => {
-  // One refresh reads chats and their line names together, so the modal gets
-  // the same account view the tab booted with.
-  await cloudAgents?.refresh();
-  return agentsTabState();
-});
 ipcMain.handle("connect:create", async (_e, name: string) => {
   await connectClient?.createCredential(name);
-  // The credential it just minted is a roster row nobody has read yet — the
-  // same gap `cloud:create` had, and the same fix.
+  // The credential it just minted is a roster row nobody has read yet.
   await connectClient?.refreshRoster();
   return agentsTabState();
 });
@@ -667,9 +624,8 @@ ipcMain.handle("connect:create", async (_e, name: string) => {
  * down. Its removal never needed the credential: `DELETE
  * /v1/agents/cloud/{agent_id}` is keyed on the agent.
  *
- * Same lifecycle owner as every other cloud removal, so the poll, the row and
- * the local state go together; the roster is re-read afterwards because the
- * credential row, if there was one, is gone with it.
+ * The roster is re-read afterwards because the credential row, if there was
+ * one, is gone with it.
  */
 ipcMain.handle("cloud:remove", async (_e, agentId: string) => {
   await cloudAgents?.remove(agentId);
@@ -689,33 +645,6 @@ ipcMain.handle("roster:remove", async (_e, id: number) => {
 ipcMain.handle("connect:dismiss", async () => {
   connectClient?.dismissCredential();
   return agentsTabState();
-});
-
-/**
- * The cloud-agent mutations, and none of them polls: `create` answers as soon
- * as Plow has issued the receipt and the row is on screen in `provisioning`;
- * the main process drives it to `active` from there.
- */
-ipcMain.handle("cloud:create", async (_e, chatUids: string[], name: string, provider: string) => {
-  await cloudAgents?.create(chatUids ?? [], name, provider);
-  // The new agent's credential row comes from the separately fetched roster,
-  // which knows nothing about a create. Without this the screen shows the agent
-  // with no row behind it, so Remove is disabled until the user leaves the tab
-  // and comes back.
-  await connectClient?.refreshRoster();
-  return agentsTabState();
-});
-
-/**
- * Change which chats an existing agent serves.
- *
- * The roster is re-read for the same reason a create re-reads it — a
- * credential's chat grant moves with the agent's set, so the row's permission
- * line is stale the moment this returns.
- */
-ipcMain.handle("cloud:editChats", async (_e, agentId: string, chatUids: string[]) => {
-  await cloudAgents?.editChats(agentId, chatUids ?? []);
-  await connectClient?.refreshRoster();
 });
 /** Connect-a-client's state plus the cloud-agent group's, in one object. The
  * cloud half is present and empty when the flag is off, so the renderer reads

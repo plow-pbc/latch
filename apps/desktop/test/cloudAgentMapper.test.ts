@@ -8,6 +8,7 @@ import { CloudAgentResource, isTerminalCloudAgent } from "../src/cloudAgents.js"
 function agent(overrides: Partial<CloudAgentResource> = {}): CloudAgentResource {
   return {
     agentId: "agent_stable",
+    lineUid: "lin_willow",
     chatUids: ["cht_123"],
     url: "https://provider.internal/secret-handle",
     provider: "exe:hermes",
@@ -23,16 +24,13 @@ function agent(overrides: Partial<CloudAgentResource> = {}): CloudAgentResource 
 describe("cloud-agent pure mappings", () => {
   it("keeps provider URL and session identity out of renderer state", () => {
     const row = toCloudAgentDisplayRow(agent(), {
-      fallbackName: "Kitchen agent",
-      chatLabels: { cht_123: "+1 415 555 0100 · Pat, Lee" },
-      recipients: { line: "+14155550100", members: ["+14155550101"] },
+      threads: [{ uid: "cht_123", label: "+1 415 555 0100 · Pat, Lee" }],
     });
 
     expect(row).toMatchObject({
       agentId: "agent_stable",
-      chatUids: ["cht_123"],
-      chatLabels: ["+1 415 555 0100 · Pat, Lee"],
-      recipients: { line: "+14155550100", members: ["+14155550101"] },
+      lineUid: "lin_willow",
+      threads: [{ uid: "cht_123", label: "+1 415 555 0100 · Pat, Lee" }],
     });
     expect(JSON.stringify(row)).not.toContain("session_old");
     expect(JSON.stringify(row)).not.toContain("provider.internal");
@@ -43,6 +41,7 @@ describe("cloud-agent pure mappings", () => {
     const row = toCloudAgentDisplayRow(
       agent({
         agentId: `agent-${sessionId}`,
+        lineUid: `line-${sessionId}`,
         chatUids: [`chat-${sessionId}`],
         name: `name ${sessionId}`,
         provider: `provider ${sessionId}`,
@@ -50,7 +49,7 @@ describe("cloud-agent pure mappings", () => {
         createdAt: `created ${sessionId}`,
         sessionId,
       }),
-      { chatLabels: { [`chat-${sessionId}`]: `chat label ${sessionId}` } },
+      { threads: [{ uid: `chat-${sessionId}`, label: `chat label ${sessionId}` }] },
     );
 
     expect(row.failureReason).toBe("credential [credential] rejected");
@@ -78,8 +77,12 @@ describe("cloud-agent pure mappings", () => {
     expect(encodedCredential.failureReason).toBeNull();
   });
 
-  it("does not invent transport recipients when chat metadata is unavailable", () => {
-    expect(toCloudAgentDisplayRow(agent()).recipients).toBeNull();
+  it("keeps legacy fixed threads as structured uid-label pairs", () => {
+    expect(toCloudAgentDisplayRow(agent({ lineUid: null, chatUids: ["cht_legacy"] }))).toMatchObject({
+      lineUid: null,
+      threads: [{ uid: "cht_legacy", label: "cht_legacy" }],
+    });
+    expect(toCloudAgentDisplayRow(agent()).threads).toEqual([]);
   });
 
   it("keeps provisioning non-terminal and treats every returned status as terminal", () => {

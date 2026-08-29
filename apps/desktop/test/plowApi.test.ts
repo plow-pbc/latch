@@ -335,6 +335,7 @@ describe("PlowApi", () => {
         displayName: null,
         // The number, off the agent's line — NOT "chat_5".
         line: "+15559876543",
+        lineUid: "lin_7",
         createdAt: "2026-08-24T18:02:11Z",
         // Members only: the agent participant is not a human in the chat.
         // The owner is first even though the wire put another member first.
@@ -359,6 +360,7 @@ describe("PlowApi", () => {
       status: "",
       displayName: null,
       line: null,
+      lineUid: null,
       participants: [],
       createdAt: "",
     });
@@ -371,6 +373,7 @@ describe("PlowApi", () => {
       status: "",
       displayName: null,
       line: null,
+      lineUid: null,
       participants: [],
       createdAt: "",
     });

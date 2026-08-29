@@ -197,6 +197,8 @@ export interface ActivationChat {
   displayName: string | null;
   /** The number the chat runs on: the pool line the user texted. */
   line: string | null;
+  /** Stable identity of that line, independent of its number or display name. */
+  lineUid: string | null;
   /** Members only — the humans in the chat. */
   participants: ActivationChatParticipant[];
   createdAt: string;
@@ -262,6 +264,7 @@ export function parseActivationChat(raw: unknown): ActivationChat | null {
     status: typeof chat.status === "string" ? chat.status : "",
     displayName: typeof chat.display_name === "string" ? chat.display_name : null,
     line: line && typeof line.provider_key === "string" ? line.provider_key : null,
+    lineUid: line && typeof line.uid === "string" ? line.uid : null,
     participants,
     createdAt: typeof chat.created_at === "string" ? chat.created_at : "",
   };

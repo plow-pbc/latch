@@ -98,23 +98,9 @@ contextBridge.exposeInMainWorld("domo", {
   cloudRemove: (agentId: string) => ipcRenderer.invoke("cloud:remove", agentId),
   onConnectChanged: (cb: () => void) => ipcRenderer.on("connect:changed", cb),
 
-  // Cloud agents (same tab, same state shape, same change channel). None of
-  // them is a poll: provisioning is watched in the main process, and the
-  // renderer just re-reads when told the state changed. `cloudCreate` answers
-  // as soon as the row is on screen in `provisioning`.
-  // Re-read the chat list from Plow and answer with the whole tab state. The
-  // picker opens through this, because `connectGet` only re-reads what was
-  // already fetched.
-  cloudRefresh: () => ipcRenderer.invoke("cloud:refresh"),
-  cloudCreate: (chatUids: string[], name: string, provider: string) =>
-    ipcRenderer.invoke("cloud:create", chatUids, name, provider),
-  // Replace the whole set of chats an agent serves. One round trip, no poll.
-  cloudEditChats: (agentId: string, chatUids: string[]) =>
-    ipcRenderer.invoke("cloud:editChats", agentId, chatUids),
-
-  // Any external destination the app links to. A KEY plus an optional
-  // main-owned record id, never a URL: main decides what may be opened.
-  openExternal: (key: string, detail?: string) => ipcRenderer.invoke("external:open", key, detail),
+  // Any external destination the app links to. A key, never a URL: main
+  // decides what may be opened.
+  openExternal: (key: string) => ipcRenderer.invoke("external:open", key),
 
   // Live browser thumbnail (audit detail pane). One whole-state shape per
   // poll; no push channel — the renderer's own interval is the clock.

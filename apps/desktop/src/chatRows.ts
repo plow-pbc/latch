@@ -51,6 +51,7 @@ export function chatEchoesCredential(
   chat: {
     uid: string;
     line: string | null;
+    lineUid?: string | null;
     participants: readonly { providerKey: string | null }[];
   },
   credential: string,
@@ -58,6 +59,7 @@ export function chatEchoesCredential(
   const identifiers = [
     chat.uid,
     chat.line ?? "",
+    chat.lineUid ?? "",
     ...chat.participants.map((member) => member.providerKey ?? ""),
   ];
   return identifiers.some((value) => echoesCredential(value.trim(), credential));
