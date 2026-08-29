@@ -76,6 +76,9 @@ echo "worktree:      $name"
 # The browser runtime (Python + Camoufox + download cache + vault server/CLI)
 # and the vendored provider CLIs alike: both are gitignored, both are expensive
 # to fetch again, and both are needed for a from-source run.
+copied_providers=0
+copied_runtime=0
+copied_browser=0
 for dir in vendor/python-runtime vendor/camoufox-browser vendor/downloads vendor/vault-server vendor/vault-cli vendor/providers; do
   if [[ -e "$dir" ]]; then
     echo "$dir already present — leaving it alone"
@@ -83,12 +86,58 @@ for dir in vendor/python-runtime vendor/camoufox-browser vendor/downloads vendor
     # Braced: the ellipsis that follows is not ASCII, and bash reads it as part
     # of an unbraced name.
     echo "cloning $dir from ${primary}…"
+    # Into a staging sibling, then renamed once the copy has SUCCEEDED, because
+    # the loop above treats existence as completion. A `cp` that died partway
+    # (or a run someone interrupted) otherwise left `$dir` there, and the next
+    # setup skipped it, built, and reported ready on half a runtime. Worse, the
+    # plain-copy fallback below would have copied INTO the directory the failed
+    # clone had already created, nesting the payload one level down.
+    # Unique per run, so two setups cannot land in each other's staging; the
+    # sweep clears what an interrupted run left, which is inert either way —
+    # only `$dir` itself is ever read as "already present".
+    rm -rf "$dir".incoming.*
+    staging="$dir.incoming.$$"
     # -c uses APFS clonefile; fall back to a plain copy on other filesystems.
-    cp -Rpc "$primary/$dir" "$dir" 2>/dev/null || cp -Rp "$primary/$dir" "$dir"
+    if cp -Rpc "$primary/$dir" "$staging" 2>/dev/null || cp -Rp "$primary/$dir" "$staging"; then
+      mv "$staging" "$dir"
+    else
+      rm -rf "$staging"
+      echo "error: copying $dir from $primary failed — nothing was left behind." >&2
+      exit 1
+    fi
+    case "$dir" in
+      vendor/providers) copied_providers=1 ;;
+      vendor/camoufox-browser) copied_browser=1 ;;
+      *) copied_runtime=1 ;;
+    esac
   else
     echo "note: $primary/$dir does not exist — skipping (run \`just fetch-browser-runtime fetch-browser\` for the browser stack, \`just fetch-vendored\` for the provider CLIs)"
   fi
 done
+
+# --- reconcile what was copied against THIS branch's pins -------------------
+# The copy is an optimisation; the pins are the authority. Payloads carry the
+# SOURCE checkout's bytes, so a branch that bumps a pin would otherwise build,
+# test and launch against the old ones while setup reported it ready.
+#
+# Both checks are content-addressed and skip on a match — `isStaged` hashes the
+# staged binary against the lock (scripts/vendored-staging.mjs), and the browser
+# build stamps a hash of runtime.lock.json + requirements — so the common case,
+# where the pins agree, costs a hash and nothing else. Only the trees actually
+# copied are reconciled: a payload that was skipped stays skipped rather than
+# turning a note into a five-minute cold build nobody asked for.
+if [[ $copied_providers == 1 ]]; then
+  echo "reconciling vendor/providers against this branch's pins…"
+  just fetch-vendored
+fi
+if [[ $copied_runtime == 1 ]]; then
+  echo "reconciling the browser runtime against this branch's pins…"
+  node scripts/build-browser-runtime.mjs
+fi
+if [[ $copied_browser == 1 ]]; then
+  echo "reconciling Camoufox against this branch's pins…"
+  node scripts/build-browser-runtime.mjs --browser
+fi
 
 # --- deps + build ----------------------------------------------------------
 just install
