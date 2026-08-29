@@ -262,6 +262,31 @@ export class PlowApi {
   }
 
   /**
+   * Consume a single-use owner payment approval for a banking-credential fill:
+   * `POST /v1/payment-approvals/consume {session_id, domain}` → `{approved}`,
+   * authenticated with this Mac's device credential.
+   *
+   * SINGLE-USE by contract — a `true` here CONSUMES the approval — so the caller
+   * (the browser fill gate) invokes it exactly once, at the moment of release.
+   *
+   * FAIL-CLOSED: this goes through `call()`, which throws on any non-2xx (no
+   * approval on file, an expired one, a server error). The gate treats a throw
+   * exactly like `approved: false`, so no status needs decoding here; a body
+   * that omits or malforms `approved` reads as not-approved for the same reason.
+   */
+  async consumePaymentApproval(
+    token: string,
+    request: { sessionId: string; domain: string },
+  ): Promise<{ approved: boolean }> {
+    const data = await this.call<{ approved?: boolean }>(
+      "POST",
+      "/v1/payment-approvals/consume",
+      { token, body: { session_id: request.sessionId, domain: request.domain } },
+    );
+    return { approved: data?.approved === true };
+  }
+
+  /**
    * One inference call, as `{status, body}` — **this deliberately does not go
    * through `call()`**.
    *

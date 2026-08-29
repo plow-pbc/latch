@@ -28,12 +28,7 @@ import path from "node:path";
 import { JSONValue, jv, originMatches, normalizeOrigin } from "@domo/protocol";
 import { BrowserHost, BrowserHostConfig, ViewerFrame } from "./browserHost.js";
 import { CredentialBroker, CredentialError, CredentialRelease } from "./credentialBroker.js";
-import {
-  assessFinancialRelease,
-  NO_APPROVAL_ENDPOINT,
-  PaymentApprovalClient,
-  resolvePaymentApproval,
-} from "./financialGate.js";
+import { isFinancialDestination, PaymentApprovalClient } from "./financialGate.js";
 
 type AuditFn = (event: string, fields: { [k: string]: JSONValue }) => void;
 
@@ -210,9 +205,10 @@ export class BrowserSessions {
     private readonly audit: AuditFn,
     private readonly idleMs: number = DEFAULT_IDLE_MS,
     /** Consulted before releasing a credential into a financial destination.
-     * The default is fail-closed (there is no plow-side approval mint yet), so
-     * every financial release is blocked until a real client is wired in. */
-    private readonly approval: PaymentApprovalClient = NO_APPROVAL_ENDPOINT,
+     * `null` means no owner-approval client is wired, which fails closed: every
+     * financial release is blocked. Production injects the real plow-consume
+     * client (see `DeviceAgent`). */
+    private readonly approval: PaymentApprovalClient | null = null,
   ) {}
 
   /** True when a page URL is inside the session's approved origins.
@@ -919,6 +915,27 @@ export class BrowserSessions {
   }
 
   /**
+   * The fail-closed collapse for the financial gate. Returns `null` when the
+   * owner's single-use payment approval was consumed successfully (release may
+   * proceed), or a short reason string when the release must be BLOCKED.
+   *
+   * Every non-approval path blocks and is told apart only for the owner's audit
+   * line: no client wired, an explicit denial, and a transport failure
+   * (unreachable, non-2xx, timeout) call for different incident responses on a
+   * money gate. The transport owns its own request timeout, so a hung call
+   * surfaces here as a thrown error — no separate timeout machinery needed.
+   */
+  private async blockedByApproval(sessionId: string, domain: string): Promise<string | null> {
+    if (!this.approval) return "no owner-approval client is configured";
+    try {
+      const { approved } = await this.approval.consumePaymentApproval({ sessionId, domain });
+      return approved === true ? null : "the owner has not approved this payment";
+    } catch {
+      return "the owner-approval service could not be reached";
+    }
+  }
+
+  /**
    * The strongest gate. Order matters: approved item → locate the frame the
    * selector is actually in → that frame's origin must be approved → ask the
    * vault whether it masks this field → the op broker releases against the
@@ -977,31 +994,24 @@ export class BrowserSessions {
 
     // FAIL-CLOSED FINANCIAL GATE. Before the vault is even asked for the value,
     // a release whose device-observed destination is a bank must carry an
-    // owner-approved payment approval. Non-financial destinations never reach
-    // the approval client and behave exactly as before. Until the plow-side
-    // approval mint exists the default client approves nothing, so every
-    // financial release is blocked here — intended, and safe: over-gating a
-    // non-bank is a recoverable prompt; under-gating a bank silently hands out a
-    // banking credential, which this exists to prevent.
-    if (assessFinancialRelease(frameHost).gated) {
-      // not-approved / error / timeout are all NON-approval — the release is
-      // blocked. The outcome is kept in the audit reason: "the owner said no"
-      // and "the approval system is unreachable" need different responses.
-      const outcome = await resolvePaymentApproval(this.approval, {
-        sessionId: s.auditId,
-        domain: frameHost,
-      });
-      if (outcome !== "approved") {
+    // owner-approved payment approval, consumed single-use from the plow cloud.
+    // Non-financial destinations never reach the approval client and behave
+    // exactly as before. Over-gating a non-bank is a recoverable prompt;
+    // under-gating a bank silently hands out a banking credential, which this
+    // exists to prevent.
+    if (isFinancialDestination(frameHost)) {
+      const denial = await this.blockedByApproval(s.auditId, frameHost);
+      if (denial !== null) {
         this.audit("credential_denied", {
           session: s.auditId,
           item: itemId,
           field,
           origin: frameHost,
-          reason: `banking credential release requires owner approval; blocked (${outcome})`,
+          reason: `banking credential release blocked: ${denial}`,
         });
-        // The agent-facing message is deliberately uniform across not-approved /
-        // error / timeout — the WHY lives in the owner's audit line above, not in
-        // the agent's hands, so it cannot tell an outage from a denial and
+        // The agent-facing message is deliberately uniform across every block
+        // reason — the WHY lives in the owner's audit line above, not in the
+        // agent's hands, so it cannot tell an outage from a denial and
         // retry-loop or probe against it. Money gate: the audit says more, the
         // agent hears less.
         return {
