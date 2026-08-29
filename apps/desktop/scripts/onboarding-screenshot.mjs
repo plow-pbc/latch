@@ -72,6 +72,23 @@ const SCREENS = [
     expectFocus: "Open Messages",
   },
   {
+    name: "signed-out-revoke-warning",
+    state: {
+      ...newUser,
+      step: "activate",
+      phone: "",
+      activation: ACTIVATION,
+      message:
+        "Signed out on this Mac. Plow could not be reached to revoke the session — revoke it in Plow's account settings.",
+    },
+    expect: [
+      "Signed out on this Mac",
+      "Plow could not be reached to revoke the session",
+      "revoke it in Plow's account settings",
+    ],
+    expectFocus: "Open Messages",
+  },
+  {
     name: "waiting",
     state: { ...newUser, step: "waiting", phone: "", activation: ACTIVATION },
     expect: [

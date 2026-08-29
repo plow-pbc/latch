@@ -232,7 +232,11 @@ export function parseActivationChat(raw: unknown): ActivationChat | null {
     return {
       providerKey: typeof participant.provider_key === "string" ? participant.provider_key : null,
       displayName,
-      isOwner: participant.role === "owner" || displayName?.trim() === "You",
+      // ROLE only. A provider that labels the owner "You" was a second answer
+      // to the same question, and a member who happens to be named "You" is
+      // not the account holder — the server says which participant owns the
+      // chat, and nothing here has to infer it.
+      isOwner: participant.role === "owner",
     };
   });
   // Keep the owner-first participant order used by addressing and the numeric
@@ -355,29 +359,6 @@ export class PlowApi {
   }
 
   /**
-   * Mint this Mac's credential: `relay:device` + `llm:chat`, and nothing else.
-   * It holds the socket, may create agents, and — because of `llm:chat` — **it
-   * can spend the account's Plow credits**: it is the bearer token on the
-   * `chatCompletion` calls that fund adversarial-reviewer inference. It can
-   * touch nothing else on the account.
-   *
-   * `revoke_calling_session` retires the session that authorised this call — the
-   * activation or OTP session — in the same transaction as the mint. That
-   * session carries `keys:manage` and `relay:*`, so it can mint *any* credential
-   * on the account; the app has no reason to hold it past this call, and one
-   * server-side revoke is the only way to be sure it is gone. It also cleans up
-   * the row the login just created, which nothing else supersedes.
-   */
-  async mintDeviceCredential(token: string, name: string): Promise<MintedCredential> {
-    const data = await this.call<{ token: string; key_prefix?: string; name?: string }>(
-      "POST",
-      "/v1/relay/devices",
-      { token, body: { name, revoke_calling_session: true } },
-    );
-    return { token: data.token, keyPrefix: data.key_prefix ?? "", name: data.name ?? name };
-  }
-
-  /**
    * Ask Plow to retire THIS Mac's own credential, authenticating with the
    * credential being retired. Sign-out is the only caller.
    *
@@ -472,8 +453,8 @@ export class PlowApi {
     return { token: data.token, keyPrefix: data.key_prefix ?? "", name: data.name ?? name };
   }
 
-  /** List this account's credential metadata. The device credential carries
-   * `keys:manage`; it remains in the bearer header and is never returned. */
+  /** List this account's credential metadata. The stored credential remains in
+   * the bearer header and is never returned. */
   async listApiKeys(token: string): Promise<KeyInfo[]> {
     return this.call<KeyInfo[]>("GET", "/v1/api-keys", { token });
   }

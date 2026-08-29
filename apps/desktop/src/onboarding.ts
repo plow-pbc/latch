@@ -15,8 +15,15 @@
  * **Nothing here puts a credential in a message.** `state()` is what the
  * sandboxed renderer sees, and the only secret it ever carries is the one the
  * user is meant to read: the activation display code. The activation *secret*
- * and the device credential never appear in it at all.
+ * and the login session never appear in it at all.
  */
+import {
+  chatEchoesCredential,
+  chatPeople,
+  chatRowTitle,
+  usableChatDisplayName,
+  withoutCredentialEchoes,
+} from "./chatRows.js";
 import { ActivationChat, PlowApi, PlowApiError } from "./plowApi.js";
 import { loadSettings, saveSettings, Settings } from "./settings.js";
 
@@ -156,42 +163,15 @@ export function activationChatRecipients(chat: ActivationChat): ChatRecipients {
   };
 }
 
-function usableChatDisplayName(value: string | null, providerKey: string | null = null): string | null {
-  const name = (value ?? "").trim();
-  const handle = (providerKey ?? "").trim();
-  const phoneNumberShaped = /[0-9]/.test(name) && /^[0-9+ (),-]+$/.test(name);
-  if (!name || name === handle || phoneNumberShaped) return null;
-  return name;
-}
 
 export function activationChatLabel(chat: ActivationChat): string {
   const displayName = usableChatDisplayName(chat.displayName);
   if (displayName) return displayName;
-
-  const members = chat.participants
-    .map((participant) => ({
-      name: usableChatDisplayName(participant.displayName, participant.providerKey),
-      handle: (participant.providerKey ?? "").trim(),
-      isOwner: participant.isOwner,
-      isSelf: (participant.displayName ?? "").trim() === "You",
-    }));
-  if (members.some((participant) => participant.name && !participant.isSelf)) {
-    const labels = [
-      ...members.filter((participant) => !participant.isOwner),
-      ...members.filter((participant) => participant.isOwner),
-    ]
-      .filter((participant) => !participant.isSelf)
-      .map((participant) => participant.name ?? participant.handle)
-      .filter(Boolean);
-    if (labels.length) return labels.join(", ");
-  }
-
-  const line = (chat.line ?? "").trim();
-  const handles = members
-    .map((participant) => participant.handle)
-    .filter((handle) => handle && handle !== line);
-  const parts = [line, ...handles].filter(Boolean);
-  return parts.length ? parts.join(", ") : chat.uid;
+  // Presentation is `chatRows`', not this file's: it decides who counts as a
+  // participant, which of them is the owner, and how a number is spelled. This
+  // used to keep a second answer to all three, and the two drifted — the label
+  // dropped the owner while the picker's row named them "You".
+  return chatRowTitle(chatPeople(chat), (chat.line ?? "").trim() || null, chat.uid);
 }
 
 export interface OnboardingState {
@@ -452,20 +432,24 @@ export class Onboarding {
       // sign-out: sign-out CLEARS the credential, so a redeem in flight when the
       // user signed out passed the test and minted — and persisted — a fresh
       // spend-capable credential that the sign-out's revoke had never seen. The
-      // account was left holding a live device credential its owner had just
-      // retired.
+      // account was left holding a live credential its owner had just retired.
       //
       // `activationSecret` is nulled by every path that abandons an activation
       // for good — sign-out, the phone-code fallback, a completed login, the
       // server retiring the code — so it says what "already holding a
       // credential" was only guessing at.
-      const stillOurs = secret === this.activationSecret;
-      if (
-        result.status === "verified" &&
-        result.token &&
-        stillOurs &&
-        !this.settings().relayCredential.trim()
-      ) {
+      // Asked, never cached. `activationSecret` is nulled by every path that
+      // abandons this activation, and the stored credential is cleared by
+      // sign-out — so both halves can change under an await, and this is
+      // re-evaluated on the far side of one rather than read once at the top.
+      const keep = () =>
+        secret === this.activationSecret && !this.settings().relayCredential.trim();
+      // A verified token this Mac will not keep is revoked best-effort. The
+      // redeem answers once, so it must not simply be dropped here.
+      if (result.status === "verified" && result.token && !keep()) {
+        await this.deps.api.revokeDeviceCredential(result.token).catch(() => {});
+      }
+      if (result.status === "verified" && result.token && keep()) {
         this.cancelPolling();
         // The redeem consumed the one-shot completion, so the code is spent
         // whatever happens next: retire it BEFORE the handoff, whose network
@@ -625,6 +609,12 @@ export class Onboarding {
     return this.publish();
   }
 
+  /** Put a fixed main-process notice on the setup screen. */
+  showMessage(message: string): OnboardingState {
+    this.message = message;
+    return this.publish();
+  }
+
   /*
    * There is deliberately no `refresh()` here.
    *
@@ -657,39 +647,42 @@ export class Onboarding {
   }
 
   /**
-   * Learn the account → mint this Mac's credential → connect.
+   * Learn the account → keep the session → connect.
    *
-   * `sessionToken` never leaves this function. It carries `keys:manage` and
-   * `relay:*` — it can mint *any* credential on the account — so the app holds
-   * it for the two calls it needs and not one longer. There is no client-side
-   * cleanup to get wrong: `mintDeviceCredential` retires the session
-   * server-side, in the same transaction as the mint.
+   * The session IS this Mac's credential. Latch is the owner's manager app,
+   * not an agent: it holds the socket, lists chats, mints agents, buys
+   * inference and mints connector tokens, and every surface added to it used
+   * to mean a plow scope change plus a fleet re-pair, because a device
+   * credential's scopes freeze at mint. A session carries `*:*` and expires
+   * only after 180 days unused, refreshed by every request it makes.
+   *
+   * So there is no second step. `POST /v1/relay/devices` — which minted a
+   * narrow credential and spent this session in the same transaction — is
+   * gone; the token the redeem handed back is what gets written.
    */
   private async finishWithSession(
     sessionToken: string,
     chat: ActivationChat | null = null,
   ): Promise<void> {
-    // A sign-out can land inside the awaits below, and it must stay signed
-    // out: minting and persisting past it would hand the account a live
-    // spend-capable credential its owner just retired. `pollGeneration` is
-    // bumped by every path that abandons this login — reset, the phone
-    // fallback, a fresh mint — so it is the epoch to check against.
+    // A sign-out can land inside the await below, and it must stay signed out:
+    // persisting past it would leave the account a live credential its owner
+    // just retired. `pollGeneration` is bumped by every path that abandons this
+    // login — reset, the phone fallback, a fresh mint — so it is the epoch to
+    // check against. One await now rather than two, so one check.
+    //
+    // A sign-out landing inside it takes the session with it. The session is
+    // revoked best-effort, the same contract sign-out keeps.
     const epoch = this.pollGeneration;
     const info = await this.deps.api.relayInfo(sessionToken);
-    if (epoch !== this.pollGeneration) return;
-    const minted = await this.deps.api.mintDeviceCredential(sessionToken, this.deps.deviceName);
     if (epoch !== this.pollGeneration) {
-      // The sign-out landed during the mint itself, so its revoke never saw
-      // this credential. Retire it before it is dropped — best effort, the
-      // same contract sign-out's own revoke keeps.
-      await this.deps.api.revokeDeviceCredential(minted.token).catch(() => {});
+      await this.deps.api.revokeDeviceCredential(sessionToken).catch(() => {});
       return;
     }
 
     // Written 0600 by saveSettings. This is the only copy of the credential and
     // it is never handed to the renderer.
     const settings = this.settings();
-    settings.relayCredential = minted.token;
+    settings.relayCredential = sessionToken;
     settings.accountUid = info.uid;
     settings.mcpUrl = info.mcpUrl;
     // Kept, not read and dropped: the redeem that carried it answers once, so
@@ -697,9 +690,18 @@ export class Onboarding {
     // sign-in with no chat — the phone-code path, or a Mac activated before
     // `provision_chat` — leaves whatever was there alone rather than blanking
     // it, because "this redeem carried no chat" is not "the account has none".
-    if (chat) {
+    // The label is built from the chat's line, uids, numbers and names — all
+    // server-authored, and this is the one place they are written to DISK. A
+    // chat echoing the session token is dropped whole: the sign-in still
+    // completes, and the account's chat list is re-read on the Agents tab
+    // anyway, so nothing is lost but a row nobody could have trusted.
+    if (chat && !chatEchoesCredential(chat, sessionToken)) {
       settings.provisionedChatUid = chat.uid;
-      settings.provisionedChatLabel = activationChatLabel(chat);
+      settings.provisionedChatLabel = activationChatLabel(withoutCredentialEchoes(chat, sessionToken));
+    } else if (chat) {
+      // No detail, and no field values: the point of the check is that one of
+      // them is the credential.
+      this.deps.warn?.("dropped a provisioned chat whose fields echoed the credential");
     }
     // Nothing records `sendTo`. Pairing asks for no chat, so it is the managed
     // phone — the number that takes an activation text, not one anyone can be

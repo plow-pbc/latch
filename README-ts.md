@@ -175,18 +175,18 @@ ready payload that *contains* the job handle. Two hops.
 This Mac dials *out* — it is behind NAT and often asleep. `packages/relay-client`
 holds one WebSocket to the relay and serves what comes down it.
 
-- **The credential is a `relay:device` key minted by first-run login** (below) —
-  nothing is pasted out of a browser. It
+- **The credential is the Plow login session first-run setup was handed**
+  (below) — nothing is pasted out of a browser. It
   travels in the post-challenge `auth` frame, as every plow channel client does
   — never an upgrade header, and **never in a URL**. That rule is absolute:
   credentials in URLs leaked into stored MCP registrations, terminal output,
   logs and shell history in the prototype. `RelayClient` also redacts the
   credential from everything it emits, because an error string from a dependency
   is not ours to audit.
-- **Stored owner-only.** `app/settings.json` is written `0600` and chmod'd on
-  every save, so a file predating that change is repaired. There is still no
-  Keychain or `safeStorage`; 0600 is the floor. The credential is never sent to
-  the renderer — Settings shows only whether one is stored.
+- **Stored owner-only.** The relay credential is sealed with Electron
+  `safeStorage` where available, with a plaintext `0600` fallback.
+  `app/settings.json` is replaced owner-only on every save. The credential is
+  never sent to the renderer — Settings shows only whether one is stored.
 - Heartbeat at or under 15s (the relay's staleness gate is twice that), and a
   server advertising a slower cadence cannot push us past it.
 - Reconnect with **full-jitter** exponential backoff: the delay is uniform in
@@ -221,23 +221,28 @@ Electron, renderable offscreen for screenshots — and `src/plowApi.ts` is the
 only place that talks HTTP to Plow. The window (`renderer/onboarding.html`)
 draws whatever state the main process hands it and owns no copy of its own.
 
-- **Five calls:** `POST /v1/auth/otp/request` → `POST /v1/auth/otp/verify` →
-  `GET /v1/relay/info` → mint the device credential → open the socket. Then
-  "create an agent" is `POST /v1/relay/agents`, which the device credential may
-  call.
-- **The login session is retired server-side the moment the device credential
-  exists.** It carries `keys:manage` and `relay:*` — it can mint *any*
-  credential on the account — so the app holds it for the two calls it needs and
-  not one longer, and never writes it to disk. The retirement is **not** a
-  best-effort client-side revoke: `mintDeviceCredential` sends
-  `revoke_calling_session: true` on `POST /v1/relay/devices`
-  (`apps/desktop/src/plowApi.ts`), and the server retires the calling session in
-  the same transaction as the mint. So there is no client-side cleanup to get
-  wrong, no window where both credentials are live, and nothing for the app to
-  report when it fails — either the mint happened and the session is gone, or
-  neither did. (An earlier note here described a `DELETE /v1/api-keys/{id}` call
-  that could not succeed against its own key; that approach is not what the code
-  does.)
+- **Four calls:** `POST /v1/auth/otp/request` → `POST /v1/auth/otp/verify` →
+  `GET /v1/relay/info` → open the socket. Then "create an agent" is
+  `POST /v1/relay/agents`, which the stored session may call.
+- **The login session IS the credential this Mac keeps.** Latch is the owner's
+  manager app, not an agent: it holds the socket, lists chats and Plow's
+  numbers, mints agents, buys inference and mints connector tokens. It used to
+  spend the session immediately on `POST /v1/relay/devices` — minting a narrow
+  `relay:device` key while `revoke_calling_session: true` retired the session in
+  the same transaction — but scopes freeze at mint (`api/plow/auth.py` in the
+  plow repo), so every surface the app grew meant a plow scope change AND a
+  re-pair of every existing Mac before any of them could use it. `DEVICE_SCOPES`
+  was widened four times that way.
+
+  The session carries the owner's full account authority and expires only after
+  180 days *unused*, refreshed by every request it makes. It is written to
+  `settings.json` (0600) as `relayCredentialEnc` where safeStorage is available,
+  with `relayCredential` as the plaintext fallback, and is never handed to the
+  renderer. Sign-out retires it with `POST /v1/relay/devices/self/revoke`, which
+  accepts a session: its guard is `relay:device`, and a session's wildcard
+  satisfies it. Macs paired before this change keep their narrow credential
+  until they sign out and back in; `GET /v1/lines` is the one surface that
+  refuses them, and says so.
 - **`/otp/request` answers `200 {"ok": true}` for an unknown number, an
   unparseable number and a failed SMS send alike**, so it cannot be used to
   probe whether an account exists. The app therefore cannot tell "sent" from

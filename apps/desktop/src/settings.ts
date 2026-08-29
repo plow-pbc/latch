@@ -3,12 +3,83 @@
  *
  * This file holds a secret — the Plow relay credential — so it is written
  * **owner-only**. It used to be written with no mode at all, which on a shared
- * or backed-up Mac is a plaintext credential anyone could read. There is still
- * no Keychain or `safeStorage` here; 0600 is the floor,
- * not the destination.
+ * or backed-up Mac is a plaintext credential anyone could read. safeStorage
+ * seals it wherever the OS offers a way; 0600 remains the floor for the
+ * plaintext fallback.
  */
 import fs from "node:fs";
 import path from "node:path";
+
+/**
+ * How the credential is encrypted at rest, when the OS offers a way.
+ *
+ * Injected rather than imported: `safeStorage` is Electron's, and this module
+ * is read by the test suite and by `latch-smoke`, neither of which runs
+ * Electron. `main.ts` installs the real one at boot.
+ */
+export interface CredentialCodec {
+  /** Whether the OS keychain can serve right now. False before `app.ready`,
+   * and on a Linux box with no keyring. */
+  available(): boolean;
+  /** Plaintext in, base64 ciphertext out. */
+  encrypt(plain: string): string;
+  /** Base64 ciphertext in, plaintext out. Throws if it cannot. */
+  decrypt(cipher: string): string;
+}
+
+let codec: CredentialCodec | null = null;
+let warnedUnavailable = false;
+
+/** Install the codec. `null` restores plaintext, which is what tests want. */
+export function useCredentialCodec(next: CredentialCodec | null): void {
+  codec = next;
+  warnedUnavailable = false;
+}
+
+function activeCodec(): CredentialCodec | null {
+  if (!codec) return null;
+  try {
+    return codec.available() ? codec : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * One sealed secret read back, or `""` when nothing here can read it.
+ *
+ * A decrypt that fails is not a crash: the keychain entry can be gone after a
+ * restored backup or a new login keychain. The honest answer is that this Mac
+ * does not hold the secret.
+ */
+function unseal(sealed: string): string {
+  const active = activeCodec();
+  if (!active) return "";
+  try {
+    return active.decrypt(sealed);
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * One secret sealed, or `""` when this Mac cannot seal it.
+ *
+ * `available()` answering yes is not a promise that `encrypt` works — the
+ * keychain can lock between the two calls — and a throw escaping here used to
+ * escape `saveSettings`, so a sign-in that had just spent its one-shot redeem
+ * wrote nothing at all and the session it was handed was live on the account
+ * with no copy anywhere. `""` sends the caller to the plaintext this Mac wrote
+ * until yesterday; 0600 is the floor that holds either way.
+ */
+function seal(value: string, active: CredentialCodec | null): string {
+  if (!value || !active) return "";
+  try {
+    return active.encrypt(value);
+  } catch {
+    return "";
+  }
+}
 
 export interface WindowBounds {
   x: number;
@@ -43,9 +114,16 @@ export interface Settings {
    * token silently meaningless and produce an auth error nobody could explain.
    * The old `relayUrl` WebSocket setting is gone with it; the socket is derived
    * from the build's base URL by `relaySocketUrl`. */
-  /** A `relay:device` key, minted by first-run login and never seen by the
-   * user. A SECRET: it is never sent to the renderer and never written to a log
-   * or an error string. */
+  /**
+   * The credential, ENCRYPTED, when the OS offered a way to encrypt it. Only
+   * one of this and `relayCredential` is ever on disk.
+   */
+  relayCredentialEnc?: string;
+  /** The Plow login session this Mac holds, from first-run activation or the
+   * phone-code fallback. It carries the owner's full account authority — Latch
+   * is their manager app, not an agent — and is never seen by the user. A
+   * SECRET: never sent to the renderer, never written to a log or an error
+   * string. */
   relayCredential: string;
   /** The account this Mac is signed into, and the endpoint agents POST to.
    * Both come from `GET /v1/relay/info` — the server stays authoritative and
@@ -150,6 +228,24 @@ export function loadSettings(home: string): Settings {
   delete settings.inferenceProvider;
 
   const loaded = { ...defaults, ...settings };
+  // The encrypted field wins where it exists. A decrypt that fails is treated
+  // as signed out rather than as a crash, and the unreadable value is cleared
+  // below along with the account-local display state.
+  // 0 users; a session that can't be revoked idles out in 180 days; revisit
+  // when there's a fleet.
+  const sealed = typeof loaded.relayCredentialEnc === "string" ? loaded.relayCredentialEnc : "";
+  let unreadableSeal = false;
+  if (sealed) {
+    loaded.relayCredential = unseal(sealed);
+    loaded.relayCredentialEnc = undefined;
+    if (!loaded.relayCredential) {
+      unreadableSeal = true;
+      loaded.accountUid = "";
+      loaded.mcpUrl = "";
+      loaded.provisionedChatUid = "";
+      loaded.provisionedChatLabel = "";
+    }
+  }
   // The spread above copies whatever the file held, and a hand-edited or
   // truncated file can put a non-object — or a `null` — where a record belongs.
   // Every reader of this map indexes it, so normalising once here is what keeps
@@ -172,16 +268,63 @@ export function loadSettings(home: string): Settings {
   // outcome this exists to prevent; every other write in this module propagates
   // too. It happens at most once, because the second read finds nothing to
   // remove.
-  if (retired) saveSettings(home, loaded);
+  // A home written before the codec existed carries plaintext. Rewrite it
+  // sealed on the first read that can — the same one-off shape the retired-key
+  // scrub uses, and for the same reason: waiting for some unrelated write
+  // leaves the plaintext on disk for as long as nobody changes a setting.
+  const needsSealing = !sealed && loaded.relayCredential.trim() !== "" && activeCodec() !== null;
+  if (retired || needsSealing || unreadableSeal) saveSettings(home, loaded);
   return loaded;
 }
 
 export function saveSettings(home: string, settings: Settings): void {
   const file = settingsPath(home);
+  // Encrypted where the OS allows, plaintext where it does not — the file is
+  // 0600 either way, which is what it has always been, so an unavailable
+  // keychain is no worse than yesterday rather than a Mac that cannot sign in.
+  const active = activeCodec();
+  const stored: Record<string, unknown> = { ...settings };
+  const credential = String(stored.relayCredential ?? "").trim();
+  const encrypted = seal(credential, active);
+  if (encrypted) {
+    stored.relayCredentialEnc = encrypted;
+    stored.relayCredential = "";
+  } else {
+    delete stored.relayCredentialEnc;
+  }
+  const credentialInClear = !encrypted && credential !== "";
+  if (credentialInClear && codec && !warnedUnavailable) {
+    warnedUnavailable = true;
+    console.log("[settings] no OS keychain available; credential stored unencrypted (0600)");
+  }
   fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
-  // mode on writeFileSync only applies when the file is created, so chmod
-  // unconditionally — otherwise a file that predates this change keeps its
-  // old permissions forever.
-  fs.writeFileSync(file, JSON.stringify(settings, null, 2) + "\n", { mode: 0o600 });
-  fs.chmodSync(file, 0o600);
+  const temporary = `${file}.tmp`;
+  let descriptor: number | null = null;
+  try {
+    descriptor = fs.openSync(temporary, "w", 0o600);
+    // `mode` only applies when the file is created. A temp left by an interrupted
+    // process is reused, so repair it before any secret bytes are written.
+    fs.fchmodSync(descriptor, 0o600);
+    const contents = Buffer.from(JSON.stringify(stored, null, 2) + "\n");
+    let offset = 0;
+    while (offset < contents.length) {
+      const written = fs.writeSync(descriptor, contents, offset, contents.length - offset);
+      if (written <= 0) throw new Error("settings write made no progress");
+      offset += written;
+    }
+    fs.fsyncSync(descriptor);
+    fs.closeSync(descriptor);
+    descriptor = null;
+    fs.renameSync(temporary, file);
+  } catch (error) {
+    if (descriptor !== null) {
+      try {
+        fs.closeSync(descriptor);
+      } catch {}
+    }
+    try {
+      fs.unlinkSync(temporary);
+    } catch {}
+    throw error;
+  }
 }

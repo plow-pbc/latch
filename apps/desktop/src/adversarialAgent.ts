@@ -475,8 +475,8 @@ export interface ReviewArgs {
    */
   history: JSONValue[];
   /**
-   * The `relay:device` credential. A SECRET: it goes in the `Authorization`
-   * header and nowhere else.
+   * This Mac's stored Plow credential. A SECRET: it goes in the
+   * `Authorization` header and nowhere else.
    */
   plowCredential: string;
   /** Plow API origin, e.g. `https://api.plow.co`. Baked into the build. */

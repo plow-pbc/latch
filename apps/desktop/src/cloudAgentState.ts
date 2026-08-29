@@ -36,6 +36,15 @@ import {
   storedActivationChat,
 } from "./onboarding.js";
 import { PlowApi, PlowApiError, parseActivationChat } from "./plowApi.js";
+import {
+  ChatPerson,
+  ChatRowEntry,
+  chatEchoesCredential,
+  chatPeople,
+  chatRowEntries,
+  chatRowTitle,
+  withoutCredentialEchoes,
+} from "./chatRows.js";
 import { loadSettings } from "./settings.js";
 
 /**
@@ -52,6 +61,44 @@ export function tabShowsCloudAgents(tab: string): boolean {
 }
 
 /** One pickable chat. Display data — the same shape setup already shows. */
+/**
+ * One of Plow's pool numbers, as the "Create a new chat" view shows it.
+ *
+ * `held` is whether one of THIS account's chats already runs on it: a number
+ * the owner has is not one they can start a second chat on, so the screen says
+ * so rather than offering a dead link.
+ */
+export interface CloudLineOption {
+  /** The line's persona name (`Willow`), or null for an unnamed line. */
+  displayName: string | null;
+  /** The number to text. Rendered verbatim, never composed here. */
+  number: string;
+  /** Whether one of THIS account's chats already runs on it. DERIVED in
+   * `state()` from the chats held at that moment — never stored, because the
+   * two reads settle independently and a stored answer is one of them being
+   * wrong. */
+  held: boolean;
+}
+
+/**
+ * A chat as the picker renders it: the option plus its formatted row.
+ *
+ * Built in `state()` rather than by the client, because an entry's label needs
+ * the LINE's persona name and only the line list carries that.
+ */
+export interface CloudChatRow extends CloudChatOption {
+  /** One position per entry, name and number together — what the renderer
+   * draws. Empty for a chat with neither a line nor participants. */
+  entries: ChatRowEntry[];
+  /** The same row as one string, for the tooltip and for the fallback chat,
+   * which has no entries to draw. */
+  title: string;
+  /** The persona name of the line this chat runs on, when Plow's list names
+   * it. Sorting is by this first, so every chat on one number sits together
+   * without needing a group header to say so. */
+  lineName: string | null;
+}
+
 export interface CloudChatOption {
   uid: string;
   label: string;
@@ -65,6 +112,10 @@ export interface CloudChatOption {
    * whatever it can find in the label.
    */
   recipients: ChatRecipients | null;
+  /** The humans in this chat, with names and which one is the owner — what
+   * `chatRows.ts` builds the title and subtitle from. Empty for the settings
+   * fallback chat, which persists no participants. */
+  people: ChatPerson[];
 }
 
 /**
@@ -95,7 +146,7 @@ export interface CloudAgentsUiState {
   /** Agent ids whose chat-set save is in flight or being reconciled. */
   cloudAgentEditsPending: string[];
   cloudAgentEditsSaving: string[];
-  cloudChats: CloudChatOption[];
+  cloudChats: CloudChatRow[];
   /**
    * A chat-list attempt SUCCEEDED — even if it returned nothing.
    *
@@ -105,6 +156,10 @@ export interface CloudAgentsUiState {
    * its re-activate prompt; the second keeps the roster and shows the error.
    */
   cloudChatsLoaded: boolean;
+  /** Plow's numbers, once asked for. `null` until the modal asks — this is not
+   * fetched on tab activation, because only one screen shows it. */
+  cloudLines: CloudLineOption[] | null;
+  cloudLinesError: string | null;
   /**
    * The number to text, from this Mac's activation — the server's `send_to`,
    * never one the app chose. `null` on a Mac that activated before it was kept,
@@ -143,6 +198,8 @@ export interface CloudChatsApi {
 export interface CloudAgentStateDeps {
   agents: CloudAgentsApi;
   chats: CloudChatsApi;
+  /** Plow's pool numbers, for the "Create a new chat" view. */
+  lines?: { list(credential: string): Promise<Omit<CloudLineOption, "held">[]> };
   home: string;
   onChange?: () => void;
 }
@@ -214,6 +271,9 @@ export class CloudAgentState {
    * read landed".
    */
   private chatsSettled: Promise<void> = Promise.resolve();
+  /** As the server listed them, with no `held` — see `CloudLineOption`. */
+  private lines: Omit<CloudLineOption, "held">[] | null = null;
+  private linesError: string | null = null;
   /** Agents whose stuck delete is being retried right now — one at a time each. */
   private tearingDown = new Set<string>();
 
@@ -229,8 +289,32 @@ export class CloudAgentState {
       cloudActionError: this.actionError,
       cloudAgentEditsPending: [...this.editsPending],
       cloudAgentEditsSaving: [...this.editsSaving],
-      cloudChats: this.chats,
+      // Rows are FORMATTED here, not in the renderer: naming a participant,
+      // spelling a number and deciding which one is the owner's are rules, and
+      // rules belong somewhere testable. `chatRows.ts` owns them.
+      cloudChats: this.chats.map((chat) => {
+        const line = chat.recipients?.line ?? null;
+        const named = this.lines?.find((row) => row.number === line) ?? null;
+        return {
+          ...chat,
+          lineName: named?.displayName ?? null,
+          entries: chatRowEntries(line, named?.displayName ?? null, chat.people),
+          title: chatRowTitle(chat.people, line, chat.label || chat.uid, named?.displayName ?? null),
+        };
+      }),
       cloudChatsLoaded: this.chatsLoaded,
+      // Computed HERE, on every read, from whichever chat list is current.
+      // Storing it at fetch time raced: the chat read and the line read settle
+      // independently, so whichever landed second left the other's answer
+      // stale — lines fetched before the chats meant a number the owner
+      // already held was offered as free.
+      //
+      // And withheld entirely until the chats HAVE landed. `held` is a claim
+      // about this account's chats; with none read, every line looks free, and
+      // the screen would offer an Open Messages button for a number the owner
+      // already has a thread on. Unknown is not the same as none.
+      cloudLines: this.chatsLoaded && this.lines ? markHeldLines(this.lines, this.chats) : null,
+      cloudLinesError: this.linesError,
     };
   }
 
@@ -266,6 +350,30 @@ export class CloudAgentState {
       await chats;
     }
     if (generation === this.generation) this.publish();
+  }
+
+  /**
+   * Ask Plow which numbers exist, for the screen that tells the owner to text
+   * one. Deliberately NOT part of `refresh`: one view needs it, and every tab
+   * activation would pay for it.
+   */
+  async refreshLines(): Promise<void> {
+    const credential = this.credential();
+    if (!credential || !this.deps.lines) return;
+    const generation = this.generation;
+    try {
+      const lines = await this.deps.lines.list(credential);
+      if (generation !== this.generation) return;
+      this.lines = lines;
+      this.linesError = null;
+    } catch (error) {
+      if (generation !== this.generation) return;
+      // The list is unknown, not empty: `cloudLines` stays null so the screen
+      // shows the error instead of "there are no numbers".
+      this.lines = null;
+      this.linesError = messageOf(error);
+    }
+    this.publish();
   }
 
   /**
@@ -419,6 +527,8 @@ export class CloudAgentState {
    * to the account that just went away.
    */
   signedOut(): void {
+    this.lines = null;
+    this.linesError = null;
     this.generation += 1;
     this.tearingDown.clear();
     // Before the rows go: these polls are authorised with a credential that is
@@ -696,7 +806,7 @@ function storedChats(home: string): CloudChatOption[] {
   const chat = storedActivationChat(loadSettings(home));
   // No recipients: settings keep a uid and a label, never the participants. The
   // chat is still offered so setup works, but it cannot be messaged.
-  return chat ? [{ ...chat, recipients: null }] : [];
+  return chat ? [{ ...chat, recipients: null, people: [] }] : [];
 }
 
 /**
@@ -744,6 +854,29 @@ function messageOf(error: unknown): string {
  * the activation redeem already returns, so the parse and the label are shared
  * with setup rather than written twice.
  */
+/**
+ * The `{ data: [...] }` envelope both list endpoints answer with, decoded.
+ *
+ * One reading, because they had two that differed only in the sentence: a body
+ * that is not JSON and a body whose `data` is not an array are the same
+ * failure — the server did not send a list — and a decoder that treats them
+ * differently in one place and not the other is a difference nobody chose.
+ */
+async function readListRows(response: Response, invalid: string): Promise<unknown[]> {
+  let decoded: unknown = null;
+  try {
+    decoded = await response.json();
+  } catch {
+    decoded = null;
+  }
+  const rows =
+    decoded && typeof decoded === "object" && Array.isArray((decoded as { data?: unknown }).data)
+      ? (decoded as { data: unknown[] }).data
+      : null;
+  if (!rows) throw new PlowApiError("http", invalid, response.status);
+  return rows;
+}
+
 export class CloudChatsClient implements CloudChatsApi {
   constructor(private readonly api: PlowApi) {}
 
@@ -770,30 +903,109 @@ export class CloudChatsClient implements CloudChatsApi {
       throw new PlowApiError("http", `Plow returned ${response.status}.`, response.status);
     }
 
-    let decoded: unknown = null;
-    try {
-      decoded = await response.json();
-    } catch {
-      decoded = null;
-    }
-    const rows =
-      decoded && typeof decoded === "object" && Array.isArray((decoded as { data?: unknown }).data)
-        ? ((decoded as { data: unknown[] }).data)
-        : null;
-    if (!rows) throw new PlowApiError("http", "Plow returned an invalid chat list.", response.status);
+    const rows = await readListRows(response, "Plow returned an invalid chat list.");
 
     return rows
       .map((raw) => parseActivationChat(raw))
       .filter((chat): chat is NonNullable<typeof chat> => chat !== null)
-      .map((chat) => {
-        const safe = {
-          ...chat,
-          displayName: echoesCredential(chat.displayName ?? "", deviceCredential) ? null : chat.displayName,
-          participants: chat.participants.map((member) => echoesCredential(
-            member.displayName ?? "", deviceCredential,
-          ) ? { ...member, displayName: null } : member),
-        };
-        return { uid: chat.uid, label: activationChatLabel(safe), recipients: activationChatRecipients(safe) };
+      .flatMap((chat) => {
+        // EVERY server-authored string on this row is scanned — the uid, the
+        // line, each participant's number and name — not just the names: all
+        // of them cross into the renderer through `state()`, as a row title, a
+        // subtitle and an `sms:` target. A name can be blanked and the row
+        // still means something; an identifier cannot, so the row is DROPPED.
+        //
+        // `chatEchoesCredential` is the one rule, shared with the redeem that
+        // persists the label — which had no check at all until it was the same
+        // function.
+        if (chatEchoesCredential(chat, deviceCredential)) return [];
+
+        const safe = withoutCredentialEchoes(chat, deviceCredential);
+        return [{
+          uid: chat.uid,
+          label: activationChatLabel(safe),
+          recipients: activationChatRecipients(safe),
+          people: chatPeople(safe),
+        }];
       });
   }
+}
+
+/**
+ * `GET /v1/lines` — every pool number the service has, so the owner can be
+ * told which one to text.
+ *
+ * Reachable because Latch stores the login session: the route gates on
+ * `chats:use`, which a session's `*:*` satisfies and the narrow device
+ * credential older Macs still hold does not. That is what the 403 below is
+ * about, and why its sentence names signing in again.
+ */
+/**
+ * E.164, which is what plow's lines are: a leading `+`, a non-zero country
+ * digit, and at most fifteen digits total. Deliberately strict — this string
+ * ends up in an `sms:` URL, so anything that is not plainly a phone number is
+ * not a phone number.
+ */
+const E164 = /^\+[1-9]\d{1,14}$/;
+
+export class CloudLinesClient {
+  constructor(private readonly api: PlowApi) {}
+
+  async list(credential: string): Promise<Omit<CloudLineOption, "held">[]> {
+    const response = await this.api.request("GET", "/v1/lines", { token: credential });
+
+    if (response.status === 403) {
+      // A Mac paired before this app kept the session holds a credential whose
+      // scopes froze at mint, and no amount of retrying widens them. Signing in
+      // again is the whole remedy, so the sentence says exactly that.
+      throw new PlowApiError("forbidden", "Sign in again to see Plow numbers.", 403);
+    }
+    if (response.status === 401) throw new PlowApiError("unauthorized", "Not authorized.", 401);
+    if (!response.ok) {
+      throw new PlowApiError("http", `Plow returned ${response.status}.`, response.status);
+    }
+
+    const rows = await readListRows(response, "Plow returned an invalid number list.");
+
+    // FAILS CLOSED, row by row. A line with no number is one nobody can text,
+    // and rendering it would put a blank where the whole instruction lives; a
+    // malformed row is dropped, not defaulted — the rule the chat list keeps.
+    return rows.flatMap((raw) => {
+      if (!raw || typeof raw !== "object") return [];
+      const row = raw as { provider_key?: unknown; display_name?: unknown };
+      const number = typeof row.provider_key === "string" ? row.provider_key.trim() : "";
+      const name = typeof row.display_name === "string" ? row.display_name.trim() : "";
+      // The number is E.164 or the row is dropped. It is not only rendered —
+      // it is matched in `smsLineUrl` and becomes the recipient of an `sms:`
+      // URL, so an arbitrary server-authored string reaching here is a string
+      // reaching the user's Messages app. A shape check is what keeps "the
+      // server said so" from being the whole authorisation.
+      // The NUMBER identifies a line here — it is what the row renders, what
+      // `smsLineUrl` matches, and what a held chat is compared against. `uid`
+      // was parsed, required and never read.
+      if (!E164.test(number)) return [];
+      // The credential must not come back out through ANY server-authored
+      // field, in any encoding. `uid` and `provider_key` are as server-authored
+      // as the name is; a row echoing one is refused outright rather than
+      // blanked, because there is nothing safe left to show of it.
+      if (echoesCredential(number, credential)) return [];
+      const safeName = name && !echoesCredential(name, credential) ? name : null;
+      return [{ displayName: safeName, number }];
+    });
+  }
+}
+
+/** Which of these numbers the account already has a chat on. Matched on the
+ * chat's own line, which is the only place the association is recorded. */
+export function markHeldLines(
+  lines: readonly Omit<CloudLineOption, "held">[],
+  chats: readonly CloudChatOption[],
+): CloudLineOption[] {
+  const held = new Set(
+    chats.flatMap((chat) => {
+      const line = chat.recipients?.line?.trim();
+      return line ? [line] : [];
+    }),
+  );
+  return lines.map((line) => ({ ...line, held: held.has(line.number) }));
 }

@@ -23,7 +23,38 @@
  *
  * `recipients: null` on a stray, deliberately: we do not know the numbers, and
  * the checklist must not invent them.
+ *
+ * A stray carries `title`/`subtitle` too, so the row renderer reads the same
+ * two fields for every row rather than falling through to `label` for some of
+ * them. The title is the stored label and the subtitle is EMPTY — a chat the
+ * account list did not return has no participants and no line to format, and
+ * an empty second line is the honest way to say so.
  */
+/**
+ * The order both chat lists are shown in: by the line each chat runs on, then
+ * by the row's own title.
+ *
+ * A plain sort rather than group headers — the account has a handful of
+ * numbers, and a header per number costs more rows than it saves. Chats on one
+ * line end up adjacent anyway, which is the whole point.
+ *
+ * Locale-aware, because these are names people read, and STABLE, because the
+ * server's order is the tiebreak we already trust. A chat whose line is
+ * unnamed sorts last: an empty string first would put the least identifiable
+ * rows at the top.
+ */
+export function sortChatRows(chats) {
+  const compare = new Intl.Collator(undefined, { sensitivity: "base", numeric: true });
+  return [...(chats ?? [])].sort((a, b) => {
+    const lineA = (a.lineName ?? "").trim();
+    const lineB = (b.lineName ?? "").trim();
+    if (!lineA !== !lineB) return lineA ? -1 : 1;
+    const byLine = compare.compare(lineA, lineB);
+    if (byLine !== 0) return byLine;
+    return compare.compare(a.title ?? "", b.title ?? "");
+  });
+}
+
 export function editorChats(agent, cloudChats) {
   const chats = [...(cloudChats ?? [])];
   const known = new Set(chats.map((chat) => chat.uid));
@@ -32,7 +63,8 @@ export function editorChats(agent, cloudChats) {
   served.forEach((uid, index) => {
     if (!uid || known.has(uid)) return;
     known.add(uid);
-    chats.push({ uid, label: labels[index] || uid, recipients: null });
+    const label = labels[index] || uid;
+    chats.push({ uid, label, recipients: null, people: [], title: label, subtitle: "", lineName: null });
   });
   return chats;
 }

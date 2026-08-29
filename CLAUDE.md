@@ -64,8 +64,11 @@ Integration coverage, which owns that list.
   never becomes a verdict, an audit record, or anything the renderer is shown —
   in any encoding. A relay auth-failure reason never reaches a log or callback.**
   Describe the guarantee here and leave the mechanism to the code — naming the
-  mechanism of the day is how this line goes stale. `settings.json` holds it and is
-  written `0600`; the renderer is never given it.
+  mechanism of the day is how this line goes stale. `settings.json` holds it and
+  is written `0600`, encrypted at rest wherever the OS offers a way and in the
+  clear where it does not — the file permission is the floor that always holds,
+  and the encryption is what is added on top of it, never instead. Describe it
+  that way and leave the mechanism to the code. The renderer is never given it.
 
 - **Capabilities are built on this Mac, from tool arguments.** An agent never
   sends a capability set or an intent — it calls a tool, and `mcp-server`

@@ -61,6 +61,7 @@ export function setAgentPurpose(home: string, purpose: unknown): string {
 export function signOutOfPlow(home: string): void {
   update(home, (s) => {
     s.relayCredential = "";
+    s.relayCredentialEnc = undefined;
     s.accountUid = "";
     s.mcpUrl = "";
     // Account data, not device data: the next sign-in may be a different
@@ -97,10 +98,10 @@ export function isSignedIn(home: string): boolean {
  *
  * The revoke is BEST EFFORT, deliberately. Offline, API down, route not
  * deployed, any error at all: the local clear has already happened and sign-out
- * reports success. **Completing the revoke across a quit is explicitly NOT
+ * logs one fixed sentence, with no server text or credential. **Completing the
+ * revoke across a quit is explicitly NOT
  * guaranteed** — if the user quits while it is in flight, the credential stays
- * live on the account until it is retired by other means. That is an accepted
- * risk for this stage, not an oversight; it is tracked in domo-desktop#21.
+ * live on the account until it idles out or is retired by other means.
  *
  * `revoke` is injected for one reason: it is what makes "sign-out always clears
  * locally, even when the revoke fails" executable by a test. `main.ts` cannot
@@ -110,16 +111,16 @@ export function isSignedIn(home: string): boolean {
 export async function revokeAndSignOut(
   home: string,
   revoke: (credential: string) => Promise<unknown>,
-): Promise<void> {
+): Promise<boolean> {
   const credential = (loadSettings(home).relayCredential ?? "").trim();
   signOutOfPlow(home);
-  if (!credential) return;
+  if (!credential) return true;
   try {
     await revoke(credential);
+    return true;
   } catch {
-    // Deliberately swallowed, and deliberately not logged: the failure is not
-    // actionable here, and the only interesting value in scope is the
-    // credential itself.
+    console.warn("[settings] session revoke failed; already signed out locally");
+    return false;
   }
 }
 

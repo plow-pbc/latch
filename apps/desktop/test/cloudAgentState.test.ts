@@ -17,6 +17,8 @@ import {
   CloudChatOption,
   CloudChatsApi,
   CloudChatsClient,
+  CloudLinesClient,
+  markHeldLines,
 } from "../src/cloudAgentState.js";
 import {
   ChatSetConflictError,
@@ -70,7 +72,21 @@ function agent(
   } as CloudAgentResource;
 }
 
-const CHATS: CloudChatOption[] = [{ uid: "cht_1", label: "+15550100 · Ada" }];
+/**
+ * One pickable chat, typed. `recipients: null` and `people: []` are what the
+ * fallback chat really carries, so the defaults are a real shape rather than a
+ * convenient one — and the factory is what keeps a literal from quietly
+ * omitting a required field and forcing a `?? []` in production code.
+ */
+const chat = (overrides: Partial<CloudChatOption> = {}): CloudChatOption => ({
+  uid: "cht_1",
+  label: "+15550100 · Ada",
+  recipients: null,
+  people: [],
+  ...overrides,
+});
+
+const CHATS: CloudChatOption[] = [chat()];
 
 /** Let every already-scheduled continuation run — a cancelled poll rejects a
  * turn after the call that cancelled it returns. */
@@ -169,7 +185,7 @@ describe("a refresh whose chat read is superseded", () => {
     // returned there would hand its caller the list from before the text that
     // sent the owner to this screen, and the modal would show no new chat.
     const gates: Array<() => void> = [];
-    const answers = [[], [{ uid: "cht_new", label: "+15550001111" }]];
+    const answers = [[], [chat({ uid: "cht_new", label: "+15550001111" })]];
     const f = fakes({
       list: async () => [],
       chats: () =>
@@ -223,6 +239,8 @@ describe("before anything has been read", () => {
       cloudAgentEditsSaving: [],
       cloudChats: [],
       cloudChatsLoaded: false,
+      cloudLines: null,
+      cloudLinesError: null,
       cloudChatsNeedReactivation: false,
     });
   });
@@ -318,11 +336,10 @@ describe("the numbers a chat can be messaged on", () => {
       fakes({
         list: async () => [agent({ chatUids: ["cht_1"] })],
         chats: async () => [
-          {
-            uid: "cht_1",
+          chat({
             label: "+15550100, +15550111, +15550122",
             recipients: { line: "+15550100", members: ["+15550111", "+15550122"] },
-          },
+          }),
         ],
       }),
     );
@@ -347,11 +364,10 @@ describe("the numbers a chat can be messaged on", () => {
         create: async () => agent({ chatUids: ["cht_1"], status: "provisioning" }),
         poll: async () => held.promise,
         chats: async () => [
-          {
-            uid: "cht_1",
-            label: "+15550100, +15550111",
+          chat({
+            label: "+15550100 · +15550111",
             recipients: { line: "+15550100", members: ["+15550111"] },
-          },
+          }),
         ],
       }),
     );
@@ -396,11 +412,7 @@ describe("the numbers a chat can be messaged on", () => {
         chats: async () => {
           if (failing) throw new PlowApiError("network", "Couldn't reach Plow.");
           return [
-            {
-              uid: "cht_1",
-              label: "+15550100 · Ada",
-              recipients: { line: "+15550100", members: ["+15550111"] },
-            },
+            chat({ recipients: { line: "+15550100", members: ["+15550111"] } }),
           ];
         },
       }),
@@ -433,16 +445,57 @@ describe("the numbers a chat can be messaged on", () => {
       CREDENTIAL,
     );
 
-    expect(chats).toEqual([
+    expect(chats).toMatchObject([
       {
         uid: "cht_1",
         // Labels put non-owners first, while addressing keeps the parser's
         // owner-first participant order.
-        label: "Ada, Grace",
+        // The label is the row title now: the line, then the people.
+        label: "+15550100 · You · Ada",
         recipients: { line: "+15550100", members: ["+15550122", "+15550111"] },
       },
     ]);
   });
+
+  it("drops a CHAT row whose participant number echoes the credential", async () => {
+    // A number is as server-authored as a name, and it crosses into the
+    // renderer through `state()` — as a title, a subtitle and an sms: target.
+    // Blanking is not an option for an identifier, so the row goes.
+    const echoing = {
+      uid: "cht_bad",
+      line: "+15550100",
+      status: "active",
+      created_at: "2026-08-24T18:02:11Z",
+      participants: [
+        { type: "member", provider_key: CREDENTIAL.slice(0, 12), display_name: "Ada", role: "member" },
+      ],
+    };
+    const fetchImpl = async () =>
+      new Response(JSON.stringify({ data: [echoing, chatRow] }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+
+    const chats = await new CloudChatsClient(new PlowApi("https://api.plow.co", fetchImpl)).list(
+      CREDENTIAL,
+    );
+
+    expect(chats.map((c) => c.uid)).toEqual(["cht_1"]);
+    expect(JSON.stringify(chats)).not.toContain(CREDENTIAL.slice(0, 10));
+  });
+
+  it("drops a CHAT row whose own uid echoes the credential", async () => {
+    const fetchImpl = async () =>
+      new Response(JSON.stringify({ data: [{ ...chatRow, uid: `cht_${CREDENTIAL.slice(0, 12)}` }] }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    const chats = await new CloudChatsClient(new PlowApi("https://api.plow.co", fetchImpl)).list(
+      CREDENTIAL,
+    );
+    expect(chats).toEqual([]);
+  });
+
 });
 
 describe("the activation chat fallback", () => {
@@ -459,7 +512,7 @@ describe("the activation chat fallback", () => {
       d.reject(new PlowApiError("network", "Couldn't reach Plow."))],
     ["success", (d: ReturnType<typeof deferred<CloudChatOption[]>>) => d.resolve(CHATS)],
   ])("a late %s never displaces the newer read", async (_ending, finish) => {
-    const newest = [{ uid: "cht_2", label: "+15550188 · Family" }];
+    const newest = [chat({ uid: "cht_2", label: "+15550188 · Family" })];
     const slow = deferred<CloudChatOption[]>();
     let first = true;
     const state = build(
@@ -597,8 +650,8 @@ describe("the activation chat fallback", () => {
         chats: async () => {
           if (failing) throw new PlowApiError("http", "Plow returned 500.", 500);
           return [
-            { uid: "cht_1", label: "+15550100 · Ada" },
-            { uid: "cht_2", label: "+15550188 · Family" },
+            chat(),
+            chat({ uid: "cht_2", label: "+15550188 · Family" }),
           ];
         },
       }),
@@ -791,7 +844,7 @@ describe("the credential boundary", () => {
     await state.refresh();
     const marshalled = JSON.stringify(state.state());
 
-    expect(state.state().cloudChats[0].label).toBe("+15550100, +15550111");
+    expect(state.state().cloudChats[0].label).toBe("+15550100 · +15550111");
     expect(marshalled).not.toContain(CREDENTIAL);
     expect(marshalled).not.toContain(SESSION);
     expect(marshalled).not.toContain("sessionId");
@@ -991,9 +1044,18 @@ describe("a 403 from the real chat endpoint", () => {
     // The activation chat, offered so this is not a dead end — but the list
     // itself did not come back, and `cloudChatsLoaded` still says so.
     // The fallback chat, offered so this is not a dead end — with no
-    // recipients, because settings never persisted the participants.
+    // recipients and no participants, because settings never persisted them,
+    // so the title falls back to the stored label and nothing is addressable.
     expect(shown.cloudChats).toEqual([
-      { uid: "cht_1", label: "+15550100 · Ada", recipients: null },
+      {
+        uid: "cht_1",
+        label: "+15550100 · Ada",
+        recipients: null,
+        people: [],
+        title: "+15550100 · Ada",
+        entries: [],
+        lineName: null,
+      },
     ]);
     // The agent list is fine, and must not be blamed for this.
     expect(shown.cloudAgentsError).toBeNull();
@@ -1039,10 +1101,7 @@ describe("changing which chats an agent serves", () => {
         served = [...chatUids];
         return agent({ chatUids: [...served] });
       },
-      chats: async () => [
-        { uid: "cht_1", label: "+15550100 · Ada", recipients: null },
-        { uid: "cht_2", label: "+15550200 · Bo", recipients: null },
-      ],
+      chats: async () => [chat(), chat({ uid: "cht_2", label: "+15550200 · Bo" })],
     });
     const state = build(tempHome(), f);
     await state.refresh();
@@ -1319,5 +1378,147 @@ describe("CloudChatsClient", () => {
       kind: "network",
       message: "Couldn't reach Plow at https://api.plow.co.",
     });
+  });
+});
+
+describe("Plow's pool numbers", () => {
+  const lineRow = { uid: "lin_1", object: "line", provider_type: "imessage", provider_key: "+15550001111", display_name: "Willow" };
+  const linesClient = (body: unknown, status = 200) =>
+    new CloudLinesClient(
+      new PlowApi("https://api.plow.co", async () =>
+        new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } })),
+    );
+
+  it("reads the LineListResponse shape off the wire", async () => {
+    const lines = await linesClient({ data: [lineRow], has_more: false, url: "/v1/lines" }).list(CREDENTIAL);
+    // No `held`: it is derived at read time from whichever chat list is
+    // current, never stored beside the line.
+    expect(lines).toEqual([{ displayName: "Willow", number: "+15550001111" }]);
+  });
+
+  it("drops a row it cannot render rather than showing a blank", async () => {
+    // A line with no number is one nobody can text, and the number IS the
+    // instruction on that screen. An unnamed line is fine — plow allows it.
+    const lines = await linesClient({
+      data: [
+        lineRow,
+        { provider_key: "" },
+        { provider_key: 15550003333 },
+        "not an object",
+        null,
+        { provider_key: "+15550004444" },
+      ],
+    }).list(CREDENTIAL);
+
+    expect(lines.map((l) => l.number)).toEqual(["+15550001111", "+15550004444"]);
+    expect(lines[1]).toEqual({ displayName: null, number: "+15550004444" });
+  });
+
+  it.each([
+    ["not a number at all", "hello"],
+    ["a number with no plus", "15550001111"],
+    ["a leading zero country code", "+05550001111"],
+    ["longer than E.164 allows", "+1234567890123456"],
+    ["too short to be a line", "+1"],
+    ["separators plow does not send", "+1 (555) 000-1111"],
+    ["an sms: URL smuggled in", "+15550001111?&body=wire%20me%20money"],
+    ["a newline and a second number", "+15550001111\n+15559999999"],
+  ])("refuses a provider_key that is %s", async (_why, provider_key) => {
+    // This string is not only rendered — `smsLineUrl` matches it and it becomes
+    // the RECIPIENT of an sms: URL in the owner's Messages app. "The server
+    // said so" is not the whole authorisation; the shape check is.
+    const lines = await linesClient({ data: [{ provider_key }] }).list(CREDENTIAL);
+    expect(lines).toEqual([]);
+  });
+
+  it("refuses a body that is not a list at all", async () => {
+    await expect(linesClient({ lines: [lineRow] }).list(CREDENTIAL)).rejects.toThrow(
+      /invalid number list/,
+    );
+  });
+
+  it("tells a Mac holding an older credential to sign in again", async () => {
+    // `GET /v1/lines` gates on `chats:use`. A session has it; the narrow device
+    // credential an older pairing minted does not, and scopes freeze at mint —
+    // so retrying never widens them and signing in again is the whole remedy.
+    const error = (await linesClient({ detail: "nope" }, 403).list(CREDENTIAL).catch((e) => e)) as PlowApiError;
+    expect(error.kind).toBe("forbidden");
+    expect(error.message).toBe("Sign in again to see Plow numbers.");
+  });
+
+  it("never lets a server-authored name echo the credential back", async () => {
+    const lines = await linesClient({
+      data: [{ ...lineRow, display_name: CREDENTIAL.slice(0, 12) }],
+    }).list(CREDENTIAL);
+    expect(lines[0]!.displayName).toBeNull();
+    expect(JSON.stringify(lines)).not.toContain(CREDENTIAL.slice(0, 12));
+  });
+  it("withholds the numbers until the chat list has landed", async () => {
+    // `held` is a claim about THIS account's chats. With none read, every line
+    // looks free, and the screen would offer an Open Messages button for a
+    // number the owner already has a thread on. Unknown is not none.
+    const f = fakes({ list: async () => [], chats: () => { throw new Error("no chats"); } });
+    const state = new CloudAgentState({
+      agents: f.agents,
+      chats: f.chats,
+      lines: { list: async () => [{ displayName: "Willow", number: "+15550001111" }] },
+      home: tempHome(),
+    });
+
+    await state.refreshLines();
+    expect(state.state().cloudLines).toBeNull();
+
+    await state.refresh();
+    expect(state.state().cloudChatsLoaded).toBe(false);
+    expect(state.state().cloudLines).toBeNull();
+  });
+
+  it("marks held numbers whichever read lands last", async () => {
+    // The chat read and the line read settle independently. Storing `held` at
+    // fetch time meant whichever landed SECOND left the other's answer stale:
+    // lines fetched before the chats offered a number the owner already held
+    // as free, with an Open Messages button that would start nothing.
+    const home = tempHome();
+    const f = fakes({
+      list: async () => [],
+      chats: async () => [
+        chat({ label: "x", recipients: { line: "+15550001111", members: [] } }),
+      ],
+    });
+    const state = new CloudAgentState({
+      agents: f.agents,
+      chats: f.chats,
+      lines: { list: async () => [{ displayName: "Willow", number: "+15550001111" }] },
+      home,
+    });
+
+    // Lines FIRST, with no chats read yet: withheld, because "held" is a claim
+    // about chats nobody has read.
+    await state.refreshLines();
+    expect(state.state().cloudLines).toBeNull();
+
+    // The chats land second and the SAME line is now held — without a second
+    // line fetch, because the answer is derived rather than stored.
+    await state.refresh();
+    expect(state.state().cloudLines).toEqual([
+      { displayName: "Willow", number: "+15550001111", held: true },
+    ]);
+  });
+
+  it("marks the numbers this account already has a chat on", async () => {
+    const marked = markHeldLines(
+      [
+        { displayName: "Willow", number: "+15550001111" },
+        { displayName: null, number: "+15550002222" },
+      ],
+      [
+        chat({ label: "x", recipients: { line: "+15550002222", members: [] } }),
+        chat({ uid: "cht_2", label: "y" }),
+      ],
+    );
+    expect(marked.map((l) => [l.number, l.held])).toEqual([
+      ["+15550001111", false],
+      ["+15550002222", true],
+    ]);
   });
 });

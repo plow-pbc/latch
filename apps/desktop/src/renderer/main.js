@@ -15,6 +15,7 @@ import {
   makeHome,
   pickChat,
   sameChatSet,
+  sortChatRows,
 } from "./chatSets.js";
 import { el, icon } from "./dom.js";
 import { renderVault, vaultConfirmLeave } from "./vault.js";
@@ -26,6 +27,7 @@ const statusText = document.getElementById("statusText");
 const CLOUD_PROVIDERS = [
   { value: "exe:hermes", label: "Hermes" },
   { value: "exe:life", label: "Life" },
+  { value: "exe:pirate", label: "Pirate" },
 ];
 
 // Null until boot() picks one: the HTML marks Audit active for the first paint,
@@ -928,7 +930,7 @@ function cloudChatHolders(state, exceptAgentId = null) {
   const holders = new Map();
   const claim = (uid, name) => {
     if (!uid || holders.has(uid)) return;
-    holders.set(uid, name || "another agent");
+    holders.set(uid, name || "a cloud agent");
   };
   for (const agent of visibleCloudAgents(state)) {
     if (agent.agentId === exceptAgentId) continue;
@@ -985,11 +987,32 @@ function chatChecklist({ chats, holders, selected = [], onChange }) {
       onChange?.();
     });
 
-    // The label already holds the best available title, member names or
-    // numbers. The only second line worth printing is why it cannot be had.
-    const main = el("div", { class: "chat-option-main" }, [
-      el("div", { class: "chat-option-name", text: chat.label || chat.uid }),
-    ]);
+    // One column per entry: the name on top, the number it belongs to
+    // directly under it. The pairing is structural — each is one <span> — so
+    // nothing here depends on two strings having the same number of positions,
+    // which is what a server-supplied name containing the separator broke.
+    // The line leads, because two chats can carry the same names and only the
+    // number an agent here would answer from tells them apart.
+    const flat = chat.title || chat.label || chat.uid;
+    const name = el("div", {
+      class: "chat-option-name chat-row-entries",
+      attrs: { title: flat },
+    });
+    const entries = chat.entries || [];
+    if (entries.length) {
+      entries.forEach((entry, index) => {
+        if (index) name.appendChild(el("span", { class: "chat-entry-sep", text: "·" }));
+        name.appendChild(el("span", { class: "chat-entry" }, [
+          el("span", { class: "chat-entry-label", text: entry.label }),
+          el("span", { class: "chat-entry-number", text: entry.number }),
+        ]));
+      });
+    } else {
+      // Nothing to pair: the settings fallback chat persists a label and
+      // neither a line nor participants.
+      name.appendChild(el("span", { class: "chat-entry-label", text: flat }));
+    }
+    const main = el("div", { class: "chat-option-main" }, [name]);
     if (taken) {
       main.appendChild(el("div", { class: "chat-option-note", text: `Served by ${heldBy}` }));
     }
@@ -1033,20 +1056,6 @@ function chatChecklist({ chats, holders, selected = [], onChange }) {
   };
 }
 
-function verifiedCloudLines(chats) {
-  const seen = new Set();
-  return chats.flatMap((chat) => {
-    const line = chat?.recipients?.line?.trim();
-    const key = cloudPhoneDigits(line);
-    if (!line || !key || seen.has(key)) return [];
-    seen.add(key);
-    return [line];
-  });
-}
-
-function cloudPhoneDigits(number) {
-  return String(number ?? "").replace(/\D/g, "");
-}
 
 function openCloudPicker(trigger, state, redraw) {
   const name = el("input", { class: "text", attrs: { placeholder: "Cloud agent", "aria-label": "Agent name" } });
@@ -1059,7 +1068,7 @@ function openCloudPicker(trigger, state, redraw) {
   const create = el("button", { class: "btn primary", text: "Set up agent" });
 
   const checklist = chatChecklist({
-    chats: state.cloudChats,
+    chats: sortChatRows(state.cloudChats),
     holders: cloudChatHolders(state),
     onChange: () => syncPicker(),
   });
@@ -1151,32 +1160,56 @@ function openCloudPicker(trigger, state, redraw) {
     if (!panel) return;
     const back = el("button", { class: "btn", text: "Back" });
     back.addEventListener("click", showPicker);
-    // Every number this Mac knows of: the lines its own chats run on, which is
-    // the only source that cannot be wrong. `verifiedCloudLines` already
-    // de-duplicates and drops the unusable.
-    const known = verifiedCloudLines(state.cloudChats);
     // There is deliberately NO "Verify a new Plow number" button here.
     //
     // It used to open the setup window, which on a Mac that is already signed
     // in lands on its "connected" screen and mints nothing — the owner clicked
     // it and got a confirmation of the sign-in they already had. Getting a chat
     // does not go through activation at all: the user texts a Plow number and
-    // Plow makes the chat. So this screen says that, and offers a control only
-    // where there is a number to act on.
+    // Plow makes the chat. So this screen says that, and lists the numbers.
+    // FREE lines only. A number the account already has a chat on is already
+    // on the screen behind this one, as that chat — listing it again with a
+    // "you have this" marker was the same fact twice, and the row carried no
+    // action either way.
+    const free = (state.cloudLines ?? []).filter((line) => !line.held);
     const body = [
-      el("p", { class: "faint conn-note", text: "Make another chat available here." }),
       el("p", {
-        class: "faint",
-        text: 'From your phone, text "new agent" to a Plow number. Plow starts the chat, and it appears here when you reopen this window.',
+        class: "faint conn-note",
+        text: "Message a number to create a thread. It appears here when you reopen this window.",
       }),
     ];
-    if (known.length) {
-      body.push(
-        el("p", { class: "faint", text: "Numbers this Mac knows about:" }),
-        el("ul", { class: "cloud-route-numbers" }, known.map((line) =>
-          el("li", { class: "cloud-route-number mono", text: line })
-        )),
-      );
+    if (state.cloudLinesError) {
+      body.push(el("p", { class: "cloud-error", text: state.cloudLinesError }));
+    } else if (state.cloudChatsError) {
+      // The numbers are withheld until the chat list lands, because "held" is a
+      // claim about this account's chats. Saying why beats a spinner that never
+      // resolves.
+      body.push(el("p", { class: "cloud-error", text: state.cloudChatsError }));
+    } else if (!state.cloudLines) {
+      body.push(el("p", { class: "faint", text: "Loading numbers…" }));
+    } else if (!free.length) {
+      // Distinct from "Plow has none": every number exists and is spoken for,
+      // and the remedy is the owner's to take on the screen behind this one.
+      body.push(el("p", {
+        class: "faint",
+        // NOT "remove an agent": an agent and its chat are different things,
+        // and removing the agent leaves the chat — and so the line — exactly
+        // as spoken for. Plow's own `DELETE /v1/chats/{uid}` even refuses
+        // while an agent still points at the chat. Latch has no delete-a-chat
+        // surface, so the remedy names where one is.
+        text: "All Plow numbers are in use. Deactivate a chat in Plow to free one.",
+      }));
+    } else {
+      body.push(el("ul", { class: "cloud-route-numbers" }, free.map((line) => {
+        // Every string here is server-authored and set as textContent.
+        const label = el("div", { class: "cloud-line-name" }, [
+          ...(line.displayName ? [el("span", { text: line.displayName }), document.createTextNode(" ")] : []),
+          el("span", { class: "mono", text: line.number }),
+        ]);
+        const open = el("button", { class: "btn small", text: "Open Messages…" });
+        open.addEventListener("click", () => window.domo.openExternal("smsLine", line.number));
+        return el("li", { class: "cloud-route-number" }, [label, open]);
+      })));
     }
     panel.replaceChildren(
       el("div", { class: "group-title", text: "Create a new chat" }),
@@ -1209,7 +1242,7 @@ function openCloudEditor(trigger, agent, state, redraw) {
   // served chat, `chosen()` omits it, and Save is live on open to detach a chat
   // the person was never shown.
   const checklist = chatChecklist({
-    chats: editorChats(agent, state.cloudChats),
+    chats: sortChatRows(editorChats(agent, state.cloudChats)),
     holders: cloudChatHolders(state, agent.agentId),
     selected: baseline,
     onChange: () => syncEditor(),

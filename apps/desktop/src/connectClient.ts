@@ -233,9 +233,8 @@ export class ConnectClient {
   /**
    * Mint a static credential for one client.
    *
-   * Authorised with this Mac's **device** credential: `relay:device` may create
-   * agents, and it is the only credential the app still holds — the login
-   * session was retired server-side the moment it was used.
+   * Authorised with this Mac's stored credential — the login session itself,
+   * which may create agents.
    */
   async createCredential(name: string): Promise<ConnectClientState> {
     // SINGLE-FLIGHT. Every mint is a long-lived credential on the account, and

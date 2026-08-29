@@ -815,3 +815,25 @@ textarea.text { min-height: 70px; resize: vertical; }
 .item .revealed p { margin: 6px 0 0; }
 /* What the selected mode does, where the purpose field would otherwise be. */
 .item p.mode-hint { margin: 10px 0 0; }
+
+.cloud-route-numbers li.cloud-route-number {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+}
+.cloud-line-name { display: flex; align-items: baseline; gap: 6px; }
+.cloud-route-number.held .cloud-line-name { color: var(--muted); }
+/* One chat row's entries. Each `.chat-entry` is a column — the name over the
+   number it belongs to — so the pairing is the layout rather than two strings
+   a reader lines up by counting. `baseline` puts the separators on the name
+   line; `nowrap` + `hidden` keeps a many-person thread to one row, with the
+   flat title as its tooltip. */
+.chat-row-entries {
+  display: flex; align-items: baseline; gap: 5px;
+  flex-wrap: nowrap; overflow: hidden;
+}
+.chat-entry { display: inline-flex; flex-direction: column; min-width: 0; }
+.chat-entry-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-entry-number {
+  color: var(--muted); font-size: 11px; font-weight: 400; margin-top: 2px;
+  white-space: nowrap;
+}
+.chat-entry-sep { color: var(--muted); font-weight: 400; flex: none; }

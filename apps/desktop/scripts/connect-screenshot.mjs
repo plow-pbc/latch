@@ -44,11 +44,34 @@ const CHAT = {
     line: "+14155550142",
     members: ["+14155550193", "+16285550112"],
   },
+  people: [
+    { number: "+14155550193", name: null, isOwner: true },
+    { number: "+16285550112", name: "Robin", isOwner: false },
+  ],
+  // Formatted by `chatRows.ts` in the real main process; the fixture carries
+  // the finished entries the same way it carries the finished label. One per
+  // position, name and number together — the row draws them as paired spans.
+  title: "Willow · You · Robin",
+  entries: [
+    { label: "Willow", number: "+1 415-555-0142" },
+    { label: "You", number: "+1 415-555-0193" },
+    { label: "Robin", number: "+1 628-555-0112" },
+  ],
 };
 const FAMILY_CHAT = {
   uid: "chat_family",
   label: "+1 (415) 555-0188 · Family group",
-  recipients: { line: "+14155550188", members: [] },
+  recipients: { line: "+14155550188", members: ["+14155550193"] },
+  // A real chat always has the owner in it. A line with nobody on it is a
+  // shape the API does not hand over, and a fixture that invents one draws a
+  // row the app cannot produce — the number printed twice, once as its own
+  // stand-in name.
+  people: [{ number: "+14155550193", name: null, isOwner: true }],
+  title: "+1 415-555-0188 · You",
+  entries: [
+    { label: "+1 415-555-0188", number: "+1 415-555-0188" },
+    { label: "You", number: "+1 415-555-0193" },
+  ],
 };
 const ACTIVE_AGENT = {
   agentId: "cag_groceries",
@@ -139,6 +162,11 @@ const CLOUD_EMPTY = {
   cloudActionError: null,
   cloudChats: [],
   cloudChatsLoaded: true,
+  cloudLines: [
+    { displayName: "Willow", number: "+14155550142", held: true },
+    { displayName: null, number: "+16285550177", held: false },
+  ],
+  cloudLinesError: null,
 };
 const CLOUD_READY = {
   ...CLOUD_EMPTY,
@@ -451,8 +479,10 @@ const SCREENS = [
     expect: [
       "Set up a cloud agent",
       "Choose the chats this agent will read and reply in",
-      "Provider", "Hermes", "Life",
-      CHAT.label,
+      "Provider", "Hermes", "Life", "Pirate",
+      // The row names its people, each over the number they are — so the text
+      // is the entries' own halves, not two joined strings.
+      ...CHAT.entries.flatMap((entry) => [entry.label, entry.number]),
       "★ Home",
       "This changes 1 chat permanently",
       "Removing the agent later will not restore them",
@@ -474,11 +504,11 @@ const SCREENS = [
       "Create a new chat",
       // The whole instruction: a chat is made by texting a Plow number, not by
       // running activation again.
-      'text "new agent" to a Plow number',
+      "Message a number to create a thread",
       "reopen this window",
-      "Numbers this Mac knows about:",
-      "+14155550142",
-      "+14155550188",
+      // Only the FREE number: +14155550142 is held, so it is absent here and
+      // present on the screen behind as its own chat.
+      "+16285550177",
     ],
   },
   {
@@ -526,6 +556,7 @@ const SCREENS = [
       cloudAgents: [{
         ...ACTIVE_AGENT,
         recipients: { line: null, members: CHAT.recipients.members },
+    people: CHAT.people ?? [],
       }],
       cloudAgentsError: "Method Not Allowed",
       cloudChatsError: "This Mac cannot list chats yet. Try re-activating it, then try again.",

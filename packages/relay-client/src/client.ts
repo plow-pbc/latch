@@ -31,7 +31,14 @@ export type ServeRequest = (request: Request, auth?: RelayAuth) => Promise<Respo
 export interface RelayClientOptions {
   /** The relay's device endpoint, e.g. `wss://api.plow.co/v1/relay/ws`. */
   url: string;
-  /** A `relay:device` key. Sent only in the auth frame; never logged. */
+  /**
+   * The credential this Mac holds — today the owner's Plow login session.
+   *
+   * The socket asks for one thing: a scope covering `relay:device`, which a
+   * session's wildcard satisfies (`check_scope` in plow's `auth.py`). It does
+   * NOT require a device row, and the socket binds to the USER uid rather than
+   * a device identity. Sent only in the auth frame; never logged.
+   */
   credential: string;
   /** Where a tunnelled request goes. */
   serve: ServeRequest;

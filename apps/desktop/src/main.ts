@@ -12,7 +12,7 @@
  *     HTML, and the enforceable bound shown is the capability set the sandbox
  *     is derived from — not the goal text.
  */
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, screen, shell, systemPreferences, Tray } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, safeStorage as electronSafeStorage, screen, shell, systemPreferences, Tray } from "electron";
 import electronUpdater from "electron-updater";
 import fs from "node:fs/promises";
 import { createRequire } from "node:module";
@@ -39,12 +39,12 @@ import { devIconScript } from "./devIcon.js";
 import { migrateLegacyHome } from "./migrateHome.js";
 import { buildMinter, vendorDirs } from "./providerWiring.js";
 import { resolveInstancePaths } from "./paths.js";
-import { loadSettings, saveSettings, WindowBounds } from "./settings.js";
+import { loadSettings, saveSettings, useCredentialCodec, WindowBounds } from "./settings.js";
 import { PlowApi, relaySocketUrl, resolveApiBaseUrl } from "./plowApi.js";
 import { Onboarding } from "./onboarding.js";
 import { ConnectClient } from "./connectClient.js";
 import { CloudAgentsClient } from "./cloudAgents.js";
-import { CloudAgentState, CloudChatsClient, tabShowsCloudAgents } from "./cloudAgentState.js";
+import { CloudAgentState, CloudChatsClient, CloudLinesClient, tabShowsCloudAgents } from "./cloudAgentState.js";
 import { cloudAgentMessagesUrl } from "./cloudAgentMessages.js";
 import { loggingFetch } from "./wireLog.js";
 import { WindowGate } from "./windowGate.js";
@@ -479,7 +479,7 @@ ipcMain.handle("settings:getRelay", async () => {
  * credential takes the Plow reviewer with it, and retiring Adversarial mode is
  * part of that same write.
  */
-function signOut(): void {
+function signOut() {
   // `signOutOfPlow` rather than blanking the fields inline: losing the Plow
   // credential takes the Plow reviewer with it, and retiring Adversarial mode
   // is part of that same write.
@@ -497,7 +497,7 @@ function signOut(): void {
   // activation screen needs. `begin` covers the already-open case; it is
   // idempotent, so between them exactly one code is minted.
   gate.sync();
-  void onboarding?.begin();
+  return onboarding?.begin();
 }
 
 /**
@@ -516,17 +516,21 @@ async function signOutThisMac(): Promise<void> {
   // over the one the user may have just texted.
   if (!isSignedIn(home)) return;
   // Started first: it clears the stored credential synchronously, before its
-  // own first await, so everything below already sees a signed-out Mac. What it
-  // returns is only the best-effort revoke, which nothing else waits on.
+  // own first await, so everything below already sees a signed-out Mac.
   const revoking = revokeAndSignOut(home, (credential) =>
     new PlowApi(apiBaseUrl).revokeDeviceCredential(credential),
   );
   // The one place that resets the app's state, shared with the relay's
   // auth-failed path. It also drops connect-a-client's shown-once credential,
   // which a click has exactly as much reason to clear as a revocation does.
-  signOut();
+  const beginning = signOut();
   await startRelay();
-  await revoking;
+  await beginning;
+  if (!(await revoking)) {
+    onboarding?.showMessage(
+      "Signed out on this Mac. Plow could not be reached to revoke the session — revoke it in Plow's account settings.",
+    );
+  }
 }
 
 ipcMain.handle("settings:signOut", async () => signOutThisMac());
@@ -577,9 +581,28 @@ const EXTERNAL_URLS: Readonly<Record<string, string>> = Object.freeze({
   fullDiskSettings: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles",
 });
 
+/**
+ * The `sms:` draft for one of Plow's numbers, or "" when the renderer named a
+ * number the server did not list.
+ *
+ * The body is a greeting, not a command: the thread is what matters, and Plow
+ * makes it from the message arriving.
+ */
+function smsLineUrl(lines: readonly { number: string }[], number: string): string {
+  const wanted = number.trim();
+  if (!wanted || !lines.some((line) => line.number === wanted)) return "";
+  return `sms:${wanted}?&body=${encodeURIComponent("Hi!")}`;
+}
+
 ipcMain.handle("external:open", async (_e, key: string, detail?: string) => {
   const url = key === "cloudAgentMessages"
     ? cloudAgentMessagesUrl(cloudAgents?.state().cloudAgents ?? [], detail ?? "")
+    // A Plow number, drafted with the text that makes a chat. Main composes
+    // the URL and will not take one: `detail` has to BE a number the server
+    // listed, matched against `cloudLines`, so the renderer names a row rather
+    // than handing over a destination.
+    : key === "smsLine"
+    ? smsLineUrl(cloudAgents?.state().cloudLines ?? [], detail ?? "")
     : EXTERNAL_URLS[key];
   if (!url) return false;
   await shell.openExternal(url);
@@ -600,7 +623,9 @@ ipcMain.handle("connect:get", async () => agentsTabState());
  * the modal opens through this, and awaits it.
  */
 ipcMain.handle("cloud:refresh", async () => {
-  await cloudAgents?.refresh();
+  // Both, and together: the modal shows the chat list AND the numbers to text
+  // when there is none, so opening it must have asked for each.
+  await Promise.all([cloudAgents?.refresh(), cloudAgents?.refreshLines()]);
   return agentsTabState();
 });
 ipcMain.handle("connect:create", async (_e, name: string) => {
@@ -1006,7 +1031,7 @@ async function startRelay(): Promise<void> {
     onAuthFailed: () => {
       console.log("[relay] credential rejected; signing out");
       connected = false;
-      signOut();
+      void signOut();
       notifyRenderer("status:changed");
     },
     // RelayClient redacts the credential from everything it emits; this is the
@@ -1034,6 +1059,19 @@ app.whenReady().then(async () => {
   // setName at the top of this file). From here on the name is the product's,
   // for every menu, window and tray item built below.
   app.setName(instance.appName);
+  // Encrypt the stored credential at rest, under the SAME frozen Keychain
+  // identity the vault uses — installed here because that identity is now
+  // latched and because nothing has read settings yet this process.
+  //
+  // `settings.json` was already 0600, so this defends a backup or a second
+  // admin account, not the owner's own processes: `safeStorage` decrypts for
+  // anything running as them. It matters more than it did, because the stored
+  // credential is the owner's login session rather than a scoped device key.
+  useCredentialCodec({
+    available: () => electronSafeStorage.isEncryptionAvailable(),
+    encrypt: (plain) => electronSafeStorage.encryptString(plain).toString("base64"),
+    decrypt: (cipher) => electronSafeStorage.decryptString(Buffer.from(cipher, "base64")),
+  });
   // The dialog answers; the store writes down what was asked before it is
   // asked, so a pending approval is a record on disk rather than only a promise
   // in memory. It also bounds the wait: an approval nobody answers expires and
@@ -1113,7 +1151,6 @@ app.whenReady().then(async () => {
     // handed to this — see Onboarding's callers of `warn`.
     warn: (message) => console.log(`[onboarding] ${message}`),
   });
-
   // Built first: the roster's removal routing needs the cloud-agent client,
   // because a row with an `agent_id` must be deleted as an agent and never
   // revoked as a key.
@@ -1141,6 +1178,7 @@ app.whenReady().then(async () => {
     // that account is the only one there is.
     agents: cloudAgentsClient,
     chats: new CloudChatsClient(cloudApi),
+    lines: new CloudLinesClient(cloudApi),
     home,
     onChange: () => notifyRenderer("connect:changed"),
   });

@@ -189,8 +189,29 @@ describe("this Mac's own credential", () => {
       { deviceCredential: DEVICE_CREDENTIAL },
     );
 
-    expect(sections.mcp.find((row) => row.id === 1)?.isThisMac).toBe(true);
-    expect(sections.mcp.find((row) => row.id === 2)?.isThisMac).toBe(false);
+    // Searched across sections: this Mac's row is a Session, so it sits with
+    // the other sessions rather than among the MCP clients.
+    const rows = [...sections.mcp, ...sections.other];
+    expect(rows.find((row) => row.id === 1)?.isThisMac).toBe(true);
+    expect(rows.find((row) => row.id === 2)?.isThisMac).toBe(false);
+  });
+
+  it("is a Session, not a leftover, whatever its scopes read", () => {
+    // This Mac holds the login session now — `*:*`, which is exactly the shape
+    // `rosterKind` calls "Legacy — full access". The screen was labelling the
+    // credential it is running on as something to clean up.
+    const sections = sectionRoster(
+      [
+        key({ id: 1, scopes: ["*:*"], key_prefix: keyPrefixOf(DEVICE_CREDENTIAL) }),
+        key({ id: 2, scopes: ["*:*"], key_prefix: keyPrefixOf("plow_sk_zzz999_someone_elses") }),
+      ],
+      { deviceCredential: DEVICE_CREDENTIAL },
+    );
+
+    const rows = [...sections.mcp, ...sections.other];
+    expect(rows.find((row) => row.id === 1)).toMatchObject({ kind: "Session", isThisMac: true });
+    // Another account credential with the same scopes is still a leftover.
+    expect(rows.find((row) => row.id === 2)).toMatchObject({ kind: "Legacy — full access" });
   });
 
   it("marks nothing when two rows would both match", () => {

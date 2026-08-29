@@ -58,7 +58,7 @@ export interface RosterSectionRow {
   chatAccess: ChatAccess;
   permissions: RosterPermissions;
   /**
-   * This Mac's own device credential.
+   * This Mac's own stored credential.
    *
    * Revoking it signs this Mac out, so the screen has to say so before the
    * click. Matched on the key prefix, which is the only part of a credential
@@ -186,7 +186,11 @@ export function sectionRoster(
     const placed: RosterSectionRow = {
       id: key.id,
       name: key.name,
-      kind: rosterKind(key.scopes),
+      // This Mac's own row is a Session, whatever its scopes say. It holds the
+      // login session now, which is `*:*` — the same shape `rosterKind` reads
+      // as "Legacy — full access", so the screen labelled the credential it is
+      // running on as a leftover to clean up.
+      kind: key.id === thisMacId ? "Session" : rosterKind(key.scopes),
       createdAt: key.created_at,
       lastSeenAt: key.last_seen_at,
       agentId: key.agent_id,

@@ -125,22 +125,6 @@ describe("PlowApi", () => {
     expect((error as PlowApiError).message).toBe("Plow didn't answer in time. Try again.");
   });
 
-  it("passes a timeout signal on every request, not just the ones we remembered", async () => {
-    const seen: Array<string | undefined> = [];
-    const fetchImpl = async (_url: string, init?: RequestInit) => {
-      seen.push(init?.signal ? "signal" : undefined);
-      return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
-    };
-    const api = new PlowApi("https://api.plow.co", fetchImpl);
-    await api.requestOtp("+1");
-    await api.createActivation("Mac");
-    await api.redeemActivation("s").catch(() => {});
-    await api.relayInfo("t");
-    await api.mintDeviceCredential("t", "Mac");
-    await api.createAgent("t", "a");
-
-    expect(seen).toEqual(Array(6).fill("signal"));
-  });
 
   it("turns an unreachable API into a readable message, not a stack", async () => {
     const fetchImpl = async () => {
@@ -183,22 +167,6 @@ describe("PlowApi", () => {
     expect((calls[0].init.headers as Record<string, string>).authorization).toBe("Bearer plow_secret");
   });
 
-  it("mints this Mac's credential and retires the calling session in the same call", async () => {
-    const { calls, fetchImpl } = recordingFetch([
-      { status: 200, body: { token: "plow_devicetok", key_prefix: "devicet", name: "Plow Latch" } },
-    ]);
-    await new PlowApi("https://api.plow.co", fetchImpl).mintDeviceCredential("plow_session", "Plow Latch");
-
-    expect(calls[0].url).toBe("https://api.plow.co/v1/relay/devices");
-    // The flag is the whole reason there is no client-side cleanup: the session
-    // that authorised this call can mint any credential on the account, and it
-    // is gone server-side before this returns.
-    expect(JSON.parse(String(calls[0].init.body))).toEqual({
-      name: "Plow Latch",
-      revoke_calling_session: true,
-    });
-    expect(calls[0].url).not.toContain("plow_session");
-  });
 
   it("starts an activation and hands back the code, the secret and where to text it", async () => {
     const { calls, fetchImpl } = recordingFetch([

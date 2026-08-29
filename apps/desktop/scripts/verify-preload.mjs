@@ -81,6 +81,18 @@ const cloudChat = {
     line: "+14155550142",
     members: ["+14155550193", "+16285550112"],
   },
+  people: [
+    { number: "+14155550193", name: null, isOwner: true },
+    { number: "+16285550112", name: "Robin", isOwner: false },
+  ],
+  title: "Willow · You · Robin",
+  // One entry per position, name and number in the same object — what the row
+  // draws as paired spans.
+  entries: [
+    { label: "Willow", number: "+1 415-555-0142" },
+    { label: "You", number: "+1 415-555-0193" },
+    { label: "Robin", number: "+1 628-555-0112" },
+  ],
 };
 const cloudAgent = {
   agentId: "cag_probe",
@@ -132,6 +144,11 @@ let cloudProbe = {
   cloudAgentEditsPending: [],
   cloudChats: [cloudChat],
   cloudChatsLoaded: true,
+  cloudLines: [
+    { displayName: "Willow", number: "+14155550142", held: false },
+    { displayName: null, number: "+16285550177", held: false },
+  ],
+  cloudLinesError: null,
 };
 const cloudCalls = { create: [], editChats: [] };
 let cloudEditPending = false;
@@ -165,6 +182,13 @@ let cloudRefreshCalls = 0;
 // lets a test change the backing list and prove the reopen fetched it.
 ipcMain.handle("cloud:refresh", async () => {
   cloudRefreshCalls += 1;
+  // Main marks held lines from the chats it just read; the fake does the same
+  // so the probe sees what the screen will.
+  const held = new Set(cloudProbe.cloudChats.flatMap((c) => (c.recipients?.line ? [c.recipients.line] : [])));
+  cloudProbe = {
+    ...cloudProbe,
+    cloudLines: (cloudProbe.cloudLines ?? []).map((l) => ({ ...l, held: held.has(l.number) })),
+  };
   return agentsTabProbeState();
 });
 ipcMain.handle("cloud:create", async (_e, chatUids, name, provider) => {
@@ -696,7 +720,7 @@ app.whenReady().then(async () => {
     const createButton = () => [...document.querySelectorAll(".cloud-modal button")]
       .find((node) => node.textContent.trim() === "Set up agent");
     const homeLabels = () => [...document.querySelectorAll(".cloud-modal .home-toggle.on")]
-      .map((node) => node.closest(".chat-option").querySelector(".chat-option-name").textContent);
+      .map((node) => node.closest(".chat-option").querySelector(".chat-option-name").title);
     const settle = () => new Promise((resolve) => setTimeout(resolve));
 
     const emptyDisables = createButton().disabled;
@@ -878,7 +902,7 @@ app.whenReady().then(async () => {
   await waitFor(win, `document.querySelector(".cloud-modal .chat-list")`, "the editor with a stray chat");
   const cloudEditStray = await win.webContents.executeJavaScript(`(${() => {
     const options = [...document.querySelectorAll(".cloud-modal .chat-option")].map((row) => ({
-      name: row.querySelector(".chat-option-name").textContent,
+      name: row.querySelector(".chat-option-name").title,
       checked: row.querySelector("input").checked,
     }));
     const stray = options.find((option) => option.name.includes("Old thread"));
@@ -899,11 +923,13 @@ app.whenReady().then(async () => {
   // A three-chat agent whose server order is not the account list's order. The
   // checklist orders by the list; index-for-index called that a change, so Save
   // opened alive and one click restarted the agent to tell it what it knew.
+  // Titles as `state()` would build them, because the rows are now SORTED for
+  // display and the checkbox order is no longer the fixture's array order.
   const reorderedChats = [
     cloudChat,
-    { uid: "chat_family", label: "+1 (415) 555-0188 · Family group", recipients: { line: "+14155550188", members: [] } },
-    { uid: "chat_book", label: "+1 (510) 555-0133 · Book club", recipients: { line: "+15105550133", members: [] } },
-    { uid: "chat_new", label: "+1 (510) 555-0144 · New chat", recipients: { line: "+15105550144", members: [] } },
+    { uid: "chat_family", label: "+1 (415) 555-0188 · Family group", title: "Family group", entries: [], lineName: null, people: [], recipients: { line: "+14155550188", members: [] } },
+    { uid: "chat_book", label: "+1 (510) 555-0133 · Book club", title: "Book club", entries: [], lineName: null, people: [], recipients: { line: "+15105550133", members: [] } },
+    { uid: "chat_new", label: "+1 (510) 555-0144 · New chat", title: "New chat", entries: [], lineName: null, people: [], recipients: { line: "+15105550144", members: [] } },
   ];
   cloudProbe = {
     ...cloudProbe,
@@ -931,17 +957,26 @@ app.whenReady().then(async () => {
     const settle = () => new Promise((resolve) => setTimeout(resolve));
     const save = () => [...document.querySelectorAll(".cloud-modal button")]
       .find((node) => node.textContent.trim() === "Save changes");
-    const boxes = () => [...document.querySelectorAll(".cloud-modal .chat-option input")];
-    const allChecked = boxes().slice(0, 3).every((box) => box.checked) && !boxes()[3].checked;
+    // Rows are SORTED for display, so a box is found by the chat it belongs to
+    // rather than by position — the two orders are deliberately independent.
+    const boxFor = (title) => [...document.querySelectorAll(".cloud-modal .chat-option")]
+      .find((row) => row.querySelector(".chat-option-name")?.title.trim() === title)
+      ?.querySelector("input");
+    const served = ["Willow · You · Robin", "Book club", "Family group"];
+    const allChecked = served.every((title) => boxFor(title)?.checked === true)
+      && boxFor("New chat")?.checked === false;
     const deadOnOpen = save().disabled;
     // A real change still wakes it, and undoing that change puts it back.
-    boxes()[1].click();
+    // Family group specifically: unchecking and rechecking APPENDS it (that is
+    // `pickChat`), so the saved order becomes home, book, family — which is
+    // what `retainedServerOrder` below pins.
+    boxFor("Family group").click();
     await settle();
     const liveAfterChange = !save().disabled;
-    boxes()[1].click();
+    boxFor("Family group").click();
     await settle();
     const deadAgain = save().disabled;
-    boxes()[3].click();
+    boxFor("New chat").click();
     await settle();
     save().click();
     return { allChecked, deadOnOpen, liveAfterChange, deadAgain };
@@ -1014,7 +1049,7 @@ app.whenReady().then(async () => {
   await waitFor(win, `document.querySelector(".cloud-modal .chat-list")`, "the activation-chat fallback checklist");
   cloudForbidden.offersActivationChat = await win.webContents.executeJavaScript(
     `[...document.querySelectorAll(".cloud-modal .chat-option-name")]
-      .some((name) => name.textContent.trim() === ${JSON.stringify("+1 (415) 555-0142, +1 (415) 555-0193, +1 (628) 555-0112")})`,
+      .some((name) => name.title.trim() === "Willow · You · Robin")`,
   );
   await win.webContents.executeJavaScript(
     `[...document.querySelectorAll(".cloud-modal button")].find((button) => button.textContent.trim() === "Cancel").click()`,
@@ -1085,13 +1120,17 @@ app.whenReady().then(async () => {
     const labels = [...document.querySelectorAll(".cloud-modal button")]
       .map((button) => button.textContent.trim());
     return {
-      saysTextANumber: text.includes('text "new agent" to a Plow number'),
+      saysTextANumber: text.includes("Message a number to create a thread"),
       saysReopen: text.includes("reopen this window"),
       // The dead route is gone: it opened the setup window, which on a
       // signed-in Mac lands on "connected" and mints nothing.
       noVerifyButton: !labels.includes("Verify a new Plow number"),
-      // No number is known, so nothing is offered to act on.
-      noNumbersList: !document.querySelector(".cloud-modal .cloud-route-numbers"),
+      // Plow's numbers, with the persona name where there is one.
+      listsNamedLine: text.includes("Willow") && text.includes("+14155550142"),
+      listsUnnamedLine: text.includes("+16285550177"),
+      // Every free line gets the one control that acts on it.
+      opensMessages: [...document.querySelectorAll(".cloud-modal .cloud-route-number button")]
+        .filter((b) => b.textContent.trim() === "Open Messages…").length === 2,
     };
   }})()`);
   // Back to the picker, then out: "Back" leaves the explainer, "Cancel" closes.
@@ -1112,8 +1151,48 @@ app.whenReady().then(async () => {
   );
   await waitFor(win, `document.querySelector(".cloud-modal .chat-list")`, "the checklist after a chat arrived");
   cloudZeroChatGuidance.reopenAsked = cloudRefreshCalls > refreshesBefore;
+  // The chat that arrived, named by its PEOPLE — the line is deliberately not
+  // in the title any more, so this looks for the participants.
   cloudZeroChatGuidance.reopenShowsNewChat = await win.webContents.executeJavaScript(
-    `[...document.querySelectorAll(".cloud-modal .chat-option-name")].some((n) => n.textContent.includes("555-0142"))`,
+    `[...document.querySelectorAll(".cloud-modal .chat-option-name")].some((n) => n.title === "Willow · You · Robin")`,
+  );
+  // The row: participants in the title (owner as "You", line excluded), and
+  // The pair, read STRUCTURALLY: each name and the number it belongs to are
+  // one <span class="chat-entry"> in the DOM, so nothing has to line up two
+  // strings by counting positions.
+  cloudZeroChatGuidance.chatRowShowsLine = await win.webContents.executeJavaScript(`(${() => {
+    const row = document.querySelector(".cloud-modal .chat-option-name");
+    const entries = [...(row?.querySelectorAll(".chat-entry") ?? [])].map((entry) => [
+      entry.querySelector(".chat-entry-label")?.textContent ?? "",
+      entry.querySelector(".chat-entry-number")?.textContent ?? "",
+    ]);
+    return JSON.stringify(entries) === JSON.stringify([
+      ["Willow", "+1 415-555-0142"],
+      ["You", "+1 415-555-0193"],
+      ["Robin", "+1 628-555-0112"],
+    ])
+      // Every entry has both halves — a name with no number under it is the
+      // shape the old two-string row could produce.
+      && entries.every(([label, number]) => label && number)
+      // ...and the flat form is still there for the tooltip.
+      && row?.title === "Willow · You · Robin";
+  }})()`);
+  // ...and that number is now held, so the explainer offers it no button.
+  await win.webContents.executeJavaScript(
+    `[...document.querySelectorAll(".cloud-modal button")].find((b) => b.textContent.trim() === "New chat…")?.click()`,
+  );
+  cloudZeroChatGuidance.dropsHeldLine = await win.webContents.executeJavaScript(`(${() => {
+    const rows = [...document.querySelectorAll(".cloud-modal .cloud-route-number")];
+    // The held number is not listed at all — it is on the screen behind this
+    // one, as the chat itself. The free one is, with its one control.
+    return !rows.some((r) => r.textContent.includes("+14155550142"))
+      && rows.length === 1
+      && !!rows[0].textContent.includes("+16285550177")
+      && !!rows[0].querySelector("button")
+      && !document.querySelector(".cloud-modal").innerText.includes("already have a chat");
+  }})()`);
+  await win.webContents.executeJavaScript(
+    `[...document.querySelectorAll(".cloud-modal button")].find((b) => b.textContent.trim() === "Back")?.click()`,
   );
   await win.webContents.executeJavaScript(
     `[...document.querySelectorAll(".cloud-modal button")].find((b) => b.textContent.trim() === "Cancel")?.click()`,
@@ -1805,9 +1884,13 @@ app.whenReady().then(async () => {
     cloudZeroChatGuidance.saysTextANumber &&
     cloudZeroChatGuidance.saysReopen &&
     cloudZeroChatGuidance.noVerifyButton &&
-    cloudZeroChatGuidance.noNumbersList &&
+    cloudZeroChatGuidance.listsNamedLine &&
+    cloudZeroChatGuidance.listsUnnamedLine &&
+    cloudZeroChatGuidance.opensMessages &&
     cloudZeroChatGuidance.reopenAsked &&
     cloudZeroChatGuidance.reopenShowsNewChat &&
+    cloudZeroChatGuidance.chatRowShowsLine &&
+    cloudZeroChatGuidance.dropsHeldLine &&
     cloudServerDetail.preserved &&
     cloudServerDetail.notReplaced &&
     settings.hasAccountGroup &&

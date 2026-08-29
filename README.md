@@ -63,9 +63,9 @@ actually permits. The audit log is append-only. See DESIGN.md §8.
 Agent identity used to be an agent-held Ed25519 key pinned at access-grant time;
 it is now asserted by the relay, which authenticates the agent before
 forwarding. Note two things that are true of the code today: the device private
-key is a plaintext seed in a `0600` file (there is no Keychain or `safeStorage`
-integration anywhere), and `settings.json` — which holds the Plow relay
-credential — is written `0600`.
+key is a plaintext seed in a `0600` file, while the Plow relay credential is
+`safeStorage`-sealed where available and falls back to plaintext in the
+owner-only `0600` `settings.json`.
 
 ## License
 

@@ -71,7 +71,6 @@ type FakeRedeem =
 /** A stand-in Plow: records what was called, answers what the real one does. */
 class FakePlow {
   requested: string[] = [];
-  minted: Array<{ token: string; name: string }> = [];
   connected = false;
   verifyFails: "unauthorized" | "network" | null = null;
   requestFails: "provider_unavailable" | "network" | null = null;
@@ -134,12 +133,6 @@ class FakePlow {
     // The login session, whichever path minted it — never the device credential.
     expect([OTP_TOKEN, SESSION_TOKEN]).toContain(token);
     return { uid: "u_123", mcpUrl: MCP_URL, deviceConnected: this.connected };
-  }
-
-  async mintDeviceCredential(token: string, name: string) {
-    expect([OTP_TOKEN, SESSION_TOKEN]).toContain(token);
-    this.minted.push({ token, name });
-    return { token: DEVICE_TOKEN, keyPrefix: DEVICE_TOKEN.slice(5, 13), name };
   }
 
   revoked: string[] = [];
@@ -226,6 +219,12 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  // Park every poll loop this test left running, BEFORE the next test exists.
+  // An activation that never completes polls forever, and `wait` resolves
+  // instantly under the fake clock — so a loop still live when the file's last
+  // test ends spins until its `waits` array hits V8's element limit and takes
+  // the worker with it. Bumping here makes the park unconditional.
+  harnessGen += 1;
   fs.rmSync(home, { recursive: true, force: true });
 });
 
@@ -253,7 +252,7 @@ describe("activation — the path a brand-new user takes", () => {
     expect(state.step).toBe("connected");
     expect(state.connected).toBe(true);
     expect(waits.every((ms) => ms === ACTIVATION_POLL_INTERVAL_MS)).toBe(true);
-    expect(loadSettings(home).relayCredential).toBe(DEVICE_TOKEN);
+    expect(loadSettings(home).relayCredential).toBe(SESSION_TOKEN);
     // The spent activation is dropped rather than left on a screen behind this.
     expect(state.activation).toBeNull();
   });
@@ -273,10 +272,10 @@ describe("activation — the path a brand-new user takes", () => {
     // later window has no way to ask for it again.
     const settings = loadSettings(home);
     expect(settings.provisionedChatUid).toBe("cht_D7hfWNK");
-    expect(settings.provisionedChatLabel).toBe("+15559876543, +15551230000");
+    expect(settings.provisionedChatLabel).toBe("+1 555-987-6543 · You");
     expect(onboarding.state().chat).toEqual({
       uid: "cht_D7hfWNK",
-      label: "+15559876543, +15551230000",
+      label: "+1 555-987-6543 · You",
     });
     // A fresh window on the same home still knows about it.
     expect(build().state().chat?.uid).toBe("cht_D7hfWNK");
@@ -316,6 +315,53 @@ describe("activation — the path a brand-new user takes", () => {
     expect(shown.activation?.sendTo).toBe("+15550001111");
   });
 
+  it.each([
+    ["its line", (token: string) => ({ ...CHAT, line: token.slice(0, 12) })],
+    ["a participant's number", (token: string) => ({
+      ...CHAT,
+      participants: [{ providerKey: token.slice(0, 12), displayName: "Ada", isOwner: false }],
+    })],
+    ["its uid", (token: string) => ({ ...CHAT, uid: `cht_${token.slice(0, 12)}` })],
+  ])("never writes a chat to disk when %s echoes the session token", async (_why, make) => {
+    // The label is built from the line, the uids, the numbers and the names,
+    // and THIS is the one place they are written to disk. The redeem carries
+    // the session token in the same breath, so a server that echoed it here
+    // would have persisted it and rendered it.
+    plow.redeems = [{ status: "verified", token: SESSION_TOKEN, chat: make(SESSION_TOKEN) }];
+    const onboarding = build();
+    await onboarding.begin();
+    await settle();
+
+    // The sign-in still completes — the chat is what is dropped, and the
+    // account's list is re-read on the Agents tab anyway.
+    expect(loadSettings(home).relayCredential).toBe(SESSION_TOKEN);
+    expect(loadSettings(home).provisionedChatUid).toBe("");
+    expect(loadSettings(home).provisionedChatLabel).toBe("");
+    const persisted = JSON.stringify(loadSettings(home));
+    expect(persisted.split(SESSION_TOKEN).length - 1).toBe(1); // the credential, and nothing else
+    expect(JSON.stringify(onboarding.state())).not.toContain(SESSION_TOKEN.slice(0, 12));
+    // Said, without repeating any of the fields that triggered it.
+    expect(warnings.join(" ")).toContain("echoed the credential");
+    expect(warnings.join(" ")).not.toContain(SESSION_TOKEN.slice(0, 12));
+  });
+
+  it("keeps a chat whose NAME echoes, with the name removed", async () => {
+    // A name can be blanked and the row still means something; dropping it
+    // would lose a chat the owner actually has.
+    plow.redeems = [{
+      status: "verified",
+      token: SESSION_TOKEN,
+      chat: { ...CHAT, displayName: SESSION_TOKEN.slice(0, 12) },
+    }];
+    const onboarding = build();
+    await onboarding.begin();
+    await settle();
+
+    expect(loadSettings(home).provisionedChatUid).toBe(CHAT.uid);
+    expect(loadSettings(home).provisionedChatLabel).not.toContain(SESSION_TOKEN.slice(0, 12));
+    expect(loadSettings(home).provisionedChatLabel).toBeTruthy();
+  });
+
   it("has no chat to show on a Mac whose activation never made one", async () => {
     plow.redeems = [{ status: "verified", token: SESSION_TOKEN }];
     const onboarding = build();
@@ -326,40 +372,45 @@ describe("activation — the path a brand-new user takes", () => {
     expect(onboarding.state().chat).toBeNull();
   });
 
+  // The label is `chatRows`' title now — the ONE place participants become
+  // people. It leads with the line, names the owner "You", and stands a
+  // formatted number in for anyone without a usable name. A top-level chat
+  // title still wins outright when the provider gives one.
   it.each([
     ["prefers a chat's top-level display name", {
       displayName: "Weekend crew",
-      members: [{ displayName: "Morgan", role: "member" as const }],
+      members: [{ displayName: "Morgan", providerKey: "+15550001001", role: "member" as const }],
     }, "Weekend crew"],
-    ["uses member display names with non-owners first and skips You", {
-      members: [
-        { displayName: "You", role: "owner" as const },
-        { displayName: "Riley", role: "member" as const },
-        { displayName: "Casey", role: "owner" as const },
-      ],
-    }, "Riley, Casey"],
-    ["rejects a member display name that repeats its provider handle", {
-      line: "+15550003000",
-      members: [{ displayName: "+15550003001", providerKey: "+15550003001", role: "owner" as const }],
-    }, "+15550003000, +15550003001"],
-    ["rejects a phone-number-shaped top-level display name", {
+    ["keeps an emoji-only top-level display name", {
+      displayName: "🎉",
+      members: [{ displayName: "Riley", providerKey: "+15550002001", role: "member" as const }],
+    }, "🎉"],
+    ["rejects a phone-number-shaped top-level display name and names the people", {
       displayName: "+1 (555) 000-4001, +1 (555) 000-4002",
       line: "+15550004000",
       members: [
-        { displayName: "+15550004001", providerKey: "+15550004001", role: "owner" as const },
-        { displayName: "+15550004002", providerKey: "+15550004002", role: "member" as const },
+        { displayName: "Riley", providerKey: "+15550004001", role: "owner" as const },
+        { displayName: "Casey", providerKey: "+15550004002", role: "member" as const },
       ],
-    }, "+15550004000, +15550004001, +15550004002"],
-    ["keeps an emoji-only top-level display name", {
-      displayName: "🎉",
-      members: [{ displayName: "Riley", role: "member" as const }],
-    }, "🎉"],
-    ["uses each member's name or provider handle", {
+    }, "+1 555-000-4000 · You · Casey"],
+    ["names the owner You and everyone else by name", {
+      line: "+15550005000",
       members: [
-        { displayName: "Riley", role: "member" as const },
-        { displayName: "", providerKey: "+15550005002", role: "member" as const },
+        { displayName: "Whoever", providerKey: "+15550005001", role: "owner" as const },
+        { displayName: "Riley", providerKey: "+15550005002", role: "member" as const },
       ],
-    }, "Riley, +15550005002"],
+    }, "+1 555-000-5000 · You · Riley"],
+    ["stands a number in for a name that just repeats the handle", {
+      line: "+15550003000",
+      members: [{ displayName: "+15550003001", providerKey: "+15550003001", role: "member" as const }],
+    }, "+1 555-000-3000 · +1 555-000-3001"],
+    ["lists the line once when a member is on it", {
+      line: "+15550006000",
+      members: [
+        { displayName: "Riley", providerKey: "+15550006000", role: "member" as const },
+        { displayName: "Casey", providerKey: "+15550006002", role: "member" as const },
+      ],
+    }, "+1 555-000-6000 · Casey"],
   ])("%s", (_case, fields, expected) => {
     expect(activationChatLabel(parseActivationChat(wireChat(fields))!)).toBe(expected);
   });
@@ -377,8 +428,11 @@ describe("activation — the path a brand-new user takes", () => {
       ],
     }))!;
 
+    // The owner reads as "You" and the line is formatted; what this pins is
+    // that the LINE is the number shown, never the chat's own `provider_key`.
     const label = activationChatLabel(chat);
-    expect(label).toBe("+15559876543, +15551230000");
+    expect(label).toBe("+1 555-987-6543 · You");
+    expect(label).not.toContain("thread_fixture");
     expect(label).not.toContain("thread_fixture");
   });
 
@@ -389,7 +443,7 @@ describe("activation — the path a brand-new user takes", () => {
         { providerKey: "+15551230000", displayName: null, isOwner: true },
         { providerKey: "+15557654321", displayName: null, isOwner: false },
       ],
-    })).toBe("+15559876543, +15551230000, +15557654321");
+    })).toBe("+1 555-987-6543 · You · +1 555-765-4321");
     // A member whose address IS the line is not said twice.
     expect(
       activationChatLabel({
@@ -399,8 +453,8 @@ describe("activation — the path a brand-new user takes", () => {
           { providerKey: "+15559876543", displayName: null, isOwner: false },
         ],
       }),
-    ).toBe("+15559876543, +15551230000");
-    expect(activationChatLabel({ ...CHAT, participants: [] })).toBe("+15559876543");
+    ).toBe("+1 555-987-6543 · You");
+    expect(activationChatLabel({ ...CHAT, participants: [] })).toBe("+1 555-987-6543");
     // A member without a usable display name is identified by its real handle.
     expect(
       activationChatLabel({
@@ -408,7 +462,7 @@ describe("activation — the path a brand-new user takes", () => {
         line: null,
         participants: [{ providerKey: "+15551230000", displayName: null, isOwner: false }],
       }),
-    ).toBe("+15551230000");
+    ).toBe("+1 555-123-0000");
     // Nothing to say but the uid beats an empty line on the last setup screen.
     expect(activationChatLabel({ ...CHAT, line: null, participants: [] })).toBe("cht_D7hfWNK");
   });
@@ -452,7 +506,7 @@ describe("activation — the path a brand-new user takes", () => {
     plow.redeems = [{ status: "verified", token: SESSION_TOKEN }];
     await settleUntil(() => onboarding.state().step === "connected");
 
-    expect(loadSettings(home).relayCredential).toBe(DEVICE_TOKEN);
+    expect(loadSettings(home).relayCredential).toBe(SESSION_TOKEN);
     expect(plow.activations).toHaveLength(1);
   });
 
@@ -720,6 +774,17 @@ describe("one code, however many callers ask for it", () => {
 });
 
 describe("signing out", () => {
+  it("shows the fixed revoke warning on the setup screen", () => {
+    const onboarding = build();
+    const warning =
+      "Signed out on this Mac. Plow could not be reached to revoke the session — revoke it in Plow's account settings.";
+
+    const state = onboarding.showMessage(warning);
+
+    expect(state.step).toBe("activate");
+    expect(state.message).toBe(warning);
+  });
+
   it("returns to the activation screen without needing a restart", async () => {
     // Reported live: Sign Out blanked the credential in settings but left the
     // state machine on "connected", because `step` is decided in the
@@ -829,19 +894,23 @@ describe("the phone-code fallback still works", () => {
 
     // The endpoint came from GET /v1/relay/info; the app never builds it.
     const settings = loadSettings(home);
-    expect(settings.relayCredential).toBe(DEVICE_TOKEN);
+    expect(settings.relayCredential).toBe(OTP_TOKEN);
     expect(settings.mcpUrl).toBe(MCP_URL);
   });
 
-  it("keeps the login session nowhere — the mint retires it server-side", async () => {
+  it("keeps the login session AS the credential, minting nothing", async () => {
+    // Latch is the owner's manager app, not an agent: the session it was just
+    // handed is what it holds. `POST /v1/relay/devices` — a narrow credential
+    // plus `revoke_calling_session` — is gone, and the fake throws if anything
+    // reaches for it.
     const onboarding = buildOnPhonePath();
     await onboarding.requestCode("+15551110000");
     await onboarding.submitCode("12345678");
 
-    // There is no client-side revoke left to get wrong: `mintDeviceCredential`
-    // passes `revoke_calling_session`, so the session dies in the same
-    // transaction as the mint. All the app has to do is not keep a copy.
-    expect(JSON.stringify(loadSettings(home))).not.toContain(OTP_TOKEN);
+    // `PlowApi` has no `mintDeviceCredential` to reach for: the method is
+    // deleted, so this cannot regress into a second step without a compile
+    // error first.
+    expect(loadSettings(home).relayCredential).toBe(OTP_TOKEN);
     expect(warnings).toEqual([]);
   });
 
@@ -1056,14 +1125,18 @@ describe("signing out", () => {
     // to the only thing that could revoke it.
     const onboarding = await signedIn();
     expect((await onboarding.useActivation()).step).toBe("activate");
-    const mintedBefore = plow.minted.length;
     const credential = loadSettings(home).relayCredential;
 
     plow.redeems = [{ status: "verified", token: SESSION_TOKEN }];
     await settle();
 
-    expect(plow.minted.length).toBe(mintedBefore);
+    // The credential this Mac already holds is not overwritten by a redeem it
+    // did not ask for — and the session that redeem carried is RETIRED rather
+    // than dropped. The redeem answers once, so a token declined here is a live
+    // session on the account that nothing holds a reference to: not sign-out,
+    // not the next launch. Nobody could ever retire it.
     expect(loadSettings(home).relayCredential).toBe(credential);
+    expect(plow.revoked).toContain(SESSION_TOKEN);
   });
 
   it("a redeem in flight across the sign-out cannot mint", async () => {
@@ -1097,15 +1170,13 @@ describe("signing out", () => {
     // The user signs out while that call is still on the wire.
     signOutOfPlow(home);
     onboarding.reset();
-    const mintedBefore = plow.minted.length;
 
     // …and only now does the server answer "verified".
     release();
     await settle();
 
-    // Nothing was minted, nothing was persisted, and the window did not slide
-    // back to the account the user just left.
-    expect(plow.minted.length).toBe(mintedBefore);
+    // Nothing was persisted, and the window did not slide back to the account
+    // the user just left.
     expect(loadSettings(home).relayCredential).toBe("");
     expect(loadSettings(home).accountUid).toBe("");
     expect(onboarding.state().step).not.toBe("connected");
@@ -1113,34 +1184,23 @@ describe("signing out", () => {
 });
 
 describe("a sign-out while the credential handoff is in the air", () => {
-  // The two sides of the credential-mint boundary a sign-out can race. Same
-  // arrange/act; what differs is which call is on the wire — and so whether a
-  // credential exists that must be retired (the sign-out's own revoke ran
-  // before it was minted; persisting it would silently undo the sign-out).
-  for (const race of [
-    { stage: "relayInfo", revoked: [] as string[] },
-    { stage: "mintDeviceCredential", revoked: [DEVICE_TOKEN] },
-  ] as const) {
+  // One await now, not two: the mint that used to follow `relayInfo` is gone,
+  // so `relayInfo` is the whole window a sign-out can land in. The session is
+  // revoked on this path: it exists on the account, the
+  // sign-out's own revoke ran before it did, and the redeem that carried it
+  // answers once — so a token dropped here is one nobody can ever retire.
+  for (const race of [{ stage: "relayInfo", revoked: [SESSION_TOKEN] }] as const) {
     it(`stays signed out when the sign-out lands during ${race.stage}`, async () => {
       let release = () => {};
       const inAir = new Promise<void>((r) => {
         release = () => r();
       });
       plow.redeems = [{ status: "verified", token: SESSION_TOKEN }];
-      if (race.stage === "relayInfo") {
-        const original = plow.relayInfo.bind(plow);
-        plow.relayInfo = async (token: string) => {
-          await inAir;
-          return original(token);
-        };
-      } else {
-        const original = plow.mintDeviceCredential.bind(plow);
-        plow.mintDeviceCredential = async (token: string, name: string) => {
-          const minted = await original(token, name);
-          await inAir;
-          return minted;
-        };
-      }
+      const original = plow.relayInfo.bind(plow);
+      plow.relayInfo = async (token: string) => {
+        await inAir;
+        return original(token);
+      };
       const onboarding = build();
       await onboarding.begin();
       await settle();
@@ -1150,9 +1210,8 @@ describe("a sign-out while the credential handoff is in the air", () => {
       release();
       await settle();
 
-      // A mint the sign-out beat never happens; one it raced is retired.
-      // Either way nothing is persisted and the window stays signed out.
-      expect(plow.minted).toHaveLength(race.revoked.length);
+      // Nothing is persisted, the session is retired best-effort, and the
+      // window stays signed out.
       expect(plow.revoked).toEqual(race.revoked);
       expect(loadSettings(home).relayCredential).toBe("");
       expect(onboarding.state().step).not.toBe("connected");
