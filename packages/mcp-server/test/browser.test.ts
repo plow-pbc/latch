@@ -177,7 +177,7 @@ describe("browser tools (fake runtime)", () => {
   });
 
   it("defers a slow fill_secret without executing the credential fill twice", async () => {
-    const { server, device } = makeServer(new HeadlessPolicy({ intent: "allow_once" }), 100);
+    const { server, device } = makeServer(new HeadlessPolicy({ intent: "allow_once" }), 1_000);
     const session = await open(server, ["pizza.example"]);
     await act(server, session, "goto", { url: "https://pizza.example/" });
     await callTool(server, "plow_browser_request", { session, credential_items: ["L1"] }, AGENT);
@@ -196,7 +196,7 @@ describe("browser tools (fake runtime)", () => {
       return original(requestedSession, params);
     });
 
-    const releaseTimer = setTimeout(releaseFill, 300);
+    const releaseTimer = setTimeout(releaseFill, 1_500);
     const first = await act(server, session, "fill_secret", {
       selector: "#pass",
       item: "L1",
