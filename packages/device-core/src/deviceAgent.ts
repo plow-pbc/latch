@@ -14,7 +14,7 @@
 import { capabilityDisplay, Intent, intentIsExpired, JSONValue, jv } from "@domo/protocol";
 import { PROVIDERS, vendoredProvider, type VendoredProvider } from "./providers/registry.js";
 import { MintError, type MintedAccounts, type Minter } from "./providers/mint.js";
-import { mergeFanout, planPlowGog } from "./providers/plowGog.js";
+import { gogExitReason, mergeFanout, planPlowGog } from "./providers/plowGog.js";
 import os from "node:os";
 import fs from "node:fs";
 import path from "node:path";
@@ -705,23 +705,55 @@ export class DeviceAgent {
       );
       const ok: { account: string; stdout: string }[] = [];
       const failed: { account: string; reason: string }[] = [];
+      // Accounts that answered with nothing: `--fail-empty` makes gog exit 3
+      // for an empty result, which is an ANSWER, not a failure — the same
+      // "nothing today" an exit-0 empty list carries, spelled as an exit code
+      // because the caller asked for it to be. Counted, and deliberately not
+      // listed as degraded: there is nothing for an owner to fix.
+      let empty = 0;
       for (const { a, result } of runs) {
         // The reasons carry the exit disposition only: a child's output is
-        // service-fetched text and stays out of every error string.
-        if (result.exitCode !== 0) {
-          failed.push({ account: a.account, reason: `gog exited ${result.exitCode ?? -1}` });
+        // service-fetched text and stays out of every error string. The
+        // DISPOSITION is gog's published exit table, which says more than the
+        // number without quoting a word the service wrote.
+        if (result.exitCode === 3) {
+          empty += 1;
+        } else if (result.exitCode !== 0) {
+          failed.push({ account: a.account, reason: gogExitReason(result.exitCode) });
         } else ok.push({ account: a.account, stdout: this.executor.stdout(result.handle).toString("utf8") });
       }
       const merged = mergeFanout(ok, plan.sort);
-      this.audit.record("exec_end", { intentId: intent.intentId, exit_code: 0 });
+      const unreadable = new Set(merged.unparsed.map((u) => u.account));
+      // An account ANSWERED: its child ran, said something gog calls a result,
+      // and anything it printed parsed. Whether that answer had rows in it is
+      // the account's business — "no mail today" is an answer.
+      const answered = ok.filter((o) => !unreadable.has(o.account)).length + empty;
+      const allDegraded = [
+        ...degraded,
+        ...failed,
+        ...merged.unparsed.map((u) => ({ account: u.account, reason: u.error })),
+      ];
+      // One number for N accounts, so it can only answer "did ANY account
+      // answer?" — counted over accounts, never over items. Counting items
+      // marked a healthy account that legitimately returned nothing as a
+      // failure the moment some OTHER account was degraded, which is a partial
+      // success wearing a failure's badge.
+      //
+      // Counted over accounts rather than over children, too: an account can
+      // fail before a child exists — every account degraded at the mint runs
+      // nothing at all — and reading exit codes alone called that green.
+      //
+      // So: a partial success is 0, with the accounts that failed named in
+      // `degraded`; a run where nobody answered and somebody failed is 1; and
+      // a fan-out with no accounts at all stays 0, having nothing to report.
+      this.audit.record("exec_end", {
+        intentId: intent.intentId,
+        exit_code: answered === 0 && allDegraded.length > 0 ? 1 : 0,
+      });
       return {
         status: "completed",
         items: merged.items,
-        degraded: [
-          ...degraded,
-          ...failed,
-          ...merged.unparsed.map((u) => ({ account: u.account, reason: u.error })),
-        ],
+        degraded: allDegraded,
       } as JSONValue;
     }
 
