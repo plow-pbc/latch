@@ -16,7 +16,8 @@ export function normalizeOrigin(pattern: string): string {
   const wildcard = p.startsWith("*.");
   if (wildcard) p = p.slice(2);
   p = p.replace(/^[a-z][a-z0-9+.-]*:\/\//, ""); // scheme
-  p = p.replace(/[/?#].*$/, ""); // path/query/fragment
+  const suffixStart = p.search(/[/?#]/);
+  if (suffixStart !== -1) p = p.slice(0, suffixStart); // path/query/fragment
   p = p.replace(/:\d+$/, ""); // port
   p = p.replace(/\.$/, ""); // trailing dot
   return wildcard ? `*.${p}` : p;
