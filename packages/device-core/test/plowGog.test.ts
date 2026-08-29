@@ -5,7 +5,7 @@
  * seam.
  */
 import { describe, expect, it } from "vitest";
-import { mergeFanout, planPlowGog, type PlowGogPlan } from "../src/providers/plowGog.js";
+import { gogExitReason, mergeFanout, planPlowGog, type PlowGogPlan } from "../src/providers/plowGog.js";
 
 describe("planPlowGog", () => {
   // One row per behavior. `expected` is the WHOLE plan — a partial match would
@@ -44,6 +44,56 @@ describe("planPlowGog", () => {
         gogArgv: ["plow-gog", "gmail", "search", "q", "--json", "--results-only"],
         sort: "gmail-date",
         accounts: ["a@example.com", "b@example.com"],
+      },
+    },
+    {
+      // gog publishes `-a` as the shorthand for its own --account, so an agent
+      // that read `gog --help` writes it. Reading it as anything but plow-gog's
+      // own flag left the account unnamed and refused a command the agent had
+      // spelled correctly.
+      why: "reads gog's -a shorthand as --account, value in the next argument",
+      argv: ["plow-gog", "gmail", "search", "q", "-a", "a@example.com,b@example.com"],
+      expected: {
+        kind: "fanout",
+        gogArgv: ["plow-gog", "gmail", "search", "q", "--json", "--results-only"],
+        sort: "gmail-date",
+        accounts: ["a@example.com", "b@example.com"],
+      },
+    },
+    {
+      why: "reads the joined -a=<v> shorthand",
+      argv: ["plow-gog", "gmail", "get", "m1", "-a=b@example.com"],
+      expected: {
+        kind: "single",
+        gogArgv: ["plow-gog", "gmail", "get", "m1"],
+        account: "b@example.com",
+        confirmConflict: false,
+        conflictCheck: null,
+      },
+    },
+    {
+      why: "reads the attached -a<v> shorthand",
+      argv: ["plow-gog", "gmail", "get", "m1", "-ab@example.com"],
+      expected: {
+        kind: "single",
+        gogArgv: ["plow-gog", "gmail", "get", "m1"],
+        account: "b@example.com",
+        confirmConflict: false,
+        conflictCheck: null,
+      },
+    },
+    {
+      // Not one of the three spellings: a cluster stays gog's, where a
+      // supplied token makes its account flag inert. It must still reach gog
+      // whole rather than being half-eaten here.
+      why: "leaves a shorthand cluster alone, forwarding it to gog",
+      argv: ["plow-gog", "gmail", "get", "m1", "-ja", "b@example.com"],
+      expected: {
+        kind: "single",
+        gogArgv: ["plow-gog", "gmail", "get", "m1", "-ja", "b@example.com"],
+        account: null,
+        confirmConflict: false,
+        conflictCheck: null,
       },
     },
     {
@@ -310,6 +360,18 @@ describe("planPlowGog", () => {
       reason: "--account needs a value",
     },
     {
+      // The shorthand is the same flag, so it fails the same way rather than
+      // running against whatever account happens to be default.
+      why: "refuses a -a with no value",
+      argv: ["plow-gog", "gmail", "search", "q", "-a"],
+      reason: "--account needs a value",
+    },
+    {
+      why: "refuses an empty -a= value",
+      argv: ["plow-gog", "gmail", "search", "q", "-a="],
+      reason: "--account needs a value",
+    },
+    {
       // A calendar id has an owner; under a fan-out there is no account to
       // send it to. The sentence carries both corrections.
       why: "refuses --calendars under a fan-out",
@@ -408,5 +470,25 @@ describe("mergeFanout", () => {
     );
     expect(items).toEqual([{ id: "ok", account: "b@example.com" }]);
     expect(unparsed).toEqual([{ account: "a@example.com", error: "output was not JSON" }]);
+  });
+});
+
+/**
+ * gog's published exit table (`gog schema --json` → `automation.exit_codes`),
+ * verified against the vendored binary at 0.36.0. The sentences are fixed:
+ * the child's own output is service-fetched text and never reaches a reason.
+ */
+describe("gog exit reasons", () => {
+  it.each<{ why: string; code: number | null; reason: string }>([
+    { why: "usage — in practice Google rejecting the request", code: 2, reason: "gog rejected the request as invalid" },
+    // No row for 3: gog's "empty results" is an answer, and `deviceAgent`
+    // counts it as one before this is asked what went wrong.
+    { why: "auth", code: 4, reason: "that account needs re-auth — re-connect it in Plow" },
+    { why: "permission denied", code: 6, reason: "permission denied for that account" },
+    { why: "rate limited", code: 7, reason: "rate limited by Google" },
+    { why: "an unmapped code keeps the number", code: 5, reason: "gog exited 5" },
+    { why: "a signalled child has no code at all", code: null, reason: "gog exited -1" },
+  ])("$why", ({ code, reason }) => {
+    expect(gogExitReason(code)).toBe(reason);
   });
 });
