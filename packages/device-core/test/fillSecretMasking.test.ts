@@ -651,6 +651,28 @@ describe("fill_secret banking-credential gate", () => {
     expect(released().length).toBe(1);
     expect(fills()).toEqual([{ selector: "#pass", mask: true }]);
   });
+
+  it("refuses an unreadable bank destination before the approval client is consulted", async () => {
+    // Defense-in-depth ordering: the frame-origin check rejects a host it cannot
+    // read BEFORE `isFinancialDestination` classifies it, so a garbage
+    // destination on what would be a bank fill never reaches the approval
+    // consume. `#card*` selectors take the fixture's frame_url; a malformed one
+    // has no host. An approval that WOULD have released proves the short-circuit.
+    await ctx.sessions.closeAll("teardown");
+    ctx = makeCtx({ FAKE_CARD_FRAME_URL: "not-a-url" }, {}, { approved: true });
+    const handle = await bankSession();
+    const result = await ctx.sessions.command(handle, {
+      action: "fill_secret",
+      selector: "#card-x",
+      item: "B1",
+      field: "password",
+    });
+    expect(jv(result).get("status").str).toBe("error");
+    expect(released()).toEqual([]);
+    expect(fills()).toEqual([]);
+    expect(ctx.approvalCalls).toEqual([]);
+    expect(JSON.stringify(ctx.events)).not.toContain("hunter2");
+  });
 });
 
 /**
