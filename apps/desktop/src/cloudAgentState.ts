@@ -233,7 +233,7 @@ export class CloudAgentState {
   private chatsError: string | null = null;
   private chatsNeedReactivation = false;
   /**
-   * Which chat refresh is the newest. Bumped per read, not per account.
+   * Which account-view refresh is the newest. Bumped per read, not per account.
    *
    * `generation` only moves on sign-out, so two refreshes in the same session
    * share one and neither can tell it has been overtaken. A slow FAILURE
@@ -241,10 +241,7 @@ export class CloudAgentState {
    * cached fallback and an error banner — degrading the very fallback this
    * exists to provide, on an account whose chats we had just read fine.
    */
-  private chatReads = 0;
-  /** Which line refresh is the newest. A slow older failure must not erase a
-   * newer list and its names. */
-  private lineReads = 0;
+  private viewReads = 0;
   private actionError: string | null = null;
   /** Agents whose chat sets are being saved or reconciled with a roster read. */
   private editsPending = new Set<string>();
@@ -265,18 +262,15 @@ export class CloudAgentState {
    */
   private currentAction: Promise<void> = Promise.resolve();
   /**
-   * The chat read currently in flight, so a caller whose own read was
+   * The chat-and-line view currently in flight, so a caller whose own read was
    * superseded can wait on the one that replaced it.
    *
    * Separate from `currentAction`, and deliberately: that chain serialises the
-   * ROSTER against its mutations. Chat-list ordering is left independent (#224
-   * says so), so the picker's await needs its own answer to "has the newest
+   * ROSTER against its mutations. Account-view ordering is left independent
+   * (#224 says so), so the picker's await needs its own answer to "has the newest
    * read landed".
    */
-  private chatsSettled: Promise<void> = Promise.resolve();
-  /** The line read currently in flight, paired with `chatsSettled` so a
-   * superseded refresh answers from one coherent account view. */
-  private linesSettled: Promise<void> = Promise.resolve();
+  private viewSettled: Promise<void> = Promise.resolve();
   /** As the server listed them, with no `held` — see `CloudLineOption`. */
   private lines: Omit<CloudLineOption, "held">[] | null = null;
   private linesError: string | null = null;
@@ -331,14 +325,15 @@ export class CloudAgentState {
     if (!credential) return;
     const generation = this.generation;
     const pendingEdits = new Set(this.editsPending);
-    let chats = this.refreshChats(credential, generation);
-    this.chatsSettled = chats;
-    let lines = this.refreshLines(credential, generation);
-    this.linesSettled = lines;
+    const read = ++this.viewReads;
+    let view = Promise.all([
+      this.refreshChats(credential, generation, read),
+      this.refreshLines(credential, generation, read),
+    ]).then(() => {});
+    this.viewSettled = view;
     await Promise.all([
       this.sequence(() => this.refreshAgents(credential, generation, pendingEdits)),
-      chats,
-      lines,
+      view,
     ]);
     // A newer chat or line read started while ours was in flight. Ours DROPPED
     // its own answer on purpose — a superseded read says nothing about now —
@@ -347,28 +342,26 @@ export class CloudAgentState {
     // through `cloud:refresh`, and needs the newest chats and the names that
     // identify them. Join whatever replaced each read.
     //
-    // Not `sequence`: that chain is the roster's, and #224 leaves chat-list
+    // Not `sequence`: that chain is the roster's, and #224 leaves account-view
     // ordering independent on purpose.
-    while (this.chatsSettled !== chats || this.linesSettled !== lines) {
-      chats = this.chatsSettled;
-      lines = this.linesSettled;
-      await Promise.all([chats, lines]);
+    while (this.viewSettled !== view) {
+      view = this.viewSettled;
+      await view;
     }
     if (generation === this.generation) this.publish();
   }
 
   /** Ask Plow which line names identify the chats in the account. */
-  private async refreshLines(credential: string, generation: number): Promise<void> {
+  private async refreshLines(credential: string, generation: number, read: number): Promise<void> {
     if (!this.deps.lines) return;
-    const read = ++this.lineReads;
     try {
       const lines = await this.deps.lines.list(credential);
-      if (generation !== this.generation || read !== this.lineReads) return;
+      if (generation !== this.generation || read !== this.viewReads) return;
       this.lines = lines;
       this.linesError = null;
       this.relabelRows();
     } catch (error) {
-      if (generation !== this.generation || read !== this.lineReads) return;
+      if (generation !== this.generation || read !== this.viewReads) return;
       // The current enumeration is unknown, not empty: `cloudLines` stays null
       // so the screen shows the error instead of "there are no numbers". Keep
       // the previous success as naming metadata for chats already on screen.
@@ -544,8 +537,7 @@ export class CloudAgentState {
     this.chatsError = null;
     this.chatsNeedReactivation = false;
     // Nothing in flight belongs to the next account either.
-    this.chatReads += 1;
-    this.lineReads += 1;
+    this.viewReads += 1;
     this.currentAction = Promise.resolve();
     this.agentsError = null;
     this.actionError = null;
@@ -667,11 +659,10 @@ export class CloudAgentState {
     return result;
   }
 
-  private async refreshChats(credential: string, generation: number): Promise<void> {
-    const read = ++this.chatReads;
+  private async refreshChats(credential: string, generation: number, read: number): Promise<void> {
     try {
       const chats = await this.deps.chats.list(credential);
-      if (generation !== this.generation || read !== this.chatReads) return;
+      if (generation !== this.generation || read !== this.viewReads) return;
       this.chats = chats;
       // Only here: the one place a list actually came back. An empty answer is
       // still an answer, and it is the only one the empty state may render.
@@ -684,7 +675,7 @@ export class CloudAgentState {
       // A superseded read says nothing about now. Landing late must never undo
       // a newer answer, and a failure undoing a success is the expensive
       // direction of that.
-      if (generation !== this.generation || read !== this.chatReads) return;
+      if (generation !== this.generation || read !== this.viewReads) return;
       // Whatever went wrong, the account's chats are unknown, and the screen
       // must not read that as "you have no chats" — which is why `chatsLoaded`
       // and the error travel together, and why the roster stays where it is.

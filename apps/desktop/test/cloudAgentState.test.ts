@@ -241,24 +241,10 @@ describe("line names on refresh", () => {
 
     await state.refresh();
 
-    expect(state.state().cloudChats[0]).toMatchObject({
-      lineName: "Willow",
-      title: "Willow · You · Nina",
+    expect(state.state()).toMatchObject({
+      cloudChats: [{ lineName: "Willow", title: "Willow · You · Nina" }],
+      cloudAgents: [{ chatLabels: ["Willow · You · Nina"] }],
     });
-  });
-
-  it("gives roster rows the same formatted title as the picker", async () => {
-    const f = fakes({ list: async () => [agent()], chats: async () => [namedChat()] });
-    const state = new CloudAgentState({
-      agents: f.agents,
-      chats: f.chats,
-      lines: { list: async () => [{ displayName: "Willow", number: "+16503156536" }] },
-      home: tempHome(),
-    });
-
-    await state.refresh();
-
-    expect(state.state().cloudAgents[0].chatLabels).toEqual(["Willow · You · Nina"]);
   });
 
   it("keeps chats usable when the line list fails", async () => {
