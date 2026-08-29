@@ -58,3 +58,35 @@ describe("a dial that resolves after stop()", () => {
     expect(conn.closed).toBe(true);
   });
 });
+
+describe("an authentication refusal", () => {
+  it("does not pass the relay's reason to a log or callback", async () => {
+    const credential = "plow_sk_device_do_not_leak";
+    const reason = `credential ${credential} is invalid`;
+    const logs: string[] = [];
+    const callbackArgs: unknown[][] = [];
+    const conn: Connection = {
+      onLine: null,
+      onClose: null,
+      startReading() {},
+      sendLine() {},
+      close() {},
+    };
+    const client = new RelayClient({
+      url: "ws://example.invalid/relay",
+      credential,
+      serve: async () => new Response("no"),
+      log: (message) => logs.push(message),
+      onAuthFailed: (...args: unknown[]) => callbackArgs.push(args),
+      dial: () => ({ connect: async () => conn }),
+    });
+
+    await client.start();
+    logs.length = 0;
+    conn.onLine?.(Buffer.from(JSON.stringify({ type: "auth.error", reason }), "utf8"));
+
+    expect(logs).toEqual(["relay rejected the credential"]);
+    expect(callbackArgs).toEqual([[]]);
+    expect(JSON.stringify({ logs, callbackArgs })).not.toContain(credential);
+  });
+});

@@ -39,9 +39,8 @@ export interface RelayClientOptions {
   /**
    * The relay refused this credential. Terminal: it will not become valid by
    * waiting, so the client has stopped and the owner has to sign in again.
-   * `reason` is the relay's text and never contains the credential.
    */
-  onAuthFailed?: (reason: string) => void;
+  onAuthFailed?: () => void;
   /** Diagnostics. Never receives the credential — see `redact`. */
   log?: (message: string) => void;
   /** Injectable for tests. */
@@ -228,10 +227,9 @@ export class RelayClient {
       }
 
       case "auth.error": {
-        // `reason` is the relay's text. Redacted anyway — an error string is
-        // exactly where a credential must never appear.
-        const reason = String(msg.reason ?? "");
-        this.say(`relay rejected the credential: ${reason}`);
+        // The relay's reason is untrusted and may echo the credential, in an
+        // encoding that string replacement cannot reliably scrub.
+        this.say("relay rejected the credential");
         // TERMINAL, not a retryable failure. A refused credential does not
         // become valid by waiting, so reconnecting only hammers the relay with
         // a token it has already rejected — which is exactly what a revoked key
@@ -242,7 +240,7 @@ export class RelayClient {
         this.clearTimers();
         conn.close();
         this.setConnected(false);
-        this.options.onAuthFailed?.(reason);
+        this.options.onAuthFailed?.();
         return;
       }
 
