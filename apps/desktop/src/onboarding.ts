@@ -26,6 +26,7 @@ import {
 } from "./chatRows.js";
 import { ActivationChat, PlowApi, PlowApiError } from "./plowApi.js";
 import {
+  credentialLocked,
   holdForRevocation,
   loadSettings,
   releaseRevocation,
@@ -83,6 +84,18 @@ export const ACTIVATION_SMS_PREFIX = "Plow Activate:";
  * both halves — Latch is holding on to retry, and the owner can end it now —
  * because a retry that keeps failing is a live `*:*` session for 180 days.
  */
+/**
+ * What setup says when this Mac holds a credential it cannot read.
+ *
+ * It names the remedy and, more importantly, names the thing NOT to do: the
+ * obvious move on a screen asking you to sign in is to sign in, and that is
+ * the one action that would strand the session already on disk.
+ */
+export const KEYCHAIN_LOCKED_MESSAGE =
+  "Latch can't reach this Mac's keychain, so it can't read the Plow login it already has. " +
+  "Quit Latch and open it again — signing in again here would leave the session it's holding " +
+  "live on your account with no way to retire it.";
+
 export const LOOSE_SESSION_WARNING =
   "A Plow login session couldn't be retired. Latch is holding it and will try again — " +
   "or revoke it in Plow.";
@@ -209,6 +222,9 @@ export interface OnboardingState {
   /** We have stopped watching this activation. The screen stops counting down
    * and offers a fresh code. */
   activationStale: boolean;
+  /** This Mac has a credential it cannot read — see `credentialLocked`. Setup
+   * says so and refuses to start a login that would overwrite it. */
+  locked: boolean;
   accountUid: string;
   mcpUrl: string;
   connected: boolean;
@@ -267,15 +283,21 @@ export class Onboarding {
 
   state(): OnboardingState {
     const settings = this.settings();
+    const locked = credentialLocked(settings);
     return {
       step: this.step,
       phone: this.phone,
-      message: this.message,
+      // A locked Mac has one thing to say and it is not whatever the wizard
+      // was last doing. Derived here rather than assigned on a failed click,
+      // so the screen is right the moment it opens — nobody has to press
+      // something that cannot work in order to be told why.
+      message: locked ? KEYCHAIN_LOCKED_MESSAGE : this.message,
       busy: this.busy,
       codeExpiresAt: this.codeExpiresAt,
       activation: this.activation,
       chat: storedActivationChat(settings),
       activationStale: this.activationStale,
+      locked,
       accountUid: settings.accountUid,
       mcpUrl: settings.mcpUrl,
       connected: this.deps.isConnected(),
@@ -311,6 +333,10 @@ export class Onboarding {
    * is what lets this mint.
    */
   async newActivationCode(): Promise<OnboardingState> {
+    // Before the single-flight check, and before anything that could burn a
+    // code: a login started here would seal over a credential this Mac still
+    // has and cannot read.
+    if (this.locked()) return this.fail(KEYCHAIN_LOCKED_MESSAGE);
     // SINGLE-FLIGHT. A display code IS a credential — whoever texts it gets the
     // account — so a second mint nobody is shown is a live credential loose on
     // the account, and the screen can only ever show one of them. Two callers
@@ -579,6 +605,7 @@ export class Onboarding {
    * the copy says "check your phone", never "we've sent you a code".
    */
   async requestCode(phone: string, note = ""): Promise<OnboardingState> {
+    if (this.locked()) return this.fail(KEYCHAIN_LOCKED_MESSAGE);
     const trimmed = (phone ?? "").trim();
     if (!trimmed) return this.fail("Enter your phone number.");
     return this.run(async () => {
@@ -612,6 +639,7 @@ export class Onboarding {
   }
 
   async submitCode(code: string): Promise<OnboardingState> {
+    if (this.locked()) return this.fail(KEYCHAIN_LOCKED_MESSAGE);
     const trimmed = (code ?? "").replace(/\s/g, "");
     if (trimmed.length !== CODE_LENGTH || !/^\d+$/.test(trimmed)) {
       return this.fail(`Enter the ${CODE_LENGTH}-digit code from your phone.`);
@@ -813,7 +841,8 @@ export class Onboarding {
         // is calling), so a 401 is that token saying it no longer works. There
         // is nothing left to retire, and holding it anyway is not caution: it
         // is a permanent warning on the setup screen and a worktree cleanup
-        // that refuses for good, over a session that is already gone.
+        // that refuses for good, over a session that is already gone. Only a
+        // 401 — see `alreadyDead`; a 403 is a session that is very much alive.
         releaseRevocation(this.deps.home, token);
         return true;
       }
@@ -850,21 +879,42 @@ export class Onboarding {
     // that closes; the 401 handling above is the belt to this braces, because
     // the same collision can happen across two processes.
     if (this.retrying) return this.retrying;
-    // The handle is dropped inside the body rather than by chaining `.finally`
-    // — same reason as `newActivationCode`: a chained one adds a turn before
-    // the caller resumes, and under a test clock that turn lets the detached
-    // poll loop run ahead of the caller.
-    const flight = (async () => {
-      try {
-        for (const token of [...this.settings().pendingRevocations]) {
-          await this.retireOrRetain(token);
-        }
-      } finally {
-        this.retrying = null;
-      }
-    })();
+    const flight = this.sweepPendingRevocations();
     this.retrying = flight;
+    // The handle is dropped AFTER it is taken, and only if it is still this
+    // sweep's. Dropping it inside the body was a trap the empty case sprang
+    // every time: with nothing held, the body runs to completion
+    // synchronously, so it cleared the handle BEFORE the line above set it —
+    // and the settled promise stayed parked here for the life of the process,
+    // making every later launch or activation "join" a sweep that had already
+    // finished. Nothing was ever retried again. The identity check is what
+    // keeps a newer sweep from being cleared by an older one finishing.
+    //
+    // `then(clear, clear)` rather than `finally`: the caller gets `flight`
+    // itself, so this cleanup rides its own chain and adds no turn before the
+    // caller resumes — the reason `newActivationCode` avoids a chained
+    // `finally` too.
+    const clear = () => {
+      if (this.retrying === flight) this.retrying = null;
+    };
+    flight.then(clear, clear);
     return flight;
+  }
+
+  /**
+   * One pass over the held list. Never throws — the contract
+   * `retryPendingRevocations` advertises, and what lets its callers treat it
+   * as fire-and-forget. A token whose retry blows up in an unexpected way
+   * stays held, which is the safe direction.
+   */
+  private async sweepPendingRevocations(): Promise<void> {
+    for (const token of [...this.settings().pendingRevocations]) {
+      try {
+        await this.retireOrRetain(token);
+      } catch {
+        /* stays held */
+      }
+    }
   }
 
   /**
@@ -884,6 +934,11 @@ export class Onboarding {
 
   private settings(): Settings {
     return loadSettings(this.deps.home);
+  }
+
+  /** Holding a credential it cannot read — see `credentialLocked`. */
+  private locked(): boolean {
+    return credentialLocked(this.settings());
   }
 
   private save(settings: Settings): void {
@@ -928,18 +983,20 @@ export class Onboarding {
 /**
  * Is this failure the token telling us it is already gone?
  *
- * `unauthorized` is the API's own word for "a wrong or expired code, or a
- * revoked token", and the revoke call authenticates with the very token it
- * retires — so a 401 here is not a failure to revoke, it is a revoke that has
- * already happened. `forbidden` joins it because a token this Mac is not
- * permitted to retire is one no retry can ever retire either, and holding it
- * forever tells the owner nothing they can act on that the first warning did
- * not already say.
+ * 401 and nothing else. The revoke authenticates with the very token it
+ * retires, and `unauthorized` is the API's own word for "a wrong or expired
+ * code, or a revoked token" — so a 401 is not a failure to revoke, it is a
+ * revoke that has already happened.
+ *
+ * A 403 is the opposite and used to be lumped in here, which was a real bug:
+ * it means the token DID authenticate — so the session is alive — and only
+ * that this call was not permitted. Dropping the handle to a live `*:*`
+ * session because the server would not let us retire it is precisely the
+ * orphan this whole mechanism exists to prevent, and the owner needs that
+ * handle to retire it in Plow. A 403 stays held.
  */
 function alreadyDead(error: unknown): boolean {
-  return (
-    error instanceof PlowApiError && (error.kind === "unauthorized" || error.kind === "forbidden")
-  );
+  return error instanceof PlowApiError && error.kind === "unauthorized";
 }
 
 function messageOf(error: unknown): string {

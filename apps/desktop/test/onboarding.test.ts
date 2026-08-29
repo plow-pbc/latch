@@ -7,12 +7,13 @@ import {
   ACTIVATION_POLL_WINDOW_MS,
   CODE_TTL_MS,
   activationChatLabel,
+  KEYCHAIN_LOCKED_MESSAGE,
   LOOSE_SESSION_WARNING,
   Onboarding,
   OnboardingDeps,
 } from "../src/onboarding.js";
 import { ActivationChat, PlowApi, PlowApiError, parseActivationChat } from "../src/plowApi.js";
-import { loadSettings, saveSettings } from "../src/settings.js";
+import { loadSettings, saveSettings, useCredentialCodec } from "../src/settings.js";
 import { signOutOfPlow } from "../src/settingsActions.js";
 
 const DEVICE_TOKEN = "plow_DEVICEtok_secret";
@@ -151,6 +152,9 @@ class FakePlow {
   /** Tokens the server says are already gone — what a 401 on
    * `/v1/relay/devices/self/revoke` means, since the token authenticates it. */
   revokeUnauthorized: string[] = [];
+  /** Tokens that authenticate but may not be revoked: a 403, and a session
+   * that is very much alive. */
+  revokeForbidden: string[] = [];
 
   private revokeGate: Promise<void> | null = null;
   private openRevokes: (() => void) | null = null;
@@ -174,6 +178,9 @@ class FakePlow {
     if (this.revokeGate) await this.revokeGate;
     if (this.revokeUnauthorized.includes(token)) {
       throw new PlowApiError("unauthorized", "Not authorized.", 401);
+    }
+    if (this.revokeForbidden.includes(token)) {
+      throw new PlowApiError("forbidden", "Not permitted.", 403);
     }
     if (this.revokeFails || this.revokeRefuses.includes(token)) {
       throw new PlowApiError("network", "unreachable");
@@ -207,6 +214,17 @@ let waits: number[];
 let changes: number;
 /** Bumped per test; a wait built under an older value parks — see `wait`. */
 let harnessGen = 0;
+
+/** The same shape `settings.test.ts` uses: reversible, and `available()` is
+ * what a locked keychain answers false to. */
+const fakeCodec = (available = true) => ({
+  available: () => available,
+  encrypt: (plain: string) => `sealed:${Buffer.from(plain).toString("base64")}`,
+  decrypt: (cipher: string) => {
+    if (!cipher.startsWith("sealed:")) throw new Error("not ours");
+    return Buffer.from(cipher.slice("sealed:".length), "base64").toString();
+  },
+});
 
 function build(extra: Partial<OnboardingDeps> = {}): Onboarding {
   const gen = harnessGen;
@@ -1559,5 +1577,128 @@ describe("a session held for a later revoke", () => {
     await build().retryPendingRevocations();
 
     expect(loadSettings(home).pendingRevocations).toEqual([LIVE]);
+  });
+
+  it("keeps a 403 staged — that session authenticated, so it is alive", async () => {
+    // A 403 is the OPPOSITE of a 401 here: the token did authenticate, so the
+    // session exists; only this call was refused. Dropping the handle to a
+    // live `*:*` session because the server would not let us retire it is the
+    // orphan the whole mechanism exists to prevent, and the owner needs that
+    // handle to retire it in Plow.
+    heldSession();
+    plow.revokeForbidden = [SESSION_TOKEN];
+    const onboarding = build();
+    await onboarding.retryPendingRevocations();
+
+    expect(loadSettings(home).pendingRevocations).toEqual([SESSION_TOKEN]);
+    expect(onboarding.state().message).toBe(LOOSE_SESSION_WARNING);
+  });
+
+  it("still sweeps after a first sweep that had nothing to do", async () => {
+    // A sweep with an empty list runs to completion synchronously, so it used
+    // to clear the single-flight handle BEFORE the handle was assigned — and
+    // the settled promise stayed parked there for the life of the process.
+    // Every later launch and activation "joined" a sweep that had already
+    // finished, and nothing was ever retried again.
+    const onboarding = build();
+    await onboarding.retryPendingRevocations();
+    expect(plow.revokeCalls).toEqual([]);
+
+    // ...now a login fails to retire its session, and an activation retries.
+    heldSession();
+    await onboarding.retryPendingRevocations();
+
+    expect(plow.revoked).toEqual([SESSION_TOKEN]);
+    expect(loadSettings(home).pendingRevocations).toEqual([]);
+  });
+
+  it("still sweeps on a fresh activation after an empty first sweep", async () => {
+    // The same bug through the door it actually comes in by: launch sweeps an
+    // empty list, then the owner starts a login and that mint's own retry is
+    // the one that has to work.
+    const onboarding = build();
+    await onboarding.retryPendingRevocations();
+    heldSession();
+
+    await onboarding.begin();
+
+    expect(plow.revoked).toEqual([SESSION_TOKEN]);
+  });
+});
+
+describe("a Mac holding a credential it cannot read", () => {
+  /** Seal a credential, then take the keychain away. */
+  function locked(): void {
+    useCredentialCodec(fakeCodec());
+    const settings = loadSettings(home);
+    settings.relayCredential = "plow_sk_sealed_and_unreadable";
+    saveSettings(home, settings);
+    useCredentialCodec(fakeCodec(false));
+  }
+
+  afterEach(() => useCredentialCodec(null));
+
+  it("says so, and offers no way to sign in over it", () => {
+    locked();
+    const state = build().state();
+
+    expect(state.locked).toBe(true);
+    // Said the moment the screen opens — nobody has to press something that
+    // cannot work in order to be told why.
+    expect(state.message).toBe(KEYCHAIN_LOCKED_MESSAGE);
+  });
+
+  it("refuses to mint an activation code", async () => {
+    locked();
+    const onboarding = build();
+    const shown = await onboarding.begin();
+
+    expect(plow.activations).toEqual([]);
+    expect(shown.activation).toBeNull();
+    expect(shown.message).toBe(KEYCHAIN_LOCKED_MESSAGE);
+  });
+
+  it("refuses the phone-code path too", async () => {
+    locked();
+    const onboarding = build();
+    await onboarding.requestCode("+15551230000");
+    expect(plow.requested).toEqual([]);
+
+    await onboarding.submitCode("12345678");
+    expect(loadSettings(home).relayCredential).toBe("");
+  });
+
+  it("never seals a new credential over the one it cannot read", async () => {
+    // The orphan this state exists to prevent: sign in again while locked and
+    // the new credential's seal overwrites the old one, whose session is live
+    // for 180 days with nothing left that could retire it.
+    locked();
+    const sealedBefore = JSON.parse(
+      fs.readFileSync(path.join(home, "app/settings.json"), "utf8"),
+    ) as Record<string, unknown>;
+    plow.redeems = [{ status: "verified", token: SESSION_TOKEN }];
+
+    const onboarding = build();
+    await onboarding.begin();
+    await settle();
+
+    const after = JSON.parse(
+      fs.readFileSync(path.join(home, "app/settings.json"), "utf8"),
+    ) as Record<string, unknown>;
+    expect(after.relayCredentialEnc).toBe(sealedBefore.relayCredentialEnc);
+    // ...and it comes back intact once the keychain does.
+    useCredentialCodec(fakeCodec());
+    expect(loadSettings(home).relayCredential).toBe("plow_sk_sealed_and_unreadable");
+  });
+
+  it("goes back to ordinary setup once the keychain returns and it signs out", async () => {
+    locked();
+    useCredentialCodec(fakeCodec());
+    signOutOfPlow(home);
+
+    const onboarding = build();
+    expect(onboarding.state().locked).toBe(false);
+    await onboarding.begin();
+    expect(onboarding.state().activation?.displayCode).toBe("CODE1");
   });
 });

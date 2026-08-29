@@ -57,7 +57,8 @@ export async function waitFor(win, expr, label, timeoutMs = 10_000) {
 /**
  * Shoot every screen, and exit non-zero if one of them lost its content.
  *
- * `expect` is matched against the page's text case-insensitively — several of
+ * `expect` is matched against the page's text case-insensitively, and
+ * `reject` the same way for text that must NOT be there — several of
  * these panes uppercase their labels in CSS, and this checks what the screen
  * says, not how it is set. `expectValues` is matched against field values,
  * which is where a revealed secret lands. `expectFocus` is matched against the
@@ -84,6 +85,13 @@ export async function shootScreens({ win, outDir, prefix, screens, load, beforeS
     );
     const missing = [
       ...(screen.expect ?? []).filter((needle) => !text.includes(needle.toLowerCase())),
+      // `reject` is the other half of `expect`, for a screen whose point is
+      // that something is ABSENT — a control that must not be offered, not one
+      // that is merely disabled. Reported as "unexpected: …" so a failure says
+      // which way round it went.
+      ...(screen.reject ?? [])
+        .filter((needle) => text.includes(needle.toLowerCase()))
+        .map((needle) => `unexpected: ${needle}`),
       ...(screen.expectValues ?? []).filter((needle) => !values.includes(needle)),
       ...(screen.expectFocus && !focused.includes(screen.expectFocus)
         ? [`focus on "${screen.expectFocus}" (focused: "${focused}")`]

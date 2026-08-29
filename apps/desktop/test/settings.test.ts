@@ -7,7 +7,13 @@ import { afterEach, describe, expect, it } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { loadSettings, saveSettings, Settings, useCredentialCodec } from "../src/settings.js";
+import {
+  holdForRevocation,
+  loadSettings,
+  saveSettings,
+  Settings,
+  useCredentialCodec,
+} from "../src/settings.js";
 import { signOutOfPlow } from "../src/settingsActions.js";
 
 const cleanups: (() => void)[] = [];
@@ -452,6 +458,34 @@ describe("the credential at rest", () => {
     // The unopened entry survived, and both readable ones are there.
     expect(fileOf(home).pendingRevocationsEnc).toContain(stranger);
     expect(loadSettings(home).pendingRevocations).toEqual(["plow_sk_older", "plow_sk_newer"]);
+  });
+
+  it("finds a token staged in the clear beside a seal it cannot open", () => {
+    // With the keychain down there is nowhere to stage a new token but the
+    // plaintext list, while the unopenable sealed list is still on disk. The
+    // sealed list used to win outright, so the token just staged went
+    // invisible — never retried, and written away by the following save.
+    useCredentialCodec(fakeCodec());
+    const home = tempHome();
+    const first = loadSettings(home);
+    first.pendingRevocations = ["plow_sk_sealed_one"];
+    saveSettings(home, first);
+
+    // The keychain goes away, and sign-out stages another session.
+    useCredentialCodec(fakeCodec(false));
+    holdForRevocation(home, "plow_sk_staged_in_the_clear");
+
+    // Both are there, from both sources...
+    expect(loadSettings(home).pendingRevocations).toEqual(["plow_sk_staged_in_the_clear"]);
+    expect(fileOf(home).pendingRevocationsEnc).toHaveLength(1);
+
+    // ...and when the keychain returns, so does the sealed one — neither
+    // having been written away by the saves in between.
+    useCredentialCodec(fakeCodec());
+    expect(loadSettings(home).pendingRevocations).toEqual([
+      "plow_sk_sealed_one",
+      "plow_sk_staged_in_the_clear",
+    ]);
   });
 
   it("lets sign-out delete a seal nobody can open", () => {
