@@ -172,14 +172,14 @@ describe("PlowApi", () => {
     const { calls, fetchImpl } = recordingFetch([{ status: 200, body: { approved: true } }]);
     const result = await new PlowApi("https://api.plow.co", fetchImpl).consumePaymentApproval(
       "plow_devicetok",
-      { sessionId: "sess-digest", domain: "chase.com" },
+      { sessionId: "42", domain: "chase.com" },
     );
 
     expect(result).toEqual({ approved: true });
     expect(calls[0].url).toBe("https://api.plow.co/v1/payment-approvals/consume");
     // The endpoint's snake-case contract: session_id + domain, nothing else.
     expect(JSON.parse(String(calls[0].init.body))).toEqual({
-      session_id: "sess-digest",
+      session_id: "42",
       domain: "chase.com",
     });
     // The device credential travels in the header, never in the URL or the body.
