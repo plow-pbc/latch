@@ -424,8 +424,8 @@ documented as gated in two. The vendored
 vault's collections). `fill_secret`
 is the strongest gate, in order: item ∈ approved set → the selector is located
 to its owning frame → the frame's origin ∈ session scope → **a fill whose
-device-observed destination is a bank additionally requires a separate,
-single-use owner payment approval, consumed from plow's
+device-observed destination matches the bundled v1 bank registry additionally
+requires a separate, single-use owner payment approval, consumed from plow's
 `POST /v1/payment-approvals/consume`; the release proceeds ONLY when that
 returns `approved`, and any other answer — not approved, a non-2xx, an
 unreachable service, or no client wired — blocks fail-closed** → `seed-vault-broker
