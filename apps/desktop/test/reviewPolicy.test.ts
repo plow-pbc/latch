@@ -678,7 +678,9 @@ describe("settings defaults", () => {
   it("a settings.json that was never written reads as an unusable reviewer", () => {
     const s = loadSettings("/nonexistent-domo-home");
     expect(reviewerAvailable(s)).toBe(false);
-    expect(s.approvalMode).toBe("ask");
+    // Adversarial by default — with no credential it fails closed (deny),
+    // never a silent grant.
+    expect(s.approvalMode).toBe("adversarial");
   });
 });
 

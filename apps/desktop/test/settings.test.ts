@@ -99,6 +99,19 @@ describe("settings storage", () => {
     expect(loadSettings(tempHome()).selectedTab).toBe("agents");
   });
 
+  /**
+   * A new home starts with the reviewer deciding; the owner opts INTO dialogs.
+   * A home whose owner chose a mode keeps it — the file's value wins.
+   */
+  it("defaults a new home to adversarial review, and keeps a chosen mode", () => {
+    expect(loadSettings(tempHome()).approvalMode).toBe("adversarial");
+    const home = tempHome();
+    const settings = loadSettings(home);
+    settings.approvalMode = "ask";
+    saveSettings(home, settings);
+    expect(loadSettings(home).approvalMode).toBe("ask");
+  });
+
   it("leaves a home that already chose a tab exactly where it was", () => {
     const home = tempHome();
     const settings = loadSettings(home);
