@@ -51,6 +51,14 @@ included — requires \`--account\` and is refused with the connected list until
 you name one; with exactly one account connected, it runs there without the
 flag.
 
+**Unnamed writes go to the default.** When the user composes without naming
+an account — "write an email", "add a cal invite", or says "my default/main
+account" — resolve it yourself: take the DEFAULT from \`["plow-gog",
+"accounts"]\`, pass it as an explicit \`--account\`, and tell the user which
+account you used. Do not bounce the refusal back to the user and do not pick
+any other account unnamed. (Follow-ups are different: a reply or an edit
+stays on the account that owns the thread or event, per the rule below.)
+
 **Follow-ups carry the item's account.** Message and event IDs are
 per-mailbox: a \`gmail get\` on an id from a fan-out result passes
 \`--account <that item's account>\`. When replying, use the
