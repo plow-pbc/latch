@@ -290,6 +290,12 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  // Park every poll loop this test left running, BEFORE the next test exists.
+  // An activation that never completes polls forever, and `wait` resolves
+  // instantly under the fake clock — so a loop still live when the file's last
+  // test ends spins until its `waits` array hits V8's element limit and takes
+  // the worker with it. Bumping here makes the park unconditional.
+  harnessGen += 1;
   fs.rmSync(home, { recursive: true, force: true });
 });
 
