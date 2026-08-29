@@ -153,6 +153,11 @@ export async function resolvePaymentApproval(
   request: PaymentApprovalRequest,
   budgetMs: number = APPROVAL_BUDGET_MS,
 ): Promise<ApprovalOutcome> {
+  // TODO(plow-approval-PR): when a real client lands, thread an AbortSignal
+  // through PaymentApprovalClient and cancel on timeout — Promise.race abandons
+  // the losing promise but cannot stop it, so a hung network call keeps running
+  // (and could double-fire against a retry). No cost today: the only client is
+  // the instant NO_APPROVAL_ENDPOINT.
   let timer: ReturnType<typeof setTimeout> | undefined;
   const budget = new Promise<never>((_resolve, reject) => {
     timer = setTimeout(() => reject(new ApprovalTimeout()), budgetMs);

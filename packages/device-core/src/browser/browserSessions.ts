@@ -999,6 +999,11 @@ export class BrowserSessions {
           origin: frameHost,
           reason: `banking credential release requires owner approval; blocked (${outcome})`,
         });
+        // The agent-facing message is deliberately uniform across not-approved /
+        // error / timeout — the WHY lives in the owner's audit line above, not in
+        // the agent's hands, so it cannot tell an outage from a denial and
+        // retry-loop or probe against it. Money gate: the audit says more, the
+        // agent hears less.
         return {
           status: "error",
           error:
