@@ -61,6 +61,12 @@ electronLanguages:
 # arch passes, so the universal merge copies it through untouched. Runtime code
 # resolves it via process.resourcesPath ("browser-runtime/...").
 extraResources:
+  # The repo's own redistribution terms ride inside the bundle — recipients of
+  # the DMG/update ZIP get them, not just readers of the source tree.
+  - from: ../../LICENSE
+    to: LICENSE
+  - from: ../../NOTICE
+    to: NOTICE
   - from: ../../vendor/python-runtime
     to: browser-runtime/python
     filter: ["**/*", "!.stamp"]
@@ -69,6 +75,14 @@ extraResources:
   - from: ../../vendor/camoufox-browser/universal
     to: browser-runtime/camoufox
     filter: ["**/*", "!.sha256"]
+  # Every vendored provider CLI, per-arch, in ONE entry — the payloads live
+  # under vendor/providers/<command>/<arch>/, so adding a provider edits nothing
+  # here. resolveVendoredBinary looks the arch up by process.arch, so those
+  # directory names are Node's (arm64, x64), not any release's. VERSION is each
+  # provider's local staleness marker, not payload.
+  - from: ../../vendor/providers
+    to: providers
+    filter: ["**/*", "!*/VERSION"]
   - from: ../../vendor/vault-cli
     to: browser-runtime/vault-cli
     filter: ["**/*", "!*/.sha256"]
@@ -107,8 +121,14 @@ mac:
   # identically into both electron slices, and the merger would try to lipo a
   # thin binary against its identical twin and fail. This pattern passes those
   # two through instead. Fusing them the way Camoufox is fused is issue #15.
-  x64ArchFiles: "**/browser-runtime/{vault-cli,vault-server}/**"
+  # Vendored provider CLIs are the same shape as the vault payloads and need the
+  # same treatment: two THIN per-arch binaries copied identically into both
+  # electron slices, so the merger would lipo a thin binary against its
+  # identical twin and fail. One `providers` alternation covers all of them.
+  x64ArchFiles: "**/{browser-runtime/{vault-cli,vault-server},providers}/**"
   notarize: true
+  extendInfo:
+    NSAppleEventsUsageDescription: "Plow Latch sends the Messages and automation commands you approve on this Mac."
 
 # Re-sign browser-runtime after the universal merge (which rewrites nested
 # Info.plists and breaks their seals) and before signing/notarization.

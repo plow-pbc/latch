@@ -1,0 +1,100 @@
+/**
+ * How a vendored provider CLI is authorised, and where its binary lives.
+ *
+ * Outside `main.ts` for the reason the browser runtime's resolution is: these
+ * decide which credential leaves this Mac and which binary a bare command name
+ * reaches, so both have to be reachable by `npx vitest run` with no display.
+ */
+import path from "node:path";
+import {
+  MintError,
+  overrideVar,
+  PROVIDERS,
+  resolveVendoredBinary,
+  type Minter,
+  type VendoredProvider,
+} from "@domo/device-core";
+import type { PlowApi } from "./plowApi.js";
+import { loadSettings } from "./settings.js";
+
+/**
+ * Adapts `PlowApi` to the `Minter` the device expects.
+ *
+ * An adapter rather than a transport: everything about how the call is made —
+ * the bearer header, the bound, the credential-echo rule — is already
+ * `PlowApi`'s, and duplicating it would have put those three properties in two
+ * places that can drift.
+ */
+export function buildMinter(opts: { api: PlowApi; home: string }): Minter {
+  const authorised = async <T>(
+    provider: VendoredProvider,
+    call: (credential: string) => Promise<T>,
+  ): Promise<T> => {
+    // Read per call, never captured: re-pairing takes effect on the next
+    // command rather than the next launch.
+    const credential = loadSettings(opts.home).relayCredential.trim();
+    if (!credential) throw MintError.unpaired();
+    try {
+      return await call(credential);
+    } catch (e) {
+      // PlowApi composes its own messages under the same no-foreign-text
+      // rule, so this one is safe to carry into the audit log.
+      throw MintError.failed(provider.command, e instanceof Error ? e.message : "unknown error");
+    }
+  };
+  return {
+    mintAll: (provider) =>
+      authorised(provider, (c) => opts.api.mintAccountTokens(c, provider.mintPrefix, provider.mintAction)),
+  };
+}
+
+/**
+ * The directories holding vendored CLIs, for the child's PATH.
+ *
+ * One entry per STAGED provider: a provider whose binary is missing is
+ * skipped, not fatal, and does not stop the others resolving. Empty when
+ * nothing is staged at all, which is not an error either — the exec path
+ * reports a missing provider through the approval dialog rather than failing
+ * at launch, and every non-provider command still runs.
+ *
+ * `providers` is a parameter so the loop itself can be tested. With one row in
+ * `PROVIDERS`, a walker and a single lookup are indistinguishable — which is
+ * the same false generality this seam was just fixed for, one caller up.
+ */
+export function vendorDirs(
+  opts: { resourcesDir?: string; repoRoot?: string },
+  providers: readonly VendoredProvider[] = PROVIDERS,
+): string[] {
+  const dirs: string[] = [];
+  for (const provider of providers) {
+    // The staged payload, which is not always the command: plow-gog execs the
+    // vendored gog, so two rows resolve one binary — and one PATH entry.
+    const binary = provider.binary;
+    const located = resolveVendoredBinary(binary, opts);
+    if (located.path !== null) {
+      const dir = path.dirname(located.path);
+      if (!dirs.includes(dir)) dirs.push(dir);
+      continue;
+    }
+    // The distinction `resolveVendoredBinary` draws is worth keeping: an
+    // operator who NAMED a path gets told that path is wrong, rather than
+    // "nothing is staged", which would send them to run a fetch they have
+    // already run. Logged rather than thrown — this runs inside the launch
+    // chain, and a stale env var must not be able to take the app down.
+    if (located.problem !== "not-staged") {
+      const name = overrideVar(binary);
+      const why =
+        located.problem === "override-missing"
+          ? "names no executable file"
+          : `must name a file called \`${binary}\` — only its directory reaches the child`;
+      // `tried` is what the resolver actually looked at — normalized once,
+      // there, rather than re-derived here from the environment.
+      // Both halves come off the result, so nothing here re-reads the
+      // environment or repeats the resolve: the operator can match the line
+      // against what they typed, and see what was actually looked at.
+      const { given, tried } = located;
+      console.error(`[providers] ${name} ${why}: ${given === tried ? given : `${given} → ${tried}`}`);
+    }
+  }
+  return dirs;
+}

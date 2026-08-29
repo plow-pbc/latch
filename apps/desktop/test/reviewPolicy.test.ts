@@ -16,7 +16,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Intent, JSONValue, makeIntent } from "@domo/protocol";
 import { adversarialReview } from "../src/adversarialAgent.js";
 import type { ReviewArgs, ReviewFailureCause, Verdict } from "../src/adversarialAgent.js";
-import { DENIAL_SOURCE_NO_REVIEWER } from "@domo/device-core";
+import { DENIAL_SOURCE_NO_REVIEWER, PolicyEngine } from "@domo/device-core";
+import type { PolicyDelegate } from "@domo/device-core";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { Settings } from "../src/settings.js";
 import { auditActivities, decidedByLabel } from "../src/viewModel.js";
 import {
@@ -24,10 +28,14 @@ import {
   decideIntent,
   inferenceStatus,
   reviewerAvailable,
+  storedRuleMayGrant,
 } from "../src/reviewPolicy.js";
 import { REVIEWER_MODEL } from "../src/adversarialAgent.js";
 
 const PLOW_CREDENTIAL = "plow_sk_do_not_leak_me";
+
+// A real directory, because confinement canonicalizes (realpath) both sides.
+const PLOW_ROOT = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), "plow-root-"));
 
 function settings(overrides: Partial<Settings> = {}): Settings {
   return {
@@ -36,7 +44,6 @@ function settings(overrides: Partial<Settings> = {}): Settings {
     mcpUrl: "",
     selectedTab: "audit",
     approvalMode: "ask",
-    showAgentSuggestions: true,
     agentPurpose: "",
     ...overrides,
   };
@@ -82,6 +89,7 @@ function harness(
     decideIntent(intent(), {
       settings: s,
       apiBaseUrl: "https://api.plow.co",
+      plowRoot: PLOW_ROOT,
       auditEntries: () => [],
       record: (event, fields) => records.push({ event, fields }),
       review,
@@ -118,6 +126,7 @@ describe("nothing about the past reaches the reviewer", () => {
     await decideIntent(intent(), {
       settings: settings({ approvalMode: "adversarial", relayCredential: PLOW_CREDENTIAL }),
       apiBaseUrl: "https://api.plow.co",
+      plowRoot: PLOW_ROOT,
       auditEntries: () => soaked,
       record: () => {},
       review,
@@ -185,7 +194,6 @@ describe("the reviewer is told whether anyone is behind it", () => {
       settings({
         approvalMode: "ask",
         relayCredential: PLOW_CREDENTIAL,
-        showAgentSuggestions: true,
       }),
       { verdict: "ask" },
     );
@@ -208,6 +216,162 @@ describe("decideIntent — modes that never reach the reviewer", () => {
     expect(await h.run()).toEqual({ decision: "deny", source: "policy" });
     expect(h.review).not.toHaveBeenCalled();
     expect(h.openApproval).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * The bypass: a stored always-allow rule is replayed by `PolicyEngine.decide`
+ * BEFORE the delegate is consulted at all, so an agent with review switched on
+ * auto-ran anything the human had ever pressed "always allow" on. Same class as
+ * the bug the switch was written to fix — a control that reports success and
+ * does nothing — and not visible from `decideIntent` alone, because the engine
+ * never reaches it.
+ *
+ * Pinned against the REAL `PolicyEngine` with a real rule on disk. A fake
+ * engine here would only assert that the test agrees with itself.
+ */
+describe("a stored rule cannot stand in for a required review", () => {
+  let rulesDir: string;
+  let engine: PolicyEngine;
+
+  /** The delegate the app installs, minus Electron: it answers with the review
+   * policy and vetoes rule replay exactly where `ElectronPolicy` does. */
+  const delegate = (s: Settings, answer: () => Promise<Verdict>): PolicyDelegate & {
+    calls: number;
+  } => {
+    const d = {
+      calls: 0,
+      mayGrantFromStoredRule: () => storedRuleMayGrant(s),
+      async decideIntent(i: Intent) {
+        d.calls += 1;
+        return decideIntent(i, {
+          settings: s,
+          apiBaseUrl: "https://api.plow.co",
+      plowRoot: PLOW_ROOT,
+          auditEntries: () => [],
+          record: () => {},
+          review: async () => ({ verdict: await answer(), reason: "because" }),
+          openApproval: async () => "deny" as const,
+        });
+      },
+    };
+    return d;
+  };
+
+  /** A Mac whose global mode hands the decision to the reviewer. */
+  const reviewed = (over: Partial<Settings> = {}) =>
+    settings({
+      approvalMode: "adversarial",
+      relayCredential: PLOW_CREDENTIAL,
+      ...over,
+    });
+
+  /** Store an always-allow rule for the harness intent by making one. */
+  const storeRule = async () => {
+    const first: PolicyDelegate = { decideIntent: async () => "always_allow" as const };
+    const grant = await engine.decide(intent(), first);
+    expect(grant.decision).toBe("always_allow");
+    expect(engine.allRules()).toHaveLength(1);
+  };
+
+  beforeEach(() => {
+    rulesDir = fs.mkdtempSync(path.join(os.tmpdir(), "domo-rules-"));
+    engine = new PolicyEngine(path.join(rulesDir, "rules.json"));
+  });
+
+  afterEach(() => {
+    fs.rmSync(rulesDir, { recursive: true, force: true });
+  });
+
+  it("replays the rule under a mode that lets a rule answer", async () => {
+    // The behaviour that must survive the fix: rules still work.
+    await storeRule();
+    const d = delegate(settings({ approvalMode: "approve" }), async () => "allow");
+    const grant = await engine.decide(intent(), d);
+
+    expect(grant.decision).toBe("always_allow");
+    expect(grant.source).toBe("rule");
+    expect(d.calls).toBe(0);
+  });
+
+  it("THE BYPASS: does not replay it when the reviewer decides", async () => {
+    await storeRule();
+    const d = delegate(reviewed(), async () => "allow");
+    const grant = await engine.decide(intent(), d);
+
+    // The reviewer ran, and its verdict — not the cached click — is the answer.
+    expect(d.calls).toBe(1);
+    expect(grant.source).toBe("adversarial");
+  });
+
+  it("lets that review DENY what the stored rule would have allowed", async () => {
+    await storeRule();
+    const d = delegate(reviewed(), async () => "deny");
+    const grant = await engine.decide(intent(), d);
+
+    expect(grant.decision).toBe("deny");
+    expect(grant.source).toBe("adversarial");
+  });
+
+  it("leaves the rule itself on disk — it is not a revocation", async () => {
+    await storeRule();
+    await engine.decide(intent(), delegate(reviewed(), async () => "allow"));
+
+    // The switch changes who answers, not what the human once chose. Turn it
+    // off and the rule applies again.
+    expect(engine.allRules()).toHaveLength(1);
+    const after = await engine.decide(intent(), delegate(settings(), async () => "allow"));
+    expect(after.source).toBe("rule");
+  });
+
+  it("keeps global deny in front of the rule and the review alike", async () => {
+    await storeRule();
+    const d = delegate(reviewed({ approvalMode: "deny" }), async () => "allow");
+    const grant = await engine.decide(intent(), d);
+
+    expect(grant.decision).toBe("deny");
+    expect(grant.source).toBe("policy");
+  });
+
+  it("fails closed when the veto itself throws", async () => {
+    // A guard that errors must not read as permission, or the bypass returns
+    // the moment the guard is the thing that broke.
+    await storeRule();
+    const d = delegate(reviewed(), async () => "deny");
+    const grant = await engine.decide(intent(), {
+      ...d,
+      mayGrantFromStoredRule: () => {
+        throw new Error("settings unreadable");
+      },
+    });
+
+    expect(grant.source).not.toBe("rule");
+    expect(grant.decision).toBe("deny");
+  });
+
+  it("keeps the plain behaviour for a delegate with no veto at all", async () => {
+    await storeRule();
+    const grant = await engine.decide(intent(), {
+      decideIntent: async () => "deny" as const,
+    });
+
+    expect(grant.source).toBe("rule");
+  });
+});
+
+describe("storedRuleMayGrant", () => {
+  it.each([
+    ["adversarial", false],
+    ["approve", true],
+    ["ask", true],
+    ["deny", false],
+  ])("under %s mode: %s", (mode, expected) => {
+    // The two modes that take the decision away from the human refuse a
+    // replay: adversarial gives it to the reviewer, deny refuses everything.
+    // A rule is a cached human decision, and neither mode wants one.
+    expect(storedRuleMayGrant(settings({ approvalMode: mode as Settings["approvalMode"] }))).toBe(
+      expected,
+    );
   });
 });
 
@@ -346,9 +510,9 @@ describe("decideIntent — adversarial mode", () => {
 });
 
 describe("decideIntent — ask mode and suggestions", () => {
-  it("suggests when the toggle is on and there is a credential", async () => {
+  it("suggests when there is a credential", async () => {
     const h = harness(
-      settings({ approvalMode: "ask", relayCredential: PLOW_CREDENTIAL, showAgentSuggestions: true }),
+      settings({ approvalMode: "ask", relayCredential: PLOW_CREDENTIAL }),
       { verdict: "allow", decision: "always_allow" },
     );
     expect(await h.run()).toEqual({ decision: "always_allow", source: "ask" });
@@ -370,17 +534,8 @@ describe("decideIntent — ask mode and suggestions", () => {
     }
   });
 
-  it("skips the review entirely when suggestions are off", async () => {
-    const h = harness(
-      settings({ approvalMode: "ask", relayCredential: PLOW_CREDENTIAL, showAgentSuggestions: false }),
-    );
-    await h.run();
-    expect(h.review).not.toHaveBeenCalled();
-    expect(h.dialogs).toEqual([null]);
-  });
-
   it("skips the review when there is no credential", async () => {
-    const h = harness(settings({ approvalMode: "ask", showAgentSuggestions: true }));
+    const h = harness(settings({ approvalMode: "ask" }));
     await h.run();
     expect(h.review).not.toHaveBeenCalled();
     expect(h.dialogs).toEqual([null]);
@@ -390,7 +545,7 @@ describe("decideIntent — ask mode and suggestions", () => {
     // The user did not delegate the decision here, so a billing problem must
     // not turn into a denial. The dialog opens exactly as it always does.
     const h = harness(
-      settings({ approvalMode: "ask", relayCredential: PLOW_CREDENTIAL, showAgentSuggestions: true }),
+      settings({ approvalMode: "ask", relayCredential: PLOW_CREDENTIAL }),
       { verdict: "ask", cause: "no_credits", reason: "insufficient Plow balance", decision: "allow_once" },
     );
     expect(await h.run()).toEqual({ decision: "allow_once", source: "ask" });
@@ -461,9 +616,9 @@ describe("the approval dialog's advice note carries no credential either", () =>
       settings: settings({
         approvalMode: "ask",
         relayCredential: PLOW_CREDENTIAL,
-        showAgentSuggestions: true,
       }),
       apiBaseUrl: "https://api.plow.co",
+      plowRoot: PLOW_ROOT,
       auditEntries: () => [],
       record: () => {},
       review: adversarialReview, // the REAL one, guard included
@@ -523,7 +678,9 @@ describe("settings defaults", () => {
   it("a settings.json that was never written reads as an unusable reviewer", () => {
     const s = loadSettings("/nonexistent-domo-home");
     expect(reviewerAvailable(s)).toBe(false);
-    expect(s.approvalMode).toBe("ask");
+    // Adversarial by default — with no credential it fails closed (deny),
+    // never a silent grant.
+    expect(s.approvalMode).toBe("adversarial");
   });
 });
 
@@ -575,7 +732,7 @@ describe("the audit tells one coherent story about who decided", () => {
     // adversarial mode `ask` is not in the schema at all, so there is nothing
     // left to render for it.
     const h = harness(
-      settings({ relayCredential: PLOW_CREDENTIAL, showAgentSuggestions: true }),
+      settings({ relayCredential: PLOW_CREDENTIAL }),
       { verdict: "ask", reason: "genuinely ambiguous", decision: "allow_once" },
     );
     const decision = await h.run();
@@ -662,5 +819,60 @@ describe("what the reviewer is told about the owner's purpose", () => {
 
     expect(JSON.stringify(h.records)).not.toContain("Groceries");
     expect(JSON.stringify(h.records)).not.toContain("~/Developer");
+  });
+});
+
+/**
+ * The ~/Plow playground: file operations confined to it are granted with no
+ * reviewer and no dialog — in every mode except deny, which is the owner's
+ * kill switch and must keep outranking the carve-out.
+ */
+describe("the ~/Plow playground carve-out", () => {
+  function plowIntent(caps: Parameters<typeof makeIntent>[0]["capabilities"]): Intent {
+    return makeIntent({
+      agentId: "agent-1",
+      agentDisplay: "Agent One",
+      deviceId: "device-1",
+      request: "write file",
+      capabilities: caps,
+      sessionId: "s1",
+    });
+  }
+
+  function run(mode: Settings["approvalMode"], caps: Parameters<typeof makeIntent>[0]["capabilities"]) {
+    const review = vi.fn(async () => ({ verdict: "deny" as const, reason: "no" }));
+    const openApproval = vi.fn(async () => "deny" as const);
+    const result = decideIntent(plowIntent(caps), {
+      settings: settings({ approvalMode: mode, relayCredential: PLOW_CREDENTIAL }),
+      apiBaseUrl: "https://api.plow.co",
+      plowRoot: PLOW_ROOT,
+      auditEntries: () => [],
+      record: () => {},
+      review,
+      openApproval,
+    });
+    return { result, review, openApproval };
+  }
+
+  const confinedWrite = () => [{ kind: "fs.write" as const, paths: [path.join(PLOW_ROOT, "notes.md")] }];
+  const confinedRead = () => [{ kind: "fs.read" as const, paths: [path.join(PLOW_ROOT, "a/b.txt")] }];
+  const outsideWrite = () => [{ kind: "fs.write" as const, paths: [path.join(os.tmpdir(), "outside.txt")] }];
+  const writeAndExec = () => [
+    { kind: "fs.write" as const, paths: [path.join(PLOW_ROOT, "notes.md")] },
+    { kind: "process.exec" as const, argv: ["ls"], cwd: PLOW_ROOT },
+  ];
+
+  it.each([
+    ["a confined write in adversarial mode grants, no review spent", "adversarial", confinedWrite, "plow_folder", 0, 0],
+    ["a confined read in ask mode grants, no dialog", "ask", confinedRead, "plow_folder", 0, 0],
+    ["deny mode still refuses the playground", "deny", confinedWrite, "policy", 0, 0],
+    // reviews=1 on the ask rows: suggestions are on, so the dialog gets a hint.
+    ["a path outside the folder keeps the normal path", "ask", outsideWrite, "ask", 1, 1],
+    ["exec disqualifies the whole set, even inside the folder", "ask", writeAndExec, "ask", 1, 1],
+  ] as const)("%s", async (_name, mode, caps, source, reviews, dialogs) => {
+    const { result, review, openApproval } = run(mode, caps());
+    expect((await result).source).toBe(source);
+    expect(review).toHaveBeenCalledTimes(reviews);
+    expect(openApproval).toHaveBeenCalledTimes(dialogs);
   });
 });

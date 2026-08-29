@@ -335,6 +335,11 @@ input.text, textarea.text {
   background: var(--bg); border: 1px solid var(--border);
   border-radius: var(--radius-sm); padding: 8px 10px; outline: none;
 }
+select.text {
+  width: 100%; font: inherit; color: var(--fg);
+  background: var(--bg); border: 1px solid var(--border);
+  border-radius: var(--radius-sm); padding: 8px 10px; outline: none;
+}
 textarea.text { min-height: 70px; resize: vertical; }
 .field { margin-bottom: 10px; }
 .field label { display: block; color: var(--muted); margin-bottom: 4px; }
@@ -534,8 +539,8 @@ textarea.text { min-height: 70px; resize: vertical; }
 }
 
 /* ---- Connect an MCP client ------------------------------------------------
-   The Agents pane, which carries `.settings` alongside `.agents` because it
-   reuses the same group card — so every rule here stays scoped under it.
+   Agents and Rules carry `.settings` because they reuse the same group card —
+   so every rule here stays scoped under that shared furniture.
 
    `styles.css` had no spacing tokens (only --radius/--shadow/colours), so this
    pane defines a small 8px scale of its own rather than inventing global ones
@@ -588,6 +593,157 @@ textarea.text { min-height: 70px; resize: vertical; }
   color: var(--faint); font-size: 12px; text-decoration: underline; cursor: pointer;
 }
 .settings .connect .linkbtn:hover { color: var(--fg); }
+
+/* ---------- Agents inventory ---------- */
+.agents-roster { padding: 10px 16px 16px; }
+.list-section + .list-section { margin-top: 10px; }
+.list-section-head {
+  display: flex; align-items: center; gap: 8px; margin-bottom: 5px;
+}
+.list-section-head h2 { font-size: 15px; margin: 0; }
+.list-section-head .faint { font-size: 12px; }
+.entity-list {
+  background: var(--card); border: 1px solid var(--border);
+  border-radius: var(--radius); box-shadow: var(--shadow);
+}
+.entity-row {
+  min-height: 53px; display: flex; align-items: center; gap: 9px;
+  padding: 5px 10px; position: relative;
+}
+.entity-row + .entity-row { border-top: 1px solid var(--border); }
+.entity-mark {
+  width: 28px; height: 28px; flex: none; display: grid; place-items: center;
+  border-radius: 8px; background: var(--sel); color: var(--blue-fg);
+  font-weight: 700;
+}
+.entity-mark.client {
+  font-family: var(--mono); background: var(--bg); color: var(--muted);
+  border: 1px solid var(--border); font-size: 11px;
+}
+.entity-main { flex: 1; min-width: 0; }
+.entity-top { display: flex; align-items: center; gap: 8px; margin-bottom: 2px; }
+.entity-name { font-weight: 600; overflow-wrap: anywhere; }
+.entity-context {
+  color: var(--muted); font-size: 11.5px; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis;
+}
+.entity-perms {
+  color: var(--fg); font-size: 11.5px; line-height: 1.3;
+  margin-top: 3px; white-space: normal;
+}
+.entity-perms span + span::before { content: " · "; color: var(--faint); }
+.entity-actions { display: flex; align-items: center; gap: 6px; flex: none; }
+.message-btn { white-space: nowrap; }
+.more { width: 28px; height: 28px; justify-content: center; padding: 0; font-size: 18px; line-height: 1; }
+.more-menu {
+  position: absolute; z-index: 4; right: 9px; top: 42px; width: 124px;
+  padding: 5px; background: var(--card); border: 1px solid var(--border-strong);
+  border-radius: 8px; box-shadow: var(--shadow);
+}
+.more-menu button {
+  -webkit-app-region: no-drag; width: 100%; text-align: left; border: 0;
+  border-radius: 6px; background: none; color: var(--red-fg);
+  padding: 7px 9px; font: inherit; cursor: pointer;
+}
+.more-menu button:hover { background: var(--red-bg); }
+.status-setting {
+  display: inline-flex; align-items: center; gap: 6px;
+  color: var(--amber-fg); font-size: 11px; font-weight: 600;
+}
+.status-setting .cloud-spinner { margin: 0; }
+.status-removing { color: var(--muted); }
+.signout-warning { color: var(--amber-fg); }
+.revoked-summary {
+  min-height: 26px; color: var(--muted); font-size: 11.5px;
+  padding: 4px 10px; border-top: 1px solid var(--border);
+}
+.entity-empty { padding: 16px 10px; text-align: left; }
+.roster-notices { margin-bottom: 10px; }
+.roster-notices .cloud-callout + .cloud-callout { margin-top: 8px; }
+.list-section-head + .cloud-callout,
+.list-section-head + .cloud-progress { margin-bottom: 8px; }
+.cloud-callout + .entity-list,
+.cloud-progress + .entity-list { margin-top: 8px; }
+
+/* ---------- Cloud setup and status ---------- */
+.cloud-progress {
+  display: flex; align-items: center; gap: 8px;
+  margin-top: 10px; color: var(--muted); font-size: 12px;
+}
+.cloud-loading { margin: 4px 0 12px; }
+.cloud-spinner {
+  width: 13px; height: 13px; flex: none; border-radius: 50%;
+  border: 2px solid var(--border-strong); border-top-color: var(--blue-fg);
+  animation: cloud-spin 0.8s linear infinite;
+}
+.btn.primary .cloud-spinner {
+  border-color: rgba(255, 255, 255, 0.45); border-top-color: white;
+}
+@keyframes cloud-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .cloud-spinner { animation: none; }
+}
+.cloud-callout, .cloud-warning {
+  padding: 10px 12px; border: 1px solid var(--border);
+  border-radius: var(--radius-sm); background: var(--bg);
+}
+.cloud-callout + .cloud-callout { margin-top: 10px; }
+.cloud-callout-title, .cloud-warning-title { font-weight: 600; }
+.cloud-callout p, .cloud-warning p { margin-top: 4px; }
+.cloud-callout .btn { margin-top: 10px; }
+.cloud-error { border-color: var(--red-bd); background: var(--red-bg); }
+.cloud-error .cloud-callout-title { color: var(--red-fg); }
+.cloud-modal .field { margin-bottom: 12px; }
+.cloud-modal .cloud-warning { margin-top: 4px; border-color: var(--amber-bd); background: var(--amber-bg); }
+.cloud-modal-actions { margin-top: 18px; }
+/* The chat checklist, in the set-up and edit-chats modals. The row IS a
+   <label>, and `.field label { display: block }` above outranks a bare class,
+   so the layout rule has to be scoped under `.field` to reach it. */
+.chat-list {
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  background: var(--bg); overflow: hidden;
+}
+.field .chat-option {
+  display: flex; align-items: center; gap: 9px;
+  padding: 7px 10px; margin-bottom: 0; cursor: pointer; color: var(--fg);
+}
+.chat-option + .chat-option { border-top: 1px solid var(--border); }
+.chat-option:hover { background: var(--hover); }
+.chat-option input { margin: 0; flex: none; }
+.chat-option-main { flex: 1; min-width: 0; }
+.chat-option-name { font-weight: 600; }
+.chat-option-note {
+  color: var(--muted); font-size: 11.5px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* A chat another agent already serves. One chat belongs to one agent, so this
+   is not a choice being discouraged — it is one that is not on offer. */
+.chat-option.disabled { cursor: default; opacity: 0.55; }
+.chat-option.disabled:hover { background: none; }
+.chat-option.disabled .chat-option-note { color: var(--amber-fg); opacity: 1; }
+/* Only a chosen chat can be home, so this shows only on a checked row. */
+.home-toggle {
+  flex: none; border: 1px solid var(--border-strong); background: var(--card);
+  color: var(--muted); border-radius: 999px; padding: 1px 9px;
+  font: inherit; font-size: 11px; cursor: pointer; white-space: nowrap;
+}
+.home-toggle:hover { background: var(--hover); }
+.home-toggle.on {
+  border-color: var(--blue-bd); background: var(--blue-bg);
+  color: var(--blue-fg); font-weight: 600;
+}
+.chat-list-alt { margin: 8px 0 0; }
+/* The app had `.linkbtn` only inside the wizard and the connect group; the
+   checklist's "New chat…" needs the same affordance in a modal. */
+.linkbtn {
+  border: 0; background: none; padding: 0; font: inherit;
+  color: var(--muted); text-decoration: underline; cursor: pointer;
+}
+.linkbtn:hover { color: var(--fg); }
+
+.cloud-route-numbers { margin: 6px 0 0; padding-left: 22px; }
+.cloud-route-numbers li + li { margin-top: 3px; }
+.roster-confirm-loud { border-color: var(--red-bd); }
 
 /* ---------- Static-credential modal ----------
    Plain DOM over the pane, which is `inert` while this is up. The panel reuses
@@ -659,3 +815,25 @@ textarea.text { min-height: 70px; resize: vertical; }
 .item .revealed p { margin: 6px 0 0; }
 /* What the selected mode does, where the purpose field would otherwise be. */
 .item p.mode-hint { margin: 10px 0 0; }
+
+.cloud-route-numbers li.cloud-route-number {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+}
+.cloud-line-name { display: flex; align-items: baseline; gap: 6px; }
+.cloud-route-number.held .cloud-line-name { color: var(--muted); }
+/* One chat row's entries. Each `.chat-entry` is a column — the name over the
+   number it belongs to — so the pairing is the layout rather than two strings
+   a reader lines up by counting. `baseline` puts the separators on the name
+   line; `nowrap` + `hidden` keeps a many-person thread to one row, with the
+   flat title as its tooltip. */
+.chat-row-entries {
+  display: flex; align-items: baseline; gap: 5px;
+  flex-wrap: nowrap; overflow: hidden;
+}
+.chat-entry { display: inline-flex; flex-direction: column; min-width: 0; }
+.chat-entry-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-entry-number {
+  color: var(--muted); font-size: 11px; font-weight: 400; margin-top: 2px;
+  white-space: nowrap;
+}
+.chat-entry-sep { color: var(--muted); font-weight: 400; flex: none; }

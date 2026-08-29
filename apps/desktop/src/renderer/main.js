@@ -3,21 +3,38 @@
    textContent (never innerHTML), so nothing on the wire can inject markup. */
 
 import {
-  APPROVAL_MODES,
   PURPOSE_CAVEATS,
   PURPOSE_LABEL,
   PURPOSE_PLACEHOLDER,
 } from "./approvals.js";
 
+import {
+  canEditChats,
+  cloudChatSummary,
+  dropChat,
+  editorChats,
+  makeHome,
+  pickChat,
+  sameChatSet,
+  sortChatRows,
+} from "./chatSets.js";
 import { el, icon } from "./dom.js";
-import { renderVault } from "./vault.js";
+import { renderVault, vaultConfirmLeave } from "./vault.js";
 
 const view = document.getElementById("view");
 const seg = document.getElementById("seg");
 const statusDot = document.getElementById("statusDot");
 const statusText = document.getElementById("statusText");
+const CLOUD_PROVIDERS = [
+  { value: "exe:hermes", label: "Hermes" },
+  { value: "exe:life", label: "Life" },
+  { value: "exe:pirate", label: "Pirate" },
+];
 
-let currentTab = "audit";
+// Null until boot() picks one: the HTML marks Audit active for the first paint,
+// but boot must still RENDER that pane, and "already on this tab" now returns
+// early — so the starting value cannot be a tab boot might legitimately select.
+let currentTab = null;
 let filter = "all";
 // The mounted Settings pane, while that tab is up. Holds a `refresh` that
 // updates the display nodes in place, so a relay reconnect cannot reset the
@@ -377,8 +394,112 @@ function detailFor(a) {
 
 // ---- Rules ----
 
+let rulesMounted = null;
+
 async function renderRules() {
   const rules = await window.domo.rulesList();
+
+  // ---- Approvals: what happens when one of those agents asks for something.
+  //
+  // It sits above the stored rules because both controls answer what agents
+  // may do. The stored mode values are untouched — every label below is
+  // display only.
+  let inference = await window.domo.inferenceGet();
+  const modeChips = el("div", { class: "chips" });
+  const modeNote = el("p", { class: "faint chip-note", text: "" });
+  const modeHintLine = el("p", { class: "faint mode-hint", text: "" });
+
+  // The purpose statement, and the two things that have to be said beside it.
+  // Device-owner text: it is read and written through the settings IPC pair and
+  // nowhere else, and it reaches no rule key, grant, or sandbox profile.
+  const purposeInput = el("textarea", {
+    class: "text",
+    attrs: { placeholder: PURPOSE_PLACEHOLDER },
+  });
+  purposeInput.value = await window.domo.agentPurposeGet();
+  // On commit only — blur or Enter: an `input` handler would persist every
+  // half-written sentence on the way to the real one. The stored value is
+  // what goes back on screen, so the field shows what the reviewer will read.
+  purposeInput.addEventListener("change", async () => {
+    purposeInput.value = await window.domo.agentPurposeSet(purposeInput.value);
+  });
+  const purposeBlock = el("div", { class: "revealed" }, [
+    el("div", { class: "field" }, [el("label", { text: PURPOSE_LABEL }), purposeInput]),
+    ...PURPOSE_CAVEATS.map((text) => el("p", { class: "faint", text })),
+  ]);
+
+  // The reads above can outlive a quick tab switch. Do not let the
+  // completed Rules render replace the pane the user switched to meanwhile.
+  if (currentTab !== "rules") return;
+
+  // What a reviewer with no credential costs, said rather than enforced — the
+  // mode is still the owner's to choose, and choosing it is not an error to
+  // prevent.
+
+  const renderApprovals = () => {
+    const mode = inference.approvalMode;
+    const hasKey = inference.available;
+    // How to get a reviewer. One reviewer, one answer — and the two sentences
+    // below both end in it, so they cannot come to disagree about the remedy.
+    const remedy = ": sign in to Plow in Settings.";
+    // Only worth saying when the owner has actually asked the reviewer to
+    // decide. The second half is the part people get wrong: a denial here is
+    // not a freeze, because a rule already approved is a decision they made.
+    modeNote.textContent =
+      mode === "adversarial" && !hasKey
+        ? `The AI Reviewer has no credential${remedy} ` +
+          "Until then it denies every request."
+        : "";
+    const chip = (value, label) => {
+      const chip = el("span", {
+        class: "chip" + (mode === value ? " active" : ""),
+      }, [el("span", { text: label })]);
+      chip.addEventListener("click", async () => {
+        // What MAIN stored, not what was asked for. Main takes any known mode
+        // now, but it is still the one that decides what is on disk, and the
+        // pane must show that rather than what it optimistically asked for.
+        await window.domo.approvalModeSet(value);
+        inference = await window.domo.inferenceGet();
+        renderApprovals();
+      });
+      return chip;
+    };
+    modeChips.replaceChildren(
+      chip("ask", "Ask me every time"),
+      chip("adversarial", "AI Reviewer decides"),
+      chip("approve", "Approve everything"),
+      chip("deny", "Deny everything"),
+    );
+    purposeBlock.hidden = mode !== "adversarial";
+    // Ask mode always gets the reviewer's suggestion — when the reviewer can
+    // run. With no credential it can't, so say what is actually true instead.
+    if (mode === "ask" && !hasKey) {
+      modeHintLine.textContent =
+        "Any request a rule doesn't already cover opens an approval window. " +
+        `The AI Reviewer has no credential, so it cannot suggest an answer${remedy}`;
+    } else if (mode === "approve") {
+      modeHintLine.textContent =
+        "Every request is allowed without asking you and without review.";
+    } else if (mode === "deny") {
+      modeHintLine.textContent =
+        "Every request is refused without asking you.";
+    } else {
+      // Unknown stored values keep the card useful by falling back to Ask.
+      modeHintLine.textContent = mode === "adversarial" ? "" :
+        "Any request a rule doesn't already cover opens an approval window, " +
+        "and the AI Reviewer suggests an answer.";
+    }
+    modeHintLine.hidden = mode === "adversarial";
+  };
+  renderApprovals();
+
+  // Signing in or out changes what the reviewer can do, not what the owner
+  // chose — the stored mode stays put — so this only re-reads and redraws.
+  const refreshApprovals = async () => {
+    inference = await window.domo.inferenceGet();
+    renderApprovals();
+  };
+  rulesMounted = { refreshApprovals };
 
   const ruleItems = rules.length
     ? rules.map((r) => {
@@ -392,7 +513,17 @@ async function renderRules() {
       })
     : [el("div", { class: "empty", text: "No always-allow rules." })];
 
-  view.replaceChildren(el("div", { class: "panel" }, [
+  view.replaceChildren(el("div", { class: "panel rules settings" }, [
+    group(
+      "Approvals",
+      "What happens when an agent asks to do something on this Mac. Requests already covered " +
+        "by an always-allow rule skip Ask and Approve; AI Reviewer and Deny still apply to every " +
+        "request. Manage those rules below. The reviewer sees which " +
+        "agent is asking, what it's asking to do, the exact bounds it would get, and the purpose " +
+        "you wrote for it. It never sees your files, your history on this Mac, or anything the " +
+        "agent hasn't asked for.",
+      [modeChips, modeNote, purposeBlock, modeHintLine],
+    ),
     el("div", { class: "section-label", text: "Always-allow rules" }),
     ...ruleItems,
   ]));
@@ -467,6 +598,50 @@ function group(title, desc, body) {
     disclosure, not app state, and nothing outside this window cares. */
 let staticOpen = false;
 
+/** The one modal shell mounted outside the inert application chrome. */
+let activeModal = null;
+
+function closeModal(modal) {
+  if (!modal || modal !== activeModal) return;
+  document.removeEventListener("keydown", modal.onKeydown, true);
+  modal.backdrop.remove();
+  for (const node of document.querySelectorAll(".titlebar, #view, .update-banner")) {
+    node.removeAttribute("inert");
+  }
+  activeModal = null;
+  if (modal.trigger?.isConnected) modal.trigger.focus();
+}
+
+function openModal(trigger, { children = [], className = "", focus, canDismiss, onDismiss }) {
+  if (activeModal) return null;
+  const panel = el("div", {
+    class: `modal${className ? ` ${className}` : ""}`,
+    attrs: { role: "dialog", "aria-modal": "true" },
+  }, children);
+  const backdrop = el("div", { class: "modal-backdrop" }, [panel]);
+  const dismiss = () => {
+    if (canDismiss && !canDismiss()) return;
+    onDismiss();
+  };
+  const onKeydown = (e) => {
+    if (e.key !== "Escape" || (canDismiss && !canDismiss())) return;
+    e.preventDefault();
+    e.stopPropagation();
+    onDismiss();
+  };
+  backdrop.addEventListener("mousedown", (e) => {
+    if (e.target === backdrop) dismiss();
+  });
+  document.addEventListener("keydown", onKeydown, true);
+  for (const node of document.querySelectorAll(".titlebar, #view, .update-banner")) {
+    node.setAttribute("inert", "");
+  }
+  document.body.appendChild(backdrop);
+  activeModal = { backdrop, panel, trigger, onKeydown };
+  (focus ?? panel.querySelector("button, input, select"))?.focus();
+  return activeModal;
+}
+
 /**
  * The static-credential modal, while it is up.
  *
@@ -483,15 +658,8 @@ let staticModal = null;
 /** Everything the modal switched off, switched back on. */
 function closeStaticModal() {
   if (!staticModal) return;
-  const { backdrop, trigger, onKeydown } = staticModal;
-  document.removeEventListener("keydown", onKeydown, true);
-  backdrop.remove();
-  for (const node of document.querySelectorAll(".titlebar, #view, .update-banner")) {
-    node.removeAttribute("inert");
-  }
+  closeModal(staticModal);
   staticModal = null;
-  // Focus goes back where it came from, not to the top of the document.
-  if (trigger && trigger.isConnected) trigger.focus();
 }
 
 /**
@@ -508,32 +676,19 @@ function closeStaticModal() {
  * polite name.
  */
 function openStaticModal(trigger, redraw) {
-  if (staticModal) return;
-  const panel = el("div", { class: "modal", attrs: { role: "dialog", "aria-modal": "true" } });
-  const backdrop = el("div", { class: "modal-backdrop" }, [panel]);
   const nameInput = el("input", { class: "text", attrs: { placeholder: "Claude Code" } });
-  const onKeydown = (e) => {
-    // Esc closes the form. It does NOT close a displayed credential.
-    if (e.key !== "Escape" || staticModal?.holdingCredential) return;
-    e.preventDefault();
-    e.stopPropagation();
-    staticOpen = false;
-    closeStaticModal();
-    redraw();
-  };
-  backdrop.addEventListener("mousedown", (e) => {
-    if (e.target !== backdrop || staticModal?.holdingCredential) return;
-    staticOpen = false;
-    closeStaticModal();
-    redraw();
+  const shell = openModal(trigger, {
+    focus: nameInput,
+    // Esc and the backdrop close the form, but not a displayed credential.
+    canDismiss: () => !staticModal?.holdingCredential,
+    onDismiss: () => {
+      staticOpen = false;
+      closeStaticModal();
+      redraw();
+    },
   });
-  document.addEventListener("keydown", onKeydown, true);
-  for (const node of document.querySelectorAll(".titlebar, #view, .update-banner")) {
-    node.setAttribute("inert", "");
-  }
-  document.body.appendChild(backdrop);
-  staticModal = { backdrop, panel, nameInput, trigger, onKeydown, kind: null, holdingCredential: false };
-  nameInput.focus();
+  if (!shell) return;
+  staticModal = Object.assign(shell, { nameInput, kind: null, holdingCredential: false });
 }
 
 /**
@@ -614,7 +769,11 @@ function syncStaticModal(s, redraw) {
  * Returns nodes instead of painting the view: it is no longer a screen of its
  * own, and `redraw` repaints only this group rather than the pane around it.
  */
-function connectNodes(s, redraw) {
+function connectNodes(s, redraw, openStatic = (trigger) => {
+  staticOpen = true;
+  openStaticModal(trigger, redraw);
+  redraw();
+}) {
   // Not signed in should be unreachable — the gate means the main window does
   // not exist without a credential — but showing a blank URL would be worse
   // than saying so. Folded in rather than early-returning off the screen: this
@@ -639,9 +798,7 @@ function connectNodes(s, redraw) {
   if (!s.credential) {
     const link = el("button", { class: "linkbtn", text: "Can't use OAuth? Create a static credential" });
     link.addEventListener("click", () => {
-      staticOpen = true;
-      openStaticModal(link, redraw);
-      redraw();
+      openStatic(link);
     });
     fallback = [el("div", { class: "alt" }, [link])];
   }
@@ -669,155 +826,927 @@ function connectNodes(s, redraw) {
   for (const b of box.querySelectorAll("button")) if (s.busy) b.disabled = true;
   return [box];
 }
+
+/** The OAuth-first MCP setup flow, kept off the inventory until requested. */
+let mcpModal = null;
+
+function closeMcpModal() {
+  if (!mcpModal) return;
+  closeModal(mcpModal);
+  mcpModal = null;
+}
+
+function syncMcpModal(s, redraw) {
+  if (!mcpModal) return;
+  const cancel = el("button", { class: "btn", text: "Close" });
+  cancel.addEventListener("click", closeMcpModal);
+  const openStatic = () => {
+    const trigger = mcpModal?.trigger;
+    closeMcpModal();
+    staticOpen = true;
+    openStaticModal(trigger, redraw);
+    redraw();
+  };
+  mcpModal.panel.replaceChildren(
+    el("div", { class: "group-title", text: "Connect an MCP client" }),
+    el("p", {
+      class: "faint conn-note",
+      text: "Add this server URL to Claude Code, Codex, Cursor, or any MCP-compatible client.",
+    }),
+    ...connectNodes(s, redraw, openStatic),
+    el("div", { class: "row conn-actions" }, [el("div", { class: "spacer" }), cancel]),
+  );
+}
+
+function openMcpModal(trigger, s, redraw) {
+  const shell = openModal(trigger, {
+    className: "connect-modal settings",
+    onDismiss: closeMcpModal,
+  });
+  if (!shell) return;
+  mcpModal = shell;
+  syncMcpModal(s, redraw);
+}
+
+// ---- Cloud agents ---------------------------------------------------------
+
+/** The cloud-agent dialog, if one is open. It lives outside #view so a state
+    refresh can redraw the roster without taking an in-progress choice away. */
+let cloudModal = null;
+
+function closeCloudModal() {
+  if (!cloudModal) return;
+  closeModal(cloudModal);
+  cloudModal = null;
+}
+
+/** A modal for an ordinary, reversible cloud action. */
+function openCloudModal(trigger, children, focus) {
+  const shell = openModal(trigger, {
+    children,
+    className: "cloud-modal",
+    focus,
+    onDismiss: closeCloudModal,
+  });
+  if (!shell) return null;
+  cloudModal = shell;
+  return shell.panel;
+}
+
+function cloudStatus(status, failureReason) {
+  if (status === "running") return { tone: "green", label: "Ready" };
+  if (status === "provisioning") return { tone: "amber", label: "Setting up…" };
+  if (status === "teardown") return { tone: "amber", label: "Removing…" };
+  if (status === "failed") {
+    return { tone: "red", label: `Failed · ${failureReason ?? "Reason unavailable"}` };
+  }
+  return { tone: "amber", label: "Status unavailable" };
+}
+
+const pendingCloudCreates = new Map();
+let pendingCloudCreateId = 0;
+
+function visibleCloudAgents(state) {
+  const serverChats = new Set(state.cloudAgents.flatMap((agent) => agent.chatUids ?? []));
+  return [
+    // A local pending row survives only until the server has a row covering any
+    // of the chats it asked for — one overlap is enough, because a chat belongs
+    // to at most one agent and the server's row is the real one.
+    ...[...pendingCloudCreates.values()].filter(
+      (agent) => !(agent.chatUids ?? []).some((uid) => serverChats.has(uid)),
+    ),
+    ...state.cloudAgents,
+  ];
+}
+
 /**
- * The mounted Agents pane, while that tab is up. Holds the one refresh
- * `connect:changed` calls, so a mint or a dismissal redraws the flow and
- * nothing else.
+ * Which agent already serves each chat, by uid.
+ *
+ * The picker offers a chat only if nothing holds it — one chat belongs to one
+ * agent, so offering a taken one is offering a 409. Built from the agent rows
+ * rather than the credential roster because the answer wanted here is the
+ * agent's NAME, and the set on the agent is the one the server enforces.
  */
+function cloudChatHolders(state, exceptAgentId = null) {
+  const holders = new Map();
+  const claim = (uid, name) => {
+    if (!uid || holders.has(uid)) return;
+    holders.set(uid, name || "a cloud agent");
+  };
+  for (const agent of visibleCloudAgents(state)) {
+    if (agent.agentId === exceptAgentId) continue;
+    for (const uid of agent.chatUids ?? []) claim(uid, agent.name);
+  }
+  return holders;
+}
+
+/**
+ * What a modal built around a checklist should focus.
+ *
+ * Not simply the first checkbox: every chat in the list can be disabled — an
+ * account whose chats all belong to other agents — and focusing a disabled
+ * control focuses nothing at all, leaving the modal with no keyboard entry
+ * point and Escape as the only way out.
+ */
+function firstUsableControl(panel) {
+  const enabled = (selector) =>
+    [...panel.querySelectorAll(selector)].find((node) => !node.disabled) ?? null;
+  return enabled("input:not([type=hidden])") ?? enabled("button") ?? null;
+}
+
+/**
+ * The chat checklist both modals are built from.
+ *
+ * Its one selection array is already the wire shape: home first, then every
+ * other chosen chat. An edit starts in server order, a new pick appends, and
+ * moving home moves that uid to position zero.
+ */
+function chatChecklist({ chats, holders, selected = [], onChange }) {
+  const order = chats.map((chat) => chat.uid);
+  // Home is position zero. Starting from the server's own array preserves its
+  // order on edit; newly checked chats append after the retained ones.
+  let chosen = selected.filter((uid) => order.includes(uid));
+  const chosenNow = () => new Set(chosen);
+
+  // Each row is built ONCE and updated in place. Rebuilding the list from a
+  // checkbox's own change handler detaches the <label> that click is still
+  // travelling through, and the label's activation then lands on the fresh
+  // checkbox and toggles it straight back.
+  const rows = chats.map((chat) => {
+    const heldBy = holders.get(chat.uid);
+    const taken = !!heldBy && !chosen.includes(chat.uid);
+    const row = el("label", { class: `chat-option${taken ? " disabled" : ""}` });
+
+    const box = el("input", { attrs: { type: "checkbox" } });
+    box.checked = chosen.includes(chat.uid);
+    box.disabled = taken;
+    box.addEventListener("change", () => {
+      chosen = box.checked
+        ? pickChat(chosen, chat.uid)
+        : dropChat(chosen, chat.uid, order);
+      paint();
+      onChange?.();
+    });
+
+    // One column per entry: the name on top, the number it belongs to
+    // directly under it. The pairing is structural — each is one <span> — so
+    // nothing here depends on two strings having the same number of positions,
+    // which is what a server-supplied name containing the separator broke.
+    // The line leads, because two chats can carry the same names and only the
+    // number an agent here would answer from tells them apart.
+    const flat = chat.title || chat.label || chat.uid;
+    const name = el("div", {
+      class: "chat-option-name chat-row-entries",
+      attrs: { title: flat },
+    });
+    const entries = chat.entries || [];
+    if (entries.length) {
+      entries.forEach((entry, index) => {
+        if (index) name.appendChild(el("span", { class: "chat-entry-sep", text: "·" }));
+        name.appendChild(el("span", { class: "chat-entry" }, [
+          el("span", { class: "chat-entry-label", text: entry.label }),
+          el("span", { class: "chat-entry-number", text: entry.number }),
+        ]));
+      });
+    } else {
+      // Nothing to pair: the settings fallback chat persists a label and
+      // neither a line nor participants.
+      name.appendChild(el("span", { class: "chat-entry-label", text: flat }));
+    }
+    const main = el("div", { class: "chat-option-main" }, [name]);
+    if (taken) {
+      main.appendChild(el("div", { class: "chat-option-note", text: `Served by ${heldBy}` }));
+    }
+
+    // Only a chosen chat can be home, so this is shown and hidden rather than
+    // built and destroyed — one more node that must not move under a click.
+    const make = el("button", {
+      class: "home-toggle",
+      attrs: { type: "button", title: "Reminders the agent schedules land in its home chat" },
+    });
+    make.addEventListener("click", (event) => {
+      // Without this the click also activates the surrounding <label>, which
+      // would toggle the very chat the user is promoting to home.
+      event.preventDefault();
+      chosen = makeHome(chosen, chat.uid);
+      paint();
+      onChange?.();
+    });
+
+    row.append(box, main, make);
+    return { chat, box, make };
+  });
+
+  const paint = () => {
+    const picked = chosenNow();
+    for (const { chat, box, make } of rows) {
+      box.checked = picked.has(chat.uid);
+      make.hidden = !picked.has(chat.uid);
+      const isHome = chosen[0] === chat.uid;
+      make.classList.toggle("on", isHome);
+      make.textContent = isHome ? "★ Home" : "Make home";
+    }
+  };
+
+  const list = el("div", { class: "chat-list" }, rows.map(({ box }) => box.parentElement));
+  paint();
+  return {
+    node: list,
+    chosen: () => [...chosen],
+    homeLabel: () => chats.find((chat) => chat.uid === chosen[0])?.label ?? null,
+  };
+}
+
+
+function openCloudPicker(trigger, state, redraw) {
+  const name = el("input", { class: "text", attrs: { placeholder: "Cloud agent", "aria-label": "Agent name" } });
+  const provider = el("select", { class: "text", attrs: { "aria-label": "Provider" } },
+    CLOUD_PROVIDERS.map(({ value, label }) => el("option", { text: label, attrs: { value } })));
+  const warningTitle = el("div", { class: "warn cloud-warning-title", text: "" });
+  const warningBody = el("p", { class: "faint", text: "" });
+  const warning = el("div", { class: "cloud-warning" }, [warningTitle, warningBody]);
+  const cancel = el("button", { class: "btn", text: "Cancel" });
+  const create = el("button", { class: "btn primary", text: "Set up agent" });
+
+  const checklist = chatChecklist({
+    chats: sortChatRows(state.cloudChats),
+    holders: cloudChatHolders(state),
+    onChange: () => syncPicker(),
+  });
+
+  // Every chat this agent takes over is a chat whose notifications change and
+  // do not come back, so the warning counts what was actually chosen.
+  const syncPicker = () => {
+    const chosen = checklist.chosen();
+    create.disabled = chosen.length === 0;
+    warning.hidden = chosen.length === 0;
+    warningTitle.textContent =
+      `This changes ${chosen.length} chat${chosen.length === 1 ? "" : "s"} permanently`;
+    warningBody.textContent =
+      "This agent will take over notifications for the chats you picked. Removing the agent later will not restore them.";
+  };
+
+  cancel.addEventListener("click", closeCloudModal);
+  create.addEventListener("click", async () => {
+    const chatUids = checklist.chosen();
+    if (!chatUids.length) return;
+    create.disabled = true;
+    cancel.disabled = true;
+    create.replaceChildren(
+      el("span", { class: "cloud-spinner", attrs: { "aria-hidden": "true" } }),
+      el("span", { text: "Setting up…" }),
+    );
+    const requestedName = name.value.trim();
+    const labelFor = (uid) => {
+      const chat = state.cloudChats.find((option) => option.uid === uid);
+      return chat?.title || chat?.label || uid;
+    };
+    const home = state.cloudChats.find((option) => option.uid === chatUids[0]);
+    const pendingId = `pending-cloud-${++pendingCloudCreateId}`;
+    pendingCloudCreates.set(pendingId, {
+      agentId: pendingId,
+      name: requestedName || "Cloud agent",
+      chatUids,
+      chatLabels: chatUids.map(labelFor),
+      // Home's, like every other row: it is the chat Message opens.
+      recipients: home?.recipients ?? null,
+      provider: provider.value,
+      status: "provisioning",
+      failureReason: null,
+      createdAt: "",
+      localPending: true,
+    });
+    const request = window.domo.cloudCreate(chatUids, requestedName, provider.value);
+    await new Promise((resolve) => requestAnimationFrame(resolve));
+    closeCloudModal();
+    await redraw();
+    try {
+      await request;
+    } finally {
+      pendingCloudCreates.delete(pendingId);
+      await redraw();
+    }
+  });
+
+  const newChatLink = el("button", {
+    class: "linkbtn",
+    text: "New chat…",
+    attrs: { type: "button" },
+  });
+  newChatLink.addEventListener("click", () => showExplainer());
+
+  const pickerChildren = [
+    el("div", { class: "group-title", text: "Set up a cloud agent" }),
+    el("p", { class: "faint conn-note", text: "Choose the chats this agent will read and reply in." }),
+    el("div", { class: "field" }, [
+      el("label", { text: "Chats" }),
+      checklist.node,
+      el("p", { class: "chat-list-alt" }, [newChatLink]),
+    ]),
+    el("div", { class: "field" }, [el("label", { text: "Name (optional)" }), name]),
+    el("div", { class: "field" }, [el("label", { text: "Provider" }), provider]),
+    warning,
+    el("div", { class: "row cloud-modal-actions" }, [
+      el("div", { class: "spacer" }),
+      cancel,
+      create,
+    ]),
+  ];
+  let panel = null;
+  const showPicker = () => {
+    if (!panel) return;
+    panel.replaceChildren(...pickerChildren);
+    syncPicker();
+    firstUsableControl(panel)?.focus();
+  };
+  const showExplainer = () => {
+    if (!panel) return;
+    const back = el("button", { class: "btn", text: "Back" });
+    back.addEventListener("click", showPicker);
+    // There is deliberately NO "Verify a new Plow number" button here.
+    //
+    // It used to open the setup window, which on a Mac that is already signed
+    // in lands on its "connected" screen and mints nothing — the owner clicked
+    // it and got a confirmation of the sign-in they already had. Getting a chat
+    // does not go through activation at all: the user texts a Plow number and
+    // Plow makes the chat. So this screen says that, and lists the numbers.
+    // FREE lines only. A number the account already has a chat on is already
+    // on the screen behind this one, as that chat — listing it again with a
+    // "you have this" marker was the same fact twice, and the row carried no
+    // action either way.
+    const free = (state.cloudLines ?? []).filter((line) => !line.held);
+    const body = [
+      el("p", {
+        class: "faint conn-note",
+        text: "Message a number to create a thread. It appears here when you reopen this window.",
+      }),
+    ];
+    if (state.cloudLinesError) {
+      body.push(el("p", { class: "cloud-error", text: state.cloudLinesError }));
+    } else if (state.cloudChatsError) {
+      // The numbers are withheld until the chat list lands, because "held" is a
+      // claim about this account's chats. Saying why beats a spinner that never
+      // resolves.
+      body.push(el("p", { class: "cloud-error", text: state.cloudChatsError }));
+    } else if (!state.cloudLines) {
+      body.push(el("p", { class: "faint", text: "Loading numbers…" }));
+    } else if (!free.length) {
+      // Distinct from "Plow has none": every number exists and is spoken for,
+      // and the remedy is the owner's to take on the screen behind this one.
+      body.push(el("p", {
+        class: "faint",
+        // NOT "remove an agent": an agent and its chat are different things,
+        // and removing the agent leaves the chat — and so the line — exactly
+        // as spoken for. Plow's own `DELETE /v1/chats/{uid}` even refuses
+        // while an agent still points at the chat. Latch has no delete-a-chat
+        // surface, so the remedy names where one is.
+        text: "All Plow numbers are in use. Deactivate a chat in Plow to free one.",
+      }));
+    } else {
+      body.push(el("ul", { class: "cloud-route-numbers" }, free.map((line) => {
+        // Every string here is server-authored and set as textContent.
+        const label = el("div", { class: "cloud-line-name" }, [
+          ...(line.displayName ? [el("span", { text: line.displayName }), document.createTextNode(" ")] : []),
+          el("span", { class: "mono", text: line.number }),
+        ]);
+        const open = el("button", { class: "btn small", text: "Open Messages…" });
+        open.addEventListener("click", () => window.domo.openExternal("smsLine", line.number));
+        return el("li", { class: "cloud-route-number" }, [label, open]);
+      })));
+    }
+    panel.replaceChildren(
+      el("div", { class: "group-title", text: "Create a new chat" }),
+      ...body,
+      el("div", { class: "row cloud-modal-actions" }, [back]),
+    );
+    back.focus();
+  };
+  panel = openCloudModal(trigger, pickerChildren, null);
+  if (!panel) return;
+  syncPicker();
+  // After sync, so a control this pass disables is not the one taking focus.
+  firstUsableControl(panel)?.focus();
+}
+
+/**
+ * Change which chats an existing agent serves.
+ *
+ * The same checklist as setup, pre-filled — the agent's own chats are its to
+ * keep or drop, so they are never shown as taken by it. Save stays dead until
+ * the answer differs from what the agent serves now.
+ */
+function openCloudEditor(trigger, agent, state, redraw) {
+  const baseline = agent.chatUids ?? [];
+  const cancel = el("button", { class: "btn", text: "Cancel" });
+  const save = el("button", { class: "btn primary", text: "Save changes" });
+
+  // Every chat the agent serves is in the list, whether or not the account's
+  // chat list mentions it — see `editorChats`. Without that the modal hides a
+  // served chat, `chosen()` omits it, and Save is live on open to detach a chat
+  // the person was never shown.
+  const checklist = chatChecklist({
+    chats: sortChatRows(editorChats(agent, state.cloudChats)),
+    holders: cloudChatHolders(state, agent.agentId),
+    selected: baseline,
+    onChange: () => syncEditor(),
+  });
+
+  // Home and membership, never index for index: removing and re-adding a
+  // non-home chat changes its array position, but not what the agent serves.
+  const unchanged = () => sameChatSet(checklist.chosen(), baseline);
+  const syncEditor = () => {
+    const chosen = checklist.chosen();
+    save.disabled = chosen.length === 0 || unchanged();
+  };
+
+  cancel.addEventListener("click", closeCloudModal);
+  save.addEventListener("click", async () => {
+    const chatUids = checklist.chosen();
+    if (!chatUids.length || unchanged()) return;
+    closeCloudModal();
+    await window.domo.cloudEditChats(agent.agentId, chatUids);
+    await redraw();
+  });
+
+  const panel = openCloudModal(trigger, [
+    el("div", { class: "group-title", text: `Edit chats — ${agent.name || "cloud agent"}` }),
+    el("p", { class: "faint conn-note", text: "Add or remove the chats this agent reads and replies in." }),
+    el("div", { class: "field" }, [el("label", { text: "Chats" }), checklist.node]),
+    el("div", { class: "cloud-warning" }, [
+      el("div", { class: "warn cloud-warning-title", text: "Saving restarts the agent" }),
+      el("p", {
+        class: "faint",
+        text: "Saving restarts the agent for a few seconds. Detached chats go quiet; attached ones get a greeting.",
+      }),
+    ]),
+    el("div", { class: "row cloud-modal-actions" }, [
+      el("div", { class: "spacer" }),
+      cancel,
+      save,
+    ]),
+  ], null);
+  syncEditor();
+  // After sync, so a control this pass disables is not the one taking focus.
+  if (panel) firstUsableControl(panel)?.focus();
+}
+
+const cloudHttpReasons = new Set([
+  "bad request",
+  "unauthorized",
+  "forbidden",
+  "not found",
+  "method not allowed",
+  "not acceptable",
+  "request timeout",
+  "conflict",
+  "gone",
+  "unprocessable entity",
+  "too many requests",
+  "internal server error",
+  "not implemented",
+  "bad gateway",
+  "service unavailable",
+  "gateway timeout",
+]);
+
+function cloudErrorCopy(message) {
+  const reason = String(message ?? "").trim().replace(/[.!]$/, "").toLowerCase();
+  if (cloudHttpReasons.has(reason) || /^(?:plow returned|http(?: error)?) \d{3}$/.test(reason)) {
+    return "Plow couldn't complete that request. Try again.";
+  }
+  return message;
+}
+
+function cloudErrorBanner(message, title = "Cloud agents could not be refreshed") {
+  if (!message) return null;
+  return el("div", { class: "cloud-callout cloud-error" }, [
+    el("div", { class: "cloud-callout-title", text: title }),
+    el("p", { class: "faint", text: cloudErrorCopy(message) }),
+  ]);
+}
+
+function cloudChatsErrorBanner(message, needsReactivation) {
+  const reactivate = needsReactivation
+    ? el("button", { class: "btn", text: "Sign out and re-activate" })
+    : null;
+  reactivate?.addEventListener("click", async () => {
+    reactivate.disabled = true;
+    await window.domo.relaySignOut();
+  });
+  return el("div", { class: "cloud-callout cloud-error" }, [
+    el("div", { class: "cloud-callout-title", text: "Chats could not be loaded" }),
+    el("p", { class: "faint", text: cloudErrorCopy(message) }),
+    reactivate,
+  ]);
+}
+
+function rosterName(row, fallback) {
+  return row?.name?.trim() || fallback;
+}
+
+function rosterDate(value) {
+  if (!value) return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  const now = new Date();
+  if (date.toDateString() === now.toDateString()) return "today";
+  return date.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
+function rosterAgo(value) {
+  if (!value) return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  const seconds = Math.max(0, Math.round((Date.now() - date.getTime()) / 1000));
+  if (seconds < 60) return "just now";
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes} minute${minutes === 1 ? "" : "s"} ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours} hour${hours === 1 ? "" : "s"} ago`;
+  return rosterDate(value);
+}
+
+function rosterUse(row, verb = "Last used") {
+  const seen = rosterAgo(row?.lastSeenAt);
+  if (seen) return `${verb} ${seen}`;
+  const created = rosterDate(row?.createdAt);
+  return created ? `Never used · Created ${created}` : "Never used";
+}
+
+function rosterChatGrant(chatUids, chatAccess) {
+  const chats = Array.isArray(chatUids) ? chatUids : [];
+  if (chatAccess === "all") return "all chats";
+  if (chatAccess === "none") return "no chats";
+  if (!chats.length) return "no chats";
+  if (chats.length === 1 && chats[0] === "*") return "all chats";
+  return chats.length === 1 ? "1 chat" : `${chats.length} chats`;
+}
+
+function rosterPermissionCopy(row, provisioning = false) {
+  const permissions = [];
+  if (row?.permissions?.canReadAndReply === true) {
+    permissions.push(
+      `${provisioning ? "Will read and reply" : "Reads and replies"} in ${rosterChatGrant(row.chatUids, row.chatAccess)}`,
+    );
+  }
+  if (row?.permissions?.canReachMac === true) {
+    permissions.push(`${provisioning ? "Will reach" : "Can reach"} this Mac`);
+  }
+  if (row?.permissions?.canSpendInference === true) permissions.push("Can spend inference");
+  if (!permissions.length) {
+    permissions.push(row ? "No agent permissions granted." : "No granted permissions known.");
+  }
+  return permissions;
+}
+
+function entityMark(name, client = false) {
+  const words = String(name).trim().split(/\s+/).filter(Boolean);
+  const text = client
+    ? words.slice(0, 2).map((word) => word[0]).join("").toUpperCase() || "?"
+    : (words[0]?.[0] || "?").toUpperCase();
+  return el("span", { class: `entity-mark${client ? " client" : ""}`, text });
+}
+
+function rosterBadge(row) {
+  if (row.isThisMac) return badge("blue", "This Mac");
+  if (row.kind === "Plow web login") return badge("zinc", "Web login");
+  if (row.kind === "Legacy — full access") return badge("amber", "Legacy *:*");
+  if (row.kind === "Session") return badge("zinc", "Session");
+  return null;
+}
+
+function closeRosterConfirm(shell) {
+  if (shell) closeModal(shell);
+}
+
+function openRosterConfirm(row, section, trigger, redraw, cloudAgentId = null) {
+  const name = rosterName(row, section === "cloud" ? "Cloud agent" : "Unnamed session");
+  const destructive = section === "cloud" ? "Remove agent" : "Revoke";
+  let title = section === "cloud" ? `Remove ${name}?` : `Revoke ${name}?`;
+  let copy = section === "cloud"
+    ? "The agent will stop reading and replying in all its chats. Their previous notification setup cannot be restored."
+    : "Any client or session using this credential will stop working.";
+  if (row.isThisMac) {
+    title = "Sign this Mac out?";
+    copy = "Revoking this credential immediately signs this Mac out and stops agents from reaching it.";
+  } else if (row.kind === "Plow web login") {
+    copy = "Revoking this session signs you out of the Plow website.";
+  }
+  const cancel = el("button", { class: "btn", text: "Cancel" });
+  const confirm = el("button", { class: "btn danger", text: destructive });
+  const note = el("p", { class: "faint modal-note", text: "" });
+  let shell = null;
+  const dismiss = () => closeRosterConfirm(shell);
+  cancel.addEventListener("click", dismiss);
+  confirm.addEventListener("click", async () => {
+    cancel.disabled = true;
+    confirm.disabled = true;
+    note.textContent = section === "cloud" ? "Removing…" : "Revoking…";
+    try {
+      if (cloudAgentId) await window.domo.cloudRemove(cloudAgentId);
+      else await window.domo.rosterRemove(row.id);
+    } finally {
+      dismiss();
+      await redraw();
+    }
+  });
+  shell = openModal(trigger, {
+    className: row.isThisMac ? "roster-confirm roster-confirm-loud" : "roster-confirm",
+    focus: cancel,
+    onDismiss: dismiss,
+    children: [
+      el("div", { class: "group-title", text: title }),
+      el("p", { class: row.isThisMac ? "warn conn-note" : "conn-note", text: copy }),
+      note,
+      el("div", { class: "row conn-actions" }, [cancel, el("div", { class: "spacer" }), confirm]),
+    ],
+  });
+}
+
+function rosterActions(
+  row,
+  section,
+  redraw,
+  { messageAgentId = null, messageDisabled = false, cloudAgentId = null, editAgent = null, removeDisabled = false } = {},
+) {
+  const name = rosterName(row, section === "cloud" ? "Cloud agent" : "Unnamed session");
+  const actions = [];
+  if (messageAgentId) {
+    const message = el("button", {
+      class: "btn small message-btn",
+      text: "Message",
+      attrs: { "aria-label": `Message ${name}` },
+    });
+    message.disabled = messageDisabled;
+    message.addEventListener("click", () =>
+      window.domo.openExternal("cloudAgentMessages", messageAgentId));
+    actions.push(message);
+  }
+  if (editAgent) {
+    const edit = el("button", {
+      class: "btn small",
+      text: "Edit chats",
+      attrs: { "aria-label": `Edit chats for ${name}` },
+    });
+    edit.disabled = !editAgent.enabled;
+    if (!editAgent.enabled) edit.title = editAgent.why;
+    edit.addEventListener("click", () =>
+      openCloudEditor(edit, editAgent.agent, editAgent.state, redraw));
+    actions.push(edit);
+  }
+  const more = el("button", {
+    class: "btn more",
+    text: "⋯",
+    attrs: { "aria-label": `More actions for ${name}` },
+  });
+  more.disabled = removeDisabled;
+  const actionLabel = section === "cloud" ? "Remove" : "Revoke";
+  const action = el("button", { text: actionLabel });
+  const menu = el("div", { class: "more-menu", attrs: { role: "menu" } }, [action]);
+  menu.hidden = true;
+  more.addEventListener("click", (event) => {
+    event.stopPropagation();
+    for (const open of document.querySelectorAll(".more-menu:not([hidden])")) {
+      if (open !== menu) open.hidden = true;
+    }
+    menu.hidden = !menu.hidden;
+  });
+  action.addEventListener("click", () => {
+    menu.hidden = true;
+    openRosterConfirm(row, section, more, redraw, cloudAgentId);
+  });
+  actions.push(more, menu);
+  return el("div", { class: "entity-actions" }, actions);
+}
+
+function cloudProviderLabel(value) {
+  const provider = String(value ?? "").trim();
+  return CLOUD_PROVIDERS.find(({ value }) => value === provider)?.label ?? provider;
+}
+
+function cloudContext(agent, row) {
+  const chats = cloudChatSummary(agent);
+  const provider = cloudProviderLabel(agent?.provider);
+  return [
+    chats || "Chats unavailable",
+    provider ? `Provider ${provider}` : null,
+    rosterUse(row ?? { createdAt: agent?.createdAt, lastSeenAt: null }, "Used"),
+  ].filter(Boolean).join(" · ");
+}
+
+function cloudStatusNode(agent, updating = false) {
+  if (updating) {
+    return el("span", { class: "status-setting" }, [
+      el("span", { class: "cloud-spinner", attrs: { "aria-hidden": "true" } }),
+      el("span", { text: "Updating chats…" }),
+    ]);
+  }
+  const status = cloudStatus(agent?.status, agent?.failureReason);
+  if (agent?.status === "provisioning") {
+    return el("span", { class: "status-setting" }, [
+      el("span", { class: "cloud-spinner", attrs: { "aria-hidden": "true" } }),
+      el("span", { text: status.label }),
+    ]);
+  }
+  if (agent?.status === "teardown") {
+    return el("span", { class: "status-setting status-removing", text: status.label });
+  }
+  return badge(status.tone, status.label);
+}
+
+function cloudEntityRow(row, agent, state, redraw) {
+  const name = rosterName(row, agent?.name || "Cloud agent");
+  const provisioning = agent?.status === "provisioning";
+  const editPending = state.cloudAgentEditsPending?.includes(agent?.agentId) ?? false;
+  const permissions = rosterPermissionCopy(row, provisioning);
+  return el("div", { class: "entity-row cloud-agent-row", attrs: { "data-cloud-agent-id": agent?.agentId ?? row?.agentId ?? "" } }, [
+    entityMark(name),
+    el("div", { class: "entity-main" }, [
+      el("div", { class: "entity-top" }, [
+        el("span", { class: "entity-name", text: name }),
+        cloudStatusNode(agent, editPending),
+      ]),
+      // `.entity-context` is one ellipsised line, and two chats already run
+      // past it — so the tooltip carries the whole thing rather than a legend
+      // for a star the reader may not be able to see.
+      el("div", {
+        class: "entity-context",
+        text: cloudContext(agent, row),
+        attrs: { title: `★ = home chat. ${cloudContext(agent, row)}` },
+      }),
+      el("div", { class: "entity-perms" }, permissions.map((text) => el("span", { text }))),
+    ]),
+    rosterActions(row ?? { name }, "cloud", redraw, {
+      messageAgentId: agent?.agentId ?? row?.agentId,
+      messageDisabled: editPending || agent?.status !== "running" || !agent?.recipients?.line?.trim(),
+      cloudAgentId: row ? null : agent?.agentId,
+      removeDisabled: state.cloudAgentEditsSaving?.includes(agent?.agentId) ?? false,
+      // Only a real, running agent can be edited: a local pending row has no
+      // agent id Plow knows, and one that failed or is being torn down has no
+      // chats to move. Provisioning shows the button dead rather than hiding
+      // it, so it does not appear from nowhere a minute later — and so does an
+      // agent whose account chats have not been read, because a checklist built
+      // on the fallback list is missing most of what could be picked.
+      editAgent: agent && !agent.localPending &&
+        (agent.status === "running" || agent.status === "provisioning")
+        ? {
+            agent,
+            state,
+            enabled: !editPending && canEditChats(agent, state.cloudChatsLoaded),
+            why: editPending
+              ? "Checking which chats this agent serves"
+              : agent.status === "running"
+              ? "Available once this Mac has read your chats"
+              : "Available once the agent is running",
+          }
+        : null,
+    }),
+  ]);
+}
+
+function sessionEntityRow(row, section, redraw) {
+  const fallback = section === "mcp" ? "Unnamed MCP client" : "Unnamed session";
+  const name = rosterName(row, fallback);
+  const context = [
+    section === "mcp" ? "MCP client" : row.kind,
+    row.createdAt ? `Created ${rosterDate(row.createdAt) ?? "date unknown"}` : "Created date unknown",
+    row.lastSeenAt ? `Last used ${rosterAgo(row.lastSeenAt) ?? "date unknown"}` : "Never used",
+  ].join(" · ");
+  const permissions = rosterPermissionCopy(row);
+  if (row.kind === "Plow web login") permissions.push("Revoking signs you out of the Plow website");
+  if (row.isThisMac) permissions.push("Revoking signs this Mac out");
+  return el("div", { class: "entity-row" }, [
+    entityMark(name, true),
+    el("div", { class: "entity-main" }, [
+      el("div", { class: "entity-top" }, [
+        el("span", { class: "entity-name", text: name }),
+        rosterBadge(row),
+      ]),
+      el("div", { class: "entity-context", text: context }),
+      el("div", { class: "entity-perms" }, permissions.map((text) =>
+        el("span", {
+          class: text.startsWith("Revoking") ? "signout-warning" : "",
+          text,
+        }),
+      )),
+    ]),
+    rosterActions(row, section, redraw),
+  ]);
+}
+
+function sectionHeader(title, count, unit, action) {
+  return el("div", { class: "list-section-head" }, [
+    el("h2", { text: title }),
+    el("span", { class: "faint", text: `${count} ${unit}${count === 1 ? "" : "s"}` }),
+    el("div", { class: "spacer" }),
+    action,
+  ]);
+}
+
+function cloudSection(s, redraw) {
+  const add = el("button", { class: "btn primary", text: "Set up cloud agent" });
+  // Disabled only while the chat list is still unknown. An account whose list
+  // came back EMPTY keeps the button: since pairing stopped spending a pool
+  // line that is the ordinary state of a freshly paired Mac, and a dead button
+  // there says nothing about what to do next.
+  add.disabled = !s.cloudChatsLoaded && !s.cloudChats.length;
+  // Opening ASKS PLOW first. `s` is whatever the last tab activation fetched,
+  // and the explainer inside promises a new chat "appears here when you reopen
+  // this window" — a promise the captured state cannot keep. `cloud:refresh`
+  // answers with the tab state whether or not the network read succeeded, so
+  // there is nothing to fall back to.
+  add.addEventListener("click", async () => {
+    openCloudPicker(add, await window.domo.cloudRefresh(), redraw);
+  });
+  const rosterRows = s.roster?.cloud ?? [];
+  const agents = visibleCloudAgents(s);
+  const byAgentId = new Map(agents.map((agent) => [agent.agentId, agent]));
+  const seen = new Set();
+  const rows = rosterRows.map((row) => {
+    seen.add(row.agentId);
+    return cloudEntityRow(row, byAgentId.get(row.agentId), s, redraw);
+  });
+  for (const agent of agents) {
+    if (!seen.has(agent.agentId)) rows.push(cloudEntityRow(null, agent, s, redraw));
+  }
+  const notices = [];
+  if (!s.cloudChatsLoaded) {
+    notices.push(s.cloudChatsError
+      ? cloudChatsErrorBanner(
+          s.cloudChatsError,
+          s.cloudChatsNeedReactivation === true,
+        )
+      : el("div", { class: "cloud-progress cloud-loading" }, [
+          el("span", { class: "cloud-spinner", attrs: { "aria-hidden": "true" } }),
+          el("span", { text: "Loading chats…" }),
+        ]));
+  }
+  const refreshError = cloudErrorBanner(s.cloudAgentsError);
+  if (refreshError) notices.push(refreshError);
+  if (s.cloudActionError) notices.push(cloudErrorBanner(s.cloudActionError, "That change did not finish"));
+  return el("section", { class: "list-section" }, [
+    sectionHeader("Cloud agents", rows.length, "agent", add),
+    ...notices,
+    el("div", { class: "entity-list compact-list" }, rows.length
+      ? rows
+      : [el("div", { class: "empty entity-empty", text: "No cloud agents." })]),
+  ]);
+}
+
+function sessionSection(title, rows, section, s, redraw) {
+  const action = section === "mcp"
+    ? (() => {
+        const add = el("button", { class: "btn small", text: "Connect MCP client" });
+        add.addEventListener("click", () => openMcpModal(add, s, redraw));
+        return add;
+      })()
+    : null;
+  const unit = section === "mcp" ? "client" : "active session";
+  const children = rows.map((row) => sessionEntityRow(row, section, redraw));
+  if (section === "other" && s.roster.revokedHidden > 0) {
+    const count = s.roster.revokedHidden;
+    children.push(el("div", {
+      class: "revoked-summary",
+      text: `${count} revoked session${count === 1 ? "" : "s"} hidden`,
+    }));
+  }
+  return el("section", { class: "list-section" }, [
+    sectionHeader(title, rows.length, unit, action),
+    el("div", { class: "entity-list compact-list" }, children.length
+      ? children
+      : [el("div", { class: "empty entity-empty", text: `No ${title.toLowerCase()}.` })]),
+  ]);
+}
+
+function rosterNotice(s) {
+  if (!s.rosterError && !s.removeError) return null;
+  return el("div", { class: "roster-notices" }, [
+    s.rosterError ? cloudErrorBanner(s.rosterError, "Sessions could not be refreshed") : null,
+    s.removeError ? cloudErrorBanner(s.removeError, "That session was not removed") : null,
+  ]);
+}
+
+/** The mounted Agents pane; its one refresh redraws all three views of state. */
 let agentsMounted = null;
 
-/**
- * The Agents tab — first in the bar, and a place rather than an action.
- *
- * It was a "Connect a client" tab once, and that was the problem: a setup verb
- * makes an odd permanent home. Agents is what has access to this Mac, and
- * giving something access is one thing you do here. The roster of what already
- * has access is meant to join it in this pane once the app can ask for it.
- */
 async function renderAgents() {
-  const connectBox = el("div");
+  const panel = el("div", { class: "panel agents agents-roster" });
+  view.replaceChildren(panel);
   const refreshConnect = async () => {
     const s = await window.domo.connectGet();
-    connectBox.replaceChildren(...(s ? connectNodes(s, refreshConnect) : []));
-    if (s) syncStaticModal(s, refreshConnect);
+    if (!s || !panel.isConnected) return s;
+    panel.replaceChildren(...[
+      rosterNotice(s),
+      cloudSection(s, refreshConnect),
+      sessionSection("MCP clients", s.roster?.mcp ?? [], "mcp", s, refreshConnect),
+      sessionSection("Other sessions", s.roster?.other ?? [], "other", s, refreshConnect),
+    ].filter(Boolean));
+    syncMcpModal(s, refreshConnect);
+    syncStaticModal(s, refreshConnect);
+    return s;
   };
+  agentsMounted = { refreshConnect };
   await refreshConnect();
-
-  // ---- Approvals: what happens when one of those agents asks for something.
-  //
-  // It sits here, under the clients, because that is the order of the two
-  // questions: what can reach this Mac, and what it may do when it does. The
-  // stored mode values are untouched — every label below is display only.
-  let inference = await window.domo.inferenceGet();
-  const modeChips = el("div", { class: "chips" });
-  const modeNote = el("p", { class: "faint chip-note", text: "" });
-  const modeHintLine = el("p", { class: "faint mode-hint", text: "" });
-
-  // The purpose statement, and the two things that have to be said beside it.
-  // Device-owner text: it is read and written through the settings IPC pair and
-  // nowhere else, and it reaches no rule key, grant, or sandbox profile.
-  const purposeInput = el("textarea", {
-    class: "text",
-    attrs: { placeholder: PURPOSE_PLACEHOLDER },
-  });
-  purposeInput.value = await window.domo.agentPurposeGet();
-  // On commit only — blur or Enter: an `input` handler would persist every
-  // half-written sentence on the way to the real one. The stored value is
-  // what goes back on screen, so the field shows what the reviewer will read.
-  purposeInput.addEventListener("change", async () => {
-    purposeInput.value = await window.domo.agentPurposeSet(purposeInput.value);
-  });
-  const purposeBlock = el("div", { class: "revealed" }, [
-    el("div", { class: "field" }, [el("label", { text: PURPOSE_LABEL }), purposeInput]),
-    ...PURPOSE_CAVEATS.map((text) => el("p", { class: "faint", text })),
-  ]);
-
-  // Whether the reviewer may speak up in Ask mode. It sits in this card because
-  // the mode it depends on is set here: the suggestion is only ever shown when
-  // a human is being asked, and only a reviewer with a credential can produce
-  // one, so both of its conditions are one row above it.
-  const suggestCheck = el("input", { attrs: { type: "checkbox" } });
-  suggestCheck.checked = await window.domo.showSuggestionsGet();
-  const suggestLabel = el("label", { class: "check block" }, [
-    suggestCheck,
-    el("span", { text: "Let the reviewer suggest an answer when an approval window opens" }),
-  ]);
-  suggestCheck.addEventListener("change", () => window.domo.showSuggestionsSet(suggestCheck.checked));
-
-  // What a reviewer with no credential costs, said rather than enforced — the
-  // mode is still the owner's to choose, and choosing it is not an error to
-  // prevent.
-
-  const renderApprovals = () => {
-    const mode = inference.approvalMode;
-    const hasKey = inference.available;
-    // How to get a reviewer. One reviewer, one answer — and the two sentences
-    // below both end in it, so they cannot come to disagree about the remedy.
-    const remedy = ": sign in to Plow in Settings.";
-    // Only worth saying when the owner has actually asked the reviewer to
-    // decide. The second half is the part people get wrong: a denial here is
-    // not a freeze, because a rule already approved is a decision they made.
-    modeNote.textContent =
-      mode === "adversarial" && !hasKey
-        ? `The AI Reviewer has no credential${remedy} ` +
-          "Until then it denies anything it is asked to decide — requests already " +
-          "covered by an always-allow rule keep running."
-        : "";
-    // The suggestion is only ever shown in Ask mode, and only by a reviewer
-    // that can run. Dead rather than hidden: a checkbox that vanished would
-    // read as a setting the app lost.
-    const suggestOn = mode === "ask" && hasKey;
-    suggestCheck.disabled = !suggestOn;
-    suggestLabel.classList.toggle("disabled", !suggestOn);
-    modeChips.replaceChildren(...APPROVAL_MODES.map(({ value, label }) => {
-      const chip = el("span", {
-        class: "chip" + (mode === value ? " active" : ""),
-      }, [el("span", { text: label })]);
-      chip.addEventListener("click", async () => {
-        // What MAIN stored, not what was asked for. Main takes any known mode
-        // now, but it is still the one that decides what is on disk, and the
-        // pane must show that rather than what it optimistically asked for.
-        await window.domo.approvalModeSet(value);
-        inference = await window.domo.inferenceGet();
-        renderApprovals();
-      });
-      return chip;
-    }));
-    // One lookup, and the row answers both questions. A stored value the app
-    // no longer offers falls back to the first mode rather than a blank card.
-    const active = APPROVAL_MODES.find((m) => m.value === mode) ?? APPROVAL_MODES[0];
-    purposeBlock.hidden = !active.showsPurpose;
-    // Ask mode's hint points at the checkbox below it. With no credential that
-    // checkbox is dead, so pointing at it is an instruction that cannot be
-    // followed — say what is actually true instead.
-    modeHintLine.textContent =
-      mode === "ask" && !hasKey
-        ? "Any request a rule doesn't already cover opens an approval window. " +
-          `The AI Reviewer has no credential, so it cannot suggest an answer${remedy}`
-        : active.hint;
-    modeHintLine.hidden = active.showsPurpose;
-  };
-  renderApprovals();
-
-  // Signing in or out changes what the reviewer can do, not what the owner
-  // chose — the stored mode stays put — so this only re-reads and redraws.
-  const refreshApprovals = async () => {
-    inference = await window.domo.inferenceGet();
-    renderApprovals();
-  };
-  agentsMounted = { refreshConnect, refreshApprovals };
-
-  // `settings` alongside `agents` on purpose: the group card, its title and its
-  // description are the same furniture Settings uses, and this pane is one of
-  // those groups that outgrew the pane it was in.
-  view.replaceChildren(el("div", { class: "panel agents settings" }, [
-    group(
-      // The designer's title and subtitle.
-      "Connect an MCP client",
-      "Add this server URL to Claude Code, Codex, Cursor, or any MCP-compatible client.",
-      [connectBox],
-    ),
-    group(
-      "Approvals",
-      "What happens when an agent asks to do something on this Mac. Requests already covered " +
-        "by an always-allow rule skip this — manage those in Rules. Anything the AI Reviewer " +
-        "sees — the request, the paths asked for, the agent's identity, its goal and plan, the " +
-        "capabilities it asked for, its recent activity on this Mac, and what you say agents " +
-        "are for — is sent to Plow to be judged, and billed to your account; nothing from " +
-        "other agents goes with it.",
-      [modeChips, modeNote, purposeBlock, modeHintLine, suggestLabel],
-    ),
-  ]));
 }
 
 /** One honest line about the relay link, from what the main process reports. */
@@ -832,11 +1761,16 @@ function capText(c) {
     case "fs.write": return "write: " + (c.paths || []).join(", ");
     case "process.exec": return "run " + (c.argv || []).join(" ");
     case "network": return c.allowed ? "network: allowed" : "network: denied";
+    case "apple_events": return c.allowed ? "apple events: may control this Mac's apps" : "apple events: denied";
     case "tool": return "tool: " + (c.tool || "?");
     case "browser": return "browse: " + (c.origins || []).join(", ");
     case "credential":
+      // A rule saved before the metadata capability was removed can still be
+      // sitting in rules.json. Nothing requests that shape any more, so it
+      // grants nothing — but the owner should read back what they actually
+      // approved, not see it relabelled as a fill grant they never gave.
       return c.access === "metadata"
-        ? "credentials: list names/labels"
+        ? "credentials: list names/labels (no longer requested)"
         : "credentials: fill " + (c.items || []).join(", ");
     default: return c.kind;
   }
@@ -1124,26 +2058,39 @@ function render() {
   else if (currentTab === "settings") renderSettings();
 }
 
-function selectTab(tab) {
+// Returns whether the switch actually happened. Leaving the Vault replaces the
+// whole pane, so an open form with unsaved edits gets a say first — and a caller
+// must not persist a tab the owner backed out of.
+async function selectTab(tab) {
+  // Already there: a rebuild would throw away an open form for no navigation at
+  // all, which is the loss this guard exists to prevent.
+  if (tab === currentTab) return true;
+  if (currentTab === "vault" && !(await vaultConfirmLeave())) return false;
   currentTab = tab;
   // Leaving Agents closes the fallback: it is a disclosure, and coming back to
   // a form you did not open is a surprise.
-  if (tab !== "agents") { staticOpen = false; closeStaticModal(); }
+  if (tab !== "agents") {
+    staticOpen = false;
+    closeStaticModal();
+    closeMcpModal();
+    closeCloudModal();
+  }
   if (tab !== "audit") auditMounted = null; // avoid stale refreshes into detached nodes
   if (tab !== "settings") settingsMounted = null;
   if (tab !== "agents") agentsMounted = null;
+  if (tab !== "rules") rulesMounted = null;
   for (const b of seg.querySelectorAll("button")) b.classList.toggle("active", b.dataset.tab === tab);
   render();
+  return true;
 }
 
 // Let the headless preload probe drive the tabs without synthesising clicks.
 window.__domoSelectTab = selectTab;
 
-seg.addEventListener("mousedown", (e) => {
+seg.addEventListener("mousedown", async (e) => {
   const btn = e.target.closest("button");
   if (!btn) return;
-  selectTab(btn.dataset.tab);
-  window.domo.uiSetTab(btn.dataset.tab); // persist across launches
+  if (await selectTab(btn.dataset.tab)) window.domo.uiSetTab(btn.dataset.tab); // persist across launches
 });
 
 window.domo.onAuditChanged(() => { if (currentTab === "audit") refreshAudit({ followTop: true }); });
@@ -1153,12 +2100,10 @@ window.domo.onStatusChanged(() => {
   // pane has to re-read — main fires this saying "Settings re-reads what
   // changed", and until now only the header did.
   if (currentTab === "settings") settingsMounted?.refresh();
-  // Signing in or out changes whether the flow has a URL to show at all — and,
-  // since the Approvals card moved here, whether the reviewer can run.
-  if (currentTab === "agents") {
-    agentsMounted?.refreshConnect();
-    agentsMounted?.refreshApprovals();
-  }
+  // Signing in or out changes the roster, whether MCP setup has a URL, and
+  // whether the reviewer shown in Rules can run.
+  if (currentTab === "agents") agentsMounted?.refreshConnect();
+  if (currentTab === "rules") rulesMounted?.refreshApprovals();
 });
 // Minting or dismissing a credential redraws only the Agents flow.
 window.domo.onConnectChanged(() => { agentsMounted?.refreshConnect(); });
@@ -1169,7 +2114,16 @@ window.domo.onUpdatesChanged(() => {
   if (currentTab === "settings") settingsMounted?.refreshUpdates();
 });
 // The menu-bar "Check for Updates…" lands here so its outcome is visible.
-window.domo.onShowSettings(() => selectTab("settings"));
+// Closing the window or quitting throws an open Vault form away too, so main
+// asks here first. Anything outside the Vault has nothing to lose.
+window.domo.onConfirmLeave(async () => {
+  window.domo.confirmLeaveReply(currentTab === "vault" ? await vaultConfirmLeave() : true);
+});
+
+// Only check once Settings is actually on screen — see checkForUpdatesFromMenu.
+window.domo.onShowSettings(async () => {
+  if (await selectTab("settings")) window.domo.updatesCheck();
+});
 // Granting Full Disk Access happens in System Settings, and no event reaches
 // this app when it does — the moment the pane can learn the outcome is when
 // the person comes back.

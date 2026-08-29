@@ -12,7 +12,7 @@
  *     HTML, and the enforceable bound shown is the capability set the sandbox
  *     is derived from — not the goal text.
  */
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, screen, shell, systemPreferences, Tray } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, safeStorage as electronSafeStorage, screen, shell, systemPreferences, Tray } from "electron";
 import electronUpdater from "electron-updater";
 import fs from "node:fs/promises";
 import { createRequire } from "node:module";
@@ -25,9 +25,11 @@ import {
   DeviceAgent,
   PaymentApprovalClient,
   PaymentApprovalRequest,
+  plowFolderPath,
   PolicyDelegate,
   readCredentialsState,
   resolveBrowserRuntime,
+  totpCode,
   VaultItemInput,
 } from "@domo/device-core";
 import { createDomoMcpServer, DomoMcpServer } from "@domo/mcp-server";
@@ -37,15 +39,25 @@ import { probeFullDiskAccess } from "./fullDiskAccess.js";
 import { launchAtLoginState, LoginItemApi, setLaunchAtLogin } from "./loginItem.js";
 import { devIconScript } from "./devIcon.js";
 import { migrateLegacyHome } from "./migrateHome.js";
+import { buildMinter, vendorDirs } from "./providerWiring.js";
 import { resolveInstancePaths } from "./paths.js";
-import { loadSettings, saveSettings, WindowBounds } from "./settings.js";
+import { loadSettings, saveSettings, useCredentialCodec, WindowBounds } from "./settings.js";
 import { PlowApi, relaySocketUrl, resolveApiBaseUrl } from "./plowApi.js";
 import { Onboarding } from "./onboarding.js";
 import { ConnectClient } from "./connectClient.js";
+import { CloudAgentsClient } from "./cloudAgents.js";
+import { CloudAgentState, CloudChatsClient, CloudLinesClient, tabShowsCloudAgents } from "./cloudAgentState.js";
+import { cloudAgentMessagesUrl } from "./cloudAgentMessages.js";
+import { loggingFetch } from "./wireLog.js";
 import { WindowGate } from "./windowGate.js";
 import { SimulatedScenario, SimulatedUpdater, UpdateController } from "./updates.js";
 import { adversarialReview } from "./adversarialAgent.js";
-import { ApprovalDecision, decideIntent, ReviewHint } from "./reviewPolicy.js";
+import {
+  ApprovalDecision,
+  decideIntent,
+  ReviewHint,
+  storedRuleMayGrant,
+} from "./reviewPolicy.js";
 import {
   isSignedIn,
   readAgentPurpose,
@@ -163,6 +175,7 @@ let approvals: ApprovalStore | null = null;
 let relay: RelayClient | null = null;
 let onboarding: Onboarding | null = null;
 let connectClient: ConnectClient | null = null;
+let cloudAgents: CloudAgentState | null = null;
 let onboardingWindow: BrowserWindow | null = null;
 let updates: UpdateController | null = null;
 
@@ -172,6 +185,15 @@ let updates: UpdateController | null = null;
  * click.
  */
 class ElectronPolicy implements PolicyDelegate {
+  /**
+   * A cached "always allow" cannot stand in for the reviewer when the mode
+   * hands the decision to it. The rule itself is left alone — it applies again
+   * as soon as the mode is one that lets a rule answer.
+   */
+  mayGrantFromStoredRule(): boolean {
+    return storedRuleMayGrant(loadSettings(home));
+  }
+
   // The branching itself lives in reviewPolicy.ts so it is testable without a
   // display; this only supplies the Electron-shaped pieces.
   async decideIntent(intent: Intent): Promise<{ decision: ApprovalDecision; source: string }> {
@@ -179,6 +201,10 @@ class ElectronPolicy implements PolicyDelegate {
     return decideIntent(intent, {
       settings: loadSettings(home),
       apiBaseUrl,
+      // The real home, deliberately — same resolution the DeviceAgent below
+      // gets as ownerHome. A from-source run shares the packaged app's
+      // playground; the folder is the owner's, not the instance's.
+      plowRoot: plowFolderPath(os.homedir()),
       auditEntries: () => audit?.entries() ?? [],
       record: (event, fields) => audit?.record(event, fields),
       review: adversarialReview,
@@ -311,6 +337,9 @@ function approvalId(request: ApprovalRequest): string {
 }
 
 function createMainWindow(): void {
+  // Shutting down: a window opened now would be an editable Vault nobody will
+  // ask about again, restorable from the tray or the Dock mid-quit.
+  if (quitting) return;
   if (mainWindow) {
     mainWindow.show();
     return;
@@ -347,11 +376,27 @@ function createMainWindow(): void {
   };
   mainWindow.on("resized", persist);
   mainWindow.on("moved", persist);
-  mainWindow.on("close", persist);
-  // Only if it is still the current one: 'closed' can arrive after the gate has
-  // already dropped the reference and opened a replacement.
+  // Cmd-W destroys the form as surely as Quit does, so it asks the same
+  // question. `allowClose` is what lets the second, answered close through, and
+  // `cleanedUp` is the quit that already asked — NOT `quitting`, which only
+  // means a quit is in progress and may still be waiting on its answer.
+  let allowClose = false;
+  mainWindow.on("close", (event) => {
+    persist();
+    if (allowClose || cleanedUp) return;
+    event.preventDefault();
+    void mayLeaveMain(win).then((mayLeave) => {
+      if (!mayLeave || win.isDestroyed()) return;
+      allowClose = true;
+      win.close();
+    });
+  });
   mainWindow.on("closed", () => {
-    if (mainWindow === win) mainWindow = null;
+    mainWindow = null;
+    // Nobody consented: the window that was asked is gone. Refusing rather than
+    // approving keeps a destroyed window from authorising someone else's quit,
+    // and frees the promise a later Cmd-W would otherwise inherit still pending.
+    settleLeave?.(false);
   });
 }
 
@@ -404,6 +449,16 @@ ipcMain.handle("rules:remove", async (_e, key: string) => {
 });
 ipcMain.handle("ui:getTab", async () => {
   const tab = loadSettings(home).selectedTab;
+  // Renderer boot: it asks which tab to restore and then selects it directly,
+  // without the `ui:setTab` that a click makes — so this, not that, is the only
+  // signal that the Agents tab is about to appear on a fresh launch. Without it
+  // a new home, which defaults to Agents, shows an empty cloud group until the
+  // user navigates away and back. Not awaited: the read must not wait on the
+  // network, and the refresh publishes `connect:changed` when it lands.
+  if (tabShowsCloudAgents(tab)) {
+    void cloudAgents?.refresh();
+    void connectClient?.refreshRoster();
+  }
   // "connect" was this tab's key before the content went to Settings and came
   // back as "agents". Anyone who left the app on it lands where that content
   // lives now, rather than silently on the default tab.
@@ -413,6 +468,14 @@ ipcMain.handle("ui:setTab", async (_e, tab: string) => {
   const settings = loadSettings(home);
   settings.selectedTab = tab;
   saveSettings(home, settings);
+  // Landing on Agents is a moment the cloud group is certainly about to be
+  // looked at; renderer boot (`ui:getTab`) is the other. Not awaited: selecting
+  // a tab must never wait on the network, and the refresh publishes
+  // `connect:changed` when it lands.
+  if (tabShowsCloudAgents(tab)) {
+    void cloudAgents?.refresh();
+    void connectClient?.refreshRoster();
+  }
 });
 // The account this Mac is signed into. The CREDENTIAL IS NEVER RETURNED — the
 // renderer only learns whether one is set. It is a secret with no reason to
@@ -440,7 +503,7 @@ ipcMain.handle("settings:getRelay", async () => {
  * credential takes the Plow reviewer with it, and retiring Adversarial mode is
  * part of that same write.
  */
-function signOut(): void {
+function signOut() {
   // `signOutOfPlow` rather than blanking the fields inline: losing the Plow
   // credential takes the Plow reviewer with it, and retiring Adversarial mode
   // is part of that same write.
@@ -449,36 +512,52 @@ function signOut(): void {
   // Connect-a-client holds the old account's state too — possibly a shown-once
   // credential still on screen, or a mint in flight.
   connectClient?.signedOut();
+  // And the cloud group: its rows, its chat list and any provision still being
+  // polled all belong to the account that just went away.
+  cloudAgents?.signedOut();
   // The gate, not a bare `openOnboardingWindow`: with no credential this Mac is
   // not usable, so the main window goes away as the setup window arrives.
   // Opening it boots the renderer, which calls `begin` and mints the code the
   // activation screen needs. `begin` covers the already-open case; it is
   // idempotent, so between them exactly one code is minted.
   gate.sync();
-  void onboarding?.begin();
+  return onboarding?.begin();
 }
 
-// Sign out: retire the credential with Plow, forget it here, and drop the
-// socket. The revoke is best-effort — see revokeAndSignOut — so a Mac that
-// cannot reach Plow still signs out locally.
-ipcMain.handle("settings:signOut", async () => {
+/**
+ * Sign out: retire the credential with Plow, forget it here, and drop the
+ * socket. The revoke is best-effort — see `revokeAndSignOut` — so a Mac that
+ * cannot reach Plow still signs out locally.
+ *
+ * Two callers: the Settings button, and the roster's own row for this Mac.
+ * Revoking that row as an ordinary key would leave the credential on disk, the
+ * socket dialled and the window open, all talking to an account that no longer
+ * accepts them.
+ */
+async function signOutThisMac(): Promise<void> {
   // A second click, before the button re-rendered. The first already signed
   // out; going round again would reset the setup window and mint a fresh code
   // over the one the user may have just texted.
   if (!isSignedIn(home)) return;
   // Started first: it clears the stored credential synchronously, before its
-  // own first await, so everything below already sees a signed-out Mac. What it
-  // returns is only the best-effort revoke, which nothing else waits on.
+  // own first await, so everything below already sees a signed-out Mac.
   const revoking = revokeAndSignOut(home, (credential) =>
     new PlowApi(apiBaseUrl).revokeDeviceCredential(credential),
   );
   // The one place that resets the app's state, shared with the relay's
   // auth-failed path. It also drops connect-a-client's shown-once credential,
   // which a click has exactly as much reason to clear as a revocation does.
-  signOut();
+  const beginning = signOut();
   await startRelay();
-  await revoking;
-});
+  await beginning;
+  if (!(await revoking)) {
+    onboarding?.showMessage(
+      "Signed out on this Mac. Plow could not be reached to revoke the session — revoke it in Plow's account settings.",
+    );
+  }
+}
+
+ipcMain.handle("settings:signOut", async () => signOutThisMac());
 ipcMain.handle("onboarding:open", async () => openOnboardingWindow());
 
 // MARK: IPC for "Connect a client" (main window)
@@ -512,6 +591,11 @@ ipcMain.handle("onboarding:open", async () => openOnboardingWindow());
  * sending the person to the switch IS the whole grant flow (see
  * fullDiskAccess.ts), so the deep link belongs in this table like any other
  * page the app may open.
+ *
+ * `cloudAgentMessages` is the dynamic exception: the renderer supplies only
+ * an agent id. Main requires that agent to be running and derives the `sms:`
+ * recipients from its current display row, so the sandboxed page still cannot
+ * choose an arbitrary external URL or phone number.
  */
 const EXTERNAL_URLS: Readonly<Record<string, string>> = Object.freeze({
   account: `${apiBaseUrl}/app/`,
@@ -521,16 +605,127 @@ const EXTERNAL_URLS: Readonly<Record<string, string>> = Object.freeze({
   fullDiskSettings: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles",
 });
 
-ipcMain.handle("external:open", async (_e, key: string) => {
-  const url = EXTERNAL_URLS[key];
+/**
+ * The `sms:` draft for one of Plow's numbers, or "" when the renderer named a
+ * number the server did not list.
+ *
+ * The body is a greeting, not a command: the thread is what matters, and Plow
+ * makes it from the message arriving.
+ */
+function smsLineUrl(lines: readonly { number: string }[], number: string): string {
+  const wanted = number.trim();
+  if (!wanted || !lines.some((line) => line.number === wanted)) return "";
+  return `sms:${wanted}?&body=${encodeURIComponent("Hi!")}`;
+}
+
+ipcMain.handle("external:open", async (_e, key: string, detail?: string) => {
+  const url = key === "cloudAgentMessages"
+    ? cloudAgentMessagesUrl(cloudAgents?.state().cloudAgents ?? [], detail ?? "")
+    // A Plow number, drafted with the text that makes a chat. Main composes
+    // the URL and will not take one: `detail` has to BE a number the server
+    // listed, matched against `cloudLines`, so the renderer names a row rather
+    // than handing over a destination.
+    : key === "smsLine"
+    ? smsLineUrl(cloudAgents?.state().cloudLines ?? [], detail ?? "")
+    : EXTERNAL_URLS[key];
   if (!url) return false;
   await shell.openExternal(url);
   return true;
 });
 
-ipcMain.handle("connect:get", async () => connectClient?.state() ?? null);
-ipcMain.handle("connect:create", async (_e, name: string) => connectClient?.createCredential(name));
-ipcMain.handle("connect:dismiss", async () => connectClient?.dismissCredential());
+// One shape for the whole Agents tab: connect-a-client and the cloud-agent
+// group are two groups on one screen, and a renderer that had to reconcile two
+// asynchronous reads would render them disagreeing.
+ipcMain.handle("connect:get", async () => agentsTabState());
+/**
+ * Re-read the account's chats, then answer with the tab's state.
+ *
+ * `connect:get` is a pure read of what was last fetched, so a screen that
+ * opens on it shows whatever the last tab activation happened to see. The
+ * cloud-agent picker tells the owner their new chat "appears here when you
+ * reopen this window", which is only true if reopening asks the server — so
+ * the modal opens through this, and awaits it.
+ */
+ipcMain.handle("cloud:refresh", async () => {
+  // One refresh reads chats and their line names together, so the modal gets
+  // the same account view the tab booted with.
+  await cloudAgents?.refresh();
+  return agentsTabState();
+});
+ipcMain.handle("connect:create", async (_e, name: string) => {
+  await connectClient?.createCredential(name);
+  // The credential it just minted is a roster row nobody has read yet — the
+  // same gap `cloud:create` had, and the same fix.
+  await connectClient?.refreshRoster();
+  return agentsTabState();
+});
+/**
+ * Remove a cloud agent by its own id, with no credential row involved.
+ *
+ * A live agent whose credential has gone inactive has no roster row, and the
+ * screen used to disable Remove for it — a running agent nobody could take
+ * down. Its removal never needed the credential: `DELETE
+ * /v1/agents/cloud/{agent_id}` is keyed on the agent.
+ *
+ * Same lifecycle owner as every other cloud removal, so the poll, the row and
+ * the local state go together; the roster is re-read afterwards because the
+ * credential row, if there was one, is gone with it.
+ */
+ipcMain.handle("cloud:remove", async (_e, agentId: string) => {
+  await cloudAgents?.remove(agentId);
+  await connectClient?.refreshRoster();
+  return agentsTabState();
+});
+
+/**
+ * Remove one roster row. Which call that means is the state's decision, not
+ * the renderer's — see `rosterSections.ts`.
+ */
+ipcMain.handle("roster:remove", async (_e, id: number) => {
+  await connectClient?.removeRosterRow(id);
+  return agentsTabState();
+});
+
+ipcMain.handle("connect:dismiss", async () => {
+  connectClient?.dismissCredential();
+  return agentsTabState();
+});
+
+/**
+ * The cloud-agent mutations, and none of them polls: `create` answers as soon
+ * as Plow has issued the receipt and the row is on screen in `provisioning`;
+ * the main process drives it to `active` from there.
+ */
+ipcMain.handle("cloud:create", async (_e, chatUids: string[], name: string, provider: string) => {
+  await cloudAgents?.create(chatUids ?? [], name, provider);
+  // The new agent's credential row comes from the separately fetched roster,
+  // which knows nothing about a create. Without this the screen shows the agent
+  // with no row behind it, so Remove is disabled until the user leaves the tab
+  // and comes back.
+  await connectClient?.refreshRoster();
+  return agentsTabState();
+});
+
+/**
+ * Change which chats an existing agent serves.
+ *
+ * The roster is re-read for the same reason a create re-reads it — a
+ * credential's chat grant moves with the agent's set, so the row's permission
+ * line is stale the moment this returns.
+ */
+ipcMain.handle("cloud:editChats", async (_e, agentId: string, chatUids: string[]) => {
+  await cloudAgents?.editChats(agentId, chatUids ?? []);
+  await connectClient?.refreshRoster();
+});
+/** Connect-a-client's state plus the cloud-agent group's, in one object. The
+ * cloud half is present and empty when the flag is off, so the renderer reads
+ * the same fields either way. */
+function agentsTabState(): Record<string, unknown> | null {
+  const connect = connectClient?.state() ?? null;
+  const cloud = cloudAgents?.state() ?? null;
+  if (!connect) return null;
+  return { ...connect, ...(cloud ?? {}) };
+}
 
 // MARK: IPC for the first-run setup window
 
@@ -565,12 +760,6 @@ ipcMain.handle("onboarding:finish", async () => {
   gate.sync();
 });
 ipcMain.handle("settings:setApprovalMode", async (_e, mode: string) => setApprovalMode(home, mode));
-ipcMain.handle("settings:getShowSuggestions", async () => loadSettings(home).showAgentSuggestions ?? true);
-ipcMain.handle("settings:setShowSuggestions", async (_e, on: boolean) => {
-  const settings = loadSettings(home);
-  settings.showAgentSuggestions = !!on;
-  saveSettings(home, settings);
-});
 // What the owner says agents are for. This pair is the only way the text is
 // written or read on the renderer's behalf; nothing an agent can reach touches
 // it, which is what makes it trusted context for the reviewer.
@@ -621,6 +810,16 @@ ipcMain.handle("vault:reveal", async (_e, itemId: string, field: string) => {
   const vault = device?.vaultClient;
   if (!vault) throw new Error("the vault is not running");
   return vault.reveal(String(itemId), field);
+});
+
+// The six digits an item's authenticator key is showing now, for the owner's
+// own eyes. `key` previews what is being TYPED, before there is an item to ask
+// about — which is the only way to tell a good paste from a bad one on sight.
+ipcMain.handle("vault:totp", async (_e, itemId: string, key?: string) => {
+  if (typeof key === "string" && key.trim() !== "") return totpCode(key);
+  const vault = device?.vaultClient;
+  if (!vault) throw new Error("the vault is not running");
+  return vault.totp(String(itemId));
 });
 
 ipcMain.handle("vault:deleteItem", async (_e, itemId: string) => {
@@ -802,14 +1001,21 @@ const gate = new WindowGate({
   isSetupOpen: () => !!onboardingWindow && !onboardingWindow.isDestroyed(),
   openMain: () => createMainWindow(),
   openSetup: () => openOnboardingWindow(),
-  // Drop the reference before closing, so `isMainOpen`/`isSetupOpen` answer
-  // truthfully straight away: 'closed' is not guaranteed to have fired by the
-  // time `close()` returns.
+  // destroy(), not close(): the gate's teardown is NOT a departure the owner may
+  // refuse. It fires when the relay rejects the credential, and a signed-out Mac
+  // is not entitled to a main window at all — the gate's contract is exactly one
+  // window, always. `destroy()` says that outright instead of asking `close()`
+  // for permission and then holding a flag to overrule the answer.
+  //
+  // The unsaved edits die with it, which is the honest trade: there is no
+  // signed-out state in which that form could have been saved. Bounds survive —
+  // 'resized'/'moved' persist them as they happen, not at close.
   closeMain: () => {
     const win = mainWindow;
-    mainWindow = null;
-    if (win && !win.isDestroyed()) win.close();
+    if (win && !win.isDestroyed()) win.destroy();
   },
+  // Setup has no form to lose, so its close is immediate and the early drop
+  // still buys a truthful `isSetupOpen` before 'closed' arrives.
   closeSetup: () => {
     const win = onboardingWindow;
     onboardingWindow = null;
@@ -846,10 +1052,10 @@ async function startRelay(): Promise<void> {
     // The relay refused the credential — revoked in the console, or minted
     // against a different environment. It will never work again, so the app
     // signs itself out rather than reconnecting forever with a dead token.
-    onAuthFailed: (reason) => {
-      console.log(`[relay] credential rejected (${reason}); signing out`);
+    onAuthFailed: () => {
+      console.log("[relay] credential rejected; signing out");
       connected = false;
-      signOut();
+      void signOut();
       notifyRenderer("status:changed");
     },
     // RelayClient redacts the credential from everything it emits; this is the
@@ -877,6 +1083,19 @@ app.whenReady().then(async () => {
   // setName at the top of this file). From here on the name is the product's,
   // for every menu, window and tray item built below.
   app.setName(instance.appName);
+  // Encrypt the stored credential at rest, under the SAME frozen Keychain
+  // identity the vault uses — installed here because that identity is now
+  // latched and because nothing has read settings yet this process.
+  //
+  // `settings.json` was already 0600, so this defends a backup or a second
+  // admin account, not the owner's own processes: `safeStorage` decrypts for
+  // anything running as them. It matters more than it did, because the stored
+  // credential is the owner's login session rather than a scoped device key.
+  useCredentialCodec({
+    available: () => electronSafeStorage.isEncryptionAvailable(),
+    encrypt: (plain) => electronSafeStorage.encryptString(plain).toString("base64"),
+    decrypt: (cipher) => electronSafeStorage.decryptString(Buffer.from(cipher, "base64")),
+  });
   // The dialog answers; the store writes down what was asked before it is
   // asked, so a pending approval is a record on disk rather than only a promise
   // in memory. It also bounds the wait: an approval nobody answers expires and
@@ -889,6 +1108,24 @@ app.whenReady().then(async () => {
     hostName(),
     approvals,
     resolveBrowserRuntime(process.resourcesPath),
+    // The owner's real home, resolved here because this is the only caller that
+    // knows it. `home` above is the app's own (branch-suffixed in a from-source
+    // run); this is where WhatsApp and everything else of theirs actually lives.
+    os.homedir(),
+    // How a vendored provider CLI is authorised. The exec path reports a
+    // missing one through the approval dialog rather than throwing.
+    buildMinter({ api: new PlowApi(apiBaseUrl), home }),
+    // Packaged: Contents/Resources/<command>/<arch>. From source:
+    // vendor/<command>. The RESOLVER is keyed on the command; staging is not
+    // — each provider still needs its own `fetch-<command>` recipe and its own
+    // extraResources entry, and gog is the only one written today.
+    // `app.getAppPath()` is <root>/apps/desktop
+    // under `just app`, not the workspace root, so the from-source lookup has
+    // to climb two levels or it can never resolve.
+    vendorDirs({
+      resourcesDir: process.resourcesPath,
+      repoRoot: path.resolve(app.getAppPath(), "..", ".."),
+    }),
     plowPaymentApproval(new PlowApi(apiBaseUrl)),
   );
   // Same tick as the store's construction (see onAbandoned): an approval that
@@ -939,11 +1176,35 @@ app.whenReady().then(async () => {
     // handed to this — see Onboarding's callers of `warn`.
     warn: (message) => console.log(`[onboarding] ${message}`),
   });
+  // Built first: the roster's removal routing needs the cloud-agent client,
+  // because a row with an `agent_id` must be deleted as an agent and never
+  // revoked as a key.
+  const cloudApi = new PlowApi(apiBaseUrl, loggingFetch(home));
+  const cloudAgentsClient = new CloudAgentsClient(cloudApi);
 
   connectClient = new ConnectClient({
     api: new PlowApi(apiBaseUrl),
     home,
     isConnected: () => connected,
+    // Through the state that owns the agent's poll, row and settings — not the
+    // raw client, which would leave all three behind.
+    removeCloudAgent: async (agentId: string) => {
+      await cloudAgents?.remove(agentId);
+    },
+    signOutThisMac,
+    onChange: () => notifyRenderer("connect:changed"),
+  });
+
+  // The cloud-agent group shares the Agents tab's change channel, because it
+  // shares the tab's state shape.
+  cloudAgents = new CloudAgentState({
+    // Both clients log what they send and what comes back — see wireLog.ts.
+    // There is no server-side request log we can read, and during the rollout
+    // that account is the only one there is.
+    agents: cloudAgentsClient,
+    chats: new CloudChatsClient(cloudApi),
+    lines: new CloudLinesClient(cloudApi),
+    home,
     onChange: () => notifyRenderer("connect:changed"),
   });
 
@@ -1023,6 +1284,46 @@ app.whenReady().then(async () => {
   });
 });
 
+/**
+ * The one gate every teardown of the main window goes through — Cmd-W, Quit,
+ * and the relay gate's closeMain() all end here, and nothing else may destroy
+ * that window.
+ *
+ * One question at a time: a second path arriving while it is up waits on the
+ * same answer instead of stacking a dialog or — the bug this shape exists to
+ * make unrepresentable — reading "a question is pending" as a yes.
+ *
+ * There is no timeout and no assumed answer. A person reading the question is
+ * not a renderer that failed to reply, and no timer can tell them apart, so
+ * silence keeps the window; Force Quit is still there for a wedged one.
+ */
+let leaveInFlight: Promise<boolean> | null = null;
+/** Settles the question above when the window it was asked of dies unanswered. */
+let settleLeave: ((ok: boolean) => void) | null = null;
+function mayLeaveMain(win: BrowserWindow | null): Promise<boolean> {
+  if (!win || win.isDestroyed()) return Promise.resolve(true);
+  leaveInFlight ??= new Promise<boolean>((resolve) => {
+    const done = (ok: boolean) => {
+      ipcMain.removeListener("ui:confirmLeaveReply", onReply);
+      settleLeave = null;
+      resolve(ok);
+    };
+    const onReply = (_e: unknown, ok: boolean) => done(!!ok);
+    settleLeave = done;
+    ipcMain.on("ui:confirmLeaveReply", onReply);
+    // The question is drawn IN the window, so it has to be on screen to be seen.
+    if (!win.isVisible()) win.show();
+    // ...and it has to be asked of a renderer that is already listening: the
+    // bridge uses ipcRenderer.on, which does not replay, so a question sent
+    // mid-load is one nobody will ever answer — and this promise is shared, so
+    // that would strand every later close behind it. Same wait as showSettings.
+    const ask = () => win.webContents.send("ui:confirmLeave");
+    if (win.webContents.isLoading()) win.webContents.once("did-finish-load", ask);
+    else ask();
+  }).finally(() => { leaveInFlight = null; });
+  return leaveInFlight;
+}
+
 let quitting = false;
 let cleanedUp = false;
 app.on("before-quit", (event) => {
@@ -1034,11 +1335,22 @@ app.on("before-quit", (event) => {
   event.preventDefault();
   if (quitting) return;
   quitting = true;
-  // Kill any live Camoufox session/process group so Firefox children don't outlive us.
-  // Every step of it is timeout-bounded, so this waits seconds, not forever.
-  void Promise.allSettled([relay?.stop(), device?.shutdown()]).then(() => {
-    cleanedUp = true;
-    app.quit();
+  void mayLeaveMain(mainWindow).then((mayLeave) => {
+    if (!mayLeave) {
+      quitting = false; // they went back to their form; this quit never happened
+      return;
+    }
+    // Take the window away before cleanup, not after. The answer covered what
+    // was on screen at THAT moment, and shutting the browsers down takes
+    // seconds — seconds in which another editor could be opened and typed into,
+    // and destroyed by the quit below without ever being asked about.
+    mainWindow?.destroy();
+    // Kill any live Camoufox session/process group so Firefox children don't
+    // outlive us. Every step is timeout-bounded, so this waits seconds, not forever.
+    void Promise.allSettled([relay?.stop(), device?.shutdown()]).then(() => {
+      cleanedUp = true;
+      app.quit();
+    });
   });
 });
 
@@ -1102,7 +1414,11 @@ function refreshTray(): void {
  * the outcome — the passive answer to what Sparkle does with a modal.
  */
 function checkForUpdatesFromMenu(): void {
-  updates?.checkNow();
+  // The check is NOT started here. Settings is the only place its outcome — up
+  // to date, or an error — is ever shown, and the renderer can refuse to go
+  // there (an open Vault form with unsaved edits gets asked first). Starting
+  // the check before knowing that would hide the answer on a screen the owner
+  // never reached, so the renderer starts it once it has arrived.
   // Through the gate: a Mac that is not signed in has no main window to show
   // the outcome in, and must not be given one from here. `mainWindow` is null
   // in that case and the send below is a no-op.

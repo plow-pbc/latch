@@ -3,11 +3,11 @@
  * a security property, not housekeeping. It used to be written with no mode at
  * all.
  */
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { loadSettings, saveSettings } from "../src/settings.js";
+import { loadSettings, saveSettings, useCredentialCodec } from "../src/settings.js";
 
 const cleanups: (() => void)[] = [];
 afterEach(() => {
@@ -53,6 +53,26 @@ describe("settings storage", () => {
     expect(mode(file)).toBe(0o600);
   });
 
+  it("keeps the old file intact when a replacement write fails midway", () => {
+    const home = tempHome();
+    const settings = loadSettings(home);
+    settings.accountUid = "u_before";
+    saveSettings(home, settings);
+    const file = path.join(home, "app/settings.json");
+    const before = fs.readFileSync(file, "utf8");
+    const writeSync = fs.writeSync;
+    vi.spyOn(fs, "writeSync").mockImplementationOnce((fd, buffer) => {
+      writeSync(fd, (buffer as Uint8Array).subarray(0, 12));
+      throw new Error("disk full midway through write");
+    });
+
+    settings.accountUid = "u_after";
+    expect(() => saveSettings(home, settings)).toThrow("disk full midway through write");
+
+    expect(fs.readFileSync(file, "utf8")).toBe(before);
+    expect(loadSettings(home).accountUid).toBe("u_before");
+  });
+
   it("round-trips the credential and what the server said about the account", () => {
     const home = tempHome();
     const settings = loadSettings(home);
@@ -77,6 +97,19 @@ describe("settings storage", () => {
    */
   it("lands a new home on the Agents tab", () => {
     expect(loadSettings(tempHome()).selectedTab).toBe("agents");
+  });
+
+  /**
+   * A new home starts with the reviewer deciding; the owner opts INTO dialogs.
+   * A home whose owner chose a mode keeps it — the file's value wins.
+   */
+  it("defaults a new home to adversarial review, and keeps a chosen mode", () => {
+    expect(loadSettings(tempHome()).approvalMode).toBe("adversarial");
+    const home = tempHome();
+    const settings = loadSettings(home);
+    settings.approvalMode = "ask";
+    saveSettings(home, settings);
+    expect(loadSettings(home).approvalMode).toBe("ask");
   });
 
   it("leaves a home that already chose a tab exactly where it was", () => {
@@ -216,5 +249,131 @@ describe("the retired bring-your-own-key fields are scrubbed on read", () => {
     expect(JSON.parse(raw).launchAtLoginDefaulted).toBe(true);
     // The second load, which finds nothing to scrub, agrees with the first.
     expect(loadSettings(home).launchAtLoginDefaulted).toBe(true);
+  });
+});
+
+describe("the credential at rest", () => {
+  /** A codec that is obviously not encryption — the point is the SHAPE: one
+   * value in the file, decrypted only through the port, never the plaintext. */
+  const fakeCodec = (available = true) => ({
+    available: () => available,
+    encrypt: (plain: string) => `sealed:${Buffer.from(plain).toString("base64")}`,
+    decrypt: (cipher: string) => {
+      if (!cipher.startsWith("sealed:")) throw new Error("not ours");
+      return Buffer.from(cipher.slice("sealed:".length), "base64").toString();
+    },
+  });
+
+  afterEach(() => {
+    useCredentialCodec(null);
+    vi.restoreAllMocks();
+  });
+
+  const fileOf = (home: string) =>
+    JSON.parse(fs.readFileSync(path.join(home, "app/settings.json"), "utf8")) as Record<string, unknown>;
+
+  it("writes the credential sealed and never in the clear", () => {
+    useCredentialCodec(fakeCodec());
+    const home = tempHome();
+    const settings = loadSettings(home);
+    settings.relayCredential = "plow_sk_secret_value";
+    saveSettings(home, settings);
+
+    const raw = fs.readFileSync(path.join(home, "app/settings.json"), "utf8");
+    expect(raw).not.toContain("plow_sk_secret_value");
+    // The exact bytes — a seal nobody can check could be the plaintext with a
+    // prefix on it.
+    expect(fileOf(home).relayCredentialEnc).toBe(
+      `sealed:${Buffer.from("plow_sk_secret_value").toString("base64")}`,
+    );
+    expect(fileOf(home).relayCredential).toBe("");
+    // ...and it comes back through the port.
+    expect(loadSettings(home).relayCredential).toBe("plow_sk_secret_value");
+  });
+
+  it("migrates a plaintext credential on the first read that can seal it", () => {
+    const home = tempHome();
+    const settings = loadSettings(home);
+    settings.relayCredential = "plow_sk_secret_value";
+    saveSettings(home, settings);
+    // Written in the clear, because no codec was installed yet.
+    expect(loadSettings(home).relayCredential).toBe("plow_sk_secret_value");
+
+    useCredentialCodec(fakeCodec());
+    expect(loadSettings(home).relayCredential).toBe("plow_sk_secret_value");
+
+    // Rewritten on that read, not left for some later unrelated write.
+    const raw = fs.readFileSync(path.join(home, "app/settings.json"), "utf8");
+    expect(raw).not.toContain("plow_sk_secret_value");
+    expect(fileOf(home).relayCredentialEnc).toBeTruthy();
+  });
+
+  it("falls back to plaintext 0600 when the OS offers no keychain", () => {
+    // No regression against what shipped: the file has always been 0600, so an
+    // unavailable keychain must not be a Mac that cannot sign in.
+    useCredentialCodec(fakeCodec(false));
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    const home = tempHome();
+    const settings = loadSettings(home);
+    settings.relayCredential = "plow_sk_unsealed";
+    saveSettings(home, settings);
+
+    expect(fileOf(home).relayCredential).toBe("plow_sk_unsealed");
+    expect(fileOf(home).relayCredentialEnc).toBeUndefined();
+    expect(fs.statSync(path.join(home, "app/settings.json")).mode & 0o777).toBe(0o600);
+    expect(loadSettings(home).relayCredential).toBe("plow_sk_unsealed");
+    expect(log).toHaveBeenCalledWith(
+      "[settings] no OS keychain available; credential stored unencrypted (0600)",
+    );
+  });
+
+  it("keeps the credential in the clear when sealing THROWS", () => {
+    // `available()` saying yes is not a promise that `encryptString` works —
+    // the keychain can be locked between the two calls. A throw escaping
+    // `saveSettings` wrote nothing at all, and a sign-in that had just spent
+    // its one-shot redeem lost the session it was handed, live on the account
+    // with no copy anywhere.
+    useCredentialCodec({
+      available: () => true,
+      encrypt: () => {
+        throw new Error("keychain locked");
+      },
+      decrypt: () => "unused",
+    });
+    const home = tempHome();
+    const settings = loadSettings(home);
+    settings.relayCredential = "plow_sk_must_survive";
+    saveSettings(home, settings);
+
+    expect(fileOf(home).relayCredential).toBe("plow_sk_must_survive");
+    expect(fileOf(home).relayCredentialEnc).toBeUndefined();
+    expect(fs.statSync(path.join(home, "app/settings.json")).mode & 0o777).toBe(0o600);
+    expect(loadSettings(home).relayCredential).toBe("plow_sk_must_survive");
+  });
+
+  it("clears an unreadable seal and treats the Mac as signed out", () => {
+    useCredentialCodec(fakeCodec());
+    const home = tempHome();
+    const settings = loadSettings(home);
+    settings.relayCredential = "plow_sk_sealed";
+    settings.accountUid = "u_first";
+    settings.mcpUrl = "https://api.plow.co/v1/relay/devices/u_first/mcp";
+    settings.provisionedChatUid = "cht_first";
+    settings.provisionedChatLabel = "Willow, You";
+    saveSettings(home, settings);
+
+    const file = path.join(home, "app/settings.json");
+    const onDisk = JSON.parse(fs.readFileSync(file, "utf8")) as Record<string, unknown>;
+    onDisk.relayCredentialEnc = "garbage-from-another-keychain";
+    fs.writeFileSync(file, JSON.stringify(onDisk));
+
+    expect(loadSettings(home)).toMatchObject({
+      relayCredential: "",
+      accountUid: "",
+      mcpUrl: "",
+      provisionedChatUid: "",
+      provisionedChatLabel: "",
+    });
+    expect(fileOf(home).relayCredentialEnc).toBeUndefined();
   });
 });

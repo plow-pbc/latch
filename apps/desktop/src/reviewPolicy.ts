@@ -9,6 +9,8 @@
  */
 import { Intent, JSONValue } from "@domo/protocol";
 import {
+  APPROVAL_SOURCE_PLOW_FOLDER,
+  confinedToPlowFolder,
   DENIAL_SOURCE_NO_CREDITS,
   DENIAL_SOURCE_NO_REVIEWER,
   DENIAL_SOURCE_REVIEWER_UNAVAILABLE,
@@ -19,7 +21,7 @@ import {
   ReviewFailureCause,
   Verdict,
 } from "./adversarialAgent.js";
-import { Settings } from "./settings.js";
+import { DEFAULT_APPROVAL_MODE, Settings } from "./settings.js";
 
 export type ApprovalDecision = "allow_once" | "always_allow" | "deny";
 
@@ -56,7 +58,7 @@ export interface InferenceStatus {
 export function inferenceStatus(settings: Settings): InferenceStatus {
   return {
     available: reviewerAvailable(settings),
-    approvalMode: settings.approvalMode ?? "ask",
+    approvalMode: settings.approvalMode ?? DEFAULT_APPROVAL_MODE,
   };
 }
 
@@ -65,17 +67,51 @@ export function reviewerAvailable(settings: Settings): boolean {
   return !!(settings.relayCredential ?? "").trim();
 }
 
+/**
+ * May a stored always-allow rule answer on its own?
+ *
+ * Only under the modes that would let a cached human decision stand. A rule is
+ * one human decision replayed, and the policy engine replays it BEFORE any
+ * delegate is consulted — so a mode that takes the decision away from the
+ * human has to say so here or be bypassed by every operation they ever pressed
+ * "always allow" on.
+ *
+ * Two modes take it away. `adversarial` gives it to the reviewer; `deny`
+ * refuses everything, and a cached allow must not outrank it.
+ *
+ * Refusing here is not itself a denial. It routes the intent down the normal
+ * path, where `decideIntent` runs the review or denies as the mode requires.
+ */
+export function storedRuleMayGrant(settings: Settings): boolean {
+  const mode = settings.approvalMode ?? DEFAULT_APPROVAL_MODE;
+  return mode !== "adversarial" && mode !== "deny";
+}
+
 /** Everything `decideIntent` needs from the outside world, injected for tests. */
 export interface DecideDeps {
   settings: Settings;
   /** Plow API origin. Baked into the build, never a setting. */
   apiBaseUrl: string;
-  /** The audit log's current entries, for the reviewer's history context. */
+  /**
+   * The owner's `~/Plow` folder — the playground. File operations confined to
+   * it are granted without a reviewer or a dialog (see `confinedToPlowFolder`
+   * for what "confined" refuses). Deny mode outranks it.
+   */
+  plowRoot: string;
+  /**
+   * The audit log's current entries. NOT review context any more — nothing
+   * below reads this, and the reviewer is handed `history: []` (DESIGN.md
+   * §4). It comes out with `ReviewArgs.history` (#140).
+   */
   auditEntries: () => JSONValue[];
   record: (event: string, fields: Record<string, JSONValue>) => void;
   review: (
     args: ReviewArgs,
-  ) => Promise<{ verdict: Verdict; reason: string; cause?: ReviewFailureCause }>;
+  ) => Promise<{
+    verdict: Verdict;
+    reason: string;
+    cause?: ReviewFailureCause;
+  }>;
   /** Show the human the approval dialog, optionally with the reviewer's say. */
   openApproval: (hint: Promise<ReviewHint> | null) => Promise<ApprovalDecision>;
 }
@@ -93,19 +129,35 @@ export async function decideIntent(
   deps: DecideDeps,
 ): Promise<{ decision: ApprovalDecision; source: string }> {
   const { settings } = deps;
-  const mode = settings.approvalMode ?? "ask";
+  const mode = settings.approvalMode ?? DEFAULT_APPROVAL_MODE;
 
-  if (mode === "approve") return { decision: "allow_once", source: "approve" };
   if (mode === "deny") return { decision: "deny", source: "policy" };
+
+  // The playground: file operations confined to ~/Plow are granted here, in
+  // every mode that grants anything — no review spent, no dialog raised. After
+  // the deny return above ON PURPOSE: deny mode is the owner's kill switch,
+  // and the carve-out must not outrank it.
+  if (await confinedToPlowFolder(intent.capabilities, deps.plowRoot)) {
+    return { decision: "allow_once", source: APPROVAL_SOURCE_PLOW_FOLDER };
+  }
+
+  /** Is the reviewer the decider for this intent? */
+  // Approve: the whole point of the mode. Above the reviewer, because by here
+  // `deny` has already returned and `ask` still wants the human.
+  if (mode === "approve") {
+    return { decision: "allow_once", source: "approve" };
+  }
+
+  const reviewDecides = mode === "adversarial";
 
   // Run one review, recording its start and outcome onto the intent's audit
   // timeline so the app shows "adversarial agent started" + its verdict between
   // the request and the final decision.
-  // Adversarial mode has no human in it, and the reviewer is told so rather
-  // than left to infer it from the owner's freeform purpose text. Ask mode is
-  // the other way round: the dialog is coming either way, so a reviewer that
-  // wants to defer is saying something the human will actually see.
-  const humanAvailable = mode !== "adversarial";
+  // A review that decides has no human behind it, and the reviewer is told so
+  // rather than left to infer it from the owner's freeform purpose text. Ask
+  // mode is the other way round: the dialog is coming either way, so a reviewer
+  // that wants to defer is saying something the human will actually see.
+  const humanAvailable = !reviewDecides;
 
   const review = async () => {
     deps.record("adversarial_review_started", {
@@ -142,7 +194,11 @@ export async function decideIntent(
     return r;
   };
 
-  if (mode === "adversarial") {
+  if (reviewDecides) {
+    // No credential is no reviewer, and this intent has no other decider: the
+    // mode that got here has no human in it. Auto-approving would hand the
+    // agent exactly the access the mode exists to gate.
+    //
     // Decide this BEFORE `review()`, which opens the timeline with "adversarial
     // agent started" and names the model it is about to use. With no credential
     // there is no call and no model, so recording one would put a reviewer that
@@ -151,7 +207,8 @@ export async function decideIntent(
       return { decision: "deny", source: DENIAL_SOURCE_NO_REVIEWER };
     }
     const { verdict, reason, cause } = await review();
-    if (verdict === "allow") return { decision: "allow_once", source: "adversarial" };
+    if (verdict === "allow")
+      return { decision: "allow_once", source: "adversarial" };
     if (verdict === "deny") return { decision: "deny", source: "adversarial" };
     // The account cannot pay for inference, so the reviewer can never run.
     // Deny — and say why, in a form the calling agent can read.
@@ -179,15 +236,15 @@ export async function decideIntent(
     return { decision: "deny", source: DENIAL_SOURCE_REVIEWER_UNAVAILABLE };
   }
 
-  // Ask mode: show the dialog, optionally with the reviewer's hint when both
-  // the toggle and a credential are present. A 402 here costs only the hint —
-  // the human was always the decider.
+  // Ask mode: show the dialog, with the reviewer's hint whenever a credential
+  // is present. A 402 here costs only the hint — the human was always the
+  // decider.
   //
   // A hint is a nicety, so it is skipped when there is no credential:
   // running a review that cannot run would buy an audit pair and a null
   // suggestion. Not a gate — nothing the human chose is refused by it.
   const hint =
-    settings.showAgentSuggestions && reviewerAvailable(settings)
+    reviewerAvailable(settings)
       ? review().then((r) => ({
           decision:
             r.verdict === "allow"

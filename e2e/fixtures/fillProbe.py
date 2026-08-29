@@ -59,7 +59,7 @@ class Handle:
     def __init__(self, trace, detach_before_fill=False, mask_result="stylesheet", marked=False,
                  document_url="https://pizza.example/login", value="", partial_fill=False,
                  document_token="doc-1", type_fails=False, typeable="single-line",
-                 drops_keys=False, assign_fails=False):
+                 drops_keys=False, assign_fails=False, max_length=-1, rewrites=None):
         self.trace = trace
         self.detach_before_fill = detach_before_fill
         self.partial_fill = partial_fill
@@ -80,6 +80,11 @@ class Handle:
         # NODE that holds it, so every question asked afterwards sees the same
         # thing the real one would.
         self.drops_keys = drops_keys
+        # What the field says it will hold, and how it rewrites what it is
+        # given: a card box grouping digits, a phone box dropping punctuation.
+        # `rewrites` takes the landed string and answers what the node keeps.
+        self.max_length = max_length
+        self.rewrites = rewrites
         # And one that will not take the value by assignment either, which is
         # the loud failure the keystroke path must never swallow.
         self.assign_fails = assign_fails
@@ -112,6 +117,10 @@ class Handle:
         # accident and the scenario quietly tests nothing.
         if "__domoDocumentToken" in js:
             return self.document_token
+        if "maxLength" in js:
+            return self.max_length
+        if "=== wanted" in js:
+            return (self.value or "") == (args[0] if args else "")
         if "tagName" in js:
             return self.typeable
         if "startsWith(now)" in js:
@@ -158,7 +167,9 @@ class Handle:
             # this value at all. Nothing landed and the caller has to hear so.
             self.trace.append("handle.assign-failed")
             raise RuntimeError("Cannot type text into input[type=number]")
-        self.value = value
+        # An assignment ignores `maxlength`, but the page's own script still runs
+        # on the input event it fires, so a rewriting field rewrites this too.
+        self.value = self.rewrites(value) if self.rewrites is not None else value
         self.trace.append("handle.assign")
 
     def type(self, text, delay=None, timeout=None):
@@ -192,8 +203,15 @@ class Handle:
         if self.drops_keys:
             return
         # Keys land ON what the assignment left, never instead of it -- which
-        # is the only way a scenario can tell the head was assigned at all.
-        self.value = (self.value or "") + text
+        # is the only way a scenario can tell the head was assigned at all --
+        # and the field then does to them whatever it does.
+        landed = (self.value or "") + text
+        if self.rewrites is not None:
+            landed = self.rewrites(landed)
+        # No cap clipping here: an over-cap value never reaches the keys, because
+        # the cap is measured against what this node will actually receive and
+        # refused before the node is touched.
+        self.value = landed
         if self.partial_fill and self.type_calls > 1:
             # Some of it went in and then the field went away. It takes more
             # than one key for that to be interesting: what the node is left
@@ -226,7 +244,7 @@ class Frame:
                  nodes=None, document_url="https://pizza.example/login", value="",
                  partial_fill=False, document_token="doc-1", type_fails=False,
                  typeable="single-line", drops_keys=False, assign_fails=False,
-                 hides=False, detached=False):
+                 hides=False, detached=False, max_length=-1, rewrites=None):
         self.trace = trace
         # A frame that HAS the field and will not show it, and one that went
         # away: the two failures the fill path ranks against each other.
@@ -236,7 +254,7 @@ class Frame:
         self.document_token = document_token
         self.handle = Handle(trace, detach_before_fill, mask_result, marked, document_url, value,
                              partial_fill, document_token, type_fails, typeable, drops_keys,
-                             assign_fails)
+                             assign_fails, max_length, rewrites)
         self.nodes = nodes
 
     def _node(self, selector):
@@ -297,12 +315,12 @@ class Page:
 def run(server, cmd, detach_before_fill=False, mask_result="stylesheet", marked=False,
         document_url="https://pizza.example/login", value="", partial_fill=False,
         document_token="doc-1", type_fails=False, typeable="single-line", drops_keys=False,
-        assign_fails=False):
+        assign_fails=False, max_length=-1, rewrites=None):
     trace: list[str] = []
     frame = Frame(trace, detach_before_fill, mask_result, marked, document_url=document_url,
                   value=value, partial_fill=partial_fill, document_token=document_token,
                   type_fails=type_fails, typeable=typeable, drops_keys=drops_keys,
-                  assign_fails=assign_fails)
+                  assign_fails=assign_fails, max_length=max_length, rewrites=rewrites)
     page = Page(frame)
     session = server.Session(page)
     out = {"trace": trace, "error": None, "marked": False, "result": None, "value_kept": True,
@@ -312,7 +330,8 @@ def run(server, cmd, detach_before_fill=False, mask_result="stylesheet", marked=
         # The value is never part of this: only whether the fill happened, and
         # for a locate, what identity it reported.
         out["result"] = {k: v for k, v in result.items()
-                         if k in ("ok", "mask", "frame", "frame_url", "frame_token")}
+                         if k in ("ok", "mask", "frame", "frame_url", "frame_token",
+                                  "cap", "altered")}
     except Exception as exc:  # noqa: BLE001 — the scenario under test
         out["error"] = type(exc).__name__
     out["marked"] = frame.handle.marked
@@ -497,11 +516,56 @@ def main() -> int:
         "orphan_mark_premarked": run(server, {**base, "mask": True}, detach_before_fill=True,
                                      marked=True, value="hunter2"),
         "plain": run(server, base),
+        # The field says how much it holds and the value is more. Refused before
+        # the node is touched, so nothing is half-written and the page is left
+        # as it was found -- the one thing knowable without knowing what the
+        # value MEANS.
+        "over_cap": run(server, {**base, "value": "hunter2"}, max_length=4),
+        "over_cap_masked": run(server, {**base, "mask": True, "value": "hunter2"},
+                               max_length=4),
+        # `maxlength` counts UTF-16 units: four emoji are eight, so a cap of
+        # four does not admit them however few code points they are.
+        "over_cap_astral": run(server, {**base, "value": "\U0001F600" * 4}, max_length=4),
+        # The boundary: exactly the cap fits, and nothing is reported.
+        "at_cap": run(server, {**base, "value": "1234"}, max_length=4),
+        # A field that REWRITES what it is given. Both of these are ordinary and
+        # neither is refused -- the fill reports that the field is holding
+        # something else and says nothing about whether that matters, because
+        # only a caller who knows what the value means can tell a card number
+        # gaining its spaces from a name losing one.
+        "grouped_by_the_field": run(
+            server, {**base, "value": "4111111111111111"},
+            rewrites=lambda t: " ".join(
+                t.replace(" ", "")[i:i + 4]
+                for i in range(0, len(t.replace(" ", "")), 4))),
+        "stripped_by_the_field": run(
+            server, {**base, "value": "Jon Doe"}, rewrites=lambda t: t.replace(" ", "")),
+        # And the same on a concealed fill, which is where the device turns the
+        # fact into a refusal of its own.
+        "stripped_by_the_field_masked": run(
+            server, {**base, "mask": True, "value": "Jon Doe"},
+            rewrites=lambda t: t.replace(" ", "")),
+        # A page script truncating what it was given -- the field declares no
+        # cap, it just keeps less than it took.
+        "truncated_by_the_field": run(
+            server, {**base, "value": "hunter2"}, rewrites=lambda t: t[:4]),
         # A value carrying a newline, at a single-line field. The node could not
         # hold the break anyway -- an <input> strips it in value sanitization --
         # so it is normalized away and the rest still goes in as real keys, and
         # no Enter is ever sent at a form.
         "newline_single_line": run(server, {**base, "value": "one\ntwo"}),
+        # The same value at a field that holds six. The break never reaches the
+        # node, so what arrives is "onetwo" and it fits -- measuring the value
+        # as given would refuse it and tell the owner to shorten something that
+        # was never too long.
+        "newline_fits_once_dropped": run(
+            server, {**base, "value": "one\ntwo"}, max_length=6),
+        # The same value at a TEXTAREA, which KEEPS its breaks -- so it arrives
+        # as seven and does not fit, where the input two rows up took it as six
+        # and did. One value, two answers, and both correct: the measure asks
+        # the node what it will receive rather than assuming either way.
+        "over_cap_textarea_keeps_its_breaks": run(
+            server, {**base, "value": "one\ntwo"}, max_length=6, typeable="multiline"),
         # The same at a single-line field, spelled with CR. This is what pins the
         # ORDER of the normalization: CR becomes LF before the strip removes it,
         # so no Enter is sent. Reversed, `type()` would press Enter mid-value and

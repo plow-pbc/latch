@@ -29,6 +29,11 @@ import {
 } from "@domo/mcp-server";
 import { callTool, parse, pollUntil, rpc } from "./client.js";
 
+// The cases that run a real command go through seatbelt (`sandbox-exec`),
+// which is the Mac's own; off it the spawn fails before the case's own claim
+// is ever exercised.
+const ON_MAC = process.platform === "darwin";
+
 const cleanups: (() => void)[] = [];
 afterEach(async () => {
   while (cleanups.length) await cleanups.pop()!();
@@ -130,7 +135,7 @@ describe("a tool call end to end, in process", () => {
     expect(jv(received).get("goal").str).toBe("check the greeting");
   });
 
-  it("goal text cannot widen the sandbox: a path outside its permitted region is blocked", async () => {
+  it.skipIf(!ON_MAC)("goal text cannot widen the sandbox: a path outside its permitted region is blocked", async () => {
     const { server } = makeServer();
     const allowed = tempDir();
     const offLimits = tempDir();
@@ -320,17 +325,12 @@ describe("the deferred-result contract (§4.3)", () => {
     expect(owner.payload.status).not.toBe("unknown");
   });
 
-  it("the call budget leaves the relay's 25s exchange ten seconds to deliver", () => {
-    // The relay's pending future times out at 25 SECONDS. What is left after
-    // the budget is not slack: it is the time registering the handle, framing
-    // the response and matching it to the waiting exchange all have to fit in.
-    const RELAY_TIMEOUT_MS = 25_000;
-    const DELIVERY_MARGIN_MS = 10_000;
-    // Pinned, not just bounded: a margin check alone passes for any budget
-    // SHORTER than this one too, and the point of the number is that a human
-    // gets the whole fifteen seconds to answer inside the original call.
+  it("the call budget and handle lifetime are pinned, not merely bounded", () => {
+    // The point of the budget is that a human gets the whole fifteen seconds to
+    // answer inside the original call. Whether that still leaves the relay room
+    // to deliver is checked at the seam owning the relay's ceiling —
+    // `relay-client/test/wire.test.ts`.
     expect(CALL_BUDGET_MS).toBe(15_000);
-    expect(RELAY_TIMEOUT_MS - CALL_BUDGET_MS).toBeGreaterThanOrEqual(DELIVERY_MARGIN_MS);
     expect(HANDLE_TTL_MS).toBe(15 * 60_000);
   });
 });
@@ -547,12 +547,60 @@ describe("review findings", () => {
       expect(approved).toEqual([canonicalize(realDir)]);
       expect(cwd).toBe(canonicalize(realDir));
     });
+
+    // The `allowed` flag the policy sees for a given capability kind, when
+    // plow_run_command builds an intent from `argv` + the extra tool args.
+    async function allowedFor(
+      kind: string,
+      argv: string[],
+      extra: Record<string, unknown> = {},
+    ): Promise<boolean | undefined> {
+      let allowed: boolean | undefined;
+      const { server } = makeServer({
+        async decideIntent(intent) {
+          allowed = intent.capabilities.find((c) => c.kind === kind)?.allowed;
+          return "deny" as const;
+        },
+      });
+      await callTool(server, "plow_run_command", { argv, wait_ms: 1_000, ...extra }, AGENT);
+      return allowed;
+    }
+
+    // A vendored provider reaches its service by definition, so the network
+    // capability is not the agent's to remember. Without this the skill's own
+    // canonical example is approved with network denied and the sandbox
+    // refuses every Google request — the advertised flow, broken. An explicit
+    // `false` does not disarm it either: honouring that would approve a gog
+    // call the sandbox then denies, which is the same bug spelled out loud.
+    it.each([
+      ["a gog command implies network", ["gog", "gmail", "search", "q"], undefined, true],
+      ["and an explicit false does not disarm it", ["gog", "gmail", "search", "q"], false, true],
+      ["gog --help does not, like the mint it also skips", ["gog", "--help"], undefined, false],
+      ["and an ordinary command still asks", ["/bin/echo", "x"], undefined, false],
+      ["...and still means false when it says so", ["/bin/echo", "x"], false, false],
+    ])("%s", async (_name, argv, network, allowed) => {
+      expect(await allowedFor("network", argv, network === undefined ? {} : { network })).toBe(allowed);
+    });
+
+    // Unlike network, apple_events is opt-in only: there is no vendored
+    // command that implies it, so the capability is pushed only when the
+    // agent asks for it, and omitted (not sent as `allowed: false`) otherwise
+    // so an unrelated command's approval rule hash does not change.
+    it.each([
+      ["apple_events true grants it", true, true],
+      ["omitted means no apple_events capability at all", undefined, undefined],
+      ["explicit false also means no capability, not a denied one", false, undefined],
+    ])("%s", async (_name, appleEvents, allowed) => {
+      expect(
+        await allowedFor("apple_events", ["/bin/echo", "x"], appleEvents === undefined ? {} : { apple_events: appleEvents }),
+      ).toBe(allowed);
+    });
   });
 
   // 5 — the wait_ms cap does not produce a direct job handle. Pin what really
   // happens so the claim cannot drift back to the wrong one.
   describe("a command outrunning the budget defers, then yields its job handle", () => {
-    it("takes two hops: pending handle, then a ready payload containing the job handle", async () => {
+    it.skipIf(!ON_MAC)("takes two hops: pending handle, then a ready payload containing the job handle", async () => {
       const { server, device } = makeServer(new ScriptedPolicy("allow_once", 0), 30);
       const first = await callTool(
         server,
@@ -675,7 +723,7 @@ describe("per-agent isolation (§4.4)", () => {
     return handle;
   }
 
-  it("one agent cannot read another's job output — even sharing a name", async () => {
+  it.skipIf(!ON_MAC)("one agent cannot read another's job output — even sharing a name", async () => {
     const { server } = makeServer();
     const handle = await startJob(server, ALICE, "alice-secret");
 
@@ -696,7 +744,7 @@ describe("per-agent isolation (§4.4)", () => {
     expect(owner.payload.output).toContain("alice-secret");
   });
 
-  it("one agent's read cannot advance another's cursor", async () => {
+  it.skipIf(!ON_MAC)("one agent's read cannot advance another's cursor", async () => {
     const { server } = makeServer();
     const aliceHandle = await startJob(server, ALICE, "alice");
     const malloryHandle = await startJob(server, MALLORY, "mallory");

@@ -6,7 +6,9 @@
  * to where it belongs. The broker built a *signed intent* from tool arguments
  * and shipped it to a Mac; we build the same capability set from the same
  * arguments, in-process, and hand it straight to the policy engine. Nothing is
- * signed because nothing crosses a wire.
+ * signed because no third party's intent is received here. That is provenance,
+ * not confinement — DESIGN.md §4 *The intent object* owns where an intent's
+ * contents go.
  *
  * The surface is reduced: the broker's tools assumed many Macs behind one
  * endpoint, so every one of them took a `device`. Ours is one Mac addressed by
@@ -28,6 +30,8 @@ import {
   LIVE_WEB_ROUTING,
   MAX_CLICK_TIMEOUT_MS,
   MAX_FILE_BYTES,
+  impliesNetwork,
+  vendoredProvider,
 } from "@domo/device-core";
 import { DeferredResults, DeniedError, Progress } from "./deferred.js";
 import { JobOwners } from "./jobs.js";
@@ -175,13 +179,37 @@ export const MACOS_TOOLING =
   "mdfind for Spotlight search across their files, sips for images, " +
   "pbcopy and pbpaste for the clipboard, and whatever else they have installed";
 
+/**
+ * Appended to every skill body `plow_read_skill` returns — one seam, not
+ * per-skill prose, so the contribution path is stated once.
+ *
+ * Upstream-only, and deliberately static. An earlier version also advertised a
+ * *local* write path (`<home>/device/skills`), but printing any device-home
+ * path in an approval-free response kept leaking owner-identifying layout — the
+ * account name, a client folder, a volume — and the only leak-free path (the
+ * packaged default) needed host-sensitive branching to detect. At single-digit
+ * alpha users there's no evidence agents write skill fixes to disk, so that
+ * ~50-LOC branch isn't earning its keep. The local-override mechanism still
+ * exists (`SkillRegistry.loadDir` reads `$DOMO_HOME/device/skills/*.md`); the
+ * footer just no longer nudges agents at it. Re-add a local clause if a real
+ * need shows up.
+ */
+export const SKILL_FOOTER =
+  "\n\n---\nImprove this skill: if a recipe here is wrong or you found a better way, " +
+  "propose it. File an issue or PR at github.com/plow-pbc/latch quoting the exact query " +
+  "and observed deviation. Never include message content, real handles or names, or " +
+  "owner-identifying paths — reproduce with the schema shape, not the data. Contributions " +
+  "made with this Mac's own tools act as the owner and are approval-gated like any command.";
+
 export const TOOLS: ToolSpec[] = [
   {
     name: "plow_read_file",
     title: "Read a file on the user's Mac",
     description:
       "Read a file on the user's own Mac — their real filesystem, not your workspace. " +
-      "They may be asked to approve, so this can return a pending handle.",
+      "They may be asked to approve, so this can return a pending handle. Paths inside " +
+      "~/Plow (the shared Plow folder — see the plow-folder skill) approve automatically " +
+      "unless this Mac is set to deny everything.",
     inputSchema: {
       type: "object",
       required: ["path"],
@@ -221,7 +249,9 @@ export const TOOLS: ToolSpec[] = [
     description:
       "Write a file on the user's own Mac — use this when the file is for them to open or keep, " +
       "not for your own working files. They may be asked to approve, so this can return a " +
-      "pending handle.",
+      "pending handle. Paths inside ~/Plow (the shared Plow folder — see the plow-folder " +
+      "skill) approve automatically unless this Mac is set to deny everything; prefer it " +
+      "for files you produce for the user.",
     inputSchema: {
       type: "object",
       required: ["path", "content"],
@@ -269,6 +299,18 @@ export const TOOLS: ToolSpec[] = [
       "write access is granted from them. They are NOT the full extent of what the command can " +
       "read — the sandbox profile permits reads more broadly than the paths declared here. " +
       "If the command is still running when the wait elapses you get a job handle for plow_get_output. " +
+      "A command that declares neither write_paths nor network can be killed if it has produced no " +
+      "output at all after 15 minutes — so if long silent work is expected, have it print progress — " +
+      "and in exchange its only writable place is `$TMPDIR`, a directory of its own that is deleted " +
+      "when it is killed. Declare a write path (or " +
+      "network, or apple_events) and it is never killed that way, because it could be mid-work and a " +
+      "truncated file — or a message already sent — is worse than the wait. A vendored provider command counts as having declared network even " +
+      "though you did not — so it is never killed that way either, and the `$TMPDIR` exchange is " +
+      "off — unless it asks for help (`--help`/`-h` last, no `--` before it), which " +
+      "reaches nothing and is exempt. " +
+      "A run ends when the command itself exits, and its stdout and stderr close with it — so a job " +
+      "left running in the background will normally be killed by its next write unless it redirects " +
+      "both (`>log 2>&1`), its output is not captured, and no handle tracks it. "  +
       "If the whole call outruns this Mac's budget you get a pending handle instead: poll it with " +
       "plow_get_result, and the ready payload is the plow_run_command result — including its job handle.",
     inputSchema: {
@@ -295,7 +337,20 @@ export const TOOLS: ToolSpec[] = [
         },
         network: {
           type: "boolean",
-          description: "Whether the command needs network access (default false)",
+          description:
+            "Whether the command needs network access (default false). Ignored for a " +
+            "vendored provider command: those reach their service by definition, so " +
+            "network is granted whether you omit this or set it false, and the approver " +
+            "sees it either way. The exception is asking for help — `--help` or `-h` as " +
+            "the LAST argument, with no `--` before it — which reaches nothing.",
+        },
+        apple_events: {
+          type: "boolean",
+          description:
+            "Whether the command sends Apple events to control this Mac's apps — " +
+            "required for osascript that tells an application to do something " +
+            "(default false). Shown to the approver like any capability; without " +
+            "it the sandbox denies the event and the script fails.",
         },
         wait_ms: {
           type: "integer",
@@ -316,6 +371,17 @@ export const TOOLS: ToolSpec[] = [
       const argv = strings(argvValues);
       if (argv.length !== argvValues.length) throw new ToolError("argv must be strings");
 
+      // A vendored provider CLI refuses some argv outright — an argument that
+      // would disarm its safety flags or read a local file into an outbound
+      // message, or a command the bundled binary does not have. Checked HERE,
+      // before an intent exists, because a card the owner approves mints a
+      // live provider token: nobody should be asked to authorise a call this
+      // Mac was always going to refuse. The device checks again; it is the
+      // chokepoint and cannot rely on this caller.
+      const provider = vendoredProvider(argv);
+      const refusal = provider?.refuse(argv) ?? null;
+      if (refusal !== null) throw new ToolError(refusal);
+
       // Resolve every declared path before it becomes the bound the human
       // approves and the sandbox enforces.
       const readPaths = await resolveAll(strings(a.get("read_paths").arr));
@@ -323,8 +389,31 @@ export const TOOLS: ToolSpec[] = [
       const rawCwd = a.get("cwd").str;
       const capabilities: Capability[] = [
         { kind: "process.exec", argv, cwd: rawCwd === null ? undefined : await resolved(rawCwd) },
-        { kind: "network", allowed: a.get("network").bool ?? false },
+        // A vendored provider implies network. Its whole purpose is to reach
+        // the service its minted token authenticates against, so a gog call
+        // approved without it is a call the sandbox then denies — and making
+        // the agent remember a flag whose answer is never in doubt is a
+        // footgun a skill can only paper over. The human still sees it: it is
+        // in the capability set they approve, like any other network grant.
+        // `--help` is exempt for the same reason it mints nothing.
+        //
+        // NOT only a network grant. `Executor.isReapable` keys on this same
+        // flag, so a provider command is also exempt from the 15-minute
+        // silent-run reaper and gains the housekeeping write paths — the
+        // coupling is easy to miss from here, and the tool description above
+        // says so because it is the agent's account of when a run is killable.
+        {
+          kind: "network",
+          allowed: (a.get("network").bool ?? false) || impliesNetwork(argv),
+        },
       ];
+      // Unlike network, no vendored command implies this one, so it is pushed
+      // only when the agent explicitly asks — never as an `allowed: false`
+      // entry, which would change the approval rule hash of every command
+      // that doesn't touch Apple events at all.
+      if (a.get("apple_events").bool === true) {
+        capabilities.push({ kind: "apple_events", allowed: true });
+      }
       if (readPaths.length > 0) capabilities.push({ kind: "fs.read", paths: readPaths });
       if (writePaths.length > 0) capabilities.push({ kind: "fs.write", paths: writePaths });
 
@@ -358,7 +447,11 @@ export const TOOLS: ToolSpec[] = [
     description:
       "Fetch incremental output of a command still running from plow_run_command. " +
       "Pass 'since' = the output_length you last saw. Takes the job handle plow_run_command returned, " +
-      "not a handle from plow_get_result.",
+      "not a handle from plow_get_result. " +
+      "A read-only command that produces nothing and never exits is eventually killed by this Mac: " +
+      "the reply then carries an 'error' saying so, which is for the user to hear. One approved to " +
+      "write or to use the network is not — it could be mid-work — so polling will not resolve on " +
+      "its own; tell the user, who is the only one who can end it.",
     inputSchema: {
       type: "object",
       required: ["handle"],
@@ -411,7 +504,11 @@ export const TOOLS: ToolSpec[] = [
       if (name === null) throw new ToolError("missing 'name'");
       const skill = ctx.device.skills.skill(name);
       if (skill === null) throw new ToolError(`no skill named '${name}' on this Mac`);
-      return { name: skill.name, description: skill.description, body: skill.body };
+      return {
+        name: skill.name,
+        description: skill.description,
+        body: skill.body + SKILL_FOOTER,
+      };
     },
   },
   {
@@ -429,10 +526,10 @@ export const TOOLS: ToolSpec[] = [
       "plainly when it is full. " +
       "It is a supervised anti-detection browser, scoped to the listed " +
       "site origins. The owner approves the origin list — include every domain you expect (apex AND " +
-      "wildcard: 'dominos.com', '*.dominos.com'). Set credentials_metadata to also request " +
-      "permission to list the owner's vault item names (never values). The browser window is " +
-      "visible by default; pass headed:false only when the owner asked for it to run in the " +
-      "background. Returns a session handle for the 'plow_browser' tool. Read the camoufox-browsing " +
+      "wildcard: 'dominos.com', '*.dominos.com'). Vault item names are listed by 'plow_vault'. " +
+      "The browser window is " +
+      "hidden by default; pass headed:true only when the owner asked to watch it run. " +
+      "Returns a session handle for the 'plow_browser' tool. Read the camoufox-browsing " +
       "skill first.",
     inputSchema: {
       type: "object",
@@ -443,16 +540,12 @@ export const TOOLS: ToolSpec[] = [
           items: { type: "string" },
           description: "Host patterns: 'example.com' or '*.example.com'",
         },
-        credentials_metadata: {
-          type: "boolean",
-          description: "Also request vault metadata listing (default false)",
-        },
         headed: {
           type: "boolean",
           description:
-            "Show the browser window so the owner can watch (default true). Pass false only " +
-            "when the owner asked to run it in the background — you see the same screenshots " +
-            "either way, they do not.",
+            "Show the browser window so the owner can watch (default false). Pass true only " +
+            "when the owner asked to watch it run — you see the same screenshots either way, " +
+            "they do not.",
         },
         goal: GOAL,
       },
@@ -465,16 +558,14 @@ export const TOOLS: ToolSpec[] = [
       const origins = strings(a.get("origins").arr);
       if (origins.length === 0) throw new ToolError("missing 'origins'");
       const capabilities: Capability[] = [{ kind: "browser", origins }];
-      if (a.get("credentials_metadata").bool === true) {
-        capabilities.push({ kind: "credential", access: "metadata" });
-      }
-      // The owner is about to approve a browser they may not see: say so in the
-      // line they read, and carry the choice as payload — it bounds nothing.
+      // The owner does not see the browser unless this session asks for a
+      // window: say when one is coming in the line they read, and carry the
+      // choice as payload — it bounds nothing.
       const headed = a.get("headed").bool;
       const response = await decideAndRun(
         ctx,
         progress,
-        `browse${headed === false ? " (hidden window)" : ""}: ${origins.join(", ")}`,
+        `browse${headed === true ? " (visible window)" : ""}: ${origins.join(", ")}`,
         a.get("goal").str ?? undefined,
         capabilities,
         headed === null ? null : { headed },

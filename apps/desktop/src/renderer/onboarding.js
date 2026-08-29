@@ -80,9 +80,16 @@ function sendInstructions(activation) {
     ]),
     el("div", { class: "field" }, [
       el("label", { text: "To" }),
-      // Whatever /v1/auth/activate returned. Per-environment config, and it may
-      // be a pool line rather than the managed number — never hardcoded.
+      // Whatever /v1/auth/activate returned, verbatim — never a number chosen
+      // here. Pairing asks for no chat, so this is Plow's managed activation
+      // phone: the number that takes sign-in codes. It is not a line anyone
+      // gets a chat on, and nothing is provisioned by texting it beyond the
+      // sign-in itself.
       el("div", { class: "faint mono", text: activation.sendTo }),
+      el("div", {
+        class: "faint",
+        text: "Plow's activation number — it signs this Mac in. It does not start a chat.",
+      }),
     ]),
   ];
 }
@@ -146,12 +153,15 @@ function waitingScreen() {
   return [
     el("div", { class: "orow" }, [
       el("span", { class: `status-dot${state.activationStale ? "" : " on"}` }),
-      el("h2", { text: state.activationStale ? "Still nothing" : "Waiting for your text" }),
+      el("h2", { text: state.activationStale ? "Not signed in yet" : "Waiting for your text" }),
     ]),
     el("p", {
       class: "faint lede",
+      // Reason-neutral: a stale screen can mean a text that never arrived, an
+      // expired code, or a handoff that failed AFTER the server verified the
+      // text — `state.message` below says which, so this must not guess.
       text: state.activationStale
-        ? "Plow never got the message. It has to start with the words below — anything before them and Plow ignores it silently."
+        ? "The message has to start with the words below — anything before them and Plow ignores it silently."
         : "Send the message from Messages and this screen will move on by itself. Nothing to type.",
     }),
     el("div", { class: "bigcode mono", text: activation ? activation.displayCode : "—" }),
@@ -160,10 +170,10 @@ function waitingScreen() {
     el("div", { class: "oactions" }, [
       button("Open Messages…", "btn", async () => apply(await window.domo.onboardingOpenMessages())),
       el("div", { class: "spacer" }),
-      // Re-polls the old code first: the app stops watching at five minutes but
-      // the server honours it for thirty, so a text sent at minute six has
-      // already worked and this button signs them straight in.
-      button("Get a New Code", "btn primary", async () =>
+      // Re-polls the old code first: completed signs them straight in, and a
+      // code the server still honours goes back on the clock instead of being
+      // replaced — only a retired code mints a fresh one.
+      button("Try Again", "btn primary", async () =>
         apply(await window.domo.onboardingNewCode()),
       ),
     ]),
@@ -249,6 +259,23 @@ function connectedScreen() {
       el("label", { text: "Account" }),
       el("div", { class: "faint mono", text: state.accountUid || "—" }),
     ]),
+    // The chat uses the best title, member names or numeric fallback available.
+    // It is absent on a Mac that signed in with a phone code, or one activated
+    // before chats existed — the row is simply not drawn rather than reading
+    // "none", which would claim something about the account this screen cannot
+    // know.
+    ...(state.chat
+      ? [
+          el("div", { class: "field" }, [
+            el("label", { text: "Your chat" }),
+            el("div", { class: "faint mono", text: state.chat.label }),
+            el("div", {
+              class: "faint",
+              text: "Messages here are how a cloud agent will reach you.",
+            }),
+          ]),
+        ]
+      : []),
     el("div", { class: "oactions" }, [
       el("div", { class: "spacer" }),
       button("Continue", "btn primary", () => window.domo.onboardingFinish()),

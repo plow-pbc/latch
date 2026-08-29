@@ -14,7 +14,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { JSONValue, jv } from "@domo/protocol";
 import { DeviceAgent, HeadlessPolicy, PolicyDelegate, ResolvedBrowserRuntime } from "@domo/device-core";
-import { createDomoMcpServer, DomoMcpServer, RelayAuth } from "@domo/mcp-server";
+import { createDomoMcpServer, DomoMcpServer, RelayAuth, SKILL_FOOTER } from "@domo/mcp-server";
 import { callTool, parse, rpc } from "./client.js";
 
 const fixtures = fileURLToPath(new URL("../../../e2e/fixtures", import.meta.url));
@@ -82,13 +82,8 @@ const launches = (argvLog: string): string[] =>
 const events = (device: DeviceAgent): string[] =>
   device.audit.entries().map((e) => jv(e as JSONValue).get("event").str ?? "");
 
-async function open(server: DomoMcpServer, origins: string[], metadata = true): Promise<string> {
-  const { payload, isError } = await callTool(
-    server,
-    "plow_browser_open",
-    { origins, credentials_metadata: metadata },
-    AGENT,
-  );
+async function open(server: DomoMcpServer, origins: string[]): Promise<string> {
+  const { payload, isError } = await callTool(server, "plow_browser_open", { origins }, AGENT);
   expect(isError, JSON.stringify(payload)).toBe(false);
   return payload.session as string;
 }
@@ -104,6 +99,11 @@ describe("browser tools (fake runtime)", () => {
     expect(skills.map((s) => s.name)).toContain("camoufox-browsing");
     const { payload } = await callTool(server, "plow_read_skill", { name: "camoufox-browsing" }, AGENT);
     expect(payload.body).toContain("fill_secret");
+    // Every skill read carries the contribution footer, once, at the end —
+    // never mixed into the skill's own prose.
+    const body = payload.body as string;
+    expect(body.endsWith(SKILL_FOOTER)).toBe(true);
+    expect(body.split(SKILL_FOOTER)).toHaveLength(2);
   });
 
   it("open → browse → screenshot image block → scope lockout → extend → fill_secret → close", async () => {
@@ -192,38 +192,45 @@ describe("browser tools (fake runtime)", () => {
 
   it("denyKinds credential blocks fill grants while browsing still works", async () => {
     const { server } = makeServer(new HeadlessPolicy({ intent: "allow_once", denyKinds: ["credential"] }));
-    const session = await open(server, ["pizza.example"], false);
+    const session = await open(server, ["pizza.example"]);
     expect((await act(server, session, "goto", { url: "https://pizza.example/" })).isError).toBe(false);
     const denied = await callTool(server, "plow_browser_request", { session, credential_items: ["L1"] }, AGENT);
     expect(denied.isError).toBe(true);
     expect(JSON.stringify(denied.payload)).toContain("denied");
   });
 
-  it("the agent picks the window mode per session; saying nothing keeps it visible", async () => {
-    vi.stubEnv("DOMO_BROWSER_HEADED", "1"); // the shipped default: visible
-    cleanups.push(() => vi.unstubAllEnvs());
-    const { server, device, argvLog } = makeServer();
-
-    const hidden = await callTool(
-      server, "plow_browser_open", { origins: ["pizza.example"], headed: false }, AGENT,
-    );
-    expect(hidden.isError, JSON.stringify(hidden.payload)).toBe(false);
-    expect(hidden.payload.headed).toBe(false);
-    await callTool(server, "plow_browser_close", { session: hidden.payload.session }, AGENT);
-
-    const watched = await callTool(server, "plow_browser_open", { origins: ["pizza.example"] }, AGENT);
-    expect(watched.payload.headed).toBe(true);
-
-    // The flag only exists on the command line, so the launches are the oracle.
-    const [first, second] = launches(argvLog);
-    expect(first).not.toContain("--headed");
-    expect(second).toContain("--headed");
-    // And the owner's log says which browser each session got.
-    const opened = device.audit
+  /** Window mode of each session the owner's log recorded, oldest first. */
+  const openedHeaded = (device: DeviceAgent): (boolean | null)[] =>
+    device.audit
       .entries()
       .filter((e) => jv(e as JSONValue).get("event").str === "browser_session_opened")
       .map((e) => jv(e as JSONValue).get("headed").bool);
-    expect(opened).toEqual([false, true]);
+
+  // Two ways a session's window mode is decided — the app default the install
+  // ships with, and the per-session `headed` that overrides it either way.
+  // Each row opens twice: a session that says nothing, then one that asks for
+  // the opposite. `expected` is both, in order, and every oracle must agree.
+  it.each([
+    // No DOMO_BROWSER_HEADED at all — this is what a packaged install runs.
+    ["the shipped default is headless, and a session can ask to be watched", undefined, true, [false, true]],
+    ["DOMO_BROWSER_HEADED=1 puts the window back, and a session can still hide", "1", false, [true, false]],
+  ])("%s", async (_name, env, override, expected) => {
+    vi.stubEnv("DOMO_BROWSER_HEADED", env);
+    cleanups.push(() => vi.unstubAllEnvs());
+    const { server, device, argvLog } = makeServer();
+
+    const quiet = await callTool(server, "plow_browser_open", { origins: ["pizza.example"] }, AGENT);
+    expect(quiet.isError, JSON.stringify(quiet.payload)).toBe(false);
+    await callTool(server, "plow_browser_close", { session: quiet.payload.session }, AGENT);
+    const asked = await callTool(
+      server, "plow_browser_open", { origins: ["pizza.example"], headed: override }, AGENT,
+    );
+
+    // What the agent is told, what the browser was actually launched with (the
+    // flag only exists on the command line), and what the owner's log records.
+    expect([quiet.payload.headed, asked.payload.headed]).toEqual(expected);
+    expect(launches(argvLog).map((argv) => argv.includes("--headed"))).toEqual(expected);
+    expect(openedHeaded(device)).toEqual(expected);
   });
 
   it("a second session is decided entirely by rules — the unattended-pizza oracle", async () => {

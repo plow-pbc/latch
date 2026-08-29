@@ -33,40 +33,52 @@ npm workspaces. Libraries in `packages/`, executables/apps in `apps/`:
 - `apps/desktop` — the Electron app. Main process runs `device-core`; the
   renderer is sandboxed (see the security rule below).
 
-**Being rebuilt.** The broker (its rendezvous service, MCP subset, stdio shim,
-connection-string/pinning concepts and pairing flow) has been removed. A Mac
-dials *out* to the Plow relay, which authenticates the calling agent and forwards
-MCP to `@domo/mcp-server`. Both halves of this side exist. **So does the relay**,
-in the `plow-pbc/plow` repository — `api/plow/relay/` serves the MCP endpoint, the device
-WebSocket and an OAuth flow, covered by `api/tests/relay/`. This line used to say
-it was "not built", which was true when written and cost a later reader a wrong
-assumption; check that repo rather than this sentence. The in-repo stand-in that
-used to verify this side against the wire contract has been deleted (head
-chef's call: a locally running plow API simulates plow). The scripts that drove
-a *live* stack went with it, so there is **no automated live-stack path either**
-— not here, not in CI. The relay leg is verified **by hand**: bring up a plow
-stack, run the app against it, drive it. `packages/relay-client/test` keeps the
-wire-contract checks plus the socket lifecycle against a fake connection. See [docs/TESTING-THE-APP.md](docs/TESTING-THE-APP.md).
+**Rebuilt: a Mac dials out.** The broker (its rendezvous service, MCP subset,
+stdio shim, connection-string/pinning concepts and pairing flow) has been
+removed. A Mac dials *out* to the Plow relay, which authenticates the calling
+agent and forwards MCP to `@domo/mcp-server`. Both halves of this side exist,
+and **so does the relay** — in the `plow-pbc/plow` repository (private), where
+`api/plow/relay/` serves the MCP endpoint, the device WebSocket and an OAuth
+flow, covered by `api/tests/relay/`. **Agents reach Macs through this app
+today.** This line used to say the relay was "not built", which was true when
+written and cost a later reader a wrong assumption; check that repo rather
+than this sentence. What is gone is the in-repo stand-in that used to verify
+this side against the wire contract (head chef's call: a locally running plow
+API simulates plow). The scripts that drove a *live* stack went with it, so
+there is **no automated live-stack path** — not here, not in CI. What is
+manual is the leg against a REAL relay: bring up a plow stack, run the app
+against it, drive it. One exception, and `docs/TESTING-THE-APP.md` owns the
+account of it: `scripts/latch-smoke` drives a single real MCP call against an
+*installed* app and reads the verdict out of `audit.ndjson` — no UI walk, and
+it needs an install plus a client registration. `packages/relay-client/test`
+does cover the client's protocol behavior — the pure wire contract, plus the
+connection lifecycle over hand-written fakes; nothing in it opens a socket or
+tunnels an MCP call. See [README-ts.md](README-ts.md#integration-coverage) §
+Integration coverage, which owns that list.
 
 - **A credential never goes in a URL, a log line, an error string, or the audit
   log.** Two transports carry it, and no third kind: the relay socket's
   post-challenge `auth` frame, and the `Authorization` header of an
   authenticated Plow API call — today agent creation and reviewer inference,
-  and anything else added the same way. **A response that repeats it back never
-  becomes a verdict, an audit record, or anything the renderer is shown — in any
-  encoding.** That is the guarantee; the means is a check on the decoded
-  `reason` after the single parse. Describe the guarantee here and leave the
-  mechanism to the code — naming the mechanism of the day is how this line goes
-  stale. `settings.json` holds it and is
-  written `0600`; the renderer is never given it.
+  and anything else added the same way. **A reviewer response that echoes it
+  never becomes a verdict, an audit record, or anything the renderer is shown —
+  in any encoding. A relay auth-failure reason never reaches a log or callback.**
+  Describe the guarantee here and leave the mechanism to the code — naming the
+  mechanism of the day is how this line goes stale. `settings.json` holds it and
+  is written `0600`, encrypted at rest wherever the OS offers a way and in the
+  clear where it does not — the file permission is the floor that always holds,
+  and the encryption is what is added on top of it, never instead. Describe it
+  that way and leave the mechanism to the code. The renderer is never given it.
 
 - **Capabilities are built on this Mac, from tool arguments.** An agent never
   sends a capability set or an intent — it calls a tool, and `mcp-server`
   derives the capabilities the policy engine and the sandbox will enforce. Goal
   text rides along for the human to read and never influences the bound.
-- **Nothing may block past the call budget.** The relay's pending future times
-  out at **25 seconds**, so a tunnelled call has to answer well inside that. Any
-  tool that cannot returns a deferred handle and keeps working; `plow_get_result`
+- **Nothing may block past the call budget.** `RELAY_TIMEOUT_MS` in
+  `@domo/relay-client`'s `wire.ts` is the relay's ceiling — it belongs with the
+  rest of the cross-repo contract — and `CALL_BUDGET_MS` in `@domo/mcp-server`
+  is what this Mac allows itself inside it. Any tool that cannot answer in the
+  budget returns a deferred handle and keeps working; `plow_get_result`
   retrieves it. A handle belongs to the `agent_id` that created it. This is why
   file operations are async and size-capped: synchronous work blocks the event
   loop and the budget timer never fires.
@@ -92,14 +104,14 @@ wire-contract checks plus the socket lifecycle against a fake connection. See [d
   removed, so anything needing one is a manual run instead.
 - **Never launch the app on this Mac.** Windows flash on the head chef's screen.
   Electron runs — the app, the screenshot scripts, `verify-preload` — happen on
-  the M4:
-  `/Users/plucas/.claude-kitchen/projects/domo-desktop/wiki/m4-screenshots.md`.
+  a dedicated test machine (the capture procedure lives in the maintainers'
+  private wiki).
 - **The audit log is the test oracle.** Assert on `audit.ndjson` events rather
   than internal state where possible. Keep events append-only and one-per-line.
-- **`fixtures/` is the frozen protocol spec.** The golden vectors (canonical
-  JSON, grant signing bytes, rule keys, SBPL profiles) were generated by the
-  original Swift implementation, which has been removed; the fixtures are now the
-  source of truth. Any change to canonical encoding, signing bytes, rule keys or
+- **`fixtures/` is the frozen protocol spec.** The golden vectors were
+  generated by the original Swift implementation, which has been removed; the
+  fixtures are now the source of truth. `README-ts.md` lists which six they are
+  and how each is asserted. Any change to canonical encoding, signing bytes, rule keys or
   SBPL that changes these bytes is a protocol break — update the fixtures
   deliberately and say so. `connection.json`, `channel.json` and `challenge.json`
   were deleted with the concepts they froze, and `intent.json` was re-frozen
@@ -111,7 +123,10 @@ wire-contract checks plus the socket lifecycle against a fake connection. See [d
   because seatbelt enforces against physical paths. `fs.realpathSync` is
   `realpath(3)` and preserves `/private` — don't swap in anything that
   normalizes differently.
-- **Everything honors `DOMO_HOME`** so tests use throwaway roots.
+- **Everything honors `DOMO_HOME`** so tests use throwaway roots. One deliberate
+  exception: a launched app creates the owner's real `~/Plow` (the agent
+  playground) whatever `DOMO_HOME` says — the folder is the owner's, not the
+  instance's. Tests stay hermetic because `DeviceAgent` keys it on `ownerHome`.
 - `DOMO_DEBUG_SANDBOX=1` dumps generated seatbelt profiles to stderr.
 - **Canonical JSON is signature-critical.** Object keys sort by code unit (ASCII
   only — never introduce non-ASCII keys), slashes are not escaped, integral

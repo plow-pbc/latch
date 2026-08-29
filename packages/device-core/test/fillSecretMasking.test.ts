@@ -176,9 +176,9 @@ const audited = (): string =>
 
 /** Open a session already approved for both items and both origins. */
 async function session(): Promise<string> {
-  const opened = await ctx.sessions.open("i1", "agent-1", ["pizza.example", "payframe.example"], false);
+  const opened = await ctx.sessions.open("i1", "agent-1", ["pizza.example", "payframe.example"]);
   const handle = (opened as { session: string }).session;
-  ctx.sessions.extend("i2", handle, [], ["L1", "C1", "I1"], false);
+  ctx.sessions.extend("i2", handle, [], ["L1", "C1", "I1"]);
   await ctx.sessions.command(handle, {
     action: "goto",
     url: "https://pizza.example/login",
@@ -303,9 +303,9 @@ describe("fill_secret marking", () => {
       new CredentialBroker({ command: [process.execPath, broken] }),
       (event, fields) => ctx.events.push({ event, fields }),
     );
-    const opened = await sessions.open("i1", "agent-1", ["pizza.example"], false);
+    const opened = await sessions.open("i1", "agent-1", ["pizza.example"]);
     const h = (opened as { session: string }).session;
-    sessions.extend("i2", h, [], ["L1"], false);
+    sessions.extend("i2", h, [], ["L1"]);
     await sessions.command(h, { action: "goto", url: "https://pizza.example/login" });
     const before = fills().length;
     const result = await sessions.command(h, {
@@ -459,6 +459,46 @@ describe("fill_secret marking", () => {
     expect(fill.frame_token).toBe("doc-card");
   });
 
+  // The browser reports that the field is holding something else; it does not
+  // judge whether that matters. Here it can be judged: the value came out of
+  // the vault, so a field that changed it did not receive the credential.
+  it.each([
+    { what: "the field says it holds less than the value",
+      env: { FAKE_TOO_LONG: "16" },
+      says: ["holds only 16 characters", "shortened where it is stored"],
+      omits: ["check the selector"],
+      reason: "the field holds only 16 characters" },
+    { what: "the field is holding something other than what was typed",
+      env: { FAKE_ALTERED: "1" },
+      // It DID go in — a changed copy is in the field, and saying "not filled"
+      // would leave the caller thinking the page was untouched.
+      says: ["holding a changed copy", "still in the field", "not at fault"],
+      // The other one's remedy: it would send the owner to change a credential
+      // that is not the problem.
+      omits: ["shortened"],
+      reason: "the field is holding a changed copy of the value" },
+  ])("refuses a credential fill when $what", async ({ env, says, omits, reason }) => {
+    await ctx.sessions.closeAll("teardown");
+    ctx = makeCtx(env);
+    const handle = await session();
+    const before = ctx.events.length;
+    const result = await ctx.sessions.command(handle, {
+      action: "fill_secret", selector: "#card-number", item: "C1", field: "number",
+    });
+    expect(jv(result).get("status").str).toBe("error");
+    const error = jv(result).get("error").str ?? "";
+    for (const text of says) expect(error).toContain(text);
+    for (const text of omits) expect(error).not.toContain(text);
+    expect(ctx.events.slice(before).at(-1)).toEqual({
+      event: "credential_fill_failed",
+      fields: {
+        session: audited(), item: "C1", field: "number",
+        origin: "payframe.example", selector: "#card-number", reason,
+      },
+    });
+    expect(JSON.stringify(result)).not.toContain("4111");
+  });
+
   it("refuses when the browser says the frame moved", async () => {
     await ctx.sessions.closeAll("teardown");
     ctx = makeCtx({ FAKE_FRAME_MOVED: "1" });
@@ -495,7 +535,7 @@ describe("fill_secret marking", () => {
     });
     await new Promise((r) => setTimeout(r, 150));
     await ctx.sessions.close(handle, "agent");
-    const reopened = await ctx.sessions.open("i9", "agent-2", ["other.example"], false);
+    const reopened = await ctx.sessions.open("i9", "agent-2", ["other.example"]);
     expect(jv(reopened).get("session").str).not.toBe(handle);
 
     const result = await inFlight;
@@ -692,7 +732,8 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
         trace: string[];
         error: string | null;
         marked: boolean;
-        result: { ok?: boolean; mask?: string; frame?: number; frame_url?: string; frame_token?: string } | null;
+        result: { ok?: boolean; mask?: string; frame?: number; frame_url?: string;
+          frame_token?: string; cap?: number; altered?: boolean } | null;
         value_kept: boolean;
         ledgered: boolean;
         typed_delay: number | null;
@@ -729,6 +770,79 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
       ranked_gone_first: { error: string | null; tried: number };
     }>(FILL_PROBE);
   })();
+
+  // The one thing knowable before the node is touched: the field says how much
+  // it holds and the value is more. Refused there, so nothing is half-written
+  // and the page is left exactly as it was found.
+  it.each([
+    { what: "an ordinary fill", scenario: "over_cap" },
+    { what: "a concealed fill", scenario: "over_cap_masked" },
+    // `maxlength` counts UTF-16 units, so four emoji are eight of them.
+    { what: "a value whose emoji are two units each", scenario: "over_cap_astral" },
+  ])("refuses $what of a field that says it holds less", ({ scenario }) => {
+    expect(probed[scenario].result).toEqual({ ok: false, mask: "too_long", cap: 4, frame: 0 });
+    // Nothing was written, so nothing was marked and nothing is tracked.
+    expect(probed[scenario].trace).toEqual(["frame.wait_for_selector"]);
+    expect(probed[scenario].marked).toBe(false);
+    expect(probed[scenario].ledgered).toBe(false);
+  });
+
+  it("does not refuse a value that only overflows before its break is dropped", () => {
+    // "one\ntwo" is seven, and the field holds six — but a node that is not
+    // multiline never receives the break, so what arrives is "onetwo" and it
+    // fits. Measuring the value as given would refuse it and tell the owner to
+    // shorten something that was never too long.
+    expect(probed.newline_fits_once_dropped.result).toEqual({
+      ok: true, frame: 0, altered: true,
+    });
+  });
+
+  it("refuses the same value at a textarea, which keeps its breaks", () => {
+    // One value, two answers, both correct: "one\ntwo" arrives at an <input>
+    // as six because the break is dropped, and at a <textarea> as seven because
+    // it is not. The measure asks the node what it will receive rather than
+    // assuming either way — guessing short would let an over-cap value into a
+    // textarea, guessing long would refuse one that fits an input.
+    expect(probed.over_cap_textarea_keeps_its_breaks.result).toEqual({
+      ok: false, mask: "too_long", cap: 6, frame: 0,
+    });
+    expect(probed.over_cap_textarea_keeps_its_breaks.trace).toEqual(["frame.wait_for_selector"]);
+  });
+
+  it("fills a value exactly as long as the field's cap", () => {
+    expect(probed.at_cap.result).toEqual({ ok: true, frame: 0 });
+  });
+
+  // Everything else a field does to a value is REPORTED, not judged. Whether a
+  // difference matters depends on what the value means — a card box gaining its
+  // spaces has changed nothing that counts, a name box losing one has changed
+  // somebody's name — and the browser server cannot tell those apart. So it
+  // says the field is holding something else and stops there.
+  it.each([
+    { what: "groups the digits it was given", scenario: "grouped_by_the_field" },
+    { what: "strips a space out of a name", scenario: "stripped_by_the_field" },
+    { what: "truncates what it was given", scenario: "truncated_by_the_field" },
+  ])("reports, without refusing, a field that $what", ({ scenario }) => {
+    expect(probed[scenario].result).toEqual({ ok: true, frame: 0, altered: true });
+  });
+
+  it("reports it on a concealed fill too, which stays marked and tracked", () => {
+    expect(probed.stripped_by_the_field_masked.result).toEqual({
+      ok: true, mask: "stylesheet", frame: 0, altered: true,
+    });
+    // The value is in the page and it is a credential, so it stays covered.
+    expect(probed.stripped_by_the_field_masked.marked).toBe(true);
+    expect(probed.stripped_by_the_field_masked.ledgered).toBe(true);
+  });
+
+  it.each([
+    { what: "a fill the field took whole", scenario: "plain" },
+    { what: "a concealed fill the field took whole", scenario: "masked" },
+    { what: "a repair after the keys were dropped", scenario: "keys_dropped" },
+    { what: "a value assigned into a widget", scenario: "not_typeable" },
+  ])("says nothing about $what", ({ scenario }) => {
+    expect(probed[scenario].result).not.toHaveProperty("altered");
+  });
 
   it("resolves the node once and marks it before the value goes in", () => {
     expect(probed.masked.trace).toEqual([
@@ -798,36 +912,44 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
   // so a CR never reaches `type()`, which would send it as Enter and submit the
   // form with half a credential in the field.
   it.each([
+    // `altered` says whether the value survived that normalization: a break an
+    // input cannot hold means the field ends up with something other than what
+    // was asked for, and a textarea that keeps the break loses nothing. The
+    // comparison behind it is against the value as it ARRIVED, never the
+    // normalized string the keys were sent from — a stored credential carrying
+    // a break would otherwise be graded against what we settled for.
     {
       what: "a break an input cannot hold is dropped, and the rest still typed",
-      scenario: "newline_single_line", typedLen: "onetwo".length,
+      scenario: "newline_single_line", typedLen: "onetwo".length, altered: true,
     },
     {
       what: "the same break spelled as CR, which must not reach the keys",
-      scenario: "cr_single_line", typedLen: "onetwo".length,
+      scenario: "cr_single_line", typedLen: "onetwo".length, altered: true,
     },
     {
       what: "a break a textarea holds as a character is kept",
-      scenario: "newline_multiline", typedLen: "one\ntwo".length,
+      scenario: "newline_multiline", typedLen: "one\ntwo".length, altered: false,
     },
     {
       what: "a CRLF becomes one break, not two Enters",
-      scenario: "crlf_multiline", typedLen: "one\ntwo".length,
+      scenario: "crlf_multiline", typedLen: "one\ntwo".length, altered: true,
     },
     {
       what: "a break in the assigned head leaves the tail typed as it was",
       scenario: "newline_outside_tail", typedLen: probed.constants.typed_chars,
+      altered: true,
     },
     {
       what: "a tab in the assigned head leaves the tail typed as it was",
       scenario: "tab_outside_tail", typedLen: probed.constants.typed_chars,
+      altered: false,
     },
-  ])("$what", ({ scenario, typedLen }) => {
+  ])("$what", ({ scenario, typedLen, altered }) => {
     const run = probed[scenario];
     expect(run.trace).toContain("handle.type");
     expect(run.typed_has_cr).toBe(false);
     expect(run.typed_len).toBe(typedLen);
-    expect(run.result).toEqual({ ok: true, frame: 0 });
+    expect(run.result).toEqual({ ok: true, frame: 0, ...(altered ? { altered } : {}) });
   });
 
   it("assigns a value carrying a tab, which no key can put in the field", () => {

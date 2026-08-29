@@ -52,7 +52,6 @@ ipcMain.handle("settings:getRelay", async () => {
   };
 });
 ipcMain.handle("settings:setApprovalMode", async (_e, m) => setApprovalMode(probeHome, m));
-ipcMain.handle("settings:getShowSuggestions", async () => true);
 // A Mac that has NOT granted Full Disk Access — the state the Capabilities
 // section exists to explain.
 ipcMain.handle("capabilities:get", async () => ({ fullDiskAccess: false }));
@@ -75,9 +74,96 @@ ipcMain.handle("settings:getInference", async () => readInference(probeHome));
 // it. Nothing an agent can reach registers a handler on either channel.
 ipcMain.handle("settings:getAgentPurpose", async () => readAgentPurpose(probeHome));
 ipcMain.handle("settings:setAgentPurpose", async (_e, purpose) => setAgentPurpose(probeHome, purpose));
-// Connect a client: the same shape `ConnectClient.state()` returns, with no
-// credential minted — the screen this probe renders is the OAuth one.
-ipcMain.handle("connect:get", async () => ({
+const cloudChat = {
+  uid: "chat_probe",
+  label: "+1 (415) 555-0142, +1 (415) 555-0193, +1 (628) 555-0112",
+  lineName: "Willow",
+  recipients: {
+    line: "+14155550142",
+    members: ["+14155550193", "+16285550112"],
+  },
+  people: [
+    { number: "+14155550193", name: null, isOwner: true },
+    { number: "+16285550112", name: "Robin", isOwner: false },
+  ],
+  title: "Willow · You · Robin",
+  // One entry per position, name and number in the same object — what the row
+  // draws as paired spans.
+  entries: [
+    { label: "Willow", number: "+1 415-555-0142" },
+    { label: "You", number: "+1 415-555-0193" },
+    { label: "Robin", number: "+1 628-555-0112" },
+  ],
+};
+const cloudAgent = {
+  agentId: "cag_probe",
+  name: "Household helper",
+  chatUids: [cloudChat.uid],
+  chatLabels: [cloudChat.title],
+  recipients: cloudChat.recipients,
+  provider: "exe:hermes",
+  status: "running",
+  failureReason: null,
+  createdAt: "2026-08-24T18:00:00.000Z",
+};
+const rosterProbe = {
+  cloud: [{
+    id: 201,
+    name: "Household helper",
+    kind: "Agent",
+    createdAt: cloudAgent.createdAt,
+    lastSeenAt: "2026-08-25T17:55:00.000Z",
+    agentId: cloudAgent.agentId,
+    chatUids: [cloudChat.uid],
+    chatAccess: "listed",
+    permissions: { canReadAndReply: true, canReachMac: true, canSpendInference: true },
+    isActive: true,
+    isThisMac: false,
+  }],
+  mcp: [{
+    id: 202,
+    name: "Claude Code",
+    kind: "Agent",
+    createdAt: "2026-08-23T18:00:00.000Z",
+    lastSeenAt: "2026-08-25T17:50:00.000Z",
+    agentId: null,
+    chatUids: ["*"],
+    chatAccess: "all",
+    permissions: { canReadAndReply: true, canReachMac: true, canSpendInference: true },
+    isActive: true,
+    isThisMac: false,
+  }],
+  other: [],
+  revokedHidden: 0,
+};
+let cloudProbe = {
+  cloudAgents: [cloudAgent],
+  cloudAgentsError: null,
+  cloudChatsError: null,
+  cloudChatsNeedReactivation: false,
+  cloudActionError: null,
+  cloudAgentEditsPending: [],
+  cloudChats: [cloudChat],
+  cloudChatsLoaded: true,
+  cloudLines: [
+    { displayName: "Willow", number: "+14155550142", held: false },
+    { displayName: null, number: "+16285550177", held: false },
+  ],
+  cloudLinesError: null,
+};
+const cloudCalls = { create: [], editChats: [] };
+let cloudEditPending = false;
+let releaseCloudEdit = null;
+let releaseCloudCreate = null;
+let cloudCreatePending = false;
+let relaySignOutCalls = 0;
+
+// Connect state also carries the cloud-agent display state. It contains no
+// credential, session id or worker URL.
+/** The Agents tab's whole state, as main assembles it. ONE shape: `connect:get`
+ * and `cloud:refresh` both answer with it, so a field added to the tab is added
+ * here once rather than in two fixtures that drift. */
+const agentsTabProbeState = () => ({
   mcpUrl: "https://api.plow.co/v1/relay/devices/u_probe/mcp",
   accountUid: "u_probe",
   connected: true,
@@ -85,7 +171,77 @@ ipcMain.handle("connect:get", async () => ({
   busy: false,
   message: "",
   credential: null,
-}));
+  roster: rosterProbe,
+  rosterError: null,
+  removeError: null,
+  ...cloudProbe,
+});
+ipcMain.handle("connect:get", async () => agentsTabProbeState());
+let cloudRefreshCalls = 0;
+// The real one re-reads Plow, then answers with the tab state. The fake counts
+// the call and answers with whatever `cloudProbe` holds NOW — which is what
+// lets a test change the backing list and prove the reopen fetched it.
+ipcMain.handle("cloud:refresh", async () => {
+  cloudRefreshCalls += 1;
+  // Main marks held lines from the chats it just read; the fake does the same
+  // so the probe sees what the screen will.
+  const held = new Set(cloudProbe.cloudChats.flatMap((c) => (c.recipients?.line ? [c.recipients.line] : [])));
+  cloudProbe = {
+    ...cloudProbe,
+    cloudLines: (cloudProbe.cloudLines ?? []).map((l) => ({ ...l, held: held.has(l.number) })),
+  };
+  return agentsTabProbeState();
+});
+ipcMain.handle("cloud:create", async (_e, chatUids, name, provider) => {
+  cloudCalls.create.push({ chatUids, name, provider });
+  cloudCreatePending = true;
+  await new Promise((resolve) => { releaseCloudCreate = resolve; });
+  cloudProbe = {
+    ...cloudProbe,
+    cloudAgents: [{
+      ...cloudAgent,
+      chatUids,
+      chatLabels: chatUids.map(
+        (uid) => {
+          const chat = cloudProbe.cloudChats.find((candidate) => candidate.uid === uid);
+          return chat?.title ?? chat?.label ?? uid;
+        },
+      ),
+      name: name || "Cloud agent",
+      provider,
+      status: "provisioning",
+    }],
+  };
+  cloudCreatePending = false;
+});
+// Editing an agent's chats: the row has to come out carrying the new set.
+ipcMain.handle("cloud:editChats", async (_e, agentId, chatUids) => {
+  cloudCalls.editChats.push({ agentId, chatUids });
+  cloudProbe = { ...cloudProbe, cloudAgentEditsPending: [agentId] };
+  if (!releaseCloudEdit) {
+    cloudEditPending = true;
+    await new Promise((resolve) => { releaseCloudEdit = resolve; });
+    cloudEditPending = false;
+  }
+  cloudProbe = {
+    ...cloudProbe,
+    cloudActionError: null,
+    cloudAgentEditsPending: [],
+    cloudAgents: cloudProbe.cloudAgents.map((agent) => agent.agentId === agentId
+      ? {
+          ...agent,
+          chatUids,
+          chatLabels: chatUids.map(
+            (uid) => {
+              const chat = cloudProbe.cloudChats.find((candidate) => candidate.uid === uid);
+              return chat?.title ?? chat?.label ?? uid;
+            },
+          ),
+        }
+      : agent),
+  };
+});
+ipcMain.handle("settings:signOut", async () => { relaySignOutCalls += 1; });
 // A packaged-looking updater state so the Software Updates section renders
 // its full form (status line, check button, both preference checkboxes).
 ipcMain.handle("updates:get", async () => ({
@@ -103,7 +259,39 @@ ipcMain.handle("updates:get", async () => ({
 // A vault whose key has moved: the account is on disk and cannot be opened.
 // This is what a Keychain reset, a restore from backup, or an app rename leaves
 // behind, and it must not be reported as an empty vault.
-ipcMain.handle("vault:items", async () => ({ locked: true, reason: "undecryptable" }));
+// Switchable, because the unsaved-edits checks further down need a vault with
+// something in it — the locked reply above has no list and no forms.
+let vaultItemsReply = { locked: true, reason: "undecryptable" };
+ipcMain.handle("vault:items", async () => vaultItemsReply);
+ipcMain.handle("vault:item", async () => ({
+  id: "itm1",
+  type: "login",
+  name: "Notion",
+  revision: 1,
+  fields: { username: "owner@probe" },
+  secrets: ["password"],
+  urls: ["https://notion.so"],
+  notes: "",
+}));
+// Holdable, so a check can look at the pane WHILE a vault call is in flight.
+// A deferred promise, not a delay: the check runs when the call is provably in
+// flight and releases it explicitly, so no amount of scheduling jitter can let
+// the reveal finish first.
+let holdReveal = false;
+let releaseReveal = null;
+ipcMain.handle("vault:reveal", async () => {
+  if (holdReveal) await new Promise((r) => { releaseReveal = r; });
+  return "revealed-secret";
+});
+// Holdable like the reveal, so a check can act while a SAVE is in flight — the
+// transaction that ends by replacing the pane, which a held reveal never does.
+let holdSave = false;
+let releaseSave = null;
+ipcMain.handle("vault:saveItem", async () => {
+  if (holdSave) await new Promise((r) => { releaseSave = r; });
+  return { id: "itm1" };
+});
+ipcMain.handle("vault:deleteItem", async () => true);
 ipcMain.handle("settings:getApprovalMode", async () => "ask");
 // No browsing session: the audit screen's live thumbnail stays hidden.
 ipcMain.handle("viewer:state", async () => ({
@@ -386,7 +574,7 @@ app.whenReady().then(async () => {
     approvalMode: "ask",
   });
   await win.webContents.executeJavaScript(`window.__domoSelectTab("audit")`);
-  await win.webContents.executeJavaScript(`window.__domoSelectTab("agents")`);
+  await win.webContents.executeJavaScript(`window.__domoSelectTab("rules")`);
   await waitFor(win, `[...document.querySelectorAll(".chip")].some((c) => c.textContent.trim() === "AI Reviewer decides" && !c.classList.contains("disabled"))`,
     "the AI Reviewer chip to render enabled");
   // The credential goes AFTER the pane rendered, with no notification — so the
@@ -449,8 +637,13 @@ app.whenReady().then(async () => {
   }})()`);
 
   await win.webContents.executeJavaScript(`window.__domoSelectTab("agents")`);
-  await waitFor(win, `document.querySelector("#view .panel.agents .connect .client-card")`,
-    "the Agents pane and its client card");
+  await waitFor(win, `document.querySelectorAll("#view .panel.agents .list-section").length === 3`,
+    "the three-section Agents pane");
+  await win.webContents.executeJavaScript(
+    `[...document.querySelectorAll("#view button")].find((b) => b.textContent.trim() === "Connect MCP client").click()`,
+  );
+  await waitFor(win, `document.querySelector(".connect-modal .connect .client-card")`,
+    "the MCP setup modal and its client card");
   const connect = await win.webContents.executeJavaScript(`(${() => {
     const text = document.body.innerText;
     const tabs = [...document.querySelectorAll("#seg button")].map((b) => b.dataset.tab);
@@ -465,7 +658,7 @@ app.whenReady().then(async () => {
       // The move itself: its own tab, FIRST in the bar, under the new key.
       agentsTabFirst: tabs[0] === "agents",
       tabOrder: tabs,
-      hasAgentsPane: !!document.querySelector("#view .panel.agents .connect"),
+      hasAgentsPane: document.querySelectorAll("#view .panel.agents .list-section").length === 3,
       showsTitle: text.includes("Connect an MCP client"),
       noConnectTab: !document.querySelector('#seg button[data-tab="connect"]'),
       // The client shortcut. Exactly one: a card exists only for a client whose
@@ -480,6 +673,569 @@ app.whenReady().then(async () => {
       ).fontWeight === "400",
     };
   }})()`);
+  await win.webContents.executeJavaScript(
+    `[...document.querySelectorAll(".connect-modal button")].find((b) => b.textContent.trim() === "Close").click()`,
+  );
+
+  const cloudRoster = await win.webContents.executeJavaScript(`(${() => {
+    const group = [...document.querySelectorAll("#view .panel.agents .list-section")]
+      .find((item) => item.querySelector("h2")?.textContent.trim() === "Cloud agents");
+    return {
+      noCredentialIdentity: !group?.textContent.includes("session") && !group?.textContent.includes("worker"),
+      showsProvider: group?.textContent.includes("Provider Hermes") === true,
+      namesHomeLine: group?.querySelector(".cloud-agent-row .entity-context")?.textContent
+        .startsWith("★ Willow · You · Robin") === true,
+    };
+  }})()`);
+
+  // This is the first cloud modal opened in the run. Both the roster already
+  // on screen and Edit chats must have the line name from tab boot, without
+  // relying on the setup picker to fetch it first.
+  await win.webContents.executeJavaScript(
+    `[...document.querySelectorAll(".cloud-agent-row button")].find((b) => b.textContent.trim() === "Edit chats").click()`,
+  );
+  await waitFor(win, `document.querySelector(".cloud-modal .chat-list")`, "the first Edit chats checklist");
+  const cloudFirstLineNames = await win.webContents.executeJavaScript(`(${() => ({
+    roster: document.querySelector(".cloud-agent-row .entity-context")?.textContent
+      .startsWith("★ Willow · You · Robin") === true,
+    editor: document.querySelector(".cloud-modal .chat-option-name")?.getAttribute("title")
+      === "Willow · You · Robin",
+  })})()`);
+  await win.webContents.executeJavaScript(
+    `[...document.querySelectorAll(".cloud-modal button")].find((b) => b.textContent.trim() === "Cancel").click()`,
+  );
+
+  // The warning is specific to the first agent on a chat. Remove the fixture
+  // row, remount the pane, and open the picker through the exposed control.
+  //
+  // THREE chats, and the first is the one the credential roster says Household
+  // helper already holds: the rules below need two free chats to move ★
+  // between, and the roster's claim stands whether or not the agent list read.
+  cloudProbe = {
+    ...cloudProbe,
+    cloudAgents: [],
+    cloudChats: [cloudChat, {
+      uid: "chat_family",
+      label: "+1 (415) 555-0188 · Family group",
+      recipients: { line: "+14155550188", members: [] },
+    }, {
+      uid: "chat_book",
+      label: "+1 (510) 555-0133 · Book club",
+      recipients: { line: "+15105550133", members: [] },
+    }],
+  };
+  await win.webContents.executeJavaScript(`window.__domoSelectTab("audit")`);
+  await win.webContents.executeJavaScript(`window.__domoSelectTab("agents")`);
+  await waitFor(win, `[...document.querySelectorAll("#view button")].some((b) => b.textContent.trim() === "Set up cloud agent")`, "the cloud-agent setup action");
+  await win.webContents.executeJavaScript(`[...document.querySelectorAll("#view button")].find((b) => b.textContent.trim() === "Set up cloud agent").click()`);
+  await waitFor(win, `document.querySelector(".cloud-modal .chat-list")`, "the chat checklist");
+  const cloudModalFocus = await win.webContents.executeJavaScript(`(${() => {
+    const active = document.activeElement;
+    return {
+      insideModal: !!active?.closest(".cloud-modal"),
+      usable: !!active && !active.disabled,
+      tag: active?.tagName ?? null,
+    };
+  }})()`);
+  // The checklist's rules, at the boundary the renderer actually enforces:
+  // nothing chosen means nothing to create, the first box checked becomes home,
+  // moving home changes position zero, and unchecking home promotes by list order.
+  const cloudModalGuard = await win.webContents.executeJavaScript(`(${async () => {
+    const boxes = () =>
+      [...document.querySelectorAll(".cloud-modal .chat-option:not(.disabled) input")];
+    const createButton = () => [...document.querySelectorAll(".cloud-modal button")]
+      .find((node) => node.textContent.trim() === "Set up agent");
+    const homeLabels = () => [...document.querySelectorAll(".cloud-modal .home-toggle.on")]
+      .map((node) => node.closest(".chat-option").querySelector(".chat-option-name").title);
+    const settle = () => new Promise((resolve) => setTimeout(resolve));
+
+    const emptyDisables = createButton().disabled;
+    const defaultProvider = document.querySelector('.cloud-modal select[aria-label="Provider"]')
+      ?.value === "exe:hermes";
+    boxes()[0].click();
+    await settle();
+    const firstIsHome = homeLabels().length === 1 && !createButton().disabled;
+    const homeAfterFirst = homeLabels()[0];
+    boxes()[1].click();
+    await settle();
+    const secondDoesNotStealHome = homeLabels()[0] === homeAfterFirst;
+    const secondMakeHome = boxes()[1].closest(".chat-option").querySelector(".home-toggle");
+    secondMakeHome.click();
+    await settle();
+    const homeAfterMake = homeLabels()[0];
+    const makeHomeMovesToZero = homeAfterMake !== homeAfterFirst;
+    // Uncheck home: the star must move rather than vanish.
+    boxes()[1].click();
+    await settle();
+    const homeMoved = homeLabels().length === 1 && homeLabels()[0] === homeAfterFirst;
+    const warningCounts = document.querySelector(".cloud-modal .cloud-warning-title")
+      .textContent.includes("1 chat");
+    // Leave exactly one chosen for the create that follows.
+    return {
+      emptyDisables, defaultProvider, firstIsHome, secondDoesNotStealHome, makeHomeMovesToZero,
+      homeMoved, warningCounts,
+      warningTitle: document.querySelector(".cloud-modal .cloud-warning-title").textContent,
+      homeAfterFirst, homeNow: homeLabels()[0] ?? null,
+      ignored: emptyDisables && firstIsHome && secondDoesNotStealHome,
+      keptOriginal: homeMoved && warningCounts,
+    };
+  }})()`);
+  await win.webContents.executeJavaScript(`[...document.querySelectorAll(".cloud-modal button")].find((b) => b.textContent.trim() === "New chat…").click()`);
+  await waitFor(win, `document.querySelector(".cloud-modal .cloud-route-numbers")`, "the new-chat explainer");
+  await win.webContents.executeJavaScript(`[...document.querySelectorAll(".cloud-modal button")].find((b) => b.textContent.trim() === "Back").click()`);
+  await win.webContents.executeJavaScript(`[...document.querySelectorAll(".cloud-modal button")].find((b) => b.textContent.trim() === "Cancel").click()`);
+
+  await win.webContents.executeJavaScript(`[...document.querySelectorAll("#view button")].find((b) => b.textContent.trim() === "Set up cloud agent").click()`);
+  await waitFor(win, `document.querySelector(".cloud-modal .chat-list")`, "the picker for the create wait");
+  await win.webContents.executeJavaScript(
+    `document.querySelector(".cloud-modal .chat-option:not(.disabled) input").click()`,
+  );
+  await win.webContents.executeJavaScript(
+    `document.querySelector('.cloud-modal select[aria-label="Provider"]').value = "exe:life"`,
+  );
+  const cloudCreateWait = await win.webContents.executeJavaScript(`(${() => {
+    const button = [...document.querySelectorAll(".cloud-modal button")]
+      .find((node) => node.textContent.trim() === "Set up agent");
+    button.click();
+    return {
+      disabled: button.disabled,
+      spinner: !!button.querySelector(".cloud-spinner"),
+      copy: button.textContent.trim() === "Setting up…",
+    };
+  }})()`);
+  await waitFor(win, `!document.querySelector(".cloud-modal")`, "the picker to close during create");
+  await waitFor(win, `document.querySelector('[data-cloud-agent-id^="pending-cloud-"]')`, "the pending create row");
+  const cloudCreateTransition = await win.webContents.executeJavaScript(`(${() => ({
+    modalClosed: !document.querySelector(".cloud-modal"),
+    pendingRow: !!document.querySelector('[data-cloud-agent-id^="pending-cloud-"]'),
+  })})()`);
+  cloudCreateTransition.requestPending = cloudCreatePending;
+  cloudCreateTransition.provider = cloudCalls.create.at(-1)?.provider;
+  releaseCloudCreate();
+  await waitFor(
+    win,
+    `document.querySelectorAll(".cloud-agent-row").length === 1 && document.querySelector('[data-cloud-agent-id="cag_probe"]') && !document.querySelector('[data-cloud-agent-id^="pending-cloud-"]')`,
+    "the pending row to reconcile with the receipt-backed agent row",
+  );
+  cloudCreateTransition.reconciled = true;
+
+  await waitFor(win, `document.querySelector(".cloud-agent-row .entity-actions")`, "the cloud-agent row actions");
+  const cloudRowActions = await win.webContents.executeJavaScript(`(${() => ({
+    hasMessage: [...document.querySelectorAll(".cloud-agent-row button")]
+      .some((button) => button.textContent.trim() === "Message"),
+    noSettings: ![...document.querySelectorAll(".cloud-agent-row button")]
+      .some((button) => button.textContent.trim() === "Settings"),
+    hasMenu: [...document.querySelectorAll(".cloud-agent-row button")]
+      .some((button) => button.getAttribute("aria-label")?.startsWith("More actions for")),
+  })})()`);
+
+  // Edit chats: dead while the agent is provisioning, and Save dead until the
+  // chosen set differs from what the agent already serves.
+  const cloudEditGate = await win.webContents.executeJavaScript(`(${() => {
+    const edit = [...document.querySelectorAll(".cloud-agent-row button")]
+      .find((button) => button.textContent.trim() === "Edit chats");
+    return { present: !!edit, disabledWhileProvisioning: !!edit?.disabled };
+  }})()`);
+  cloudProbe = { ...cloudProbe, cloudAgents: [cloudAgent] };
+  await win.webContents.executeJavaScript(`window.__domoSelectTab("audit")`);
+  await win.webContents.executeJavaScript(`window.__domoSelectTab("agents")`);
+  await waitFor(
+    win,
+    `[...document.querySelectorAll(".cloud-agent-row button")].some((b) => b.textContent.trim() === "Edit chats" && !b.disabled)`,
+    "Edit chats to come alive on a running agent",
+  );
+  await win.webContents.executeJavaScript(
+    `[...document.querySelectorAll(".cloud-agent-row button")].find((b) => b.textContent.trim() === "Edit chats").click()`,
+  );
+  await waitFor(win, `document.querySelector(".cloud-modal .chat-list")`, "the edit checklist");
+  const cloudEditSave = await win.webContents.executeJavaScript(`(${async () => {
+    const settle = () => new Promise((resolve) => setTimeout(resolve));
+    const saveButton = () => [...document.querySelectorAll(".cloud-modal button")]
+      .find((node) => node.textContent.trim() === "Save changes");
+    // Re-query every time: the checklist re-renders on each change, so a
+    // NodeList captured once is a list of detached nodes after the first click.
+    const boxes = () =>
+      [...document.querySelectorAll(".cloud-modal .chat-option:not(.disabled) input")];
+    const prefilled = boxes().filter((box) => box.checked).length === 1;
+    const deadWhenUnchanged = saveButton().disabled;
+    boxes()[1].click();
+    await settle();
+    const liveAfterChange = !saveButton().disabled;
+    // Put it back: unchanged again, so Save must die again.
+    boxes()[1].click();
+    await settle();
+    const deadAgain = saveButton().disabled;
+    boxes()[1].click();
+    await settle();
+    saveButton().click();
+    return { prefilled, deadWhenUnchanged, liveAfterChange, deadAgain };
+  }})()`);
+  await waitForNode(() => cloudEditPending, "the cloud edit request to stay in flight");
+  win.webContents.send("connect:changed");
+  await waitFor(
+    win,
+    `[...document.querySelectorAll(".cloud-agent-row button")].find((button) => button.textContent.trim() === "Edit chats")?.disabled === true`,
+    "the editing row to redraw as pending",
+  );
+  cloudEditSave.updatingRow = await win.webContents.executeJavaScript(`(${() => {
+    const row = document.querySelector(".cloud-agent-row");
+    const button = (text) => [...row.querySelectorAll("button")]
+      .find((item) => item.textContent.trim() === text);
+    return {
+      modalClosed: !document.querySelector(".cloud-modal"),
+      updating: row.textContent.includes("Updating chats…"),
+      spinner: !!row.querySelector(".status-setting .cloud-spinner"),
+      editDisabled: button("Edit chats")?.disabled === true,
+      messageDisabled: button("Message")?.disabled === true,
+    };
+  }})()`);
+  releaseCloudEdit();
+  await waitForNode(() => !cloudEditPending, "the cloud edit request to finish");
+  await waitFor(win, `!document.querySelector(".cloud-modal")`, "the editor to close on a saved change");
+  await waitFor(
+    win,
+    `document.querySelector(".cloud-agent-row .entity-context")?.textContent.includes("★")`,
+    "the row to name its home chat",
+  );
+  cloudEditSave.sentBothChats = cloudCalls.editChats.at(-1)?.chatUids.length === 2;
+  cloudEditSave.homeFirst =
+    cloudCalls.editChats.at(-1)?.chatUids[0] === cloudAgent.chatUids[0];
+
+  // A chat the agent serves that the account's chat list does not mention: the
+  // fallback list, or a chat the owner has since left. It must still be on the
+  // checklist, checked — a row that is not drawn is a chat the next Save
+  // detaches on behalf of someone who was never shown it.
+  cloudProbe = {
+    ...cloudProbe,
+    cloudChatsLoaded: true,
+    cloudChats: [cloudChat],
+    cloudAgents: [{
+      ...cloudAgent,
+      chatUids: [cloudChat.uid, "chat_departed"],
+      chatLabels: [cloudChat.label, "+1 (415) 555-0177 · Old thread"],
+    }],
+  };
+  await win.webContents.executeJavaScript(`window.__domoSelectTab("audit")`);
+  await win.webContents.executeJavaScript(`window.__domoSelectTab("agents")`);
+  await waitFor(
+    win,
+    `[...document.querySelectorAll(".cloud-agent-row button")].some((b) => b.textContent.trim() === "Edit chats" && !b.disabled)`,
+    "Edit chats for the stray-chat case",
+  );
+  await win.webContents.executeJavaScript(
+    `[...document.querySelectorAll(".cloud-agent-row button")].find((b) => b.textContent.trim() === "Edit chats").click()`,
+  );
+  await waitFor(win, `document.querySelector(".cloud-modal .chat-list")`, "the editor with a stray chat");
+  const cloudEditStray = await win.webContents.executeJavaScript(`(${() => {
+    const options = [...document.querySelectorAll(".cloud-modal .chat-option")].map((row) => ({
+      name: row.querySelector(".chat-option-name").title,
+      checked: row.querySelector("input").checked,
+    }));
+    const stray = options.find((option) => option.name.includes("Old thread"));
+    return {
+      shown: !!stray,
+      checked: !!stray?.checked,
+      allServedChecked: options.filter((option) => option.checked).length === 2,
+      // Nothing has been touched, so there is nothing to save — and the bug
+      // this replaces had Save live on open, one click from a silent detach.
+      saveDeadOnOpen: [...document.querySelectorAll(".cloud-modal button")]
+        .find((node) => node.textContent.trim() === "Save changes").disabled,
+    };
+  }})()`);
+  await win.webContents.executeJavaScript(
+    `[...document.querySelectorAll(".cloud-modal button")].find((b) => b.textContent.trim() === "Cancel").click()`,
+  );
+
+  // A three-chat agent whose server order is not the account list's order. The
+  // checklist orders by the list; index-for-index called that a change, so Save
+  // opened alive and one click restarted the agent to tell it what it knew.
+  // Titles as `state()` would build them, because the rows are now SORTED for
+  // display and the checkbox order is no longer the fixture's array order.
+  const reorderedChats = [
+    cloudChat,
+    { uid: "chat_family", label: "+1 (415) 555-0188 · Family group", title: "Family group", entries: [], lineName: null, people: [], recipients: { line: "+14155550188", members: [] } },
+    { uid: "chat_book", label: "+1 (510) 555-0133 · Book club", title: "Book club", entries: [], lineName: null, people: [], recipients: { line: "+15105550133", members: [] } },
+    { uid: "chat_new", label: "+1 (510) 555-0144 · New chat", title: "New chat", entries: [], lineName: null, people: [], recipients: { line: "+15105550144", members: [] } },
+  ];
+  cloudProbe = {
+    ...cloudProbe,
+    cloudChatsLoaded: true,
+    cloudChats: reorderedChats,
+    // Server order: home, then the two the list puts in the other order.
+    cloudAgents: [{
+      ...cloudAgent,
+      chatUids: [cloudChat.uid, "chat_book", "chat_family"],
+      chatLabels: [cloudChat.label, reorderedChats[2].label, reorderedChats[1].label],
+    }],
+  };
+  await win.webContents.executeJavaScript(`window.__domoSelectTab("audit")`);
+  await win.webContents.executeJavaScript(`window.__domoSelectTab("agents")`);
+  await waitFor(
+    win,
+    `[...document.querySelectorAll(".cloud-agent-row button")].some((b) => b.textContent.trim() === "Edit chats" && !b.disabled)`,
+    "Edit chats for the reordered-set case",
+  );
+  await win.webContents.executeJavaScript(
+    `[...document.querySelectorAll(".cloud-agent-row button")].find((b) => b.textContent.trim() === "Edit chats").click()`,
+  );
+  await waitFor(win, `document.querySelector(".cloud-modal .chat-list")`, "the editor for the reordered set");
+  const cloudEditReordered = await win.webContents.executeJavaScript(`(${async () => {
+    const settle = () => new Promise((resolve) => setTimeout(resolve));
+    const save = () => [...document.querySelectorAll(".cloud-modal button")]
+      .find((node) => node.textContent.trim() === "Save changes");
+    // Rows are SORTED for display, so a box is found by the chat it belongs to
+    // rather than by position — the two orders are deliberately independent.
+    const boxFor = (title) => [...document.querySelectorAll(".cloud-modal .chat-option")]
+      .find((row) => row.querySelector(".chat-option-name")?.title.trim() === title)
+      ?.querySelector("input");
+    const served = ["Willow · You · Robin", "Book club", "Family group"];
+    const allChecked = served.every((title) => boxFor(title)?.checked === true)
+      && boxFor("New chat")?.checked === false;
+    const deadOnOpen = save().disabled;
+    // A real change still wakes it, and undoing that change puts it back.
+    // Family group specifically: unchecking and rechecking APPENDS it (that is
+    // `pickChat`), so the saved order becomes home, book, family — which is
+    // what `retainedServerOrder` below pins.
+    boxFor("Family group").click();
+    await settle();
+    const liveAfterChange = !save().disabled;
+    boxFor("Family group").click();
+    await settle();
+    const deadAgain = save().disabled;
+    boxFor("New chat").click();
+    await settle();
+    save().click();
+    return { allChecked, deadOnOpen, liveAfterChange, deadAgain };
+  }})()`);
+  await waitFor(win, `!document.querySelector(".cloud-modal")`, "the reordered editor to save");
+  cloudEditReordered.retainedServerOrder = JSON.stringify(cloudCalls.editChats.at(-1)?.chatUids)
+    === JSON.stringify([cloudChat.uid, "chat_book", "chat_family", "chat_new"]);
+
+  // And with the chat list not yet read, the editor is not offered at all: it
+  // would open on the fallback, missing every chat this Mac has not been told
+  // about.
+  cloudProbe = { ...cloudProbe, cloudChatsLoaded: false, cloudChats: [] };
+  await win.webContents.executeJavaScript(`window.__domoSelectTab("audit")`);
+  await win.webContents.executeJavaScript(`window.__domoSelectTab("agents")`);
+  await waitFor(
+    win,
+    `[...document.querySelectorAll(".cloud-agent-row button")].some((b) => b.textContent.trim() === "Edit chats")`,
+    "the Edit chats button while the chat list is unread",
+  );
+  const cloudEditGateUnread = await win.webContents.executeJavaScript(`(${() => {
+    const edit = [...document.querySelectorAll(".cloud-agent-row button")]
+      .find((button) => button.textContent.trim() === "Edit chats");
+    return { present: !!edit, disabled: !!edit?.disabled, why: edit?.title ?? null };
+  }})()`);
+
+  cloudProbe = {
+    ...cloudProbe,
+    cloudAgents: [cloudAgent],
+    cloudAgentsError: null,
+    cloudChatsError: "Couldn't reach Plow.",
+    cloudChatsNeedReactivation: false,
+    cloudChats: [],
+    cloudChatsLoaded: false,
+  };
+  await win.webContents.executeJavaScript(`window.__domoSelectTab("audit")`);
+  await win.webContents.executeJavaScript(`window.__domoSelectTab("agents")`);
+  await waitFor(win, `document.querySelector(".cloud-error")`, "the failed chat-list banner");
+  const cloudChatFailure = await win.webContents.executeJavaScript(`(${() => ({
+    showsError: document.querySelector(".cloud-error")?.textContent.includes("Couldn't reach Plow"),
+    setupDisabled: [...document.querySelectorAll("#view button")]
+      .find((button) => button.textContent.trim() === "Set up cloud agent")?.disabled === true,
+    notEmptyState: !document.querySelector(".list-section:first-child .entity-empty"),
+    keepsRoster: document.querySelector(".cloud-agent-row")?.textContent.includes("Household helper"),
+    noDestructiveRecovery: ![...document.querySelectorAll(".cloud-error button")]
+      .some((button) => button.textContent.trim() === "Sign out and re-activate"),
+  })})()`);
+
+  cloudProbe = {
+    ...cloudProbe,
+    cloudAgentsError: "Method Not Allowed",
+    cloudChatsError: "This Mac cannot list chats yet. Try re-activating it, then try again.",
+    cloudChatsNeedReactivation: true,
+    cloudChats: [cloudChat],
+  };
+  await win.webContents.executeJavaScript(`window.__domoSelectTab("audit")`);
+  await win.webContents.executeJavaScript(`window.__domoSelectTab("agents")`);
+  await waitFor(win, `document.querySelector(".cloud-error")`, "the 403 chat-list banner");
+  const cloudForbidden = await win.webContents.executeJavaScript(`(${() => {
+    const setup = [...document.querySelectorAll("#view button")]
+      .find((button) => button.textContent.trim() === "Set up cloud agent");
+    setup.click();
+    return {
+      rawReasonHidden: !document.body.innerText.includes("Method Not Allowed"),
+      setupEnabled: setup.disabled === false,
+      offersReactivation: [...document.querySelectorAll(".cloud-error button")]
+        .some((button) => button.textContent.trim() === "Sign out and re-activate"),
+      notEmptyState: !document.querySelector(".list-section:first-child .entity-empty"),
+    };
+  }})()`);
+  await waitFor(win, `document.querySelector(".cloud-modal .chat-list")`, "the activation-chat fallback checklist");
+  cloudForbidden.offersActivationChat = await win.webContents.executeJavaScript(
+    `[...document.querySelectorAll(".cloud-modal .chat-option-name")]
+      .some((name) => name.title.trim() === "Willow · You · Robin")`,
+  );
+  await win.webContents.executeJavaScript(
+    `[...document.querySelectorAll(".cloud-modal button")].find((button) => button.textContent.trim() === "Cancel").click()`,
+  );
+  await win.webContents.executeJavaScript(
+    `[...document.querySelectorAll(".cloud-error button")].find((button) => button.textContent.trim() === "Sign out and re-activate").click()`,
+  );
+  await waitForNode(() => relaySignOutCalls === 1, "the re-activate action to use sign-out");
+  cloudForbidden.reactivatesThroughSignOut = relaySignOutCalls === 1;
+
+  cloudProbe = {
+    ...cloudProbe,
+    cloudAgentsError: "Cloud capacity is full for this account.",
+    cloudChatsError: null,
+    cloudChats: [cloudChat],
+    cloudChatsLoaded: true,
+  };
+  await win.webContents.executeJavaScript(`window.__domoSelectTab("audit")`);
+  await win.webContents.executeJavaScript(`window.__domoSelectTab("agents")`);
+  await waitFor(win, `document.body.innerText.includes("Cloud capacity is full for this account.")`,
+    "the server-authored cloud error detail");
+  const cloudServerDetail = await win.webContents.executeJavaScript(`(${() => ({
+    preserved: document.body.innerText.includes("Cloud capacity is full for this account."),
+    notReplaced: !document.body.innerText.includes("Plow couldn't complete that request. Try again."),
+  })})()`);
+
+  // A chat list that came back EMPTY, and loaded. Distinct from the failure
+  // case above, which is also empty but NOT loaded: the setup button is the
+  // only route onward for a freshly paired Mac, and since pairing stopped
+  // claiming a pool line this is that Mac's ordinary state.
+  cloudProbe = {
+    ...cloudProbe,
+    cloudAgents: [],
+    cloudAgentsError: null,
+    cloudChatsError: null,
+    cloudChatsNeedReactivation: false,
+    cloudChats: [],
+    cloudChatsLoaded: true,
+  };
+  await win.webContents.executeJavaScript(`window.__domoSelectTab("audit")`);
+  await win.webContents.executeJavaScript(`window.__domoSelectTab("agents")`);
+  await waitFor(
+    win,
+    `[...document.querySelectorAll("#view button")].some((b) => b.textContent.trim() === "Set up cloud agent")`,
+    "the setup action with a loaded-but-empty chat list",
+  );
+  const cloudLoadedEmpty = await win.webContents.executeJavaScript(`(${() => {
+    const setup = [...document.querySelectorAll("#view button")]
+      .find((button) => button.textContent.trim() === "Set up cloud agent");
+    return {
+      setupEnabled: setup.disabled === false,
+      // Not the loading spinner, and not an error: the list really did arrive.
+      noLoadingNote: !document.body.innerText.includes("Loading chats…"),
+      noErrorBanner: !document.querySelector(".cloud-error"),
+    };
+  }})()`);
+  // ...and what that button leads to with no chats and no number known: the
+  // instruction, and NO control, because there is nothing here to act on.
+  await win.webContents.executeJavaScript(
+    `[...document.querySelectorAll("#view button")].find((b) => b.textContent.trim() === "Set up cloud agent").click()`,
+  );
+  await waitFor(win, `document.querySelector(".cloud-modal")`, "the modal over an empty chat list");
+  await win.webContents.executeJavaScript(
+    `[...document.querySelectorAll(".cloud-modal button")].find((b) => b.textContent.trim() === "New chat…")?.click()`,
+  );
+  const cloudZeroChatGuidance = await win.webContents.executeJavaScript(`(${() => {
+    const text = document.querySelector(".cloud-modal").innerText;
+    const labels = [...document.querySelectorAll(".cloud-modal button")]
+      .map((button) => button.textContent.trim());
+    return {
+      saysTextANumber: text.includes("Message a number to create a thread"),
+      saysReopen: text.includes("reopen this window"),
+      // The dead route is gone: it opened the setup window, which on a
+      // signed-in Mac lands on "connected" and mints nothing.
+      noVerifyButton: !labels.includes("Verify a new Plow number"),
+      // Plow's numbers, with the persona name where there is one.
+      listsNamedLine: text.includes("Willow") && text.includes("+14155550142"),
+      listsUnnamedLine: text.includes("+16285550177"),
+      // Every free line gets the one control that acts on it.
+      opensMessages: [...document.querySelectorAll(".cloud-modal .cloud-route-number button")]
+        .filter((b) => b.textContent.trim() === "Open Messages…").length === 2,
+    };
+  }})()`);
+  // Back to the picker, then out: "Back" leaves the explainer, "Cancel" closes.
+  await win.webContents.executeJavaScript(
+    `[...document.querySelectorAll(".cloud-modal button")].find((b) => b.textContent.trim() === "Back")?.click()`,
+  );
+  await win.webContents.executeJavaScript(
+    `[...document.querySelectorAll(".cloud-modal button")].find((b) => b.textContent.trim() === "Cancel")?.click()`,
+  );
+  await waitFor(win, `!document.querySelector(".cloud-modal")`, "the empty-list modal to close");
+  // The owner texted a number and Plow made the chat. The modal promises it
+  // "appears here when you reopen this window", so reopening must ASK — the
+  // state the button was rendered with cannot know about this.
+  const refreshesBefore = cloudRefreshCalls;
+  cloudProbe = { ...cloudProbe, cloudChats: [cloudChat] };
+  await win.webContents.executeJavaScript(
+    `[...document.querySelectorAll("#view button")].find((b) => b.textContent.trim() === "Set up cloud agent").click()`,
+  );
+  await waitFor(win, `document.querySelector(".cloud-modal .chat-list")`, "the checklist after a chat arrived");
+  cloudZeroChatGuidance.reopenAsked = cloudRefreshCalls > refreshesBefore;
+  // The chat that arrived, named by its PEOPLE — the line is deliberately not
+  // in the title any more, so this looks for the participants.
+  cloudZeroChatGuidance.reopenShowsNewChat = await win.webContents.executeJavaScript(
+    `[...document.querySelectorAll(".cloud-modal .chat-option-name")].some((n) => n.title === "Willow · You · Robin")`,
+  );
+  // The row: participants in the title (owner as "You", line excluded), and
+  // The pair, read STRUCTURALLY: each name and the number it belongs to are
+  // one <span class="chat-entry"> in the DOM, so nothing has to line up two
+  // strings by counting positions.
+  cloudZeroChatGuidance.chatRowShowsLine = await win.webContents.executeJavaScript(`(${() => {
+    const row = document.querySelector(".cloud-modal .chat-option-name");
+    const entries = [...(row?.querySelectorAll(".chat-entry") ?? [])].map((entry) => [
+      entry.querySelector(".chat-entry-label")?.textContent ?? "",
+      entry.querySelector(".chat-entry-number")?.textContent ?? "",
+    ]);
+    return JSON.stringify(entries) === JSON.stringify([
+      ["Willow", "+1 415-555-0142"],
+      ["You", "+1 415-555-0193"],
+      ["Robin", "+1 628-555-0112"],
+    ])
+      // Every entry has both halves — a name with no number under it is the
+      // shape the old two-string row could produce.
+      && entries.every(([label, number]) => label && number)
+      // ...and the flat form is still there for the tooltip.
+      && row?.title === "Willow · You · Robin";
+  }})()`);
+  // ...and that number is now held, so the explainer offers it no button.
+  await win.webContents.executeJavaScript(
+    `[...document.querySelectorAll(".cloud-modal button")].find((b) => b.textContent.trim() === "New chat…")?.click()`,
+  );
+  cloudZeroChatGuidance.dropsHeldLine = await win.webContents.executeJavaScript(`(${() => {
+    const rows = [...document.querySelectorAll(".cloud-modal .cloud-route-number")];
+    // The held number is not listed at all — it is on the screen behind this
+    // one, as the chat itself. The free one is, with its one control.
+    return !rows.some((r) => r.textContent.includes("+14155550142"))
+      && rows.length === 1
+      && !!rows[0].textContent.includes("+16285550177")
+      && !!rows[0].querySelector("button")
+      && !document.querySelector(".cloud-modal").innerText.includes("already have a chat");
+  }})()`);
+  await win.webContents.executeJavaScript(
+    `[...document.querySelectorAll(".cloud-modal button")].find((b) => b.textContent.trim() === "Back")?.click()`,
+  );
+  await win.webContents.executeJavaScript(
+    `[...document.querySelectorAll(".cloud-modal button")].find((b) => b.textContent.trim() === "Cancel")?.click()`,
+  );
+
+  // Restore the roster for the screenshot and the existing Agents-pane probes.
+  cloudProbe = {
+    ...cloudProbe,
+      cloudAgents: [cloudAgent],
+    cloudChats: [cloudChat],
+    cloudAgentsError: null,
+    cloudChatsError: null,
+    cloudChatsLoaded: true,
+  };
+  await win.webContents.executeJavaScript(`window.__domoSelectTab("audit")`);
+  await win.webContents.executeJavaScript(`window.__domoSelectTab("agents")`);
+  await waitFor(win, `document.querySelector(".cloud-agent-row")`, "the restored cloud-agent roster");
 
   // The Agents pane gets an image of its own, for the same reason Settings does:
   // every UI change gets one, and this one moved panes.
@@ -496,21 +1252,29 @@ app.whenReady().then(async () => {
     agentPurpose: "Groceries and calendar only.",
   });
   await win.webContents.executeJavaScript(`window.__domoSelectTab("audit")`);
-  await win.webContents.executeJavaScript(`window.__domoSelectTab("agents")`);
+  await win.webContents.executeJavaScript(`window.__domoSelectTab("rules")`);
   await waitFor(win, `[...document.querySelectorAll(".chip")].some((c) => c.textContent.trim() === "AI Reviewer decides" && c.classList.contains("active"))`,
     "the Approvals card in its reviewer state");
   const approvalsReviewer = await win.webContents.executeJavaScript(`(${() => {
     const pane = document.querySelector("#view");
     const field = pane.querySelector("textarea.text");
+    const description = [...pane.querySelectorAll(".group-title")]
+      .find((title) => title.textContent.trim() === "Approvals")
+      ?.parentElement?.querySelector(".group-desc")?.textContent ?? "";
     return {
       chipLabels: [...pane.querySelectorAll(".chips .chip")].map((c) => c.textContent.trim()),
-      inAgentsPane: !!pane.querySelector(".panel.agents"),
+      inRulesPane: !!pane.querySelector(".panel.rules"),
       // The stored text, in the field, and the two things said beside it.
       showsStoredPurpose: !!field && field.checkVisibility() && field.value === "Groceries and calendar only.",
       purposeExampleHasBoundary: field?.placeholder.endsWith(
         "You have no business with anything else on this computer — no files, no other sites.",
       ) ?? false,
       labelled: pane.innerText.includes("What are agents for?"),
+      describesGlobalPrecedence: description.includes(
+        "AI Reviewer and Deny still apply to every request",
+      ),
+      noPerAgentSwitch: !description.includes("own AI Reviewer") &&
+        !description.includes("per-agent"),
       // The purpose is the ERRAND, and an errand widens as readily as it
       // narrows: an owner who writes "Manage my SSH keys" has just made those
       // keys the job. This probe used to pin the opposite claim — that the
@@ -526,29 +1290,21 @@ app.whenReady().then(async () => {
       // word this rename retired is nowhere on screen.
       noAdversarialWord: !/adversarial/i.test(pane.innerText),
       noHintLineTakingItsPlace: !pane.innerText.includes("Any request a rule doesn't already cover opens an approval window"),
-      // The suggestions checkbox came here from Settings when that pane's
-      // reviewer section went away. In this mode nobody is being asked, so
-      // there is no suggestion to show: on screen, and dead.
-      hasSuggestionsCheckbox: pane.innerText.includes(
-        "Let the reviewer suggest an answer when an approval window opens",
-      ),
-      suggestionsDeadInReviewerMode: (() => {
-        const box = [...pane.querySelectorAll("input")].find(
-          (i) => i.type === "checkbox" &&
-            (i.closest("label")?.textContent ?? "").includes("Let the reviewer suggest"),
-        );
-        return !!box && box.disabled && !!box.closest("label")?.classList.contains("disabled");
-      })(),
+      noFalseReviewerInputs: !pane.innerText.includes("goal and plan") &&
+        !pane.innerText.includes("recent activity on this Mac"),
+      // The suggestions checkbox is gone: in Ask mode the reviewer always
+      // suggests, so there is no toggle to show in any mode.
+      noSuggestionsCheckbox: !pane.innerText.includes("Let the reviewer suggest"),
     };
   }})()`);
   const scrollToApprovals = () => win.webContents.executeJavaScript(`(() => {
-    const title = [...document.querySelectorAll(".agents .item > .group-title")]
+    const title = [...document.querySelectorAll(".rules .item > .group-title")]
       .find((t) => t.textContent.trim() === "Approvals");
     title?.scrollIntoView({ block: "start" });
     return true;
   })()`);
   await scrollToApprovals();
-  const approvalsShot = process.env.APPROVALS_OUT ?? "/tmp/agents-approvals.png";
+  const approvalsShot = process.env.APPROVALS_OUT ?? "/tmp/rules-approvals.png";
   await win.webContents.executeJavaScript(
     `new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r(null))))`,
   );
@@ -599,27 +1355,18 @@ app.whenReady().then(async () => {
       // suggestion this mode asks for, so the disclosure has to name it in the
       // mode that hides the field. This is the state where an enumeration that
       // stopped at the agent-derived items would read as complete and be wrong.
-      stillDisclosesPurposeIsSent: pane.innerText.includes("what you say agents are for"),
+      stillDisclosesPurposeIsSent: pane.innerText.includes("the purpose you wrote for it"),
       // …and the card still says what this mode does.
       showsHint: pane.innerText.includes("Any request a rule doesn't already cover opens an approval window"),
-      // The hint used to send people to Settings for the suggestions toggle.
-      // The toggle is in this card now, so the sentence points at it and not at
-      // a pane that no longer has one.
-      pointsAtTheCheckboxBelow: pane.innerText.includes("turn that on below"),
+      // The suggestion is no longer a toggle: with a credentialled reviewer
+      // the card says it just happens, and no checkbox exists to point at.
+      saysReviewerSuggests: pane.innerText.includes("the AI Reviewer suggests an answer"),
+      noSuggestionsCheckbox: !pane.innerText.includes("Let the reviewer suggest"),
       noPointerToSettings: !pane.innerText.includes("turn that on in Settings"),
-      // Ask mode with a credentialled reviewer: the one state where a
-      // suggestion can actually be shown, so the box is live.
-      suggestionsLive: (() => {
-        const box = [...pane.querySelectorAll("input")].find(
-          (i) => i.type === "checkbox" &&
-            (i.closest("label")?.textContent ?? "").includes("Let the reviewer suggest"),
-        );
-        return !!box && !box.disabled && box.checked;
-      })(),
     };
   }})()`);
-  // Ask mode on a Mac whose reviewer CANNOT run. The card must not tell anyone
-  // to turn on the checkbox one row down, because that checkbox is dead.
+  // Ask mode on a Mac whose reviewer CANNOT run. The card must not promise a
+  // suggestion, because no review can produce one.
   saveSettings(probeHome, { ...loadSettings(probeHome), relayCredential: "" });
   win.webContents.send("status:changed");
   await waitFor(
@@ -629,16 +1376,10 @@ app.whenReady().then(async () => {
   );
   const askWithoutReviewer = await win.webContents.executeJavaScript(`(${() => {
     const pane = document.querySelector("#view");
-    const box = [...pane.querySelectorAll("input")].find(
-      (i) => i.type === "checkbox" &&
-        (i.closest("label")?.textContent ?? "").includes("Let the reviewer suggest"),
-    );
     return {
-      // The dead-end sentence is gone…
-      noDeadInstruction: !pane.innerText.includes("turn that on below"),
-      // …replaced by the reason, and the checkbox it described really is dead.
+      // The promise is gone, replaced by the reason…
+      noPromise: !pane.innerText.includes("the AI Reviewer suggests an answer"),
       explainsWhy: pane.innerText.includes("cannot suggest an answer"),
-      checkboxIsDead: !!box && box.disabled,
       // …and it names the one remedy there is, which is a control that exists.
       namesTheRemedy: pane.innerText.includes("sign in to Plow in Settings"),
       // Ask mode still says what Ask mode does.
@@ -652,21 +1393,27 @@ app.whenReady().then(async () => {
     relayCredential: "plow_sk_probe_credential",
   });
   win.webContents.send("status:changed");
-  await waitFor(win, `document.querySelector("#view").innerText.includes("turn that on below")`,
+  await waitFor(win, `document.querySelector("#view").innerText.includes("the AI Reviewer suggests an answer")`,
     "the Ask card to go back to offering the suggestion");
 
   await scrollToApprovals();
-  const approvalsShotAsk = process.env.APPROVALS_ASK_OUT ?? "/tmp/agents-approvals-ask.png";
+  const approvalsShotAsk = process.env.APPROVALS_ASK_OUT ?? "/tmp/rules-approvals-ask.png";
   await win.webContents.executeJavaScript(
     `new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => r(null))))`,
   );
   fs.writeFileSync(approvalsShotAsk, (await win.webContents.capturePage()).toPNG());
 
-  // …and the same pane with the static-credential fallback EXPANDED. It is the
+  // …and the Agents pane with the static-credential fallback EXPANDED. It is the
   // busiest this pane ever gets, and the state whose spacing has to hold: the
   // form must read as the quiet alternative, not the main event.
+  await win.webContents.executeJavaScript(`window.__domoSelectTab("agents")`);
+  await waitFor(win, `document.querySelector("#view .panel.agents")`, "the Agents pane for static credential setup");
+  await win.webContents.executeJavaScript(
+    `[...document.querySelectorAll("#view button")].find((b) => b.textContent.trim() === "Connect MCP client").click()`,
+  );
+  await waitFor(win, `document.querySelector(".connect-modal .linkbtn")`, "the MCP setup modal for static credential setup");
   await win.webContents.executeJavaScript(`(() => {
-    const link = [...document.querySelectorAll(".linkbtn")].find((b) =>
+    const link = [...document.querySelectorAll(".connect-modal .linkbtn")].find((b) =>
       b.textContent.includes("static credential"),
     );
     link.click();
@@ -712,6 +1459,273 @@ app.whenReady().then(async () => {
   }})()`);
   const vaultShot = process.env.VAULT_OUT ?? "/tmp/vault-locked.png";
   await captureAfterPaint(win, vaultShot);
+
+  // Unsaved edits must not vanish without a word. The vault is the only screen
+  // that holds a form open behind a Save button, so it is the only one where
+  // leaving can throw typing away — by closing the sheet, by collapsing a row,
+  // or by switching tab out from under it.
+  const vaultUnsaved = await (async () => {
+    vaultItemsReply = [{ id: "itm1", type: "login", title: "Notion", subtitle: "owner@probe", urls: ["https://notion.so"] }];
+    const js = (fn) => win.webContents.executeJavaScript(`(${fn})()`);
+    const click = (sel) => win.webContents.executeJavaScript(
+      `(() => { const n = document.querySelector(${JSON.stringify(sel)}); if (!n) return false; n.click(); return true; })()`);
+    // A real keystroke, not an assignment: the dirty flag rides the input event.
+    const type = (sel, value) => win.webContents.executeJavaScript(
+      `(() => { const n = document.querySelector(${JSON.stringify(sel)}); if (!n) return false;
+         n.value = ${JSON.stringify(value)}; n.dispatchEvent(new Event("input", { bubbles: true })); return true; })()`);
+    const asking = () => js(() => !!document.querySelector(".vaultui .confirm-overlay"));
+    // Fire-and-forget: selectTab's promise stays pending until the confirm is
+    // answered, so awaiting it would deadlock against the click that answers it.
+    const leaveTab = (tab) => win.webContents.executeJavaScript(
+      `(() => { window.__domoSelectTab(${JSON.stringify(tab)}); return true; })()`);
+    const CONFIRM = ".vaultui .confirm-overlay";
+    const waitAsking = () => waitFor(win, `document.querySelector("${CONFIRM}")`, "the discard confirmation");
+    const waitAnswered = () => waitFor(win, `!document.querySelector("${CONFIRM}")`, "the confirmation to close");
+
+    const SHEET = ".vaultui .overlay.show:not(.confirm-overlay)";
+    const NAME = ".vaultui .sheet input[data-name='1']";
+    const KEEP = ".vaultui .confirm-overlay .btn.ghost";
+    const DISCARD = ".vaultui .confirm-overlay .btn.danger";
+
+    // The pane is already showing the LOCKED vault from the check above, and
+    // re-selecting the tab you are on is deliberately a no-op now — so go away
+    // and come back to make it re-read the (now populated) stub.
+    await win.webContents.executeJavaScript(`(() => { window.__domoSelectTab("rules"); return true; })()`);
+    await waitFor(win, `!document.querySelector(".vaultui")`, "the vault pane to go");
+    await win.webContents.executeJavaScript(`(() => { window.__domoSelectTab("vault"); return true; })()`);
+    await waitFor(win, `document.querySelector(".vaultui .vitem")`, "the vault list to render");
+
+    // An untouched sheet closes without a question.
+    await click(".vaultui .btn-primary");
+    await waitFor(win, `document.querySelector("${SHEET}")`, "the new-item sheet");
+    await click(".vaultui .ptype[data-new='login']");
+    await waitFor(win, `document.querySelector("${NAME}")`, "the login form");
+    await click(".vaultui .sheet-foot .btn.ghost");
+    await waitFor(win, `!document.querySelector(".vaultui .overlay.show")`, "the sheet to close");
+    const cleanSheetClosesFreely = !(await asking()) && !(await js(() => !!document.querySelector(".vaultui .overlay.show")));
+
+    // A filled sheet asks, and backing out leaves the typing where it was.
+    await click(".vaultui .btn-primary");
+    await waitFor(win, `document.querySelector("${SHEET}")`, "the sheet again");
+    await click(".vaultui .ptype[data-new='login']");
+    await waitFor(win, `document.querySelector("${NAME}")`, "the login form");
+    await type(NAME, "half-typed");
+    await click(".vaultui .sheet-foot .btn.ghost");
+    await waitAsking();
+    const dirtySheetAsks = await asking();
+    await click(KEEP);
+    await waitAnswered();
+    const keepKeepsTheTyping = await win.webContents.executeJavaScript(
+      `document.querySelector("${NAME}")?.value === "half-typed"`);
+
+    // Discard is the other answer, and it does close.
+    await click(".vaultui .sheet-foot .btn.ghost");
+    await waitAsking();
+    await click(DISCARD);
+    await waitFor(win, `!document.querySelector(".vaultui .overlay.show")`, "the sheet to go");
+    const discardClosesSheet = await js(() => !document.querySelector(".vaultui .overlay.show"));
+
+    // Collapsing an edited row is the same loss through a different door.
+    await click(".vaultui .vitem .vrow");
+    await waitFor(win, `document.querySelector(".vaultui .vitem.open input[data-name='1']")`, "the row's form");
+    await type(".vaultui .vitem.open input[data-name='1']", "renamed");
+    await click(".vaultui .vitem .vrow");
+    await waitAsking();
+    const dirtyRowAsksOnCollapse = await asking();
+    await click(KEEP);
+    await waitAnswered();
+    const rowStaysOpenOnKeep = await js(() => !!document.querySelector(".vaultui .vitem.open"));
+
+    // And so is walking off the tab entirely.
+    await leaveTab("rules");
+    await waitAsking();
+    const dirtyBlocksTabSwitch =
+      (await asking()) && (await js(() => document.querySelector("#seg button.active")?.dataset.tab === "vault"));
+    await click(DISCARD);
+    await waitFor(win, `document.querySelector("#seg button.active")?.dataset.tab === "rules"`, "the tab to switch");
+    const discardAllowsTabSwitch = await js(() => document.querySelector("#seg button.active")?.dataset.tab === "rules");
+
+    // A second editor cannot be opened over a dirty one without asking — this is
+    // what keeps a save/reload from silently taking another form down with it.
+    await win.webContents.executeJavaScript(`(() => { window.__domoSelectTab("vault"); return true; })()`);
+    await waitFor(win, `document.querySelector(".vaultui .vitem")`, "the vault list again");
+    await click(".vaultui .vitem .vrow");
+    await waitFor(win, `document.querySelector(".vaultui .vitem.open input[data-name='1']")`, "the row's form");
+    await type(".vaultui .vitem.open input[data-name='1']", "dirty-again");
+    await click(".vaultui .btn-primary"); // New, over a dirty row
+    await waitAsking();
+    const secondEditorAsks = await asking();
+    await click(KEEP);
+    await waitAnswered();
+    const refusedSecondEditorKeepsRow = await js(() =>
+      document.querySelector(".vaultui .vitem.open input[data-name='1']")?.value === "dirty-again"
+      && !document.querySelector(".vaultui .overlay.show"));
+
+    // Clicking the tab you are already on is not navigation, and must not
+    // quietly rebuild the pane out from under that still-dirty row.
+    await win.webContents.executeJavaScript(`(() => { window.__domoSelectTab("vault"); return true; })()`);
+    const resel = await js(() => ({
+      asked: !!document.querySelector(".vaultui .confirm-overlay"),
+      kept: document.querySelector(".vaultui .vitem.open input[data-name='1']")?.value === "dirty-again",
+    }));
+    const reselectingVaultKeepsTheForm = !resel.asked && resel.kept;
+
+    // A leave question already in flight must be SHARED, not answered twice and
+    // never treated as consent by a second teardown path arriving behind it.
+    // The row above is still open, still dirty, and still holds the seat.
+    let replies = 0;
+    const countReply = () => { replies += 1; };
+    ipcMain.on("ui:confirmLeaveReply", countReply);
+    win.webContents.send("ui:confirmLeave");
+    // ...and a row collapse arriving at the same moment, which reaches the
+    // dialog by a different route than the window teardown does.
+    await click(".vaultui .vitem .vrow");
+    await waitAsking();
+    const oneDialogForTwoAskers = await js(() =>
+      document.querySelectorAll(".vaultui .confirm-overlay").length === 1);
+    await click(KEEP);
+    await waitAnswered();
+    const refusalIsReported = await waitForNode(() => replies >= 1, "the renderer's refusal")
+      .then(() => true).catch(() => false);
+    ipcMain.removeListener("ui:confirmLeaveReply", countReply);
+    const refusedCloseKeepsTheForm = await js(() =>
+      document.querySelector(".vaultui .vitem.open input[data-name='1']")?.value === "dirty-again");
+
+    // Closing the window asks the same question main-side (Cmd-W and Quit both
+    // route through it). Drive the renderer's half of that conversation.
+    let closeAnswer = null;
+    ipcMain.once("ui:confirmLeaveReply", (_e, ok) => { closeAnswer = ok; });
+    win.webContents.send("ui:confirmLeave");
+    await waitAsking();
+    const windowCloseAsks = await asking();
+    await click(DISCARD);
+    await waitForNode(() => closeAnswer !== null, "the renderer's answer to main");
+    const windowCloseAnswersMain = closeAnswer === true;
+    // Consent must TAKE the form away, not just release it: quit spends seconds
+    // shutting down, and a form still on screen is a form still being typed into.
+    const consentClosesTheForm = await waitFor(win, `!document.querySelector(".vaultui .vitem.open")`,
+      "the approved form to be taken away").then(() => true).catch(() => false);
+
+    // ---- An edit that ends where it started is not an edit ----
+    // Daniel -> Carlos -> Daniel leaves nothing to save, so leaving must not
+    // ask. Start from a row opened clean, so the baseline is what is stored.
+    await win.webContents.executeJavaScript(`(() => { window.__domoSelectTab("vault"); return true; })()`);
+    await waitFor(win, `document.querySelector(".vaultui .vitem")`, "the vault list for the revert check");
+    await click(".vaultui .vitem .vrow");
+    const BOX = ".vaultui .vitem.open input[data-name='1']";
+    await waitFor(win, `document.querySelector("${BOX}")`, "a freshly opened row");
+    const original = await js(() => document.querySelector(".vaultui .vitem.open input[data-name='1']").value);
+
+    // Away from the original, leaving DOES ask - without this the revert below
+    // would pass on a form that simply never went dirty.
+    await type(BOX, original + "-changed");
+    await leaveTab("rules");
+    await waitAsking();
+    const editedStillAsks = await asking();
+    await click(KEEP);
+    await waitAnswered();
+
+    // Back to the original: nothing to save, so nothing is asked.
+    await type(BOX, original);
+    await leaveTab("rules");
+    const revertedSwitched = await waitFor(win,
+      `document.querySelector("#seg button.active")?.dataset.tab === "rules"`,
+      "the tab to switch with nothing left to save").then(() => true).catch(() => false);
+    const revertAskedNothing = revertedSwitched && !(await asking());
+
+    // Revealing a secret fills the box from the vault. Looking is not editing.
+    await win.webContents.executeJavaScript(`(() => { window.__domoSelectTab("vault"); return true; })()`);
+    await waitFor(win, `document.querySelector(".vaultui .vitem")`, "the vault list for the reveal check");
+    await click(".vaultui .vitem .vrow");
+    await waitFor(win, `document.querySelector(".vaultui .vitem.open .field.secret .eye")`, "the reveal button");
+    await click(".vaultui .vitem.open .field.secret .eye");
+    await waitFor(win, `document.querySelector(".vaultui .vitem.open .field.secret input").value !== ""`,
+      "the secret to land in the box");
+    await leaveTab("rules");
+    const revealSwitched = await waitFor(win,
+      `document.querySelector("#seg button.active")?.dataset.tab === "rules"`,
+      "the tab to switch after only looking").then(() => true).catch(() => false);
+    const revealAloneIsClean = revealSwitched && !(await asking());
+    // Leave nothing open behind this block: a dialog still up would deadlock
+    // the next awaited __domoSelectTab in the sections that follow.
+    if (await asking()) { await click(DISCARD); await waitAnswered(); }
+    await leaveTab("rules");
+    await waitFor(win, `document.querySelector("#seg button.active")?.dataset.tab === "rules"`, "a clean exit from the vault block");
+
+    // ---- A form with a vault call in flight takes no input ----
+    // Every one of those awaits ends by overwriting or replacing the form, so a
+    // keystroke landing mid-flight is lost. Disabling only the control that was
+    // clicked left that window open three separate times.
+    holdReveal = true;
+    await win.webContents.executeJavaScript(`(() => { window.__domoSelectTab("vault"); return true; })()`);
+    await waitFor(win, `document.querySelector(".vaultui .vitem")`, "the vault list for the busy check");
+    await click(".vaultui .vitem .vrow");
+    await waitFor(win, `document.querySelector(".vaultui .vitem.open .field.secret .eye")`, "the eye for the busy check");
+    await click(".vaultui .vitem.open .field.secret .eye");
+    await waitForNode(() => releaseReveal !== null, "the reveal to be in flight");
+    // Mid-flight the WHOLE pane is inert, not just the form that asked: the
+    // reload replaces the pane, so a sibling row edited meanwhile would go with
+    // it. Both the name box and every OTHER row must be inside that subtree.
+    const frozenWhileBusy = await js(() => {
+      const pane = document.querySelector(".vaultui[inert]");
+      return !!pane
+        && !!pane.querySelector("input[data-name='1']")
+        && pane.querySelectorAll(".vrow").length === document.querySelectorAll(".vaultui .vrow").length;
+    });
+    releaseReveal();
+    releaseReveal = null;
+    holdReveal = false;
+    await waitFor(win, `document.querySelector(".vaultui .vitem.open .field.secret input").value !== ""`,
+      "the held reveal to land once released");
+    const thawedAfterBusy = await js(() => !document.querySelector(".vaultui[inert]"));
+    await click(".vaultui .vitem .vrow");
+    await waitFor(win, `!document.querySelector(".vaultui .vitem.open")`, "the busy-check row to close");
+
+    // ---- Cmd-W during an in-flight SAVE must still get an answer ----
+    // The question is drawn INSIDE the pane, which is inert while the call runs.
+    // Raised then it could not be answered, and the reload that ends a
+    // successful save would detach it unanswered — stranding main's no-timeout
+    // wait and every later close. A held SAVE is the transaction that reloads;
+    // a held reveal never replaces the pane and would miss this entirely.
+    holdSave = true;
+    await win.webContents.executeJavaScript(`(() => { window.__domoSelectTab("vault"); return true; })()`);
+    await waitFor(win, `document.querySelector(".vaultui .vitem")`, "the vault list for the close-during-save check");
+    await click(".vaultui .vitem .vrow");
+    await waitFor(win, `document.querySelector(".vaultui .vitem.open input[data-name='1']")`, "the row for the close-during-save check");
+    await type(".vaultui .vitem.open input[data-name='1']", "edited-then-saved");
+    await click(".vaultui .vitem.open .btn.save");
+    await waitForNode(() => releaseSave !== null, "the save to be in flight");
+
+    let busyCloseAnswer = null;
+    const onBusyReply = (_e, ok) => { busyCloseAnswer = ok; };
+    ipcMain.on("ui:confirmLeaveReply", onBusyReply);
+    win.webContents.send("ui:confirmLeave");
+    const noDialogUnderInert = await js(() => !document.querySelector(".vaultui .confirm-overlay"));
+
+    releaseSave();
+    releaseSave = null;
+    holdSave = false;
+    // The save landed and released the form, so there is nothing left to ask
+    // about: main gets its answer, and no dialog is orphaned behind the reload.
+    const closeAnsweredAfterSave = await waitForNode(() => busyCloseAnswer !== null,
+      "main's answer once the save landed").then(() => busyCloseAnswer === true).catch(() => false);
+    ipcMain.removeListener("ui:confirmLeaveReply", onBusyReply);
+    const noOrphanedDialog = await js(() => !document.querySelector(".vaultui .confirm-overlay"));
+
+    vaultItemsReply = { locked: true, reason: "undecryptable" };
+    return {
+      cleanSheetClosesFreely, dirtySheetAsks, keepKeepsTheTyping, discardClosesSheet,
+      dirtyRowAsksOnCollapse, rowStaysOpenOnKeep, dirtyBlocksTabSwitch, discardAllowsTabSwitch,
+      secondEditorAsks, refusedSecondEditorKeepsRow, windowCloseAsks, windowCloseAnswersMain,
+      reselectingVaultKeepsTheForm,
+      oneDialogForTwoAskers, refusalIsReported, refusedCloseKeepsTheForm,
+      consentClosesTheForm,
+      editedStillAsks, revertAskedNothing, revealAloneIsClean,
+      frozenWhileBusy, thawedAfterBusy,
+      noDialogUnderInert, closeAnsweredAfterSave, noOrphanedDialog,
+    };
+  })();
+
   await win.webContents.executeJavaScript(`window.__domoSelectTab("agents")`);
   await waitFor(win, `document.querySelector("#view .panel.agents")`, "the Agents pane to come back");
 
@@ -726,7 +1740,7 @@ app.whenReady().then(async () => {
   const modalClosed = await win.webContents.executeJavaScript(`(${() => ({
     gone: !document.querySelector(".modal-backdrop"),
     paneLive: document.querySelector("#view")?.hasAttribute("inert") === false,
-    focusBackOnTrigger: (document.activeElement?.textContent ?? "").includes("static credential"),
+    focusBackOnTrigger: (document.activeElement?.textContent ?? "").includes("Connect MCP client"),
   })})()`);
 
   fs.rmSync(probeHome, { recursive: true, force: true });
@@ -787,6 +1801,31 @@ app.whenReady().then(async () => {
     agentsOpen.noInlineForm &&
     agentsOpen.paneInert &&
     agentsOpen.focusInModal &&
+    vaultUnsaved.cleanSheetClosesFreely &&
+    vaultUnsaved.dirtySheetAsks &&
+    vaultUnsaved.keepKeepsTheTyping &&
+    vaultUnsaved.discardClosesSheet &&
+    vaultUnsaved.dirtyRowAsksOnCollapse &&
+    vaultUnsaved.rowStaysOpenOnKeep &&
+    vaultUnsaved.dirtyBlocksTabSwitch &&
+    vaultUnsaved.discardAllowsTabSwitch &&
+    vaultUnsaved.secondEditorAsks &&
+    vaultUnsaved.refusedSecondEditorKeepsRow &&
+    vaultUnsaved.windowCloseAsks &&
+    vaultUnsaved.windowCloseAnswersMain &&
+    vaultUnsaved.reselectingVaultKeepsTheForm &&
+    vaultUnsaved.oneDialogForTwoAskers &&
+    vaultUnsaved.refusalIsReported &&
+    vaultUnsaved.refusedCloseKeepsTheForm &&
+    vaultUnsaved.consentClosesTheForm &&
+    vaultUnsaved.editedStillAsks &&
+    vaultUnsaved.revertAskedNothing &&
+    vaultUnsaved.revealAloneIsClean &&
+    vaultUnsaved.frozenWhileBusy &&
+    vaultUnsaved.thawedAfterBusy &&
+    vaultUnsaved.noDialogUnderInert &&
+    vaultUnsaved.closeAnsweredAfterSave &&
+    vaultUnsaved.noOrphanedDialog &&
     vaultLocked.saysCannotUnlock &&
     vaultLocked.doesNotClaimEmpty &&
     vaultLocked.explains &&
@@ -811,6 +1850,78 @@ app.whenReady().then(async () => {
     connect.clientCardArrow &&
     connect.clientNameNotBold &&
     connect.noConnectTab &&
+    cloudRoster.noCredentialIdentity &&
+    cloudRoster.showsProvider &&
+    cloudRoster.namesHomeLine &&
+    cloudFirstLineNames.roster &&
+    cloudFirstLineNames.editor &&
+    cloudModalFocus.insideModal &&
+    cloudModalFocus.usable &&
+    cloudModalGuard.ignored &&
+    cloudModalGuard.defaultProvider &&
+    cloudModalGuard.makeHomeMovesToZero &&
+    cloudModalGuard.keptOriginal &&
+    cloudCreateWait.disabled &&
+    cloudCreateWait.spinner &&
+    cloudCreateWait.copy &&
+    cloudCreateTransition.modalClosed &&
+    cloudCreateTransition.requestPending &&
+    cloudCreateTransition.pendingRow &&
+    cloudCreateTransition.provider === "exe:life" &&
+    cloudCreateTransition.reconciled &&
+    cloudRowActions.hasMessage &&
+    cloudRowActions.noSettings &&
+    cloudRowActions.hasMenu &&
+    cloudEditGate.present &&
+    cloudEditGate.disabledWhileProvisioning &&
+    cloudEditSave.prefilled &&
+    cloudEditSave.deadWhenUnchanged &&
+    cloudEditSave.liveAfterChange &&
+    cloudEditSave.deadAgain &&
+    cloudEditSave.sentBothChats &&
+    cloudEditSave.homeFirst &&
+    cloudEditSave.updatingRow.modalClosed &&
+    cloudEditSave.updatingRow.updating &&
+    cloudEditSave.updatingRow.spinner &&
+    cloudEditSave.updatingRow.editDisabled &&
+    cloudEditSave.updatingRow.messageDisabled &&
+    cloudEditStray.shown &&
+    cloudEditStray.checked &&
+    cloudEditStray.allServedChecked &&
+    cloudEditStray.saveDeadOnOpen &&
+    cloudEditReordered.allChecked &&
+    cloudEditReordered.deadOnOpen &&
+    cloudEditReordered.liveAfterChange &&
+    cloudEditReordered.deadAgain &&
+    cloudEditReordered.retainedServerOrder &&
+    cloudEditGateUnread.present &&
+    cloudEditGateUnread.disabled &&
+    cloudChatFailure.showsError &&
+    cloudChatFailure.setupDisabled &&
+    cloudChatFailure.notEmptyState &&
+    cloudChatFailure.keepsRoster &&
+    cloudChatFailure.noDestructiveRecovery &&
+    cloudForbidden.rawReasonHidden &&
+    cloudForbidden.setupEnabled &&
+    cloudForbidden.offersReactivation &&
+    cloudForbidden.offersActivationChat &&
+    cloudForbidden.reactivatesThroughSignOut &&
+    cloudForbidden.notEmptyState &&
+    cloudLoadedEmpty.setupEnabled &&
+    cloudLoadedEmpty.noLoadingNote &&
+    cloudLoadedEmpty.noErrorBanner &&
+    cloudZeroChatGuidance.saysTextANumber &&
+    cloudZeroChatGuidance.saysReopen &&
+    cloudZeroChatGuidance.noVerifyButton &&
+    cloudZeroChatGuidance.listsNamedLine &&
+    cloudZeroChatGuidance.listsUnnamedLine &&
+    cloudZeroChatGuidance.opensMessages &&
+    cloudZeroChatGuidance.reopenAsked &&
+    cloudZeroChatGuidance.reopenShowsNewChat &&
+    cloudZeroChatGuidance.chatRowShowsLine &&
+    cloudZeroChatGuidance.dropsHeldLine &&
+    cloudServerDetail.preserved &&
+    cloudServerDetail.notReplaced &&
     settings.hasAccountGroup &&
     settings.showsThisMac &&
     settings.noEndpointRow &&
@@ -841,29 +1952,30 @@ app.whenReady().then(async () => {
     optimisticMode.purposeFieldStillOffered &&
     approvalsReviewer.chipLabels.join(",") ===
       "Ask me every time,AI Reviewer decides,Approve everything,Deny everything" &&
-    approvalsReviewer.inAgentsPane &&
+    approvalsReviewer.inRulesPane &&
     approvalsReviewer.showsStoredPurpose &&
     approvalsReviewer.purposeExampleHasBoundary &&
     approvalsReviewer.labelled &&
+    approvalsReviewer.describesGlobalPrecedence &&
+    approvalsReviewer.noPerAgentSwitch &&
     approvalsReviewer.saysItCanWiden &&
     approvalsReviewer.noOnlyNarrowsClaim &&
     approvalsReviewer.saysItMayApprove &&
     approvalsReviewer.noAdversarialWord &&
     approvalsReviewer.noHintLineTakingItsPlace &&
-    approvalsReviewer.hasSuggestionsCheckbox &&
-    approvalsReviewer.suggestionsDeadInReviewerMode &&
+    approvalsReviewer.noFalseReviewerInputs &&
+    approvalsReviewer.noSuggestionsCheckbox &&
     purposeRoundTrip.stored &&
     purposeRoundTrip.fieldShowsWhatWasStored &&
     approvalsAsk.fieldGone &&
     approvalsAsk.purposeTextGone &&
     approvalsAsk.showsHint &&
-    approvalsAsk.pointsAtTheCheckboxBelow &&
+    approvalsAsk.saysReviewerSuggests &&
+    approvalsAsk.noSuggestionsCheckbox &&
     approvalsAsk.noPointerToSettings &&
-    approvalsAsk.suggestionsLive &&
     approvalsAsk.stillDisclosesPurposeIsSent &&
-    askWithoutReviewer.noDeadInstruction &&
+    askWithoutReviewer.noPromise &&
     askWithoutReviewer.explainsWhy &&
-    askWithoutReviewer.checkboxIsDead &&
     askWithoutReviewer.namesTheRemedy &&
     askWithoutReviewer.stillSaysWhatAskDoes &&
     settings.noApprovalModeGroup &&
@@ -883,7 +1995,7 @@ app.whenReady().then(async () => {
     errors.length === 0;
   console.log(
     "PROBE:" +
-      JSON.stringify({ main, settings, strandedOnDisk, settingsPane, connect, agentsShot, approvalsReviewer, approvalsShot, purposeRoundTrip, approvalsAsk, askWithoutReviewer, approvalsShotAsk, agentsOpen, modalClosed, vaultLocked, vaultShot, agentsOpenShot, staleSettingsPane, optimisticMode, settingsShot, approval, reviewerNote, consoleErrors: errors, ok }),
+      JSON.stringify({ main, settings, strandedOnDisk, settingsPane, connect, cloudRoster, cloudFirstLineNames, cloudModalFocus, cloudModalGuard, cloudCreateWait, cloudCreateTransition, cloudRowActions, cloudEditGate, cloudEditSave, cloudEditStray, cloudEditReordered, cloudEditGateUnread, cloudChatFailure, cloudForbidden, cloudLoadedEmpty, cloudZeroChatGuidance, cloudServerDetail, agentsShot, approvalsReviewer, approvalsShot, purposeRoundTrip, approvalsAsk, askWithoutReviewer, approvalsShotAsk, agentsOpen, modalClosed, vaultLocked, vaultUnsaved, vaultShot, agentsOpenShot, staleSettingsPane, optimisticMode, settingsShot, approval, reviewerNote, consoleErrors: errors, ok }),
   );
   app.exit(ok ? 0 : 1);
 }).catch((err) => {

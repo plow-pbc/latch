@@ -14,15 +14,20 @@ decisions and their rationale; `CLAUDE.md` carries the invariants a change must
 not break. Read the **base-branch** copies of both before judging an
 architectural tradeoff.
 
-**Stage:** pre-PMF, and mid-rebuild. The old in-repo broker has been removed; a
-Mac now dials *out* to the Plow relay, which exists — see `CLAUDE.md`
-§ Layout, "Being rebuilt", for where it lives and what is still verified by hand.
+**Stage:** pre-PMF; the broker is gone and a Mac dials out to the relay, which
+exists — see `CLAUDE.md` § Layout, "Rebuilt: a Mac dials out", for where it
+lives and what is still verified by hand.
 
 **Agents do reach a Mac through this app today.** This paragraph said the
 opposite for as long as the relay was unbuilt, and that sentence was
 load-bearing: it is what tells you whether a reachability-gated finding is
-theoretical or live. It is live. A finding that depends on a remote agent
-actually reaching this Mac gets graded as reachable, not hypothetical.
+theoretical or live. It is live.
+
+That changes whether a finding is REAL. It does not change how much defensive
+code one earns. A reachable path still has to clear the carve-out below to be
+worth a branch, and everything outside that list is still judged at
+single-digit-users. "An agent could reach this" is the start of the argument,
+not the end of it.
 
 **Userbase:** single-digit, internal. One engineer plus a handful of alpha
 machines. The signed/notarized DMG and the S3 update feed exist and work, but
@@ -45,8 +50,11 @@ they serve that same group — a packaged release is not evidence of scale.
   every browser on this Mac is the owner's (`CLAUDE.md`, and
   `BrowserSessions.validate()`). Treat handle-authority as intended, not as a
   cross-agent gap.
-- **Nothing may block past the 20s relay call budget** — that is why file ops
-  are async and size-capped, and why slow tools return a deferred handle.
+- **Nothing may block past the relay call budget** — `RELAY_TIMEOUT_MS` lives
+  with the rest of the cross-repo contract in `@domo/relay-client`'s `wire.ts`;
+  `CALL_BUDGET_MS` in `@domo/mcp-server` is what this Mac allows itself inside
+  it. That is why file ops are async and size-capped, and why slow tools return
+  a deferred handle.
 - The renderer is sandboxed (`contextIsolation` on, `nodeIntegration` off,
   strict CSP, no remote content) and reaches main only through `preload.cts`.
 - Everything honors `DOMO_HOME`, so tests use throwaway roots.
@@ -54,10 +62,11 @@ they serve that same group — a packaged release is not evidence of scale.
 **Accepted deferrals — known, recorded, not new findings.** Re-raising one of
 these costs a review slot and teaches the author to skim:
 - **The sandbox is broader than the tool description implies.** Home is readable
-  and five housekeeping dirs are writable on every invocation, before declared
-  paths are considered. This is documented in `docs/SANDBOX-BOUNDARY.md` and
-  owned. Flag it only when a diff *widens* it further or re-advertises the tight
-  bound the code does not deliver.
+  and five housekeeping dirs are writable, before declared paths are considered
+  — except a reapable run (no declared writes, no network, no apple_events),
+  which gets none of those writes; `docs/SANDBOX-BOUNDARY.md` §1 owns the whole
+  rule, exception included. Flag it only when a diff *widens* it further or re-advertises the
+  tight bound the code does not deliver.
 - **The device private key is a plaintext seed in a `0600` file.** No Keychain,
   no `safeStorage`. It is on the roadmap (DESIGN.md §12), not an oversight.
 - **There is no automated live-stack test.** The stand-in relay was deleted
@@ -100,6 +109,16 @@ the relay credential · canonical JSON and the signing bytes · the renderer
 boundary. Keep the bar high there and low everywhere else. The tell for which
 side you are on: does the branch enforce a bound a human approved, or does it
 manage a resource nobody has run out of?
+
+**Trusted caller vs untrusted data.** The blocking cases above are about
+*untrusted data* — goal text, and the message/web/file *content* an agent reads —
+influencing a capability, profile, or action. They do **not** cover a finding
+that the *caller's own* structured, human-approved argument (a participant handle
+or chat GUID the agent chose, sitting in the `argv` the owner's policy authorizes
+(and a human sees in Ask mode))
+is interpolated rather than passed positionally. Latch treats the calling agent
+as trusted (`SECURITY.md`); such caller-hardening is welcome when it costs the
+user nothing, but it is **not `[blocking]`** and is never traded against UX.
 
 | Scope creep — DON'T | Worth blocking on — DO |
 |---|---|

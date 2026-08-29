@@ -8,7 +8,9 @@ This document exists because our layer advertised an enforcement property we do 
 deliver. We have corrected our own claims. The underlying behaviour is yours to decide about, and we
 make no recommendation about it here.
 
-Everything below was verified against the code at commit `28da7a7`, not inferred from documentation.
+Everything below was verified against the code in PR #1 (merged as `3743135`), not inferred from
+documentation — except §1's two profile transcripts, regenerated in PR #176, which added the
+reapable exception.
 
 ---
 
@@ -28,7 +30,7 @@ exactly the approved capabilities**".
 
 `packages/device-core/src/executor.ts`:
 
-- **`:72–76`** — the user's entire home directory is made readable on every invocation, before any
+- **the broad home read** — the user's entire home directory is made readable on every invocation, before any
   declared path is considered:
 
   ```
@@ -39,14 +41,23 @@ exactly the approved capabilities**".
   The comment there gives the reason: *"Broad READ of the user's home so tools installed under it and
   their configs/libraries resolve."*
 
-- **`:77–86`** — five directories under home are made **writable** on every invocation, again
-  regardless of what was declared:
+- **the `housekeeping` constant** — five directories under home are made **writable**, regardless of what was
+  declared:
 
   ```
   const housekeeping = ["Library/Caches", ".cache", ".config", ".local/state", ".npm"]
   ```
 
-- **`:87–89`** — the agent's declared `read_paths` are appended *after* the above. They can only
+  With one exception, and it is the only place a declaration narrows this profile rather than
+  widening it: a **reapable** run — one that declared no write paths, no network, and no
+  `apple_events`, and so may be killed for going silent (the reap window in `executor.ts`) — does
+  not get them. A run that can be shot mid-write must have nowhere persistent to write; its scratch,
+  which the reaper deletes with it, stays writable, and the broad home grant above still covers
+  reading those five wherever they resolve under home. (`apple_events` lifts reapability for the
+  same reason writes and network do: an Apple event is a side effect — a sent message — that a
+  15-minute kill must not truncate, so such a run is never reaped and keeps the housekeeping writes.)
+
+- **the declared-read loop** — the agent's declared `read_paths` are appended *after* the above. They can only
   ever widen an already-broad grant; they never narrow it.
 
 So `read_paths` is not a bound on reads. It is a declaration that is shown to the human, recorded in
@@ -54,21 +65,29 @@ the audit log, and used to widen the profile beyond the default region.
 
 ### Verified, not assumed
 
-Generated profile for `readPaths: ["/tmp/declared"]`, `writePaths: []`, home overridden to
-`/Users/example` — every line mentioning home:
+Generated profile for `readPaths: ["/tmp/declared"]`, `writePaths: []`, `network: true`, home
+overridden to `/Users/example` — every line mentioning home. Network approved, so this run is not
+reapable and keeps the housekeeping writes:
 
 ```
-(allow file-read*  (subpath "/Users/example"))
+(allow file-read* (subpath "/Users/example"))
 (allow file-write* (subpath "/Users/example/Library/Caches"))
-(allow file-read*  (subpath "/Users/example/Library/Caches"))
+(allow file-read* (subpath "/Users/example/Library/Caches"))
 (allow file-write* (subpath "/Users/example/.cache"))
-(allow file-read*  (subpath "/Users/example/.cache"))
+(allow file-read* (subpath "/Users/example/.cache"))
 (allow file-write* (subpath "/Users/example/.config"))
-(allow file-read*  (subpath "/Users/example/.config"))
+(allow file-read* (subpath "/Users/example/.config"))
 (allow file-write* (subpath "/Users/example/.local/state"))
-(allow file-read*  (subpath "/Users/example/.local/state"))
+(allow file-read* (subpath "/Users/example/.local/state"))
 (allow file-write* (subpath "/Users/example/.npm"))
-(allow file-read*  (subpath "/Users/example/.npm"))
+(allow file-read* (subpath "/Users/example/.npm"))
+```
+
+The same inputs with `network: false` are the exception above — reapable, so the five grants are
+gone entirely (reading them is covered as §1 describes):
+
+```
+(allow file-read* (subpath "/Users/example"))
 ```
 
 And live, through the real `Executor` with **`readPaths: []`** — no declared read paths at all:
@@ -91,13 +110,13 @@ not separately protected by TCC. That includes, on a typical Mac:
 - shell history (`~/.zsh_history`), which routinely contains secrets pasted on a command line
 - browser profile directories, subject to TCC
 - `~/.config` and `~/.local/state`, which are additionally **writable** — as are `~/.cache`,
-  `~/Library/Caches` and `~/.npm`
+  `~/Library/Caches` and `~/.npm`, except for a reapable run, which gets none of those writes (§1)
 
 The approval dialog shows the human the declared capability set. A command declaring
 `read_paths: ["~/Documents/report"]` is displayed as reading that path, and can in fact read every
 item in the list above. The human is not being shown a bound; they are being shown a declaration.
 
-Network is denied unless approved (`executor.ts:90–95`), so the default exfiltration route is
+Network is denied unless approved (the `args.network` branch of `SandboxProfile.generate`), so the default exfiltration route is
 closed. That is a mitigation, not the boundary: a command with network approved for a legitimate
 reason has both halves.
 
@@ -180,9 +199,9 @@ How fair the list is depends on which capability, and it is only fully fair for 
 |---|---|
 | `Read: …` (any) | **No.** Per §1 the profile permits the whole home directory regardless of what was declared. |
 | `Write: …` on a **`write_file`** call | **Yes.** `FileOps.write` canonicalises and scope-checks against the approved paths, and refuses outside them. |
-| `Write: …` on a **`run_command`** call | **No.** `executor.ts:77-85` additionally grants writes to `Library/Caches`, `.cache`, `.config`, `.local/state` and `.npm` under home, on every invocation, whatever `write_paths` says. |
+| `Write: …` on a **`run_command`** call | **No.** The profile additionally grants writes to the five housekeeping directories under home, whatever `write_paths` says — except for a reapable run, which gets none of them. §1 states that rule; this row does not restate it. |
 | `Run: …` | Yes, in that the argv shown is the argv executed. |
-| `Network: denied` | Yes — `executor.ts:90-95`. |
+| `Network: denied` | Yes — the `args.network` branch of `SandboxProfile.generate`. |
 
 So a human approving only `Write: /tmp/report` on a command is not being shown the full writable set
 either, and a human approving any `Read:` is being shown something that is not the bound at all.

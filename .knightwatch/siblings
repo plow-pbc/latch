@@ -1,0 +1,9 @@
+# Repos a reviewer of THIS repo may search and cite, materialized under
+# .siblings/<owner>/<repo>. Declared explicitly: with no file, the reviewer's
+# fallback is "all REPOS slugs minus self", and the container manifest ships
+# REPOS=() — so an undeclared latch review sees no siblings at all.
+#
+# plow owns the relay latch dials out to and the agents that consume latch's
+# MCP tools; a latch reviewer that cannot see it reviews the device half of a
+# cross-repo contract blind.
+plow-pbc/plow

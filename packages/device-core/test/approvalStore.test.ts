@@ -287,3 +287,28 @@ describe("failing closed does not depend on the timer (review finding 2)", () =>
     expect(await pending).toEqual({ decision: "allow_once", source: "human" });
   });
 });
+
+/**
+ * The store sits between `PolicyEngine` and whoever really decides, so a veto
+ * it does not forward is a veto that never happens in production — the engine
+ * asks the store, not the delegate the app installed.
+ */
+describe("the stored-rule veto passes through", () => {
+  it("forwards the inner delegate's answer, both ways", async () => {
+    const inner = (allow: boolean): PolicyDelegate => ({
+      decideIntent: async () => "deny" as const,
+      mayGrantFromStoredRule: () => allow,
+    });
+
+    const no = new ApprovalStore(tempDir(), inner(false));
+    expect(await no.mayGrantFromStoredRule(intentFor())).toBe(false);
+
+    const yes = new ApprovalStore(tempDir(), inner(true));
+    expect(await yes.mayGrantFromStoredRule(intentFor())).toBe(true);
+  });
+
+  it("keeps the plain behaviour when the inner delegate has no veto", async () => {
+    const store = new ApprovalStore(tempDir(), silent);
+    expect(await store.mayGrantFromStoredRule(intentFor())).toBe(true);
+  });
+});

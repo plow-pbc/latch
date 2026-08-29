@@ -127,6 +127,11 @@
 .vaultui .inp { flex: 1; min-width: 0; background: none; border: 0; outline: none; color: var(--fg);
     font-family: var(--sans); font-size: 13px; padding: 9px 0; letter-spacing: .01em; line-height: 1.4; }
 .vaultui .inp::placeholder { color: var(--faint); }
+/* A stored secret's bullets are a reading of the item, not a hint about what to
+   type, so they carry the weight of a value. They are still a placeholder —
+   the box is empty, and the first keystroke clears them, which is exactly what
+   typing over a stored secret does. */
+.vaultui .field.held .inp::placeholder { color: var(--fg); }
 .vaultui .field.secret .inp { font-family: var(--mono); font-size: 12.5px; letter-spacing: .04em; }
 .vaultui textarea.inp { resize: vertical; min-height: 68px; line-height: 1.6; font-size: 12.5px; padding-top: 10px; }
 .vaultui .gen-hint { font-size: 11px; font-weight: 300; color: var(--muted); margin: 8px 0 0; line-height: 1.5; display: inline-flex; align-items: center; gap: 6px; cursor: pointer; transition: color .14s; }
@@ -135,6 +140,8 @@
 .vaultui .add-link { display: inline-flex; align-items: center; gap: 6px; margin-top: 12px; font-size: 12px; font-weight: 600; color: var(--blue-fg); cursor: pointer; background: none; border: 0; padding: 0; transition: color .14s; }
 .vaultui .add-link:hover { color: var(--blue-fg); }
 .vaultui .add-link svg { width: 13px; height: 13px; }
+/* Nothing to remove, when there is only one site left to remove. */
+.vaultui .url-rows > .field:only-child .drop { display: none; }
 .vaultui .mini { flex: none; width: 28px; height: 28px; border-radius: 7px; border: 0; background: none; cursor: pointer;
     color: var(--muted); display: grid; place-items: center; transition: background .13s, color .13s; }
 .vaultui .mini svg { width: 14px; height: 14px; }
@@ -226,3 +233,11 @@
 .vaultui .sheet-sub { font-size: 12.5px; font-weight: 300; color: var(--muted); margin: 0 0 16px; }
 .vaultui .confirm-overlay { z-index: 90; }
 .vaultui .confirm-p { font-size: 12.5px; font-weight: 300; color: var(--muted); line-height: 1.55; margin: 9px 0 20px; }
+
+/* The code an authenticator key is showing, under the box it was pasted into.
+   Digits in the mono face, because they are read off the screen and typed. */
+.vaultui .totp-read:empty { display: none; }
+.vaultui .totp-read { display: flex; align-items: baseline; gap: 8px; margin-top: 7px; font-size: 11.5px; color: var(--muted); }
+.vaultui .totp-read .totp-code { font-family: var(--mono); font-size: 16px; font-weight: 600; letter-spacing: .12em; color: var(--fg); }
+.vaultui .totp-read .totp-left { font-family: var(--mono); font-size: 10px; letter-spacing: .08em; }
+.vaultui .totp-read.bad { color: var(--red-fg); }

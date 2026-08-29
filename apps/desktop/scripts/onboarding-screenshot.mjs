@@ -37,6 +37,7 @@ const base = {
   busy: false,
   codeExpiresAt: null,
   activation: null,
+  chat: null,
   activationStale: false,
   accountUid: "u_7Qk2p9",
   mcpUrl: MCP_URL,
@@ -58,6 +59,9 @@ const SCREENS = [
       // a 200, no SMS, and total silence on both channels.
       `Plow Activate: ${DISPLAY_CODE}`,
       SEND_TO,
+      // The line is assigned per activation; the wrong Plow number activates
+      // and silently provisions no chat.
+      "Plow's activation number",
       // Whoever texts the code gets the account, and the server cannot tell.
       "This code is a credential",
       "don't share it or post a screenshot",
@@ -65,6 +69,23 @@ const SCREENS = [
       "Use a phone code instead",
     ],
     // The blue button answers Return: nothing to type here, so it holds focus.
+    expectFocus: "Open Messages",
+  },
+  {
+    name: "signed-out-revoke-warning",
+    state: {
+      ...newUser,
+      step: "activate",
+      phone: "",
+      activation: ACTIVATION,
+      message:
+        "Signed out on this Mac. Plow could not be reached to revoke the session — revoke it in Plow's account settings.",
+    },
+    expect: [
+      "Signed out on this Mac",
+      "Plow could not be reached to revoke the session",
+      "revoke it in Plow's account settings",
+    ],
     expectFocus: "Open Messages",
   },
   {
@@ -76,9 +97,9 @@ const SCREENS = [
       DISPLAY_CODE,
       `Plow Activate: ${DISPLAY_CODE}`,
       "Listening for 4:",
-      "Get a New Code",
+      "Try Again",
     ],
-    expectFocus: "Get a New Code",
+    expectFocus: "Try Again",
   },
   {
     name: "waiting-gave-up",
@@ -89,12 +110,12 @@ const SCREENS = [
       activation: ACTIVATION,
       activationStale: true,
       message:
-        "We haven't heard from your phone. Send the message exactly as shown — it has to start with “Plow Activate:” — or get a new code.",
+        "We haven't heard from your phone. Send the message exactly as shown — it has to start with “Plow Activate:” — or try again.",
     },
     // The one failure the user gets no other signal about: a wrong prefix is
     // answered with silence on both channels.
-    expect: ["Still nothing", "it has to start with", "Plow Activate:", "Get a New Code"],
-    expectFocus: "Get a New Code",
+    expect: ["Not signed in yet", "it has to start with", "Plow Activate:", "Try Again"],
+    expectFocus: "Try Again",
   },
   {
     name: "phone",
@@ -122,8 +143,21 @@ const SCREENS = [
     // main window exists for the first time. Connecting an MCP client is NOT
     // here — it is per-client and repeatable, so it lives in the main window.
     name: "connected",
-    state: { ...base, step: "connected" },
-    expect: ["This Mac is connected", "u_7Qk2p9", "under Agents", "Continue"],
+    state: {
+      ...base,
+      step: "connected",
+      chat: { uid: "cht_D7hfWNK", label: "+1 555 987 6543, +1 555 123 0000" },
+    },
+    expect: [
+      "This Mac is connected",
+      "u_7Qk2p9",
+      "under Agents",
+      // The chat activation created. A cloud agent has nowhere to live without
+      // it, so setup ends by showing it exists.
+      "Your chat",
+      "+1 555 987 6543, +1 555 123 0000",
+      "Continue",
+    ],
     expectFocus: "Continue",
   },
 ];

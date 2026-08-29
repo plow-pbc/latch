@@ -1,0 +1,43 @@
+/**
+ * Which gog groups this Mac reaches: the canonical names, gog's own aliases for
+ * them, and the union the check reads.
+ *
+ * Its own module because both `registry.ts` and the skill it publishes need
+ * them, and importing the registry from the skill it carries is a cycle.
+ */
+
+/**
+ * The canonical names, and the ONE source of the belt's scope bound.
+ *
+ * Separate from the aliases because an alias sent to `--enable-commands` would
+ * ask gog to resolve its own alias twice.
+ */
+export const GOG_CANONICAL = ["gmail", "calendar"] as const;
+
+/**
+ * gog's own alias spellings — `gog gmail (mail,email)`, `gog calendar (cal)`
+ * — each mapped to its canonical group.
+ *
+ * Accepted by the check, never sent to the belt: gog resolves them itself.
+ * Without them this refused Gmail for being called `mail`. The mapping (not
+ * just the set) exists for `plow-gog`, which classifies a command by its
+ * canonical group while passing the agent's own spelling through.
+ */
+export const GOG_ALIAS_OF: Readonly<Record<string, (typeof GOG_CANONICAL)[number]>> = {
+  mail: "gmail",
+  email: "gmail",
+  cal: "calendar",
+};
+
+export const GOG_ALIASES: readonly string[] = Object.keys(GOG_ALIAS_OF);
+
+/**
+ * Every spelling this Mac accepts as a group — the check that decides whether a
+ * command is refused at all. What each refused shape would otherwise cost is in
+ * `refuse`'s doc; the per-version verdicts behind the bound are step 5 of the
+ * pin-bump checklist in `scripts/vendored-providers.mjs`.
+ */
+export const GOG_GROUPS: ReadonlySet<string> = new Set<string>([
+  ...GOG_CANONICAL,
+  ...GOG_ALIASES,
+]);

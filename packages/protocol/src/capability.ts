@@ -13,6 +13,7 @@ export type CapabilityKind =
   | "fs.write"
   | "process.exec"
   | "network"
+  | "apple_events"
   | "tool"
   | "browser"
   | "credential";
@@ -22,10 +23,10 @@ export interface Capability {
   paths?: string[]; // fs.read / fs.write
   argv?: string[]; // process.exec (argv[0] is the executable)
   cwd?: string; // process.exec
-  allowed?: boolean; // network
+  allowed?: boolean; // network, apple_events
   tool?: string; // tool
   origins?: string[]; // browser: host patterns ("dominos.com", "*.dominos.com")
-  access?: "metadata" | "fill"; // credential: list names/labels vs type values into pages
+  access?: "fill"; // credential: type values into pages
   items?: string[]; // credential(fill): vault item ids
   reason?: string; // display-only justification
 }
@@ -57,14 +58,16 @@ export function capabilityDisplay(c: Capability): string {
     }
     case "network":
       return c.allowed ? "Network: allowed" : "Network: denied";
+    case "apple_events":
+      return c.allowed
+        ? "Apple events: may control this Mac's apps"
+        : "Apple events: denied";
     case "tool":
       return `Tool: ${c.tool ?? "?"}`;
     case "browser":
       return `Browse: ${(c.origins ?? []).join(", ")}`;
     case "credential":
-      return c.access === "metadata"
-        ? "Credentials: list vault item names & field labels (no secret values)"
-        : `Credentials: fill ${(c.items ?? []).join(", ")} into approved sites (typed on this Mac; the agent can see the page it types into)`;
+      return `Credentials: fill ${(c.items ?? []).join(", ")} into approved sites (typed on this Mac; the agent can see the page it types into)`;
   }
 }
 

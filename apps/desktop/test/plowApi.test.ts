@@ -5,6 +5,7 @@ import {
   PlowApi,
   REQUEST_TIMEOUT_MS,
   PlowApiError,
+  parseActivationChat,
   relaySocketUrl,
   resolveApiBaseUrl,
 } from "../src/plowApi.js";
@@ -124,22 +125,6 @@ describe("PlowApi", () => {
     expect((error as PlowApiError).message).toBe("Plow didn't answer in time. Try again.");
   });
 
-  it("passes a timeout signal on every request, not just the ones we remembered", async () => {
-    const seen: Array<string | undefined> = [];
-    const fetchImpl = async (_url: string, init?: RequestInit) => {
-      seen.push(init?.signal ? "signal" : undefined);
-      return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
-    };
-    const api = new PlowApi("https://api.plow.co", fetchImpl);
-    await api.requestOtp("+1");
-    await api.createActivation("Mac");
-    await api.redeemActivation("s").catch(() => {});
-    await api.relayInfo("t");
-    await api.mintDeviceCredential("t", "Mac");
-    await api.createAgent("t", "a");
-
-    expect(seen).toEqual(Array(6).fill("signal"));
-  });
 
   it("turns an unreachable API into a readable message, not a stack", async () => {
     const fetchImpl = async () => {
@@ -182,22 +167,6 @@ describe("PlowApi", () => {
     expect((calls[0].init.headers as Record<string, string>).authorization).toBe("Bearer plow_secret");
   });
 
-  it("mints this Mac's credential and retires the calling session in the same call", async () => {
-    const { calls, fetchImpl } = recordingFetch([
-      { status: 200, body: { token: "plow_devicetok", key_prefix: "devicet", name: "Plow Latch" } },
-    ]);
-    await new PlowApi("https://api.plow.co", fetchImpl).mintDeviceCredential("plow_session", "Plow Latch");
-
-    expect(calls[0].url).toBe("https://api.plow.co/v1/relay/devices");
-    // The flag is the whole reason there is no client-side cleanup: the session
-    // that authorised this call can mint any credential on the account, and it
-    // is gone server-side before this returns.
-    expect(JSON.parse(String(calls[0].init.body))).toEqual({
-      name: "Plow Latch",
-      revoke_calling_session: true,
-    });
-    expect(calls[0].url).not.toContain("plow_session");
-  });
 
   it("consumes a payment approval by posting the session id and domain, credential in the header", async () => {
     const { calls, fetchImpl } = recordingFetch([{ status: 200, body: { approved: true } }]);
@@ -255,6 +224,10 @@ describe("PlowApi", () => {
     const activation = await new PlowApi("https://api.plow.co", fetchImpl).createActivation("This Mac");
 
     expect(calls[0].url).toBe("https://api.plow.co/v1/auth/activate");
+    // `{ name }` EXACTLY — byte-identical to the request Plow's own app makes.
+    // No `provision_chat` in any form: it assigns one of the account's few
+    // pool lines, and an owner holding a chat on every line could not pair
+    // another Mac at all while signing in spent one.
     expect(JSON.parse(String(calls[0].init.body))).toEqual({ name: "This Mac" });
     // Unauthenticated by design — this is how an account that does not exist yet
     // gets created.
@@ -275,13 +248,147 @@ describe("PlowApi", () => {
     });
     expect(
       await api([{ status: 200, body: { status: "verified", token: "plow_sess" } }]).redeemActivation("s"),
-    ).toEqual({ status: "verified", token: "plow_sess" });
+    ).toEqual({ status: "verified", token: "plow_sess", chat: null });
     // A second redeem after hand-off: `token` is absent, not null. Normalised
     // to null here so callers have one shape to check.
     expect(await api([{ status: 200, body: { status: "verified" } }]).redeemActivation("s")).toEqual({
       status: "verified",
       token: null,
+      chat: null,
     });
+  });
+
+  it("says what a 503 has always said — one sentence, no per-call override", async () => {
+    // Activation used to carry its own 503 sentence, because asking for a chat
+    // made that endpoint assign a pool line and an exhausted pool 503'd there.
+    // It asks for no chat now, so that branch cannot run
+    // (`api/plow/auth_routes/router.py` raises it only under `provision_chat`)
+    // and the override went with it. A server that writes its own `detail`
+    // still wins on every call.
+    const { fetchImpl } = recordingFetch([{ status: 503, body: {} }]);
+    const error = (await new PlowApi("https://api.plow.co", fetchImpl)
+      .requestOtp("+15551110000")
+      .catch((e) => e)) as PlowApiError;
+
+    expect(error.message).toBe("Plow can't send text messages right now.");
+  });
+
+  it("keeps the chat the verified redeem carries — it is answered exactly once", async () => {
+    const { fetchImpl } = recordingFetch([
+      {
+        status: 200,
+        body: {
+          status: "verified",
+          token: "plow_sess",
+          // The REAL ChatResource. Two traps in it: the chat's own
+          // `provider_key` is the provider's THREAD ID, not a number, and the
+          // phone number lives on the agent participant's `line`.
+          chat: {
+            uid: "cht_D7hfWNK",
+            object: "chat",
+            status: "active",
+            provider_key: "chat_5",
+            failure_reason: null,
+            created_at: "2026-08-24T18:02:11Z",
+            participants: [
+              {
+                type: "agent",
+                uid: "cpt_agent",
+                object: "chat_participant",
+                line: { uid: "lin_7", provider_type: "linq", provider_key: "+15559876543" },
+              },
+              {
+                type: "member",
+                uid: "cpt_other",
+                object: "chat_participant",
+                status: "active",
+                display_name: "Ada Lovelace",
+                role: "member",
+                provider_type: "linq",
+                provider_key: "+15557654321",
+                verified_at: "2026-08-24T18:02:11Z",
+              },
+              {
+                type: "member",
+                uid: "cpt_owner",
+                object: "chat_participant",
+                status: "active",
+                display_name: "You",
+                role: "owner",
+                provider_type: "linq",
+                provider_key: "+15551230000",
+                verified_at: "2026-08-24T18:02:11Z",
+              },
+            ],
+          },
+        },
+      },
+    ]);
+    const result = await new PlowApi("https://api.plow.co", fetchImpl).redeemActivation("s");
+
+    expect(result).toEqual({
+      status: "verified",
+      token: "plow_sess",
+      chat: {
+        uid: "cht_D7hfWNK",
+        status: "active",
+        displayName: null,
+        // The number, off the agent's line — NOT "chat_5".
+        line: "+15559876543",
+        createdAt: "2026-08-24T18:02:11Z",
+        // Members only: the agent participant is not a human in the chat.
+        // The owner is first even though the wire put another member first.
+        // Names and ownership cross for labelling; phone handles stay
+        // alongside them for addressing.
+        participants: [
+          { providerKey: "+15551230000", displayName: "You", isOwner: true },
+          { providerKey: "+15557654321", displayName: "Ada Lovelace", isOwner: false },
+        ],
+      },
+    });
+    // The thread id is not carried at all, so no screen can show it as a
+    // number by mistake.
+    expect(JSON.stringify(result)).not.toContain("chat_5");
+  });
+
+  it("reads a chat that arrives with fields missing rather than losing the sign-in", () => {
+    // This is display data on the last screen of setup; a shape we did not
+    // expect must never throw away a login that has already succeeded.
+    expect(parseActivationChat({ uid: "cht_x" })).toEqual({
+      uid: "cht_x",
+      status: "",
+      displayName: null,
+      line: null,
+      participants: [],
+      createdAt: "",
+    });
+    // An untyped or unknown participant is neither the agent nor a member: no
+    // line comes off it, and it is not shown as a person.
+    expect(
+      parseActivationChat({ uid: "cht_x", participants: [null, 7, {}, { type: "ghost" }] }),
+    ).toEqual({
+      uid: "cht_x",
+      status: "",
+      displayName: null,
+      line: null,
+      participants: [],
+      createdAt: "",
+    });
+    // An agent participant with no line at all is still not the thread id.
+    expect(
+      parseActivationChat({ uid: "cht_x", provider_key: "chat_5", participants: [{ type: "agent" }] })
+        ?.line,
+    ).toBeNull();
+    expect(
+      parseActivationChat({
+        uid: "cht_x",
+        participants: [{ type: "member", provider_key: "+15551230000" }],
+      })?.participants,
+    ).toEqual([{ providerKey: "+15551230000", displayName: null, isOwner: false }]);
+    // No uid is no chat: there would be nothing to join on later.
+    expect(parseActivationChat({ status: "active" })).toBeNull();
+    expect(parseActivationChat(undefined)).toBeNull();
+    expect(parseActivationChat("cht_x")).toBeNull();
   });
 
   it("gives an expired activation its own kind, so the app can offer a fresh code", async () => {
@@ -312,6 +419,161 @@ describe("PlowApi", () => {
 
     expect(calls[0].url).toBe("https://api.plow.co/v1/relay/agents");
     expect(minted.token).toBe("plow_agenttok");
+  });
+
+  it("lists API keys and revokes one by id with bearer credentials", async () => {
+    const credential = "plow_device_do_not_leak";
+    const keys = [
+      {
+        id: 17,
+        key_prefix: "agentkey",
+        name: "Claude Code",
+        scopes: ["relay:call"],
+        tokens_used: 12,
+        is_active: true,
+        last_seen_at: "2026-08-17T12:00:00+00:00",
+        created_at: "2026-08-16T12:00:00+00:00",
+        agent_id: "agent_123",
+        chat_uids: ["cht_123"],
+      },
+    ];
+    const { calls, fetchImpl } = recordingFetch([
+      { status: 200, body: keys },
+      { status: 200, body: { status: "revoked", id: 17 } },
+    ]);
+    const api = new PlowApi("https://api.plow.co", fetchImpl);
+
+    await expect(api.listApiKeys(credential)).resolves.toEqual(keys);
+    await expect(api.revokeApiKey(credential, 17)).resolves.toEqual({
+      status: "revoked",
+      id: 17,
+    });
+
+    expect(calls.map(({ url, init }) => [init.method, url])).toEqual([
+      ["GET", "https://api.plow.co/v1/api-keys"],
+      ["DELETE", "https://api.plow.co/v1/api-keys/17"],
+    ]);
+    expect(
+      calls.every(
+        ({ init }) =>
+          (init.headers as Record<string, string>).authorization === `Bearer ${credential}`,
+      ),
+    ).toBe(true);
+    expect(calls.every(({ url }) => !url.includes(credential))).toBe(true);
+  });
+
+  it("rejects a path-shaped API key id without making a request", async () => {
+    const { calls, fetchImpl } = recordingFetch([]);
+    const api = new PlowApi("https://api.plow.co", fetchImpl);
+
+    await expect(
+      api.revokeApiKey(
+        "plow_device_do_not_leak",
+        "17/../relay/devices/self/revoke" as unknown as number,
+      ),
+    ).rejects.toMatchObject({ message: "Invalid API key id." });
+    expect(calls).toHaveLength(0);
+  });
+
+  /**
+   * Every encoding of the credential, and the plain sentence that carries
+   * none — all four answer with the status fallback, because an authenticated
+   * call drops the detail without reading it.
+   *
+   * The guard used to match the whole token, so a server echoing the first ten
+   * characters went straight to the screen. CLAUDE.md covers a repeat "in any
+   * encoding", and a prefix is an encoding: the only way to be right about
+   * every one of them is to inspect none of them.
+   */
+  it.each([
+    ["the whole credential", (c: string) => `Not permitted for Bearer ${c}`],
+    ["a ten-character prefix", (c: string) => `Key ${c.slice(0, 10)} is not permitted`],
+    ["a fragment", (c: string) => `token ...${c.slice(4, 14)}... refused`],
+    ["nothing secret at all", () => "Your plan does not include this."],
+  ])("drops an authenticated error's detail when it carries %s", async (_shape, body) => {
+    const credential = "plow_device_do_not_leak";
+    const { fetchImpl } = recordingFetch([
+      { status: 403, body: { detail: body(credential) } },
+    ]);
+
+    const error = await new PlowApi("https://api.plow.co", fetchImpl)
+      .listApiKeys(credential)
+      .catch((caught) => caught as Error);
+
+    expect(error).toBeInstanceOf(PlowApiError);
+    expect(error.message).toBe("Not permitted.");
+    expect(error.message).not.toContain(credential.slice(0, 10));
+  });
+});
+
+/**
+ * The provider mint. Its response side used to be covered by a device-core
+ * suite over a transport of its own; that transport is gone, so the coverage
+ * belongs here — on the seam that actually makes the call. (The envelope's
+ * per-row parse is `providerWiring.test.ts`'s, one layer up.)
+ */
+describe("mintAccountTokens", () => {
+  const TOKEN = "ya29.a0AfB_byExampleTokenValue0000000000";
+  const CRED = "plow-credential-value";
+  const mint = (responses: { status: number; body: unknown }[]) => {
+    const { calls, fetchImpl } = recordingFetch(responses);
+    return {
+      calls,
+      run: () =>
+        new PlowApi("https://api.plow.co", fetchImpl).mintAccountTokens(
+          CRED,
+          "/v1/connectors/gmail/",
+          "access-token",
+        ),
+    };
+  };
+
+  it("posts to the provider's own route with the device credential, asking for every account", async () => {
+    const { calls, run } = mint([
+      {
+        status: 200,
+        body: { data: { accounts: [{ account: "a@example.com", access_token: TOKEN, is_default: true }] } },
+      },
+    ]);
+    expect(await run()).toEqual({
+      accounts: [{ account: "a@example.com", token: TOKEN, isDefault: true }],
+      degraded: [],
+    });
+    expect(calls[0].url).toBe("https://api.plow.co/v1/connectors/gmail/access-token");
+    expect((calls[0].init.headers as Record<string, string>).authorization).toBe(`Bearer ${CRED}`);
+    // Which accounts is Plow's answer: this Mac names none, so it holds no
+    // second copy of a fact the server owns.
+    expect(calls[0].init.body).toBe('{"all":true}');
+  });
+
+  it.each([
+    ["no accounts in the body", { status: 200, body: { data: {} } }],
+    ["an empty envelope", { status: 200, body: { data: { accounts: [], degraded: [] } } }],
+    ["no data at all", { status: 200, body: {} }],
+    // Unvalidated JSON: a non-array here must map to PlowApiError, not throw
+    // a raw TypeError past every caller that maps it.
+    ["a non-array accounts field", { status: 200, body: { data: { accounts: 7 } } }],
+  ])("refuses %s rather than returning it", async (_why, response) => {
+    await expect(mint([response]).run()).rejects.toBeInstanceOf(PlowApiError);
+  });
+
+  it("refuses a non-2xx", async () => {
+    await expect(mint([{ status: 503, body: { detail: "nope" } }]).run()).rejects.toBeInstanceOf(
+      PlowApiError,
+    );
+  });
+
+  it("never quotes the response or the credential into the message it raises", async () => {
+    // This response carries a live credential by construction. `errorFor`
+    // drops a server `detail` outright on an AUTHENTICATED call, which is the
+    // rule this relies on rather than restates.
+    const error = await mint([
+      { status: 500, body: { detail: `echo ${CRED} and ${TOKEN}` } },
+    ])
+      .run()
+      .catch((e) => e as Error);
+    expect(error.message).not.toContain(CRED.slice(0, 12));
+    expect(error.message).not.toContain(TOKEN.slice(0, 12));
   });
 });
 

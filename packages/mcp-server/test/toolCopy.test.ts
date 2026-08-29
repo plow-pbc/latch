@@ -25,6 +25,7 @@ import {
   MACOS_TOOLING,
   SERVER_IDENTITY,
   SERVER_INSTRUCTIONS,
+  SKILL_FOOTER,
   TOOLS,
 } from "@domo/mcp-server";
 import { parse, rpc } from "./client.js";
@@ -115,6 +116,27 @@ describe("the server tells the agent what it is for", () => {
   // nicely and the bound widens" — the capability set is the bound.
   it("the instructions promise no capability", () => {
     expect(SERVER_INSTRUCTIONS).not.toMatch(/without approval|no approval|always allowed/i);
+  });
+
+  // Skills are per-user, per-Mac how-to guides an agent cannot otherwise know
+  // — the discovery call has to be named, not just implied by its existence.
+  it("the instructions route the agent to plow_list_skills", () => {
+    expect(SERVER_INSTRUCTIONS).toMatch(/plow_list_skills/);
+  });
+});
+
+describe("the skill contribution footer", () => {
+  it("carries the upstream-contribution path and the privacy bound, and leaks no path", () => {
+    // Static and upstream-only: the local-write nudge was cut because printing
+    // any device-home path in an approval-free response leaked owner layout, and
+    // there's no evidence alpha agents write skill fixes to disk. No home input,
+    // so there is nothing owner-specific to leak.
+    expect(SKILL_FOOTER).toMatch(/github\.com\/plow-pbc\/latch/);
+    expect(SKILL_FOOTER).toMatch(/message content/i);
+    expect(SKILL_FOOTER).not.toMatch(/\$DOMO_HOME/);
+    expect(SKILL_FOOTER).not.toMatch(/device\/skills\//);
+    expect(SKILL_FOOTER).not.toContain("/Users/");
+    expect(bareToolNames(SKILL_FOOTER)).toHaveLength(0);
   });
 });
 
@@ -241,6 +263,7 @@ function manifestStrings(): { where: string; text: string }[] {
   }
   out.push({ where: "skill.description", text: BROWSING_SKILL.description });
   out.push({ where: "skill.body", text: BROWSING_SKILL.body });
+  out.push({ where: "skill.footer", text: SKILL_FOOTER });
   out.push({ where: "serverInfo.title", text: SERVER_IDENTITY.title });
   out.push({ where: "serverInfo.description", text: SERVER_IDENTITY.description });
   return out;
@@ -390,7 +413,12 @@ describe("what the agent-facing copy must and must not say", () => {
    * `LIVE_WEB_ROUTING`, which every surface interpolates, is asserted to make
    * it.
    */
-  const FORBIDDEN: { what: string; why: string; offends: (text: string) => boolean }[] = [
+  const FORBIDDEN: {
+    what: string;
+    why: string;
+    offends: (text: string) => boolean;
+    except?: string[];
+  }[] = [
     {
       what: "routes web reading to the agent's own tools",
       why: "the sentence this whole surface exists to remove; it had three homes",
@@ -403,6 +431,11 @@ describe("what the agent-facing copy must and must not say", () => {
       what: "prescribes tooling the sandbox denies",
       why: "(deny default) grants no appleevent-send and the app ships no automation entitlement",
       offends: (text) => /osascript|screencapture|shortcuts/i.test(text),
+      // The apple_events capability's own description is the one place
+      // osascript is meant to appear: it is exactly what grants appleevent-send
+      // when the approver allows it, so naming it here is honest, not a
+      // prescription the sandbox then denies.
+      except: ["plow_run_command.apple_events"],
     },
     {
       what: "names a tool without its plow_ prefix",
@@ -413,8 +446,9 @@ describe("what the agent-facing copy must and must not say", () => {
     },
   ];
 
-  it.each(FORBIDDEN)("no manifest string $what", ({ offends, why }) => {
+  it.each(FORBIDDEN)("no manifest string $what", ({ offends, why, except }) => {
     for (const { where, text } of manifestStrings()) {
+      if (except?.includes(where)) continue;
       expect(offends(text), `${where}: ${why}`).toBe(false);
     }
   });

@@ -6,10 +6,11 @@ import {
   ACTIVATION_POLL_INTERVAL_MS,
   ACTIVATION_POLL_WINDOW_MS,
   CODE_TTL_MS,
+  activationChatLabel,
   Onboarding,
   OnboardingDeps,
 } from "../src/onboarding.js";
-import { ActivationRedeem, PlowApi, PlowApiError } from "../src/plowApi.js";
+import { ActivationChat, PlowApi, PlowApiError, parseActivationChat } from "../src/plowApi.js";
 import { loadSettings, saveSettings } from "../src/settings.js";
 import { signOutOfPlow } from "../src/settingsActions.js";
 
@@ -19,18 +20,67 @@ const SESSION_TOKEN = "plow_ACTIVATIONsession_secret";
 const ACTIVATION_SECRET = "activation_secret_never_shown";
 const MCP_URL = "http://localhost:4242/v1/relay/devices/u_123/mcp";
 
+/** A chat as `parseActivationChat` hands it over: the line it runs on, and the
+ * person on the other end. */
+const CHAT: ActivationChat = {
+  uid: "cht_D7hfWNK",
+  status: "active",
+  displayName: null,
+  line: "+15559876543",
+  createdAt: "2026-08-24T18:02:11Z",
+  participants: [{ providerKey: "+15551230000", displayName: null, isOwner: true }],
+};
+
+function wireChat({
+  displayName,
+  line = "+15550000000",
+  members,
+}: {
+  displayName?: string;
+  line?: string;
+  members: Array<{ displayName: string; providerKey?: string; role: "owner" | "member" }>;
+}): Record<string, unknown> {
+  return {
+    uid: "cht_fixture",
+    object: "chat",
+    status: "active",
+    provider_key: "thread_fixture",
+    ...(displayName === undefined ? {} : { display_name: displayName }),
+    participants: [
+      {
+        type: "agent",
+        line: { uid: "ln_fixture", provider_type: "imessage", provider_key: line },
+      },
+      ...members.map((member, index) => ({
+        type: "member",
+        uid: `cp_${index}`,
+        display_name: member.displayName,
+        role: member.role,
+        provider_type: "imessage",
+        provider_key: member.providerKey ?? `+1555000000${index}`,
+      })),
+    ],
+    created_at: "2026-08-27T22:22:52Z",
+  };
+}
+
+type FakeRedeem =
+  | { status: "pending" }
+  | { status: "verified"; token: string | null; chat?: ActivationChat | null };
+
 /** A stand-in Plow: records what was called, answers what the real one does. */
 class FakePlow {
   requested: string[] = [];
-  minted: Array<{ token: string; name: string }> = [];
   connected = false;
   verifyFails: "unauthorized" | "network" | null = null;
   requestFails: "provider_unavailable" | "network" | null = null;
 
   /** Activations minted, newest last — one per `POST /v1/auth/activate`. */
   activations: string[] = [];
-  /** Redeem answers, consumed in order; the last one repeats forever. */
-  redeems: Array<ActivationRedeem | PlowApiError> = [{ status: "pending" }];
+  /** Redeem answers, consumed in order; the last one repeats forever. `chat`
+   * is optional here and defaults to none, so a test only names it when the
+   * chat is what it is about. */
+  redeems: Array<FakeRedeem | PlowApiError> = [{ status: "pending" }];
   redeemCalls: string[] = [];
 
   api(): PlowApi {
@@ -65,7 +115,8 @@ class FakePlow {
     this.redeemCalls.push(secret);
     const next = this.redeems.length > 1 ? this.redeems.shift()! : this.redeems[0];
     if (next instanceof PlowApiError) throw next;
-    return next;
+    if (next.status === "pending") return next;
+    return { status: "verified", token: next.token, chat: next.chat ?? null };
   }
 
   async requestOtp(phone: string): Promise<void> {
@@ -84,10 +135,10 @@ class FakePlow {
     return { uid: "u_123", mcpUrl: MCP_URL, deviceConnected: this.connected };
   }
 
-  async mintDeviceCredential(token: string, name: string) {
-    expect([OTP_TOKEN, SESSION_TOKEN]).toContain(token);
-    this.minted.push({ token, name });
-    return { token: DEVICE_TOKEN, keyPrefix: DEVICE_TOKEN.slice(5, 13), name };
+  revoked: string[] = [];
+
+  async revokeDeviceCredential(token: string): Promise<void> {
+    this.revoked.push(token);
   }
 
 }
@@ -101,8 +152,11 @@ let clock: number;
 let waits: number[];
 /** How many times the instance told the window to re-read. */
 let changes: number;
+/** Bumped per test; a wait built under an older value parks — see `wait`. */
+let harnessGen = 0;
 
 function build(extra: Partial<OnboardingDeps> = {}): Onboarding {
+  const gen = harnessGen;
   return new Onboarding({
     api: plow.api(),
     home,
@@ -117,6 +171,12 @@ function build(extra: Partial<OnboardingDeps> = {}): Onboarding {
     // deadline is measured against, so a five-minute give-up takes microseconds
     // and is exact rather than approximately right.
     wait: async (ms) => {
+      // The server's 410 ends the real loop; a fake that only ever answers
+      // "pending" never gets one, so a loop can outlive its test. Under this
+      // instant clock it would spin the worker to death — and even short of
+      // that, it would keep mutating the next test's shared clock. Park any
+      // loop from a previous test the moment it comes up for air.
+      if (gen !== harnessGen) await new Promise(() => {});
       waits.push(ms);
       clock += ms;
     },
@@ -133,6 +193,13 @@ async function settle(): Promise<void> {
   for (let i = 0; i < 5000; i += 1) await Promise.resolve();
 }
 
+/** Let the poll loop run just until a condition holds — for states the loop
+ * passes THROUGH rather than ends in, now that a stalled screen keeps polling. */
+async function settleUntil(check: () => boolean): Promise<void> {
+  for (let i = 0; i < 5000 && !check(); i += 1) await Promise.resolve();
+  expect(check()).toBe(true);
+}
+
 /** Start on the phone-code path, which is now behind a link rather than first. */
 function buildOnPhonePath(): Onboarding {
   const onboarding = build();
@@ -141,6 +208,7 @@ function buildOnPhonePath(): Onboarding {
 }
 
 beforeEach(() => {
+  harnessGen += 1;
   home = fs.mkdtempSync(path.join(os.tmpdir(), "domo-onboarding-"));
   plow = new FakePlow();
   warnings = [];
@@ -151,6 +219,12 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  // Park every poll loop this test left running, BEFORE the next test exists.
+  // An activation that never completes polls forever, and `wait` resolves
+  // instantly under the fake clock — so a loop still live when the file's last
+  // test ends spins until its `waits` array hits V8's element limit and takes
+  // the worker with it. Bumping here makes the park unconditional.
+  harnessGen += 1;
   fs.rmSync(home, { recursive: true, force: true });
 });
 
@@ -178,9 +252,219 @@ describe("activation — the path a brand-new user takes", () => {
     expect(state.step).toBe("connected");
     expect(state.connected).toBe(true);
     expect(waits.every((ms) => ms === ACTIVATION_POLL_INTERVAL_MS)).toBe(true);
-    expect(loadSettings(home).relayCredential).toBe(DEVICE_TOKEN);
+    expect(loadSettings(home).relayCredential).toBe(SESSION_TOKEN);
     // The spent activation is dropped rather than left on a screen behind this.
     expect(state.activation).toBeNull();
+  });
+
+  it("keeps the chat the redeem carried, and shows the number the server assigned", async () => {
+    plow.redeems = [{ status: "verified", token: SESSION_TOKEN, chat: CHAT }];
+    const onboarding = build();
+
+    const shown = await onboarding.begin();
+    // The screen shows the line THIS activation was assigned. The chat is only
+    // provisioned if the code lands on that line, so a number chosen here would
+    // sign the user in and silently create nothing.
+    expect(shown.activation?.sendTo).toBe("+15550001111");
+    await settle();
+
+    // Read once and kept: the redeem hands the chat back exactly once, so a
+    // later window has no way to ask for it again.
+    const settings = loadSettings(home);
+    expect(settings.provisionedChatUid).toBe("cht_D7hfWNK");
+    expect(settings.provisionedChatLabel).toBe("+1 555-987-6543 · You");
+    expect(onboarding.state().chat).toEqual({
+      uid: "cht_D7hfWNK",
+      label: "+1 555-987-6543 · You",
+    });
+    // A fresh window on the same home still knows about it.
+    expect(build().state().chat?.uid).toBe("cht_D7hfWNK");
+  });
+
+  it("leaves a stored chat alone when a redeem carries none", async () => {
+    // "This redeem carried no chat" is not "the account has no chat": the
+    // phone-code path never carries one, and neither does a redeem from a Plow
+    // that predates chats. Blanking on that answer would erase a chat the
+    // account really has, and nothing can re-read the redeem to get it back.
+    const seeded = loadSettings(home);
+    seeded.provisionedChatUid = "cht_ALREADY";
+    seeded.provisionedChatLabel = "+15559876543 · Ada Lovelace";
+    saveSettings(home, seeded);
+
+    plow.redeems = [{ status: "verified", token: SESSION_TOKEN }];
+    const onboarding = build();
+    await onboarding.begin();
+    await settle();
+
+    expect(onboarding.state().step).toBe("connected");
+    expect(loadSettings(home).provisionedChatUid).toBe("cht_ALREADY");
+    expect(onboarding.state().chat?.uid).toBe("cht_ALREADY");
+  });
+
+  it("stores no number: pairing's sendTo is the managed phone, not a line", async () => {
+    // Pairing asks for no chat, so the server answers with the number that
+    // takes an activation text — not a pool line anyone can be told to text
+    // afterwards to get a chat. Storing it put the managed phone where the
+    // cloud-agents screen says "text this to make a chat", which provisions
+    // nothing. A number for a chat is a pool line, reached by texting it.
+    plow.redeems = [{ status: "verified", token: SESSION_TOKEN, chat: CHAT }];
+    const onboarding = build();
+    const shown = await onboarding.begin();
+    await settle();
+
+    expect(shown.activation?.sendTo).toBe("+15550001111");
+  });
+
+  it.each([
+    ["its line", (token: string) => ({ ...CHAT, line: token.slice(0, 12) })],
+    ["a participant's number", (token: string) => ({
+      ...CHAT,
+      participants: [{ providerKey: token.slice(0, 12), displayName: "Ada", isOwner: false }],
+    })],
+    ["its uid", (token: string) => ({ ...CHAT, uid: `cht_${token.slice(0, 12)}` })],
+  ])("never writes a chat to disk when %s echoes the session token", async (_why, make) => {
+    // The label is built from the line, the uids, the numbers and the names,
+    // and THIS is the one place they are written to disk. The redeem carries
+    // the session token in the same breath, so a server that echoed it here
+    // would have persisted it and rendered it.
+    plow.redeems = [{ status: "verified", token: SESSION_TOKEN, chat: make(SESSION_TOKEN) }];
+    const onboarding = build();
+    await onboarding.begin();
+    await settle();
+
+    // The sign-in still completes — the chat is what is dropped, and the
+    // account's list is re-read on the Agents tab anyway.
+    expect(loadSettings(home).relayCredential).toBe(SESSION_TOKEN);
+    expect(loadSettings(home).provisionedChatUid).toBe("");
+    expect(loadSettings(home).provisionedChatLabel).toBe("");
+    const persisted = JSON.stringify(loadSettings(home));
+    expect(persisted.split(SESSION_TOKEN).length - 1).toBe(1); // the credential, and nothing else
+    expect(JSON.stringify(onboarding.state())).not.toContain(SESSION_TOKEN.slice(0, 12));
+    // Said, without repeating any of the fields that triggered it.
+    expect(warnings.join(" ")).toContain("echoed the credential");
+    expect(warnings.join(" ")).not.toContain(SESSION_TOKEN.slice(0, 12));
+  });
+
+  it("keeps a chat whose NAME echoes, with the name removed", async () => {
+    // A name can be blanked and the row still means something; dropping it
+    // would lose a chat the owner actually has.
+    plow.redeems = [{
+      status: "verified",
+      token: SESSION_TOKEN,
+      chat: { ...CHAT, displayName: SESSION_TOKEN.slice(0, 12) },
+    }];
+    const onboarding = build();
+    await onboarding.begin();
+    await settle();
+
+    expect(loadSettings(home).provisionedChatUid).toBe(CHAT.uid);
+    expect(loadSettings(home).provisionedChatLabel).not.toContain(SESSION_TOKEN.slice(0, 12));
+    expect(loadSettings(home).provisionedChatLabel).toBeTruthy();
+  });
+
+  it("has no chat to show on a Mac whose activation never made one", async () => {
+    plow.redeems = [{ status: "verified", token: SESSION_TOKEN }];
+    const onboarding = build();
+    await onboarding.begin();
+    await settle();
+
+    expect(loadSettings(home).provisionedChatUid).toBe("");
+    expect(onboarding.state().chat).toBeNull();
+  });
+
+  // The label is `chatRows`' title now — the ONE place participants become
+  // people. It leads with the line, names the owner "You", and stands a
+  // formatted number in for anyone without a usable name. A top-level chat
+  // title still wins outright when the provider gives one.
+  it.each([
+    ["prefers a chat's top-level display name", {
+      displayName: "Weekend crew",
+      members: [{ displayName: "Morgan", providerKey: "+15550001001", role: "member" as const }],
+    }, "Weekend crew"],
+    ["keeps an emoji-only top-level display name", {
+      displayName: "🎉",
+      members: [{ displayName: "Riley", providerKey: "+15550002001", role: "member" as const }],
+    }, "🎉"],
+    ["rejects a phone-number-shaped top-level display name and names the people", {
+      displayName: "+1 (555) 000-4001, +1 (555) 000-4002",
+      line: "+15550004000",
+      members: [
+        { displayName: "Riley", providerKey: "+15550004001", role: "owner" as const },
+        { displayName: "Casey", providerKey: "+15550004002", role: "member" as const },
+      ],
+    }, "+1 555-000-4000 · You · Casey"],
+    ["names the owner You and everyone else by name", {
+      line: "+15550005000",
+      members: [
+        { displayName: "Whoever", providerKey: "+15550005001", role: "owner" as const },
+        { displayName: "Riley", providerKey: "+15550005002", role: "member" as const },
+      ],
+    }, "+1 555-000-5000 · You · Riley"],
+    ["stands a number in for a name that just repeats the handle", {
+      line: "+15550003000",
+      members: [{ displayName: "+15550003001", providerKey: "+15550003001", role: "member" as const }],
+    }, "+1 555-000-3000 · +1 555-000-3001"],
+    ["lists the line once when a member is on it", {
+      line: "+15550006000",
+      members: [
+        { displayName: "Riley", providerKey: "+15550006000", role: "member" as const },
+        { displayName: "Casey", providerKey: "+15550006002", role: "member" as const },
+      ],
+    }, "+1 555-000-6000 · Casey"],
+  ])("%s", (_case, fields, expected) => {
+    expect(activationChatLabel(parseActivationChat(wireChat(fields))!)).toBe(expected);
+  });
+
+  it("falls back to numbers when the wire has no usable display names", () => {
+    // The bug this pins: the chat's own `provider_key` is the provider's THREAD
+    // ID ("chat_5"), and the number lives on the agent participant's line.
+    // Reading the wrong one put an opaque id where the user looks for something
+    // to text. Parsed from the real shape rather than a hand-made
+    // `ActivationChat`, because the two halves are only wrong together.
+    const chat = parseActivationChat(wireChat({
+      line: "+15559876543",
+      members: [
+        { displayName: "You", providerKey: "+15551230000", role: "owner" },
+      ],
+    }))!;
+
+    // The owner reads as "You" and the line is formatted; what this pins is
+    // that the LINE is the number shown, never the chat's own `provider_key`.
+    const label = activationChatLabel(chat);
+    expect(label).toBe("+1 555-987-6543 · You");
+    expect(label).not.toContain("thread_fixture");
+    expect(label).not.toContain("thread_fixture");
+  });
+
+  it("falls back to its line, owner handle and remaining handles", () => {
+    expect(activationChatLabel({
+      ...CHAT,
+      participants: [
+        { providerKey: "+15551230000", displayName: null, isOwner: true },
+        { providerKey: "+15557654321", displayName: null, isOwner: false },
+      ],
+    })).toBe("+1 555-987-6543 · You · +1 555-765-4321");
+    // A member whose address IS the line is not said twice.
+    expect(
+      activationChatLabel({
+        ...CHAT,
+        participants: [
+          ...CHAT.participants,
+          { providerKey: "+15559876543", displayName: null, isOwner: false },
+        ],
+      }),
+    ).toBe("+1 555-987-6543 · You");
+    expect(activationChatLabel({ ...CHAT, participants: [] })).toBe("+1 555-987-6543");
+    // A member without a usable display name is identified by its real handle.
+    expect(
+      activationChatLabel({
+        ...CHAT,
+        line: null,
+        participants: [{ providerKey: "+15551230000", displayName: null, isOwner: false }],
+      }),
+    ).toBe("+1 555-123-0000");
+    // Nothing to say but the uid beats an empty line on the last setup screen.
+    expect(activationChatLabel({ ...CHAT, line: null, participants: [] })).toBe("cht_D7hfWNK");
   });
 
   it("polls without waiting to be told to — a hand-typed message still gets in", async () => {
@@ -201,23 +485,29 @@ describe("activation — the path a brand-new user takes", () => {
     expect(plow.activations).toHaveLength(1);
   });
 
-  it("gives up after five minutes and says what to check, rather than spinning", async () => {
+  it("signs in a text that lands after the screen stalled — the live mba failure", async () => {
+    // Reported from a live run: code minted at 15:02, screen stalled at 15:07,
+    // text sent at 15:17. The server completed the activation and held the
+    // session token for the first redeem — which never came, because the old
+    // loop cancelled itself at five minutes. The Mac sat on "we haven't heard
+    // from your phone" while the phone said "You're all set!".
     const onboarding = build();
     await onboarding.begin();
-    await settle();
-
-    const state = onboarding.state();
-    expect(state.activationStale).toBe(true);
-    expect(state.busy).toBe(false);
+    await settleUntil(() => onboarding.state().activationStale);
+    expect(onboarding.state().step).toBe("waiting");
+    expect(onboarding.state().busy).toBe(false);
     // The silent failure has no other feedback: a message that does not START
     // with the prefix gets a 200, no SMS, and a code left live.
-    expect(state.message).toContain("Plow Activate:");
-    expect(state.message).toContain("haven't heard from your phone");
-    // Five minutes of polling at the stated interval, and then it stopped.
-    expect(waits.length).toBeCloseTo(ACTIVATION_POLL_WINDOW_MS / ACTIVATION_POLL_INTERVAL_MS, -1);
-    const after = waits.length;
-    await settle();
-    expect(waits.length).toBe(after);
+    expect(onboarding.state().message).toContain("Plow Activate:");
+    expect(onboarding.state().message).toContain("haven't heard from your phone");
+
+    // Minute fifteen: the text arrives. No click, no new code — the next poll
+    // must catch it.
+    plow.redeems = [{ status: "verified", token: SESSION_TOKEN }];
+    await settleUntil(() => onboarding.state().step === "connected");
+
+    expect(loadSettings(home).relayCredential).toBe(SESSION_TOKEN);
+    expect(plow.activations).toHaveLength(1);
   });
 
   it("never strands the user on a screen with no way to re-check", async () => {
@@ -239,10 +529,12 @@ describe("activation — the path a brand-new user takes", () => {
     // matters is that giving up never leaves them anywhere else.
     expect(state.step).toBe("waiting");
 
-    // And the control does what the message promises: the text landed after we
-    // stopped watching, so one poll on the old secret signs them straight in.
+    // And the screen's promise holds without the control even being needed:
+    // the watch never stopped, so a late text signs in on the next poll. The
+    // click just re-arms the countdown; it must not break the sign-in.
     plow.redeems = [{ status: "verified", token: SESSION_TOKEN }];
-    expect((await onboarding.newActivationCode()).step).toBe("connected");
+    await onboarding.newActivationCode();
+    await settleUntil(() => onboarding.state().step === "connected");
     expect(plow.activations).toHaveLength(1);
   });
 
@@ -265,31 +557,58 @@ describe("activation — the path a brand-new user takes", () => {
     }
   });
 
-  it("polls the old code before minting a new one, because completion beats expiry", async () => {
+  it("re-arms the SAME code while the server still honours it — a live code is never abandoned", async () => {
+    // Minting a replacement would leave the live old code with no watcher: its
+    // completion is handed out exactly once, so a user who texts the code they
+    // already copied would succeed on the phone and strand the Mac — the same
+    // stranding this PR exists to end.
     const onboarding = build();
     await onboarding.begin();
-    await settle();
-    expect(onboarding.state().activationStale).toBe(true);
+    await settleUntil(() => onboarding.state().activationStale);
 
-    // They texted at minute six. The server honoured it; we had stopped looking.
-    plow.redeems = [{ status: "verified", token: SESSION_TOKEN }];
     const state = await onboarding.newActivationCode();
-
-    expect(state.step).toBe("connected");
-    // And no second code was ever minted.
     expect(plow.activations).toHaveLength(1);
+    expect(state.activation?.displayCode).toBe("CODE1");
+    expect(state.activationStale).toBe(false);
+    expect(state.message).toContain("still works");
+
+    // And the re-armed watch is real: a text now signs in.
+    plow.redeems = [{ status: "verified", token: SESSION_TOKEN }];
+    await settleUntil(() => onboarding.state().step === "connected");
   });
 
-  it("mints a fresh code when that poll really does come back pending", async () => {
+  it("mints a fresh code only once the server has retired the old one", async () => {
     const onboarding = build();
     await onboarding.begin();
-    await settle();
+    await settleUntil(() => onboarding.state().activationStale);
 
+    // The POLL receives the 410 — the button never redeems. Only then does a
+    // click mint.
+    plow.redeems = [new PlowApiError("expired", "Activation expired", 410)];
+    await settleUntil(() => onboarding.state().message.includes("expired before your text arrived"));
     const state = await onboarding.newActivationCode();
     expect(plow.activations).toHaveLength(2);
     expect(state.activation?.displayCode).toBe("CODE2");
     expect(state.activationStale).toBe(false);
     expect(state.step).toBe("activate");
+  });
+
+  it("keeps a live code through a transient failure — only a 410 says it is dead", async () => {
+    // A timeout or 5xx says nothing about the code, and a click during the
+    // outage must not mint over it: the abandoned code's completion has no
+    // watcher — the stranding again, this time triggered by a blip.
+    const onboarding = build();
+    await onboarding.begin();
+    await settleUntil(() => onboarding.state().activationStale);
+
+    plow.redeems = [new PlowApiError("network", "Couldn't reach Plow.")];
+    await onboarding.newActivationCode();
+    expect(plow.activations).toHaveLength(1);
+    expect(onboarding.state().activation?.displayCode).toBe("CODE1");
+
+    // And the kept code still signs in when its text lands.
+    plow.redeems = [{ status: "verified", token: SESSION_TOKEN }];
+    await settleUntil(() => onboarding.state().step === "connected");
   });
 
   it("reads a verified activation exactly once, and never re-reads it", async () => {
@@ -313,8 +632,12 @@ describe("activation — the path a brand-new user takes", () => {
     const state = onboarding.state();
     expect(state.step).not.toBe("connected");
     expect(state.activationStale).toBe(true);
-    expect(state.message).toBe("Plow verified this Mac but didn't hand back a login. Get a new code.");
+    expect(state.message).toBe("Plow verified this Mac but didn't hand back a login. Try again for a fresh code.");
     expect(plow.redeemCalls).toHaveLength(1);
+
+    // The spent code is dropped, so the promised control actually works: the
+    // next click mints instead of re-arming a code that can never sign in.
+    expect((await onboarding.newActivationCode()).activation?.displayCode).toBe("CODE2");
   });
 
   it("treats a 410 as authoritative and offers a fresh code", async () => {
@@ -418,16 +741,17 @@ describe("one code, however many callers ask for it", () => {
     onboarding.reset();
   });
 
-  it("still mints a fresh one once the first has landed", async () => {
-    // Single-flight must not wedge the button: "Get a New Code" after the mint
-    // returns is a different ask, and gets a different code.
+  it("does not wedge the button once the mint has landed", async () => {
+    // Single-flight must not wedge the button: "Try Again" after the mint
+    // returns runs a real re-check rather than joining a spent flight — and
+    // since the code is still live, the re-check re-arms it, not replaces it.
     const onboarding = build();
     await onboarding.begin();
     expect(plow.activations).toHaveLength(1);
 
     const state = await onboarding.newActivationCode();
-    expect(plow.activations).toHaveLength(2);
-    expect(state.activation?.displayCode).toBe("CODE2");
+    expect(state.activation?.displayCode).toBe("CODE1");
+    expect(plow.activations).toHaveLength(1);
     onboarding.reset();
   });
 
@@ -450,6 +774,17 @@ describe("one code, however many callers ask for it", () => {
 });
 
 describe("signing out", () => {
+  it("shows the fixed revoke warning on the setup screen", () => {
+    const onboarding = build();
+    const warning =
+      "Signed out on this Mac. Plow could not be reached to revoke the session — revoke it in Plow's account settings.";
+
+    const state = onboarding.showMessage(warning);
+
+    expect(state.step).toBe("activate");
+    expect(state.message).toBe(warning);
+  });
+
   it("returns to the activation screen without needing a restart", async () => {
     // Reported live: Sign Out blanked the credential in settings but left the
     // state machine on "connected", because `step` is decided in the
@@ -559,19 +894,23 @@ describe("the phone-code fallback still works", () => {
 
     // The endpoint came from GET /v1/relay/info; the app never builds it.
     const settings = loadSettings(home);
-    expect(settings.relayCredential).toBe(DEVICE_TOKEN);
+    expect(settings.relayCredential).toBe(OTP_TOKEN);
     expect(settings.mcpUrl).toBe(MCP_URL);
   });
 
-  it("keeps the login session nowhere — the mint retires it server-side", async () => {
+  it("keeps the login session AS the credential, minting nothing", async () => {
+    // Latch is the owner's manager app, not an agent: the session it was just
+    // handed is what it holds. `POST /v1/relay/devices` — a narrow credential
+    // plus `revoke_calling_session` — is gone, and the fake throws if anything
+    // reaches for it.
     const onboarding = buildOnPhonePath();
     await onboarding.requestCode("+15551110000");
     await onboarding.submitCode("12345678");
 
-    // There is no client-side revoke left to get wrong: `mintDeviceCredential`
-    // passes `revoke_calling_session`, so the session dies in the same
-    // transaction as the mint. All the app has to do is not keep a copy.
-    expect(JSON.stringify(loadSettings(home))).not.toContain(OTP_TOKEN);
+    // `PlowApi` has no `mintDeviceCredential` to reach for: the method is
+    // deleted, so this cannot regress into a second step without a compile
+    // error first.
+    expect(loadSettings(home).relayCredential).toBe(OTP_TOKEN);
     expect(warnings).toEqual([]);
   });
 
@@ -707,6 +1046,22 @@ describe("signing out", () => {
     return onboarding;
   }
 
+  it("forgets the chat too — the next sign-in may be a different account", async () => {
+    plow.redeems = [{ status: "verified", token: SESSION_TOKEN, chat: CHAT }];
+    const onboarding = build();
+    await onboarding.begin();
+    await settle();
+    expect(loadSettings(home).provisionedChatUid).toBe("cht_D7hfWNK");
+
+    signOutOfPlow(home);
+
+    // Leaving it would name a chat this Mac can no longer reach on the setup
+    // screen of whatever account signs in next.
+    expect(loadSettings(home).provisionedChatUid).toBe("");
+    expect(loadSettings(home).provisionedChatLabel).toBe("");
+    expect(onboarding.reset().chat).toBeNull();
+  });
+
   it("the reported path: signing out leaves a window that is NOT connected", async () => {
     // The instance outlives the sign-out, and the constructor is the only other
     // place that decides this — so it went on reporting the account just left.
@@ -770,75 +1125,95 @@ describe("signing out", () => {
     // to the only thing that could revoke it.
     const onboarding = await signedIn();
     expect((await onboarding.useActivation()).step).toBe("activate");
-    const mintedBefore = plow.minted.length;
     const credential = loadSettings(home).relayCredential;
 
     plow.redeems = [{ status: "verified", token: SESSION_TOKEN }];
     await settle();
 
-    expect(plow.minted.length).toBe(mintedBefore);
+    // The credential this Mac already holds is not overwritten by a redeem it
+    // did not ask for — and the session that redeem carried is RETIRED rather
+    // than dropped. The redeem answers once, so a token declined here is a live
+    // session on the account that nothing holds a reference to: not sign-out,
+    // not the next launch. Nobody could ever retire it.
     expect(loadSettings(home).relayCredential).toBe(credential);
+    expect(plow.revoked).toContain(SESSION_TOKEN);
   });
 
-  // The two ways a redeem can be on the wire when the user signs out. Both end
-  // in `finishWithSession`, and both must refuse — but they arrive by different
-  // callers, so each is driven on its own.
-  const inFlightRedeems = [
-    {
-      name: "the poll loop's own redeem",
-      // The loop is already running from `useActivation()`; nothing to start.
-      start: (_o: Onboarding) => null as Promise<unknown> | null,
-    },
-    {
-      name: "the re-poll 'Get a New Code' makes before minting",
-      start: (o: Onboarding) => o.newActivationCode(),
-    },
-  ];
+  it("a redeem in flight across the sign-out cannot mint", async () => {
+    // A verified answer is deliberately acted on even when its poll loop has
+    // been cancelled — the server hands the session token to the first redeem
+    // that sees the completion and never again, so dropping it would strand an
+    // activation the user really completed. The only thing that used to make
+    // it moot was already holding a credential, and SIGN-OUT CLEARS THE
+    // CREDENTIAL. The poll loop is the only redeemer there is, so its redeem
+    // is the only one that can be on the wire.
+    const onboarding = await signedIn();
+    expect((await onboarding.useActivation()).step).toBe("activate");
 
-  for (const entry of inFlightRedeems) {
-    it(`${entry.name}, in flight across the sign-out, cannot mint`, async () => {
-      // A verified answer is deliberately acted on even when its poll loop has
-      // been cancelled — the server hands the session token to the first redeem
-      // that sees the completion and never again, so dropping it would strand an
-      // activation the user really completed. The only thing that used to make
-      // it moot was already holding a credential, and SIGN-OUT CLEARS THE
-      // CREDENTIAL.
-      const onboarding = await signedIn();
-      expect((await onboarding.useActivation()).step).toBe("activate");
+    // Hold THIS activation's redeem mid-call — and only this one, so the
+    // fresh code the sign-out mints behaves like the untexted code it is.
+    const inFlight = `${ACTIVATION_SECRET}_1`;
+    let release = () => {};
+    const onTheWire = new Promise<void>((r) => {
+      release = () => r();
+    });
+    plow.redeemActivation = async (secret: string) => {
+      plow.redeemCalls.push(secret);
+      if (secret !== inFlight) return { status: "pending" };
+      await onTheWire;
+      return { status: "verified", token: SESSION_TOKEN };
+    };
 
-      // Hold THIS activation's redeem mid-call — and only this one, so the
-      // fresh code the sign-out mints behaves like the untexted code it is.
-      const inFlight = `${ACTIVATION_SECRET}_1`;
+    await settle();
+    expect(plow.redeemCalls).toContain(inFlight);
+
+    // The user signs out while that call is still on the wire.
+    signOutOfPlow(home);
+    onboarding.reset();
+
+    // …and only now does the server answer "verified".
+    release();
+    await settle();
+
+    // Nothing was persisted, and the window did not slide back to the account
+    // the user just left.
+    expect(loadSettings(home).relayCredential).toBe("");
+    expect(loadSettings(home).accountUid).toBe("");
+    expect(onboarding.state().step).not.toBe("connected");
+  });
+});
+
+describe("a sign-out while the credential handoff is in the air", () => {
+  // One await now, not two: the mint that used to follow `relayInfo` is gone,
+  // so `relayInfo` is the whole window a sign-out can land in. The session is
+  // revoked on this path: it exists on the account, the
+  // sign-out's own revoke ran before it did, and the redeem that carried it
+  // answers once — so a token dropped here is one nobody can ever retire.
+  for (const race of [{ stage: "relayInfo", revoked: [SESSION_TOKEN] }] as const) {
+    it(`stays signed out when the sign-out lands during ${race.stage}`, async () => {
       let release = () => {};
-      const onTheWire = new Promise<void>((r) => {
+      const inAir = new Promise<void>((r) => {
         release = () => r();
       });
-      plow.redeemActivation = async (secret: string) => {
-        plow.redeemCalls.push(secret);
-        if (secret !== inFlight) return { status: "pending" };
-        await onTheWire;
-        return { status: "verified", token: SESSION_TOKEN };
+      plow.redeems = [{ status: "verified", token: SESSION_TOKEN }];
+      const original = plow.relayInfo.bind(plow);
+      plow.relayInfo = async (token: string) => {
+        await inAir;
+        return original(token);
       };
-
-      const started = entry.start(onboarding);
+      const onboarding = build();
+      await onboarding.begin();
       await settle();
-      expect(plow.redeemCalls).toContain(inFlight);
 
-      // The user signs out while that call is still on the wire.
       signOutOfPlow(home);
       onboarding.reset();
-      const mintedBefore = plow.minted.length;
-
-      // …and only now does the server answer "verified".
       release();
-      if (started) await started;
       await settle();
 
-      // Nothing was minted, nothing was persisted, and the window did not slide
-      // back to the account the user just left.
-      expect(plow.minted.length).toBe(mintedBefore);
+      // Nothing is persisted, the session is retired best-effort, and the
+      // window stays signed out.
+      expect(plow.revoked).toEqual(race.revoked);
       expect(loadSettings(home).relayCredential).toBe("");
-      expect(loadSettings(home).accountUid).toBe("");
       expect(onboarding.state().step).not.toBe("connected");
     });
   }
@@ -877,4 +1252,3 @@ describe("a sign-out while startRelay is dialling", () => {
     expect(loadSettings(home).relayCredential).toBe("");
   });
 });
-

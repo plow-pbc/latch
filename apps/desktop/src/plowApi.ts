@@ -115,6 +115,27 @@ export interface MintedCredential {
   name: string;
 }
 
+/** The account credential metadata returned by `GET /v1/api-keys`.
+ * Main-process only: `key_prefix` and `scopes` must be projected away before
+ * any row crosses the renderer bridge. */
+export interface KeyInfo {
+  id: number;
+  key_prefix: string | null;
+  name: string | null;
+  scopes: string[];
+  tokens_used: number;
+  is_active: boolean;
+  last_seen_at: string | null;
+  created_at: string | null;
+  agent_id: string | null;
+  chat_uids: string[];
+}
+
+export interface RevokedKey {
+  status: string;
+  id: number;
+}
+
 /** `AbortSignal.timeout` aborts with a `TimeoutError`; some runtimes surface it
  * as a plain `AbortError`, so both count. */
 function isTimeout(error: unknown): boolean {
@@ -127,9 +148,58 @@ export interface Activation {
   displayCode: string;
   /** A SECRET: it is the poll credential. Never rendered, never logged. */
   activationSecret: string;
-  /** Per-environment config — the managed phone, or the assigned chat line.
-   * Render what the API returned; a hardcoded number is wrong somewhere. */
+  /**
+   * Where the endpoint says to text this code — **render this and nothing
+   * else**, verbatim.
+   *
+   * The managed phone, not a pool line: this request asks for no chat, so the
+   * server answers with the number that takes an activation text. Nothing is
+   * provisioned on it, and nobody can be told to text it afterwards to get a
+   * chat — that is a pool line's job, and a pool line is reached by texting it
+   * directly rather than through an activation.
+   */
   sendTo: string;
+}
+
+/**
+ * One HUMAN member of the provisioned chat.
+ *
+ * `participants[]` on the wire is discriminated — the agent participant is a
+ * different shape and carries no `display_name` — so this covers `type:
+ * "member"` only.
+ */
+export interface ActivationChatParticipant {
+  /** The member's own address — a phone number, when the server has one. */
+  providerKey: string | null;
+  /** A human-readable member name, when the provider supplied one. */
+  displayName: string | null;
+  /** Whether this member owns the chat. */
+  isOwner: boolean;
+}
+
+/**
+ * The chat the activation created.
+ *
+ * A chat may have its own title; otherwise its members' names identify it, with
+ * phone-number handles as a last fallback. Nothing here is a secret: it is the
+ * same data `GET /v1/chats` hands back, and the renderer may see it.
+ *
+ * **The chat's top-level `provider_key` is deliberately not read.** It is the
+ * provider's own thread id — "chat_5" and the like — not a phone number, and a
+ * field that is never parsed is a field no screen can accidentally show as one.
+ * The number lives on the agent participant's `line`.
+ */
+export interface ActivationChat {
+  uid: string;
+  /** `pending` until the member verifies; `active` after. */
+  status: string;
+  /** A title chosen for the whole chat, when it has one. */
+  displayName: string | null;
+  /** The number the chat runs on: the pool line the user texted. */
+  line: string | null;
+  /** Members only — the humans in the chat. */
+  participants: ActivationChatParticipant[];
+  createdAt: string;
 }
 
 /**
@@ -142,27 +212,99 @@ export interface Activation {
  */
 export type ActivationRedeem =
   | { status: "pending" }
-  | { status: "verified"; token: string | null };
+  | { status: "verified"; token: string | null; chat: ActivationChat | null };
+
+/**
+ * Read the chat out of a verified redeem, tolerating a server that sends less
+ * than we expect.
+ *
+ * Defensive on purpose: this is display data on the last screen of setup, and a
+ * field arriving in an unexpected shape must not throw away a sign-in that has
+ * already succeeded. Anything unreadable becomes `null` — "no chat to show" —
+ * never an error.
+ */
+export function parseActivationChat(raw: unknown): ActivationChat | null {
+  if (!raw || typeof raw !== "object") return null;
+  const chat = raw as Record<string, unknown>;
+  const uid = typeof chat.uid === "string" ? chat.uid : "";
+  if (!uid) return null;
+  const all = Array.isArray(chat.participants)
+    ? chat.participants.filter((p): p is Record<string, unknown> => !!p && typeof p === "object")
+    : [];
+  // The number the chat runs on is the AGENT participant's line, not the
+  // chat's own `provider_key` — that one is the provider's thread id.
+  const agent = all.find((p) => p.type === "agent");
+  const line = (agent?.line ?? null) as Record<string, unknown> | null;
+  const members = all.filter((p) => p.type === "member");
+  const parsedMembers = members.map((participant) => {
+    const displayName = typeof participant.display_name === "string"
+      ? participant.display_name
+      : null;
+    return {
+      providerKey: typeof participant.provider_key === "string" ? participant.provider_key : null,
+      displayName,
+      // ROLE only. A provider that labels the owner "You" was a second answer
+      // to the same question, and a member who happens to be named "You" is
+      // not the account holder — the server says which participant owns the
+      // chat, and nothing here has to infer it.
+      isOwner: participant.role === "owner",
+    };
+  });
+  // Keep the owner-first participant order used by addressing and the numeric
+  // fallback. Labels can order the same members differently without changing
+  // who a message is sent to.
+  const participants = [
+    ...parsedMembers.filter((participant) => participant.isOwner),
+    ...parsedMembers.filter((participant) => !participant.isOwner),
+  ];
+  return {
+    uid,
+    status: typeof chat.status === "string" ? chat.status : "",
+    displayName: typeof chat.display_name === "string" ? chat.display_name : null,
+    line: line && typeof line.provider_key === "string" ? line.provider_key : null,
+    participants,
+    createdAt: typeof chat.created_at === "string" ? chat.created_at : "",
+  };
+}
 
 /** `fetch`, injectable so tests never touch the network. */
 export type FetchLike = (url: string, init?: RequestInit) => Promise<Response>;
 
 export class PlowApi {
+  readonly baseUrl: ApiBaseUrl;
+
   constructor(
-    readonly baseUrl: ApiBaseUrl,
+    baseUrl: ApiBaseUrl,
     private readonly fetchImpl: FetchLike = fetch,
-  ) {}
+  ) {
+    this.baseUrl = normalizeApiBaseUrl(baseUrl);
+  }
 
   /**
    * Start an activation: the server mints a code, the user texts it, and the
    * account is created from that text. Outbound, so it works for a phone number
    * that has never touched Plow and cannot be used to probe who has an account.
+   *
+   * **`{ name }` and nothing else — byte-identical to the request Plow's own
+   * app makes.** `provision_chat` used to ride along, which assigned one of the
+   * account's few pool lines on every sign-in: an owner already holding a chat
+   * on every line had none left to give, the endpoint answered 503, and they
+   * could not pair another Mac at all. Signing in is not the moment to spend a
+   * scarce resource on something sign-in does not need.
+   *
+   * A chat on a Plow number is got by TEXTING that number — the user sends it a
+   * message and Plow makes the chat — not by an activation. Nothing downstream
+   * needs one from here: the redeem's `chat` is nullable, and
+   * `finishWithSession` already leaves stored chat state alone when a redeem
+   * carries none.
    */
   async createActivation(name: string): Promise<Activation> {
     const data = await this.call<{ display_code: string; activation_secret: string; send_to: string }>(
       "POST",
       "/v1/auth/activate",
-      { body: { name } },
+      {
+        body: { name },
+      },
     );
     return {
       displayCode: data.display_code,
@@ -175,14 +317,20 @@ export class PlowApi {
    * Has the text arrived yet? `410` means the code expired *without* being
    * completed — the server honours a completion that raced past the deadline,
    * so a 410 is authoritative and a local clock is not.
+   *
+   * The verified answer also carries the chat the activation provisioned. Like
+   * the token it is read exactly once, so it is kept here rather than parsed
+   * away: a second redeem cannot get it back.
    */
   async redeemActivation(activationSecret: string): Promise<ActivationRedeem> {
-    const data = await this.call<{ status: string; token?: string }>(
+    const data = await this.call<{ status: string; token?: string; chat?: unknown }>(
       "POST",
       "/v1/auth/activate/redeem",
       { body: { activation_secret: activationSecret } },
     );
-    if (data.status === "verified") return { status: "verified", token: data.token ?? null };
+    if (data.status === "verified") {
+      return { status: "verified", token: data.token ?? null, chat: parseActivationChat(data.chat) };
+    }
     return { status: "pending" };
   }
 
@@ -222,29 +370,6 @@ export class PlowApi {
   }
 
   /**
-   * Mint this Mac's credential: `relay:device` + `llm:chat`, and nothing else.
-   * It holds the socket, may create agents, and — because of `llm:chat` — **it
-   * can spend the account's Plow credits**: it is the bearer token on the
-   * `chatCompletion` calls that fund adversarial-reviewer inference. It can
-   * touch nothing else on the account.
-   *
-   * `revoke_calling_session` retires the session that authorised this call — the
-   * activation or OTP session — in the same transaction as the mint. That
-   * session carries `keys:manage` and `relay:*`, so it can mint *any* credential
-   * on the account; the app has no reason to hold it past this call, and one
-   * server-side revoke is the only way to be sure it is gone. It also cleans up
-   * the row the login just created, which nothing else supersedes.
-   */
-  async mintDeviceCredential(token: string, name: string): Promise<MintedCredential> {
-    const data = await this.call<{ token: string; key_prefix?: string; name?: string }>(
-      "POST",
-      "/v1/relay/devices",
-      { token, body: { name, revoke_calling_session: true } },
-    );
-    return { token: data.token, keyPrefix: data.key_prefix ?? "", name: data.name ?? name };
-  }
-
-  /**
    * Ask Plow to retire THIS Mac's own credential, authenticating with the
    * credential being retired. Sign-out is the only caller.
    *
@@ -261,6 +386,73 @@ export class PlowApi {
     await this.call<unknown>("POST", "/v1/relay/devices/self/revoke", { token });
   }
 
+  /**
+   * The provider mint: one short-lived token per connected account, for a
+   * provider that fans out. The body says `all`; the route is the provider's.
+   *
+   * This is THE trust-boundary parse of the batch envelope, complete on
+   * purpose so no future field re-opens the class. Nothing server-authored
+   * crosses it verbatim except an account that parses as a plausible email
+   * and the one allowlisted machine reason; every other shape — a
+   * non-email account, a named-but-tokenless row, an unknown reason —
+   * becomes a FIXED local degraded entry. Both arrays are parsed before the
+   * empty-envelope decision, because a degraded-only envelope is a valid
+   * answer ("all your accounts need re-auth"), not a failed mint; only an
+   * envelope with nothing in it at all reports as a failed mint. What a zero-healthy result MEANS is the caller's call —
+   * deviceAgent fails a single command loudly on it.
+   */
+  async mintAccountTokens(
+    token: string,
+    prefix: string,
+    action: string,
+  ): Promise<{
+    accounts: { account: string; token: string; isDefault: boolean }[];
+    degraded: { account: string; reason: string }[];
+  }> {
+    const data = await this.call<{
+      data?: { accounts?: unknown; degraded?: unknown };
+    }>("POST", `${prefix}${action}`, { token, body: { all: true } });
+    // Bounded and shaped, not RFC-precise: the value reaches error strings,
+    // audit rows and the agent, so what matters is that a credential-shaped
+    // or free-text string cannot ride the account field.
+    const plausibleEmail = (v: unknown): v is string =>
+      typeof v === "string" && /^[^\s@]{1,64}@[^\s@]{1,255}$/.test(v);
+    const rows = (v: unknown): Record<string, unknown>[] =>
+      Array.isArray(v) ? v.map((row) => (row ?? {}) as Record<string, unknown>) : [];
+    const accounts: { account: string; token: string; isDefault: boolean }[] = [];
+    const degraded: { account: string; reason: string }[] = [];
+    for (const { account, access_token, is_default } of rows(data.data?.accounts)) {
+      if (!plausibleEmail(account)) {
+        degraded.push({ account: "(unrecognized account)", reason: "malformed entry" });
+        continue;
+      }
+      const minted = typeof access_token === "string" ? access_token.trim() : "";
+      if (!minted) {
+        degraded.push({ account, reason: "token refresh failed" });
+        continue;
+      }
+      // The last field of the row: a provider token that CONTAINS the bearer
+      // credential is the credential echoed back, and it must not enter a
+      // child's environment as if Google minted it.
+      if (minted.includes(token)) {
+        degraded.push({ account, reason: "malformed entry" });
+        continue;
+      }
+      accounts.push({ account, token: minted, isDefault: is_default === true });
+    }
+    for (const { account, reason } of rows(data.data?.degraded)) {
+      if (!plausibleEmail(account)) {
+        degraded.push({ account: "(unrecognized account)", reason: "malformed entry" });
+        continue;
+      }
+      degraded.push({ account, reason: reason === "needs_reauth" ? reason : "token refresh failed" });
+    }
+    if (accounts.length === 0 && degraded.length === 0) {
+      throw new PlowApiError("http", "Plow did not return a usable provider token.");
+    }
+    return { accounts, degraded };
+  }
+
   /** Mint an agent credential through the relay's own API (`relay:call` only,
    * whatever we ask for — the server decides). */
   async createAgent(token: string, name: string): Promise<MintedCredential> {
@@ -270,6 +462,23 @@ export class PlowApi {
       { token, body: { name } },
     );
     return { token: data.token, keyPrefix: data.key_prefix ?? "", name: data.name ?? name };
+  }
+
+  /** List this account's credential metadata. The stored credential remains in
+   * the bearer header and is never returned. */
+  async listApiKeys(token: string): Promise<KeyInfo[]> {
+    return this.call<KeyInfo[]>("GET", "/v1/api-keys", { token });
+  }
+
+  /** Soft-revoke one credential by its server id. */
+  async revokeApiKey(token: string, id: number): Promise<RevokedKey> {
+    // IPC callers are runtime values no matter what TypeScript says. Refuse
+    // path-shaped strings, fractions and out-of-range numbers before the id is
+    // interpolated into an authenticated request URL.
+    if (!Number.isSafeInteger(id) || id < 0) {
+      throw new PlowApiError("http", "Invalid API key id.");
+    }
+    return this.call<RevokedKey>("DELETE", `/v1/api-keys/${id}`, { token });
   }
 
   /**
@@ -307,19 +516,19 @@ export class PlowApi {
    * One inference call, as `{status, body}` — **this deliberately does not go
    * through `call()`**.
    *
-   * `call()` throws `PlowApiError`s whose message carries the server's `detail`
-   * verbatim (see `errorFor`), which is right for onboarding, where `detail` is
-   * a sentence written for the person reading it. It is wrong here: the
-   * reviewer's failure reasons are shown to a human deciding whether to trust
-   * an operation, and an upstream body is not text we control. So this returns
-   * the status and the decoded body and lets the caller do its own mapping —
-   * the reviewer keeps `plowHttpReason`, and nothing from the body reaches a
-   * reason string except what that mapping deliberately extracts.
+   * `call()` throws `PlowApiError`s whose message normally carries the server's
+   * credential-safe `detail` (see `errorFor`). That is right for onboarding,
+   * where `detail` is a sentence written for the person reading it. It is wrong
+   * here: the reviewer's failure reasons are shown to a human deciding whether
+   * to trust an operation, and an upstream body is not text we control. So this
+   * returns the status and the decoded body and lets the caller do its own
+   * mapping — the reviewer keeps `plowHttpReason`, and nothing from the body
+   * reaches a reason string except what that mapping deliberately extracts.
    *
    * What IS shared with `call()`: the bearer header, the bounded request, and
    * the network-error sanitation in `request()`.
    *
-   * `signal` is the caller's own budget. The reviewer runs on a 30s budget and
+   * `signal` is the caller's own budget. The reviewer runs on its own budget and
    * passes the signal it aborts on timeout, so a call it has given up on does
    * not keep running (and keep billing) after the verdict.
    */
@@ -350,7 +559,7 @@ export class PlowApi {
   ): Promise<T> {
     const response = await this.request(method, path, opts);
 
-    if (!response.ok) throw await this.errorFor(response);
+    if (!response.ok) throw await this.errorFor(response, opts.token);
     if (response.status === 204) return undefined as T;
     try {
       return (await response.json()) as T;
@@ -365,25 +574,44 @@ export class PlowApi {
    * written here rather than forwarded. Returns the response whatever its
    * status — deciding what a status *means* belongs to the caller.
    */
-  private async request(
+  async request(
     method: string,
     path: string,
-    opts: { token?: string; body?: unknown; signal?: AbortSignal } = {},
+    opts: {
+      token?: string;
+      body?: unknown;
+      signal?: AbortSignal;
+      timeoutMs?: number;
+      callerAbortIsLifecycle?: boolean;
+    } = {},
   ): Promise<Response> {
     const headers: Record<string, string> = { accept: "application/json" };
     if (opts.body !== undefined) headers["content-type"] = "application/json";
     if (opts.token) headers.authorization = `Bearer ${opts.token}`;
+
+    // A caller-owned signal remains its whole budget unless the endpoint also
+    // supplies a request timeout. Cloud-agent polling needs both: sign-out or
+    // removal must cancel it, and one stuck GET must still end after 15s.
+    const timeout =
+      opts.timeoutMs !== undefined || !opts.signal
+        ? AbortSignal.timeout(opts.timeoutMs ?? REQUEST_TIMEOUT_MS)
+        : null;
+    const signal =
+      opts.signal && timeout
+        ? AbortSignal.any([opts.signal, timeout])
+        : (opts.signal ?? timeout ?? undefined);
 
     try {
       return await this.fetchImpl(`${this.baseUrl}${path}`, {
         method,
         headers,
         body: opts.body === undefined ? undefined : JSON.stringify(opts.body),
-        // No caller may wait forever. A caller that owns a budget passes its
-        // own signal; everyone else gets REQUEST_TIMEOUT_MS.
-        signal: opts.signal ?? AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+        signal,
       });
     } catch (error) {
+      // Lifecycle cancellation is not a transport failure. Only endpoints
+      // whose owner can distinguish it opt into preserving the abort reason.
+      if (opts.callerAbortIsLifecycle) opts.signal?.throwIfAborted();
       // The cause carries a hostname at most, but it is not ours to vouch for,
       // so the message is written here rather than forwarded.
       //
@@ -399,9 +627,14 @@ export class PlowApi {
     }
   }
 
-  private async errorFor(response: Response): Promise<PlowApiError> {
-    // `detail` is the FastAPI convention. It is server-authored and never
-    // echoes a request header, so it is safe to surface.
+  private async errorFor(response: Response, credential?: string): Promise<PlowApiError> {
+    // `detail` is the FastAPI convention, and it is server-authored. On an
+    // AUTHENTICATED call it is dropped outright, whatever it says: a response
+    // that repeats its bearer credential must never reach the screen, and the
+    // rule covers any encoding of it — a prefix, a truncation, a fragment. A
+    // check for the whole token only catches the one encoding we thought of,
+    // and it let the first ten characters through. Nothing here inspects the
+    // value; the decision is made from whether the call carried a credential.
     let detail = "";
     try {
       const body = (await response.json()) as { detail?: unknown };
@@ -409,6 +642,7 @@ export class PlowApi {
     } catch {
       /* a non-JSON body tells us nothing worth showing */
     }
+    if (credential) detail = "";
     if (response.status === 401) return new PlowApiError("unauthorized", detail || "Not authorized.", 401);
     if (response.status === 403) return new PlowApiError("forbidden", detail || "Not permitted.", 403);
     if (response.status === 410) {

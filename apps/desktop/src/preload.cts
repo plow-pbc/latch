@@ -16,15 +16,19 @@ contextBridge.exposeInMainWorld("domo", {
   uiGetTab: () => ipcRenderer.invoke("ui:getTab"),
   uiSetTab: (tab: string) => ipcRenderer.invoke("ui:setTab", tab),
   relayGet: () => ipcRenderer.invoke("settings:getRelay"),
+  // Sign out. Also the "Sign out and re-activate" button on the chat-list
+  // error: signing out IS re-activating, because main tears the window down
+  // and opens setup in its place. One channel, because it is one behaviour —
+  // a second name for it would be a second thing to keep in step.
   relaySignOut: () => ipcRenderer.invoke("settings:signOut"),
   onboardingOpen: () => ipcRenderer.invoke("onboarding:open"),
   approvalModeSet: (mode: string) => ipcRenderer.invoke("settings:setApprovalMode", mode),
-  showSuggestionsGet: () => ipcRenderer.invoke("settings:getShowSuggestions"),
-  showSuggestionsSet: (on: boolean) => ipcRenderer.invoke("settings:setShowSuggestions", on),
   // The vault's own contents, edited here instead of on its web page.
   vaultItems: () => ipcRenderer.invoke("vault:items"),
   vaultItem: (itemId: string) => ipcRenderer.invoke("vault:item", itemId),
   vaultReveal: (itemId: string, field: string) => ipcRenderer.invoke("vault:reveal", itemId, field),
+  // The code the key produces — with `key` set, for one being typed.
+  vaultTotp: (itemId: string | null, key?: string) => ipcRenderer.invoke("vault:totp", itemId, key),
   vaultSaveItem: (input: unknown) => ipcRenderer.invoke("vault:saveItem", input),
   vaultDeleteItem: (itemId: string) => ipcRenderer.invoke("vault:deleteItem", itemId),
   // What the owner says agents are for. The renderer's only route to the text
@@ -56,6 +60,10 @@ contextBridge.exposeInMainWorld("domo", {
   onUpdatesChanged: (cb: () => void) => ipcRenderer.on("updates:changed", cb),
   // The menu-bar "Check for Updates…" lands the window on the Settings tab.
   onShowSettings: (cb: () => void) => ipcRenderer.on("ui:showSettings", cb),
+  // Main asks before it tears the window down; the renderer answers once the
+  // owner has had their say about anything unsaved.
+  onConfirmLeave: (cb: () => void) => ipcRenderer.on("ui:confirmLeave", cb),
+  confirmLeaveReply: (ok: boolean) => ipcRenderer.send("ui:confirmLeaveReply", ok),
 
   // First-run setup window. Every call returns the whole state, so the screen
   // renders from one shape and never has to reconcile two.
@@ -80,11 +88,33 @@ contextBridge.exposeInMainWorld("domo", {
   connectGet: () => ipcRenderer.invoke("connect:get"),
   connectCreate: (name: string) => ipcRenderer.invoke("connect:create", name),
   connectDismiss: () => ipcRenderer.invoke("connect:dismiss"),
+  // Remove one roster row — a cloud agent, an MCP client or another session.
+  // The renderer says WHICH row; main decides which call that row needs, because
+  // getting it wrong leaves a live agent nobody can reach.
+  rosterRemove: (id: number) => ipcRenderer.invoke("roster:remove", id),
+  // Remove a cloud agent by its own id. For the agent whose credential row is
+  // missing — an inactive credential on a still-running agent — where there is
+  // no roster row to name and none is needed.
+  cloudRemove: (agentId: string) => ipcRenderer.invoke("cloud:remove", agentId),
   onConnectChanged: (cb: () => void) => ipcRenderer.on("connect:changed", cb),
 
-  // Any web page the app links to (client connector cards, Settings' Support
-  // section). A KEY, not a URL: main owns the table of what may be opened.
-  openExternal: (key: string) => ipcRenderer.invoke("external:open", key),
+  // Cloud agents (same tab, same state shape, same change channel). None of
+  // them is a poll: provisioning is watched in the main process, and the
+  // renderer just re-reads when told the state changed. `cloudCreate` answers
+  // as soon as the row is on screen in `provisioning`.
+  // Re-read the chat list from Plow and answer with the whole tab state. The
+  // picker opens through this, because `connectGet` only re-reads what was
+  // already fetched.
+  cloudRefresh: () => ipcRenderer.invoke("cloud:refresh"),
+  cloudCreate: (chatUids: string[], name: string, provider: string) =>
+    ipcRenderer.invoke("cloud:create", chatUids, name, provider),
+  // Replace the whole set of chats an agent serves. One round trip, no poll.
+  cloudEditChats: (agentId: string, chatUids: string[]) =>
+    ipcRenderer.invoke("cloud:editChats", agentId, chatUids),
+
+  // Any external destination the app links to. A KEY plus an optional
+  // main-owned record id, never a URL: main decides what may be opened.
+  openExternal: (key: string, detail?: string) => ipcRenderer.invoke("external:open", key, detail),
 
   // Live browser thumbnail (audit detail pane). One whole-state shape per
   // poll; no push channel — the renderer's own interval is the clock.

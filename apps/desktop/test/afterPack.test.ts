@@ -29,6 +29,12 @@ const PAYLOADS = [
  * Keyed by the piece the hook names when it is the one missing. */
 const VAULT_INTERIOR = ["arm64/vaultwarden", "x86_64/vaultwarden", "web-vault/index.html"];
 
+// @ts-expect-error — a build-time .mjs with no type declarations.
+import { VENDORED } from "../../../scripts/vendored-providers.mjs";
+
+/** Every vendored CLI the packed app must carry, and the arches it stages. */
+const PROVIDERS: { command: string; arches: Record<string, unknown> }[] = VENDORED;
+
 const IDENTITY = "Developer ID Application: Nobody (TEAMID)";
 
 /** `mac` is electron-builder's resolved mac config. It defaults to carrying the
@@ -46,12 +52,23 @@ describe("the packaging hook refuses before it signs", () => {
   let dir: string;
   const realIdentity = process.env.CODESIGN_IDENTITY;
 
-  const runtimeDir = () =>
-    path.join(dir, "Plow Latch.app", "Contents", "Resources", "browser-runtime");
+  const resourcesDir = () => path.join(dir, "Plow Latch.app", "Contents", "Resources");
+  const runtimeDir = () => path.join(resourcesDir(), "browser-runtime");
+
+  /** Every provider as production ships it: one thin binary per arch. */
+  const packProviders = () => {
+    for (const { command, arches } of PROVIDERS) {
+      for (const arch of Object.keys(arches)) {
+        fs.mkdirSync(path.join(resourcesDir(), "providers", command, arch), { recursive: true });
+        fs.writeFileSync(path.join(resourcesDir(), "providers", command, arch, command), "#!/bin/sh\n");
+      }
+    }
+  };
 
   /** A packed app whose payloads all carry something, minus `omit`. */
   const pack = (omit?: string) => {
     const runtime = runtimeDir();
+    packProviders();
     for (const payload of PAYLOADS) {
       if (payload === omit) continue;
       fs.mkdirSync(path.join(runtime, payload), { recursive: true });
@@ -159,6 +176,55 @@ describe("the packaging hook refuses before it signs", () => {
     await expect(afterPack(contextFor(dir))).rejects.toThrow(
       `vault-server is missing ${path.dirname(piece) === "web-vault" ? "web-vault" : piece}`,
     );
+  });
+
+  // One expectation over every way an arch can be unusable, for every arch of
+  // every row: absent, empty and stray-file-only are the same failure to the
+  // gate — the binary is not there.
+  it.each(
+    PROVIDERS.flatMap(({ command, arches }) =>
+      Object.keys(arches).flatMap((arch) =>
+        [
+          { how: "absent", damage: (d: string) => fs.rmSync(d, { recursive: true, force: true }) },
+          { how: "a zero-byte binary", damage: (d: string) => fs.writeFileSync(path.join(d, command), "") },
+          {
+            how: "an arch folder carrying only a stray file",
+            damage: (d: string) => {
+              fs.rmSync(path.join(d, command));
+              fs.writeFileSync(path.join(d, ".DS_Store"), "junk");
+            },
+          },
+        ].map((c) => ({ ...c, command, arch })),
+      ),
+    ),
+  )("refuses $command/$arch when it is $how", async ({ command, arch, damage }) => {
+    // Silent half-install: a tree carrying only the packaging Mac's arch clears
+    // every other gate and reaches the other arch's users with nothing.
+    pack();
+    damage(path.join(resourcesDir(), "providers", command, arch));
+    await expect(afterPack(contextFor(dir))).rejects.toThrow(
+      new RegExp(`no ${command} for ${arch}`),
+    );
+  });
+
+  it.each(PROVIDERS)("names every arch $command is missing, not just the first", async (p) => {
+    // One run of `just fetch-vendored` fixes them all; being told about one
+    // arch at a time means one package run per arch to learn that.
+    //
+    // MEMBERSHIP, not a joined string. The claim is that every missing arch is
+    // named — a hook that sorted them, or listed them one per line, would still
+    // satisfy it. Asserting the join would pin the row's declaration order and
+    // the separator, and fail a correct hook.
+    pack();
+    fs.rmSync(path.join(resourcesDir(), "providers", p.command), { recursive: true, force: true });
+    const failure = await afterPack(contextFor(dir)).catch((e: Error) => e);
+    expect(failure).toBeInstanceOf(Error);
+    const message = (failure as Error).message;
+    // Anchored to the arch gate, then membership within it. Without the anchor
+    // any error naming both arches passes — a refusal enumerating missing
+    // binary PATHS would, without the gate ever emitting its summary.
+    expect(message).toContain(`no ${p.command} for`);
+    for (const arch of Object.keys(p.arches)) expect(message).toContain(arch);
   });
 
   it("refuses a camoufox tree a fuse left without a bundle", async () => {

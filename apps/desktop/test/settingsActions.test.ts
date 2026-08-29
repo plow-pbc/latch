@@ -12,7 +12,6 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { loadSettings, saveSettings, Settings } from "../src/settings.js";
-import { PlowApiError } from "../src/plowApi.js";
 import {
   isSignedIn,
   readAgentPurpose,
@@ -27,6 +26,7 @@ const PLOW_CREDENTIAL = "plow_sk_do_not_leak_me";
 
 const cleanups: (() => void)[] = [];
 afterEach(() => {
+  vi.restoreAllMocks();
   while (cleanups.length) cleanups.pop()!();
 });
 
@@ -145,11 +145,12 @@ describe("signing out retires the credential server-side, best effort", () => {
     // and the test would pass with the ordering reversed.
     let onDiskWhenAsked: string | null = null;
 
-    await revokeAndSignOut(home, async (credential) => {
+    const revoked = await revokeAndSignOut(home, async (credential) => {
       seen.push(credential);
       onDiskWhenAsked = stored(home).relayCredential;
     });
 
+    expect(revoked).toBe(true);
     expect(seen).toEqual([PLOW_CREDENTIAL]);
     // The revoke authenticates with the CAPTURED token, so the disk copy is
     // already gone by the time we ask — see the quit test below for why.
@@ -177,58 +178,34 @@ describe("signing out retires the credential server-side, best effort", () => {
     expectSignedOutWithAdversarial(home);
   });
 
-  it("clears locally even when the revoke FAILS", async () => {
+  it.each([
+    ["Error", () => Promise.reject(new Error(`ENOTFOUND for Bearer ${PLOW_CREDENTIAL}`))],
+    ["bare string", () => Promise.reject("a bare string")],
+  ])("clears locally and reports a %s revoke failure", async (_shape, fail) => {
     // Offline, API down, route not deployed — the case that matters most,
     // because a Mac that cannot reach Plow is the one whose owner most wants
     // the local copy gone.
     const home = homeSignedIn();
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
 
-    await expect(
-      revokeAndSignOut(home, async () => {
-        throw new Error("ENOTFOUND api.plow.co");
-      }),
-    ).resolves.toBeUndefined();
+    expect(await revokeAndSignOut(home, fail)).toBe(false);
 
     expectSignedOutWithAdversarial(home);
-  });
-
-  it("clears locally for every shape of failure", async () => {
-    for (const fail of [
-      () => Promise.reject(new Error("500")),
-      () => Promise.reject("a bare string"),
-      () => Promise.reject(new PlowApiError("http", "Plow returned 404.", 404)),
-    ]) {
-      const home = homeSignedIn();
-      await revokeAndSignOut(home, fail as () => Promise<unknown>);
-      expect(stored(home).relayCredential).toBe("");
-    }
+    expect(warning).toHaveBeenCalledOnce();
+    expect(warning).toHaveBeenCalledWith(
+      "[settings] session revoke failed; already signed out locally",
+    );
+    expect(warning.mock.calls.flat().join(" ")).not.toContain(PLOW_CREDENTIAL);
   });
 
   it("does not call out at all when there is nothing to revoke", async () => {
     const home = homeWith({ relayCredential: "" });
     const revoke = vi.fn();
-    await revokeAndSignOut(home, revoke);
+    expect(await revokeAndSignOut(home, revoke)).toBe(true);
     expect(revoke).not.toHaveBeenCalled();
     expect(stored(home).relayCredential).toBe("");
   });
 
-  it("a failing revoke leaks nothing about the credential", async () => {
-    const home = homeSignedIn();
-    const logs: string[] = [];
-    for (const m of ["log", "info", "warn", "error", "debug"] as const) {
-      vi.spyOn(console, m).mockImplementation((...args: unknown[]) => {
-        logs.push(args.map(String).join(" "));
-      });
-    }
-
-    await revokeAndSignOut(home, async () => {
-      throw new Error(`failed for Bearer ${PLOW_CREDENTIAL}`);
-    });
-
-    expect(logs.join("\n")).not.toContain(PLOW_CREDENTIAL);
-    expect(logs.join("\n")).not.toContain(PLOW_CREDENTIAL.slice(0, 10));
-    vi.restoreAllMocks();
-  });
 });
 
 describe("a second sign-out is a no-op, not a second sign-out", () => {

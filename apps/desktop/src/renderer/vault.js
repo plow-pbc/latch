@@ -8,12 +8,6 @@ import { el, icon } from "./dom.js";
    Everything here is fed by the real vault: the list, the values, and the
    secrets that are fetched only when the owner asks for one. */
 
-/* ---- The Vault tab, built to Mary's design (vault.html) ----------------
-   Her markup and her class names; the styling lives in vault.css, scoped to
-   `.vaultui` so no other screen changes. Everything here is fed by the real
-   vault: the list, the values, and the secrets that are fetched only when the
-   owner asks to see one. */
-
 /* The four types, laid out as her forms lay them out. `secret` is a value the
    vault never hands over with the item — it is fetched one at a time, which is
    what the eye button does. */
@@ -25,7 +19,10 @@ const VAULT_TYPES = {
         { key: "username", label: "Username", placeholder: "you@example.com" },
         { key: "password", label: "Password", secret: true, generate: true, placeholder: "••••••••••••",
           hint: "Use the generator to create a strong, unique password" },
-        { key: "totp", label: "Authenticator key (TOTP)", secret: true, placeholder: "Optional — for 2FA codes" },
+        { key: "totp", label: "Authenticator key (TOTP)", secret: true, totp: true,
+          placeholder: "Optional — e.g. JBSW Y3DP EHPK 3PXP, or otpauth://…",
+          hint: "Paste the setup key the site shows under its QR code, or the whole otpauth:// link. " +
+                "Spaces and capitals do not matter. Not the six digits — those change every 30 seconds." },
       ] },
       { head: "Website (URI)", required: true, urls: true },
       { head: "Notes", fields: [{ key: "notes", placeholder: "Optional", textarea: true }] },
@@ -87,7 +84,12 @@ const VAULT_TYPES = {
 };
 
 function errText(err) {
-  return err && err.message ? String(err.message).replace(/^Error: /, "") : String(err);
+  // A throw from the main process arrives wrapped: "Error invoking remote
+  // method 'vault:saveItem': Error: the sentence we wrote". The owner should
+  // read the sentence, not the plumbing that carried it.
+  return (err && err.message ? String(err.message) : String(err))
+    .replace(/^Error invoking remote method '[^']*':\s*/, "")
+    .replace(/^Error:\s*/, "");
 }
 
 /** Her toast: one line, bottom of the pane, gone on its own. */
@@ -114,6 +116,183 @@ function generatedPassword() {
  * to it. A secret starts blank — the vault has not handed it over — and the eye
  * asks for it, which is the request the vault's audit records.
  */
+/*
+ * Unsaved edits are decided by COMPARING, not by remembering that a key was
+ * pressed. Type Daniel → Carlos → Daniel and there is nothing left to save, so
+ * nothing should be asked. `baseline` is what the box held when the form opened.
+ */
+function vbaseline(input) {
+  input.dataset.baseline = input.value;
+}
+
+/** Whether this box holds something other than what it opened with. */
+const vchanged = (input) => input.value !== input.dataset.baseline;
+
+/*
+ * Who owns a pane mutation.
+ *
+ * vbusy() does, and it is the only thing that does. The invariant is one line:
+ * while a vault operation is running, the pane takes no input and nothing else
+ * may replace it — and "the operation" means the call AND the pane change it
+ * ends with, not the call alone.
+ *
+ * Everything that touches the pane goes through it: reveal, save, delete, and
+ * the reload each of those ends with. A leave question waits on it rather than
+ * racing it. Anything added here that mutates the pane belongs inside it too;
+ * that is the whole rule, and it is why there is no second coordination seam.
+ */
+
+/**
+ * Run a vault call with the whole vault PANE inert.
+ *
+ * Each of these awaits ends by overwriting the form (a reveal) or replacing the
+ * entire pane (a save, a delete, and the reload each triggers). Anything typed
+ * in between is lost: not stored, not kept, not asked about.
+ *
+ * The boundary is the pane, not the form's own fields — the reload replaces the
+ * pane, so a row saving while another row is opened and edited would take that
+ * second row's edits with it. `inert` is the platform saying exactly this: the
+ * subtree takes no clicks, no typing and no focus.
+ *
+ * It comes back only if the call FAILED. On success the caller either replaces
+ * the pane or has just overwritten the form, and handing interaction back in
+ * between would reopen the window this exists to close.
+ */
+function vpane() {
+  return document.querySelector(".vaultui");
+}
+
+/**
+ * The vault OPERATION in flight, if any — the call AND the pane change it ends
+ * with. A leave question waits for the whole thing: waiting only for the call
+ * lets the question resume between the answer arriving and the reload running,
+ * which is still under the inert pane and still detached unanswered.
+ */
+let vinflight = null;
+
+async function vbusy(fn) {
+  vpane()?.toggleAttribute("inert", true);
+  const done = fn();
+  vinflight = done.then(() => {}, () => {}); // settles either way, never rejects
+  try {
+    return await done;
+  } catch (err) {
+    vpane()?.toggleAttribute("inert", false);
+    throw err;
+  } finally {
+    vinflight = null;
+  }
+}
+
+/** True when any box on this form differs from what it opened with. */
+function vformDirty(ctx) {
+  return [...Object.values(ctx.inputs), ...ctx.urlInputs].some(vchanged);
+}
+
+/*
+ * The six digits — the only thing about an authenticator key anyone can read.
+ *
+ * While a key is being pasted, they settle on sight whether the paste was the
+ * key at all: "TOTP" means the code to everyone who is not implementing one,
+ * the box is masked, and a wrong paste looks exactly like a right one until a
+ * site rejects the number. Digits ticking means it was a key; a sentence means
+ * it was not, while the box is still open.
+ *
+ * For a key already IN the vault they are the proof it is saved, so a held key
+ * shows its code as soon as the form opens. The KEY itself stays behind the
+ * eye; the code is derived from it, dead in half a minute, and cannot be
+ * turned back into it.
+ */
+function vtotp(input, ctx, held) {
+  const out = el("div", { class: "totp-read" });
+  let showing = null; // { code, expiresAt } — the code on screen, or nothing
+  // Answers arrive out of order: a keystroke's request can land after the one
+  // that replaced it, describing a key the box no longer holds. Only the
+  // newest request may reach the screen.
+  let asked = 0;
+
+  /*
+   * The one seam. `showing` and the DOM only ever change here, together, so
+   * there is no state in which the box says one thing and the variable another
+   * — which is how expired digits used to survive on screen while `showing`
+   * had already been dropped.
+   *
+   * Seconds come from the clock rather than a tick count: a backgrounded or
+   * throttled renderer gets late, coalesced callbacks, and anything counting
+   * its own ticks reads as alive long after the code died.
+   */
+  const display = (code, message) => {
+    showing = code ?? null;
+    out.classList.toggle("bad", !code && !!message);
+    if (code) {
+      const left = Math.max(0, Math.ceil((code.expiresAt - Date.now()) / 1000));
+      out.replaceChildren(
+        el("span", { class: "totp-code", text: code.code.replace(/^(\d{3})(\d+)$/, "$1 $2") }),
+        el("span", { class: "totp-left", text: `${left}s` }),
+      );
+    } else {
+      out.replaceChildren(...(message ? [el("span", { text: message })] : []));
+    }
+  };
+
+  /**
+   * One request, whoever asked.
+   *
+   * The screen is cleared before the await, not just the variable: whatever
+   * was showing is either expired (a rollover) or describes a key the box no
+   * longer holds (a keystroke), and a saved key can sit behind the Mac asking
+   * who is at the keyboard for as long as it takes. Leaving the old digits up
+   * through that would show a dead code as if it were live — the very thing
+   * counting against the clock exists to prevent. Clearing also stops the
+   * countdown, so it cannot start a second read on top of this one.
+   */
+  const ask = async (get) => {
+    const mine = ++asked;
+    display(null);
+    try {
+      const code = await get();
+      if (mine === asked) display(code);
+    } catch (err) {
+      if (mine === asked) display(null, errText(err));
+    }
+  };
+
+  /** What the box holds right now, as a code — or why it is not one. */
+  const preview = () => {
+    const typed = input.value.trim();
+    // An emptied box invalidates whatever is still in flight, or its answer
+    // would appear under a box holding nothing.
+    if (!typed) { asked++; display(null); return Promise.resolve(); }
+    return ask(() => window.domo.vaultTotp(null, typed));
+  };
+
+  /** The code a SAVED key is showing — asked for, never taken. */
+  const fromVault = () => ask(() => window.domo.vaultTotp(ctx.item.id));
+
+  // The countdown owns its own timer and ends with the box it belongs to: a
+  // replaced pane detaches the input, and the next tick clears this.
+  const timer = setInterval(() => {
+    if (!input.isConnected) { clearInterval(timer); return; }
+    if (!showing) return;
+    if (Date.now() >= showing.expiresAt) void (input.value.trim() ? preview() : fromVault());
+    else display(showing);
+  }, 1000);
+
+  input.addEventListener("input", preview);
+  /*
+   * A stored key shows its code the moment the item opens — no reveal, no
+   * click. The code is not the secret: it is six digits derived from the key,
+   * it is worthless in half a minute, and it cannot be turned back into the
+   * key. The KEY stays gated behind the eye, which is the thing worth gating.
+   *
+   * The cost is honest and deliberate: opening an item that holds a key reads
+   * that key, so the vault's audit gets a line for it. That is the owner
+   * looking at their own item, which is what the log should say.
+   */
+  if (held) void fromVault();
+  return { node: out, preview };
+}
+
 function vfield(spec, ctx) {
   const input = spec.textarea
     ? el("textarea", { class: "inp", attrs: { placeholder: spec.placeholder ?? "" } })
@@ -128,11 +307,32 @@ function vfield(spec, ctx) {
       });
   const stored = ctx.item ? (spec.key === "notes" ? ctx.item.notes : ctx.item.fields[spec.key]) : "";
   if (!spec.secret && stored) input.value = stored;
+  vbaseline(input);
   ctx.inputs[spec.key] = input;
 
   const buttons = [];
+  const held = !!(spec.secret && ctx.saved && (ctx.item.secrets || []).includes(spec.key));
+  /* Mary drew two states and never let them look alike: a saved secret sat in
+     the box (masked, with the eye), and an empty one read "Not set". This app
+     never hands a secret back to the window, so both states rendered as the
+     same blank box — which is how a key that WAS saved read as dropped.
+     Her distinction, kept, in her own alphabet: a stored secret shows the same
+     bullets every secret box in this form already shows — the password's
+     "••••••••••••", the card number's groups, the CVV's three — painted as
+     text rather than as a hint (vault.css, .field.held). A sentence in the box
+     said the same thing in a language the rest of the form does not speak.
+     A box that already draws its own bullets keeps them, whatever it groups
+     them with — a stored card number still reads in its four groups, a social
+     security number in its "•••-••-••••". The rest get a fixed run: the value
+     never reaches this window, so its true length is not ours to show — this
+     is an is-set light and nothing more, and the live code beneath a key is
+     what proves the stored value still works.
+     An existing item with no secret gets her word. */
+  if (held) input.setAttribute("placeholder", /^[•\s-]+$/.test(spec.placeholder ?? "") ? spec.placeholder : "••••••••••••");
+  else if (spec.secret && ctx.saved) input.setAttribute("placeholder", "Not set");
+  // Built before the buttons so the eye and the code button can drive it.
+  const code = spec.totp ? vtotp(input, ctx, held) : null;
   if (spec.secret) {
-    const held = ctx.saved && (ctx.item.secrets || []).includes(spec.key);
     const eye = el("button", { class: "mini eye", attrs: { type: "button", title: "Reveal" } }, [icon("eye", { class: "vico", strokeWidth: "1.8" })]);
     eye.addEventListener("click", async () => {
       if (input.getAttribute("type") === "text") {
@@ -141,15 +341,23 @@ function vfield(spec, ctx) {
         return;
       }
       if (held && !input.value) {
-        eye.disabled = true;
         try {
-          input.value = await window.domo.vaultReveal(ctx.item.id, spec.key);
+          await vbusy(async () => {
+            const revealed = await window.domo.vaultReveal(ctx.item.id, spec.key);
+            input.value = revealed;
+            // Looking at a secret is not changing it: without re-baselining,
+            // merely peeking at a password would ask to save it.
+            vbaseline(input);
+            // The key is on screen now; so is what it is worth.
+            code?.preview();
+            // The only call the pane OUTLIVES, so it is the only one that hands
+            // interaction back on success.
+            vpane()?.toggleAttribute("inert", false);
+          });
         } catch (err) {
           vtoast("Could not read it: " + errText(err));
-          eye.disabled = false;
           return;
         }
-        eye.disabled = false;
       }
       input.setAttribute("type", "text");
       eye.replaceChildren(icon("eyeOff", { class: "vico", strokeWidth: "1.8" }));
@@ -161,34 +369,51 @@ function vfield(spec, ctx) {
     gen.addEventListener("click", () => {
       input.value = generatedPassword();
       input.setAttribute("type", "text");
-      ctx.onChange?.();
     });
     buttons.push(gen);
   }
-  // Touched, so an empty box now means "clear this", not "leave it alone".
-  input.addEventListener("input", () => { input.dataset.touched = "1"; ctx.onChange?.(); });
 
   const label = spec.label
     ? el("label", { text: spec.label + " " }, spec.required ? [el("span", { class: "req", text: "*" })] : [])
     : null;
   const hint = spec.hint ? el("span", { class: "gen-hint" }, [icon("generate", { class: "vico", strokeWidth: "1.8" }), el("span", { text: " " + spec.hint })]) : null;
-  return el("div", { class: "field" + (spec.secret ? " secret" : "") + (spec.half ? "" : " span2") },
-    [label, el("div", { class: "inwrap" }, [input, ...buttons]), hint].filter(Boolean));
+  return el("div", { class: "field" + (spec.secret ? " secret" : "") + (held ? " held" : "") + (spec.half ? "" : " span2") },
+    [label, el("div", { class: "inwrap" }, [input, ...buttons]), code?.node, hint].filter(Boolean));
 }
 
-/** The website group: one box per URL the item has, and her "Add website". */
+/** The website group: one box per URL the item has, her "Add website", and a
+    way back off each one. */
 function vurls(ctx) {
-  const rows = el("div", {});
-  const add = () => {
+  // The last remaining site cannot be removed: a login with no URL can never be
+  // filled, and the save refuses it — so the form never offers that dead end.
+  // That is a fact about this list, and vault.css reads it off :only-child
+  // rather than anything here keeping a second copy of it in step.
+  const rows = el("div", { class: "url-rows" });
+  // `initial` is set BEFORE the baseline is taken: a row drawn from a stored
+  // address opens holding it, so that address is what "unchanged" means. Taking
+  // the baseline first and assigning after would leave every item that has a
+  // website permanently unsaved.
+  const add = (initial = "") => {
     const input = el("input", { class: "inp", attrs: { type: "text", spellcheck: "false", placeholder: "https://" } });
-    input.addEventListener("input", () => ctx.onChange?.());
+    input.value = initial;
+    vbaseline(input);
     ctx.urlInputs.push(input);
-    rows.appendChild(el("div", { class: "field span2" }, [el("div", { class: "inwrap" }, [input])]));
+    const drop = el("button", { class: "mini drop", attrs: { type: "button", title: "Remove this website", "aria-label": "Remove this website" } },
+      [icon("close", { class: "vico", strokeWidth: "1.8" })]);
+    const row = el("div", { class: "field span2" }, [el("div", { class: "inwrap" }, [input, drop])]);
+    drop.addEventListener("click", () => {
+      // Emptied in place, not spliced out of urlInputs: the box's position is
+      // what tells the save which stored entry this row was drawn from, and
+      // two rows can hold the same address.
+      input.value = "";
+      row.remove();
+    });
+    rows.appendChild(row);
     return input;
   };
   const existing = ctx.item ? ctx.item.urls || [] : [];
   if (existing.length === 0) add();
-  else for (const url of existing) add().value = url;
+  else for (const url of existing) add(url);
 
   const more = el("button", { class: "add-link", attrs: { type: "button" } }, [icon("plus", { class: "vico", strokeWidth: "2" }), el("span", { text: " Add website" })]);
   more.addEventListener("click", () => add().focus());
@@ -200,9 +425,9 @@ function vurls(ctx) {
 }
 
 /** Every group of a type's form, built once and shared by the sheet and the row. */
-function vformBody(type, item, onChange) {
+function vformBody(type, item) {
   const spec = VAULT_TYPES[type];
-  const ctx = { item, saved: !!(item && item.id), inputs: {}, urlInputs: [], onChange };
+  const ctx = { item, saved: !!(item && item.id), inputs: {}, urlInputs: [] };
   const name = vfield(
     { key: "name", label: "Item name", required: true, placeholder: spec.placeholder },
     { ...ctx, item: item ? { ...item, fields: { ...item.fields, name: item.name } } : null },
@@ -226,8 +451,6 @@ function vpayload(type, ctx) {
   const payload = { type, name: ctx.inputs.name.value.trim() };
   for (const group of VAULT_TYPES[type].groups) {
     if (group.urls) {
-      // Positions are kept, blanks included: dropping them here would shift
-      // every later URL onto another one's stored entry.
       payload.urls = ctx.urlInputs.map((i) => i.value.trim());
       continue;
     }
@@ -236,32 +459,98 @@ function vpayload(type, ctx) {
       // A secret box starts blank because the vault never handed the value
       // over, so blank-and-untouched means "leave the stored one alone" —
       // while blank after the owner edited it means they cleared it.
-      if (field.secret && !input.value && !input.dataset.touched) continue;
+      if (field.secret && !vchanged(input)) continue;
       payload[field.key] = input.value;
     }
   }
   return payload;
 }
 
-/** Her confirm card, for the one action that cannot be undone here. */
-function vconfirm(title, body, confirmLabel, onConfirm) {
-  const overlay = el("div", { class: "overlay confirm-overlay show" });
-  const close = () => overlay.remove();
-  const keep = el("button", { class: "btn ghost", attrs: { type: "button" }, text: "Cancel" });
-  keep.addEventListener("click", close);
-  const go = el("button", { class: "btn danger", attrs: { type: "button" }, text: confirmLabel });
-  go.addEventListener("click", async () => {
-    go.disabled = true;
-    await onConfirm();
-    close();
+/** Her confirm card, for the actions that cannot be undone. Resolves the answer. */
+function vconfirm(title, body, confirmLabel) {
+  return new Promise((resolve) => {
+    const overlay = el("div", { class: "overlay confirm-overlay show" });
+    const answer = (yes) => { overlay.remove(); resolve(yes); };
+    const keep = el("button", { class: "btn ghost", attrs: { type: "button" }, text: "Cancel" });
+    keep.addEventListener("click", () => answer(false));
+    const go = el("button", { class: "btn danger", attrs: { type: "button" }, text: confirmLabel });
+    go.addEventListener("click", () => { go.disabled = true; answer(true); });
+    overlay.appendChild(el("div", { class: "confirm-card", attrs: { role: "alertdialog" } }, [
+      el("div", { class: "confirm-h", text: title }),
+      el("p", { class: "confirm-p", text: body }),
+      el("div", { class: "confirm-acts" }, [keep, go]),
+    ]));
+    overlay.addEventListener("click", (e) => { if (e.target === overlay) answer(false); });
+    document.querySelector(".vaultui").appendChild(overlay);
   });
-  overlay.appendChild(el("div", { class: "confirm-card", attrs: { role: "alertdialog" } }, [
-    el("div", { class: "confirm-h", text: title }),
-    el("p", { class: "confirm-p", text: body }),
-    el("div", { class: "confirm-acts" }, [keep, go]),
-  ]));
-  overlay.addEventListener("click", (e) => { if (e.target === overlay) close(); });
-  document.querySelector(".vaultui").appendChild(overlay);
+}
+
+/*
+ * Unsaved edits.
+ *
+ * A form is dirty when a box DIFFERS from what it opened with — not when a key
+ * was pressed in it. Secrets compare too: the box starts blank because the vault
+ * hands nothing over, and revealing one re-baselines it, so the comparison is
+ * against what is actually stored in both states.
+ *
+ * ONE editor at a time may hold unsaved edits. The screen can show several open
+ * rows, but the moment a second one is edited the first has already been asked
+ * about — so every teardown, from a row collapsing to the window closing, has
+ * exactly one thing to consult. A set of independent dirty forms cannot give
+ * that answer: a save on one reloads the pane and takes the others down with
+ * it, which is the silent loss this whole change exists to stop.
+ */
+let editor = null; // { dirty(), close() } — the one form that may be holding edits
+
+/**
+ * True when the current editor's edits may be thrown away. One dialog at a
+ * time, whoever asks: a row collapsing and a Cmd-W arriving together are two
+ * callers of this, and two stacked overlays over one form is nonsense.
+ */
+let asking = null;
+function vmayDiscard() {
+  if (!editor?.dirty()) return Promise.resolve(true);
+  asking ??= vconfirm(
+    "Discard your changes?",
+    "What you typed here has not been saved to the vault. Leaving throws it away.",
+    "Discard",
+  ).finally(() => { asking = null; });
+  return asking;
+}
+
+/** Hand the seat to `next`, asking whoever holds it to give up their edits. */
+async function vtakeEditor(next) {
+  if (editor === next) return true;
+  if (!(await vmayDiscard())) return false;
+  editor?.close();
+  editor = next;
+  return true;
+}
+
+/** The seat is free — the holder saved, closed, or was torn down. */
+function vreleaseEditor(who) {
+  if (editor === who) editor = null;
+}
+
+/** Asked before anything replaces this pane — a tab switch, or main tearing
+    the window down. vmayDiscard() is what keeps it to one dialog. */
+export async function vaultConfirmLeave() {
+  // Wait for any call in flight before asking. The question is drawn INSIDE the
+  // pane, and the pane is inert while a call runs — so a dialog raised now could
+  // not be answered, and the reload after a successful save would detach it
+  // unanswered, leaving main's no-timeout wait stranded and every later close
+  // and quit with it. Waiting also usually removes the question: the save lands,
+  // the form is released, and there is nothing left to discard.
+  if (vinflight) await vinflight;
+  const ok = await vmayDiscard();
+  if (ok) {
+    // Close it, don't just drop the seat. Quit answers this and then spends
+    // seconds shutting the browsers down, and a form left on screen is a form
+    // still being typed into — edits nothing is watching for any more.
+    editor?.close();
+    editor = null;
+  }
+  return ok;
 }
 
 /** One saved item: her row, and the form it opens into. */
@@ -283,46 +572,68 @@ function vitem(summary, reload) {
   const body = el("div", { class: "vbody" }, [inner]);
 
   let loaded = false;
+  let form = null; // the ctx of the open form, or null when the row is shut
+  const shut = () => {
+    // Closing throws the form away, revealed values included. Keeping it
+    // would let a second look at a protected item skip the check the first
+    // one had to pass.
+    article.classList.remove("open");
+    inner.replaceChildren();
+    loaded = false;
+    form = null;
+  };
+  const seat = { dirty: () => form !== null && vformDirty(form), close: shut };
+  const release = () => { form = null; vreleaseEditor(seat); };
   row.addEventListener("click", async () => {
-    article.classList.toggle("open");
-    if (!article.classList.contains("open")) {
-      // Closing throws the form away, revealed values included. Keeping it
-      // would let a second look at a protected item skip the check the first
-      // one had to pass.
-      inner.replaceChildren();
-      loaded = false;
+    if (article.classList.contains("open")) {
+      // Ask BEFORE anything is torn down, so backing out leaves the form —
+      // and whatever was typed into it — exactly as it stood.
+      if (!(await vmayDiscard())) return;
+      release();
+      shut();
       return;
     }
+    // Opening this row takes the editor seat from whoever held it, which is
+    // where the owner of any unsaved edits gets asked.
+    if (!(await vtakeEditor(seat))) return;
+    article.classList.add("open");
     if (loaded) return;
     loaded = true;
     inner.replaceChildren(el("p", { class: "use-note", text: "Opening…" }));
     try {
       const item = await window.domo.vaultItem(summary.id);
       const { nodes, ctx } = vformBody(type, item);
+      form = ctx;
       const del = el("button", { class: "btn danger", attrs: { type: "button" }, text: "Delete" });
-      del.addEventListener("click", () =>
-        vconfirm(
+      del.addEventListener("click", async () => {
+        const yes = await vconfirm(
           "Delete this item?",
           `"${item.name}" goes to the vault's trash. Agents lose it immediately, and anything filled with it stops working.`,
           "Delete",
-          async () => {
-            try {
-              await window.domo.vaultDeleteItem(item.id);
-              vtoast("Deleted");
-              await reload();
-            } catch (err) {
-              vtoast("Could not delete it: " + errText(err));
-            }
-          },
-        ),
-      );
+        );
+        if (!yes) return;
+        try {
+          await vbusy(async () => {
+            await window.domo.vaultDeleteItem(item.id);
+            release(); // it is gone; do not ask about edits to it
+            vtoast("Deleted");
+            await reload();
+          });
+        } catch (err) {
+          vtoast("Could not delete it: " + errText(err));
+        }
+      });
       const save = el("button", { class: "btn save", attrs: { type: "button" }, text: "Save" });
       save.addEventListener("click", async () => {
         save.disabled = true;
         try {
-          await window.domo.vaultSaveItem({ ...vpayload(type, ctx), itemId: item.id });
-          vtoast("Saved");
-          await reload();
+          const input = { ...vpayload(type, ctx), itemId: item.id, revision: item.revision };
+          await vbusy(async () => {
+            await window.domo.vaultSaveItem(input);
+            release(); // stored now — the reload below must not ask about it
+            vtoast("Saved");
+            await reload();
+          });
           return;
         } catch (err) {
           vtoast("Could not save it: " + errText(err));
@@ -335,6 +646,7 @@ function vitem(summary, reload) {
       ]));
     } catch (err) {
       loaded = false;
+      release(); // nothing was ever typed into a form that failed to open
       inner.replaceChildren(el("p", { class: "use-note", text: "Could not open it: " + errText(err) }));
     }
   });
@@ -344,19 +656,26 @@ function vitem(summary, reload) {
 }
 
 /** Her sheet: pick a type, fill that type's form, save. */
-function vsheet(reload) {
+async function vsheet(reload) {
   const overlay = el("div", { class: "overlay show" });
-  const close = () => overlay.remove();
+  let formCtx = null; // the ctx of the form on screen; the picker holds none
+  const close = () => { vreleaseEditor(seat); overlay.remove(); };
+  const seat = { dirty: () => formCtx !== null && vformDirty(formCtx), close };
+  // The sheet is modal, so it holds the seat for its whole life — taking it up
+  // front is where an already-dirty row gets asked about, before this covers it.
+  if (!(await vtakeEditor(seat))) return;
+  /** Every way out except a successful save, which has nothing to discard. */
+  const leave = async () => { if (await vmayDiscard()) close(); };
 
   const title = el("h2", { text: "New item" });
   const tag = el("span", { class: "htag", attrs: { hidden: "" } });
   const back = el("button", { class: "sheet-back", attrs: { type: "button", title: "Back", hidden: "" } }, [icon("chevron", { class: "vico", strokeWidth: "2.2" })]);
   const x = el("button", { class: "sheet-x", attrs: { type: "button", title: "Close" } }, [icon("close", { class: "vico", strokeWidth: "2.2" })]);
-  x.addEventListener("click", close);
+  x.addEventListener("click", leave);
 
   const bodyEl = el("div", { class: "sheet-body" });
   const cancel = el("button", { class: "btn ghost", attrs: { type: "button" }, text: "Cancel" });
-  cancel.addEventListener("click", close);
+  cancel.addEventListener("click", leave);
   const save = el("button", { class: "btn save", attrs: { type: "button" }, text: "Save" });
   const foot = el("div", { class: "sheet-foot", attrs: { hidden: "" } }, [
     el("span", { class: "req-note" }, [el("span", { class: "req", text: "*" }), el("span", { text: " Required" })]),
@@ -365,6 +684,7 @@ function vsheet(reload) {
   ]);
 
   const picker = () => {
+    formCtx = null; // the picker holds nothing to lose; the sheet keeps the seat
     title.textContent = "New item";
     tag.setAttribute("hidden", "");
     back.setAttribute("hidden", "");
@@ -392,14 +712,19 @@ function vsheet(reload) {
     back.removeAttribute("hidden");
     foot.removeAttribute("hidden");
     const { nodes, ctx } = vformBody(type, null);
+    formCtx = ctx;
     bodyEl.replaceChildren(el("form", { class: "sheet-form", attrs: { autocomplete: "off" } }, nodes));
     save.onclick = async () => {
       save.disabled = true;
       try {
-        await window.domo.vaultSaveItem(vpayload(type, ctx));
-        close();
-        vtoast("Saved");
-        await reload();
+        const input = vpayload(type, ctx);
+        await vbusy(async () => {
+          await window.domo.vaultSaveItem(input);
+          formCtx = null; // stored: nothing left to discard
+          close();
+          vtoast("Saved");
+          await reload();
+        });
         return;
       } catch (err) {
         vtoast("Could not save it: " + errText(err));
@@ -407,14 +732,14 @@ function vsheet(reload) {
       save.disabled = false;
     };
   };
-  back.addEventListener("click", picker);
+  back.addEventListener("click", async () => { if (await vmayDiscard()) picker(); });
 
   overlay.appendChild(el("div", { class: "sheet", attrs: { role: "dialog", "aria-modal": "true" } }, [
     el("div", { class: "sheet-top" }, [back, el("div", { class: "sheet-titlewrap" }, [title, tag]), x]),
     bodyEl,
     foot,
   ]));
-  overlay.addEventListener("click", (e) => { if (e.target === overlay) close(); });
+  overlay.addEventListener("click", (e) => { if (e.target === overlay) leave(); });
   picker();
   document.querySelector(".vaultui").appendChild(overlay);
 }
@@ -430,6 +755,11 @@ const PTYPE_BLURB = {
 export async function renderVault(view, isCurrent = () => true) {
   /** Redraw this same pane — what every action hands to its callers. */
   const renderVaultIn = () => renderVault(view, isCurrent);
+  // A redraw detaches every form on the pane, so the seat goes with them. This
+  // is safe ONLY because at most one editor can be dirty: the reload is always
+  // triggered by that editor's own save or delete, which released the seat just
+  // above — there is no second dirty form for this to quietly discard.
+  editor = null;
   // Everything the vault holds, edited here. This is why the tab exists: the
   // only other way in is the vault's own web page, and reaching it means a
   // browser warning about the certificate the app issued to itself.

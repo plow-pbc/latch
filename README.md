@@ -18,17 +18,17 @@ touch — the bundle id, the update-feed prefix, the `@domo/*` package scope,
 `DOMO_HOME`, this repository's name, and the frozen vault Keychain identity
 (DESIGN.md §11a-i, which records what renaming it cost the last time).
 
-> **Being rebuilt.** The in-repo broker that used to route agents here has been
-> removed. A Mac now dials *out* to the Plow relay, which authenticates the
-> calling agent and forwards MCP to an MCP server running in this app. Both
-> halves exist here — that server and the outbound relay client — and so does
-> the relay itself (see `CLAUDE.md` § Layout, "Being rebuilt").
-> **Agents do reach this Mac today.** The policy engine, the capability-derived
-> sandbox, file operations, the audit log, the approval UI and the adversarial
-> reviewer build, run and are covered by the test suite. What the relay leg's
-> automated coverage does and does not reach is owned by
-> [README-ts.md](README-ts.md#integration-coverage) § Integration coverage;
-> the rest of that leg is verified by hand.
+> **Agents reach this Mac today.** The in-repo broker that used to route them
+> here has been removed. A Mac now dials *out* to the Plow relay, which
+> authenticates the calling agent and forwards MCP to an MCP server running
+> in this app. Both halves exist here — that server and the outbound relay
+> client — and so does the relay itself (see `CLAUDE.md` § Layout, "Rebuilt:
+> a Mac dials out"). So the policy engine, the capability-derived sandbox,
+> file operations, the audit log, the approval UI and the adversarial
+> reviewer are not just covered by the test suite: they are the live path a
+> real caller drives. What the relay leg's automated coverage does and does
+> not reach is owned by [README-ts.md](README-ts.md#integration-coverage) §
+> Integration coverage; the rest of that leg is verified by hand.
 
 ## Quickstart with `just`
 
@@ -61,8 +61,18 @@ approved capabilities — *derived from*, not tightly fitted to; see
 actually permits. The audit log is append-only. See DESIGN.md §8.
 
 Agent identity used to be an agent-held Ed25519 key pinned at access-grant time;
-it will instead be asserted by the relay, which authenticates the agent before
+it is now asserted by the relay, which authenticates the agent before
 forwarding. Note two things that are true of the code today: the device private
-key is a plaintext seed in a `0600` file (there is no Keychain or `safeStorage`
-integration anywhere), and `settings.json` — which holds the Plow relay
-credential — is written `0600`.
+key is a plaintext seed in a `0600` file, while the Plow relay credential is
+`safeStorage`-sealed where available and falls back to plaintext in the
+owner-only `0600` `settings.json`.
+
+## License
+
+Apache-2.0 — see [LICENSE](LICENSE) and [NOTICE](NOTICE). The vendored
+`vendor/browser-server/` directory carries its own MIT license from upstream.
+The browser runtime fetched at package time (`just package`; the Python-only
+`just fetch-browser-runtime` covers dev) pulls third-party components — a Python runtime (PSF), Camoufox (MPL-2.0),
+Vaultwarden (AGPL-3.0), and the Bitwarden CLI (GPL-3.0) — which are not part
+of this repository; their licenses
+govern redistribution of packaged builds that bundle them.

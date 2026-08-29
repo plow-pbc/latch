@@ -200,6 +200,16 @@ export class ApprovalStore implements PolicyDelegate {
     return true;
   }
 
+  /**
+   * Forwarded, never answered here. This decorator adds durability and a
+   * deadline; deciding whether a cached rule still applies belongs to whoever
+   * it wraps, and a decorator that quietly answered `true` would restore the
+   * bypass for every delegate it is put in front of.
+   */
+  mayGrantFromStoredRule(intent: Intent): boolean | Promise<boolean> {
+    return this.inner.mayGrantFromStoredRule?.(intent) ?? true;
+  }
+
   async decideIntent(intent: Intent): Promise<IntentDecision> {
     const started = this.now();
     const record: ApprovalRecord = {

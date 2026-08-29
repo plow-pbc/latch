@@ -34,14 +34,26 @@ describe("SBPL profile", () => {
         readPaths: c.readPaths,
         writePaths: c.writePaths,
         network: c.network,
+        appleEvents: c.appleEvents ?? false,
         scratch: c.scratch,
       });
       expect(profile).toBe(c.profile);
     });
   }
+
+  it("grants appleevent-send only when the capability was approved", () => {
+    const base = { readPaths: [], writePaths: [], network: false, scratch: "/tmp/s" };
+    expect(SandboxProfile.generate({ ...base, appleEvents: true })).toContain("(allow appleevent-send)");
+    expect(SandboxProfile.generate({ ...base, appleEvents: false })).not.toContain("appleevent-send");
+  });
 });
 
-describe("real sandboxed execution", () => {
+// Seatbelt (`sandbox-exec`) is the Mac's own, and these cases run real
+// commands through it; anywhere else they would be asserting against a spawn
+// error rather than the sandbox's behavior.
+const ON_MAC = process.platform === "darwin";
+
+describe.skipIf(!ON_MAC)("real sandboxed execution", () => {
   it("runs a command and captures output", async () => {
     const executor = new Executor(tempDir());
     const result = await executor.run({
@@ -49,6 +61,7 @@ describe("real sandboxed execution", () => {
       readPaths: [],
       writePaths: [],
       network: false,
+      appleEvents: false,
       waitMs: 10_000,
     });
     expect(result.running).toBe(false);
@@ -66,6 +79,7 @@ describe("real sandboxed execution", () => {
       readPaths: [],
       writePaths: [allowed],
       network: false,
+      appleEvents: false,
       waitMs: 10_000,
     });
     expect(result.exitCode).not.toBe(0);
@@ -82,6 +96,7 @@ describe("real sandboxed execution", () => {
       readPaths: [],
       writePaths: [allowed],
       network: false,
+      appleEvents: false,
       waitMs: 10_000,
     });
     expect(result.exitCode).toBe(0);
@@ -99,6 +114,7 @@ describe("real sandboxed execution", () => {
       readPaths: [],
       writePaths: [],
       network: false,
+      appleEvents: false,
       waitMs: 10_000,
     });
     // Without network, the socket syscall is blocked by seatbelt.
@@ -109,6 +125,7 @@ describe("real sandboxed execution", () => {
       readPaths: [],
       writePaths: [],
       network: true,
+      appleEvents: false,
       waitMs: 10_000,
     });
     // With network allowed, the syscall goes through (connection refused, but

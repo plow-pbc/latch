@@ -15,9 +15,16 @@
  * **Nothing here puts a credential in a message.** `state()` is what the
  * sandboxed renderer sees, and the only secret it ever carries is the one the
  * user is meant to read: the activation display code. The activation *secret*
- * and the device credential never appear in it at all.
+ * and the login session never appear in it at all.
  */
-import { PlowApi, PlowApiError } from "./plowApi.js";
+import {
+  chatEchoesCredential,
+  chatPeople,
+  chatRowTitle,
+  usableChatDisplayName,
+  withoutCredentialEchoes,
+} from "./chatRows.js";
+import { ActivationChat, PlowApi, PlowApiError } from "./plowApi.js";
 import { loadSettings, saveSettings, Settings } from "./settings.js";
 
 /**
@@ -34,14 +41,19 @@ export const CODE_LENGTH = 8;
 export const CODE_TTL_MS = 5 * 60_000;
 
 /**
- * How long the app watches for the text.
+ * How long the screen counts down before it stalls and offers a fresh code.
  *
- * The server's code lives 30 minutes (`ACTIVATION_CODE_TTL` in
- * `api/plow/auth_routes/router.py`), but a screen that says "waiting" for half
- * an hour is a worse experience than one that gives up early and hands control
- * back. So we stop at five and offer a fresh code — and because the server
- * honours a completion that lands after we stopped looking, "get a new code"
- * re-polls the old secret before minting anything.
+ * A screen that says "waiting" for half an hour is a worse experience than one
+ * that hands control back early — but stalling the SCREEN is all that happens
+ * at five minutes. The server keeps the code live for thirty
+ * (`ACTIVATION_CODE_TTL` in `api/plow/auth_routes/router.py`) and hands the
+ * session token to the FIRST redeem that sees the completion, so a watch that
+ * stopped with the countdown left a text at minute fifteen completed
+ * server-side with nobody listening: the phone said "You're all set!" while the
+ * Mac said it hadn't heard. The poll therefore continues quietly for the code's
+ * whole server life, and stops only on the server's own word — the 410. No
+ * client-side clock seconds that judgment: the server owns the code's life,
+ * and a local mirror of its TTL would just be a second owner to drift.
  */
 export const ACTIVATION_POLL_WINDOW_MS = 5 * 60_000;
 export const ACTIVATION_POLL_INTERVAL_MS = 3_000;
@@ -77,9 +89,89 @@ export interface OnboardingActivation {
   smsBody: string;
   /** `sms:` URL for the "Open Messages" button. */
   smsUrl: string;
-  /** Epoch ms we stop watching, so the screen can count down. Not the code's
-   * own deadline — the server keeps it live for 30 minutes after this. */
+  /** Epoch ms the screen's countdown ends and it offers a fresh code. Not the
+   * code's own deadline, and not the watch's: the poll runs on quietly until
+   * the server retires the code. */
   pollUntil: number;
+}
+
+/**
+ * The chat the activation provisioned, as the screen says it.
+ *
+ * The label is its title, its members' names or its numbers — see
+ * `activationChatLabel`. `uid` is what everything else joins on.
+ */
+export interface OnboardingChat {
+  uid: string;
+  label: string;
+}
+
+/**
+ * The chat activation provisioned, as the app remembers it.
+ *
+ * One reading of one persisted record. It was two — this screen's and the
+ * cloud-agent picker's — with different ideas about whitespace and a blank
+ * label, so the same Mac could show a chat here and a bare uid there.
+ *
+ * `null` on a Mac that activated before `provision_chat`, which is why nothing
+ * may treat its absence as "this account has no chats". The label falls back to
+ * the uid because a chat with neither a line nor members is still a real chat,
+ * and an empty row is worse than an ugly one.
+ */
+export function storedActivationChat(settings: Settings): OnboardingChat | null {
+  const uid = settings.provisionedChatUid.trim();
+  if (!uid) return null;
+  return { uid, label: settings.provisionedChatLabel.trim() || uid };
+}
+
+/**
+ * How a human recognises a chat: its title when present, otherwise each
+ * member's usable name or real handle, with non-owners first. If the provider
+ * has no usable names, use the number it runs on and each member's handle in
+ * API owner-first order. The first fallback number is the agent participant's
+ * line — never the chat's own `provider_key`, which is the provider's thread id
+ * and would put "chat_5" where the user is looking for something to text.
+ *
+ * Both halves are optional in the data, so this never returns an empty string —
+ * a chat with neither is still identified by its uid, which is ugly but true,
+ * and beats a blank line on the last screen of setup.
+ */
+/**
+ * The numbers a message to this chat would go to.
+ *
+ * Structured, and separate from the label, because they are two different
+ * jobs: the label is prose for a human to recognise a chat by, and these are
+ * addresses. Scraping the one for the other is how a label with no digits — a
+ * bare uid from the fallback — produced an empty recipient list, and how an
+ * upgraded home's `"<line> · <display name>"` produced an incomplete one.
+ *
+ * `line` is the pool line the chat runs on, which is the agent's own number.
+ * `members` are the humans, in the order the server listed them; ordering them
+ * for display is the screen's business, not this function's.
+ */
+export interface ChatRecipients {
+  line: string | null;
+  members: string[];
+}
+
+export function activationChatRecipients(chat: ActivationChat): ChatRecipients {
+  return {
+    line: (chat.line ?? "").trim() || null,
+    members: chat.participants
+      .map((p) => (p.providerKey ?? "").trim())
+      .filter((number) => number.length > 0),
+  };
+}
+
+
+export function activationChatLabel(chat: ActivationChat): string {
+  const displayName = usableChatDisplayName(chat.displayName);
+  if (displayName) return displayName;
+  // Presentation is `chatRows`', not this file's: it decides who counts as a
+  // participant, which of them is the owner, and how a number is spelled. This
+  // used to keep a second answer to all three, and the two drifted — the label
+  // dropped the owner while the picker's row named them "You".
+  return chatRowTitle(chatPeople(chat), (chat.line ?? "").trim() || null, chat.uid);
 }
 
 export interface OnboardingState {
@@ -92,6 +184,9 @@ export interface OnboardingState {
   /** Epoch ms the entered OTP code stops working. */
   codeExpiresAt: number | null;
   activation: OnboardingActivation | null;
+  /** The chat the account now has, or null on a Mac activated before there was
+   * one. Display data — no secret, and nothing here is authoritative. */
+  chat: OnboardingChat | null;
   /** We have stopped watching this activation. The screen stops counting down
    * and offers a fresh code. */
   activationStale: boolean;
@@ -156,6 +251,7 @@ export class Onboarding {
       busy: this.busy,
       codeExpiresAt: this.codeExpiresAt,
       activation: this.activation,
+      chat: storedActivationChat(settings),
       activationStale: this.activationStale,
       accountUid: settings.accountUid,
       mcpUrl: settings.mcpUrl,
@@ -180,13 +276,16 @@ export class Onboarding {
   }
 
   /**
-   * A fresh code and a fresh clock — but only if the last one really did go
-   * unanswered.
+   * A fresh code — but only once the server has retired the old one.
    *
-   * We stop watching at five minutes and the server keeps the code live for
-   * thirty, so a user who texted at minute six has *already succeeded* and is
-   * looking at a screen that says otherwise. One poll on the old secret turns a
-   * pointless second code into an instant sign-in.
+   * While a code is live, its poll loop is the ONLY redeemer, and this button
+   * just puts the same code back on the clock. The button must not redeem: a
+   * redeem racing the poll's own can split the one-shot completion — one
+   * request consumes the token, the other answers tokenless "verified" — and
+   * whichever way the responses land, a login gets discarded. The loop is
+   * guaranteed to be running whenever `activationSecret` is set, because every
+   * path that ends it clears the secret in the same breath; a cleared secret
+   * is what lets this mint.
    */
   async newActivationCode(): Promise<OnboardingState> {
     // SINGLE-FLIGHT. A display code IS a credential — whoever texts it gets the
@@ -199,7 +298,16 @@ export class Onboarding {
     // progress is the only place this can be closed.
     if (this.pendingMint) return this.pendingMint;
 
-    const previous = this.activationSecret;
+    if (this.activationSecret && this.activation) {
+      // Same code, fresh clock — and one honest line about why "Try Again"
+      // is showing the code they already have.
+      this.activation = { ...this.activation, pollUntil: this.now() + ACTIVATION_POLL_WINDOW_MS };
+      this.activationStale = false;
+      this.message =
+        "That code still works — send it exactly as shown and this screen will move on by itself.";
+      return this.publish();
+    }
+
     this.cancelPolling();
     const mintId = ++this.mints;
     // The handle is dropped inside the body rather than by chaining `.finally`
@@ -208,7 +316,6 @@ export class Onboarding {
     // detached poll loop run ahead of the caller. Same guarantee, no new tick.
     const flight = this.run(async () => {
       try {
-        if (previous && (await this.tryFinish(previous))) return;
         this.activation = null;
         this.activationSecret = null;
         this.activationStale = false;
@@ -237,40 +344,6 @@ export class Onboarding {
     this.pendingMint = flight;
     this.pendingMintId = mintId;
     return flight;
-  }
-
-  /**
-   * One redeem. Returns true if it was terminal — signed in, or verified with
-   * no token to hand back — and false if there is still nothing to act on.
-   *
-   * A failed call is `false` rather than a throw: this runs where the fallback
-   * is "mint a fresh code", which will surface its own error honestly if the
-   * API is genuinely down.
-   */
-  private async tryFinish(secret: string): Promise<boolean> {
-    let result;
-    try {
-      result = await this.deps.api.redeemActivation(secret);
-    } catch {
-      return false;
-    }
-    // The same test the poll loop makes, for the same reason and against the
-    // same race: this redeem is also a call in flight, and "Get a New Code"
-    // during a sign-out would otherwise mint and persist a credential out of an
-    // activation the sign-out had already abandoned. `activationSecret` is
-    // still `secret` for the whole legitimate call — `newActivationCode` does
-    // not clear it until this returns false.
-    if (secret !== this.activationSecret) return false;
-    if (result.status !== "verified") return false;
-    if (!result.token) {
-      // The token is handed to the first redeem that sees the completion and
-      // the key is omitted on every one after, so this means it was already
-      // read and lost. A new code is the only way forward.
-      this.stall("Plow verified this Mac but didn't hand back a login. Get a new code.");
-      return true;
-    }
-    await this.finishWithSession(result.token);
-    return true;
   }
 
   /**
@@ -312,8 +385,11 @@ export class Onboarding {
     const generation = this.pollGeneration;
     void this.pollActivation(secret, generation).catch((error) => {
       // Nothing above throws by design; if something does, the screen must not
-      // be left on a countdown that no longer runs.
+      // be left on a countdown that no longer runs — and the secret must not
+      // outlive its watcher, or "Try Again" would re-arm a code nothing
+      // is polling. Dropping it keeps the invariant: secret set ⇒ loop alive.
       if (generation !== this.pollGeneration) return;
+      this.activationSecret = null;
       this.stall(messageOf(error));
       this.publish();
     });
@@ -356,54 +432,77 @@ export class Onboarding {
       // sign-out: sign-out CLEARS the credential, so a redeem in flight when the
       // user signed out passed the test and minted — and persisted — a fresh
       // spend-capable credential that the sign-out's revoke had never seen. The
-      // account was left holding a live device credential its owner had just
-      // retired.
+      // account was left holding a live credential its owner had just retired.
       //
       // `activationSecret` is nulled by every path that abandons an activation
-      // for good — sign-out, the phone-code fallback, a completed login — and
-      // deliberately KEPT by `giveUp`, which is the case this late accept exists
-      // for. So it says what "already holding a credential" was only guessing at.
-      const stillOurs = secret === this.activationSecret;
-      if (
-        result.status === "verified" &&
-        result.token &&
-        stillOurs &&
-        !this.settings().relayCredential.trim()
-      ) {
+      // for good — sign-out, the phone-code fallback, a completed login, the
+      // server retiring the code — so it says what "already holding a
+      // credential" was only guessing at.
+      // Asked, never cached. `activationSecret` is nulled by every path that
+      // abandons this activation, and the stored credential is cleared by
+      // sign-out — so both halves can change under an await, and this is
+      // re-evaluated on the far side of one rather than read once at the top.
+      const keep = () =>
+        secret === this.activationSecret && !this.settings().relayCredential.trim();
+      // A verified token this Mac will not keep is revoked best-effort. The
+      // redeem answers once, so it must not simply be dropped here.
+      if (result.status === "verified" && result.token && !keep()) {
+        await this.deps.api.revokeDeviceCredential(result.token).catch(() => {});
+      }
+      if (result.status === "verified" && result.token && keep()) {
         this.cancelPolling();
-        await this.run(() => this.finishWithSession(result.token as string));
+        // The redeem consumed the one-shot completion, so the code is spent
+        // whatever happens next: retire it BEFORE the handoff, whose network
+        // calls can fail. A failure then leaves the stalled screen minting
+        // fresh on "Try Again" — not re-arming a code nothing can complete.
+        this.activationSecret = null;
+        this.stall();
+        await this.run(() => this.finishWithSession(result.token as string, result.chat));
         return;
       }
       if (generation !== this.pollGeneration) return;
 
       if (result.status === "verified") {
+        // The token was handed to some earlier redeem and lost — the code is
+        // spent. Dropping the secret is what lets "Try Again" mint.
         this.cancelPolling();
-        this.stall("Plow verified this Mac but didn't hand back a login. Get a new code.");
+        this.activationSecret = null;
+        this.stall("Plow verified this Mac but didn't hand back a login. Try again for a fresh code.");
         this.publish();
         return;
       }
 
-      // Pending, and our five minutes are up. The poll that just answered
-      // happened *after* the deadline, so a text racing it has already been
-      // caught; what is left is a genuine no-answer.
-      if (this.activation && this.now() > this.activation.pollUntil) {
-        this.giveUp("We haven't heard from your phone.");
-        return;
+      // Pending, and the screen's five minutes are up: stall the countdown and
+      // offer a fresh code — once — but keep watching. The code is live for
+      // another twenty-five minutes and its completion is handed to the first
+      // redeem only, so a loop that stopped here stranded a text at minute
+      // fifteen: completed server-side, and nobody ever came for the token.
+      if (this.activation && this.now() > this.activation.pollUntil && !this.activationStale) {
+        this.stallWithHint("We haven't heard from your phone.");
+        this.publish();
       }
     }
   }
 
   /**
-   * Stop watching and hand control back. The code itself is still live for the
-   * rest of its 30 minutes, which is exactly why "Get a New Code" re-polls this
-   * secret before it mints anything.
+   * Stop watching for good — the server has retired the code. A 410 gates only
+   * a code nobody completed, and once expired the webhook refuses its text, so
+   * nothing can arrive for this secret any more. Dropping it is what lets
+   * "Try Again" mint.
    */
   private giveUp(reason: string): void {
     this.cancelPolling();
-    this.stall(
-      `${reason} Send the message exactly as shown — it has to start with “${ACTIVATION_SMS_PREFIX}” — or get a new code.`,
-    );
+    this.activationSecret = null;
+    this.stallWithHint(reason);
     this.publish();
+  }
+
+  /** The stall message, with the one hint that fixes the silent-failure case
+   * (a wrong prefix is answered with a 200, no SMS, and a code left live). */
+  private stallWithHint(reason: string): void {
+    this.stall(
+      `${reason} Send the message exactly as shown — it has to start with “${ACTIVATION_SMS_PREFIX}” — or try again.`,
+    );
   }
 
   /**
@@ -510,6 +609,12 @@ export class Onboarding {
     return this.publish();
   }
 
+  /** Put a fixed main-process notice on the setup screen. */
+  showMessage(message: string): OnboardingState {
+    this.message = message;
+    return this.publish();
+  }
+
   /*
    * There is deliberately no `refresh()` here.
    *
@@ -542,24 +647,67 @@ export class Onboarding {
   }
 
   /**
-   * Learn the account → mint this Mac's credential → connect.
+   * Learn the account → keep the session → connect.
    *
-   * `sessionToken` never leaves this function. It carries `keys:manage` and
-   * `relay:*` — it can mint *any* credential on the account — so the app holds
-   * it for the two calls it needs and not one longer. There is no client-side
-   * cleanup to get wrong: `mintDeviceCredential` retires the session
-   * server-side, in the same transaction as the mint.
+   * The session IS this Mac's credential. Latch is the owner's manager app,
+   * not an agent: it holds the socket, lists chats, mints agents, buys
+   * inference and mints connector tokens, and every surface added to it used
+   * to mean a plow scope change plus a fleet re-pair, because a device
+   * credential's scopes freeze at mint. A session carries `*:*` and expires
+   * only after 180 days unused, refreshed by every request it makes.
+   *
+   * So there is no second step. `POST /v1/relay/devices` — which minted a
+   * narrow credential and spent this session in the same transaction — is
+   * gone; the token the redeem handed back is what gets written.
    */
-  private async finishWithSession(sessionToken: string): Promise<void> {
+  private async finishWithSession(
+    sessionToken: string,
+    chat: ActivationChat | null = null,
+  ): Promise<void> {
+    // A sign-out can land inside the await below, and it must stay signed out:
+    // persisting past it would leave the account a live credential its owner
+    // just retired. `pollGeneration` is bumped by every path that abandons this
+    // login — reset, the phone fallback, a fresh mint — so it is the epoch to
+    // check against. One await now rather than two, so one check.
+    //
+    // A sign-out landing inside it takes the session with it. The session is
+    // revoked best-effort, the same contract sign-out keeps.
+    const epoch = this.pollGeneration;
     const info = await this.deps.api.relayInfo(sessionToken);
-    const minted = await this.deps.api.mintDeviceCredential(sessionToken, this.deps.deviceName);
+    if (epoch !== this.pollGeneration) {
+      await this.deps.api.revokeDeviceCredential(sessionToken).catch(() => {});
+      return;
+    }
 
     // Written 0600 by saveSettings. This is the only copy of the credential and
     // it is never handed to the renderer.
     const settings = this.settings();
-    settings.relayCredential = minted.token;
+    settings.relayCredential = sessionToken;
     settings.accountUid = info.uid;
     settings.mcpUrl = info.mcpUrl;
+    // Kept, not read and dropped: the redeem that carried it answers once, so
+    // this is the only moment the app ever sees the chat it just created. A
+    // sign-in with no chat — the phone-code path, or a Mac activated before
+    // `provision_chat` — leaves whatever was there alone rather than blanking
+    // it, because "this redeem carried no chat" is not "the account has none".
+    // The label is built from the chat's line, uids, numbers and names — all
+    // server-authored, and this is the one place they are written to DISK. A
+    // chat echoing the session token is dropped whole: the sign-in still
+    // completes, and the account's chat list is re-read on the Agents tab
+    // anyway, so nothing is lost but a row nobody could have trusted.
+    if (chat && !chatEchoesCredential(chat, sessionToken)) {
+      settings.provisionedChatUid = chat.uid;
+      settings.provisionedChatLabel = activationChatLabel(withoutCredentialEchoes(chat, sessionToken));
+    } else if (chat) {
+      // No detail, and no field values: the point of the check is that one of
+      // them is the credential.
+      this.deps.warn?.("dropped a provisioned chat whose fields echoed the credential");
+    }
+    // Nothing records `sendTo`. Pairing asks for no chat, so it is the managed
+    // phone — the number that takes an activation text, not one anyone can be
+    // told to text afterwards to get a chat. The cloud-agents screen names the
+    // lines the account's own chats run on, which is the only source that
+    // cannot be wrong.
     this.save(settings);
 
     // The activation is spent: drop the code and the secret rather than leave

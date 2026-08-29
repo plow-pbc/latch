@@ -3,10 +3,15 @@
 How this app is verified now that the in-repo stand-in Plow is gone: `npx vitest run` locally, and
 anything that needs a running app driven by hand against a **locally running plow API**.
 
-The *why* behind real-input verification is in
-`/Users/plucas/.claude-kitchen/projects/plow/wiki/ui-verification.md`. Read it once. The capture
-procedure is in `/Users/plucas/.claude-kitchen/projects/domo-desktop/wiki/m4-screenshots.md` — the
-head chef wants that kept as prose, not as a maintained script.
+The *why* behind real-input verification, and the screenshot-capture procedure,
+live in the maintainers' private wiki (`ui-verification.md` and
+`m4-screenshots.md`) — the head chef wants those kept as prose, not as
+maintained scripts.
+
+For the *installed* app rather than the code — what an unattended run can and
+cannot do to a real install, and the one real MCP call that proves one works —
+see [AUTONOMOUS-OPERATION.md](AUTONOMOUS-OPERATION.md) and the `latch-smoke`
+skill beside it.
 
 ---
 
@@ -22,6 +27,11 @@ pointed at a **live** plow stack rather than at the stand-in. They went too, del
 same ruling — so **be clear about what that leaves: there is no automated live-stack path any more,
 in this repo or in CI.** The whole-flow walk against a real plow is a manual run, start to finish,
 by a person following the sections below.
+
+One leg of it is not, and it is the leg with no unit coverage at all: `scripts/latch-smoke` drives a
+real MCP call through the relay to an installed app and reads the verdict out of `audit.ndjson`. That
+proves the relay, the device socket, the MCP server and the exec path — it does not walk the UI, and
+it needs an install and a client registration, so it does not make the walk above optional.
 
 What went, and what it did:
 
@@ -87,13 +97,30 @@ Three of them, in the order the code reaches them:
 3. An `<input>` **sanitizes an assigned value**, and differently per type. CR
    and LF never survive. Some types will not keep a leading or trailing tab.
 
-The one that bites: **an assignment is not a guarantee the node kept the value,
-and nothing downstream reports the difference** — the tab guard's branch returns
-without asking `KEYS_DROPPED_JS` at all, and on the split path a value that lost
-its *leading* character is not a prefix of what was wanted, so the check answers
-false. The fill answers ok either way. This is `fill()`'s own behavior, older
-than the typing work, and it is the first thing to suspect if a credential lands
-short.
+The one that bites: **an assignment is not a guarantee the node kept the
+value** — the tab guard's branch returns without asking `KEYS_DROPPED_JS` at
+all, and on the split path a value that lost its *leading* character is not a
+prefix of what was wanted, so the check answers false. This is `fill()`'s own
+behavior, older than the typing work, and it is still the first thing to suspect
+if a credential lands short.
+
+What the fill now tells you about it:
+
+- A completed fill carries **`altered`** when the field is holding something
+  other than what went into it — whatever the field did to it, and whether or
+  not the field said it would. It is a fact and not a verdict: a card box
+  rendering the digits it was given with spaces in them has changed nothing that
+  counts, and only a caller who knows what the value means can say. A fill
+  without it landed exactly.
+- A **credential** fill is the case where that is decided for you: the value
+  came out of the vault, so `fillSecret` refuses a field that changed it and
+  says a changed copy is still sitting there. Clearing it is left to whoever can
+  see the page.
+- A value the field says it cannot hold is refused **before the node is
+  touched**, answering `too_long` with the field's own cap, so the page is left
+  exactly as it was found. Measured against what this node will actually
+  receive — a `<textarea>` keeps its breaks and an `<input>` does not, so the
+  same value can fit one and not the other.
 
 Do not trust the specifics above — the per-type details have been written down
 wrong here more than once. **Confirm against the field**: drive the real fill
@@ -158,7 +185,7 @@ DOMO_HOME=/tmp/plow-latch-local DOMO_API_BASE_URL=http://localhost:4242 npx elec
 is, and there is no main window until the wizard's last button hands over:
 
 ```bash
-DOMO_HOME=$(mktemp -d) just app                                    # a clean first run, your real state untouched
+DOMO_HOME=$(mktemp -d) just app                                    # a clean first run; real state untouched, except ~/Plow (created deliberately — the playground is the owner's)
 rm ~/Library/Application\ Support/Plow-Latch-<branch>/app/settings.json  # or reset the real one
 ```
 
@@ -188,15 +215,18 @@ top-level await means the app under test never boots and you get "the window nev
 
 ---
 
-## Approvals are answered by a human, on purpose
+## Approvals follow the approval mode — select Ask before the dialog procedure
 
-A tool call through the real app **prompts**. There is no auto-allow for read-only:
-`PolicyEngine.decide` (`packages/device-core/src/policyEngine.ts:64`) has no capability-kind fast
-path — it goes straight to the delegate, which in this app is the dialog. **Do not add a bypass
-flag**, and do not use `HeadlessPolicy` for a run that is supposed to prove the app works; both are
-false greens by construction.
+Which decider a tool call reaches depends on the app's approval mode. The **default is
+adversarial**: the AI reviewer allows or denies with **no dialog** — a fresh install never prompts,
+and its verdict lands in the audit log, not on screen. The dialog procedure below needs **Ask
+mode**: select it in the app first, or you will wait on a dialog that never opens. There is no
+auto-allow for read-only in any mode: `PolicyEngine.decide`
+(`packages/device-core/src/policyEngine.ts:64`) has no capability-kind fast path — it goes straight
+to the delegate. **Do not add a bypass flag**, and do not use `HeadlessPolicy` for a run that is
+supposed to prove the app works; both are false greens by construction.
 
-The product's own escape hatch is the answer. The dialog is its own `BrowserWindow`, title
+Under Ask mode, the product's own escape hatch is the answer. The dialog is its own `BrowserWindow`, title
 `Plow Latch — Approve`, buttons `["Deny", "Always Allow", "Allow Once"]`. Click **Always Allow** once and
 later identical calls need nobody — the rule persists to `${DOMO_HOME}/device/rules.json` under
 
@@ -206,7 +236,10 @@ SHA-256 over { agent: agentId, device: deviceId, caps: normalized(capabilities).
 
 (`packages/protocol/src/capability.ts:58`). Goal text is excluded — wording is free. Everything else
 is not, so an unattended run needs **the same agent credential, the same device, and the same exact
-capability shape** every time. Three traps, all confirmed the hard way:
+capability shape** every time. One carve-out: an `apple_events` intent — a Contacts or Messages
+write — shows only `["Deny", "Allow Once"]` and is decided fresh every time; the engine neither
+stores nor replays a rule for it (`policyEngine.ts`'s `ruleEligible`), so there is no unattended
+replay to test on that path. Three traps, all confirmed the hard way:
 
 - **`agentId` is the agent credential's session id.** A chain that mints a fresh agent credential
   per run gets a different key every run: Always Allow then persists *within* a run and never across
@@ -241,6 +274,39 @@ cd .. && docker compose --env-file .plow-dev-env -f compose.yaml up -d api dtu-l
 The variant picks its own ports (`grep PORT ../.plow-dev-env`) and its own compose project, so it
 does not collide with anyone else's. If the API 503s or a call times out mid-run, check
 `docker logs <project>-api-1 | grep -i reload` before suspecting the app.
+
+---
+
+## Release gate: apple_events under the hardened runtime
+
+The `apple_events` capability compiles to a Seatbelt `(allow appleevent-send)` rule
+(`packages/device-core/src/executor.ts`), but that rule only lets an *unhardened* process send
+Apple events. A notarized build additionally needs the automation entitlement
+(`com.apple.security.automation.apple-events` in `apps/desktop/build/entitlements.mac.plist`) and
+an `NSAppleEventsUsageDescription` in the packaged Info.plist (`apps/desktop/electron-builder.yml`
+`mac.extendInfo`) — without both, macOS silently denies the send even though the dev-app smoke
+(which runs unhardened) passes.
+
+This is a **manual release gate, not a CI check** — it requires a real notarized, signed build, and
+CI does not produce one. After cutting a notarized build:
+
+1. Grant the running app permission when macOS prompts for Apple Events / Automation access (or
+   pre-approve it in System Settings → Privacy & Security → Automation).
+2. Drive one real `apple_events:true` send through `scripts/latch-smoke` — the same script the
+   dev-app installed-app smoke uses, per `#184` — with its `--apple-events` flag, which is what
+   puts `apple_events: true` in the tool arguments so the send exercises the granted path rather
+   than the Seatbelt denial:
+
+   ```sh
+   scripts/latch-smoke --config <install-config> --home "~/Library/Application Support/Plow-Latch" \
+     --apple-events -- /usr/bin/osascript -e 'tell application "Messages" to send "release-gate" to participant "+1<your-number>" of (first account whose service type = iMessage)'
+   ```
+3. Confirm the corresponding `exec_end` line in `audit.ndjson` shows `exit 0`. A `-1743`
+   (`errAEEventNotPermitted`) or similar AppleScript error there means the entitlement or usage
+   string regressed in that build — check both before re-signing.
+
+Do this once per release candidate, not per PR — a Seatbelt-only smoke on the dev app cannot catch
+an entitlement/Info.plist regression, and this is the only place that can.
 
 ---
 

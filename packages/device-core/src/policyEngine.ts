@@ -28,6 +28,18 @@ export type IntentDecision = Decision | { decision: Decision; source?: string };
 /** Whoever answers approval questions: app UI, headless script… */
 export interface PolicyDelegate {
   decideIntent(intent: Intent): Promise<IntentDecision>;
+  /**
+   * May a stored always-allow rule answer this intent on its own?
+   *
+   * A rule is a decision the human made once and cached, and the engine
+   * short-circuits to it before this delegate is ever asked. A delegate may
+   * veto that replay when the current global policy must decide every request.
+   *
+   * Optional: a delegate that does not implement it keeps the plain behaviour.
+   * Answering false does not deny — it sends the intent down the normal path,
+   * where the delegate decides as it would have the first time.
+   */
+  mayGrantFromStoredRule?(intent: Intent): boolean | Promise<boolean>;
 }
 
 export class PolicyEngine {
@@ -63,17 +75,46 @@ export class PolicyEngine {
 
   async decide(intent: Intent, delegate: PolicyDelegate): Promise<Grant> {
     const key = intentRuleKey(intent);
-    if (this.rules.has(key)) {
+    const eligible = ruleEligible(intent);
+    if (eligible && this.rules.has(key) && (await mayGrantFromStoredRule(intent, delegate))) {
       return makeGrant(intent, "always_allow", "rule");
     }
     const result = await delegate.decideIntent(intent);
     const decision = typeof result === "string" ? result : result.decision;
     const source = typeof result === "string" ? "prompt" : (result.source ?? "prompt");
-    if (decision === "always_allow") {
+    if (decision === "always_allow" && eligible) {
       this.rules.set(key, makeAlwaysAllowRule(intent));
       this.persist();
     }
     return makeGrant(intent, decision, source);
+  }
+}
+
+/**
+ * An Apple-event intent is a mutation with no idempotence guarantee — a
+ * byte-identical `make new address` repeated duplicates owner data. So it is
+ * never answered by a stored rule and never stored as one: an `always_allow`
+ * answer still grants THIS run, it just isn't cached. Checked on both sides
+ * so a rule persisted by an older build cannot replay either.
+ */
+function ruleEligible(intent: Intent): boolean {
+  return !intent.capabilities.some((c) => c.kind === "apple_events" && c.allowed === true);
+}
+
+/**
+ * Ask the delegate whether a cached rule may still answer for itself.
+ *
+ * FAILS CLOSED on a throwing guard: a veto that errors must not read as
+ * permission, or the bypass this exists to close comes back the moment the
+ * guard is the thing that broke. Closed here means "ask properly", not "deny" —
+ * the intent goes down the normal decision path.
+ */
+async function mayGrantFromStoredRule(intent: Intent, delegate: PolicyDelegate): Promise<boolean> {
+  if (!delegate.mayGrantFromStoredRule) return true;
+  try {
+    return await delegate.mayGrantFromStoredRule(intent);
+  } catch {
+    return false;
   }
 }
 
