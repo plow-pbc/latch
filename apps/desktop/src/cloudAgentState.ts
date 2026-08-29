@@ -156,8 +156,8 @@ export interface CloudAgentsUiState {
    * its re-activate prompt; the second keeps the roster and shows the error.
    */
   cloudChatsLoaded: boolean;
-  /** Plow's numbers, refreshed with the chats. `null` until that read succeeds
-   * and the chats needed to derive `held` have loaded. */
+  /** Plow's numbers, refreshed with the chats. `null` until the latest read
+   * succeeds and the chats needed to derive `held` have loaded. */
   cloudLines: CloudLineOption[] | null;
   cloudLinesError: string | null;
   /**
@@ -310,7 +310,9 @@ export class CloudAgentState {
       // about this account's chats; with none read, every line looks free, and
       // the screen would offer an Open Messages button for a number the owner
       // already has a thread on. Unknown is not the same as none.
-      cloudLines: this.chatsLoaded && this.lines ? markHeldLines(this.lines, this.chats) : null,
+      cloudLines: this.chatsLoaded && this.lines && !this.linesError
+        ? markHeldLines(this.lines, this.chats)
+        : null,
       cloudLinesError: this.linesError,
     };
   }
@@ -367,11 +369,10 @@ export class CloudAgentState {
       this.relabelRows();
     } catch (error) {
       if (generation !== this.generation || read !== this.lineReads) return;
-      // The list is unknown, not empty: `cloudLines` stays null so the screen
-      // shows the error instead of "there are no numbers".
-      this.lines = null;
+      // The current enumeration is unknown, not empty: `cloudLines` stays null
+      // so the screen shows the error instead of "there are no numbers". Keep
+      // the previous success as naming metadata for chats already on screen.
       this.linesError = messageOf(error);
-      // Chat rows remain usable: their line number is the name fallback.
       this.relabelRows();
     }
   }

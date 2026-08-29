@@ -279,6 +279,33 @@ describe("line names on refresh", () => {
     });
   });
 
+  it("keeps established line names through a later line-list blip", async () => {
+    let lineRead = 0;
+    const f = fakes({ list: async () => [agent()], chats: async () => [namedChat()] });
+    const state = new CloudAgentState({
+      agents: f.agents,
+      chats: f.chats,
+      lines: {
+        list: async () => {
+          lineRead += 1;
+          if (lineRead > 1) throw new Error("line endpoint down");
+          return [{ displayName: "Willow", number: "+16503156536" }];
+        },
+      },
+      home: tempHome(),
+    });
+
+    await state.refresh();
+    await state.refresh();
+
+    expect(state.state()).toMatchObject({
+      cloudLines: null,
+      cloudLinesError: "Something went wrong. Try again.",
+      cloudChats: [{ lineName: "Willow", title: "Willow · You · Nina" }],
+      cloudAgents: [{ chatLabels: ["Willow · You · Nina"] }],
+    });
+  });
+
   it("does not let an older line failure erase a newer named result", async () => {
     const reads = [
       deferred<Array<{ displayName: string | null; number: string }>>(),
