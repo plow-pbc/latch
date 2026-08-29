@@ -562,7 +562,11 @@ export const TOOLS: ToolSpec[] = [
       "Ask plow_vault what is in the vault; " +
       "'fill_secret' types any approved vault field into a form field on this Mac without " +
       "returning the value to you — use it for every vault-backed field, including ones that " +
-      "are not secret. Fields the vault itself conceals (passwords, card numbers and codes, " +
+      "are not secret. Filling into a bank's own site needs more than item rights: the owner " +
+      "must ALSO approve the payment separately (a link in their Plow thread, or a 👍), and " +
+      "the fill proceeds only once they do — otherwise fill_secret returns an error and types " +
+      "nothing. Ask the owner to approve it, then retry. " +
+      "Fields the vault itself conceals (passwords, card numbers and codes, " +
       "hidden custom fields) also render masked and come back from 'forms' without their " +
       "characters; everything else fills as ordinary text you can read back. A generated " +
       "'totp' code is the one field masked although the vault's own app shows it — fill it " +
