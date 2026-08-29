@@ -15,7 +15,7 @@ import { fileURLToPath } from "node:url";
 import { JSONValue, jv } from "@domo/protocol";
 import { DeviceAgent, HeadlessPolicy, PolicyDelegate, ResolvedBrowserRuntime } from "@domo/device-core";
 import { createDomoMcpServer, DomoMcpServer, RelayAuth, SKILL_FOOTER } from "@domo/mcp-server";
-import { callTool, parse, rpc } from "./client.js";
+import { callTool, parse, pollUntil, rpc } from "./client.js";
 
 const fixtures = fileURLToPath(new URL("../../../e2e/fixtures", import.meta.url));
 const FAKE_SERVER = path.join(fixtures, "fakeBrowserServer.cjs");
@@ -53,6 +53,7 @@ function writeVault(dir: string): string {
 
 function makeServer(
   delegate: PolicyDelegate = new HeadlessPolicy({ intent: "allow_once" }),
+  budgetMs?: number,
 ): { server: DomoMcpServer; device: DeviceAgent; fillLog: string; argvLog: string } {
   const dir = tempDir();
   const fillLog = path.join(dir, "fills.log");
@@ -69,7 +70,7 @@ function makeServer(
     camoufoxInstallDir: null,
   };
   const device = new DeviceAgent(path.join(dir, "home"), "Test Mac", delegate, runtime);
-  const server = createDomoMcpServer(device);
+  const server = createDomoMcpServer(device, budgetMs === undefined ? {} : { budgetMs });
   cleanups.push(() => server.close());
   cleanups.push(() => device.shutdown());
   return { server, device, fillLog, argvLog };
@@ -173,6 +174,46 @@ describe("browser tools (fake runtime)", () => {
       expect(names, e).toContain(e);
     }
     expect(fs.readFileSync(device.audit.file, "utf8")).not.toContain("hunter2");
+  });
+
+  it("defers a slow fill_secret without executing the credential fill twice", async () => {
+    const { server, device } = makeServer(new HeadlessPolicy({ intent: "allow_once" }), 100);
+    const session = await open(server, ["pizza.example"]);
+    await act(server, session, "goto", { url: "https://pizza.example/" });
+    await callTool(server, "plow_browser_request", { session, credential_items: ["L1"] }, AGENT);
+
+    const original = device.browserCommand.bind(device);
+    let fillCalls = 0;
+    let releaseFill!: () => void;
+    const fillGate = new Promise<void>((resolve) => {
+      releaseFill = resolve;
+    });
+    vi.spyOn(device, "browserCommand").mockImplementation(async (requestedSession, params) => {
+      if (jv(params).get("action").str === "fill_secret") {
+        fillCalls += 1;
+        await fillGate;
+      }
+      return original(requestedSession, params);
+    });
+
+    const releaseTimer = setTimeout(releaseFill, 300);
+    const first = await act(server, session, "fill_secret", {
+      selector: "#pass",
+      item: "L1",
+      field: "password",
+    });
+    expect(first.isError, JSON.stringify(first.payload)).toBe(false);
+    expect(first.payload.status).toBe("pending");
+    expect(fillCalls).toBe(1);
+
+    releaseFill();
+    clearTimeout(releaseTimer);
+    const terminal = await pollUntil(
+      () => callTool(server, "plow_get_result", { handle: first.payload.handle }, AGENT),
+      (result) => result.payload.status !== "pending",
+    );
+    expect(terminal.payload).toMatchObject({ status: "ready", result: { ok: true } });
+    expect(fillCalls).toBe(1);
   });
 
   it("an action that failed tells the agent what its own requests did", async () => {

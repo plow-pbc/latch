@@ -714,39 +714,49 @@ export const TOOLS: ToolSpec[] = [
       const maxChars = a.get("max_chars").int;
       if (maxChars !== null) params.max = maxChars;
 
-      const response = await ctx.device.browserCommand(session, params);
-      const r = jv(response);
-      if (r.get("status").str === "error") {
-        // An error is a string here, so anything the device attached to it has
-        // to be said IN that string — and what the page's own requests did is
-        // usually the reason for the error.
-        const refused = r.get("failed_requests").arr;
-        throw new ToolError(
-          (r.get("error").str ?? "browser error") +
-            (refused === null ? "" : ` — the page's own requests were refused: ${canonicalJSON(refused)}`),
-        );
-      }
+      const execute = async (): Promise<JSONValue> => {
+        const response = await ctx.device.browserCommand(session, params);
+        const r = jv(response);
+        if (r.get("status").str === "error") {
+          // An error is a string here, so anything the device attached to it has
+          // to be said IN that string — and what the page's own requests did is
+          // usually the reason for the error.
+          const refused = r.get("failed_requests").arr;
+          throw new ToolError(
+            (r.get("error").str ?? "browser error") +
+              (refused === null ? "" : ` — the page's own requests were refused: ${canonicalJSON(refused)}`),
+          );
+        }
 
-      // Screenshot becomes an MCP image block so the agent can SEE the page.
-      // Built from the SAME cleaned result as every other action — only the
-      // binary transport fields are lifted out — so a diagnostic added to a
-      // result reaches a screenshot without a second copy of this code.
-      const out = { ...(r.obj ?? {}) };
-      delete out.status;
-      const imageB64 = r.get("data_b64").str;
-      if (action === "screenshot" && imageB64 !== null) {
-        const mimeType = r.get("mime").str ?? "image/jpeg";
-        delete out.data_b64;
-        delete out.mime;
-        delete out.path;
-        return {
-          __mcpContent: [
-            { type: "image", data: imageB64, mimeType },
-            { type: "text", text: canonicalJSON(out as JSONValue) },
-          ],
-        };
-      }
-      return out as JSONValue;
+        // Screenshot becomes an MCP image block so the agent can SEE the page.
+        // Built from the SAME cleaned result as every other action — only the
+        // binary transport fields are lifted out — so a diagnostic added to a
+        // result reaches a screenshot without a second copy of this code.
+        const out = { ...(r.obj ?? {}) };
+        delete out.status;
+        const imageB64 = r.get("data_b64").str;
+        if (action === "screenshot" && imageB64 !== null) {
+          const mimeType = r.get("mime").str ?? "image/jpeg";
+          delete out.data_b64;
+          delete out.mime;
+          delete out.path;
+          return {
+            __mcpContent: [
+              { type: "image", data: imageB64, mimeType },
+              { type: "text", text: canonicalJSON(out as JSONValue) },
+            ],
+          };
+        }
+        return out as JSONValue;
+      };
+
+      // A banking approval is consumed inside fill_secret, before the vault
+      // and browser finish. Let that one action outlive this exchange under the
+      // existing per-agent deferred contract, while screenshots and every
+      // ordinary interactive action continue returning directly.
+      return action === "fill_secret"
+        ? ctx.deferred.run(ctx.agent.agentId, async () => execute())
+        : execute();
     },
   },
   {
