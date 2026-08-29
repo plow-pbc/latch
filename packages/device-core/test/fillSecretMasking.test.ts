@@ -188,7 +188,10 @@ async function session(): Promise<string> {
 
 /** Open a session approved for the bank item + origin, landed on the bank page. */
 async function bankSession(): Promise<string> {
-  const opened = await ctx.sessions.open("i1", "agent-1", ["chase.com"], false);
+  // Plow's RelayAuth.agent_id is the decimal string form of its database
+  // Session.id. Keep this fixture wire-realistic: a local label such as
+  // "agent-1" would not be accepted by the backend's integer field.
+  const opened = await ctx.sessions.open("i1", "42", ["chase.com"], false);
   const handle = (opened as { session: string }).session;
   ctx.sessions.extend("i2", handle, [], ["B1"], false);
   await ctx.sessions.command(handle, { action: "goto", url: "https://chase.com/login" });
@@ -664,7 +667,8 @@ describe("fill_secret banking-credential gate", () => {
     expect(result).toEqual({ status: "completed", ok: true, frame: 0 });
     // The single-use approval was consumed for THIS session + destination.
     expect(ctx.approvalCalls).toHaveLength(1);
-    expect(ctx.approvalCalls[0]).toEqual({ sessionId: audited(), domain: "chase.com" });
+    expect(ctx.approvalCalls[0]).toEqual({ sessionId: "42", domain: "chase.com" });
+    expect(ctx.approvalCalls[0]?.sessionId).not.toBe(audited());
     // … and only then was the vault asked and the field filled, on the bank page.
     expect(released().length).toBe(1);
     expect(fills()).toEqual([{ selector: "#pass", mask: true }]);

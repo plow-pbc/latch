@@ -68,8 +68,8 @@ export function isFinancialDestination(frameHost: string): boolean {
 
 /** What the enforcement layer asks about a financial release. */
 export interface PaymentApprovalRequest {
-  /** The (already one-way-digested) session id, for correlating an approval to
-   * the browser session that needs it. */
+  /** The authenticated Plow agent credential's session id. Plow keys the
+   * approval created by that agent to this canonical database identity. */
   sessionId: string;
   /** The destination host the release is bound to. */
   domain: string;

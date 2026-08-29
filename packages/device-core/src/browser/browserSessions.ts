@@ -971,7 +971,7 @@ export class BrowserSessions {
     // under-gating a bank silently hands out a banking credential, which this
     // exists to prevent.
     if (isFinancialDestination(frameHost)) {
-      const denial = await this.blockedByApproval(s.auditId, frameHost);
+      const denial = await this.blockedByApproval(s.agentId, frameHost);
       if (denial !== null) {
         this.audit("credential_denied", {
           session: s.auditId,
