@@ -28,6 +28,7 @@ import path from "node:path";
 import { JSONValue, jv, originMatches, normalizeOrigin } from "@domo/protocol";
 import { BrowserHost, BrowserHostConfig, ViewerFrame } from "./browserHost.js";
 import { CredentialBroker, CredentialError, CredentialRelease } from "./credentialBroker.js";
+import { assessFinancialRelease, NO_APPROVAL_ENDPOINT, PaymentApprovalClient } from "./financialGate.js";
 
 type AuditFn = (event: string, fields: { [k: string]: JSONValue }) => void;
 
@@ -203,6 +204,10 @@ export class BrowserSessions {
     private readonly credentials: CredentialBroker | null,
     private readonly audit: AuditFn,
     private readonly idleMs: number = DEFAULT_IDLE_MS,
+    /** Consulted before releasing a credential into a financial destination.
+     * The default is fail-closed (there is no plow-side approval mint yet), so
+     * every financial release is blocked until a real client is wired in. */
+    private readonly approval: PaymentApprovalClient = NO_APPROVAL_ENDPOINT,
   ) {}
 
   /** True when a page URL is inside the session's approved origins.
@@ -963,6 +968,52 @@ export class BrowserSessions {
         status: "error",
         error: `the field is in a frame on ${frameHost ?? frameUrl}, outside the approved origins`,
       };
+    }
+
+    // FAIL-CLOSED FINANCIAL GATE. Before the vault is even asked for the value,
+    // a release whose device-observed destination is a bank must carry an
+    // owner-approved payment approval. Non-financial destinations never reach
+    // the approval client and behave exactly as before. Until the plow-side
+    // approval mint exists the default client approves nothing, so every
+    // financial release is blocked here — intended, and safe: over-gating a
+    // non-bank is a recoverable prompt; under-gating a bank silently hands out a
+    // banking credential, which this exists to prevent.
+    const financial = assessFinancialRelease(frameHost);
+    if (financial.gated) {
+      let approved = false;
+      try {
+        const decision = await this.approval.checkPaymentApproval({
+          sessionId: s.auditId,
+          domain: financial.domain ?? frameHost ?? "",
+        });
+        approved = decision.approved === true;
+      } catch {
+        // Any failure — error, timeout, endpoint absent — is NOT approval.
+        approved = false;
+      }
+      if (!approved) {
+        this.audit("credential_denied", {
+          session: s.auditId,
+          item: itemId,
+          field,
+          origin: frameHost,
+          reason: "banking credential release requires owner approval; none found",
+        });
+        return {
+          status: "error",
+          error:
+            `${field} was not filled: releasing a banking credential onto ${frameHost} ` +
+            `requires the owner's payment approval, and none was found. Nothing was released.`,
+        };
+      }
+      // Approved: record that the gate was consulted and passed, then fall
+      // through to the ordinary release below.
+      this.audit("credential_payment_approved", {
+        session: s.auditId,
+        item: itemId,
+        field,
+        origin: frameHost,
+      });
     }
 
     // The value and whether the vault conceals it come back together, from one
