@@ -18,14 +18,18 @@
  * just extracted that no gog flag is negatable, failing a pin bump at the
  * earliest point it can.
  *
+ * File-bearing flags are deliberately absent from the reserved set. They are
+ * parsed by `fileArgsIn` below and turned into canonical read/write
+ * capabilities, so the owner approves the path and gog executes that exact
+ * path instead of the old blanket refusal making attachments impossible.
+ *
  * What a bumper has to DO is not written here. Every bump runs through
  * `scripts/vendored-providers.mjs`, whose checklist carries the digests, the
  * probes to re-run by hand, and what the automated assertion does and does not
  * cover. A second copy here is a second thing to keep in step.
  */
 
-/** Flags that would override the gate itself, plus the one file-reading flag
- * with no shared suffix. */
+/** Flags that would override the gate itself. */
 const RESERVED_EXACT: ReadonlySet<string> = new Set([
   "--readonly",
   "--gmail-no-send",
@@ -36,50 +40,19 @@ const RESERVED_EXACT: ReadonlySet<string> = new Set([
   "--no-input",
   "--home",
   "--access-token",
-  // Reads a local file into an outbound message like the `-file` family below,
-  // but does not share their suffix.
-  "--attach",
 ]);
-
-/**
- * Two rules rather than lists of spellings, because enumeration has already
- * failed twice: `--note-file` slipped through for two review rounds because
- * `forward` has no `--body` at all and spells it `--note`.
- *
- * IN (`--*-file`) reads a local file into an outbound message. `gmail send`
- * has to stay reachable for the product to work, so without this an injected
- * call exfiltrates any file this app can read.
- *
- * OUT (`--out*`) is a filesystem WRITE to a caller-chosen path: `gmail
- * attachment` takes `--out`/`--output` and `gmail thread get` takes
- * `--out-dir`, so an injected message could land chosen bytes anywhere
- * writable. Attachment CONTENT stays reachable through `--inline`, which
- * returns base64 on stdout, so the rule costs no legitimate call.
- *
- * Checked across every gmail/calendar leaf at 0.36.0: every file-reading flag
- * ends in `-file`, and the only `--out*` flags are those three writes.
- */
-function ruleLabelFor(flag: string): string | null {
-  if (flag.endsWith("-file")) return "a --*-file flag";
-  if (flag.startsWith("--out")) return "a --out* flag";
-  return null;
-}
 
 /**
  * A safe-to-display name for the first caller-supplied argument that would
  * override the gate, or null when none does.
  *
- * **The return value is never agent text.** An exact match names a flag from
- * the closed set above; a RULE match returns a fixed label, because
- * `--<anything>-file` matches whatever the caller spelled and this string
- * reaches an error message, the approval dialog and the append-only audit log.
+ * **The return value is never agent text.** It names a flag from the closed
+ * set above, and reaches an error message, the approval dialog and the
+ * append-only audit log.
  *
  * No `--` terminator branch: it would let a caller who leads with `--` switch
- * the whole scan off. The cost is that a query spelled `--outdated` is refused
- * with a message about safety flags — a knowingly accepted false positive,
- * fail-closed and vanishingly rare, and cheaper than a branch resting on gog
- * honouring the terminator at every parse level. (It does — `unexpected
- * argument --readonly=false` at 0.36.0 — which is why the scan need not.)
+ * the whole scan off. gog rejects a reserved global after a terminator, but
+ * the gate does not depend on that parser behavior.
  */
 export function reservedFlagIn(argv: readonly string[]): string | null {
   for (const arg of argv) {
@@ -89,8 +62,61 @@ export function reservedFlagIn(argv: readonly string[]): string | null {
     // Google.
     const flag = arg.split("=", 1)[0]!;
     if (RESERVED_EXACT.has(flag)) return flag;
-    const label = ruleLabelFor(flag);
-    if (label !== null) return label;
   }
   return null;
+}
+
+interface GogFileArg {
+  readonly access: "read" | "write";
+  /** The argv element holding the value, not necessarily the flag. */
+  readonly index: number;
+  /** Present for a joined `--flag=value`; null for `--flag value`. */
+  readonly joinedPrefix: string | null;
+  readonly paths: readonly string[];
+}
+
+/**
+ * Local paths gog reads from or writes to, including enough location data for
+ * the MCP layer to replace each path with the canonical one the owner approved.
+ *
+ * Rules, not a leaf list: every input-file flag ends in `-file`, `--attach` is
+ * its one exceptional spelling, and gog's output paths start with `--out`.
+ * The rules were verified across the pinned CLI in the vendored-provider bump
+ * checklist. `--` ends this scan because everything after it is positional.
+ */
+export function fileArgsIn(argv: readonly string[]): GogFileArg[] {
+  const found: GogFileArg[] = [];
+  for (let i = 0; i < argv.length; i += 1) {
+    const arg = argv[i]!;
+    if (arg === "--") break;
+    if (!arg.startsWith("--")) continue;
+    const equals = arg.indexOf("=");
+    const flag = equals === -1 ? arg : arg.slice(0, equals);
+    const access = flag === "--attach" || flag.endsWith("-file")
+      ? "read"
+      : flag.startsWith("--out")
+        ? "write"
+        : null;
+    if (access === null) continue;
+    const valueIndex = equals === -1 ? i + 1 : i;
+    const value = equals === -1 ? argv[valueIndex] : arg.slice(equals + 1);
+    if (value === undefined || value === "" || value === "-") continue;
+    const paths = flag === "--attach" ? value.split(",").filter(Boolean) : [value];
+    if (paths.length === 0) continue;
+    found.push({
+      access,
+      index: valueIndex,
+      joinedPrefix: equals === -1 ? null : `${flag}=`,
+      paths,
+    });
+    if (equals === -1) i += 1;
+  }
+  return found;
+}
+
+/** The raw paths alone, for enforcement and focused tests. */
+export function filePathsIn(argv: readonly string[]): { read: string[]; write: string[] } {
+  const paths = { read: [] as string[], write: [] as string[] };
+  for (const arg of fileArgsIn(argv)) paths[arg.access].push(...arg.paths);
+  return paths;
 }

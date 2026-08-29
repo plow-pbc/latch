@@ -21,7 +21,17 @@ import type { Skill } from "../skills.js";
 import { isHelpInvocation } from "./gogGate.js";
 import { GOG_CANONICAL } from "./gogGroups.js";
 import { GOG_SKILL } from "./gogSkill.js";
+import { fileArgsIn } from "./gogFlags.js";
 import { planPlowGog } from "./plowGog.js";
+
+export interface ProviderFileArg {
+  readonly access: "read" | "write";
+  /** The argv element holding the value, not necessarily the flag. */
+  readonly index: number;
+  /** Present for a joined `--flag=value`; null for `--flag value`. */
+  readonly joinedPrefix: string | null;
+  readonly paths: readonly string[];
+}
 
 /** What one vendored CLI needs in order to run. */
 export interface VendoredProvider {
@@ -70,11 +80,11 @@ export interface VendoredProvider {
    * Reject argv the human must not be asked to approve, before any intent
    * exists. Returns a reason, or null.
    *
-   * Two groups. Arguments that would disarm the belt or read/write local files
-   * through the CLI — hazards a human cannot see by reading the command,
-   * because the command itself looks legitimate. And four shapes of a wrong
-   * command, all of which ONE check refuses: a group that is not gmail or
-   * calendar. The other three branches only choose a better sentence.
+   * Two groups. Arguments that would disarm the belt, and four shapes of a
+   * wrong command, all of which ONE check refuses: a group that is not gmail
+   * or calendar. The other three branches only choose a better sentence.
+   * Local file arguments are not refused: `fileArgs` below makes their paths
+   * explicit capabilities before an intent exists.
    *
    * What differs is what each would have COST unrefused, and two reach Google:
    *
@@ -93,6 +103,8 @@ export interface VendoredProvider {
    * returns a cached token outside a 60s expiry buffer.
    */
   readonly refuse: (argv: readonly string[]) => string | null;
+  /** File-bearing argv positions that become approved filesystem capabilities. */
+  readonly fileArgs: (argv: readonly string[]) => readonly ProviderFileArg[];
   /**
    * How an agent learns to drive this CLI. Published only when the binary is
    * staged, and carried on the row so the provider's name has ONE spelling —
@@ -130,6 +142,7 @@ const PLOW_GOG: VendoredProvider = {
   // cannot drift into disagreeing about what is in scope.
   belt: ["--no-input", "--wrap-untrusted", `--enable-commands=${GOG_CANONICAL.join(",")}`],
   skill: GOG_SKILL,
+  fileArgs: fileArgsIn,
   // The planner IS the gate: a refused plan and a refused argv are one
   // decision, so the dialog and the orchestrator cannot disagree about it.
   // `--help` is inert — gog prints usage and exits — and is how the skill
