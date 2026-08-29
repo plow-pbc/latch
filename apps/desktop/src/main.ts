@@ -1003,8 +1003,8 @@ async function startRelay(): Promise<void> {
     // The relay refused the credential — revoked in the console, or minted
     // against a different environment. It will never work again, so the app
     // signs itself out rather than reconnecting forever with a dead token.
-    onAuthFailed: (reason) => {
-      console.log(`[relay] credential rejected (${reason}); signing out`);
+    onAuthFailed: () => {
+      console.log("[relay] credential rejected; signing out");
       connected = false;
       signOut();
       notifyRenderer("status:changed");
