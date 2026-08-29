@@ -215,15 +215,18 @@ top-level await means the app under test never boots and you get "the window nev
 
 ---
 
-## Approvals are answered by a human, on purpose
+## Approvals follow the approval mode — select Ask before the dialog procedure
 
-A tool call through the real app **prompts**. There is no auto-allow for read-only:
-`PolicyEngine.decide` (`packages/device-core/src/policyEngine.ts:64`) has no capability-kind fast
-path — it goes straight to the delegate, which in this app is the dialog. **Do not add a bypass
-flag**, and do not use `HeadlessPolicy` for a run that is supposed to prove the app works; both are
-false greens by construction.
+Which decider a tool call reaches depends on the app's approval mode. The **default is
+adversarial**: the AI reviewer allows or denies with **no dialog** — a fresh install never prompts,
+and its verdict lands in the audit log, not on screen. The dialog procedure below needs **Ask
+mode**: select it in the app first, or you will wait on a dialog that never opens. There is no
+auto-allow for read-only in any mode: `PolicyEngine.decide`
+(`packages/device-core/src/policyEngine.ts:64`) has no capability-kind fast path — it goes straight
+to the delegate. **Do not add a bypass flag**, and do not use `HeadlessPolicy` for a run that is
+supposed to prove the app works; both are false greens by construction.
 
-The product's own escape hatch is the answer. The dialog is its own `BrowserWindow`, title
+Under Ask mode, the product's own escape hatch is the answer. The dialog is its own `BrowserWindow`, title
 `Plow Latch — Approve`, buttons `["Deny", "Always Allow", "Allow Once"]`. Click **Always Allow** once and
 later identical calls need nobody — the rule persists to `${DOMO_HOME}/device/rules.json` under
 

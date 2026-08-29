@@ -75,7 +75,7 @@ probe_settings() {
   [[ -f "$f" ]] || { PROBE_EVIDENCE="missing — open Plow Latch.app to activate"; return 1; }
   command -v jq >/dev/null 2>&1 || { PROBE_EVIDENCE="jq missing — cannot verify"; return 1; }
   local mode cred_len uid3
-  if ! mode=$(jq -r '.approvalMode // "?"' "$f" 2>/dev/null); then
+  if ! mode=$(jq -r '.approvalMode // "adversarial"' "$f" 2>/dev/null); then
     PROBE_EVIDENCE="settings.json unreadable (bad JSON)"
     return 1
   fi
