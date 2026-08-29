@@ -92,22 +92,6 @@ describe("settings storage", () => {
     expect(loadSettings(home).approvalMode).toBe("ask");
   });
 
-  /**
-   * A signed-in home from before `approvalMode` existed was operating under
-   * Ask — the owner answering dialogs. The adversarial default must not
-   * silently replace human approval on upgrade; only a home with no operating
-   * history (no credential) takes it.
-   */
-  it("grandfathers a signed-in legacy home as ask; a signed-out one takes the default", () => {
-    const signedIn = tempHome();
-    write(signedIn, JSON.stringify({ relayCredential: "plow_sk_secret" }));
-    expect(loadSettings(signedIn).approvalMode).toBe("ask");
-
-    const signedOut = tempHome();
-    write(signedOut, JSON.stringify({ selectedTab: "audit" }));
-    expect(loadSettings(signedOut).approvalMode).toBe("adversarial");
-  });
-
   it("leaves a home that already chose a tab exactly where it was", () => {
     const home = tempHome();
     const settings = loadSettings(home);

@@ -175,15 +175,6 @@ export function loadSettings(home: string): Settings {
   if (!("launchAtLoginDefaulted" in settings) && loaded.relayCredential.trim()) {
     loaded.launchAtLoginDefaulted = true;
   }
-  // A signed-in home from before `approvalMode` existed has been operating
-  // under Ask — the owner answering dialogs — and the adversarial default must
-  // not silently hand that decision to the reviewer on upgrade. Grandfather it
-  // as "ask" (same shape as the launch-at-login grandfather above); a home
-  // with no credential has no operating history to preserve and takes the
-  // default.
-  if (!("approvalMode" in settings) && loaded.relayCredential.trim()) {
-    loaded.approvalMode = "ask";
-  }
   // Take them OFF DISK here, rather than waiting for the next write of some
   // unrelated setting — and let a failure THROW. Swallowing it would report a
   // successful load while the credential is still in the file, which is the one
