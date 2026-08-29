@@ -65,7 +65,7 @@ describe.skipIf(!havePython())("latch-smoke verdict", () => {
     ["exec_start alone is not terminal", log(allow, start), false, null, ""],
     ["...and times out as still running", log(allow, start), true, 1, "started, still running"],
     ["an undecided intent is not terminal", log(), false, null, ""],
-    ["...and times out at the dialog", log(), true, 1, "unanswered at the approval dialog"],
+    ["...and times out undecided", log(), true, 1, "no decision was recorded"],
     ["allowed but never started", log(allow), true, 1, "approved, never started"],
     ["another call's exec_end is not ours", log(allow, start), true, 1, "started, still running"],
     ["no nonce is not terminal early", [], false, null, ""],

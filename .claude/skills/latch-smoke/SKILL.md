@@ -77,7 +77,10 @@ scripts/latch-smoke --config ~/.latch/<install>.json \
   the relay, so only the log read is remote.
 - `--timeout <seconds>` — default 120, and must be **more than 2**: the log
   read always consumes some of it, so at or below that a call has no time to
-  answer and the script says so rather than sending. One deadline covers the
+  answer and the script says so rather than sending. Keep it near the default
+  against an adversarial-mode target: a review is allowed up to 90s
+  (`REVIEWER_TIMEOUT_MS`), so a short window reports TIMEOUT on a decision
+  that was still coming. One deadline covers the
   log read, the send and every poll, rather than starting after the send: a
   relay that accepts and never answers costs roughly what you asked for
   instead of the 90 seconds a hard-coded socket timeout used to spend. It is a
@@ -113,7 +116,7 @@ Only success exits 0.
 | `REFUSED — HTTP 3xx` | 1 | the relay tried to redirect and this follows none — `urllib` carries the bearer across a redirect, so following one would hand it to wherever it pointed. Check `--url` |
 | `REFUSED — HTTP 4xx` | 1 | refused before an intent existed, so there is no audit line. 401/403 is the relay or the credential; another 4xx is the MCP handler |
 | `UNVERIFIED — …` | — | not an outcome. The send did not settle the question: anything that is not a response (a timeout, a dropped socket), a 5xx, or an `isError` — which is also how an ordinary **denial** comes back. So the script does not stop; it polls (up to 20s to see it arrive, then the rest of the window), and one of the rows above is still the answer |
-| `TIMEOUT — … approval dialog` | 1 | it arrived and is sitting unanswered. Not a plumbing problem |
+| `TIMEOUT — … no decision was recorded` | 1 | it arrived and nothing decided it in the window: an adversarial review still running, or an Ask dialog sitting unanswered. Not a plumbing problem — raise `--timeout` first |
 | `TIMEOUT — approved, never started` | 1 | `exec_start` is written before the spawn, so its absence means the executor was never reached. Check the app is running |
 | `TIMEOUT — started, still running` | 1 | re-run, or raise `--timeout` |
 | `TIMEOUT — nothing carrying …` | 1 | it never arrived; the output names the three causes |

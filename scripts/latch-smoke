@@ -443,8 +443,10 @@ def verdict(events, nonce, expired, since=0):
     if not expired:
         return None
     if decision is None:
-        return 1, ["TIMEOUT — it reached this Mac and is sitting unanswered at the approval dialog.",
-                   "  Not a plumbing problem. Seed an Always Allow rule for an unattended run."], True
+        return 1, ["TIMEOUT — it reached this Mac and no decision was recorded in the window.",
+                   "  Not a plumbing problem: an adversarial review may still be running, or an",
+                   "  Ask-mode dialog is sitting unanswered. Raise --timeout, or under Ask mode",
+                   "  seed an Always Allow rule for an unattended run."], True
     start = first(mine, "exec_start")
     if start is None:
         return 1, ["TIMEOUT — approved, never started. exec_start is written before the spawn,",
@@ -562,7 +564,8 @@ def main():
     if remaining() < MIN_SEND_S:
         print(f"REFUSED — under {MIN_SEND_S:.0f}s left of the {args.timeout}s window"
               " after reading the log.")
-        print("  Nothing was sent: a call with no time to answer still raises a dialog.")
+        print("  Nothing was sent: a call with no time to answer still spends a review")
+        print("  or raises a dialog on the target.")
         print("  Raise --timeout.")
         return 1
     # BEFORE the send, because the send is when a handle is most wanted: it is
