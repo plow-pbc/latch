@@ -54,9 +54,10 @@ flag.
 **Unnamed writes go to the default.** When the user composes without naming
 an account — "write an email", "add a cal invite", or says "my default/main
 account" — resolve it yourself: take the DEFAULT from \`["plow-gog",
-"accounts"]\`, pass it as an explicit \`--account\`, and tell the user which
-account you used. Do not bounce the refusal back to the user and do not pick
-any other account unnamed. (Follow-ups are different: a reply or an edit
+"accounts"]\`, pass it as an explicit \`--account\`, and confirm you used the
+default account without repeating its address (a shared thread may have
+readers who shouldn't learn it). Do not bounce the refusal back to the user
+and do not pick any other account unnamed. (Follow-ups are different: a reply or an edit
 stays on the account that owns the thread or event, per the rule below.)
 
 **Follow-ups carry the item's account.** Message and event IDs are
