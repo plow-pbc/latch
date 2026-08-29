@@ -664,7 +664,8 @@ describe("fill_secret banking-credential gate", () => {
     expect(result).toEqual({ status: "completed", ok: true, frame: 0 });
     // The single-use approval was consumed for THIS session + destination.
     expect(ctx.approvalCalls).toHaveLength(1);
-    expect(ctx.approvalCalls[0]).toEqual({ sessionId: audited(), domain: "chase.com" });
+    expect(ctx.approvalCalls[0]).toEqual({ sessionId: "agent-1", domain: "chase.com" });
+    expect(ctx.approvalCalls[0]?.sessionId).not.toBe(audited());
     // … and only then was the vault asked and the field filled, on the bank page.
     expect(released().length).toBe(1);
     expect(fills()).toEqual([{ selector: "#pass", mask: true }]);
