@@ -25,14 +25,7 @@ import {
   withoutCredentialEchoes,
 } from "./chatRows.js";
 import { ActivationChat, PlowApi, PlowApiError } from "./plowApi.js";
-import {
-  credentialLocked,
-  holdForRevocation,
-  loadSettings,
-  releaseRevocation,
-  saveSettings,
-  Settings,
-} from "./settings.js";
+import { loadSettings, saveSettings, Settings } from "./settings.js";
 
 /**
  * The wizard ends at `connected`, a confirmation with one button into the app.
@@ -74,31 +67,6 @@ export const ACTIVATION_POLL_INTERVAL_MS = 3_000;
  * rather than describing it.
  */
 export const ACTIVATION_SMS_PREFIX = "Plow Activate:";
-
-/**
- * What the setup screen says when a session this Mac will not keep could not
- * be retired.
- *
- * A fixed sentence, composed here and never from a server string: the only
- * value in scope at the point it is shown is the session token itself. It says
- * both halves — Latch is holding on to retry, and the owner can end it now —
- * because a retry that keeps failing is a live `*:*` session for 180 days.
- */
-/**
- * What setup says when this Mac holds a credential it cannot read.
- *
- * It names the remedy and, more importantly, names the thing NOT to do: the
- * obvious move on a screen asking you to sign in is to sign in, and that is
- * the one action that would strand the session already on disk.
- */
-export const KEYCHAIN_LOCKED_MESSAGE =
-  "Latch can't reach this Mac's keychain, so it can't read the Plow login it already has. " +
-  "Quit Latch and open it again — signing in again here would leave the session it's holding " +
-  "live on your account with no way to retire it.";
-
-export const LOOSE_SESSION_WARNING =
-  "A Plow login session couldn't be retired. Latch is holding it and will try again — " +
-  "or revoke it in Plow.";
 
 export function activationSmsBody(displayCode: string): string {
   return `${ACTIVATION_SMS_PREFIX} ${displayCode}`;
@@ -222,9 +190,6 @@ export interface OnboardingState {
   /** We have stopped watching this activation. The screen stops counting down
    * and offers a fresh code. */
   activationStale: boolean;
-  /** This Mac has a credential it cannot read — see `credentialLocked`. Setup
-   * says so and refuses to start a login that would overwrite it. */
-  locked: boolean;
   accountUid: string;
   mcpUrl: string;
   connected: boolean;
@@ -267,10 +232,6 @@ export class Onboarding {
    * burning a second code — see `newActivationCode`. `pendingMintId` says which
    * flight it is, so a finishing mint only drops the handle if it is its own.
    */
-  /** The retry sweep in flight, if any. Held so a second caller joins it
-   * rather than racing it onto the same tokens — see
-   * `retryPendingRevocations`. */
-  private retrying: Promise<void> | null = null;
   private pendingMint: Promise<OnboardingState> | null = null;
   private pendingMintId = 0;
   private mints = 0;
@@ -283,21 +244,15 @@ export class Onboarding {
 
   state(): OnboardingState {
     const settings = this.settings();
-    const locked = credentialLocked(settings);
     return {
       step: this.step,
       phone: this.phone,
-      // A locked Mac has one thing to say and it is not whatever the wizard
-      // was last doing. Derived here rather than assigned on a failed click,
-      // so the screen is right the moment it opens — nobody has to press
-      // something that cannot work in order to be told why.
-      message: locked ? KEYCHAIN_LOCKED_MESSAGE : this.message,
+      message: this.message,
       busy: this.busy,
       codeExpiresAt: this.codeExpiresAt,
       activation: this.activation,
       chat: storedActivationChat(settings),
       activationStale: this.activationStale,
-      locked,
       accountUid: settings.accountUid,
       mcpUrl: settings.mcpUrl,
       connected: this.deps.isConnected(),
@@ -333,10 +288,6 @@ export class Onboarding {
    * is what lets this mint.
    */
   async newActivationCode(): Promise<OnboardingState> {
-    // Before the single-flight check, and before anything that could burn a
-    // code: a login started here would seal over a credential this Mac still
-    // has and cannot read.
-    if (this.locked()) return this.fail(KEYCHAIN_LOCKED_MESSAGE);
     // SINGLE-FLIGHT. A display code IS a credential — whoever texts it gets the
     // account — so a second mint nobody is shown is a live credential loose on
     // the account, and the screen can only ever show one of them. Two callers
@@ -369,13 +320,6 @@ export class Onboarding {
         this.activationSecret = null;
         this.activationStale = false;
         this.step = "activate";
-        // Before minting, not after: a Mac about to log in again is a Mac that
-        // can reach Plow, and it is the last moment to retire a session left
-        // over from a login that did not finish. It cannot fail this mint —
-        // `retryPendingRevocation` swallows its own failure — but a second
-        // failure does leave the warning on screen under the fresh code, which
-        // is where the owner can act on it.
-        await this.retryPendingRevocations();
         const created = await this.deps.api.createActivation(this.deps.deviceName);
         this.activationSecret = created.activationSecret;
         this.activation = {
@@ -409,20 +353,6 @@ export class Onboarding {
   messagesOpened(): OnboardingState {
     if (this.step === "activate" && this.activation) this.step = "waiting";
     return this.publish();
-  }
-
-  /**
-   * Say something on the setup screen that did not come from a step this
-   * object ran — today, that a sign-out could not retire its session.
-   *
-   * `reset()` has already put this instance back on `activate`, so the message
-   * has a screen to land on; it is cleared by the next thing that runs, which
-   * is the point. Nothing secret ever reaches here: the caller composes a fixed
-   * sentence, never the credential.
-   */
-  warnSignOut(message: string): void {
-    this.message = message;
-    this.publish();
   }
 
   /** The quiet fallback: sign in with a phone code instead. */
@@ -514,10 +444,10 @@ export class Onboarding {
       // re-evaluated on the far side of one rather than read once at the top.
       const keep = () =>
         secret === this.activationSecret && !this.settings().relayCredential.trim();
-      // A verified token this Mac will NOT keep goes to `retireOrRetain`,
-      // which is the only thing here allowed to let go of one.
+      // A verified token this Mac will not keep is revoked best-effort. The
+      // redeem answers once, so it must not simply be dropped here.
       if (result.status === "verified" && result.token && !keep()) {
-        await this.retireOrRetain(result.token);
+        await this.deps.api.revokeDeviceCredential(result.token).catch(() => {});
       }
       if (result.status === "verified" && result.token && keep()) {
         this.cancelPolling();
@@ -605,7 +535,6 @@ export class Onboarding {
    * the copy says "check your phone", never "we've sent you a code".
    */
   async requestCode(phone: string, note = ""): Promise<OnboardingState> {
-    if (this.locked()) return this.fail(KEYCHAIN_LOCKED_MESSAGE);
     const trimmed = (phone ?? "").trim();
     if (!trimmed) return this.fail("Enter your phone number.");
     return this.run(async () => {
@@ -639,7 +568,6 @@ export class Onboarding {
   }
 
   async submitCode(code: string): Promise<OnboardingState> {
-    if (this.locked()) return this.fail(KEYCHAIN_LOCKED_MESSAGE);
     const trimmed = (code ?? "").replace(/\s/g, "");
     if (trimmed.length !== CODE_LENGTH || !/^\d+$/.test(trimmed)) {
       return this.fail(`Enter the ${CODE_LENGTH}-digit code from your phone.`);
@@ -736,25 +664,12 @@ export class Onboarding {
     // login — reset, the phone fallback, a fresh mint — so it is the epoch to
     // check against. One await now rather than two, so one check.
     //
-    // A sign-out landing inside it takes the session WITH it. Dropping the
-    // token there orphaned it: the redeem answers once, sign-out's own revoke
-    // ran before this session existed on disk, and nothing afterwards holds a
-    // reference to retire it by. `retireOrRetain` is the only exit.
-    //
-    // The same is true of the `relayInfo` call itself, and of the write below.
-    // Until `save` returns, this Mac's ONLY handle on a live account session is
-    // the local variable — so both are wrapped rather than allowed to throw
-    // past it, which is exactly how a transient timeout used to leave a
-    // 180-day `*:*` session with nothing anywhere able to retire it.
+    // A sign-out landing inside it takes the session with it. The session is
+    // revoked best-effort, the same contract sign-out keeps.
     const epoch = this.pollGeneration;
-    let info;
-    try {
-      info = await this.deps.api.relayInfo(sessionToken);
-    } catch (error) {
-      throw await this.orphaned(sessionToken, error);
-    }
+    const info = await this.deps.api.relayInfo(sessionToken);
     if (epoch !== this.pollGeneration) {
-      await this.retireOrRetain(sessionToken);
+      await this.deps.api.revokeDeviceCredential(sessionToken).catch(() => {});
       return;
     }
 
@@ -787,11 +702,7 @@ export class Onboarding {
     // told to text afterwards to get a chat. The cloud-agents screen names the
     // lines the account's own chats run on, which is the only source that
     // cannot be wrong.
-    try {
-      this.save(settings);
-    } catch (error) {
-      throw await this.orphaned(sessionToken, error);
-    }
+    this.save(settings);
 
     // The activation is spent: drop the code and the secret rather than leave
     // either sitting in memory or on a screen behind this one.
@@ -812,133 +723,10 @@ export class Onboarding {
     await this.deps.startRelay();
   }
 
-  // MARK: the login session's lifecycle
-
-  /**
-   * The one owner of a verified session token this Mac is not going to keep.
-   *
-   * The redeem that produced it answers EXACTLY ONCE — the server hands the
-   * token to the first caller that sees the completion and omits it ever after
-   * — so from the moment it is in hand, this process is the only thing in the
-   * world that can retire it. Every path that reaches a verified token and
-   * does not persist it comes through here, and the token leaves memory in
-   * exactly two ways: the server confirmed the revoke, or it is on disk in
-   * `pendingRevocations` waiting for the next try. Never on the floor.
-   *
-   * Best-effort was the bug, not the design: a swallowed revoke used to be
-   * indistinguishable from a successful one, and the difference is a full
-   * `*:*` session live on the owner's account for 180 days.
-   *
-   * Returns whether the server confirmed.
-   */
-  private async retireOrRetain(token: string): Promise<boolean> {
-    try {
-      await this.deps.api.revokeDeviceCredential(token);
-    } catch (error) {
-      if (alreadyDead(error)) {
-        // The revoke authenticates WITH the token being revoked
-        // (`/v1/relay/devices/self/revoke` — the server knows which credential
-        // is calling), so a 401 is that token saying it no longer works. There
-        // is nothing left to retire, and holding it anyway is not caution: it
-        // is a permanent warning on the setup screen and a worktree cleanup
-        // that refuses for good, over a session that is already gone. Only a
-        // 401 — see `alreadyDead`; a 403 is a session that is very much alive.
-        releaseRevocation(this.deps.home, token);
-        return true;
-      }
-      holdForRevocation(this.deps.home, token);
-      // No value: the only one in scope IS the session.
-      this.deps.warn?.("could not revoke a login session; holding it to retry");
-      this.message = LOOSE_SESSION_WARNING;
-      this.publish();
-      return false;
-    }
-    releaseRevocation(this.deps.home, token);
-    return true;
-  }
-
-  /**
-   * Try again to retire EVERY session an earlier revoke could not.
-   *
-   * Called on launch (`main.ts`) and before every fresh activation, which are
-   * the two moments a Mac that failed once is most likely to be able to reach
-   * Plow again. Never throws and never blocks what called it: whichever
-   * entries fail again stay exactly where they were.
-   *
-   * Over a snapshot, and one at a time: `retireOrRetain` writes settings on
-   * both outcomes, so walking the live list would skip entries as it shrank.
-   */
-  async retryPendingRevocations(): Promise<void> {
-    // SINGLE-FLIGHT. Launch starts one of these and the first activation
-    // starts another, and on a slow network they overlap — so both read the
-    // same list and both revoke the same token. The second call gets a 401,
-    // because the first one worked. Before this the 401 was just another
-    // failure and the token went back on the list: a session that no longer
-    // existed, warned about on every screen and refused by worktree cleanup
-    // for as long as the home lived. Joining the flight in progress is where
-    // that closes; the 401 handling above is the belt to this braces, because
-    // the same collision can happen across two processes.
-    if (this.retrying) return this.retrying;
-    const flight = this.sweepPendingRevocations();
-    this.retrying = flight;
-    // The handle is dropped AFTER it is taken, and only if it is still this
-    // sweep's. Dropping it inside the body was a trap the empty case sprang
-    // every time: with nothing held, the body runs to completion
-    // synchronously, so it cleared the handle BEFORE the line above set it —
-    // and the settled promise stayed parked here for the life of the process,
-    // making every later launch or activation "join" a sweep that had already
-    // finished. Nothing was ever retried again. The identity check is what
-    // keeps a newer sweep from being cleared by an older one finishing.
-    //
-    // `then(clear, clear)` rather than `finally`: the caller gets `flight`
-    // itself, so this cleanup rides its own chain and adds no turn before the
-    // caller resumes — the reason `newActivationCode` avoids a chained
-    // `finally` too.
-    const clear = () => {
-      if (this.retrying === flight) this.retrying = null;
-    };
-    flight.then(clear, clear);
-    return flight;
-  }
-
-  /**
-   * One pass over the held list. Never throws — the contract
-   * `retryPendingRevocations` advertises, and what lets its callers treat it
-   * as fire-and-forget. A token whose retry blows up in an unexpected way
-   * stays held, which is the safe direction.
-   */
-  private async sweepPendingRevocations(): Promise<void> {
-    for (const token of [...this.settings().pendingRevocations]) {
-      try {
-        await this.retireOrRetain(token);
-      } catch {
-        /* stays held */
-      }
-    }
-  }
-
-  /**
-   * A verified token that could not be persisted, and the failure to report.
-   *
-   * Which failure the owner most needs is not the one that was thrown: a
-   * `relayInfo` timeout the app can simply be asked to retry matters less than
-   * a full account session now loose on their account. So the loose session
-   * wins the message when there is one.
-   */
-  private async orphaned(token: string, error: unknown): Promise<unknown> {
-    if (await this.retireOrRetain(token)) return error;
-    return new PlowApiError("http", LOOSE_SESSION_WARNING);
-  }
-
   // MARK: plumbing
 
   private settings(): Settings {
     return loadSettings(this.deps.home);
-  }
-
-  /** Holding a credential it cannot read — see `credentialLocked`. */
-  private locked(): boolean {
-    return credentialLocked(this.settings());
   }
 
   private save(settings: Settings): void {
@@ -978,25 +766,6 @@ export class Onboarding {
     this.deps.onChange?.();
     return this.state();
   }
-}
-
-/**
- * Is this failure the token telling us it is already gone?
- *
- * 401 and nothing else. The revoke authenticates with the very token it
- * retires, and `unauthorized` is the API's own word for "a wrong or expired
- * code, or a revoked token" — so a 401 is not a failure to revoke, it is a
- * revoke that has already happened.
- *
- * A 403 is the opposite and used to be lumped in here, which was a real bug:
- * it means the token DID authenticate — so the session is alive — and only
- * that this call was not permitted. Dropping the handle to a live `*:*`
- * session because the server would not let us retire it is precisely the
- * orphan this whole mechanism exists to prevent, and the owner needs that
- * handle to retire it in Plow. A 403 stays held.
- */
-function alreadyDead(error: unknown): boolean {
-  return error instanceof PlowApiError && error.kind === "unauthorized";
 }
 
 function messageOf(error: unknown): string {

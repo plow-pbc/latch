@@ -93,7 +93,7 @@ probe_settings() {
   fi
   uid3=$(jq -r '.accountUid // "" | tostring | .[-3:]' "$f")
   if (( cred_len == 0 )); then
-    PROBE_EVIDENCE="no relayCredentialEnc or relayCredential — device not activated"
+    PROBE_EVIDENCE="no relayCredentialEnc or relayCredential — Mac not signed in"
     return 1
   fi
   PROBE_EVIDENCE="approvalMode=$mode · $cred_field present ($cred_len chars) · account …$uid3"

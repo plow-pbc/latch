@@ -7,13 +7,11 @@ import {
   ACTIVATION_POLL_WINDOW_MS,
   CODE_TTL_MS,
   activationChatLabel,
-  KEYCHAIN_LOCKED_MESSAGE,
-  LOOSE_SESSION_WARNING,
   Onboarding,
   OnboardingDeps,
 } from "../src/onboarding.js";
 import { ActivationChat, PlowApi, PlowApiError, parseActivationChat } from "../src/plowApi.js";
-import { loadSettings, saveSettings, useCredentialCodec } from "../src/settings.js";
+import { loadSettings, saveSettings } from "../src/settings.js";
 import { signOutOfPlow } from "../src/settingsActions.js";
 
 const DEVICE_TOKEN = "plow_DEVICEtok_secret";
@@ -114,10 +112,7 @@ class FakePlow {
   }
 
   async redeemActivation(secret: string): Promise<ActivationRedeem> {
-    // Recorded BEFORE the gate, so a test can wait for the call to be in
-    // flight rather than for it to finish.
     this.redeemCalls.push(secret);
-    if (this.redeemGate) await this.redeemGate;
     const next = this.redeems.length > 1 ? this.redeems.shift()! : this.redeems[0];
     if (next instanceof PlowApiError) throw next;
     if (next.status === "pending") return next;
@@ -141,64 +136,9 @@ class FakePlow {
   }
 
   revoked: string[] = [];
-  /** Every call, counted before it is awaited, so a test can wait for the call
-   * rather than for its completion. */
-  revokeCalls: string[] = [];
-
-  /** Make every revoke fail, the way an unreachable Plow does. */
-  revokeFails = false;
-  /** ...or only these, so a test can let one through and refuse the next. */
-  revokeRefuses: string[] = [];
-  /** Tokens the server says are already gone — what a 401 on
-   * `/v1/relay/devices/self/revoke` means, since the token authenticates it. */
-  revokeUnauthorized: string[] = [];
-  /** Tokens that authenticate but may not be revoked: a 403, and a session
-   * that is very much alive. */
-  revokeForbidden: string[] = [];
-
-  private revokeGate: Promise<void> | null = null;
-  private openRevokes: (() => void) | null = null;
-  /** Hold every revoke open, so a test can start a second caller while the
-   * first is still on the wire. */
-  holdRevokes(): void {
-    this.revokeGate = new Promise((resolve) => {
-      this.openRevokes = resolve;
-    });
-  }
-  releaseRevokes(): void {
-    this.openRevokes?.();
-    this.revokeGate = null;
-    this.openRevokes = null;
-  }
 
   async revokeDeviceCredential(token: string): Promise<void> {
-    // Counted before the gate, so a test can wait for the call to be IN
-    // FLIGHT rather than for it to finish.
-    this.revokeCalls.push(token);
-    if (this.revokeGate) await this.revokeGate;
-    if (this.revokeUnauthorized.includes(token)) {
-      throw new PlowApiError("unauthorized", "Not authorized.", 401);
-    }
-    if (this.revokeForbidden.includes(token)) {
-      throw new PlowApiError("forbidden", "Not permitted.", 403);
-    }
-    if (this.revokeFails || this.revokeRefuses.includes(token)) {
-      throw new PlowApiError("network", "unreachable");
-    }
     this.revoked.push(token);
-  }
-
-  private redeemGate: Promise<void> | null = null;
-  private openRedeems: (() => void) | null = null;
-  holdRedeems(): void {
-    this.redeemGate = new Promise((resolve) => {
-      this.openRedeems = resolve;
-    });
-  }
-  releaseRedeems(): void {
-    this.openRedeems?.();
-    this.redeemGate = null;
-    this.openRedeems = null;
   }
 
 }
@@ -214,17 +154,6 @@ let waits: number[];
 let changes: number;
 /** Bumped per test; a wait built under an older value parks — see `wait`. */
 let harnessGen = 0;
-
-/** The same shape `settings.test.ts` uses: reversible, and `available()` is
- * what a locked keychain answers false to. */
-const fakeCodec = (available = true) => ({
-  available: () => available,
-  encrypt: (plain: string) => `sealed:${Buffer.from(plain).toString("base64")}`,
-  decrypt: (cipher: string) => {
-    if (!cipher.startsWith("sealed:")) throw new Error("not ours");
-    return Buffer.from(cipher.slice("sealed:".length), "base64").toString();
-  },
-});
 
 function build(extra: Partial<OnboardingDeps> = {}): Onboarding {
   const gen = harnessGen;
@@ -958,46 +887,6 @@ describe("the phone-code fallback still works", () => {
     expect(settings.mcpUrl).toBe(MCP_URL);
   });
 
-  it("does not persist a token when the sign-out lands during its revoke", async () => {
-    // The decision to keep is re-asked on the far side of the revoke await,
-    // never read once at the top: `activationSecret` and the stored credential
-    // can BOTH change while that call is on the wire, and a stale yes would
-    // write a session the sign-out had already retired.
-    let releaseRevoke = () => {};
-    const revokeInAir = new Promise<void>((r) => {
-      releaseRevoke = () => r();
-    });
-    plow.holdRedeems();
-    plow.redeems = [{ status: "verified", token: SESSION_TOKEN }];
-    const original = plow.revokeDeviceCredential.bind(plow);
-    plow.revokeDeviceCredential = async (token: string) => {
-      // Recorded before the gate: the test waits for the call to be IN FLIGHT,
-      // and waiting for it to finish would wait on the gate it holds.
-      plow.revokeCalls.push(token);
-      await revokeInAir;
-      return original(token);
-    };
-
-    const onboarding = build();
-    await onboarding.begin();
-    // Wait for the redeem to be ON THE WIRE, then give up on the code: the
-    // answer that comes back is one this Mac will not keep.
-    await settleUntil(() => plow.redeemCalls.length === 1);
-    onboarding.usePhoneCode();
-    plow.releaseRedeems();
-    await settleUntil(() => plow.revokeCalls.length === 1);
-
-    // ...and signs out while that revoke is still in flight.
-    signOutOfPlow(home);
-    onboarding.reset();
-    releaseRevoke();
-    await settle();
-
-    expect(plow.revoked).toEqual([SESSION_TOKEN]);
-    expect(loadSettings(home).relayCredential).toBe("");
-    expect(onboarding.state().step).not.toBe("connected");
-  });
-
   it("keeps the login session AS the credential, minting nothing", async () => {
     // Latch is the owner's manager app, not an agent: the session it was just
     // handed is what it holds. `POST /v1/relay/devices` — a narrow credential
@@ -1285,10 +1174,8 @@ describe("signing out", () => {
 
 describe("a sign-out while the credential handoff is in the air", () => {
   // One await now, not two: the mint that used to follow `relayInfo` is gone,
-  // so `relayInfo` is the whole window a sign-out can land in. Nothing needs
-  // retiring on that path — the session is the owner's own, created by their
-  // text, and sign-out's revoke is what retires it.
-  // The session IS revoked on this path now. It exists on the account, the
+  // so `relayInfo` is the whole window a sign-out can land in. The session is
+  // revoked on this path: it exists on the account, the
   // sign-out's own revoke ran before it did, and the redeem that carried it
   // answers once — so a token dropped here is one nobody can ever retire.
   for (const race of [{ stage: "relayInfo", revoked: [SESSION_TOKEN] }] as const) {
@@ -1312,9 +1199,8 @@ describe("a sign-out while the credential handoff is in the air", () => {
       release();
       await settle();
 
-      // Nothing is persisted and the window stays signed out. Nothing is
-      // retired either: the session is the owner's own, and sign-out's revoke
-      // is what retires it.
+      // Nothing is persisted, the session is retired best-effort, and the
+      // window stays signed out.
       expect(plow.revoked).toEqual(race.revoked);
       expect(loadSettings(home).relayCredential).toBe("");
       expect(onboarding.state().step).not.toBe("connected");
@@ -1353,358 +1239,5 @@ describe("a sign-out while startRelay is dialling", () => {
 
     expect(onboarding.state().step).not.toBe("connected");
     expect(loadSettings(home).relayCredential).toBe("");
-  });
-});
-
-describe("a verified session this Mac does not keep", () => {
-  /** Break the handoff, so the session is verified and never persisted. */
-  function breakHandoff(): void {
-    plow.redeems = [{ status: "verified", token: SESSION_TOKEN }];
-    plow.relayInfo = async () => {
-      throw new PlowApiError("network", "Plow is unreachable.");
-    };
-  }
-
-  it("retires it when the handoff fails, rather than dropping it", async () => {
-    // `relayInfo` rejecting used to throw straight past the token. The redeem
-    // that produced it answers exactly once, so this Mac was the only thing in
-    // the world that could retire the session — and it had just let go.
-    breakHandoff();
-    const onboarding = build();
-    await onboarding.begin();
-    await settle();
-
-    expect(plow.revoked).toEqual([SESSION_TOKEN]);
-    // Confirmed, so nothing is held.
-    expect(loadSettings(home).pendingRevocations).toEqual([]);
-    expect(loadSettings(home).relayCredential).toBe("");
-    expect(onboarding.state().step).not.toBe("connected");
-  });
-
-  it("holds it when the revoke fails too, and says so on screen", async () => {
-    // Both calls down: the session is live on the account for 180 days, and
-    // the token is the only handle. It goes to disk rather than on the floor.
-    breakHandoff();
-    plow.revokeFails = true;
-    const onboarding = build();
-    await onboarding.begin();
-    await settle();
-
-    expect(loadSettings(home).pendingRevocations).toEqual([SESSION_TOKEN]);
-    // The loose session outranks the timeout that caused it: a network blip is
-    // retryable, an unretired account session is the owner's to act on.
-    expect(onboarding.state().message).toBe(LOOSE_SESSION_WARNING);
-    // Said, never shown: the warning names no value.
-    expect(onboarding.state().message).not.toContain(SESSION_TOKEN);
-    expect(warnings.join(" ")).not.toContain(SESSION_TOKEN);
-  });
-
-  it("never leaves the token in the state the renderer reads", async () => {
-    breakHandoff();
-    plow.revokeFails = true;
-    const onboarding = build();
-    await onboarding.begin();
-    await settle();
-
-    expect(JSON.stringify(onboarding.state())).not.toContain(SESSION_TOKEN);
-  });
-});
-
-describe("a session held for a later revoke", () => {
-  function heldSession(): void {
-    const settings = loadSettings(home);
-    settings.pendingRevocations = [SESSION_TOKEN];
-    saveSettings(home, settings);
-  }
-
-  it("is retired on the next launch, and forgotten once Plow confirms", async () => {
-    heldSession();
-    await build().retryPendingRevocations();
-
-    expect(plow.revoked).toEqual([SESSION_TOKEN]);
-    expect(loadSettings(home).pendingRevocations).toEqual([]);
-  });
-
-  it("is retried before a fresh code is minted", async () => {
-    // The last moment before the owner logs in again — and a Mac about to
-    // activate is a Mac that can reach Plow.
-    heldSession();
-    const onboarding = build();
-    await onboarding.begin();
-
-    expect(plow.revoked).toEqual([SESSION_TOKEN]);
-    expect(loadSettings(home).pendingRevocations).toEqual([]);
-    // ...and the code was still minted.
-    expect(onboarding.state().activation?.displayCode).toBe("CODE1");
-  });
-
-  it("is kept when the retry fails too, and does not stop the mint", async () => {
-    heldSession();
-    plow.revokeFails = true;
-    const onboarding = build();
-    await onboarding.begin();
-
-    expect(loadSettings(home).pendingRevocations).toEqual([SESSION_TOKEN]);
-    expect(onboarding.state().activation?.displayCode).toBe("CODE1");
-    expect(onboarding.state().message).toBe(LOOSE_SESSION_WARNING);
-  });
-
-  it("survives a sign-out, which is the moment it matters most", () => {
-    // Sign-out clears everything about the account — but the whole point of
-    // this field is a session sign-out's own revoke never saw.
-    heldSession();
-    signOutOfPlow(home);
-    expect(loadSettings(home).pendingRevocations).toEqual([SESSION_TOKEN]);
-  });
-
-  it("keeps BOTH when two logins fail their revoke, rather than overwriting", async () => {
-    // The field was one slot, and a slot is a silent drop: the second failed
-    // revoke assigned over the first, and that first session — live on the
-    // account, its only handle now gone — was orphaned exactly the way the
-    // whole mechanism exists to prevent. Two bad-network logins is all it took,
-    // so this drives two, through the real activation path.
-    const FIRST = "plow_sk_first_orphan";
-    const SECOND = "plow_sk_second_orphan";
-    plow.relayInfo = async () => {
-      throw new PlowApiError("network", "Plow is unreachable.");
-    };
-    plow.revokeFails = true;
-
-    const onboarding = build();
-    plow.redeems = [{ status: "verified", token: FIRST }];
-    await onboarding.begin();
-    await settle();
-    expect(loadSettings(home).pendingRevocations).toEqual([FIRST]);
-
-    // A second go at signing in, and a second session Plow will not take back.
-    plow.redeems = [{ status: "verified", token: SECOND }];
-    await onboarding.newActivationCode();
-    await settle();
-
-    expect(loadSettings(home).pendingRevocations).toEqual([FIRST, SECOND]);
-  });
-
-  it("retries every held session, and keeps the ones that fail again", async () => {
-    const FIRST = "plow_sk_first_orphan";
-    const SECOND = "plow_sk_second_orphan";
-    const settings = loadSettings(home);
-    settings.pendingRevocations = [FIRST, SECOND];
-    saveSettings(home, settings);
-
-    // Plow takes the first and refuses the second: the confirmed one leaves,
-    // the refused one stays. A retry is not all-or-nothing.
-    const onboarding = build();
-    plow.revokeRefuses = [SECOND];
-    await onboarding.retryPendingRevocations();
-
-    expect(plow.revoked).toEqual([FIRST]);
-    expect(loadSettings(home).pendingRevocations).toEqual([SECOND]);
-
-    // ...and once Plow will take it, the list empties.
-    plow.revokeRefuses = [];
-    await onboarding.retryPendingRevocations();
-    expect(plow.revoked).toEqual([FIRST, SECOND]);
-    expect(loadSettings(home).pendingRevocations).toEqual([]);
-  });
-
-  it("holds one token once, however many times its retry fails", async () => {
-    heldSession();
-    plow.revokeFails = true;
-    const onboarding = build();
-    await onboarding.retryPendingRevocations();
-    await onboarding.retryPendingRevocations();
-    await onboarding.retryPendingRevocations();
-
-    expect(loadSettings(home).pendingRevocations).toEqual([SESSION_TOKEN]);
-  });
-
-  it("sweeps ONCE when launch and an activation both ask at the same time", async () => {
-    // Launch starts a sweep and the first activation starts another; on a slow
-    // network they overlap, both read the same list, and both revoke the same
-    // token. The second call then gets a 401 — because the first one worked —
-    // and the token went back on the list as a session that no longer exists.
-    heldSession();
-    plow.holdRevokes();
-    const onboarding = build();
-
-    const fromLaunch = onboarding.retryPendingRevocations();
-    const fromActivation = onboarding.retryPendingRevocations();
-    await settleUntil(() => plow.revokeCalls.length >= 1);
-    plow.releaseRevokes();
-    await Promise.all([fromLaunch, fromActivation]);
-
-    // One call, not two: the second caller joined the flight in progress.
-    expect(plow.revokeCalls).toEqual([SESSION_TOKEN]);
-    expect(plow.revoked).toEqual([SESSION_TOKEN]);
-    expect(loadSettings(home).pendingRevocations).toEqual([]);
-  });
-
-  it("starts a fresh sweep once the last one has finished", async () => {
-    // Single-flight is not once-per-process: the handle is dropped when the
-    // sweep ends, so the next launch or activation really does try again.
-    heldSession();
-    plow.revokeRefuses = [SESSION_TOKEN];
-    const onboarding = build();
-    await onboarding.retryPendingRevocations();
-    expect(loadSettings(home).pendingRevocations).toEqual([SESSION_TOKEN]);
-
-    plow.revokeRefuses = [];
-    await onboarding.retryPendingRevocations();
-    expect(plow.revoked).toEqual([SESSION_TOKEN]);
-    expect(loadSettings(home).pendingRevocations).toEqual([]);
-  });
-
-  it("drops a token Plow says is already revoked, rather than holding it forever", async () => {
-    // A 401 here is the token saying it no longer works — the revoke
-    // authenticates WITH the token it retires. Treating that as a failure put
-    // it back on the list, so a session that was already gone warned on every
-    // screen and made worktree cleanup refuse for as long as the home lived.
-    heldSession();
-    plow.revokeUnauthorized = [SESSION_TOKEN];
-    const onboarding = build();
-    await onboarding.retryPendingRevocations();
-
-    expect(loadSettings(home).pendingRevocations).toEqual([]);
-    // Nothing is loose, so nothing is warned about.
-    expect(onboarding.state().message).not.toBe(LOOSE_SESSION_WARNING);
-  });
-
-  it("keeps holding the ones that failed for a reason a retry could fix", async () => {
-    // The 401 release must not become "give up on anything that errors": a
-    // network failure is still a session this Mac has to come back for.
-    const DEAD = "plow_sk_already_revoked";
-    const LIVE = "plow_sk_still_live";
-    const settings = loadSettings(home);
-    settings.pendingRevocations = [DEAD, LIVE];
-    saveSettings(home, settings);
-    plow.revokeUnauthorized = [DEAD];
-    plow.revokeRefuses = [LIVE];
-
-    await build().retryPendingRevocations();
-
-    expect(loadSettings(home).pendingRevocations).toEqual([LIVE]);
-  });
-
-  it("keeps a 403 staged — that session authenticated, so it is alive", async () => {
-    // A 403 is the OPPOSITE of a 401 here: the token did authenticate, so the
-    // session exists; only this call was refused. Dropping the handle to a
-    // live `*:*` session because the server would not let us retire it is the
-    // orphan the whole mechanism exists to prevent, and the owner needs that
-    // handle to retire it in Plow.
-    heldSession();
-    plow.revokeForbidden = [SESSION_TOKEN];
-    const onboarding = build();
-    await onboarding.retryPendingRevocations();
-
-    expect(loadSettings(home).pendingRevocations).toEqual([SESSION_TOKEN]);
-    expect(onboarding.state().message).toBe(LOOSE_SESSION_WARNING);
-  });
-
-  it("still sweeps after a first sweep that had nothing to do", async () => {
-    // A sweep with an empty list runs to completion synchronously, so it used
-    // to clear the single-flight handle BEFORE the handle was assigned — and
-    // the settled promise stayed parked there for the life of the process.
-    // Every later launch and activation "joined" a sweep that had already
-    // finished, and nothing was ever retried again.
-    const onboarding = build();
-    await onboarding.retryPendingRevocations();
-    expect(plow.revokeCalls).toEqual([]);
-
-    // ...now a login fails to retire its session, and an activation retries.
-    heldSession();
-    await onboarding.retryPendingRevocations();
-
-    expect(plow.revoked).toEqual([SESSION_TOKEN]);
-    expect(loadSettings(home).pendingRevocations).toEqual([]);
-  });
-
-  it("still sweeps on a fresh activation after an empty first sweep", async () => {
-    // The same bug through the door it actually comes in by: launch sweeps an
-    // empty list, then the owner starts a login and that mint's own retry is
-    // the one that has to work.
-    const onboarding = build();
-    await onboarding.retryPendingRevocations();
-    heldSession();
-
-    await onboarding.begin();
-
-    expect(plow.revoked).toEqual([SESSION_TOKEN]);
-  });
-});
-
-describe("a Mac holding a credential it cannot read", () => {
-  /** Seal a credential, then take the keychain away. */
-  function locked(): void {
-    useCredentialCodec(fakeCodec());
-    const settings = loadSettings(home);
-    settings.relayCredential = "plow_sk_sealed_and_unreadable";
-    saveSettings(home, settings);
-    useCredentialCodec(fakeCodec(false));
-  }
-
-  afterEach(() => useCredentialCodec(null));
-
-  it("says so, and offers no way to sign in over it", () => {
-    locked();
-    const state = build().state();
-
-    expect(state.locked).toBe(true);
-    // Said the moment the screen opens — nobody has to press something that
-    // cannot work in order to be told why.
-    expect(state.message).toBe(KEYCHAIN_LOCKED_MESSAGE);
-  });
-
-  it("refuses to mint an activation code", async () => {
-    locked();
-    const onboarding = build();
-    const shown = await onboarding.begin();
-
-    expect(plow.activations).toEqual([]);
-    expect(shown.activation).toBeNull();
-    expect(shown.message).toBe(KEYCHAIN_LOCKED_MESSAGE);
-  });
-
-  it("refuses the phone-code path too", async () => {
-    locked();
-    const onboarding = build();
-    await onboarding.requestCode("+15551230000");
-    expect(plow.requested).toEqual([]);
-
-    await onboarding.submitCode("12345678");
-    expect(loadSettings(home).relayCredential).toBe("");
-  });
-
-  it("never seals a new credential over the one it cannot read", async () => {
-    // The orphan this state exists to prevent: sign in again while locked and
-    // the new credential's seal overwrites the old one, whose session is live
-    // for 180 days with nothing left that could retire it.
-    locked();
-    const sealedBefore = JSON.parse(
-      fs.readFileSync(path.join(home, "app/settings.json"), "utf8"),
-    ) as Record<string, unknown>;
-    plow.redeems = [{ status: "verified", token: SESSION_TOKEN }];
-
-    const onboarding = build();
-    await onboarding.begin();
-    await settle();
-
-    const after = JSON.parse(
-      fs.readFileSync(path.join(home, "app/settings.json"), "utf8"),
-    ) as Record<string, unknown>;
-    expect(after.relayCredentialEnc).toBe(sealedBefore.relayCredentialEnc);
-    // ...and it comes back intact once the keychain does.
-    useCredentialCodec(fakeCodec());
-    expect(loadSettings(home).relayCredential).toBe("plow_sk_sealed_and_unreadable");
-  });
-
-  it("goes back to ordinary setup once the keychain returns and it signs out", async () => {
-    locked();
-    useCredentialCodec(fakeCodec());
-    signOutOfPlow(home);
-
-    const onboarding = build();
-    expect(onboarding.state().locked).toBe(false);
-    await onboarding.begin();
-    expect(onboarding.state().activation?.displayCode).toBe("CODE1");
   });
 });

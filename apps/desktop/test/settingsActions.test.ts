@@ -12,7 +12,6 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { loadSettings, saveSettings, Settings } from "../src/settings.js";
-import { PlowApiError } from "../src/plowApi.js";
 import {
   isSignedIn,
   readAgentPurpose,
@@ -27,6 +26,7 @@ const PLOW_CREDENTIAL = "plow_sk_do_not_leak_me";
 
 const cleanups: (() => void)[] = [];
 afterEach(() => {
+  vi.restoreAllMocks();
   while (cleanups.length) cleanups.pop()!();
 });
 
@@ -145,15 +145,10 @@ describe("signing out retires the credential server-side, best effort", () => {
     // and the test would pass with the ordering reversed.
     let onDiskWhenAsked: string | null = null;
 
-    // ...and it reports that the revoke landed. The caller needs the answer:
-    // the credential is the owner's login session, so one this Mac could not
-    // retire stays live on the account with nothing here able to reach it.
-    expect(
-      await revokeAndSignOut(home, async (credential) => {
-        seen.push(credential);
-        onDiskWhenAsked = stored(home).relayCredential;
-      }),
-    ).toBe(true);
+    await revokeAndSignOut(home, async (credential) => {
+      seen.push(credential);
+      onDiskWhenAsked = stored(home).relayCredential;
+    });
 
     expect(seen).toEqual([PLOW_CREDENTIAL]);
     // The revoke authenticates with the CAPTURED token, so the disk copy is
@@ -188,79 +183,40 @@ describe("signing out retires the credential server-side, best effort", () => {
     // the local copy gone.
     const home = homeSignedIn();
 
-    // ...and reports the failure rather than swallowing it: the credential is
-    // the owner's login session, so one left live is theirs to retire.
-    await expect(
-      revokeAndSignOut(home, async () => {
-        throw new Error("ENOTFOUND api.plow.co");
-      }),
-    ).resolves.toBe(false);
-
-    expectSignedOutWithAdversarial(home);
-    // ...and KEEPS the session it could not retire. Sign-out has just erased
-    // the only copy of a live `*:*` bearer, so dropping it here left the
-    // account holding one for 180 days with nothing anywhere able to revoke
-    // it. It goes to the same pending list `Onboarding` uses, and the app
-    // retries it on the next launch and the next activation.
-    expect(stored(home).pendingRevocations).toEqual([PLOW_CREDENTIAL]);
-  });
-
-  it("stages the session BEFORE the revoke, so a quit mid-flight survives it", async () => {
-    // Sign-out clears the credential synchronously and then waits on the
-    // network. Staging only after that call failed left a window with the
-    // token nowhere on disk — and quitting inside it is indistinguishable from
-    // a failed revoke, except that nothing was left to retry with.
-    const home = homeSignedIn();
-    let staged: string[] = [];
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
     await revokeAndSignOut(home, async () => {
-      // Mid-flight: the app could be quit right here.
-      staged = [...stored(home).pendingRevocations];
-      expect(stored(home).relayCredential).toBe("");
+      throw new Error(`ENOTFOUND api.plow.co for Bearer ${PLOW_CREDENTIAL}`);
     });
 
-    expect(staged).toEqual([PLOW_CREDENTIAL]);
-    // ...and a revoke that lands releases it again.
-    expect(stored(home).pendingRevocations).toEqual([]);
+    expectSignedOutWithAdversarial(home);
+    expect(warning).toHaveBeenCalledOnce();
+    expect(warning).toHaveBeenCalledWith(
+      "[settings] session revoke failed; already signed out locally",
+    );
+    expect(warning.mock.calls.flat().join(" ")).not.toContain(PLOW_CREDENTIAL);
   });
 
   it("clears locally for every shape of failure", async () => {
     for (const fail of [
       () => Promise.reject(new Error("500")),
       () => Promise.reject("a bare string"),
-      () => Promise.reject(new PlowApiError("http", "Plow returned 404.", 404)),
     ]) {
       const home = homeSignedIn();
+      vi.spyOn(console, "warn").mockImplementation(() => {});
       await revokeAndSignOut(home, fail as () => Promise<unknown>);
       expect(stored(home).relayCredential).toBe("");
+      vi.restoreAllMocks();
     }
   });
 
   it("does not call out at all when there is nothing to revoke", async () => {
     const home = homeWith({ relayCredential: "" });
     const revoke = vi.fn();
-    // Nothing to retire IS success: there is no session left loose.
-    expect(await revokeAndSignOut(home, revoke)).toBe(true);
+    await revokeAndSignOut(home, revoke);
     expect(revoke).not.toHaveBeenCalled();
     expect(stored(home).relayCredential).toBe("");
   });
 
-  it("a failing revoke leaks nothing about the credential", async () => {
-    const home = homeSignedIn();
-    const logs: string[] = [];
-    for (const m of ["log", "info", "warn", "error", "debug"] as const) {
-      vi.spyOn(console, m).mockImplementation((...args: unknown[]) => {
-        logs.push(args.map(String).join(" "));
-      });
-    }
-
-    await revokeAndSignOut(home, async () => {
-      throw new Error(`failed for Bearer ${PLOW_CREDENTIAL}`);
-    });
-
-    expect(logs.join("\n")).not.toContain(PLOW_CREDENTIAL);
-    expect(logs.join("\n")).not.toContain(PLOW_CREDENTIAL.slice(0, 10));
-    vi.restoreAllMocks();
-  });
 });
 
 describe("a second sign-out is a no-op, not a second sign-out", () => {
@@ -349,4 +305,3 @@ describe("the purpose statement is owner-authored data", () => {
     });
   }
 });
-

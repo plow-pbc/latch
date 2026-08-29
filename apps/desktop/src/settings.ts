@@ -3,9 +3,9 @@
  *
  * This file holds a secret — the Plow relay credential — so it is written
  * **owner-only**. It used to be written with no mode at all, which on a shared
- * or backed-up Mac is a plaintext credential anyone could read. There is still
- * no Keychain or `safeStorage` here; 0600 is the floor,
- * not the destination.
+ * or backed-up Mac is a plaintext credential anyone could read. safeStorage
+ * seals it wherever the OS offers a way; 0600 remains the floor for the
+ * plaintext fallback.
  */
 import fs from "node:fs";
 import path from "node:path";
@@ -48,10 +48,9 @@ function activeCodec(): CredentialCodec | null {
 /**
  * One sealed secret read back, or `""` when nothing here can read it.
  *
- * A decrypt that fails is not a crash: the keychain entry can be gone (a
- * restored backup, a new login keychain), and there is no codec at all under
- * the tests and `latch-smoke`. The honest answer in both cases is that this
- * Mac does not hold the secret.
+ * A decrypt that fails is not a crash: the keychain entry can be gone after a
+ * restored backup or a new login keychain. The honest answer is that this Mac
+ * does not hold the secret.
  */
 function unseal(sealed: string): string {
   const active = activeCodec();
@@ -94,76 +93,14 @@ function storeSecret(
   active: CredentialCodec | null,
 ): boolean {
   const value = String(stored[plainKey] ?? "").trim();
-  // Ciphertext `loadSettings` could not open, carried back verbatim. THE
-  // dangerous case, and it took an ordinary window resize to reach: a locked
-  // keychain made the secret read as `""`, `""` looked exactly like "there is
-  // no secret", and the next save — a window move, a tab change, anything —
-  // deleted the only copy of a live 180-day session. An unread secret is not
-  // an absent one. Only sign-out and release, which know what they are
-  // throwing away, clear these.
-  const carried = String(stored[sealedKey] ?? "");
   const sealed = seal(value, active);
   if (sealed) {
     stored[sealedKey] = sealed;
     stored[plainKey] = "";
     return false;
   }
-  if (!value && carried) {
-    stored[sealedKey] = carried;
-    stored[plainKey] = "";
-    return false;
-  }
   delete stored[sealedKey];
   return value !== "";
-}
-
-/**
- * The same, for a LIST of secrets — sealed entry by entry rather than as one
- * blob, so a single unreadable entry costs one token rather than all of them.
- *
- * All or nothing per write: if the keychain refuses even one, the whole list
- * goes out in the clear. A file holding half its tokens sealed and half not is
- * a shape nothing else here has to reason about, and the alternative is
- * dropping the ones that would not seal — which is the one outcome this list
- * exists to prevent.
- */
-function storeSecretList(
-  stored: Record<string, unknown>,
-  plainKey: string,
-  sealedKey: string,
-  active: CredentialCodec | null,
-): boolean {
-  const values = readSecretList(stored[plainKey]);
-  // Entries `loadSettings` could not open. Kept ahead of the ones written
-  // here, blind and untouched: this Mac does not know which sessions they are,
-  // and "cannot read it" is the one thing that must never mean "throw it away"
-  // — those tokens are live on the owner's account either way.
-  const carried = readSecretList(stored[sealedKey]);
-  const sealedAll = values.map((value) => seal(value, active));
-  if (values.length && sealedAll.every((entry) => entry !== "")) {
-    stored[sealedKey] = [...carried, ...sealedAll];
-    stored[plainKey] = [];
-    return false;
-  }
-  if (!values.length && carried.length) {
-    stored[sealedKey] = carried;
-    stored[plainKey] = [];
-    return false;
-  }
-  if (carried.length) stored[sealedKey] = carried;
-  else delete stored[sealedKey];
-  stored[plainKey] = values;
-  return values.length > 0;
-}
-
-/** Whatever the file held where a list of secrets belongs, as a list of
- * non-empty strings. A hand-edited file can put anything here. */
-function readSecretList(value: unknown): string[] {
-  if (!Array.isArray(value)) return [];
-  return value
-    .filter((entry): entry is string => typeof entry === "string")
-    .map((entry) => entry.trim())
-    .filter((entry) => entry !== "");
 }
 
 export interface WindowBounds {
@@ -202,13 +139,6 @@ export interface Settings {
   /**
    * The credential, ENCRYPTED, when the OS offered a way to encrypt it. Only
    * one of this and `relayCredential` is ever on disk.
-   *
-   * ON A LOADED `Settings` THIS MEANS SOMETHING NARROWER, and everything below
-   * depends on it: it is set only when the seal could NOT be opened. A seal
-   * that opened is dropped from the object, because the next save writes it
-   * again from the plaintext. So `relayCredentialEnc` on a loaded object is
-   * exactly "this Mac has a credential it cannot read right now" — which is
-   * what `credentialLocked` asks, and is not the same as having none.
    */
   relayCredentialEnc?: string;
   /** The Plow login session this Mac holds, from first-run activation or the
@@ -217,29 +147,6 @@ export interface Settings {
    * SECRET: never sent to the renderer, never written to a log or an error
    * string. */
   relayCredential: string;
-  /**
-   * Login sessions this Mac holds ONLY so they can be retired.
-   *
-   * A verified session it will not keep — a sign-out that landed mid-login, a
-   * handoff that failed — has to be revoked, and the redeem that produced it
-   * answers exactly once. When that revoke fails there is nowhere else the
-   * token exists: dropping it leaves the owner's account carrying a live
-   * `*:*` session for 180 days with nothing anywhere able to retire it. So it
-   * is kept here, every entry retried before the next activation and on the
-   * next launch, and each cleared the moment the server confirms.
-   *
-   * A LIST, and that is the point. It was one slot, which meant a second
-   * failed revoke silently overwrote the first — the same orphaned session,
-   * arrived at one layer further in. Sessions accumulate here only while Plow
-   * is unreachable, and the same token is never held twice.
-   *
-   * SECRETS, sealed and never shown, exactly like `relayCredential`. None of
-   * them is a credential this Mac USES — nothing reads them but the retry.
-   */
-  pendingRevocations: string[];
-  /** `pendingRevocations`, each entry ENCRYPTED, when the OS offered a way.
-   * Only one of this and `pendingRevocations` is ever on disk. */
-  pendingRevocationsEnc?: string[];
   /** The account this Mac is signed into, and the endpoint agents POST to.
    * Both come from `GET /v1/relay/info` — the server stays authoritative and
    * the app never constructs the MCP URL itself. Cached only for display. */
@@ -313,7 +220,6 @@ function settingsPath(home: string): string {
 export function loadSettings(home: string): Settings {
   const defaults: Settings = {
     relayCredential: "",
-    pendingRevocations: [],
     accountUid: "",
     mcpUrl: "",
     selectedTab: "agents",
@@ -345,48 +251,23 @@ export function loadSettings(home: string): Settings {
 
   const loaded = { ...defaults, ...settings };
   // The encrypted field wins where it exists. A decrypt that fails is treated
-  // as no credential rather than as a crash: the keychain entry can be gone
-  // (a restored backup, a new login keychain), and the honest answer to "what
-  // is this Mac signed in as" is then nothing — which sends the owner through
-  // setup rather than into an auth error nobody can explain.
-  // A seal that opens becomes the plaintext and the ciphertext is dropped from
-  // the object, because `saveSettings` will write it again from that plaintext.
-  // A seal that does NOT open is carried instead — this Mac cannot read the
-  // secret right now, which is not the same as not having one, and the whole
-  // of `storeSecret` depends on telling those apart.
-  //
-  // This deliberately no longer reads as "signed out". It used to blank the
-  // account uid, the endpoint and the provisioned chat here, on the theory
-  // that an unopenable seal meant a home that had lost its credential for
-  // good — and a locked keychain is a Tuesday, not a lost credential. The
-  // fields come back on the first read that can open the seal. `signOutOfPlow`
-  // still clears the same set, which is where clearing them belongs.
+  // as signed out rather than as a crash, and the unreadable value is cleared
+  // below along with the account-local display state.
+  // 0 users; a session that can't be revoked idles out in 180 days; revisit
+  // when there's a fleet.
   const sealed = typeof loaded.relayCredentialEnc === "string" ? loaded.relayCredentialEnc : "";
+  let unreadableSeal = false;
   if (sealed) {
     loaded.relayCredential = unseal(sealed);
-    loaded.relayCredentialEnc = loaded.relayCredential ? undefined : sealed;
+    loaded.relayCredentialEnc = undefined;
+    if (!loaded.relayCredential) {
+      unreadableSeal = true;
+      loaded.accountUid = "";
+      loaded.mcpUrl = "";
+      loaded.provisionedChatUid = "";
+      loaded.provisionedChatLabel = "";
+    }
   }
-  // Entry by entry, and the same rule: the ones that open become tokens the
-  // retry can use, the ones that do not are carried back as ciphertext for
-  // `saveSettings` to write again untouched. Reporting an unopened entry as a
-  // token would put a value the server has never seen into a revoke; dropping
-  // it would strand a live session. It is neither.
-  const sealedPending = readSecretList(loaded.pendingRevocationsEnc);
-  const opened = sealedPending.map((entry) => ({ entry, token: unseal(entry) }));
-  const unopened = opened.filter((o) => !o.token).map((o) => o.entry);
-  // BOTH sources, always. The sealed list used to win outright when it existed,
-  // and that lost tokens for real: with the keychain down, an unopenable sealed
-  // list sits on disk while `holdForRevocation` has nowhere to put a new token
-  // but the plaintext list — so the next load saw a sealed list, took only
-  // that, and the freshly staged session went invisible and was written away
-  // by the following save. The two lists are one list stored two ways.
-  loaded.pendingRevocations = [
-    ...new Set([
-      ...opened.filter((o) => o.token).map((o) => o.token),
-      ...readSecretList(loaded.pendingRevocations),
-    ]),
-  ];
-  loaded.pendingRevocationsEnc = unopened.length ? unopened : undefined;
   // The spread above copies whatever the file held, and a hand-edited or
   // truncated file can put a non-object — or a `null` — where a record belongs.
   // Every reader of this map indexes it, so normalising once here is what keeps
@@ -413,11 +294,8 @@ export function loadSettings(home: string): Settings {
   // sealed on the first read that can — the same one-off shape the retired-key
   // scrub uses, and for the same reason: waiting for some unrelated write
   // leaves the plaintext on disk for as long as nobody changes a setting.
-  const needsSealing =
-    activeCodec() !== null &&
-    ((!sealed && loaded.relayCredential.trim() !== "") ||
-      (!sealedPending.length && loaded.pendingRevocations.length > 0));
-  if (retired || needsSealing) saveSettings(home, loaded);
+  const needsSealing = !sealed && loaded.relayCredential.trim() !== "" && activeCodec() !== null;
+  if (retired || needsSealing || unreadableSeal) saveSettings(home, loaded);
   return loaded;
 }
 
@@ -429,13 +307,7 @@ export function saveSettings(home: string, settings: Settings): void {
   const active = activeCodec();
   const stored: Record<string, unknown> = { ...settings };
   const credentialInClear = storeSecret(stored, "relayCredential", "relayCredentialEnc", active);
-  const pendingInClear = storeSecretList(
-    stored,
-    "pendingRevocations",
-    "pendingRevocationsEnc",
-    active,
-  );
-  if ((credentialInClear || pendingInClear) && codec && !warnedUnavailable) {
+  if (credentialInClear && codec && !warnedUnavailable) {
     warnedUnavailable = true;
     console.log("[settings] no OS keychain available; credential stored unencrypted (0600)");
   }
@@ -445,57 +317,4 @@ export function saveSettings(home: string, settings: Settings): void {
   // old permissions forever.
   fs.writeFileSync(file, JSON.stringify(stored, null, 2) + "\n", { mode: 0o600 });
   fs.chmodSync(file, 0o600);
-}
-
-/**
- * Keep a session token for a later revoke, ALONGSIDE any already held.
- *
- * THE one place a failed revocation is retained, and it is here rather than in
- * either caller because both of them have the same problem and only one of
- * them used to know it: `Onboarding` holds tokens a login never persisted, and
- * sign-out holds the credential whose revoke did not land. A retention that
- * lived in one of them left the other silently dropping a live `*:*` session.
- *
- * Appended, never assigned. A single slot looked like it was doing this job
- * and was not: a second failure overwrote the first, which is the same
- * orphaned session, reached one layer further in. De-duplicated, because every
- * retry that fails comes back holding a token already on the list.
- *
- * Read fresh: every caller reaches this on the far side of a network call, and
- * anything may have written settings while it was out.
- */
-export function holdForRevocation(home: string, token: string): void {
-  const value = (token ?? "").trim();
-  if (!value) return;
-  const settings = loadSettings(home);
-  if (settings.pendingRevocations.includes(value)) return;
-  settings.pendingRevocations = [...settings.pendingRevocations, value];
-  saveSettings(home, settings);
-}
-
-/** Forget one token the server has confirmed dead, leaving the rest alone. */
-export function releaseRevocation(home: string, token: string): void {
-  const settings = loadSettings(home);
-  if (!settings.pendingRevocations.includes(token)) return;
-  settings.pendingRevocations = settings.pendingRevocations.filter((held) => held !== token);
-  saveSettings(home, settings);
-}
-
-/**
- * Is this Mac holding a credential it cannot read?
- *
- * LOCKED, which is a third state — not signed in, and emphatically not signed
- * out. The keychain is unavailable (a locked login keychain, a Mac that has
- * not finished unlocking), the sealed credential is still on disk, and it will
- * read fine again later.
- *
- * The distinction is load-bearing rather than cosmetic. Every gate in the app
- * asks "is there a credential?" by looking at the plaintext, which is empty
- * here — so without this, a locked Mac is shown first-run setup, the owner
- * signs in again, and the new credential's seal overwrites the old one. That
- * is an orphaned `*:*` session created by the app's own recovery path. While
- * this answers true, setup says so and refuses to start a new login.
- */
-export function credentialLocked(settings: Settings): boolean {
-  return (settings.relayCredentialEnc ?? "") !== "";
 }

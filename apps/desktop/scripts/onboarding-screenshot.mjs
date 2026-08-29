@@ -39,7 +39,6 @@ const base = {
   activation: null,
   chat: null,
   activationStale: false,
-  locked: false,
   accountUid: "u_7Qk2p9",
   mcpUrl: MCP_URL,
   connected: true,
@@ -48,34 +47,8 @@ const base = {
 /** Before the account exists: no uid, no endpoint, no socket. */
 const newUser = { ...base, accountUid: "", mcpUrl: "", connected: false };
 
-/**
- * This Mac holds a credential it cannot read: the keychain is unavailable, and
- * the sealed login is still on disk. The screen exists so the owner does NOT
- * sign in again, which would seal over the session already there and strand it
- * live on the account.
- */
-const LOCKED_MESSAGE =
-  "Latch can't reach this Mac's keychain, so it can't read the Plow login it already has. " +
-  "Quit Latch and open it again — signing in again here would leave the session it's holding " +
-  "live on your account with no way to retire it.";
-
 /** Each screen, with the text it must contain to count as rendered. */
 const SCREENS = [
-  {
-    name: "locked",
-    state: { ...newUser, step: "activate", locked: true, message: LOCKED_MESSAGE },
-    expect: [
-      "Keychain unavailable",
-      "can't read the Plow login it already has",
-      "Quit Latch and open it again",
-      // The remedy has to say what NOT to do, because the obvious move on a
-      // setup screen is the one that strands the session.
-      "signing in again here would leave the session it's holding",
-      "once macOS unlocks your login keychain",
-    ],
-    // No way forward at all: the sign-in controls are absent, not disabled.
-    reject: ["Open Messages…", "Use a phone code instead", "Connect this Mac"],
-  },
   {
     name: "activate",
     state: { ...newUser, step: "activate", phone: "", activation: ACTIVATION },

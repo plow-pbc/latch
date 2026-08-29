@@ -516,8 +516,7 @@ async function signOutThisMac(): Promise<void> {
   // over the one the user may have just texted.
   if (!isSignedIn(home)) return;
   // Started first: it clears the stored credential synchronously, before its
-  // own first await, so everything below already sees a signed-out Mac. What it
-  // returns is only the best-effort revoke, which nothing else waits on.
+  // own first await, so everything below already sees a signed-out Mac.
   const revoking = revokeAndSignOut(home, (credential) =>
     new PlowApi(apiBaseUrl).revokeDeviceCredential(credential),
   );
@@ -526,14 +525,7 @@ async function signOutThisMac(): Promise<void> {
   // which a click has exactly as much reason to clear as a revocation does.
   signOut();
   await startRelay();
-  // The outcome is the owner's to know: a Mac that could not reach Plow is
-  // signed out locally either way, but the session it was holding is still
-  // live on the account and only they can retire it now.
-  if (!(await revoking)) {
-    onboarding?.warnSignOut(
-      "Signed out on this Mac; the session could not be revoked — revoke it in Plow.",
-    );
-  }
+  await revoking;
 }
 
 ipcMain.handle("settings:signOut", async () => signOutThisMac());
@@ -1154,12 +1146,6 @@ app.whenReady().then(async () => {
     // handed to this — see Onboarding's callers of `warn`.
     warn: (message) => console.log(`[onboarding] ${message}`),
   });
-  // Login sessions an earlier run could not retire are still live on the
-  // account. Detached: the boot path must not wait on Plow, and a second
-  // failure just leaves them on disk for the next launch or the next
-  // activation to try again.
-  void onboarding.retryPendingRevocations();
-
   // Built first: the roster's removal routing needs the cloud-agent client,
   // because a row with an `agent_id` must be deleted as an agent and never
   // revoked as a key.

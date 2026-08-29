@@ -236,7 +236,8 @@ draws whatever state the main process hands it and owns no copy of its own.
 
   The session carries the owner's full account authority and expires only after
   180 days *unused*, refreshed by every request it makes. It is written to
-  `settings.json` (0600) as `relayCredential` and is never handed to the
+  `settings.json` (0600) as `relayCredentialEnc` where safeStorage is available,
+  with `relayCredential` as the plaintext fallback, and is never handed to the
   renderer. Sign-out retires it with `POST /v1/relay/devices/self/revoke`, which
   accepts a session: its guard is `relay:device`, and a session's wildcard
   satisfies it. Macs paired before this change keep their narrow credential

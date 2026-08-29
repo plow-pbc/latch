@@ -107,25 +107,6 @@ function countdown(node, until) {
   window.__domoExpiryTimer = setInterval(tick, 1000);
 }
 
-/**
- * This Mac has a credential it cannot read.
- *
- * Not a variant of the sign-in screen — a REPLACEMENT for it, with no way
- * forward on it at all. The one action a sign-in screen invites is the one
- * action that would strand the session already on disk, so the buttons are not
- * disabled here, they are absent.
- */
-function lockedScreen() {
-  return [
-    el("h2", { text: "Keychain unavailable" }),
-    el("p", { class: "faint lede", text: state.message }),
-    el("p", {
-      class: "faint lede",
-      text: "This usually clears on its own once macOS unlocks your login keychain.",
-    }),
-  ];
-}
-
 function activateScreen() {
   const activation = state.activation;
   if (!activation) {
@@ -306,10 +287,7 @@ function connectedScreen() {
 function render() {
   if (!state) return;
   const screen =
-    // Ahead of every step: locked is not a step the wizard walks through, it
-    // is the wizard being unavailable.
-    state.locked ? lockedScreen()
-    : state.step === "activate" ? activateScreen()
+    state.step === "activate" ? activateScreen()
     : state.step === "waiting" ? waitingScreen()
     : state.step === "phone" ? phoneScreen()
     : state.step === "code" ? codeScreen()
