@@ -65,9 +65,9 @@ export type PendingReason = "awaiting_approval" | "running";
  * still commonplace — and the
  * approve/deny modes, which never show a human anything at all.
  *
- * An earlier version of this note hedged on whether approval was *needed*,
- * which is not the uncertain part: it always is. What varies is whether it has
- * been ASKED yet.
+ * `running` means the caller-level decision step is complete and execution is
+ * underway. It does not claim that action-specific checks inside that execution
+ * have succeeded.
  */
 const PENDING_NOTES: Record<PendingReason, string> = {
   awaiting_approval:
@@ -75,7 +75,7 @@ const PENDING_NOTES: Record<PendingReason, string> = {
     "prepared. Tell the user it is waiting, then poll plow_get_result with this handle. " +
     "Do not repeat the original call; that starts a second request.",
   running:
-    "approved, and running now. Poll plow_get_result with this handle; do not repeat the " +
+    "execution is underway now. Poll plow_get_result with this handle; do not repeat the " +
     "original call.",
 };
 

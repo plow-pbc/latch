@@ -336,6 +336,13 @@ describe("every tool says what kind of tool it is", () => {
 });
 
 describe("what the agent-facing copy must and must not say", () => {
+  it("qualifies separate payment approval with the bundled v1 bank registry", async () => {
+    const browserTool = (await descriptions(makeServer())).plow_browser;
+    for (const copy of [BROWSING_SKILL.body, browserTool]) {
+      expect(copy).toMatch(/bundled v1 bank registry/i);
+    }
+  });
+
   // The mechanism itself is pinned on LIVE_WEB_ROUTING by the seam test below;
   // what is this block's own is that the instructions name the tool and carry
   // the worked example — a concrete case moves a model where a rule does not,
