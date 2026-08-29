@@ -28,7 +28,12 @@ import path from "node:path";
 import { JSONValue, jv, originMatches, normalizeOrigin } from "@domo/protocol";
 import { BrowserHost, BrowserHostConfig, ViewerFrame } from "./browserHost.js";
 import { CredentialBroker, CredentialError, CredentialRelease } from "./credentialBroker.js";
-import { assessFinancialRelease, NO_APPROVAL_ENDPOINT, PaymentApprovalClient } from "./financialGate.js";
+import {
+  assessFinancialRelease,
+  NO_APPROVAL_ENDPOINT,
+  PaymentApprovalClient,
+  resolvePaymentApproval,
+} from "./financialGate.js";
 
 type AuditFn = (event: string, fields: { [k: string]: JSONValue }) => void;
 
@@ -978,26 +983,21 @@ export class BrowserSessions {
     // financial release is blocked here — intended, and safe: over-gating a
     // non-bank is a recoverable prompt; under-gating a bank silently hands out a
     // banking credential, which this exists to prevent.
-    const financial = assessFinancialRelease(frameHost);
-    if (financial.gated) {
-      let approved = false;
-      try {
-        const decision = await this.approval.checkPaymentApproval({
-          sessionId: s.auditId,
-          domain: financial.domain ?? frameHost ?? "",
-        });
-        approved = decision.approved === true;
-      } catch {
-        // Any failure — error, timeout, endpoint absent — is NOT approval.
-        approved = false;
-      }
-      if (!approved) {
+    if (assessFinancialRelease(frameHost).gated) {
+      // not-approved / error / timeout are all NON-approval — the release is
+      // blocked. The outcome is kept in the audit reason: "the owner said no"
+      // and "the approval system is unreachable" need different responses.
+      const outcome = await resolvePaymentApproval(this.approval, {
+        sessionId: s.auditId,
+        domain: frameHost,
+      });
+      if (outcome !== "approved") {
         this.audit("credential_denied", {
           session: s.auditId,
           item: itemId,
           field,
           origin: frameHost,
-          reason: "banking credential release requires owner approval; none found",
+          reason: `banking credential release requires owner approval; blocked (${outcome})`,
         });
         return {
           status: "error",

@@ -51,8 +51,6 @@ export interface FinancialAssessment {
   /** True when this release must pass the owner-approval gate before it may
    * proceed. */
   gated: boolean;
-  /** Why it was gated, for the audit line. Never a value, never a full URL. */
-  reason: string;
   /** The destination host the approval is bound to — null when it could not be
    * read (which is itself a reason to gate). */
   domain: string | null;
@@ -71,20 +69,12 @@ export interface FinancialAssessment {
  */
 export function assessFinancialRelease(frameHost: string | null): FinancialAssessment {
   if (frameHost === null || frameHost === "") {
-    return {
-      gated: true,
-      reason: "financial gate: destination host could not be read (fail closed)",
-      domain: null,
-    };
+    return { gated: true, domain: null };
   }
   if (originMatches(frameHost, BANK_PATTERNS)) {
-    return {
-      gated: true,
-      reason: "financial gate: destination is a known bank domain",
-      domain: frameHost,
-    };
+    return { gated: true, domain: frameHost };
   }
-  return { gated: false, reason: "", domain: frameHost };
+  return { gated: false, domain: frameHost };
 }
 
 /** What the enforcement layer asks about a financial release. */
@@ -126,3 +116,53 @@ export const NO_APPROVAL_ENDPOINT: PaymentApprovalClient = {
     return { approved: false, reason: "no owner-approval endpoint is configured yet" };
   },
 };
+
+/**
+ * How an approval attempt ended. Only `approved` releases; every other outcome
+ * blocks, and they are kept distinct so the audit line can say WHY — "the owner
+ * said no" and "the approval system is unreachable" call for different incident
+ * responses on a money gate.
+ */
+export type ApprovalOutcome = "approved" | "not-approved" | "error" | "timeout";
+
+/** The longest the gate will wait on the approval client before failing closed.
+ * A yes/no from the cloud is quick; a hang (network stall, plow-side outage)
+ * must not park `fill_secret` past its action budget, so an unsettled call is a
+ * timeout, well under the browser action cap and the vault call that follows. */
+export const APPROVAL_BUDGET_MS = 5_000;
+
+/** Raised by the budget below, so a timed-out call is told apart from a thrown
+ * one without mistaking either for a real answer. */
+export class ApprovalTimeout extends Error {
+  constructor() {
+    super("approval check timed out");
+    this.name = "ApprovalTimeout";
+  }
+}
+
+/**
+ * Ask the approval client, but only within a bounded budget, and collapse the
+ * answer to one of four outcomes.
+ *
+ * This is where "fail closed" is made real: not-approved, a thrown error, and a
+ * call that never settles all resolve to a NON-approved outcome. Only an
+ * explicit `approved: true` inside the budget returns "approved".
+ */
+export async function resolvePaymentApproval(
+  client: PaymentApprovalClient,
+  request: PaymentApprovalRequest,
+  budgetMs: number = APPROVAL_BUDGET_MS,
+): Promise<ApprovalOutcome> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const budget = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => reject(new ApprovalTimeout()), budgetMs);
+  });
+  try {
+    const decision = await Promise.race([client.checkPaymentApproval(request), budget]);
+    return decision.approved === true ? "approved" : "not-approved";
+  } catch (error: unknown) {
+    return error instanceof ApprovalTimeout ? "timeout" : "error";
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}

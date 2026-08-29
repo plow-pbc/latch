@@ -28,6 +28,7 @@ import {
   PaymentApprovalClient,
   PaymentApprovalRequest,
   assessFinancialRelease,
+  resolvePaymentApproval,
 } from "@domo/device-core";
 
 const FAKE_SERVER = fileURLToPath(
@@ -155,6 +156,10 @@ function fills(): { selector: string }[] {
     .map((c) => ({ selector: c.selector! }));
 }
 
+/** What the audit calls this session — read off the open event, not recomputed. */
+const audited = (): string =>
+  ctx.events.find((e) => e.event === "browser_session_opened")!.fields.session as string;
+
 /** The broker's own audit lines — RELEASED means it was asked for, and handed
  * over, a value. */
 function brokerLines(): string[] {
@@ -169,13 +174,14 @@ afterEach(async () => {
 });
 
 describe("fill_secret financial gate — blocking", () => {
-  // Both a plain denial and an approval-service failure must block: the
-  // enforcement treats not-approved, error, timeout and absent-endpoint alike.
+  // Not-approved, an errored approval service, and no endpoint at all must all
+  // block; the audit reason records WHICH, so an outage reads differently from a
+  // real "no".
   it.each([
-    { what: "the owner has not approved", approval: { approved: false } as const },
-    { what: "the approval service errors", approval: "throw" as const },
-    { what: "no approval endpoint is wired (the shipping default)", approval: "default" as const },
-  ])("refuses a bank credential when $what", async ({ approval }) => {
+    { what: "the owner has not approved", approval: { approved: false } as const, cause: "not-approved" },
+    { what: "the approval service errors", approval: "throw" as const, cause: "error" },
+    { what: "no approval endpoint is wired (the shipping default)", approval: "default" as const, cause: "not-approved" },
+  ])("refuses a bank credential when $what", async ({ approval, cause }) => {
     ctx = makeCtx(approval);
     const handle = await sessionAt(BANK_URL);
     const result = await ctx.sessions.command(handle, {
@@ -190,20 +196,24 @@ describe("fill_secret financial gate — blocking", () => {
     // The vault was never asked for the value, and nothing was typed.
     expect(released()).toEqual([]);
     expect(fills()).toEqual([]);
-    // Recorded as a denial, and no secret leaked into the result or the audit.
+    // Recorded as a denial, tagged with the outcome, and no secret leaked.
     expect(ctx.events.at(-1)?.event).toBe("credential_denied");
     expect(ctx.events.at(-1)?.fields.reason).toBe(
-      "banking credential release requires owner approval; none found",
+      `banking credential release requires owner approval; blocked (${cause})`,
     );
     expect(JSON.stringify(result)).not.toContain("hunter2");
     expect(JSON.stringify(ctx.events)).not.toContain("hunter2");
   });
 
-  it("fails closed when the destination host cannot be read", async () => {
-    // An unreadable destination cannot be ruled out as a bank, so nothing is
-    // released — the strongest fail-closed: refused before it can even be
-    // classified. `#card*` selectors take the frame_url the fixture is told to
-    // report; a garbage one has no host.
+  it("refuses before the client is even consulted when the destination host cannot be read", async () => {
+    // Defense-in-depth: an unreadable destination is refused by the frame-origin
+    // check BEFORE it can be classified, so the financial gate (and its approval
+    // client) never even runs. `assessFinancialRelease`'s own null-host
+    // fail-closed branch is unreachable from here by construction and is covered
+    // by the unit test below; this pins the end-to-end guarantee that nothing is
+    // released, and no approval is minted, for a destination with no host.
+    // `#card*` selectors take the frame_url the fixture is told to report; a
+    // garbage one has no host.
     ctx = makeCtx({ approved: true }, { FAKE_CARD_FRAME_URL: "not-a-url" });
     const handle = await sessionAt(BANK_URL);
     const result = await ctx.sessions.command(handle, {
@@ -215,6 +225,7 @@ describe("fill_secret financial gate — blocking", () => {
     expect(jv(result).get("status").str).toBe("error");
     expect(released()).toEqual([]);
     expect(fills()).toEqual([]);
+    expect(ctx.approvalCalls).toEqual([]);
     expect(JSON.stringify(ctx.events)).not.toContain("hunter2");
   });
 });
@@ -230,9 +241,11 @@ describe("fill_secret financial gate — release", () => {
       field: "password",
     });
     expect(result).toEqual({ status: "completed", ok: true, frame: 0 });
-    // The gate was consulted for this session + destination …
+    // The gate was consulted for this session + destination — the approval must
+    // bind to the session it was granted for, so the session id is asserted too.
     expect(ctx.approvalCalls).toHaveLength(1);
     expect(ctx.approvalCalls[0].domain).toBe("chase.com");
+    expect(ctx.approvalCalls[0].sessionId).toBe(audited());
     // … and, on approval, the vault WAS asked and the field filled, on the bank page.
     expect(released().length).toBe(1);
     expect(released()[0]).toContain("page=chase.com");
@@ -287,5 +300,46 @@ describe("the shipping default approval client", () => {
       domain: "chase.com",
     });
     expect(decision.approved).toBe(false);
+  });
+});
+
+describe("resolvePaymentApproval — fail-closed collapse", () => {
+  const req: PaymentApprovalRequest = { sessionId: "s", domain: "chase.com" };
+  const client = (
+    impl: () => Promise<{ approved: boolean }> | Promise<never>,
+  ): PaymentApprovalClient => ({ checkPaymentApproval: impl });
+
+  it("returns 'approved' only on an explicit approval", async () => {
+    expect(await resolvePaymentApproval(client(async () => ({ approved: true })), req)).toBe(
+      "approved",
+    );
+  });
+
+  it("returns 'not-approved' on an explicit denial", async () => {
+    expect(await resolvePaymentApproval(client(async () => ({ approved: false })), req)).toBe(
+      "not-approved",
+    );
+  });
+
+  it("returns 'error' when the client throws", async () => {
+    expect(
+      await resolvePaymentApproval(
+        client(async () => {
+          throw new Error("unreachable");
+        }),
+        req,
+      ),
+    ).toBe("error");
+  });
+
+  it("returns 'timeout' when the client never settles, rather than hanging", async () => {
+    // A real client that hangs (network stall, plow outage) must not park the
+    // caller past its budget. A tiny budget keeps the test fast.
+    const outcome = await resolvePaymentApproval(
+      client(() => new Promise<never>(() => {})),
+      req,
+      20,
+    );
+    expect(outcome).toBe("timeout");
   });
 });

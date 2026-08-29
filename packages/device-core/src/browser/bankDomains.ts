@@ -15,8 +15,12 @@
  * this list exists to prevent. So when in doubt, ADD the domain.
  *
  * Extend by appending the registrable domain (eTLD+1) only — no scheme, no
- * subdomain, no path. Matching is host-suffix (`domain` and `*.domain`), so
- * `chase.com` already covers `secure.chase.com`, `www.chase.com`, etc.
+ * subdomain, no path. `financialGate.ts` generates BOTH the exact `domain` and
+ * the `*.domain` wildcard from each bare entry here, and it needs both:
+ * `originMatches` exact-matches a bare `chase.com` and covers `secure.chase.com`
+ * / `www.chase.com` ONLY through the generated `*.chase.com`. So one bare eTLD+1
+ * per bank is all you add — do not hand-write subdomains, and do not drop the
+ * wildcard half in `financialGate.ts` or subdomains silently stop matching.
  */
 export const BANK_ETLD1_DOMAINS: readonly string[] = [
   // Fintech / the one explicitly named in the spec.
