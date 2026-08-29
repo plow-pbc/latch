@@ -75,7 +75,10 @@ probe_settings() {
   [[ -f "$f" ]] || { PROBE_EVIDENCE="missing — open Plow Latch.app to activate"; return 1; }
   command -v jq >/dev/null 2>&1 || { PROBE_EVIDENCE="jq missing — cannot verify"; return 1; }
   local mode cred_len uid3
-  if ! mode=$(jq -r '.approvalMode // "adversarial"' "$f" 2>/dev/null); then
+  # Absent means "ask" here, not the app default: this evidence line only
+  # renders for a credentialed home (empty-credential returns above), and
+  # loadSettings grandfathers exactly those to ask.
+  if ! mode=$(jq -r '.approvalMode // "ask"' "$f" 2>/dev/null); then
     PROBE_EVIDENCE="settings.json unreadable (bad JSON)"
     return 1
   fi
