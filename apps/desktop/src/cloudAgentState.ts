@@ -156,8 +156,8 @@ export interface CloudAgentsUiState {
    * its re-activate prompt; the second keeps the roster and shows the error.
    */
   cloudChatsLoaded: boolean;
-  /** Plow's numbers, once asked for. `null` until the modal asks — this is not
-   * fetched on tab activation, because only one screen shows it. */
+  /** Plow's numbers, refreshed with the chats. `null` until the latest read
+   * succeeds and the chats needed to derive `held` have loaded. */
   cloudLines: CloudLineOption[] | null;
   cloudLinesError: string | null;
   /**
@@ -233,7 +233,7 @@ export class CloudAgentState {
   private chatsError: string | null = null;
   private chatsNeedReactivation = false;
   /**
-   * Which chat refresh is the newest. Bumped per read, not per account.
+   * Which account-view refresh is the newest. Bumped per read, not per account.
    *
    * `generation` only moves on sign-out, so two refreshes in the same session
    * share one and neither can tell it has been overtaken. A slow FAILURE
@@ -241,7 +241,7 @@ export class CloudAgentState {
    * cached fallback and an error banner — degrading the very fallback this
    * exists to provide, on an account whose chats we had just read fine.
    */
-  private chatReads = 0;
+  private viewReads = 0;
   private actionError: string | null = null;
   /** Agents whose chat sets are being saved or reconciled with a roster read. */
   private editsPending = new Set<string>();
@@ -262,15 +262,15 @@ export class CloudAgentState {
    */
   private currentAction: Promise<void> = Promise.resolve();
   /**
-   * The chat read currently in flight, so a caller whose own read was
+   * The chat-and-line view currently in flight, so a caller whose own read was
    * superseded can wait on the one that replaced it.
    *
    * Separate from `currentAction`, and deliberately: that chain serialises the
-   * ROSTER against its mutations. Chat-list ordering is left independent (#224
-   * says so), so the picker's await needs its own answer to "has the newest
+   * ROSTER against its mutations. Account-view ordering is left independent
+   * (#224 says so), so the picker's await needs its own answer to "has the newest
    * read landed".
    */
-  private chatsSettled: Promise<void> = Promise.resolve();
+  private viewSettled: Promise<void> = Promise.resolve();
   /** As the server listed them, with no `held` — see `CloudLineOption`. */
   private lines: Omit<CloudLineOption, "held">[] | null = null;
   private linesError: string | null = null;
@@ -292,16 +292,7 @@ export class CloudAgentState {
       // Rows are FORMATTED here, not in the renderer: naming a participant,
       // spelling a number and deciding which one is the owner's are rules, and
       // rules belong somewhere testable. `chatRows.ts` owns them.
-      cloudChats: this.chats.map((chat) => {
-        const line = chat.recipients?.line ?? null;
-        const named = this.lines?.find((row) => row.number === line) ?? null;
-        return {
-          ...chat,
-          lineName: named?.displayName ?? null,
-          entries: chatRowEntries(line, named?.displayName ?? null, chat.people),
-          title: chatRowTitle(chat.people, line, chat.label || chat.uid, named?.displayName ?? null),
-        };
-      }),
+      cloudChats: this.chats.map((chat) => this.chatRow(chat)),
       cloudChatsLoaded: this.chatsLoaded,
       // Computed HERE, on every read, from whichever chat list is current.
       // Storing it at fetch time raced: the chat read and the line read settle
@@ -313,67 +304,70 @@ export class CloudAgentState {
       // about this account's chats; with none read, every line looks free, and
       // the screen would offer an Open Messages button for a number the owner
       // already has a thread on. Unknown is not the same as none.
-      cloudLines: this.chatsLoaded && this.lines ? markHeldLines(this.lines, this.chats) : null,
+      cloudLines: this.chatsLoaded && this.lines && !this.linesError
+        ? markHeldLines(this.lines, this.chats)
+        : null,
       cloudLinesError: this.linesError,
     };
   }
 
   /**
-   * Re-read server truth: the agents, and the chats the picker offers.
+   * Re-read server truth: the agents, the chats the picker offers, and the
+   * line names that identify those chats.
    *
    * Called on tab activation, after every mutation, and at the end of a poll.
-   * Both halves run together and neither can fail the other — a chat list that
-   * 403s still leaves the roster on screen.
+   * All three run together and none can fail the others — a chat list that
+   * 403s still leaves the roster on screen, and a line failure still leaves
+   * chats identified by number.
    */
   async refresh(): Promise<void> {
     const credential = this.credential();
     if (!credential) return;
     const generation = this.generation;
     const pendingEdits = new Set(this.editsPending);
-    let chats = this.refreshChats(credential, generation);
-    this.chatsSettled = chats;
+    const read = ++this.viewReads;
+    let view = Promise.all([
+      this.refreshChats(credential, generation, read),
+      this.refreshLines(credential, generation, read),
+    ]).then(() => {});
+    this.viewSettled = view;
     await Promise.all([
       this.sequence(() => this.refreshAgents(credential, generation, pendingEdits)),
-      chats,
+      view,
     ]);
-    // A newer chat read started while ours was in flight. Ours DROPPED its own
-    // answer on purpose — a superseded read says nothing about now — so
-    // returning here would answer from before either of them. That is exactly
-    // what a caller awaiting this must not be handed: the picker opens through
-    // `cloud:refresh`, and would show the chat list from before the text that
-    // sent the owner here. Join whatever replaced it, and whatever replaced that.
+    // A newer chat or line read started while ours was in flight. Ours DROPPED
+    // its own answer on purpose — a superseded read says nothing about now —
+    // so returning here would answer from before either of them. That is
+    // exactly what a caller awaiting this must not be handed: the picker opens
+    // through `cloud:refresh`, and needs the newest chats and the names that
+    // identify them. Join whatever replaced each read.
     //
-    // Not `sequence`: that chain is the roster's, and #224 leaves chat-list
+    // Not `sequence`: that chain is the roster's, and #224 leaves account-view
     // ordering independent on purpose.
-    while (this.chatsSettled !== chats) {
-      chats = this.chatsSettled;
-      await chats;
+    while (this.viewSettled !== view) {
+      view = this.viewSettled;
+      await view;
     }
     if (generation === this.generation) this.publish();
   }
 
-  /**
-   * Ask Plow which numbers exist, for the screen that tells the owner to text
-   * one. Deliberately NOT part of `refresh`: one view needs it, and every tab
-   * activation would pay for it.
-   */
-  async refreshLines(): Promise<void> {
-    const credential = this.credential();
-    if (!credential || !this.deps.lines) return;
-    const generation = this.generation;
+  /** Ask Plow which line names identify the chats in the account. */
+  private async refreshLines(credential: string, generation: number, read: number): Promise<void> {
+    if (!this.deps.lines) return;
     try {
       const lines = await this.deps.lines.list(credential);
-      if (generation !== this.generation) return;
+      if (generation !== this.generation || read !== this.viewReads) return;
       this.lines = lines;
       this.linesError = null;
+      this.relabelRows();
     } catch (error) {
-      if (generation !== this.generation) return;
-      // The list is unknown, not empty: `cloudLines` stays null so the screen
-      // shows the error instead of "there are no numbers".
-      this.lines = null;
+      if (generation !== this.generation || read !== this.viewReads) return;
+      // The current enumeration is unknown, not empty: `cloudLines` stays null
+      // so the screen shows the error instead of "there are no numbers". Keep
+      // the previous success as naming metadata for chats already on screen.
       this.linesError = messageOf(error);
+      this.relabelRows();
     }
-    this.publish();
   }
 
   /**
@@ -543,7 +537,7 @@ export class CloudAgentState {
     this.chatsError = null;
     this.chatsNeedReactivation = false;
     // Nothing in flight belongs to the next account either.
-    this.chatReads += 1;
+    this.viewReads += 1;
     this.currentAction = Promise.resolve();
     this.agentsError = null;
     this.actionError = null;
@@ -665,11 +659,10 @@ export class CloudAgentState {
     return result;
   }
 
-  private async refreshChats(credential: string, generation: number): Promise<void> {
-    const read = ++this.chatReads;
+  private async refreshChats(credential: string, generation: number, read: number): Promise<void> {
     try {
       const chats = await this.deps.chats.list(credential);
-      if (generation !== this.generation || read !== this.chatReads) return;
+      if (generation !== this.generation || read !== this.viewReads) return;
       this.chats = chats;
       // Only here: the one place a list actually came back. An empty answer is
       // still an answer, and it is the only one the empty state may render.
@@ -682,7 +675,7 @@ export class CloudAgentState {
       // A superseded read says nothing about now. Landing late must never undo
       // a newer answer, and a failure undoing a success is the expensive
       // direction of that.
-      if (generation !== this.generation || read !== this.chatReads) return;
+      if (generation !== this.generation || read !== this.viewReads) return;
       // Whatever went wrong, the account's chats are unknown, and the screen
       // must not read that as "you have no chats" — which is why `chatsLoaded`
       // and the error travel together, and why the roster stays where it is.
@@ -722,21 +715,32 @@ export class CloudAgentState {
     });
   }
 
-  /** Every label the chat list knows, by uid. Absent uids stay absent — the
-   * mapper falls back to the uid rather than inventing a name for it. */
+  /** Every formatted row title the chat list knows, by uid. Absent uids stay
+   * absent — the mapper falls back to the uid rather than inventing a name. */
   private labelsByUid(): Record<string, string> {
     const labels: Record<string, string> = {};
-    for (const chat of this.chats) if (chat.label) labels[chat.uid] = chat.label;
+    for (const chat of this.chats) labels[chat.uid] = this.chatRow(chat).title;
     return labels;
+  }
+
+  /** Format one chat once for both the picker and the roster summary. */
+  private chatRow(chat: CloudChatOption): CloudChatRow {
+    const line = chat.recipients?.line ?? null;
+    const lineName = this.lines?.find((row) => row.number === line)?.displayName ?? null;
+    return {
+      ...chat,
+      lineName,
+      entries: chatRowEntries(line, lineName, chat.people),
+      title: chatRowTitle(chat.people, line, chat.label || chat.uid, lineName),
+    };
   }
 
   /**
    * Re-resolve what the chat list knows about each row's chats.
    *
-   * The labels and the recipients arrive together and go stale together: a row
-   * built before the chats landed has uids for labels and no addresses, and
-   * both are fixed from the same lookup. Relabelling one without the other is
-   * how a row could name a chat it could not message.
+   * Recipients arrive with chats, while a title also depends on the line list.
+   * A row built before either read may have uids for labels and no addresses;
+   * each successful read resolves the whole row from the current pair.
    */
   private relabelRows(): void {
     const labels = this.labelsByUid();

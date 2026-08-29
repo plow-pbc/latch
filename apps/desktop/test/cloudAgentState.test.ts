@@ -220,6 +220,109 @@ describe("a refresh whose chat read is superseded", () => {
   });
 });
 
+describe("line names on refresh", () => {
+  const namedChat = () => chat({
+    label: "+16503156536 · owner and Nina",
+    recipients: { line: "+16503156536", members: ["+13305541942", "+12018051467"] },
+    people: [
+      { number: "+13305541942", name: null, isOwner: true },
+      { number: "+12018051467", name: "Nina", isOwner: false },
+    ],
+  });
+
+  it("puts the line name on state during the first account refresh", async () => {
+    const f = fakes({ list: async () => [agent()], chats: async () => [namedChat()] });
+    const state = new CloudAgentState({
+      agents: f.agents,
+      chats: f.chats,
+      lines: { list: async () => [{ displayName: "Willow", number: "+16503156536" }] },
+      home: tempHome(),
+    });
+
+    await state.refresh();
+
+    expect(state.state()).toMatchObject({
+      cloudChats: [{ lineName: "Willow", title: "Willow · You · Nina" }],
+      cloudAgents: [{ chatLabels: ["Willow · You · Nina"] }],
+    });
+  });
+
+  it("keeps chats usable when the line list fails", async () => {
+    const f = fakes({ chats: async () => [namedChat()] });
+    const state = new CloudAgentState({
+      agents: f.agents,
+      chats: f.chats,
+      lines: { list: async () => { throw new Error("line endpoint down"); } },
+      home: tempHome(),
+    });
+
+    await state.refresh();
+
+    expect(state.state()).toMatchObject({
+      cloudChatsLoaded: true,
+      cloudLinesError: "Something went wrong. Try again.",
+      cloudChats: [{ lineName: null, title: "+1 650-315-6536 · You · Nina" }],
+    });
+  });
+
+  it("keeps established line names through a later line-list blip", async () => {
+    let lineRead = 0;
+    const f = fakes({ list: async () => [agent()], chats: async () => [namedChat()] });
+    const state = new CloudAgentState({
+      agents: f.agents,
+      chats: f.chats,
+      lines: {
+        list: async () => {
+          lineRead += 1;
+          if (lineRead > 1) throw new Error("line endpoint down");
+          return [{ displayName: "Willow", number: "+16503156536" }];
+        },
+      },
+      home: tempHome(),
+    });
+
+    await state.refresh();
+    await state.refresh();
+
+    expect(state.state()).toMatchObject({
+      cloudLines: null,
+      cloudLinesError: "Something went wrong. Try again.",
+      cloudChats: [{ lineName: "Willow", title: "Willow · You · Nina" }],
+      cloudAgents: [{ chatLabels: ["Willow · You · Nina"] }],
+    });
+  });
+
+  it("does not let an older line failure erase a newer named result", async () => {
+    const reads = [
+      deferred<Array<{ displayName: string | null; number: string }>>(),
+      deferred<Array<{ displayName: string | null; number: string }>>(),
+    ];
+    let read = 0;
+    const f = fakes({ chats: async () => [namedChat()] });
+    const state = new CloudAgentState({
+      agents: f.agents,
+      chats: f.chats,
+      lines: { list: async () => reads[read++]!.promise },
+      home: tempHome(),
+    });
+
+    const first = state.refresh();
+    await vi.waitFor(() => expect(read).toBe(1));
+    const second = state.refresh();
+    await vi.waitFor(() => expect(read).toBe(2));
+    reads[1]!.resolve([{ displayName: "Willow", number: "+16503156536" }]);
+    await second;
+    reads[0]!.reject(new Error("late failure"));
+    await first;
+
+    expect(state.state().cloudChats[0]).toMatchObject({
+      lineName: "Willow",
+      title: "Willow · You · Nina",
+    });
+    expect(state.state().cloudLinesError).toBeNull();
+  });
+});
+
 describe("before anything has been read", () => {
   it("claims nothing about the account rather than reporting it empty", async () => {
     const f = fakes({ list: async () => [agent()] });
@@ -412,7 +515,10 @@ describe("the numbers a chat can be messaged on", () => {
         chats: async () => {
           if (failing) throw new PlowApiError("network", "Couldn't reach Plow.");
           return [
-            chat({ recipients: { line: "+15550100", members: ["+15550111"] } }),
+            chat({
+              recipients: { line: "+15550100", members: ["+15550111"] },
+              people: [{ number: "+15550111", name: "Ada", isOwner: false }],
+            }),
           ];
         },
       }),
@@ -1465,7 +1571,7 @@ describe("Plow's pool numbers", () => {
       home: tempHome(),
     });
 
-    await state.refreshLines();
+    // Before the account refresh, neither half has been read.
     expect(state.state().cloudLines).toBeNull();
 
     await state.refresh();
@@ -1479,27 +1585,34 @@ describe("Plow's pool numbers", () => {
     // lines fetched before the chats offered a number the owner already held
     // as free, with an Open Messages button that would start nothing.
     const home = tempHome();
+    const chats = deferred<CloudChatOption[]>();
+    let linesRead = false;
     const f = fakes({
       list: async () => [],
-      chats: async () => [
-        chat({ label: "x", recipients: { line: "+15550001111", members: [] } }),
-      ],
+      chats: async () => chats.promise,
     });
     const state = new CloudAgentState({
       agents: f.agents,
       chats: f.chats,
-      lines: { list: async () => [{ displayName: "Willow", number: "+15550001111" }] },
+      lines: { list: async () => {
+        linesRead = true;
+        return [{ displayName: "Willow", number: "+15550001111" }];
+      } },
       home,
     });
 
-    // Lines FIRST, with no chats read yet: withheld, because "held" is a claim
-    // about chats nobody has read.
-    await state.refreshLines();
+    // Lines land first within the shared refresh. With no chats read yet they
+    // are withheld, because "held" is a claim about chats nobody has read.
+    const refreshing = state.refresh();
+    await vi.waitFor(() => expect(linesRead).toBe(true));
     expect(state.state().cloudLines).toBeNull();
 
-    // The chats land second and the SAME line is now held — without a second
-    // line fetch, because the answer is derived rather than stored.
-    await state.refresh();
+    // The chats land second and the SAME line is now held, because the answer
+    // is derived rather than stored.
+    chats.resolve([
+      chat({ label: "x", recipients: { line: "+15550001111", members: [] } }),
+    ]);
+    await refreshing;
     expect(state.state().cloudLines).toEqual([
       { displayName: "Willow", number: "+15550001111", held: true },
     ]);

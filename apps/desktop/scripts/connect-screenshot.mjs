@@ -40,6 +40,7 @@ const home = fs.mkdtempSync(path.join(os.tmpdir(), "connect-shot-"));
 const CHAT = {
   uid: "chat_groceries",
   label: "+1 (415) 555-0142, +1 (415) 555-0193, +1 (628) 555-0112",
+  lineName: "Willow",
   recipients: {
     line: "+14155550142",
     members: ["+14155550193", "+16285550112"],
@@ -61,6 +62,7 @@ const CHAT = {
 const FAMILY_CHAT = {
   uid: "chat_family",
   label: "+1 (415) 555-0188 · Family group",
+  lineName: null,
   recipients: { line: "+14155550188", members: ["+14155550193"] },
   // A real chat always has the owner in it. A line with nobody on it is a
   // shape the API does not hand over, and a fixture that invents one draws a
@@ -77,7 +79,7 @@ const ACTIVE_AGENT = {
   agentId: "cag_groceries",
   name: "Household helper",
   chatUids: [CHAT.uid, FAMILY_CHAT.uid],
-  chatLabels: [CHAT.label, FAMILY_CHAT.label],
+  chatLabels: [CHAT.title, FAMILY_CHAT.title],
   recipients: CHAT.recipients,
   provider: "exe:hermes",
   status: "running",
@@ -274,7 +276,10 @@ async function setUp() {
         cloudAgents: [{
           ...ACTIVE_AGENT,
           chatUids,
-          chatLabels: chatUids,
+          chatLabels: chatUids.map((uid) => {
+            const chat = cloudFixture.cloudChats.find((candidate) => candidate.uid === uid);
+            return chat?.title ?? chat?.label ?? uid;
+          }),
           name: name || "Cloud agent",
           provider,
           status: "provisioning",
@@ -388,7 +393,7 @@ const SCREENS = [
       "Cloud agents", "2 agents", "Household helper", "Ready", "Trip planner", "Setting up…",
       // Every chat the agent serves, home starred and first. The old line named
       // one chat and prefixed it "Agent"; an agent serves a set now.
-      `★ ${CHAT.label}`, FAMILY_CHAT.label,
+      `★ ${CHAT.title}`, FAMILY_CHAT.title,
       "Provider Hermes", "Provider Life",
       "Reads and replies in no chats", "Can reach this Mac", "Can spend inference", "Message",
       "MCP clients", "Claude Code on MacBook Pro", "Reads and replies in all chats",
@@ -595,7 +600,11 @@ const SCREENS = [
       await clickText(win, "Set up cloud agent", 0);
       await waitFor(win, `document.querySelector(".cloud-modal .chat-list")`, "the fallback chat checklist");
     },
-    expect: ["Set up a cloud agent", CHAT.label, "Set up agent"],
+    expect: [
+      "Set up a cloud agent",
+      ...CHAT.entries.flatMap((entry) => [entry.label, entry.number]),
+      "Set up agent",
+    ],
   },
   {
     name: "cloud-empty",

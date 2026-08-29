@@ -10,6 +10,7 @@ import { describe, expect, it } from "vitest";
 // @ts-expect-error — plain-JS renderer module, shipped as-is (not compiled by tsc)
 import {
   canEditChats,
+  cloudChatSummary,
   dropChat,
   editorChats,
   sortChatRows,
@@ -233,5 +234,13 @@ describe("the order chat rows are shown in", () => {
     const chats = [row({ uid: "c1", lineName: "Zoe" }), row({ uid: "c2", lineName: "Ash" })];
     sortChatRows(chats);
     expect(chats.map((chat) => chat.uid)).toEqual(["c1", "c2"]);
+  });
+});
+
+describe("the roster's chat summary", () => {
+  it("keeps home first and starred while using the formatted row titles", () => {
+    expect(cloudChatSummary({
+      chatLabels: ["Willow · You · Robin", "Ash · You · Nina"],
+    })).toBe("★ Willow · You · Robin · Ash · You · Nina");
   });
 });
