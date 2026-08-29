@@ -32,6 +32,17 @@ export const API_BASE_URL_ENV = "DOMO_API_BASE_URL";
 export const REQUEST_TIMEOUT_MS = 15_000;
 
 /**
+ * A tighter bound for the banking-fill approval check, because it runs inside a
+ * NON-deferrable `fill_secret` that must answer well inside the relay's ~20-25s
+ * per-exchange budget — and it is only the FIRST hop: a vault-broker round trip
+ * and the browser fill still follow it, so the generic `REQUEST_TIMEOUT_MS`
+ * would leave too little headroom. A yes/no from the cloud is quick; a hang
+ * (network stall, plow-side outage) must fail closed here, fast, rather than
+ * stall the whole tool call into a relay-level timeout.
+ */
+export const PAYMENT_APPROVAL_TIMEOUT_MS = 5_000;
+
+/**
  * Which Plow this build talks to. **Baked in, never a setting.**
  *
  * A credential is only valid against the environment that minted it, so a
@@ -471,6 +482,37 @@ export class PlowApi {
   }
 
   /**
+   * Consume a single-use owner payment approval for a banking-credential fill:
+   * `POST /v1/payment-approvals/consume {session_id, domain}` → `{approved}`,
+   * authenticated with this Mac's device credential.
+   *
+   * SINGLE-USE by contract — a `true` here CONSUMES the approval — so the caller
+   * (the browser fill gate) invokes it exactly once, at the moment of release.
+   *
+   * FAIL-CLOSED: this goes through `call()`, which throws on any non-2xx (no
+   * approval on file, an expired one, a server error). The gate treats a throw
+   * exactly like `approved: false`, so no status needs decoding here; a body
+   * that omits or malforms `approved` reads as not-approved for the same reason.
+   */
+  async consumePaymentApproval(
+    token: string,
+    request: { sessionId: string; domain: string },
+  ): Promise<{ approved: boolean }> {
+    const data = await this.call<{ approved?: boolean }>(
+      "POST",
+      "/v1/payment-approvals/consume",
+      {
+        token,
+        body: { session_id: request.sessionId, domain: request.domain },
+        // Its own tighter budget, not the generic transport timeout: `fill_secret`
+        // is non-deferrable and this is only its first hop. A hang fails closed.
+        signal: AbortSignal.timeout(PAYMENT_APPROVAL_TIMEOUT_MS),
+      },
+    );
+    return { approved: data?.approved === true };
+  }
+
+  /**
    * One inference call, as `{status, body}` — **this deliberately does not go
    * through `call()`**.
    *
@@ -513,7 +555,7 @@ export class PlowApi {
   private async call<T>(
     method: string,
     path: string,
-    opts: { token?: string; body?: unknown } = {},
+    opts: { token?: string; body?: unknown; signal?: AbortSignal } = {},
   ): Promise<T> {
     const response = await this.request(method, path, opts);
 

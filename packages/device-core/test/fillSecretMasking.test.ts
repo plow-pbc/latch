@@ -16,7 +16,13 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { JSONValue, jv } from "@domo/protocol";
-import { BrowserHostConfig, BrowserSessions, CredentialBroker } from "@domo/device-core";
+import {
+  BrowserHostConfig,
+  BrowserSessions,
+  CredentialBroker,
+  PaymentApprovalClient,
+  PaymentApprovalRequest,
+} from "@domo/device-core";
 import { havePython, runProbe } from "./pythonProbe.js";
 
 const FAKE_SERVER = fileURLToPath(
@@ -38,6 +44,8 @@ interface Ctx {
   sessions: BrowserSessions;
   browsers: BrowserHostConfig;
   events: { event: string; fields: { [k: string]: JSONValue } }[];
+  /** What the injected approval client was asked — empty when none is wired. */
+  approvalCalls: PaymentApprovalRequest[];
   dir: string;
   cmdLog: string;
   brokerLog: string;
@@ -45,7 +53,29 @@ interface Ctx {
 
 let ctx: Ctx;
 
-function makeCtx(serverEnv: Record<string, string> = {}, brokerEnv: Record<string, string> = {}): Ctx {
+/** A payment-approval client that records what it was asked and answers as told;
+ * `"throw"` stands in for an unreachable service / non-2xx / timeout — all of
+ * which the gate must treat as NOT approved. */
+function fakeApproval(
+  answer: { approved: boolean } | "throw",
+  record: PaymentApprovalRequest[],
+): PaymentApprovalClient {
+  return {
+    async consumePaymentApproval(request: PaymentApprovalRequest) {
+      record.push(request);
+      if (answer === "throw") throw new Error("approval service unreachable");
+      return answer;
+    },
+  };
+}
+
+function makeCtx(
+  serverEnv: Record<string, string> = {},
+  brokerEnv: Record<string, string> = {},
+  /** The financial-gate approval client: `null` (the default) wires none, which
+   * fails closed on a bank destination. */
+  approval: { approved: boolean } | "throw" | null = null,
+): Ctx {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "domo-mask-"));
   const cmdLog = path.join(dir, "cmds.log");
   const brokerLog = path.join(dir, "broker-audit.log");
@@ -65,6 +95,20 @@ function makeCtx(serverEnv: Record<string, string> = {}, brokerEnv: Record<strin
           { label: "shipping address", hidden: false, custom: true, alias: false },
         ],
         values: { username: "jon", password: "hunter2", "shipping address": "1 Elm St" },
+      },
+      {
+        // A bank login, for the financial-gate cases below. chase.com is on the
+        // bundled bank-domain list, so a fill onto it is gated.
+        id: "B1",
+        title: "Chase",
+        category: "LOGIN",
+        username: "jon",
+        urls: ["https://chase.com/login"],
+        descriptors: [
+          { label: "username", hidden: false, custom: false, alias: false },
+          { label: "password", hidden: true, custom: false, alias: false },
+        ],
+        values: { username: "jon", password: "hunter2" },
       },
       {
         id: "C1",
@@ -103,6 +147,7 @@ function makeCtx(serverEnv: Record<string, string> = {}, brokerEnv: Record<strin
     ]),
   );
   const events: Ctx["events"] = [];
+  const approvalCalls: PaymentApprovalRequest[] = [];
   const browsers = {
     command: [process.execPath, FAKE_SERVER],
     headed: false,
@@ -119,8 +164,10 @@ function makeCtx(serverEnv: Record<string, string> = {}, brokerEnv: Record<strin
     browsers,
     credentials,
     (event, fields) => events.push({ event, fields }),
+    undefined,
+    approval === null ? null : fakeApproval(approval, approvalCalls),
   );
-  return { sessions, browsers, events, dir, cmdLog, brokerLog };
+  return { sessions, browsers, events, approvalCalls, dir, cmdLog, brokerLog };
 }
 
 /** What the audit calls this session — read off the open event, not recomputed. */
@@ -138,6 +185,22 @@ async function session(): Promise<string> {
   });
   return handle;
 }
+
+/** Open a session approved for the bank item + origin, landed on the bank page. */
+async function bankSession(): Promise<string> {
+  const opened = await ctx.sessions.open("i1", "agent-1", ["chase.com"], false);
+  const handle = (opened as { session: string }).session;
+  ctx.sessions.extend("i2", handle, [], ["B1"], false);
+  await ctx.sessions.command(handle, { action: "goto", url: "https://chase.com/login" });
+  return handle;
+}
+
+/** The broker's own audit lines that mean it was asked for, and handed over, a
+ * value — proof the vault WAS (or was not) reached. */
+const released = (): string[] =>
+  fs.existsSync(ctx.brokerLog)
+    ? fs.readFileSync(ctx.brokerLog, "utf8").trim().split("\n").filter((l) => l.includes("RELEASED"))
+    : [];
 
 /** Every command the device sent, values already redacted by the fixture. */
 function commands(): { action: string; selector?: string; mask?: boolean; frame_token?: string }[] {
@@ -540,6 +603,115 @@ describe("fill_secret marking", () => {
       },
     ]);
     for (const e of ctx.events) expect(JSON.stringify(e)).not.toContain("hunter2");
+  });
+});
+
+describe("fill_secret banking-credential gate", () => {
+  // Not-approved and an unreachable/erroring approval service must both block a
+  // bank credential release; the audit reason records WHICH, so an outage reads
+  // differently from a real "no". "Blocked" is proven by the two things the
+  // owner cares about: the vault was never asked (no RELEASED line) and nothing
+  // was typed (no fill reached the browser). The agent-facing message stays
+  // uniform across every block reason so it cannot probe an outage from a "no".
+  it.each([
+    {
+      what: "the owner has not approved",
+      approval: { approved: false } as const,
+      reason: "the owner has not approved this payment",
+    },
+    {
+      what: "the approval service is unreachable (a throw stands in for non-2xx / timeout)",
+      approval: "throw" as const,
+      reason: "the owner-approval service could not be reached",
+    },
+    {
+      what: "no approval client is wired (fail-closed default)",
+      approval: null,
+      reason: "no owner-approval client is configured",
+    },
+  ])("refuses a bank credential when $what", async ({ approval, reason }) => {
+    await ctx.sessions.closeAll("teardown");
+    ctx = makeCtx({}, {}, approval);
+    const handle = await bankSession();
+    const result = await ctx.sessions.command(handle, {
+      action: "fill_secret",
+      selector: "#pass",
+      item: "B1",
+      field: "password",
+    });
+    expect(jv(result).get("status").str).toBe("error");
+    expect(jv(result).get("error").str).toContain("requires the owner's payment approval");
+    // The vault was never asked for the value, and nothing was typed.
+    expect(released()).toEqual([]);
+    expect(fills()).toEqual([]);
+    // Recorded as a denial, tagged with the outcome, and no secret leaked.
+    expect(ctx.events.at(-1)?.event).toBe("credential_denied");
+    expect(ctx.events.at(-1)?.fields.reason).toBe(`banking credential release blocked: ${reason}`);
+    expect(JSON.stringify(result)).not.toContain("hunter2");
+    expect(JSON.stringify(ctx.events)).not.toContain("hunter2");
+  });
+
+  it("releases a bank credential once approved, binding the consume to this session + domain", async () => {
+    await ctx.sessions.closeAll("teardown");
+    ctx = makeCtx({}, {}, { approved: true });
+    const handle = await bankSession();
+    const result = await ctx.sessions.command(handle, {
+      action: "fill_secret",
+      selector: "#pass",
+      item: "B1",
+      field: "password",
+    });
+    expect(result).toEqual({ status: "completed", ok: true, frame: 0 });
+    // The single-use approval was consumed for THIS session + destination.
+    expect(ctx.approvalCalls).toHaveLength(1);
+    expect(ctx.approvalCalls[0]).toEqual({ sessionId: audited(), domain: "chase.com" });
+    // … and only then was the vault asked and the field filled, on the bank page.
+    expect(released().length).toBe(1);
+    expect(fills()).toEqual([{ selector: "#pass", mask: true }]);
+    expect(ctx.events.map((e) => e.event)).toEqual(
+      expect.arrayContaining(["credential_payment_approved", "credential_filled"]),
+    );
+  });
+
+  it("never consults the gate for a non-financial destination", async () => {
+    // A plain login on a plain site behaves exactly as before: the approval
+    // client is never asked — even one that would refuse — and the release
+    // proceeds.
+    await ctx.sessions.closeAll("teardown");
+    ctx = makeCtx({}, {}, { approved: false });
+    const handle = await session();
+    const result = await ctx.sessions.command(handle, {
+      action: "fill_secret",
+      selector: "#pass",
+      item: "L1",
+      field: "password",
+    });
+    expect(result).toEqual({ status: "completed", ok: true, frame: 0 });
+    expect(ctx.approvalCalls).toEqual([]);
+    expect(released().length).toBe(1);
+    expect(fills()).toEqual([{ selector: "#pass", mask: true }]);
+  });
+
+  it("refuses an unreadable bank destination before the approval client is consulted", async () => {
+    // Defense-in-depth ordering: the frame-origin check rejects a host it cannot
+    // read BEFORE `isFinancialDestination` classifies it, so a garbage
+    // destination on what would be a bank fill never reaches the approval
+    // consume. `#card*` selectors take the fixture's frame_url; a malformed one
+    // has no host. An approval that WOULD have released proves the short-circuit.
+    await ctx.sessions.closeAll("teardown");
+    ctx = makeCtx({ FAKE_CARD_FRAME_URL: "not-a-url" }, {}, { approved: true });
+    const handle = await bankSession();
+    const result = await ctx.sessions.command(handle, {
+      action: "fill_secret",
+      selector: "#card-x",
+      item: "B1",
+      field: "password",
+    });
+    expect(jv(result).get("status").str).toBe("error");
+    expect(released()).toEqual([]);
+    expect(fills()).toEqual([]);
+    expect(ctx.approvalCalls).toEqual([]);
+    expect(JSON.stringify(ctx.events)).not.toContain("hunter2");
   });
 });
 

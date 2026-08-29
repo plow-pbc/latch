@@ -23,6 +23,8 @@ import { Intent } from "@domo/protocol";
 import {
   ApprovalStore,
   DeviceAgent,
+  PaymentApprovalClient,
+  PaymentApprovalRequest,
   plowFolderPath,
   PolicyDelegate,
   readCredentialsState,
@@ -142,6 +144,28 @@ const home = instance.home;
  * developer env-var override a developer exports when they want another relay.
  */
 const apiBaseUrl = resolveApiBaseUrl({ env: process.env });
+
+/**
+ * The production payment-approval client the browser fill gate consults before
+ * releasing a banking credential. It CONSUMES a single-use owner approval from
+ * plow over the same HTTP transport the reviewer bills against, authenticating
+ * with this Mac's device credential.
+ *
+ * The credential is read at CALL time, not construction: it changes on
+ * sign-in/out, so a stale one would release against the wrong account. With no
+ * credential this Mac cannot ask, so it cannot be approved — fail closed, and a
+ * transport failure or non-2xx from `consumePaymentApproval` throws, which the
+ * gate blocks on for the same reason.
+ */
+function plowPaymentApproval(api: PlowApi): PaymentApprovalClient {
+  return {
+    async consumePaymentApproval(request: PaymentApprovalRequest) {
+      const token = (loadSettings(home).relayCredential ?? "").trim();
+      if (!token) return { approved: false };
+      return api.consumePaymentApproval(token, request);
+    },
+  };
+}
 
 let tray: Tray | null = null;
 let mainWindow: BrowserWindow | null = null;
@@ -1102,6 +1126,7 @@ app.whenReady().then(async () => {
       resourcesDir: process.resourcesPath,
       repoRoot: path.resolve(app.getAppPath(), "..", ".."),
     }),
+    plowPaymentApproval(new PlowApi(apiBaseUrl)),
   );
   // Same tick as the store's construction (see onAbandoned): an approval that
   // was pending when the app last quit gets closed out in the audit log too,

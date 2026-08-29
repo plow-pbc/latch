@@ -423,19 +423,41 @@ documented as gated in two. The vendored
 `seed_vault_broker` CLI wraps the bundled `bw` (an agent account scoped to one
 vault's collections). `fill_secret`
 is the strongest gate, in order: item ∈ approved set → the selector is located
-to its owning frame → the frame's origin ∈ session scope → `seed-vault-broker
+to its owning frame → the frame's origin ∈ session scope → **a fill whose
+device-observed destination is a bank additionally requires a separate,
+single-use owner payment approval, consumed from plow's
+`POST /v1/payment-approvals/consume`; the release proceeds ONLY when that
+returns `approved`, and any other answer — not approved, a non-2xx, an
+unreachable service, or no client wired — blocks fail-closed** → `seed-vault-broker
 get-field` against the **device-observed** frame URL (its own eTLD+1 item/site
-check applies; credit cards deliberately pass — they are meant for any
-merchant) → a frame-targeted fill → the value is dropped. Secret values never
-traverse MCP, never appear in the results these tools return, and never appear
-in either audit log. **Scope of that guarantee:** it covers what `plow_vault`
-and `fill_secret` hand back, and — through masking (§11a-ii) — what a
-screenshot or `forms` shows. It does not cover `eval`, which reads
+check applies; credit cards deliberately pass the broker's own check — they are
+meant for any merchant) → a frame-targeted fill → the value is dropped. Secret
+values never traverse MCP, never appear in the results these tools return, and
+never appear in either audit log. **Scope of that guarantee:** it covers what
+`plow_vault` and `fill_secret` hand back, and — through masking (§11a-ii) — what
+a screenshot or `forms` shows. It does not cover `eval`, which reads
 `input.value` directly; that is the documented residual, accepted because the
 threat model is accidental exposure and an agent reaching for `eval` is
 outside it.
 Item ids on the approval card are resolved to titles **locally** (agent-supplied
 titles would be spoofable).
+
+**Banking-credential payment gate (interim trigger, owner-approval backstop).**
+The owner grants the separate payment approval out of band — a link in the
+owner thread, or a 👍 — and plow mints a single-use token that
+`consume` spends at fill time. What flags a fill as "banking" today is a bundled
+**bank-domain list** (`bankDomains.ts`), matched on the unspoofable
+device-observed destination host. That list is an **INTERIM** trigger and fails
+open for a bank it does not list (and for a credit card typed on an arbitrary
+merchant site) — so it is deliberately NOT the security boundary. The reliable
+primitive is a future **owner-tagged-item registry**: an owner flag carried on
+the vault item itself (or its category/folder), returned by the broker's
+`get-field` alongside `value`+`hidden` so no extra round-trip or
+time-of-check/time-of-use window is introduced. Whichever way a fill is flagged,
+the per-payment owner approval consumed from plow is the backstop — nothing is
+released on the strength of the domain list alone. Gating **every** credential
+release was rejected: it would break the agent's ordinary non-bank logins, which
+are the common case.
 
 **The owner's live view.** While a browsing session is open, the audit
 screen's detail pane shows a small near-live mirror of what Camoufox is

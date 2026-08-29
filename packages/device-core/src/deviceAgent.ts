@@ -23,6 +23,7 @@ import { AuditLog } from "./auditLog.js";
 import { BrowserHostConfig, ViewerFrame } from "./browser/browserHost.js";
 import { BrowserSessions } from "./browser/browserSessions.js";
 import { CredentialBroker } from "./browser/credentialBroker.js";
+import { PaymentApprovalClient } from "./browser/financialGate.js";
 import { VaultServer } from "./browser/vaultServer.js";
 import { VaultClient } from "./browser/vaultClient.js";
 import { ResolvedBrowserRuntime } from "./browser/browserRuntime.js";
@@ -180,6 +181,10 @@ export class DeviceAgent {
      * runs and a provider one reports that it is not installed.
      */
     private readonly vendorDirs: readonly string[] = [],
+    /** Consulted before releasing a credential into a bank destination. `null`
+     * (the default) fails closed — every financial release is blocked. The app
+     * injects the real plow-consume client so production can obtain approvals. */
+    approval: PaymentApprovalClient | null = null,
   ) {
     this.identity = loadOrCreateIdentity(home, name);
     this.audit = new AuditLog(path.join(home, "device/audit.ndjson"));
@@ -304,7 +309,13 @@ export class DeviceAgent {
         fleetToken: process.env.DOMO_VAULT_TOKEN,
       });
       this.credentialBroker = credentials;
-      this.browserSessions = new BrowserSessions(this.browserConfig, credentials, auditFn);
+      this.browserSessions = new BrowserSessions(
+        this.browserConfig,
+        credentials,
+        auditFn,
+        undefined,
+        approval,
+      );
     }
     // LAST, so the owner's own file wins. `register` is a Map.set, so whoever
     // goes last takes the name — and a skill the owner wrote into their own

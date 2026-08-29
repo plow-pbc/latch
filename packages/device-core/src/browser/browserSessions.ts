@@ -28,6 +28,7 @@ import path from "node:path";
 import { JSONValue, jv, originMatches, normalizeOrigin } from "@domo/protocol";
 import { BrowserHost, BrowserHostConfig, ViewerFrame } from "./browserHost.js";
 import { CredentialBroker, CredentialError, CredentialRelease } from "./credentialBroker.js";
+import { isFinancialDestination, PaymentApprovalClient } from "./financialGate.js";
 
 type AuditFn = (event: string, fields: { [k: string]: JSONValue }) => void;
 
@@ -203,6 +204,11 @@ export class BrowserSessions {
     private readonly credentials: CredentialBroker | null,
     private readonly audit: AuditFn,
     private readonly idleMs: number = DEFAULT_IDLE_MS,
+    /** Consulted before releasing a credential into a financial destination.
+     * `null` means no owner-approval client is wired, which fails closed: every
+     * financial release is blocked. Production injects the real plow-consume
+     * client (see `DeviceAgent`). */
+    private readonly approval: PaymentApprovalClient | null = null,
   ) {}
 
   /** True when a page URL is inside the session's approved origins.
@@ -880,6 +886,27 @@ export class BrowserSessions {
   }
 
   /**
+   * The fail-closed collapse for the financial gate. Returns `null` when the
+   * owner's single-use payment approval was consumed successfully (release may
+   * proceed), or a short reason string when the release must be BLOCKED.
+   *
+   * Every non-approval path blocks and is told apart only for the owner's audit
+   * line: no client wired, an explicit denial, and a transport failure
+   * (unreachable, non-2xx, timeout) call for different incident responses on a
+   * money gate. The transport owns its own request timeout, so a hung call
+   * surfaces here as a thrown error — no separate timeout machinery needed.
+   */
+  private async blockedByApproval(sessionId: string, domain: string): Promise<string | null> {
+    if (!this.approval) return "no owner-approval client is configured";
+    try {
+      const { approved } = await this.approval.consumePaymentApproval({ sessionId, domain });
+      return approved === true ? null : "the owner has not approved this payment";
+    } catch {
+      return "the owner-approval service could not be reached";
+    }
+  }
+
+  /**
    * The strongest gate. Order matters: approved item → locate the frame the
    * selector is actually in → that frame's origin must be approved → ask the
    * vault whether it masks this field → the op broker releases against the
@@ -934,6 +961,45 @@ export class BrowserSessions {
         status: "error",
         error: `the field is in a frame on ${frameHost ?? frameUrl}, outside the approved origins`,
       };
+    }
+
+    // FAIL-CLOSED FINANCIAL GATE. Before the vault is even asked for the value,
+    // a release whose device-observed destination is a bank must carry an
+    // owner-approved payment approval, consumed single-use from the plow cloud.
+    // Non-financial destinations never reach the approval client and behave
+    // exactly as before. Over-gating a non-bank is a recoverable prompt;
+    // under-gating a bank silently hands out a banking credential, which this
+    // exists to prevent.
+    if (isFinancialDestination(frameHost)) {
+      const denial = await this.blockedByApproval(s.auditId, frameHost);
+      if (denial !== null) {
+        this.audit("credential_denied", {
+          session: s.auditId,
+          item: itemId,
+          field,
+          origin: frameHost,
+          reason: `banking credential release blocked: ${denial}`,
+        });
+        // The agent-facing message is deliberately uniform across every block
+        // reason — the WHY lives in the owner's audit line above, not in the
+        // agent's hands, so it cannot tell an outage from a denial and
+        // retry-loop or probe against it. Money gate: the audit says more, the
+        // agent hears less.
+        return {
+          status: "error",
+          error:
+            `${field} was not filled: releasing a banking credential onto ${frameHost} ` +
+            `requires the owner's payment approval, and none was found. Nothing was released.`,
+        };
+      }
+      // Approved: record that the gate was consulted and passed, then fall
+      // through to the ordinary release below.
+      this.audit("credential_payment_approved", {
+        session: s.auditId,
+        item: itemId,
+        field,
+        origin: frameHost,
+      });
     }
 
     // The value and whether the vault conceals it come back together, from one

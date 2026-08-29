@@ -653,7 +653,11 @@ export const TOOLS: ToolSpec[] = [
       "Ask plow_vault what is in the vault; " +
       "'fill_secret' types any approved vault field into a form field on this Mac without " +
       "returning the value to you — use it for every vault-backed field, including ones that " +
-      "are not secret. Fields the vault itself conceals (passwords, card numbers and codes, " +
+      "are not secret. Filling into a bank's own site needs more than item rights: the owner " +
+      "must ALSO approve the payment separately (a link in their Plow thread, or a 👍), and " +
+      "the fill proceeds only once they do — otherwise fill_secret returns an error and types " +
+      "nothing. Ask the owner to approve it, then retry. " +
+      "Fields the vault itself conceals (passwords, card numbers and codes, " +
       "hidden custom fields) also render masked and come back from 'forms' without their " +
       "characters; everything else fills as ordinary text you can read back. A generated " +
       "'totp' code is the one field masked although the vault's own app shows it — fill it " +
@@ -710,39 +714,49 @@ export const TOOLS: ToolSpec[] = [
       const maxChars = a.get("max_chars").int;
       if (maxChars !== null) params.max = maxChars;
 
-      const response = await ctx.device.browserCommand(session, params);
-      const r = jv(response);
-      if (r.get("status").str === "error") {
-        // An error is a string here, so anything the device attached to it has
-        // to be said IN that string — and what the page's own requests did is
-        // usually the reason for the error.
-        const refused = r.get("failed_requests").arr;
-        throw new ToolError(
-          (r.get("error").str ?? "browser error") +
-            (refused === null ? "" : ` — the page's own requests were refused: ${canonicalJSON(refused)}`),
-        );
-      }
+      const execute = async (): Promise<JSONValue> => {
+        const response = await ctx.device.browserCommand(session, params);
+        const r = jv(response);
+        if (r.get("status").str === "error") {
+          // An error is a string here, so anything the device attached to it has
+          // to be said IN that string — and what the page's own requests did is
+          // usually the reason for the error.
+          const refused = r.get("failed_requests").arr;
+          throw new ToolError(
+            (r.get("error").str ?? "browser error") +
+              (refused === null ? "" : ` — the page's own requests were refused: ${canonicalJSON(refused)}`),
+          );
+        }
 
-      // Screenshot becomes an MCP image block so the agent can SEE the page.
-      // Built from the SAME cleaned result as every other action — only the
-      // binary transport fields are lifted out — so a diagnostic added to a
-      // result reaches a screenshot without a second copy of this code.
-      const out = { ...(r.obj ?? {}) };
-      delete out.status;
-      const imageB64 = r.get("data_b64").str;
-      if (action === "screenshot" && imageB64 !== null) {
-        const mimeType = r.get("mime").str ?? "image/jpeg";
-        delete out.data_b64;
-        delete out.mime;
-        delete out.path;
-        return {
-          __mcpContent: [
-            { type: "image", data: imageB64, mimeType },
-            { type: "text", text: canonicalJSON(out as JSONValue) },
-          ],
-        };
-      }
-      return out as JSONValue;
+        // Screenshot becomes an MCP image block so the agent can SEE the page.
+        // Built from the SAME cleaned result as every other action — only the
+        // binary transport fields are lifted out — so a diagnostic added to a
+        // result reaches a screenshot without a second copy of this code.
+        const out = { ...(r.obj ?? {}) };
+        delete out.status;
+        const imageB64 = r.get("data_b64").str;
+        if (action === "screenshot" && imageB64 !== null) {
+          const mimeType = r.get("mime").str ?? "image/jpeg";
+          delete out.data_b64;
+          delete out.mime;
+          delete out.path;
+          return {
+            __mcpContent: [
+              { type: "image", data: imageB64, mimeType },
+              { type: "text", text: canonicalJSON(out as JSONValue) },
+            ],
+          };
+        }
+        return out as JSONValue;
+      };
+
+      // A banking approval is consumed inside fill_secret, before the vault
+      // and browser finish. Let that one action outlive this exchange under the
+      // existing per-agent deferred contract, while screenshots and every
+      // ordinary interactive action continue returning directly.
+      return action === "fill_secret"
+        ? ctx.deferred.run(ctx.agent.agentId, async () => execute())
+        : execute();
     },
   },
   {

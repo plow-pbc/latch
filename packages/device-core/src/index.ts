@@ -4,6 +4,8 @@ export * from "./browser/browserHost.js";
 export * from "./browser/browserRuntime.js";
 export * from "./browser/browserSessions.js";
 export * from "./browser/credentialBroker.js";
+export * from "./browser/bankDomains.js";
+export * from "./browser/financialGate.js";
 export * from "./browser/vaultServer.js";
 export * from "./browser/vaultClient.js";
 export * from "./browser/vaultItems.js";

@@ -168,6 +168,52 @@ describe("PlowApi", () => {
   });
 
 
+  it("consumes a payment approval by posting the session id and domain, credential in the header", async () => {
+    const { calls, fetchImpl } = recordingFetch([{ status: 200, body: { approved: true } }]);
+    const result = await new PlowApi("https://api.plow.co", fetchImpl).consumePaymentApproval(
+      "plow_devicetok",
+      { sessionId: "sess-digest", domain: "chase.com" },
+    );
+
+    expect(result).toEqual({ approved: true });
+    expect(calls[0].url).toBe("https://api.plow.co/v1/payment-approvals/consume");
+    // The endpoint's snake-case contract: session_id + domain, nothing else.
+    expect(JSON.parse(String(calls[0].init.body))).toEqual({
+      session_id: "sess-digest",
+      domain: "chase.com",
+    });
+    // The device credential travels in the header, never in the URL or the body.
+    expect((calls[0].init.headers as Record<string, string>).authorization).toBe(
+      "Bearer plow_devicetok",
+    );
+    expect(calls[0].url).not.toContain("plow_devicetok");
+    expect(String(calls[0].init.body)).not.toContain("plow_devicetok");
+  });
+
+  it.each([
+    { what: "no approval on file (404)", answer: { status: 404, body: { detail: "no approval" } } },
+    { what: "a server error (500)", answer: { status: 500, body: {} } },
+  ])("throws rather than approving when the consume fails: $what", async ({ answer }) => {
+    // Fail-closed: any non-2xx throws through call(), and the fill gate treats a
+    // throw exactly like approved:false — nothing is released.
+    const { fetchImpl } = recordingFetch([answer]);
+    await expect(
+      new PlowApi("https://api.plow.co", fetchImpl).consumePaymentApproval("t", {
+        sessionId: "s",
+        domain: "chase.com",
+      }),
+    ).rejects.toBeInstanceOf(PlowApiError);
+  });
+
+  it("reads a body that omits or malforms 'approved' as NOT approved", async () => {
+    const { fetchImpl } = recordingFetch([{ status: 200, body: { note: "hmm" } }]);
+    const result = await new PlowApi("https://api.plow.co", fetchImpl).consumePaymentApproval("t", {
+      sessionId: "s",
+      domain: "chase.com",
+    });
+    expect(result).toEqual({ approved: false });
+  });
+
   it("starts an activation and hands back the code, the secret and where to text it", async () => {
     const { calls, fetchImpl } = recordingFetch([
       {
