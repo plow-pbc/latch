@@ -13,7 +13,7 @@
  *
  * Three arguments are plow-gog's own and are stripped before anything reaches
  * gog: `--account <email>[,<email>…]` (one account, or the several to fan
- * out to), `--confirm-conflict`
+ * out to, spelled `-a` too), `--confirm-conflict`
  * (override the conflict gate), and the `accounts` verb (list connected
  * accounts from the mint, no gog run at all). Refusal reasons follow the house
  * rule (`gogFlags.ts`): they may name a rule, never the caller's text.
@@ -89,6 +89,68 @@ function flagValue(args: readonly string[], name: string): string | null {
   return value;
 }
 
+/**
+ * The account flag's value at `i`, and the index the scan continues from — or
+ * null when the argument is not the account flag.
+ *
+ * gog publishes `-a` as the shorthand for its own `--account`, so an agent
+ * that read `gog --help` writes it, and all three spellings kong accepts for a
+ * shorthand carrying a value (`-a v`, `-a=v`, `-av`) are plow-gog's too. A
+ * shorthand CLUSTER (`-ja x@y.co`) deliberately is not: it stays gog's, where
+ * a supplied token makes the flag inert. Nothing else can be spelled `-a…` —
+ * gog's shorthands are single letters and its long flags take two dashes.
+ */
+function accountAt(
+  argv: readonly string[],
+  i: number,
+): { value: string | undefined; next: number } | null {
+  const arg = argv[i]!;
+  if (arg === "--account" || arg === "-a") return { value: argv[i + 1], next: i + 1 };
+  if (arg.startsWith("--account=")) return { value: arg.slice("--account=".length), next: i };
+  if (arg.startsWith("-a=")) return { value: arg.slice("-a=".length), next: i };
+  if (arg.startsWith("-a")) return { value: arg.slice("-a".length), next: i };
+  return null;
+}
+
+/**
+ * Why an account FAILED, as a fixed sentence.
+ *
+ * gog publishes its exit codes as a contract (`gog schema --json` →
+ * `automation.exit_codes`) and maps Google's own failures onto that same
+ * table, so the NUMBER carries the diagnosis and the child's output — which is
+ * service-fetched text — never has to travel in a reason string (the
+ * `gogFlags.ts` rule). Verified against the vendored binary at 0.36.0.
+ *
+ * Without this the only account-level diagnosis was `gog exited 2`, and a
+ * fan-out that came back empty for every account could not be told apart from
+ * one whose token had expired.
+ *
+ * Exit 3 is absent deliberately: gog's "empty results" is an ANSWER, and the
+ * caller counts it as one before asking this what went wrong. A sentence for
+ * it here would be a second, disagreeing opinion about the same code.
+ *
+ * The rest of gog's table (5 not found, 8 retryable, 10 config, 11 orphaned,
+ * 130 interrupted) keeps the bare number on purpose: those say nothing an
+ * owner could act on without the command in front of them, and a wrong
+ * sentence is worse than a number.
+ */
+export function gogExitReason(exitCode: number | null): string {
+  switch (exitCode) {
+    // "usage" — the belt and the gate settle gog's own grammar before a child
+    // starts, so in practice this is Google rejecting the request itself.
+    case 2:
+      return "gog rejected the request as invalid";
+    case 4:
+      return "that account needs re-auth — re-connect it in Plow";
+    case 6:
+      return "permission denied for that account";
+    case 7:
+      return "rate limited by Google";
+    default:
+      return `gog exited ${exitCode ?? -1}`;
+  }
+}
+
 export function planPlowGog(argv: readonly string[]): PlowGogPlan {
   // Strip plow-gog's own flags first: they are this Mac's to interpret, and a
   // spelling that reached gog would collide with gog's own `--account` — which
@@ -100,12 +162,13 @@ export function planPlowGog(argv: readonly string[]): PlowGogPlan {
   let confirmConflict = false;
   for (let i = 1; i < argv.length; i++) {
     const arg = argv[i]!;
-    if (arg === "--account" || arg.startsWith("--account=")) {
-      const value = arg === "--account" ? argv[++i] : arg.slice("--account=".length);
-      accounts = (value ?? "").split(",").filter((a) => a !== "");
+    const named = accountAt(argv, i);
+    if (named !== null) {
+      accounts = (named.value ?? "").split(",").filter((a) => a !== "");
       if (accounts.length === 0) {
         return { kind: "refused", reason: "--account needs a value: the account's email address" };
       }
+      i = named.next;
       continue;
     }
     if (arg === "--confirm-conflict") {
