@@ -424,8 +424,8 @@ documented as gated in two. The vendored
 vault's collections). `fill_secret`
 is the strongest gate, in order: item ∈ approved set → the selector is located
 to its owning frame → the frame's origin ∈ session scope → **a fill whose
-device-observed destination is a bank additionally requires a separate,
-single-use owner payment approval, consumed from plow's
+device-observed destination matches the bundled v1 bank registry additionally
+requires a separate, single-use owner payment approval, consumed from plow's
 `POST /v1/payment-approvals/consume`; the release proceeds ONLY when that
 returns `approved`, and any other answer — not approved, a non-2xx, an
 unreachable service, or no client wired — blocks fail-closed** → `seed-vault-broker
@@ -442,22 +442,18 @@ outside it.
 Item ids on the approval card are resolved to titles **locally** (agent-supplied
 titles would be spoofable).
 
-**Banking-credential payment gate (interim trigger, owner-approval backstop).**
+**Banking-credential payment gate (v1 domain registry).**
 The owner grants the separate payment approval out of band — a link in the
 owner thread, or a 👍 — and plow mints a single-use token that
 `consume` spends at fill time. What flags a fill as "banking" today is a bundled
 **bank-domain list** (`bankDomains.ts`), matched on the unspoofable
-device-observed destination host. That list is an **INTERIM** trigger and fails
-open for a bank it does not list (and for a credit card typed on an arbitrary
-merchant site) — so it is deliberately NOT the security boundary. The reliable
-primitive is a future **owner-tagged-item registry**: an owner flag carried on
-the vault item itself (or its category/folder), returned by the broker's
-`get-field` alongside `value`+`hidden` so no extra round-trip or
-time-of-check/time-of-use window is introduced. Whichever way a fill is flagged,
-the per-payment owner approval consumed from plow is the backstop — nothing is
-released on the strength of the domain list alone. Gating **every** credential
-release was rejected: it would break the agent's ordinary non-bank logins, which
-are the common case.
+device-observed destination host. This 55-domain list is the accepted v1
+detector. Listed exact domains and subdomains require a per-payment owner
+approval and fail closed if approval cannot be consumed. An unlisted institution
+or a credit card typed on an arbitrary merchant site does not trigger the gate;
+that fail-open gap is an accepted v1 residual. Maintain the single domain list
+as real usage exposes gaps. Gating **every** credential release was rejected: it
+would break the agent's ordinary non-bank logins, which are the common case.
 
 **The owner's live view.** While a browsing session is open, the audit
 screen's detail pane shows a small near-live mirror of what Camoufox is

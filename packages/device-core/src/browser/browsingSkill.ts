@@ -133,8 +133,9 @@ item's, and \`fill_secret\` types them into the page the same way.
    cardholder name and a username are vault fields too, and \`fill_secret\` is the only way to
    put one in a page. Plain \`fill\` is for text you already have, not for anything the vault
    holds. Cards may fill on any approved origin; logins only on their own site.
-   **Filling into a bank site needs a separate owner payment approval.** When the page you
-   are filling is a bank's own site, \`fill_secret\` needs more than item rights: the owner
+   **A destination in the bundled v1 bank registry needs a separate owner payment
+   approval.** When the page you are filling matches that registry, \`fill_secret\` needs
+   more than item rights: the owner
    must ALSO approve the payment out of band — a link in their Plow thread, or a 👍. The
    fill proceeds only once that approval is granted; until then \`fill_secret\` returns an
    error saying the owner's payment approval was not found, and NOTHING is typed. That is

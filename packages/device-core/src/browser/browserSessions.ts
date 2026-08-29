@@ -964,12 +964,11 @@ export class BrowserSessions {
     }
 
     // FAIL-CLOSED FINANCIAL GATE. Before the vault is even asked for the value,
-    // a release whose device-observed destination is a bank must carry an
-    // owner-approved payment approval, consumed single-use from the plow cloud.
-    // Non-financial destinations never reach the approval client and behave
-    // exactly as before. Over-gating a non-bank is a recoverable prompt;
-    // under-gating a bank silently hands out a banking credential, which this
-    // exists to prevent.
+    // a release whose device-observed destination matches the bundled v1 bank
+    // registry must carry an owner-approved payment approval, consumed
+    // single-use from the plow cloud. Non-matching destinations never reach the
+    // approval client and behave exactly as before; a missed registry entry is
+    // the accepted v1 residual documented in financialGate.ts.
     if (isFinancialDestination(frameHost)) {
       const denial = await this.blockedByApproval(s.agentId, frameHost);
       if (denial !== null) {

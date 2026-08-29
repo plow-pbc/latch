@@ -653,10 +653,10 @@ export const TOOLS: ToolSpec[] = [
       "Ask plow_vault what is in the vault; " +
       "'fill_secret' types any approved vault field into a form field on this Mac without " +
       "returning the value to you — use it for every vault-backed field, including ones that " +
-      "are not secret. Filling into a bank's own site needs more than item rights: the owner " +
-      "must ALSO approve the payment separately (a link in their Plow thread, or a 👍), and " +
-      "the fill proceeds only once they do — otherwise fill_secret returns an error and types " +
-      "nothing. Ask the owner to approve it, then retry. " +
+      "are not secret. A destination in the bundled v1 bank registry needs more than item " +
+      "rights: the owner must ALSO approve the payment separately (a link in their Plow " +
+      "thread, or a 👍), and the fill proceeds only once they do — otherwise fill_secret " +
+      "returns an error and types nothing. Ask the owner to approve it, then retry. " +
       "Fields the vault itself conceals (passwords, card numbers and codes, " +
       "hidden custom fields) also render masked and come back from 'forms' without their " +
       "characters; everything else fills as ordinary text you can read back. A generated " +
@@ -755,7 +755,10 @@ export const TOOLS: ToolSpec[] = [
       // existing per-agent deferred contract, while screenshots and every
       // ordinary interactive action continue returning directly.
       return action === "fill_secret"
-        ? ctx.deferred.run(ctx.agent.agentId, async () => execute())
+        ? ctx.deferred.run(ctx.agent.agentId, async (progress) => {
+            progress.decided();
+            return execute();
+          })
         : execute();
     },
   },

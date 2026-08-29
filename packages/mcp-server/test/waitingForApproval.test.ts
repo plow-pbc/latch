@@ -147,9 +147,9 @@ describe("a pending handle says what to do about it", () => {
     expect(polled.payload.note).toBe(first.payload.note);
   });
 
-  // "running" means the human already answered; telling that agent a request
-  // is sitting on someone's screen would be a lie.
-  it("once approved and running, the note says so instead", async () => {
+  // "running" means execution has started; it does not imply that every
+  // action-specific authorization inside that execution has succeeded.
+  it("once decided and running, the note claims only that execution started", async () => {
     const store = new DeferredResults(20);
     let release!: () => void;
     const held = new Promise<void>((r) => {
@@ -163,7 +163,8 @@ describe("a pending handle says what to do about it", () => {
 
     expect(pending.status).toBe("pending");
     expect(pending.reason).toBe("running");
-    expect(pending.note).toMatch(/approved/i);
+    expect(pending.note).toMatch(/execution is underway/i);
+    expect(pending.note).not.toMatch(/approved/i);
     expect(pending.note).not.toMatch(/tell the user you are waiting/i);
     expect(pending.note).toMatch(/plow_get_result/);
     expect(bareToolNames(pending.note)).toEqual([]);
