@@ -69,6 +69,13 @@ export function editorChats(agent, cloudChats) {
   return chats;
 }
 
+/** Every chat an agent serves, home first and starred. */
+export function cloudChatSummary(agent) {
+  const labels = (agent?.chatLabels ?? []).map((label) => String(label ?? "").trim()).filter(Boolean);
+  if (!labels.length) return "";
+  return labels.map((label, index) => (index === 0 ? `★ ${label}` : label)).join(" · ");
+}
+
 /**
  * Is this agent's chat set safe to edit right now?
  *

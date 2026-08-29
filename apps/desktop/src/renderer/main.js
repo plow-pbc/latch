@@ -10,6 +10,7 @@ import {
 
 import {
   canEditChats,
+  cloudChatSummary,
   dropChat,
   editorChats,
   makeHome,
@@ -1096,8 +1097,10 @@ function openCloudPicker(trigger, state, redraw) {
       el("span", { text: "Setting up…" }),
     );
     const requestedName = name.value.trim();
-    const labelFor = (uid) =>
-      state.cloudChats.find((option) => option.uid === uid)?.label || uid;
+    const labelFor = (uid) => {
+      const chat = state.cloudChats.find((option) => option.uid === uid);
+      return chat?.title || chat?.label || uid;
+    };
     const home = state.cloudChats.find((option) => option.uid === chatUids[0]);
     const pendingId = `pending-cloud-${++pendingCloudCreateId}`;
     pendingCloudCreates.set(pendingId, {
@@ -1514,13 +1517,6 @@ function rosterActions(
   });
   actions.push(more, menu);
   return el("div", { class: "entity-actions" }, actions);
-}
-
-/** Every chat the agent serves, home first and starred. */
-function cloudChatSummary(agent) {
-  const labels = (agent?.chatLabels ?? []).map((label) => String(label ?? "").trim()).filter(Boolean);
-  if (!labels.length) return "";
-  return labels.map((label, index) => (index === 0 ? `★ ${label}` : label)).join(" · ");
 }
 
 function cloudProviderLabel(value) {

@@ -77,6 +77,7 @@ ipcMain.handle("settings:setAgentPurpose", async (_e, purpose) => setAgentPurpos
 const cloudChat = {
   uid: "chat_probe",
   label: "+1 (415) 555-0142, +1 (415) 555-0193, +1 (628) 555-0112",
+  lineName: "Willow",
   recipients: {
     line: "+14155550142",
     members: ["+14155550193", "+16285550112"],
@@ -98,7 +99,7 @@ const cloudAgent = {
   agentId: "cag_probe",
   name: "Household helper",
   chatUids: [cloudChat.uid],
-  chatLabels: [cloudChat.label],
+  chatLabels: [cloudChat.title],
   recipients: cloudChat.recipients,
   provider: "exe:hermes",
   status: "running",
@@ -201,7 +202,10 @@ ipcMain.handle("cloud:create", async (_e, chatUids, name, provider) => {
       ...cloudAgent,
       chatUids,
       chatLabels: chatUids.map(
-        (uid) => cloudProbe.cloudChats.find((chat) => chat.uid === uid)?.label ?? uid,
+        (uid) => {
+          const chat = cloudProbe.cloudChats.find((candidate) => candidate.uid === uid);
+          return chat?.title ?? chat?.label ?? uid;
+        },
       ),
       name: name || "Cloud agent",
       provider,
@@ -228,7 +232,10 @@ ipcMain.handle("cloud:editChats", async (_e, agentId, chatUids) => {
           ...agent,
           chatUids,
           chatLabels: chatUids.map(
-            (uid) => cloudProbe.cloudChats.find((chat) => chat.uid === uid)?.label ?? uid,
+            (uid) => {
+              const chat = cloudProbe.cloudChats.find((candidate) => candidate.uid === uid);
+              return chat?.title ?? chat?.label ?? uid;
+            },
           ),
         }
       : agent),
@@ -676,8 +683,27 @@ app.whenReady().then(async () => {
     return {
       noCredentialIdentity: !group?.textContent.includes("session") && !group?.textContent.includes("worker"),
       showsProvider: group?.textContent.includes("Provider Hermes") === true,
+      namesHomeLine: group?.querySelector(".cloud-agent-row .entity-context")?.textContent
+        .startsWith("★ Willow · You · Robin") === true,
     };
   }})()`);
+
+  // This is the first cloud modal opened in the run. Both the roster already
+  // on screen and Edit chats must have the line name from tab boot, without
+  // relying on the setup picker to fetch it first.
+  await win.webContents.executeJavaScript(
+    `[...document.querySelectorAll(".cloud-agent-row button")].find((b) => b.textContent.trim() === "Edit chats").click()`,
+  );
+  await waitFor(win, `document.querySelector(".cloud-modal .chat-list")`, "the first Edit chats checklist");
+  const cloudFirstLineNames = await win.webContents.executeJavaScript(`(${() => ({
+    roster: document.querySelector(".cloud-agent-row .entity-context")?.textContent
+      .startsWith("★ Willow · You · Robin") === true,
+    editor: document.querySelector(".cloud-modal .chat-option-name")?.getAttribute("title")
+      === "Willow · You · Robin",
+  })})()`);
+  await win.webContents.executeJavaScript(
+    `[...document.querySelectorAll(".cloud-modal button")].find((b) => b.textContent.trim() === "Cancel").click()`,
+  );
 
   // The warning is specific to the first agent on a chat. Remove the fixture
   // row, remount the pane, and open the picker through the exposed control.
@@ -1826,6 +1852,9 @@ app.whenReady().then(async () => {
     connect.noConnectTab &&
     cloudRoster.noCredentialIdentity &&
     cloudRoster.showsProvider &&
+    cloudRoster.namesHomeLine &&
+    cloudFirstLineNames.roster &&
+    cloudFirstLineNames.editor &&
     cloudModalFocus.insideModal &&
     cloudModalFocus.usable &&
     cloudModalGuard.ignored &&
@@ -1966,7 +1995,7 @@ app.whenReady().then(async () => {
     errors.length === 0;
   console.log(
     "PROBE:" +
-      JSON.stringify({ main, settings, strandedOnDisk, settingsPane, connect, cloudRoster, cloudModalFocus, cloudModalGuard, cloudCreateWait, cloudCreateTransition, cloudRowActions, cloudEditGate, cloudEditSave, cloudEditStray, cloudEditReordered, cloudEditGateUnread, cloudChatFailure, cloudForbidden, cloudLoadedEmpty, cloudZeroChatGuidance, cloudServerDetail, agentsShot, approvalsReviewer, approvalsShot, purposeRoundTrip, approvalsAsk, askWithoutReviewer, approvalsShotAsk, agentsOpen, modalClosed, vaultLocked, vaultUnsaved, vaultShot, agentsOpenShot, staleSettingsPane, optimisticMode, settingsShot, approval, reviewerNote, consoleErrors: errors, ok }),
+      JSON.stringify({ main, settings, strandedOnDisk, settingsPane, connect, cloudRoster, cloudFirstLineNames, cloudModalFocus, cloudModalGuard, cloudCreateWait, cloudCreateTransition, cloudRowActions, cloudEditGate, cloudEditSave, cloudEditStray, cloudEditReordered, cloudEditGateUnread, cloudChatFailure, cloudForbidden, cloudLoadedEmpty, cloudZeroChatGuidance, cloudServerDetail, agentsShot, approvalsReviewer, approvalsShot, purposeRoundTrip, approvalsAsk, askWithoutReviewer, approvalsShotAsk, agentsOpen, modalClosed, vaultLocked, vaultUnsaved, vaultShot, agentsOpenShot, staleSettingsPane, optimisticMode, settingsShot, approval, reviewerNote, consoleErrors: errors, ok }),
   );
   app.exit(ok ? 0 : 1);
 }).catch((err) => {

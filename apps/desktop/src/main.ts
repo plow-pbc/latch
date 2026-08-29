@@ -623,9 +623,9 @@ ipcMain.handle("connect:get", async () => agentsTabState());
  * the modal opens through this, and awaits it.
  */
 ipcMain.handle("cloud:refresh", async () => {
-  // Both, and together: the modal shows the chat list AND the numbers to text
-  // when there is none, so opening it must have asked for each.
-  await Promise.all([cloudAgents?.refresh(), cloudAgents?.refreshLines()]);
+  // One refresh reads chats and their line names together, so the modal gets
+  // the same account view the tab booted with.
+  await cloudAgents?.refresh();
   return agentsTabState();
 });
 ipcMain.handle("connect:create", async (_e, name: string) => {
