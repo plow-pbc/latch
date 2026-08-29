@@ -183,10 +183,10 @@ holds one WebSocket to the relay and serves what comes down it.
   logs and shell history in the prototype. `RelayClient` also redacts the
   credential from everything it emits, because an error string from a dependency
   is not ours to audit.
-- **Stored owner-only.** `app/settings.json` is written `0600` and chmod'd on
-  every save, so a file predating that change is repaired. There is still no
-  Keychain or `safeStorage`; 0600 is the floor. The credential is never sent to
-  the renderer — Settings shows only whether one is stored.
+- **Stored owner-only.** The relay credential is sealed with Electron
+  `safeStorage` where available, with a plaintext `0600` fallback.
+  `app/settings.json` is replaced owner-only on every save. The credential is
+  never sent to the renderer — Settings shows only whether one is stored.
 - Heartbeat at or under 15s (the relay's staleness gate is twice that), and a
   server advertising a slower cadence cannot push us past it.
 - Reconnect with **full-jitter** exponential backoff: the delay is uniform in

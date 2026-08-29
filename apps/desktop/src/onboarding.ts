@@ -609,6 +609,12 @@ export class Onboarding {
     return this.publish();
   }
 
+  /** Put a fixed main-process notice on the setup screen. */
+  showMessage(message: string): OnboardingState {
+    this.message = message;
+    return this.publish();
+  }
+
   /*
    * There is deliberately no `refresh()` here.
    *

@@ -145,11 +145,12 @@ describe("signing out retires the credential server-side, best effort", () => {
     // and the test would pass with the ordering reversed.
     let onDiskWhenAsked: string | null = null;
 
-    await revokeAndSignOut(home, async (credential) => {
+    const revoked = await revokeAndSignOut(home, async (credential) => {
       seen.push(credential);
       onDiskWhenAsked = stored(home).relayCredential;
     });
 
+    expect(revoked).toBe(true);
     expect(seen).toEqual([PLOW_CREDENTIAL]);
     // The revoke authenticates with the CAPTURED token, so the disk copy is
     // already gone by the time we ask — see the quit test below for why.
@@ -177,16 +178,17 @@ describe("signing out retires the credential server-side, best effort", () => {
     expectSignedOutWithAdversarial(home);
   });
 
-  it("clears locally even when the revoke FAILS", async () => {
+  it.each([
+    ["Error", () => Promise.reject(new Error(`ENOTFOUND for Bearer ${PLOW_CREDENTIAL}`))],
+    ["bare string", () => Promise.reject("a bare string")],
+  ])("clears locally and reports a %s revoke failure", async (_shape, fail) => {
     // Offline, API down, route not deployed — the case that matters most,
     // because a Mac that cannot reach Plow is the one whose owner most wants
     // the local copy gone.
     const home = homeSignedIn();
-
     const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
-    await revokeAndSignOut(home, async () => {
-      throw new Error(`ENOTFOUND api.plow.co for Bearer ${PLOW_CREDENTIAL}`);
-    });
+
+    expect(await revokeAndSignOut(home, fail)).toBe(false);
 
     expectSignedOutWithAdversarial(home);
     expect(warning).toHaveBeenCalledOnce();
@@ -196,23 +198,10 @@ describe("signing out retires the credential server-side, best effort", () => {
     expect(warning.mock.calls.flat().join(" ")).not.toContain(PLOW_CREDENTIAL);
   });
 
-  it("clears locally for every shape of failure", async () => {
-    for (const fail of [
-      () => Promise.reject(new Error("500")),
-      () => Promise.reject("a bare string"),
-    ]) {
-      const home = homeSignedIn();
-      vi.spyOn(console, "warn").mockImplementation(() => {});
-      await revokeAndSignOut(home, fail as () => Promise<unknown>);
-      expect(stored(home).relayCredential).toBe("");
-      vi.restoreAllMocks();
-    }
-  });
-
   it("does not call out at all when there is nothing to revoke", async () => {
     const home = homeWith({ relayCredential: "" });
     const revoke = vi.fn();
-    await revokeAndSignOut(home, revoke);
+    expect(await revokeAndSignOut(home, revoke)).toBe(true);
     expect(revoke).not.toHaveBeenCalled();
     expect(stored(home).relayCredential).toBe("");
   });

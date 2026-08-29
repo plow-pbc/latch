@@ -774,6 +774,17 @@ describe("one code, however many callers ask for it", () => {
 });
 
 describe("signing out", () => {
+  it("shows the fixed revoke warning on the setup screen", () => {
+    const onboarding = build();
+    const warning =
+      "Signed out on this Mac. Plow could not be reached to revoke the session — revoke it in Plow's account settings.";
+
+    const state = onboarding.showMessage(warning);
+
+    expect(state.step).toBe("activate");
+    expect(state.message).toBe(warning);
+  });
+
   it("returns to the activation screen without needing a restart", async () => {
     // Reported live: Sign Out blanked the credential in settings but left the
     // state machine on "connected", because `step` is decided in the

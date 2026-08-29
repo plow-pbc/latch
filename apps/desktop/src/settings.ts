@@ -81,28 +81,6 @@ function seal(value: string, active: CredentialCodec | null): string {
   }
 }
 
-/**
- * Put one secret into the record on its way to disk: sealed where the OS can
- * seal it, in the clear where it cannot. Returns whether it went out in the
- * clear, which is the only case worth a warning.
- */
-function storeSecret(
-  stored: Record<string, unknown>,
-  plainKey: string,
-  sealedKey: string,
-  active: CredentialCodec | null,
-): boolean {
-  const value = String(stored[plainKey] ?? "").trim();
-  const sealed = seal(value, active);
-  if (sealed) {
-    stored[sealedKey] = sealed;
-    stored[plainKey] = "";
-    return false;
-  }
-  delete stored[sealedKey];
-  return value !== "";
-}
-
 export interface WindowBounds {
   x: number;
   y: number;
@@ -306,15 +284,47 @@ export function saveSettings(home: string, settings: Settings): void {
   // keychain is no worse than yesterday rather than a Mac that cannot sign in.
   const active = activeCodec();
   const stored: Record<string, unknown> = { ...settings };
-  const credentialInClear = storeSecret(stored, "relayCredential", "relayCredentialEnc", active);
+  const credential = String(stored.relayCredential ?? "").trim();
+  const encrypted = seal(credential, active);
+  if (encrypted) {
+    stored.relayCredentialEnc = encrypted;
+    stored.relayCredential = "";
+  } else {
+    delete stored.relayCredentialEnc;
+  }
+  const credentialInClear = !encrypted && credential !== "";
   if (credentialInClear && codec && !warnedUnavailable) {
     warnedUnavailable = true;
     console.log("[settings] no OS keychain available; credential stored unencrypted (0600)");
   }
   fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
-  // mode on writeFileSync only applies when the file is created, so chmod
-  // unconditionally — otherwise a file that predates this change keeps its
-  // old permissions forever.
-  fs.writeFileSync(file, JSON.stringify(stored, null, 2) + "\n", { mode: 0o600 });
-  fs.chmodSync(file, 0o600);
+  const temporary = `${file}.tmp`;
+  let descriptor: number | null = null;
+  try {
+    descriptor = fs.openSync(temporary, "w", 0o600);
+    // `mode` only applies when the file is created. A temp left by an interrupted
+    // process is reused, so repair it before any secret bytes are written.
+    fs.fchmodSync(descriptor, 0o600);
+    const contents = Buffer.from(JSON.stringify(stored, null, 2) + "\n");
+    let offset = 0;
+    while (offset < contents.length) {
+      const written = fs.writeSync(descriptor, contents, offset, contents.length - offset);
+      if (written <= 0) throw new Error("settings write made no progress");
+      offset += written;
+    }
+    fs.fsyncSync(descriptor);
+    fs.closeSync(descriptor);
+    descriptor = null;
+    fs.renameSync(temporary, file);
+  } catch (error) {
+    if (descriptor !== null) {
+      try {
+        fs.closeSync(descriptor);
+      } catch {}
+    }
+    try {
+      fs.unlinkSync(temporary);
+    } catch {}
+    throw error;
+  }
 }

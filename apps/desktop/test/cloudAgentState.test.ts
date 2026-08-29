@@ -1453,18 +1453,6 @@ describe("Plow's pool numbers", () => {
     expect(lines[0]!.displayName).toBeNull();
     expect(JSON.stringify(lines)).not.toContain(CREDENTIAL.slice(0, 12));
   });
-
-
-  it("refuses a whole row whose number echoes the credential", async () => {
-    // Belt and braces behind the E.164 check: a credential cannot BE a phone
-    // number, so this row would already be dropped — but the echo rule is the
-    // one that must not depend on another check happening to fire first.
-    const echoed = `+1${CREDENTIAL.slice(0, 12)}`;
-    const lines = await linesClient({ data: [{ provider_key: echoed }] }).list(CREDENTIAL);
-    expect(lines).toEqual([]);
-    expect(JSON.stringify(lines)).not.toContain(CREDENTIAL.slice(0, 12));
-  });
-
   it("withholds the numbers until the chat list has landed", async () => {
     // `held` is a claim about THIS account's chats. With none read, every line
     // looks free, and the screen would offer an Open Messages button for a

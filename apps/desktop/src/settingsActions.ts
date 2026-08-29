@@ -111,14 +111,16 @@ export function isSignedIn(home: string): boolean {
 export async function revokeAndSignOut(
   home: string,
   revoke: (credential: string) => Promise<unknown>,
-): Promise<void> {
+): Promise<boolean> {
   const credential = (loadSettings(home).relayCredential ?? "").trim();
   signOutOfPlow(home);
-  if (!credential) return;
+  if (!credential) return true;
   try {
     await revoke(credential);
+    return true;
   } catch {
     console.warn("[settings] session revoke failed; already signed out locally");
+    return false;
   }
 }
 

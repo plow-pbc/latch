@@ -479,7 +479,7 @@ ipcMain.handle("settings:getRelay", async () => {
  * credential takes the Plow reviewer with it, and retiring Adversarial mode is
  * part of that same write.
  */
-function signOut(): void {
+function signOut() {
   // `signOutOfPlow` rather than blanking the fields inline: losing the Plow
   // credential takes the Plow reviewer with it, and retiring Adversarial mode
   // is part of that same write.
@@ -497,7 +497,7 @@ function signOut(): void {
   // activation screen needs. `begin` covers the already-open case; it is
   // idempotent, so between them exactly one code is minted.
   gate.sync();
-  void onboarding?.begin();
+  return onboarding?.begin();
 }
 
 /**
@@ -523,9 +523,14 @@ async function signOutThisMac(): Promise<void> {
   // The one place that resets the app's state, shared with the relay's
   // auth-failed path. It also drops connect-a-client's shown-once credential,
   // which a click has exactly as much reason to clear as a revocation does.
-  signOut();
+  const beginning = signOut();
   await startRelay();
-  await revoking;
+  await beginning;
+  if (!(await revoking)) {
+    onboarding?.showMessage(
+      "Signed out on this Mac. Plow could not be reached to revoke the session — revoke it in Plow's account settings.",
+    );
+  }
 }
 
 ipcMain.handle("settings:signOut", async () => signOutThisMac());
@@ -1026,7 +1031,7 @@ async function startRelay(): Promise<void> {
     onAuthFailed: () => {
       console.log("[relay] credential rejected; signing out");
       connected = false;
-      signOut();
+      void signOut();
       notifyRenderer("status:changed");
     },
     // RelayClient redacts the credential from everything it emits; this is the

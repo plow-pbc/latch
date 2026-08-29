@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { loadSettings, saveSettings, Settings, useCredentialCodec } from "../src/settings.js";
+import { loadSettings, saveSettings, useCredentialCodec } from "../src/settings.js";
 
 const cleanups: (() => void)[] = [];
 afterEach(() => {
@@ -51,6 +51,26 @@ describe("settings storage", () => {
     settings.relayCredential = "plow_sk_secret";
     saveSettings(home, settings);
     expect(mode(file)).toBe(0o600);
+  });
+
+  it("keeps the old file intact when a replacement write fails midway", () => {
+    const home = tempHome();
+    const settings = loadSettings(home);
+    settings.accountUid = "u_before";
+    saveSettings(home, settings);
+    const file = path.join(home, "app/settings.json");
+    const before = fs.readFileSync(file, "utf8");
+    const writeSync = fs.writeSync;
+    vi.spyOn(fs, "writeSync").mockImplementationOnce((fd, buffer) => {
+      writeSync(fd, (buffer as Uint8Array).subarray(0, 12));
+      throw new Error("disk full midway through write");
+    });
+
+    settings.accountUid = "u_after";
+    expect(() => saveSettings(home, settings)).toThrow("disk full midway through write");
+
+    expect(fs.readFileSync(file, "utf8")).toBe(before);
+    expect(loadSettings(home).accountUid).toBe("u_before");
   });
 
   it("round-trips the credential and what the server said about the account", () => {
@@ -239,60 +259,40 @@ describe("the credential at rest", () => {
   const fileOf = (home: string) =>
     JSON.parse(fs.readFileSync(path.join(home, "app/settings.json"), "utf8")) as Record<string, unknown>;
 
-  /** The secret's two on-disk spellings and how to read it back. */
-  const secrets = [
-    {
-      name: "the credential",
-      plainKey: "relayCredential",
-      sealedKey: "relayCredentialEnc",
-      emptyOnDisk: "",
-      values: ["plow_sk_secret_value"],
-      set: (settings: Settings, values: string[]) => {
-        settings.relayCredential = values[0];
-      },
-      read: (settings: Settings) => (settings.relayCredential ? [settings.relayCredential] : []),
-    },
-  ];
-
-  /** Whatever the sealed key holds, as a list — a string for one secret, an
-   * array for a list of them. */
-  const sealedEntries = (home: string, key: string): unknown[] =>
-    [fileOf(home)[key]].flat().filter((entry) => entry !== undefined);
-
-  it.each(secrets)("writes $name sealed and never in the clear", (secret) => {
+  it("writes the credential sealed and never in the clear", () => {
     useCredentialCodec(fakeCodec());
     const home = tempHome();
     const settings = loadSettings(home);
-    secret.set(settings, secret.values);
+    settings.relayCredential = "plow_sk_secret_value";
     saveSettings(home, settings);
 
     const raw = fs.readFileSync(path.join(home, "app/settings.json"), "utf8");
-    for (const value of secret.values) expect(raw).not.toContain(value);
-    // One seal per value, and the exact bytes — a seal nobody can check is a
-    // seal that could be the plaintext with a prefix on it.
-    expect(sealedEntries(home, secret.sealedKey)).toEqual(
-      secret.values.map((value) => `sealed:${Buffer.from(value).toString("base64")}`),
+    expect(raw).not.toContain("plow_sk_secret_value");
+    // The exact bytes — a seal nobody can check could be the plaintext with a
+    // prefix on it.
+    expect(fileOf(home).relayCredentialEnc).toBe(
+      `sealed:${Buffer.from("plow_sk_secret_value").toString("base64")}`,
     );
-    expect(fileOf(home)[secret.plainKey]).toEqual(secret.emptyOnDisk);
+    expect(fileOf(home).relayCredential).toBe("");
     // ...and it comes back through the port.
-    expect(secret.read(loadSettings(home))).toEqual(secret.values);
+    expect(loadSettings(home).relayCredential).toBe("plow_sk_secret_value");
   });
 
-  it.each(secrets)("migrates a plaintext home's $name on the first read that can seal it", (secret) => {
+  it("migrates a plaintext credential on the first read that can seal it", () => {
     const home = tempHome();
     const settings = loadSettings(home);
-    secret.set(settings, secret.values);
+    settings.relayCredential = "plow_sk_secret_value";
     saveSettings(home, settings);
     // Written in the clear, because no codec was installed yet.
-    expect(secret.read(loadSettings(home))).toEqual(secret.values);
+    expect(loadSettings(home).relayCredential).toBe("plow_sk_secret_value");
 
     useCredentialCodec(fakeCodec());
-    expect(secret.read(loadSettings(home))).toEqual(secret.values);
+    expect(loadSettings(home).relayCredential).toBe("plow_sk_secret_value");
 
     // Rewritten on that read, not left for some later unrelated write.
     const raw = fs.readFileSync(path.join(home, "app/settings.json"), "utf8");
-    for (const value of secret.values) expect(raw).not.toContain(value);
-    expect(sealedEntries(home, secret.sealedKey)).toHaveLength(secret.values.length);
+    expect(raw).not.toContain("plow_sk_secret_value");
+    expect(fileOf(home).relayCredentialEnc).toBeTruthy();
   });
 
   it("falls back to plaintext 0600 when the OS offers no keychain", () => {
