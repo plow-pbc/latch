@@ -11,7 +11,7 @@
  * key to pin. That is provenance, not confinement — DESIGN.md §4 *The intent
  * object* owns where an intent's contents go.
  */
-import { canonicalize, capabilityDisplay, Intent, intentIsExpired, JSONValue, jv } from "@domo/protocol";
+import { capabilityDisplay, Intent, intentIsExpired, JSONValue, jv } from "@domo/protocol";
 import { PROVIDERS, vendoredProvider, type VendoredProvider } from "./providers/registry.js";
 import { MintError, type MintedAccounts, type Minter } from "./providers/mint.js";
 import { gogExitReason, mergeFanout, planPlowGog } from "./providers/plowGog.js";
@@ -544,14 +544,9 @@ export class DeviceAgent {
       const approvedReads = new Set(readPaths);
       const approvedWrites = new Set(writePaths);
       for (const fileArg of provider.fileArgs(argv)) {
-        for (const raw of fileArg.paths) {
-          const absolute = raw.startsWith("/") || raw === "~" || raw.startsWith("~/")
-            ? raw
-            : exec.cwd === undefined
-              ? null
-              : path.resolve(exec.cwd, raw);
+        for (const providerPath of fileArg.paths) {
           const approved = fileArg.access === "read" ? approvedReads : approvedWrites;
-          if (absolute === null || !approved.has(canonicalize(absolute))) {
+          if (!approved.has(providerPath)) {
             return this.execError(
               intent.intentId,
               "provider file arguments require matching approved file capabilities",

@@ -29,6 +29,8 @@
  * cover. A second copy here is a second thing to keep in step.
  */
 
+import type { ProviderFileArg } from "./registry.js";
+
 /** Flags that would override the gate itself. */
 const RESERVED_EXACT: ReadonlySet<string> = new Set([
   "--readonly",
@@ -66,15 +68,6 @@ export function reservedFlagIn(argv: readonly string[]): string | null {
   return null;
 }
 
-interface GogFileArg {
-  readonly access: "read" | "write";
-  /** The argv element holding the value, not necessarily the flag. */
-  readonly index: number;
-  /** Present for a joined `--flag=value`; null for `--flag value`. */
-  readonly joinedPrefix: string | null;
-  readonly paths: readonly string[];
-}
-
 /**
  * Local paths gog reads from or writes to, including enough location data for
  * the MCP layer to replace each path with the canonical one the owner approved.
@@ -84,8 +77,8 @@ interface GogFileArg {
  * The rules were verified across the pinned CLI in the vendored-provider bump
  * checklist. `--` ends this scan because everything after it is positional.
  */
-export function fileArgsIn(argv: readonly string[]): GogFileArg[] {
-  const found: GogFileArg[] = [];
+export function fileArgsIn(argv: readonly string[]): ProviderFileArg[] {
+  const found: ProviderFileArg[] = [];
   for (let i = 0; i < argv.length; i += 1) {
     const arg = argv[i]!;
     if (arg === "--") break;
