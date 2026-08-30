@@ -35,6 +35,7 @@ import {
 } from "@domo/device-core";
 import { DeferredResults, DeniedError, Progress } from "./deferred.js";
 import { JobOwners } from "./jobs.js";
+import path from "node:path";
 
 /** A tool argument was missing or unusable — the agent's problem, not ours. */
 export class ToolError extends Error {}
@@ -108,6 +109,8 @@ const resolved = (p: string): Promise<string> => canonicalizeAsync(p);
 
 /** Resolve a list of supplied paths concurrently. */
 const resolveAll = (paths: string[]): Promise<string[]> => Promise.all(paths.map(resolved));
+
+const unique = (paths: string[]): string[] => [...new Set(paths)];
 
 /**
  * Build an intent from an already-constructed capability set and run it through
@@ -368,12 +371,12 @@ export const TOOLS: ToolSpec[] = [
       const a = jv(args);
       const argvValues = a.get("argv").arr;
       if (!argvValues || argvValues.length === 0) throw new ToolError("missing 'argv'");
-      const argv = strings(argvValues);
+      let argv = strings(argvValues);
       if (argv.length !== argvValues.length) throw new ToolError("argv must be strings");
 
       // A vendored provider CLI refuses some argv outright — an argument that
-      // would disarm its safety flags or read a local file into an outbound
-      // message, or a command the bundled binary does not have. Checked HERE,
+      // would disarm its safety flags, or a command group the bundled binary
+      // may not run. Checked HERE,
       // before an intent exists, because a card the owner approves mints a
       // live provider token: nobody should be asked to authorise a call this
       // Mac was always going to refuse. The device checks again; it is the
@@ -382,13 +385,43 @@ export const TOOLS: ToolSpec[] = [
       const refusal = provider?.refuse(argv) ?? null;
       if (refusal !== null) throw new ToolError(refusal);
 
-      // Resolve every declared path before it becomes the bound the human
-      // approves and the sandbox enforces.
-      const readPaths = await resolveAll(strings(a.get("read_paths").arr));
-      const writePaths = await resolveAll(strings(a.get("write_paths").arr));
+      // Resolve every declared or provider-derived path before it becomes the
+      // bound the human approves and the sandbox enforces.
       const rawCwd = a.get("cwd").str;
+      const cwd = rawCwd === null ? undefined : await resolved(rawCwd);
+      const providerReadPaths: string[] = [];
+      const providerWritePaths: string[] = [];
+      if (provider !== null) {
+        const normalized = [...argv];
+        for (const fileArg of provider.fileArgs(argv)) {
+          const resolvedPaths = await Promise.all(fileArg.paths.map(async (raw) => {
+            const absolute = raw.startsWith("/") || raw === "~" || raw.startsWith("~/")
+              ? raw
+              : cwd === undefined
+                ? null
+                : path.resolve(cwd, raw);
+            if (absolute === null) {
+              throw new ToolError("a relative provider file path requires cwd");
+            }
+            return resolved(absolute);
+          }));
+          normalized[fileArg.index] = `${fileArg.joinedPrefix ?? ""}${resolvedPaths.join(",")}`;
+          (fileArg.access === "read" ? providerReadPaths : providerWritePaths).push(...resolvedPaths);
+        }
+        // The process executes the exact physical path the owner sees. This is
+        // the command equivalent of plow_read_file freezing a symlink target.
+        argv = normalized;
+      }
+      const readPaths = unique([
+        ...await resolveAll(strings(a.get("read_paths").arr)),
+        ...providerReadPaths,
+      ]);
+      const writePaths = unique([
+        ...await resolveAll(strings(a.get("write_paths").arr)),
+        ...providerWritePaths,
+      ]);
       const capabilities: Capability[] = [
-        { kind: "process.exec", argv, cwd: rawCwd === null ? undefined : await resolved(rawCwd) },
+        { kind: "process.exec", argv, cwd },
         // A vendored provider implies network. Its whole purpose is to reach
         // the service its minted token authenticates against, so a gog call
         // approved without it is a call the sandbox then denies — and making

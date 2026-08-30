@@ -548,6 +548,40 @@ describe("review findings", () => {
       expect(cwd).toBe(canonicalize(realDir));
     });
 
+    it("plow-gog file flags derive the paths the approver sees", async () => {
+      let approved: string[] = [];
+      let approvedArgv: string[] = [];
+      const { server } = makeServer({
+        async decideIntent(intent) {
+          approved = intent.capabilities.flatMap((c) => c.paths ?? []);
+          approvedArgv = intent.capabilities.find((c) => c.kind === "process.exec")?.argv ?? [];
+          return "deny" as const;
+        },
+      });
+      const dir = tempDir();
+      const attachment = path.join(dir, "actual-receipt.jpg");
+      const attachmentLink = path.join(dir, "receipt.jpg");
+      const output = path.join(dir, "download.pdf");
+      fs.writeFileSync(attachment, "image bytes");
+      fs.symlinkSync(attachment, attachmentLink);
+
+      await callTool(
+        server,
+        "plow_run_command",
+        {
+          argv: [
+            "plow-gog", "gmail", "send", "--attach", attachmentLink,
+            "--out", output,
+          ],
+        },
+        AGENT,
+      );
+
+      expect(approved).toEqual([canonicalize(attachment), canonicalize(output)]);
+      expect(approvedArgv).toContain(canonicalize(attachment));
+      expect(approvedArgv).not.toContain(attachmentLink);
+    });
+
     // The `allowed` flag the policy sees for a given capability kind, when
     // plow_run_command builds an intent from `argv` + the extra tool args.
     async function allowedFor(
