@@ -172,17 +172,24 @@ export class CloudAgentsClient {
     while (!isTerminalCloudAgent(current)) {
       await this.wait(CLOUD_AGENT_POLL_INTERVAL_MS);
       signal?.throwIfAborted();
-      const response = await this.api.request(
-        "GET",
-        `/v1/agents/cloud/${encodeURIComponent(current.agentId)}`,
-        {
-          token: deviceCredential,
-          signal,
-          timeoutMs: REQUEST_TIMEOUT_MS,
-          callerAbortIsLifecycle: true,
-        },
-      );
-      const next = await this.resourceFor(response, deviceCredential);
+      let next: CloudAgentResource;
+      try {
+        const response = await this.api.request(
+          "GET",
+          `/v1/agents/cloud/${encodeURIComponent(current.agentId)}`,
+          {
+            token: deviceCredential,
+            signal,
+            timeoutMs: REQUEST_TIMEOUT_MS,
+            callerAbortIsLifecycle: true,
+          },
+        );
+        next = await this.resourceFor(response, deviceCredential);
+      } catch (error) {
+        signal?.throwIfAborted();
+        if (isRetryablePollError(error)) continue;
+        throw error;
+      }
       if (next.agentId !== current.agentId) continue;
       current = next;
       signal?.throwIfAborted();
@@ -201,6 +208,11 @@ export class CloudAgentsClient {
     return parseResource(decoded, deviceCredential, response.status);
   }
 
+}
+
+function isRetryablePollError(error: unknown): boolean {
+  return error instanceof PlowApiError &&
+    (error.kind === "network" || (error.status !== undefined && error.status >= 500));
 }
 
 async function decodeJson(response: Response): Promise<unknown> {

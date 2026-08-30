@@ -367,6 +367,41 @@ describe("CloudAgentsClient polling", () => {
     expect(REQUEST_TIMEOUT_MS).toBe(15_000);
   });
 
+  it("continues polling through network and 5xx failures", async () => {
+    let reads = 0;
+    const fetchImpl: FetchLike = async () => {
+      reads += 1;
+      if (reads === 1) throw new TypeError("connection dropped");
+      if (reads === 2) return new Response(null, { status: 503 });
+      return new Response(JSON.stringify(wireAgent({ status: "running" })), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    };
+
+    const final = await new CloudAgentsClient(
+      new PlowApi("https://api.plow.co", fetchImpl),
+      async () => {},
+    ).poll(CREDENTIAL, receipt());
+
+    expect(final.status).toBe("running");
+    expect(reads).toBe(3);
+  });
+
+  it("stops polling on an authoritative 4xx", async () => {
+    const { calls, fetchImpl } = recordingFetch([
+      { status: 409 },
+      { status: 200, body: wireAgent({ status: "running" }) },
+    ]);
+
+    await expect(new CloudAgentsClient(
+      new PlowApi("https://api.plow.co", fetchImpl),
+      async () => {},
+    ).poll(CREDENTIAL, receipt())).rejects.toThrow("Plow returned 409.");
+
+    expect(calls).toHaveLength(1);
+  });
+
   it("aborts an in-flight poll read", async () => {
     const controller = new AbortController();
     let started!: () => void;
