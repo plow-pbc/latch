@@ -44,6 +44,7 @@ describe("a dial that resolves after stop()", () => {
     const client = new RelayClient({
       url: "ws://example.invalid/relay",
       credential: "plow_sk_test",
+      deviceId: "device-1",
       serve: async () => new Response("no"),
       dial: () => ({ connect: async () => { await dialing; return conn; } }),
     });
@@ -69,6 +70,7 @@ describe("an authentication refusal", () => {
     const client = new RelayClient({
       url: "ws://example.invalid/relay",
       credential,
+      deviceId: "device-1",
       serve: async () => new Response("no"),
       log: (message) => logs.push(message),
       onAuthFailed: (...args: unknown[]) => callbackArgs.push(args),
@@ -81,5 +83,29 @@ describe("an authentication refusal", () => {
 
     expect(logs).toEqual(["relay rejected the credential"]);
     expect(callbackArgs).toEqual([[]]);
+  });
+
+  it("rejects an auth.ok naming a different installation", async () => {
+    const logs: string[] = [];
+    let rejected = 0;
+    const conn = fakeConn();
+    const client = new RelayClient({
+      url: "ws://example.invalid/relay",
+      credential: "plow_sk_test",
+      deviceId: "device-1",
+      serve: async () => new Response("no"),
+      log: (message) => logs.push(message),
+      onAuthFailed: () => {
+        rejected += 1;
+      },
+      dial: () => ({ connect: async () => conn }),
+    });
+
+    await client.start();
+    conn.onLine?.(Buffer.from(JSON.stringify({ type: "auth.ok", device_id: "device-2" })));
+
+    expect(rejected).toBe(1);
+    expect(conn.closed).toBe(true);
+    expect(logs).toContain("relay authenticated a different device");
   });
 });

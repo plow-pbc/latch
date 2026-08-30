@@ -108,11 +108,22 @@ export interface RelayInfo {
   deviceConnected: boolean;
 }
 
+export interface RelayDeviceInfo {
+  deviceId: string;
+  hostname: string;
+  displayName: string;
+  isPrimary: boolean;
+  connected: boolean;
+  mcpUrl: string;
+}
+
 export interface MintedCredential {
   /** Shown to the user once (agents) or stored and never shown (the device). */
   token: string;
   keyPrefix: string;
   name: string;
+  /** Server-authored config containing one MCP server per active Latch. */
+  mcpConfig: string;
 }
 
 /** The account credential metadata returned by `GET /v1/api-keys`.
@@ -369,6 +380,40 @@ export class PlowApi {
     return { uid: data.uid, mcpUrl: data.mcp_url, deviceConnected: !!data.device_connected };
   }
 
+  async registerRelayDevice(
+    token: string,
+    deviceId: string,
+    hostname: string,
+  ): Promise<RelayDeviceInfo> {
+    const data = await this.call<{
+      device_id?: unknown;
+      hostname?: unknown;
+      display_name?: unknown;
+      is_primary?: unknown;
+      connected?: unknown;
+      mcp_url?: unknown;
+    }>("PUT", `/v1/relay/devices/${encodeURIComponent(deviceId)}`, {
+      token,
+      body: { hostname },
+    });
+    if (
+      data.device_id !== deviceId ||
+      typeof data.hostname !== "string" ||
+      typeof data.display_name !== "string" ||
+      typeof data.mcp_url !== "string"
+    ) {
+      throw new PlowApiError("http", "Plow did not register this Mac correctly.");
+    }
+    return {
+      deviceId,
+      hostname: data.hostname,
+      displayName: data.display_name,
+      isPrimary: data.is_primary === true,
+      connected: data.connected === true,
+      mcpUrl: data.mcp_url,
+    };
+  }
+
   /**
    * Ask Plow to retire THIS Mac's own credential, authenticating with the
    * credential being retired. Sign-out is the only caller.
@@ -456,12 +501,25 @@ export class PlowApi {
   /** Mint an agent credential through the relay's own API (`relay:call` only,
    * whatever we ask for — the server decides). */
   async createAgent(token: string, name: string): Promise<MintedCredential> {
-    const data = await this.call<{ token: string; key_prefix?: string; name?: string }>(
+    const data = await this.call<{
+      token: string;
+      key_prefix?: string;
+      name?: string;
+      mcp_config?: unknown;
+    }>(
       "POST",
       "/v1/relay/agents",
       { token, body: { name } },
     );
-    return { token: data.token, keyPrefix: data.key_prefix ?? "", name: data.name ?? name };
+    if (typeof data.mcp_config !== "string" || !data.mcp_config.trim()) {
+      throw new PlowApiError("http", "Plow did not return an MCP configuration.");
+    }
+    return {
+      token: data.token,
+      keyPrefix: data.key_prefix ?? "",
+      name: data.name ?? name,
+      mcpConfig: data.mcp_config,
+    };
   }
 
   /** List this account's credential metadata. The stored credential remains in

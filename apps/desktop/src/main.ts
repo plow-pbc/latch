@@ -1036,7 +1036,8 @@ async function startRelay(): Promise<void> {
 
   const settings = loadSettings(home);
   const credential = (settings.relayCredential ?? "").trim();
-  if (!credential || !mcp) return;
+  const deviceId = (settings.relayDeviceId ?? "").trim();
+  if (!credential || !deviceId || !mcp) return;
 
   const server = mcp;
   relay = new RelayClient({
@@ -1044,6 +1045,7 @@ async function startRelay(): Promise<void> {
     // relay path appended. Two URL fields that must agree is a support burden.
     url: relaySocketUrl(apiBaseUrl),
     credential,
+    deviceId,
     serve: (request, auth) => server.fetch(request, auth),
     onStatusChange: (isConnected) => {
       connected = isConnected;
@@ -1171,6 +1173,8 @@ app.whenReady().then(async () => {
     startRelay,
     isConnected: () => connected,
     deviceName: `Plow Latch (${hostName()})`,
+    deviceId: device.identity.deviceId,
+    hostname: hostName(),
     onChange: () => onboardingWindow?.webContents.send("onboarding:changed"),
     // RelayClient's redaction is not in play here, so nothing secret is ever
     // handed to this — see Onboarding's callers of `warn`.

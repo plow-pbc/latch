@@ -167,6 +167,39 @@ describe("PlowApi", () => {
     expect((calls[0].init.headers as Record<string, string>).authorization).toBe("Bearer plow_secret");
   });
 
+  it("registers this stable device identity with its DNS hostname", async () => {
+    const { calls, fetchImpl } = recordingFetch([
+      {
+        status: 200,
+        body: {
+          device_id: "device/one",
+          hostname: "mbp",
+          display_name: "mbp (2)",
+          is_primary: false,
+          connected: false,
+          mcp_url: "https://api.plow.co/v1/relay/devices/device%2Fone/mcp",
+        },
+      },
+    ]);
+
+    const device = await new PlowApi("https://api.plow.co", fetchImpl).registerRelayDevice(
+      "plow_secret",
+      "device/one",
+      "mbp",
+    );
+
+    expect(calls[0].url).toBe("https://api.plow.co/v1/relay/devices/device%2Fone");
+    expect(JSON.parse(String(calls[0].init.body))).toEqual({ hostname: "mbp" });
+    expect(device).toEqual({
+      deviceId: "device/one",
+      hostname: "mbp",
+      displayName: "mbp (2)",
+      isPrimary: false,
+      connected: false,
+      mcpUrl: "https://api.plow.co/v1/relay/devices/device%2Fone/mcp",
+    });
+  });
+
 
   it("consumes a payment approval by posting the session id and domain, credential in the header", async () => {
     const { calls, fetchImpl } = recordingFetch([{ status: 200, body: { approved: true } }]);
@@ -410,7 +443,15 @@ describe("PlowApi", () => {
 
   it("mints an agent through the relay's own endpoint", async () => {
     const { calls, fetchImpl } = recordingFetch([
-      { status: 200, body: { token: "plow_agenttok", key_prefix: "agenttk", name: "Claude Code" } },
+      {
+        status: 200,
+        body: {
+          token: "plow_agenttok",
+          key_prefix: "agenttk",
+          name: "Claude Code",
+          mcp_config: '{"mcpServers":{"plow-mbp":{"headers":{"Authorization":"Bearer plow_agenttok"}}}}',
+        },
+      },
     ]);
     const minted = await new PlowApi("https://api.plow.co", fetchImpl).createAgent(
       "plow_device",

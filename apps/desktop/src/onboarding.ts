@@ -203,6 +203,10 @@ export interface OnboardingDeps {
   isConnected: () => boolean;
   /** Names this Mac, both in the activation and in the user's key list. */
   deviceName: string;
+  /** Stable installation identity already owned by device-core. */
+  deviceId: string;
+  /** DNS hostname used only as the server-authored display-name seed. */
+  hostname: string;
   onChange?: () => void;
   now?: () => number;
   /** How the poll loop waits. Injectable so tests need no real timers. */
@@ -656,9 +660,9 @@ export class Onboarding {
    * credential's scopes freeze at mint. A session carries `*:*` and expires
    * only after 180 days unused, refreshed by every request it makes.
    *
-   * So there is no second step. `POST /v1/relay/devices` — which minted a
-   * narrow credential and spent this session in the same transaction — is
-   * gone; the token the redeem handed back is what gets written.
+   * The token the redeem handed back is what gets written. Registration is an
+   * idempotent `PUT` that binds this installation's existing identity to that
+   * session; it does not mint or replace the credential.
    */
   private async finishWithSession(
     sessionToken: string,
@@ -668,12 +672,21 @@ export class Onboarding {
     // persisting past it would leave the account a live credential its owner
     // just retired. `pollGeneration` is bumped by every path that abandons this
     // login — reset, the phone fallback, a fresh mint — so it is the epoch to
-    // check against. One await now rather than two, so one check.
+    // check against after each network step.
     //
     // A sign-out landing inside it takes the session with it. The session is
     // revoked best-effort, the same contract sign-out keeps.
     const epoch = this.pollGeneration;
     const info = await this.deps.api.relayInfo(sessionToken);
+    if (epoch !== this.pollGeneration) {
+      await this.deps.api.revokeDeviceCredential(sessionToken).catch(() => {});
+      return;
+    }
+    const registered = await this.deps.api.registerRelayDevice(
+      sessionToken,
+      this.deps.deviceId,
+      this.deps.hostname,
+    );
     if (epoch !== this.pollGeneration) {
       await this.deps.api.revokeDeviceCredential(sessionToken).catch(() => {});
       return;
@@ -684,7 +697,10 @@ export class Onboarding {
     const settings = this.settings();
     settings.relayCredential = sessionToken;
     settings.accountUid = info.uid;
-    settings.mcpUrl = info.mcpUrl;
+    settings.accountMcpUrl = info.mcpUrl;
+    settings.relayDeviceId = registered.deviceId;
+    settings.relayDeviceName = registered.displayName;
+    settings.mcpUrl = registered.mcpUrl;
     // Kept, not read and dropped: the redeem that carried it answers once, so
     // this is the only moment the app ever sees the chat it just created. A
     // sign-in with no chat — the phone-code path, or a Mac activated before

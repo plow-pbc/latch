@@ -67,6 +67,7 @@ describe("a socket that goes silent", () => {
     const client = new RelayClient({
       url: "ws://example.invalid/relay",
       credential: "plow_sk_test",
+      deviceId: "device-1",
       serve: async () => new Response("no"),
       onStatusChange: (connected) => status.push(connected),
       // Full jitter picks a delay in [0, ceiling]; pinned so the reconnect
@@ -87,6 +88,11 @@ describe("a socket that goes silent", () => {
     const { client, conns, status } = harness();
     await client.start();
     conns[0].handshake();
+    expect(conns[0].sent[0]).toMatchObject({
+      type: "auth",
+      token: "plow_sk_test",
+      device_id: "device-1",
+    });
     expect(client.isConnected).toBe(true);
     expect(status).toEqual([true]);
 

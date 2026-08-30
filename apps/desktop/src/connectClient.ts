@@ -266,7 +266,7 @@ export class ConnectClient {
         if (generation !== this.generation) return this.state();
         this.credential = {
           name: minted.name || trimmed,
-          config: agentConfig(settings.mcpUrl, minted.token),
+          config: validatedAgentConfig(minted.mcpConfig, minted.token),
         };
       } catch (error) {
         if (generation === this.generation) this.message = messageOf(error);
@@ -338,22 +338,38 @@ export class ConnectClient {
   }
 }
 
-/** What to paste into an MCP client. The credential is a header, never part of
- * the URL — a URL ends up in shell history, logs and stored registrations. */
-export function agentConfig(mcpUrl: string, token: string): string {
-  return JSON.stringify(
-    {
-      mcpServers: {
-        plow: {
-          type: "http",
-          url: mcpUrl,
-          headers: { Authorization: `Bearer ${token}` },
-        },
-      },
-    },
-    null,
-    2,
-  );
+export function validatedAgentConfig(config: string, token: string): string {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(config);
+  } catch {
+    throw new PlowApiError("http", "Plow returned an invalid MCP configuration.");
+  }
+  if (!parsed || typeof parsed !== "object") {
+    throw new PlowApiError("http", "Plow returned an invalid MCP configuration.");
+  }
+  const servers = (parsed as { mcpServers?: unknown }).mcpServers;
+  if (!servers || typeof servers !== "object" || Array.isArray(servers) || !Object.keys(servers).length) {
+    throw new PlowApiError("http", "Plow returned an invalid MCP configuration.");
+  }
+  for (const server of Object.values(servers as Record<string, unknown>)) {
+    if (!server || typeof server !== "object") {
+      throw new PlowApiError("http", "Plow returned an invalid MCP configuration.");
+    }
+    const headers = (server as { headers?: unknown }).headers;
+    if (
+      !headers ||
+      typeof headers !== "object" ||
+      (headers as Record<string, unknown>).Authorization !== `Bearer ${token}`
+    ) {
+      throw new PlowApiError("http", "Plow returned an invalid MCP configuration.");
+    }
+  }
+  const echoed = JSON.stringify(parsed).match(/plow_[A-Za-z0-9_-]+/g) ?? [];
+  if (echoed.some((value) => value !== token)) {
+    throw new PlowApiError("http", "Plow returned an invalid MCP configuration.");
+  }
+  return config;
 }
 
 function messageOf(error: unknown): string {
