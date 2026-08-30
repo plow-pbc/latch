@@ -124,7 +124,7 @@ const ROSTER = {
       isActive: true, isThisMac: false,
     },
     {
-      id: 403, name: "Legacy automation token", kind: "Legacy — full access",
+      id: 403, name: "Legacy automation token", kind: "Admin — full access",
       createdAt: "2026-08-20T17:00:00.000Z", lastSeenAt: null,
       agentId: null, chatUids: ["*"], chatAccess: "all",
       permissions: { canReadAndReply: true, canReachMac: true, canSpendInference: true },
@@ -428,7 +428,7 @@ const SCREENS = [
       "+1 628-555-0144", "Created today", "Message",
       "MCP clients", "Claude Code on MacBook Pro", "Cursor desktop",
       "Other sessions", "Plow Latch on this Mac", "This Mac",
-      "Plow website · Safari", "Legacy automation token", "14 revoked sessions hidden",
+      "Plow website · Safari", "Legacy automation token", "Admin *:*", "14 revoked sessions hidden",
     ],
   },
   {

@@ -19,8 +19,16 @@
  * by launching a window is one nobody tests.
  */
 import { PlowApi, PlowApiError } from "./plowApi.js";
-import { EMPTY_ROSTER, RosterSections, sectionRoster } from "./rosterSections.js";
+import {
+  EMPTY_ROSTER,
+  RosterSections,
+  sectionRoster,
+  shouldAutoRevokeSession,
+  thisMacKeyId,
+} from "./rosterSections.js";
 import { loadSettings, Settings } from "./settings.js";
+
+const MAX_AUTO_REVOKES_PER_REFRESH = 25;
 
 export interface ClientCredential {
   /** What the user called this connection. Display only. */
@@ -89,8 +97,13 @@ export interface ConnectClientDeps {
    * server. The stored credential, the relay socket and the window gate all
    * stay live, so the app keeps running as though signed in while every call
    * it makes 401s — and the roster promises immediate sign-out.
-   */
+  */
   signOutThisMac: () => Promise<void>;
+  /** Append a non-secret account-maintenance event to this Mac's audit log. */
+  recordAudit: (
+    event: string,
+    fields: Record<string, string | number | boolean>,
+  ) => void;
   onChange?: () => void;
 }
 
@@ -172,8 +185,48 @@ export class ConnectClient {
       // never undo a newer answer — least of all by restoring a session the
       // newer one saw revoked.
       if (generation !== this.generation || read !== this.rosterReads) return this.state();
-      this.roster = sectionRoster(keys, { deviceCredential: credential });
-      this.rosterError = null;
+
+      const thisMacId = thisMacKeyId(keys, credential);
+      const now = Date.now();
+      const abandoned = thisMacId === null
+        ? []
+        : keys
+          .filter((key) => shouldAutoRevokeSession(key, { thisMacId, now }))
+          .slice(0, MAX_AUTO_REVOKES_PER_REFRESH);
+      const revoked = new Set<number>();
+      for (const key of abandoned) {
+        if (generation !== this.generation || read !== this.rosterReads) return this.state();
+        try {
+          await this.deps.api.revokeApiKey(credential, key.id);
+          revoked.add(key.id);
+          this.recordCleanup(key.id, "revoked");
+        } catch (error) {
+          this.recordCleanup(key.id, "failed", messageOf(error));
+        }
+      }
+      if (generation !== this.generation || read !== this.rosterReads) return this.state();
+
+      let currentKeys = keys;
+      let refreshError: string | null = null;
+      if (abandoned.length > 0) {
+        try {
+          const listed = await this.deps.api.listApiKeys(credential);
+          currentKeys = listed.map((key) =>
+            revoked.has(key.id) ? { ...key, is_active: false } : key,
+          );
+        } catch (error) {
+          // A successful revoke is already server truth even if the confirming
+          // read fails. Keep failed rows and mark successes inactive locally,
+          // while the banner says the refreshed list could not be confirmed.
+          currentKeys = keys.map((key) =>
+            revoked.has(key.id) ? { ...key, is_active: false } : key,
+          );
+          refreshError = messageOf(error);
+        }
+      }
+      if (generation !== this.generation || read !== this.rosterReads) return this.state();
+      this.roster = sectionRoster(currentKeys, { deviceCredential: credential });
+      this.rosterError = refreshError;
     } catch (error) {
       if (generation !== this.generation || read !== this.rosterReads) return this.state();
       // The rows already on screen stay: a stale list with a banner beats an
@@ -181,6 +234,16 @@ export class ConnectClient {
       this.rosterError = messageOf(error);
     }
     return this.publish();
+  }
+
+  private recordCleanup(id: number, outcome: "revoked" | "failed", error?: string): void {
+    try {
+      const fields: Record<string, string | number> = { keyId: id, outcome };
+      if (error !== undefined) fields.error = error;
+      this.deps.recordAudit("activation_session_cleanup", fields);
+    } catch (auditError) {
+      console.error("[connect] could not audit activation-session cleanup:", auditError);
+    }
   }
 
   /**

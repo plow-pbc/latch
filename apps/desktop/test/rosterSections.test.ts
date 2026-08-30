@@ -4,7 +4,11 @@
  * one everyday testing never enters.
  */
 import { describe, expect, it } from "vitest";
-import { sectionRoster, removalRouteFor } from "../src/rosterSections.js";
+import {
+  removalRouteFor,
+  sectionRoster,
+  shouldAutoRevokeSession,
+} from "../src/rosterSections.js";
 import type { KeyInfo } from "../src/plowApi.js";
 
 /** A device credential of the shape plow issues. */
@@ -67,7 +71,7 @@ describe("which section a credential belongs in", () => {
     ]);
     expect(sections.other.map(({ id, kind }) => ({ id, kind }))).toEqual([
       { id: 2, kind: "Plow web login" },
-      { id: 3, kind: "Legacy — full access" },
+      { id: 3, kind: "Admin — full access" },
     ]);
   });
 
@@ -102,6 +106,35 @@ describe("which section a credential belongs in", () => {
     expect(JSON.stringify(sections)).not.toMatch(
       /key_prefix|plow_sk_abc123|scopes|relay:call|tokens_used/,
     );
+  });
+});
+
+describe("abandoned activation sessions", () => {
+  const now = Date.parse("2026-08-30T12:00:00Z");
+  const abandoned = (): KeyInfo => key({
+    id: 2,
+    name: null,
+    scopes: ["*:*"],
+    is_active: true,
+    last_seen_at: null,
+    created_at: "2026-08-30T11:49:00Z",
+    agent_id: null,
+  });
+
+  it.each([
+    ["the complete abandoned shape", {}, true],
+    ["an inactive key", { is_active: false }, false],
+    ["an agent-owned key", { agent_id: "agent_2" }, false],
+    ["a narrower scope", { scopes: ["relay:*"] }, false],
+    ["a named key", { name: "Another Mac" }, false],
+    ["a key used once", { last_seen_at: "2026-08-30T11:50:00Z" }, false],
+    ["this Mac's key", { id: 1 }, false],
+    ["a key exactly ten minutes old", { created_at: "2026-08-30T11:50:00Z" }, false],
+    ["a key with no creation time", { created_at: null }, false],
+    ["a key with an invalid creation time", { created_at: "not-a-date" }, false],
+  ] satisfies Array<[string, Partial<KeyInfo>, boolean]>)("selects %s: %s", (_case, overrides, expected) => {
+    expect(shouldAutoRevokeSession({ ...abandoned(), ...overrides }, { thisMacId: 1, now }))
+      .toBe(expected);
   });
 });
 
@@ -196,10 +229,10 @@ describe("this Mac's own credential", () => {
     expect(rows.find((row) => row.id === 2)?.isThisMac).toBe(false);
   });
 
-  it("is a Session, not a leftover, whatever its scopes read", () => {
+  it("is a Session, not an Admin credential, whatever its scopes read", () => {
     // This Mac holds the login session now — `*:*`, which is exactly the shape
-    // `rosterKind` calls "Legacy — full access". The screen was labelling the
-    // credential it is running on as something to clean up.
+    // `rosterKind` calls "Admin — full access". The screen must still identify
+    // the credential it is running on as its own session.
     const sections = sectionRoster(
       [
         key({ id: 1, scopes: ["*:*"], key_prefix: keyPrefixOf(DEVICE_CREDENTIAL) }),
@@ -210,8 +243,8 @@ describe("this Mac's own credential", () => {
 
     const rows = [...sections.mcp, ...sections.other];
     expect(rows.find((row) => row.id === 1)).toMatchObject({ kind: "Session", isThisMac: true });
-    // Another account credential with the same scopes is still a leftover.
-    expect(rows.find((row) => row.id === 2)).toMatchObject({ kind: "Legacy — full access" });
+    // Another account credential with the same scopes is still full access.
+    expect(rows.find((row) => row.id === 2)).toMatchObject({ kind: "Admin — full access" });
   });
 
   it("marks nothing when two rows would both match", () => {

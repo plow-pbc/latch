@@ -1188,6 +1188,7 @@ app.whenReady().then(async () => {
       await cloudAgents?.remove(agentId);
     },
     signOutThisMac,
+    recordAudit: (event, fields) => device?.audit.record(event, fields),
     onChange: () => notifyRenderer("connect:changed"),
   });
 
