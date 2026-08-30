@@ -103,10 +103,14 @@ export interface CloudLineFlowUiState {
   completedAgentId: string | null;
   /** Whether retry must mint a fresh line instead of repeating the final mutation. */
   retryNewLine: boolean;
+  /** A terminal condition for which repeating the same request cannot help. */
+  terminal: "no_numbers" | null;
 }
 
 export interface CloudCreateInput {
   name: string;
+  /** Provider executable selected in the New agent form. */
+  provider?: string;
   /** `null` asks Plow to provision a new line through activation. */
   lineUid: string | null;
 }
@@ -340,6 +344,11 @@ export class CloudAgentState {
   /** Start a new agent on a known line, or mint and watch a brand-new line. */
   async create(input: CloudCreateInput): Promise<string | null> {
     const name = typeof input?.name === "string" ? input.name.trim() : "";
+    const provider = typeof input?.provider === "string" ? input.provider.trim() : "exe:hermes";
+    if (!provider) {
+      this.setLineFlowError("create", "Pick an agent type.", false);
+      return null;
+    }
     const rawLineUid = input?.lineUid;
     if (rawLineUid !== null && typeof rawLineUid !== "string") {
       this.setLineFlowError("create", "Pick a line for this agent.", false);
@@ -356,7 +365,7 @@ export class CloudAgentState {
       return null;
     }
 
-    const request: CloudLineRequest = { kind: "create", name, lineUid };
+    const request: CloudLineRequest = { kind: "create", name, provider, lineUid };
     const flow = this.beginLineFlow(request);
 
     if (lineUid !== null) return this.finishLineFlow(request, this.generation, flow);
@@ -426,6 +435,18 @@ export class CloudAgentState {
     );
   }
 
+  /** A Messages deep link for one resolved agent line, kept in main-process state. */
+  agentSmsUrl(agentId: string): string | null {
+    const lineUid = this.rows.get(agentId)?.line?.uid;
+    if (!lineUid) return null;
+    const number = (
+      this.lines?.find((line) => line.uid === lineUid)?.number ??
+      this.chats.find((chat) => chat.lineUid === lineUid)?.recipients?.line ??
+      ""
+    ).trim();
+    return E164.test(number) ? `sms:${number}` : null;
+  }
+
   private async startNewLine(
     action: CloudLineRequest,
     generation: number,
@@ -436,7 +457,8 @@ export class CloudAgentState {
       created = await this.deps.activation.createProvisionedActivation();
     } catch (error) {
       if (this.isCurrentLineFlow(action.kind, generation, flow)) {
-        this.setLineFlowError(action.kind, messageOf(error), true);
+        if (isNoNumbersAvailable(error)) this.setNoNumbersAvailable(action.kind);
+        else this.setLineFlowError(action.kind, messageOf(error), true);
       }
       return null;
     }
@@ -453,6 +475,7 @@ export class CloudAgentState {
       message: null,
       completedAgentId: null,
       retryNewLine: false,
+      terminal: null,
     };
     this.lineFlow = { kind: action.kind, request: action, ui: waiting };
     this.publish();
@@ -550,7 +573,7 @@ export class CloudAgentState {
     const lineUid = request.lineUid;
     if (lineUid === null) return Promise.resolve(null);
     return request.kind === "create"
-      ? this.provision({ name: request.name, lineUid }, generation, flow)
+      ? this.provision({ name: request.name, provider: request.provider ?? "exe:hermes", lineUid }, generation, flow)
       : this.moveToLine(request.agentId, lineUid, generation, flow);
   }
 
@@ -628,6 +651,7 @@ export class CloudAgentState {
     this.retryRequests.set(agentId, {
       lineUid,
       name: moved.name ?? previous?.name ?? "",
+      provider: moved.provider ?? "exe:hermes",
     });
     this.completeLineFlow(agentId);
     this.publish();
@@ -728,6 +752,21 @@ export class CloudAgentState {
         phase: "error",
         message,
         retryNewLine,
+      },
+    };
+    this.publish();
+  }
+
+  private setNoNumbersAvailable(kind: CloudLineRequest["kind"]): void {
+    this.activationSecret = null;
+    this.lineFlow = {
+      kind,
+      request: null,
+      ui: {
+        ...idleLineFlowUi(),
+        phase: "error",
+        message: "No numbers are available right now. Try again later.",
+        terminal: "no_numbers",
       },
     };
     this.publish();
@@ -841,6 +880,7 @@ export class CloudAgentState {
           this.retryRequests.set(agent.agentId, {
             lineUid,
             name: agent.name ?? "",
+            provider: agent.provider ?? "exe:hermes",
           });
         }
       }
@@ -993,7 +1033,11 @@ export class CloudAgentState {
       const line = this.lineFor(lineUid);
       const threads = this.threadsFor(lineUid);
       if (lineUid !== null) {
-        this.retryRequests.set(agentId, { lineUid, name: row.name });
+        this.retryRequests.set(agentId, {
+          lineUid,
+          name: row.name,
+          provider: this.retryRequests.get(agentId)?.provider ?? "exe:hermes",
+        });
       }
       const unchanged = line?.uid === row.line?.uid && line?.label === row.line?.label &&
         threads.length === row.threads.length && threads.every(
@@ -1031,13 +1075,19 @@ function idleLineFlowUi(): CloudLineFlowUiState {
     message: null,
     completedAgentId: null,
     retryNewLine: false,
+    terminal: null,
   };
 }
 
-/** Newest first, matching the account roster. */
+/** Newest first; missing or equal creation dates fall back to display name. */
 function byNewestFirst(a: CloudAgentDisplayRow, b: CloudAgentDisplayRow): number {
-  if (a.createdAt !== b.createdAt) return a.createdAt < b.createdAt ? 1 : -1;
-  return a.agentId < b.agentId ? -1 : 1;
+  const aCreated = Date.parse(a.createdAt);
+  const bCreated = Date.parse(b.createdAt);
+  const aKnown = Number.isFinite(aCreated);
+  const bKnown = Number.isFinite(bCreated);
+  if (aKnown && bKnown && aCreated !== bCreated) return bCreated - aCreated;
+  if (aKnown !== bKnown) return aKnown ? -1 : 1;
+  return a.name.localeCompare(b.name) || a.agentId.localeCompare(b.agentId);
 }
 
 /**
@@ -1062,6 +1112,11 @@ function isCredentialFailure(error: unknown): boolean {
   return (
     error instanceof PlowApiError && (error.kind === "forbidden" || error.kind === "unauthorized")
   );
+}
+
+/** The current activation service reports an empty line pool as an uncoded 503. */
+function isNoNumbersAvailable(error: unknown): boolean {
+  return error instanceof PlowApiError && error.status === 503 && error.code === undefined;
 }
 
 function isAbort(error: unknown): boolean {

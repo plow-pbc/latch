@@ -33,6 +33,7 @@ export interface CloudAgentResource {
 export interface CreateCloudAgentRequest {
   lineUid: string;
   name: string;
+  provider: string;
 }
 
 export type CloudAgentLineErrorCode =
@@ -89,6 +90,7 @@ export class CloudAgentsClient {
       token: deviceCredential,
       body: {
         line_uid: request.lineUid,
+        provider: request.provider,
         ...(request.name.trim() ? { name: request.name } : {}),
       },
     });

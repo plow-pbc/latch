@@ -276,6 +276,19 @@ describe("PlowApi", () => {
     expect(JSON.parse(String(calls[0].init.body))).toEqual({ provision_chat: true });
   });
 
+  it("preserves the current uncoded 503 contract for an exhausted line pool", async () => {
+    const { fetchImpl } = recordingFetch([{
+      status: 503,
+      body: { detail: "no chat line available" },
+    }]);
+
+    const error = await new PlowApi("https://api.plow.co", fetchImpl)
+      .createProvisionedActivation()
+      .catch((caught: unknown) => caught as PlowApiError);
+
+    expect(error).toMatchObject({ status: 503, code: undefined });
+  });
+
   it("drops the provisioned redeem token and finds an agent participant out of position", async () => {
     const token = "plow_session_that_must_be_dropped";
     const { fetchImpl } = recordingFetch([{

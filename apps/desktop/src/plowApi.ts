@@ -96,6 +96,7 @@ export class PlowApiError extends Error {
     readonly kind: PlowApiErrorKind,
     message: string,
     readonly status?: number,
+    readonly code?: string,
   ) {
     super(message);
     this.name = "PlowApiError";
@@ -775,25 +776,39 @@ export class PlowApi {
     // and it let the first ten characters through. Nothing here inspects the
     // value; the decision is made from whether the call carried a credential.
     let detail = "";
+    let code: string | undefined;
     try {
-      const body = (await response.json()) as { detail?: unknown };
+      const body = (await response.json()) as { detail?: unknown; code?: unknown };
       if (typeof body?.detail === "string") detail = body.detail;
+      const nestedCode = body?.detail && typeof body.detail === "object"
+        ? (body.detail as { code?: unknown }).code
+        : undefined;
+      const rawCode = nestedCode ?? body?.code;
+      if (typeof rawCode === "string" && /^[A-Z][A-Z0-9_]*$/.test(rawCode.trim())) {
+        code = rawCode.trim();
+      }
     } catch {
       /* a non-JSON body tells us nothing worth showing */
     }
     if (credential) detail = "";
-    if (response.status === 401) return new PlowApiError("unauthorized", detail || "Not authorized.", 401);
-    if (response.status === 403) return new PlowApiError("forbidden", detail || "Not permitted.", 403);
+    if (response.status === 401) return new PlowApiError("unauthorized", detail || "Not authorized.", 401, code);
+    if (response.status === 403) return new PlowApiError("forbidden", detail || "Not permitted.", 403, code);
     if (response.status === 410) {
-      return new PlowApiError("expired", detail || "That code has expired.", 410);
+      return new PlowApiError("expired", detail || "That code has expired.", 410, code);
     }
     if (response.status === 503) {
       return new PlowApiError(
         "provider_unavailable",
         detail || "Plow can't send text messages right now.",
         503,
+        code,
       );
     }
-    return new PlowApiError("http", detail || `Plow returned ${response.status}.`, response.status);
+    return new PlowApiError(
+      "http",
+      detail || `Plow returned ${response.status}.`,
+      response.status,
+      code,
+    );
   }
 }

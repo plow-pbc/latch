@@ -641,6 +641,7 @@ ipcMain.handle("cloud:create", async (_e, input: unknown) => {
   const raw = input && typeof input === "object" ? input as Record<string, unknown> : {};
   await cloudAgents?.create({
     name: typeof raw.name === "string" ? raw.name : "",
+    provider: typeof raw.provider === "string" ? raw.provider : "",
     lineUid: raw.lineUid === null ? null : typeof raw.lineUid === "string" ? raw.lineUid : "",
   });
   await connectClient?.refreshRoster();
@@ -669,8 +670,10 @@ ipcMain.handle("cloud:changeLine", async (_e, input: unknown) => {
   await connectClient?.refreshRoster();
   return agentsTabState();
 });
-ipcMain.handle("cloud:openMessages", async () => {
-  const url = cloudAgents?.createSmsUrl();
+ipcMain.handle("cloud:openMessages", async (_e, agentId?: unknown) => {
+  const url = typeof agentId === "string"
+    ? cloudAgents?.agentSmsUrl(agentId)
+    : cloudAgents?.createSmsUrl();
   if (!url) return false;
   await shell.openExternal(url);
   return true;

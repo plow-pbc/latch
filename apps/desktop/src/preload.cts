@@ -97,14 +97,14 @@ contextBridge.exposeInMainWorld("domo", {
   // no roster row to name and none is needed.
   cloudRemove: (agentId: string) => ipcRenderer.invoke("cloud:remove", agentId),
   cloudRefresh: () => ipcRenderer.invoke("cloud:refresh"),
-  cloudCreate: (input: { name: string; lineUid: string | null }) =>
+  cloudCreate: (input: { name: string; provider: string; lineUid: string | null }) =>
     ipcRenderer.invoke("cloud:create", input),
   cloudCancelLineFlow: () => ipcRenderer.invoke("cloud:cancelLineFlow"),
   cloudRetryLineFlow: () => ipcRenderer.invoke("cloud:retryLineFlow"),
   cloudRetryFailed: (agentId: string) => ipcRenderer.invoke("cloud:retryFailed", agentId),
   cloudChangeLine: (input: { agentId: string; lineUid: string | null }) =>
     ipcRenderer.invoke("cloud:changeLine", input),
-  cloudOpenMessages: () => ipcRenderer.invoke("cloud:openMessages"),
+  cloudOpenMessages: (agentId?: string) => ipcRenderer.invoke("cloud:openMessages", agentId),
   onConnectChanged: (cb: () => void) => ipcRenderer.on("connect:changed", cb),
 
   // Any external destination the app links to. A key, never a URL: main

@@ -114,12 +114,12 @@ describe("CloudAgentsClient resources", () => {
 });
 
 describe("CloudAgentsClient creation", () => {
-  it.each([200, 202])("accepts %s and sends only the line and name", async (status) => {
+  it.each([200, 202])("accepts %s and sends the selected provider", async (status) => {
     const { calls, fetchImpl } = recordingFetch([{ status, body: wireAgent() }]);
 
     await new CloudAgentsClient(new PlowApi("https://api.plow.co", fetchImpl)).create(
       CREDENTIAL,
-      { lineUid: "lin_willow", name: "Kitchen" },
+      { lineUid: "lin_willow", name: "Kitchen", provider: "exe:life" },
     );
 
     expect(calls[0].url).toBe("https://api.plow.co/v1/agents/cloud");
@@ -127,6 +127,7 @@ describe("CloudAgentsClient creation", () => {
     expect(JSON.parse(String(calls[0].init.body))).toEqual({
       line_uid: "lin_willow",
       name: "Kitchen",
+      provider: "exe:life",
     });
     expect(String(calls[0].init.body)).not.toContain("chat_uids");
   });
@@ -136,10 +137,13 @@ describe("CloudAgentsClient creation", () => {
 
     await new CloudAgentsClient(new PlowApi("https://api.plow.co", fetchImpl)).create(
       CREDENTIAL,
-      { lineUid: "lin_willow", name: "" },
+      { lineUid: "lin_willow", name: "", provider: "exe:hermes" },
     );
 
-    expect(JSON.parse(String(calls[0].init.body))).toEqual({ line_uid: "lin_willow" });
+    expect(JSON.parse(String(calls[0].init.body))).toEqual({
+      line_uid: "lin_willow",
+      provider: "exe:hermes",
+    });
   });
 
   it("maps NO_HOME_CHAT to fixed create copy", async () => {
@@ -150,7 +154,7 @@ describe("CloudAgentsClient creation", () => {
 
     await expect(new CloudAgentsClient(new PlowApi("https://api.plow.co", fetchImpl)).create(
       CREDENTIAL,
-      { lineUid: "lin_willow", name: "Kitchen" },
+      { lineUid: "lin_willow", name: "Kitchen", provider: "exe:hermes" },
     )).rejects.toThrow("Text this line once first, then try again.");
     expect(console.error).toHaveBeenCalledWith(
       "[cloud-agent] request failed status=409 code=NO_HOME_CHAT",
@@ -169,7 +173,11 @@ describe("CloudAgentsClient creation", () => {
     }]);
 
     const error = await new CloudAgentsClient(new PlowApi("https://api.plow.co", fetchImpl))
-      .create(CREDENTIAL, { lineUid: "lin_willow", name: "Kitchen" })
+      .create(CREDENTIAL, {
+        lineUid: "lin_willow",
+        name: "Kitchen",
+        provider: "exe:hermes",
+      })
       .catch((caught: unknown) => caught as Error);
 
     expect(error.message).toBe("Plow returned 422.");
