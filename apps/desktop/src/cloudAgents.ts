@@ -17,12 +17,7 @@ export type CloudAgentStatus =
  */
 export interface CloudAgentResource {
   agentId: string;
-  /**
-   * The line this agent follows. Older agents have no line and retain the
-   * fixed chats in `chatUids` instead.
-   */
-  lineUid: string | null;
-  /** Informational line scope for current agents; fixed threads for legacy agents. */
+  /** The first entry is the home chat used to resolve this agent's line. */
   chatUids: string[];
   url: string | null;
   provider: string | null;
@@ -233,9 +228,6 @@ function parseResource(
   if (
     !isRecord(decoded) ||
     typeof decoded.agent_id !== "string" ||
-    (decoded.line_uid !== undefined &&
-      decoded.line_uid !== null &&
-      typeof decoded.line_uid !== "string") ||
     (decoded.status !== undefined && decoded.status !== null && typeof decoded.status !== "string") ||
     (decoded.created_at !== undefined && typeof decoded.created_at !== "string")
   ) {
@@ -249,7 +241,6 @@ function parseResource(
     typeof value === "string" ? value : null;
   const resource: CloudAgentResource = {
     agentId: decoded.agent_id,
-    lineUid: optionalString(decoded.line_uid),
     chatUids,
     url: optionalString(decoded.url),
     provider: optionalString(decoded.provider),

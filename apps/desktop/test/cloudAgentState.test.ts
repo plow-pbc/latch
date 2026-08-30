@@ -33,7 +33,6 @@ function tempHome(): string {
 function agent(overrides: Partial<CloudAgentResource> = {}): CloudAgentResource {
   return {
     agentId: "agent_1",
-    lineUid: null,
     chatUids: ["cht_one"],
     url: null,
     provider: "exe:hermes",
@@ -169,7 +168,7 @@ describe("CloudAgentState line and thread display", () => {
     });
   });
 
-  it("filters a current agent's read-only threads by line uid", async () => {
+  it("filters an agent's read-only threads by its home chat's line", async () => {
     const { state } = build({
       listChats: async () => [
         chat({ uid: "cht_one", lineUid: "lin_willow", label: "one" }),
@@ -189,7 +188,7 @@ describe("CloudAgentState line and thread display", () => {
     });
   });
 
-  it("lists only a legacy agent's fixed chats, with resolved labels", async () => {
+  it("shows no line and no threads when the home chat is absent", async () => {
     const { state } = build({
       listAgents: async () => [agent({ chatUids: ["cht_missing", "cht_two"] })],
       listChats: async () => [
@@ -207,28 +206,6 @@ describe("CloudAgentState line and thread display", () => {
 
     expect(state.state().cloudAgents[0]).toMatchObject({
       line: null,
-      threads: [
-        { uid: "cht_missing", label: "cht_missing" },
-        { uid: "cht_two", label: "+15550200" },
-      ],
-    });
-  });
-
-  it("resolves a formatted line from its uid even when the line has no threads", async () => {
-    const { state } = build({
-      listAgents: async () => [agent({ lineUid: "lin_willow" })],
-      listChats: async () => [],
-      listLines: async () => [{
-        uid: "lin_willow",
-        displayName: "Willow",
-        number: "+14155550142",
-      }],
-    });
-
-    await state.refresh();
-
-    expect(state.state().cloudAgents[0]).toMatchObject({
-      line: { uid: "lin_willow", label: "Willow · +1 415-555-0142" },
       threads: [],
     });
   });
@@ -243,9 +220,7 @@ describe("CloudAgentState line and thread display", () => {
     await state.refresh();
 
     expect(state.state().cloudAgents).toHaveLength(1);
-    expect(state.state().cloudAgents[0].threads).toEqual([
-      { uid: "cht_one", label: "cht_one" },
-    ]);
+    expect(state.state().cloudAgents[0].threads).toEqual([]);
     expect(state.state().cloudAgentsError).toBeNull();
     expect(state.state().cloudChatsError).toBe("Plow returned 503.");
     expect(state.state().cloudChatsLoaded).toBe(false);
@@ -512,12 +487,12 @@ describe("CloudAgentState new agent flow", () => {
 });
 
 describe("CloudAgentState change-line flow", () => {
-  it("moves a legacy agent to a picked free line without activating", async () => {
+  it("moves an agent with no home chat to a picked free line without activating", async () => {
     const moved: Array<{ agentId: string; lineUid: string }> = [];
     const { state, calls } = build({
       listAgents: async () => [agent({ chatUids: ["cht_missing"] })],
       listChats: async () => [
-        chat({ uid: "cht_legacy", lineUid: "lin_willow" }),
+        chat({ uid: "cht_willow", lineUid: "lin_willow" }),
         chat({ uid: "cht_ash", lineUid: "lin_ash", recipients: { line: "+15550200", members: [] } }),
       ],
       listLines: async () => [
@@ -597,7 +572,7 @@ describe("CloudAgentState change-line flow", () => {
             "Text this line once first, then try again.",
           );
         }
-        return agent({ agentId, lineUid });
+        return agent({ agentId, chatUids: ["cht_ash"] });
       },
     });
     await state.refresh();
@@ -618,7 +593,7 @@ describe("CloudAgentState change-line flow", () => {
     const { state } = build({
       listAgents: async () => lists++ === 0
         ? [agent()]
-        : [agent(), agent({ agentId: "agent_2", lineUid: "lin_ash" })],
+        : [agent(), agent({ agentId: "agent_2", chatUids: ["cht_ash"] })],
       listChats: async () => [
         chat(),
         chat({ uid: "cht_ash", lineUid: "lin_ash", recipients: { line: "+15550200", members: [] } }),

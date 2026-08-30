@@ -57,12 +57,10 @@ const PROVISIONING_AGENT = {
   failureReason: null,
   createdAt: new Date().toISOString(),
 };
-const LEGACY_AGENT = {
+const NO_LINE_AGENT = {
   ...ACTIVE_AGENT,
-  agentId: "cag_legacy",
-  name: "Legacy helper",
   line: null,
-  threads: [{ uid: "chat_old", label: "Old fixed thread" }],
+  threads: [],
 };
 const EMPTY_ROSTER = { cloud: [], mcp: [], other: [], revokedHidden: 0 };
 const ROSTER = {
@@ -578,7 +576,7 @@ const SCREENS = [
     name: "cloud-chat-loading-detail",
     cloud: {
       ...CLOUD_READY,
-      cloudAgents: [{ ...LEGACY_AGENT, threads: [] }],
+      cloudAgents: [NO_LINE_AGENT],
       cloudChatsLoaded: false,
     },
     prepare: async (win) => {
@@ -588,13 +586,13 @@ const SCREENS = [
       await waitFor(win, `document.querySelector(".cloud-modal .cloud-detail-threads")`,
         "the loading-thread detail");
     },
-    expect: ["Legacy helper", "Line unavailable", "Loading threads…", "Delete agent"],
+    expect: ["Household helper", "Line unavailable", "Loading threads…", "Delete agent"],
   },
   {
     name: "cloud-chat-failed-detail",
     cloud: {
       ...CLOUD_READY,
-      cloudAgents: [{ ...LEGACY_AGENT, threads: [] }],
+      cloudAgents: [NO_LINE_AGENT],
       cloudChatsError: "The chat list is unavailable.",
       cloudChatsLoaded: false,
     },
@@ -611,7 +609,7 @@ const SCREENS = [
         throw new Error("detail exposed a raw line uid while chats were unavailable");
       }
     },
-    expect: ["Legacy helper", "Line unavailable", "Threads couldn't be loaded", "Delete agent"],
+    expect: ["Household helper", "Line unavailable", "Threads couldn't be loaded", "Delete agent"],
   },
   {
     name: "cloud-delete-confirm",
@@ -642,60 +640,19 @@ const SCREENS = [
     },
   },
   {
-    name: "cloud-legacy-detail",
+    name: "cloud-no-line-detail",
     cloud: {
       ...CLOUD_READY,
-      cloudAgents: [LEGACY_AGENT],
+      cloudAgents: [NO_LINE_AGENT],
     },
     prepare: async (win) => {
       await win.webContents.executeJavaScript(
         `document.querySelector(".cloud-agent-row .cloud-agent-open").click()`,
       );
       await waitFor(win, `document.querySelector(".cloud-modal .cloud-detail-threads")`,
-        "the legacy agent detail");
+        "the no-line agent detail");
     },
-    expect: ["Legacy helper", "No line", "Old fixed thread", "Change line", "Delete agent"],
-  },
-  {
-    name: "cloud-legacy-change-line",
-    cloud: {
-      ...CLOUD_READY,
-      cloudAgents: [LEGACY_AGENT],
-      cloudFreeLines: [{ uid: "lin_ash", label: "Ash · +1 415-555-0199" }],
-    },
-    prepare: async (win) => {
-      await win.webContents.executeJavaScript(
-        `document.querySelector(".cloud-agent-row .cloud-agent-open").click()`,
-      );
-      await waitFor(win, `document.querySelector(".cloud-modal .cloud-detail-threads")`,
-        "the legacy agent detail");
-      await clickText(win, "Change line", 0);
-      await waitFor(win, `document.querySelector(".cloud-modal .cloud-line-options")`,
-        "the legacy Change line picker");
-    },
-    expect: [
-      "Change line", "keeps its name and memory", "Ash · +1 415-555-0199", "New line",
-    ],
-  },
-  {
-    name: "cloud-legacy-delete-confirm",
-    cloud: { ...CLOUD_READY, cloudAgents: [LEGACY_AGENT] },
-    prepare: async (win) => {
-      await win.webContents.executeJavaScript(
-        `document.querySelector(".cloud-agent-row .cloud-agent-open").click()`,
-      );
-      await waitFor(win, `document.querySelector(".cloud-modal .cloud-detail-threads")`,
-        "the legacy agent detail");
-      await clickText(win, "Delete agent", 0);
-      await waitFor(win,
-        `document.querySelector(".cloud-modal .group-title")?.textContent.startsWith("Delete ")`,
-        "the legacy delete confirmation");
-    },
-    expect: [
-      "Delete Legacy helper?",
-      "The agent will stop reading and replying in its fixed threads.",
-      "Cancel", "Delete agent",
-    ],
+    expect: ["Household helper", "No line", "No threads.", "Change line", "Delete agent"],
   },
   {
     name: "agents-final-revoked-count",

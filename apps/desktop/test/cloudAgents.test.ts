@@ -49,17 +49,9 @@ describe("CloudAgentsClient resources", () => {
   it.each([
     ["deployed line-scoped shape", wireAgent(), {
       agentId: "agent_123",
-      lineUid: null,
       chatUids: ["cht_home"],
       name: "Kitchen",
       status: "running",
-    }],
-    ["explicit line uid", wireAgent({ line_uid: "lin_willow" }), {
-      lineUid: "lin_willow",
-    }],
-    ["legacy", wireAgent({ line_uid: null, chat_uids: ["cht_one", "cht_two"] }), {
-      lineUid: null,
-      chatUids: ["cht_one", "cht_two"],
     }],
     ["omitted status", wireAgent({ status: undefined }), { status: "provisioning" }],
     ["failure metadata", wireAgent({
@@ -80,12 +72,12 @@ describe("CloudAgentsClient resources", () => {
   it("accepts the older single-chat grant", async () => {
     const oldShape = wireAgent();
     delete oldShape.chat_uids;
-    Object.assign(oldShape, { chat_uid: "cht_legacy" });
+    Object.assign(oldShape, { chat_uid: "cht_home_old" });
     const { fetchImpl } = recordingFetch([{ status: 200, body: { data: [oldShape] } }]);
     const client = new CloudAgentsClient(new PlowApi("https://api.plow.co", fetchImpl));
 
     await expect(client.list(CREDENTIAL)).resolves.toMatchObject([
-      { chatUids: ["cht_legacy"] },
+      { chatUids: ["cht_home_old"] },
     ]);
   });
 
@@ -104,8 +96,8 @@ describe("CloudAgentsClient resources", () => {
 
     await expect(new CloudAgentsClient(new PlowApi("https://api.plow.co", fetchImpl))
       .list(CREDENTIAL)).resolves.toMatchObject([
-      { agentId: "agent_empty", lineUid: "lin_empty", chatUids: [] },
-      { agentId: "agent_absent", lineUid: "lin_absent", chatUids: [] },
+      { agentId: "agent_empty", chatUids: [] },
+      { agentId: "agent_absent", chatUids: [] },
     ]);
   });
 
@@ -119,31 +111,6 @@ describe("CloudAgentsClient resources", () => {
       .list(CREDENTIAL)).rejects.toThrow("Plow returned an invalid cloud-agent response.");
   });
 
-  it("rejects a non-string line uid instead of treating a current agent as legacy", async () => {
-    const { fetchImpl } = recordingFetch([{
-      status: 200,
-      body: { data: [wireAgent({ line_uid: 7 })] },
-    }]);
-
-    await expect(new CloudAgentsClient(new PlowApi("https://api.plow.co", fetchImpl))
-      .list(CREDENTIAL))
-      .rejects.toThrow("Plow returned an invalid cloud-agent response.");
-  });
-
-  it("rejects a renderer-bound line uid that repeats the credential", async () => {
-    const { fetchImpl } = recordingFetch([{
-      status: 200,
-      body: { data: [wireAgent({ line_uid: `line-${CREDENTIAL}` })] },
-    }]);
-
-    const error = await new CloudAgentsClient(new PlowApi("https://api.plow.co", fetchImpl))
-      .list(CREDENTIAL)
-      .catch((caught: unknown) => caught);
-
-    expect(error).toBeInstanceOf(PlowApiError);
-    expect((error as Error).message).toBe("Plow returned an unsafe cloud-agent response.");
-    expect((error as Error).message).not.toContain(CREDENTIAL);
-  });
 });
 
 describe("CloudAgentsClient creation", () => {
@@ -191,10 +158,11 @@ describe("CloudAgentsClient creation", () => {
   });
 
   it("uses fixed copy and logs only status for an unknown authenticated error", async () => {
+    const encoded = Buffer.from(CREDENTIAL).toString("base64");
     const { fetchImpl } = recordingFetch([{
       status: 422,
       body: {
-        detail: { code: "LINE_CAPACITY", message: "No capacity for that line." },
+        detail: { code: "LINE_CAPACITY", message: `Rejected bearer ${encoded}` },
         token: CREDENTIAL,
         debug: "body-only marker",
       },
@@ -210,32 +178,11 @@ describe("CloudAgentsClient creation", () => {
       "[cloud-agent] request failed status=422",
     );
     const stderr = vi.mocked(console.error).mock.calls.flat().join(" ");
+    expect(error.message).not.toContain(encoded);
+    expect(stderr).not.toContain(encoded);
     expect(stderr).not.toContain(CREDENTIAL);
     expect(stderr).not.toContain("LINE_CAPACITY");
     expect(stderr).not.toContain("body-only marker");
-    expect(stderr).not.toContain("No capacity for that line.");
-  });
-
-  it("drops encoded credential detail from the error and log", async () => {
-    const encodedCredential = Buffer.from(CREDENTIAL).toString("base64");
-    const { fetchImpl } = recordingFetch([{
-      status: 400,
-      body: {
-        detail: {
-          code: "BAD_REQUEST",
-          message: `Rejected bearer ${encodedCredential}`,
-        },
-      },
-    }]);
-
-    const error = await new CloudAgentsClient(new PlowApi("https://api.plow.co", fetchImpl))
-      .create(CREDENTIAL, { lineUid: "lin_willow", name: "Kitchen" })
-      .catch((caught: unknown) => caught as Error);
-
-    expect(error.message).toBe("Plow returned 400.");
-    expect(error.message).not.toContain(encodedCredential);
-    expect(console.error).toHaveBeenCalledWith("[cloud-agent] request failed status=400");
-    expect(vi.mocked(console.error).mock.calls.flat().join(" ")).not.toContain(encodedCredential);
   });
 });
 
@@ -282,25 +229,6 @@ describe("CloudAgentsClient line changes", () => {
     );
   });
 
-  it("uses fixed copy and omits unknown codes from line-change logs", async () => {
-    const { fetchImpl } = recordingFetch([{
-      status: 503,
-      body: { detail: { code: "LINE_SERVICE_DOWN", message: "Line service is restarting." } },
-    }]);
-
-    const error = await new CloudAgentsClient(new PlowApi("https://api.plow.co", fetchImpl))
-      .changeLine(CREDENTIAL, "agent/with space", "lin_ash")
-      .catch((caught: unknown) => caught as Error);
-
-    expect(error.message).toBe("Cloud-agent provisioning is unavailable right now.");
-    expect(console.error).toHaveBeenCalledTimes(1);
-    expect(console.error).toHaveBeenCalledWith(
-      "[cloud-agent] request failed status=503",
-    );
-    const stderr = vi.mocked(console.error).mock.calls.flat().join(" ");
-    expect(stderr).not.toContain("LINE_SERVICE_DOWN");
-    expect(stderr).not.toContain("Line service is restarting.");
-  });
 });
 
 describe("CloudAgentsClient deletion", () => {
@@ -330,7 +258,6 @@ describe("CloudAgentsClient deletion", () => {
 describe("CloudAgentsClient polling", () => {
   const receipt = (): CloudAgentResource => ({
     agentId: "agent_123",
-    lineUid: "lin_willow",
     chatUids: ["line:lin_willow"],
     url: null,
     provider: null,

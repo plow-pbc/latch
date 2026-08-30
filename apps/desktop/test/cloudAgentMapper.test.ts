@@ -8,7 +8,6 @@ import { CloudAgentResource, isTerminalCloudAgent } from "../src/cloudAgents.js"
 function agent(overrides: Partial<CloudAgentResource> = {}): CloudAgentResource {
   return {
     agentId: "agent_stable",
-    lineUid: "lin_willow",
     chatUids: ["cht_123"],
     url: "https://provider.internal/secret-handle",
     provider: "exe:hermes",
@@ -42,7 +41,6 @@ describe("cloud-agent pure mappings", () => {
     const row = toCloudAgentDisplayRow(
       agent({
         agentId: `agent-${sessionId}`,
-        lineUid: `line-${sessionId}`,
         chatUids: [`chat-${sessionId}`],
         name: `name ${sessionId}`,
         provider: `provider ${sessionId}`,
@@ -79,18 +77,6 @@ describe("cloud-agent pure mappings", () => {
       failureCode: "cGxvd19za19kZXZpY2VfZG9fbm90X2xlYWs=",
     } as CloudAgentResource);
     expect(encodedCredential.failureReason).toBeNull();
-  });
-
-  it("keeps legacy fixed threads as structured uid-label pairs", () => {
-    expect(toCloudAgentDisplayRow(agent({ lineUid: null, chatUids: ["cht_legacy"] }))).toMatchObject({
-      line: null,
-      threads: [{ uid: "cht_legacy", label: "cht_legacy" }],
-    });
-    expect(toCloudAgentDisplayRow(agent()).line).toEqual({
-      uid: "lin_willow",
-      label: "Unknown line",
-    });
-    expect(toCloudAgentDisplayRow(agent()).threads).toEqual([]);
   });
 
   it("keeps provisioning non-terminal and treats every returned status as terminal", () => {

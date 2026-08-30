@@ -28,7 +28,6 @@ import {
   activationSmsUrl,
   activationChatLabel,
   activationChatRecipients,
-  storedActivationChat,
 } from "./onboarding.js";
 import {
   Activation,
@@ -81,15 +80,13 @@ export interface CloudChatOption {
    * The numbers a message to this chat goes to, or `null` when we do not know
    * them.
    *
-   * Null is a real answer, not a gap to paper over: the fallback chat comes
-   * from settings, which persist a uid and a label and never the participants.
-   * A screen that cannot address the chat must say so rather than send to
-   * whatever it can find in the label.
+   * Null is a real answer, not a gap to paper over. A screen that cannot
+   * address the chat must say so rather than send to whatever it can find in
+   * the label.
    */
   recipients: ChatRecipients | null;
   /** The humans in this chat, with names and which one is the owner — what
-   * `chatRows.ts` builds the title and subtitle from. Empty for the settings
-   * fallback chat, which persists no participants. */
+   * `chatRows.ts` builds the title and subtitle from. */
   people: ChatPerson[];
 }
 
@@ -151,8 +148,7 @@ export interface CloudAgentsUiState {
    * The chat list failed because of the CREDENTIAL, not the network.
    *
    * The only failure re-activating fixes. Signing out to recover from a
-   * timeout would wipe the cached activation chat, which can still name a
-   * legacy agent's fixed thread when the list is down.
+   * timeout would wipe the cached activation chat.
    */
   cloudChatsNeedReactivation: boolean;
   /** A delete/retry failure, and nothing else. */
@@ -209,6 +205,8 @@ export interface CloudAgentStateDeps {
 export class CloudAgentState {
   /** Keyed on `agent_id`, which is stable for the agent's whole life. */
   private rows = new Map<string, CloudAgentDisplayRow>();
+  /** Home-chat identity stays private while chat results resolve each line. */
+  private homeChatUids = new Map<string, string>();
   /** Fresh receipts stay visible until the account list catches up. */
   private pending = new Set<string>();
   private polls = new Map<string, AbortController>();
@@ -382,7 +380,7 @@ export class CloudAgentState {
     return request.kind === "create" ? this.create(request) : this.changeLine(request);
   }
 
-  /** Move any current or legacy agent to a known line, or mint a new one. */
+  /** Move an agent to a known line, or mint a new one. */
   async changeLine(input: CloudChangeLineInput): Promise<string | null> {
     const agentId = typeof input?.agentId === "string" ? input.agentId.trim() : "";
     const rawLineUid = input?.lineUid;
@@ -759,6 +757,7 @@ export class CloudAgentState {
       }
       if (generation !== this.generation) return false;
       this.rows.delete(id);
+      this.homeChatUids.delete(id);
       this.pending.delete(id);
       this.retryRequests.delete(id);
       this.publish();
@@ -780,6 +779,7 @@ export class CloudAgentState {
     this.tearingDown.clear();
     for (const agentId of [...this.polls.keys()]) this.abortPoll(agentId);
     this.rows.clear();
+    this.homeChatUids.clear();
     this.pending.clear();
     this.retryRequests.clear();
     this.chats = [];
@@ -812,6 +812,7 @@ export class CloudAgentState {
         await this.deps.agents.delete(credential, agentId);
         if (generation !== this.generation) return;
         this.rows.delete(agentId);
+        this.homeChatUids.delete(agentId);
         this.pending.delete(agentId);
         this.retryRequests.delete(agentId);
         this.publish();
@@ -845,6 +846,9 @@ export class CloudAgentState {
       }
       for (const [agentId, row] of this.rows) {
         if (!listed.has(agentId) && this.pending.has(agentId)) listed.set(agentId, row);
+      }
+      for (const agentId of this.homeChatUids.keys()) {
+        if (!listed.has(agentId)) this.homeChatUids.delete(agentId);
       }
       for (const agentId of this.retryRequests.keys()) {
         if (!listed.has(agentId)) this.retryRequests.delete(agentId);
@@ -899,16 +903,9 @@ export class CloudAgentState {
       // But not every failure means the same thing to the person reading it.
       // Only a credential the server refused is fixed by re-activating; a
       // timeout or a 5xx is fixed by waiting. Offering to sign out for those
-      // would destroy the cached activation chat — the very fallback installed
-      // on the next line — and charge a full re-activation over SMS for a blip.
+      // would charge a full re-activation over SMS for a blip.
       this.chatsNeedReactivation = isCredentialFailure(error);
-      // "Unknown" is not "none". Activation left us one chat, and it can still
-      // label a legacy agent's fixed thread. Offered, never asserted:
-      // `chatsLoaded` stays false.
-      this.chats = storedChats(this.deps.home);
-      // The rows may have been built before this landed, against no labels at
-      // all — the success path relabels and this one has to as well, or a raw
-      // chat uid sits on screen where a phone number belongs.
+      this.chats = [];
       this.relabelRows();
     }
   }
@@ -921,16 +918,18 @@ export class CloudAgentState {
 
   private rowFor(agent: CloudAgentResource, fallbackName = ""): CloudAgentDisplayRow {
     const displayAgent = fallbackName && !agent.name ? { ...agent, name: fallbackName } : agent;
+    const homeChatUid = agent.chatUids[0];
+    if (homeChatUid) this.homeChatUids.set(agent.agentId, homeChatUid);
+    else this.homeChatUids.delete(agent.agentId);
     const lineUid = this.agentLineUid(agent);
     return toCloudAgentDisplayRow(displayAgent, {
       line: this.lineFor(lineUid),
-      threads: this.threadsFor(lineUid, agent.chatUids),
+      threads: this.threadsFor(lineUid),
     });
   }
 
-  /** Resolve older API rows through their first (home) chat. */
-  private agentLineUid(agent: Pick<CloudAgentResource, "lineUid" | "chatUids">): string | null {
-    if (agent.lineUid !== null) return agent.lineUid;
+  /** Resolve an agent's line through its first (home) chat. */
+  private agentLineUid(agent: Pick<CloudAgentResource, "chatUids">): string | null {
     const homeChatUid = agent.chatUids[0];
     return this.chats.find((chat) => chat.uid === homeChatUid)?.lineUid ?? null;
   }
@@ -938,16 +937,8 @@ export class CloudAgentState {
   private freeLines(): CloudAgentLine[] {
     if (!this.chatsLoaded) return [];
     const occupied = new Set<string>();
-    const legacyChatUids = new Set<string>();
     for (const row of this.rows.values()) {
-      if (row.line) {
-        occupied.add(row.line.uid);
-      } else {
-        for (const thread of row.threads) legacyChatUids.add(thread.uid);
-      }
-    }
-    for (const chat of this.chats) {
-      if (chat.lineUid && legacyChatUids.has(chat.uid)) occupied.add(chat.lineUid);
+      if (row.line) occupied.add(row.line.uid);
     }
     const seen = new Set<string>();
     const free: CloudAgentLine[] = [];
@@ -961,21 +952,12 @@ export class CloudAgentState {
     return free.sort((a, b) => a.label.localeCompare(b.label));
   }
 
-  /** Resolve the line's current threads, or a legacy agent's fixed grant. */
-  private threadsFor(
-    lineUid: string | null,
-    legacyChatUids: readonly string[],
-  ): { uid: string; label: string }[] {
-    if (lineUid !== null) {
-      return this.chats
-        .filter((chat) => chat.lineUid === lineUid)
-        .map((chat) => ({ uid: chat.uid, label: this.chatTitle(chat) }));
-    }
-
-    return legacyChatUids.map((uid) => {
-      const chat = this.chats.find((candidate) => candidate.uid === uid);
-      return { uid, label: chat ? this.chatTitle(chat) : uid };
-    });
+  /** Resolve the line's current threads. */
+  private threadsFor(lineUid: string | null): { uid: string; label: string }[] {
+    if (lineUid === null) return [];
+    return this.chats
+      .filter((chat) => chat.lineUid === lineUid)
+      .map((chat) => ({ uid: chat.uid, label: this.chatTitle(chat) }));
   }
 
   /** Resolve the agent's line by stable uid, even when it has no current chats. */
@@ -1002,19 +984,14 @@ export class CloudAgentState {
    * Re-resolve what the chat list knows about each row's threads.
    *
    * Recipients arrive with chats, while a title also depends on the line list.
-   * A row built before either read may have only legacy uids; each successful
-   * read resolves it from the current account view.
+   * Each successful read resolves it from the current account view.
    */
   private relabelRows(): void {
     for (const [agentId, row] of this.rows) {
-      const lineUid = row.line?.uid ??
-        this.chats.find((chat) => chat.uid === row.threads[0]?.uid)?.lineUid ??
-        null;
+      const homeChatUid = this.homeChatUids.get(agentId);
+      const lineUid = this.chats.find((chat) => chat.uid === homeChatUid)?.lineUid ?? null;
       const line = this.lineFor(lineUid);
-      const threads = this.threadsFor(
-        lineUid,
-        line === null ? row.threads.map((thread) => thread.uid) : [],
-      );
+      const threads = this.threadsFor(lineUid);
       if (lineUid !== null) {
         this.retryRequests.set(agentId, { lineUid, name: row.name });
       }
@@ -1072,19 +1049,6 @@ function byNewestFirst(a: CloudAgentDisplayRow, b: CloudAgentDisplayRow): number
  */
 function isTeardown(status: string): boolean {
   return status === "teardown";
-}
-
-/**
- * The chat activation left, as a one-entry fallback list.
- *
- * Reads the same record `onboarding.ts` reads, through the same function, so a
- * Mac cannot show a chat on one screen and a bare uid on the other.
- */
-function storedChats(home: string): CloudChatOption[] {
-  const chat = storedActivationChat(loadSettings(home));
-  // No recipients: settings keep a uid and a label, never the participants. The
-  // chat can still identify a legacy thread, but carries no line association.
-  return chat ? [{ ...chat, lineUid: null, recipients: null, people: [] }] : [];
 }
 
 /**

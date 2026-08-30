@@ -24,7 +24,7 @@ export interface CloudAgentDisplayRow {
   agentId: string;
   name: string;
   line: CloudAgentLine | null;
-  /** Read-only threads on the line, or the fixed grant for a legacy agent. */
+  /** Read-only threads on the line. */
   threads: CloudAgentThread[];
   status: CloudAgentStatus;
   failureReason: string | null;
@@ -32,7 +32,7 @@ export interface CloudAgentDisplayRow {
 }
 
 export interface CloudAgentDisplayContext {
-  /** The agent's line resolved from the account's line list. */
+  /** The agent's line resolved through its home chat. */
   line?: CloudAgentLine | null;
   /** Threads resolved from the separately fetched chat list. */
   threads?: readonly CloudAgentThread[];
@@ -51,18 +51,13 @@ export function toCloudAgentDisplayRow(
   const failureReason = agent.failureCode && Object.hasOwn(FAILURE_LABELS, agent.failureCode)
     ? FAILURE_LABELS[agent.failureCode]
     : agent.failureReason;
-  const line = context.line === undefined
-    ? agent.lineUid === null ? null : { uid: agent.lineUid, label: "Unknown line" }
-    : context.line;
+  const line = context.line ?? null;
   return {
     agentId: scrub(agent.agentId),
     name: scrub(agent.name ?? "cloud agent"),
     line: line === null ? null : { uid: scrub(line.uid), label: scrub(line.label) },
-    threads: (context.threads ?? (
-      agent.lineUid === null
-        ? agent.chatUids.map((uid) => ({ uid, label: uid }))
-        : []
-    )).map((thread) => ({ uid: scrub(thread.uid), label: scrub(thread.label) })),
+    threads: (context.threads ?? [])
+      .map((thread) => ({ uid: scrub(thread.uid), label: scrub(thread.label) })),
     status: agent.status,
     failureReason: failureReason === null ? null : scrub(failureReason),
     createdAt: agent.createdAt === null ? "" : scrub(agent.createdAt),
