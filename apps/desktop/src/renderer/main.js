@@ -889,8 +889,11 @@ function cloudStatus(status, failureReason) {
   return { tone: "amber", label: "Status unavailable" };
 }
 
-function cloudLine(agent) {
-  return agent?.line?.label || "No line";
+function cloudLine(agent, state) {
+  if (agent?.line?.label) return agent.line.label;
+  return state.cloudChatsLoaded === true && !state.cloudChatsError
+    ? "No line"
+    : "Line unavailable";
 }
 
 function focusCloudAgent(agentId) {
@@ -1187,7 +1190,7 @@ function syncCloudModal(state, redraw) {
       el("div", { class: "cloud-detail-meta" }, [
         el("div", { class: "cloud-detail-field" }, [
           el("span", { class: "faint", text: "Line" }),
-          el("span", { text: cloudLine(agent) }),
+          el("span", { text: cloudLine(agent, state) }),
         ]),
         el("div", { class: "cloud-detail-field" }, [
           el("span", { class: "faint", text: "Status" }),
@@ -1462,9 +1465,9 @@ function rosterActions(
   return el("div", { class: "entity-actions" }, actions);
 }
 
-function cloudContext(agent, row) {
+function cloudContext(agent, row, state) {
   return [
-    cloudLine(agent),
+    cloudLine(agent, state),
     rosterUse(row ?? { createdAt: agent?.createdAt, lastSeenAt: null }, "Used"),
   ].filter(Boolean).join(" · ");
 }
@@ -1497,8 +1500,8 @@ function cloudEntityRow(row, agent, state, redraw) {
     ]),
     el("div", {
       class: "entity-context",
-      text: cloudContext(agent, row),
-      attrs: { title: cloudContext(agent, row) },
+      text: cloudContext(agent, row, state),
+      attrs: { title: cloudContext(agent, row, state) },
     }),
   ]);
   if (agent) {

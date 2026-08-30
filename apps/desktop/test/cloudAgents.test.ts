@@ -388,6 +388,24 @@ describe("CloudAgentsClient polling", () => {
     expect(reads).toBe(3);
   });
 
+  it("stops after five minutes of consecutive retryable failures", async () => {
+    let now = 0;
+    vi.spyOn(Date, "now").mockImplementation(() => now);
+    const { calls, fetchImpl } = recordingFetch([
+      { status: 503 },
+      { status: 503 },
+      { status: 409 },
+    ]);
+
+    await expect(new CloudAgentsClient(
+      new PlowApi("https://api.plow.co", fetchImpl),
+      async () => { now += 5 * 60_000; },
+    ).poll(CREDENTIAL, receipt()))
+      .rejects.toThrow("Cloud-agent provisioning is unavailable right now.");
+
+    expect(calls).toHaveLength(2);
+  });
+
   it("stops polling on an authoritative 4xx", async () => {
     const { calls, fetchImpl } = recordingFetch([
       { status: 409 },

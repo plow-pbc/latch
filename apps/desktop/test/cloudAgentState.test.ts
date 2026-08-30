@@ -444,7 +444,7 @@ describe("CloudAgentState new agent flow", () => {
     expect(state.state().cloudLineFlow.completedAgentId).toBe("agent_existing");
   });
 
-  it("reports a verified payload with no agent line using a fixed warning", async () => {
+  it("reports a verified payload with no agent line and logs only its safe shape", async () => {
     const droppedToken = "plow_token_from_redeem_must_disappear";
     const warned: string[] = [];
     const { state, home } = build({
@@ -453,7 +453,15 @@ describe("CloudAgentState new agent flow", () => {
       redeemActivation: async () => ({
         status: "verified",
         token: droppedToken,
-        chat: null,
+        chat: {
+          uid: "cht_missing_line",
+          status: "active",
+          displayName: null,
+          line: null,
+          lineUid: null,
+          participants: [{ providerKey: null, displayName: null, isOwner: true }],
+          createdAt: "",
+        },
       } as unknown as ProvisionedActivationRedeem),
     });
 
@@ -465,7 +473,7 @@ describe("CloudAgentState new agent flow", () => {
       retryNewLine: true,
     });
     expect(warned).toEqual([
-      "[cloud-agent] verified activation missing line uid",
+      '[cloud-agent] verified activation missing line uid: {"chat":"present","participantTypes":["member"],"hasLine":false,"hasLineUid":false}',
     ]);
     expect(JSON.stringify(state.state())).not.toContain(droppedToken);
     expect(JSON.stringify(loadSettings(home))).not.toContain(droppedToken);

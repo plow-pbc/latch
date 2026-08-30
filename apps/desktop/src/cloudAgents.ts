@@ -1,6 +1,7 @@
 import { PlowApi, PlowApiError, REQUEST_TIMEOUT_MS } from "./plowApi.js";
 
 export const CLOUD_AGENT_POLL_INTERVAL_MS = 2_000;
+const CLOUD_AGENT_POLL_RETRY_WINDOW_MS = 5 * 60_000;
 
 export type CloudAgentStatus =
   | "provisioning"
@@ -167,6 +168,7 @@ export class CloudAgentsClient {
   ): Promise<CloudAgentResource> {
     signal?.throwIfAborted();
     let current = receipt;
+    let retryableFailureSince: number | null = null;
     await onTransition?.(current);
     signal?.throwIfAborted();
     while (!isTerminalCloudAgent(current)) {
@@ -187,9 +189,14 @@ export class CloudAgentsClient {
         next = await this.resourceFor(response, deviceCredential);
       } catch (error) {
         signal?.throwIfAborted();
-        if (isRetryablePollError(error)) continue;
+        if (isRetryablePollError(error)) {
+          const failedAt = Date.now();
+          retryableFailureSince ??= failedAt;
+          if (failedAt - retryableFailureSince < CLOUD_AGENT_POLL_RETRY_WINDOW_MS) continue;
+        }
         throw error;
       }
+      retryableFailureSince = null;
       if (next.agentId !== current.agentId) continue;
       current = next;
       signal?.throwIfAborted();

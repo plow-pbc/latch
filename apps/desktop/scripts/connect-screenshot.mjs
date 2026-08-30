@@ -548,7 +548,7 @@ const SCREENS = [
     name: "cloud-chat-loading-detail",
     cloud: {
       ...CLOUD_READY,
-      cloudAgents: [{ ...ACTIVE_AGENT, threads: [] }],
+      cloudAgents: [{ ...LEGACY_AGENT, threads: [] }],
       cloudChatsLoaded: false,
     },
     prepare: async (win) => {
@@ -558,13 +558,13 @@ const SCREENS = [
       await waitFor(win, `document.querySelector(".cloud-modal .cloud-detail-threads")`,
         "the loading-thread detail");
     },
-    expect: ["Household helper", "Willow · +1 415-555-0142", "Loading threads…", "Delete agent"],
+    expect: ["Legacy helper", "Line unavailable", "Loading threads…", "Delete agent"],
   },
   {
     name: "cloud-chat-failed-detail",
     cloud: {
       ...CLOUD_READY,
-      cloudAgents: [{ ...ACTIVE_AGENT, threads: [] }],
+      cloudAgents: [{ ...LEGACY_AGENT, threads: [] }],
       cloudChatsError: "The chat list is unavailable.",
       cloudChatsLoaded: false,
     },
@@ -581,7 +581,7 @@ const SCREENS = [
         throw new Error("detail exposed a raw line uid while chats were unavailable");
       }
     },
-    expect: ["Household helper", "Willow · +1 415-555-0142", "Threads couldn't be loaded", "Delete agent"],
+    expect: ["Legacy helper", "Line unavailable", "Threads couldn't be loaded", "Delete agent"],
   },
   {
     name: "cloud-delete-confirm",

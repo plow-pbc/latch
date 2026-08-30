@@ -818,7 +818,7 @@ app.whenReady().then(async () => {
 
   cloudProbe = {
     ...cloudProbe,
-    cloudAgents: [{ ...cloudAgent, threads: [] }],
+    cloudAgents: [{ ...cloudAgent, line: null, threads: [] }],
     cloudChatsError: null,
     cloudChatsLoaded: false,
   };
@@ -831,9 +831,15 @@ app.whenReady().then(async () => {
   );
   await waitFor(win, `document.querySelector(".cloud-modal .cloud-detail-threads")`,
     "the loading-thread detail");
-  const loadingCloudDetail = await win.webContents.executeJavaScript(
-    `document.querySelector(".cloud-modal .cloud-thread-empty")?.textContent.trim()`,
-  );
+  const loadingCloudDetail = await win.webContents.executeJavaScript(`(${() => {
+    const modal = document.querySelector(".cloud-modal");
+    const fields = [...modal.querySelectorAll(".cloud-detail-field")].map((field) =>
+      field.textContent.trim());
+    return {
+      line: fields[0] ?? "",
+      threadState: modal.querySelector(".cloud-thread-empty")?.textContent.trim(),
+    };
+  }})()`);
   cloudProbe = {
     ...cloudProbe,
     cloudAgents: [cloudAgent],
@@ -852,7 +858,7 @@ app.whenReady().then(async () => {
 
   cloudProbe = {
     ...cloudProbe,
-    cloudAgents: [{ ...cloudAgent, threads: [] }],
+    cloudAgents: [{ ...cloudAgent, line: null, threads: [] }],
     cloudChatsError: "The chat list is unavailable.",
     cloudChatsLoaded: false,
   };
@@ -1679,8 +1685,9 @@ app.whenReady().then(async () => {
     cloudDeleteConfirm.title === "Delete Household helper?" &&
     cloudDeleteConfirm.copy &&
     cloudDeleteConfirm.buttons.join("|") === "Cancel|Delete agent" &&
-    loadingCloudDetail === "Loading threads…" &&
-    unavailableCloudDetail.line.includes("LineWillow · +1 415-555-0142") &&
+    loadingCloudDetail.line.includes("LineLine unavailable") &&
+    loadingCloudDetail.threadState === "Loading threads…" &&
+    unavailableCloudDetail.line.includes("LineLine unavailable") &&
     unavailableCloudDetail.threadState === "Threads couldn't be loaded." &&
     unavailableCloudDetail.hidesRawLineUid &&
     settings.hasAccountGroup &&
