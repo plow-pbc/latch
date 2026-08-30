@@ -117,18 +117,11 @@ const rosterProbe = {
 let cloudProbe = {
   cloudAgents: [cloudAgent],
   cloudFreeLines: [{ uid: "lin_ash", label: "Ash · +1 415-555-0199" }],
-  cloudCreate: {
+  cloudLineFlow: {
     phase: "idle",
     activation: null,
     message: null,
-    createdAgentId: null,
-    retryNewLine: false,
-  },
-  cloudChangeLine: {
-    phase: "idle",
-    activation: null,
-    message: null,
-    changedAgentId: null,
+    completedAgentId: null,
     retryNewLine: false,
   },
   cloudAgentsError: null,
@@ -158,14 +151,15 @@ const agentsTabProbeState = () => ({
 });
 ipcMain.handle("connect:get", async () => agentsTabProbeState());
 ipcMain.handle("cloud:refresh", async () => agentsTabProbeState());
-ipcMain.handle("cloud:cancelCreate", async () => {
+ipcMain.handle("cloud:cancelLineFlow", async () => {
+  cloudChangeCancelCount += 1;
   cloudProbe = {
     ...cloudProbe,
-    cloudCreate: {
+    cloudLineFlow: {
       phase: "idle",
       activation: null,
       message: null,
-      createdAgentId: null,
+      completedAgentId: null,
       retryNewLine: false,
     },
   };
@@ -175,7 +169,7 @@ ipcMain.handle("cloud:create", async (_e, input) => {
   if (input?.lineUid === null) {
     cloudProbe = {
       ...cloudProbe,
-      cloudCreate: {
+      cloudLineFlow: {
         phase: "waiting",
         activation: {
           displayCode: "LINE42",
@@ -183,46 +177,32 @@ ipcMain.handle("cloud:create", async (_e, input) => {
           smsBody: "Plow Activate: LINE42",
         },
         message: null,
-        createdAgentId: null,
+        completedAgentId: null,
         retryNewLine: false,
       },
     };
   } else if (input?.lineUid === "lin_error") {
     cloudProbe = {
       ...cloudProbe,
-      cloudCreate: {
+      cloudLineFlow: {
         phase: "error",
         activation: null,
         message: "No capacity for that line.",
-        createdAgentId: null,
+        completedAgentId: null,
         retryNewLine: false,
       },
     };
   }
   return agentsTabProbeState();
 });
-ipcMain.handle("cloud:retryCreate", async () => agentsTabProbeState());
+ipcMain.handle("cloud:retryLineFlow", async () => agentsTabProbeState());
 ipcMain.handle("cloud:retryFailed", async () => agentsTabProbeState());
-ipcMain.handle("cloud:cancelChangeLine", async () => {
-  cloudChangeCancelCount += 1;
-  cloudProbe = {
-    ...cloudProbe,
-    cloudChangeLine: {
-      phase: "idle",
-      activation: null,
-      message: null,
-      changedAgentId: null,
-      retryNewLine: false,
-    },
-  };
-  return agentsTabProbeState();
-});
 ipcMain.handle("cloud:changeLine", async (_e, input) => {
   cloudChangeRequest = input;
   if (input?.lineUid === null) {
     cloudProbe = {
       ...cloudProbe,
-      cloudChangeLine: {
+      cloudLineFlow: {
         phase: "waiting",
         activation: {
           displayCode: "MOVE42",
@@ -230,25 +210,24 @@ ipcMain.handle("cloud:changeLine", async (_e, input) => {
           smsBody: "Plow Activate: MOVE42",
         },
         message: null,
-        changedAgentId: null,
+        completedAgentId: null,
         retryNewLine: false,
       },
     };
   } else if (input?.lineUid === "lin_error") {
     cloudProbe = {
       ...cloudProbe,
-      cloudChangeLine: {
+      cloudLineFlow: {
         phase: "error",
         activation: null,
         message: "Line service is restarting.",
-        changedAgentId: null,
+        completedAgentId: null,
         retryNewLine: false,
       },
     };
   }
   return agentsTabProbeState();
 });
-ipcMain.handle("cloud:retryChangeLine", async () => agentsTabProbeState());
 ipcMain.handle("cloud:openMessages", async () => true);
 ipcMain.handle("cloud:remove", async (_e, agentId) => {
   cloudProbe = {
@@ -926,11 +905,11 @@ app.whenReady().then(async () => {
     ...cloudProbe,
     cloudAgents: [cloudAgent],
     cloudFreeLines: [],
-    cloudCreate: {
+    cloudLineFlow: {
       phase: "idle",
       activation: null,
       message: null,
-      createdAgentId: null,
+      completedAgentId: null,
       retryNewLine: false,
     },
     cloudChatsError: "Plow returned 503.",
@@ -995,11 +974,11 @@ app.whenReady().then(async () => {
   cloudProbe = {
     ...cloudProbe,
     cloudAgents: [{ ...cloudAgent, status: "failed", failureReason: "Set up failed" }],
-    cloudCreate: {
+    cloudLineFlow: {
       phase: "idle",
       activation: null,
       message: null,
-      createdAgentId: null,
+      completedAgentId: null,
       retryNewLine: false,
     },
   };
@@ -1024,11 +1003,11 @@ app.whenReady().then(async () => {
   cloudProbe = {
     ...cloudProbe,
     cloudAgents: [cloudAgent],
-    cloudChangeLine: {
+    cloudLineFlow: {
       phase: "idle",
       activation: null,
       message: null,
-      changedAgentId: null,
+      completedAgentId: null,
       retryNewLine: false,
     },
   };
@@ -1066,11 +1045,11 @@ app.whenReady().then(async () => {
   cloudProbe = {
     ...cloudProbe,
     cloudFreeLines: [],
-    cloudChangeLine: {
+    cloudLineFlow: {
       phase: "idle",
       activation: null,
       message: null,
-      changedAgentId: null,
+      completedAgentId: null,
       retryNewLine: false,
     },
   };

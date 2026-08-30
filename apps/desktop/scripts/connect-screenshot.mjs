@@ -126,18 +126,11 @@ const ROSTER = {
 const CLOUD_EMPTY = {
   cloudAgents: [],
   cloudFreeLines: [],
-  cloudCreate: {
+  cloudLineFlow: {
     phase: "idle",
     activation: null,
     message: null,
-    createdAgentId: null,
-    retryNewLine: false,
-  },
-  cloudChangeLine: {
-    phase: "idle",
-    activation: null,
-    message: null,
-    changedAgentId: null,
+    completedAgentId: null,
     retryNewLine: false,
   },
   cloudAgentsError: null,
@@ -227,10 +220,10 @@ async function setUp() {
   const state = () => ({ ...connect.state(), roster: rosterFixture, ...cloudFixture });
   ipcMain.handle("connect:get", async () => state());
   ipcMain.handle("cloud:refresh", async () => state());
-  ipcMain.handle("cloud:cancelCreate", async () => {
+  ipcMain.handle("cloud:cancelLineFlow", async () => {
     cloudFixture = {
       ...cloudFixture,
-      cloudCreate: { ...CLOUD_EMPTY.cloudCreate },
+      cloudLineFlow: { ...CLOUD_EMPTY.cloudLineFlow },
     };
     return state();
   });
@@ -238,7 +231,7 @@ async function setUp() {
     if (input?.lineUid === null) {
       cloudFixture = {
         ...cloudFixture,
-        cloudCreate: {
+        cloudLineFlow: {
           phase: "waiting",
           activation: {
             displayCode: "LINE42",
@@ -246,27 +239,20 @@ async function setUp() {
             smsBody: "Plow Activate: LINE42",
           },
           message: null,
-          createdAgentId: null,
+          completedAgentId: null,
           retryNewLine: false,
         },
       };
     }
     return state();
   });
-  ipcMain.handle("cloud:retryCreate", async () => state());
+  ipcMain.handle("cloud:retryLineFlow", async () => state());
   ipcMain.handle("cloud:retryFailed", async () => state());
-  ipcMain.handle("cloud:cancelChangeLine", async () => {
-    cloudFixture = {
-      ...cloudFixture,
-      cloudChangeLine: { ...CLOUD_EMPTY.cloudChangeLine },
-    };
-    return state();
-  });
   ipcMain.handle("cloud:changeLine", async (_e, input) => {
     if (input?.lineUid === null) {
       cloudFixture = {
         ...cloudFixture,
-        cloudChangeLine: {
+        cloudLineFlow: {
           phase: "waiting",
           activation: {
             displayCode: "MOVE42",
@@ -274,7 +260,7 @@ async function setUp() {
             smsBody: "Plow Activate: MOVE42",
           },
           message: null,
-          changedAgentId: null,
+          completedAgentId: null,
           retryNewLine: false,
         },
       };
@@ -289,15 +275,14 @@ async function setUp() {
             }
           : agent),
         cloudFreeLines: [],
-        cloudChangeLine: {
-          ...CLOUD_EMPTY.cloudChangeLine,
-          changedAgentId: input.agentId,
+        cloudLineFlow: {
+          ...CLOUD_EMPTY.cloudLineFlow,
+          completedAgentId: input.agentId,
         },
       };
     }
     return state();
   });
-  ipcMain.handle("cloud:retryChangeLine", async () => state());
   ipcMain.handle("cloud:openMessages", async () => true);
   ipcMain.handle("connect:create", async (_e, name) => connect.createCredential(name));
   ipcMain.handle("connect:dismiss", async () => connect.dismissCredential());

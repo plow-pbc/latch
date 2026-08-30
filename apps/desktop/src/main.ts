@@ -646,12 +646,12 @@ ipcMain.handle("cloud:create", async (_e, input: unknown) => {
   await connectClient?.refreshRoster();
   return agentsTabState();
 });
-ipcMain.handle("cloud:cancelCreate", async () => {
-  cloudAgents?.cancelCreate();
+ipcMain.handle("cloud:cancelLineFlow", async () => {
+  cloudAgents?.cancelLineFlow();
   return agentsTabState();
 });
-ipcMain.handle("cloud:retryCreate", async () => {
-  await cloudAgents?.retryCreate();
+ipcMain.handle("cloud:retryLineFlow", async () => {
+  await cloudAgents?.retryLineFlow();
   await connectClient?.refreshRoster();
   return agentsTabState();
 });
@@ -666,15 +666,6 @@ ipcMain.handle("cloud:changeLine", async (_e, input: unknown) => {
     agentId: typeof raw.agentId === "string" ? raw.agentId : "",
     lineUid: raw.lineUid === null ? null : typeof raw.lineUid === "string" ? raw.lineUid : "",
   });
-  await connectClient?.refreshRoster();
-  return agentsTabState();
-});
-ipcMain.handle("cloud:cancelChangeLine", async () => {
-  cloudAgents?.cancelChangeLine();
-  return agentsTabState();
-});
-ipcMain.handle("cloud:retryChangeLine", async () => {
-  await cloudAgents?.retryChangeLine();
   await connectClient?.refreshRoster();
   return agentsTabState();
 });

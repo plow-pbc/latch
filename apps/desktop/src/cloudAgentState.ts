@@ -93,18 +93,18 @@ export interface CloudChatOption {
   people: ChatPerson[];
 }
 
-export type CloudCreatePhase = "idle" | "activating" | "waiting" | "creating" | "error";
+export type CloudLineFlowPhase = "idle" | "activating" | "waiting" | "creating" | "error";
 
-export interface CloudCreateUiState {
-  phase: CloudCreatePhase;
+export interface CloudLineFlowUiState {
+  phase: CloudLineFlowPhase;
   activation: {
     displayCode: string;
     sendTo: string;
     smsBody: string;
   } | null;
   message: string | null;
-  createdAgentId: string | null;
-  /** Whether retry must mint a fresh line instead of re-posting the agent body. */
+  completedAgentId: string | null;
+  /** Whether retry must mint a fresh line instead of repeating the final mutation. */
   retryNewLine: boolean;
 }
 
@@ -114,24 +114,21 @@ export interface CloudCreateInput {
   lineUid: string | null;
 }
 
-export interface CloudChangeLineUiState {
-  phase: CloudCreatePhase;
-  activation: CloudCreateUiState["activation"];
-  message: string | null;
-  changedAgentId: string | null;
-  /** Whether retry must mint a fresh line instead of repeating the PUT. */
-  retryNewLine: boolean;
-}
-
 export interface CloudChangeLineInput {
   agentId: string;
   /** `null` asks Plow to provision a new line through activation. */
   lineUid: string | null;
 }
 
-type CloudLineFlow =
-  | { kind: "create"; name: string }
-  | { kind: "change"; agentId: string };
+type CloudLineRequest =
+  | ({ kind: "create" } & CloudCreateInput)
+  | ({ kind: "change" } & CloudChangeLineInput);
+
+interface CloudLineFlow {
+  kind: CloudLineRequest["kind"];
+  request: CloudLineRequest | null;
+  ui: CloudLineFlowUiState;
+}
 
 /**
  * Everything the Agents tab renders about cloud agents, in one shape.
@@ -145,8 +142,7 @@ export interface CloudAgentsUiState {
   cloudAgents: CloudAgentDisplayRow[];
   /** Lines found on the owner's chats that no current agent occupies. */
   cloudFreeLines: CloudAgentLine[];
-  cloudCreate: CloudCreateUiState;
-  cloudChangeLine: CloudChangeLineUiState;
+  cloudLineFlow: CloudLineFlowUiState;
   /** An agent-list failure, and nothing else. */
   cloudAgentsError: string | null;
   /** A chat-list failure, and nothing else. */
@@ -220,17 +216,7 @@ export class CloudAgentState {
   private lineFlowGeneration = 0;
   /** SECRET. Never crosses `state()` and is discarded on every terminal path. */
   private activationSecret: string | null = null;
-  private activeLineFlow: "create" | "change" | null = null;
-  private activeCreateRequest: CloudCreateInput | null = null;
-  private activeChangeRequest: CloudChangeLineInput | null = null;
-  private createUi: CloudCreateUiState = {
-    phase: "idle",
-    activation: null,
-    message: null,
-    createdAgentId: null,
-    retryNewLine: false,
-  };
-  private changeUi: CloudChangeLineUiState = idleChangeLineUi();
+  private lineFlow: CloudLineFlow | null = null;
   private agentsError: string | null = null;
   /**
    * Held apart from `agentsError` deliberately.
@@ -287,13 +273,9 @@ export class CloudAgentState {
     return {
       cloudAgents: [...this.rows.values()].sort(byNewestFirst),
       cloudFreeLines: this.freeLines(),
-      cloudCreate: {
-        ...this.createUi,
-        activation: this.createUi.activation ? { ...this.createUi.activation } : null,
-      },
-      cloudChangeLine: {
-        ...this.changeUi,
-        activation: this.changeUi.activation ? { ...this.changeUi.activation } : null,
+      cloudLineFlow: {
+        ...(this.lineFlow?.ui ?? idleLineFlowUi()),
+        activation: this.lineFlow?.ui.activation ? { ...this.lineFlow.ui.activation } : null,
       },
       cloudAgentsError: this.agentsError,
       cloudChatsError: this.chatsError,
@@ -362,58 +344,42 @@ export class CloudAgentState {
     const name = typeof input?.name === "string" ? input.name.trim() : "";
     const rawLineUid = input?.lineUid;
     if (rawLineUid !== null && typeof rawLineUid !== "string") {
-      this.setCreateError("Pick a line for this agent.", false);
+      this.setLineFlowError("create", "Pick a line for this agent.", false);
       return null;
     }
     const lineUid = typeof rawLineUid === "string" ? rawLineUid.trim() : null;
     if (rawLineUid !== null && !lineUid) {
-      this.setCreateError("Pick a line for this agent.", false);
+      this.setLineFlowError("create", "Pick a line for this agent.", false);
       return null;
     }
     const credential = this.credential();
     if (!credential) {
-      this.setCreateError("This Mac isn't signed in yet.", false);
+      this.setLineFlowError("create", "This Mac isn't signed in yet.", false);
       return null;
     }
 
-    const flow = ++this.lineFlowGeneration;
-    this.activationSecret = null;
-    this.activeLineFlow = "create";
-    this.activeCreateRequest = { name, lineUid };
-    this.activeChangeRequest = null;
-    this.changeUi = idleChangeLineUi();
-    this.createUi = {
-      phase: lineUid === null ? "activating" : "creating",
-      activation: null,
-      message: null,
-      createdAgentId: null,
-      retryNewLine: false,
-    };
-    this.publish();
+    const request: CloudLineRequest = { kind: "create", name, lineUid };
+    const flow = this.beginLineFlow(request);
 
-    if (lineUid !== null) {
-      return this.provision({ name, lineUid }, this.generation, flow);
-    }
-    return this.startNewLine({ kind: "create", name }, this.generation, flow);
+    if (lineUid !== null) return this.finishLineFlow(request, this.generation, flow);
+    return this.startNewLine(request, this.generation, flow);
   }
 
   /** Stop watching a new-line activation. No cloud-agent POST follows it. */
-  cancelCreate(): void {
-    if (this.activeLineFlow === "create") {
+  cancelLineFlow(): void {
+    if (this.lineFlow) {
       this.lineFlowGeneration += 1;
       this.activationSecret = null;
-      this.activeLineFlow = null;
     }
-    this.activeCreateRequest = null;
-    this.createUi = idleCreateUi();
+    this.lineFlow = null;
     this.publish();
   }
 
-  /** Retry the action still shown in the New agent modal. */
-  async retryCreate(): Promise<string | null> {
-    const request = this.activeCreateRequest;
+  /** Retry the action still shown in the line picker. */
+  async retryLineFlow(): Promise<string | null> {
+    const request = this.lineFlow?.request;
     if (!request) return null;
-    return this.create(request);
+    return request.kind === "create" ? this.create(request) : this.changeLine(request);
   }
 
   /** Move any current or legacy agent to a known line, or mint a new one. */
@@ -422,52 +388,23 @@ export class CloudAgentState {
     const rawLineUid = input?.lineUid;
     const lineUid = typeof rawLineUid === "string" ? rawLineUid.trim() : null;
     if (!agentId || !this.rows.has(agentId)) {
-      this.setChangeLineError("That agent is no longer available.", false);
+      this.setLineFlowError("change", "That agent is no longer available.", false);
       return null;
     }
     if (rawLineUid !== null && (!lineUid || typeof rawLineUid !== "string")) {
-      this.setChangeLineError("Pick a line for this agent.", false);
+      this.setLineFlowError("change", "Pick a line for this agent.", false);
       return null;
     }
     if (!this.credential()) {
-      this.setChangeLineError("This Mac isn't signed in yet.", false);
+      this.setLineFlowError("change", "This Mac isn't signed in yet.", false);
       return null;
     }
 
-    const flow = ++this.lineFlowGeneration;
-    this.activationSecret = null;
-    this.activeLineFlow = "change";
-    this.activeCreateRequest = null;
-    this.createUi = idleCreateUi();
-    this.activeChangeRequest = { agentId, lineUid };
-    this.changeUi = {
-      phase: lineUid === null ? "activating" : "creating",
-      activation: null,
-      message: null,
-      changedAgentId: null,
-      retryNewLine: false,
-    };
-    this.publish();
+    const request: CloudLineRequest = { kind: "change", agentId, lineUid };
+    const flow = this.beginLineFlow(request);
 
-    if (lineUid !== null) return this.moveToLine(agentId, lineUid, this.generation, flow);
-    return this.startNewLine({ kind: "change", agentId }, this.generation, flow);
-  }
-
-  cancelChangeLine(): void {
-    if (this.activeLineFlow === "change") {
-      this.lineFlowGeneration += 1;
-      this.activationSecret = null;
-      this.activeLineFlow = null;
-    }
-    this.activeChangeRequest = null;
-    this.changeUi = idleChangeLineUi();
-    this.publish();
-  }
-
-  async retryChangeLine(): Promise<string | null> {
-    const request = this.activeChangeRequest;
-    if (!request) return null;
-    return this.changeLine(request);
+    if (lineUid !== null) return this.finishLineFlow(request, this.generation, flow);
+    return this.startNewLine(request, this.generation, flow);
   }
 
   /** Re-post the exact create body retained for a failed roster row. */
@@ -483,9 +420,7 @@ export class CloudAgentState {
 
   /** Main owns external navigation; the renderer never receives this URL. */
   createSmsUrl(): string | null {
-    const activation = this.activeLineFlow === "change"
-      ? this.changeUi.activation
-      : this.createUi.activation;
+    const activation = this.lineFlow?.ui.activation;
     if (!this.activationSecret || !activation) return null;
     return activationSmsUrl(
       activation.sendTo,
@@ -494,7 +429,7 @@ export class CloudAgentState {
   }
 
   private async startNewLine(
-    action: CloudLineFlow,
+    action: CloudLineRequest,
     generation: number,
     flow: number,
   ): Promise<null> {
@@ -503,14 +438,14 @@ export class CloudAgentState {
       created = await this.deps.activation.createProvisionedActivation();
     } catch (error) {
       if (this.isCurrentLineFlow(action.kind, generation, flow)) {
-        this.setLineFlowError(action, messageOf(error), true);
+        this.setLineFlowError(action.kind, messageOf(error), true);
       }
       return null;
     }
     if (!this.isCurrentLineFlow(action.kind, generation, flow)) return null;
 
     this.activationSecret = created.activationSecret;
-    const waiting: Omit<CloudCreateUiState, "createdAgentId"> = {
+    const waiting: CloudLineFlowUiState = {
       phase: "waiting",
       activation: {
         displayCode: created.displayCode,
@@ -518,13 +453,10 @@ export class CloudAgentState {
         smsBody: activationSmsBody(created.displayCode),
       },
       message: null,
+      completedAgentId: null,
       retryNewLine: false,
     };
-    if (action.kind === "create") {
-      this.createUi = { ...waiting, createdAgentId: null };
-    } else {
-      this.changeUi = { ...waiting, changedAgentId: null };
-    }
+    this.lineFlow = { kind: action.kind, request: action, ui: waiting };
     this.publish();
     void this.pollNewLine(created.activationSecret, action, generation, flow);
     return null;
@@ -532,7 +464,7 @@ export class CloudAgentState {
 
   private async pollNewLine(
     secret: string,
-    action: CloudLineFlow,
+    action: CloudLineRequest,
     generation: number,
     flow: number,
   ): Promise<void> {
@@ -553,7 +485,7 @@ export class CloudAgentState {
         if (error instanceof PlowApiError && error.kind === "expired") {
           this.activationSecret = null;
           this.setLineFlowError(
-            action,
+            action.kind,
             action.kind === "create"
               ? "That code expired. Retry New agent."
               : "That code expired. Try again.",
@@ -561,10 +493,11 @@ export class CloudAgentState {
           );
           return;
         }
-        if (action.kind === "create") {
-          this.createUi = { ...this.createUi, message: messageOf(error) };
-        } else {
-          this.changeUi = { ...this.changeUi, message: messageOf(error) };
+        if (this.lineFlow) {
+          this.lineFlow = {
+            ...this.lineFlow,
+            ui: { ...this.lineFlow.ui, message: messageOf(error) },
+          };
         }
         this.publish();
         continue;
@@ -579,7 +512,7 @@ export class CloudAgentState {
         this.deps.warn?.(
           `[cloud-agent] verified activation missing line uid: ${JSON.stringify(result.shape)}`,
         );
-        this.setLineFlowError(action, "Couldn't read the line for this agent.", true);
+        this.setLineFlowError(action.kind, "Couldn't read the line for this agent.", true);
         return;
       }
 
@@ -599,32 +532,28 @@ export class CloudAgentState {
         this.relabelRows();
       }
 
-      if (action.kind === "create") {
-        const request = { name: action.name, lineUid };
-        this.activeCreateRequest = request;
-        this.createUi = {
-          phase: "creating",
-          activation: null,
-          message: null,
-          createdAgentId: null,
-          retryNewLine: false,
-        };
-        this.publish();
-        await this.provision(request, generation, flow);
-      } else {
-        this.activeChangeRequest = { agentId: action.agentId, lineUid };
-        this.changeUi = {
-          phase: "creating",
-          activation: null,
-          message: null,
-          changedAgentId: null,
-          retryNewLine: false,
-        };
-        this.publish();
-        await this.moveToLine(action.agentId, lineUid, generation, flow);
-      }
+      const request: CloudLineRequest = { ...action, lineUid };
+      this.lineFlow = {
+        kind: action.kind,
+        request,
+        ui: { ...idleLineFlowUi(), phase: "creating" },
+      };
+      this.publish();
+      await this.finishLineFlow(request, generation, flow);
       return;
     }
+  }
+
+  private finishLineFlow(
+    request: CloudLineRequest,
+    generation: number,
+    flow: number,
+  ): Promise<string | null> {
+    const lineUid = request.lineUid;
+    if (lineUid === null) return Promise.resolve(null);
+    return request.kind === "create"
+      ? this.provision({ name: request.name, lineUid }, generation, flow)
+      : this.moveToLine(request.agentId, lineUid, generation, flow);
   }
 
   private async provision(
@@ -642,7 +571,7 @@ export class CloudAgentState {
         return null;
       }
       if (flow === null) this.failAction(messageOf(error));
-      else this.setCreateError(messageOf(error), false);
+      else this.setLineFlowError("create", messageOf(error), false);
       return null;
     }
     if (generation !== this.generation || (flow !== null && flow !== this.lineFlowGeneration)) {
@@ -654,14 +583,7 @@ export class CloudAgentState {
     this.observe(receipt, request);
     this.startAgentPoll(credential, receipt, request, generation);
     if (flow !== null) {
-      this.activeLineFlow = null;
-      this.createUi = {
-        phase: "idle",
-        activation: null,
-        message: null,
-        createdAgentId: receipt.agentId,
-        retryNewLine: false,
-      };
+      this.completeLineFlow(receipt.agentId);
       this.publish();
     }
     return receipt.agentId;
@@ -687,14 +609,14 @@ export class CloudAgentState {
       if (error instanceof CloudAgentLineError && error.code === "line_occupied") {
         await this.refresh();
         if (!this.isCurrentLineFlow("change", generation, flow)) return null;
-        this.activeChangeRequest = null;
-        this.changeUi = {
-          ...idleChangeLineUi(),
-          message: error.message,
+        this.lineFlow = {
+          kind: "change",
+          request: null,
+          ui: { ...idleLineFlowUi(), message: error.message },
         };
         this.publish();
       } else {
-        this.setChangeLineError(messageOf(error), false);
+        this.setLineFlowError("change", messageOf(error), false);
       }
       return null;
     }
@@ -709,14 +631,7 @@ export class CloudAgentState {
       lineUid,
       name: moved.name ?? previous?.name ?? "",
     });
-    this.activeLineFlow = null;
-    this.changeUi = {
-      phase: "idle",
-      activation: null,
-      message: null,
-      changedAgentId: agentId,
-      retryNewLine: false,
-    };
+    this.completeLineFlow(agentId);
     this.publish();
     return agentId;
   }
@@ -774,40 +689,50 @@ export class CloudAgentState {
   ): boolean {
     return generation === this.generation &&
       flow === this.lineFlowGeneration &&
-      this.activeLineFlow === kind;
+      this.lineFlow?.kind === kind;
   }
 
-  private setCreateError(message: string, retryNewLine: boolean): void {
+  private beginLineFlow(request: CloudLineRequest): number {
+    const flow = ++this.lineFlowGeneration;
     this.activationSecret = null;
-    this.createUi = {
-      phase: "error",
-      activation: null,
-      message,
-      createdAgentId: null,
-      retryNewLine,
+    this.lineFlow = {
+      kind: request.kind,
+      request,
+      ui: {
+        ...idleLineFlowUi(),
+        phase: request.lineUid === null ? "activating" : "creating",
+      },
     };
     this.publish();
+    return flow;
   }
 
-  private setChangeLineError(message: string, retryNewLine: boolean): void {
-    this.activationSecret = null;
-    this.changeUi = {
-      phase: "error",
-      activation: null,
-      message,
-      changedAgentId: null,
-      retryNewLine,
+  private completeLineFlow(agentId: string): void {
+    if (!this.lineFlow) return;
+    this.lineFlow = {
+      ...this.lineFlow,
+      request: null,
+      ui: { ...idleLineFlowUi(), completedAgentId: agentId },
     };
-    this.publish();
   }
 
   private setLineFlowError(
-    action: CloudLineFlow,
+    kind: CloudLineRequest["kind"],
     message: string,
     retryNewLine: boolean,
   ): void {
-    if (action.kind === "create") this.setCreateError(message, retryNewLine);
-    else this.setChangeLineError(message, retryNewLine);
+    this.activationSecret = null;
+    this.lineFlow = {
+      kind,
+      request: this.lineFlow?.kind === kind ? this.lineFlow.request : null,
+      ui: {
+        ...idleLineFlowUi(),
+        phase: "error",
+        message,
+        retryNewLine,
+      },
+    };
+    this.publish();
   }
 
   /** Remove an agent — the machine and its hold on the line, not just a key. */
@@ -851,11 +776,7 @@ export class CloudAgentState {
     this.generation += 1;
     this.lineFlowGeneration += 1;
     this.activationSecret = null;
-    this.activeLineFlow = null;
-    this.activeCreateRequest = null;
-    this.activeChangeRequest = null;
-    this.createUi = idleCreateUi();
-    this.changeUi = idleChangeLineUi();
+    this.lineFlow = null;
     this.tearingDown.clear();
     for (const agentId of [...this.polls.keys()]) this.abortPoll(agentId);
     this.rows.clear();
@@ -1126,22 +1047,12 @@ export class CloudAgentState {
 const defaultWait = (milliseconds: number): Promise<void> =>
   new Promise((resolve) => setTimeout(resolve, milliseconds));
 
-function idleCreateUi(): CloudCreateUiState {
+function idleLineFlowUi(): CloudLineFlowUiState {
   return {
     phase: "idle",
     activation: null,
     message: null,
-    createdAgentId: null,
-    retryNewLine: false,
-  };
-}
-
-function idleChangeLineUi(): CloudChangeLineUiState {
-  return {
-    phase: "idle",
-    activation: null,
-    message: null,
-    changedAgentId: null,
+    completedAgentId: null,
     retryNewLine: false,
   };
 }

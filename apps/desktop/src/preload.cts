@@ -99,13 +99,11 @@ contextBridge.exposeInMainWorld("domo", {
   cloudRefresh: () => ipcRenderer.invoke("cloud:refresh"),
   cloudCreate: (input: { name: string; lineUid: string | null }) =>
     ipcRenderer.invoke("cloud:create", input),
-  cloudCancelCreate: () => ipcRenderer.invoke("cloud:cancelCreate"),
-  cloudRetryCreate: () => ipcRenderer.invoke("cloud:retryCreate"),
+  cloudCancelLineFlow: () => ipcRenderer.invoke("cloud:cancelLineFlow"),
+  cloudRetryLineFlow: () => ipcRenderer.invoke("cloud:retryLineFlow"),
   cloudRetryFailed: (agentId: string) => ipcRenderer.invoke("cloud:retryFailed", agentId),
   cloudChangeLine: (input: { agentId: string; lineUid: string | null }) =>
     ipcRenderer.invoke("cloud:changeLine", input),
-  cloudCancelChangeLine: () => ipcRenderer.invoke("cloud:cancelChangeLine"),
-  cloudRetryChangeLine: () => ipcRenderer.invoke("cloud:retryChangeLine"),
   cloudOpenMessages: () => ipcRenderer.invoke("cloud:openMessages"),
   onConnectChanged: (cb: () => void) => ipcRenderer.on("connect:changed", cb),
 

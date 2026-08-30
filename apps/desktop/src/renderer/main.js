@@ -899,23 +899,20 @@ function focusCloudAgent(agentId) {
   row?.querySelector(".cloud-agent-open")?.focus();
 }
 
-function dismissCloudCreateModal() {
-  if (cloudModal?.kind === "create" && cloudModal.started && cloudModal.phase === "creating") {
-    return;
-  }
-  if (cloudModal?.kind === "create") void window.domo.cloudCancelCreate();
+function dismissCloudLineModal() {
+  if (cloudModal?.kind === "line-flow" && cloudModal.phase === "creating") return;
+  if (cloudModal?.kind === "line-flow") void window.domo.cloudCancelLineFlow();
   closeCloudModal();
 }
 
-function cloudCreateProgress(
+function cloudLineProgress(
   panel,
   text,
   cancellable = true,
   title = "New agent",
-  onCancel = dismissCloudCreateModal,
 ) {
   const cancel = cancellable ? el("button", { class: "btn", text: "Cancel" }) : null;
-  cancel?.addEventListener("click", onCancel);
+  cancel?.addEventListener("click", dismissCloudLineModal);
   panel.replaceChildren(
     el("div", { class: "group-title", text: title }),
     el("div", { class: "cloud-progress" }, [
@@ -930,10 +927,10 @@ function cloudCreateProgress(
   cancel?.focus();
 }
 
-function cloudActivationScreen(panel, flow, onCancel) {
+function cloudActivationScreen(panel, flow) {
   const cancel = el("button", { class: "btn", text: "Cancel" });
   const messages = el("button", { class: "btn primary", text: "Open Messages…" });
-  cancel.addEventListener("click", onCancel);
+  cancel.addEventListener("click", dismissCloudLineModal);
   messages.addEventListener("click", () => window.domo.cloudOpenMessages());
   panel.replaceChildren(
     el("div", { class: "group-title", text: "New line" }),
@@ -996,31 +993,41 @@ function cloudLinePickerNodes(state, start, cancel, message = null) {
   ];
 }
 
-function syncCloudCreateModal(state, redraw) {
-  if (cloudModal?.kind !== "create") return;
+function syncCloudLineModal(state, redraw) {
+  if (cloudModal?.kind !== "line-flow") return;
   const modal = cloudModal;
-  const flow = state.cloudCreate ?? { phase: "idle" };
-  const { panel, nameInput } = modal;
+  const changing = modal.mode === "change";
+  const title = changing ? "Change line" : "New agent";
+  const agent = changing
+    ? (state.cloudAgents ?? []).find((candidate) => candidate.agentId === modal.agentId)
+    : null;
+  if (changing && !agent) {
+    void window.domo.cloudCancelLineFlow();
+    closeCloudModal();
+    return;
+  }
+  const flow = state.cloudLineFlow ?? { phase: "idle" };
+  const { panel } = modal;
   modal.phase = flow.phase;
 
-  if (modal.started && flow.createdAgentId) {
-    const createdAgentId = flow.createdAgentId;
+  if (modal.started && flow.completedAgentId) {
+    const completedAgentId = flow.completedAgentId;
     closeCloudModal();
-    focusCloudAgent(createdAgentId);
+    focusCloudAgent(completedAgentId);
     return;
   }
 
   if (modal.started && flow.phase === "activating") {
-    cloudCreateProgress(panel, "Getting a new line from Plow…");
+    cloudLineProgress(panel, "Getting a new line from Plow…", true, title);
     return;
   }
   if (modal.started && flow.phase === "creating") {
-    cloudCreateProgress(panel, "Setting up the agent…", false);
+    cloudLineProgress(panel, changing ? "Moving the agent…" : "Setting up the agent…", false, title);
     return;
   }
 
   if (modal.started && flow.phase === "waiting" && flow.activation) {
-    cloudActivationScreen(panel, flow, dismissCloudCreateModal);
+    cloudActivationScreen(panel, flow);
     return;
   }
 
@@ -1028,19 +1035,22 @@ function syncCloudCreateModal(state, redraw) {
     const cancel = el("button", { class: "btn", text: "Cancel" });
     const retry = el("button", {
       class: "btn primary",
-      text: flow.retryNewLine ? "Retry New agent" : "Try again",
+      text: !changing && flow.retryNewLine ? "Retry New agent" : "Try again",
     });
-    cancel.addEventListener("click", dismissCloudCreateModal);
+    cancel.addEventListener("click", dismissCloudLineModal);
     retry.addEventListener("click", async () => {
       retry.disabled = true;
       cancel.disabled = true;
-      await window.domo.cloudRetryCreate();
+      await window.domo.cloudRetryLineFlow();
       await redraw();
     });
     panel.replaceChildren(
-      el("div", { class: "group-title", text: "New agent" }),
+      el("div", { class: "group-title", text: title }),
       el("div", { class: "cloud-callout cloud-error" }, [
-        el("div", { class: "cloud-callout-title", text: "The agent wasn't created" }),
+        el("div", {
+          class: "cloud-callout-title",
+          text: changing ? "The line wasn't changed" : "The agent wasn't created",
+        }),
         el("p", {
           class: "faint",
           text: cloudErrorCopy(flow.message || "Something went wrong. Try again."),
@@ -1059,27 +1069,38 @@ function syncCloudCreateModal(state, redraw) {
   const start = async (lineUid) => {
     modal.started = true;
     modal.phase = lineUid === null ? "activating" : "creating";
-    cloudCreateProgress(
+    cloudLineProgress(
       panel,
-      lineUid === null ? "Getting a new line from Plow…" : "Setting up the agent…",
+      lineUid === null
+        ? "Getting a new line from Plow…"
+        : changing ? "Moving the agent…" : "Setting up the agent…",
       lineUid === null,
+      title,
     );
-    await window.domo.cloudCreate({ name: nameInput.value.trim(), lineUid });
+    if (changing) {
+      await window.domo.cloudChangeLine({ agentId: agent.agentId, lineUid });
+    } else {
+      await window.domo.cloudCreate({ name: modal.nameInput.value.trim(), lineUid });
+    }
     await redraw();
   };
   const cancel = el("button", { class: "btn", text: "Cancel" });
-  cancel.addEventListener("click", dismissCloudCreateModal);
+  cancel.addEventListener("click", dismissCloudLineModal);
   panel.replaceChildren(
-    el("div", { class: "group-title", text: "New agent" }),
-    el("div", { class: "field cloud-agent-name" }, [
+    el("div", { class: "group-title", text: title }),
+    ...(changing ? [el("p", {
+      class: "conn-note",
+      text: "The agent keeps its name and memory and moves to the new number.",
+    })] : [el("div", { class: "field cloud-agent-name" }, [
       el("label", { text: "Name (optional)" }),
-      nameInput,
-    ]),
-    ...cloudLinePickerNodes(state, start, cancel),
+      modal.nameInput,
+    ])]),
+    ...cloudLinePickerNodes(state, start, cancel, changing ? flow.message : null),
   );
   if (modal.firstPaint) {
     modal.firstPaint = false;
-    nameInput.focus();
+    if (changing) panel.querySelector(".cloud-line-option, .cloud-new-line button")?.focus();
+    else modal.nameInput.focus();
   }
 }
 
@@ -1088,148 +1109,45 @@ function openCloudCreate(trigger, state, redraw) {
     class: "text",
     attrs: { placeholder: "Cloud agent", "aria-label": "Agent name" },
   });
-  if (!openCloudModal(trigger, [], nameInput, dismissCloudCreateModal)) return;
+  if (!openCloudModal(trigger, [], nameInput, dismissCloudLineModal)) return;
   Object.assign(cloudModal, {
-    kind: "create",
+    kind: "line-flow",
+    mode: "create",
     nameInput,
     started: false,
     phase: "idle",
     firstPaint: true,
   });
-  cloudCreateProgress(cloudModal.panel, "Loading your lines…");
+  cloudLineProgress(cloudModal.panel, "Loading your lines…");
   void (async () => {
-    await window.domo.cloudCancelCreate();
+    await window.domo.cloudCancelLineFlow();
     const refreshed = await window.domo.cloudRefresh();
-    if (cloudModal?.kind === "create") syncCloudCreateModal(refreshed ?? state, redraw);
+    if (cloudModal?.kind === "line-flow") syncCloudLineModal(refreshed ?? state, redraw);
   })();
-}
-
-function dismissCloudChangeLineModal() {
-  if (cloudModal?.kind === "change-line" && cloudModal.phase === "creating") return;
-  if (cloudModal?.kind === "change-line") void window.domo.cloudCancelChangeLine();
-  closeCloudModal();
-}
-
-function syncCloudChangeLineModal(state, redraw) {
-  if (cloudModal?.kind !== "change-line") return;
-  const modal = cloudModal;
-  const agent = (state.cloudAgents ?? [])
-    .find((candidate) => candidate.agentId === modal.agentId);
-  if (!agent) {
-    void window.domo.cloudCancelChangeLine();
-    closeCloudModal();
-    return;
-  }
-  const flow = state.cloudChangeLine ?? { phase: "idle" };
-  modal.phase = flow.phase;
-
-  if (modal.started && flow.changedAgentId) {
-    const changedAgentId = flow.changedAgentId;
-    closeCloudModal();
-    focusCloudAgent(changedAgentId);
-    return;
-  }
-  if (modal.started && flow.phase === "activating") {
-    cloudCreateProgress(
-      modal.panel,
-      "Getting a new line from Plow…",
-      true,
-      "Change line",
-      dismissCloudChangeLineModal,
-    );
-    return;
-  }
-  if (modal.started && flow.phase === "creating") {
-    cloudCreateProgress(
-      modal.panel,
-      "Moving the agent…",
-      false,
-      "Change line",
-      dismissCloudChangeLineModal,
-    );
-    return;
-  }
-  if (modal.started && flow.phase === "waiting" && flow.activation) {
-    cloudActivationScreen(modal.panel, flow, dismissCloudChangeLineModal);
-    return;
-  }
-  if (modal.started && flow.phase === "error") {
-    const cancel = el("button", { class: "btn", text: "Cancel" });
-    const retry = el("button", { class: "btn primary", text: "Try again" });
-    cancel.addEventListener("click", dismissCloudChangeLineModal);
-    retry.addEventListener("click", async () => {
-      retry.disabled = true;
-      cancel.disabled = true;
-      await window.domo.cloudRetryChangeLine();
-      await redraw();
-    });
-    modal.panel.replaceChildren(
-      el("div", { class: "group-title", text: "Change line" }),
-      el("div", { class: "cloud-callout cloud-error" }, [
-        el("div", { class: "cloud-callout-title", text: "The line wasn't changed" }),
-        el("p", {
-          class: "faint",
-          text: cloudErrorCopy(flow.message || "Something went wrong. Try again."),
-        }),
-      ]),
-      el("div", { class: "row cloud-modal-actions" }, [
-        cancel,
-        el("div", { class: "spacer" }),
-        retry,
-      ]),
-    );
-    retry.focus();
-    return;
-  }
-
-  modal.started = false;
-  const start = async (lineUid) => {
-    modal.started = true;
-    modal.phase = lineUid === null ? "activating" : "creating";
-    cloudCreateProgress(
-      modal.panel,
-      lineUid === null ? "Getting a new line from Plow…" : "Moving the agent…",
-      lineUid === null,
-      "Change line",
-      dismissCloudChangeLineModal,
-    );
-    await window.domo.cloudChangeLine({ agentId: agent.agentId, lineUid });
-    await redraw();
-  };
-  const cancel = el("button", { class: "btn", text: "Cancel" });
-  cancel.addEventListener("click", dismissCloudChangeLineModal);
-  modal.panel.replaceChildren(
-    el("div", { class: "group-title", text: "Change line" }),
-    el("p", {
-      class: "conn-note",
-      text: "The agent keeps its name and memory and moves to the new number.",
-    }),
-    ...cloudLinePickerNodes(state, start, cancel, flow.message),
-  );
-  modal.panel.querySelector(".cloud-line-option, .cloud-new-line button")?.focus();
 }
 
 function openCloudChangeLine(agent, state, redraw) {
   if (!cloudModal) return;
   Object.assign(cloudModal, {
-    kind: "change-line",
+    kind: "line-flow",
+    mode: "change",
     agentId: agent.agentId,
     started: false,
     phase: "idle",
-    dismiss: dismissCloudChangeLineModal,
+    firstPaint: true,
+    dismiss: dismissCloudLineModal,
   });
-  cloudCreateProgress(
+  cloudLineProgress(
     cloudModal.panel,
     "Loading your lines…",
     true,
     "Change line",
-    dismissCloudChangeLineModal,
   );
   void (async () => {
-    await window.domo.cloudCancelChangeLine();
+    await window.domo.cloudCancelLineFlow();
     const refreshed = await window.domo.cloudRefresh();
-    if (cloudModal?.kind === "change-line") {
-      syncCloudChangeLineModal(refreshed ?? state, redraw);
+    if (cloudModal?.kind === "line-flow") {
+      syncCloudLineModal(refreshed ?? state, redraw);
     }
   })();
 }
@@ -1237,12 +1155,8 @@ function openCloudChangeLine(agent, state, redraw) {
 /** Repaint the open agent detail from the same state as the roster behind it. */
 function syncCloudModal(state, redraw) {
   if (!cloudModal) return;
-  if (cloudModal.kind === "create") {
-    syncCloudCreateModal(state, redraw);
-    return;
-  }
-  if (cloudModal.kind === "change-line") {
-    syncCloudChangeLineModal(state, redraw);
+  if (cloudModal.kind === "line-flow") {
+    syncCloudLineModal(state, redraw);
     return;
   }
   const agent = (state.cloudAgents ?? [])
