@@ -362,10 +362,13 @@ app.whenReady().then(async () => {
     screens: SCREENS,
     load: async () => {
       await win.loadFile(path.join(dist, "renderer/index.html"));
-      // The tab is empty until the vault answers, and the text is in the DOM one
-      // tick before it is painted: a shot on that tick is a blank window with
-      // the right innerText.
-      await waitFor(win, `document.querySelector(".vaultui .vitem, .vaultui .empty")`, "the vault tab to list");
+      // Wait for the LIST, not merely for the pane: the tab now paints its
+      // masthead and an "Opening the vault…" row before it reads the vault, so
+      // waiting on `.empty` would resolve on that placeholder and shoot every
+      // screen mid-load. `.list-head` and `.vitem` both mean the read landed.
+      // The text is in the DOM one tick before it is painted: a shot on that
+      // tick is a blank window with the right innerText.
+      await waitFor(win, `document.querySelector(".vaultui .vitem, .vaultui .list-head")`, "the vault tab to list");
       await new Promise((r) => setTimeout(r, 400));
     },
   });
