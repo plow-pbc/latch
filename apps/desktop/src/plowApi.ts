@@ -118,6 +118,8 @@ export interface RelayDeviceInfo {
 }
 
 export interface MintedCredential {
+  /** Session id used to revoke a mint that cannot be handed to the user. */
+  id: number;
   /** Shown to the user once (agents) or stored and never shown (the device). */
   token: string;
   keyPrefix: string;
@@ -502,6 +504,7 @@ export class PlowApi {
    * whatever we ask for — the server decides). */
   async createAgent(token: string, name: string): Promise<MintedCredential> {
     const data = await this.call<{
+      id?: unknown;
       token: string;
       key_prefix?: string;
       name?: string;
@@ -511,10 +514,11 @@ export class PlowApi {
       "/v1/relay/agents",
       { token, body: { name } },
     );
-    if (typeof data.mcp_config !== "string" || !data.mcp_config.trim()) {
+    if (typeof data.id !== "number" || typeof data.mcp_config !== "string" || !data.mcp_config.trim()) {
       throw new PlowApiError("http", "Plow did not return an MCP configuration.");
     }
     return {
+      id: data.id,
       token: data.token,
       keyPrefix: data.key_prefix ?? "",
       name: data.name ?? name,

@@ -232,6 +232,7 @@ async function setUp() {
     async createAgent(token, name) {
       if (token !== DEVICE_TOKEN) throw new Error("the mint must use the device credential");
       return {
+        id: 700,
         token: CLIENT_TOKEN,
         keyPrefix: CLIENT_TOKEN.slice(5, 13),
         name,

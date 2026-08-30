@@ -219,7 +219,7 @@ export class RelayClient {
         return;
 
       case "auth.ok": {
-        if (typeof msg.device_id === "string" && msg.device_id !== this.options.deviceId) {
+        if (msg.device_id !== this.options.deviceId) {
           this.stopAfterAuthFailure(conn, "relay authenticated a different device");
           return;
         }

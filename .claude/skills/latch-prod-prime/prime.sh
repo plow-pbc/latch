@@ -173,12 +173,14 @@ probe_relay() {
 
 probe_client_configs() {
   command -v jq >/dev/null 2>&1 || { PROBE_EVIDENCE="jq missing"; return 1; }
-  local names=() f host
+  local names=() f server host
   for f in "$CLIENT_CONFIG_DIR"/*.json; do
     [[ -f "$f" ]] || continue
-    # Host only — the URL path embeds the deviceId; headers hold Authorization.
-    host=$(jq -r '.mcpServers.plow.url // "" | sub("^https?://";"") | split("/")[0]' "$f" 2>/dev/null)
-    names+=("$(basename "$f" .json)→${host:-?}")
+    # Names and hosts only — URL paths embed deviceIds; headers hold secrets.
+    while IFS=$'\t' read -r server host; do
+      [[ -n "$server" ]] || continue
+      names+=("$(basename "$f" .json)/$server→${host:-?}")
+    done < <(jq -r '.mcpServers // {} | to_entries[] | [.key, (.value.url // "" | sub("^https?://";"") | split("/")[0])] | @tsv' "$f" 2>/dev/null)
   done
   if (( ${#names[@]} == 0 )); then
     PROBE_EVIDENCE="no client configs in $CLIENT_CONFIG_DIR"

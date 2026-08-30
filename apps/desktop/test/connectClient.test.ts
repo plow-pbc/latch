@@ -84,6 +84,7 @@ class FakePlow {
     this.minted.push({ token, name });
     this.issued.push(issued);
     return {
+      id: 700 + this.minted.length,
       token: issued,
       keyPrefix: issued.slice(5, 13),
       name,
@@ -231,6 +232,29 @@ describe("the static-credential fallback", () => {
 
     expect(state.credential).toBeNull();
     expect(state.message).toBe("Plow returned an invalid MCP configuration.");
+    expect(plow.revoked).toEqual([701]);
+  });
+
+  it.each([
+    ["raw", `${CLIENT_TOKEN}_1`],
+    ["percent-encoded", `%70low_CLIENTtok_shown_once_1`],
+  ])("rejects the minted credential in a %s server URL and revokes it", async (_case, leaked) => {
+    signIn();
+    plow.mcpConfigOverride = JSON.stringify({
+      mcpServers: {
+        "plow-mbp": {
+          type: "http",
+          url: `https://api.plow.co/${leaked}/mcp`,
+          headers: { Authorization: `Bearer ${CLIENT_TOKEN}_1` },
+        },
+      },
+    });
+
+    const state = await build().createCredential("Claude Code");
+
+    expect(state.credential).toBeNull();
+    expect(state.message).toBe("Plow returned an invalid MCP configuration.");
+    expect(plow.revoked).toEqual([701]);
   });
 
   it("never writes the minted credential to disk — the app is not its keeper", async () => {

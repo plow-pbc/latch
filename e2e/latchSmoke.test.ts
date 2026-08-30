@@ -171,6 +171,12 @@ describe.skipIf(!havePython())("latch-smoke, run for real", () => {
   }
   const registration = (url: string) => JSON.stringify(
     { mcpServers: { plow: { type: "http", url, headers: { Authorization: "Bearer t" } } } });
+  const multiRegistration = JSON.stringify({
+    mcpServers: {
+      "plow-mbp": { type: "http", url: "relay.plow.com/mbp", headers: { Authorization: "Bearer t" } },
+      "plow-mba": { type: "http", url: "relay.plow.com/mba", headers: { Authorization: "Bearer t" } },
+    },
+  });
   const refusals: [string, () => string[], number, string, string | null, boolean][] = [
     ["a local home that does not exist", () => fixture("5", NOT_A_HOME).argv,
       1, "REFUSED — no such home", NOT_A_HOME, false],
@@ -198,7 +204,9 @@ describe.skipIf(!havePython())("latch-smoke, run for real", () => {
       () => [script, "--config", "/nonexistent/config", "--home", REAL_HOME, "--timeout", "5"],
       1, "REFUSED — /nonexistent/config", null, false],
     ["a config file that is not the rendered block", () => configArgv('{"mcpServers":{}}'),
-      1, "exactly one entry", null, false],
+      1, "has no entries", null, false],
+    ["a multi-device config without a selected server", () => configArgv(multiRegistration),
+      1, "pass --server", null, false],
     // The 0600 contract is enforced, not just documented — for both credential files.
     ["a config file another account can read", () => {
       const argv = configArgv(registration("http://127.0.0.1:9/mcp"));
@@ -228,6 +236,15 @@ describe.skipIf(!havePython())("latch-smoke, run for real", () => {
     // Either it never offered a handle, or it took it back.
     expect(out.includes("nonce=")).toBe(retractsNonce);
     if (retractsNonce) expect(out).toContain("corresponds to no call");
+  });
+
+  it("selects one named server from a multi-device config", () => {
+    const argv = configArgv(multiRegistration);
+    argv.splice(argv.indexOf("--home"), 0, "--server", "plow-mba");
+    const run = spawnSync("python3", argv, { encoding: "utf8", env });
+    expect(run.status).toBe(1);
+    expect(run.stdout + run.stderr).toContain("The request never left this Mac");
+    expect(run.stdout + run.stderr).not.toContain("pass --server");
   });
 
   // The two that need a fake ssh, so they cannot be rows above.

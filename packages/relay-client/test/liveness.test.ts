@@ -36,7 +36,7 @@ class FakeConn implements Connection {
     this.sent.push(frame);
     if (this.deaf) return;
     // A live relay answers: the handshake, and a pong for every ping.
-    if (frame.type === "auth") this.deliver({ type: "auth.ok" });
+    if (frame.type === "auth") this.deliver({ type: "auth.ok", device_id: "device-1" });
     if (frame.type === "ping") this.deliver({ type: "pong" });
   }
 
@@ -169,7 +169,7 @@ describe("a socket that goes silent", () => {
     const { client, conns, status } = harness();
     await client.start();
     conns[0].deliver({ type: "auth.challenge" });
-    conns[0].deliver({ type: "auth.ok", ping_interval_ms: 1000 });
+    conns[0].deliver({ type: "auth.ok", device_id: "device-1", ping_interval_ms: 1000 });
     expect(client.isConnected).toBe(true);
 
     // That relay goes silent and is dropped on its own (fast) cadence.

@@ -446,6 +446,7 @@ describe("PlowApi", () => {
       {
         status: 200,
         body: {
+          id: 41,
           token: "plow_agenttok",
           key_prefix: "agenttk",
           name: "Claude Code",
@@ -459,6 +460,7 @@ describe("PlowApi", () => {
     );
 
     expect(calls[0].url).toBe("https://api.plow.co/v1/relay/agents");
+    expect(minted.id).toBe(41);
     expect(minted.token).toBe("plow_agenttok");
   });
 

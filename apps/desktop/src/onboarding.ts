@@ -697,9 +697,6 @@ export class Onboarding {
     const settings = this.settings();
     settings.relayCredential = sessionToken;
     settings.accountUid = info.uid;
-    settings.accountMcpUrl = info.mcpUrl;
-    settings.relayDeviceId = registered.deviceId;
-    settings.relayDeviceName = registered.displayName;
     settings.mcpUrl = registered.mcpUrl;
     // Kept, not read and dropped: the redeem that carried it answers once, so
     // this is the only moment the app ever sees the chat it just created. A

@@ -134,15 +134,9 @@ export interface Settings {
    * SECRET: never sent to the renderer, never written to a log or an error
    * string. */
   relayCredential: string;
-  /** The account this Mac is signed into and server-authored MCP endpoints.
-   * Registration supplies this installation's URL; relay info supplies the
-   * compatibility alias. The app constructs neither. */
+  /** The account this Mac is signed into. */
   accountUid: string;
-  /** Compatibility endpoint that resolves only to the account's primary device. */
-  accountMcpUrl: string;
-  /** This installation's stable identity and server-allocated display name. */
-  relayDeviceId: string;
-  relayDeviceName: string;
+  /** This installation's server-authored MCP endpoint. */
   mcpUrl: string;
   /** The last-selected main-window tab, restored across launches.
    *
@@ -213,9 +207,6 @@ export function loadSettings(home: string): Settings {
   const defaults: Settings = {
     relayCredential: "",
     accountUid: "",
-    accountMcpUrl: "",
-    relayDeviceId: "",
-    relayDeviceName: "",
     mcpUrl: "",
     selectedTab: "agents",
     approvalMode: DEFAULT_APPROVAL_MODE,
@@ -258,9 +249,6 @@ export function loadSettings(home: string): Settings {
     if (!loaded.relayCredential) {
       unreadableSeal = true;
       loaded.accountUid = "";
-      loaded.accountMcpUrl = "";
-      loaded.relayDeviceId = "";
-      loaded.relayDeviceName = "";
       loaded.mcpUrl = "";
       loaded.provisionedChatUid = "";
       loaded.provisionedChatLabel = "";

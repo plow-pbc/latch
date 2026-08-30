@@ -276,8 +276,6 @@ describe("activation — the path a brand-new user takes", () => {
     expect(plow.registrations).toEqual([
       { token: SESSION_TOKEN, deviceId: "device-1", hostname: "test-mac" },
     ]);
-    expect(loadSettings(home).relayDeviceId).toBe("device-1");
-    expect(loadSettings(home).relayDeviceName).toBe("test-mac");
     expect(loadSettings(home).mcpUrl).toBe(DEVICE_MCP_URL);
     // The spent activation is dropped rather than left on a screen behind this.
     expect(state.activation).toBeNull();
@@ -918,10 +916,9 @@ describe("the phone-code fallback still works", () => {
     expect(state.mcpUrl).toBe(DEVICE_MCP_URL);
     expect(started).toBe(1);
 
-    // The endpoint came from GET /v1/relay/info; the app never builds it.
+    // The endpoint came from device registration; the app never builds it.
     const settings = loadSettings(home);
     expect(settings.relayCredential).toBe(OTP_TOKEN);
-    expect(settings.accountMcpUrl).toBe(MCP_URL);
     expect(settings.mcpUrl).toBe(DEVICE_MCP_URL);
   });
 
@@ -950,7 +947,6 @@ describe("the phone-code fallback still works", () => {
 
     expect(state.message).toBe("Plow could not register this Mac.");
     expect(loadSettings(home).relayCredential).toBe("");
-    expect(loadSettings(home).relayDeviceId).toBe("");
     expect(started).toBe(0);
   });
 

@@ -260,13 +260,22 @@ export class ConnectClient {
       try {
         const minted = await this.deps.api.createAgent(settings.relayCredential, trimmed);
         // A sign-out while this was in the air: the credential belongs to an
-        // account this Mac is no longer on, so it is dropped rather than shown.
-        // It stays live on that account until revoked there — nothing this app
-        // can reach — but it never crosses into the next session.
-        if (generation !== this.generation) return this.state();
+        // account this Mac is no longer on, so revoke it rather than showing it
+        // or leaving an unreachable credential behind.
+        if (generation !== this.generation) {
+          await this.deps.api.revokeApiKey(settings.relayCredential, minted.id).catch(() => {});
+          return this.state();
+        }
+        let config: string;
+        try {
+          config = validatedAgentConfig(minted.mcpConfig, minted.token);
+        } catch (error) {
+          await this.deps.api.revokeApiKey(settings.relayCredential, minted.id).catch(() => {});
+          throw error;
+        }
         this.credential = {
           name: minted.name || trimmed,
-          config: validatedAgentConfig(minted.mcpConfig, minted.token),
+          config,
         };
       } catch (error) {
         if (generation === this.generation) this.message = messageOf(error);
@@ -357,7 +366,17 @@ export function validatedAgentConfig(config: string, token: string): string {
       throw new PlowApiError("http", "Plow returned an invalid MCP configuration.");
     }
     const headers = (server as { headers?: unknown }).headers;
+    const url = (server as { url?: unknown }).url;
+    let decodedUrl: string;
+    try {
+      decodedUrl = typeof url === "string" ? decodeURIComponent(url) : "";
+    } catch {
+      throw new PlowApiError("http", "Plow returned an invalid MCP configuration.");
+    }
     if (
+      typeof url !== "string" ||
+      url.includes(token) ||
+      decodedUrl.includes(token) ||
       !headers ||
       typeof headers !== "object" ||
       (headers as Record<string, unknown>).Authorization !== `Bearer ${token}`

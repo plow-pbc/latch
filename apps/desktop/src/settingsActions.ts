@@ -63,9 +63,6 @@ export function signOutOfPlow(home: string): void {
     s.relayCredential = "";
     s.relayCredentialEnc = undefined;
     s.accountUid = "";
-    s.accountMcpUrl = "";
-    s.relayDeviceId = "";
-    s.relayDeviceName = "";
     s.mcpUrl = "";
     // Account data, not device data: the next sign-in may be a different
     // account, and a stale chat label on its setup screen would name a chat
