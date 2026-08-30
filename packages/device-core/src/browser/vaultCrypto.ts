@@ -22,12 +22,25 @@ export function httpCa(caPath?: string): Buffer | undefined {
   return caPath && fs.existsSync(caPath) ? fs.readFileSync(caPath) : undefined;
 }
 
+/**
+ * How long the local vault gets to answer before a request is given up on.
+ *
+ * Every vault call goes through `send`, and none of them is long work: the
+ * server is on this Mac. Without this, a wedged vault — a suspended process, an
+ * orphan from an earlier install still holding the port — was an await that
+ * never settled, which surfaced to the owner as a Vault tab that simply never
+ * opened. A timeout turns that into the error state the UI already knows how
+ * to show.
+ */
+export const VAULT_REQUEST_TIMEOUT_MS = 10_000;
+
 export function send(
   http: VaultHttp,
   method: string,
   urlPath: string,
   body?: string,
   contentType = "application/json",
+  timeoutMs = VAULT_REQUEST_TIMEOUT_MS,
 ): Promise<{ status: number; body: string }> {
   return new Promise((resolve, reject) => {
     const payload = body === undefined ? undefined : Buffer.from(body);
@@ -50,6 +63,12 @@ export function send(
       },
     );
     req.once("error", reject);
+    // `destroy(err)` surfaces as the `error` above, so a stall rejects with a
+    // sentence rather than hanging. Covers a connect that never completes and a
+    // response that stops mid-body alike.
+    req.setTimeout(timeoutMs, () =>
+      req.destroy(new Error(`the vault did not answer in ${Math.round(timeoutMs / 1000)}s`)),
+    );
     req.end(payload);
   });
 }
