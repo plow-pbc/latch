@@ -510,12 +510,7 @@ export class CloudAgentState {
       const credential = this.credential();
       if (!lineUid || echoesCredential(lineUid, credential)) {
         this.deps.warn?.(
-          `[cloud-agent] verified activation missing line uid: ${JSON.stringify({
-            chat: result.chat ? "present" : "missing",
-            participantTypes: result.chat?.participants.length ? ["member"] : [],
-            hasLine: Boolean(result.chat?.line),
-            hasLineUid: Boolean(result.chat?.lineUid),
-          })}`,
+          `[cloud-agent] verified activation missing line uid: ${JSON.stringify(result.shape)}`,
         );
         this.setLineFlowError(action.kind, "Couldn't read the line for this agent.", true);
         return;

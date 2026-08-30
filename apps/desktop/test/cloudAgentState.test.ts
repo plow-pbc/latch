@@ -404,6 +404,11 @@ describe("CloudAgentState new agent flow", () => {
           participants: [],
           createdAt: "",
         },
+        shape: {
+          chat: "object",
+          participantTypes: ["member", "agent"],
+          agentLine: "uid_string",
+        },
       }),
       createAgent: async (request) => {
         created.push(request);
@@ -457,10 +462,15 @@ describe("CloudAgentState new agent flow", () => {
           uid: "cht_missing_line",
           status: "active",
           displayName: null,
-          line: null,
+          line: "+15550100",
           lineUid: null,
           participants: [{ providerKey: null, displayName: null, isOwner: true }],
           createdAt: "",
+        },
+        shape: {
+          chat: "object",
+          participantTypes: ["member", "agent"],
+          agentLine: "uid_missing",
         },
       } as unknown as ProvisionedActivationRedeem),
     });
@@ -473,7 +483,7 @@ describe("CloudAgentState new agent flow", () => {
       retryNewLine: true,
     });
     expect(warned).toEqual([
-      '[cloud-agent] verified activation missing line uid: {"chat":"present","participantTypes":["member"],"hasLine":false,"hasLineUid":false}',
+      '[cloud-agent] verified activation missing line uid: {"chat":"object","participantTypes":["member","agent"],"agentLine":"uid_missing"}',
     ]);
     expect(JSON.stringify(state.state())).not.toContain(droppedToken);
     expect(JSON.stringify(loadSettings(home))).not.toContain(droppedToken);
@@ -570,6 +580,11 @@ describe("CloudAgentState change-line flow", () => {
           lineUid: "lin_new",
           participants: [],
           createdAt: "",
+        },
+        shape: {
+          chat: "object",
+          participantTypes: ["member", "agent"],
+          agentLine: "uid_string",
         },
       }),
       changeAgentLine: async (agentId, lineUid) => {

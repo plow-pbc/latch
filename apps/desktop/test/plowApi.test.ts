@@ -299,6 +299,11 @@ describe("PlowApi", () => {
     expect(result).toMatchObject({
       status: "verified",
       chat: { lineUid: "lin_new" },
+      shape: {
+        chat: "object",
+        participantTypes: ["member", "agent"],
+        agentLine: "uid_string",
+      },
     });
     expect(JSON.stringify(result)).not.toContain(token);
   });
@@ -326,6 +331,7 @@ describe("PlowApi", () => {
     expect(result).toMatchObject({
       status: "verified",
       chat: null,
+      shape: { participantTypes: ["other", "agent"] },
     });
     expect(JSON.stringify(result)).not.toContain(token);
   });
