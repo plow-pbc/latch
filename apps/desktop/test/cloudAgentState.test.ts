@@ -346,6 +346,30 @@ describe("CloudAgentState new agent flow", () => {
     ]);
   });
 
+  it("excludes a line whose chat is fixed to a legacy agent", async () => {
+    const { state } = build({
+      listAgents: async () => [agent({ lineUid: null, chatUids: ["cht_willow"] })],
+      listChats: async () => [
+        chat({ uid: "cht_willow", lineUid: "lin_willow" }),
+        chat({
+          uid: "cht_ash",
+          lineUid: "lin_ash",
+          recipients: { line: "+15550200", members: [] },
+        }),
+      ],
+      listLines: async () => [
+        { uid: "lin_willow", displayName: "Willow", number: "+15550100" },
+        { uid: "lin_ash", displayName: "Ash", number: "+15550200" },
+      ],
+    });
+
+    await state.refresh();
+
+    expect(state.state().cloudFreeLines).toEqual([
+      { uid: "lin_ash", label: "Ash · +15550200" },
+    ]);
+  });
+
   it("creates directly on a picked free line without activating", async () => {
     const created: Array<{ lineUid: string; name: string }> = [];
     const { state, calls } = build({

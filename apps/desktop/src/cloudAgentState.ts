@@ -1009,11 +1009,18 @@ export class CloudAgentState {
 
   private freeLines(): CloudAgentLine[] {
     if (!this.chatsLoaded) return [];
-    const occupied = new Set(
-      [...this.rows.values()]
-        .map((row) => row.line?.uid ?? null)
-        .filter((uid): uid is string => uid !== null),
-    );
+    const occupied = new Set<string>();
+    const legacyChatUids = new Set<string>();
+    for (const row of this.rows.values()) {
+      if (row.line) {
+        occupied.add(row.line.uid);
+      } else {
+        for (const thread of row.threads) legacyChatUids.add(thread.uid);
+      }
+    }
+    for (const chat of this.chats) {
+      if (chat.lineUid && legacyChatUids.has(chat.uid)) occupied.add(chat.lineUid);
+    }
     const seen = new Set<string>();
     const free: CloudAgentLine[] = [];
     for (const chat of this.chats) {

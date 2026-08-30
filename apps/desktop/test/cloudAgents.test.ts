@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   CloudAgentResource,
   CloudAgentLineError,
@@ -8,6 +8,14 @@ import {
 import { FetchLike, PlowApi, PlowApiError, REQUEST_TIMEOUT_MS } from "../src/plowApi.js";
 
 const CREDENTIAL = "plow_dev_credential_123456789";
+
+beforeEach(() => {
+  vi.spyOn(console, "error").mockImplementation(() => {});
+});
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 const wireAgent = (overrides: Record<string, unknown> = {}) => ({
   agent_id: "agent_123",
@@ -79,6 +87,20 @@ describe("CloudAgentsClient resources", () => {
       .list(CREDENTIAL);
 
     expect(agent.lineUid).toBe("lin_fallback");
+  });
+
+  it("finds the line fallback within a mixed chat grant", async () => {
+    const mixedGrant = wireAgent({ chat_uids: ["cht_one", "line:lin_p4"] });
+    delete mixedGrant.line_uid;
+    const { fetchImpl } = recordingFetch([{
+      status: 200,
+      body: { data: [mixedGrant] },
+    }]);
+
+    const [agent] = await new CloudAgentsClient(new PlowApi("https://api.plow.co", fetchImpl))
+      .list(CREDENTIAL);
+
+    expect(agent.lineUid).toBe("lin_p4");
   });
 
   it("accepts the older single-chat grant", async () => {
@@ -179,6 +201,52 @@ describe("CloudAgentsClient creation", () => {
       { lineUid: "lin_willow", name: "Kitchen" },
     )).rejects.toThrow("Text this line once first, then try again.");
   });
+
+  it("surfaces unknown error detail and logs only failure metadata", async () => {
+    const { fetchImpl } = recordingFetch([{
+      status: 422,
+      body: {
+        detail: { code: "LINE_CAPACITY", message: "No capacity for that line." },
+        token: CREDENTIAL,
+        debug: "body-only marker",
+      },
+    }]);
+
+    const error = await new CloudAgentsClient(new PlowApi("https://api.plow.co", fetchImpl))
+      .create(CREDENTIAL, { lineUid: "lin_willow", name: "Kitchen" })
+      .catch((caught: unknown) => caught as Error);
+
+    expect(error.message).toBe("No capacity for that line.");
+    expect(console.error).toHaveBeenCalledTimes(1);
+    expect(console.error).toHaveBeenCalledWith(
+      "[cloud-agent] POST /v1/agents/cloud failed status=422 code=LINE_CAPACITY",
+    );
+    const stderr = vi.mocked(console.error).mock.calls.flat().join(" ");
+    expect(stderr).not.toContain(CREDENTIAL);
+    expect(stderr).not.toContain("body-only marker");
+    expect(stderr).not.toContain("No capacity for that line.");
+  });
+
+  it("drops error detail that echoes the credential", async () => {
+    const { fetchImpl } = recordingFetch([{
+      status: 400,
+      body: {
+        detail: {
+          code: "BAD_REQUEST",
+          message: `Rejected bearer ${CREDENTIAL}`,
+        },
+      },
+    }]);
+
+    const error = await new CloudAgentsClient(new PlowApi("https://api.plow.co", fetchImpl))
+      .create(CREDENTIAL, { lineUid: "lin_willow", name: "Kitchen" })
+      .catch((caught: unknown) => caught as Error);
+
+    expect(error.message).toBe("Plow returned 400.");
+    expect(error.message).not.toContain(CREDENTIAL.slice(0, 10));
+    expect(vi.mocked(console.error).mock.calls.flat().join(" "))
+      .not.toContain(CREDENTIAL.slice(0, 10));
+  });
 });
 
 describe("CloudAgentsClient line changes", () => {
@@ -219,6 +287,23 @@ describe("CloudAgentsClient line changes", () => {
     expect(error).toBeInstanceOf(CloudAgentLineError);
     expect(error).toMatchObject({ code, message: copy });
     expect(String(error)).not.toContain(CREDENTIAL);
+  });
+
+  it("surfaces unknown error detail on non-409 statuses", async () => {
+    const { fetchImpl } = recordingFetch([{
+      status: 503,
+      body: { detail: { code: "LINE_SERVICE_DOWN", message: "Line service is restarting." } },
+    }]);
+
+    const error = await new CloudAgentsClient(new PlowApi("https://api.plow.co", fetchImpl))
+      .changeLine(CREDENTIAL, "agent/with space", "lin_ash")
+      .catch((caught: unknown) => caught as Error);
+
+    expect(error.message).toBe("Line service is restarting.");
+    expect(console.error).toHaveBeenCalledTimes(1);
+    expect(console.error).toHaveBeenCalledWith(
+      "[cloud-agent] PUT /v1/agents/cloud/{agent_id}/line failed status=503 code=LINE_SERVICE_DOWN",
+    );
   });
 });
 

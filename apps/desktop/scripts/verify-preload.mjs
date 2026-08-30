@@ -193,7 +193,7 @@ ipcMain.handle("cloud:create", async (_e, input) => {
       cloudCreate: {
         phase: "error",
         activation: null,
-        message: "Plow returned 409.",
+        message: "No capacity for that line.",
         createdAgentId: null,
         retryNewLine: false,
       },
@@ -240,7 +240,7 @@ ipcMain.handle("cloud:changeLine", async (_e, input) => {
       cloudChangeLine: {
         phase: "error",
         activation: null,
-        message: "Plow returned 409.",
+        message: "Line service is restarting.",
         changedAgentId: null,
         retryNewLine: false,
       },
@@ -982,9 +982,9 @@ app.whenReady().then(async () => {
   );
   await waitFor(win, `document.querySelector(".cloud-modal .cloud-callout-title")?.textContent
     .includes("wasn't created")`, "the create error card");
-  const cloudCreateErrorSafe = await win.webContents.executeJavaScript(
-    `document.querySelector(".cloud-modal").textContent.includes("Plow couldn't complete that request. Try again.") &&
-      !document.querySelector(".cloud-modal").textContent.includes("Plow returned 409.")`,
+  const cloudCreateErrorDetail = await win.webContents.executeJavaScript(
+    `document.querySelector(".cloud-modal .cloud-callout p")?.textContent.trim() ===
+      "No capacity for that line."`,
   );
   await win.webContents.executeJavaScript(
     `[...document.querySelectorAll(".cloud-modal button")]
@@ -1053,9 +1053,9 @@ app.whenReady().then(async () => {
   );
   await waitFor(win, `document.querySelector(".cloud-modal .cloud-callout-title")?.textContent
     .includes("wasn't changed")`, "the change-line error card");
-  const cloudChangeErrorSafe = await win.webContents.executeJavaScript(
-    `document.querySelector(".cloud-modal").textContent.includes("Plow couldn't complete that request. Try again.") &&
-      !document.querySelector(".cloud-modal").textContent.includes("Plow returned 409.")`,
+  const cloudChangeErrorDetail = await win.webContents.executeJavaScript(
+    `document.querySelector(".cloud-modal .cloud-callout p")?.textContent.trim() ===
+      "Line service is restarting."`,
   );
   await win.webContents.executeJavaScript(
     `[...document.querySelectorAll(".cloud-modal button")]
@@ -1742,9 +1742,9 @@ app.whenReady().then(async () => {
     cloudUnknownLines.showsSafeError &&
     cloudUnknownLines.hidesRawError &&
     cloudUnknownLines.buttons.join("|") === "Cancel" &&
-    cloudCreateErrorSafe &&
+    cloudCreateErrorDetail &&
     failedCloudDetailButtons.join("|") === "Close|Delete agent" &&
-    cloudChangeErrorSafe &&
+    cloudChangeErrorDetail &&
     cloudAgentGoneCancelled &&
     cloudDeleteConfirm.title === "Delete Household helper?" &&
     cloudDeleteConfirm.copy &&
@@ -1826,7 +1826,7 @@ app.whenReady().then(async () => {
     errors.length === 0;
   console.log(
     "PROBE:" +
-      JSON.stringify({ main, settings, strandedOnDisk, settingsPane, connect, cloudRoster, cloudCreatePicker, cloudCreateCode, cloudDetail, cloudChangePicker, cloudChangeCode, cloudChangeRequest, cloudUnknownLines, cloudCreateErrorSafe, failedCloudDetailButtons, cloudChangeErrorSafe, cloudAgentGoneCancelled, cloudDeleteConfirm, agentsShot, approvalsReviewer, approvalsShot, purposeRoundTrip, approvalsAsk, askWithoutReviewer, approvalsShotAsk, agentsOpen, modalClosed, vaultLocked, vaultUnsaved, vaultShot, agentsOpenShot, staleSettingsPane, optimisticMode, settingsShot, approval, reviewerNote, consoleErrors: errors, ok }),
+      JSON.stringify({ main, settings, strandedOnDisk, settingsPane, connect, cloudRoster, cloudCreatePicker, cloudCreateCode, cloudDetail, cloudChangePicker, cloudChangeCode, cloudChangeRequest, cloudUnknownLines, cloudCreateErrorDetail, failedCloudDetailButtons, cloudChangeErrorDetail, cloudAgentGoneCancelled, cloudDeleteConfirm, agentsShot, approvalsReviewer, approvalsShot, purposeRoundTrip, approvalsAsk, askWithoutReviewer, approvalsShotAsk, agentsOpen, modalClosed, vaultLocked, vaultUnsaved, vaultShot, agentsOpenShot, staleSettingsPane, optimisticMode, settingsShot, approval, reviewerNote, consoleErrors: errors, ok }),
   );
   app.exit(ok ? 0 : 1);
 }).catch((err) => {
