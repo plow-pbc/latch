@@ -32,11 +32,6 @@ const NEW_LINE_VALUE = "__new_line__";
 const LOCAL_PROVIDER = "local:docker";
 const ADD_HOST_VALUE = "__add_host__";
 
-/** The origin as the main process will store it, so a freshly added host can
- * be found again in the state that comes back. */
-function normalizedBaseUrl(raw) {
-  return String(raw ?? "").trim().replace(/\/+$/, "");
-}
 
 // Null until boot() picks one: the HTML marks Audit active for the first paint,
 // but boot must still RENDER that pane, and "already on this tab" now returns
@@ -1018,18 +1013,18 @@ function cloudHostFieldNodes(state, modal, redraw) {
     const save = el("button", { class: "btn primary", text: "Save host" });
     save.addEventListener("click", async () => {
       save.disabled = true;
-      const wanted = normalizedBaseUrl(baseUrl.value);
       const next = await window.domo.cloudAddTarget({
         label: label.value.trim(),
         baseUrl: baseUrl.value,
         bearer: bearer.value,
       });
-      const saved = (next?.cloudTargets ?? [])
-        .find((target) => !target.builtin && target.baseUrl === wanted);
       if (cloudModal?.kind === "line-flow") {
-        // A rejected host leaves the form up with the reason on it; only a
-        // saved one closes the form and selects itself.
-        if (saved) Object.assign(cloudModal, { targetId: saved.id, addingHost: false });
+        // Main says which row it wrote. A rejected host answers with no id and
+        // leaves the form up with the reason on it; only a saved one closes
+        // the form and selects itself.
+        if (next?.addedTargetId) {
+          Object.assign(cloudModal, { targetId: next.addedTargetId, addingHost: false });
+        }
         syncCloudLineModal(next ?? state, redraw);
       }
       await redraw();
@@ -1041,7 +1036,8 @@ function cloudHostFieldNodes(state, modal, redraw) {
         baseUrl,
         el("p", {
           class: "faint conn-note",
-          text: "Where agent-mgr serve is listening — reachable from this Mac.",
+          text: "Where agent-mgr serve is listening — reachable from this Mac. " +
+            "Over plain http:// the token is sent in the clear, so use a network you trust.",
         }),
       ]),
       el("div", { class: "field" }, [el("label", { text: "Host token" }), bearer]),

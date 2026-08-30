@@ -684,9 +684,17 @@ ipcMain.handle("cloud:create", async (_e, input: unknown) => {
  */
 ipcMain.handle("cloud:addTarget", async (_e, input: unknown) => {
   const raw = input && typeof input === "object" ? input as Record<string, unknown> : {};
-  cloudAgents?.addTarget({ label: raw.label, baseUrl: raw.baseUrl, bearer: raw.bearer });
-  await cloudAgents?.refresh();
-  return agentsTabState();
+  // The id comes back so the form can select what it just saved. Without it
+  // the renderer had to re-derive the canonical origin to find the row, which
+  // meant a second copy of the canonicalisation rules living where the
+  // untrusted input is typed.
+  const addedTargetId = cloudAgents?.addTarget({
+    label: raw.label,
+    baseUrl: raw.baseUrl,
+    bearer: raw.bearer,
+  }) ?? null;
+  if (addedTargetId) await cloudAgents?.refresh();
+  return { ...agentsTabState(), addedTargetId };
 });
 ipcMain.handle("cloud:forgetTarget", async (_e, targetId: unknown) => {
   cloudAgents?.forgetTarget(typeof targetId === "string" ? targetId : "");

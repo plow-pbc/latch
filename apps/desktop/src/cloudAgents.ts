@@ -101,7 +101,7 @@ export class CloudAgentsClient {
       },
     });
     if (!response.ok) {
-      await throwCloudCallError(response, target.bearer);
+      await throwCloudCallError(response, request.name);
     }
     return this.resourceFor(response, target.bearer);
   }
@@ -121,7 +121,7 @@ export class CloudAgentsClient {
       },
     );
     if (!response.ok) {
-      await throwCloudCallError(response, target.bearer);
+      await throwCloudCallError(response, "");
     }
     return this.resourceFor(response, target.bearer);
   }
@@ -314,7 +314,7 @@ function responseCode(decoded: unknown): string | null {
 
 async function throwCloudCallError(
   response: Response,
-  bearer: string,
+  agentName: string,
 ): Promise<never> {
   const decoded = await decodeJson(response);
   const code = responseCode(decoded);
@@ -323,9 +323,8 @@ async function throwCloudCallError(
   );
   const mapped = code === null ? null : LINE_ERRORS[code];
   if (mapped) throw new CloudAgentLineError(mapped.code, mapped.message, response.status);
-  if (response.status === 400) {
-    const detail = badRequestDetail(decoded, bearer);
-    if (detail) throw new PlowApiError("http", detail, 400);
+  if (response.status === 400 && namesRegisterCommand(decoded)) {
+    throw new PlowApiError("http", unregisteredAgentMessage(agentName), 400);
   }
   throw errorFor(response.status);
 }
@@ -376,28 +375,39 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 /**
- * A 400's own sentence, when it is safe to show.
+ * Does this 400 mean "that name is not registered on this host"?
  *
- * A self-hosted host answers 400 with the command the owner has to run next —
- * `agent-mgr register <name> <dir>` for a name that host has never heard of —
- * and that sentence IS the fix. `errorFor` would replace it with "returned
- * 400", hiding the only useful thing in the response and leaving a dead end
- * where there is a one-line answer.
- *
- * Passed through only when it cannot be echoing the bearer back onto the
- * screen: this is server-authored text from an origin the owner typed in, so
- * it is checked here rather than trusted, exactly as `parseResource` checks
- * every other server-authored string.
+ * A BOOLEAN, deliberately, and this is the whole shape of the fix: a
+ * self-hosted host is an origin its owner typed in, so its response body is
+ * untrusted text. Forwarding it could not be made safe — a bearer echoed back
+ * in any reversible encoding walks straight past a literal check and onto the
+ * screen, which is exactly the contract this app makes about the renderer.
+ * So nothing server-authored crosses. We only ask whether the body carries
+ * the marker, and write the sentence ourselves.
  */
-function badRequestDetail(decoded: unknown, bearer: string): string | null {
-  if (!isRecord(decoded)) return null;
+function namesRegisterCommand(decoded: unknown): boolean {
+  if (!isRecord(decoded)) return false;
   const detail = decoded.detail;
-  const message = typeof detail === "string"
+  const text = typeof detail === "string"
     ? detail
     : isRecord(detail) && typeof detail.message === "string"
       ? detail.message
       : "";
-  const text = message.trim();
-  if (!text || echoesCredential(text, bearer)) return null;
-  return text;
+  return text.includes("agent-mgr register");
+}
+
+/**
+ * The next step, written here from the name WE sent.
+ *
+ * `agent-mgr` refuses a name it has never been told about, because an `exe:`
+ * agent unpacks an image while a local one needs a checkout on that machine.
+ * Registering it is the fix, and a bare "returned 400" would hide that there
+ * is one — so the sentence names the command, built from the app's own
+ * request rather than from anything the host said back.
+ */
+function unregisteredAgentMessage(agentName: string): string {
+  const name = agentName.trim();
+  return name
+    ? `That host has no agent named "${name}". Run \`agent-mgr register ${name} <dir>\` on it first.`
+    : "That host doesn't know this agent yet. Run `agent-mgr register <name> <dir>` on it first.";
 }

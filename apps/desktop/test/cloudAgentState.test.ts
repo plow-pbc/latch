@@ -1270,21 +1270,52 @@ describe("CloudAgentState self-hosted targets", () => {
     expect(calls).not.toContain("delete@plow:agent_local");
   });
 
-  it("rejects a host address that is not an http origin, and a missing token", () => {
+  it.each([
+    ["a bare host:port that is not a URL", "192.168.15.12:8765"],
+    ["a scheme that is not http", "slowdown:8765"],
+    ["a local file", "file:///etc/passwd"],
+    // The security ones: each of these is a place a secret can be typed, and
+    // all three are stored, written to the wire log, and shown to the renderer.
+    ["credentials in the URL", "http://user:pass@192.168.15.12:8765"],
+    ["a password alone", "http://:pass@192.168.15.12:8765"],
+    ["a query string", "http://192.168.15.12:8765?token=abc"],
+    ["a fragment", "http://192.168.15.12:8765#abc"],
+  ])("refuses %s", (_why, baseUrl) => {
     const { state } = build();
 
-    expect(state.addTarget({ label: "x", baseUrl: "192.168.15.12:8765", bearer: "t" })).toBe(null);
-    expect(state.state().cloudActionError).toContain("isn't a URL");
-    // `new URL` accepts any scheme, so a bare `host:port` parses as one — it is
-    // the protocol check, not the parse, that turns these away.
-    expect(state.addTarget({ label: "x", baseUrl: "slowdown:8765", bearer: "t" })).toBe(null);
-    expect(state.state().cloudActionError).toBe("A host address has to be http:// or https://.");
-    expect(state.addTarget({ label: "x", baseUrl: "file:///etc/passwd", bearer: "t" })).toBe(null);
-    expect(state.state().cloudActionError).toBe("A host address has to be http:// or https://.");
+    expect(state.addTarget({ label: "x", baseUrl, bearer: "t" })).toBe(null);
+    expect(state.state().cloudActionError).toContain("isn't usable");
+    expect(state.state().cloudTargets).toHaveLength(1);
+  });
+
+  it("refuses a host with no token", () => {
+    const { state } = build();
+
     expect(state.addTarget({ label: "x", baseUrl: "http://192.168.15.12:8765", bearer: " " }))
       .toBe(null);
     expect(state.state().cloudActionError).toBe("Paste the host's AGENT_MGR_SERVE_TOKEN.");
     expect(state.state().cloudTargets).toHaveLength(1);
+  });
+
+  it("stores one host for spellings of the same origin", () => {
+    const { state } = build();
+
+    const first = state.addTarget({
+      label: "slowdown",
+      baseUrl: "HTTP://192.168.15.12:8765/",
+      bearer: "t",
+    });
+    // Case and a default port are the same machine. A regex that only trims
+    // slashes would have made three hosts out of these.
+    const upper = state.addTarget({ label: "s", baseUrl: "http://192.168.15.12:8765", bearer: "t" });
+    const plain = state.addTarget({ label: "s", baseUrl: "http://PLOW.example:80", bearer: "t" });
+    const port = state.addTarget({ label: "s", baseUrl: "http://plow.example", bearer: "t" });
+
+    expect(upper).toBe(first);
+    expect(port).toBe(plain);
+    expect(state.state().cloudTargets.filter((target) => !target.builtin)
+      .map((target) => target.baseUrl))
+      .toEqual(["http://192.168.15.12:8765", "http://plow.example"]);
   });
 
   it("replaces a host entered twice rather than listing it again", () => {

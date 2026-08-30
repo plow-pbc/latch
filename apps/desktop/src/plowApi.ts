@@ -104,6 +104,42 @@ export function normalizeApiBaseUrl(raw: string): ApiBaseUrl {
 }
 
 /**
+ * One self-hosted host address, canonical — or `null` for one we will not talk
+ * to at all.
+ *
+ * Canonical through `URL` rather than a slash-trimming regex, because
+ * equivalent spellings must not become two hosts: `URL` lowercases the host
+ * and drops a default port, which no amount of trimming can. The rejections
+ * are the substance:
+ *
+ * - **userinfo** (`https://user:pass@host`) is a credential inside a string
+ *   this app stores, writes to the wire log, and hands to the renderer — all
+ *   three of the boundaries a bearer is promised never to cross. A URL is not
+ *   a place to keep one.
+ * - **query and fragment** are not part of an origin, and a token pasted into
+ *   one would ride into exactly the same three places.
+ *
+ * **Plaintext `http://` to a host that is not loopback is allowed**, and that
+ * is a deliberate accepted risk rather than an oversight: `agent-mgr serve`
+ * speaks plain HTTP, and the hosts this exists for are reached over a LAN or
+ * tailnet address. Refusing them would reject the only deployment this
+ * feature has. The bearer is a per-host serve token — not the Mac's Plow
+ * session — so the blast radius of someone sniffing that segment is that one
+ * host, and the form says so where the address is typed.
+ */
+export function canonicalAgentHostUrl(raw: string): ApiBaseUrl | null {
+  let url: URL;
+  try {
+    url = new URL(String(raw ?? "").trim());
+  } catch {
+    return null;
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") return null;
+  if (url.username || url.password || url.search || url.hash) return null;
+  return `${url.origin}${url.pathname.replace(/\/+$/, "")}`;
+}
+
+/**
  * The device socket is the same origin with the scheme swapped and the relay
  * path appended. Derived rather than configured: two URL fields that must agree
  * is a support burden, and the relay path is fixed by the wire contract.

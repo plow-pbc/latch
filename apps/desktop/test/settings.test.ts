@@ -475,6 +475,24 @@ describe("self-hosted agent targets", () => {
     );
   });
 
+  it("drops a stored host carrying credentials in its URL", () => {
+    const home = tempHome();
+    write(home, JSON.stringify({
+      agentTargets: [
+        // Written by hand, or by a build before the address was canonicalised.
+        // A URL is not a place to keep a secret, and this one is logged and
+        // shown to the renderer.
+        { id: "tgt_1", label: "a", baseUrl: "http://user:pass@192.168.15.12:8765", bearer: "t" },
+        { id: "tgt_2", label: "b", baseUrl: "http://192.168.15.12:8765?token=abc", bearer: "t" },
+        { id: "tgt_3", label: "c", baseUrl: "HTTP://192.168.15.12:8765/", bearer: "t" },
+      ],
+    }));
+
+    expect(loadSettings(home).agentTargets).toEqual([
+      { id: "tgt_3", label: "c", baseUrl: "http://192.168.15.12:8765", bearer: "t" },
+    ]);
+  });
+
   it("reads a non-array as no hosts at all", () => {
     const home = tempHome();
     write(home, JSON.stringify({ agentTargets: { id: "tgt_1" } }));

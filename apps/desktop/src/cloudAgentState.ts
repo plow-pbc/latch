@@ -39,7 +39,7 @@ import {
   PlowApi,
   PlowApiError,
   ProvisionedActivationRedeem,
-  normalizeApiBaseUrl,
+  canonicalAgentHostUrl,
   parseActivationChat,
   parseApiTimestamp,
 } from "./plowApi.js";
@@ -1319,16 +1319,14 @@ export class CloudAgentState {
   addTarget(input: { label?: unknown; baseUrl?: unknown; bearer?: unknown }): string | null {
     const label = typeof input?.label === "string" ? input.label.trim() : "";
     const bearer = typeof input?.bearer === "string" ? input.bearer.trim() : "";
-    const rawUrl = typeof input?.baseUrl === "string" ? input.baseUrl.trim() : "";
-    const baseUrl = normalizeApiBaseUrl(rawUrl);
-    let origin: URL;
-    try {
-      origin = new URL(baseUrl);
-    } catch {
-      return this.failAction("That host address isn't a URL. It looks like http://127.0.0.1:8765.");
-    }
-    if (origin.protocol !== "http:" && origin.protocol !== "https:") {
-      return this.failAction("A host address has to be http:// or https://.");
+    const rawUrl = typeof input?.baseUrl === "string" ? input.baseUrl : "";
+    // Canonical, and refused outright if it carries anything a host address
+    // has no business carrying — see `canonicalAgentHostUrl`.
+    const baseUrl = canonicalAgentHostUrl(rawUrl);
+    if (!baseUrl) {
+      return this.failAction(
+        "That host address isn't usable. It looks like http://192.168.1.10:8765 — no user, password or query.",
+      );
     }
     if (!bearer) return this.failAction("Paste the host's AGENT_MGR_SERVE_TOKEN.");
 

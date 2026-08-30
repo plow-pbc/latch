@@ -437,7 +437,7 @@ describe("CloudAgentsClient against a self-hosted host", () => {
     expect(new Headers(calls[0].init.headers).get("authorization")).not.toContain(CREDENTIAL);
   });
 
-  it("shows the register command a 400 names, instead of 'returned 400'", async () => {
+  it("shows the register command instead of 'returned 400'", async () => {
     const { fetchImpl } = recordingFetch([{
       status: 400,
       body: { detail: "Unknown agent 'demo'. Run 'agent-mgr register demo <dir>' on this host." },
@@ -452,10 +452,10 @@ describe("CloudAgentsClient against a self-hosted host", () => {
     expect(String(error)).toContain("agent-mgr register demo <dir>");
   });
 
-  it("reads the same message out of a nested detail", async () => {
+  it("recognises the marker in a nested detail too", async () => {
     const { fetchImpl } = recordingFetch([{
       status: 400,
-      body: { detail: { message: "Run 'agent-mgr register demo <dir>' first." } },
+      body: { detail: { message: "Run 'agent-mgr register ...' first." } },
     }]);
 
     const error = await new CloudAgentsClient(() => new PlowApi(LOCAL.baseUrl, fetchImpl))
@@ -465,20 +465,43 @@ describe("CloudAgentsClient against a self-hosted host", () => {
     expect(String(error)).toContain("agent-mgr register demo <dir>");
   });
 
-  it("refuses to repeat a 400 that echoes the host's own token", async () => {
+  it.each([
+    ["in the clear", (bearer: string) => `bad token ${bearer}`],
+    // The one a literal check cannot catch — and the reason NOTHING
+    // server-authored is forwarded rather than filtered.
+    ["base64-encoded", (bearer: string) => `bad token ${Buffer.from(bearer).toString("base64")}`],
+    ["hex-encoded", (bearer: string) => `bad token ${Buffer.from(bearer).toString("hex")}`],
+    ["reversed", (bearer: string) => `bad token ${[...bearer].reverse().join("")}`],
+  ])("never repeats a 400 body that carries the token %s", async (_how, encode) => {
     const { fetchImpl } = recordingFetch([{
       status: 400,
-      body: { detail: `bad token ${LOCAL.bearer}` },
+      body: { detail: encode(LOCAL.bearer) },
     }]);
 
     const error = await new CloudAgentsClient(() => new PlowApi(LOCAL.baseUrl, fetchImpl))
       .create(LOCAL, { lineUid: "lin_willow", name: "demo", provider: "local:docker" })
       .catch((thrown) => thrown);
 
-    // Server-authored text from an origin the owner typed in is checked, not
-    // trusted — the fixed copy is what reaches the screen instead.
-    expect(String(error)).not.toContain(LOCAL.bearer);
+    // The body is a host the owner typed in talking. It is asked a yes/no
+    // question and never quoted, so no encoding of the bearer has a path here.
+    expect(String(error)).not.toContain(encode(LOCAL.bearer));
     expect(String(error)).toContain("400");
+  });
+
+  it("writes the register sentence itself, from the name it sent", async () => {
+    const { fetchImpl } = recordingFetch([{
+      status: 400,
+      // Everything else in this body is noise the screen must not repeat.
+      body: { detail: `Unknown agent. Run 'agent-mgr register ...'. token=${LOCAL.bearer}` },
+    }]);
+
+    const error = await new CloudAgentsClient(() => new PlowApi(LOCAL.baseUrl, fetchImpl))
+      .create(LOCAL, { lineUid: "lin_willow", name: "demo", provider: "local:docker" })
+      .catch((thrown) => thrown);
+
+    expect(String(error)).toContain("agent-mgr register demo <dir>");
+    expect(String(error)).not.toContain(LOCAL.bearer);
+    expect(String(error)).not.toContain("Unknown agent.");
   });
 
   it("still answers 401 for a wrong bearer", async () => {

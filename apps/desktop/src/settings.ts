@@ -9,7 +9,7 @@
  */
 import fs from "node:fs";
 import path from "node:path";
-import { AgentTarget, BUILTIN_TARGET_ID, normalizeApiBaseUrl } from "./plowApi.js";
+import { AgentTarget, BUILTIN_TARGET_ID, canonicalAgentHostUrl } from "./plowApi.js";
 
 /**
  * How the credential is encrypted at rest, when the OS offers a way.
@@ -392,7 +392,9 @@ function readAgentTargets(raw: unknown): AgentTarget[] {
     if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue;
     const row = entry as Record<string, unknown>;
     const id = text(row.id);
-    const baseUrl = normalizeApiBaseUrl(text(row.baseUrl));
+    // Canonicalised on the way in too, not only when it was added: a host
+    // written by an older build, or by hand, gets the same refusals.
+    const baseUrl = canonicalAgentHostUrl(text(row.baseUrl));
     const sealedBearer = text(row.bearerEnc);
     const bearer = sealedBearer ? unseal(sealedBearer).trim() : text(row.bearer);
     if (!id || id === BUILTIN_TARGET_ID || seen.has(id) || !baseUrl || !bearer) continue;
