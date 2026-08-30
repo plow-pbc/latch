@@ -682,6 +682,21 @@ app.whenReady().then(async () => {
   const loadingCloudDetail = await win.webContents.executeJavaScript(
     `document.querySelector(".cloud-modal .cloud-thread-empty")?.textContent.trim()`,
   );
+  cloudProbe = {
+    ...cloudProbe,
+    cloudAgents: [cloudAgent],
+    cloudChatsError: null,
+    cloudChatsLoaded: true,
+  };
+  win.webContents.send("connect:changed");
+  await waitFor(
+    win,
+    `document.querySelector(".cloud-modal .cloud-thread-list li")?.textContent.trim() === ${JSON.stringify(cloudThreadTitle)}`,
+    "the open cloud-agent detail to refresh with its loaded threads",
+  );
+  const refreshedCloudDetail = await win.webContents.executeJavaScript(
+    `document.querySelector(".cloud-modal .cloud-thread-list li")?.textContent.trim()`,
+  );
   await win.webContents.executeJavaScript(
     `[...document.querySelectorAll(".cloud-modal button")]
       .find((button) => button.textContent.trim() === "Close").click()`,
@@ -689,7 +704,12 @@ app.whenReady().then(async () => {
   await waitFor(win, `!document.querySelector(".cloud-modal")`,
     "the loading-thread detail to close");
 
-  cloudProbe = { ...cloudProbe, cloudChatsError: "The chat list is unavailable." };
+  cloudProbe = {
+    ...cloudProbe,
+    cloudAgents: [{ ...cloudAgent, threads: [] }],
+    cloudChatsError: "The chat list is unavailable.",
+    cloudChatsLoaded: false,
+  };
   await win.webContents.executeJavaScript(`window.__domoSelectTab("audit")`);
   await win.webContents.executeJavaScript(`window.__domoSelectTab("agents")`);
   await waitFor(win, `document.querySelector(".cloud-agent-row .cloud-agent-open")`,
@@ -1339,6 +1359,7 @@ app.whenReady().then(async () => {
     cloudDeleteConfirm.copy &&
     cloudDeleteConfirm.buttons.join("|") === "Cancel|Delete agent" &&
     loadingCloudDetail === "Loading threads…" &&
+    refreshedCloudDetail === cloudThreadTitle &&
     unavailableCloudDetail.line.includes("LineWillow · +1 415-555-0142") &&
     unavailableCloudDetail.threadState === "Threads couldn't be loaded." &&
     unavailableCloudDetail.hidesRawLineUid &&

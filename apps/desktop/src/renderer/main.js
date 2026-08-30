@@ -892,17 +892,27 @@ function cloudLine(agent) {
   return agent?.line?.label || "No line";
 }
 
-/** Show one agent's line and read-only threads. Delete is the only action. */
-function openCloudDetail(trigger, agent, state, redraw) {
-  const panel = openCloudModal(trigger, [], null);
-  if (!panel) return;
+/** Repaint the open agent detail from the same state as the roster behind it. */
+function syncCloudModal(state, redraw) {
+  if (!cloudModal) return;
+  const agent = (state.cloudAgents ?? [])
+    .find((candidate) => candidate.agentId === cloudModal.agentId);
+  if (!agent) {
+    closeCloudModal();
+    return;
+  }
+  const { panel } = cloudModal;
   const name = agent.name || "Cloud agent";
 
   const showDetail = () => {
+    cloudModal.confirmingDelete = false;
     const close = el("button", { class: "btn", text: "Close" });
     const remove = el("button", { class: "btn danger", text: "Delete agent" });
     close.addEventListener("click", closeCloudModal);
-    remove.addEventListener("click", showConfirm);
+    remove.addEventListener("click", () => {
+      cloudModal.confirmingDelete = true;
+      syncCloudModal(state, redraw);
+    });
     const threads = agent.threads ?? [];
     panel.replaceChildren(
       el("div", { class: "group-title", text: name }),
@@ -942,7 +952,10 @@ function openCloudDetail(trigger, agent, state, redraw) {
     const back = el("button", { class: "btn", text: "Cancel" });
     const confirm = el("button", { class: "btn danger", text: "Delete agent" });
     const note = el("p", { class: "faint modal-note", text: "" });
-    back.addEventListener("click", showDetail);
+    back.addEventListener("click", () => {
+      cloudModal.confirmingDelete = false;
+      syncCloudModal(state, redraw);
+    });
     confirm.addEventListener("click", async () => {
       back.disabled = true;
       confirm.disabled = true;
@@ -969,7 +982,15 @@ function openCloudDetail(trigger, agent, state, redraw) {
     back.focus();
   };
 
-  showDetail();
+  if (cloudModal.confirmingDelete) showConfirm();
+  else showDetail();
+}
+
+/** Show one agent's line and read-only threads. Delete is the only action. */
+function openCloudDetail(trigger, agent, state, redraw) {
+  if (!openCloudModal(trigger, [], null)) return;
+  Object.assign(cloudModal, { agentId: agent.agentId, confirmingDelete: false });
+  syncCloudModal(state, redraw);
 }
 
 const cloudHttpReasons = new Set([
@@ -1348,6 +1369,7 @@ async function renderAgents() {
       sessionSection("MCP clients", s.roster?.mcp ?? [], "mcp", s, refreshConnect),
       sessionSection("Other sessions", s.roster?.other ?? [], "other", s, refreshConnect),
     ].filter(Boolean));
+    syncCloudModal(s, refreshConnect);
     syncMcpModal(s, refreshConnect);
     syncStaticModal(s, refreshConnect);
     return s;
