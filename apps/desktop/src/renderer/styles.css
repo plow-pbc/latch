@@ -621,6 +621,10 @@ textarea.text { min-height: 70px; resize: vertical; }
   border: 1px solid var(--border); font-size: 11px;
 }
 .entity-main { flex: 1; min-width: 0; }
+.cloud-agent-open { cursor: pointer; border-radius: 6px; outline: none; }
+.cloud-agent-open:focus-visible {
+  box-shadow: 0 0 0 2px var(--blue-bd);
+}
 .entity-top { display: flex; align-items: center; gap: 8px; margin-bottom: 2px; }
 .entity-name { font-weight: 600; overflow-wrap: anywhere; }
 .entity-context {
@@ -665,7 +669,7 @@ textarea.text { min-height: 70px; resize: vertical; }
 .cloud-callout + .entity-list,
 .cloud-progress + .entity-list { margin-top: 8px; }
 
-/* ---------- Cloud setup and status ---------- */
+/* ---------- Cloud agents and status ---------- */
 .cloud-progress {
   display: flex; align-items: center; gap: 8px;
   margin-top: 10px; color: var(--muted); font-size: 12px;
@@ -676,73 +680,57 @@ textarea.text { min-height: 70px; resize: vertical; }
   border: 2px solid var(--border-strong); border-top-color: var(--blue-fg);
   animation: cloud-spin 0.8s linear infinite;
 }
-.btn.primary .cloud-spinner {
-  border-color: rgba(255, 255, 255, 0.45); border-top-color: white;
-}
 @keyframes cloud-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) {
   .cloud-spinner { animation: none; }
 }
-.cloud-callout, .cloud-warning {
+.cloud-callout {
   padding: 10px 12px; border: 1px solid var(--border);
   border-radius: var(--radius-sm); background: var(--bg);
 }
 .cloud-callout + .cloud-callout { margin-top: 10px; }
-.cloud-callout-title, .cloud-warning-title { font-weight: 600; }
-.cloud-callout p, .cloud-warning p { margin-top: 4px; }
+.cloud-callout-title { font-weight: 600; }
+.cloud-callout p { margin-top: 4px; }
 .cloud-callout .btn { margin-top: 10px; }
 .cloud-error { border-color: var(--red-bd); background: var(--red-bg); }
 .cloud-error .cloud-callout-title { color: var(--red-fg); }
-.cloud-modal .field { margin-bottom: 12px; }
-.cloud-modal .cloud-warning { margin-top: 4px; border-color: var(--amber-bd); background: var(--amber-bg); }
 .cloud-modal-actions { margin-top: 18px; }
-/* The chat checklist, in the set-up and edit-chats modals. The row IS a
-   <label>, and `.field label { display: block }` above outranks a bare class,
-   so the layout rule has to be scoped under `.field` to reach it. */
-.chat-list {
+.cloud-modal .field + .field { margin-top: 14px; }
+.cloud-agent-name { margin-top: 0; }
+.cloud-agent-line { margin-top: 14px; }
+.cloud-confirmed {
+  margin-top: 18px; color: var(--green-fg); font-size: 16px; font-weight: 600;
+}
+.cloud-activation-code {
+  margin: 14px 0; padding: 14px;
+  border: 1px solid var(--border-strong); border-radius: var(--radius-sm);
+  background: var(--bg); font-size: 24px; font-weight: 600;
+  letter-spacing: 0.12em; text-align: center;
+}
+.cloud-detail-meta {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 12px;
+  margin-top: 14px;
+}
+.cloud-detail-field { display: flex; flex-direction: column; gap: 5px; }
+.cloud-detail-field > .badge,
+.cloud-detail-field > .status-setting { align-self: flex-start; }
+.cloud-detail-threads { margin-top: 18px; }
+.cloud-detail-heading { font-weight: 600; margin-bottom: 7px; }
+.cloud-thread-list {
+  margin: 0; padding: 0; list-style: none;
   border: 1px solid var(--border); border-radius: var(--radius-sm);
   background: var(--bg); overflow: hidden;
 }
-.field .chat-option {
-  display: flex; align-items: center; gap: 9px;
-  padding: 7px 10px; margin-bottom: 0; cursor: pointer; color: var(--fg);
-}
-.chat-option + .chat-option { border-top: 1px solid var(--border); }
-.chat-option:hover { background: var(--hover); }
-.chat-option input { margin: 0; flex: none; }
-.chat-option-main { flex: 1; min-width: 0; }
-.chat-option-name { font-weight: 600; }
-.chat-option-note {
-  color: var(--muted); font-size: 11.5px;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
-/* A chat another agent already serves. One chat belongs to one agent, so this
-   is not a choice being discouraged — it is one that is not on offer. */
-.chat-option.disabled { cursor: default; opacity: 0.55; }
-.chat-option.disabled:hover { background: none; }
-.chat-option.disabled .chat-option-note { color: var(--amber-fg); opacity: 1; }
-/* Only a chosen chat can be home, so this shows only on a checked row. */
-.home-toggle {
-  flex: none; border: 1px solid var(--border-strong); background: var(--card);
-  color: var(--muted); border-radius: 999px; padding: 1px 9px;
-  font: inherit; font-size: 11px; cursor: pointer; white-space: nowrap;
-}
-.home-toggle:hover { background: var(--hover); }
-.home-toggle.on {
-  border-color: var(--blue-bd); background: var(--blue-bg);
-  color: var(--blue-fg); font-weight: 600;
-}
-.chat-list-alt { margin: 8px 0 0; }
-/* The app had `.linkbtn` only inside the wizard and the connect group; the
-   checklist's "New chat…" needs the same affordance in a modal. */
+.cloud-thread-list li { padding: 8px 10px; }
+.cloud-thread-list li + li { border-top: 1px solid var(--border); }
+.cloud-thread-empty { margin: 0; }
+/* Quiet secondary actions in the connect flow. */
 .linkbtn {
   border: 0; background: none; padding: 0; font: inherit;
   color: var(--muted); text-decoration: underline; cursor: pointer;
 }
 .linkbtn:hover { color: var(--fg); }
 
-.cloud-route-numbers { margin: 6px 0 0; padding-left: 22px; }
-.cloud-route-numbers li + li { margin-top: 3px; }
 .roster-confirm-loud { border-color: var(--red-bd); }
 
 /* ---------- Static-credential modal ----------
@@ -815,25 +803,3 @@ textarea.text { min-height: 70px; resize: vertical; }
 .item .revealed p { margin: 6px 0 0; }
 /* What the selected mode does, where the purpose field would otherwise be. */
 .item p.mode-hint { margin: 10px 0 0; }
-
-.cloud-route-numbers li.cloud-route-number {
-  display: flex; align-items: center; justify-content: space-between; gap: 10px;
-}
-.cloud-line-name { display: flex; align-items: baseline; gap: 6px; }
-.cloud-route-number.held .cloud-line-name { color: var(--muted); }
-/* One chat row's entries. Each `.chat-entry` is a column — the name over the
-   number it belongs to — so the pairing is the layout rather than two strings
-   a reader lines up by counting. `baseline` puts the separators on the name
-   line; `nowrap` + `hidden` keeps a many-person thread to one row, with the
-   flat title as its tooltip. */
-.chat-row-entries {
-  display: flex; align-items: baseline; gap: 5px;
-  flex-wrap: nowrap; overflow: hidden;
-}
-.chat-entry { display: inline-flex; flex-direction: column; min-width: 0; }
-.chat-entry-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.chat-entry-number {
-  color: var(--muted); font-size: 11px; font-weight: 400; margin-top: 2px;
-  white-space: nowrap;
-}
-.chat-entry-sep { color: var(--muted); font-weight: 400; flex: none; }

@@ -74,34 +74,14 @@ ipcMain.handle("settings:getInference", async () => readInference(probeHome));
 // it. Nothing an agent can reach registers a handler on either channel.
 ipcMain.handle("settings:getAgentPurpose", async () => readAgentPurpose(probeHome));
 ipcMain.handle("settings:setAgentPurpose", async (_e, purpose) => setAgentPurpose(probeHome, purpose));
-const cloudChat = {
-  uid: "chat_probe",
-  label: "+1 (415) 555-0142, +1 (415) 555-0193, +1 (628) 555-0112",
-  lineName: "Willow",
-  recipients: {
-    line: "+14155550142",
-    members: ["+14155550193", "+16285550112"],
-  },
-  people: [
-    { number: "+14155550193", name: null, isOwner: true },
-    { number: "+16285550112", name: "Robin", isOwner: false },
-  ],
-  title: "Willow · You · Robin",
-  // One entry per position, name and number in the same object — what the row
-  // draws as paired spans.
-  entries: [
-    { label: "Willow", number: "+1 415-555-0142" },
-    { label: "You", number: "+1 415-555-0193" },
-    { label: "Robin", number: "+1 628-555-0112" },
-  ],
-};
+const cloudThreadTitle = "Willow · You · Robin";
 const cloudAgent = {
   agentId: "cag_probe",
   name: "Household helper",
-  chatUids: [cloudChat.uid],
-  chatLabels: [cloudChat.title],
-  recipients: cloudChat.recipients,
-  provider: "exe:hermes",
+  line: { uid: "lin_willow", label: "Willow · +1 415-555-0142" },
+  canMessage: true,
+  canRetry: true,
+  threads: [{ uid: "chat_probe", label: cloudThreadTitle }],
   status: "running",
   failureReason: null,
   createdAt: "2026-08-24T18:00:00.000Z",
@@ -114,7 +94,7 @@ const rosterProbe = {
     createdAt: cloudAgent.createdAt,
     lastSeenAt: "2026-08-25T17:55:00.000Z",
     agentId: cloudAgent.agentId,
-    chatUids: [cloudChat.uid],
+    chatUids: [cloudAgent.threads[0].uid],
     chatAccess: "listed",
     permissions: { canReadAndReply: true, canReachMac: true, canSpendInference: true },
     isActive: true,
@@ -138,31 +118,29 @@ const rosterProbe = {
 };
 let cloudProbe = {
   cloudAgents: [cloudAgent],
+  cloudFreeLines: [{ uid: "lin_ash", label: "Ash · +1 415-555-0199" }],
+  cloudLineFlow: {
+    phase: "idle",
+    activation: null,
+    message: null,
+    completedAgentId: null,
+    retryNewLine: false,
+  },
   cloudAgentsError: null,
   cloudChatsError: null,
   cloudChatsNeedReactivation: false,
   cloudActionError: null,
-  cloudAgentEditsPending: [],
-  cloudChats: [cloudChat],
   cloudChatsLoaded: true,
-  cloudLines: [
-    { displayName: "Willow", number: "+14155550142", held: false },
-    { displayName: null, number: "+16285550177", held: false },
-  ],
-  cloudLinesError: null,
 };
-const cloudCalls = { create: [], editChats: [] };
-let cloudEditPending = false;
-let releaseCloudEdit = null;
-let releaseCloudCreate = null;
-let cloudCreatePending = false;
-let relaySignOutCalls = 0;
+let cloudChangeRequest = null;
+let cloudChangeCancelCount = 0;
+let exhaustNextCloudActivation = false;
+const cloudMessageAgentIds = [];
+const cloudCreateRequests = [];
 
 // Connect state also carries the cloud-agent display state. It contains no
 // credential, session id or worker URL.
-/** The Agents tab's whole state, as main assembles it. ONE shape: `connect:get`
- * and `cloud:refresh` both answer with it, so a field added to the tab is added
- * here once rather than in two fixtures that drift. */
+/** The Agents tab's whole state, as main assembles it. */
 const agentsTabProbeState = () => ({
   mcpUrl: "https://api.plow.co/v1/relay/devices/u_probe/mcp",
   accountUid: "u_probe",
@@ -177,71 +155,134 @@ const agentsTabProbeState = () => ({
   ...cloudProbe,
 });
 ipcMain.handle("connect:get", async () => agentsTabProbeState());
-let cloudRefreshCalls = 0;
-// The real one re-reads Plow, then answers with the tab state. The fake counts
-// the call and answers with whatever `cloudProbe` holds NOW — which is what
-// lets a test change the backing list and prove the reopen fetched it.
-ipcMain.handle("cloud:refresh", async () => {
-  cloudRefreshCalls += 1;
-  // Main marks held lines from the chats it just read; the fake does the same
-  // so the probe sees what the screen will.
-  const held = new Set(cloudProbe.cloudChats.flatMap((c) => (c.recipients?.line ? [c.recipients.line] : [])));
+ipcMain.handle("cloud:refresh", async () => agentsTabProbeState());
+ipcMain.handle("cloud:cancelLineFlow", async () => {
+  cloudChangeCancelCount += 1;
   cloudProbe = {
     ...cloudProbe,
-    cloudLines: (cloudProbe.cloudLines ?? []).map((l) => ({ ...l, held: held.has(l.number) })),
+    cloudLineFlow: {
+      phase: "idle",
+      activation: null,
+      message: null,
+      completedAgentId: null,
+      retryNewLine: false,
+    },
   };
   return agentsTabProbeState();
 });
-ipcMain.handle("cloud:create", async (_e, chatUids, name, provider) => {
-  cloudCalls.create.push({ chatUids, name, provider });
-  cloudCreatePending = true;
-  await new Promise((resolve) => { releaseCloudCreate = resolve; });
-  cloudProbe = {
-    ...cloudProbe,
-    cloudAgents: [{
-      ...cloudAgent,
-      chatUids,
-      chatLabels: chatUids.map(
-        (uid) => {
-          const chat = cloudProbe.cloudChats.find((candidate) => candidate.uid === uid);
-          return chat?.title ?? chat?.label ?? uid;
+ipcMain.handle("cloud:create", async (_e, input) => {
+  cloudCreateRequests.push(input);
+  if (input?.lineUid === null && exhaustNextCloudActivation) {
+    exhaustNextCloudActivation = false;
+    cloudProbe = {
+      ...cloudProbe,
+      cloudLineFlow: {
+        phase: "error",
+        activation: null,
+        message: "No numbers are available right now. Try again later.",
+        completedAgentId: null,
+        retryNewLine: false,
+        terminal: "no_numbers",
+      },
+    };
+  } else if (input?.lineUid === null) {
+    cloudProbe = {
+      ...cloudProbe,
+      cloudLineFlow: {
+        phase: "waiting",
+        activation: {
+          displayCode: "LINE42",
+          sendTo: "+15551230000",
+          smsBody: "Plow Activate: LINE42",
         },
-      ),
-      name: name || "Cloud agent",
-      provider,
+        message: null,
+        completedAgentId: null,
+        retryNewLine: false,
+      },
+    };
+  } else if (input?.lineUid === "lin_ash") {
+    const created = {
+      agentId: "cag_created",
+      name: input.name || "Cloud agent",
+      line: { uid: "lin_ash", label: "Ash · +1 415-555-0199" },
+      canMessage: true,
+      canRetry: true,
+      threads: [],
       status: "provisioning",
-    }],
-  };
-  cloudCreatePending = false;
-});
-// Editing an agent's chats: the row has to come out carrying the new set.
-ipcMain.handle("cloud:editChats", async (_e, agentId, chatUids) => {
-  cloudCalls.editChats.push({ agentId, chatUids });
-  cloudProbe = { ...cloudProbe, cloudAgentEditsPending: [agentId] };
-  if (!releaseCloudEdit) {
-    cloudEditPending = true;
-    await new Promise((resolve) => { releaseCloudEdit = resolve; });
-    cloudEditPending = false;
+      failureReason: null,
+      createdAt: "2026-08-30T19:00:00.000Z",
+    };
+    cloudProbe = {
+      ...cloudProbe,
+      cloudAgents: [created, ...cloudProbe.cloudAgents],
+      cloudFreeLines: [],
+      cloudLineFlow: {
+        phase: "idle",
+        activation: null,
+        message: null,
+        completedAgentId: created.agentId,
+        retryNewLine: false,
+      },
+    };
+  } else if (input?.lineUid === "lin_error") {
+    cloudProbe = {
+      ...cloudProbe,
+      cloudLineFlow: {
+        phase: "error",
+        activation: null,
+        message: "Plow returned 422.",
+        completedAgentId: null,
+        retryNewLine: false,
+      },
+    };
   }
+  return agentsTabProbeState();
+});
+ipcMain.handle("cloud:retryLineFlow", async () => agentsTabProbeState());
+ipcMain.handle("cloud:retryFailed", async () => agentsTabProbeState());
+ipcMain.handle("cloud:changeLine", async (_e, input) => {
+  cloudChangeRequest = input;
+  if (input?.lineUid === null) {
+    cloudProbe = {
+      ...cloudProbe,
+      cloudLineFlow: {
+        phase: "waiting",
+        activation: {
+          displayCode: "MOVE42",
+          sendTo: "+15551230000",
+          smsBody: "Plow Activate: MOVE42",
+        },
+        message: null,
+        completedAgentId: null,
+        retryNewLine: false,
+      },
+    };
+  } else if (input?.lineUid === "lin_error") {
+    cloudProbe = {
+      ...cloudProbe,
+      cloudLineFlow: {
+        phase: "error",
+        activation: null,
+        message: "Line service is restarting.",
+        completedAgentId: null,
+        retryNewLine: false,
+      },
+    };
+  }
+  return agentsTabProbeState();
+});
+ipcMain.handle("cloud:openMessages", async (_e, agentId) => {
+  if (typeof agentId === "string") cloudMessageAgentIds.push(agentId);
+  return true;
+});
+ipcMain.handle("cloud:remove", async (_e, agentId) => {
   cloudProbe = {
     ...cloudProbe,
-    cloudActionError: null,
-    cloudAgentEditsPending: [],
-    cloudAgents: cloudProbe.cloudAgents.map((agent) => agent.agentId === agentId
-      ? {
-          ...agent,
-          chatUids,
-          chatLabels: chatUids.map(
-            (uid) => {
-              const chat = cloudProbe.cloudChats.find((candidate) => candidate.uid === uid);
-              return chat?.title ?? chat?.label ?? uid;
-            },
-          ),
-        }
-      : agent),
+    cloudAgents: cloudProbe.cloudAgents.filter((agent) => agent.agentId !== agentId),
   };
+  return agentsTabProbeState();
 });
-ipcMain.handle("settings:signOut", async () => { relaySignOutCalls += 1; });
+ipcMain.handle("settings:signOut", async () => {});
 // A packaged-looking updater state so the Software Updates section renders
 // its full form (status line, check button, both preference checkboxes).
 ipcMain.handle("updates:get", async () => ({
@@ -354,6 +395,14 @@ async function waitForNode(predicate, label, timeoutMs = 10000) {
     if (Date.now() >= deadline) throw new Error(`timed out after ${timeoutMs}ms waiting for ${label}`);
     await new Promise((r) => setTimeout(r, 20));
   }
+}
+
+async function clickCloudButton(win, label) {
+  const text = JSON.stringify(label);
+  await win.webContents.executeJavaScript(
+    `[...document.querySelectorAll(".cloud-modal button")]
+      .find((button) => button.textContent.trim() === ${text}).click()`,
+  );
 }
 
 /**
@@ -680,567 +729,603 @@ app.whenReady().then(async () => {
   const cloudRoster = await win.webContents.executeJavaScript(`(${() => {
     const group = [...document.querySelectorAll("#view .panel.agents .list-section")]
       .find((item) => item.querySelector("h2")?.textContent.trim() === "Cloud agents");
+    const row = group?.querySelector(".cloud-agent-row");
     return {
-      noCredentialIdentity: !group?.textContent.includes("session") && !group?.textContent.includes("worker"),
-      showsProvider: group?.textContent.includes("Provider Hermes") === true,
-      namesHomeLine: group?.querySelector(".cloud-agent-row .entity-context")?.textContent
-        .startsWith("★ Willow · You · Robin") === true,
+      noCredentialIdentity: !group?.textContent.includes("session") &&
+        !group?.textContent.includes("worker"),
+      hidesProvider: !group?.textContent.includes("Provider"),
+      namesLine: row?.querySelector(".entity-context")?.textContent
+        .includes("Willow · +1 415-555-0142") === true,
+      showsCreated: row?.querySelector(".entity-context")?.textContent
+        .includes("Created Aug 24") === true,
+      hidesLastUsed: !row?.querySelector(".entity-context")?.textContent.includes("Used "),
+      offersMessage: row?.querySelector(".message-btn")?.textContent.trim() === "Message",
+      rowIsDetailTrigger: row?.querySelector(".cloud-agent-open")
+        ?.getAttribute("role") === "button",
+      offersNewAgent: [...group.querySelectorAll("button")]
+        .some((button) => button.textContent.trim() === "New agent"),
     };
   }})()`);
 
-  // This is the first cloud modal opened in the run. Both the roster already
-  // on screen and Edit chats must have the line name from tab boot, without
-  // relying on the setup picker to fetch it first.
   await win.webContents.executeJavaScript(
-    `[...document.querySelectorAll(".cloud-agent-row button")].find((b) => b.textContent.trim() === "Edit chats").click()`,
+    `document.querySelector(".cloud-agent-row .message-btn").click()`,
   );
-  await waitFor(win, `document.querySelector(".cloud-modal .chat-list")`, "the first Edit chats checklist");
-  const cloudFirstLineNames = await win.webContents.executeJavaScript(`(${() => ({
-    roster: document.querySelector(".cloud-agent-row .entity-context")?.textContent
-      .startsWith("★ Willow · You · Robin") === true,
-    editor: document.querySelector(".cloud-modal .chat-option-name")?.getAttribute("title")
-      === "Willow · You · Robin",
-  })})()`);
-  await win.webContents.executeJavaScript(
-    `[...document.querySelectorAll(".cloud-modal button")].find((b) => b.textContent.trim() === "Cancel").click()`,
+  await waitForNode(
+    () => cloudMessageAgentIds.at(-1) === cloudAgent.agentId,
+    "the roster Message IPC",
   );
 
-  // The warning is specific to the first agent on a chat. Remove the fixture
-  // row, remount the pane, and open the picker through the exposed control.
-  //
-  // THREE chats, and the first is the one the credential roster says Household
-  // helper already holds: the rules below need two free chats to move ★
-  // between, and the roster's claim stands whether or not the agent list read.
+  await win.webContents.executeJavaScript(
+    `[...document.querySelectorAll("#view button")]
+      .find((button) => button.textContent.trim() === "New agent").click()`,
+  );
+  await waitFor(win, `document.querySelector('.cloud-modal select[aria-label="Line"]')`,
+    "the New agent line picker");
+  const cloudProbeBeforeCreate = cloudProbe;
+  const cloudCreatePicker = await win.webContents.executeJavaScript(`(${() => {
+    const modal = document.querySelector(".cloud-modal");
+    const provider = modal.querySelector('select[aria-label="Agent type"]');
+    const line = modal.querySelector('select[aria-label="Line"]');
+    const fields = [...modal.querySelectorAll(".field")];
+    return {
+      title: modal.querySelector(".group-title")?.textContent.trim(),
+      hasName: modal.querySelector('input[aria-label="Agent name"]') !== null,
+      hasAgentType: provider?.previousElementSibling?.textContent.trim() === "Agent type",
+      providers: [...provider.options].map((option) => `${option.textContent.trim()}:${option.value}`),
+      lines: [...line.options].map((option) => `${option.textContent.trim()}:${option.value}`),
+      selectedLine: line.value,
+      submitDisabled: [...modal.querySelectorAll("button")]
+        .find((button) => button.textContent.trim() === "Create agent")?.disabled,
+      buttons: [...modal.querySelectorAll("button")].map((button) => button.textContent.trim()),
+      fieldGaps: fields.slice(1).map((field, index) => Math.round(
+        field.getBoundingClientRect().top - fields[index].getBoundingClientRect().bottom,
+      )),
+      labelGaps: fields.map((field) => Math.round(
+        field.querySelector("input, select").getBoundingClientRect().top -
+          field.querySelector("label").getBoundingClientRect().bottom,
+      )),
+    };
+  }})()`);
+  await win.webContents.executeJavaScript(
+    `(() => {
+      document.querySelector('.cloud-modal select[aria-label="Agent type"]').value = "exe:life";
+      const line = document.querySelector('.cloud-modal select[aria-label="Line"]');
+      line.value = line.options[line.options.length - 1].value;
+      line.dispatchEvent(new Event("change"));
+    })()`,
+  );
+  const createRequestsBeforeSelection = cloudCreateRequests.length;
+  const cloudCreateSelection = await win.webContents.executeJavaScript(`(${() => {
+    const modal = document.querySelector(".cloud-modal");
+    const line = modal.querySelector('select[aria-label="Line"]');
+    const submit = [...modal.querySelectorAll("button")]
+      .find((button) => button.textContent.trim() === "Create agent");
+    return {
+      stillPicking: Boolean(line),
+      selected: line.selectedOptions[0]?.textContent.trim() === "New line",
+      submitEnabled: submit?.disabled === false,
+    };
+  }})()`);
+  const cloudCreateSelectionOnly = cloudCreateRequests.length === createRequestsBeforeSelection;
+  await clickCloudButton(win, "Create agent");
+  await waitFor(win, `document.querySelector(".cloud-modal .cloud-activation-code")`,
+    "the New agent activation code");
+  const cloudCreateRequest = cloudCreateRequests.at(-1);
+  const cloudCreateCode = await win.webContents.executeJavaScript(`(${() => {
+    const modal = document.querySelector(".cloud-modal");
+    return {
+      title: modal.querySelector(".group-title")?.textContent.trim(),
+      code: modal.querySelector(".cloud-activation-code")?.textContent.trim(),
+      copy: modal.textContent.includes("Text this code to +15551230000 from your phone."),
+      exactMessage: modal.textContent.includes("Plow Activate: LINE42"),
+      buttons: [...modal.querySelectorAll("button")].map((button) => button.textContent.trim()),
+    };
+  }})()`);
+  const createCancelsBefore = cloudChangeCancelCount;
+  await clickCloudButton(win, "Cancel");
+  await waitFor(win, `!document.querySelector(".cloud-modal")`, "the New agent flow to close");
+  const cloudCreateCancelled = cloudChangeCancelCount === createCancelsBefore + 1;
+
+  await win.webContents.executeJavaScript(
+    `[...document.querySelectorAll("#view button")]
+      .find((button) => button.textContent.trim() === "New agent").click()`,
+  );
+  await waitFor(win, `document.querySelector('.cloud-modal select[aria-label="Line"]')`,
+    "the existing-line New agent picker");
+  await win.webContents.executeJavaScript(`(() => {
+    document.querySelector('.cloud-modal input[aria-label="Agent name"]').value = "New helper";
+    document.querySelector('.cloud-modal select[aria-label="Agent type"]').value = "exe:pirate";
+    const line = document.querySelector('.cloud-modal select[aria-label="Line"]');
+    line.value = "lin_ash";
+    line.dispatchEvent(new Event("change"));
+  })()`);
+  await clickCloudButton(win, "Create agent");
+  await waitFor(win, `!document.querySelector(".cloud-modal")`,
+    "the existing-line New agent modal to close");
+  const cloudExistingCreate = await win.webContents.executeJavaScript(`(${() => {
+    const row = [...document.querySelectorAll(".cloud-agent-row")]
+      .find((candidate) => candidate.textContent.includes("New helper"));
+    return {
+      provisioning: row?.textContent.includes("Setting up…") === true,
+      name: row?.querySelector(".entity-name")?.textContent.trim(),
+    };
+  }})()`);
+  const cloudExistingCreateRequest = cloudCreateRequests.at(-1);
+
   cloudProbe = {
-    ...cloudProbe,
-    cloudAgents: [],
-    cloudChats: [cloudChat, {
-      uid: "chat_family",
-      label: "+1 (415) 555-0188 · Family group",
-      recipients: { line: "+14155550188", members: [] },
-    }, {
-      uid: "chat_book",
-      label: "+1 (510) 555-0133 · Book club",
-      recipients: { line: "+15105550133", members: [] },
-    }],
+    ...cloudProbeBeforeCreate,
+    cloudLineFlow: { ...cloudProbeBeforeCreate.cloudLineFlow },
   };
-  await win.webContents.executeJavaScript(`window.__domoSelectTab("audit")`);
-  await win.webContents.executeJavaScript(`window.__domoSelectTab("agents")`);
-  await waitFor(win, `[...document.querySelectorAll("#view button")].some((b) => b.textContent.trim() === "Set up cloud agent")`, "the cloud-agent setup action");
-  await win.webContents.executeJavaScript(`[...document.querySelectorAll("#view button")].find((b) => b.textContent.trim() === "Set up cloud agent").click()`);
-  await waitFor(win, `document.querySelector(".cloud-modal .chat-list")`, "the chat checklist");
-  const cloudModalFocus = await win.webContents.executeJavaScript(`(${() => {
-    const active = document.activeElement;
-    return {
-      insideModal: !!active?.closest(".cloud-modal"),
-      usable: !!active && !active.disabled,
-      tag: active?.tagName ?? null,
-    };
-  }})()`);
-  // The checklist's rules, at the boundary the renderer actually enforces:
-  // nothing chosen means nothing to create, the first box checked becomes home,
-  // moving home changes position zero, and unchecking home promotes by list order.
-  const cloudModalGuard = await win.webContents.executeJavaScript(`(${async () => {
-    const boxes = () =>
-      [...document.querySelectorAll(".cloud-modal .chat-option:not(.disabled) input")];
-    const createButton = () => [...document.querySelectorAll(".cloud-modal button")]
-      .find((node) => node.textContent.trim() === "Set up agent");
-    const homeLabels = () => [...document.querySelectorAll(".cloud-modal .home-toggle.on")]
-      .map((node) => node.closest(".chat-option").querySelector(".chat-option-name").title);
-    const settle = () => new Promise((resolve) => setTimeout(resolve));
-
-    const emptyDisables = createButton().disabled;
-    const defaultProvider = document.querySelector('.cloud-modal select[aria-label="Provider"]')
-      ?.value === "exe:hermes";
-    boxes()[0].click();
-    await settle();
-    const firstIsHome = homeLabels().length === 1 && !createButton().disabled;
-    const homeAfterFirst = homeLabels()[0];
-    boxes()[1].click();
-    await settle();
-    const secondDoesNotStealHome = homeLabels()[0] === homeAfterFirst;
-    const secondMakeHome = boxes()[1].closest(".chat-option").querySelector(".home-toggle");
-    secondMakeHome.click();
-    await settle();
-    const homeAfterMake = homeLabels()[0];
-    const makeHomeMovesToZero = homeAfterMake !== homeAfterFirst;
-    // Uncheck home: the star must move rather than vanish.
-    boxes()[1].click();
-    await settle();
-    const homeMoved = homeLabels().length === 1 && homeLabels()[0] === homeAfterFirst;
-    const warningCounts = document.querySelector(".cloud-modal .cloud-warning-title")
-      .textContent.includes("1 chat");
-    // Leave exactly one chosen for the create that follows.
-    return {
-      emptyDisables, defaultProvider, firstIsHome, secondDoesNotStealHome, makeHomeMovesToZero,
-      homeMoved, warningCounts,
-      warningTitle: document.querySelector(".cloud-modal .cloud-warning-title").textContent,
-      homeAfterFirst, homeNow: homeLabels()[0] ?? null,
-      ignored: emptyDisables && firstIsHome && secondDoesNotStealHome,
-      keptOriginal: homeMoved && warningCounts,
-    };
-  }})()`);
-  await win.webContents.executeJavaScript(`[...document.querySelectorAll(".cloud-modal button")].find((b) => b.textContent.trim() === "New chat…").click()`);
-  await waitFor(win, `document.querySelector(".cloud-modal .cloud-route-numbers")`, "the new-chat explainer");
-  await win.webContents.executeJavaScript(`[...document.querySelectorAll(".cloud-modal button")].find((b) => b.textContent.trim() === "Back").click()`);
-  await win.webContents.executeJavaScript(`[...document.querySelectorAll(".cloud-modal button")].find((b) => b.textContent.trim() === "Cancel").click()`);
-
-  await win.webContents.executeJavaScript(`[...document.querySelectorAll("#view button")].find((b) => b.textContent.trim() === "Set up cloud agent").click()`);
-  await waitFor(win, `document.querySelector(".cloud-modal .chat-list")`, "the picker for the create wait");
-  await win.webContents.executeJavaScript(
-    `document.querySelector(".cloud-modal .chat-option:not(.disabled) input").click()`,
-  );
-  await win.webContents.executeJavaScript(
-    `document.querySelector('.cloud-modal select[aria-label="Provider"]').value = "exe:life"`,
-  );
-  const cloudCreateWait = await win.webContents.executeJavaScript(`(${() => {
-    const button = [...document.querySelectorAll(".cloud-modal button")]
-      .find((node) => node.textContent.trim() === "Set up agent");
-    button.click();
-    return {
-      disabled: button.disabled,
-      spinner: !!button.querySelector(".cloud-spinner"),
-      copy: button.textContent.trim() === "Setting up…",
-    };
-  }})()`);
-  await waitFor(win, `!document.querySelector(".cloud-modal")`, "the picker to close during create");
-  await waitFor(win, `document.querySelector('[data-cloud-agent-id^="pending-cloud-"]')`, "the pending create row");
-  const cloudCreateTransition = await win.webContents.executeJavaScript(`(${() => ({
-    modalClosed: !document.querySelector(".cloud-modal"),
-    pendingRow: !!document.querySelector('[data-cloud-agent-id^="pending-cloud-"]'),
-  })})()`);
-  cloudCreateTransition.requestPending = cloudCreatePending;
-  cloudCreateTransition.provider = cloudCalls.create.at(-1)?.provider;
-  releaseCloudCreate();
-  await waitFor(
-    win,
-    `document.querySelectorAll(".cloud-agent-row").length === 1 && document.querySelector('[data-cloud-agent-id="cag_probe"]') && !document.querySelector('[data-cloud-agent-id^="pending-cloud-"]')`,
-    "the pending row to reconcile with the receipt-backed agent row",
-  );
-  cloudCreateTransition.reconciled = true;
-
-  await waitFor(win, `document.querySelector(".cloud-agent-row .entity-actions")`, "the cloud-agent row actions");
-  const cloudRowActions = await win.webContents.executeJavaScript(`(${() => ({
-    hasMessage: [...document.querySelectorAll(".cloud-agent-row button")]
-      .some((button) => button.textContent.trim() === "Message"),
-    noSettings: ![...document.querySelectorAll(".cloud-agent-row button")]
-      .some((button) => button.textContent.trim() === "Settings"),
-    hasMenu: [...document.querySelectorAll(".cloud-agent-row button")]
-      .some((button) => button.getAttribute("aria-label")?.startsWith("More actions for")),
-  })})()`);
-
-  // Edit chats: dead while the agent is provisioning, and Save dead until the
-  // chosen set differs from what the agent already serves.
-  const cloudEditGate = await win.webContents.executeJavaScript(`(${() => {
-    const edit = [...document.querySelectorAll(".cloud-agent-row button")]
-      .find((button) => button.textContent.trim() === "Edit chats");
-    return { present: !!edit, disabledWhileProvisioning: !!edit?.disabled };
-  }})()`);
-  cloudProbe = { ...cloudProbe, cloudAgents: [cloudAgent] };
-  await win.webContents.executeJavaScript(`window.__domoSelectTab("audit")`);
-  await win.webContents.executeJavaScript(`window.__domoSelectTab("agents")`);
-  await waitFor(
-    win,
-    `[...document.querySelectorAll(".cloud-agent-row button")].some((b) => b.textContent.trim() === "Edit chats" && !b.disabled)`,
-    "Edit chats to come alive on a running agent",
-  );
-  await win.webContents.executeJavaScript(
-    `[...document.querySelectorAll(".cloud-agent-row button")].find((b) => b.textContent.trim() === "Edit chats").click()`,
-  );
-  await waitFor(win, `document.querySelector(".cloud-modal .chat-list")`, "the edit checklist");
-  const cloudEditSave = await win.webContents.executeJavaScript(`(${async () => {
-    const settle = () => new Promise((resolve) => setTimeout(resolve));
-    const saveButton = () => [...document.querySelectorAll(".cloud-modal button")]
-      .find((node) => node.textContent.trim() === "Save changes");
-    // Re-query every time: the checklist re-renders on each change, so a
-    // NodeList captured once is a list of detached nodes after the first click.
-    const boxes = () =>
-      [...document.querySelectorAll(".cloud-modal .chat-option:not(.disabled) input")];
-    const prefilled = boxes().filter((box) => box.checked).length === 1;
-    const deadWhenUnchanged = saveButton().disabled;
-    boxes()[1].click();
-    await settle();
-    const liveAfterChange = !saveButton().disabled;
-    // Put it back: unchanged again, so Save must die again.
-    boxes()[1].click();
-    await settle();
-    const deadAgain = saveButton().disabled;
-    boxes()[1].click();
-    await settle();
-    saveButton().click();
-    return { prefilled, deadWhenUnchanged, liveAfterChange, deadAgain };
-  }})()`);
-  await waitForNode(() => cloudEditPending, "the cloud edit request to stay in flight");
   win.webContents.send("connect:changed");
-  await waitFor(
-    win,
-    `[...document.querySelectorAll(".cloud-agent-row button")].find((button) => button.textContent.trim() === "Edit chats")?.disabled === true`,
-    "the editing row to redraw as pending",
+  await waitFor(win, `document.querySelectorAll(".cloud-agent-row").length === 1`,
+    "the create probe roster to reset");
+
+  await win.webContents.executeJavaScript(
+    `[...document.querySelectorAll("#view button")]
+      .find((button) => button.textContent.trim() === "New agent").click()`,
   );
-  cloudEditSave.updatingRow = await win.webContents.executeJavaScript(`(${() => {
-    const row = document.querySelector(".cloud-agent-row");
-    const button = (text) => [...row.querySelectorAll("button")]
-      .find((item) => item.textContent.trim() === text);
+  await waitFor(win, `document.querySelector('.cloud-modal select[aria-label="Line"]')`,
+    "the confirmed-code New agent picker");
+  await win.webContents.executeJavaScript(`(() => {
+    const line = document.querySelector('.cloud-modal select[aria-label="Line"]');
+    line.value = line.options[line.options.length - 1].value;
+    line.dispatchEvent(new Event("change"));
+  })()`);
+  await clickCloudButton(win, "Create agent");
+  await waitFor(win, `document.querySelector(".cloud-modal .cloud-activation-code")`,
+    "the confirmed-code activation screen");
+  const confirmedAgent = {
+    agentId: "cag_confirmed",
+    name: "Cloud agent",
+    line: { uid: "lin_new", label: "+1 415-555-0999" },
+    canMessage: true,
+    canRetry: true,
+    threads: [],
+    status: "provisioning",
+    failureReason: null,
+    createdAt: "2026-08-30T20:00:00.000Z",
+  };
+  cloudProbe = {
+    ...cloudProbe,
+    cloudAgents: [confirmedAgent, ...cloudProbe.cloudAgents],
+    cloudFreeLines: [],
+    cloudLineFlow: {
+      phase: "idle",
+      activation: null,
+      message: null,
+      completedAgentId: confirmedAgent.agentId,
+      retryNewLine: false,
+    },
+  };
+  win.webContents.send("connect:changed");
+  await waitFor(win, `document.querySelector(".cloud-modal")?.textContent.includes("Code confirmed")`,
+    "the Code confirmed state");
+  const cloudCodeConfirmed = await win.webContents.executeJavaScript(`(${() => {
+    const modal = document.querySelector(".cloud-modal");
     return {
-      modalClosed: !document.querySelector(".cloud-modal"),
-      updating: row.textContent.includes("Updating chats…"),
-      spinner: !!row.querySelector(".status-setting .cloud-spinner"),
-      editDisabled: button("Edit chats")?.disabled === true,
-      messageDisabled: button("Message")?.disabled === true,
+      copy: modal.textContent.includes("Code confirmed"),
+      noButton: modal.querySelectorAll("button").length === 0,
     };
   }})()`);
-  releaseCloudEdit();
-  await waitForNode(() => !cloudEditPending, "the cloud edit request to finish");
-  await waitFor(win, `!document.querySelector(".cloud-modal")`, "the editor to close on a saved change");
-  await waitFor(
-    win,
-    `document.querySelector(".cloud-agent-row .entity-context")?.textContent.includes("★")`,
-    "the row to name its home chat",
+  await waitFor(win, `!document.querySelector(".cloud-modal")`,
+    "the confirmed-code modal to auto-close");
+  const cloudCodeConfirmedClosed = await win.webContents.executeJavaScript(
+    `[...document.querySelectorAll(".cloud-agent-row")]
+      .some((row) => row.textContent.includes("Cloud agent") && row.textContent.includes("Setting up…"))`,
   );
-  cloudEditSave.sentBothChats = cloudCalls.editChats.at(-1)?.chatUids.length === 2;
-  cloudEditSave.homeFirst =
-    cloudCalls.editChats.at(-1)?.chatUids[0] === cloudAgent.chatUids[0];
 
-  // A chat the agent serves that the account's chat list does not mention: the
-  // fallback list, or a chat the owner has since left. It must still be on the
-  // checklist, checked — a row that is not drawn is a chat the next Save
-  // detaches on behalf of someone who was never shown it.
   cloudProbe = {
-    ...cloudProbe,
-    cloudChatsLoaded: true,
-    cloudChats: [cloudChat],
-    cloudAgents: [{
-      ...cloudAgent,
-      chatUids: [cloudChat.uid, "chat_departed"],
-      chatLabels: [cloudChat.label, "+1 (415) 555-0177 · Old thread"],
-    }],
+    ...cloudProbeBeforeCreate,
+    cloudFreeLines: [],
+    cloudLineFlow: { ...cloudProbeBeforeCreate.cloudLineFlow },
   };
-  await win.webContents.executeJavaScript(`window.__domoSelectTab("audit")`);
-  await win.webContents.executeJavaScript(`window.__domoSelectTab("agents")`);
-  await waitFor(
-    win,
-    `[...document.querySelectorAll(".cloud-agent-row button")].some((b) => b.textContent.trim() === "Edit chats" && !b.disabled)`,
-    "Edit chats for the stray-chat case",
-  );
+  exhaustNextCloudActivation = true;
+  win.webContents.send("connect:changed");
   await win.webContents.executeJavaScript(
-    `[...document.querySelectorAll(".cloud-agent-row button")].find((b) => b.textContent.trim() === "Edit chats").click()`,
+    `[...document.querySelectorAll("#view button")]
+      .find((button) => button.textContent.trim() === "New agent").click()`,
   );
-  await waitFor(win, `document.querySelector(".cloud-modal .chat-list")`, "the editor with a stray chat");
-  const cloudEditStray = await win.webContents.executeJavaScript(`(${() => {
-    const options = [...document.querySelectorAll(".cloud-modal .chat-option")].map((row) => ({
-      name: row.querySelector(".chat-option-name").title,
-      checked: row.querySelector("input").checked,
-    }));
-    const stray = options.find((option) => option.name.includes("Old thread"));
+  await waitFor(win, `document.querySelector('.cloud-modal select[aria-label="Line"]')`,
+    "the empty-pool New agent picker");
+  const cloudNoFreeLines = await win.webContents.executeJavaScript(`(${() => {
+    const modal = document.querySelector(".cloud-modal");
+    const line = modal.querySelector('select[aria-label="Line"]');
+    const submit = [...modal.querySelectorAll("button")]
+      .find((button) => button.textContent.trim() === "Create agent");
     return {
-      shown: !!stray,
-      checked: !!stray?.checked,
-      allServedChecked: options.filter((option) => option.checked).length === 2,
-      // Nothing has been touched, so there is nothing to save — and the bug
-      // this replaces had Save live on open, one click from a silent detach.
-      saveDeadOnOpen: [...document.querySelectorAll(".cloud-modal button")]
-        .find((node) => node.textContent.trim() === "Save changes").disabled,
+      options: [...line.options].map((option) => option.textContent.trim()),
+      selected: line.value,
+      enabled: submit.disabled === false,
     };
   }})()`);
-  await win.webContents.executeJavaScript(
-    `[...document.querySelectorAll(".cloud-modal button")].find((b) => b.textContent.trim() === "Cancel").click()`,
-  );
+  await win.webContents.executeJavaScript(`(() => {
+    const line = document.querySelector('.cloud-modal select[aria-label="Line"]');
+    line.value = line.options[line.options.length - 1].value;
+    line.dispatchEvent(new Event("change"));
+  })()`);
+  await clickCloudButton(win, "Create agent");
+  await waitFor(win, `document.querySelector(".cloud-modal")?.textContent
+    .includes("No numbers are available right now. Try again later.")`,
+    "the terminal no-numbers state");
+  const cloudNoNumbers = await win.webContents.executeJavaScript(`(${() => {
+    const modal = document.querySelector(".cloud-modal");
+    return {
+      copy: modal.textContent.includes("No numbers are available right now. Try again later."),
+      buttons: [...modal.querySelectorAll("button")].map((button) => button.textContent.trim()),
+    };
+  }})()`);
+  await clickCloudButton(win, "Close");
+  await waitFor(win, `!document.querySelector(".cloud-modal")`,
+    "the no-numbers state to close");
 
-  // A three-chat agent whose server order is not the account list's order. The
-  // checklist orders by the list; index-for-index called that a change, so Save
-  // opened alive and one click restarted the agent to tell it what it knew.
-  // Titles as `state()` would build them, because the rows are now SORTED for
-  // display and the checkbox order is no longer the fixture's array order.
-  const reorderedChats = [
-    cloudChat,
-    { uid: "chat_family", label: "+1 (415) 555-0188 · Family group", title: "Family group", entries: [], lineName: null, people: [], recipients: { line: "+14155550188", members: [] } },
-    { uid: "chat_book", label: "+1 (510) 555-0133 · Book club", title: "Book club", entries: [], lineName: null, people: [], recipients: { line: "+15105550133", members: [] } },
-    { uid: "chat_new", label: "+1 (510) 555-0144 · New chat", title: "New chat", entries: [], lineName: null, people: [], recipients: { line: "+15105550144", members: [] } },
-  ];
   cloudProbe = {
-    ...cloudProbe,
-    cloudChatsLoaded: true,
-    cloudChats: reorderedChats,
-    // Server order: home, then the two the list puts in the other order.
-    cloudAgents: [{
-      ...cloudAgent,
-      chatUids: [cloudChat.uid, "chat_book", "chat_family"],
-      chatLabels: [cloudChat.label, reorderedChats[2].label, reorderedChats[1].label],
-    }],
+    ...cloudProbeBeforeCreate,
+    cloudLineFlow: { ...cloudProbeBeforeCreate.cloudLineFlow },
   };
-  await win.webContents.executeJavaScript(`window.__domoSelectTab("audit")`);
-  await win.webContents.executeJavaScript(`window.__domoSelectTab("agents")`);
-  await waitFor(
-    win,
-    `[...document.querySelectorAll(".cloud-agent-row button")].some((b) => b.textContent.trim() === "Edit chats" && !b.disabled)`,
-    "Edit chats for the reordered-set case",
-  );
-  await win.webContents.executeJavaScript(
-    `[...document.querySelectorAll(".cloud-agent-row button")].find((b) => b.textContent.trim() === "Edit chats").click()`,
-  );
-  await waitFor(win, `document.querySelector(".cloud-modal .chat-list")`, "the editor for the reordered set");
-  const cloudEditReordered = await win.webContents.executeJavaScript(`(${async () => {
-    const settle = () => new Promise((resolve) => setTimeout(resolve));
-    const save = () => [...document.querySelectorAll(".cloud-modal button")]
-      .find((node) => node.textContent.trim() === "Save changes");
-    // Rows are SORTED for display, so a box is found by the chat it belongs to
-    // rather than by position — the two orders are deliberately independent.
-    const boxFor = (title) => [...document.querySelectorAll(".cloud-modal .chat-option")]
-      .find((row) => row.querySelector(".chat-option-name")?.title.trim() === title)
-      ?.querySelector("input");
-    const served = ["Willow · You · Robin", "Book club", "Family group"];
-    const allChecked = served.every((title) => boxFor(title)?.checked === true)
-      && boxFor("New chat")?.checked === false;
-    const deadOnOpen = save().disabled;
-    // A real change still wakes it, and undoing that change puts it back.
-    // Family group specifically: unchecking and rechecking APPENDS it (that is
-    // `pickChat`), so the saved order becomes home, book, family — which is
-    // what `retainedServerOrder` below pins.
-    boxFor("Family group").click();
-    await settle();
-    const liveAfterChange = !save().disabled;
-    boxFor("Family group").click();
-    await settle();
-    const deadAgain = save().disabled;
-    boxFor("New chat").click();
-    await settle();
-    save().click();
-    return { allChecked, deadOnOpen, liveAfterChange, deadAgain };
-  }})()`);
-  await waitFor(win, `!document.querySelector(".cloud-modal")`, "the reordered editor to save");
-  cloudEditReordered.retainedServerOrder = JSON.stringify(cloudCalls.editChats.at(-1)?.chatUids)
-    === JSON.stringify([cloudChat.uid, "chat_book", "chat_family", "chat_new"]);
+  win.webContents.send("connect:changed");
+  await waitFor(win, `document.querySelectorAll(".cloud-agent-row").length === 1`,
+    "the cloud detail roster to reset");
 
-  // And with the chat list not yet read, the editor is not offered at all: it
-  // would open on the fallback, missing every chat this Mac has not been told
-  // about.
-  cloudProbe = { ...cloudProbe, cloudChatsLoaded: false, cloudChats: [] };
-  await win.webContents.executeJavaScript(`window.__domoSelectTab("audit")`);
-  await win.webContents.executeJavaScript(`window.__domoSelectTab("agents")`);
+  await win.webContents.executeJavaScript(
+    `document.querySelector(".cloud-agent-row .cloud-agent-open").click()`,
+  );
   await waitFor(
     win,
-    `[...document.querySelectorAll(".cloud-agent-row button")].some((b) => b.textContent.trim() === "Edit chats")`,
-    "the Edit chats button while the chat list is unread",
+    `document.querySelector(".cloud-modal .cloud-detail-threads")`,
+    "the cloud-agent detail view",
   );
-  const cloudEditGateUnread = await win.webContents.executeJavaScript(`(${() => {
-    const edit = [...document.querySelectorAll(".cloud-agent-row button")]
-      .find((button) => button.textContent.trim() === "Edit chats");
-    return { present: !!edit, disabled: !!edit?.disabled, why: edit?.title ?? null };
+  const cloudDetail = await win.webContents.executeJavaScript(`(${() => {
+    const modal = document.querySelector(".cloud-modal");
+    const buttons = [...modal.querySelectorAll("button")].map((button) =>
+      button.textContent.trim());
+    const fields = [...modal.querySelectorAll(".cloud-detail-field")].map((field) =>
+      field.textContent.trim());
+    const threads = [...modal.querySelectorAll(".cloud-thread-list li")].map((thread) =>
+      thread.textContent.trim());
+    return {
+      title: modal.querySelector(".group-title")?.textContent.trim(),
+      line: fields[0] ?? "",
+      status: fields[1] ?? "",
+      threads,
+      buttons,
+      readOnly: !modal.querySelector("input, select, textarea") &&
+        !buttons.some((label) => /edit|save/i.test(label)),
+    };
   }})()`);
+
+  cloudMessageAgentIds.length = 0;
+  await clickCloudButton(win, "Message");
+  await waitForNode(
+    () => cloudMessageAgentIds.at(-1) === cloudAgent.agentId,
+    "the detail Message IPC",
+  );
+
+  await clickCloudButton(win, "Change line");
+  await waitFor(win, `document.querySelector('.cloud-modal select[aria-label="Line"]')`,
+    "the Change line picker");
+  const cloudChangePicker = await win.webContents.executeJavaScript(`(${() => {
+    const modal = document.querySelector(".cloud-modal");
+    const line = modal.querySelector('select[aria-label="Line"]');
+    return {
+      title: modal.querySelector(".group-title")?.textContent.trim(),
+      exactCopy: modal.textContent.includes(
+        "The agent keeps its name and memory and moves to the new number.",
+      ),
+      lines: [...line.options].map((option) => `${option.textContent.trim()}:${option.value}`),
+      selectedLine: line.value,
+      submitDisabled: [...modal.querySelectorAll("button")]
+        .find((button) => button.textContent.trim() === "Change line")?.disabled,
+      buttons: [...modal.querySelectorAll("button")].map((button) => button.textContent.trim()),
+    };
+  }})()`);
+  const changeRequestBeforeSelection = cloudChangeRequest;
+  await win.webContents.executeJavaScript(`(() => {
+    const line = document.querySelector('.cloud-modal select[aria-label="Line"]');
+    line.value = line.options[line.options.length - 1].value;
+    line.dispatchEvent(new Event("change"));
+  })()`);
+  const cloudChangeSelection = await win.webContents.executeJavaScript(`(${() => {
+    const modal = document.querySelector(".cloud-modal");
+    const line = modal.querySelector('select[aria-label="Line"]');
+    const submit = [...modal.querySelectorAll("button")]
+      .find((button) => button.textContent.trim() === "Change line");
+    return {
+      stillPicking: Boolean(line),
+      selected: line.selectedOptions[0]?.textContent.trim() === "New line",
+      submitEnabled: submit?.disabled === false,
+    };
+  }})()`);
+  const cloudChangeSelectionOnly = cloudChangeRequest === changeRequestBeforeSelection;
+  await clickCloudButton(win, "Change line");
+  await waitFor(win, `document.querySelector(".cloud-modal .cloud-activation-code")`,
+    "the Change line activation code");
+  const cloudChangeCode = await win.webContents.executeJavaScript(`(${() => {
+    const modal = document.querySelector(".cloud-modal");
+    return {
+      title: modal.querySelector(".group-title")?.textContent.trim(),
+      code: modal.querySelector(".cloud-activation-code")?.textContent.trim(),
+      exactMessage: modal.textContent.includes("Plow Activate: MOVE42"),
+      buttons: [...modal.querySelectorAll("button")].map((button) => button.textContent.trim()),
+    };
+  }})()`);
+  await clickCloudButton(win, "Cancel");
+  await waitFor(win, `!document.querySelector(".cloud-modal")`,
+    "the Change line flow to close");
+  await win.webContents.executeJavaScript(
+    `document.querySelector(".cloud-agent-row .cloud-agent-open").click()`,
+  );
+  await waitFor(win, `document.querySelector(".cloud-modal .cloud-detail-threads")`,
+    "the cloud-agent detail after Change line");
+
+  await clickCloudButton(win, "Delete agent");
+  await waitFor(
+    win,
+    `document.querySelector(".cloud-modal .group-title")?.textContent.startsWith("Delete ")`,
+    "the cloud-agent delete confirmation",
+  );
+  const cloudDeleteConfirm = await win.webContents.executeJavaScript(`(${() => {
+    const modal = document.querySelector(".cloud-modal");
+    return {
+      title: modal.querySelector(".group-title")?.textContent.trim(),
+      copy: modal.textContent.includes("stop reading and replying."),
+      buttons: [...modal.querySelectorAll("button")].map((button) => button.textContent.trim()),
+    };
+  }})()`);
+  await clickCloudButton(win, "Cancel");
+  await waitFor(
+    win,
+    `document.querySelector(".cloud-modal .cloud-detail-threads")`,
+    "the cloud-agent detail after cancelling delete",
+  );
+
+  // Capture the shipping detail view, not only its DOM, so layout regressions
+  // in the new line-and-threads surface are visible in the required artifact.
+  const agentsShot = process.env.AGENTS_OUT ?? "/tmp/agents.png";
+  await captureAfterPaint(win, agentsShot);
+  await clickCloudButton(win, "Close");
+  await waitFor(win, `!document.querySelector(".cloud-modal")`, "the cloud-agent detail to close");
 
   cloudProbe = {
     ...cloudProbe,
-    cloudAgents: [cloudAgent],
-    cloudAgentsError: null,
-    cloudChatsError: "Couldn't reach Plow.",
-    cloudChatsNeedReactivation: false,
-    cloudChats: [],
+    cloudAgents: [{ ...cloudAgent, line: null, canMessage: false, threads: [] }],
+    cloudChatsError: null,
     cloudChatsLoaded: false,
   };
   await win.webContents.executeJavaScript(`window.__domoSelectTab("audit")`);
   await win.webContents.executeJavaScript(`window.__domoSelectTab("agents")`);
-  await waitFor(win, `document.querySelector(".cloud-error")`, "the failed chat-list banner");
-  const cloudChatFailure = await win.webContents.executeJavaScript(`(${() => ({
-    showsError: document.querySelector(".cloud-error")?.textContent.includes("Couldn't reach Plow"),
-    setupDisabled: [...document.querySelectorAll("#view button")]
-      .find((button) => button.textContent.trim() === "Set up cloud agent")?.disabled === true,
-    notEmptyState: !document.querySelector(".list-section:first-child .entity-empty"),
-    keepsRoster: document.querySelector(".cloud-agent-row")?.textContent.includes("Household helper"),
-    noDestructiveRecovery: ![...document.querySelectorAll(".cloud-error button")]
-      .some((button) => button.textContent.trim() === "Sign out and re-activate"),
-  })})()`);
-
-  cloudProbe = {
-    ...cloudProbe,
-    cloudAgentsError: "Method Not Allowed",
-    cloudChatsError: "This Mac cannot list chats yet. Try re-activating it, then try again.",
-    cloudChatsNeedReactivation: true,
-    cloudChats: [cloudChat],
-  };
-  await win.webContents.executeJavaScript(`window.__domoSelectTab("audit")`);
-  await win.webContents.executeJavaScript(`window.__domoSelectTab("agents")`);
-  await waitFor(win, `document.querySelector(".cloud-error")`, "the 403 chat-list banner");
-  const cloudForbidden = await win.webContents.executeJavaScript(`(${() => {
-    const setup = [...document.querySelectorAll("#view button")]
-      .find((button) => button.textContent.trim() === "Set up cloud agent");
-    setup.click();
+  await waitFor(win, `document.querySelector(".cloud-agent-row .cloud-agent-open")`,
+    "the cloud agent whose threads are still loading");
+  await win.webContents.executeJavaScript(
+    `document.querySelector(".cloud-agent-row .cloud-agent-open").click()`,
+  );
+  await waitFor(win, `document.querySelector(".cloud-modal .cloud-detail-threads")`,
+    "the loading-thread detail");
+  const loadingCloudDetail = await win.webContents.executeJavaScript(`(${() => {
+    const modal = document.querySelector(".cloud-modal");
+    const fields = [...modal.querySelectorAll(".cloud-detail-field")].map((field) =>
+      field.textContent.trim());
     return {
-      rawReasonHidden: !document.body.innerText.includes("Method Not Allowed"),
-      setupEnabled: setup.disabled === false,
-      offersReactivation: [...document.querySelectorAll(".cloud-error button")]
-        .some((button) => button.textContent.trim() === "Sign out and re-activate"),
-      notEmptyState: !document.querySelector(".list-section:first-child .entity-empty"),
+      line: fields[0] ?? "",
+      threadState: modal.querySelector(".cloud-thread-empty")?.textContent.trim(),
+      offersMessage: [...modal.querySelectorAll("button")]
+        .some((button) => button.textContent.trim() === "Message"),
     };
   }})()`);
-  await waitFor(win, `document.querySelector(".cloud-modal .chat-list")`, "the activation-chat fallback checklist");
-  cloudForbidden.offersActivationChat = await win.webContents.executeJavaScript(
-    `[...document.querySelectorAll(".cloud-modal .chat-option-name")]
-      .some((name) => name.title.trim() === "Willow · You · Robin")`,
-  );
-  await win.webContents.executeJavaScript(
-    `[...document.querySelectorAll(".cloud-modal button")].find((button) => button.textContent.trim() === "Cancel").click()`,
-  );
-  await win.webContents.executeJavaScript(
-    `[...document.querySelectorAll(".cloud-error button")].find((button) => button.textContent.trim() === "Sign out and re-activate").click()`,
-  );
-  await waitForNode(() => relaySignOutCalls === 1, "the re-activate action to use sign-out");
-  cloudForbidden.reactivatesThroughSignOut = relaySignOutCalls === 1;
-
   cloudProbe = {
     ...cloudProbe,
-    cloudAgentsError: "Cloud capacity is full for this account.",
+    cloudAgents: [cloudAgent],
     cloudChatsError: null,
-    cloudChats: [cloudChat],
     cloudChatsLoaded: true,
   };
-  await win.webContents.executeJavaScript(`window.__domoSelectTab("audit")`);
-  await win.webContents.executeJavaScript(`window.__domoSelectTab("agents")`);
-  await waitFor(win, `document.body.innerText.includes("Cloud capacity is full for this account.")`,
-    "the server-authored cloud error detail");
-  const cloudServerDetail = await win.webContents.executeJavaScript(`(${() => ({
-    preserved: document.body.innerText.includes("Cloud capacity is full for this account."),
-    notReplaced: !document.body.innerText.includes("Plow couldn't complete that request. Try again."),
-  })})()`);
-
-  // A chat list that came back EMPTY, and loaded. Distinct from the failure
-  // case above, which is also empty but NOT loaded: the setup button is the
-  // only route onward for a freshly paired Mac, and since pairing stopped
-  // claiming a pool line this is that Mac's ordinary state.
-  cloudProbe = {
-    ...cloudProbe,
-    cloudAgents: [],
-    cloudAgentsError: null,
-    cloudChatsError: null,
-    cloudChatsNeedReactivation: false,
-    cloudChats: [],
-    cloudChatsLoaded: true,
-  };
-  await win.webContents.executeJavaScript(`window.__domoSelectTab("audit")`);
-  await win.webContents.executeJavaScript(`window.__domoSelectTab("agents")`);
+  win.webContents.send("connect:changed");
   await waitFor(
     win,
-    `[...document.querySelectorAll("#view button")].some((b) => b.textContent.trim() === "Set up cloud agent")`,
-    "the setup action with a loaded-but-empty chat list",
+    `document.querySelector(".cloud-modal .cloud-thread-list li")?.textContent.trim() === ${JSON.stringify(cloudThreadTitle)}`,
+    "the open cloud-agent detail to refresh with its loaded threads",
   );
-  const cloudLoadedEmpty = await win.webContents.executeJavaScript(`(${() => {
-    const setup = [...document.querySelectorAll("#view button")]
-      .find((button) => button.textContent.trim() === "Set up cloud agent");
-    return {
-      setupEnabled: setup.disabled === false,
-      // Not the loading spinner, and not an error: the list really did arrive.
-      noLoadingNote: !document.body.innerText.includes("Loading chats…"),
-      noErrorBanner: !document.querySelector(".cloud-error"),
-    };
-  }})()`);
-  // ...and what that button leads to with no chats and no number known: the
-  // instruction, and NO control, because there is nothing here to act on.
-  await win.webContents.executeJavaScript(
-    `[...document.querySelectorAll("#view button")].find((b) => b.textContent.trim() === "Set up cloud agent").click()`,
-  );
-  await waitFor(win, `document.querySelector(".cloud-modal")`, "the modal over an empty chat list");
-  await win.webContents.executeJavaScript(
-    `[...document.querySelectorAll(".cloud-modal button")].find((b) => b.textContent.trim() === "New chat…")?.click()`,
-  );
-  const cloudZeroChatGuidance = await win.webContents.executeJavaScript(`(${() => {
-    const text = document.querySelector(".cloud-modal").innerText;
-    const labels = [...document.querySelectorAll(".cloud-modal button")]
-      .map((button) => button.textContent.trim());
-    return {
-      saysTextANumber: text.includes("Message a number to create a thread"),
-      saysReopen: text.includes("reopen this window"),
-      // The dead route is gone: it opened the setup window, which on a
-      // signed-in Mac lands on "connected" and mints nothing.
-      noVerifyButton: !labels.includes("Verify a new Plow number"),
-      // Plow's numbers, with the persona name where there is one.
-      listsNamedLine: text.includes("Willow") && text.includes("+14155550142"),
-      listsUnnamedLine: text.includes("+16285550177"),
-      // Every free line gets the one control that acts on it.
-      opensMessages: [...document.querySelectorAll(".cloud-modal .cloud-route-number button")]
-        .filter((b) => b.textContent.trim() === "Open Messages…").length === 2,
-    };
-  }})()`);
-  // Back to the picker, then out: "Back" leaves the explainer, "Cancel" closes.
-  await win.webContents.executeJavaScript(
-    `[...document.querySelectorAll(".cloud-modal button")].find((b) => b.textContent.trim() === "Back")?.click()`,
-  );
-  await win.webContents.executeJavaScript(
-    `[...document.querySelectorAll(".cloud-modal button")].find((b) => b.textContent.trim() === "Cancel")?.click()`,
-  );
-  await waitFor(win, `!document.querySelector(".cloud-modal")`, "the empty-list modal to close");
-  // The owner texted a number and Plow made the chat. The modal promises it
-  // "appears here when you reopen this window", so reopening must ASK — the
-  // state the button was rendered with cannot know about this.
-  const refreshesBefore = cloudRefreshCalls;
-  cloudProbe = { ...cloudProbe, cloudChats: [cloudChat] };
-  await win.webContents.executeJavaScript(
-    `[...document.querySelectorAll("#view button")].find((b) => b.textContent.trim() === "Set up cloud agent").click()`,
-  );
-  await waitFor(win, `document.querySelector(".cloud-modal .chat-list")`, "the checklist after a chat arrived");
-  cloudZeroChatGuidance.reopenAsked = cloudRefreshCalls > refreshesBefore;
-  // The chat that arrived, named by its PEOPLE — the line is deliberately not
-  // in the title any more, so this looks for the participants.
-  cloudZeroChatGuidance.reopenShowsNewChat = await win.webContents.executeJavaScript(
-    `[...document.querySelectorAll(".cloud-modal .chat-option-name")].some((n) => n.title === "Willow · You · Robin")`,
-  );
-  // The row: participants in the title (owner as "You", line excluded), and
-  // The pair, read STRUCTURALLY: each name and the number it belongs to are
-  // one <span class="chat-entry"> in the DOM, so nothing has to line up two
-  // strings by counting positions.
-  cloudZeroChatGuidance.chatRowShowsLine = await win.webContents.executeJavaScript(`(${() => {
-    const row = document.querySelector(".cloud-modal .chat-option-name");
-    const entries = [...(row?.querySelectorAll(".chat-entry") ?? [])].map((entry) => [
-      entry.querySelector(".chat-entry-label")?.textContent ?? "",
-      entry.querySelector(".chat-entry-number")?.textContent ?? "",
-    ]);
-    return JSON.stringify(entries) === JSON.stringify([
-      ["Willow", "+1 415-555-0142"],
-      ["You", "+1 415-555-0193"],
-      ["Robin", "+1 628-555-0112"],
-    ])
-      // Every entry has both halves — a name with no number under it is the
-      // shape the old two-string row could produce.
-      && entries.every(([label, number]) => label && number)
-      // ...and the flat form is still there for the tooltip.
-      && row?.title === "Willow · You · Robin";
-  }})()`);
-  // ...and that number is now held, so the explainer offers it no button.
-  await win.webContents.executeJavaScript(
-    `[...document.querySelectorAll(".cloud-modal button")].find((b) => b.textContent.trim() === "New chat…")?.click()`,
-  );
-  cloudZeroChatGuidance.dropsHeldLine = await win.webContents.executeJavaScript(`(${() => {
-    const rows = [...document.querySelectorAll(".cloud-modal .cloud-route-number")];
-    // The held number is not listed at all — it is on the screen behind this
-    // one, as the chat itself. The free one is, with its one control.
-    return !rows.some((r) => r.textContent.includes("+14155550142"))
-      && rows.length === 1
-      && !!rows[0].textContent.includes("+16285550177")
-      && !!rows[0].querySelector("button")
-      && !document.querySelector(".cloud-modal").innerText.includes("already have a chat");
-  }})()`);
-  await win.webContents.executeJavaScript(
-    `[...document.querySelectorAll(".cloud-modal button")].find((b) => b.textContent.trim() === "Back")?.click()`,
-  );
-  await win.webContents.executeJavaScript(
-    `[...document.querySelectorAll(".cloud-modal button")].find((b) => b.textContent.trim() === "Cancel")?.click()`,
-  );
+  await clickCloudButton(win, "Close");
+  await waitFor(win, `!document.querySelector(".cloud-modal")`,
+    "the loading-thread detail to close");
 
-  // Restore the roster for the screenshot and the existing Agents-pane probes.
   cloudProbe = {
     ...cloudProbe,
-      cloudAgents: [cloudAgent],
-    cloudChats: [cloudChat],
-    cloudAgentsError: null,
+    cloudAgents: [{ ...cloudAgent, line: null, canMessage: false, threads: [] }],
+    cloudChatsError: "The chat list is unavailable.",
+    cloudChatsLoaded: false,
+  };
+  await win.webContents.executeJavaScript(`window.__domoSelectTab("audit")`);
+  await win.webContents.executeJavaScript(`window.__domoSelectTab("agents")`);
+  await waitFor(win, `document.querySelector(".cloud-agent-row .cloud-agent-open")`,
+    "the cloud agent whose threads failed to load");
+  await win.webContents.executeJavaScript(
+    `document.querySelector(".cloud-agent-row .cloud-agent-open").click()`,
+  );
+  await waitFor(win, `document.querySelector(".cloud-modal .cloud-detail-threads")`,
+    "the unavailable-thread detail");
+  const unavailableCloudDetail = await win.webContents.executeJavaScript(`(${() => {
+    const modal = document.querySelector(".cloud-modal");
+    const fields = [...modal.querySelectorAll(".cloud-detail-field")].map((field) =>
+      field.textContent.trim());
+    return {
+      line: fields[0] ?? "",
+      threadState: modal.querySelector(".cloud-thread-empty")?.textContent.trim(),
+      hidesRawLineUid: !modal.textContent.includes("lin_willow"),
+      offersMessage: [...modal.querySelectorAll("button")]
+        .some((button) => button.textContent.trim() === "Message"),
+    };
+  }})()`);
+  await clickCloudButton(win, "Close");
+  await waitFor(win, `!document.querySelector(".cloud-modal")`,
+    "the unavailable-thread detail to close");
+
+  cloudProbe = {
+    ...cloudProbe,
+    cloudAgents: [cloudAgent],
+    cloudFreeLines: [],
+    cloudLineFlow: {
+      phase: "idle",
+      activation: null,
+      message: null,
+      completedAgentId: null,
+      retryNewLine: false,
+    },
+    cloudChatsError: "Plow returned 503.",
+    cloudChatsLoaded: false,
+  };
+  await win.webContents.executeJavaScript(`window.__domoSelectTab("audit")`);
+  await win.webContents.executeJavaScript(`window.__domoSelectTab("agents")`);
+  await waitFor(win, `[...document.querySelectorAll("#view button")]
+    .some((button) => button.textContent.trim() === "New agent")`, "the unknown-lines roster");
+  await win.webContents.executeJavaScript(
+    `[...document.querySelectorAll("#view button")]
+      .find((button) => button.textContent.trim() === "New agent").click()`,
+  );
+  await waitFor(win, `document.querySelector(".cloud-modal .group-title")?.textContent.trim() === "New agent" &&
+    !document.querySelector(".cloud-modal .cloud-progress")`, "the unknown-lines picker");
+  const cloudUnknownLines = await win.webContents.executeJavaScript(`(${() => {
+    const modal = document.querySelector(".cloud-modal");
+    return {
+      showsSafeError: modal.textContent.includes("Plow couldn't complete that request. Try again."),
+      hidesRawError: !modal.textContent.includes("Plow returned 503."),
+      buttons: [...modal.querySelectorAll("button")].map((button) => button.textContent.trim()),
+    };
+  }})()`);
+  await clickCloudButton(win, "Cancel");
+  await waitFor(win, `!document.querySelector(".cloud-modal")`, "the unknown-lines picker to close");
+
+  cloudProbe = {
+    ...cloudProbe,
+    cloudFreeLines: [{ uid: "lin_error", label: "Error line" }],
     cloudChatsError: null,
     cloudChatsLoaded: true,
   };
   await win.webContents.executeJavaScript(`window.__domoSelectTab("audit")`);
   await win.webContents.executeJavaScript(`window.__domoSelectTab("agents")`);
-  await waitFor(win, `document.querySelector(".cloud-agent-row")`, "the restored cloud-agent roster");
+  await waitFor(win, `[...document.querySelectorAll("#view button")]
+    .some((button) => button.textContent.trim() === "New agent")`, "the create-error roster");
+  await win.webContents.executeJavaScript(
+    `[...document.querySelectorAll("#view button")]
+      .find((button) => button.textContent.trim() === "New agent").click()`,
+  );
+  await waitFor(win, `document.querySelector('.cloud-modal select[aria-label="Line"]')`,
+    "the create-error picker");
+  await win.webContents.executeJavaScript(`(() => {
+    const line = document.querySelector('.cloud-modal select[aria-label="Line"]');
+    line.value = "lin_error";
+    line.dispatchEvent(new Event("change"));
+  })()`);
+  await clickCloudButton(win, "Create agent");
+  await waitFor(win, `document.querySelector(".cloud-modal .cloud-callout-title")?.textContent
+    .includes("wasn't created")`, "the create error card");
+  const cloudCreateErrorDetail = await win.webContents.executeJavaScript(
+    `document.querySelector(".cloud-modal .cloud-callout p")?.textContent.trim() ===
+      "Plow couldn't complete that request. Try again."`,
+  );
+  await clickCloudButton(win, "Cancel");
+  await waitFor(win, `!document.querySelector(".cloud-modal")`, "the create error card to close");
 
-  // The Agents pane gets an image of its own, for the same reason Settings does:
-  // every UI change gets one, and this one moved panes.
-  const agentsShot = process.env.AGENTS_OUT ?? "/tmp/agents.png";
-  await captureAfterPaint(win, agentsShot);
+  cloudProbe = {
+    ...cloudProbe,
+    cloudAgents: [{ ...cloudAgent, status: "failed", failureReason: "Set up failed" }],
+    cloudLineFlow: {
+      phase: "idle",
+      activation: null,
+      message: null,
+      completedAgentId: null,
+      retryNewLine: false,
+    },
+  };
+  await win.webContents.executeJavaScript(`window.__domoSelectTab("audit")`);
+  await win.webContents.executeJavaScript(`window.__domoSelectTab("agents")`);
+  await waitFor(win, `document.querySelector(".cloud-agent-row .cloud-agent-open")`,
+    "the failed cloud agent");
+  await win.webContents.executeJavaScript(
+    `document.querySelector(".cloud-agent-row .cloud-agent-open").click()`,
+  );
+  await waitFor(win, `document.querySelector(".cloud-modal .cloud-detail-threads")`,
+    "the failed cloud-agent detail");
+  const failedCloudDetailButtons = await win.webContents.executeJavaScript(
+    `[...document.querySelectorAll(".cloud-modal button")].map((button) => button.textContent.trim())`,
+  );
+  await clickCloudButton(win, "Close");
+  await waitFor(win, `!document.querySelector(".cloud-modal")`, "the failed detail to close");
+
+  cloudProbe = {
+    ...cloudProbe,
+    cloudAgents: [cloudAgent],
+    cloudLineFlow: {
+      phase: "idle",
+      activation: null,
+      message: null,
+      completedAgentId: null,
+      retryNewLine: false,
+    },
+  };
+  await win.webContents.executeJavaScript(`window.__domoSelectTab("audit")`);
+  await win.webContents.executeJavaScript(`window.__domoSelectTab("agents")`);
+  await waitFor(win, `document.querySelector(".cloud-agent-row .cloud-agent-open")`,
+    "the change-error cloud agent");
+  await win.webContents.executeJavaScript(
+    `document.querySelector(".cloud-agent-row .cloud-agent-open").click()`,
+  );
+  await waitFor(win, `document.querySelector(".cloud-modal .cloud-detail-threads")`,
+    "the change-error detail");
+  await clickCloudButton(win, "Change line");
+  await waitFor(win, `document.querySelector('.cloud-modal select[aria-label="Line"]')`,
+    "the change-error picker");
+  await win.webContents.executeJavaScript(`(() => {
+    const line = document.querySelector('.cloud-modal select[aria-label="Line"]');
+    line.value = "lin_error";
+    line.dispatchEvent(new Event("change"));
+  })()`);
+  await clickCloudButton(win, "Change line");
+  await waitFor(win, `document.querySelector(".cloud-modal .cloud-callout-title")?.textContent
+    .includes("wasn't changed")`, "the change-line error card");
+  const cloudChangeErrorDetail = await win.webContents.executeJavaScript(
+    `document.querySelector(".cloud-modal .cloud-callout p")?.textContent.trim() ===
+      "Line service is restarting."`,
+  );
+  await clickCloudButton(win, "Cancel");
+  await waitFor(win, `!document.querySelector(".cloud-modal")`, "the change error card to close");
+
+  cloudProbe = {
+    ...cloudProbe,
+    cloudFreeLines: [],
+    cloudLineFlow: {
+      phase: "idle",
+      activation: null,
+      message: null,
+      completedAgentId: null,
+      retryNewLine: false,
+    },
+  };
+  await win.webContents.executeJavaScript(`window.__domoSelectTab("audit")`);
+  await win.webContents.executeJavaScript(`window.__domoSelectTab("agents")`);
+  await waitFor(win, `document.querySelector(".cloud-agent-row .cloud-agent-open")`,
+    "the agent-gone cloud agent");
+  await win.webContents.executeJavaScript(
+    `document.querySelector(".cloud-agent-row .cloud-agent-open").click()`,
+  );
+  await waitFor(win, `document.querySelector(".cloud-modal .cloud-detail-threads")`,
+    "the agent-gone detail");
+  await clickCloudButton(win, "Change line");
+  await waitFor(win, `document.querySelector('.cloud-modal select[aria-label="Line"]')`,
+    "the agent-gone line picker");
+  await win.webContents.executeJavaScript(`(() => {
+    const line = document.querySelector('.cloud-modal select[aria-label="Line"]');
+    line.value = line.options[line.options.length - 1].value;
+    line.dispatchEvent(new Event("change"));
+  })()`);
+  await clickCloudButton(win, "Change line");
+  await waitFor(win, `document.querySelector(".cloud-modal .cloud-activation-code")`,
+    "the agent-gone activation code");
+  const cancelsBeforeAgentGone = cloudChangeCancelCount;
+  cloudProbe = { ...cloudProbe, cloudAgents: [] };
+  win.webContents.send("connect:changed");
+  await waitFor(win, `!document.querySelector(".cloud-modal")`,
+    "the removed agent's Change line flow to close");
+  await new Promise((resolve) => setTimeout(resolve, 25));
+  const cloudAgentGoneCancelled = cloudChangeCancelCount === cancelsBeforeAgentGone + 1;
 
   // The Approvals card: the modes, and the owner's purpose statement. Two
   // states, because the card has two — the field under the reviewer chip, and
@@ -1851,77 +1936,91 @@ app.whenReady().then(async () => {
     connect.clientNameNotBold &&
     connect.noConnectTab &&
     cloudRoster.noCredentialIdentity &&
-    cloudRoster.showsProvider &&
-    cloudRoster.namesHomeLine &&
-    cloudFirstLineNames.roster &&
-    cloudFirstLineNames.editor &&
-    cloudModalFocus.insideModal &&
-    cloudModalFocus.usable &&
-    cloudModalGuard.ignored &&
-    cloudModalGuard.defaultProvider &&
-    cloudModalGuard.makeHomeMovesToZero &&
-    cloudModalGuard.keptOriginal &&
-    cloudCreateWait.disabled &&
-    cloudCreateWait.spinner &&
-    cloudCreateWait.copy &&
-    cloudCreateTransition.modalClosed &&
-    cloudCreateTransition.requestPending &&
-    cloudCreateTransition.pendingRow &&
-    cloudCreateTransition.provider === "exe:life" &&
-    cloudCreateTransition.reconciled &&
-    cloudRowActions.hasMessage &&
-    cloudRowActions.noSettings &&
-    cloudRowActions.hasMenu &&
-    cloudEditGate.present &&
-    cloudEditGate.disabledWhileProvisioning &&
-    cloudEditSave.prefilled &&
-    cloudEditSave.deadWhenUnchanged &&
-    cloudEditSave.liveAfterChange &&
-    cloudEditSave.deadAgain &&
-    cloudEditSave.sentBothChats &&
-    cloudEditSave.homeFirst &&
-    cloudEditSave.updatingRow.modalClosed &&
-    cloudEditSave.updatingRow.updating &&
-    cloudEditSave.updatingRow.spinner &&
-    cloudEditSave.updatingRow.editDisabled &&
-    cloudEditSave.updatingRow.messageDisabled &&
-    cloudEditStray.shown &&
-    cloudEditStray.checked &&
-    cloudEditStray.allServedChecked &&
-    cloudEditStray.saveDeadOnOpen &&
-    cloudEditReordered.allChecked &&
-    cloudEditReordered.deadOnOpen &&
-    cloudEditReordered.liveAfterChange &&
-    cloudEditReordered.deadAgain &&
-    cloudEditReordered.retainedServerOrder &&
-    cloudEditGateUnread.present &&
-    cloudEditGateUnread.disabled &&
-    cloudChatFailure.showsError &&
-    cloudChatFailure.setupDisabled &&
-    cloudChatFailure.notEmptyState &&
-    cloudChatFailure.keepsRoster &&
-    cloudChatFailure.noDestructiveRecovery &&
-    cloudForbidden.rawReasonHidden &&
-    cloudForbidden.setupEnabled &&
-    cloudForbidden.offersReactivation &&
-    cloudForbidden.offersActivationChat &&
-    cloudForbidden.reactivatesThroughSignOut &&
-    cloudForbidden.notEmptyState &&
-    cloudLoadedEmpty.setupEnabled &&
-    cloudLoadedEmpty.noLoadingNote &&
-    cloudLoadedEmpty.noErrorBanner &&
-    cloudZeroChatGuidance.saysTextANumber &&
-    cloudZeroChatGuidance.saysReopen &&
-    cloudZeroChatGuidance.noVerifyButton &&
-    cloudZeroChatGuidance.listsNamedLine &&
-    cloudZeroChatGuidance.listsUnnamedLine &&
-    cloudZeroChatGuidance.opensMessages &&
-    cloudZeroChatGuidance.reopenAsked &&
-    cloudZeroChatGuidance.reopenShowsNewChat &&
-    cloudZeroChatGuidance.chatRowShowsLine &&
-    cloudZeroChatGuidance.dropsHeldLine &&
-    cloudServerDetail.preserved &&
-    cloudServerDetail.notReplaced &&
+    cloudRoster.hidesProvider &&
+    cloudRoster.namesLine &&
+    cloudRoster.showsCreated &&
+    cloudRoster.hidesLastUsed &&
+    cloudRoster.offersMessage &&
+    cloudRoster.rowIsDetailTrigger &&
+    cloudRoster.offersNewAgent &&
+    cloudCreatePicker.title === "New agent" &&
+    cloudCreatePicker.hasName &&
+    cloudCreatePicker.hasAgentType &&
+    cloudCreatePicker.providers.join("|") ===
+      "Hermes:exe:hermes|Life:exe:life|Pirate:exe:pirate" &&
+    cloudCreatePicker.lines.join("|") ===
+      "Choose a line…:|Ash · +1 415-555-0199:lin_ash|New line:__new_line__" &&
+    cloudCreatePicker.selectedLine === "" &&
+    cloudCreatePicker.submitDisabled &&
+    cloudCreatePicker.fieldGaps.join("|") === "14|14" &&
+    cloudCreatePicker.labelGaps.every((gap) =>
+      gap === cloudCreatePicker.labelGaps[0] && gap >= 4) &&
+    cloudCreatePicker.buttons.join("|") === "Cancel|Create agent" &&
+    cloudCreateSelection.stillPicking &&
+    cloudCreateSelection.selected &&
+    cloudCreateSelection.submitEnabled &&
+    cloudCreateSelectionOnly &&
+    cloudCreateRequest?.provider === "exe:life" &&
+    cloudCreateRequest?.lineUid === null &&
+    cloudCreateCancelled &&
+    cloudCreateCode.title === "New line" &&
+    cloudCreateCode.code === "LINE42" &&
+    cloudCreateCode.copy &&
+    cloudCreateCode.exactMessage &&
+    cloudCreateCode.buttons.join("|") === "Copy|Cancel|Open Messages…" &&
+    cloudExistingCreate.provisioning &&
+    cloudExistingCreate.name === "New helper" &&
+    cloudExistingCreateRequest?.name === "New helper" &&
+    cloudExistingCreateRequest?.provider === "exe:pirate" &&
+    cloudExistingCreateRequest?.lineUid === "lin_ash" &&
+    cloudCodeConfirmed.copy &&
+    cloudCodeConfirmed.noButton &&
+    cloudCodeConfirmedClosed &&
+    cloudNoFreeLines.options.join("|") === "Choose a line…|New line" &&
+    cloudNoFreeLines.selected === "" &&
+    !cloudNoFreeLines.enabled &&
+    cloudNoNumbers.copy &&
+    cloudNoNumbers.buttons.join("|") === "Close" &&
+    cloudDetail.title === "Household helper" &&
+    cloudDetail.line.includes("LineWillow · +1 415-555-0142") &&
+    cloudDetail.status.includes("StatusReady") &&
+    cloudDetail.threads.join("|") === "Willow · You · Robin" &&
+    cloudDetail.buttons.join("|") === "Close|Message|Change line|Delete agent" &&
+    cloudDetail.readOnly &&
+    cloudChangePicker.title === "Change line" &&
+    cloudChangePicker.exactCopy &&
+    cloudChangePicker.lines.join("|") ===
+      "Choose a line…:|Ash · +1 415-555-0199:lin_ash|New line:__new_line__" &&
+    cloudChangePicker.selectedLine === "" &&
+    cloudChangePicker.submitDisabled &&
+    cloudChangePicker.buttons.join("|") === "Cancel|Change line" &&
+    cloudChangeSelection.stillPicking &&
+    cloudChangeSelection.selected &&
+    cloudChangeSelection.submitEnabled &&
+    cloudChangeSelectionOnly &&
+    cloudChangeCode.title === "New line" &&
+    cloudChangeCode.code === "MOVE42" &&
+    cloudChangeCode.exactMessage &&
+    cloudChangeCode.buttons.join("|") === "Copy|Cancel|Open Messages…" &&
+    cloudChangeRequest?.agentId === cloudAgent.agentId &&
+    cloudChangeRequest?.lineUid === null &&
+    cloudUnknownLines.showsSafeError &&
+    cloudUnknownLines.hidesRawError &&
+    cloudUnknownLines.buttons.join("|") === "Cancel" &&
+    cloudCreateErrorDetail &&
+    failedCloudDetailButtons.join("|") === "Close|Message|Delete agent" &&
+    cloudChangeErrorDetail &&
+    cloudAgentGoneCancelled &&
+    cloudDeleteConfirm.title === "Delete Household helper?" &&
+    cloudDeleteConfirm.copy &&
+    cloudDeleteConfirm.buttons.join("|") === "Cancel|Delete agent" &&
+    loadingCloudDetail.line.includes("LineLine unavailable") &&
+    loadingCloudDetail.threadState === "Loading threads…" &&
+    !loadingCloudDetail.offersMessage &&
+    unavailableCloudDetail.line.includes("LineLine unavailable") &&
+    unavailableCloudDetail.threadState === "Threads couldn't be loaded." &&
+    unavailableCloudDetail.hidesRawLineUid &&
+    !unavailableCloudDetail.offersMessage &&
     settings.hasAccountGroup &&
     settings.showsThisMac &&
     settings.noEndpointRow &&
@@ -1995,7 +2094,7 @@ app.whenReady().then(async () => {
     errors.length === 0;
   console.log(
     "PROBE:" +
-      JSON.stringify({ main, settings, strandedOnDisk, settingsPane, connect, cloudRoster, cloudFirstLineNames, cloudModalFocus, cloudModalGuard, cloudCreateWait, cloudCreateTransition, cloudRowActions, cloudEditGate, cloudEditSave, cloudEditStray, cloudEditReordered, cloudEditGateUnread, cloudChatFailure, cloudForbidden, cloudLoadedEmpty, cloudZeroChatGuidance, cloudServerDetail, agentsShot, approvalsReviewer, approvalsShot, purposeRoundTrip, approvalsAsk, askWithoutReviewer, approvalsShotAsk, agentsOpen, modalClosed, vaultLocked, vaultUnsaved, vaultShot, agentsOpenShot, staleSettingsPane, optimisticMode, settingsShot, approval, reviewerNote, consoleErrors: errors, ok }),
+      JSON.stringify({ main, settings, strandedOnDisk, settingsPane, connect, cloudRoster, cloudCreatePicker, cloudCreateSelection, cloudCreateSelectionOnly, cloudCreateRequest, cloudCreateCancelled, cloudCreateCode, cloudExistingCreate, cloudExistingCreateRequest, cloudCodeConfirmed, cloudCodeConfirmedClosed, cloudNoFreeLines, cloudNoNumbers, cloudDetail, cloudChangePicker, cloudChangeSelection, cloudChangeSelectionOnly, cloudChangeCode, cloudChangeRequest, cloudUnknownLines, cloudCreateErrorDetail, failedCloudDetailButtons, cloudChangeErrorDetail, cloudAgentGoneCancelled, cloudDeleteConfirm, loadingCloudDetail, unavailableCloudDetail, agentsShot, approvalsReviewer, approvalsShot, purposeRoundTrip, approvalsAsk, askWithoutReviewer, approvalsShotAsk, agentsOpen, modalClosed, vaultLocked, vaultUnsaved, vaultShot, agentsOpenShot, staleSettingsPane, optimisticMode, settingsShot, approval, reviewerNote, consoleErrors: errors, ok }),
   );
   app.exit(ok ? 0 : 1);
 }).catch((err) => {

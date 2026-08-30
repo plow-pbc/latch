@@ -96,25 +96,20 @@ contextBridge.exposeInMainWorld("domo", {
   // missing — an inactive credential on a still-running agent — where there is
   // no roster row to name and none is needed.
   cloudRemove: (agentId: string) => ipcRenderer.invoke("cloud:remove", agentId),
+  cloudRefresh: () => ipcRenderer.invoke("cloud:refresh"),
+  cloudCreate: (input: { name: string; provider: string; lineUid: string | null }) =>
+    ipcRenderer.invoke("cloud:create", input),
+  cloudCancelLineFlow: () => ipcRenderer.invoke("cloud:cancelLineFlow"),
+  cloudRetryLineFlow: () => ipcRenderer.invoke("cloud:retryLineFlow"),
+  cloudRetryFailed: (agentId: string) => ipcRenderer.invoke("cloud:retryFailed", agentId),
+  cloudChangeLine: (input: { agentId: string; lineUid: string | null }) =>
+    ipcRenderer.invoke("cloud:changeLine", input),
+  cloudOpenMessages: (agentId?: string) => ipcRenderer.invoke("cloud:openMessages", agentId),
   onConnectChanged: (cb: () => void) => ipcRenderer.on("connect:changed", cb),
 
-  // Cloud agents (same tab, same state shape, same change channel). None of
-  // them is a poll: provisioning is watched in the main process, and the
-  // renderer just re-reads when told the state changed. `cloudCreate` answers
-  // as soon as the row is on screen in `provisioning`.
-  // Re-read the chat list from Plow and answer with the whole tab state. The
-  // picker opens through this, because `connectGet` only re-reads what was
-  // already fetched.
-  cloudRefresh: () => ipcRenderer.invoke("cloud:refresh"),
-  cloudCreate: (chatUids: string[], name: string, provider: string) =>
-    ipcRenderer.invoke("cloud:create", chatUids, name, provider),
-  // Replace the whole set of chats an agent serves. One round trip, no poll.
-  cloudEditChats: (agentId: string, chatUids: string[]) =>
-    ipcRenderer.invoke("cloud:editChats", agentId, chatUids),
-
-  // Any external destination the app links to. A KEY plus an optional
-  // main-owned record id, never a URL: main decides what may be opened.
-  openExternal: (key: string, detail?: string) => ipcRenderer.invoke("external:open", key, detail),
+  // Any external destination the app links to. A key, never a URL: main
+  // decides what may be opened.
+  openExternal: (key: string) => ipcRenderer.invoke("external:open", key),
 
   // Live browser thumbnail (audit detail pane). One whole-state shape per
   // poll; no push channel — the renderer's own interval is the clock.

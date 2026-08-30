@@ -261,6 +261,113 @@ describe("PlowApi", () => {
     });
   });
 
+  it("starts a provisioned activation with no sign-in name", async () => {
+    const { calls, fetchImpl } = recordingFetch([{
+      status: 200,
+      body: {
+        display_code: "Z1SWY",
+        activation_secret: "act_secret_xyz",
+        send_to: "+15551230000",
+      },
+    }]);
+
+    await new PlowApi("https://api.plow.co", fetchImpl).createProvisionedActivation();
+
+    expect(JSON.parse(String(calls[0].init.body))).toEqual({ provision_chat: true });
+  });
+
+  it.each([
+    {
+      caseName: "uncoded 503",
+      status: 503,
+      body: { detail: "no chat line available" },
+      expected: { status: 503, code: undefined },
+    },
+    {
+      caseName: "structured no-line code",
+      status: 409,
+      body: {
+        detail: {
+          code: "NO_CHAT_LINE_AVAILABLE",
+          message: "server-authored wording is not display copy",
+        },
+      },
+      expected: {
+        status: 409,
+        code: "NO_CHAT_LINE_AVAILABLE",
+        message: "Plow returned 409.",
+      },
+    },
+  ])("parses provisioned-activation errors: $caseName", async ({ status, body, expected }) => {
+    const { fetchImpl } = recordingFetch([{ status, body }]);
+
+    const error = await new PlowApi("https://api.plow.co", fetchImpl)
+      .createProvisionedActivation()
+      .catch((caught: unknown) => caught as PlowApiError);
+
+    expect(error).toMatchObject(expected);
+  });
+
+  it("drops the provisioned redeem token and finds an agent participant out of position", async () => {
+    const token = "plow_session_that_must_be_dropped";
+    const { fetchImpl } = recordingFetch([{
+      status: 200,
+      body: {
+        status: "verified",
+        token,
+        chat: {
+          uid: "cht_new",
+          participants: [
+            { type: "member", role: "owner", provider_key: "+15550111" },
+            { type: "agent", line: { uid: "lin_new", provider_key: "+15550100" } },
+          ],
+        },
+      },
+    }]);
+
+    const result = await new PlowApi("https://api.plow.co", fetchImpl)
+      .redeemProvisionedActivation("act_secret_xyz");
+
+    expect(result).toMatchObject({
+      status: "verified",
+      chat: { lineUid: "lin_new" },
+      shape: {
+        chat: "object",
+        participantTypes: ["member", "agent"],
+        agentLine: "uid_string",
+      },
+    });
+    expect(JSON.stringify(result)).not.toContain(token);
+  });
+
+  it("does not carry a redeem token echoed by provisioned chat fields", async () => {
+    const token = "plow_session_that_must_be_dropped";
+    const { fetchImpl } = recordingFetch([{
+      status: 200,
+      body: {
+        status: "verified",
+        token,
+        chat: {
+          uid: "cht_new",
+          participants: [
+            { type: token },
+            { type: "agent", line: { uid: `lin_${token}`, provider_key: "+15550100" } },
+          ],
+        },
+      },
+    }]);
+
+    const result = await new PlowApi("https://api.plow.co", fetchImpl)
+      .redeemProvisionedActivation("act_secret_xyz");
+
+    expect(result).toMatchObject({
+      status: "verified",
+      chat: null,
+      shape: { participantTypes: ["other", "agent"] },
+    });
+    expect(JSON.stringify(result)).not.toContain(token);
+  });
+
   it("reads a redeem poll, including the verified answer that omits the token", async () => {
     const api = (answers: Array<{ status: number; body?: unknown }>) =>
       new PlowApi("https://api.plow.co", recordingFetch(answers).fetchImpl);
@@ -357,6 +464,7 @@ describe("PlowApi", () => {
         displayName: null,
         // The number, off the agent's line — NOT "chat_5".
         line: "+15559876543",
+        lineUid: "lin_7",
         createdAt: "2026-08-24T18:02:11Z",
         // Members only: the agent participant is not a human in the chat.
         // The owner is first even though the wire put another member first.
@@ -381,6 +489,7 @@ describe("PlowApi", () => {
       status: "",
       displayName: null,
       line: null,
+      lineUid: null,
       participants: [],
       createdAt: "",
     });
@@ -393,6 +502,7 @@ describe("PlowApi", () => {
       status: "",
       displayName: null,
       line: null,
+      lineUid: null,
       participants: [],
       createdAt: "",
     });

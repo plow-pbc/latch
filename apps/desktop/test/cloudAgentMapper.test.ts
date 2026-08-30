@@ -23,16 +23,18 @@ function agent(overrides: Partial<CloudAgentResource> = {}): CloudAgentResource 
 describe("cloud-agent pure mappings", () => {
   it("keeps provider URL and session identity out of renderer state", () => {
     const row = toCloudAgentDisplayRow(agent(), {
-      fallbackName: "Kitchen agent",
-      chatLabels: { cht_123: "+1 415 555 0100 · Pat, Lee" },
-      recipients: { line: "+14155550100", members: ["+14155550101"] },
+      line: { uid: "lin_willow", label: "Willow · +1 415-555-0100" },
+      canMessage: true,
+      canRetry: true,
+      threads: [{ uid: "cht_123", label: "+1 415 555 0100 · Pat, Lee" }],
     });
 
     expect(row).toMatchObject({
       agentId: "agent_stable",
-      chatUids: ["cht_123"],
-      chatLabels: ["+1 415 555 0100 · Pat, Lee"],
-      recipients: { line: "+14155550100", members: ["+14155550101"] },
+      line: { uid: "lin_willow", label: "Willow · +1 415-555-0100" },
+      canMessage: true,
+      canRetry: true,
+      threads: [{ uid: "cht_123", label: "+1 415 555 0100 · Pat, Lee" }],
     });
     expect(JSON.stringify(row)).not.toContain("session_old");
     expect(JSON.stringify(row)).not.toContain("provider.internal");
@@ -50,7 +52,10 @@ describe("cloud-agent pure mappings", () => {
         createdAt: `created ${sessionId}`,
         sessionId,
       }),
-      { chatLabels: { [`chat-${sessionId}`]: `chat label ${sessionId}` } },
+      {
+        line: { uid: `line-${sessionId}`, label: `line label ${sessionId}` },
+        threads: [{ uid: `chat-${sessionId}`, label: `chat label ${sessionId}` }],
+      },
     );
 
     expect(row.failureReason).toBe("credential [credential] rejected");
@@ -76,10 +81,6 @@ describe("cloud-agent pure mappings", () => {
       failureCode: "cGxvd19za19kZXZpY2VfZG9fbm90X2xlYWs=",
     } as CloudAgentResource);
     expect(encodedCredential.failureReason).toBeNull();
-  });
-
-  it("does not invent transport recipients when chat metadata is unavailable", () => {
-    expect(toCloudAgentDisplayRow(agent()).recipients).toBeNull();
   });
 
   it("keeps provisioning non-terminal and treats every returned status as terminal", () => {
