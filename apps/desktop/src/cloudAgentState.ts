@@ -705,12 +705,10 @@ export class CloudAgentState {
       ? moved
       : { ...moved, name: previous.name };
     this.rows.set(agentId, this.rowFor(display));
-    if (moved.lineUid !== null) {
-      this.retryRequests.set(agentId, {
-        lineUid: moved.lineUid,
-        name: moved.name ?? previous?.name ?? "",
-      });
-    }
+    this.retryRequests.set(agentId, {
+      lineUid,
+      name: moved.name ?? previous?.name ?? "",
+    });
     this.activeLineFlow = null;
     this.changeUi = {
       phase: "idle",
@@ -916,9 +914,10 @@ export class CloudAgentState {
         agents.map((agent) => [agent.agentId, this.rowFor(agent)] as const),
       );
       for (const agent of agents) {
-        if (agent.lineUid !== null) {
+        const lineUid = this.agentLineUid(agent);
+        if (lineUid !== null) {
           this.retryRequests.set(agent.agentId, {
-            lineUid: agent.lineUid,
+            lineUid,
             name: agent.name ?? "",
           });
         }
@@ -1001,10 +1000,18 @@ export class CloudAgentState {
 
   private rowFor(agent: CloudAgentResource, fallbackName = ""): CloudAgentDisplayRow {
     const displayAgent = fallbackName && !agent.name ? { ...agent, name: fallbackName } : agent;
+    const lineUid = this.agentLineUid(agent);
     return toCloudAgentDisplayRow(displayAgent, {
-      line: this.lineFor(agent.lineUid),
-      threads: this.threadsFor(agent.lineUid, agent.chatUids),
+      line: this.lineFor(lineUid),
+      threads: this.threadsFor(lineUid, agent.chatUids),
     });
+  }
+
+  /** Resolve older API rows through their first (home) chat. */
+  private agentLineUid(agent: Pick<CloudAgentResource, "lineUid" | "chatUids">): string | null {
+    if (agent.lineUid !== null) return agent.lineUid;
+    const homeChatUid = agent.chatUids[0];
+    return this.chats.find((chat) => chat.uid === homeChatUid)?.lineUid ?? null;
   }
 
   private freeLines(): CloudAgentLine[] {
@@ -1079,12 +1086,17 @@ export class CloudAgentState {
    */
   private relabelRows(): void {
     for (const [agentId, row] of this.rows) {
-      const lineUid = row.line?.uid ?? null;
+      const lineUid = row.line?.uid ??
+        this.chats.find((chat) => chat.uid === row.threads[0]?.uid)?.lineUid ??
+        null;
       const line = this.lineFor(lineUid);
       const threads = this.threadsFor(
         lineUid,
         line === null ? row.threads.map((thread) => thread.uid) : [],
       );
+      if (lineUid !== null) {
+        this.retryRequests.set(agentId, { lineUid, name: row.name });
+      }
       const unchanged = line?.uid === row.line?.uid && line?.label === row.line?.label &&
         threads.length === row.threads.length && threads.every(
         (thread, index) =>

@@ -19,8 +19,7 @@ afterEach(() => {
 
 const wireAgent = (overrides: Record<string, unknown> = {}) => ({
   agent_id: "agent_123",
-  line_uid: "lin_willow",
-  chat_uids: ["line:lin_willow"],
+  chat_uids: ["cht_home"],
   url: "https://provider.example/agent_123",
   provider: "exe:hermes",
   name: "Kitchen",
@@ -48,12 +47,15 @@ function recordingFetch(responses: Array<{ status: number; body?: unknown }>) {
 
 describe("CloudAgentsClient resources", () => {
   it.each([
-    ["line-scoped", wireAgent(), {
+    ["deployed line-scoped shape", wireAgent(), {
       agentId: "agent_123",
-      lineUid: "lin_willow",
-      chatUids: ["line:lin_willow"],
+      lineUid: null,
+      chatUids: ["cht_home"],
       name: "Kitchen",
       status: "running",
+    }],
+    ["explicit line uid", wireAgent({ line_uid: "lin_willow" }), {
+      lineUid: "lin_willow",
     }],
     ["legacy", wireAgent({ line_uid: null, chat_uids: ["cht_one", "cht_two"] }), {
       lineUid: null,
@@ -73,34 +75,6 @@ describe("CloudAgentsClient resources", () => {
 
     await expect(new CloudAgentsClient(new PlowApi("https://api.plow.co", fetchImpl))
       .list(CREDENTIAL)).resolves.toMatchObject([expected]);
-  });
-
-  it("falls back to a lone line grant when line_uid is absent", async () => {
-    const oldShape = wireAgent({ chat_uids: ["line:lin_fallback"] });
-    delete oldShape.line_uid;
-    const { fetchImpl } = recordingFetch([{
-      status: 200,
-      body: { data: [oldShape] },
-    }]);
-
-    const [agent] = await new CloudAgentsClient(new PlowApi("https://api.plow.co", fetchImpl))
-      .list(CREDENTIAL);
-
-    expect(agent.lineUid).toBe("lin_fallback");
-  });
-
-  it("finds the line fallback within a mixed chat grant", async () => {
-    const mixedGrant = wireAgent({ chat_uids: ["cht_one", "line:lin_p4"] });
-    delete mixedGrant.line_uid;
-    const { fetchImpl } = recordingFetch([{
-      status: 200,
-      body: { data: [mixedGrant] },
-    }]);
-
-    const [agent] = await new CloudAgentsClient(new PlowApi("https://api.plow.co", fetchImpl))
-      .list(CREDENTIAL);
-
-    expect(agent.lineUid).toBe("lin_p4");
   });
 
   it("accepts the older single-chat grant", async () => {
@@ -188,6 +162,17 @@ describe("CloudAgentsClient creation", () => {
       name: "Kitchen",
     });
     expect(String(calls[0].init.body)).not.toContain("chat_uids");
+  });
+
+  it("omits a blank optional name", async () => {
+    const { calls, fetchImpl } = recordingFetch([{ status: 200, body: wireAgent() }]);
+
+    await new CloudAgentsClient(new PlowApi("https://api.plow.co", fetchImpl)).create(
+      CREDENTIAL,
+      { lineUid: "lin_willow", name: "" },
+    );
+
+    expect(JSON.parse(String(calls[0].init.body))).toEqual({ line_uid: "lin_willow" });
   });
 
   it("maps NO_HOME_CHAT to fixed create copy", async () => {

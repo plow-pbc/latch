@@ -91,7 +91,10 @@ export class CloudAgentsClient {
     const path = "/v1/agents/cloud";
     const response = await this.api.request("POST", path, {
       token: deviceCredential,
-      body: { line_uid: request.lineUid, name: request.name },
+      body: {
+        line_uid: request.lineUid,
+        ...(request.name.trim() ? { name: request.name } : {}),
+      },
     });
     if (!response.ok) {
       await throwCloudCallError("POST", path, response, deviceCredential);
@@ -230,14 +233,9 @@ function parseResource(
 
   const optionalString = (value: unknown): string | null =>
     typeof value === "string" ? value : null;
-  const fallbackLineUid = chatUids
-    .map((uid) => uid.startsWith("line:") ? uid.slice("line:".length).trim() : "")
-    .find(Boolean) ?? null;
   const resource: CloudAgentResource = {
     agentId: decoded.agent_id,
-    lineUid: Object.hasOwn(decoded, "line_uid")
-      ? optionalString(decoded.line_uid)
-      : fallbackLineUid,
+    lineUid: optionalString(decoded.line_uid),
     chatUids,
     url: optionalString(decoded.url),
     provider: optionalString(decoded.provider),
