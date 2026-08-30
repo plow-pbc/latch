@@ -1052,8 +1052,9 @@ async function startRelay(): Promise<void> {
         registered = await new PlowApi(apiBaseUrl).registerRelayDevice(credential, deviceId, hostName());
       } catch (error) {
         if (!(error instanceof PlowApiError) || error.kind !== "unauthorized") throw error;
+        if (loadSettings(home).relayCredential.trim() !== credential) return;
         console.log("[relay] credential rejected during registration; signing out");
-        await relay?.stop();
+        void relay?.stop();
         connected = false;
         void signOut();
         notifyRenderer("status:changed");
