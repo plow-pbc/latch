@@ -21,6 +21,22 @@ const CLOUD_PROVIDERS = [
   { value: "exe:pirate", label: "Pirate" },
 ];
 const NEW_LINE_VALUE = "__new_line__";
+/**
+ * The only provider a self-hosted host will provision.
+ *
+ * Not a choice, so it is not a select: agent-mgr REFUSES an `exe:` provider
+ * against a local host on purpose, so that a caller cannot believe it
+ * provisioned a tenant and get a container instead. Offering the cloud list
+ * here would just be three ways to reach one 400.
+ */
+const LOCAL_PROVIDER = "local:docker";
+const ADD_HOST_VALUE = "__add_host__";
+
+/** The origin as the main process will store it, so a freshly added host can
+ * be found again in the state that comes back. */
+function normalizedBaseUrl(raw) {
+  return String(raw ?? "").trim().replace(/\/+$/, "");
+}
 
 // Null until boot() picks one: the HTML marks Audit active for the first paint,
 // but boot must still RENDER that pane, and "already on this tab" now returns
@@ -968,6 +984,112 @@ function cloudActivationScreen(panel, flow) {
   messages.focus();
 }
 
+/**
+ * The host field of the New local agent form: pick a saved host, or enter one.
+ *
+ * The token field is write-only from here on. It goes to the main process and
+ * is never sent back — `cloudTargets` carries a label and an origin and
+ * nothing else — so a saved host shows its address, never its bearer, and
+ * re-entering a rotated token means typing it again rather than editing one on
+ * screen.
+ */
+function cloudHostFieldNodes(state, modal, redraw) {
+  const hosts = (state.cloudTargets ?? []).filter((target) => !target.builtin);
+  if (modal.targetId && !hosts.some((host) => host.id === modal.targetId)) {
+    modal.targetId = null;
+  }
+  const adding = modal.addingHost === true || hosts.length === 0;
+
+  if (adding) {
+    const label = el("input", {
+      class: "text",
+      attrs: { placeholder: "slowdown", "aria-label": "Host name" },
+    });
+    const baseUrl = el("input", {
+      class: "text",
+      // A LAN or tailnet address, not loopback: the host that runs the agents
+      // is normally another machine.
+      attrs: { placeholder: "http://192.168.1.10:8765", "aria-label": "Host address" },
+    });
+    const bearer = el("input", {
+      class: "text",
+      attrs: { type: "password", placeholder: "AGENT_MGR_SERVE_TOKEN", "aria-label": "Host token" },
+    });
+    const save = el("button", { class: "btn primary", text: "Save host" });
+    save.addEventListener("click", async () => {
+      save.disabled = true;
+      const wanted = normalizedBaseUrl(baseUrl.value);
+      const next = await window.domo.cloudAddTarget({
+        label: label.value.trim(),
+        baseUrl: baseUrl.value,
+        bearer: bearer.value,
+      });
+      const saved = (next?.cloudTargets ?? [])
+        .find((target) => !target.builtin && target.baseUrl === wanted);
+      if (cloudModal?.kind === "line-flow") {
+        // A rejected host leaves the form up with the reason on it; only a
+        // saved one closes the form and selects itself.
+        if (saved) Object.assign(cloudModal, { targetId: saved.id, addingHost: false });
+        syncCloudLineModal(next ?? state, redraw);
+      }
+      await redraw();
+    });
+    const nodes = [
+      el("div", { class: "field" }, [el("label", { text: "Host name" }), label]),
+      el("div", { class: "field" }, [
+        el("label", { text: "Host address" }),
+        baseUrl,
+        el("p", {
+          class: "faint conn-note",
+          text: "Where agent-mgr serve is listening — reachable from this Mac.",
+        }),
+      ]),
+      el("div", { class: "field" }, [el("label", { text: "Host token" }), bearer]),
+      el("div", { class: "row cloud-modal-actions" }, [el("div", { class: "spacer" }), save]),
+    ];
+    if (hosts.length) {
+      const back = el("button", { class: "linkbtn", text: "Use a saved host", attrs: { type: "button" } });
+      back.addEventListener("click", () => {
+        modal.addingHost = false;
+        syncCloudLineModal(state, redraw);
+      });
+      nodes.push(el("p", { class: "chat-list-alt" }, [back]));
+    }
+    return nodes;
+  }
+
+  modal.targetId = modal.targetId ?? hosts[0].id;
+  const hostSelect = el("select", { class: "text", attrs: { "aria-label": "Host" } }, [
+    ...hosts.map((host) =>
+      el("option", { text: `${host.label} · ${host.baseUrl}`, attrs: { value: host.id } })),
+    el("option", { text: "Add a host…", attrs: { value: ADD_HOST_VALUE } }),
+  ]);
+  hostSelect.value = modal.targetId;
+  hostSelect.addEventListener("change", () => {
+    if (hostSelect.value === ADD_HOST_VALUE) modal.addingHost = true;
+    else modal.targetId = hostSelect.value;
+    syncCloudLineModal(state, redraw);
+  });
+  const forget = el("button", { class: "btn small", text: "Forget" });
+  forget.addEventListener("click", async () => {
+    forget.disabled = true;
+    const next = await window.domo.cloudForgetTarget(modal.targetId);
+    if (cloudModal?.kind === "line-flow") {
+      // Forgetting a host does not tear its agents down; it drops the only way
+      // this Mac had to reach them.
+      Object.assign(cloudModal, { targetId: null, addingHost: false });
+      syncCloudLineModal(next ?? state, redraw);
+    }
+    await redraw();
+  });
+  return [
+    el("div", { class: "field" }, [
+      el("label", { text: "Host" }),
+      el("div", { class: "row cloud-host-row" }, [hostSelect, forget]),
+    ]),
+  ];
+}
+
 function cloudLinePickerNodes(state, modal, start, cancel, message = null) {
   if (state.cloudChatsLoaded !== true) {
     const unavailable = state.cloudChatsError
@@ -1040,7 +1162,7 @@ function syncCloudLineModal(state, redraw) {
   if (cloudModal?.kind !== "line-flow") return;
   const modal = cloudModal;
   const changing = modal.mode === "change";
-  const title = changing ? "Change line" : "New agent";
+  const title = changing ? "Change line" : modal.local ? "New local agent" : "New agent";
   const agent = changing
     ? (state.cloudAgents ?? []).find((candidate) => candidate.agentId === modal.agentId)
     : null;
@@ -1163,8 +1285,9 @@ function syncCloudLineModal(state, redraw) {
     } else {
       await window.domo.cloudCreate({
         name: modal.nameInput.value.trim(),
-        provider: modal.providerSelect.value,
+        provider: modal.local ? LOCAL_PROVIDER : modal.providerSelect.value,
         lineUid,
+        ...(modal.local ? { targetId: modal.targetId } : {}),
       });
     }
     await redraw();
@@ -1179,11 +1302,17 @@ function syncCloudLineModal(state, redraw) {
     })] : [el("div", { class: "field cloud-agent-name" }, [
       el("label", { text: "Name (optional)" }),
       modal.nameInput,
-    ]), el("div", { class: "field" }, [
-      el("label", { text: "Agent type" }),
-      modal.providerSelect,
-    ])]),
-    ...cloudLinePickerNodes(state, modal, start, cancel, changing ? flow.message : null),
+    ]), ...(modal.local
+      ? cloudHostFieldNodes(state, modal, redraw)
+      : [el("div", { class: "field" }, [
+        el("label", { text: "Agent type" }),
+        modal.providerSelect,
+      ])])]),
+    // A host still being entered has nothing to create on yet, so the line
+    // picker and its Create button stay off screen until one is saved.
+    ...(modal.local && !modal.targetId
+      ? [el("div", { class: "row cloud-modal-actions" }, [cancel])]
+      : cloudLinePickerNodes(state, modal, start, cancel, changing ? flow.message : null)),
   );
   if (modal.firstPaint) {
     modal.firstPaint = false;
@@ -1192,7 +1321,7 @@ function syncCloudLineModal(state, redraw) {
   }
 }
 
-function openCloudCreate(trigger, state, redraw) {
+function openCloudCreate(trigger, state, redraw, { local = false } = {}) {
   const nameInput = el("input", {
     class: "text",
     attrs: { placeholder: "Cloud agent", "aria-label": "Agent name" },
@@ -1206,6 +1335,11 @@ function openCloudCreate(trigger, state, redraw) {
   Object.assign(cloudModal, {
     kind: "line-flow",
     mode: "create",
+    local,
+    // Which host, and whether the form is currently entering a new one. Both
+    // start unset so the first paint reads them off the state it fetches.
+    targetId: null,
+    addingHost: false,
     nameInput,
     providerSelect,
     selectedLineUid: undefined,
@@ -1555,9 +1689,24 @@ function rosterActions(
 function cloudContext(agent, state) {
   const created = rosterDate(agent?.createdAt);
   return [
+    cloudHostLabel(agent, state),
     cloudLine(agent, state),
     created ? `Created ${created}` : null,
   ].filter(Boolean).join(" · ");
+}
+
+/**
+ * Which host an agent runs on, for the rows that are not on Plow.
+ *
+ * Named only for a self-hosted agent: the roster is overwhelmingly Plow's, and
+ * stamping "Plow" on every row would be the same word repeated down the
+ * screen. A host whose target has since been forgotten shows nothing rather
+ * than an id.
+ */
+function cloudHostLabel(agent, state) {
+  if (!agent || !agent.targetId) return null;
+  const target = (state.cloudTargets ?? []).find((row) => row.id === agent.targetId);
+  return !target || target.builtin ? null : target.label;
 }
 
 function cloudStatusNode(agent) {
@@ -1665,6 +1814,9 @@ function sectionHeader(title, count, unit, action) {
 function cloudSection(s, redraw) {
   const add = el("button", { class: "btn primary", text: "New agent" });
   add.addEventListener("click", () => openCloudCreate(add, s, redraw));
+  const addLocal = el("button", { class: "btn", text: "Set up local agent" });
+  addLocal.addEventListener("click", () => openCloudCreate(addLocal, s, redraw, { local: true }));
+  const actions = el("div", { class: "row list-section-actions" }, [addLocal, add]);
   const rosterRows = s.roster?.cloud ?? [];
   const agents = s.cloudAgents;
   const rosterByAgentId = new Map(rosterRows.map((row) => [row.agentId, row]));
@@ -1693,7 +1845,7 @@ function cloudSection(s, redraw) {
   if (refreshError) notices.push(refreshError);
   if (s.cloudActionError) notices.push(cloudErrorBanner(s.cloudActionError, "That change did not finish"));
   return el("section", { class: "list-section" }, [
-    sectionHeader("Cloud agents", rows.length, "agent", add),
+    sectionHeader("Cloud agents", rows.length, "agent", actions),
     ...notices,
     el("div", { class: "entity-list compact-list" }, rows.length
       ? rows

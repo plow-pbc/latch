@@ -127,6 +127,10 @@ contextBridge.exposeInMainWorld("domo", {
   cloudRefresh: () => ipcRenderer.invoke("cloud:refresh"),
   cloudCreate: (input: { name: string; provider: string; lineUid: string | null }) =>
     ipcRenderer.invoke("cloud:create", input),
+  // A host's bearer goes one way only: in. Nothing reads it back out.
+  cloudAddTarget: (input: { label: string; baseUrl: string; bearer: string }) =>
+    ipcRenderer.invoke("cloud:addTarget", input),
+  cloudForgetTarget: (targetId: string) => ipcRenderer.invoke("cloud:forgetTarget", targetId),
   cloudCancelLineFlow: () => ipcRenderer.invoke("cloud:cancelLineFlow"),
   cloudRetryLineFlow: () => ipcRenderer.invoke("cloud:retryLineFlow"),
   cloudRetryFailed: (agentId: string) => ipcRenderer.invoke("cloud:retryFailed", agentId),

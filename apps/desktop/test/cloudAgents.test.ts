@@ -5,9 +5,23 @@ import {
   CloudAgentsClient,
   isTerminalCloudAgent,
 } from "../src/cloudAgents.js";
-import { FetchLike, PlowApi, PlowApiError, REQUEST_TIMEOUT_MS } from "../src/plowApi.js";
+import {
+  AgentTarget,
+  BUILTIN_TARGET_ID,
+  FetchLike,
+  PlowApi,
+  PlowApiError,
+  REQUEST_TIMEOUT_MS,
+} from "../src/plowApi.js";
 
 const CREDENTIAL = "plow_dev_credential_123456789";
+/** The built-in Plow target: this suite's origin, authorised with CREDENTIAL. */
+const TARGET: AgentTarget = {
+  id: BUILTIN_TARGET_ID,
+  label: "Plow",
+  baseUrl: "https://api.plow.co",
+  bearer: CREDENTIAL,
+};
 
 beforeEach(() => {
   vi.spyOn(console, "error").mockImplementation(() => {});
@@ -65,8 +79,8 @@ describe("CloudAgentsClient resources", () => {
   ])("resource parsing matrix: %s", async (_case, wire, expected) => {
     const { fetchImpl } = recordingFetch([{ status: 200, body: { data: [wire] } }]);
 
-    await expect(new CloudAgentsClient(new PlowApi("https://api.plow.co", fetchImpl))
-      .list(CREDENTIAL)).resolves.toMatchObject([expected]);
+    await expect(new CloudAgentsClient(() => new PlowApi("https://api.plow.co", fetchImpl))
+      .list(TARGET)).resolves.toMatchObject([expected]);
   });
 
   it("accepts the older single-chat grant", async () => {
@@ -74,9 +88,9 @@ describe("CloudAgentsClient resources", () => {
     delete oldShape.chat_uids;
     Object.assign(oldShape, { chat_uid: "cht_home_old" });
     const { fetchImpl } = recordingFetch([{ status: 200, body: { data: [oldShape] } }]);
-    const client = new CloudAgentsClient(new PlowApi("https://api.plow.co", fetchImpl));
+    const client = new CloudAgentsClient(() => new PlowApi("https://api.plow.co", fetchImpl));
 
-    await expect(client.list(CREDENTIAL)).resolves.toMatchObject([
+    await expect(client.list(TARGET)).resolves.toMatchObject([
       { chatUids: ["cht_home_old"] },
     ]);
   });
@@ -94,8 +108,8 @@ describe("CloudAgentsClient resources", () => {
       },
     }]);
 
-    await expect(new CloudAgentsClient(new PlowApi("https://api.plow.co", fetchImpl))
-      .list(CREDENTIAL)).resolves.toMatchObject([
+    await expect(new CloudAgentsClient(() => new PlowApi("https://api.plow.co", fetchImpl))
+      .list(TARGET)).resolves.toMatchObject([
       { agentId: "agent_empty", chatUids: [] },
       { agentId: "agent_absent", chatUids: [] },
     ]);
@@ -107,8 +121,8 @@ describe("CloudAgentsClient resources", () => {
       body: { data: [wireAgent({ chat_uids: [7] })] },
     }]);
 
-    await expect(new CloudAgentsClient(new PlowApi("https://api.plow.co", fetchImpl))
-      .list(CREDENTIAL)).rejects.toThrow("Plow returned an invalid cloud-agent response.");
+    await expect(new CloudAgentsClient(() => new PlowApi("https://api.plow.co", fetchImpl))
+      .list(TARGET)).rejects.toThrow("Plow returned an invalid cloud-agent response.");
   });
 
 });
@@ -117,8 +131,8 @@ describe("CloudAgentsClient creation", () => {
   it.each([200, 202])("accepts %s and sends the selected provider", async (status) => {
     const { calls, fetchImpl } = recordingFetch([{ status, body: wireAgent() }]);
 
-    await new CloudAgentsClient(new PlowApi("https://api.plow.co", fetchImpl)).create(
-      CREDENTIAL,
+    await new CloudAgentsClient(() => new PlowApi("https://api.plow.co", fetchImpl)).create(
+      TARGET,
       { lineUid: "lin_willow", name: "Kitchen", provider: "exe:life" },
     );
 
@@ -135,8 +149,8 @@ describe("CloudAgentsClient creation", () => {
   it("omits a blank optional name", async () => {
     const { calls, fetchImpl } = recordingFetch([{ status: 200, body: wireAgent() }]);
 
-    await new CloudAgentsClient(new PlowApi("https://api.plow.co", fetchImpl)).create(
-      CREDENTIAL,
+    await new CloudAgentsClient(() => new PlowApi("https://api.plow.co", fetchImpl)).create(
+      TARGET,
       { lineUid: "lin_willow", name: "", provider: "exe:hermes" },
     );
 
@@ -152,8 +166,8 @@ describe("CloudAgentsClient creation", () => {
       body: { detail: { code: "NO_HOME_CHAT", message: `echo ${CREDENTIAL}` } },
     }]);
 
-    await expect(new CloudAgentsClient(new PlowApi("https://api.plow.co", fetchImpl)).create(
-      CREDENTIAL,
+    await expect(new CloudAgentsClient(() => new PlowApi("https://api.plow.co", fetchImpl)).create(
+      TARGET,
       { lineUid: "lin_willow", name: "Kitchen", provider: "exe:hermes" },
     )).rejects.toThrow("Text this line once first, then try again.");
     expect(console.error).toHaveBeenCalledWith(
@@ -172,8 +186,8 @@ describe("CloudAgentsClient creation", () => {
       },
     }]);
 
-    const error = await new CloudAgentsClient(new PlowApi("https://api.plow.co", fetchImpl))
-      .create(CREDENTIAL, {
+    const error = await new CloudAgentsClient(() => new PlowApi("https://api.plow.co", fetchImpl))
+      .create(TARGET, {
         lineUid: "lin_willow",
         name: "Kitchen",
         provider: "exe:hermes",
@@ -201,8 +215,8 @@ describe("CloudAgentsClient line changes", () => {
       body: wireAgent({ line_uid: "lin_ash" }),
     }]);
 
-    await new CloudAgentsClient(new PlowApi("https://api.plow.co", fetchImpl))
-      .changeLine(CREDENTIAL, "agent/with space", "lin_ash");
+    await new CloudAgentsClient(() => new PlowApi("https://api.plow.co", fetchImpl))
+      .changeLine(TARGET, "agent/with space", "lin_ash");
 
     expect(calls[0].url).toBe(
       "https://api.plow.co/v1/agents/cloud/agent%2Fwith%20space/line",
@@ -225,8 +239,8 @@ describe("CloudAgentsClient line changes", () => {
       body: { detail: { code: wireCode, message: `echo ${CREDENTIAL}` } },
     }]);
 
-    const error = await new CloudAgentsClient(new PlowApi("https://api.plow.co", fetchImpl))
-      .changeLine(CREDENTIAL, "agent_123", "lin_ash")
+    const error = await new CloudAgentsClient(() => new PlowApi("https://api.plow.co", fetchImpl))
+      .changeLine(TARGET, "agent_123", "lin_ash")
       .catch((caught: unknown) => caught);
 
     expect(error).toBeInstanceOf(CloudAgentLineError);
@@ -243,8 +257,8 @@ describe("CloudAgentsClient deletion", () => {
   it("routes by encoded agent id and treats an already-gone agent as success", async () => {
     const { calls, fetchImpl } = recordingFetch([{ status: 404 }]);
 
-    await new CloudAgentsClient(new PlowApi("https://api.plow.co", fetchImpl))
-      .delete(CREDENTIAL, "agent/with space");
+    await new CloudAgentsClient(() => new PlowApi("https://api.plow.co", fetchImpl))
+      .delete(TARGET, "agent/with space");
 
     expect(calls[0].url).toBe("https://api.plow.co/v1/agents/cloud/agent%2Fwith%20space");
     expect(calls[0].init.method).toBe("DELETE");
@@ -257,8 +271,8 @@ describe("CloudAgentsClient deletion", () => {
       body: { detail: `provider echoed ${CREDENTIAL}` },
     }]);
 
-    await expect(new CloudAgentsClient(new PlowApi("https://api.plow.co", fetchImpl))
-      .delete(CREDENTIAL, "agent_123"))
+    await expect(new CloudAgentsClient(() => new PlowApi("https://api.plow.co", fetchImpl))
+      .delete(TARGET, "agent_123"))
       .rejects.toThrow("Cloud-agent provisioning is unavailable right now.");
   });
 });
@@ -283,9 +297,9 @@ describe("CloudAgentsClient polling", () => {
       { status: 200, body: wireAgent({ status: "running" }) },
     ]);
     const transitions: string[] = [];
-    const client = new CloudAgentsClient(new PlowApi("https://api.plow.co", fetchImpl), async () => {});
+    const client = new CloudAgentsClient(() => new PlowApi("https://api.plow.co", fetchImpl), async () => {});
 
-    const final = await client.poll(CREDENTIAL, receipt(), (agent) => {
+    const final = await client.poll(TARGET, receipt(), (agent) => {
       transitions.push(`${agent.agentId}:${agent.status}`);
     });
 
@@ -305,8 +319,8 @@ describe("CloudAgentsClient polling", () => {
     };
     const controller = new AbortController();
 
-    await new CloudAgentsClient(new PlowApi("https://api.plow.co", fetchImpl), async () => {})
-      .poll(CREDENTIAL, receipt(), undefined, controller.signal);
+    await new CloudAgentsClient(() => new PlowApi("https://api.plow.co", fetchImpl), async () => {})
+      .poll(TARGET, receipt(), undefined, controller.signal);
 
     expect(seen[0].signal).toBeInstanceOf(AbortSignal);
     expect(seen[0].signal?.aborted).toBe(false);
@@ -326,9 +340,9 @@ describe("CloudAgentsClient polling", () => {
     };
 
     const final = await new CloudAgentsClient(
-      new PlowApi("https://api.plow.co", fetchImpl),
+      () => new PlowApi("https://api.plow.co", fetchImpl),
       async () => {},
-    ).poll(CREDENTIAL, receipt());
+    ).poll(TARGET, receipt());
 
     expect(final.status).toBe("running");
     expect(reads).toBe(3);
@@ -344,9 +358,9 @@ describe("CloudAgentsClient polling", () => {
     ]);
 
     await expect(new CloudAgentsClient(
-      new PlowApi("https://api.plow.co", fetchImpl),
+      () => new PlowApi("https://api.plow.co", fetchImpl),
       async () => { now += 5 * 60_000; },
-    ).poll(CREDENTIAL, receipt()))
+    ).poll(TARGET, receipt()))
       .rejects.toThrow("Cloud-agent provisioning is unavailable right now.");
 
     expect(calls).toHaveLength(2);
@@ -359,9 +373,9 @@ describe("CloudAgentsClient polling", () => {
     ]);
 
     await expect(new CloudAgentsClient(
-      new PlowApi("https://api.plow.co", fetchImpl),
+      () => new PlowApi("https://api.plow.co", fetchImpl),
       async () => {},
-    ).poll(CREDENTIAL, receipt())).rejects.toThrow("Plow returned 409.");
+    ).poll(TARGET, receipt())).rejects.toThrow("Plow returned 409.");
 
     expect(calls).toHaveLength(1);
   });
@@ -377,9 +391,9 @@ describe("CloudAgentsClient polling", () => {
       });
     };
     const polling = new CloudAgentsClient(
-      new PlowApi("https://api.plow.co", fetchImpl),
+      () => new PlowApi("https://api.plow.co", fetchImpl),
       async () => {},
-    ).poll(CREDENTIAL, receipt(), undefined, controller.signal);
+    ).poll(TARGET, receipt(), undefined, controller.signal);
 
     await fetchStarted;
     controller.abort();
@@ -392,5 +406,86 @@ describe("CloudAgentsClient polling", () => {
     expect(isTerminalCloudAgent({ status: "running" })).toBe(true);
     expect(isTerminalCloudAgent({ status: "failed" })).toBe(true);
     expect(isTerminalCloudAgent({ status: "future_status" })).toBe(true);
+  });
+});
+
+/**
+ * A self-hosted host answers on its OWN origin with its OWN bearer, and its
+ * 400 carries the command the owner has to run next. Both are things the
+ * cloud path never had to get right.
+ */
+describe("CloudAgentsClient against a self-hosted host", () => {
+  const LOCAL: AgentTarget = {
+    id: "tgt_slowdown",
+    label: "slowdown",
+    baseUrl: "http://192.168.15.12:8765",
+    bearer: "serve-token-abc",
+  };
+
+  it("sends to the host's own origin with the host's own bearer", async () => {
+    const { calls, fetchImpl } = recordingFetch([{ status: 202, body: wireAgent() }]);
+
+    await new CloudAgentsClient(() => new PlowApi(LOCAL.baseUrl, fetchImpl)).create(
+      LOCAL,
+      { lineUid: "lin_willow", name: "Kitchen", provider: "local:docker" },
+    );
+
+    expect(calls[0].url).toBe("http://192.168.15.12:8765/v1/agents/cloud");
+    expect(new Headers(calls[0].init.headers).get("authorization"))
+      .toBe("Bearer serve-token-abc");
+    // The Mac's Plow session is not what authorised a host the owner typed in.
+    expect(new Headers(calls[0].init.headers).get("authorization")).not.toContain(CREDENTIAL);
+  });
+
+  it("shows the register command a 400 names, instead of 'returned 400'", async () => {
+    const { fetchImpl } = recordingFetch([{
+      status: 400,
+      body: { detail: "Unknown agent 'demo'. Run 'agent-mgr register demo <dir>' on this host." },
+    }]);
+
+    const error = await new CloudAgentsClient(() => new PlowApi(LOCAL.baseUrl, fetchImpl))
+      .create(LOCAL, { lineUid: "lin_willow", name: "demo", provider: "local:docker" })
+      .catch((thrown) => thrown);
+
+    // The sentence IS the fix; a generic failure would hide the one useful
+    // thing in the response.
+    expect(String(error)).toContain("agent-mgr register demo <dir>");
+  });
+
+  it("reads the same message out of a nested detail", async () => {
+    const { fetchImpl } = recordingFetch([{
+      status: 400,
+      body: { detail: { message: "Run 'agent-mgr register demo <dir>' first." } },
+    }]);
+
+    const error = await new CloudAgentsClient(() => new PlowApi(LOCAL.baseUrl, fetchImpl))
+      .create(LOCAL, { lineUid: "lin_willow", name: "demo", provider: "local:docker" })
+      .catch((thrown) => thrown);
+
+    expect(String(error)).toContain("agent-mgr register demo <dir>");
+  });
+
+  it("refuses to repeat a 400 that echoes the host's own token", async () => {
+    const { fetchImpl } = recordingFetch([{
+      status: 400,
+      body: { detail: `bad token ${LOCAL.bearer}` },
+    }]);
+
+    const error = await new CloudAgentsClient(() => new PlowApi(LOCAL.baseUrl, fetchImpl))
+      .create(LOCAL, { lineUid: "lin_willow", name: "demo", provider: "local:docker" })
+      .catch((thrown) => thrown);
+
+    // Server-authored text from an origin the owner typed in is checked, not
+    // trusted — the fixed copy is what reaches the screen instead.
+    expect(String(error)).not.toContain(LOCAL.bearer);
+    expect(String(error)).toContain("400");
+  });
+
+  it("still answers 401 for a wrong bearer", async () => {
+    const { fetchImpl } = recordingFetch([{ status: 401, body: { detail: "nope" } }]);
+
+    await expect(new CloudAgentsClient(() => new PlowApi(LOCAL.baseUrl, fetchImpl))
+      .create(LOCAL, { lineUid: "lin_willow", name: "demo", provider: "local:docker" }))
+      .rejects.toThrow("Not authorized.");
   });
 });

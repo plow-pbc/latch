@@ -9,6 +9,7 @@
  */
 import fs from "node:fs";
 import path from "node:path";
+import { AgentTarget, BUILTIN_TARGET_ID, normalizeApiBaseUrl } from "./plowApi.js";
 
 /**
  * How the credential is encrypted at rest, when the OS offers a way.
@@ -138,6 +139,20 @@ export interface Settings {
   accountUid: string;
   /** This installation's server-authored MCP endpoint. */
   mcpUrl: string;
+  /**
+   * Self-hosted agent hosts the owner added, in the order they added them.
+   *
+   * The built-in Plow target is NOT here — it is derived from the build's base
+   * URL and `relayCredential` — so everything in this list is an origin a human
+   * typed, and every bearer in it is that host's own token. The relay
+   * credential must never be copied into one: it carries the owner's full Plow
+   * authority, and handing it to a URL someone typed is how a support request
+   * becomes an account compromise.
+   *
+   * Each bearer is a secret and is sealed at rest exactly as `relayCredential`
+   * is, under a per-entry `bearerEnc`.
+   */
+  agentTargets: AgentTarget[];
   /** The last-selected main-window tab, restored across launches.
    *
    * The default is the FIRST launch's landing, not a fallback anyone returns
@@ -217,6 +232,7 @@ export function loadSettings(home: string): Settings {
     agentPurpose: "",
     provisionedChatUid: "",
     provisionedChatLabel: "",
+    agentTargets: [],
     autoCheckUpdates: true,
     autoInstallUpdates: true,
     keepAwakeWhileRunning: false,
@@ -241,6 +257,7 @@ export function loadSettings(home: string): Settings {
   delete settings.inferenceProvider;
 
   const loaded = { ...defaults, ...settings };
+  loaded.agentTargets = readAgentTargets(settings.agentTargets);
   // The encrypted field wins where it exists. A decrypt that fails is treated
   // as signed out rather than as a crash, and the unreadable value is cleared
   // below along with the account-local display state.
@@ -305,6 +322,15 @@ export function saveSettings(home: string, settings: Settings): void {
   } else {
     delete stored.relayCredentialEnc;
   }
+  stored.agentTargets = (settings.agentTargets ?? []).map((target) => {
+    const bearer = target.bearer.trim();
+    const sealed = seal(bearer, active);
+    // Same shape as the relay credential above: sealed where the OS can, and
+    // plaintext inside a 0600 file where it cannot — never both.
+    return sealed
+      ? { id: target.id, label: target.label, baseUrl: target.baseUrl, bearer: "", bearerEnc: sealed }
+      : { id: target.id, label: target.label, baseUrl: target.baseUrl, bearer };
+  });
   const credentialInClear = !encrypted && credential !== "";
   if (credentialInClear && codec && !warnedUnavailable) {
     warnedUnavailable = true;
@@ -340,4 +366,38 @@ export function saveSettings(home: string, settings: Settings): void {
     } catch {}
     throw error;
   }
+}
+
+/**
+ * The stored host list, normalised.
+ *
+ * A hand-edited or truncated file can put anything here, and every reader
+ * treats an entry as a live request target — so this is a trust boundary, not
+ * housekeeping. An entry is kept only if it can actually be used:
+ *
+ * - **No bearer, no target.** A sealed bearer this Mac can no longer decrypt
+ *   (a restored backup, a new login keychain) leaves a host that answers 401 to
+ *   everything. Dropping it costs the owner two fields to re-enter; keeping it
+ *   costs them an error with no explanation.
+ * - **The built-in id is reserved**, so nothing on disk can shadow Plow itself
+ *   and take the relay credential's place in the picker.
+ * - **First id wins**, because rows are keyed on it downstream.
+ */
+function readAgentTargets(raw: unknown): AgentTarget[] {
+  if (!Array.isArray(raw)) return [];
+  const text = (value: unknown): string => (typeof value === "string" ? value.trim() : "");
+  const targets: AgentTarget[] = [];
+  const seen = new Set<string>();
+  for (const entry of raw) {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue;
+    const row = entry as Record<string, unknown>;
+    const id = text(row.id);
+    const baseUrl = normalizeApiBaseUrl(text(row.baseUrl));
+    const sealedBearer = text(row.bearerEnc);
+    const bearer = sealedBearer ? unseal(sealedBearer).trim() : text(row.bearer);
+    if (!id || id === BUILTIN_TARGET_ID || seen.has(id) || !baseUrl || !bearer) continue;
+    seen.add(id);
+    targets.push({ id, label: text(row.label) || baseUrl, baseUrl, bearer });
+  }
+  return targets;
 }

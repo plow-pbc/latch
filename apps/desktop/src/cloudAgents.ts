@@ -1,4 +1,4 @@
-import { PlowApi, PlowApiError, REQUEST_TIMEOUT_MS } from "./plowApi.js";
+import { AgentTarget, ApiBaseUrl, PlowApi, PlowApiError, REQUEST_TIMEOUT_MS } from "./plowApi.js";
 
 export const CLOUD_AGENT_POLL_INTERVAL_MS = 2_000;
 const CLOUD_AGENT_POLL_RETRY_WINDOW_MS = 5 * 60_000;
@@ -76,18 +76,24 @@ export function isTerminalCloudAgent(agent: Pick<CloudAgentResource, "status">):
  * to a long-running POST.
  */
 export class CloudAgentsClient {
+  /**
+   * Takes a resolver rather than an api, because the host is chosen per call.
+   * Every method here is given an `AgentTarget` and reads BOTH the origin and
+   * the bearer out of it — there is no path through this class that pairs one
+   * host's URL with another host's token.
+   */
   constructor(
-    private readonly api: PlowApi,
+    private readonly apiFor: (baseUrl: ApiBaseUrl) => PlowApi,
     private readonly wait: Wait = defaultWait,
   ) {}
 
   async create(
-    deviceCredential: string,
+    target: AgentTarget,
     request: CreateCloudAgentRequest,
   ): Promise<CloudAgentResource> {
     const path = "/v1/agents/cloud";
-    const response = await this.api.request("POST", path, {
-      token: deviceCredential,
+    const response = await this.apiFor(target.baseUrl).request("POST", path, {
+      token: target.bearer,
       body: {
         line_uid: request.lineUid,
         provider: request.provider,
@@ -95,34 +101,34 @@ export class CloudAgentsClient {
       },
     });
     if (!response.ok) {
-      await throwCloudCallError(response);
+      await throwCloudCallError(response, target.bearer);
     }
-    return this.resourceFor(response, deviceCredential);
+    return this.resourceFor(response, target.bearer);
   }
 
   async changeLine(
-    deviceCredential: string,
+    target: AgentTarget,
     agentId: string,
     lineUid: string,
   ): Promise<CloudAgentResource> {
     const path = `/v1/agents/cloud/${encodeURIComponent(agentId)}/line`;
-    const response = await this.api.request(
+    const response = await this.apiFor(target.baseUrl).request(
       "PUT",
       path,
       {
-        token: deviceCredential,
+        token: target.bearer,
         body: { line_uid: lineUid },
       },
     );
     if (!response.ok) {
-      await throwCloudCallError(response);
+      await throwCloudCallError(response, target.bearer);
     }
-    return this.resourceFor(response, deviceCredential);
+    return this.resourceFor(response, target.bearer);
   }
 
-  async list(deviceCredential: string): Promise<CloudAgentResource[]> {
-    const response = await this.api.request("GET", "/v1/agents/cloud", {
-      token: deviceCredential,
+  async list(target: AgentTarget): Promise<CloudAgentResource[]> {
+    const response = await this.apiFor(target.baseUrl).request("GET", "/v1/agents/cloud", {
+      token: target.bearer,
     });
     if (!response.ok) throw errorFor(response.status);
 
@@ -135,14 +141,14 @@ export class CloudAgentsClient {
     if (!data) {
       throw invalidResponse(response.status);
     }
-    return data.map((entry) => parseResource(entry, deviceCredential, response.status));
+    return data.map((entry) => parseResource(entry, target.bearer, response.status));
   }
 
-  async delete(deviceCredential: string, agentId: string): Promise<void> {
-    const response = await this.api.request(
+  async delete(target: AgentTarget, agentId: string): Promise<void> {
+    const response = await this.apiFor(target.baseUrl).request(
       "DELETE",
       `/v1/agents/cloud/${encodeURIComponent(agentId)}`,
-      { token: deviceCredential },
+      { token: target.bearer },
     );
     // Delete is retry-safe from the app's perspective: a record already gone
     // is the requested outcome even though the API reports it as 404.
@@ -153,7 +159,7 @@ export class CloudAgentsClient {
 
   /** Continue an existing receipt until Plow leaves `provisioning`. */
   async poll(
-    deviceCredential: string,
+    target: AgentTarget,
     receipt: CloudAgentResource,
     onTransition?: CloudAgentTransition,
     signal?: AbortSignal,
@@ -168,17 +174,17 @@ export class CloudAgentsClient {
       signal?.throwIfAborted();
       let next: CloudAgentResource;
       try {
-        const response = await this.api.request(
+        const response = await this.apiFor(target.baseUrl).request(
           "GET",
           `/v1/agents/cloud/${encodeURIComponent(current.agentId)}`,
           {
-            token: deviceCredential,
+            token: target.bearer,
             signal,
             timeoutMs: REQUEST_TIMEOUT_MS,
             callerAbortIsLifecycle: true,
           },
         );
-        next = await this.resourceFor(response, deviceCredential);
+        next = await this.resourceFor(response, target.bearer);
       } catch (error) {
         signal?.throwIfAborted();
         if (isRetryablePollError(error)) {
@@ -200,11 +206,11 @@ export class CloudAgentsClient {
 
   private async resourceFor(
     response: Response,
-    deviceCredential: string,
+    bearer: string,
   ): Promise<CloudAgentResource> {
     if (!response.ok) throw errorFor(response.status);
     const decoded = await decodeJson(response);
-    return parseResource(decoded, deviceCredential, response.status);
+    return parseResource(decoded, bearer, response.status);
   }
 
 }
@@ -224,7 +230,7 @@ async function decodeJson(response: Response): Promise<unknown> {
 
 function parseResource(
   decoded: unknown,
-  deviceCredential: string,
+  bearer: string,
   statusCode: number,
 ): CloudAgentResource {
   if (
@@ -257,7 +263,7 @@ function parseResource(
   if (
     Object.values(resource)
       .flatMap((value) => (Array.isArray(value) ? value : [value]))
-      .some((value) => typeof value === "string" && echoesCredential(value, deviceCredential))
+      .some((value) => typeof value === "string" && echoesCredential(value, bearer))
   ) {
     throw new PlowApiError("http", "Plow returned an unsafe cloud-agent response.", statusCode);
   }
@@ -308,6 +314,7 @@ function responseCode(decoded: unknown): string | null {
 
 async function throwCloudCallError(
   response: Response,
+  bearer: string,
 ): Promise<never> {
   const decoded = await decodeJson(response);
   const code = responseCode(decoded);
@@ -316,6 +323,10 @@ async function throwCloudCallError(
   );
   const mapped = code === null ? null : LINE_ERRORS[code];
   if (mapped) throw new CloudAgentLineError(mapped.code, mapped.message, response.status);
+  if (response.status === 400) {
+    const detail = badRequestDetail(decoded, bearer);
+    if (detail) throw new PlowApiError("http", detail, 400);
+  }
   throw errorFor(response.status);
 }
 
@@ -362,4 +373,31 @@ export function echoesCredential(text: string, credential: string): boolean {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * A 400's own sentence, when it is safe to show.
+ *
+ * A self-hosted host answers 400 with the command the owner has to run next —
+ * `agent-mgr register <name> <dir>` for a name that host has never heard of —
+ * and that sentence IS the fix. `errorFor` would replace it with "returned
+ * 400", hiding the only useful thing in the response and leaving a dead end
+ * where there is a one-line answer.
+ *
+ * Passed through only when it cannot be echoing the bearer back onto the
+ * screen: this is server-authored text from an origin the owner typed in, so
+ * it is checked here rather than trusted, exactly as `parseResource` checks
+ * every other server-authored string.
+ */
+function badRequestDetail(decoded: unknown, bearer: string): string | null {
+  if (!isRecord(decoded)) return null;
+  const detail = decoded.detail;
+  const message = typeof detail === "string"
+    ? detail
+    : isRecord(detail) && typeof detail.message === "string"
+      ? detail.message
+      : "";
+  const text = message.trim();
+  if (!text || echoesCredential(text, bearer)) return null;
+  return text;
 }

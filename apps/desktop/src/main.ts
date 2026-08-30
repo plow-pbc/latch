@@ -669,8 +669,27 @@ ipcMain.handle("cloud:create", async (_e, input: unknown) => {
     name: typeof raw.name === "string" ? raw.name : "",
     provider: typeof raw.provider === "string" ? raw.provider : "",
     lineUid: raw.lineUid === null ? null : typeof raw.lineUid === "string" ? raw.lineUid : "",
+    ...(typeof raw.targetId === "string" ? { targetId: raw.targetId } : {}),
   });
   await connectClient?.refreshRoster();
+  return agentsTabState();
+});
+
+/**
+ * Add or re-enter a self-hosted host, and forget one.
+ *
+ * The bearer travels IN and never back out: `agentsTabState()` carries hosts
+ * as label and origin only, so a token the owner pasted here cannot be read
+ * back by the window it was typed into.
+ */
+ipcMain.handle("cloud:addTarget", async (_e, input: unknown) => {
+  const raw = input && typeof input === "object" ? input as Record<string, unknown> : {};
+  cloudAgents?.addTarget({ label: raw.label, baseUrl: raw.baseUrl, bearer: raw.bearer });
+  await cloudAgents?.refresh();
+  return agentsTabState();
+});
+ipcMain.handle("cloud:forgetTarget", async (_e, targetId: unknown) => {
+  cloudAgents?.forgetTarget(typeof targetId === "string" ? targetId : "");
   return agentsTabState();
 });
 ipcMain.handle("cloud:cancelLineFlow", async () => {
@@ -1367,7 +1386,18 @@ app.whenReady().then(async () => {
   // because a row with an `agent_id` must be deleted as an agent and never
   // revoked as a key.
   const cloudApi = new PlowApi(apiBaseUrl, loggingFetch(home));
-  const cloudAgentsClient = new CloudAgentsClient(cloudApi);
+  // One api per origin, kept so a poll does not build a new one every two
+  // seconds. Bounded by the hosts the owner has added — nothing here is
+  // reachable without a settings entry someone typed.
+  const apisByBaseUrl = new Map<string, PlowApi>([[cloudApi.baseUrl, cloudApi]]);
+  const apiForBaseUrl = (baseUrl: string): PlowApi => {
+    const existing = apisByBaseUrl.get(baseUrl);
+    if (existing) return existing;
+    const api = new PlowApi(baseUrl, loggingFetch(home));
+    apisByBaseUrl.set(baseUrl, api);
+    return api;
+  };
+  const cloudAgentsClient = new CloudAgentsClient(apiForBaseUrl);
 
   connectClient = new ConnectClient({
     api: new PlowApi(apiBaseUrl),
@@ -1389,6 +1419,7 @@ app.whenReady().then(async () => {
     // There is no server-side request log we can read, and during the rollout
     // that account is the only one there is.
     agents: cloudAgentsClient,
+    baseUrl: apiBaseUrl,
     activation: cloudApi,
     chats: new CloudChatsClient(cloudApi),
     lines: new CloudLinesClient(cloudApi),

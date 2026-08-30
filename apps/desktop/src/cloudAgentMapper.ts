@@ -1,4 +1,5 @@
 import { CloudAgentResource, CloudAgentStatus } from "./cloudAgents.js";
+import { BUILTIN_TARGET_ID } from "./plowApi.js";
 
 const FAILURE_LABELS: Record<string, string> = {
   provider_unreachable: "Provider unreachable",
@@ -22,6 +23,14 @@ export interface CloudAgentLine {
 
 export interface CloudAgentDisplayRow {
   agentId: string;
+  /**
+   * Which host this agent lives on — `BUILTIN_TARGET_ID` for Plow itself.
+   *
+   * The row carries it because every later call about this agent (delete,
+   * change line, poll) has to reach the SAME host, and the agent id alone
+   * cannot say which one that is.
+   */
+  targetId: string;
   name: string;
   line: CloudAgentLine | null;
   /** Whether the resolved line has an E.164 destination for Messages. */
@@ -36,6 +45,8 @@ export interface CloudAgentDisplayRow {
 }
 
 export interface CloudAgentDisplayContext {
+  /** The host this agent was listed from. Defaults to the built-in Plow. */
+  targetId?: string;
   /** The agent's line resolved through its home chat. */
   line?: CloudAgentLine | null;
   /** Whether the resolved line has an E.164 destination for Messages. */
@@ -62,6 +73,8 @@ export function toCloudAgentDisplayRow(
   const line = context.line ?? null;
   return {
     agentId: scrub(agent.agentId),
+    // Never scrubbed: a target id is this app's own, not server-authored.
+    targetId: context.targetId ?? BUILTIN_TARGET_ID,
     name: scrub(agent.name ?? "cloud agent"),
     line: line === null ? null : { uid: scrub(line.uid), label: scrub(line.label) },
     canMessage: context.canMessage === true,

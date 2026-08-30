@@ -13,6 +13,8 @@ import {
 import { CloudAgentLineError, CloudAgentResource } from "../src/cloudAgents.js";
 import {
   Activation,
+  AgentTarget,
+  BUILTIN_TARGET_ID,
   KeyInfo,
   PlowApi,
   PlowApiError,
@@ -22,6 +24,7 @@ import { loadSettings, saveSettings } from "../src/settings.js";
 import { deferred } from "./deferred.js";
 
 const CREDENTIAL = "plow_session_123456789";
+const BASE_URL = "https://api.plow.co";
 
 function tempHome(): string {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "cloud-line-state-"));
@@ -113,6 +116,7 @@ function build(options: {
     receipt: CloudAgentResource,
     transition?: (agent: CloudAgentResource) => void | Promise<void>,
   ) => Promise<CloudAgentResource>;
+  listAgentsFor?: (targetId: string) => Promise<CloudAgentResource[]>;
   listChats?: () => Promise<CloudChatOption[]>;
   listLines?: () => Promise<CloudLineOption[]>;
   createActivation?: () => Promise<Activation>;
@@ -128,28 +132,30 @@ function build(options: {
   const calls: string[] = [];
   const audit: Array<{ event: string; fields: Record<string, unknown> }> = [];
   const agents: CloudAgentsApi = {
-    async create(_credential, request) {
-      calls.push(`create:${request.lineUid}:${request.name}`);
+    async create(target, request) {
+      calls.push(`create@${target.id}:${request.lineUid}:${request.name}:${request.provider}`);
       return options.createAgent
         ? options.createAgent(request)
         : agent({ name: request.name, status: "running" });
     },
-    async changeLine(_credential, agentId, lineUid) {
-      calls.push(`changeLine:${agentId}:${lineUid}`);
+    async changeLine(target, agentId, lineUid) {
+      calls.push(`changeLine@${target.id}:${agentId}:${lineUid}`);
       return options.changeAgentLine
         ? options.changeAgentLine(agentId, lineUid)
         : agent({ agentId });
     },
-    async list() {
-      calls.push("listAgents");
+    async list(target) {
+      calls.push(`listAgents@${target.id}`);
+      if (options.listAgentsFor) return options.listAgentsFor(target.id);
+      if (target.id !== BUILTIN_TARGET_ID) return [];
       return options.listAgents ? options.listAgents() : [agent()];
     },
-    async delete(_credential, agentId) {
-      calls.push(`delete:${agentId}`);
+    async delete(target, agentId) {
+      calls.push(`delete@${target.id}:${agentId}`);
       await options.remove?.(agentId);
     },
-    async poll(_credential, receipt, transition) {
-      calls.push(`poll:${receipt.agentId}`);
+    async poll(target, receipt, transition) {
+      calls.push(`poll@${target.id}:${receipt.agentId}`);
       if (options.pollAgent) return options.pollAgent(receipt, transition);
       await transition?.(receipt);
       return receipt;
@@ -158,6 +164,7 @@ function build(options: {
   const home = tempHome();
   const state = new CloudAgentState({
     home,
+    baseUrl: BASE_URL,
     agents,
     activation: {
       async createProvisionedActivation() {
@@ -228,6 +235,9 @@ describe("CloudAgentState line and thread display", () => {
       cloudChatsNeedReactivation: false,
       cloudActionError: null,
       cloudChatsLoaded: false,
+      cloudTargets: [
+        { id: BUILTIN_TARGET_ID, label: "Plow", baseUrl: BASE_URL, builtin: true },
+      ],
     });
   });
 
@@ -441,6 +451,7 @@ describe("CloudAgentState line and thread display", () => {
       lineUid: "lin_willow",
       name: "Kitchen",
       provider: "exe:life",
+    targetId: BUILTIN_TARGET_ID,
     }]);
   });
 
@@ -469,8 +480,8 @@ describe("CloudAgentState line and thread display", () => {
     await state.retryFailed("agent_1");
 
     expect(requests).toEqual([
-      { lineUid: "lin_willow", name: "Kitchen", provider: "exe:pirate" },
-      { lineUid: "lin_willow", name: "Kitchen", provider: "exe:pirate" },
+      { lineUid: "lin_willow", name: "Kitchen", provider: "exe:pirate", targetId: BUILTIN_TARGET_ID },
+      { lineUid: "lin_willow", name: "Kitchen", provider: "exe:pirate", targetId: BUILTIN_TARGET_ID },
     ]);
   });
 
@@ -525,12 +536,13 @@ describe("CloudAgentState new agent flow", () => {
     });
     await state.refresh();
 
-    await state.create({ name: "Garden", provider: "exe:life", lineUid: "lin_willow" });
+    await state.create({ name: "Garden", provider: "exe:life", lineUid: "lin_willow", targetId: BUILTIN_TARGET_ID });
 
     expect(created).toEqual([{
       name: "Garden",
       provider: "exe:life",
       lineUid: "lin_willow",
+      targetId: BUILTIN_TARGET_ID,
     }]);
     expect(calls).not.toContain("createActivation");
     expect(state.state().cloudAgents).toHaveLength(1);
@@ -578,6 +590,7 @@ describe("CloudAgentState new agent flow", () => {
       name: "Garden",
       provider: "exe:pirate",
       lineUid: "lin_new",
+      targetId: BUILTIN_TARGET_ID,
     }]));
 
     expect(calls).toContain("createActivation");
@@ -722,7 +735,7 @@ describe("CloudAgentState new agent flow", () => {
     });
     await state.refresh();
 
-    await state.create({ name: "Kitchen", provider: "exe:hermes", lineUid: "lin_willow" });
+    await state.create({ name: "Kitchen", provider: "exe:hermes", lineUid: "lin_willow", targetId: BUILTIN_TARGET_ID });
 
     expect(state.state().cloudAgents).toHaveLength(1);
     expect(state.state().cloudLineFlow.completedAgentId).toBe("agent_existing");
@@ -783,7 +796,7 @@ describe("CloudAgentState new agent flow", () => {
     await Promise.resolve();
 
     expect(calls).not.toContain("redeemActivation");
-    expect(calls.some((call) => call.startsWith("create:"))).toBe(false);
+    expect(calls.some((call) => call.startsWith("create@plow:"))).toBe(false);
     expect(state.state().cloudLineFlow.phase).toBe("idle");
   });
 
@@ -847,13 +860,13 @@ describe("CloudAgentState new agent flow", () => {
     });
     await state.refresh();
 
-    await state.create({ name: "Kitchen", provider: "exe:hermes", lineUid: "lin_willow" });
+    await state.create({ name: "Kitchen", provider: "exe:hermes", lineUid: "lin_willow", targetId: BUILTIN_TARGET_ID });
     expect(state.state().cloudLineFlow.message).toBe("Text this line once first, then try again.");
     await state.retryFailed("agent_1");
 
     expect(requests).toEqual([
-      { name: "Kitchen", provider: "exe:hermes", lineUid: "lin_willow" },
-      { name: "Kitchen", provider: "exe:hermes", lineUid: "lin_willow" },
+      { name: "Kitchen", provider: "exe:hermes", lineUid: "lin_willow", targetId: BUILTIN_TARGET_ID },
+      { name: "Kitchen", provider: "exe:hermes", lineUid: "lin_willow", targetId: BUILTIN_TARGET_ID },
     ]);
   });
 });
@@ -923,7 +936,7 @@ describe("CloudAgentState change-line flow", () => {
     ]));
 
     expect(calls).toContain("createActivation");
-    expect(calls.some((call) => call.startsWith("create:"))).toBe(false);
+    expect(calls.some((call) => call.startsWith("create@plow:"))).toBe(false);
     expect(state.state().cloudAgents[0].line).toEqual({
       uid: "lin_new",
       label: "+1 415-555-0999",
@@ -1005,7 +1018,7 @@ describe("CloudAgentState deletion", () => {
 
     await state.remove("agent_1");
 
-    expect(calls).toContain("delete:agent_1");
+    expect(calls).toContain("delete@plow:agent_1");
     expect(state.state().cloudAgents).toEqual([]);
   });
 
@@ -1146,5 +1159,182 @@ describe("Plow line display metadata", () => {
       { uid: "lin_credential_name", displayName: null, number: "+15550100" },
       { uid: "lin_ash", displayName: "Ash", number: "+15550200" },
     ]);
+  });
+});
+
+/**
+ * A self-hosted host is a SECOND origin with its OWN bearer, and everything
+ * here is about the app never confusing the two: which host a call goes to,
+ * whose failure it is when one is unreachable, and what the Mac's own Plow
+ * credential is not handed to.
+ */
+describe("CloudAgentState self-hosted targets", () => {
+  /** Save one host the way `addTarget` does, before the state is built. */
+  function withHost(home: string, overrides: Partial<AgentTarget> = {}): AgentTarget {
+    const target: AgentTarget = {
+      id: "tgt_slowdown",
+      label: "slowdown",
+      baseUrl: "http://192.168.15.12:8765",
+      bearer: "serve-token-abc",
+      ...overrides,
+    };
+    const settings = loadSettings(home);
+    saveSettings(home, { ...settings, agentTargets: [...settings.agentTargets, target] });
+    return target;
+  }
+
+  it("offers the built-in Plow first and never leaks a host's bearer", () => {
+    const { state, home } = build();
+    withHost(home);
+
+    expect(state.state().cloudTargets).toEqual([
+      { id: BUILTIN_TARGET_ID, label: "Plow", baseUrl: BASE_URL, builtin: true },
+      { id: "tgt_slowdown", label: "slowdown", baseUrl: "http://192.168.15.12:8765", builtin: false },
+    ]);
+    expect(JSON.stringify(state.state())).not.toContain("serve-token-abc");
+  });
+
+  it("creates on the named host as local:docker, and polls the same host", async () => {
+    const { state, calls, home } = build();
+    withHost(home);
+    await state.refresh();
+    calls.length = 0;
+
+    await state.create({
+      name: "Garden",
+      provider: "local:docker",
+      lineUid: "lin_willow",
+      targetId: "tgt_slowdown",
+    });
+
+    expect(calls).toContain("create@tgt_slowdown:lin_willow:Garden:local:docker");
+    await vi.waitFor(() => expect(calls).toContain("poll@tgt_slowdown:agent_1"));
+    // The Mac's Plow credential was NOT what authorised any of it.
+    expect(calls.some((call) => call.startsWith("create@plow"))).toBe(false);
+  });
+
+  it("refuses to create on a host this Mac has not been told about", async () => {
+    const { state, calls } = build();
+
+    await state.create({
+      name: "Garden",
+      provider: "local:docker",
+      lineUid: "lin_willow",
+      targetId: "tgt_gone",
+    });
+
+    expect(calls.some((call) => call.startsWith("create@"))).toBe(false);
+    expect(state.state().cloudLineFlow.message)
+      .toBe("That host is no longer set up on this Mac.");
+  });
+
+  it("keeps an unreachable host's rows and names it, without losing Plow's", async () => {
+    const { state, home } = build({
+      listAgentsFor: async (targetId) => {
+        if (targetId === BUILTIN_TARGET_ID) return [agent({ agentId: "agent_cloud", name: "Cloud" })];
+        return [agent({ agentId: "agent_local", name: "Local" })];
+      },
+    });
+    withHost(home);
+    await state.refresh();
+    expect(state.state().cloudAgents.map((row) => row.agentId).sort())
+      .toEqual(["agent_cloud", "agent_local"]);
+
+    // The laptop went to sleep. Plow is fine.
+    const { state: after, home: afterHome } = build({
+      listAgentsFor: async (targetId) => {
+        if (targetId === BUILTIN_TARGET_ID) return [agent({ agentId: "agent_cloud", name: "Cloud" })];
+        throw new PlowApiError("network", "Couldn't reach Plow at http://192.168.15.12:8765.");
+      },
+    });
+    withHost(afterHome);
+    await after.refresh();
+
+    expect(after.state().cloudAgents.map((row) => row.agentId)).toEqual(["agent_cloud"]);
+    expect(after.state().cloudAgentsError)
+      .toBe("slowdown: Couldn't reach Plow at http://192.168.15.12:8765.");
+  });
+
+  it("deletes an agent on the host that holds it", async () => {
+    const { state, calls, home } = build({
+      listAgentsFor: async (targetId) =>
+        targetId === BUILTIN_TARGET_ID ? [] : [agent({ agentId: "agent_local" })],
+    });
+    withHost(home);
+    await state.refresh();
+    calls.length = 0;
+
+    await state.remove("agent_local");
+
+    expect(calls).toContain("delete@tgt_slowdown:agent_local");
+    expect(calls).not.toContain("delete@plow:agent_local");
+  });
+
+  it("rejects a host address that is not an http origin, and a missing token", () => {
+    const { state } = build();
+
+    expect(state.addTarget({ label: "x", baseUrl: "192.168.15.12:8765", bearer: "t" })).toBe(null);
+    expect(state.state().cloudActionError).toContain("isn't a URL");
+    // `new URL` accepts any scheme, so a bare `host:port` parses as one — it is
+    // the protocol check, not the parse, that turns these away.
+    expect(state.addTarget({ label: "x", baseUrl: "slowdown:8765", bearer: "t" })).toBe(null);
+    expect(state.state().cloudActionError).toBe("A host address has to be http:// or https://.");
+    expect(state.addTarget({ label: "x", baseUrl: "file:///etc/passwd", bearer: "t" })).toBe(null);
+    expect(state.state().cloudActionError).toBe("A host address has to be http:// or https://.");
+    expect(state.addTarget({ label: "x", baseUrl: "http://192.168.15.12:8765", bearer: " " }))
+      .toBe(null);
+    expect(state.state().cloudActionError).toBe("Paste the host's AGENT_MGR_SERVE_TOKEN.");
+    expect(state.state().cloudTargets).toHaveLength(1);
+  });
+
+  it("replaces a host entered twice rather than listing it again", () => {
+    const { state, home } = build();
+
+    const first = state.addTarget({
+      label: "slowdown",
+      baseUrl: "http://192.168.15.12:8765/",
+      bearer: "old-token",
+    });
+    const again = state.addTarget({
+      label: "slowdown",
+      baseUrl: "http://192.168.15.12:8765",
+      bearer: "rotated-token",
+    });
+
+    expect(again).toBe(first);
+    expect(state.state().cloudTargets).toHaveLength(2);
+    // The trailing slash is not a second machine, and the new token is the one
+    // kept — re-entering a host is how a rotated token gets in.
+    expect(loadSettings(home).agentTargets).toEqual([
+      { id: first, label: "slowdown", baseUrl: "http://192.168.15.12:8765", bearer: "rotated-token" },
+    ]);
+  });
+
+  it("forgetting a host drops its rows without deleting its agents", async () => {
+    const { state, calls, home } = build({
+      listAgentsFor: async (targetId) =>
+        targetId === BUILTIN_TARGET_ID
+          ? [agent({ agentId: "agent_cloud" })]
+          : [agent({ agentId: "agent_local" })],
+    });
+    withHost(home);
+    await state.refresh();
+    calls.length = 0;
+
+    state.forgetTarget("tgt_slowdown");
+
+    expect(state.state().cloudAgents.map((row) => row.agentId)).toEqual(["agent_cloud"]);
+    expect(state.state().cloudTargets).toHaveLength(1);
+    expect(calls.some((call) => call.startsWith("delete@"))).toBe(false);
+  });
+
+  it("will not forget the built-in Plow", () => {
+    const { state, home } = build();
+    withHost(home);
+
+    state.forgetTarget(BUILTIN_TARGET_ID);
+
+    expect(state.state().cloudTargets.map((target) => target.id))
+      .toEqual([BUILTIN_TARGET_ID, "tgt_slowdown"]);
   });
 });

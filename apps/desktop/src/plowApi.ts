@@ -13,6 +13,40 @@
 /** One API origin, e.g. `https://api.plow.co`. Everything else derives. */
 export type ApiBaseUrl = string;
 
+/**
+ * One host this app can drive, and the bearer that host honours.
+ *
+ * The two travel as a single value because neither is valid without the other:
+ * a credential only means anything to the origin that minted it. Passing them
+ * as separate arguments is precisely what would let a caller send this Mac's
+ * Plow session to a URL its owner typed into a text field, so nothing here
+ * takes an origin and a token apart.
+ */
+export interface AgentTarget {
+  /** Stable for the target's life. Rows and the picker join on it. */
+  id: string;
+  /** What the picker shows. Never used to address anything. */
+  label: string;
+  baseUrl: ApiBaseUrl;
+  /**
+   * A SECRET, exactly like `relayCredential`: it rides in an `Authorization`
+   * header and nowhere else, and never crosses into the renderer.
+   */
+  bearer: string;
+}
+
+/**
+ * The built-in target: this build's Plow, authenticated with this Mac's own
+ * relay credential.
+ *
+ * Derived at read time rather than stored, so there is nothing to keep in step
+ * when the build's origin or the Mac's session changes — and no way for a
+ * stored row to claim to be Plow. The id is reserved: a persisted target
+ * carrying it is dropped on load.
+ */
+export const BUILTIN_TARGET_ID = "plow";
+export const BUILTIN_TARGET_LABEL = "Plow";
+
 export const PRODUCTION_API_BASE_URL = "https://api.plow.co";
 
 /** Developer-only escape hatch, so retargeting does not need a rebuild. */

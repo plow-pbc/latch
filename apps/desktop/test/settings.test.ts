@@ -377,3 +377,108 @@ describe("the credential at rest", () => {
     expect(fileOf(home).relayCredentialEnc).toBeUndefined();
   });
 });
+
+/**
+ * A self-hosted host's bearer is a second secret in this file, and every reader
+ * treats a stored entry as a live request target — so the list is a trust
+ * boundary, not a preference.
+ */
+describe("self-hosted agent targets", () => {
+  const fakeCodec = {
+    available: () => true,
+    encrypt: (plain: string) => `sealed:${Buffer.from(plain).toString("base64")}`,
+    decrypt: (cipher: string) => {
+      if (!cipher.startsWith("sealed:")) throw new Error("not ours");
+      return Buffer.from(cipher.slice("sealed:".length), "base64").toString();
+    },
+  };
+
+  afterEach(() => useCredentialCodec(null));
+
+  const fileOf = (home: string) =>
+    JSON.parse(fs.readFileSync(path.join(home, "app/settings.json"), "utf8")) as Record<string, unknown>;
+
+  it("seals each host's bearer, exactly as it seals the relay credential", () => {
+    useCredentialCodec(fakeCodec);
+    const home = tempHome();
+    const settings = loadSettings(home);
+    settings.agentTargets = [
+      { id: "tgt_1", label: "slowdown", baseUrl: "http://192.168.15.12:8765", bearer: "serve_token_xyz" },
+    ];
+    saveSettings(home, settings);
+
+    expect(fs.readFileSync(path.join(home, "app/settings.json"), "utf8"))
+      .not.toContain("serve_token_xyz");
+    expect((fileOf(home).agentTargets as Record<string, unknown>[])[0]).toEqual({
+      id: "tgt_1",
+      label: "slowdown",
+      baseUrl: "http://192.168.15.12:8765",
+      bearer: "",
+      bearerEnc: `sealed:${Buffer.from("serve_token_xyz").toString("base64")}`,
+    });
+    expect(loadSettings(home).agentTargets[0].bearer).toBe("serve_token_xyz");
+  });
+
+  it("drops a host whose sealed bearer this Mac can no longer read", () => {
+    useCredentialCodec(fakeCodec);
+    const home = tempHome();
+    saveSettings(home, {
+      ...loadSettings(home),
+      agentTargets: [
+        { id: "tgt_1", label: "slowdown", baseUrl: "http://192.168.15.12:8765", bearer: "serve_token_xyz" },
+      ],
+    });
+    // A restored backup, or a new login keychain: the seal is there and
+    // unreadable. A host that answers 401 to everything is not a host.
+    useCredentialCodec({ ...fakeCodec, decrypt: () => { throw new Error("gone"); } });
+
+    expect(loadSettings(home).agentTargets).toEqual([]);
+  });
+
+  it("refuses a stored entry that would shadow the built-in Plow", () => {
+    const home = tempHome();
+    write(home, JSON.stringify({
+      agentTargets: [
+        { id: "plow", label: "Not Plow", baseUrl: "http://evil.example", bearer: "t" },
+        { id: "tgt_ok", label: "", baseUrl: "http://192.168.15.12:8765/", bearer: "t" },
+      ],
+    }));
+
+    // The reserved id is gone; the survivor keeps its origin normalised and
+    // falls back to naming itself by address.
+    expect(loadSettings(home).agentTargets).toEqual([
+      { id: "tgt_ok", label: "http://192.168.15.12:8765", baseUrl: "http://192.168.15.12:8765", bearer: "t" },
+    ]);
+  });
+
+  it("ignores junk a hand-edited file can put in the list", () => {
+    const home = tempHome();
+    write(home, JSON.stringify({
+      agentTargets: [
+        null,
+        "http://192.168.15.12:8765",
+        { id: "tgt_1", baseUrl: "http://192.168.15.12:8765" },
+        { id: "tgt_2", baseUrl: "", bearer: "t" },
+        { id: "", baseUrl: "http://192.168.15.12:8765", bearer: "t" },
+        { id: "tgt_3", baseUrl: "http://a.example", bearer: "t", label: "a" },
+        { id: "tgt_3", baseUrl: "http://b.example", bearer: "t", label: "b" },
+      ],
+    }));
+
+    // No bearer, no origin, no id — no target. And the first id wins, because
+    // rows are keyed on it downstream.
+    expect(loadSettings(home).agentTargets).toEqual([
+      { id: "tgt_3", label: "a", baseUrl: "http://a.example", bearer: "t" },
+    ]);
+    expect(loadSettings(home).agentTargets).toEqual(
+      loadSettings(home).agentTargets.filter(Boolean),
+    );
+  });
+
+  it("reads a non-array as no hosts at all", () => {
+    const home = tempHome();
+    write(home, JSON.stringify({ agentTargets: { id: "tgt_1" } }));
+
+    expect(loadSettings(home).agentTargets).toEqual([]);
+  });
+});
