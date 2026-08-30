@@ -6,7 +6,12 @@ export function deviceDisplayName(
   return registeredDisplayName?.trim() || hostname?.trim() || "Mac";
 }
 
-/** Name the login session created by this Latch without duplicating composition in Electron main. */
+/**
+ * Name the login session created by this Latch without duplicating composition
+ * in Electron main. This must never be blank: cleanup distinguishes named
+ * sign-in sessions from unnamed provisioned sessions, and a blank name would
+ * make this Mac's own session a revocation candidate.
+ */
 export function latchSessionName(
   registeredDisplayName: string | null | undefined,
   hostname: string | null | undefined,

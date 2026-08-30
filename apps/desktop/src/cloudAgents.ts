@@ -80,7 +80,6 @@ export function isTerminalCloudAgent(agent: Pick<CloudAgentResource, "status">):
 export class CloudAgentsClient {
   constructor(
     private readonly api: PlowApi,
-    private readonly deviceUid: string,
     private readonly wait: Wait = defaultWait,
   ) {}
 
@@ -94,8 +93,6 @@ export class CloudAgentsClient {
       body: {
         line_uid: request.lineUid,
         provider: request.provider,
-        // TODO(device-pinned cloud-agent guide): send `device_uid: this.deviceUid`
-        // after Plow's strict create schema accepts the additive field.
         ...(request.name.trim() ? { name: request.name } : {}),
       },
     });

@@ -10,6 +10,7 @@ import {
   Onboarding,
   OnboardingDeps,
 } from "../src/onboarding.js";
+import { latchSessionName } from "../src/deviceNames.js";
 import { ActivationChat, PlowApi, PlowApiError, parseActivationChat } from "../src/plowApi.js";
 import { loadSettings, saveSettings } from "../src/settings.js";
 import { signOutOfPlow } from "../src/settingsActions.js";
@@ -253,10 +254,13 @@ afterEach(() => {
 });
 
 describe("activation — the path a brand-new user takes", () => {
-  it("resolves the session name when the activation is created", async () => {
-    let deviceName = "Plow Latch (old-account-mac)";
-    const onboarding = build({ deviceName: () => deviceName });
-    deviceName = "Plow Latch (current-host.local)";
+  it("drops the former account's device name before the next activation", async () => {
+    let registeredDisplayName: string | null = "old-account-mac";
+    const onboarding = build({
+      deviceName: () => latchSessionName(registeredDisplayName, "current-host.local"),
+    });
+    // Sign-out clears this account-owned slot while the Onboarding instance lives on.
+    registeredDisplayName = null;
 
     await onboarding.begin();
 

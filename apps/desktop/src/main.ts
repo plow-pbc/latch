@@ -1184,7 +1184,7 @@ app.whenReady().then(async () => {
   // because a row with an `agent_id` must be deleted as an agent and never
   // revoked as a key.
   const cloudApi = new PlowApi(apiBaseUrl, loggingFetch(home));
-  const cloudAgentsClient = new CloudAgentsClient(cloudApi, device.identity.deviceId);
+  const cloudAgentsClient = new CloudAgentsClient(cloudApi);
 
   connectClient = new ConnectClient({
     api: new PlowApi(apiBaseUrl),
