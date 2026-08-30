@@ -39,10 +39,8 @@ class FakePlow {
   keys: KeyInfo[] = [];
   /** Hold one list open, so a test can land reads out of order. */
   listGate: (() => Promise<KeyInfo[]> | null) | null = null;
-  listCalls = 0;
   /** Every key revoke that was actually issued, in order. */
   revoked: number[] = [];
-  revokeFailures = new Set<number>();
   /** Set to hold every mint open until `release()`, the way a slow API does. */
   private gate: Promise<void> | null = null;
   private open: (() => void) | null = null;
@@ -52,7 +50,6 @@ class FakePlow {
   }
 
   async listApiKeys(_token: string): Promise<KeyInfo[]> {
-    this.listCalls += 1;
     const held = this.listGate?.();
     if (held) return held;
     if (this.fails) throw this.fails;
@@ -61,11 +58,6 @@ class FakePlow {
 
   async revokeApiKey(_token: string, id: number) {
     this.revoked.push(id);
-    if (this.revokeFailures.has(id)) {
-      throw new PlowApiError("http", "Plow returned 500.", 500);
-    }
-    const key = this.keys.find((candidate) => candidate.id === id);
-    if (key) key.is_active = false;
     return { status: "revoked", id };
   }
 
@@ -123,7 +115,6 @@ let changes: number;
 let agentDeletes: string[];
 /** How many times the roster asked this Mac to sign out. */
 let signOuts: number;
-let audit: Array<{ event: string; fields: Record<string, unknown> }>;
 
 function build(options: { deleteFails?: boolean } = {}): ConnectClient {
   return new ConnectClient({
@@ -136,9 +127,6 @@ function build(options: { deleteFails?: boolean } = {}): ConnectClient {
     },
     signOutThisMac: async () => {
       signOuts += 1;
-    },
-    recordAudit: (event, fields) => {
-      audit.push({ event, fields });
     },
     onChange: () => {
       changes += 1;
@@ -161,7 +149,6 @@ beforeEach(() => {
   connected = true;
   agentDeletes = [];
   signOuts = 0;
-  audit = [];
   changes = 0;
 });
 
@@ -431,86 +418,6 @@ describe("reading the state is a read", () => {
     connect.state();
     connect.state();
     expect(changes).toBe(0);
-  });
-});
-
-describe("cleaning abandoned activation sessions", () => {
-  function key(overrides: Partial<KeyInfo> = {}): KeyInfo {
-    return {
-      id: 1,
-      key_prefix: keyPrefixOf("plow_sk_someone_elses_credential"),
-      name: null,
-      scopes: ["*:*"],
-      tokens_used: 0,
-      is_active: true,
-      last_seen_at: null,
-      created_at: "2000-01-01T00:00:00Z",
-      agent_id: null,
-      chat_uids: [],
-      ...overrides,
-    };
-  }
-
-  it("revokes a leftover, audits it, re-reads, and never revokes this Mac", async () => {
-    signIn();
-    plow.keys = [
-      key({ id: 1, key_prefix: keyPrefixOf(DEVICE_TOKEN) }),
-      key({ id: 2 }),
-    ];
-
-    const state = await build().refreshRoster();
-
-    expect(plow.revoked).toEqual([2]);
-    expect(plow.listCalls).toBe(2);
-    expect(state.roster.other.map((row) => row.id)).toEqual([1]);
-    expect(state.roster.revokedHidden).toBe(1);
-    expect(audit).toEqual([{
-      event: "activation_session_cleanup",
-      fields: { keyId: 2, outcome: "revoked" },
-    }]);
-  });
-
-  it("keeps a leftover row when its best-effort revoke fails", async () => {
-    signIn();
-    plow.keys = [
-      key({ id: 1, key_prefix: keyPrefixOf(DEVICE_TOKEN) }),
-      key({ id: 2 }),
-    ];
-    plow.revokeFailures.add(2);
-
-    const state = await build().refreshRoster();
-
-    expect(plow.revoked).toEqual([2]);
-    expect(state.roster.other.map((row) => row.id)).toEqual([1, 2]);
-    expect(audit).toEqual([{
-      event: "activation_session_cleanup",
-      fields: { keyId: 2, outcome: "failed", error: "Plow returned 500." },
-    }]);
-  });
-
-  it("revokes nothing when this Mac's key prefix is ambiguous", async () => {
-    signIn();
-    const prefix = keyPrefixOf(DEVICE_TOKEN);
-    plow.keys = [key({ id: 1, key_prefix: prefix }), key({ id: 2, key_prefix: prefix })];
-
-    await build().refreshRoster();
-
-    expect(plow.revoked).toEqual([]);
-    expect(audit).toEqual([]);
-  });
-
-  it("caps one refresh at 25 revocations", async () => {
-    signIn();
-    plow.keys = [
-      key({ id: 1, key_prefix: keyPrefixOf(DEVICE_TOKEN) }),
-      ...Array.from({ length: 30 }, (_, index) => key({ id: index + 2 })),
-    ];
-
-    const state = await build().refreshRoster();
-
-    expect(plow.revoked).toHaveLength(25);
-    expect(audit).toHaveLength(25);
-    expect(state.roster.other.filter((row) => !row.isThisMac)).toHaveLength(5);
   });
 });
 

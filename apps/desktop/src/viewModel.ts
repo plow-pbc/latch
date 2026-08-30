@@ -320,6 +320,7 @@ function activityTitle(
   if (has("access_request") || has("access_decision")) {
     return `Access — ${value("access_request", "display") ?? "agent"}`;
   }
+  if (has("activation_session_cleanup")) return "Activation session cleanup";
   if (has("agent_spawned")) return "Agent spawned";
   if (has("exec_end")) return "Command finished";
   return jv(events[0]).get("event").str ?? "Activity";
@@ -341,6 +342,17 @@ function classifyActivity(
   entry: (e: string) => JSONValue | null,
 ): { status: string; tone: BadgeTone; category: string } {
   if (entry("intent_rejected")) return { status: "Rejected", tone: "red", category: "denied" };
+  const cleanup = entry("activation_session_cleanup");
+  if (cleanup) {
+    const outcome = jv(cleanup).get("outcome").str;
+    if (outcome === "revoked") {
+      return { status: "Revoked", tone: "green", category: "approved" };
+    }
+    if (outcome === "failed") {
+      return { status: "Failed", tone: "red", category: "failed" };
+    }
+    return { status: "Skipped", tone: "zinc", category: "other" };
+  }
   if (has("access_request") || has("access_decision")) {
     const d = entry("access_decision");
     if (d) {
@@ -532,6 +544,25 @@ function describeStep(e: JSONValue): AuditStep {
       state = ev.get("approved").bool ? "ok" : "bad";
       break;
     case "agent_spawned": text = `Agent spawned — ${ev.get("goal").str ?? ""}`; break;
+    case "activation_session_cleanup": {
+      const outcome = ev.get("outcome").str ?? "";
+      const keyId = ev.get("keyId").int;
+      const suffix = keyId === null ? "" : ` — key ${keyId}`;
+      if (outcome === "revoked") {
+        text = `Activation session revoked${suffix}`;
+        state = "ok";
+      } else if (outcome === "failed") {
+        text = `Activation session cleanup failed${suffix} — ${ev.get("error").str ?? "unknown error"}`;
+        state = "bad";
+      } else if (outcome === "ambiguous") {
+        text = `Activation session cleanup skipped — ${ev.get("candidateCount").int ?? 0} matches`;
+      } else if (outcome === "no_match") {
+        text = "Activation session cleanup skipped — no matching session";
+      } else {
+        text = "Activation session cleanup skipped";
+      }
+      break;
+    }
     case "intent_received": text = `Request: ${ev.get("request").str ?? ""}`; break;
     case "adversarial_review_started": text = "AI Reviewer started reviewing…"; break;
     case "adversarial_review_result": {

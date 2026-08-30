@@ -31,10 +31,12 @@ import {
 } from "./onboarding.js";
 import {
   Activation,
+  KeyInfo,
   PlowApi,
   PlowApiError,
   ProvisionedActivationRedeem,
   parseActivationChat,
+  parseApiTimestamp,
 } from "./plowApi.js";
 import {
   ChatPerson,
@@ -187,6 +189,8 @@ export interface CloudAgentsApi {
 export interface CloudActivationApi {
   createProvisionedActivation(): Promise<Activation>;
   redeemProvisionedActivation(secret: string): Promise<ProvisionedActivationRedeem>;
+  listApiKeys(deviceCredential: string): Promise<KeyInfo[]>;
+  revokeApiKey(deviceCredential: string, id: number): Promise<unknown>;
 }
 
 export interface CloudChatsApi {
@@ -200,7 +204,12 @@ export interface CloudAgentStateDeps {
   /** Plow's pool numbers, used as display metadata for chat rows. */
   lines?: { list(credential: string): Promise<CloudLineOption[]> };
   home: string;
+  recordAudit: (
+    event: string,
+    fields: Record<string, string | number | boolean>,
+  ) => void;
   onChange?: () => void;
+  now?: () => number;
   wait?: (milliseconds: number) => Promise<void>;
   /** Value-free diagnostics only; anything passed here may reach a log. */
   warn?: (message: string) => void;
@@ -447,6 +456,7 @@ export class CloudAgentState {
     generation: number,
     flow: number,
   ): Promise<null> {
+    const activationStartedAt = (this.deps.now ?? Date.now)();
     let created: Activation;
     try {
       created = await this.deps.activation.createProvisionedActivation();
@@ -474,7 +484,13 @@ export class CloudAgentState {
     };
     this.lineFlow = { kind: action.kind, request: action, ui: waiting };
     this.publish();
-    void this.pollNewLine(created.activationSecret, action, generation, flow);
+    void this.pollNewLine(
+      created.activationSecret,
+      action,
+      generation,
+      flow,
+      activationStartedAt,
+    );
     return null;
   }
 
@@ -483,6 +499,7 @@ export class CloudAgentState {
     action: CloudLineRequest,
     generation: number,
     flow: number,
+    activationStartedAt: number,
   ): Promise<void> {
     while (
       this.isCurrentLineFlow(action.kind, generation, flow) &&
@@ -522,6 +539,9 @@ export class CloudAgentState {
       if (!this.isCurrentLineFlow(action.kind, generation, flow)) return;
 
       this.activationSecret = null;
+      await this.cleanupActivationSession(activationStartedAt);
+      if (!this.isCurrentLineFlow(action.kind, generation, flow)) return;
+
       const lineUid = (result.chat?.lineUid ?? "").trim();
       const credential = this.credential();
       if (!lineUid || echoesCredential(lineUid, credential)) {
@@ -557,6 +577,69 @@ export class CloudAgentState {
       this.publish();
       await this.finishLineFlow(request, generation, flow);
       return;
+    }
+  }
+
+  /** Revoke only the credential minted by this verified activation, if unique. */
+  private async cleanupActivationSession(activationStartedAt: number): Promise<void> {
+    const credential = this.credential();
+    if (!credential) {
+      this.recordActivationCleanup({ outcome: "no_credential" });
+      return;
+    }
+
+    let keys: KeyInfo[];
+    try {
+      keys = await this.deps.activation.listApiKeys(credential);
+    } catch (error) {
+      this.recordActivationCleanup({
+        outcome: "failed",
+        stage: "lookup",
+        error: messageOf(error),
+      });
+      return;
+    }
+
+    const candidates = keys.filter((key) => {
+      if (!key.is_active || key.agent_id !== null) return false;
+      if (key.name?.trim() || !key.scopes.includes("*:*")) return false;
+      if (key.last_seen_at !== null || key.created_at === null) return false;
+      const createdAt = parseApiTimestamp(key.created_at);
+      return Number.isFinite(createdAt) && createdAt >= activationStartedAt;
+    });
+    if (candidates.length === 0) {
+      this.recordActivationCleanup({ outcome: "no_match" });
+      return;
+    }
+    if (candidates.length > 1) {
+      this.recordActivationCleanup({
+        outcome: "ambiguous",
+        candidateCount: candidates.length,
+      });
+      return;
+    }
+
+    const [candidate] = candidates;
+    try {
+      await this.deps.activation.revokeApiKey(credential, candidate.id);
+      this.recordActivationCleanup({ outcome: "revoked", keyId: candidate.id });
+    } catch (error) {
+      this.recordActivationCleanup({
+        outcome: "failed",
+        stage: "revoke",
+        keyId: candidate.id,
+        error: messageOf(error),
+      });
+    }
+  }
+
+  private recordActivationCleanup(
+    fields: Record<string, string | number | boolean>,
+  ): void {
+    try {
+      this.deps.recordAudit("activation_session_cleanup", fields);
+    } catch (error) {
+      console.error("[cloud-agent] could not audit activation-session cleanup:", error);
     }
   }
 

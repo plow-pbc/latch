@@ -155,44 +155,6 @@ function rosterKind(scopes: readonly string[]): AgentRosterKind {
 }
 
 /**
- * The active key this Mac is authenticated with, only when its public prefix
- * identifies exactly one row. An ambiguous match identifies nothing.
- */
-export function thisMacKeyId(
-  keys: readonly KeyInfo[],
-  deviceCredential: string,
-): number | null {
-  const credential = deviceCredential.trim();
-  const candidates = keys.filter(
-    (key) => key.is_active && isDeviceCredential(key.key_prefix, credential),
-  );
-  return candidates.length === 1 ? candidates[0].id : null;
-}
-
-const ABANDONED_SESSION_AGE_MS = 10 * 60_000;
-
-/**
- * Whether an active key has the exact shape left behind by an abandoned
- * activation: an unnamed, unused global session old enough not to be another
- * Mac's sign-in still settling. Agent-owned keys are not sessions; revoking
- * one here would leave its cloud agent running without a usable credential.
- */
-export function shouldAutoRevokeSession(
-  key: KeyInfo,
-  options: { thisMacId: number; now: number },
-): boolean {
-  if (!key.is_active) return false;
-  if (key.agent_id !== null) return false;
-  if (!key.scopes.includes("*:*")) return false;
-  if (key.name?.trim()) return false;
-  if (key.last_seen_at !== null) return false;
-  if (key.id === options.thisMacId) return false;
-  if (key.created_at === null) return false;
-  const createdAt = Date.parse(key.created_at);
-  return Number.isFinite(createdAt) && createdAt < options.now - ABANDONED_SESSION_AGE_MS;
-}
-
-/**
  * Split the account's credentials into the three sections the screen shows.
  *
  * `agentId` decides first and decides alone. A credential that belongs to a
@@ -211,7 +173,10 @@ export function sectionRoster(
   // is not identifying anything, and marking both would warn about revoking a
   // credential that is not ours — on the one row where the warning is the
   // difference between a revoke and signing this Mac out.
-  const thisMacId = thisMacKeyId(keys, credential);
+  const candidates = keys.filter(
+    (key) => key.is_active && isDeviceCredential(key.key_prefix, credential),
+  );
+  const thisMacId = candidates.length === 1 ? candidates[0].id : null;
 
   for (const key of keys) {
     if (!key.is_active) {

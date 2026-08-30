@@ -138,6 +138,13 @@ export interface KeyInfo {
   chat_uids: string[];
 }
 
+/** Parse Plow's UTC timestamp, whose wire form may omit the trailing offset. */
+export function parseApiTimestamp(value: string): number {
+  const timestamp = value.trim();
+  const hasOffset = /(?:Z|[+-]\d{2}:\d{2})$/i.test(timestamp);
+  return Date.parse(hasOffset ? timestamp : `${timestamp}Z`);
+}
+
 export interface RevokedKey {
   status: string;
   id: number;

@@ -13,6 +13,7 @@ import {
 import { CloudAgentLineError, CloudAgentResource } from "../src/cloudAgents.js";
 import {
   Activation,
+  KeyInfo,
   PlowApi,
   PlowApiError,
   ProvisionedActivationRedeem,
@@ -60,6 +61,42 @@ function chat(overrides: Partial<CloudChatOption> = {}): CloudChatOption {
   };
 }
 
+function activationSession(overrides: Partial<KeyInfo> = {}): KeyInfo {
+  return {
+    id: 42,
+    key_prefix: null,
+    name: null,
+    scopes: ["*:*"],
+    tokens_used: 0,
+    is_active: true,
+    last_seen_at: null,
+    created_at: "2026-08-30T21:59:02.464862",
+    agent_id: null,
+    chat_uids: [],
+    ...overrides,
+  };
+}
+
+function verifiedProvisionedActivation(): ProvisionedActivationRedeem {
+  return {
+    status: "verified",
+    chat: {
+      uid: "cht_new",
+      status: "active",
+      displayName: null,
+      line: "+14155550999",
+      lineUid: "lin_new",
+      participants: [],
+      createdAt: "",
+    },
+    shape: {
+      chat: "object",
+      participantTypes: ["member", "agent"],
+      agentLine: "uid_string",
+    },
+  };
+}
+
 function build(options: {
   listAgents?: () => Promise<CloudAgentResource[]>;
   createAgent?: (request: { lineUid: string; name: string; provider: string }) => Promise<CloudAgentResource>;
@@ -72,12 +109,16 @@ function build(options: {
   listLines?: () => Promise<CloudLineOption[]>;
   createActivation?: () => Promise<Activation>;
   redeemActivation?: () => Promise<ProvisionedActivationRedeem>;
+  listKeys?: () => Promise<KeyInfo[]>;
+  revokeKey?: (id: number) => Promise<void>;
   remove?: (agentId: string) => Promise<void>;
+  now?: () => number;
   wait?: (milliseconds: number) => Promise<void>;
   warn?: (message: string) => void;
   onChange?: () => void;
 } = {}) {
   const calls: string[] = [];
+  const audit: Array<{ event: string; fields: Record<string, unknown> }> = [];
   const agents: CloudAgentsApi = {
     async create(_credential, request) {
       calls.push(`create:${request.lineUid}:${request.name}`);
@@ -123,6 +164,15 @@ function build(options: {
           ? options.redeemActivation()
           : { status: "pending" };
       },
+      async listApiKeys() {
+        calls.push("listKeys");
+        return options.listKeys ? options.listKeys() : [];
+      },
+      async revokeApiKey(_credential, id) {
+        calls.push(`revokeKey:${id}`);
+        await options.revokeKey?.(id);
+        return { status: "revoked", id };
+      },
     },
     chats: {
       async list() {
@@ -138,11 +188,15 @@ function build(options: {
           : [{ uid: "lin_willow", displayName: "Willow", number: "+15550100" }];
       },
     },
+    recordAudit: (event, fields) => {
+      audit.push({ event, fields });
+    },
+    now: options.now,
     wait: options.wait ?? (() => new Promise<void>(() => {})),
     warn: options.warn,
     onChange: options.onChange,
   });
-  return { state, calls, home };
+  return { state, calls, audit, home };
 }
 
 describe("CloudAgentState line and thread display", () => {
@@ -524,6 +578,109 @@ describe("CloudAgentState new agent flow", () => {
       uid: "lin_new",
       label: "+1 415-555-0999",
     });
+  });
+
+  it.each(["UTC", "America/Los_Angeles", "Asia/Tokyo"])(
+    "revokes the one session created by verification when the Mac is in %s",
+    async (timezone) => {
+      const previous = process.env.TZ;
+      process.env.TZ = timezone;
+      try {
+        const keys = [
+          // Production currently gives this Mac's own row no prefix marker.
+          activationSession({ id: 1, created_at: "2026-08-30T21:58:59.000000" }),
+          activationSession(),
+        ];
+        const { state, calls, audit } = build({
+          now: () => Date.parse("2026-08-30T21:59:00Z"),
+          wait: async () => {},
+          redeemActivation: async () => verifiedProvisionedActivation(),
+          listKeys: async () => keys,
+          revokeKey: async (id) => {
+            keys.find((key) => key.id === id)!.is_active = false;
+          },
+        });
+
+        await state.create({ name: "Garden", provider: "exe:hermes", lineUid: null });
+        await vi.waitFor(() => expect(audit).toHaveLength(1));
+
+        expect(keys[0]).toMatchObject({ id: 1, key_prefix: null, is_active: true });
+        expect(calls.filter((call) => call === "listKeys")).toHaveLength(1);
+        expect(calls.filter((call) => call.startsWith("revokeKey:"))).toEqual([
+          "revokeKey:42",
+        ]);
+        expect(audit).toEqual([{
+          event: "activation_session_cleanup",
+          fields: { outcome: "revoked", keyId: 42 },
+        }]);
+      } finally {
+        if (previous === undefined) delete process.env.TZ;
+        else process.env.TZ = previous;
+      }
+    },
+  );
+
+  it.each([
+    ["no", [], { outcome: "no_match" }],
+    [
+      "two",
+      [activationSession(), activationSession({ id: 43 })],
+      { outcome: "ambiguous", candidateCount: 2 },
+    ],
+  ] satisfies Array<[string, KeyInfo[], Record<string, string | number>]>)(
+    "revokes nothing when verification has %s matching sessions",
+    async (_count, candidates, expectedFields) => {
+      const keys = [
+        activationSession({ id: 1, created_at: "2026-08-30T21:58:59.000000" }),
+        ...candidates,
+      ];
+      const { state, calls, audit } = build({
+        now: () => Date.parse("2026-08-30T21:59:00Z"),
+        wait: async () => {},
+        redeemActivation: async () => verifiedProvisionedActivation(),
+        listKeys: async () => keys,
+      });
+
+      await state.create({ name: "Garden", provider: "exe:hermes", lineUid: null });
+      await vi.waitFor(() => expect(audit).toHaveLength(1));
+
+      expect(calls.some((call) => call.startsWith("revokeKey:"))).toBe(false);
+      expect(audit).toEqual([{
+        event: "activation_session_cleanup",
+        fields: expectedFields,
+      }]);
+    },
+  );
+
+  it("leaves the verification session active and audits a failed revoke", async () => {
+    const keys = [
+      activationSession({ id: 1, created_at: "2026-08-30T21:58:59.000000" }),
+      activationSession(),
+    ];
+    const { state, calls, audit } = build({
+      now: () => Date.parse("2026-08-30T21:59:00Z"),
+      wait: async () => {},
+      redeemActivation: async () => verifiedProvisionedActivation(),
+      listKeys: async () => keys,
+      revokeKey: async () => {
+        throw new PlowApiError("http", "Plow returned 500.", 500);
+      },
+    });
+
+    await state.create({ name: "Garden", provider: "exe:hermes", lineUid: null });
+    await vi.waitFor(() => expect(audit).toHaveLength(1));
+
+    expect(calls).toContain("revokeKey:42");
+    expect(keys.find((key) => key.id === 42)?.is_active).toBe(true);
+    expect(audit).toEqual([{
+      event: "activation_session_cleanup",
+      fields: {
+        outcome: "failed",
+        stage: "revoke",
+        keyId: 42,
+        error: "Plow returned 500.",
+      },
+    }]);
   });
 
   it("selects an idempotently returned roster agent without duplicating it", async () => {

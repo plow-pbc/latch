@@ -185,6 +185,39 @@ describe("auditActivities (grouping)", () => {
     expect(acts[0]!.title).toBe("future_event");
   });
 
+  it.each([
+    [
+      { outcome: "revoked", keyId: 42 },
+      { status: "Revoked", tone: "green", category: "approved", step: "Activation session revoked — key 42", state: "ok" },
+    ],
+    [
+      { outcome: "failed", keyId: 42, error: "Plow returned 500." },
+      { status: "Failed", tone: "red", category: "failed", step: "Activation session cleanup failed — key 42 — Plow returned 500.", state: "bad" },
+    ],
+    [
+      { outcome: "no_match" },
+      { status: "Skipped", tone: "zinc", category: "other", step: "Activation session cleanup skipped — no matching session", state: "neutral" },
+    ],
+    [
+      { outcome: "ambiguous", candidateCount: 2 },
+      { status: "Skipped", tone: "zinc", category: "other", step: "Activation session cleanup skipped — 2 matches", state: "neutral" },
+    ],
+  ])("renders activation-session cleanup outcome %#", (fields, expected) => {
+    const [activity] = auditActivities([{
+      event: "activation_session_cleanup",
+      ...fields,
+      ts: "2026-08-30T22:00:00Z",
+    }]);
+
+    expect(activity).toMatchObject({
+      title: "Activation session cleanup",
+      status: expected.status,
+      tone: expected.tone,
+      category: expected.category,
+      timeline: [{ text: expected.step, state: expected.state }],
+    });
+  });
+
   it("an expired approval reads as a timeout, not a refusal", () => {
     const acts = auditActivities([
       { event: "intent_received", intentId: "i1", request: "run: df -h", ts: "2026-08-18T12:00:00Z" },

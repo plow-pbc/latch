@@ -4,11 +4,7 @@
  * one everyday testing never enters.
  */
 import { describe, expect, it } from "vitest";
-import {
-  removalRouteFor,
-  sectionRoster,
-  shouldAutoRevokeSession,
-} from "../src/rosterSections.js";
+import { sectionRoster, removalRouteFor } from "../src/rosterSections.js";
 import type { KeyInfo } from "../src/plowApi.js";
 
 /** A device credential of the shape plow issues. */
@@ -106,35 +102,6 @@ describe("which section a credential belongs in", () => {
     expect(JSON.stringify(sections)).not.toMatch(
       /key_prefix|plow_sk_abc123|scopes|relay:call|tokens_used/,
     );
-  });
-});
-
-describe("abandoned activation sessions", () => {
-  const now = Date.parse("2026-08-30T12:00:00Z");
-  const abandoned = (): KeyInfo => key({
-    id: 2,
-    name: null,
-    scopes: ["*:*"],
-    is_active: true,
-    last_seen_at: null,
-    created_at: "2026-08-30T11:49:00Z",
-    agent_id: null,
-  });
-
-  it.each([
-    ["the complete abandoned shape", {}, true],
-    ["an inactive key", { is_active: false }, false],
-    ["an agent-owned key", { agent_id: "agent_2" }, false],
-    ["a narrower scope", { scopes: ["relay:*"] }, false],
-    ["a named key", { name: "Another Mac" }, false],
-    ["a key used once", { last_seen_at: "2026-08-30T11:50:00Z" }, false],
-    ["this Mac's key", { id: 1 }, false],
-    ["a key exactly ten minutes old", { created_at: "2026-08-30T11:50:00Z" }, false],
-    ["a key with no creation time", { created_at: null }, false],
-    ["a key with an invalid creation time", { created_at: "not-a-date" }, false],
-  ] satisfies Array<[string, Partial<KeyInfo>, boolean]>)("selects %s: %s", (_case, overrides, expected) => {
-    expect(shouldAutoRevokeSession({ ...abandoned(), ...overrides }, { thisMacId: 1, now }))
-      .toBe(expected);
   });
 });
 
