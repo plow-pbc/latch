@@ -325,11 +325,6 @@ describe("planPlowGog", () => {
       reason: "safety flags",
     },
     {
-      why: "refuses a --*-file flag by its rule label",
-      argv: ["plow-gog", "gmail", "send", "--body-file", "/etc/passwd"],
-      reason: "a --*-file flag",
-    },
-    {
       why: "refuses a group outside the token's scopes",
       argv: ["plow-gog", "drive", "ls"],
       reason: "only Gmail and Calendar",

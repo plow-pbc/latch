@@ -151,20 +151,42 @@ describe("PlowApi", () => {
     expect((error as PlowApiError).kind).toBe("unauthorized");
   });
 
-  it("reads the account and endpoint from /v1/relay/info rather than constructing them", async () => {
+  it("reads the account from /v1/relay/info", async () => {
     const { calls, fetchImpl } = recordingFetch([
       { status: 200, body: { uid: "u_123", mcp_url: "https://api.plow.co/v1/relay/devices/u_123/mcp", device_connected: true } },
     ]);
     const info = await new PlowApi("https://api.plow.co", fetchImpl).relayInfo("plow_secret");
 
-    expect(info).toEqual({
-      uid: "u_123",
-      mcpUrl: "https://api.plow.co/v1/relay/devices/u_123/mcp",
-      deviceConnected: true,
-    });
+    expect(info).toEqual({ uid: "u_123" });
     // The credential travels in a header — never in the URL.
     expect(calls[0].url).not.toContain("plow_secret");
     expect((calls[0].init.headers as Record<string, string>).authorization).toBe("Bearer plow_secret");
+  });
+
+  it("registers this stable device identity with its DNS hostname", async () => {
+    const { calls, fetchImpl } = recordingFetch([
+      {
+        status: 200,
+        body: {
+          device_id: "device/one",
+          hostname: "mbp",
+          display_name: "mbp (2)",
+          is_primary: false,
+          connected: false,
+          mcp_url: "https://api.plow.co/v1/relay/devices/device%2Fone/mcp",
+        },
+      },
+    ]);
+
+    const device = await new PlowApi("https://api.plow.co", fetchImpl).registerRelayDevice(
+      "plow_secret",
+      "device/one",
+      "mbp",
+    );
+
+    expect(calls[0].url).toBe("https://api.plow.co/v1/relay/devices/device%2Fone");
+    expect(JSON.parse(String(calls[0].init.body))).toEqual({ hostname: "mbp" });
+    expect(device).toEqual({ mcpUrl: "https://api.plow.co/v1/relay/devices/device%2Fone/mcp" });
   });
 
 
@@ -488,7 +510,16 @@ describe("PlowApi", () => {
 
   it("mints an agent through the relay's own endpoint", async () => {
     const { calls, fetchImpl } = recordingFetch([
-      { status: 200, body: { token: "plow_agenttok", key_prefix: "agenttk", name: "Claude Code" } },
+      {
+        status: 200,
+        body: {
+          id: 41,
+          token: "plow_agenttok",
+          key_prefix: "agenttk",
+          name: "Claude Code",
+          mcp_config: '{"mcpServers":{"plow-mbp":{"headers":{"Authorization":"Bearer plow_agenttok"}}}}',
+        },
+      },
     ]);
     const minted = await new PlowApi("https://api.plow.co", fetchImpl).createAgent(
       "plow_device",
@@ -496,6 +527,7 @@ describe("PlowApi", () => {
     );
 
     expect(calls[0].url).toBe("https://api.plow.co/v1/relay/agents");
+    expect(minted.id).toBe(41);
     expect(minted.token).toBe("plow_agenttok");
   });
 

@@ -35,11 +35,16 @@ export interface RelayClientOptions {
    * The credential this Mac holds — today the owner's Plow login session.
    *
    * The socket asks for one thing: a scope covering `relay:device`, which a
-   * session's wildcard satisfies (`check_scope` in plow's `auth.py`). It does
-   * NOT require a device row, and the socket binds to the USER uid rather than
-   * a device identity. Sent only in the auth frame; never logged.
+   * session's wildcard satisfies (`check_scope` in plow's `auth.py`). The
+   * device is registered before this socket opens, and the relay binds the
+   * connection to that stable installation identity. Sent only in the auth
+   * frame; never logged.
    */
   credential: string;
+  /** Stable installation identity registered with Plow before this socket opens. */
+  deviceId: string;
+  /** Preparation that must succeed before each dial; failures use the same backoff. */
+  beforeConnect?: () => Promise<void>;
   /** Where a tunnelled request goes. */
   serve: ServeRequest;
   onStatusChange?: (connected: boolean) => void;
@@ -157,6 +162,10 @@ export class RelayClient {
   }
 
   private async connectOnce(): Promise<void> {
+    if (this.options.beforeConnect) {
+      await this.options.beforeConnect();
+      if (!this.running) return;
+    }
     this.say(`connecting to ${this.options.url}`);
     const conn = await this.dialer().connect();
     // The dial can outlive a `stop()`. Sign-out drops the socket while this is
@@ -211,10 +220,15 @@ export class RelayClient {
           type: "auth",
           token: this.options.credential,
           client_kind: RELAY_CLIENT_KIND,
+          device_id: this.options.deviceId,
         });
         return;
 
       case "auth.ok": {
+        if (msg.device_id !== this.options.deviceId) {
+          this.stopAfterAuthFailure(conn, "relay authenticated a different device");
+          return;
+        }
         // No `ready` frame. Plow's agent-runtime client sends one for its own
         // channel's reasons; our wire contract has no such frame and the relay
         // logs it as an unknown type. Least code: do not send what nobody reads.
@@ -236,18 +250,7 @@ export class RelayClient {
       case "auth.error": {
         // The relay's reason is untrusted and may echo the credential, in an
         // encoding that string replacement cannot reliably scrub.
-        this.say("relay rejected the credential");
-        // TERMINAL, not a retryable failure. A refused credential does not
-        // become valid by waiting, so reconnecting only hammers the relay with
-        // a token it has already rejected — which is exactly what a revoked key
-        // did: an endless 4001 flap, and a user with no idea why. Stop, and let
-        // the app drop them back to signing in.
-        this.credentialRejected = true;
-        this.running = false;
-        this.clearTimers();
-        conn.close();
-        this.setConnected(false);
-        this.options.onAuthFailed?.();
+        this.stopAfterAuthFailure(conn, "relay rejected the credential");
         return;
       }
 
@@ -272,6 +275,16 @@ export class RelayClient {
     }
 
     this.say(`ignoring unknown frame type ${String(msg.type)}`);
+  }
+
+  private stopAfterAuthFailure(conn: Connection, message: string): void {
+    this.say(message);
+    this.credentialRejected = true;
+    this.running = false;
+    this.clearTimers();
+    conn.close();
+    this.setConnected(false);
+    this.options.onAuthFailed?.();
   }
 
   private async serveRequest(conn: Connection, frame: RelayRequestFrame): Promise<void> {

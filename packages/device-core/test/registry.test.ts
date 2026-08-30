@@ -67,8 +67,6 @@ describe("the gog provider's refusal", () => {
     // An IN-SCOPE group, so the flag is the only thing refusing it — with an
     // out-of-scope one the row passes on branch ordering instead.
     ["a flag that would widen the scope bound", ["gog", "gmail", "search", "q", "--enable-commands=drive"], "--enable-commands"],
-    ["a flag that reads a local file into an outbound message", ["gog", "gmail", "send", "--body-file", "/etc/passwd"], "a --*-file flag"],
-    ["a flag that writes to a caller-chosen path", ["gog", "gmail", "attachment", "1", "2", "--out", "/tmp/x"], "a --out* flag"],
     // The check that refuses every wrong-command shape; the other branches
     // only change the sentence. `refuse`'s doc owns the account.
     // Each row pins WHICH sentence, not just that one came back. Collapsing
@@ -120,11 +118,6 @@ describe("the gog provider's refusal", () => {
     }
   });
 
-  it("never reports a spelling the caller chose", () => {
-    // The reason reaches an error, the approval dialog and the audit log.
-    const reason = gog.refuse(["gog", "gmail", "send", "--sneaky-agent-text-file", "/x"])!;
-    expect(reason).not.toContain("sneaky-agent-text");
-  });
 });
 
 describe("needsToken", () => {
@@ -265,7 +258,6 @@ describe("the plow-gog provider's refusal", () => {
   // matrix lives on the gog rows above and in plowGog.test.ts.
   it.each([
     ["a flag that would disarm the belt", ["plow-gog", "gmail", "search", "q", "--wrap-untrusted=false"], "--wrap-untrusted"],
-    ["a flag that reads a local file into an outbound message", ["plow-gog", "gmail", "send", "--body-file", "/x"], "a --*-file flag"],
     ["a group outside the token's scopes", ["plow-gog", "drive", "search", "q"], "only Gmail and Calendar"],
     ["the dotted spelling", ["plow-gog", "gmail.search", "q"], "separate words"],
     ["a leading global flag", ["plow-gog", "--json", "gmail", "search", "q"], "before any flags"],
@@ -279,6 +271,7 @@ describe("the plow-gog provider's refusal", () => {
     expect(plowGog.refuse(["plow-gog", "accounts"])).toBeNull();
     expect(plowGog.refuse(["plow-gog", "gmail", "search", "q", "--account", "a@x.com"])).toBeNull();
     expect(plowGog.refuse(["plow-gog", "gmail", "--help"])).toBeNull();
+    expect(plowGog.refuse(["plow-gog", "gmail", "send", "--body-file", "/tmp/body.txt"])).toBeNull();
   });
 
   it("mints nothing for help, like gog", () => {

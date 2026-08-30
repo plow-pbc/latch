@@ -541,6 +541,19 @@ export class DeviceAgent {
       // request that never passed through it.
       const refusal = provider.refuse(argv);
       if (refusal !== null) return this.execError(intent.intentId, refusal);
+      const approvedReads = new Set(readPaths);
+      const approvedWrites = new Set(writePaths);
+      for (const fileArg of provider.fileArgs(argv)) {
+        for (const providerPath of fileArg.paths) {
+          const approved = fileArg.access === "read" ? approvedReads : approvedWrites;
+          if (!approved.has(providerPath)) {
+            return this.execError(
+              intent.intentId,
+              "provider file arguments require matching approved file capabilities",
+            );
+          }
+        }
+      }
       // A provider NAME with no staged binary is refused, never let through.
       // Falling through would run whatever `gog` the owner happens to have on
       // their own PATH — unbelted, unrefused, and against their own

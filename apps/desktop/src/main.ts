@@ -42,7 +42,7 @@ import { migrateLegacyHome } from "./migrateHome.js";
 import { buildMinter, vendorDirs } from "./providerWiring.js";
 import { resolveInstancePaths } from "./paths.js";
 import { loadSettings, saveSettings, useCredentialCodec, WindowBounds } from "./settings.js";
-import { PlowApi, relaySocketUrl, resolveApiBaseUrl } from "./plowApi.js";
+import { PlowApi, PlowApiError, relaySocketUrl, resolveApiBaseUrl } from "./plowApi.js";
 import { Onboarding } from "./onboarding.js";
 import { ConnectClient } from "./connectClient.js";
 import { CloudAgentsClient } from "./cloudAgents.js";
@@ -1017,7 +1017,8 @@ async function startRelay(): Promise<void> {
 
   const settings = loadSettings(home);
   const credential = (settings.relayCredential ?? "").trim();
-  if (!credential || !mcp) return;
+  const deviceId = device?.identity.deviceId;
+  if (!credential || !deviceId || !mcp) return;
 
   const server = mcp;
   relay = new RelayClient({
@@ -1025,6 +1026,26 @@ async function startRelay(): Promise<void> {
     // relay path appended. Two URL fields that must agree is a support burden.
     url: relaySocketUrl(apiBaseUrl),
     credential,
+    deviceId,
+    beforeConnect: async () => {
+      let registered;
+      try {
+        registered = await new PlowApi(apiBaseUrl).registerRelayDevice(credential, deviceId, hostName());
+      } catch (error) {
+        if (!(error instanceof PlowApiError) || error.kind !== "unauthorized") throw error;
+        if (loadSettings(home).relayCredential.trim() !== credential) return;
+        console.log("[relay] credential rejected during registration; signing out");
+        void relay?.stop();
+        connected = false;
+        void signOut();
+        notifyRenderer("status:changed");
+        return;
+      }
+      const latest = loadSettings(home);
+      if (latest.relayCredential.trim() !== credential) return;
+      latest.mcpUrl = registered.mcpUrl;
+      saveSettings(home, latest);
+    },
     serve: (request, auth) => server.fetch(request, auth),
     onStatusChange: (isConnected) => {
       connected = isConnected;

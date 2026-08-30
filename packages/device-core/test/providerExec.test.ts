@@ -181,6 +181,16 @@ describe("a vendored provider through the exec path", () => {
     expectNeverSpawned(d);
   });
 
+  it("refuses a provider file argument missing its approved file capability", async () => {
+    const mint = vi.fn(async () => TOKEN);
+    const d = device(minterOf(mint), [vendorDir()]);
+    const response = await run(d, ["plow-gog", "gmail", "send", "--attach", "/tmp/receipt.jpg"]);
+    expect(jv(response).get("status").str).toBe("error");
+    expect(jv(response).get("error").str).toContain("file capabilit");
+    expect(mint).not.toHaveBeenCalled();
+    expectNeverSpawned(d);
+  });
+
   it.each([
     [
       "a mint that failed",

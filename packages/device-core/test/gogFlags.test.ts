@@ -9,7 +9,7 @@
  * around it.
  */
 import { describe, expect, it } from "vitest";
-import { reservedFlagIn } from "../src/providers/gogFlags.js";
+import { filePathsIn, reservedFlagIn } from "../src/providers/gogFlags.js";
 
 describe("reservedFlagIn", () => {
   // The third column pins WHAT comes back, not just that something did: a
@@ -27,33 +27,10 @@ describe("reservedFlagIn", () => {
     ["re-enables interactive prompting", ["gmail", "get", "1", "--no-input=false"], "--no-input"],
     ["repoints gog's config root", ["gmail", "get", "1", "--home", "/tmp/evil"], "--home"],
     ["supplies a different token", ["gmail", "get", "1", "--access-token", "AAA"], "--access-token"],
-    ["reads a local file into an outbound message", ["gmail", "send", "--body-file", "/etc/passwd"], "a --*-file flag"],
-    ["the spelling enumeration missed twice", ["gmail", "forward", "1", "--note-file", "/etc/passwd"], "a --*-file flag"],
-    ["an html body read from a file", ["gmail", "send", "--body-html-file", "/etc/passwd"], "a --*-file flag"],
-    ["a --*-file flag gog has not shipped yet", ["gmail", "send", "--future-file", "/etc/passwd"], "a --*-file flag"],
-    ["writes chosen bytes to a chosen path", ["gmail", "attachment", "1", "2", "--out", "/tmp/p"], "a --out* flag"],
-    ["the --out alias", ["gmail", "attachment", "1", "2", "--output", "/tmp/p"], "a --out* flag"],
-    ["the --out-dir spelling", ["gmail", "thread", "get", "1", "--out-dir", "/tmp"], "a --out* flag"],
-    ["reads a local file, no shared suffix", ["gmail", "send", "--attach", "/etc/passwd"], "--attach"],
   ];
 
   it.each(refused)("refuses: %s", (_why, argv, expected) => {
     expect(reservedFlagIn(argv)).toBe(expected);
-  });
-
-  it("never reports a spelling the caller chose", () => {
-    // A rule match reports a fixed label. The returned string reaches an error
-    // message, the approval dialog and the append-only audit log, so it must
-    // not be able to carry text an agent wrote.
-    expect(reservedFlagIn(["gmail", "send", "--totally-made-up-file", "/x"])).toBe("a --*-file flag");
-    expect(reservedFlagIn(["gmail", "send", "--outlandish", "/x"])).toBe("a --out* flag");
-  });
-
-  it("refuses a rule-matching positional after a terminator, knowingly", () => {
-    // The accepted cost of having no terminator branch: a query spelled like a
-    // refused flag is refused. Fail-closed and vanishingly rare, and recorded
-    // here as a decision rather than left to be discovered as a bug.
-    expect(reservedFlagIn(["gmail", "search", "--", "--outdated"])).toBe("a --out* flag");
   });
 
   it("cannot be switched off by leading with a terminator", () => {
@@ -78,5 +55,25 @@ describe("reservedFlagIn", () => {
 
   it.each(allowed)("allows: %s", (_why, argv) => {
     expect(reservedFlagIn(argv)).toBeNull();
+  });
+});
+
+describe("filePathsIn", () => {
+  it.each([
+    ["an attachment", ["gmail", "send", "--attach", "/tmp/photo.jpg"], ["/tmp/photo.jpg"], []],
+    ["joined attachments", ["gmail", "send", "--attach=/tmp/a.jpg,/tmp/b.pdf"], ["/tmp/a.jpg", "/tmp/b.pdf"], []],
+    ["a body file", ["gmail", "send", "--body-file=/tmp/body.txt"], ["/tmp/body.txt"], []],
+    ["a future input-file flag", ["gmail", "send", "--future-file", "/tmp/in"], ["/tmp/in"], []],
+    ["an output file", ["gmail", "attachment", "1", "2", "--out", "/tmp/a.pdf"], [], ["/tmp/a.pdf"]],
+    ["an output directory", ["gmail", "thread", "get", "1", "--out-dir=/tmp/mail"], [], ["/tmp/mail"]],
+  ] as const)("derives %s from argv", (_why, argv, read, write) => {
+    expect(filePathsIn(argv)).toEqual({ read: [...read], write: [...write] });
+  });
+
+  it("ignores stdin and flag-looking positionals after the terminator", () => {
+    expect(filePathsIn(["gmail", "send", "--body-file", "-", "--", "--outdated"])).toEqual({
+      read: [],
+      write: [],
+    });
   });
 });
