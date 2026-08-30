@@ -201,7 +201,7 @@ export interface OnboardingDeps {
   /** (Re)start the relay from stored settings. */
   startRelay: () => Promise<void>;
   isConnected: () => boolean;
-  /** Names this Mac, both in the activation and in the user's key list. */
+  /** Names this Mac in the activation request. */
   deviceName: string;
   onChange?: () => void;
   now?: () => number;
@@ -656,19 +656,18 @@ export class Onboarding {
    * credential's scopes freeze at mint. A session carries `*:*` and expires
    * only after 180 days unused, refreshed by every request it makes.
    *
-   * So there is no second step. `POST /v1/relay/devices` — which minted a
-   * narrow credential and spent this session in the same transaction — is
-   * gone; the token the redeem handed back is what gets written.
+   * The token the redeem handed back is what gets written. Runtime relay
+   * startup owns the idempotent registration and retries it with backoff.
    */
   private async finishWithSession(
     sessionToken: string,
     chat: ActivationChat | null = null,
   ): Promise<void> {
-    // A sign-out can land inside the await below, and it must stay signed out:
+    // A sign-out can land inside the account lookup, and it must stay signed out:
     // persisting past it would leave the account a live credential its owner
     // just retired. `pollGeneration` is bumped by every path that abandons this
     // login — reset, the phone fallback, a fresh mint — so it is the epoch to
-    // check against. One await now rather than two, so one check.
+    // check against after each network step.
     //
     // A sign-out landing inside it takes the session with it. The session is
     // revoked best-effort, the same contract sign-out keeps.
@@ -678,13 +677,12 @@ export class Onboarding {
       await this.deps.api.revokeDeviceCredential(sessionToken).catch(() => {});
       return;
     }
-
     // Written 0600 by saveSettings. This is the only copy of the credential and
     // it is never handed to the renderer.
     const settings = this.settings();
     settings.relayCredential = sessionToken;
     settings.accountUid = info.uid;
-    settings.mcpUrl = info.mcpUrl;
+    settings.mcpUrl = "";
     // Kept, not read and dropped: the redeem that carried it answers once, so
     // this is the only moment the app ever sees the chat it just created. A
     // sign-in with no chat — the phone-code path, or a Mac activated before

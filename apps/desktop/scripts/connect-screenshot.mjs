@@ -231,7 +231,21 @@ async function setUp() {
   const api = {
     async createAgent(token, name) {
       if (token !== DEVICE_TOKEN) throw new Error("the mint must use the device credential");
-      return { token: CLIENT_TOKEN, keyPrefix: CLIENT_TOKEN.slice(5, 13), name };
+      return {
+        id: 700,
+        token: CLIENT_TOKEN,
+        keyPrefix: CLIENT_TOKEN.slice(5, 13),
+        name,
+        mcpConfig: JSON.stringify({
+          mcpServers: {
+            "plow-macbook-pro": {
+              type: "http",
+              url: MCP_URL,
+              headers: { Authorization: `Bearer ${CLIENT_TOKEN}` },
+            },
+          },
+        }),
+      };
     },
   };
 

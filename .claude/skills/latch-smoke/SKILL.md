@@ -24,15 +24,17 @@ You need an MCP client registration for the target install — endpoint plus
 bearer token. It is minted once, in the app's Agents tab on the target Mac
 (a GUI step), and then **recorded at a known path so no later run needs the
 GUI**: save the block `_mcpConfig` renders, verbatim, to
-`~/.latch/<install>.json` — `0600`, directory `0700`, one file per install
+`~/.latch/<client>.json` — `0600`, directory `0700`, one file per agent credential
 (`docs/AUTONOMOUS-OPERATION.md` Stop 3 owns this convention). The block:
 
 ```json
-{"mcpServers":{"plow":{"type":"http","url":"<mcpUrl>","headers":{"Authorization":"Bearer <token>"}}}}
+{"mcpServers":{"plow-mbp":{"type":"http","url":"<mcpUrl>","headers":{"Authorization":"Bearer <token>"}}}}
 ```
 
-Pass it as `--config ~/.latch/<install>.json`, which supplies both url and
-token; `--url` + `--token-file` (token alone, one line, `0600`) remains for a
+Pass it as `--config ~/.latch/<client>.json --server <name>`, which selects one
+device when the config contains several and supplies both URL and token. The
+`--server` flag is optional for a one-server config. `--url` + `--token-file`
+(token alone, one line, `0600`) remains for a
 credential that is not recorded. Treat the file the way this repo treats every
 credential: never echo it, never put it in a log line or a commit, reference
 the token by its last 3 characters only. The script prints an HTTP status on
@@ -42,7 +44,7 @@ repeat the credential back.
 ## Run it
 
 ```bash
-scripts/latch-smoke --config ~/.latch/<install>.json \
+scripts/latch-smoke --config ~/.latch/<client>.json --server plow-mbp \
   --home "~/Library/Application Support/Plow-Latch"
 ```
 
@@ -137,7 +139,7 @@ mint, not at the binary.
 Same command, its own argv:
 
 ```bash
-scripts/latch-smoke --config ~/.latch/<install>.json \
+scripts/latch-smoke --config ~/.latch/<client>.json --server plow-mbp \
   --home "~/Library/Application Support/Plow-Latch" -- gog gmail search newer_than:1d --json
 ```
 

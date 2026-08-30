@@ -298,7 +298,7 @@ CI does not produce one. After cutting a notarized build:
    than the Seatbelt denial:
 
    ```sh
-   scripts/latch-smoke --config <install-config> --home "~/Library/Application Support/Plow-Latch" \
+   scripts/latch-smoke --config <agent-config> --server <name> --home "~/Library/Application Support/Plow-Latch" \
      --apple-events -- /usr/bin/osascript -e 'tell application "Messages" to send "release-gate" to participant "+1<your-number>" of (first account whose service type = iMessage)'
    ```
 3. Confirm the corresponding `exec_end` line in `audit.ndjson` shows `exit 0`. A `-1743`

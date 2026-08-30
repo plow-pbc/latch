@@ -19,6 +19,7 @@ const OTP_TOKEN = "plow_OTPTOKEN_secret";
 const SESSION_TOKEN = "plow_ACTIVATIONsession_secret";
 const ACTIVATION_SECRET = "activation_secret_never_shown";
 const MCP_URL = "http://localhost:4242/v1/relay/devices/u_123/mcp";
+const DEVICE_MCP_URL = "http://localhost:4242/v1/relay/devices/device-1/mcp";
 
 /** A chat as `parseActivationChat` hands it over: the line it runs on, and the
  * person on the other end. */
@@ -82,6 +83,8 @@ class FakePlow {
    * chat is what it is about. */
   redeems: Array<FakeRedeem | PlowApiError> = [{ status: "pending" }];
   redeemCalls: string[] = [];
+  registrations: Array<{ token: string; deviceId: string; hostname: string }> = [];
+  registrationFails = false;
 
   api(): PlowApi {
     return this as unknown as PlowApi;
@@ -132,7 +135,15 @@ class FakePlow {
   async relayInfo(token: string) {
     // The login session, whichever path minted it — never the device credential.
     expect([OTP_TOKEN, SESSION_TOKEN]).toContain(token);
-    return { uid: "u_123", mcpUrl: MCP_URL, deviceConnected: this.connected };
+    return { uid: "u_123" };
+  }
+
+  async registerRelayDevice(token: string, deviceId: string, hostname: string) {
+    if (this.registrationFails) {
+      throw new PlowApiError("http", "Plow could not register this Mac.");
+    }
+    this.registrations.push({ token, deviceId, hostname });
+    return { mcpUrl: DEVICE_MCP_URL };
   }
 
   revoked: string[] = [];
@@ -162,6 +173,19 @@ function build(extra: Partial<OnboardingDeps> = {}): Onboarding {
     home,
     startRelay: async () => {
       started += 1;
+      const settings = loadSettings(home);
+      try {
+        const registered = await plow.registerRelayDevice(
+          settings.relayCredential,
+          "device-1",
+          "test-mac",
+        );
+        settings.mcpUrl = registered.mcpUrl;
+        saveSettings(home, settings);
+      } catch {
+        // Production leaves registration failures on RelayClient's backoff.
+        return;
+      }
       plow.connected = true;
     },
     isConnected: () => plow.connected,
@@ -253,6 +277,10 @@ describe("activation — the path a brand-new user takes", () => {
     expect(state.connected).toBe(true);
     expect(waits.every((ms) => ms === ACTIVATION_POLL_INTERVAL_MS)).toBe(true);
     expect(loadSettings(home).relayCredential).toBe(SESSION_TOKEN);
+    expect(plow.registrations).toEqual([
+      { token: SESSION_TOKEN, deviceId: "device-1", hostname: "test-mac" },
+    ]);
+    expect(loadSettings(home).mcpUrl).toBe(DEVICE_MCP_URL);
     // The spent activation is dropped rather than left on a screen behind this.
     expect(state.activation).toBeNull();
   });
@@ -889,13 +917,13 @@ describe("the phone-code fallback still works", () => {
     state = await onboarding.submitCode("12345678");
     expect(state.step).toBe("connected");
     expect(state.accountUid).toBe("u_123");
-    expect(state.mcpUrl).toBe(MCP_URL);
+    expect(state.mcpUrl).toBe(DEVICE_MCP_URL);
     expect(started).toBe(1);
 
-    // The endpoint came from GET /v1/relay/info; the app never builds it.
+    // The endpoint came from device registration; the app never builds it.
     const settings = loadSettings(home);
     expect(settings.relayCredential).toBe(OTP_TOKEN);
-    expect(settings.mcpUrl).toBe(MCP_URL);
+    expect(settings.mcpUrl).toBe(DEVICE_MCP_URL);
   });
 
   it("keeps the login session AS the credential, minting nothing", async () => {
@@ -912,6 +940,19 @@ describe("the phone-code fallback still works", () => {
     // error first.
     expect(loadSettings(home).relayCredential).toBe(OTP_TOKEN);
     expect(warnings).toEqual([]);
+  });
+
+  it("keeps the session while device registration retries", async () => {
+    plow.registrationFails = true;
+    const onboarding = buildOnPhonePath();
+
+    await onboarding.requestCode("+15551110000");
+    const state = await onboarding.submitCode("12345678");
+
+    expect(state.step).toBe("connected");
+    expect(loadSettings(home).relayCredential).toBe(OTP_TOKEN);
+    expect(loadSettings(home).mcpUrl).toBe("");
+    expect(started).toBe(1);
   });
 
   it("writes settings owner-only", async () => {
@@ -1184,39 +1225,32 @@ describe("signing out", () => {
 });
 
 describe("a sign-out while the credential handoff is in the air", () => {
-  // One await now, not two: the mint that used to follow `relayInfo` is gone,
-  // so `relayInfo` is the whole window a sign-out can land in. The session is
-  // revoked on this path: it exists on the account, the
-  // sign-out's own revoke ran before it did, and the redeem that carried it
-  // answers once — so a token dropped here is one nobody can ever retire.
-  for (const race of [{ stage: "relayInfo", revoked: [SESSION_TOKEN] }] as const) {
-    it(`stays signed out when the sign-out lands during ${race.stage}`, async () => {
-      let release = () => {};
-      const inAir = new Promise<void>((r) => {
-        release = () => r();
-      });
-      plow.redeems = [{ status: "verified", token: SESSION_TOKEN }];
-      const original = plow.relayInfo.bind(plow);
-      plow.relayInfo = async (token: string) => {
-        await inAir;
-        return original(token);
-      };
-      const onboarding = build();
-      await onboarding.begin();
-      await settle();
-
-      signOutOfPlow(home);
-      onboarding.reset();
-      release();
-      await settle();
-
-      // Nothing is persisted, the session is retired best-effort, and the
-      // window stays signed out.
-      expect(plow.revoked).toEqual(race.revoked);
-      expect(loadSettings(home).relayCredential).toBe("");
-      expect(onboarding.state().step).not.toBe("connected");
+  it("stays signed out when the sign-out lands during relayInfo", async () => {
+    let release = () => {};
+    const inAir = new Promise<void>((r) => {
+      release = () => r();
     });
-  }
+    plow.redeems = [{ status: "verified", token: SESSION_TOKEN }];
+    const original = plow.relayInfo.bind(plow);
+    plow.relayInfo = async (token: string) => {
+      await inAir;
+      return original(token);
+    };
+    const onboarding = build();
+    await onboarding.begin();
+    await settle();
+
+    signOutOfPlow(home);
+    onboarding.reset();
+    release();
+    await settle();
+
+    // Nothing is persisted, the session is retired best-effort, and the
+    // window stays signed out.
+    expect(plow.revoked).toEqual([SESSION_TOKEN]);
+    expect(loadSettings(home).relayCredential).toBe("");
+    expect(onboarding.state().step).not.toBe("connected");
+  });
 });
 
 describe("a sign-out while startRelay is dialling", () => {

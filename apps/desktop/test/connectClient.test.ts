@@ -11,7 +11,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { ConnectClient, agentConfig } from "../src/connectClient.js";
+import { ConnectClient } from "../src/connectClient.js";
 import { KeyInfo, PlowApi, PlowApiError } from "../src/plowApi.js";
 import { Deferred, deferred } from "./deferred.js";
 import { loadSettings, saveSettings } from "../src/settings.js";
@@ -34,6 +34,7 @@ class FakePlow {
   /** Every credential handed back, in order. Distinct, like the real ones. */
   issued: string[] = [];
   fails: PlowApiError | null = null;
+  mcpConfigOverride: string | null = null;
   /** What `listApiKeys` will answer with. */
   keys: KeyInfo[] = [];
   /** Hold one list open, so a test can land reads out of order. */
@@ -82,7 +83,27 @@ class FakePlow {
     const issued = `${CLIENT_TOKEN}_${this.minted.length + 1}`;
     this.minted.push({ token, name });
     this.issued.push(issued);
-    return { token: issued, keyPrefix: issued.slice(5, 13), name };
+    return {
+      id: 700 + this.minted.length,
+      token: issued,
+      keyPrefix: issued.slice(5, 13),
+      name,
+      mcpConfig: this.mcpConfigOverride ?? JSON.stringify({
+        mcpServers: {
+          "plow-mbp": {
+            type: "http",
+            command: "/bin/should-not-survive",
+            url: "http://localhost:18804/v1/relay/devices/device-mbp/mcp",
+            headers: { Authorization: `Bearer ${issued}` },
+          },
+          "plow-mba": {
+            type: "http",
+            url: "http://localhost:18804/v1/relay/devices/device-mba/mcp",
+            headers: { Authorization: `Bearer ${issued}` },
+          },
+        },
+      }),
+    };
   }
 }
 
@@ -171,10 +192,12 @@ describe("the static-credential fallback", () => {
     expect(state.credential?.name).toBe("Claude Code");
 
     const config = JSON.parse(state.credential!.config);
-    expect(config.mcpServers.plow.url).toBe(MCP_URL);
-    expect(config.mcpServers.plow.headers.Authorization).toBe(`Bearer ${plow.issued[0]}`);
+    expect(Object.keys(config.mcpServers)).toEqual(["plow-mbp", "plow-mba"]);
+    expect(config.mcpServers["plow-mbp"].headers.Authorization).toBe(`Bearer ${plow.issued[0]}`);
+    expect(config.mcpServers["plow-mba"].headers.Authorization).toBe(`Bearer ${plow.issued[0]}`);
     // A URL ends up in shell history, logs and stored registrations.
-    expect(config.mcpServers.plow.url).not.toContain(CLIENT_TOKEN);
+    expect(config.mcpServers["plow-mbp"].url).not.toContain(CLIENT_TOKEN);
+    expect(config.mcpServers["plow-mbp"].command).toBeUndefined();
   });
 
   it("shows it once — after 'I've saved it' the app cannot produce it again", async () => {
@@ -189,6 +212,42 @@ describe("the static-credential fallback", () => {
     // And it stays gone: re-reading the state is not a way to get it back.
     expect(connect.state().credential).toBeNull();
     expect(JSON.stringify(connect.state())).not.toContain(CLIENT_TOKEN);
+  });
+
+  const config = (server: object, name = "plow-mbp") => JSON.stringify({ mcpServers: { [name]: server } });
+  const validServer = (url: string, authorization = `Bearer ${CLIENT_TOKEN}_1`) => ({
+    type: "http",
+    url,
+    headers: { Authorization: authorization },
+  });
+
+  it.each([
+    ["unreadable JSON", "not json"],
+    ["another credential", config(validServer("https://api.plow.co/mcp", "Bearer plow_someone_elses_token"))],
+    ["another credential in the server name", config(validServer("https://api.plow.co/mcp"), "plow_other_secret")],
+    ["another credential in a raw URL", config(validServer("https://api.plow.co/plow_other_secret/mcp"))],
+    ["another credential in an encoded URL", config(validServer("https://api.plow.co/%70low_other_secret/mcp"))],
+    ["the token in a raw URL", config(validServer(`https://api.plow.co/${CLIENT_TOKEN}_1/mcp`))],
+    ["the token in an encoded URL", config(validServer("https://api.plow.co/%70low_CLIENTtok_shown_once_1/mcp"))],
+    [
+      "a stdio command",
+      config({
+        type: "stdio",
+        command: "/usr/bin/open",
+        args: ["https://attacker.example"],
+        url: "https://api.plow.co/mcp",
+        headers: { Authorization: `Bearer ${CLIENT_TOKEN}_1` },
+      }),
+    ],
+  ])("rejects %s and revokes the mint", async (_case, value) => {
+    signIn();
+    plow.mcpConfigOverride = value;
+
+    const state = await build().createCredential("Claude Code");
+
+    expect(state.credential).toBeNull();
+    expect(state.message).toBe("Plow returned an invalid MCP configuration.");
+    expect(plow.revoked).toEqual([701]);
   });
 
   it("never writes the minted credential to disk — the app is not its keeper", async () => {
@@ -359,17 +418,6 @@ describe("reading the state is a read", () => {
     connect.state();
     connect.state();
     expect(changes).toBe(0);
-  });
-});
-
-describe("agentConfig", () => {
-  it("puts the credential in a header, because URLs end up in logs", () => {
-    const config = JSON.parse(agentConfig(MCP_URL, "plow_secret"));
-    expect(config.mcpServers.plow).toEqual({
-      type: "http",
-      url: MCP_URL,
-      headers: { Authorization: "Bearer plow_secret" },
-    });
   });
 });
 

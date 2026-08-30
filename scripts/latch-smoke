@@ -114,12 +114,12 @@ def _permissive(handle, path):
     return None
 
 
-def read_config(config_file):
+def read_config(config_file, server_name=None):
     """`(url, token, problem)` from a recorded client registration.
 
     The file is the `_mcpConfig` block the Agents tab renders, saved verbatim
     at the known path `docs/AUTONOMOUS-OPERATION.md` (Stop 3) names:
-    `~/.latch/<install>.json`. Every refusal names keys and paths, never
+    `~/.latch/<agent>.json`. Every refusal names keys and paths, never
     values — an Authorization header is a credential.
     """
     try:
@@ -133,10 +133,15 @@ def read_config(config_file):
     except (UnicodeDecodeError, ValueError):
         return None, None, f"{config_file} is not the JSON block the Agents tab renders"
     servers = parsed.get("mcpServers") if isinstance(parsed, dict) else None
-    if not isinstance(servers, dict) or len(servers) != 1:
-        return None, None, (f"{config_file} must hold exactly one entry under"
-                            " mcpServers — one file per install")
-    (server,) = servers.values()
+    if not isinstance(servers, dict) or not servers:
+        return None, None, f"{config_file} has no entries under mcpServers"
+    if server_name is None and len(servers) != 1:
+        names = ", ".join(sorted(servers))
+        return None, None, f"{config_file} has multiple MCP servers; pass --server NAME ({names})"
+    if server_name is not None and server_name not in servers:
+        names = ", ".join(sorted(servers))
+        return None, None, f"{config_file} has no MCP server named {server_name} ({names})"
+    server = servers[server_name] if server_name is not None else next(iter(servers.values()))
     url = server.get("url") if isinstance(server, dict) else None
     auth = server.get("headers", {}).get("Authorization") if isinstance(server, dict) else None
     if not url or not isinstance(url, str):
@@ -468,7 +473,9 @@ def main():
     parser.add_argument("--config", default=os.environ.get("LATCH_CONFIG"),
                         help="a 0600 file holding the Agents tab's _mcpConfig block —"
                              " supplies url and token together; the recorded-registration"
-                             " convention is ~/.latch/<install>.json (env: LATCH_CONFIG)")
+                             " convention is ~/.latch/<agent>.json (env: LATCH_CONFIG)")
+    parser.add_argument("--server", default=None,
+                        help="mcpServers key to use; required when --config contains multiple devices")
     # REQUIRED. There is no default and no environment fallback: every wrong
     # home this script has produced came from it choosing one, and a chosen
     # home that is wrong reads as a fresh install rather than an error. The
@@ -493,6 +500,8 @@ def main():
     if not args.config and (not args.url or not args.token_file):
         parser.error("pass --config (or LATCH_CONFIG), or both --url and --token-file"
                      " (or MCP_URL / TOKEN_FILE)")
+    if args.server and not args.config:
+        parser.error("--server requires --config")
     # `--home "$(just --evaluate apphome)"` yields "" when that command fails,
     # which is the likeliest way the documented invocation breaks — and falling
     # through to the packaged install would read the wrong one silently.
@@ -504,7 +513,7 @@ def main():
     # MIN_SEND_S leaves less than that by the time the send is reached and the
     # downstream guard refuses every time.
     if args.config:
-        args.url, token, token_problem = read_config(args.config)
+        args.url, token, token_problem = read_config(args.config, args.server)
         credential_flag = "--config (or LATCH_CONFIG)"
     else:
         token, token_problem = read_token(args.token_file)

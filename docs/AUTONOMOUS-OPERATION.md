@@ -25,7 +25,7 @@ and driving a call and reading the log are `scripts/latch-smoke`.
 **One real gap** remains, and it is the whole of what is worth building:
 nothing installs a built artifact onto a target Mac (Stop 2). Addressing an
 install as a client (Stop 3) now has an interim answer — the recorded
-registration at `~/.latch/<install>.json` — with only its one-time mint
+registration at `~/.latch/<agent>.json` — with only its one-time mint
 still a GUI step.
 
 **Three deliberate gates** are not gaps and should stay: the `release`
@@ -119,15 +119,15 @@ file an unattended run can read to reach an install it did not just create.
 
 **The interim fix is in place**: the operator records the registration on
 their own machines, the way `plow-message` reads a target's own
-`plow-api-token` from a known path. The convention — one file per install,
+`plow-api-token` from a known path. The convention — one file per agent credential,
 holding the `_mcpConfig` block the Agents tab renders, verbatim:
 
 ```
-~/.latch/<install>.json        # 0600, directory 0700
+~/.latch/<agent>.json          # 0600, directory 0700
 ```
 
-`scripts/latch-smoke --config ~/.latch/<install>.json` reads url and token
-from it, so an unattended run needs the GUI only once, at mint time. The
+`scripts/latch-smoke --config ~/.latch/<agent>.json --server <name>` selects a
+named Mac from a multi-device block, so an unattended run needs the GUI only once, at mint time. The
 relay endpoint inside is not a secret; the bearer token is — the file never
 gets echoed, committed, or copied into a checkout.
 
@@ -159,7 +159,7 @@ Everything up to the artifact:
   and nothing else about it needs a local keychain
 - drive one real MCP call against an install and read the verdict out of its
   audit log, locally or over SSH: `scripts/latch-smoke` — **given a recorded
-  client registration** (`--config ~/.latch/<install>.json`, Stop 3), whose
+  client registration** (`--config ~/.latch/<agent>.json --server <name>`, Stop 3), whose
   mint is the one remaining GUI step
 - read any install's `audit.ndjson` over SSH, given access to the host
 

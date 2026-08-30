@@ -24,7 +24,7 @@ You are working against the production Plow Latch install on this Mac (`/Applica
 - `electron/` — Electron app state.
 - `plow-wire.log` — wire-protocol log (top-level in the app-support root).
 
-**Client MCP configs** — `~/.latch/*.json`: `mcpServers.plow.{type,url,headers.Authorization}` (**Authorization value is SECRET — never print**; the URL path embeds the deviceId).
+**Client MCP configs** — `~/.latch/*.json`: each named entry under `mcpServers` has `{type,url,headers.Authorization}` (**Authorization value is SECRET — never print**; the URL path embeds the deviceId).
 
 **Relay** — `https://api.plow.co/v1/relay/devices/<deviceId>/mcp`. An unauthenticated request without both Accept types returns 406; with no/bad token expect 401/403 — any of these proves reachability.
 
@@ -78,7 +78,7 @@ jq -r '{approvalMode, mcpHost: (.mcpUrl|sub("^https?://";"")|split("/")[0]), sig
 # identity.json — deviceId first 8 chars; key length only
 jq -r '{deviceId8: (.deviceId[0:8]), name, keyLen: (.privateKeyBase64|length)}' "$HOME/Library/Application Support/Plow-Latch/device/identity.json"
 # client configs — host only, never headers
-jq -r '.mcpServers.plow.url | sub("^https?://";"") | split("/")[0]' ~/.latch/*.json
+jq -r '.mcpServers | to_entries[] | [.key, (.value.url | sub("^https?://";"") | split("/")[0])] | @tsv' ~/.latch/*.json
 ```
 
 Conventions: `relayCredentialEnc` / `relayCredential` / `privateKeyBase64` / `Authorization` — presence/length only, never the value. `deviceId` — first 8 chars. `accountUid` — last 3 chars.

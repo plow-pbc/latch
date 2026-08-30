@@ -171,6 +171,12 @@ describe.skipIf(!havePython())("latch-smoke, run for real", () => {
   }
   const registration = (url: string) => JSON.stringify(
     { mcpServers: { plow: { type: "http", url, headers: { Authorization: "Bearer t" } } } });
+  const multiRegistration = JSON.stringify({
+    mcpServers: {
+      "plow-mbp": { type: "http", url: "relay.plow.com/mbp", headers: { Authorization: "Bearer t" } },
+      "plow-mba": { type: "http", url: "relay.plow.com/mba", headers: { Authorization: "Bearer t" } },
+    },
+  });
   const refusals: [string, () => string[], number, string, string | null, boolean][] = [
     ["a local home that does not exist", () => fixture("5", NOT_A_HOME).argv,
       1, "REFUSED — no such home", NOT_A_HOME, false],
@@ -198,7 +204,14 @@ describe.skipIf(!havePython())("latch-smoke, run for real", () => {
       () => [script, "--config", "/nonexistent/config", "--home", REAL_HOME, "--timeout", "5"],
       1, "REFUSED — /nonexistent/config", null, false],
     ["a config file that is not the rendered block", () => configArgv('{"mcpServers":{}}'),
-      1, "exactly one entry", null, false],
+      1, "has no entries", null, false],
+    ["a multi-device config without a selected server", () => configArgv(multiRegistration),
+      1, "pass --server", null, false],
+    ["a selected server whose URL cannot connect", () => {
+      const argv = configArgv(multiRegistration);
+      argv.splice(argv.indexOf("--home"), 0, "--server", "plow-mba");
+      return argv;
+    }, 1, "The request never left this Mac", REAL_HOME, true],
     // The 0600 contract is enforced, not just documented — for both credential files.
     ["a config file another account can read", () => {
       const argv = configArgv(registration("http://127.0.0.1:9/mcp"));

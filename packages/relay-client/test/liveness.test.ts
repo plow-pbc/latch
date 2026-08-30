@@ -36,7 +36,7 @@ class FakeConn implements Connection {
     this.sent.push(frame);
     if (this.deaf) return;
     // A live relay answers: the handshake, and a pong for every ping.
-    if (frame.type === "auth") this.deliver({ type: "auth.ok" });
+    if (frame.type === "auth") this.deliver({ type: "auth.ok", device_id: "device-1" });
     if (frame.type === "ping") this.deliver({ type: "pong" });
   }
 
@@ -67,6 +67,7 @@ describe("a socket that goes silent", () => {
     const client = new RelayClient({
       url: "ws://example.invalid/relay",
       credential: "plow_sk_test",
+      deviceId: "device-1",
       serve: async () => new Response("no"),
       onStatusChange: (connected) => status.push(connected),
       // Full jitter picks a delay in [0, ceiling]; pinned so the reconnect
@@ -83,10 +84,48 @@ describe("a socket that goes silent", () => {
     return { client, conns, status };
   }
 
+  it.each([
+    ["retries a transient failure", "retry", 500, 2, 1],
+    ["stays stopped after terminal preparation", "stop", 30_000, 1, 0],
+  ] as const)("%s before it opens a socket", async (_case, outcome, elapsed, expectedPreparations, expectedDials) => {
+    let preparations = 0;
+    let dials = 0;
+    let client!: RelayClient;
+    client = new RelayClient({
+      url: "ws://example.invalid/relay",
+      credential: "plow_sk_test",
+      deviceId: "device-1",
+      serve: async () => new Response("no"),
+      beforeConnect: async () => {
+        preparations += 1;
+        if (outcome === "retry" && preparations === 1) throw new Error("registration unavailable");
+        if (outcome === "stop") await client.stop();
+      },
+      random: () => 1,
+      dial: () => ({
+        connect: async () => {
+          dials += 1;
+          return new FakeConn();
+        },
+      }),
+    });
+
+    await client.start();
+    await vi.advanceTimersByTimeAsync(elapsed);
+    expect(preparations).toBe(expectedPreparations);
+    expect(dials).toBe(expectedDials);
+    await client.stop();
+  });
+
   it("drops it, greys the dot, and reconnects", async () => {
     const { client, conns, status } = harness();
     await client.start();
     conns[0].handshake();
+    expect(conns[0].sent[0]).toMatchObject({
+      type: "auth",
+      token: "plow_sk_test",
+      device_id: "device-1",
+    });
     expect(client.isConnected).toBe(true);
     expect(status).toEqual([true]);
 
@@ -163,7 +202,7 @@ describe("a socket that goes silent", () => {
     const { client, conns, status } = harness();
     await client.start();
     conns[0].deliver({ type: "auth.challenge" });
-    conns[0].deliver({ type: "auth.ok", ping_interval_ms: 1000 });
+    conns[0].deliver({ type: "auth.ok", device_id: "device-1", ping_interval_ms: 1000 });
     expect(client.isConnected).toBe(true);
 
     // That relay goes silent and is dropped on its own (fast) cadence.

@@ -134,10 +134,9 @@ export interface Settings {
    * SECRET: never sent to the renderer, never written to a log or an error
    * string. */
   relayCredential: string;
-  /** The account this Mac is signed into, and the endpoint agents POST to.
-   * Both come from `GET /v1/relay/info` — the server stays authoritative and
-   * the app never constructs the MCP URL itself. Cached only for display. */
+  /** The account this Mac is signed into. */
   accountUid: string;
+  /** This installation's server-authored MCP endpoint. */
   mcpUrl: string;
   /** The last-selected main-window tab, restored across launches.
    *

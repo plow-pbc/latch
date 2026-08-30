@@ -205,11 +205,9 @@ holds one WebSocket to the relay and serves what comes down it.
 - The receive loop **never awaits** a request. Serving can take the whole call
   budget, and blocking there would stall the heartbeat into staleness.
 
-**`src/wire.ts` is the interface.** The handshake and heartbeat are fixed by
-plow's existing channel protocol, but the two request/response frame `type`
-strings and the client kind are *not* pinned by the design docs — the names
-there are our proposal. If the relay chooses differently, that file is the only
-thing that changes.
+**`src/wire.ts` is the interface.** Its handshake binds `auth` and `auth.ok` to
+the stable `device_id` and has no `ready` frame. The two request/response frame
+`type` strings and the client kind remain centralized there too.
 
 ## First-run login
 
@@ -221,8 +219,10 @@ Electron, renderable offscreen for screenshots — and `src/plowApi.ts` is the
 only place that talks HTTP to Plow. The window (`renderer/onboarding.html`)
 draws whatever state the main process hands it and owns no copy of its own.
 
-- **Four calls:** `POST /v1/auth/otp/request` → `POST /v1/auth/otp/verify` →
-  `GET /v1/relay/info` → open the socket. Then "create an agent" is
+- **Five calls:** `POST /v1/auth/otp/request` → `POST /v1/auth/otp/verify` →
+  `GET /v1/relay/info` → `PUT /v1/relay/devices/{device-id}` → open the socket.
+  Registration reuses device-core's stable identity and the Mac's DNS hostname;
+  Plow allocates the durable display name (`mbp`, `mbp (2)`). Then "create an agent" is
   `POST /v1/relay/agents`, which the stored session may call.
 - **The login session IS the credential this Mac keeps.** Latch is the owner's
   manager app, not an agent: it holds the socket, lists chats and Plow's
@@ -255,10 +255,14 @@ draws whatever state the main process hands it and owns no copy of its own.
   `DOMO_API_BASE_URL` as an override a developer exports. A credential is only valid
   against the environment that minted it, so an editable origin could only ever
   be wrong. The device socket derives from that base by swapping the scheme; the
-  **agent endpoint is not derived at all** — `GET /v1/relay/info` returns it and
-  the server stays authoritative.
+  **agent endpoints are not derived at all** — registration and agent minting
+  return server-authored URLs/configuration, and the server stays authoritative.
 - **Agent credentials are shown exactly once**, as a ready-to-paste MCP config
-  with the token in an `Authorization` header — never in the URL.
+  with the token in an `Authorization` header — never in the URL. The config has
+  one named server per active Latch installation (`plow-mbp`, `plow-mba`, …),
+  and every agent credential on the account can reach all of them. The original
+  account URL remains a compatibility alias for the oldest active device; it
+  fails with that device's name when offline and never falls back to another Mac.
 
 Evidence, both reproducible and both failing loudly rather than quietly:
 
