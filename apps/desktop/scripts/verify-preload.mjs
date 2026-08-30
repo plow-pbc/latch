@@ -798,7 +798,7 @@ app.whenReady().then(async () => {
     const modal = document.querySelector(".cloud-modal");
     return {
       title: modal.querySelector(".group-title")?.textContent.trim(),
-      copy: modal.textContent.includes("stop reading and replying on this line"),
+      copy: modal.textContent.includes("stop reading and replying."),
       buttons: [...modal.querySelectorAll("button")].map((button) => button.textContent.trim()),
     };
   }})()`);

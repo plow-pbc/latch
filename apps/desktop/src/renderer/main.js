@@ -1240,7 +1240,7 @@ function syncCloudModal(state, redraw) {
       el("div", { class: "group-title", text: `Delete ${name}?` }),
       el("p", {
         class: "conn-note",
-        text: "The agent will stop reading and replying on this line.",
+        text: "The agent will stop reading and replying.",
       }),
       note,
       el("div", { class: "row cloud-modal-actions" }, [

@@ -627,7 +627,7 @@ const SCREENS = [
     },
     expect: [
       "Delete Household helper?",
-      "The agent will stop reading and replying on this line.",
+      "The agent will stop reading and replying.",
       "Cancel", "Delete agent",
     ],
     after: async (win) => {
