@@ -24,12 +24,14 @@ describe("cloud-agent pure mappings", () => {
   it("keeps provider URL and session identity out of renderer state", () => {
     const row = toCloudAgentDisplayRow(agent(), {
       line: { uid: "lin_willow", label: "Willow · +1 415-555-0100" },
+      canMessage: true,
       threads: [{ uid: "cht_123", label: "+1 415 555 0100 · Pat, Lee" }],
     });
 
     expect(row).toMatchObject({
       agentId: "agent_stable",
       line: { uid: "lin_willow", label: "Willow · +1 415-555-0100" },
+      canMessage: true,
       threads: [{ uid: "cht_123", label: "+1 415 555 0100 · Pat, Lee" }],
     });
     expect(JSON.stringify(row)).not.toContain("session_old");

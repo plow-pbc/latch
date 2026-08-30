@@ -20,6 +20,7 @@ const CLOUD_PROVIDERS = [
   { value: "exe:life", label: "Life" },
   { value: "exe:pirate", label: "Pirate" },
 ];
+const NEW_LINE_VALUE = "__new_line__";
 
 // Null until boot() picks one: the HTML marks Audit active for the first paint,
 // but boot must still RENDER that pane, and "already on this tab" now returns
@@ -979,23 +980,32 @@ function cloudLinePickerNodes(state, modal, start, cancel, message = null) {
     class: "text",
     attrs: { "aria-label": "Line" },
   }, [
+    el("option", { text: "Choose a line…", attrs: { value: "", disabled: "" } }),
     ...freeLines.map((line) => el("option", { text: line.label, attrs: { value: line.uid } })),
-    el("option", { text: "New line", attrs: { value: "" } }),
+    el("option", { text: "New line", attrs: { value: NEW_LINE_VALUE } }),
   ]);
   const available = new Set(freeLines.map((line) => line.uid));
-  if (modal.selectedLineUid === undefined ||
-      (modal.selectedLineUid !== null && !available.has(modal.selectedLineUid))) {
-    modal.selectedLineUid = freeLines[0]?.uid ?? null;
+  if (modal.selectedLineUid !== undefined && modal.selectedLineUid !== null &&
+      !available.has(modal.selectedLineUid)) {
+    modal.selectedLineUid = undefined;
   }
-  lineSelect.value = modal.selectedLineUid ?? "";
-  lineSelect.addEventListener("change", () => {
-    modal.selectedLineUid = lineSelect.value || null;
-  });
+  lineSelect.value = modal.selectedLineUid === null
+    ? NEW_LINE_VALUE
+    : modal.selectedLineUid ?? "";
   const submit = el("button", {
     class: "btn primary",
     text: modal.mode === "change" ? "Change line" : "Create agent",
   });
-  submit.addEventListener("click", () => start(modal.selectedLineUid));
+  submit.disabled = modal.selectedLineUid === undefined;
+  lineSelect.addEventListener("change", () => {
+    modal.selectedLineUid = lineSelect.value === NEW_LINE_VALUE
+      ? null
+      : lineSelect.value || undefined;
+    submit.disabled = modal.selectedLineUid === undefined;
+  });
+  submit.addEventListener("click", () => {
+    if (modal.selectedLineUid !== undefined) start(modal.selectedLineUid);
+  });
   return [
     ...(message ? [el("div", { class: "cloud-callout cloud-error" }, [
       el("p", { class: "faint", text: cloudErrorCopy(message) }),
@@ -1164,7 +1174,7 @@ function syncCloudLineModal(state, redraw) {
       el("label", { text: "Name (optional)" }),
       modal.nameInput,
     ]), el("div", { class: "field" }, [
-      el("label", { text: "Provider" }),
+      el("label", { text: "Agent type" }),
       modal.providerSelect,
     ])]),
     ...cloudLinePickerNodes(state, modal, start, cancel, changing ? flow.message : null),
@@ -1183,7 +1193,7 @@ function openCloudCreate(trigger, state, redraw) {
   });
   const providerSelect = el("select", {
     class: "text",
-    attrs: { "aria-label": "Provider" },
+    attrs: { "aria-label": "Agent type" },
   }, CLOUD_PROVIDERS.map(({ value, label }) =>
     el("option", { text: label, attrs: { value } })));
   if (!openCloudModal(trigger, [], nameInput, dismissCloudLineModal)) return;
@@ -1254,7 +1264,7 @@ function syncCloudModal(state, redraw) {
     const changeLine = agent.status === "failed"
       ? null
       : el("button", { class: "btn", text: "Change line" });
-    const message = agent.line ? el("button", { class: "btn", text: "Message" }) : null;
+    const message = agent.canMessage ? el("button", { class: "btn", text: "Message" }) : null;
     const remove = el("button", { class: "btn danger", text: "Delete agent" });
     close.addEventListener("click", closeCloudModal);
     message?.addEventListener("click", () => window.domo.cloudOpenMessages(agent.agentId));
@@ -1587,7 +1597,7 @@ function cloudEntityRow(row, agent, state, redraw) {
   const retry = agent?.status === "failed"
     ? el("button", { class: "btn small", text: "Retry" })
     : null;
-  const message = agent?.line
+  const message = agent?.canMessage
     ? el("button", {
         class: "btn small message-btn",
         text: "Message",

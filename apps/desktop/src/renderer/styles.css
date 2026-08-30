@@ -695,7 +695,8 @@ textarea.text { min-height: 70px; resize: vertical; }
 .cloud-error { border-color: var(--red-bd); background: var(--red-bg); }
 .cloud-error .cloud-callout-title { color: var(--red-fg); }
 .cloud-modal-actions { margin-top: 18px; }
-.cloud-agent-name { margin-top: 14px; }
+.cloud-modal .field + .field { margin-top: 14px; }
+.cloud-agent-name { margin-top: 0; }
 .cloud-agent-line { margin-top: 14px; }
 .cloud-confirmed {
   margin-top: 18px; color: var(--green-fg); font-size: 16px; font-weight: 600;

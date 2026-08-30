@@ -773,8 +773,10 @@ export class PlowApi {
     // that repeats its bearer credential must never reach the screen, and the
     // rule covers any encoding of it — a prefix, a truncation, a fragment. A
     // check for the whole token only catches the one encoding we thought of,
-    // and it let the first ten characters through. Nothing here inspects the
-    // value; the decision is made from whether the call carried a credential.
+    // and it let the first ten characters through. Detail is therefore kept or
+    // dropped solely from whether the call carried a credential. A separately
+    // structured, format-checked code is retained for machine decisions and is
+    // never used as display copy.
     let detail = "";
     let code: string | undefined;
     try {

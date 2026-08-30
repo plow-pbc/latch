@@ -79,6 +79,7 @@ const cloudAgent = {
   agentId: "cag_probe",
   name: "Household helper",
   line: { uid: "lin_willow", label: "Willow · +1 415-555-0142" },
+  canMessage: true,
   threads: [{ uid: "chat_probe", label: cloudThreadTitle }],
   status: "running",
   failureReason: null,
@@ -203,6 +204,7 @@ ipcMain.handle("cloud:create", async (_e, input) => {
       agentId: "cag_created",
       name: input.name || "Cloud agent",
       line: { uid: "lin_ash", label: "Ash · +1 415-555-0199" },
+      canMessage: true,
       threads: [],
       status: "provisioning",
       failureReason: null,
@@ -760,24 +762,33 @@ app.whenReady().then(async () => {
   const cloudProbeBeforeCreate = cloudProbe;
   const cloudCreatePicker = await win.webContents.executeJavaScript(`(${() => {
     const modal = document.querySelector(".cloud-modal");
-    const provider = modal.querySelector('select[aria-label="Provider"]');
+    const provider = modal.querySelector('select[aria-label="Agent type"]');
     const line = modal.querySelector('select[aria-label="Line"]');
+    const fields = [...modal.querySelectorAll(".field")];
     return {
       title: modal.querySelector(".group-title")?.textContent.trim(),
       hasName: modal.querySelector('input[aria-label="Agent name"]') !== null,
+      hasAgentType: provider?.previousElementSibling?.textContent.trim() === "Agent type",
       providers: [...provider.options].map((option) => `${option.textContent.trim()}:${option.value}`),
       lines: [...line.options].map((option) => `${option.textContent.trim()}:${option.value}`),
       selectedLine: line.value,
       submitDisabled: [...modal.querySelectorAll("button")]
         .find((button) => button.textContent.trim() === "Create agent")?.disabled,
       buttons: [...modal.querySelectorAll("button")].map((button) => button.textContent.trim()),
+      fieldGaps: fields.slice(1).map((field, index) => Math.round(
+        field.getBoundingClientRect().top - fields[index].getBoundingClientRect().bottom,
+      )),
+      labelGaps: fields.map((field) => Math.round(
+        field.querySelector("input, select").getBoundingClientRect().top -
+          field.querySelector("label").getBoundingClientRect().bottom,
+      )),
     };
   }})()`);
   await win.webContents.executeJavaScript(
     `(() => {
-      document.querySelector('.cloud-modal select[aria-label="Provider"]').value = "exe:life";
+      document.querySelector('.cloud-modal select[aria-label="Agent type"]').value = "exe:life";
       const line = document.querySelector('.cloud-modal select[aria-label="Line"]');
-      line.value = "";
+      line.value = line.options[line.options.length - 1].value;
       line.dispatchEvent(new Event("change"));
     })()`,
   );
@@ -789,7 +800,7 @@ app.whenReady().then(async () => {
       .find((button) => button.textContent.trim() === "Create agent");
     return {
       stillPicking: Boolean(line),
-      selected: line.value === "",
+      selected: line.selectedOptions[0]?.textContent.trim() === "New line",
       submitEnabled: submit?.disabled === false,
     };
   }})()`);
@@ -821,7 +832,10 @@ app.whenReady().then(async () => {
     "the existing-line New agent picker");
   await win.webContents.executeJavaScript(`(() => {
     document.querySelector('.cloud-modal input[aria-label="Agent name"]').value = "New helper";
-    document.querySelector('.cloud-modal select[aria-label="Provider"]').value = "exe:pirate";
+    document.querySelector('.cloud-modal select[aria-label="Agent type"]').value = "exe:pirate";
+    const line = document.querySelector('.cloud-modal select[aria-label="Line"]');
+    line.value = "lin_ash";
+    line.dispatchEvent(new Event("change"));
   })()`);
   await clickCloudButton(win, "Create agent");
   await waitFor(win, `!document.querySelector(".cloud-modal")`,
@@ -852,7 +866,7 @@ app.whenReady().then(async () => {
     "the confirmed-code New agent picker");
   await win.webContents.executeJavaScript(`(() => {
     const line = document.querySelector('.cloud-modal select[aria-label="Line"]');
-    line.value = "";
+    line.value = line.options[line.options.length - 1].value;
     line.dispatchEvent(new Event("change"));
   })()`);
   await clickCloudButton(win, "Create agent");
@@ -862,6 +876,7 @@ app.whenReady().then(async () => {
     agentId: "cag_confirmed",
     name: "Cloud agent",
     line: { uid: "lin_new", label: "+1 415-555-0999" },
+    canMessage: true,
     threads: [],
     status: "provisioning",
     failureReason: null,
@@ -920,6 +935,11 @@ app.whenReady().then(async () => {
       enabled: submit.disabled === false,
     };
   }})()`);
+  await win.webContents.executeJavaScript(`(() => {
+    const line = document.querySelector('.cloud-modal select[aria-label="Line"]');
+    line.value = line.options[line.options.length - 1].value;
+    line.dispatchEvent(new Event("change"));
+  })()`);
   await clickCloudButton(win, "Create agent");
   await waitFor(win, `document.querySelector(".cloud-modal")?.textContent
     .includes("No numbers are available right now. Try again later.")`,
@@ -998,7 +1018,7 @@ app.whenReady().then(async () => {
   const changeRequestBeforeSelection = cloudChangeRequest;
   await win.webContents.executeJavaScript(`(() => {
     const line = document.querySelector('.cloud-modal select[aria-label="Line"]');
-    line.value = "";
+    line.value = line.options[line.options.length - 1].value;
     line.dispatchEvent(new Event("change"));
   })()`);
   const cloudChangeSelection = await win.webContents.executeJavaScript(`(${() => {
@@ -1008,7 +1028,7 @@ app.whenReady().then(async () => {
       .find((button) => button.textContent.trim() === "Change line");
     return {
       stillPicking: Boolean(line),
-      selected: line.value === "",
+      selected: line.selectedOptions[0]?.textContent.trim() === "New line",
       submitEnabled: submit?.disabled === false,
     };
   }})()`);
@@ -1064,7 +1084,7 @@ app.whenReady().then(async () => {
 
   cloudProbe = {
     ...cloudProbe,
-    cloudAgents: [{ ...cloudAgent, line: null, threads: [] }],
+    cloudAgents: [{ ...cloudAgent, line: null, canMessage: false, threads: [] }],
     cloudChatsError: null,
     cloudChatsLoaded: false,
   };
@@ -1106,7 +1126,7 @@ app.whenReady().then(async () => {
 
   cloudProbe = {
     ...cloudProbe,
-    cloudAgents: [{ ...cloudAgent, line: null, threads: [] }],
+    cloudAgents: [{ ...cloudAgent, line: null, canMessage: false, threads: [] }],
     cloudChatsError: "The chat list is unavailable.",
     cloudChatsLoaded: false,
   };
@@ -1186,6 +1206,11 @@ app.whenReady().then(async () => {
   );
   await waitFor(win, `document.querySelector('.cloud-modal select[aria-label="Line"]')`,
     "the create-error picker");
+  await win.webContents.executeJavaScript(`(() => {
+    const line = document.querySelector('.cloud-modal select[aria-label="Line"]');
+    line.value = "lin_error";
+    line.dispatchEvent(new Event("change"));
+  })()`);
   await clickCloudButton(win, "Create agent");
   await waitFor(win, `document.querySelector(".cloud-modal .cloud-callout-title")?.textContent
     .includes("wasn't created")`, "the create error card");
@@ -1245,6 +1270,11 @@ app.whenReady().then(async () => {
   await clickCloudButton(win, "Change line");
   await waitFor(win, `document.querySelector('.cloud-modal select[aria-label="Line"]')`,
     "the change-error picker");
+  await win.webContents.executeJavaScript(`(() => {
+    const line = document.querySelector('.cloud-modal select[aria-label="Line"]');
+    line.value = "lin_error";
+    line.dispatchEvent(new Event("change"));
+  })()`);
   await clickCloudButton(win, "Change line");
   await waitFor(win, `document.querySelector(".cloud-modal .cloud-callout-title")?.textContent
     .includes("wasn't changed")`, "the change-line error card");
@@ -1278,6 +1308,11 @@ app.whenReady().then(async () => {
   await clickCloudButton(win, "Change line");
   await waitFor(win, `document.querySelector('.cloud-modal select[aria-label="Line"]')`,
     "the agent-gone line picker");
+  await win.webContents.executeJavaScript(`(() => {
+    const line = document.querySelector('.cloud-modal select[aria-label="Line"]');
+    line.value = line.options[line.options.length - 1].value;
+    line.dispatchEvent(new Event("change"));
+  })()`);
   await clickCloudButton(win, "Change line");
   await waitFor(win, `document.querySelector(".cloud-modal .cloud-activation-code")`,
     "the agent-gone activation code");
@@ -1907,12 +1942,16 @@ app.whenReady().then(async () => {
     cloudRoster.offersNewAgent &&
     cloudCreatePicker.title === "New agent" &&
     cloudCreatePicker.hasName &&
+    cloudCreatePicker.hasAgentType &&
     cloudCreatePicker.providers.join("|") ===
       "Hermes:exe:hermes|Life:exe:life|Pirate:exe:pirate" &&
     cloudCreatePicker.lines.join("|") ===
-      "Ash · +1 415-555-0199:lin_ash|New line:" &&
-    cloudCreatePicker.selectedLine === "lin_ash" &&
-    !cloudCreatePicker.submitDisabled &&
+      "Choose a line…:|Ash · +1 415-555-0199:lin_ash|New line:__new_line__" &&
+    cloudCreatePicker.selectedLine === "" &&
+    cloudCreatePicker.submitDisabled &&
+    cloudCreatePicker.fieldGaps.join("|") === "14|14" &&
+    cloudCreatePicker.labelGaps.every((gap) =>
+      gap === cloudCreatePicker.labelGaps[0] && gap >= 4) &&
     cloudCreatePicker.buttons.join("|") === "Cancel|Create agent" &&
     cloudCreateSelection.stillPicking &&
     cloudCreateSelection.selected &&
@@ -1934,9 +1973,9 @@ app.whenReady().then(async () => {
     cloudCodeConfirmed.copy &&
     cloudCodeConfirmed.noButton &&
     cloudCodeConfirmedClosed &&
-    cloudNoFreeLines.options.join("|") === "New line" &&
+    cloudNoFreeLines.options.join("|") === "Choose a line…|New line" &&
     cloudNoFreeLines.selected === "" &&
-    cloudNoFreeLines.enabled &&
+    !cloudNoFreeLines.enabled &&
     cloudNoNumbers.copy &&
     cloudNoNumbers.buttons.join("|") === "Close" &&
     cloudDetail.title === "Household helper" &&
@@ -1948,9 +1987,9 @@ app.whenReady().then(async () => {
     cloudChangePicker.title === "Change line" &&
     cloudChangePicker.exactCopy &&
     cloudChangePicker.lines.join("|") ===
-      "Ash · +1 415-555-0199:lin_ash|New line:" &&
-    cloudChangePicker.selectedLine === "lin_ash" &&
-    !cloudChangePicker.submitDisabled &&
+      "Choose a line…:|Ash · +1 415-555-0199:lin_ash|New line:__new_line__" &&
+    cloudChangePicker.selectedLine === "" &&
+    cloudChangePicker.submitDisabled &&
     cloudChangePicker.buttons.join("|") === "Cancel|Change line" &&
     cloudChangeSelection.stillPicking &&
     cloudChangeSelection.selected &&

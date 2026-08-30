@@ -289,6 +289,28 @@ describe("PlowApi", () => {
     expect(error).toMatchObject({ status: 503, code: undefined });
   });
 
+  it("retains a structured activation error code separately from display copy", async () => {
+    const { fetchImpl } = recordingFetch([{
+      status: 409,
+      body: {
+        detail: {
+          code: "NO_CHAT_LINE_AVAILABLE",
+          message: "server-authored wording is not display copy",
+        },
+      },
+    }]);
+
+    const error = await new PlowApi("https://api.plow.co", fetchImpl)
+      .createProvisionedActivation()
+      .catch((caught: unknown) => caught as PlowApiError);
+
+    expect(error).toMatchObject({
+      status: 409,
+      code: "NO_CHAT_LINE_AVAILABLE",
+      message: "Plow returned 409.",
+    });
+  });
+
   it("drops the provisioned redeem token and finds an agent participant out of position", async () => {
     const token = "plow_session_that_must_be_dropped";
     const { fetchImpl } = recordingFetch([{

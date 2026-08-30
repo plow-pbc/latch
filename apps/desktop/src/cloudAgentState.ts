@@ -110,7 +110,7 @@ export interface CloudLineFlowUiState {
 export interface CloudCreateInput {
   name: string;
   /** Provider executable selected in the New agent form. */
-  provider?: string;
+  provider: string;
   /** `null` asks Plow to provision a new line through activation. */
   lineUid: string | null;
 }
@@ -215,6 +215,8 @@ export class CloudAgentState {
   private pending = new Set<string>();
   private polls = new Map<string, AbortController>();
   private retryRequests = new Map<string, CreateCloudAgentRequest>();
+  /** Provider identity retained in main so relabeling cannot change a retry body. */
+  private providers = new Map<string, string>();
   private lineFlowGeneration = 0;
   /** SECRET. Never crosses `state()` and is discarded on every terminal path. */
   private activationSecret: string | null = null;
@@ -344,7 +346,7 @@ export class CloudAgentState {
   /** Start a new agent on a known line, or mint and watch a brand-new line. */
   async create(input: CloudCreateInput): Promise<string | null> {
     const name = typeof input?.name === "string" ? input.name.trim() : "";
-    const provider = typeof input?.provider === "string" ? input.provider.trim() : "exe:hermes";
+    const provider = typeof input?.provider === "string" ? input.provider.trim() : "";
     if (!provider) {
       this.setLineFlowError("create", "Pick an agent type.", false);
       return null;
@@ -438,13 +440,7 @@ export class CloudAgentState {
   /** A Messages deep link for one resolved agent line, kept in main-process state. */
   agentSmsUrl(agentId: string): string | null {
     const lineUid = this.rows.get(agentId)?.line?.uid;
-    if (!lineUid) return null;
-    const number = (
-      this.lines?.find((line) => line.uid === lineUid)?.number ??
-      this.chats.find((chat) => chat.lineUid === lineUid)?.recipients?.line ??
-      ""
-    ).trim();
-    return E164.test(number) ? `sms:${number}` : null;
+    return this.lineDetails(lineUid ?? null).smsUrl;
   }
 
   private async startNewLine(
@@ -573,7 +569,7 @@ export class CloudAgentState {
     const lineUid = request.lineUid;
     if (lineUid === null) return Promise.resolve(null);
     return request.kind === "create"
-      ? this.provision({ name: request.name, provider: request.provider ?? "exe:hermes", lineUid }, generation, flow)
+      ? this.provision({ name: request.name, provider: request.provider, lineUid }, generation, flow)
       : this.moveToLine(request.agentId, lineUid, generation, flow);
   }
 
@@ -648,11 +644,19 @@ export class CloudAgentState {
       ? moved
       : { ...moved, name: previous.name };
     this.rows.set(agentId, this.rowFor(display));
-    this.retryRequests.set(agentId, {
-      lineUid,
-      name: moved.name ?? previous?.name ?? "",
-      provider: moved.provider ?? "exe:hermes",
-    });
+    const provider = moved.provider?.trim() ||
+      this.retryRequests.get(agentId)?.provider ||
+      this.providers.get(agentId);
+    if (provider) {
+      this.providers.set(agentId, provider);
+      this.retryRequests.set(agentId, {
+        lineUid,
+        name: moved.name ?? previous?.name ?? "",
+        provider,
+      });
+    } else {
+      this.retryRequests.delete(agentId);
+    }
     this.completeLineFlow(agentId);
     this.publish();
     return agentId;
@@ -797,6 +801,7 @@ export class CloudAgentState {
       if (generation !== this.generation) return false;
       this.rows.delete(id);
       this.homeChatUids.delete(id);
+      this.providers.delete(id);
       this.pending.delete(id);
       this.retryRequests.delete(id);
       this.publish();
@@ -819,6 +824,7 @@ export class CloudAgentState {
     for (const agentId of [...this.polls.keys()]) this.abortPoll(agentId);
     this.rows.clear();
     this.homeChatUids.clear();
+    this.providers.clear();
     this.pending.clear();
     this.retryRequests.clear();
     this.chats = [];
@@ -852,6 +858,7 @@ export class CloudAgentState {
         if (generation !== this.generation) return;
         this.rows.delete(agentId);
         this.homeChatUids.delete(agentId);
+        this.providers.delete(agentId);
         this.pending.delete(agentId);
         this.retryRequests.delete(agentId);
         this.publish();
@@ -875,13 +882,21 @@ export class CloudAgentState {
         agents.map((agent) => [agent.agentId, this.rowFor(agent)] as const),
       );
       for (const agent of agents) {
+        const resourceProvider = agent.provider?.trim() || null;
+        const provider = resourceProvider ??
+          this.retryRequests.get(agent.agentId)?.provider ??
+          this.providers.get(agent.agentId);
+        if (provider) this.providers.set(agent.agentId, provider);
+        else this.providers.delete(agent.agentId);
         const lineUid = this.agentLineUid(agent);
-        if (lineUid !== null) {
+        if (lineUid !== null && provider) {
           this.retryRequests.set(agent.agentId, {
             lineUid,
             name: agent.name ?? "",
-            provider: agent.provider ?? "exe:hermes",
+            provider,
           });
+        } else if (lineUid !== null) {
+          this.retryRequests.delete(agent.agentId);
         }
       }
       for (const [agentId, row] of this.rows) {
@@ -892,6 +907,9 @@ export class CloudAgentState {
       }
       for (const agentId of this.retryRequests.keys()) {
         if (!listed.has(agentId)) this.retryRequests.delete(agentId);
+      }
+      for (const agentId of this.providers.keys()) {
+        if (!listed.has(agentId) && !this.pending.has(agentId)) this.providers.delete(agentId);
       }
       this.rows = listed;
       this.agentsError = null;
@@ -951,6 +969,7 @@ export class CloudAgentState {
   }
 
   private observe(agent: CloudAgentResource, request: CreateCloudAgentRequest): void {
+    this.providers.set(agent.agentId, request.provider);
     this.retryRequests.set(agent.agentId, { ...request });
     this.rows.set(agent.agentId, this.rowFor(agent, request.name));
     this.publish();
@@ -962,8 +981,10 @@ export class CloudAgentState {
     if (homeChatUid) this.homeChatUids.set(agent.agentId, homeChatUid);
     else this.homeChatUids.delete(agent.agentId);
     const lineUid = this.agentLineUid(agent);
+    const details = this.lineDetails(lineUid);
     return toCloudAgentDisplayRow(displayAgent, {
-      line: this.lineFor(lineUid),
+      line: details.line,
+      canMessage: details.canMessage,
       threads: this.threadsFor(lineUid),
     });
   }
@@ -986,7 +1007,7 @@ export class CloudAgentState {
       const uid = chat.lineUid;
       if (!uid || occupied.has(uid) || seen.has(uid)) continue;
       seen.add(uid);
-      const line = this.lineFor(uid);
+      const line = this.lineDetails(uid).line;
       if (line) free.push(line);
     }
     return free.sort((a, b) => a.label.localeCompare(b.label));
@@ -1000,16 +1021,29 @@ export class CloudAgentState {
       .map((chat) => ({ uid: chat.uid, label: this.chatTitle(chat) }));
   }
 
-  /** Resolve the agent's line by stable uid, even when it has no current chats. */
-  private lineFor(lineUid: string | null): CloudAgentLine | null {
-    if (lineUid === null) return null;
+  /** Resolve display and Messages addressability from the same line facts. */
+  private lineDetails(lineUid: string | null): {
+    line: CloudAgentLine | null;
+    canMessage: boolean;
+    smsUrl: string | null;
+  } {
+    if (lineUid === null) return { line: null, canMessage: false, smsUrl: null };
     const known = this.lines?.find((line) => line.uid === lineUid);
     const chat = this.chats.find((candidate) => candidate.lineUid === lineUid);
     const name = (known?.displayName ?? "").trim();
-    const number = formatNumber(known?.number ?? chat?.recipients?.line ?? "");
+    const numbers = [known?.number, chat?.recipients?.line]
+      .filter((number): number is string => typeof number === "string")
+      .map((number) => number.trim())
+      .filter(Boolean);
+    const messageNumber = numbers.find((number) => E164.test(number)) ?? null;
+    const number = formatNumber(messageNumber ?? numbers[0] ?? "");
     return {
-      uid: lineUid,
-      label: name && number ? `${name} · ${number}` : name || number || "Unknown line",
+      line: {
+        uid: lineUid,
+        label: name && number ? `${name} · ${number}` : name || number || "Unknown line",
+      },
+      canMessage: messageNumber !== null,
+      smsUrl: messageNumber === null ? null : `sms:${messageNumber}`,
     };
   }
 
@@ -1030,21 +1064,31 @@ export class CloudAgentState {
     for (const [agentId, row] of this.rows) {
       const homeChatUid = this.homeChatUids.get(agentId);
       const lineUid = this.chats.find((chat) => chat.uid === homeChatUid)?.lineUid ?? null;
-      const line = this.lineFor(lineUid);
+      const details = this.lineDetails(lineUid);
       const threads = this.threadsFor(lineUid);
-      if (lineUid !== null) {
+      const provider = this.providers.get(agentId);
+      if (lineUid !== null && provider) {
         this.retryRequests.set(agentId, {
           lineUid,
           name: row.name,
-          provider: this.retryRequests.get(agentId)?.provider ?? "exe:hermes",
+          provider,
         });
+      } else if (lineUid !== null) {
+        this.retryRequests.delete(agentId);
       }
-      const unchanged = line?.uid === row.line?.uid && line?.label === row.line?.label &&
+      const unchanged = details.line?.uid === row.line?.uid &&
+        details.line?.label === row.line?.label &&
+        details.canMessage === row.canMessage &&
         threads.length === row.threads.length && threads.every(
         (thread, index) =>
           thread.uid === row.threads[index]?.uid && thread.label === row.threads[index]?.label,
       );
-      if (!unchanged) this.rows.set(agentId, { ...row, line, threads });
+      if (!unchanged) this.rows.set(agentId, {
+        ...row,
+        line: details.line,
+        canMessage: details.canMessage,
+        threads,
+      });
     }
   }
 
@@ -1114,9 +1158,9 @@ function isCredentialFailure(error: unknown): boolean {
   );
 }
 
-/** The current activation service reports an empty line pool as an uncoded 503. */
+/** Pool exhaustion is terminal only when the activation API names it explicitly. */
 function isNoNumbersAvailable(error: unknown): boolean {
-  return error instanceof PlowApiError && error.status === 503 && error.code === undefined;
+  return error instanceof PlowApiError && error.code === "NO_CHAT_LINE_AVAILABLE";
 }
 
 function isAbort(error: unknown): boolean {

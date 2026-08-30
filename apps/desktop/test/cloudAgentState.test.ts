@@ -194,6 +194,7 @@ describe("CloudAgentState line and thread display", () => {
     await state.refresh();
 
     expect(state.agentSmsUrl("agent_1")).toBe("sms:+15550100");
+    expect(state.state().cloudAgents[0].canMessage).toBe(true);
 
     const { state: unresolved } = build({
       listAgents: async () => [agent({ chatUids: ["cht_missing"] })],
@@ -201,6 +202,26 @@ describe("CloudAgentState line and thread display", () => {
     await unresolved.refresh();
 
     expect(unresolved.agentSmsUrl("agent_1")).toBeNull();
+    expect(unresolved.state().cloudAgents[0].canMessage).toBe(false);
+  });
+
+  it("keeps a resolved line without an E.164 number non-messageable", async () => {
+    const { state } = build({
+      listChats: async () => [chat({ recipients: { line: "not-a-number", members: [] } })],
+      listLines: async () => [{
+        uid: "lin_willow",
+        displayName: "Willow",
+        number: "",
+      }],
+    });
+
+    await state.refresh();
+
+    expect(state.state().cloudAgents[0]).toMatchObject({
+      line: { uid: "lin_willow", label: "Willow · not-a-number" },
+      canMessage: false,
+    });
+    expect(state.agentSmsUrl("agent_1")).toBeNull();
   });
 
   it("filters an agent's read-only threads by its home chat's line", async () => {
@@ -331,6 +352,68 @@ describe("CloudAgentState line and thread display", () => {
       { uid: "cht_one", label: "+15550100 · You · Nina" },
     ]);
   });
+
+  it("keeps the resource provider when agents load before chats resolve the retry line", async () => {
+    const chats = deferred<CloudChatOption[]>();
+    const requests: Array<{ lineUid: string; name: string; provider: string }> = [];
+    const { state } = build({
+      listAgents: async () => [agent({ status: "failed", provider: "exe:life" })],
+      listChats: async () => chats.promise,
+      createAgent: async (request) => {
+        requests.push(request);
+        return agent({ status: "provisioning", provider: request.provider });
+      },
+    });
+
+    const refresh = state.refresh();
+    await vi.waitFor(() => expect(state.state().cloudAgents).toHaveLength(1));
+    expect(state.state().cloudAgents[0].line).toBeNull();
+
+    chats.resolve([chat()]);
+    await refresh;
+    await state.retryFailed("agent_1");
+
+    expect(requests).toEqual([{
+      lineUid: "lin_willow",
+      name: "Kitchen",
+      provider: "exe:life",
+    }]);
+  });
+
+  it("keeps the selected provider when later resources omit it", async () => {
+    const requests: Array<{ lineUid: string; name: string; provider: string }> = [];
+    let created = false;
+    const { state, calls } = build({
+      listAgents: async () => created
+        ? [agent({ status: "failed", provider: null })]
+        : [],
+      createAgent: async (request) => {
+        requests.push(request);
+        created = true;
+        return agent({ status: "failed", provider: null });
+      },
+      pollAgent: async (receipt, transition) => {
+        await transition?.(receipt);
+        return receipt;
+      },
+    });
+    await state.refresh();
+
+    await state.create({
+      name: "Kitchen",
+      provider: "exe:pirate",
+      lineUid: "lin_willow",
+    });
+    await vi.waitFor(() => {
+      expect(calls.filter((call) => call === "listAgents")).toHaveLength(2);
+    });
+    await state.retryFailed("agent_1");
+
+    expect(requests).toEqual([
+      { lineUid: "lin_willow", name: "Kitchen", provider: "exe:pirate" },
+      { lineUid: "lin_willow", name: "Kitchen", provider: "exe:pirate" },
+    ]);
+  });
 });
 
 describe("CloudAgentState new agent flow", () => {
@@ -437,7 +520,7 @@ describe("CloudAgentState new agent flow", () => {
     });
     await state.refresh();
 
-    await state.create({ name: "Kitchen", lineUid: "lin_willow" });
+    await state.create({ name: "Kitchen", provider: "exe:hermes", lineUid: "lin_willow" });
 
     expect(state.state().cloudAgents).toHaveLength(1);
     expect(state.state().cloudLineFlow.completedAgentId).toBe("agent_existing");
@@ -469,7 +552,7 @@ describe("CloudAgentState new agent flow", () => {
       } as unknown as ProvisionedActivationRedeem),
     });
 
-    await state.create({ name: "Garden", lineUid: null });
+    await state.create({ name: "Garden", provider: "exe:hermes", lineUid: null });
     await vi.waitFor(() => expect(state.state().cloudLineFlow.phase).toBe("error"));
 
     expect(state.state().cloudLineFlow).toMatchObject({
@@ -488,7 +571,7 @@ describe("CloudAgentState new agent flow", () => {
     const tick = deferred<void>();
     const { state, calls } = build({ wait: async () => tick.promise });
 
-    await state.create({ name: "Garden", lineUid: null });
+    await state.create({ name: "Garden", provider: "exe:hermes", lineUid: null });
     expect(state.state().cloudLineFlow.phase).toBe("waiting");
     expect(state.createSmsUrl()).toBe(
       "sms:+15550100?&body=Plow%20Activate%3A%20NEW42",
@@ -502,7 +585,7 @@ describe("CloudAgentState new agent flow", () => {
     expect(state.state().cloudLineFlow.phase).toBe("idle");
   });
 
-  it("makes the activation service's uncoded 503 a terminal no-numbers state", async () => {
+  it("keeps an uncoded activation 503 retryable instead of guessing pool exhaustion", async () => {
     let attempts = 0;
     const { state } = build({
       createActivation: async () => {
@@ -511,7 +594,31 @@ describe("CloudAgentState new agent flow", () => {
       },
     });
 
-    await state.create({ name: "Garden", lineUid: null });
+    await state.create({ name: "Garden", provider: "exe:hermes", lineUid: null });
+
+    expect(state.state().cloudLineFlow).toMatchObject({
+      phase: "error",
+      message: "server wording may change",
+      retryNewLine: true,
+      terminal: null,
+    });
+    await state.retryLineFlow();
+    expect(attempts).toBe(2);
+  });
+
+  it("makes an explicit no-chat-line code terminal without reading its message", async () => {
+    const { state } = build({
+      createActivation: async () => {
+        throw new PlowApiError(
+          "http",
+          "untrusted and unrelated wording",
+          409,
+          "NO_CHAT_LINE_AVAILABLE",
+        );
+      },
+    });
+
+    await state.create({ name: "Garden", provider: "exe:hermes", lineUid: null });
 
     expect(state.state().cloudLineFlow).toMatchObject({
       phase: "error",
@@ -519,8 +626,6 @@ describe("CloudAgentState new agent flow", () => {
       retryNewLine: false,
       terminal: "no_numbers",
     });
-    await state.retryLineFlow();
-    expect(attempts).toBe(1);
   });
 
   it("shows fixed no-home-chat copy and retries failed rows with the same body", async () => {
@@ -539,7 +644,7 @@ describe("CloudAgentState new agent flow", () => {
     });
     await state.refresh();
 
-    await state.create({ name: "Kitchen", lineUid: "lin_willow" });
+    await state.create({ name: "Kitchen", provider: "exe:hermes", lineUid: "lin_willow" });
     expect(state.state().cloudLineFlow.message).toBe("Text this line once first, then try again.");
     await state.retryFailed("agent_1");
 
