@@ -113,6 +113,9 @@ async function renderAudit() {
     liveImg,
     el("div", { class: "live-cap" }, [liveDot, liveCapText]),
   ]);
+  // Click the thumbnail to blow it up over the window; click again (anywhere on
+  // the blown-up view) to shrink it back to the corner.
+  liveBox.addEventListener("click", () => liveBox.classList.toggle("expanded"));
   const detailBox = el("aside", { class: "detail" }, [detailScroll, liveBox]);
   detailBox.style.width = detailWidth + "px";
   const splitter = el("div", { class: "splitter", attrs: { title: "Drag to resize" } });
@@ -268,7 +271,10 @@ async function refreshLiveThumb() {
     const s = await window.domo.viewerState();
     const m = auditMounted;
     if (!m) return;
-    if (!s.active) m.liveHasFrame = false; // next session starts with a fresh frame
+    if (!s.active) {
+      m.liveHasFrame = false; // next session starts with a fresh frame
+      m.liveBox.classList.remove("expanded"); // never leave the overlay up with no session
+    }
     if (s.active && s.frame && /^image\/(jpeg|png|webp)$/.test(s.frame.mime)) {
       m.liveImg.src = `data:${s.frame.mime};base64,${s.frame.dataB64}`;
       m.liveHasFrame = true;

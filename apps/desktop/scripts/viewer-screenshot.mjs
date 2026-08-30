@@ -14,6 +14,8 @@ import { fileURLToPath } from "node:url";
 const dir = path.dirname(fileURLToPath(import.meta.url));
 const dist = path.join(dir, "../dist");
 const out = process.env.OUT ?? "/tmp/browser-viewer.png";
+// Second shot: the same thumbnail after a click, blown up over the window.
+const outBig = process.env.OUT_EXPANDED ?? out.replace(/\.png$/, "-expanded.png");
 
 // A stand-in for a Camoufox frame: a mock webpage drawn on a canvas in a
 // hidden sandboxed window (the main process can't draw — devIcon pattern).
@@ -112,9 +114,30 @@ app.whenReady().then(async () => {
       caption: document.querySelector(".live-cap")?.textContent ?? "",
       // The thumbnail must sit outside the timeline scroller.
       outsideScroll: !img?.closest(".detail-scroll"),
+      width: img ? Math.round(img.getBoundingClientRect().width) : 0,
     };
   }})()`);
-  const ok = probe.thumbVisible && probe.outsideScroll && probe.caption.includes("pizza.example");
-  console.log("SHOT:" + JSON.stringify({ out, ...probe, ok }));
+  // Clicking the thumbnail blows it up over the window; clicking the blown-up
+  // view puts it back. Measure the image both ways so the toggle can't silently
+  // become a no-op.
+  const clickThumb = () => win.webContents.executeJavaScript(`(${() => {
+    const box = document.querySelector(".live-corner");
+    box.click();
+    return {
+      expanded: box.classList.contains("expanded"),
+      fixed: getComputedStyle(box).position === "fixed",
+      width: Math.round(box.querySelector("img").getBoundingClientRect().width),
+    };
+  }})()`);
+
+  const small = probe.width;
+  const big = await clickThumb();
+  fs.writeFileSync(outBig, (await win.webContents.capturePage()).toPNG());
+  const back = await clickThumb();
+
+  const ok = probe.thumbVisible && probe.outsideScroll && probe.caption.includes("pizza.example")
+    && big.expanded && big.fixed && big.width > small
+    && !back.expanded && back.width === small;
+  console.log("SHOT:" + JSON.stringify({ out, outBig, ...probe, small, big, back, ok }));
   app.exit(ok ? 0 : 1);
 });
