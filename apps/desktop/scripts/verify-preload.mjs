@@ -146,12 +146,19 @@ let cloudProbe = {
   cloudChatsNeedReactivation: false,
   cloudActionError: null,
   cloudChatsLoaded: true,
+  // Only the built-in Plow to begin with, so the local form has to be the
+  // add-a-host one on a Mac that has never added one.
+  cloudTargets: [
+    { id: "plow", label: "Plow", baseUrl: "https://api.plow.co", builtin: true },
+  ],
 };
 let cloudChangeRequest = null;
 let cloudChangeCancelCount = 0;
 let exhaustNextCloudActivation = false;
 const cloudMessageAgentIds = [];
 const cloudCreateRequests = [];
+const cloudAddedTargets = [];
+const cloudForgottenTargets = [];
 
 // Connect state also carries the cloud-agent display state. It contains no
 // credential, session id or worker URL.
@@ -182,6 +189,31 @@ ipcMain.handle("cloud:cancelLineFlow", async () => {
       completedAgentId: null,
       retryNewLine: false,
     },
+  };
+  return agentsTabProbeState();
+});
+ipcMain.handle("cloud:addTarget", async (_e, input) => {
+  cloudAddedTargets.push(input);
+  // What main does on a good host: store it and hand back a bearer-free row.
+  cloudProbe = {
+    ...cloudProbe,
+    cloudTargets: [
+      ...cloudProbe.cloudTargets,
+      {
+        id: "tgt_probe",
+        label: input.label || input.baseUrl,
+        baseUrl: String(input.baseUrl ?? "").trim().replace(/\/+$/, ""),
+        builtin: false,
+      },
+    ],
+  };
+  return agentsTabProbeState();
+});
+ipcMain.handle("cloud:forgetTarget", async (_e, targetId) => {
+  cloudForgottenTargets.push(targetId);
+  cloudProbe = {
+    ...cloudProbe,
+    cloudTargets: cloudProbe.cloudTargets.filter((target) => target.id !== targetId),
   };
   return agentsTabProbeState();
 });
@@ -855,6 +887,77 @@ app.whenReady().then(async () => {
   await clickCloudButton(win, "Cancel");
   await waitFor(win, `!document.querySelector(".cloud-modal")`, "the New agent flow to close");
   const cloudCreateCancelled = cloudChangeCancelCount === createCancelsBefore + 1;
+
+  // ---- Set up local agent ------------------------------------------------
+  // The self-hosted path: a Mac with no hosts must be asked for one, the token
+  // must never come back out of main, and the create must name the host and
+  // `local:docker` rather than an agent type the host would refuse.
+  await win.webContents.executeJavaScript(
+    `[...document.querySelectorAll("#view button")]
+      .find((button) => button.textContent.trim() === "Set up local agent").click()`,
+  );
+  await waitFor(win, `document.querySelector('.cloud-modal input[aria-label="Host address"]')`,
+    "the local agent host form");
+  const cloudLocalHostForm = await win.webContents.executeJavaScript(`(${() => {
+    const modal = document.querySelector(".cloud-modal");
+    return {
+      title: modal.querySelector(".group-title")?.textContent.trim(),
+      // With no host saved there is nothing to create on, so the line picker
+      // and Create button are deliberately absent.
+      noLinePicker: modal.querySelector('select[aria-label="Line"]') === null,
+      noAgentType: modal.querySelector('select[aria-label="Agent type"]') === null,
+      tokenIsMasked:
+        modal.querySelector('input[aria-label="Host token"]')?.type === "password",
+      namePlaceholder: modal.querySelector('input[aria-label="Agent name"]')?.placeholder,
+      placeholderIsNotLoopback: !modal
+        .querySelector('input[aria-label="Host address"]')
+        ?.placeholder.includes("127.0.0.1"),
+      buttons: [...modal.querySelectorAll("button")].map((button) => button.textContent.trim()),
+    };
+  }})()`);
+  await win.webContents.executeJavaScript(`(() => {
+    const modal = document.querySelector(".cloud-modal");
+    modal.querySelector('input[aria-label="Host name"]').value = "slowdown";
+    modal.querySelector('input[aria-label="Host address"]').value = "http://192.168.15.12:8765/";
+    modal.querySelector('input[aria-label="Host token"]').value = "serve-token-abc";
+  })()`);
+  await clickCloudButton(win, "Save host");
+  await waitFor(win, `document.querySelector('.cloud-modal select[aria-label="Host"]')`,
+    "the saved host to be selected");
+  const cloudLocalHostSaved = await win.webContents.executeJavaScript(`(${() => {
+    const modal = document.querySelector(".cloud-modal");
+    const host = modal.querySelector('select[aria-label="Host"]');
+    return {
+      hosts: [...host.options].map((option) => option.textContent.trim()),
+      selected: host.selectedOptions[0]?.textContent.trim(),
+      // The bearer went one way. Nothing on screen can show it again.
+      tokenNotOnScreen: !modal.textContent.includes("serve-token-abc") &&
+        [...modal.querySelectorAll("input")].every((input) => input.value !== "serve-token-abc"),
+      // A local host still picks a Plow line, and still has no agent type.
+      offersLine: modal.querySelector('select[aria-label="Line"]') !== null,
+      noAgentType: modal.querySelector('select[aria-label="Agent type"]') === null,
+      buttons: [...modal.querySelectorAll("button")].map((button) => button.textContent.trim()),
+    };
+  }})()`);
+  const localAddRequest = cloudAddedTargets.at(-1);
+  const localAgentShot = process.env.LOCAL_AGENT_OUT ?? "/tmp/agents-local.png";
+  await captureAfterPaint(win, localAgentShot);
+  // A new line rather than the free one: `lin_ash` is the fixture the cloud
+  // probes below still need, and creating on it would spend it.
+  await win.webContents.executeJavaScript(`(() => {
+    const modal = document.querySelector(".cloud-modal");
+    modal.querySelector('input[aria-label="Agent name"]').value = "demo";
+    const line = modal.querySelector('select[aria-label="Line"]');
+    line.value = "__new_line__";
+    line.dispatchEvent(new Event("change"));
+  })()`);
+  await clickCloudButton(win, "Create agent");
+  await waitFor(win, `document.querySelector(".cloud-modal .cloud-activation-code")`,
+    "the local agent activation code");
+  const cloudLocalCreateRequest = cloudCreateRequests.at(-1);
+  await clickCloudButton(win, "Cancel");
+  await waitFor(win, `!document.querySelector(".cloud-modal")`,
+    "the local agent flow to close");
 
   await win.webContents.executeJavaScript(
     `[...document.querySelectorAll("#view button")]
@@ -2153,7 +2256,7 @@ app.whenReady().then(async () => {
     errors.length === 0;
   console.log(
     "PROBE:" +
-      JSON.stringify({ main, settings, strandedOnDisk, settingsPane, connect, cloudRoster, cloudCreatePicker, cloudCreateSelection, cloudCreateSelectionOnly, cloudCreateRequest, cloudCreateCancelled, cloudCreateCode, cloudExistingCreate, cloudExistingCreateRequest, cloudCodeConfirmed, cloudCodeConfirmedClosed, cloudNoFreeLines, cloudNoNumbers, cloudDetail, cloudChangePicker, cloudChangeSelection, cloudChangeSelectionOnly, cloudChangeCode, cloudChangeRequest, cloudUnknownLines, cloudCreateErrorDetail, failedCloudDetailButtons, cloudChangeErrorDetail, cloudAgentGoneCancelled, cloudDeleteConfirm, loadingCloudDetail, unavailableCloudDetail, agentsShot, approvalsReviewer, approvalsShot, purposeRoundTrip, approvalsAsk, askWithoutReviewer, approvalsShotAsk, agentsOpen, modalClosed, vaultLocked, vaultUnsaved, vaultShot, agentsOpenShot, staleSettingsPane, optimisticMode, settingsShot, approval, reviewerNote, grantPanel, consoleErrors: errors, ok }),
+      JSON.stringify({ main, settings, strandedOnDisk, settingsPane, connect, cloudRoster, cloudCreatePicker, cloudCreateSelection, cloudCreateSelectionOnly, cloudCreateRequest, cloudCreateCancelled, cloudLocalHostForm, cloudLocalHostSaved, localAddRequest, localAgentShot, cloudLocalCreateRequest, cloudCreateCode, cloudExistingCreate, cloudExistingCreateRequest, cloudCodeConfirmed, cloudCodeConfirmedClosed, cloudNoFreeLines, cloudNoNumbers, cloudDetail, cloudChangePicker, cloudChangeSelection, cloudChangeSelectionOnly, cloudChangeCode, cloudChangeRequest, cloudUnknownLines, cloudCreateErrorDetail, failedCloudDetailButtons, cloudChangeErrorDetail, cloudAgentGoneCancelled, cloudDeleteConfirm, loadingCloudDetail, unavailableCloudDetail, agentsShot, approvalsReviewer, approvalsShot, purposeRoundTrip, approvalsAsk, askWithoutReviewer, approvalsShotAsk, agentsOpen, modalClosed, vaultLocked, vaultUnsaved, vaultShot, agentsOpenShot, staleSettingsPane, optimisticMode, settingsShot, approval, reviewerNote, grantPanel, consoleErrors: errors, ok }),
   );
   app.exit(ok ? 0 : 1);
 }).catch((err) => {

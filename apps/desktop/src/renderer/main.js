@@ -1324,7 +1324,7 @@ function syncCloudLineModal(state, redraw) {
 function openCloudCreate(trigger, state, redraw, { local = false } = {}) {
   const nameInput = el("input", {
     class: "text",
-    attrs: { placeholder: "Cloud agent", "aria-label": "Agent name" },
+    attrs: { placeholder: local ? "Local agent" : "Cloud agent", "aria-label": "Agent name" },
   });
   const providerSelect = el("select", {
     class: "text",
