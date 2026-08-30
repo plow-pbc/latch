@@ -879,7 +879,7 @@ export class CloudAgentState {
         const lineUid = this.agentLineUid(agent);
         if (provider) {
           this.retainedCreates.set(agent.agentId, {
-            lineUid,
+            lineUid: lineUid ?? retained?.lineUid ?? null,
             name: agent.name ?? retained?.name ?? "",
             provider,
           });
@@ -1052,8 +1052,9 @@ export class CloudAgentState {
       const details = this.lineDetails(lineUid);
       const threads = this.threadsFor(lineUid);
       const retained = this.retainedCreates.get(agentId);
-      if (retained) this.retainedCreates.set(agentId, { ...retained, lineUid, name: row.name });
-      const canRetry = retained !== undefined && lineUid !== null;
+      const resolved = retained && lineUid !== null ? { ...retained, lineUid } : retained;
+      if (resolved) this.retainedCreates.set(agentId, { ...resolved, name: row.name });
+      const canRetry = resolved !== undefined && resolved.lineUid !== null;
       const unchanged = details.line?.uid === row.line?.uid &&
         details.line?.label === row.line?.label &&
         details.canMessage === row.canMessage &&

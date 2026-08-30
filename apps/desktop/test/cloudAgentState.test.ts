@@ -387,7 +387,7 @@ describe("CloudAgentState line and thread display", () => {
     let created = false;
     const { state } = build({
       listAgents: async () => created
-        ? [agent({ status: "failed", provider: null })]
+        ? [agent({ status: "failed", provider: null, chatUids: [] })]
         : [],
       createAgent: async (request) => {
         requests.push(request);
@@ -403,6 +403,7 @@ describe("CloudAgentState line and thread display", () => {
       lineUid: "lin_willow",
     });
     await vi.waitFor(() => expect(state.state().cloudAgents[0]?.status).toBe("failed"));
+    expect(state.state().cloudAgents[0]).toMatchObject({ line: null, canRetry: true });
     await state.retryFailed("agent_1");
 
     expect(requests).toEqual([

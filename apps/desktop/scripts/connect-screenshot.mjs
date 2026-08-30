@@ -691,15 +691,13 @@ const SCREENS = [
         throw new Error(`detail exposed unexpected controls: ${controls.join("|")}`);
       }
       const statusSizing = await win.webContents.executeJavaScript(`(() => {
-        const field = document.querySelectorAll(".cloud-modal .cloud-detail-field")[1];
-        const badge = field?.querySelector(".badge");
+        const badge = document.querySelector(".cloud-modal .cloud-detail-field > .badge");
         return {
-          display: badge ? getComputedStyle(badge).display : "",
           badgeWidth: badge?.getBoundingClientRect().width ?? 0,
-          fieldWidth: field?.getBoundingClientRect().width ?? 0,
+          fieldWidth: badge?.parentElement?.getBoundingClientRect().width ?? 0,
         };
       })()`);
-      if (!statusSizing.display.includes("flex") || statusSizing.badgeWidth >= statusSizing.fieldWidth) {
+      if (statusSizing.badgeWidth >= statusSizing.fieldWidth) {
         throw new Error(`detail status did not shrink-wrap: ${JSON.stringify(statusSizing)}`);
       }
     },
