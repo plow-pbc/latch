@@ -222,20 +222,12 @@ export type ActivationRedeem =
   | { status: "pending" }
   | { status: "verified"; token: string | null; chat: ActivationChat | null };
 
-/** Structural diagnostics for a provisioned activation, with no field values. */
-export interface ProvisionedActivationShape {
-  chat: "missing" | "invalid" | "object";
-  participantTypes: Array<"agent" | "member" | "other" | "invalid">;
-  agentLine: "missing" | "invalid" | "uid_missing" | "uid_string";
-}
-
 /** The new-agent activation result. Its session token has no representation. */
 export type ProvisionedActivationRedeem =
   | { status: "pending" }
   | {
       status: "verified";
       chat: ActivationChat | null;
-      shape: ProvisionedActivationShape;
     };
 
 /**
@@ -289,40 +281,6 @@ export function parseActivationChat(raw: unknown): ActivationChat | null {
     lineUid: line && typeof line.uid === "string" ? line.uid : null,
     participants,
     createdAt: typeof chat.created_at === "string" ? chat.created_at : "",
-  };
-}
-
-function provisionedActivationShape(raw: unknown): ProvisionedActivationShape {
-  if (raw === undefined || raw === null) {
-    return { chat: "missing", participantTypes: [], agentLine: "missing" };
-  }
-  if (typeof raw !== "object" || Array.isArray(raw)) {
-    return { chat: "invalid", participantTypes: [], agentLine: "missing" };
-  }
-  const participants = Array.isArray((raw as Record<string, unknown>).participants)
-    ? (raw as Record<string, unknown>).participants as unknown[]
-    : [];
-  const records = participants.filter(
-    (participant): participant is Record<string, unknown> =>
-      typeof participant === "object" && participant !== null && !Array.isArray(participant),
-  );
-  const participantTypes = records.map((participant) =>
-    participant.type === "agent" || participant.type === "member"
-      ? participant.type
-      : typeof participant.type === "string" ? "other" : "invalid");
-  const agent = records.find((participant) => participant.type === "agent");
-  if (!agent || agent.line === undefined || agent.line === null) {
-    return { chat: "object", participantTypes, agentLine: "missing" };
-  }
-  if (typeof agent.line !== "object" || Array.isArray(agent.line)) {
-    return { chat: "object", participantTypes, agentLine: "invalid" };
-  }
-  return {
-    chat: "object",
-    participantTypes,
-    agentLine: typeof (agent.line as Record<string, unknown>).uid === "string"
-      ? "uid_string"
-      : "uid_missing",
   };
 }
 
@@ -420,7 +378,7 @@ export class PlowApi {
 
   /**
    * Redeem a new-line activation without returning its session token.
-   * Only the provisioned chat and value-free shape diagnostics leave here.
+   * Only the provisioned chat leaves here.
    */
   async redeemProvisionedActivation(
     activationSecret: string,
@@ -436,7 +394,6 @@ export class PlowApi {
     return {
       status: "verified",
       chat: parsed && !valueEchoesSecret(parsed, token) ? parsed : null,
-      shape: provisionedActivationShape(data.chat),
     };
   }
 

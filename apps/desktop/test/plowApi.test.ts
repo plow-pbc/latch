@@ -299,16 +299,11 @@ describe("PlowApi", () => {
     expect(result).toMatchObject({
       status: "verified",
       chat: { lineUid: "lin_new" },
-      shape: {
-        chat: "object",
-        participantTypes: ["member", "agent"],
-        agentLine: "uid_string",
-      },
     });
     expect(JSON.stringify(result)).not.toContain(token);
   });
 
-  it("does not carry a redeem token echoed by provisioned chat fields or diagnostics", async () => {
+  it("does not carry a redeem token echoed by provisioned chat fields", async () => {
     const token = "plow_session_that_must_be_dropped";
     const { fetchImpl } = recordingFetch([{
       status: 200,
@@ -331,7 +326,6 @@ describe("PlowApi", () => {
     expect(result).toMatchObject({
       status: "verified",
       chat: null,
-      shape: { participantTypes: ["other", "agent"] },
     });
     expect(JSON.stringify(result)).not.toContain(token);
   });

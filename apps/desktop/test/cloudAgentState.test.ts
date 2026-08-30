@@ -404,11 +404,6 @@ describe("CloudAgentState new agent flow", () => {
           participants: [],
           createdAt: "",
         },
-        shape: {
-          chat: "object",
-          participantTypes: ["member", "agent"],
-          agentLine: "uid_string",
-        },
       }),
       createAgent: async (request) => {
         created.push(request);
@@ -449,7 +444,7 @@ describe("CloudAgentState new agent flow", () => {
     expect(state.state().cloudLineFlow.completedAgentId).toBe("agent_existing");
   });
 
-  it("reports a verified payload with no agent line and logs only its shape", async () => {
+  it("reports a verified payload with no agent line using a fixed warning", async () => {
     const droppedToken = "plow_token_from_redeem_must_disappear";
     const warned: string[] = [];
     const { state, home } = build({
@@ -459,11 +454,6 @@ describe("CloudAgentState new agent flow", () => {
         status: "verified",
         token: droppedToken,
         chat: null,
-        shape: {
-          chat: "object",
-          participantTypes: ["member"],
-          agentLine: "missing",
-        },
       } as unknown as ProvisionedActivationRedeem),
     });
 
@@ -475,7 +465,7 @@ describe("CloudAgentState new agent flow", () => {
       retryNewLine: true,
     });
     expect(warned).toEqual([
-      '[cloud-agent] verified activation missing line uid: {"chat":"object","participantTypes":["member"],"agentLine":"missing"}',
+      "[cloud-agent] verified activation missing line uid",
     ]);
     expect(JSON.stringify(state.state())).not.toContain(droppedToken);
     expect(JSON.stringify(loadSettings(home))).not.toContain(droppedToken);
@@ -572,11 +562,6 @@ describe("CloudAgentState change-line flow", () => {
           lineUid: "lin_new",
           participants: [],
           createdAt: "",
-        },
-        shape: {
-          chat: "object",
-          participantTypes: ["member", "agent"],
-          agentLine: "uid_string",
         },
       }),
       changeAgentLine: async (agentId, lineUid) => {
