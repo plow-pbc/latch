@@ -67,7 +67,7 @@ describe("which section a credential belongs in", () => {
     ]);
     expect(sections.other.map(({ id, kind }) => ({ id, kind }))).toEqual([
       { id: 2, kind: "Plow web login" },
-      { id: 3, kind: "Legacy — full access" },
+      { id: 3, kind: "Admin — full access" },
     ]);
   });
 
@@ -196,10 +196,10 @@ describe("this Mac's own credential", () => {
     expect(rows.find((row) => row.id === 2)?.isThisMac).toBe(false);
   });
 
-  it("is a Session, not a leftover, whatever its scopes read", () => {
+  it("is a Session, not an Admin credential, whatever its scopes read", () => {
     // This Mac holds the login session now — `*:*`, which is exactly the shape
-    // `rosterKind` calls "Legacy — full access". The screen was labelling the
-    // credential it is running on as something to clean up.
+    // `rosterKind` calls "Admin — full access". The screen must still identify
+    // the credential it is running on as its own session.
     const sections = sectionRoster(
       [
         key({ id: 1, scopes: ["*:*"], key_prefix: keyPrefixOf(DEVICE_CREDENTIAL) }),
@@ -210,8 +210,8 @@ describe("this Mac's own credential", () => {
 
     const rows = [...sections.mcp, ...sections.other];
     expect(rows.find((row) => row.id === 1)).toMatchObject({ kind: "Session", isThisMac: true });
-    // Another account credential with the same scopes is still a leftover.
-    expect(rows.find((row) => row.id === 2)).toMatchObject({ kind: "Legacy — full access" });
+    // Another account credential with the same scopes is still full access.
+    expect(rows.find((row) => row.id === 2)).toMatchObject({ kind: "Admin — full access" });
   });
 
   it("marks nothing when two rows would both match", () => {
@@ -252,6 +252,18 @@ describe("this Mac's own credential", () => {
 });
 
 describe("ordering", () => {
+  it("normalizes Plow's offsetless timestamps as UTC before exposing a row", () => {
+    const [row] = allRows(sectionRoster([key({
+      created_at: "2026-08-30T21:59:02.464862",
+      last_seen_at: "2026-08-30T21:59:02.464862",
+    })]));
+
+    expect(row).toMatchObject({
+      createdAt: "2026-08-30T21:59:02.464Z",
+      lastSeenAt: "2026-08-30T21:59:02.464Z",
+    });
+  });
+
   it("puts the most recently used first and the never-used last", () => {
     const sections = sectionRoster([
       key({ id: 1, last_seen_at: "2026-08-20T10:00:00Z" }),

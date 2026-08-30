@@ -6,12 +6,12 @@
  * removed by the wrong endpoint — that is a decision for tested code, not for
  * a template.
  */
-import type { KeyInfo } from "./plowApi.js";
+import { parseApiTimestamp, type KeyInfo } from "./plowApi.js";
 
 export type AgentRosterKind =
   | "Agent"
   | "Plow web login"
-  | "Legacy — full access"
+  | "Admin — full access"
   | "Session";
 
 /**
@@ -119,6 +119,12 @@ function newestFirst(a: string | null, b: string | null): number {
   return 0;
 }
 
+function normalizeRosterTimestamp(value: string | null): string | null {
+  if (value === null) return null;
+  const timestamp = parseApiTimestamp(value);
+  return Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : value;
+}
+
 /**
  * Does this credential's scope set cover the one asked about?
  *
@@ -150,7 +156,7 @@ function chatAccessOf(chatUids: readonly string[]): ChatAccess {
 function rosterKind(scopes: readonly string[]): AgentRosterKind {
   if (scopes.includes("relay:call")) return "Agent";
   if (scopes.includes("relay:*")) return "Plow web login";
-  if (scopes.includes("*:*")) return "Legacy — full access";
+  if (scopes.includes("*:*")) return "Admin — full access";
   return "Session";
 }
 
@@ -188,11 +194,11 @@ export function sectionRoster(
       name: key.name,
       // This Mac's own row is a Session, whatever its scopes say. It holds the
       // login session now, which is `*:*` — the same shape `rosterKind` reads
-      // as "Legacy — full access", so the screen labelled the credential it is
-      // running on as a leftover to clean up.
+      // as "Admin — full access", so without this override the screen would
+      // label its own session as an admin credential.
       kind: key.id === thisMacId ? "Session" : rosterKind(key.scopes),
-      createdAt: key.created_at,
-      lastSeenAt: key.last_seen_at,
+      createdAt: normalizeRosterTimestamp(key.created_at),
+      lastSeenAt: normalizeRosterTimestamp(key.last_seen_at),
       agentId: key.agent_id,
       chatUids: key.chat_uids,
       chatAccess: chatAccessOf(key.chat_uids),

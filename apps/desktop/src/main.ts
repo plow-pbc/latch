@@ -1202,6 +1202,7 @@ app.whenReady().then(async () => {
     chats: new CloudChatsClient(cloudApi),
     lines: new CloudLinesClient(cloudApi),
     home,
+    recordAudit: (event, fields) => device?.audit.record(event, fields),
     onChange: () => notifyRenderer("connect:changed"),
     warn: (message) => console.log(message),
   });
