@@ -103,6 +103,13 @@ export class PlowApiError extends Error {
   }
 }
 
+export function echoesCredential(text: string, credential: string): boolean {
+  const secret = credential.trim();
+  if (!secret) return false;
+  if (text.includes(secret)) return true;
+  return secret.length > 10 && text.includes(secret.slice(0, 10));
+}
+
 export interface RelayInfo {
   uid: string;
 }
@@ -500,9 +507,14 @@ export class PlowApi {
     ) {
       throw new PlowApiError("http", "Plow did not register this Mac correctly.");
     }
+    let displayName = data.display_name;
+    if (echoesCredential(displayName, token)) {
+      displayName = hostname.trim();
+      if (!displayName || echoesCredential(displayName, token)) displayName = "Mac";
+    }
     return {
       mcpUrl: data.mcp_url,
-      displayName: data.display_name,
+      displayName,
     };
   }
 

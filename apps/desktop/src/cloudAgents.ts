@@ -1,4 +1,4 @@
-import { PlowApi, PlowApiError, REQUEST_TIMEOUT_MS } from "./plowApi.js";
+import { echoesCredential, PlowApi, PlowApiError, REQUEST_TIMEOUT_MS } from "./plowApi.js";
 
 export const CLOUD_AGENT_POLL_INTERVAL_MS = 2_000;
 const CLOUD_AGENT_POLL_RETRY_WINDOW_MS = 5 * 60_000;
@@ -360,13 +360,6 @@ const LINE_ERRORS: Readonly<Record<string, {
     message: "Another kind of agent already uses that line.",
   },
 });
-
-export function echoesCredential(text: string, credential: string): boolean {
-  const secret = credential.trim();
-  if (!secret) return false;
-  if (text.includes(secret)) return true;
-  return secret.length > 10 && text.includes(secret.slice(0, 10));
-}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);

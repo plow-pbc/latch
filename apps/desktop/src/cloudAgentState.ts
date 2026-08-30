@@ -19,7 +19,6 @@ import {
   CloudAgentLineError,
   CloudAgentResource,
   CreateCloudAgentRequest,
-  echoesCredential,
 } from "./cloudAgents.js";
 import {
   ACTIVATION_POLL_INTERVAL_MS,
@@ -31,6 +30,7 @@ import {
 } from "./onboarding.js";
 import {
   Activation,
+  echoesCredential,
   KeyInfo,
   PlowApi,
   PlowApiError,
