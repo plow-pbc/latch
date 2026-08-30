@@ -173,12 +173,23 @@ function build(extra: Partial<OnboardingDeps> = {}): Onboarding {
     home,
     startRelay: async () => {
       started += 1;
+      const settings = loadSettings(home);
+      try {
+        const registered = await plow.registerRelayDevice(
+          settings.relayCredential,
+          "device-1",
+          "test-mac",
+        );
+        settings.mcpUrl = registered.mcpUrl;
+        saveSettings(home, settings);
+      } catch {
+        // Production leaves registration failures on RelayClient's backoff.
+        return;
+      }
       plow.connected = true;
     },
     isConnected: () => plow.connected,
     deviceName: "Plow Latch (test)",
-    deviceId: "device-1",
-    hostname: "test-mac",
     now: () => clock,
     // No real timers: the poll loop's wait advances the same fake clock the
     // deadline is measured against, so a five-minute give-up takes microseconds
@@ -931,16 +942,17 @@ describe("the phone-code fallback still works", () => {
     expect(warnings).toEqual([]);
   });
 
-  it("does not save or dial when device registration fails", async () => {
+  it("keeps the session while device registration retries", async () => {
     plow.registrationFails = true;
     const onboarding = buildOnPhonePath();
 
     await onboarding.requestCode("+15551110000");
     const state = await onboarding.submitCode("12345678");
 
-    expect(state.message).toBe("Plow could not register this Mac.");
-    expect(loadSettings(home).relayCredential).toBe("");
-    expect(started).toBe(0);
+    expect(state.step).toBe("connected");
+    expect(loadSettings(home).relayCredential).toBe(OTP_TOKEN);
+    expect(loadSettings(home).mcpUrl).toBe("");
+    expect(started).toBe(1);
   });
 
   it("writes settings owner-only", async () => {
@@ -1213,48 +1225,32 @@ describe("signing out", () => {
 });
 
 describe("a sign-out while the credential handoff is in the air", () => {
-  // Both server reads can be overtaken by sign-out. The session is revoked on
-  // either path: the redeem that carried it answers once, so a token dropped
-  // here is one nobody can ever retire.
-  for (const race of [
-    { stage: "relayInfo", revoked: [SESSION_TOKEN] },
-    { stage: "registerRelayDevice", revoked: [SESSION_TOKEN] },
-  ] as const) {
-    it(`stays signed out when the sign-out lands during ${race.stage}`, async () => {
-      let release = () => {};
-      const inAir = new Promise<void>((r) => {
-        release = () => r();
-      });
-      plow.redeems = [{ status: "verified", token: SESSION_TOKEN }];
-      if (race.stage === "relayInfo") {
-        const original = plow.relayInfo.bind(plow);
-        plow.relayInfo = async (token: string) => {
-          await inAir;
-          return original(token);
-        };
-      } else {
-        const original = plow.registerRelayDevice.bind(plow);
-        plow.registerRelayDevice = async (token: string, deviceId: string, hostname: string) => {
-          await inAir;
-          return original(token, deviceId, hostname);
-        };
-      }
-      const onboarding = build();
-      await onboarding.begin();
-      await settle();
-
-      signOutOfPlow(home);
-      onboarding.reset();
-      release();
-      await settle();
-
-      // Nothing is persisted, the session is retired best-effort, and the
-      // window stays signed out.
-      expect(plow.revoked).toEqual(race.revoked);
-      expect(loadSettings(home).relayCredential).toBe("");
-      expect(onboarding.state().step).not.toBe("connected");
+  it("stays signed out when the sign-out lands during relayInfo", async () => {
+    let release = () => {};
+    const inAir = new Promise<void>((r) => {
+      release = () => r();
     });
-  }
+    plow.redeems = [{ status: "verified", token: SESSION_TOKEN }];
+    const original = plow.relayInfo.bind(plow);
+    plow.relayInfo = async (token: string) => {
+      await inAir;
+      return original(token);
+    };
+    const onboarding = build();
+    await onboarding.begin();
+    await settle();
+
+    signOutOfPlow(home);
+    onboarding.reset();
+    release();
+    await settle();
+
+    // Nothing is persisted, the session is retired best-effort, and the
+    // window stays signed out.
+    expect(plow.revoked).toEqual([SESSION_TOKEN]);
+    expect(loadSettings(home).relayCredential).toBe("");
+    expect(onboarding.state().step).not.toBe("connected");
+  });
 });
 
 describe("a sign-out while startRelay is dialling", () => {

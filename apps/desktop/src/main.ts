@@ -42,7 +42,7 @@ import { migrateLegacyHome } from "./migrateHome.js";
 import { buildMinter, vendorDirs } from "./providerWiring.js";
 import { resolveInstancePaths } from "./paths.js";
 import { loadSettings, saveSettings, useCredentialCodec, WindowBounds } from "./settings.js";
-import { PlowApi, relaySocketUrl, resolveApiBaseUrl } from "./plowApi.js";
+import { PlowApi, PlowApiError, relaySocketUrl, resolveApiBaseUrl } from "./plowApi.js";
 import { Onboarding } from "./onboarding.js";
 import { ConnectClient } from "./connectClient.js";
 import { CloudAgentsClient } from "./cloudAgents.js";
@@ -1047,7 +1047,18 @@ async function startRelay(): Promise<void> {
     credential,
     deviceId,
     beforeConnect: async () => {
-      const registered = await new PlowApi(apiBaseUrl).registerRelayDevice(credential, deviceId, hostName());
+      let registered;
+      try {
+        registered = await new PlowApi(apiBaseUrl).registerRelayDevice(credential, deviceId, hostName());
+      } catch (error) {
+        if (!(error instanceof PlowApiError) || error.kind !== "unauthorized") throw error;
+        console.log("[relay] credential rejected during registration; signing out");
+        await relay?.stop();
+        connected = false;
+        void signOut();
+        notifyRenderer("status:changed");
+        return;
+      }
       const latest = loadSettings(home);
       if (latest.relayCredential.trim() !== credential) return;
       latest.mcpUrl = registered.mcpUrl;
@@ -1180,8 +1191,6 @@ app.whenReady().then(async () => {
     startRelay,
     isConnected: () => connected,
     deviceName: `Plow Latch (${hostName()})`,
-    deviceId: device.identity.deviceId,
-    hostname: hostName(),
     onChange: () => onboardingWindow?.webContents.send("onboarding:changed"),
     // RelayClient's redaction is not in play here, so nothing secret is ever
     // handed to this — see Onboarding's callers of `warn`.

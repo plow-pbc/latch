@@ -214,7 +214,7 @@ describe("the static-credential fallback", () => {
     expect(JSON.stringify(connect.state())).not.toContain(CLIENT_TOKEN);
   });
 
-  const config = (server: object) => JSON.stringify({ mcpServers: { "plow-mbp": server } });
+  const config = (server: object, name = "plow-mbp") => JSON.stringify({ mcpServers: { [name]: server } });
   const validServer = (url: string, authorization = `Bearer ${CLIENT_TOKEN}_1`) => ({
     type: "http",
     url,
@@ -224,6 +224,9 @@ describe("the static-credential fallback", () => {
   it.each([
     ["unreadable JSON", "not json"],
     ["another credential", config(validServer("https://api.plow.co/mcp", "Bearer plow_someone_elses_token"))],
+    ["another credential in the server name", config(validServer("https://api.plow.co/mcp"), "plow_other_secret")],
+    ["another credential in a raw URL", config(validServer("https://api.plow.co/plow_other_secret/mcp"))],
+    ["another credential in an encoded URL", config(validServer("https://api.plow.co/%70low_other_secret/mcp"))],
     ["the token in a raw URL", config(validServer(`https://api.plow.co/${CLIENT_TOKEN}_1/mcp`))],
     ["the token in an encoded URL", config(validServer("https://api.plow.co/%70low_CLIENTtok_shown_once_1/mcp"))],
     [

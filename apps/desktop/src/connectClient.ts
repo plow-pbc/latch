@@ -362,8 +362,9 @@ export function validatedAgentConfig(config: string, token: string): string {
     throw new PlowApiError("http", "Plow returned an invalid MCP configuration.");
   }
   const projected: Array<[string, { type: "http"; url: string; headers: { Authorization: string } }]> = [];
+  const credentialPattern = /plow_[A-Za-z0-9_-]+/;
   for (const [name, server] of Object.entries(servers as Record<string, unknown>)) {
-    if (name.includes(token)) {
+    if (credentialPattern.test(name)) {
       throw new PlowApiError("http", "Plow returned an invalid MCP configuration.");
     }
     if (!server || typeof server !== "object") {
@@ -383,8 +384,8 @@ export function validatedAgentConfig(config: string, token: string): string {
       (server as { type?: unknown }).type !== "http" ||
       typeof url !== "string" ||
       (protocol !== "http:" && protocol !== "https:") ||
-      url.includes(token) ||
-      decodedUrl.includes(token) ||
+      credentialPattern.test(url) ||
+      credentialPattern.test(decodedUrl) ||
       !headers ||
       typeof headers !== "object" ||
       (headers as Record<string, unknown>).Authorization !== `Bearer ${token}`
