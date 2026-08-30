@@ -11,6 +11,7 @@
  * only be reached by launching a window is one nobody tests.
  */
 import {
+  CloudAgentLine,
   CloudAgentDisplayRow,
   toCloudAgentDisplayRow,
 } from "./cloudAgentMapper.js";
@@ -52,20 +53,12 @@ export function tabShowsCloudAgents(tab: string): boolean {
  * One of Plow's pool numbers, used to name the line on a chat row.
  */
 export interface CloudLineOption {
+  /** Stable identity used by agent resources and chat participants. */
+  uid: string;
   /** The line's persona name (`Willow`), or null for an unnamed line. */
   displayName: string | null;
   /** The line's E.164 number. */
   number: string;
-}
-
-/**
- * The chat metadata the detail view needs to name an agent's line.
- */
-export interface CloudChatRow {
-  uid: string;
-  lineUid: string | null;
-  /** Finished display copy: the persona and formatted number, or its honest fallback. */
-  lineLabel: string;
 }
 
 export interface CloudChatOption {
@@ -113,14 +106,11 @@ export interface CloudAgentsUiState {
   cloudChatsNeedReactivation: boolean;
   /** A delete/retry failure, and nothing else. */
   cloudActionError: string | null;
-  cloudChats: CloudChatRow[];
   /**
    * A chat-list attempt SUCCEEDED — even if it returned nothing.
    *
-   * The distinction is the whole field: `cloudChats: []` alone cannot tell
-   * "this account has no chats" from "we could not ask". The latter keeps the
-   * roster and shows the list error instead of presenting missing threads as
-   * an authoritative empty result.
+   * The distinction keeps an unresolved agent row from presenting its threads
+   * as an authoritative empty result.
    */
   cloudChatsLoaded: boolean;
 }
@@ -206,10 +196,6 @@ export class CloudAgentState {
       cloudChatsError: this.chatsError,
       cloudChatsNeedReactivation: this.chatsNeedReactivation,
       cloudActionError: this.actionError,
-      // Rows are FORMATTED here, not in the renderer: naming a participant,
-      // spelling a number and deciding which one is the owner's are rules, and
-      // rules belong somewhere testable. `chatRows.ts` owns them.
-      cloudChats: this.chats.map((chat) => this.chatRow(chat)),
       cloudChatsLoaded: this.chatsLoaded,
     };
   }
@@ -422,6 +408,7 @@ export class CloudAgentState {
 
   private rowFor(agent: CloudAgentResource): CloudAgentDisplayRow {
     return toCloudAgentDisplayRow(agent, {
+      line: this.lineFor(agent.lineUid),
       threads: this.threadsFor(agent.lineUid, agent.chatUids),
     });
   }
@@ -443,15 +430,16 @@ export class CloudAgentState {
     });
   }
 
-  /** Reduce one chat to the line metadata the renderer reads. */
-  private chatRow(chat: CloudChatOption): CloudChatRow {
-    const line = chat.recipients?.line ?? null;
-    const name = (this.lines?.find((row) => row.number === line)?.displayName ?? "").trim();
-    const number = formatNumber(line ?? "");
+  /** Resolve the agent's line by stable uid, even when it has no current chats. */
+  private lineFor(lineUid: string | null): CloudAgentLine | null {
+    if (lineUid === null) return null;
+    const known = this.lines?.find((line) => line.uid === lineUid);
+    const chat = this.chats.find((candidate) => candidate.lineUid === lineUid);
+    const name = (known?.displayName ?? "").trim();
+    const number = formatNumber(known?.number ?? chat?.recipients?.line ?? "");
     return {
-      uid: chat.uid,
-      lineUid: chat.lineUid,
-      lineLabel: name && number ? `${name} · ${number}` : name || number || "Unknown line",
+      uid: lineUid,
+      label: name && number ? `${name} · ${number}` : name || number || "Unknown line",
     };
   }
 
@@ -471,15 +459,18 @@ export class CloudAgentState {
    */
   private relabelRows(): void {
     for (const [agentId, row] of this.rows) {
+      const lineUid = row.line?.uid ?? null;
+      const line = this.lineFor(lineUid);
       const threads = this.threadsFor(
-        row.lineUid,
-        row.lineUid === null ? row.threads.map((thread) => thread.uid) : [],
+        lineUid,
+        line === null ? row.threads.map((thread) => thread.uid) : [],
       );
-      const unchanged = threads.length === row.threads.length && threads.every(
+      const unchanged = line?.uid === row.line?.uid && line?.label === row.line?.label &&
+        threads.length === row.threads.length && threads.every(
         (thread, index) =>
           thread.uid === row.threads[index]?.uid && thread.label === row.threads[index]?.label,
       );
-      if (!unchanged) this.rows.set(agentId, { ...row, threads });
+      if (!unchanged) this.rows.set(agentId, { ...row, line, threads });
     }
   }
 
@@ -677,19 +668,20 @@ export class CloudLinesClient {
     // malformed row is dropped, not defaulted — the rule the chat list keeps.
     return rows.flatMap((raw) => {
       if (!raw || typeof raw !== "object") return [];
-      const row = raw as { provider_key?: unknown; display_name?: unknown };
+      const row = raw as { uid?: unknown; provider_key?: unknown; display_name?: unknown };
+      const uid = typeof row.uid === "string" ? row.uid.trim() : "";
       const number = typeof row.provider_key === "string" ? row.provider_key.trim() : "";
       const name = typeof row.display_name === "string" ? row.display_name.trim() : "";
       // The number is E.164 or the row is dropped. Arbitrary server-authored
       // strings are not useful line identities.
-      if (!E164.test(number)) return [];
+      if (!uid || !E164.test(number)) return [];
       // The credential must not come back out through ANY server-authored
       // field, in any encoding. `uid` and `provider_key` are as server-authored
       // as the name is; a row echoing one is refused outright rather than
       // blanked, because there is nothing safe left to show of it.
-      if (echoesCredential(number, credential)) return [];
+      if (echoesCredential(uid, credential) || echoesCredential(number, credential)) return [];
       const safeName = name && !echoesCredential(name, credential) ? name : null;
-      return [{ displayName: safeName, number }];
+      return [{ uid, displayName: safeName, number }];
     });
   }
 }

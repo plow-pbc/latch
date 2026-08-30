@@ -39,16 +39,11 @@ const TRIP_CHAT_TITLE = "+1 628-555-0144 · You";
 
 const home = fs.mkdtempSync(path.join(os.tmpdir(), "connect-shot-"));
 
-const CHAT = {
-  uid: "chat_groceries",
-  lineUid: "lin_willow",
-  lineLabel: "Willow · +1 415-555-0142",
-};
 const ACTIVE_AGENT = {
   agentId: "cag_groceries",
   name: "Household helper",
-  lineUid: CHAT.lineUid,
-  threads: [{ uid: CHAT.uid, label: CHAT_TITLE }],
+  line: { uid: "lin_willow", label: "Willow · +1 415-555-0142" },
+  threads: [{ uid: "chat_groceries", label: CHAT_TITLE }],
   status: "running",
   failureReason: null,
   createdAt: "2026-08-24T18:00:00.000Z",
@@ -56,16 +51,18 @@ const ACTIVE_AGENT = {
 const PROVISIONING_AGENT = {
   agentId: "cag_trip",
   name: "Trip planner",
-  lineUid: "lin_trip",
+  line: { uid: "lin_trip", label: "+1 628-555-0144" },
   threads: [{ uid: "chat_trip", label: TRIP_CHAT_TITLE }],
   status: "provisioning",
   failureReason: null,
   createdAt: new Date().toISOString(),
 };
-const TRIP_CHAT = {
-  uid: "chat_trip",
-  lineUid: PROVISIONING_AGENT.lineUid,
-  lineLabel: "+1 628-555-0144",
+const LEGACY_AGENT = {
+  ...ACTIVE_AGENT,
+  agentId: "cag_legacy",
+  name: "Legacy helper",
+  line: null,
+  threads: [{ uid: "chat_old", label: "Old fixed thread" }],
 };
 const EMPTY_ROSTER = { cloud: [], mcp: [], other: [], revokedHidden: 0 };
 const ROSTER = {
@@ -132,7 +129,6 @@ const CLOUD_EMPTY = {
   cloudChatsError: null,
   cloudChatsNeedReactivation: false,
   cloudActionError: null,
-  cloudChats: [],
   cloudChatsLoaded: true,
 };
 const CLOUD_READY = {
@@ -255,7 +251,6 @@ const SCREENS = [
     roster: ROSTER,
     cloud: {
       ...CLOUD_READY,
-      cloudChats: [CHAT, TRIP_CHAT],
       cloudAgents: [ACTIVE_AGENT, PROVISIONING_AGENT],
     },
     prepare: async (win) => {
@@ -284,7 +279,7 @@ const SCREENS = [
   {
     name: "cloud-detail",
     roster: { ...ROSTER, cloud: [ROSTER.cloud[0]], mcp: [], other: [] },
-    cloud: { ...CLOUD_READY, cloudChats: [CHAT], cloudAgents: [ACTIVE_AGENT] },
+    cloud: { ...CLOUD_READY, cloudAgents: [ACTIVE_AGENT] },
     prepare: async (win) => {
       await win.webContents.executeJavaScript(
         `document.querySelector(".cloud-agent-row .cloud-agent-open").click()`,
@@ -308,7 +303,6 @@ const SCREENS = [
     cloud: {
       ...CLOUD_READY,
       cloudAgents: [{ ...ACTIVE_AGENT, threads: [] }],
-      cloudChats: [],
       cloudChatsLoaded: false,
     },
     prepare: async (win) => {
@@ -318,7 +312,7 @@ const SCREENS = [
       await waitFor(win, `document.querySelector(".cloud-modal .cloud-detail-threads")`,
         "the loading-thread detail");
     },
-    expect: ["Household helper", "Unknown line", "Loading threads…", "Delete agent"],
+    expect: ["Household helper", "Willow · +1 415-555-0142", "Loading threads…", "Delete agent"],
   },
   {
     name: "cloud-chat-failed-detail",
@@ -326,7 +320,6 @@ const SCREENS = [
       ...CLOUD_READY,
       cloudAgents: [{ ...ACTIVE_AGENT, threads: [] }],
       cloudChatsError: "The chat list is unavailable.",
-      cloudChats: [],
       cloudChatsLoaded: false,
     },
     prepare: async (win) => {
@@ -338,15 +331,15 @@ const SCREENS = [
       const text = await win.webContents.executeJavaScript(
         `document.querySelector(".cloud-modal").textContent`,
       );
-      if (text.includes(ACTIVE_AGENT.lineUid)) {
+      if (text.includes(ACTIVE_AGENT.line.uid)) {
         throw new Error("detail exposed a raw line uid while chats were unavailable");
       }
     },
-    expect: ["Household helper", "Unknown line", "Threads couldn't be loaded", "Delete agent"],
+    expect: ["Household helper", "Willow · +1 415-555-0142", "Threads couldn't be loaded", "Delete agent"],
   },
   {
     name: "cloud-delete-confirm",
-    cloud: { ...CLOUD_READY, cloudChats: [CHAT], cloudAgents: [ACTIVE_AGENT] },
+    cloud: { ...CLOUD_READY, cloudAgents: [ACTIVE_AGENT] },
     prepare: async (win) => {
       await win.webContents.executeJavaScript(
         `document.querySelector(".cloud-agent-row .cloud-agent-open").click()`,
@@ -376,14 +369,7 @@ const SCREENS = [
     name: "cloud-legacy-detail",
     cloud: {
       ...CLOUD_READY,
-      cloudChats: [],
-      cloudAgents: [{
-        ...ACTIVE_AGENT,
-        agentId: "cag_legacy",
-        name: "Legacy helper",
-        lineUid: null,
-        threads: [{ uid: "chat_old", label: "Old fixed thread" }],
-      }],
+      cloudAgents: [LEGACY_AGENT],
     },
     prepare: async (win) => {
       await win.webContents.executeJavaScript(
@@ -395,11 +381,30 @@ const SCREENS = [
     expect: ["Legacy helper", "No line", "Old fixed thread", "Delete agent"],
   },
   {
+    name: "cloud-legacy-delete-confirm",
+    cloud: { ...CLOUD_READY, cloudAgents: [LEGACY_AGENT] },
+    prepare: async (win) => {
+      await win.webContents.executeJavaScript(
+        `document.querySelector(".cloud-agent-row .cloud-agent-open").click()`,
+      );
+      await waitFor(win, `document.querySelector(".cloud-modal .cloud-detail-threads")`,
+        "the legacy agent detail");
+      await clickText(win, "Delete agent", 0);
+      await waitFor(win,
+        `document.querySelector(".cloud-modal .group-title")?.textContent.startsWith("Delete ")`,
+        "the legacy delete confirmation");
+    },
+    expect: [
+      "Delete Legacy helper?",
+      "The agent will stop reading and replying in its fixed threads.",
+      "Cancel", "Delete agent",
+    ],
+  },
+  {
     name: "agents-final-revoked-count",
     roster: ROSTER,
     cloud: {
       ...CLOUD_READY,
-      cloudChats: [CHAT, TRIP_CHAT],
       cloudAgents: [ACTIVE_AGENT, PROVISIONING_AGENT],
     },
     prepare: async (win) => {
@@ -414,7 +419,6 @@ const SCREENS = [
     name: "cloud-teardown",
     cloud: {
       ...CLOUD_READY,
-      cloudChats: [CHAT],
       cloudAgents: [{ ...ACTIVE_AGENT, status: "teardown" }],
     },
     prepare: async () => {},
@@ -428,7 +432,6 @@ const SCREENS = [
       cloudAgentsError: "Method Not Allowed",
       cloudChatsError: "This Mac cannot list chats yet. Try re-activating it, then try again.",
       cloudChatsNeedReactivation: true,
-      cloudChats: [],
       cloudChatsLoaded: false,
     },
     prepare: async () => {},

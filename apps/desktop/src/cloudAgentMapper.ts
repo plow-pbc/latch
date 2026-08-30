@@ -15,10 +15,15 @@ export interface CloudAgentThread {
   label: string;
 }
 
+export interface CloudAgentLine {
+  uid: string;
+  label: string;
+}
+
 export interface CloudAgentDisplayRow {
   agentId: string;
   name: string;
-  lineUid: string | null;
+  line: CloudAgentLine | null;
   /** Read-only threads on the line, or the fixed grant for a legacy agent. */
   threads: CloudAgentThread[];
   status: CloudAgentStatus;
@@ -27,6 +32,8 @@ export interface CloudAgentDisplayRow {
 }
 
 export interface CloudAgentDisplayContext {
+  /** The agent's line resolved from the account's line list. */
+  line?: CloudAgentLine | null;
   /** Threads resolved from the separately fetched chat list. */
   threads?: readonly CloudAgentThread[];
 }
@@ -44,10 +51,13 @@ export function toCloudAgentDisplayRow(
   const failureReason = agent.failureCode && Object.hasOwn(FAILURE_LABELS, agent.failureCode)
     ? FAILURE_LABELS[agent.failureCode]
     : agent.failureReason;
+  const line = context.line === undefined
+    ? agent.lineUid === null ? null : { uid: agent.lineUid, label: "Unknown line" }
+    : context.line;
   return {
     agentId: scrub(agent.agentId),
     name: scrub(agent.name ?? "cloud agent"),
-    lineUid: agent.lineUid === null ? null : scrub(agent.lineUid),
+    line: line === null ? null : { uid: scrub(line.uid), label: scrub(line.label) },
     threads: (context.threads ?? (
       agent.lineUid === null
         ? agent.chatUids.map((uid) => ({ uid, label: uid }))

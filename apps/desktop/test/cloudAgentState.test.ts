@@ -7,6 +7,7 @@ import {
   CloudAgentsApi,
   CloudChatOption,
   CloudChatsClient,
+  CloudLineOption,
   CloudLinesClient,
 } from "../src/cloudAgentState.js";
 import { CloudAgentResource } from "../src/cloudAgents.js";
@@ -58,7 +59,7 @@ function chat(overrides: Partial<CloudChatOption> = {}): CloudChatOption {
 function build(options: {
   listAgents?: () => Promise<CloudAgentResource[]>;
   listChats?: () => Promise<CloudChatOption[]>;
-  listLines?: () => Promise<Array<{ displayName: string | null; number: string }>>;
+  listLines?: () => Promise<CloudLineOption[]>;
   remove?: (agentId: string) => Promise<void>;
   onChange?: () => void;
 } = {}) {
@@ -87,7 +88,7 @@ function build(options: {
         calls.push("listLines");
         return options.listLines
           ? options.listLines()
-          : [{ displayName: "Willow", number: "+15550100" }];
+          : [{ uid: "lin_willow", displayName: "Willow", number: "+15550100" }];
       },
     },
     onChange: options.onChange,
@@ -106,7 +107,6 @@ describe("CloudAgentState line and thread display", () => {
       cloudChatsError: null,
       cloudChatsNeedReactivation: false,
       cloudActionError: null,
-      cloudChats: [],
       cloudChatsLoaded: false,
     });
   });
@@ -123,17 +123,12 @@ describe("CloudAgentState line and thread display", () => {
     await state.refresh();
 
     expect(state.state().cloudAgents[0]).toMatchObject({
-      lineUid: "lin_willow",
+      line: { uid: "lin_willow", label: "Willow · +15550100" },
       threads: [
         { uid: "cht_one", label: "Willow · You · Nina" },
         { uid: "cht_three", label: "Willow · You · Nina" },
       ],
     });
-    expect(state.state().cloudChats.map(({ uid, lineUid }) => ({ uid, lineUid }))).toEqual([
-      { uid: "cht_one", lineUid: "lin_willow" },
-      { uid: "cht_two", lineUid: "lin_ash" },
-      { uid: "cht_three", lineUid: "lin_willow" },
-    ]);
   });
 
   it("lists only a legacy agent's fixed chats, with resolved labels", async () => {
@@ -153,7 +148,7 @@ describe("CloudAgentState line and thread display", () => {
     await state.refresh();
 
     expect(state.state().cloudAgents[0]).toMatchObject({
-      lineUid: null,
+      line: null,
       threads: [
         { uid: "cht_two", label: "+15550200" },
         { uid: "cht_missing", label: "cht_missing" },
@@ -161,24 +156,22 @@ describe("CloudAgentState line and thread display", () => {
     });
   });
 
-  it("marshals a finished, formatted line label and uses the line name in thread labels", async () => {
+  it("resolves a formatted line from its uid even when the line has no threads", async () => {
     const { state } = build({
-      listChats: async () => [chat({
-        recipients: { line: "+14155550142", members: ["+15550111", "+15550122"] },
-      })],
-      listLines: async () => [{ displayName: "Willow", number: "+14155550142" }],
+      listChats: async () => [],
+      listLines: async () => [{
+        uid: "lin_willow",
+        displayName: "Willow",
+        number: "+14155550142",
+      }],
     });
 
     await state.refresh();
 
-    expect(state.state().cloudChats[0]).toEqual({
-      uid: "cht_one",
-      lineUid: "lin_willow",
-      lineLabel: "Willow · +1 415-555-0142",
+    expect(state.state().cloudAgents[0]).toMatchObject({
+      line: { uid: "lin_willow", label: "Willow · +1 415-555-0142" },
+      threads: [],
     });
-    expect(state.state().cloudAgents[0].threads).toEqual([
-      { uid: "cht_one", label: "Willow · You · Nina" },
-    ]);
   });
 
   it("keeps the roster and reports chat-list failure independently", async () => {
@@ -230,7 +223,7 @@ describe("CloudAgentState line and thread display", () => {
 
     second.resolve([chat({ uid: "cht_new" })]);
     await Promise.all([olderRefresh, newerRefresh]);
-    expect(state.state().cloudChats.map(({ uid }) => uid)).toEqual(["cht_new"]);
+    expect(state.state().cloudAgents[0].threads.map(({ uid }) => uid)).toEqual(["cht_new"]);
   });
 
   it("keeps existing rows when a later agent-list refresh fails", async () => {
@@ -259,12 +252,7 @@ describe("CloudAgentState line and thread display", () => {
 
     await state.refresh();
 
-    expect(state.state().cloudChats).toHaveLength(1);
-    expect(state.state().cloudChats[0]).toEqual({
-      uid: "cht_one",
-      lineUid: "lin_willow",
-      lineLabel: "+15550100",
-    });
+    expect(state.state().cloudAgents[0].line).toEqual({ uid: "lin_willow", label: "+15550100" });
     expect(state.state().cloudAgents[0].threads).toEqual([
       { uid: "cht_one", label: "+15550100 · You · Nina" },
     ]);
@@ -401,8 +389,8 @@ describe("Plow line display metadata", () => {
     ));
 
     await expect(client.list(CREDENTIAL)).resolves.toEqual([
-      { displayName: "Willow", number: "+15550100" },
-      { displayName: null, number: "+15550200" },
+      { uid: "lin_1", displayName: "Willow", number: "+15550100" },
+      { uid: "lin_2", displayName: null, number: "+15550200" },
     ]);
   });
 
@@ -412,15 +400,16 @@ describe("Plow line display metadata", () => {
       async () => new Response(JSON.stringify({
         data: [
           { provider_key: "not-a-number", display_name: "Bad" },
-          { provider_key: "+15550100", display_name: CREDENTIAL },
-          { provider_key: "+15550200", display_name: "Ash" },
+          { uid: "lin_credential_name", provider_key: "+15550100", display_name: CREDENTIAL },
+          { uid: `lin_${CREDENTIAL}`, provider_key: "+15550150", display_name: "Unsafe" },
+          { uid: "lin_ash", provider_key: "+15550200", display_name: "Ash" },
         ],
       }), { status: 200, headers: { "content-type": "application/json" } }),
     ));
 
     await expect(client.list(CREDENTIAL)).resolves.toEqual([
-      { displayName: null, number: "+15550100" },
-      { displayName: "Ash", number: "+15550200" },
+      { uid: "lin_credential_name", displayName: null, number: "+15550100" },
+      { uid: "lin_ash", displayName: "Ash", number: "+15550200" },
     ]);
   });
 });

@@ -24,12 +24,13 @@ function agent(overrides: Partial<CloudAgentResource> = {}): CloudAgentResource 
 describe("cloud-agent pure mappings", () => {
   it("keeps provider URL and session identity out of renderer state", () => {
     const row = toCloudAgentDisplayRow(agent(), {
+      line: { uid: "lin_willow", label: "Willow · +1 415-555-0100" },
       threads: [{ uid: "cht_123", label: "+1 415 555 0100 · Pat, Lee" }],
     });
 
     expect(row).toMatchObject({
       agentId: "agent_stable",
-      lineUid: "lin_willow",
+      line: { uid: "lin_willow", label: "Willow · +1 415-555-0100" },
       threads: [{ uid: "cht_123", label: "+1 415 555 0100 · Pat, Lee" }],
     });
     expect(JSON.stringify(row)).not.toContain("session_old");
@@ -49,7 +50,10 @@ describe("cloud-agent pure mappings", () => {
         createdAt: `created ${sessionId}`,
         sessionId,
       }),
-      { threads: [{ uid: `chat-${sessionId}`, label: `chat label ${sessionId}` }] },
+      {
+        line: { uid: `line-${sessionId}`, label: `line label ${sessionId}` },
+        threads: [{ uid: `chat-${sessionId}`, label: `chat label ${sessionId}` }],
+      },
     );
 
     expect(row.failureReason).toBe("credential [credential] rejected");
@@ -79,8 +83,12 @@ describe("cloud-agent pure mappings", () => {
 
   it("keeps legacy fixed threads as structured uid-label pairs", () => {
     expect(toCloudAgentDisplayRow(agent({ lineUid: null, chatUids: ["cht_legacy"] }))).toMatchObject({
-      lineUid: null,
+      line: null,
       threads: [{ uid: "cht_legacy", label: "cht_legacy" }],
+    });
+    expect(toCloudAgentDisplayRow(agent()).line).toEqual({
+      uid: "lin_willow",
+      label: "Unknown line",
     });
     expect(toCloudAgentDisplayRow(agent()).threads).toEqual([]);
   });

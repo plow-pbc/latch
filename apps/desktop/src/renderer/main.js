@@ -888,10 +888,8 @@ function cloudStatus(status, failureReason) {
   return { tone: "amber", label: "Status unavailable" };
 }
 
-function cloudLine(agent, state) {
-  if (!agent?.lineUid) return "No line";
-  const chat = state.cloudChats.find((candidate) => candidate.lineUid === agent.lineUid);
-  return chat?.lineLabel || "Unknown line";
+function cloudLine(agent) {
+  return agent?.line?.label || "No line";
 }
 
 /** Show one agent's line and read-only threads. Delete is the only action. */
@@ -911,7 +909,7 @@ function openCloudDetail(trigger, agent, state, redraw) {
       el("div", { class: "cloud-detail-meta" }, [
         el("div", { class: "cloud-detail-field" }, [
           el("span", { class: "faint", text: "Line" }),
-          el("span", { text: cloudLine(agent, state) }),
+          el("span", { text: cloudLine(agent) }),
         ]),
         el("div", { class: "cloud-detail-field" }, [
           el("span", { class: "faint", text: "Status" }),
@@ -928,7 +926,7 @@ function openCloudDetail(trigger, agent, state, redraw) {
               text: state.cloudChatsError
                 ? "Threads couldn't be loaded."
                 : !state.cloudChatsLoaded ? "Loading threads…"
-                : agent.lineUid ? "No threads on this line." : "No threads.",
+                : agent.line ? "No threads on this line." : "No threads.",
             }),
       ]),
       el("div", { class: "row cloud-modal-actions" }, [
@@ -957,7 +955,9 @@ function openCloudDetail(trigger, agent, state, redraw) {
       el("div", { class: "group-title", text: `Delete ${name}?` }),
       el("p", {
         class: "conn-note",
-        text: "The agent will stop reading and replying on this line.",
+        text: agent.line
+          ? "The agent will stop reading and replying on this line."
+          : "The agent will stop reading and replying in its fixed threads.",
       }),
       note,
       el("div", { class: "row cloud-modal-actions" }, [
@@ -1172,9 +1172,9 @@ function rosterActions(
   return el("div", { class: "entity-actions" }, actions);
 }
 
-function cloudContext(agent, row, state) {
+function cloudContext(agent, row) {
   return [
-    cloudLine(agent, state),
+    cloudLine(agent),
     rosterUse(row ?? { createdAt: agent?.createdAt, lastSeenAt: null }, "Used"),
   ].filter(Boolean).join(" · ");
 }
@@ -1207,8 +1207,8 @@ function cloudEntityRow(row, agent, state, redraw) {
     ]),
     el("div", {
       class: "entity-context",
-      text: cloudContext(agent, row, state),
-      attrs: { title: cloudContext(agent, row, state) },
+      text: cloudContext(agent, row),
+      attrs: { title: cloudContext(agent, row) },
     }),
   ]);
   if (agent) {

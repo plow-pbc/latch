@@ -75,16 +75,11 @@ ipcMain.handle("settings:getInference", async () => readInference(probeHome));
 ipcMain.handle("settings:getAgentPurpose", async () => readAgentPurpose(probeHome));
 ipcMain.handle("settings:setAgentPurpose", async (_e, purpose) => setAgentPurpose(probeHome, purpose));
 const cloudThreadTitle = "Willow · You · Robin";
-const cloudChat = {
-  uid: "chat_probe",
-  lineUid: "lin_willow",
-  lineLabel: "Willow · +1 415-555-0142",
-};
 const cloudAgent = {
   agentId: "cag_probe",
   name: "Household helper",
-  lineUid: cloudChat.lineUid,
-  threads: [{ uid: cloudChat.uid, label: cloudThreadTitle }],
+  line: { uid: "lin_willow", label: "Willow · +1 415-555-0142" },
+  threads: [{ uid: "chat_probe", label: cloudThreadTitle }],
   status: "running",
   failureReason: null,
   createdAt: "2026-08-24T18:00:00.000Z",
@@ -97,7 +92,7 @@ const rosterProbe = {
     createdAt: cloudAgent.createdAt,
     lastSeenAt: "2026-08-25T17:55:00.000Z",
     agentId: cloudAgent.agentId,
-    chatUids: [cloudChat.uid],
+    chatUids: [cloudAgent.threads[0].uid],
     chatAccess: "listed",
     permissions: { canReadAndReply: true, canReachMac: true, canSpendInference: true },
     isActive: true,
@@ -125,7 +120,6 @@ let cloudProbe = {
   cloudChatsError: null,
   cloudChatsNeedReactivation: false,
   cloudActionError: null,
-  cloudChats: [cloudChat],
   cloudChatsLoaded: true,
 };
 
@@ -674,7 +668,6 @@ app.whenReady().then(async () => {
     ...cloudProbe,
     cloudAgents: [{ ...cloudAgent, threads: [] }],
     cloudChatsError: null,
-    cloudChats: [],
     cloudChatsLoaded: false,
   };
   await win.webContents.executeJavaScript(`window.__domoSelectTab("audit")`);
@@ -1346,7 +1339,7 @@ app.whenReady().then(async () => {
     cloudDeleteConfirm.copy &&
     cloudDeleteConfirm.buttons.join("|") === "Cancel|Delete agent" &&
     loadingCloudDetail === "Loading threads…" &&
-    unavailableCloudDetail.line.includes("LineUnknown line") &&
+    unavailableCloudDetail.line.includes("LineWillow · +1 415-555-0142") &&
     unavailableCloudDetail.threadState === "Threads couldn't be loaded." &&
     unavailableCloudDetail.hidesRawLineUid &&
     settings.hasAccountGroup &&

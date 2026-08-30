@@ -38,32 +38,32 @@ function recordingFetch(responses: Array<{ status: number; body?: unknown }>) {
 }
 
 describe("CloudAgentsClient resources", () => {
-  it("parses a line-scoped agent and keeps the informational grant", async () => {
-    const { fetchImpl } = recordingFetch([{ status: 200, body: { data: [wireAgent()] } }]);
-
-    const [agent] = await new CloudAgentsClient(new PlowApi("https://api.plow.co", fetchImpl))
-      .list(CREDENTIAL);
-
-    expect(agent).toMatchObject({
+  it.each([
+    ["line-scoped", wireAgent(), {
       agentId: "agent_123",
       lineUid: "lin_willow",
       chatUids: ["line:lin_willow"],
       name: "Kitchen",
       status: "running",
-    });
-  });
+    }],
+    ["legacy", wireAgent({ line_uid: null, chat_uids: ["cht_one", "cht_two"] }), {
+      lineUid: null,
+      chatUids: ["cht_one", "cht_two"],
+    }],
+    ["omitted status", wireAgent({ status: undefined }), { status: "provisioning" }],
+    ["failure metadata", wireAgent({
+      status: "failed",
+      failure_code: "capacity_exhausted",
+      failure_reason: "Provider capacity is exhausted.",
+    }), {
+      failureCode: "capacity_exhausted",
+      failureReason: "Provider capacity is exhausted.",
+    }],
+  ])("resource parsing matrix: %s", async (_case, wire, expected) => {
+    const { fetchImpl } = recordingFetch([{ status: 200, body: { data: [wire] } }]);
 
-  it("parses a legacy agent with a null line and fixed chats", async () => {
-    const { fetchImpl } = recordingFetch([{
-      status: 200,
-      body: { data: [wireAgent({ line_uid: null, chat_uids: ["cht_one", "cht_two"] })] },
-    }]);
-
-    const [agent] = await new CloudAgentsClient(new PlowApi("https://api.plow.co", fetchImpl))
-      .list(CREDENTIAL);
-
-    expect(agent.lineUid).toBeNull();
-    expect(agent.chatUids).toEqual(["cht_one", "cht_two"]);
+    await expect(new CloudAgentsClient(new PlowApi("https://api.plow.co", fetchImpl))
+      .list(CREDENTIAL)).resolves.toMatchObject([expected]);
   });
 
   it("falls back to a lone line grant when line_uid is absent", async () => {
@@ -78,37 +78,6 @@ describe("CloudAgentsClient resources", () => {
       .list(CREDENTIAL);
 
     expect(agent.lineUid).toBe("lin_fallback");
-  });
-
-  it("defaults an omitted status to provisioning", async () => {
-    const { fetchImpl } = recordingFetch([{
-      status: 200,
-      body: { data: [wireAgent({ status: undefined })] },
-    }]);
-
-    const [agent] = await new CloudAgentsClient(new PlowApi("https://api.plow.co", fetchImpl))
-      .list(CREDENTIAL);
-
-    expect(agent.status).toBe("provisioning");
-  });
-
-  it("preserves failure codes and legacy failure prose", async () => {
-    const { fetchImpl } = recordingFetch([{
-      status: 200,
-      body: {
-        data: [wireAgent({
-          status: "failed",
-          failure_code: "capacity_exhausted",
-          failure_reason: "Provider capacity is exhausted.",
-        })],
-      },
-    }]);
-
-    const [agent] = await new CloudAgentsClient(new PlowApi("https://api.plow.co", fetchImpl))
-      .list(CREDENTIAL);
-
-    expect(agent.failureCode).toBe("capacity_exhausted");
-    expect(agent.failureReason).toBe("Provider capacity is exhausted.");
   });
 
   it("accepts the older single-chat grant", async () => {
