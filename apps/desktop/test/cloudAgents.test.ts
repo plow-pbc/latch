@@ -111,22 +111,46 @@ describe("CloudAgentsClient resources", () => {
     expect(agent.failureReason).toBe("Provider capacity is exhausted.");
   });
 
-  it("accepts the older single-chat grant and rejects malformed grants", async () => {
+  it("accepts the older single-chat grant", async () => {
     const oldShape = wireAgent();
     delete oldShape.chat_uids;
     Object.assign(oldShape, { chat_uid: "cht_legacy" });
-    const { fetchImpl } = recordingFetch([
-      { status: 200, body: { data: [oldShape] } },
-      { status: 200, body: { data: [wireAgent({ chat_uids: [] })] } },
-    ]);
+    const { fetchImpl } = recordingFetch([{ status: 200, body: { data: [oldShape] } }]);
     const client = new CloudAgentsClient(new PlowApi("https://api.plow.co", fetchImpl));
 
     await expect(client.list(CREDENTIAL)).resolves.toMatchObject([
       { chatUids: ["cht_legacy"] },
     ]);
-    await expect(client.list(CREDENTIAL)).rejects.toThrow(
-      "Plow returned an invalid cloud-agent response.",
-    );
+  });
+
+  it("keeps the roster when informational chat grants are empty or absent", async () => {
+    const absentGrant = wireAgent({ agent_id: "agent_absent", line_uid: "lin_absent" });
+    delete absentGrant.chat_uids;
+    const { fetchImpl } = recordingFetch([{
+      status: 200,
+      body: {
+        data: [
+          wireAgent({ agent_id: "agent_empty", line_uid: "lin_empty", chat_uids: [] }),
+          absentGrant,
+        ],
+      },
+    }]);
+
+    await expect(new CloudAgentsClient(new PlowApi("https://api.plow.co", fetchImpl))
+      .list(CREDENTIAL)).resolves.toMatchObject([
+      { agentId: "agent_empty", lineUid: "lin_empty", chatUids: [] },
+      { agentId: "agent_absent", lineUid: "lin_absent", chatUids: [] },
+    ]);
+  });
+
+  it("rejects a malformed chat grant", async () => {
+    const { fetchImpl } = recordingFetch([{
+      status: 200,
+      body: { data: [wireAgent({ chat_uids: [7] })] },
+    }]);
+
+    await expect(new CloudAgentsClient(new PlowApi("https://api.plow.co", fetchImpl))
+      .list(CREDENTIAL)).rejects.toThrow("Plow returned an invalid cloud-agent response.");
   });
 
   it("rejects a non-string line uid instead of treating a current agent as legacy", async () => {

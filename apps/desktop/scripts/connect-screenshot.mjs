@@ -34,37 +34,21 @@ const MCP_URL = "https://api.plow.co/v1/relay/devices/u_7Qk2p9/mcp";
 // fake mint hands back, so the copy-once block has something to show.
 const DEVICE_TOKEN = "plow_EXAMPLEdeviceNOTreal_00000";
 const CLIENT_TOKEN = "plow_EXAMPLEclientNOTreal_00000";
+const CHAT_TITLE = "Willow · You · Robin";
+const TRIP_CHAT_TITLE = "+1 628-555-0144 · You";
 
 const home = fs.mkdtempSync(path.join(os.tmpdir(), "connect-shot-"));
 
 const CHAT = {
   uid: "chat_groceries",
   lineUid: "lin_willow",
-  label: "+1 (415) 555-0142, +1 (415) 555-0193, +1 (628) 555-0112",
-  lineName: "Willow",
-  recipients: {
-    line: "+14155550142",
-    members: ["+14155550193", "+16285550112"],
-  },
-  people: [
-    { number: "+14155550193", name: null, isOwner: true },
-    { number: "+16285550112", name: "Robin", isOwner: false },
-  ],
-  // Formatted by `chatRows.ts` in the real main process; the fixture carries
-  // the finished entries the same way it carries the finished label. One per
-  // position, name and number together — the row draws them as paired spans.
-  title: "Willow · You · Robin",
-  entries: [
-    { label: "Willow", number: "+1 415-555-0142" },
-    { label: "You", number: "+1 415-555-0193" },
-    { label: "Robin", number: "+1 628-555-0112" },
-  ],
+  lineLabel: "Willow · +1 415-555-0142",
 };
 const ACTIVE_AGENT = {
   agentId: "cag_groceries",
   name: "Household helper",
   lineUid: CHAT.lineUid,
-  threads: [{ uid: CHAT.uid, label: CHAT.title }],
+  threads: [{ uid: CHAT.uid, label: CHAT_TITLE }],
   status: "running",
   failureReason: null,
   createdAt: "2026-08-24T18:00:00.000Z",
@@ -73,7 +57,7 @@ const PROVISIONING_AGENT = {
   agentId: "cag_trip",
   name: "Trip planner",
   lineUid: "lin_trip",
-  threads: [{ uid: "chat_trip", label: "+1 (628) 555-0144 · You" }],
+  threads: [{ uid: "chat_trip", label: TRIP_CHAT_TITLE }],
   status: "provisioning",
   failureReason: null,
   createdAt: new Date().toISOString(),
@@ -81,15 +65,7 @@ const PROVISIONING_AGENT = {
 const TRIP_CHAT = {
   uid: "chat_trip",
   lineUid: PROVISIONING_AGENT.lineUid,
-  label: "+1 (628) 555-0144, +1 (415) 555-0193",
-  lineName: null,
-  recipients: { line: "+16285550144", members: ["+14155550193"] },
-  people: [{ number: "+14155550193", name: null, isOwner: true }],
-  title: "+1 628-555-0144 · You",
-  entries: [
-    { label: "+1 628-555-0144", number: "+1 628-555-0144" },
-    { label: "You", number: "+1 415-555-0193" },
-  ],
+  lineLabel: "+1 628-555-0144",
 };
 const EMPTY_ROSTER = { cloud: [], mcp: [], other: [], revokedHidden: 0 };
 const ROSTER = {
@@ -299,7 +275,7 @@ const SCREENS = [
     },
     expect: [
       "Cloud agents", "2 agents", "Household helper", "Ready",
-      "Willow · +14155550142", "Trip planner", "Setting up…", "+16285550144",
+      "Willow · +1 415-555-0142", "Trip planner", "Setting up…", "+1 628-555-0144",
       "MCP clients", "Claude Code on MacBook Pro", "Cursor desktop",
       "Other sessions", "Plow Latch on this Mac", "This Mac",
       "Plow website · Safari", "Legacy automation token", "14 revoked sessions hidden",
@@ -323,9 +299,50 @@ const SCREENS = [
       }
     },
     expect: [
-      "Household helper", "Line", "Willow · +14155550142", "Status", "Ready",
-      "Threads", CHAT.title, "Close", "Delete agent",
+      "Household helper", "Line", "Willow · +1 415-555-0142", "Status", "Ready",
+      "Threads", CHAT_TITLE, "Close", "Delete agent",
     ],
+  },
+  {
+    name: "cloud-chat-loading-detail",
+    cloud: {
+      ...CLOUD_READY,
+      cloudAgents: [{ ...ACTIVE_AGENT, threads: [] }],
+      cloudChats: [],
+      cloudChatsLoaded: false,
+    },
+    prepare: async (win) => {
+      await win.webContents.executeJavaScript(
+        `document.querySelector(".cloud-agent-row .cloud-agent-open").click()`,
+      );
+      await waitFor(win, `document.querySelector(".cloud-modal .cloud-detail-threads")`,
+        "the loading-thread detail");
+    },
+    expect: ["Household helper", "Unknown line", "Loading threads…", "Delete agent"],
+  },
+  {
+    name: "cloud-chat-failed-detail",
+    cloud: {
+      ...CLOUD_READY,
+      cloudAgents: [{ ...ACTIVE_AGENT, threads: [] }],
+      cloudChatsError: "The chat list is unavailable.",
+      cloudChats: [],
+      cloudChatsLoaded: false,
+    },
+    prepare: async (win) => {
+      await win.webContents.executeJavaScript(
+        `document.querySelector(".cloud-agent-row .cloud-agent-open").click()`,
+      );
+      await waitFor(win, `document.querySelector(".cloud-modal .cloud-detail-threads")`,
+        "the unavailable-thread detail");
+      const text = await win.webContents.executeJavaScript(
+        `document.querySelector(".cloud-modal").textContent`,
+      );
+      if (text.includes(ACTIVE_AGENT.lineUid)) {
+        throw new Error("detail exposed a raw line uid while chats were unavailable");
+      }
+    },
+    expect: ["Household helper", "Unknown line", "Threads couldn't be loaded", "Delete agent"],
   },
   {
     name: "cloud-delete-confirm",

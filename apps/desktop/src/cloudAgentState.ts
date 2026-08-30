@@ -27,11 +27,10 @@ import {
 import { PlowApi, PlowApiError, parseActivationChat } from "./plowApi.js";
 import {
   ChatPerson,
-  ChatRowEntry,
   chatEchoesCredential,
   chatPeople,
-  chatRowEntries,
   chatRowTitle,
+  formatNumber,
   withoutCredentialEchoes,
 } from "./chatRows.js";
 import { loadSettings } from "./settings.js";
@@ -60,22 +59,13 @@ export interface CloudLineOption {
 }
 
 /**
- * A chat as the detail view renders it: the option plus its formatted row.
- *
- * Built in `state()` rather than by the client, because an entry's label needs
- * the LINE's persona name and only the line list carries that.
+ * The chat metadata the detail view needs to name an agent's line.
  */
-export interface CloudChatRow extends CloudChatOption {
-  /** One position per entry, name and number together — what the renderer
-   * draws. Empty for a chat with neither a line nor participants. */
-  entries: ChatRowEntry[];
-  /** The same row as one string, for the tooltip and for the fallback chat,
-   * which has no entries to draw. */
-  title: string;
-  /** The persona name of the line this chat runs on, when Plow's list names
-   * it. Sorting is by this first, so every chat on one number sits together
-   * without needing a group header to say so. */
-  lineName: string | null;
+export interface CloudChatRow {
+  uid: string;
+  lineUid: string | null;
+  /** Finished display copy: the persona and formatted number, or its honest fallback. */
+  lineLabel: string;
 }
 
 export interface CloudChatOption {
@@ -444,25 +434,32 @@ export class CloudAgentState {
     if (lineUid !== null) {
       return this.chats
         .filter((chat) => chat.lineUid === lineUid)
-        .map((chat) => ({ uid: chat.uid, label: this.chatRow(chat).title }));
+        .map((chat) => ({ uid: chat.uid, label: this.chatTitle(chat) }));
     }
 
     return legacyChatUids.map((uid) => {
       const chat = this.chats.find((candidate) => candidate.uid === uid);
-      return { uid, label: chat ? this.chatRow(chat).title : uid };
+      return { uid, label: chat ? this.chatTitle(chat) : uid };
     });
   }
 
-  /** Format one chat once for both the roster and detail view. */
+  /** Reduce one chat to the line metadata the renderer reads. */
   private chatRow(chat: CloudChatOption): CloudChatRow {
     const line = chat.recipients?.line ?? null;
-    const lineName = this.lines?.find((row) => row.number === line)?.displayName ?? null;
+    const name = (this.lines?.find((row) => row.number === line)?.displayName ?? "").trim();
+    const number = formatNumber(line ?? "");
     return {
-      ...chat,
-      lineName,
-      entries: chatRowEntries(line, lineName, chat.people),
-      title: chatRowTitle(chat.people, line, chat.label || chat.uid, lineName),
+      uid: chat.uid,
+      lineUid: chat.lineUid,
+      lineLabel: name && number ? `${name} · ${number}` : name || number || "Unknown line",
     };
+  }
+
+  /** Build a thread label in the main process from the full chat resource. */
+  private chatTitle(chat: CloudChatOption): string {
+    const line = chat.recipients?.line ?? null;
+    const lineName = this.lines?.find((row) => row.number === line)?.displayName ?? null;
+    return chatRowTitle(chat.people, line, chat.label || chat.uid, lineName);
   }
 
   /**

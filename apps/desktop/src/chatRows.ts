@@ -84,11 +84,8 @@ export function withoutCredentialEchoes<
 /**
  * What separates one entry from the next in a FLAT label.
  *
- * Only where a row has to collapse to a single string with no numbers beside
- * it — the activation label on disk, and the picker's fallback. Nothing reads
- * it back: the row a human sees is built from `chatRowEntries`, where a name
- * and its number are one object, so a display name that happens to contain
- * this separator is just a name.
+ * Used where a row has to collapse to a single string with no numbers beside
+ * it — the activation label on disk and a thread's display label.
  */
 const ENTRY_SEPARATOR = " · ";
 
@@ -144,50 +141,6 @@ export function formatNumber(number: string): string {
   return nanp ? `+1 ${nanp[1]}-${nanp[2]}-${nanp[3]}` : raw;
 }
 
-/** One position on a chat row: who, and which number they are. */
-export interface ChatRowEntry {
-  /** "You" for the owner, the line's or the person's name where there is a
-   * usable one, and their formatted number where there is not. */
-  label: string;
-  /** The same entry's number, formatted. */
-  number: string;
-}
-
-/**
- * The row, as the picker draws it: the line this chat runs on, then its
- * participants as the API listed them.
- *
- * A name and its number are ONE object all the way to the DOM, so a reader
- * never has to line up two strings by counting. They used to be exactly that
- * — a title and a subtitle joined on a separator a display name cannot
- * contain — and "cannot contain" is a promise about server-authored text that
- * nothing here can keep: `Willow · Home` is a line name a provider will hand
- * over, and it added a position to the top line with no number under it.
- */
-export function chatRowEntries(
-  line: string | null,
-  lineName: string | null,
-  people: readonly ChatPerson[],
-): ChatRowEntry[] {
-  const lineNumber = (line ?? "").trim();
-  const entries: ChatRowEntry[] = [];
-  if (lineNumber) {
-    // The line leads. It is the number the chat runs on — the one an agent
-    // here answers from — and naming it first is what tells two chats with the
-    // same people apart.
-    entries.push({
-      label: lineName?.trim() || formatNumber(lineNumber),
-      number: formatNumber(lineNumber),
-    });
-  }
-  for (const person of people) {
-    if (person.number === lineNumber) continue;
-    const label = person.isOwner ? "You" : person.name?.trim() || formatNumber(person.number);
-    entries.push({ label, number: formatNumber(person.number) });
-  }
-  return entries;
-}
-
 /**
  * The same row flattened to ONE string: `Willow · You · Nina`.
  *
@@ -205,6 +158,12 @@ export function chatRowTitle(
   fallback: string,
   lineName: string | null = null,
 ): string {
-  const labels = chatRowEntries(line, lineName, people).map((entry) => entry.label);
+  const lineNumber = (line ?? "").trim();
+  const labels: string[] = [];
+  if (lineNumber) labels.push(lineName?.trim() || formatNumber(lineNumber));
+  for (const person of people) {
+    if (person.number === lineNumber) continue;
+    labels.push(person.isOwner ? "You" : person.name?.trim() || formatNumber(person.number));
+  }
   return labels.length ? labels.join(ENTRY_SEPARATOR) : fallback;
 }

@@ -74,33 +74,17 @@ ipcMain.handle("settings:getInference", async () => readInference(probeHome));
 // it. Nothing an agent can reach registers a handler on either channel.
 ipcMain.handle("settings:getAgentPurpose", async () => readAgentPurpose(probeHome));
 ipcMain.handle("settings:setAgentPurpose", async (_e, purpose) => setAgentPurpose(probeHome, purpose));
+const cloudThreadTitle = "Willow · You · Robin";
 const cloudChat = {
   uid: "chat_probe",
   lineUid: "lin_willow",
-  label: "+1 (415) 555-0142, +1 (415) 555-0193, +1 (628) 555-0112",
-  lineName: "Willow",
-  recipients: {
-    line: "+14155550142",
-    members: ["+14155550193", "+16285550112"],
-  },
-  people: [
-    { number: "+14155550193", name: null, isOwner: true },
-    { number: "+16285550112", name: "Robin", isOwner: false },
-  ],
-  title: "Willow · You · Robin",
-  // One entry per position, name and number in the same object — what the row
-  // draws as paired spans.
-  entries: [
-    { label: "Willow", number: "+1 415-555-0142" },
-    { label: "You", number: "+1 415-555-0193" },
-    { label: "Robin", number: "+1 628-555-0112" },
-  ],
+  lineLabel: "Willow · +1 415-555-0142",
 };
 const cloudAgent = {
   agentId: "cag_probe",
   name: "Household helper",
   lineUid: cloudChat.lineUid,
-  threads: [{ uid: cloudChat.uid, label: cloudChat.title }],
+  threads: [{ uid: cloudChat.uid, label: cloudThreadTitle }],
   status: "running",
   failureReason: null,
   createdAt: "2026-08-24T18:00:00.000Z",
@@ -614,7 +598,7 @@ app.whenReady().then(async () => {
         !group?.textContent.includes("worker"),
       hidesProvider: !group?.textContent.includes("Provider"),
       namesLine: row?.querySelector(".entity-context")?.textContent
-        .includes("Willow · +14155550142") === true,
+        .includes("Willow · +1 415-555-0142") === true,
       rowIsDetailTrigger: row?.querySelector(".cloud-agent-open")
         ?.getAttribute("role") === "button",
       noCreateAction: ![...group.querySelectorAll("button")]
@@ -685,6 +669,59 @@ app.whenReady().then(async () => {
       .find((button) => button.textContent.trim() === "Close").click()`,
   );
   await waitFor(win, `!document.querySelector(".cloud-modal")`, "the cloud-agent detail to close");
+
+  cloudProbe = {
+    ...cloudProbe,
+    cloudAgents: [{ ...cloudAgent, threads: [] }],
+    cloudChatsError: null,
+    cloudChats: [],
+    cloudChatsLoaded: false,
+  };
+  await win.webContents.executeJavaScript(`window.__domoSelectTab("audit")`);
+  await win.webContents.executeJavaScript(`window.__domoSelectTab("agents")`);
+  await waitFor(win, `document.querySelector(".cloud-agent-row .cloud-agent-open")`,
+    "the cloud agent whose threads are still loading");
+  await win.webContents.executeJavaScript(
+    `document.querySelector(".cloud-agent-row .cloud-agent-open").click()`,
+  );
+  await waitFor(win, `document.querySelector(".cloud-modal .cloud-detail-threads")`,
+    "the loading-thread detail");
+  const loadingCloudDetail = await win.webContents.executeJavaScript(
+    `document.querySelector(".cloud-modal .cloud-thread-empty")?.textContent.trim()`,
+  );
+  await win.webContents.executeJavaScript(
+    `[...document.querySelectorAll(".cloud-modal button")]
+      .find((button) => button.textContent.trim() === "Close").click()`,
+  );
+  await waitFor(win, `!document.querySelector(".cloud-modal")`,
+    "the loading-thread detail to close");
+
+  cloudProbe = { ...cloudProbe, cloudChatsError: "The chat list is unavailable." };
+  await win.webContents.executeJavaScript(`window.__domoSelectTab("audit")`);
+  await win.webContents.executeJavaScript(`window.__domoSelectTab("agents")`);
+  await waitFor(win, `document.querySelector(".cloud-agent-row .cloud-agent-open")`,
+    "the cloud agent whose threads failed to load");
+  await win.webContents.executeJavaScript(
+    `document.querySelector(".cloud-agent-row .cloud-agent-open").click()`,
+  );
+  await waitFor(win, `document.querySelector(".cloud-modal .cloud-detail-threads")`,
+    "the unavailable-thread detail");
+  const unavailableCloudDetail = await win.webContents.executeJavaScript(`(${() => {
+    const modal = document.querySelector(".cloud-modal");
+    const fields = [...modal.querySelectorAll(".cloud-detail-field")].map((field) =>
+      field.textContent.trim());
+    return {
+      line: fields[0] ?? "",
+      threadState: modal.querySelector(".cloud-thread-empty")?.textContent.trim(),
+      hidesRawLineUid: !modal.textContent.includes("lin_willow"),
+    };
+  }})()`);
+  await win.webContents.executeJavaScript(
+    `[...document.querySelectorAll(".cloud-modal button")]
+      .find((button) => button.textContent.trim() === "Close").click()`,
+  );
+  await waitFor(win, `!document.querySelector(".cloud-modal")`,
+    "the unavailable-thread detail to close");
 
   // The Approvals card: the modes, and the owner's purpose statement. Two
   // states, because the card has two — the field under the reviewer chip, and
@@ -1300,7 +1337,7 @@ app.whenReady().then(async () => {
     cloudRoster.rowIsDetailTrigger &&
     cloudRoster.noCreateAction &&
     cloudDetail.title === "Household helper" &&
-    cloudDetail.line.includes("LineWillow · +14155550142") &&
+    cloudDetail.line.includes("LineWillow · +1 415-555-0142") &&
     cloudDetail.status.includes("StatusReady") &&
     cloudDetail.threads.join("|") === "Willow · You · Robin" &&
     cloudDetail.buttons.join("|") === "Close|Delete agent" &&
@@ -1308,6 +1345,10 @@ app.whenReady().then(async () => {
     cloudDeleteConfirm.title === "Delete Household helper?" &&
     cloudDeleteConfirm.copy &&
     cloudDeleteConfirm.buttons.join("|") === "Cancel|Delete agent" &&
+    loadingCloudDetail === "Loading threads…" &&
+    unavailableCloudDetail.line.includes("LineUnknown line") &&
+    unavailableCloudDetail.threadState === "Threads couldn't be loaded." &&
+    unavailableCloudDetail.hidesRawLineUid &&
     settings.hasAccountGroup &&
     settings.showsThisMac &&
     settings.noEndpointRow &&

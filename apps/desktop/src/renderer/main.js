@@ -891,9 +891,7 @@ function cloudStatus(status, failureReason) {
 function cloudLine(agent, state) {
   if (!agent?.lineUid) return "No line";
   const chat = state.cloudChats.find((candidate) => candidate.lineUid === agent.lineUid);
-  const name = String(chat?.lineName ?? "").trim();
-  const number = String(chat?.recipients?.line ?? "").trim() || null;
-  return name && number ? `${name} · ${number}` : name || number || agent.lineUid;
+  return chat?.lineLabel || "Unknown line";
 }
 
 /** Show one agent's line and read-only threads. Delete is the only action. */
@@ -927,7 +925,10 @@ function openCloudDetail(trigger, agent, state, redraw) {
               el("li", { text: thread.label || thread.uid })))
           : el("p", {
               class: "faint cloud-thread-empty",
-              text: agent.lineUid ? "No threads on this line." : "No threads.",
+              text: state.cloudChatsError
+                ? "Threads couldn't be loaded."
+                : !state.cloudChatsLoaded ? "Loading threads…"
+                : agent.lineUid ? "No threads on this line." : "No threads.",
             }),
       ]),
       el("div", { class: "row cloud-modal-actions" }, [

@@ -198,18 +198,19 @@ function parseResource(
 /**
  * The chat grant, from either shape the API has served: `chat_uids` is the
  * multi-chat grant, and a lone `chat_uid` is the single-chat form that
- * preceded it. `null` means neither was present and well-formed — a response
- * we must not guess at.
+ * preceded it. The grant is informational for line-scoped agents, so an
+ * omitted or empty grant is an empty list. `null` means a present grant was
+ * malformed.
  */
 function readChatUids(decoded: Record<string, unknown>): string[] | null {
   const many = decoded.chat_uids;
   if (Array.isArray(many)) {
-    if (many.length === 0 || !many.every((uid) => typeof uid === "string")) return null;
+    if (!many.every((uid) => typeof uid === "string")) return null;
     return many as string[];
   }
   if (many !== undefined) return null;
   if (typeof decoded.chat_uid === "string") return [decoded.chat_uid];
-  return null;
+  return [];
 }
 
 function errorFor(status: number): PlowApiError {
