@@ -694,9 +694,6 @@ app.whenReady().then(async () => {
     `document.querySelector(".cloud-modal .cloud-thread-list li")?.textContent.trim() === ${JSON.stringify(cloudThreadTitle)}`,
     "the open cloud-agent detail to refresh with its loaded threads",
   );
-  const refreshedCloudDetail = await win.webContents.executeJavaScript(
-    `document.querySelector(".cloud-modal .cloud-thread-list li")?.textContent.trim()`,
-  );
   await win.webContents.executeJavaScript(
     `[...document.querySelectorAll(".cloud-modal button")]
       .find((button) => button.textContent.trim() === "Close").click()`,
@@ -1359,7 +1356,6 @@ app.whenReady().then(async () => {
     cloudDeleteConfirm.copy &&
     cloudDeleteConfirm.buttons.join("|") === "Cancel|Delete agent" &&
     loadingCloudDetail === "Loading threads…" &&
-    refreshedCloudDetail === cloudThreadTitle &&
     unavailableCloudDetail.line.includes("LineWillow · +1 415-555-0142") &&
     unavailableCloudDetail.threadState === "Threads couldn't be loaded." &&
     unavailableCloudDetail.hidesRawLineUid &&
