@@ -202,6 +202,10 @@ describe("auditActivities (grouping)", () => {
       { outcome: "ambiguous", candidateCount: 2 },
       { status: "Skipped", tone: "zinc", category: "other", step: "Activation session cleanup skipped — 2 matches", state: "neutral" },
     ],
+    [
+      { outcome: "no_credential" },
+      { status: "Skipped", tone: "zinc", category: "other", step: "Activation session cleanup skipped — this Mac is not signed in", state: "neutral" },
+    ],
   ])("renders activation-session cleanup outcome %#", (fields, expected) => {
     const [activity] = auditActivities([{
       event: "activation_session_cleanup",

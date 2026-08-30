@@ -539,9 +539,6 @@ export class CloudAgentState {
       if (!this.isCurrentLineFlow(action.kind, generation, flow)) return;
 
       this.activationSecret = null;
-      await this.cleanupActivationSession(activationStartedAt);
-      if (!this.isCurrentLineFlow(action.kind, generation, flow)) return;
-
       const lineUid = (result.chat?.lineUid ?? "").trim();
       const credential = this.credential();
       if (!lineUid || echoesCredential(lineUid, credential)) {
@@ -549,6 +546,7 @@ export class CloudAgentState {
           `[cloud-agent] verified activation missing line uid: ${JSON.stringify(result.shape)}`,
         );
         this.setLineFlowError(action.kind, "Couldn't read the line for this agent.", true);
+        void this.cleanupActivationSession(activationStartedAt);
         return;
       }
 
@@ -576,6 +574,7 @@ export class CloudAgentState {
       };
       this.publish();
       await this.finishLineFlow(request, generation, flow);
+      void this.cleanupActivationSession(activationStartedAt);
       return;
     }
   }
@@ -603,8 +602,12 @@ export class CloudAgentState {
     const candidates = keys.filter((key) => {
       if (!key.is_active || key.agent_id !== null) return false;
       if (key.name?.trim() || !key.scopes.includes("*:*")) return false;
+      // resolve_bearer_token commits the caller's last_seen_at touch before the
+      // list route body, so this Mac is not a never-used candidate.
       if (key.last_seen_at !== null || key.created_at === null) return false;
       const createdAt = parseApiTimestamp(key.created_at);
+      // Cross-clock fallback: Plow authors createdAt while this Mac records the
+      // flow start; a session id in the redeem response would remove this compare.
       return Number.isFinite(createdAt) && createdAt >= activationStartedAt;
     });
     if (candidates.length === 0) {

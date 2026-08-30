@@ -558,6 +558,8 @@ function describeStep(e: JSONValue): AuditStep {
         text = `Activation session cleanup skipped — ${ev.get("candidateCount").int ?? 0} matches`;
       } else if (outcome === "no_match") {
         text = "Activation session cleanup skipped — no matching session";
+      } else if (outcome === "no_credential") {
+        text = "Activation session cleanup skipped — this Mac is not signed in";
       } else {
         text = "Activation session cleanup skipped";
       }

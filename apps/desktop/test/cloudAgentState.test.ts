@@ -77,6 +77,14 @@ function activationSession(overrides: Partial<KeyInfo> = {}): KeyInfo {
   };
 }
 
+function thisMacSession(): KeyInfo {
+  return activationSession({
+    id: 1,
+    created_at: "2026-08-30T21:58:59.000000",
+    last_seen_at: "2026-08-30T21:59:01.000000",
+  });
+}
+
 function verifiedProvisionedActivation(): ProvisionedActivationRedeem {
   return {
     status: "verified",
@@ -588,7 +596,7 @@ describe("CloudAgentState new agent flow", () => {
       try {
         const keys = [
           // Production currently gives this Mac's own row no prefix marker.
-          activationSession({ id: 1, created_at: "2026-08-30T21:58:59.000000" }),
+          thisMacSession(),
           activationSession(),
         ];
         const { state, calls, audit } = build({
@@ -604,7 +612,12 @@ describe("CloudAgentState new agent flow", () => {
         await state.create({ name: "Garden", provider: "exe:hermes", lineUid: null });
         await vi.waitFor(() => expect(audit).toHaveLength(1));
 
-        expect(keys[0]).toMatchObject({ id: 1, key_prefix: null, is_active: true });
+        expect(keys[0]).toMatchObject({
+          id: 1,
+          key_prefix: null,
+          last_seen_at: "2026-08-30T21:59:01.000000",
+          is_active: true,
+        });
         expect(calls.filter((call) => call === "listKeys")).toHaveLength(1);
         expect(calls.filter((call) => call.startsWith("revokeKey:"))).toEqual([
           "revokeKey:42",
@@ -620,18 +633,39 @@ describe("CloudAgentState new agent flow", () => {
     },
   );
 
+  it("completes the visible agent flow before a session lookup finishes", async () => {
+    const listing = deferred<KeyInfo[]>();
+    const { state, calls, audit } = build({
+      now: () => Date.parse("2026-08-30T21:59:00Z"),
+      wait: async () => {},
+      redeemActivation: async () => verifiedProvisionedActivation(),
+      listKeys: async () => listing.promise,
+    });
+
+    await state.create({ name: "Garden", provider: "exe:hermes", lineUid: null });
+    await vi.waitFor(() => expect(calls).toContain("listKeys"));
+
+    expect(state.state().cloudLineFlow.completedAgentId).toBe("agent_1");
+    listing.resolve([]);
+    await vi.waitFor(() => expect(audit).toHaveLength(1));
+  });
+
   it.each([
-    ["no", [], { outcome: "no_match" }],
+    ["no matching sessions", [], { outcome: "no_match" }],
+    ["an agent-owned key", [activationSession({ agent_id: "agent_42" })], { outcome: "no_match" }],
+    ["a named key", [activationSession({ name: "Deliberate Admin key" })], { outcome: "no_match" }],
+    ["a non-wildcard key", [activationSession({ scopes: ["relay:*"] })], { outcome: "no_match" }],
+    ["an already-used key", [activationSession({ last_seen_at: "2026-08-30T21:59:03.000000" })], { outcome: "no_match" }],
     [
-      "two",
+      "two matching sessions",
       [activationSession(), activationSession({ id: 43 })],
       { outcome: "ambiguous", candidateCount: 2 },
     ],
   ] satisfies Array<[string, KeyInfo[], Record<string, string | number>]>)(
-    "revokes nothing when verification has %s matching sessions",
-    async (_count, candidates, expectedFields) => {
+    "revokes nothing when verification has %s",
+    async (_shape, candidates, expectedFields) => {
       const keys = [
-        activationSession({ id: 1, created_at: "2026-08-30T21:58:59.000000" }),
+        thisMacSession(),
         ...candidates,
       ];
       const { state, calls, audit } = build({
@@ -654,7 +688,7 @@ describe("CloudAgentState new agent flow", () => {
 
   it("leaves the verification session active and audits a failed revoke", async () => {
     const keys = [
-      activationSession({ id: 1, created_at: "2026-08-30T21:58:59.000000" }),
+      thisMacSession(),
       activationSession(),
     ];
     const { state, calls, audit } = build({
