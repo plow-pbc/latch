@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   CloudAgentResource,
+  CloudAgentLineError,
   CloudAgentsClient,
   isTerminalCloudAgent,
 } from "../src/cloudAgents.js";
@@ -146,6 +147,73 @@ describe("CloudAgentsClient resources", () => {
     expect(error).toBeInstanceOf(PlowApiError);
     expect((error as Error).message).toBe("Plow returned an unsafe cloud-agent response.");
     expect((error as Error).message).not.toContain(CREDENTIAL);
+  });
+});
+
+describe("CloudAgentsClient creation", () => {
+  it.each([200, 202])("accepts %s and sends only the line and name", async (status) => {
+    const { calls, fetchImpl } = recordingFetch([{ status, body: wireAgent() }]);
+
+    await new CloudAgentsClient(new PlowApi("https://api.plow.co", fetchImpl)).create(
+      CREDENTIAL,
+      { lineUid: "lin_willow", name: "Kitchen" },
+    );
+
+    expect(calls[0].url).toBe("https://api.plow.co/v1/agents/cloud");
+    expect(calls[0].init.method).toBe("POST");
+    expect(JSON.parse(String(calls[0].init.body))).toEqual({
+      line_uid: "lin_willow",
+      name: "Kitchen",
+    });
+    expect(String(calls[0].init.body)).not.toContain("chat_uids");
+  });
+
+  it("maps NO_HOME_CHAT to fixed create copy", async () => {
+    const { fetchImpl } = recordingFetch([{
+      status: 409,
+      body: { detail: { code: "NO_HOME_CHAT", message: `echo ${CREDENTIAL}` } },
+    }]);
+
+    await expect(new CloudAgentsClient(new PlowApi("https://api.plow.co", fetchImpl)).create(
+      CREDENTIAL,
+      { lineUid: "lin_willow", name: "Kitchen" },
+    )).rejects.toThrow("Text this line once first, then try again.");
+  });
+});
+
+describe("CloudAgentsClient line changes", () => {
+  it("sends only the new line uid to the encoded agent route", async () => {
+    const { calls, fetchImpl } = recordingFetch([{
+      status: 200,
+      body: wireAgent({ line_uid: "lin_ash" }),
+    }]);
+
+    await new CloudAgentsClient(new PlowApi("https://api.plow.co", fetchImpl))
+      .changeLine(CREDENTIAL, "agent/with space", "lin_ash");
+
+    expect(calls[0].url).toBe(
+      "https://api.plow.co/v1/agents/cloud/agent%2Fwith%20space/line",
+    );
+    expect(calls[0].init.method).toBe("PUT");
+    expect(JSON.parse(String(calls[0].init.body))).toEqual({ line_uid: "lin_ash" });
+  });
+
+  it.each([
+    ["NO_HOME_CHAT", "no_home_chat", "Text this line once first, then try again."],
+    ["CHAT_SET_CONFLICT", "line_occupied", "Another agent already uses that line."],
+  ] as const)("maps %s to fixed change-line copy", async (wireCode, code, copy) => {
+    const { fetchImpl } = recordingFetch([{
+      status: 409,
+      body: { detail: { code: wireCode, message: `echo ${CREDENTIAL}` } },
+    }]);
+
+    const error = await new CloudAgentsClient(new PlowApi("https://api.plow.co", fetchImpl))
+      .changeLine(CREDENTIAL, "agent_123", "lin_ash")
+      .catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(CloudAgentLineError);
+    expect(error).toMatchObject({ code, message: copy });
+    expect(String(error)).not.toContain(CREDENTIAL);
   });
 });
 

@@ -96,6 +96,17 @@ contextBridge.exposeInMainWorld("domo", {
   // missing — an inactive credential on a still-running agent — where there is
   // no roster row to name and none is needed.
   cloudRemove: (agentId: string) => ipcRenderer.invoke("cloud:remove", agentId),
+  cloudRefresh: () => ipcRenderer.invoke("cloud:refresh"),
+  cloudCreate: (input: { name: string; lineUid: string | null }) =>
+    ipcRenderer.invoke("cloud:create", input),
+  cloudCancelCreate: () => ipcRenderer.invoke("cloud:cancelCreate"),
+  cloudRetryCreate: () => ipcRenderer.invoke("cloud:retryCreate"),
+  cloudRetryFailed: (agentId: string) => ipcRenderer.invoke("cloud:retryFailed", agentId),
+  cloudChangeLine: (input: { agentId: string; lineUid: string | null }) =>
+    ipcRenderer.invoke("cloud:changeLine", input),
+  cloudCancelChangeLine: () => ipcRenderer.invoke("cloud:cancelChangeLine"),
+  cloudRetryChangeLine: () => ipcRenderer.invoke("cloud:retryChangeLine"),
+  cloudOpenMessages: () => ipcRenderer.invoke("cloud:openMessages"),
   onConnectChanged: (cb: () => void) => ipcRenderer.on("connect:changed", cb),
 
   // Any external destination the app links to. A key, never a URL: main

@@ -610,6 +610,10 @@ ipcMain.handle("external:open", async (_e, key: string) => {
 // group are two groups on one screen, and a renderer that had to reconcile two
 // asynchronous reads would render them disagreeing.
 ipcMain.handle("connect:get", async () => agentsTabState());
+ipcMain.handle("cloud:refresh", async () => {
+  await cloudAgents?.refresh();
+  return agentsTabState();
+});
 ipcMain.handle("connect:create", async (_e, name: string) => {
   await connectClient?.createCredential(name);
   // The credential it just minted is a roster row nobody has read yet.
@@ -631,6 +635,54 @@ ipcMain.handle("cloud:remove", async (_e, agentId: string) => {
   await cloudAgents?.remove(agentId);
   await connectClient?.refreshRoster();
   return agentsTabState();
+});
+
+ipcMain.handle("cloud:create", async (_e, input: unknown) => {
+  const raw = input && typeof input === "object" ? input as Record<string, unknown> : {};
+  await cloudAgents?.create({
+    name: typeof raw.name === "string" ? raw.name : "",
+    lineUid: raw.lineUid === null ? null : typeof raw.lineUid === "string" ? raw.lineUid : "",
+  });
+  await connectClient?.refreshRoster();
+  return agentsTabState();
+});
+ipcMain.handle("cloud:cancelCreate", async () => {
+  cloudAgents?.cancelCreate();
+  return agentsTabState();
+});
+ipcMain.handle("cloud:retryCreate", async () => {
+  await cloudAgents?.retryCreate();
+  await connectClient?.refreshRoster();
+  return agentsTabState();
+});
+ipcMain.handle("cloud:retryFailed", async (_e, agentId: string) => {
+  await cloudAgents?.retryFailed(agentId);
+  await connectClient?.refreshRoster();
+  return agentsTabState();
+});
+ipcMain.handle("cloud:changeLine", async (_e, input: unknown) => {
+  const raw = input && typeof input === "object" ? input as Record<string, unknown> : {};
+  await cloudAgents?.changeLine({
+    agentId: typeof raw.agentId === "string" ? raw.agentId : "",
+    lineUid: raw.lineUid === null ? null : typeof raw.lineUid === "string" ? raw.lineUid : "",
+  });
+  await connectClient?.refreshRoster();
+  return agentsTabState();
+});
+ipcMain.handle("cloud:cancelChangeLine", async () => {
+  cloudAgents?.cancelChangeLine();
+  return agentsTabState();
+});
+ipcMain.handle("cloud:retryChangeLine", async () => {
+  await cloudAgents?.retryChangeLine();
+  await connectClient?.refreshRoster();
+  return agentsTabState();
+});
+ipcMain.handle("cloud:openMessages", async () => {
+  const url = cloudAgents?.createSmsUrl();
+  if (!url) return false;
+  await shell.openExternal(url);
+  return true;
 });
 
 /**
@@ -1131,10 +1183,12 @@ app.whenReady().then(async () => {
     // There is no server-side request log we can read, and during the rollout
     // that account is the only one there is.
     agents: cloudAgentsClient,
+    activation: cloudApi,
     chats: new CloudChatsClient(cloudApi),
     lines: new CloudLinesClient(cloudApi),
     home,
     onChange: () => notifyRenderer("connect:changed"),
+    warn: (message) => console.log(message),
   });
 
   // Only a packaged install updates: a from-source run has no app-update.yml

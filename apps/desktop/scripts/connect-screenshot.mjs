@@ -125,6 +125,21 @@ const ROSTER = {
 };
 const CLOUD_EMPTY = {
   cloudAgents: [],
+  cloudFreeLines: [],
+  cloudCreate: {
+    phase: "idle",
+    activation: null,
+    message: null,
+    createdAgentId: null,
+    retryNewLine: false,
+  },
+  cloudChangeLine: {
+    phase: "idle",
+    activation: null,
+    message: null,
+    changedAgentId: null,
+    retryNewLine: false,
+  },
   cloudAgentsError: null,
   cloudChatsError: null,
   cloudChatsNeedReactivation: false,
@@ -197,6 +212,79 @@ async function setUp() {
   // are the real handlers from main.ts, pointed at the same class.
   const state = () => ({ ...connect.state(), roster: rosterFixture, ...cloudFixture });
   ipcMain.handle("connect:get", async () => state());
+  ipcMain.handle("cloud:refresh", async () => state());
+  ipcMain.handle("cloud:cancelCreate", async () => {
+    cloudFixture = {
+      ...cloudFixture,
+      cloudCreate: { ...CLOUD_EMPTY.cloudCreate },
+    };
+    return state();
+  });
+  ipcMain.handle("cloud:create", async (_e, input) => {
+    if (input?.lineUid === null) {
+      cloudFixture = {
+        ...cloudFixture,
+        cloudCreate: {
+          phase: "waiting",
+          activation: {
+            displayCode: "LINE42",
+            sendTo: "+1 555-123-0000",
+            smsBody: "Plow Activate: LINE42",
+          },
+          message: null,
+          createdAgentId: null,
+          retryNewLine: false,
+        },
+      };
+    }
+    return state();
+  });
+  ipcMain.handle("cloud:retryCreate", async () => state());
+  ipcMain.handle("cloud:retryFailed", async () => state());
+  ipcMain.handle("cloud:cancelChangeLine", async () => {
+    cloudFixture = {
+      ...cloudFixture,
+      cloudChangeLine: { ...CLOUD_EMPTY.cloudChangeLine },
+    };
+    return state();
+  });
+  ipcMain.handle("cloud:changeLine", async (_e, input) => {
+    if (input?.lineUid === null) {
+      cloudFixture = {
+        ...cloudFixture,
+        cloudChangeLine: {
+          phase: "waiting",
+          activation: {
+            displayCode: "MOVE42",
+            sendTo: "+1 555-123-0000",
+            smsBody: "Plow Activate: MOVE42",
+          },
+          message: null,
+          changedAgentId: null,
+          retryNewLine: false,
+        },
+      };
+    } else if (typeof input?.lineUid === "string") {
+      cloudFixture = {
+        ...cloudFixture,
+        cloudAgents: cloudFixture.cloudAgents.map((agent) => agent.agentId === input.agentId
+          ? {
+              ...agent,
+              line: { uid: input.lineUid, label: "Ash · +1 415-555-0199" },
+              threads: [],
+            }
+          : agent),
+        cloudFreeLines: [],
+        cloudChangeLine: {
+          ...CLOUD_EMPTY.cloudChangeLine,
+          changedAgentId: input.agentId,
+        },
+      };
+    }
+    return state();
+  });
+  ipcMain.handle("cloud:retryChangeLine", async () => state());
+  ipcMain.handle("cloud:openMessages", async () => true);
   ipcMain.handle("connect:create", async (_e, name) => connect.createCredential(name));
   ipcMain.handle("connect:dismiss", async () => connect.dismissCredential());
   ipcMain.handle("roster:remove", async (_e, id) => {
@@ -269,11 +357,49 @@ const SCREENS = [
       }
     },
     expect: [
-      "Cloud agents", "2 agents", "Household helper", "Ready",
+      "Cloud agents", "2 agents", "New agent", "Household helper", "Ready",
       "Willow · +1 415-555-0142", "Trip planner", "Setting up…", "+1 628-555-0144",
       "MCP clients", "Claude Code on MacBook Pro", "Cursor desktop",
       "Other sessions", "Plow Latch on this Mac", "This Mac",
       "Plow website · Safari", "Legacy automation token", "14 revoked sessions hidden",
+    ],
+  },
+  {
+    name: "cloud-create-picker",
+    cloud: {
+      ...CLOUD_READY,
+      cloudFreeLines: [
+        { uid: "lin_ash", label: "Ash · +1 415-555-0199" },
+        { uid: "lin_trip", label: "+1 628-555-0144" },
+      ],
+    },
+    prepare: async (win) => {
+      await clickText(win, "New agent", 0);
+      await waitFor(win, `document.querySelector(".cloud-modal .cloud-line-options")`,
+        "the New agent picker");
+    },
+    expect: [
+      "New agent", "Name (optional)", "Your free lines",
+      "Ash · +1 415-555-0199", "+1 628-555-0144", "New line", "Cancel",
+    ],
+  },
+  {
+    name: "cloud-create-code",
+    cloud: {
+      ...CLOUD_READY,
+      cloudFreeLines: [{ uid: "lin_ash", label: "Ash · +1 415-555-0199" }],
+    },
+    prepare: async (win) => {
+      await clickText(win, "New agent", 0);
+      await waitFor(win, `document.querySelector(".cloud-modal .cloud-line-options")`,
+        "the New agent picker");
+      await clickText(win, "New line", 0);
+      await waitFor(win, `document.querySelector(".cloud-modal .cloud-activation-code")`,
+        "the New line activation code");
+    },
+    expect: [
+      "New line", "Text this code to +1 555-123-0000 from your phone.",
+      "LINE42", "Plow Activate: LINE42", "Copy", "Cancel", "Open Messages…",
     ],
   },
   {
@@ -289,14 +415,83 @@ const SCREENS = [
       const controls = await win.webContents.executeJavaScript(
         `[...document.querySelectorAll(".cloud-modal button")].map((button) => button.textContent.trim())`,
       );
-      if (controls.join("|") !== "Close|Delete agent") {
+      if (controls.join("|") !== "Close|Change line|Delete agent") {
         throw new Error(`detail exposed unexpected controls: ${controls.join("|")}`);
       }
     },
     expect: [
       "Household helper", "Line", "Willow · +1 415-555-0142", "Status", "Ready",
-      "Threads", CHAT_TITLE, "Close", "Delete agent",
+      "Threads", CHAT_TITLE, "Close", "Change line", "Delete agent",
     ],
+  },
+  {
+    name: "cloud-change-line-picker",
+    cloud: {
+      ...CLOUD_READY,
+      cloudAgents: [ACTIVE_AGENT],
+      cloudFreeLines: [{ uid: "lin_ash", label: "Ash · +1 415-555-0199" }],
+    },
+    prepare: async (win) => {
+      await win.webContents.executeJavaScript(
+        `document.querySelector(".cloud-agent-row .cloud-agent-open").click()`,
+      );
+      await waitFor(win, `document.querySelector(".cloud-modal .cloud-detail-threads")`,
+        "the line agent detail");
+      await clickText(win, "Change line", 0);
+      await waitFor(win, `document.querySelector(".cloud-modal .cloud-line-options")`,
+        "the Change line picker");
+    },
+    expect: [
+      "Change line", "The agent keeps its name and memory and moves to the new number.",
+      "Your free lines", "Ash · +1 415-555-0199", "New line", "Cancel",
+    ],
+  },
+  {
+    name: "cloud-change-line-code",
+    cloud: {
+      ...CLOUD_READY,
+      cloudAgents: [ACTIVE_AGENT],
+      cloudFreeLines: [{ uid: "lin_ash", label: "Ash · +1 415-555-0199" }],
+    },
+    prepare: async (win) => {
+      await win.webContents.executeJavaScript(
+        `document.querySelector(".cloud-agent-row .cloud-agent-open").click()`,
+      );
+      await waitFor(win, `document.querySelector(".cloud-modal .cloud-detail-threads")`,
+        "the line agent detail");
+      await clickText(win, "Change line", 0);
+      await waitFor(win, `document.querySelector(".cloud-modal .cloud-line-options")`,
+        "the Change line picker");
+      await clickText(win, "New line", 0);
+      await waitFor(win, `document.querySelector(".cloud-modal .cloud-activation-code")`,
+        "the Change line activation code");
+    },
+    expect: [
+      "New line", "Text this code to +1 555-123-0000 from your phone.",
+      "MOVE42", "Plow Activate: MOVE42", "Copy", "Cancel", "Open Messages…",
+    ],
+  },
+  {
+    name: "cloud-change-line-result",
+    cloud: {
+      ...CLOUD_READY,
+      cloudAgents: [ACTIVE_AGENT],
+      cloudFreeLines: [{ uid: "lin_ash", label: "Ash · +1 415-555-0199" }],
+    },
+    prepare: async (win) => {
+      await win.webContents.executeJavaScript(
+        `document.querySelector(".cloud-agent-row .cloud-agent-open").click()`,
+      );
+      await waitFor(win, `document.querySelector(".cloud-modal .cloud-detail-threads")`,
+        "the line agent detail");
+      await clickText(win, "Change line", 0);
+      await waitFor(win, `document.querySelector(".cloud-modal .cloud-line-options")`,
+        "the Change line picker");
+      await clickText(win, "Ash · +1 415-555-0199", 0);
+      await waitFor(win, `!document.querySelector(".cloud-modal")`,
+        "the changed agent roster");
+    },
+    expect: ["Household helper", "Ash · +1 415-555-0199", "Ready"],
   },
   {
     name: "cloud-chat-loading-detail",
@@ -378,7 +573,28 @@ const SCREENS = [
       await waitFor(win, `document.querySelector(".cloud-modal .cloud-detail-threads")`,
         "the legacy agent detail");
     },
-    expect: ["Legacy helper", "No line", "Old fixed thread", "Delete agent"],
+    expect: ["Legacy helper", "No line", "Old fixed thread", "Change line", "Delete agent"],
+  },
+  {
+    name: "cloud-legacy-change-line",
+    cloud: {
+      ...CLOUD_READY,
+      cloudAgents: [LEGACY_AGENT],
+      cloudFreeLines: [{ uid: "lin_ash", label: "Ash · +1 415-555-0199" }],
+    },
+    prepare: async (win) => {
+      await win.webContents.executeJavaScript(
+        `document.querySelector(".cloud-agent-row .cloud-agent-open").click()`,
+      );
+      await waitFor(win, `document.querySelector(".cloud-modal .cloud-detail-threads")`,
+        "the legacy agent detail");
+      await clickText(win, "Change line", 0);
+      await waitFor(win, `document.querySelector(".cloud-modal .cloud-line-options")`,
+        "the legacy Change line picker");
+    },
+    expect: [
+      "Change line", "keeps its name and memory", "Ash · +1 415-555-0199", "New line",
+    ],
   },
   {
     name: "cloud-legacy-delete-confirm",
@@ -454,7 +670,7 @@ const SCREENS = [
       );
       if (hasSetup) throw new Error("removed cloud-agent setup action remains");
     },
-    expect: ["No cloud agents.", "No MCP clients.", "No other sessions.", "Connect MCP client"],
+    expect: ["New agent", "No cloud agents.", "No MCP clients.", "No other sessions.", "Connect MCP client"],
   },
   {
     name: "oauth",

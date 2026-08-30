@@ -10,8 +10,13 @@ import {
   CloudLineOption,
   CloudLinesClient,
 } from "../src/cloudAgentState.js";
-import { CloudAgentResource } from "../src/cloudAgents.js";
-import { PlowApi, PlowApiError } from "../src/plowApi.js";
+import { CloudAgentLineError, CloudAgentResource } from "../src/cloudAgents.js";
+import {
+  Activation,
+  PlowApi,
+  PlowApiError,
+  ProvisionedActivationRedeem,
+} from "../src/plowApi.js";
 import { loadSettings, saveSettings } from "../src/settings.js";
 import { deferred } from "./deferred.js";
 
@@ -58,13 +63,35 @@ function chat(overrides: Partial<CloudChatOption> = {}): CloudChatOption {
 
 function build(options: {
   listAgents?: () => Promise<CloudAgentResource[]>;
+  createAgent?: (request: { lineUid: string; name: string }) => Promise<CloudAgentResource>;
+  changeAgentLine?: (agentId: string, lineUid: string) => Promise<CloudAgentResource>;
+  pollAgent?: (
+    receipt: CloudAgentResource,
+    transition?: (agent: CloudAgentResource) => void | Promise<void>,
+  ) => Promise<CloudAgentResource>;
   listChats?: () => Promise<CloudChatOption[]>;
   listLines?: () => Promise<CloudLineOption[]>;
+  createActivation?: () => Promise<Activation>;
+  redeemActivation?: () => Promise<ProvisionedActivationRedeem>;
   remove?: (agentId: string) => Promise<void>;
+  wait?: (milliseconds: number) => Promise<void>;
+  warn?: (message: string) => void;
   onChange?: () => void;
 } = {}) {
   const calls: string[] = [];
   const agents: CloudAgentsApi = {
+    async create(_credential, request) {
+      calls.push(`create:${request.lineUid}:${request.name}`);
+      return options.createAgent
+        ? options.createAgent(request)
+        : agent({ lineUid: request.lineUid, name: request.name, status: "running" });
+    },
+    async changeLine(_credential, agentId, lineUid) {
+      calls.push(`changeLine:${agentId}:${lineUid}`);
+      return options.changeAgentLine
+        ? options.changeAgentLine(agentId, lineUid)
+        : agent({ agentId, lineUid });
+    },
     async list() {
       calls.push("listAgents");
       return options.listAgents ? options.listAgents() : [agent()];
@@ -73,10 +100,31 @@ function build(options: {
       calls.push(`delete:${agentId}`);
       await options.remove?.(agentId);
     },
+    async poll(_credential, receipt, transition) {
+      calls.push(`poll:${receipt.agentId}`);
+      if (options.pollAgent) return options.pollAgent(receipt, transition);
+      await transition?.(receipt);
+      return receipt;
+    },
   };
+  const home = tempHome();
   const state = new CloudAgentState({
-    home: tempHome(),
+    home,
     agents,
+    activation: {
+      async createProvisionedActivation() {
+        calls.push("createActivation");
+        return options.createActivation
+          ? options.createActivation()
+          : { displayCode: "NEW42", activationSecret: "act_secret", sendTo: "+15550100" };
+      },
+      async redeemProvisionedActivation() {
+        calls.push("redeemActivation");
+        return options.redeemActivation
+          ? options.redeemActivation()
+          : { status: "pending" };
+      },
+    },
     chats: {
       async list() {
         calls.push("listChats");
@@ -91,9 +139,11 @@ function build(options: {
           : [{ uid: "lin_willow", displayName: "Willow", number: "+15550100" }];
       },
     },
+    wait: options.wait ?? (() => new Promise<void>(() => {})),
+    warn: options.warn,
     onChange: options.onChange,
   });
-  return { state, calls };
+  return { state, calls, home };
 }
 
 describe("CloudAgentState line and thread display", () => {
@@ -103,6 +153,21 @@ describe("CloudAgentState line and thread display", () => {
     expect(calls).toEqual([]);
     expect(state.state()).toEqual({
       cloudAgents: [],
+      cloudFreeLines: [],
+      cloudCreate: {
+        phase: "idle",
+        activation: null,
+        message: null,
+        createdAgentId: null,
+        retryNewLine: false,
+      },
+      cloudChangeLine: {
+        phase: "idle",
+        activation: null,
+        message: null,
+        changedAgentId: null,
+        retryNewLine: false,
+      },
       cloudAgentsError: null,
       cloudChatsError: null,
       cloudChatsNeedReactivation: false,
@@ -256,6 +321,322 @@ describe("CloudAgentState line and thread display", () => {
     expect(state.state().cloudAgents[0].threads).toEqual([
       { uid: "cht_one", label: "+15550100 · You · Nina" },
     ]);
+  });
+});
+
+describe("CloudAgentState new agent flow", () => {
+  it("derives unique free lines from chats minus agent line uids", async () => {
+    const { state } = build({
+      listAgents: async () => [agent({ lineUid: "lin_willow" })],
+      listChats: async () => [
+        chat({ uid: "cht_willow", lineUid: "lin_willow" }),
+        chat({ uid: "cht_ash_one", lineUid: "lin_ash", recipients: { line: "+15550200", members: [] } }),
+        chat({ uid: "cht_ash_two", lineUid: "lin_ash", recipients: { line: "+15550200", members: [] } }),
+      ],
+      listLines: async () => [
+        { uid: "lin_willow", displayName: "Willow", number: "+15550100" },
+        { uid: "lin_ash", displayName: "Ash", number: "+15550200" },
+      ],
+    });
+
+    await state.refresh();
+
+    expect(state.state().cloudFreeLines).toEqual([
+      { uid: "lin_ash", label: "Ash · +15550200" },
+    ]);
+  });
+
+  it("creates directly on a picked free line without activating", async () => {
+    const created: Array<{ lineUid: string; name: string }> = [];
+    const { state, calls } = build({
+      listAgents: async () => [],
+      createAgent: async (request) => {
+        created.push(request);
+        return agent({ agentId: "agent_new", lineUid: request.lineUid, name: request.name });
+      },
+    });
+    await state.refresh();
+
+    await state.create({ name: "Garden", lineUid: "lin_willow" });
+
+    expect(created).toEqual([{ name: "Garden", lineUid: "lin_willow" }]);
+    expect(calls).not.toContain("createActivation");
+    expect(state.state().cloudAgents).toHaveLength(1);
+    expect(state.state().cloudCreate.createdAgentId).toBe("agent_new");
+  });
+
+  it("always activates for New line, then creates from the verified line uid", async () => {
+    const created: Array<{ lineUid: string; name: string }> = [];
+    const { state, calls } = build({
+      listAgents: async () => [],
+      wait: async () => {},
+      redeemActivation: async () => ({
+        status: "verified",
+        chat: {
+          uid: "cht_new",
+          status: "active",
+          displayName: null,
+          line: "+14155550999",
+          lineUid: "lin_new",
+          participants: [],
+          createdAt: "",
+        },
+        shape: {
+          chat: "object",
+          participantTypes: ["member", "agent"],
+          agentLine: "uid_string",
+        },
+      }),
+      createAgent: async (request) => {
+        created.push(request);
+        return agent({
+          agentId: "agent_new",
+          lineUid: request.lineUid,
+          name: request.name,
+          status: "provisioning",
+        });
+      },
+      pollAgent: async () => new Promise<CloudAgentResource>(() => {}),
+    });
+    await state.refresh();
+    expect(state.state().cloudFreeLines).toHaveLength(1);
+
+    await state.create({ name: "Garden", lineUid: null });
+    await vi.waitFor(() => expect(created).toEqual([{ name: "Garden", lineUid: "lin_new" }]));
+
+    expect(calls).toContain("createActivation");
+    expect(state.state().cloudCreate.createdAgentId).toBe("agent_new");
+    expect(state.state().cloudAgents[0].line).toEqual({
+      uid: "lin_new",
+      label: "+1 415-555-0999",
+    });
+  });
+
+  it("selects an idempotently returned roster agent without duplicating it", async () => {
+    const existing = agent({ agentId: "agent_existing" });
+    const { state } = build({
+      listAgents: async () => [existing],
+      createAgent: async () => existing,
+    });
+    await state.refresh();
+
+    await state.create({ name: "Kitchen", lineUid: "lin_willow" });
+
+    expect(state.state().cloudAgents).toHaveLength(1);
+    expect(state.state().cloudCreate.createdAgentId).toBe("agent_existing");
+  });
+
+  it("reports a verified payload with no agent line and logs only its shape", async () => {
+    const droppedToken = "plow_token_from_redeem_must_disappear";
+    const warned: string[] = [];
+    const { state, home } = build({
+      wait: async () => {},
+      warn: (message) => warned.push(message),
+      redeemActivation: async () => ({
+        status: "verified",
+        token: droppedToken,
+        chat: null,
+        shape: {
+          chat: "object",
+          participantTypes: ["member"],
+          agentLine: "missing",
+        },
+      } as unknown as ProvisionedActivationRedeem),
+    });
+
+    await state.create({ name: "Garden", lineUid: null });
+    await vi.waitFor(() => expect(state.state().cloudCreate.phase).toBe("error"));
+
+    expect(state.state().cloudCreate).toMatchObject({
+      message: "Couldn't read the line for this agent.",
+      retryNewLine: true,
+    });
+    expect(warned).toEqual([
+      '[cloud-agent] verified activation missing line uid: {"chat":"object","participantTypes":["member"],"agentLine":"missing"}',
+    ]);
+    expect(JSON.stringify(state.state())).not.toContain(droppedToken);
+    expect(JSON.stringify(loadSettings(home))).not.toContain(droppedToken);
+    expect(warned.join("\n")).not.toContain(droppedToken);
+  });
+
+  it("cancelling the code screen stops redemption and creates nothing", async () => {
+    const tick = deferred<void>();
+    const { state, calls } = build({ wait: async () => tick.promise });
+
+    await state.create({ name: "Garden", lineUid: null });
+    expect(state.state().cloudCreate.phase).toBe("waiting");
+    expect(state.createSmsUrl()).toBe(
+      "sms:+15550100?&body=Plow%20Activate%3A%20NEW42",
+    );
+    state.cancelCreate();
+    tick.resolve();
+    await Promise.resolve();
+
+    expect(calls).not.toContain("redeemActivation");
+    expect(calls.some((call) => call.startsWith("create:"))).toBe(false);
+    expect(state.state().cloudCreate.phase).toBe("idle");
+  });
+
+  it("shows fixed no-home-chat copy and retries failed rows with the same body", async () => {
+    const requests: Array<{ lineUid: string; name: string }> = [];
+    let fail = true;
+    const { state } = build({
+      listAgents: async () => [agent({ status: "failed" })],
+      createAgent: async (request) => {
+        requests.push(request);
+        if (fail) {
+          fail = false;
+          throw new PlowApiError("http", "Text this line once first, then try again.", 409);
+        }
+        return agent({ ...request, status: "provisioning" });
+      },
+    });
+    await state.refresh();
+
+    await state.create({ name: "Kitchen", lineUid: "lin_willow" });
+    expect(state.state().cloudCreate.message).toBe("Text this line once first, then try again.");
+    await state.retryFailed("agent_1");
+
+    expect(requests).toEqual([
+      { name: "Kitchen", lineUid: "lin_willow" },
+      { name: "Kitchen", lineUid: "lin_willow" },
+    ]);
+  });
+});
+
+describe("CloudAgentState change-line flow", () => {
+  it("moves a legacy agent to a picked free line without activating", async () => {
+    const moved: Array<{ agentId: string; lineUid: string }> = [];
+    const { state, calls } = build({
+      listAgents: async () => [agent({ lineUid: null, chatUids: ["cht_legacy"] })],
+      listChats: async () => [
+        chat({ uid: "cht_legacy", lineUid: "lin_willow" }),
+        chat({ uid: "cht_ash", lineUid: "lin_ash", recipients: { line: "+15550200", members: [] } }),
+      ],
+      listLines: async () => [
+        { uid: "lin_willow", displayName: "Willow", number: "+15550100" },
+        { uid: "lin_ash", displayName: "Ash", number: "+15550200" },
+      ],
+      changeAgentLine: async (agentId, lineUid) => {
+        moved.push({ agentId, lineUid });
+        return agent({ agentId, lineUid, chatUids: ["line:lin_ash"] });
+      },
+    });
+    await state.refresh();
+
+    await state.changeLine({ agentId: "agent_1", lineUid: "lin_ash" });
+
+    expect(moved).toEqual([{ agentId: "agent_1", lineUid: "lin_ash" }]);
+    expect(calls).not.toContain("createActivation");
+    expect(state.state().cloudAgents[0]).toMatchObject({
+      line: { uid: "lin_ash", label: "Ash · +15550200" },
+      threads: [{ uid: "cht_ash" }],
+    });
+    expect(state.state().cloudChangeLine.changedAgentId).toBe("agent_1");
+  });
+
+  it("reuses new-line activation before moving an existing agent", async () => {
+    const moved: Array<{ agentId: string; lineUid: string }> = [];
+    const { state, calls } = build({
+      wait: async () => {},
+      redeemActivation: async () => ({
+        status: "verified",
+        chat: {
+          uid: "cht_new",
+          status: "active",
+          displayName: null,
+          line: "+14155550999",
+          lineUid: "lin_new",
+          participants: [],
+          createdAt: "",
+        },
+        shape: {
+          chat: "object",
+          participantTypes: ["member", "agent"],
+          agentLine: "uid_string",
+        },
+      }),
+      changeAgentLine: async (agentId, lineUid) => {
+        moved.push({ agentId, lineUid });
+        return agent({ agentId, lineUid, chatUids: ["line:lin_new"] });
+      },
+    });
+    await state.refresh();
+
+    await state.changeLine({ agentId: "agent_1", lineUid: null });
+    await vi.waitFor(() => expect(moved).toEqual([
+      { agentId: "agent_1", lineUid: "lin_new" },
+    ]));
+
+    expect(calls).toContain("createActivation");
+    expect(calls.some((call) => call.startsWith("create:"))).toBe(false);
+    expect(state.state().cloudAgents[0].line).toEqual({
+      uid: "lin_new",
+      label: "+1 415-555-0999",
+    });
+    expect(state.state().cloudChangeLine.changedAgentId).toBe("agent_1");
+  });
+
+  it("shows no-home-chat copy and keeps the same PUT available to retry", async () => {
+    const moved: string[] = [];
+    let fail = true;
+    const { state } = build({
+      changeAgentLine: async (agentId, lineUid) => {
+        moved.push(`${agentId}:${lineUid}`);
+        if (fail) {
+          fail = false;
+          throw new CloudAgentLineError(
+            "no_home_chat",
+            "Text this line once first, then try again.",
+          );
+        }
+        return agent({ agentId, lineUid });
+      },
+    });
+    await state.refresh();
+
+    await state.changeLine({ agentId: "agent_1", lineUid: "lin_ash" });
+    expect(state.state().cloudChangeLine).toMatchObject({
+      phase: "error",
+      message: "Text this line once first, then try again.",
+    });
+    await state.retryChangeLine();
+
+    expect(moved).toEqual(["agent_1:lin_ash", "agent_1:lin_ash"]);
+    expect(state.state().cloudChangeLine.changedAgentId).toBe("agent_1");
+  });
+
+  it("refreshes the picker after another agent claims the chosen line", async () => {
+    let lists = 0;
+    const { state } = build({
+      listAgents: async () => lists++ === 0
+        ? [agent()]
+        : [agent(), agent({ agentId: "agent_2", lineUid: "lin_ash" })],
+      listChats: async () => [
+        chat(),
+        chat({ uid: "cht_ash", lineUid: "lin_ash", recipients: { line: "+15550200", members: [] } }),
+      ],
+      listLines: async () => [
+        { uid: "lin_willow", displayName: "Willow", number: "+15550100" },
+        { uid: "lin_ash", displayName: "Ash", number: "+15550200" },
+      ],
+      changeAgentLine: async () => {
+        throw new CloudAgentLineError(
+          "line_occupied",
+          "Another agent already uses that line.",
+        );
+      },
+    });
+    await state.refresh();
+    expect(state.state().cloudFreeLines.map((line) => line.uid)).toEqual(["lin_ash"]);
+
+    await state.changeLine({ agentId: "agent_1", lineUid: "lin_ash" });
+
+    expect(state.state().cloudChangeLine).toMatchObject({
+      phase: "idle",
+      message: "Another agent already uses that line.",
+    });
+    expect(state.state().cloudFreeLines).toEqual([]);
   });
 });
 

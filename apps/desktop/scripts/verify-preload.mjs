@@ -116,12 +116,28 @@ const rosterProbe = {
 };
 let cloudProbe = {
   cloudAgents: [cloudAgent],
+  cloudFreeLines: [{ uid: "lin_ash", label: "Ash · +1 415-555-0199" }],
+  cloudCreate: {
+    phase: "idle",
+    activation: null,
+    message: null,
+    createdAgentId: null,
+    retryNewLine: false,
+  },
+  cloudChangeLine: {
+    phase: "idle",
+    activation: null,
+    message: null,
+    changedAgentId: null,
+    retryNewLine: false,
+  },
   cloudAgentsError: null,
   cloudChatsError: null,
   cloudChatsNeedReactivation: false,
   cloudActionError: null,
   cloudChatsLoaded: true,
 };
+let cloudChangeRequest = null;
 
 // Connect state also carries the cloud-agent display state. It contains no
 // credential, session id or worker URL.
@@ -140,6 +156,76 @@ const agentsTabProbeState = () => ({
   ...cloudProbe,
 });
 ipcMain.handle("connect:get", async () => agentsTabProbeState());
+ipcMain.handle("cloud:refresh", async () => agentsTabProbeState());
+ipcMain.handle("cloud:cancelCreate", async () => {
+  cloudProbe = {
+    ...cloudProbe,
+    cloudCreate: {
+      phase: "idle",
+      activation: null,
+      message: null,
+      createdAgentId: null,
+      retryNewLine: false,
+    },
+  };
+  return agentsTabProbeState();
+});
+ipcMain.handle("cloud:create", async (_e, input) => {
+  if (input?.lineUid === null) {
+    cloudProbe = {
+      ...cloudProbe,
+      cloudCreate: {
+        phase: "waiting",
+        activation: {
+          displayCode: "LINE42",
+          sendTo: "+15551230000",
+          smsBody: "Plow Activate: LINE42",
+        },
+        message: null,
+        createdAgentId: null,
+        retryNewLine: false,
+      },
+    };
+  }
+  return agentsTabProbeState();
+});
+ipcMain.handle("cloud:retryCreate", async () => agentsTabProbeState());
+ipcMain.handle("cloud:retryFailed", async () => agentsTabProbeState());
+ipcMain.handle("cloud:cancelChangeLine", async () => {
+  cloudProbe = {
+    ...cloudProbe,
+    cloudChangeLine: {
+      phase: "idle",
+      activation: null,
+      message: null,
+      changedAgentId: null,
+      retryNewLine: false,
+    },
+  };
+  return agentsTabProbeState();
+});
+ipcMain.handle("cloud:changeLine", async (_e, input) => {
+  cloudChangeRequest = input;
+  if (input?.lineUid === null) {
+    cloudProbe = {
+      ...cloudProbe,
+      cloudChangeLine: {
+        phase: "waiting",
+        activation: {
+          displayCode: "MOVE42",
+          sendTo: "+15551230000",
+          smsBody: "Plow Activate: MOVE42",
+        },
+        message: null,
+        changedAgentId: null,
+        retryNewLine: false,
+      },
+    };
+  }
+  return agentsTabProbeState();
+});
+ipcMain.handle("cloud:retryChangeLine", async () => agentsTabProbeState());
+ipcMain.handle("cloud:openMessages", async () => true);
 ipcMain.handle("cloud:remove", async (_e, agentId) => {
   cloudProbe = {
     ...cloudProbe,
@@ -595,10 +681,46 @@ app.whenReady().then(async () => {
         .includes("Willow · +1 415-555-0142") === true,
       rowIsDetailTrigger: row?.querySelector(".cloud-agent-open")
         ?.getAttribute("role") === "button",
-      noCreateAction: ![...group.querySelectorAll("button")]
-        .some((button) => button.textContent.includes("Set up")),
+      offersNewAgent: [...group.querySelectorAll("button")]
+        .some((button) => button.textContent.trim() === "New agent"),
     };
   }})()`);
+
+  await win.webContents.executeJavaScript(
+    `[...document.querySelectorAll("#view button")]
+      .find((button) => button.textContent.trim() === "New agent").click()`,
+  );
+  await waitFor(win, `document.querySelector(".cloud-modal .cloud-line-options")`,
+    "the New agent line picker");
+  const cloudCreatePicker = await win.webContents.executeJavaScript(`(${() => {
+    const modal = document.querySelector(".cloud-modal");
+    return {
+      title: modal.querySelector(".group-title")?.textContent.trim(),
+      hasName: modal.querySelector('input[aria-label="Agent name"]') !== null,
+      buttons: [...modal.querySelectorAll("button")].map((button) => button.textContent.trim()),
+    };
+  }})()`);
+  await win.webContents.executeJavaScript(
+    `[...document.querySelectorAll(".cloud-modal button")]
+      .find((button) => button.textContent.trim() === "New line").click()`,
+  );
+  await waitFor(win, `document.querySelector(".cloud-modal .cloud-activation-code")`,
+    "the New agent activation code");
+  const cloudCreateCode = await win.webContents.executeJavaScript(`(${() => {
+    const modal = document.querySelector(".cloud-modal");
+    return {
+      title: modal.querySelector(".group-title")?.textContent.trim(),
+      code: modal.querySelector(".cloud-activation-code")?.textContent.trim(),
+      copy: modal.textContent.includes("Text this code to +15551230000 from your phone."),
+      exactMessage: modal.textContent.includes("Plow Activate: LINE42"),
+      buttons: [...modal.querySelectorAll("button")].map((button) => button.textContent.trim()),
+    };
+  }})()`);
+  await win.webContents.executeJavaScript(
+    `[...document.querySelectorAll(".cloud-modal button")]
+      .find((button) => button.textContent.trim() === "Cancel").click()`,
+  );
+  await waitFor(win, `!document.querySelector(".cloud-modal")`, "the New agent flow to close");
 
   await win.webContents.executeJavaScript(
     `document.querySelector(".cloud-agent-row .cloud-agent-open").click()`,
@@ -626,6 +748,49 @@ app.whenReady().then(async () => {
         !buttons.some((label) => /edit|save|message/i.test(label)),
     };
   }})()`);
+
+  await win.webContents.executeJavaScript(
+    `[...document.querySelectorAll(".cloud-modal button")]
+      .find((button) => button.textContent.trim() === "Change line").click()`,
+  );
+  await waitFor(win, `document.querySelector(".cloud-modal .cloud-line-options")`,
+    "the Change line picker");
+  const cloudChangePicker = await win.webContents.executeJavaScript(`(${() => {
+    const modal = document.querySelector(".cloud-modal");
+    return {
+      title: modal.querySelector(".group-title")?.textContent.trim(),
+      exactCopy: modal.textContent.includes(
+        "The agent keeps its name and memory and moves to the new number.",
+      ),
+      buttons: [...modal.querySelectorAll("button")].map((button) => button.textContent.trim()),
+    };
+  }})()`);
+  await win.webContents.executeJavaScript(
+    `[...document.querySelectorAll(".cloud-modal button")]
+      .find((button) => button.textContent.trim() === "New line").click()`,
+  );
+  await waitFor(win, `document.querySelector(".cloud-modal .cloud-activation-code")`,
+    "the Change line activation code");
+  const cloudChangeCode = await win.webContents.executeJavaScript(`(${() => {
+    const modal = document.querySelector(".cloud-modal");
+    return {
+      title: modal.querySelector(".group-title")?.textContent.trim(),
+      code: modal.querySelector(".cloud-activation-code")?.textContent.trim(),
+      exactMessage: modal.textContent.includes("Plow Activate: MOVE42"),
+      buttons: [...modal.querySelectorAll("button")].map((button) => button.textContent.trim()),
+    };
+  }})()`);
+  await win.webContents.executeJavaScript(
+    `[...document.querySelectorAll(".cloud-modal button")]
+      .find((button) => button.textContent.trim() === "Cancel").click()`,
+  );
+  await waitFor(win, `!document.querySelector(".cloud-modal")`,
+    "the Change line flow to close");
+  await win.webContents.executeJavaScript(
+    `document.querySelector(".cloud-agent-row .cloud-agent-open").click()`,
+  );
+  await waitFor(win, `document.querySelector(".cloud-modal .cloud-detail-threads")`,
+    "the cloud-agent detail after Change line");
 
   await win.webContents.executeJavaScript(
     `[...document.querySelectorAll(".cloud-modal button")]
@@ -1345,13 +1510,30 @@ app.whenReady().then(async () => {
     cloudRoster.hidesProvider &&
     cloudRoster.namesLine &&
     cloudRoster.rowIsDetailTrigger &&
-    cloudRoster.noCreateAction &&
+    cloudRoster.offersNewAgent &&
+    cloudCreatePicker.title === "New agent" &&
+    cloudCreatePicker.hasName &&
+    cloudCreatePicker.buttons.join("|") === "Ash · +1 415-555-0199|New line|Cancel" &&
+    cloudCreateCode.title === "New line" &&
+    cloudCreateCode.code === "LINE42" &&
+    cloudCreateCode.copy &&
+    cloudCreateCode.exactMessage &&
+    cloudCreateCode.buttons.join("|") === "Copy|Cancel|Open Messages…" &&
     cloudDetail.title === "Household helper" &&
     cloudDetail.line.includes("LineWillow · +1 415-555-0142") &&
     cloudDetail.status.includes("StatusReady") &&
     cloudDetail.threads.join("|") === "Willow · You · Robin" &&
-    cloudDetail.buttons.join("|") === "Close|Delete agent" &&
+    cloudDetail.buttons.join("|") === "Close|Change line|Delete agent" &&
     cloudDetail.readOnly &&
+    cloudChangePicker.title === "Change line" &&
+    cloudChangePicker.exactCopy &&
+    cloudChangePicker.buttons.join("|") === "Ash · +1 415-555-0199|New line|Cancel" &&
+    cloudChangeCode.title === "New line" &&
+    cloudChangeCode.code === "MOVE42" &&
+    cloudChangeCode.exactMessage &&
+    cloudChangeCode.buttons.join("|") === "Copy|Cancel|Open Messages…" &&
+    cloudChangeRequest?.agentId === cloudAgent.agentId &&
+    cloudChangeRequest?.lineUid === null &&
     cloudDeleteConfirm.title === "Delete Household helper?" &&
     cloudDeleteConfirm.copy &&
     cloudDeleteConfirm.buttons.join("|") === "Cancel|Delete agent" &&
@@ -1432,7 +1614,7 @@ app.whenReady().then(async () => {
     errors.length === 0;
   console.log(
     "PROBE:" +
-      JSON.stringify({ main, settings, strandedOnDisk, settingsPane, connect, cloudRoster, cloudDetail, cloudDeleteConfirm, agentsShot, approvalsReviewer, approvalsShot, purposeRoundTrip, approvalsAsk, askWithoutReviewer, approvalsShotAsk, agentsOpen, modalClosed, vaultLocked, vaultUnsaved, vaultShot, agentsOpenShot, staleSettingsPane, optimisticMode, settingsShot, approval, reviewerNote, consoleErrors: errors, ok }),
+      JSON.stringify({ main, settings, strandedOnDisk, settingsPane, connect, cloudRoster, cloudCreatePicker, cloudCreateCode, cloudDetail, cloudChangePicker, cloudChangeCode, cloudChangeRequest, cloudDeleteConfirm, agentsShot, approvalsReviewer, approvalsShot, purposeRoundTrip, approvalsAsk, askWithoutReviewer, approvalsShotAsk, agentsOpen, modalClosed, vaultLocked, vaultUnsaved, vaultShot, agentsOpenShot, staleSettingsPane, optimisticMode, settingsShot, approval, reviewerNote, consoleErrors: errors, ok }),
   );
   app.exit(ok ? 0 : 1);
 }).catch((err) => {

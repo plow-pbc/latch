@@ -86,6 +86,18 @@ describe("the wire log", () => {
     ]);
   });
 
+  it("does not log the token in a verified activation response", async () => {
+    const home = tempHome();
+    const token = "plow_redeem_token_must_not_be_logged";
+
+    await loggingFetch(home, answering(200, { status: "verified", token }))(
+      "https://api.plow.co/v1/auth/activate/redeem",
+      post(),
+    );
+
+    expect(fs.readFileSync(wireLogPath(home), "utf8")).not.toContain(token);
+  });
+
   it("keeps a session id out of the file even on a success", async () => {
     const home = tempHome();
 

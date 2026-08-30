@@ -34,6 +34,23 @@ export interface CloudAgentResource {
   sessionId: string | null;
 }
 
+export interface CreateCloudAgentRequest {
+  lineUid: string;
+  name: string;
+}
+
+export type CloudAgentLineErrorCode = "no_home_chat" | "line_occupied";
+
+export class CloudAgentLineError extends PlowApiError {
+  constructor(
+    readonly code: CloudAgentLineErrorCode,
+    message: string,
+  ) {
+    super("http", message, 409);
+    this.name = "CloudAgentLineError";
+  }
+}
+
 export type CloudAgentTransition = (
   agent: CloudAgentResource,
 ) => void | Promise<void>;
@@ -58,6 +75,35 @@ export class CloudAgentsClient {
     private readonly api: PlowApi,
     private readonly wait: Wait = defaultWait,
   ) {}
+
+  async create(
+    deviceCredential: string,
+    request: CreateCloudAgentRequest,
+  ): Promise<CloudAgentResource> {
+    const response = await this.api.request("POST", "/v1/agents/cloud", {
+      token: deviceCredential,
+      body: { line_uid: request.lineUid, name: request.name },
+    });
+    if (response.status === 409) await throwLineError(response);
+    return this.resourceFor(response, deviceCredential);
+  }
+
+  async changeLine(
+    deviceCredential: string,
+    agentId: string,
+    lineUid: string,
+  ): Promise<CloudAgentResource> {
+    const response = await this.api.request(
+      "PUT",
+      `/v1/agents/cloud/${encodeURIComponent(agentId)}/line`,
+      {
+        token: deviceCredential,
+        body: { line_uid: lineUid },
+      },
+    );
+    if (response.status === 409) await throwLineError(response);
+    return this.resourceFor(response, deviceCredential);
+  }
 
   async list(deviceCredential: string): Promise<CloudAgentResource[]> {
     const response = await this.api.request("GET", "/v1/agents/cloud", {
@@ -228,6 +274,27 @@ function errorFor(status: number): PlowApiError {
 
 function invalidResponse(status: number): PlowApiError {
   return new PlowApiError("http", "Plow returned an invalid cloud-agent response.", status);
+}
+
+function responseCode(decoded: unknown): string | null {
+  if (!isRecord(decoded) || !isRecord(decoded.detail)) return null;
+  return typeof decoded.detail.code === "string" ? decoded.detail.code.toUpperCase() : null;
+}
+
+async function throwLineError(response: Response): Promise<void> {
+  const code = responseCode(await decodeJson(response));
+  if (code === "NO_HOME_CHAT") {
+    throw new CloudAgentLineError(
+      "no_home_chat",
+      "Text this line once first, then try again.",
+    );
+  }
+  if (code === "CHAT_SET_CONFLICT") {
+    throw new CloudAgentLineError(
+      "line_occupied",
+      "Another agent already uses that line.",
+    );
+  }
 }
 
 export function echoesCredential(text: string, credential: string): boolean {

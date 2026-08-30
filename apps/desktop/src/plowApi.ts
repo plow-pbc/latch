@@ -216,6 +216,22 @@ export type ActivationRedeem =
   | { status: "pending" }
   | { status: "verified"; token: string | null; chat: ActivationChat | null };
 
+/** Structural diagnostics for a provisioned activation, with no field values. */
+export interface ProvisionedActivationShape {
+  chat: "missing" | "invalid" | "object";
+  participantTypes: Array<"agent" | "member" | "other" | "invalid">;
+  agentLine: "missing" | "invalid" | "uid_missing" | "uid_string";
+}
+
+/** The new-agent activation result. Its session token has no representation. */
+export type ProvisionedActivationRedeem =
+  | { status: "pending" }
+  | {
+      status: "verified";
+      chat: ActivationChat | null;
+      shape: ProvisionedActivationShape;
+    };
+
 /**
  * Read the chat out of a verified redeem, tolerating a server that sends less
  * than we expect.
@@ -270,6 +286,51 @@ export function parseActivationChat(raw: unknown): ActivationChat | null {
   };
 }
 
+function provisionedActivationShape(raw: unknown): ProvisionedActivationShape {
+  if (raw === undefined || raw === null) {
+    return { chat: "missing", participantTypes: [], agentLine: "missing" };
+  }
+  if (typeof raw !== "object" || Array.isArray(raw)) {
+    return { chat: "invalid", participantTypes: [], agentLine: "missing" };
+  }
+  const participants = Array.isArray((raw as Record<string, unknown>).participants)
+    ? (raw as Record<string, unknown>).participants as unknown[]
+    : [];
+  const records = participants.filter(
+    (participant): participant is Record<string, unknown> =>
+      typeof participant === "object" && participant !== null && !Array.isArray(participant),
+  );
+  const participantTypes = records.map((participant) =>
+    participant.type === "agent" || participant.type === "member"
+      ? participant.type
+      : typeof participant.type === "string" ? "other" : "invalid");
+  const agent = records.find((participant) => participant.type === "agent");
+  if (!agent || agent.line === undefined || agent.line === null) {
+    return { chat: "object", participantTypes, agentLine: "missing" };
+  }
+  if (typeof agent.line !== "object" || Array.isArray(agent.line)) {
+    return { chat: "object", participantTypes, agentLine: "invalid" };
+  }
+  return {
+    chat: "object",
+    participantTypes,
+    agentLine: typeof (agent.line as Record<string, unknown>).uid === "string"
+      ? "uid_string"
+      : "uid_missing",
+  };
+}
+
+function valueEchoesSecret(value: unknown, secret: string): boolean {
+  if (!secret) return false;
+  const needles = secret.length > 10 ? [secret, secret.slice(0, 10)] : [secret];
+  if (typeof value === "string") return needles.some((needle) => value.includes(needle));
+  if (Array.isArray(value)) return value.some((entry) => valueEchoesSecret(entry, secret));
+  if (value && typeof value === "object") {
+    return Object.values(value).some((entry) => valueEchoesSecret(entry, secret));
+  }
+  return false;
+}
+
 /** `fetch`, injectable so tests never touch the network. */
 export type FetchLike = (url: string, init?: RequestInit) => Promise<Response>;
 
@@ -316,6 +377,20 @@ export class PlowApi {
     };
   }
 
+  /** Mint a code whose verified text provisions one new line and home chat. */
+  async createProvisionedActivation(): Promise<Activation> {
+    const data = await this.call<{ display_code: string; activation_secret: string; send_to: string }>(
+      "POST",
+      "/v1/auth/activate",
+      { body: { provision_chat: true } },
+    );
+    return {
+      displayCode: data.display_code,
+      activationSecret: data.activation_secret,
+      sendTo: data.send_to,
+    };
+  }
+
   /**
    * Has the text arrived yet? `410` means the code expired *without* being
    * completed — the server honours a completion that raced past the deadline,
@@ -335,6 +410,28 @@ export class PlowApi {
       return { status: "verified", token: data.token ?? null, chat: parseActivationChat(data.chat) };
     }
     return { status: "pending" };
+  }
+
+  /**
+   * Redeem a new-line activation without returning its session token.
+   * Only the provisioned chat and value-free shape diagnostics leave here.
+   */
+  async redeemProvisionedActivation(
+    activationSecret: string,
+  ): Promise<ProvisionedActivationRedeem> {
+    const data = await this.call<{ status: string; token?: unknown; chat?: unknown }>(
+      "POST",
+      "/v1/auth/activate/redeem",
+      { body: { activation_secret: activationSecret } },
+    );
+    if (data.status !== "verified") return { status: "pending" };
+    const token = typeof data.token === "string" ? data.token.trim() : "";
+    const parsed = parseActivationChat(data.chat);
+    return {
+      status: "verified",
+      chat: parsed && !valueEchoesSecret(parsed, token) ? parsed : null,
+      shape: provisionedActivationShape(data.chat),
+    };
   }
 
   /**
