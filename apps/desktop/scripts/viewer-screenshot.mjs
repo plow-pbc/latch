@@ -15,7 +15,11 @@ const dir = path.dirname(fileURLToPath(import.meta.url));
 const dist = path.join(dir, "../dist");
 const out = process.env.OUT ?? "/tmp/browser-viewer.png";
 // Second shot: the same thumbnail after a click, blown up over the window.
-const outBig = process.env.OUT_EXPANDED ?? out.replace(/\.png$/, "-expanded.png");
+// Derived with path.parse rather than a suffix swap, so an OUT that is not
+// lowercase `.png` (an extensionless path, `.PNG`) still gets its own file
+// instead of silently overwriting the collapsed shot.
+const outBig = process.env.OUT_EXPANDED ?? (({ dir, name, ext }) =>
+  path.join(dir, `${name}-expanded${ext}`))(path.parse(out));
 
 // A stand-in for a Camoufox frame: a mock webpage drawn on a canvas in a
 // hidden sandboxed window (the main process can't draw — devIcon pattern).
