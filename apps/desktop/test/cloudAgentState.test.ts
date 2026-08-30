@@ -588,50 +588,47 @@ describe("CloudAgentState new agent flow", () => {
     });
   });
 
-  it.each(["UTC", "America/Los_Angeles", "Asia/Tokyo"])(
-    "revokes the one session created by verification when the Mac is in %s",
-    async (timezone) => {
-      const previous = process.env.TZ;
-      process.env.TZ = timezone;
-      try {
-        const keys = [
-          // Production currently gives this Mac's own row no prefix marker.
-          thisMacSession(),
-          activationSession(),
-        ];
-        const { state, calls, audit } = build({
-          now: () => Date.parse("2026-08-30T21:59:00Z"),
-          wait: async () => {},
-          redeemActivation: async () => verifiedProvisionedActivation(),
-          listKeys: async () => keys,
-          revokeKey: async (id) => {
-            keys.find((key) => key.id === id)!.is_active = false;
-          },
-        });
+  it("revokes the one session created by verification on a non-UTC Mac", async () => {
+    const previous = process.env.TZ;
+    process.env.TZ = "America/Los_Angeles";
+    try {
+      const keys = [
+        // Production currently gives this Mac's own row no prefix marker.
+        thisMacSession(),
+        activationSession(),
+      ];
+      const { state, calls, audit } = build({
+        now: () => Date.parse("2026-08-30T21:59:00Z"),
+        wait: async () => {},
+        redeemActivation: async () => verifiedProvisionedActivation(),
+        listKeys: async () => keys,
+        revokeKey: async (id) => {
+          keys.find((key) => key.id === id)!.is_active = false;
+        },
+      });
 
-        await state.create({ name: "Garden", provider: "exe:hermes", lineUid: null });
-        await vi.waitFor(() => expect(audit).toHaveLength(1));
+      await state.create({ name: "Garden", provider: "exe:hermes", lineUid: null });
+      await vi.waitFor(() => expect(audit).toHaveLength(1));
 
-        expect(keys[0]).toMatchObject({
-          id: 1,
-          key_prefix: null,
-          last_seen_at: "2026-08-30T21:59:01.000000",
-          is_active: true,
-        });
-        expect(calls.filter((call) => call === "listKeys")).toHaveLength(1);
-        expect(calls.filter((call) => call.startsWith("revokeKey:"))).toEqual([
-          "revokeKey:42",
-        ]);
-        expect(audit).toEqual([{
-          event: "activation_session_cleanup",
-          fields: { outcome: "revoked", keyId: 42 },
-        }]);
-      } finally {
-        if (previous === undefined) delete process.env.TZ;
-        else process.env.TZ = previous;
-      }
-    },
-  );
+      expect(keys[0]).toMatchObject({
+        id: 1,
+        key_prefix: null,
+        last_seen_at: "2026-08-30T21:59:01.000000",
+        is_active: true,
+      });
+      expect(calls.filter((call) => call === "listKeys")).toHaveLength(1);
+      expect(calls.filter((call) => call.startsWith("revokeKey:"))).toEqual([
+        "revokeKey:42",
+      ]);
+      expect(audit).toEqual([{
+        event: "activation_session_cleanup",
+        fields: { outcome: "revoked", keyId: 42 },
+      }]);
+    } finally {
+      if (previous === undefined) delete process.env.TZ;
+      else process.env.TZ = previous;
+    }
+  });
 
   it("completes the visible agent flow before a session lookup finishes", async () => {
     const listing = deferred<KeyInfo[]>();

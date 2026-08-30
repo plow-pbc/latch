@@ -252,6 +252,18 @@ describe("this Mac's own credential", () => {
 });
 
 describe("ordering", () => {
+  it("normalizes Plow's offsetless timestamps as UTC before exposing a row", () => {
+    const [row] = allRows(sectionRoster([key({
+      created_at: "2026-08-30T21:59:02.464862",
+      last_seen_at: "2026-08-30T21:59:02.464862",
+    })]));
+
+    expect(row).toMatchObject({
+      createdAt: "2026-08-30T21:59:02.464Z",
+      lastSeenAt: "2026-08-30T21:59:02.464Z",
+    });
+  });
+
   it("puts the most recently used first and the never-used last", () => {
     const sections = sectionRoster([
       key({ id: 1, last_seen_at: "2026-08-20T10:00:00Z" }),

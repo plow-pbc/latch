@@ -6,7 +6,7 @@
  * removed by the wrong endpoint — that is a decision for tested code, not for
  * a template.
  */
-import type { KeyInfo } from "./plowApi.js";
+import { parseApiTimestamp, type KeyInfo } from "./plowApi.js";
 
 export type AgentRosterKind =
   | "Agent"
@@ -119,6 +119,12 @@ function newestFirst(a: string | null, b: string | null): number {
   return 0;
 }
 
+function normalizeRosterTimestamp(value: string | null): string | null {
+  if (value === null) return null;
+  const timestamp = parseApiTimestamp(value);
+  return Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : value;
+}
+
 /**
  * Does this credential's scope set cover the one asked about?
  *
@@ -191,8 +197,8 @@ export function sectionRoster(
       // as "Admin — full access", so without this override the screen would
       // label its own session as an admin credential.
       kind: key.id === thisMacId ? "Session" : rosterKind(key.scopes),
-      createdAt: key.created_at,
-      lastSeenAt: key.last_seen_at,
+      createdAt: normalizeRosterTimestamp(key.created_at),
+      lastSeenAt: normalizeRosterTimestamp(key.last_seen_at),
       agentId: key.agent_id,
       chatUids: key.chat_uids,
       chatAccess: chatAccessOf(key.chat_uids),
