@@ -1039,18 +1039,6 @@ async function startRelay(): Promise<void> {
   const deviceId = device?.identity.deviceId;
   if (!credential || !deviceId || !mcp) return;
 
-  let registered;
-  try {
-    registered = await new PlowApi(apiBaseUrl).registerRelayDevice(credential, deviceId, hostName());
-  } catch {
-    console.log("[relay] device registration failed");
-    return;
-  }
-  const latest = loadSettings(home);
-  if (latest.relayCredential.trim() !== credential) return;
-  latest.mcpUrl = registered.mcpUrl;
-  saveSettings(home, latest);
-
   const server = mcp;
   relay = new RelayClient({
     // Derived from the build's API base URL: same origin, scheme swapped, the
@@ -1058,6 +1046,13 @@ async function startRelay(): Promise<void> {
     url: relaySocketUrl(apiBaseUrl),
     credential,
     deviceId,
+    beforeConnect: async () => {
+      const registered = await new PlowApi(apiBaseUrl).registerRelayDevice(credential, deviceId, hostName());
+      const latest = loadSettings(home);
+      if (latest.relayCredential.trim() !== credential) return;
+      latest.mcpUrl = registered.mcpUrl;
+      saveSettings(home, latest);
+    },
     serve: (request, auth) => server.fetch(request, auth),
     onStatusChange: (isConnected) => {
       connected = isConnected;

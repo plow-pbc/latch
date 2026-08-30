@@ -135,7 +135,7 @@ class FakePlow {
   async relayInfo(token: string) {
     // The login session, whichever path minted it — never the device credential.
     expect([OTP_TOKEN, SESSION_TOKEN]).toContain(token);
-    return { uid: "u_123", mcpUrl: MCP_URL, deviceConnected: this.connected };
+    return { uid: "u_123" };
   }
 
   async registerRelayDevice(token: string, deviceId: string, hostname: string) {
@@ -143,14 +143,7 @@ class FakePlow {
       throw new PlowApiError("http", "Plow could not register this Mac.");
     }
     this.registrations.push({ token, deviceId, hostname });
-    return {
-      deviceId,
-      hostname,
-      displayName: "test-mac",
-      isPrimary: true,
-      connected: false,
-      mcpUrl: DEVICE_MCP_URL,
-    };
+    return { mcpUrl: DEVICE_MCP_URL };
   }
 
   revoked: string[] = [];

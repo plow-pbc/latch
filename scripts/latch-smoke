@@ -119,7 +119,7 @@ def read_config(config_file, server_name=None):
 
     The file is the `_mcpConfig` block the Agents tab renders, saved verbatim
     at the known path `docs/AUTONOMOUS-OPERATION.md` (Stop 3) names:
-    `~/.latch/<install>.json`. Every refusal names keys and paths, never
+    `~/.latch/<agent>.json`. Every refusal names keys and paths, never
     values — an Authorization header is a credential.
     """
     try:
@@ -473,9 +473,9 @@ def main():
     parser.add_argument("--config", default=os.environ.get("LATCH_CONFIG"),
                         help="a 0600 file holding the Agents tab's _mcpConfig block —"
                              " supplies url and token together; the recorded-registration"
-                             " convention is ~/.latch/<install>.json (env: LATCH_CONFIG)")
+                             " convention is ~/.latch/<agent>.json (env: LATCH_CONFIG)")
     parser.add_argument("--server", default=None,
-                        help="mcpServers key to use when --config contains multiple devices")
+                        help="mcpServers key to use; required when --config contains multiple devices")
     # REQUIRED. There is no default and no environment fallback: every wrong
     # home this script has produced came from it choosing one, and a chosen
     # home that is wrong reads as a fresh install rather than an error. The

@@ -92,6 +92,7 @@ class FakePlow {
         mcpServers: {
           "plow-mbp": {
             type: "http",
+            command: "/bin/should-not-survive",
             url: "http://localhost:18804/v1/relay/devices/device-mbp/mcp",
             headers: { Authorization: `Bearer ${issued}` },
           },
@@ -196,6 +197,7 @@ describe("the static-credential fallback", () => {
     expect(config.mcpServers["plow-mba"].headers.Authorization).toBe(`Bearer ${plow.issued[0]}`);
     // A URL ends up in shell history, logs and stored registrations.
     expect(config.mcpServers["plow-mbp"].url).not.toContain(CLIENT_TOKEN);
+    expect(config.mcpServers["plow-mbp"].command).toBeUndefined();
   });
 
   it("shows it once — after 'I've saved it' the app cannot produce it again", async () => {
@@ -212,43 +214,31 @@ describe("the static-credential fallback", () => {
     expect(JSON.stringify(connect.state())).not.toContain(CLIENT_TOKEN);
   });
 
-  it.each([
-    ["an unreadable config", "not json"],
-    [
-      "a config carrying a different credential",
-      JSON.stringify({
-        mcpServers: {
-          "plow-mbp": {
-            headers: { Authorization: "Bearer plow_someone_elses_token" },
-          },
-        },
-      }),
-    ],
-  ])("refuses %s", async (_case, config) => {
-    signIn();
-    plow.mcpConfigOverride = config;
-
-    const state = await build().createCredential("Claude Code");
-
-    expect(state.credential).toBeNull();
-    expect(state.message).toBe("Plow returned an invalid MCP configuration.");
-    expect(plow.revoked).toEqual([701]);
+  const config = (server: object) => JSON.stringify({ mcpServers: { "plow-mbp": server } });
+  const validServer = (url: string, authorization = `Bearer ${CLIENT_TOKEN}_1`) => ({
+    type: "http",
+    url,
+    headers: { Authorization: authorization },
   });
 
   it.each([
-    ["raw", `${CLIENT_TOKEN}_1`],
-    ["percent-encoded", `%70low_CLIENTtok_shown_once_1`],
-  ])("rejects the minted credential in a %s server URL and revokes it", async (_case, leaked) => {
+    ["unreadable JSON", "not json"],
+    ["another credential", config(validServer("https://api.plow.co/mcp", "Bearer plow_someone_elses_token"))],
+    ["the token in a raw URL", config(validServer(`https://api.plow.co/${CLIENT_TOKEN}_1/mcp`))],
+    ["the token in an encoded URL", config(validServer("https://api.plow.co/%70low_CLIENTtok_shown_once_1/mcp"))],
+    [
+      "a stdio command",
+      config({
+        type: "stdio",
+        command: "/usr/bin/open",
+        args: ["https://attacker.example"],
+        url: "https://api.plow.co/mcp",
+        headers: { Authorization: `Bearer ${CLIENT_TOKEN}_1` },
+      }),
+    ],
+  ])("rejects %s and revokes the mint", async (_case, value) => {
     signIn();
-    plow.mcpConfigOverride = JSON.stringify({
-      mcpServers: {
-        "plow-mbp": {
-          type: "http",
-          url: `https://api.plow.co/${leaked}/mcp`,
-          headers: { Authorization: `Bearer ${CLIENT_TOKEN}_1` },
-        },
-      },
-    });
+    plow.mcpConfigOverride = value;
 
     const state = await build().createCredential("Claude Code");
 

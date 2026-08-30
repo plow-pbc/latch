@@ -205,11 +205,9 @@ holds one WebSocket to the relay and serves what comes down it.
 - The receive loop **never awaits** a request. Serving can take the whole call
   budget, and blocking there would stall the heartbeat into staleness.
 
-**`src/wire.ts` is the interface.** The handshake and heartbeat are fixed by
-plow's existing channel protocol, but the two request/response frame `type`
-strings and the client kind are *not* pinned by the design docs — the names
-there are our proposal. If the relay chooses differently, that file is the only
-thing that changes.
+**`src/wire.ts` is the interface.** Its handshake binds `auth` and `auth.ok` to
+the stable `device_id` and has no `ready` frame. The two request/response frame
+`type` strings and the client kind remain centralized there too.
 
 ## First-run login
 

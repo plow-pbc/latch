@@ -207,6 +207,11 @@ describe.skipIf(!havePython())("latch-smoke, run for real", () => {
       1, "has no entries", null, false],
     ["a multi-device config without a selected server", () => configArgv(multiRegistration),
       1, "pass --server", null, false],
+    ["a selected server whose URL cannot connect", () => {
+      const argv = configArgv(multiRegistration);
+      argv.splice(argv.indexOf("--home"), 0, "--server", "plow-mba");
+      return argv;
+    }, 1, "The request never left this Mac", REAL_HOME, true],
     // The 0600 contract is enforced, not just documented — for both credential files.
     ["a config file another account can read", () => {
       const argv = configArgv(registration("http://127.0.0.1:9/mcp"));
@@ -236,15 +241,6 @@ describe.skipIf(!havePython())("latch-smoke, run for real", () => {
     // Either it never offered a handle, or it took it back.
     expect(out.includes("nonce=")).toBe(retractsNonce);
     if (retractsNonce) expect(out).toContain("corresponds to no call");
-  });
-
-  it("selects one named server from a multi-device config", () => {
-    const argv = configArgv(multiRegistration);
-    argv.splice(argv.indexOf("--home"), 0, "--server", "plow-mba");
-    const run = spawnSync("python3", argv, { encoding: "utf8", env });
-    expect(run.status).toBe(1);
-    expect(run.stdout + run.stderr).toContain("The request never left this Mac");
-    expect(run.stdout + run.stderr).not.toContain("pass --server");
   });
 
   // The two that need a fake ssh, so they cannot be rows above.

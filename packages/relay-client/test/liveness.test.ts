@@ -84,6 +84,37 @@ describe("a socket that goes silent", () => {
     return { client, conns, status };
   }
 
+  it("retries preparation failures before it opens a socket", async () => {
+    let preparations = 0;
+    let dials = 0;
+    const client = new RelayClient({
+      url: "ws://example.invalid/relay",
+      credential: "plow_sk_test",
+      deviceId: "device-1",
+      serve: async () => new Response("no"),
+      beforeConnect: async () => {
+        preparations += 1;
+        if (preparations === 1) throw new Error("registration unavailable");
+      },
+      random: () => 1,
+      dial: () => ({
+        connect: async () => {
+          dials += 1;
+          return new FakeConn();
+        },
+      }),
+    });
+
+    await client.start();
+    expect(preparations).toBe(1);
+    expect(dials).toBe(0);
+
+    await vi.advanceTimersByTimeAsync(500);
+    expect(preparations).toBe(2);
+    expect(dials).toBe(1);
+    await client.stop();
+  });
+
   it("drops it, greys the dot, and reconnects", async () => {
     const { client, conns, status } = harness();
     await client.start();

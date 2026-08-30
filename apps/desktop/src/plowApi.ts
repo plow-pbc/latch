@@ -104,16 +104,9 @@ export class PlowApiError extends Error {
 
 export interface RelayInfo {
   uid: string;
-  mcpUrl: string;
-  deviceConnected: boolean;
 }
 
 export interface RelayDeviceInfo {
-  deviceId: string;
-  hostname: string;
-  displayName: string;
-  isPrimary: boolean;
-  connected: boolean;
   mcpUrl: string;
 }
 
@@ -374,12 +367,8 @@ export class PlowApi {
    * never constructs that URL itself.
    */
   async relayInfo(token: string): Promise<RelayInfo> {
-    const data = await this.call<{ uid: string; mcp_url: string; device_connected?: boolean }>(
-      "GET",
-      "/v1/relay/info",
-      { token },
-    );
-    return { uid: data.uid, mcpUrl: data.mcp_url, deviceConnected: !!data.device_connected };
+    const data = await this.call<{ uid: string }>("GET", "/v1/relay/info", { token });
+    return { uid: data.uid };
   }
 
   async registerRelayDevice(
@@ -389,29 +378,17 @@ export class PlowApi {
   ): Promise<RelayDeviceInfo> {
     const data = await this.call<{
       device_id?: unknown;
-      hostname?: unknown;
-      display_name?: unknown;
-      is_primary?: unknown;
-      connected?: unknown;
       mcp_url?: unknown;
     }>("PUT", `/v1/relay/devices/${encodeURIComponent(deviceId)}`, {
       token,
       body: { hostname },
     });
     if (
-      data.device_id !== deviceId ||
-      typeof data.hostname !== "string" ||
-      typeof data.display_name !== "string" ||
-      typeof data.mcp_url !== "string"
+      data.device_id !== deviceId || typeof data.mcp_url !== "string"
     ) {
       throw new PlowApiError("http", "Plow did not register this Mac correctly.");
     }
     return {
-      deviceId,
-      hostname: data.hostname,
-      displayName: data.display_name,
-      isPrimary: data.is_primary === true,
-      connected: data.connected === true,
       mcpUrl: data.mcp_url,
     };
   }

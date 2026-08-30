@@ -43,6 +43,8 @@ export interface RelayClientOptions {
   credential: string;
   /** Stable installation identity registered with Plow before this socket opens. */
   deviceId: string;
+  /** Preparation that must succeed before each dial; failures use the same backoff. */
+  beforeConnect?: () => Promise<void>;
   /** Where a tunnelled request goes. */
   serve: ServeRequest;
   onStatusChange?: (connected: boolean) => void;
@@ -160,6 +162,10 @@ export class RelayClient {
   }
 
   private async connectOnce(): Promise<void> {
+    if (this.options.beforeConnect) {
+      await this.options.beforeConnect();
+      if (!this.running) return;
+    }
     this.say(`connecting to ${this.options.url}`);
     const conn = await this.dialer().connect();
     // The dial can outlive a `stop()`. Sign-out drops the socket while this is

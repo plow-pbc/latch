@@ -5,12 +5,9 @@
  * purpose: the relay lives in a different repository and is written by someone
  * else, so the names below are the interface, not implementation detail.
  *
- * The handshake and heartbeat are plow's existing channel protocol, not
- * anything new — challenge → auth → `auth.ok` → `ready`, then a JSON `ping`
- * every `ping_interval_ms`. That shape is fixed by
- * `api/plow/channels/ws_schemas.py` and the shared client at
- * `app/agent-runtime/channels/shared/ws-client-core.ts`, and this client
- * follows it exactly.
+ * The device-bound handshake is challenge → auth carrying `device_id` →
+ * `auth.ok` echoing that identity, then a JSON `ping` every
+ * `ping_interval_ms`. There is no `ready` frame in this relay protocol.
  *
  * **The two request/response frame `type` strings and the client kind are NOT
  * pinned by the design docs.** The design gives their fields but not their

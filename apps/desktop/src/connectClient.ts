@@ -361,20 +361,28 @@ export function validatedAgentConfig(config: string, token: string): string {
   if (!servers || typeof servers !== "object" || Array.isArray(servers) || !Object.keys(servers).length) {
     throw new PlowApiError("http", "Plow returned an invalid MCP configuration.");
   }
-  for (const server of Object.values(servers as Record<string, unknown>)) {
+  const projected: Array<[string, { type: "http"; url: string; headers: { Authorization: string } }]> = [];
+  for (const [name, server] of Object.entries(servers as Record<string, unknown>)) {
+    if (name.includes(token)) {
+      throw new PlowApiError("http", "Plow returned an invalid MCP configuration.");
+    }
     if (!server || typeof server !== "object") {
       throw new PlowApiError("http", "Plow returned an invalid MCP configuration.");
     }
     const headers = (server as { headers?: unknown }).headers;
     const url = (server as { url?: unknown }).url;
     let decodedUrl: string;
+    let protocol: string;
     try {
       decodedUrl = typeof url === "string" ? decodeURIComponent(url) : "";
+      protocol = typeof url === "string" ? new URL(url).protocol : "";
     } catch {
       throw new PlowApiError("http", "Plow returned an invalid MCP configuration.");
     }
     if (
+      (server as { type?: unknown }).type !== "http" ||
       typeof url !== "string" ||
+      (protocol !== "http:" && protocol !== "https:") ||
       url.includes(token) ||
       decodedUrl.includes(token) ||
       !headers ||
@@ -383,12 +391,9 @@ export function validatedAgentConfig(config: string, token: string): string {
     ) {
       throw new PlowApiError("http", "Plow returned an invalid MCP configuration.");
     }
+    projected.push([name, { type: "http", url, headers: { Authorization: `Bearer ${token}` } }]);
   }
-  const echoed = JSON.stringify(parsed).match(/plow_[A-Za-z0-9_-]+/g) ?? [];
-  if (echoed.some((value) => value !== token)) {
-    throw new PlowApiError("http", "Plow returned an invalid MCP configuration.");
-  }
-  return config;
+  return JSON.stringify({ mcpServers: Object.fromEntries(projected) }, null, 2);
 }
 
 function messageOf(error: unknown): string {
