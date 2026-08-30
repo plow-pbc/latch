@@ -712,6 +712,8 @@ textarea.text { min-height: 70px; resize: vertical; }
   margin-top: 14px;
 }
 .cloud-detail-field { display: flex; flex-direction: column; gap: 5px; }
+.cloud-detail-field > .badge,
+.cloud-detail-field > .status-setting { align-self: flex-start; }
 .cloud-detail-threads { margin-top: 18px; }
 .cloud-detail-heading { font-weight: 600; margin-bottom: 7px; }
 .cloud-thread-list {

@@ -26,6 +26,8 @@ export interface CloudAgentDisplayRow {
   line: CloudAgentLine | null;
   /** Whether the resolved line has an E.164 destination for Messages. */
   canMessage: boolean;
+  /** Whether main retains enough create data to retry a failed agent. */
+  canRetry: boolean;
   /** Read-only threads on the line. */
   threads: CloudAgentThread[];
   status: CloudAgentStatus;
@@ -38,6 +40,8 @@ export interface CloudAgentDisplayContext {
   line?: CloudAgentLine | null;
   /** Whether the resolved line has an E.164 destination for Messages. */
   canMessage?: boolean;
+  /** Whether main retains enough create data to retry a failed agent. */
+  canRetry?: boolean;
   /** Threads resolved from the separately fetched chat list. */
   threads?: readonly CloudAgentThread[];
 }
@@ -61,6 +65,7 @@ export function toCloudAgentDisplayRow(
     name: scrub(agent.name ?? "cloud agent"),
     line: line === null ? null : { uid: scrub(line.uid), label: scrub(line.label) },
     canMessage: context.canMessage === true,
+    canRetry: context.canRetry === true,
     threads: (context.threads ?? [])
       .map((thread) => ({ uid: scrub(thread.uid), label: scrub(thread.label) })),
     status: agent.status,

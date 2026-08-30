@@ -368,9 +368,11 @@ describe("CloudAgentState line and thread display", () => {
     const refresh = state.refresh();
     await vi.waitFor(() => expect(state.state().cloudAgents).toHaveLength(1));
     expect(state.state().cloudAgents[0].line).toBeNull();
+    expect(state.state().cloudAgents[0].canRetry).toBe(false);
 
     chats.resolve([chat()]);
     await refresh;
+    expect(state.state().cloudAgents[0].canRetry).toBe(true);
     await state.retryFailed("agent_1");
 
     expect(requests).toEqual([{
@@ -383,18 +385,14 @@ describe("CloudAgentState line and thread display", () => {
   it("keeps the selected provider when later resources omit it", async () => {
     const requests: Array<{ lineUid: string; name: string; provider: string }> = [];
     let created = false;
-    const { state, calls } = build({
+    const { state } = build({
       listAgents: async () => created
         ? [agent({ status: "failed", provider: null })]
         : [],
       createAgent: async (request) => {
         requests.push(request);
         created = true;
-        return agent({ status: "failed", provider: null });
-      },
-      pollAgent: async (receipt, transition) => {
-        await transition?.(receipt);
-        return receipt;
+        return agent({ status: "provisioning", provider: null });
       },
     });
     await state.refresh();
@@ -404,15 +402,30 @@ describe("CloudAgentState line and thread display", () => {
       provider: "exe:pirate",
       lineUid: "lin_willow",
     });
-    await vi.waitFor(() => {
-      expect(calls.filter((call) => call === "listAgents")).toHaveLength(2);
-    });
+    await vi.waitFor(() => expect(state.state().cloudAgents[0]?.status).toBe("failed"));
     await state.retryFailed("agent_1");
 
     expect(requests).toEqual([
       { lineUid: "lin_willow", name: "Kitchen", provider: "exe:pirate" },
       { lineUid: "lin_willow", name: "Kitchen", provider: "exe:pirate" },
     ]);
+  });
+
+  it("does not offer retry after relaunch when a failed resource omits its provider", async () => {
+    const createAgent = vi.fn(async () => agent());
+    const { state } = build({
+      listAgents: async () => [agent({ status: "failed", provider: null })],
+      createAgent,
+    });
+
+    await state.refresh();
+
+    expect(state.state().cloudAgents[0]).toMatchObject({
+      status: "failed",
+      canRetry: false,
+    });
+    expect(await state.retryFailed("agent_1")).toBeNull();
+    expect(createAgent).not.toHaveBeenCalled();
   });
 });
 
@@ -609,6 +622,7 @@ describe("CloudAgentState new agent flow", () => {
   it("makes an explicit no-chat-line code terminal without reading its message", async () => {
     const { state } = build({
       createActivation: async () => {
+        // Forward-looking fixture: Plow does not emit this code yet.
         throw new PlowApiError(
           "http",
           "untrusted and unrelated wording",

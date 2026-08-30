@@ -276,21 +276,15 @@ describe("PlowApi", () => {
     expect(JSON.parse(String(calls[0].init.body))).toEqual({ provision_chat: true });
   });
 
-  it("preserves the current uncoded 503 contract for an exhausted line pool", async () => {
-    const { fetchImpl } = recordingFetch([{
+  it.each([
+    {
+      caseName: "uncoded 503",
       status: 503,
       body: { detail: "no chat line available" },
-    }]);
-
-    const error = await new PlowApi("https://api.plow.co", fetchImpl)
-      .createProvisionedActivation()
-      .catch((caught: unknown) => caught as PlowApiError);
-
-    expect(error).toMatchObject({ status: 503, code: undefined });
-  });
-
-  it("retains a structured activation error code separately from display copy", async () => {
-    const { fetchImpl } = recordingFetch([{
+      expected: { status: 503, code: undefined },
+    },
+    {
+      caseName: "structured no-line code",
       status: 409,
       body: {
         detail: {
@@ -298,17 +292,20 @@ describe("PlowApi", () => {
           message: "server-authored wording is not display copy",
         },
       },
-    }]);
+      expected: {
+        status: 409,
+        code: "NO_CHAT_LINE_AVAILABLE",
+        message: "Plow returned 409.",
+      },
+    },
+  ])("parses provisioned-activation errors: $caseName", async ({ status, body, expected }) => {
+    const { fetchImpl } = recordingFetch([{ status, body }]);
 
     const error = await new PlowApi("https://api.plow.co", fetchImpl)
       .createProvisionedActivation()
       .catch((caught: unknown) => caught as PlowApiError);
 
-    expect(error).toMatchObject({
-      status: 409,
-      code: "NO_CHAT_LINE_AVAILABLE",
-      message: "Plow returned 409.",
-    });
+    expect(error).toMatchObject(expected);
   });
 
   it("drops the provisioned redeem token and finds an agent participant out of position", async () => {

@@ -214,9 +214,8 @@ export class CloudAgentState {
   /** Fresh receipts stay visible until the account list catches up. */
   private pending = new Set<string>();
   private polls = new Map<string, AbortController>();
-  private retryRequests = new Map<string, CreateCloudAgentRequest>();
-  /** Provider identity retained in main so relabeling cannot change a retry body. */
-  private providers = new Map<string, string>();
+  /** Create choices retained in main; chats may resolve the line after agents load. */
+  private retainedCreates = new Map<string, CloudCreateInput>();
   private lineFlowGeneration = 0;
   /** SECRET. Never crosses `state()` and is discarded on every terminal path. */
   private activationSecret: string | null = null;
@@ -419,12 +418,12 @@ export class CloudAgentState {
   /** Re-post the exact create body retained for a failed roster row. */
   async retryFailed(agentId: string): Promise<string | null> {
     const id = (agentId ?? "").trim();
-    const request = this.retryRequests.get(id);
-    if (!request || this.rows.get(id)?.status !== "failed") return null;
+    const retained = this.retainedCreates.get(id);
+    if (!retained || retained.lineUid === null || this.rows.get(id)?.status !== "failed") return null;
     const credential = this.credential();
     if (!credential) return this.failAction("This Mac isn't signed in yet.");
     this.actionError = null;
-    return this.provision(request, this.generation, null);
+    return this.provision({ ...retained, lineUid: retained.lineUid }, this.generation, null);
   }
 
   /** Main owns external navigation; the renderer never receives this URL. */
@@ -595,7 +594,6 @@ export class CloudAgentState {
       return null;
     }
 
-    this.retryRequests.set(receipt.agentId, { ...request });
     this.pending.add(receipt.agentId);
     this.observe(receipt, request);
     this.startAgentPoll(credential, receipt, request, generation);
@@ -643,20 +641,18 @@ export class CloudAgentState {
     const display = moved.name || !previous?.name
       ? moved
       : { ...moved, name: previous.name };
-    this.rows.set(agentId, this.rowFor(display));
     const provider = moved.provider?.trim() ||
-      this.retryRequests.get(agentId)?.provider ||
-      this.providers.get(agentId);
+      this.retainedCreates.get(agentId)?.provider;
     if (provider) {
-      this.providers.set(agentId, provider);
-      this.retryRequests.set(agentId, {
+      this.retainedCreates.set(agentId, {
         lineUid,
         name: moved.name ?? previous?.name ?? "",
         provider,
       });
     } else {
-      this.retryRequests.delete(agentId);
+      this.retainedCreates.delete(agentId);
     }
+    this.rows.set(agentId, this.rowFor(display));
     this.completeLineFlow(agentId);
     this.publish();
     return agentId;
@@ -801,9 +797,8 @@ export class CloudAgentState {
       if (generation !== this.generation) return false;
       this.rows.delete(id);
       this.homeChatUids.delete(id);
-      this.providers.delete(id);
       this.pending.delete(id);
-      this.retryRequests.delete(id);
+      this.retainedCreates.delete(id);
       this.publish();
       return true;
     });
@@ -824,9 +819,8 @@ export class CloudAgentState {
     for (const agentId of [...this.polls.keys()]) this.abortPoll(agentId);
     this.rows.clear();
     this.homeChatUids.clear();
-    this.providers.clear();
     this.pending.clear();
-    this.retryRequests.clear();
+    this.retainedCreates.clear();
     this.chats = [];
     this.chatsLoaded = false;
     this.chatsError = null;
@@ -858,9 +852,8 @@ export class CloudAgentState {
         if (generation !== this.generation) return;
         this.rows.delete(agentId);
         this.homeChatUids.delete(agentId);
-        this.providers.delete(agentId);
         this.pending.delete(agentId);
-        this.retryRequests.delete(agentId);
+        this.retainedCreates.delete(agentId);
         this.publish();
       } catch {
         // Still in teardown. The next refresh will find it and try again.
@@ -878,26 +871,20 @@ export class CloudAgentState {
     try {
       const agents = await this.deps.agents.list(credential);
       if (generation !== this.generation) return;
-      const listed = new Map(
-        agents.map((agent) => [agent.agentId, this.rowFor(agent)] as const),
-      );
+      const listed = new Map<string, CloudAgentDisplayRow>();
       for (const agent of agents) {
+        const retained = this.retainedCreates.get(agent.agentId);
         const resourceProvider = agent.provider?.trim() || null;
-        const provider = resourceProvider ??
-          this.retryRequests.get(agent.agentId)?.provider ??
-          this.providers.get(agent.agentId);
-        if (provider) this.providers.set(agent.agentId, provider);
-        else this.providers.delete(agent.agentId);
+        const provider = resourceProvider ?? retained?.provider;
         const lineUid = this.agentLineUid(agent);
-        if (lineUid !== null && provider) {
-          this.retryRequests.set(agent.agentId, {
+        if (provider) {
+          this.retainedCreates.set(agent.agentId, {
             lineUid,
-            name: agent.name ?? "",
+            name: agent.name ?? retained?.name ?? "",
             provider,
           });
-        } else if (lineUid !== null) {
-          this.retryRequests.delete(agent.agentId);
-        }
+        } else this.retainedCreates.delete(agent.agentId);
+        listed.set(agent.agentId, this.rowFor(agent));
       }
       for (const [agentId, row] of this.rows) {
         if (!listed.has(agentId) && this.pending.has(agentId)) listed.set(agentId, row);
@@ -905,11 +892,8 @@ export class CloudAgentState {
       for (const agentId of this.homeChatUids.keys()) {
         if (!listed.has(agentId)) this.homeChatUids.delete(agentId);
       }
-      for (const agentId of this.retryRequests.keys()) {
-        if (!listed.has(agentId)) this.retryRequests.delete(agentId);
-      }
-      for (const agentId of this.providers.keys()) {
-        if (!listed.has(agentId) && !this.pending.has(agentId)) this.providers.delete(agentId);
+      for (const agentId of this.retainedCreates.keys()) {
+        if (!listed.has(agentId) && !this.pending.has(agentId)) this.retainedCreates.delete(agentId);
       }
       this.rows = listed;
       this.agentsError = null;
@@ -969,8 +953,7 @@ export class CloudAgentState {
   }
 
   private observe(agent: CloudAgentResource, request: CreateCloudAgentRequest): void {
-    this.providers.set(agent.agentId, request.provider);
-    this.retryRequests.set(agent.agentId, { ...request });
+    this.retainedCreates.set(agent.agentId, { ...request });
     this.rows.set(agent.agentId, this.rowFor(agent, request.name));
     this.publish();
   }
@@ -982,9 +965,11 @@ export class CloudAgentState {
     else this.homeChatUids.delete(agent.agentId);
     const lineUid = this.agentLineUid(agent);
     const details = this.lineDetails(lineUid);
+    const retained = this.retainedCreates.get(agent.agentId);
     return toCloudAgentDisplayRow(displayAgent, {
       line: details.line,
       canMessage: details.canMessage,
+      canRetry: retained !== undefined && retained.lineUid !== null,
       threads: this.threadsFor(lineUid),
     });
   }
@@ -1066,19 +1051,13 @@ export class CloudAgentState {
       const lineUid = this.chats.find((chat) => chat.uid === homeChatUid)?.lineUid ?? null;
       const details = this.lineDetails(lineUid);
       const threads = this.threadsFor(lineUid);
-      const provider = this.providers.get(agentId);
-      if (lineUid !== null && provider) {
-        this.retryRequests.set(agentId, {
-          lineUid,
-          name: row.name,
-          provider,
-        });
-      } else if (lineUid !== null) {
-        this.retryRequests.delete(agentId);
-      }
+      const retained = this.retainedCreates.get(agentId);
+      if (retained) this.retainedCreates.set(agentId, { ...retained, lineUid, name: row.name });
+      const canRetry = retained !== undefined && lineUid !== null;
       const unchanged = details.line?.uid === row.line?.uid &&
         details.line?.label === row.line?.label &&
         details.canMessage === row.canMessage &&
+        canRetry === row.canRetry &&
         threads.length === row.threads.length && threads.every(
         (thread, index) =>
           thread.uid === row.threads[index]?.uid && thread.label === row.threads[index]?.label,
@@ -1087,6 +1066,7 @@ export class CloudAgentState {
         ...row,
         line: details.line,
         canMessage: details.canMessage,
+        canRetry,
         threads,
       });
     }
@@ -1158,7 +1138,7 @@ function isCredentialFailure(error: unknown): boolean {
   );
 }
 
-/** Pool exhaustion is terminal only when the activation API names it explicitly. */
+/** Plow returns an uncoded 503 today; this arms the card when it adds the code, deliberately never matching detail text. */
 function isNoNumbersAvailable(error: unknown): boolean {
   return error instanceof PlowApiError && error.code === "NO_CHAT_LINE_AVAILABLE";
 }

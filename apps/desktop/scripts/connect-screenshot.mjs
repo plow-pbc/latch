@@ -44,6 +44,7 @@ const ACTIVE_AGENT = {
   name: "Household helper",
   line: { uid: "lin_willow", label: "Willow · +1 415-555-0142" },
   canMessage: true,
+  canRetry: true,
   threads: [{ uid: "chat_groceries", label: CHAT_TITLE }],
   status: "running",
   failureReason: null,
@@ -54,6 +55,7 @@ const PROVISIONING_AGENT = {
   name: "Trip planner",
   line: { uid: "lin_trip", label: "+1 628-555-0144" },
   canMessage: true,
+  canRetry: true,
   threads: [{ uid: "chat_trip", label: TRIP_CHAT_TITLE }],
   status: "provisioning",
   failureReason: null,
@@ -63,6 +65,7 @@ const NO_LINE_AGENT = {
   ...ACTIVE_AGENT,
   line: null,
   canMessage: false,
+  canRetry: false,
   threads: [],
 };
 const NO_NUMBER_AGENT = {
@@ -281,6 +284,7 @@ async function setUp() {
         name: input.name || "Cloud agent",
         line: { uid: input.lineUid, label: "Ash · +1 415-555-0199" },
         canMessage: true,
+        canRetry: true,
         threads: [],
         status: "provisioning",
         failureReason: null,
@@ -551,6 +555,7 @@ const SCREENS = [
         name: "Cloud agent",
         line: { uid: "lin_new", label: "+1 415-555-0999" },
         canMessage: true,
+        canRetry: true,
         threads: [],
         status: "provisioning",
         failureReason: null,
@@ -685,6 +690,18 @@ const SCREENS = [
       if (controls.join("|") !== "Close|Message|Change line|Delete agent") {
         throw new Error(`detail exposed unexpected controls: ${controls.join("|")}`);
       }
+      const statusSizing = await win.webContents.executeJavaScript(`(() => {
+        const field = document.querySelectorAll(".cloud-modal .cloud-detail-field")[1];
+        const badge = field?.querySelector(".badge");
+        return {
+          display: badge ? getComputedStyle(badge).display : "",
+          badgeWidth: badge?.getBoundingClientRect().width ?? 0,
+          fieldWidth: field?.getBoundingClientRect().width ?? 0,
+        };
+      })()`);
+      if (!statusSizing.display.includes("flex") || statusSizing.badgeWidth >= statusSizing.fieldWidth) {
+        throw new Error(`detail status did not shrink-wrap: ${JSON.stringify(statusSizing)}`);
+      }
     },
     expect: [
       "Household helper", "Line", "Willow · +1 415-555-0142", "Status", "Ready",
@@ -698,10 +715,16 @@ const SCREENS = [
       cloudAgents: [{
         ...ACTIVE_AGENT,
         status: "failed",
+        canRetry: false,
         failureReason: "Set up failed",
       }],
     },
     prepare: async (win) => {
+      const rosterHasRetry = await win.webContents.executeJavaScript(
+        `[...document.querySelectorAll(".cloud-agent-row button")]
+          .some((button) => button.textContent.trim() === "Retry")`,
+      );
+      if (rosterHasRetry) throw new Error("a failed agent without a retained provider offered Retry");
       await win.webContents.executeJavaScript(
         `document.querySelector(".cloud-agent-row .cloud-agent-open").click()`,
       );

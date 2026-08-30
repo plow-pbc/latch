@@ -1594,7 +1594,7 @@ function cloudEntityRow(row, agent, state, redraw) {
       openCloudDetail(main, agent, state, redraw);
     });
   }
-  const retry = agent?.status === "failed"
+  const retry = agent?.status === "failed" && agent.canRetry
     ? el("button", { class: "btn small", text: "Retry" })
     : null;
   const message = agent?.canMessage
