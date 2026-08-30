@@ -228,7 +228,18 @@ async function setUp() {
     return state();
   });
   ipcMain.handle("cloud:create", async (_e, input) => {
-    if (input?.lineUid === null) {
+    if (input?.lineUid === "lin_error") {
+      cloudFixture = {
+        ...cloudFixture,
+        cloudLineFlow: {
+          phase: "error",
+          activation: null,
+          message: "Plow returned 422.",
+          completedAgentId: null,
+          retryNewLine: false,
+        },
+      };
+    } else if (input?.lineUid === null) {
       cloudFixture = {
         ...cloudFixture,
         cloudLineFlow: {
@@ -399,6 +410,25 @@ const SCREENS = [
     expect: [
       "New line", "Text this code to +1 555-123-0000 from your phone.",
       "LINE42", "Plow Activate: LINE42", "Copy", "Cancel", "Open Messages…",
+    ],
+  },
+  {
+    name: "cloud-create-error",
+    cloud: {
+      ...CLOUD_READY,
+      cloudFreeLines: [{ uid: "lin_error", label: "Error line" }],
+    },
+    prepare: async (win) => {
+      await clickText(win, "New agent", 0);
+      await waitFor(win, `document.querySelector(".cloud-modal .cloud-line-options")`,
+        "the create-error picker");
+      await clickText(win, "Error line", 0);
+      await waitFor(win, `document.querySelector(".cloud-modal .cloud-callout-title")?.textContent
+        .includes("wasn't created")`, "the create error card");
+    },
+    expect: [
+      "The agent wasn't created", "Plow couldn't complete that request. Try again.",
+      "Cancel", "Try again",
     ],
   },
   {

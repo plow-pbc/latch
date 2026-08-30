@@ -187,7 +187,7 @@ ipcMain.handle("cloud:create", async (_e, input) => {
       cloudLineFlow: {
         phase: "error",
         activation: null,
-        message: "No capacity for that line.",
+        message: "Plow returned 422.",
         completedAgentId: null,
         retryNewLine: false,
       },
@@ -941,7 +941,7 @@ app.whenReady().then(async () => {
     .includes("wasn't created")`, "the create error card");
   const cloudCreateErrorDetail = await win.webContents.executeJavaScript(
     `document.querySelector(".cloud-modal .cloud-callout p")?.textContent.trim() ===
-      "No capacity for that line."`,
+      "Plow couldn't complete that request. Try again."`,
   );
   await clickCloudButton(win, "Cancel");
   await waitFor(win, `!document.querySelector(".cloud-modal")`, "the create error card to close");

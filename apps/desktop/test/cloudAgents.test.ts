@@ -185,9 +185,12 @@ describe("CloudAgentsClient creation", () => {
       CREDENTIAL,
       { lineUid: "lin_willow", name: "Kitchen" },
     )).rejects.toThrow("Text this line once first, then try again.");
+    expect(console.error).toHaveBeenCalledWith(
+      "[cloud-agent] request failed status=409 code=NO_HOME_CHAT",
+    );
   });
 
-  it("surfaces unknown error detail and logs only failure metadata", async () => {
+  it("uses fixed copy and logs only status for an unknown authenticated error", async () => {
     const { fetchImpl } = recordingFetch([{
       status: 422,
       body: {
@@ -201,24 +204,26 @@ describe("CloudAgentsClient creation", () => {
       .create(CREDENTIAL, { lineUid: "lin_willow", name: "Kitchen" })
       .catch((caught: unknown) => caught as Error);
 
-    expect(error.message).toBe("No capacity for that line.");
+    expect(error.message).toBe("Plow returned 422.");
     expect(console.error).toHaveBeenCalledTimes(1);
     expect(console.error).toHaveBeenCalledWith(
-      "[cloud-agent] POST /v1/agents/cloud failed status=422 code=LINE_CAPACITY",
+      "[cloud-agent] request failed status=422",
     );
     const stderr = vi.mocked(console.error).mock.calls.flat().join(" ");
     expect(stderr).not.toContain(CREDENTIAL);
+    expect(stderr).not.toContain("LINE_CAPACITY");
     expect(stderr).not.toContain("body-only marker");
     expect(stderr).not.toContain("No capacity for that line.");
   });
 
-  it("drops error detail that echoes the credential", async () => {
+  it("drops encoded credential detail from the error and log", async () => {
+    const encodedCredential = Buffer.from(CREDENTIAL).toString("base64");
     const { fetchImpl } = recordingFetch([{
       status: 400,
       body: {
         detail: {
           code: "BAD_REQUEST",
-          message: `Rejected bearer ${CREDENTIAL}`,
+          message: `Rejected bearer ${encodedCredential}`,
         },
       },
     }]);
@@ -228,9 +233,9 @@ describe("CloudAgentsClient creation", () => {
       .catch((caught: unknown) => caught as Error);
 
     expect(error.message).toBe("Plow returned 400.");
-    expect(error.message).not.toContain(CREDENTIAL.slice(0, 10));
-    expect(vi.mocked(console.error).mock.calls.flat().join(" "))
-      .not.toContain(CREDENTIAL.slice(0, 10));
+    expect(error.message).not.toContain(encodedCredential);
+    expect(console.error).toHaveBeenCalledWith("[cloud-agent] request failed status=400");
+    expect(vi.mocked(console.error).mock.calls.flat().join(" ")).not.toContain(encodedCredential);
   });
 });
 
@@ -272,9 +277,12 @@ describe("CloudAgentsClient line changes", () => {
     expect(error).toBeInstanceOf(CloudAgentLineError);
     expect(error).toMatchObject({ code, message: copy });
     expect(String(error)).not.toContain(CREDENTIAL);
+    expect(console.error).toHaveBeenCalledWith(
+      `[cloud-agent] request failed status=409 code=${wireCode}`,
+    );
   });
 
-  it("surfaces unknown error detail on non-409 statuses", async () => {
+  it("uses fixed copy and omits unknown codes from line-change logs", async () => {
     const { fetchImpl } = recordingFetch([{
       status: 503,
       body: { detail: { code: "LINE_SERVICE_DOWN", message: "Line service is restarting." } },
@@ -284,11 +292,14 @@ describe("CloudAgentsClient line changes", () => {
       .changeLine(CREDENTIAL, "agent/with space", "lin_ash")
       .catch((caught: unknown) => caught as Error);
 
-    expect(error.message).toBe("Line service is restarting.");
+    expect(error.message).toBe("Cloud-agent provisioning is unavailable right now.");
     expect(console.error).toHaveBeenCalledTimes(1);
     expect(console.error).toHaveBeenCalledWith(
-      "[cloud-agent] PUT /v1/agents/cloud/{agent_id}/line failed status=503 code=LINE_SERVICE_DOWN",
+      "[cloud-agent] request failed status=503",
     );
+    const stderr = vi.mocked(console.error).mock.calls.flat().join(" ");
+    expect(stderr).not.toContain("LINE_SERVICE_DOWN");
+    expect(stderr).not.toContain("Line service is restarting.");
   });
 });
 

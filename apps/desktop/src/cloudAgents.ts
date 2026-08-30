@@ -98,7 +98,7 @@ export class CloudAgentsClient {
       },
     });
     if (!response.ok) {
-      await throwCloudCallError("POST", path, response, deviceCredential);
+      await throwCloudCallError(response);
     }
     return this.resourceFor(response, deviceCredential);
   }
@@ -118,12 +118,7 @@ export class CloudAgentsClient {
       },
     );
     if (!response.ok) {
-      await throwCloudCallError(
-        "PUT",
-        "/v1/agents/cloud/{agent_id}/line",
-        response,
-        deviceCredential,
-      );
+      await throwCloudCallError(response);
     }
     return this.resourceFor(response, deviceCredential);
   }
@@ -294,56 +289,41 @@ function readChatUids(decoded: Record<string, unknown>): string[] | null {
   return [];
 }
 
-function errorFor(status: number, detail = ""): PlowApiError {
-  if (status === 401) return new PlowApiError("unauthorized", detail || "Not authorized.", status);
-  if (status === 403) return new PlowApiError("forbidden", detail || "Not permitted.", status);
+function errorFor(status: number): PlowApiError {
+  if (status === 401) return new PlowApiError("unauthorized", "Not authorized.", status);
+  if (status === 403) return new PlowApiError("forbidden", "Not permitted.", status);
   if (status === 503) {
     return new PlowApiError(
       "provider_unavailable",
-      detail || "Cloud-agent provisioning is unavailable right now.",
+      "Cloud-agent provisioning is unavailable right now.",
       status,
     );
   }
-  return new PlowApiError("http", detail || `Plow returned ${status}.`, status);
+  return new PlowApiError("http", `Plow returned ${status}.`, status);
 }
 
 function invalidResponse(status: number): PlowApiError {
   return new PlowApiError("http", "Plow returned an invalid cloud-agent response.", status);
 }
 
-function responseCode(decoded: unknown, credential: string): string | null {
+function responseCode(decoded: unknown): string | null {
   if (!isRecord(decoded) || !isRecord(decoded.detail)) return null;
   if (typeof decoded.detail.code !== "string") return null;
-  const code = decoded.detail.code.trim();
-  if (!/^[a-z][a-z0-9_]{0,63}$/i.test(code) || echoesCredential(code, credential)) return null;
-  return code.toUpperCase();
-}
-
-function responseDetail(decoded: unknown): string | null {
-  if (!isRecord(decoded)) return null;
-  if (typeof decoded.detail === "string") return decoded.detail.trim() || null;
-  if (!isRecord(decoded.detail) || typeof decoded.detail.message !== "string") return null;
-  return decoded.detail.message.trim() || null;
+  const code = decoded.detail.code.trim().toUpperCase();
+  return Object.prototype.hasOwnProperty.call(LINE_ERRORS, code) ? code : null;
 }
 
 async function throwCloudCallError(
-  method: "POST" | "PUT",
-  path: string,
   response: Response,
-  credential: string,
 ): Promise<never> {
   const decoded = await decodeJson(response);
-  const code = responseCode(decoded, credential);
+  const code = responseCode(decoded);
   console.error(
-    `[cloud-agent] ${method} ${path} failed status=${response.status} code=${code ?? "UNKNOWN"}`,
+    `[cloud-agent] request failed status=${response.status}${code ? ` code=${code}` : ""}`,
   );
   const mapped = code === null ? null : LINE_ERRORS[code];
   if (mapped) throw new CloudAgentLineError(mapped.code, mapped.message, response.status);
-  const detail = responseDetail(decoded);
-  throw errorFor(
-    response.status,
-    detail && !echoesCredential(detail, credential) ? detail : "",
-  );
+  throw errorFor(response.status);
 }
 
 const LINE_ERRORS: Readonly<Record<string, {
