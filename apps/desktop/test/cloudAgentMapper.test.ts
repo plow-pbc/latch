@@ -42,18 +42,8 @@ describe("cloud-agent pure mappings", () => {
     expect(JSON.stringify(row)).not.toContain("provider.internal");
   });
 
-  it("passes a pinned device name to the renderer and scrubs credential echoes", () => {
-    const sessionId = "session_sensitive_123";
-    const row = toCloudAgentDisplayRow(agent({
-      deviceName: `plucas-mbp.local (${sessionId})`,
-      sessionId,
-    }));
-
-    expect(row.deviceName).toBe("plucas-mbp.local ([credential])");
-  });
-
   it("scrubs a session id embedded in every renderer-bound display string", () => {
-    const sessionId = "session_sensitive_123";
+    const sessionId = "session-sensitive-123";
     const row = toCloudAgentDisplayRow(
       agent({
         agentId: `agent-${sessionId}`,
@@ -62,6 +52,7 @@ describe("cloud-agent pure mappings", () => {
         provider: `provider ${sessionId}`,
         failureReason: `credential ${sessionId} rejected`,
         createdAt: `created ${sessionId}`,
+        deviceName: `${sessionId}.local (2)`,
         sessionId,
       }),
       {
@@ -71,6 +62,7 @@ describe("cloud-agent pure mappings", () => {
     );
 
     expect(row.failureReason).toBe("credential [credential] rejected");
+    expect(row.deviceName).toBe("[credential].local (2)");
     expect(JSON.stringify(row)).not.toContain(sessionId);
   });
 

@@ -38,6 +38,7 @@ import { approvalViewModel, auditActivities, CredentialTitles } from "./viewMode
 import { probeFullDiskAccess } from "./fullDiskAccess.js";
 import { launchAtLoginState, LoginItemApi, setLaunchAtLogin } from "./loginItem.js";
 import { devIconScript } from "./devIcon.js";
+import { deviceDisplayName, latchSessionName } from "./deviceNames.js";
 import { migrateLegacyHome } from "./migrateHome.js";
 import { buildMinter, vendorDirs } from "./providerWiring.js";
 import { resolveInstancePaths } from "./paths.js";
@@ -175,6 +176,7 @@ let relay: RelayClient | null = null;
 let onboarding: Onboarding | null = null;
 let connectClient: ConnectClient | null = null;
 let cloudAgents: CloudAgentState | null = null;
+let registeredDeviceDisplayName: string | null = null;
 let onboardingWindow: BrowserWindow | null = null;
 let updates: UpdateController | null = null;
 
@@ -507,6 +509,7 @@ function signOut() {
   // credential takes the Plow reviewer with it, and retiring Adversarial mode
   // is part of that same write.
   signOutOfPlow(home);
+  registeredDeviceDisplayName = null;
   onboarding?.reset();
   // Connect-a-client holds the old account's state too — possibly a shown-once
   // credential still on screen, or a mint in flight.
@@ -828,7 +831,7 @@ ipcMain.handle("viewer:state", async () => {
 });
 ipcMain.handle("status:get", async () => ({
   deviceId: device?.identity.deviceId ?? "",
-  name: device?.identity.name ?? "",
+  name: deviceDisplayName(registeredDeviceDisplayName, device?.identity.name),
   connected: connected,
 }));
 // macOS permission ceilings on the app itself — today just Full Disk Access.
@@ -1027,7 +1030,7 @@ async function startRelay(): Promise<void> {
         registered = await new PlowApi(apiBaseUrl).registerRelayDevice(
           credential,
           deviceId,
-          `${hostName()}${instance.nameSuffix}`,
+          hostName(),
         );
       } catch (error) {
         if (!(error instanceof PlowApiError) || error.kind !== "unauthorized") throw error;
@@ -1041,6 +1044,7 @@ async function startRelay(): Promise<void> {
       }
       const latest = loadSettings(home);
       if (latest.relayCredential.trim() !== credential) return;
+      registeredDeviceDisplayName = registered.displayName;
       latest.mcpUrl = registered.mcpUrl;
       saveSettings(home, latest);
     },
@@ -1170,7 +1174,7 @@ app.whenReady().then(async () => {
     home,
     startRelay,
     isConnected: () => connected,
-    deviceName: `Plow Latch (${hostName()})`,
+    deviceName: latchSessionName(registeredDeviceDisplayName, device.identity.name),
     onChange: () => onboardingWindow?.webContents.send("onboarding:changed"),
     // RelayClient's redaction is not in play here, so nothing secret is ever
     // handed to this — see Onboarding's callers of `warn`.

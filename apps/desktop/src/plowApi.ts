@@ -109,6 +109,7 @@ export interface RelayInfo {
 
 export interface RelayDeviceInfo {
   mcpUrl: string;
+  displayName: string;
 }
 
 export interface MintedCredential {
@@ -480,17 +481,21 @@ export class PlowApi {
     const data = await this.call<{
       device_id?: unknown;
       mcp_url?: unknown;
+      display_name?: unknown;
     }>("PUT", `/v1/relay/devices/${encodeURIComponent(deviceId)}`, {
       token,
       body: { hostname },
     });
     if (
-      data.device_id !== deviceId || typeof data.mcp_url !== "string"
+      data.device_id !== deviceId ||
+      typeof data.mcp_url !== "string" ||
+      typeof data.display_name !== "string"
     ) {
       throw new PlowApiError("http", "Plow did not register this Mac correctly.");
     }
     return {
       mcpUrl: data.mcp_url,
+      displayName: data.display_name,
     };
   }
 

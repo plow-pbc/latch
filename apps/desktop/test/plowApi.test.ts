@@ -186,7 +186,10 @@ describe("PlowApi", () => {
 
     expect(calls[0].url).toBe("https://api.plow.co/v1/relay/devices/device%2Fone");
     expect(JSON.parse(String(calls[0].init.body))).toEqual({ hostname: "mbp" });
-    expect(device).toEqual({ mcpUrl: "https://api.plow.co/v1/relay/devices/device%2Fone/mcp" });
+    expect(device).toEqual({
+      mcpUrl: "https://api.plow.co/v1/relay/devices/device%2Fone/mcp",
+      displayName: "mbp (2)",
+    });
   });
 
 

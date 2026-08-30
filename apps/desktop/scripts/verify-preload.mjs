@@ -78,7 +78,7 @@ const cloudThreadTitle = "Willow · You · Robin";
 const cloudAgent = {
   agentId: "cag_probe",
   name: "Household helper",
-  deviceName: "plucas-mbp.local (main)",
+  deviceName: "plucas-mbp.local (2)",
   line: { uid: "lin_willow", label: "Willow · +1 415-555-0142" },
   canMessage: true,
   canRetry: true,
@@ -738,7 +738,7 @@ app.whenReady().then(async () => {
       namesLine: row?.querySelector(".entity-context")?.textContent
         .includes("Willow · +1 415-555-0142") === true,
       namesDevice: row?.querySelector(".entity-context")?.textContent
-        .includes("drives: plucas-mbp.local (main)") === true,
+        .includes("drives: plucas-mbp.local (2)") === true,
       showsCreated: row?.querySelector(".entity-context")?.textContent
         .includes("Created Aug 24") === true,
       hidesLastUsed: !row?.querySelector(".entity-context")?.textContent.includes("Used "),
@@ -1989,7 +1989,7 @@ app.whenReady().then(async () => {
     cloudDetail.title === "Household helper" &&
     cloudDetail.line.includes("LineWillow · +1 415-555-0142") &&
     cloudDetail.status.includes("StatusReady") &&
-    cloudDetail.device.includes("Drivesplucas-mbp.local (main)") &&
+    cloudDetail.device.includes("Drivesplucas-mbp.local (2)") &&
     cloudDetail.threads.join("|") === "Willow · You · Robin" &&
     cloudDetail.buttons.join("|") === "Close|Message|Change line|Delete agent" &&
     cloudDetail.readOnly &&

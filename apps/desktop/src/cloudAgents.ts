@@ -80,7 +80,7 @@ export function isTerminalCloudAgent(agent: Pick<CloudAgentResource, "status">):
 export class CloudAgentsClient {
   constructor(
     private readonly api: PlowApi,
-    private readonly deviceUid: string | null = null,
+    private readonly deviceUid: string,
     private readonly wait: Wait = defaultWait,
   ) {}
 
@@ -88,16 +88,14 @@ export class CloudAgentsClient {
     deviceCredential: string,
     request: CreateCloudAgentRequest,
   ): Promise<CloudAgentResource> {
-    if (!this.deviceUid) {
-      throw new Error("Cloud agent creation requires this home's device id.");
-    }
     const path = "/v1/agents/cloud";
     const response = await this.api.request("POST", path, {
       token: deviceCredential,
       body: {
         line_uid: request.lineUid,
         provider: request.provider,
-        device_uid: this.deviceUid,
+        // TODO(device-pinned cloud-agent guide): send `device_uid: this.deviceUid`
+        // after Plow's strict create schema accepts the additive field.
         ...(request.name.trim() ? { name: request.name } : {}),
       },
     });
@@ -308,7 +306,12 @@ function invalidResponse(status: number): PlowApiError {
 }
 
 function responseCode(decoded: unknown): string | null {
-  if (!isRecord(decoded) || !isRecord(decoded.detail)) return null;
+  if (!isRecord(decoded)) return null;
+  // FastAPI's request-schema failures are a list, not the structured error
+  // object used by the cloud-agent lifecycle. Name the class without copying
+  // any server-provided validation text into the log.
+  if (Array.isArray(decoded.detail)) return "VALIDATION_ERROR";
+  if (!isRecord(decoded.detail)) return null;
   if (typeof decoded.detail.code !== "string") return null;
   const code = decoded.detail.code.trim().toUpperCase();
   return Object.prototype.hasOwnProperty.call(LINE_ERRORS, code) ? code : null;
