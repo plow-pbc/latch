@@ -201,6 +201,11 @@ describe("CloudAgentsClient line changes", () => {
   it.each([
     ["NO_HOME_CHAT", "no_home_chat", "Text this line once first, then try again."],
     ["CHAT_SET_CONFLICT", "line_occupied", "Another agent already uses that line."],
+    ["AGENT_FAILED", "agent_failed", "This agent failed to set up. Retry or delete it before changing lines."],
+    ["PROVISION_IN_FLIGHT", "provision_in_flight", "This agent is still setting up. Try again when it's ready."],
+    ["PENDING_TEARDOWN", "pending_teardown", "This agent is still being removed. Try again when removal finishes."],
+    ["CHAT_DELETED", "chat_deleted", "That line changed while Plow was updating the agent. Refresh and try again."],
+    ["PROVIDER_CONFLICT", "provider_conflict", "Another kind of agent already uses that line."],
   ] as const)("maps %s to fixed change-line copy", async (wireCode, code, copy) => {
     const { fetchImpl } = recordingFetch([{
       status: 409,

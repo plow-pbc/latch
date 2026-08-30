@@ -403,6 +403,32 @@ const SCREENS = [
     ],
   },
   {
+    name: "cloud-lines-unknown",
+    cloud: {
+      ...CLOUD_READY,
+      cloudAgents: [ACTIVE_AGENT],
+      cloudFreeLines: [],
+      cloudChatsError: "Plow returned 503.",
+      cloudChatsLoaded: false,
+    },
+    prepare: async (win) => {
+      await clickText(win, "New agent", 0);
+      await waitFor(win, `document.querySelector(".cloud-modal .cloud-callout-title")
+        ?.textContent.trim() === "Lines could not be loaded"`, "the unknown-lines picker");
+      const buttons = await win.webContents.executeJavaScript(
+        `[...document.querySelectorAll(".cloud-modal button")]
+          .map((button) => button.textContent.trim())`,
+      );
+      if (buttons.join("|") !== "Cancel") {
+        throw new Error(`unknown chats exposed a line action: ${buttons.join("|")}`);
+      }
+    },
+    expect: [
+      "New agent", "Lines could not be loaded",
+      "Plow couldn't complete that request. Try again.", "Cancel",
+    ],
+  },
+  {
     name: "cloud-detail",
     roster: { ...ROSTER, cloud: [ROSTER.cloud[0]], mcp: [], other: [] },
     cloud: { ...CLOUD_READY, cloudAgents: [ACTIVE_AGENT] },
@@ -423,6 +449,32 @@ const SCREENS = [
       "Household helper", "Line", "Willow · +1 415-555-0142", "Status", "Ready",
       "Threads", CHAT_TITLE, "Close", "Change line", "Delete agent",
     ],
+  },
+  {
+    name: "cloud-failed-detail",
+    cloud: {
+      ...CLOUD_READY,
+      cloudAgents: [{
+        ...ACTIVE_AGENT,
+        status: "failed",
+        failureReason: "Set up failed",
+      }],
+    },
+    prepare: async (win) => {
+      await win.webContents.executeJavaScript(
+        `document.querySelector(".cloud-agent-row .cloud-agent-open").click()`,
+      );
+      await waitFor(win, `document.querySelector(".cloud-modal .cloud-detail-threads")`,
+        "the failed agent detail");
+      const buttons = await win.webContents.executeJavaScript(
+        `[...document.querySelectorAll(".cloud-modal button")]
+          .map((button) => button.textContent.trim())`,
+      );
+      if (buttons.join("|") !== "Close|Delete agent") {
+        throw new Error(`failed agent exposed unexpected controls: ${buttons.join("|")}`);
+      }
+    },
+    expect: ["Household helper", "Failed · Set up failed", "Close", "Delete agent"],
   },
   {
     name: "cloud-change-line-picker",

@@ -138,6 +138,7 @@ let cloudProbe = {
   cloudChatsLoaded: true,
 };
 let cloudChangeRequest = null;
+let cloudChangeCancelCount = 0;
 
 // Connect state also carries the cloud-agent display state. It contains no
 // credential, session id or worker URL.
@@ -186,12 +187,24 @@ ipcMain.handle("cloud:create", async (_e, input) => {
         retryNewLine: false,
       },
     };
+  } else if (input?.lineUid === "lin_error") {
+    cloudProbe = {
+      ...cloudProbe,
+      cloudCreate: {
+        phase: "error",
+        activation: null,
+        message: "Plow returned 409.",
+        createdAgentId: null,
+        retryNewLine: false,
+      },
+    };
   }
   return agentsTabProbeState();
 });
 ipcMain.handle("cloud:retryCreate", async () => agentsTabProbeState());
 ipcMain.handle("cloud:retryFailed", async () => agentsTabProbeState());
 ipcMain.handle("cloud:cancelChangeLine", async () => {
+  cloudChangeCancelCount += 1;
   cloudProbe = {
     ...cloudProbe,
     cloudChangeLine: {
@@ -217,6 +230,17 @@ ipcMain.handle("cloud:changeLine", async (_e, input) => {
           smsBody: "Plow Activate: MOVE42",
         },
         message: null,
+        changedAgentId: null,
+        retryNewLine: false,
+      },
+    };
+  } else if (input?.lineUid === "lin_error") {
+    cloudProbe = {
+      ...cloudProbe,
+      cloudChangeLine: {
+        phase: "error",
+        activation: null,
+        message: "Plow returned 409.",
         changedAgentId: null,
         retryNewLine: false,
       },
@@ -898,6 +922,187 @@ app.whenReady().then(async () => {
   await waitFor(win, `!document.querySelector(".cloud-modal")`,
     "the unavailable-thread detail to close");
 
+  cloudProbe = {
+    ...cloudProbe,
+    cloudAgents: [cloudAgent],
+    cloudFreeLines: [],
+    cloudCreate: {
+      phase: "idle",
+      activation: null,
+      message: null,
+      createdAgentId: null,
+      retryNewLine: false,
+    },
+    cloudChatsError: "Plow returned 503.",
+    cloudChatsLoaded: false,
+  };
+  await win.webContents.executeJavaScript(`window.__domoSelectTab("audit")`);
+  await win.webContents.executeJavaScript(`window.__domoSelectTab("agents")`);
+  await waitFor(win, `[...document.querySelectorAll("#view button")]
+    .some((button) => button.textContent.trim() === "New agent")`, "the unknown-lines roster");
+  await win.webContents.executeJavaScript(
+    `[...document.querySelectorAll("#view button")]
+      .find((button) => button.textContent.trim() === "New agent").click()`,
+  );
+  await waitFor(win, `document.querySelector(".cloud-modal .group-title")?.textContent.trim() === "New agent" &&
+    !document.querySelector(".cloud-modal .cloud-progress")`, "the unknown-lines picker");
+  const cloudUnknownLines = await win.webContents.executeJavaScript(`(${() => {
+    const modal = document.querySelector(".cloud-modal");
+    return {
+      showsSafeError: modal.textContent.includes("Plow couldn't complete that request. Try again."),
+      hidesRawError: !modal.textContent.includes("Plow returned 503."),
+      buttons: [...modal.querySelectorAll("button")].map((button) => button.textContent.trim()),
+    };
+  }})()`);
+  await win.webContents.executeJavaScript(
+    `[...document.querySelectorAll(".cloud-modal button")]
+      .find((button) => button.textContent.trim() === "Cancel").click()`,
+  );
+  await waitFor(win, `!document.querySelector(".cloud-modal")`, "the unknown-lines picker to close");
+
+  cloudProbe = {
+    ...cloudProbe,
+    cloudFreeLines: [{ uid: "lin_error", label: "Error line" }],
+    cloudChatsError: null,
+    cloudChatsLoaded: true,
+  };
+  await win.webContents.executeJavaScript(`window.__domoSelectTab("audit")`);
+  await win.webContents.executeJavaScript(`window.__domoSelectTab("agents")`);
+  await waitFor(win, `[...document.querySelectorAll("#view button")]
+    .some((button) => button.textContent.trim() === "New agent")`, "the create-error roster");
+  await win.webContents.executeJavaScript(
+    `[...document.querySelectorAll("#view button")]
+      .find((button) => button.textContent.trim() === "New agent").click()`,
+  );
+  await waitFor(win, `document.querySelector(".cloud-modal .cloud-line-options")`,
+    "the create-error picker");
+  await win.webContents.executeJavaScript(
+    `[...document.querySelectorAll(".cloud-modal button")]
+      .find((button) => button.textContent.trim() === "Error line").click()`,
+  );
+  await waitFor(win, `document.querySelector(".cloud-modal .cloud-callout-title")?.textContent
+    .includes("wasn't created")`, "the create error card");
+  const cloudCreateErrorSafe = await win.webContents.executeJavaScript(
+    `document.querySelector(".cloud-modal").textContent.includes("Plow couldn't complete that request. Try again.") &&
+      !document.querySelector(".cloud-modal").textContent.includes("Plow returned 409.")`,
+  );
+  await win.webContents.executeJavaScript(
+    `[...document.querySelectorAll(".cloud-modal button")]
+      .find((button) => button.textContent.trim() === "Cancel").click()`,
+  );
+  await waitFor(win, `!document.querySelector(".cloud-modal")`, "the create error card to close");
+
+  cloudProbe = {
+    ...cloudProbe,
+    cloudAgents: [{ ...cloudAgent, status: "failed", failureReason: "Set up failed" }],
+    cloudCreate: {
+      phase: "idle",
+      activation: null,
+      message: null,
+      createdAgentId: null,
+      retryNewLine: false,
+    },
+  };
+  await win.webContents.executeJavaScript(`window.__domoSelectTab("audit")`);
+  await win.webContents.executeJavaScript(`window.__domoSelectTab("agents")`);
+  await waitFor(win, `document.querySelector(".cloud-agent-row .cloud-agent-open")`,
+    "the failed cloud agent");
+  await win.webContents.executeJavaScript(
+    `document.querySelector(".cloud-agent-row .cloud-agent-open").click()`,
+  );
+  await waitFor(win, `document.querySelector(".cloud-modal .cloud-detail-threads")`,
+    "the failed cloud-agent detail");
+  const failedCloudDetailButtons = await win.webContents.executeJavaScript(
+    `[...document.querySelectorAll(".cloud-modal button")].map((button) => button.textContent.trim())`,
+  );
+  await win.webContents.executeJavaScript(
+    `[...document.querySelectorAll(".cloud-modal button")]
+      .find((button) => button.textContent.trim() === "Close").click()`,
+  );
+  await waitFor(win, `!document.querySelector(".cloud-modal")`, "the failed detail to close");
+
+  cloudProbe = {
+    ...cloudProbe,
+    cloudAgents: [cloudAgent],
+    cloudChangeLine: {
+      phase: "idle",
+      activation: null,
+      message: null,
+      changedAgentId: null,
+      retryNewLine: false,
+    },
+  };
+  await win.webContents.executeJavaScript(`window.__domoSelectTab("audit")`);
+  await win.webContents.executeJavaScript(`window.__domoSelectTab("agents")`);
+  await waitFor(win, `document.querySelector(".cloud-agent-row .cloud-agent-open")`,
+    "the change-error cloud agent");
+  await win.webContents.executeJavaScript(
+    `document.querySelector(".cloud-agent-row .cloud-agent-open").click()`,
+  );
+  await waitFor(win, `document.querySelector(".cloud-modal .cloud-detail-threads")`,
+    "the change-error detail");
+  await win.webContents.executeJavaScript(
+    `[...document.querySelectorAll(".cloud-modal button")]
+      .find((button) => button.textContent.trim() === "Change line").click()`,
+  );
+  await waitFor(win, `document.querySelector(".cloud-modal .cloud-line-options")`,
+    "the change-error picker");
+  await win.webContents.executeJavaScript(
+    `[...document.querySelectorAll(".cloud-modal button")]
+      .find((button) => button.textContent.trim() === "Error line").click()`,
+  );
+  await waitFor(win, `document.querySelector(".cloud-modal .cloud-callout-title")?.textContent
+    .includes("wasn't changed")`, "the change-line error card");
+  const cloudChangeErrorSafe = await win.webContents.executeJavaScript(
+    `document.querySelector(".cloud-modal").textContent.includes("Plow couldn't complete that request. Try again.") &&
+      !document.querySelector(".cloud-modal").textContent.includes("Plow returned 409.")`,
+  );
+  await win.webContents.executeJavaScript(
+    `[...document.querySelectorAll(".cloud-modal button")]
+      .find((button) => button.textContent.trim() === "Cancel").click()`,
+  );
+  await waitFor(win, `!document.querySelector(".cloud-modal")`, "the change error card to close");
+
+  cloudProbe = {
+    ...cloudProbe,
+    cloudFreeLines: [],
+    cloudChangeLine: {
+      phase: "idle",
+      activation: null,
+      message: null,
+      changedAgentId: null,
+      retryNewLine: false,
+    },
+  };
+  await win.webContents.executeJavaScript(`window.__domoSelectTab("audit")`);
+  await win.webContents.executeJavaScript(`window.__domoSelectTab("agents")`);
+  await waitFor(win, `document.querySelector(".cloud-agent-row .cloud-agent-open")`,
+    "the agent-gone cloud agent");
+  await win.webContents.executeJavaScript(
+    `document.querySelector(".cloud-agent-row .cloud-agent-open").click()`,
+  );
+  await waitFor(win, `document.querySelector(".cloud-modal .cloud-detail-threads")`,
+    "the agent-gone detail");
+  await win.webContents.executeJavaScript(
+    `[...document.querySelectorAll(".cloud-modal button")]
+      .find((button) => button.textContent.trim() === "Change line").click()`,
+  );
+  await waitFor(win, `document.querySelector(".cloud-modal .cloud-new-line")`,
+    "the agent-gone line picker");
+  await win.webContents.executeJavaScript(
+    `[...document.querySelectorAll(".cloud-modal button")]
+      .find((button) => button.textContent.trim() === "New line").click()`,
+  );
+  await waitFor(win, `document.querySelector(".cloud-modal .cloud-activation-code")`,
+    "the agent-gone activation code");
+  const cancelsBeforeAgentGone = cloudChangeCancelCount;
+  cloudProbe = { ...cloudProbe, cloudAgents: [] };
+  win.webContents.send("connect:changed");
+  await waitFor(win, `!document.querySelector(".cloud-modal")`,
+    "the removed agent's Change line flow to close");
+  await new Promise((resolve) => setTimeout(resolve, 25));
+  const cloudAgentGoneCancelled = cloudChangeCancelCount === cancelsBeforeAgentGone + 1;
+
   // The Approvals card: the modes, and the owner's purpose statement. Two
   // states, because the card has two — the field under the reviewer chip, and
   // one honest line in its place under every other one.
@@ -1534,6 +1739,13 @@ app.whenReady().then(async () => {
     cloudChangeCode.buttons.join("|") === "Copy|Cancel|Open Messages…" &&
     cloudChangeRequest?.agentId === cloudAgent.agentId &&
     cloudChangeRequest?.lineUid === null &&
+    cloudUnknownLines.showsSafeError &&
+    cloudUnknownLines.hidesRawError &&
+    cloudUnknownLines.buttons.join("|") === "Cancel" &&
+    cloudCreateErrorSafe &&
+    failedCloudDetailButtons.join("|") === "Close|Delete agent" &&
+    cloudChangeErrorSafe &&
+    cloudAgentGoneCancelled &&
     cloudDeleteConfirm.title === "Delete Household helper?" &&
     cloudDeleteConfirm.copy &&
     cloudDeleteConfirm.buttons.join("|") === "Cancel|Delete agent" &&
@@ -1614,7 +1826,7 @@ app.whenReady().then(async () => {
     errors.length === 0;
   console.log(
     "PROBE:" +
-      JSON.stringify({ main, settings, strandedOnDisk, settingsPane, connect, cloudRoster, cloudCreatePicker, cloudCreateCode, cloudDetail, cloudChangePicker, cloudChangeCode, cloudChangeRequest, cloudDeleteConfirm, agentsShot, approvalsReviewer, approvalsShot, purposeRoundTrip, approvalsAsk, askWithoutReviewer, approvalsShotAsk, agentsOpen, modalClosed, vaultLocked, vaultUnsaved, vaultShot, agentsOpenShot, staleSettingsPane, optimisticMode, settingsShot, approval, reviewerNote, consoleErrors: errors, ok }),
+      JSON.stringify({ main, settings, strandedOnDisk, settingsPane, connect, cloudRoster, cloudCreatePicker, cloudCreateCode, cloudDetail, cloudChangePicker, cloudChangeCode, cloudChangeRequest, cloudUnknownLines, cloudCreateErrorSafe, failedCloudDetailButtons, cloudChangeErrorSafe, cloudAgentGoneCancelled, cloudDeleteConfirm, agentsShot, approvalsReviewer, approvalsShot, purposeRoundTrip, approvalsAsk, askWithoutReviewer, approvalsShotAsk, agentsOpen, modalClosed, vaultLocked, vaultUnsaved, vaultShot, agentsOpenShot, staleSettingsPane, optimisticMode, settingsShot, approval, reviewerNote, consoleErrors: errors, ok }),
   );
   app.exit(ok ? 0 : 1);
 }).catch((err) => {

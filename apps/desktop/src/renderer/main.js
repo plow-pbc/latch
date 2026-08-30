@@ -957,6 +957,18 @@ function cloudActivationScreen(panel, flow, onCancel) {
 }
 
 function cloudLinePickerNodes(state, start, cancel, message = null) {
+  if (state.cloudChatsLoaded !== true) {
+    const unavailable = state.cloudChatsError
+      ? cloudErrorCopy(state.cloudChatsError)
+      : "Your lines couldn't be loaded yet. Try again.";
+    return [
+      el("div", { class: "cloud-callout cloud-error" }, [
+        el("div", { class: "cloud-callout-title", text: "Lines could not be loaded" }),
+        el("p", { class: "faint", text: unavailable }),
+      ]),
+      el("div", { class: "row cloud-modal-actions" }, [cancel]),
+    ];
+  }
   const freeLines = state.cloudFreeLines ?? [];
   const lineChoices = freeLines.map((line) => {
     const choose = el("button", { class: "cloud-line-option", text: line.label });
@@ -967,7 +979,7 @@ function cloudLinePickerNodes(state, start, cancel, message = null) {
   newLine.addEventListener("click", () => start(null));
   return [
     ...(message ? [el("div", { class: "cloud-callout cloud-error" }, [
-      el("p", { class: "faint", text: message }),
+      el("p", { class: "faint", text: cloudErrorCopy(message) }),
     ])] : []),
     ...(lineChoices.length ? [
       el("div", { class: "cloud-line-heading", text: "Your free lines" }),
@@ -1029,7 +1041,10 @@ function syncCloudCreateModal(state, redraw) {
       el("div", { class: "group-title", text: "New agent" }),
       el("div", { class: "cloud-callout cloud-error" }, [
         el("div", { class: "cloud-callout-title", text: "The agent wasn't created" }),
-        el("p", { class: "faint", text: flow.message || "Something went wrong. Try again." }),
+        el("p", {
+          class: "faint",
+          text: cloudErrorCopy(flow.message || "Something went wrong. Try again."),
+        }),
       ]),
       el("div", { class: "row cloud-modal-actions" }, [
         cancel,
@@ -1101,6 +1116,7 @@ function syncCloudChangeLineModal(state, redraw) {
   const agent = (state.cloudAgents ?? [])
     .find((candidate) => candidate.agentId === modal.agentId);
   if (!agent) {
+    void window.domo.cloudCancelChangeLine();
     closeCloudModal();
     return;
   }
@@ -1151,7 +1167,10 @@ function syncCloudChangeLineModal(state, redraw) {
       el("div", { class: "group-title", text: "Change line" }),
       el("div", { class: "cloud-callout cloud-error" }, [
         el("div", { class: "cloud-callout-title", text: "The line wasn't changed" }),
-        el("p", { class: "faint", text: flow.message || "Something went wrong. Try again." }),
+        el("p", {
+          class: "faint",
+          text: cloudErrorCopy(flow.message || "Something went wrong. Try again."),
+        }),
       ]),
       el("div", { class: "row cloud-modal-actions" }, [
         cancel,
@@ -1238,10 +1257,12 @@ function syncCloudModal(state, redraw) {
   const showDetail = () => {
     cloudModal.confirmingDelete = false;
     const close = el("button", { class: "btn", text: "Close" });
-    const changeLine = el("button", { class: "btn", text: "Change line" });
+    const changeLine = agent.status === "failed"
+      ? null
+      : el("button", { class: "btn", text: "Change line" });
     const remove = el("button", { class: "btn danger", text: "Delete agent" });
     close.addEventListener("click", closeCloudModal);
-    changeLine.addEventListener("click", () => openCloudChangeLine(agent, state, redraw));
+    changeLine?.addEventListener("click", () => openCloudChangeLine(agent, state, redraw));
     remove.addEventListener("click", () => {
       cloudModal.confirmingDelete = true;
       syncCloudModal(state, redraw);

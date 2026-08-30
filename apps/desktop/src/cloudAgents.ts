@@ -39,7 +39,14 @@ export interface CreateCloudAgentRequest {
   name: string;
 }
 
-export type CloudAgentLineErrorCode = "no_home_chat" | "line_occupied";
+export type CloudAgentLineErrorCode =
+  | "no_home_chat"
+  | "line_occupied"
+  | "agent_failed"
+  | "provision_in_flight"
+  | "pending_teardown"
+  | "chat_deleted"
+  | "provider_conflict";
 
 export class CloudAgentLineError extends PlowApiError {
   constructor(
@@ -283,19 +290,43 @@ function responseCode(decoded: unknown): string | null {
 
 async function throwLineError(response: Response): Promise<void> {
   const code = responseCode(await decodeJson(response));
-  if (code === "NO_HOME_CHAT") {
-    throw new CloudAgentLineError(
-      "no_home_chat",
-      "Text this line once first, then try again.",
-    );
-  }
-  if (code === "CHAT_SET_CONFLICT") {
-    throw new CloudAgentLineError(
-      "line_occupied",
-      "Another agent already uses that line.",
-    );
-  }
+  const mapped = code === null ? null : LINE_ERRORS[code];
+  if (mapped) throw new CloudAgentLineError(mapped.code, mapped.message);
 }
+
+const LINE_ERRORS: Readonly<Record<string, {
+  code: CloudAgentLineErrorCode;
+  message: string;
+}>> = Object.freeze({
+  NO_HOME_CHAT: {
+    code: "no_home_chat",
+    message: "Text this line once first, then try again.",
+  },
+  CHAT_SET_CONFLICT: {
+    code: "line_occupied",
+    message: "Another agent already uses that line.",
+  },
+  AGENT_FAILED: {
+    code: "agent_failed",
+    message: "This agent failed to set up. Retry or delete it before changing lines.",
+  },
+  PROVISION_IN_FLIGHT: {
+    code: "provision_in_flight",
+    message: "This agent is still setting up. Try again when it's ready.",
+  },
+  PENDING_TEARDOWN: {
+    code: "pending_teardown",
+    message: "This agent is still being removed. Try again when removal finishes.",
+  },
+  CHAT_DELETED: {
+    code: "chat_deleted",
+    message: "That line changed while Plow was updating the agent. Refresh and try again.",
+  },
+  PROVIDER_CONFLICT: {
+    code: "provider_conflict",
+    message: "Another kind of agent already uses that line.",
+  },
+});
 
 export function echoesCredential(text: string, credential: string): boolean {
   const secret = credential.trim();
