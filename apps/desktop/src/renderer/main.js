@@ -1831,9 +1831,6 @@ async function renderSettings() {
   // and the API origin is baked into the build (a token is only valid against
   // the environment that minted it, so an editable origin could only be wrong).
   const relay = await window.domo.relayGet();
-  // The machine's own name, for the one row this group keeps. Already on the
-  // bridge for the titlebar; no new IPC and no API call for it.
-  const status = await window.domo.statusGet();
   const relayNote = el("p", { class: "faint", text: relayStatusText(relay) });
   // The "Connect a Client" button that used to sit here is gone: connecting a
   // client is now a subsection of this same group, so a button navigating to it
@@ -1853,6 +1850,9 @@ async function renderSettings() {
   // rewrites its contents rather than the pane.
   const accountBox = el("div", { class: "account" });
   const refreshAccount = async () => {
+    // The machine's own name, for the one row this group keeps. Already on the
+    // bridge for the titlebar; no new IPC and no API call for it.
+    const status = await window.domo.statusGet();
     const relay = await window.domo.relayGet();
     relayNote.textContent = relayStatusText(relay);
     // `hidden` is not enough: `.btn` is `display: inline-flex`, which outranks

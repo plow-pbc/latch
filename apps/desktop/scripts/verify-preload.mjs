@@ -35,7 +35,8 @@ saveSettings(probeHome, {
 // Stub the IPC handlers the renderer calls on load, so this probe needs no
 // device — we're testing the bridge + render path, not the data.
 ipcMain.handle("audit:activities", async () => []);
-ipcMain.handle("status:get", async () => ({ deviceId: "probe", name: "Probe", connected: false }));
+let statusName = "Probe";
+ipcMain.handle("status:get", async () => ({ deviceId: "probe", name: statusName, connected: false }));
 ipcMain.handle("rules:list", async () => []);
 ipcMain.handle("ui:getTab", async () => "audit");
 ipcMain.handle("ui:setTab", async () => {});
@@ -531,10 +532,6 @@ app.whenReady().then(async () => {
     };
   }})()`);
 
-  // Settings changed with first-run login, and every UI change gets an image.
-  const settingsShot = process.env.SETTINGS_OUT ?? "/tmp/settings-account.png";
-  await captureAfterPaint(win, settingsShot);
-
   // The Mac that once pasted its own Anthropic key. Its settings.json still
   // holds the retired fields until something reads them; loading is what takes
   // them off disk, and the pane must show no trace of them either way.
@@ -587,6 +584,7 @@ app.whenReady().then(async () => {
   // The same refresh re-reads Launch at Login: the probe goes from-source here,
   // and the pane must follow — toggle dead, note visible.
   launchSupported = false;
+  statusName = "Probe (2)";
   win.webContents.send("status:changed");
   await waitFor(
     win,
@@ -595,10 +593,15 @@ app.whenReady().then(async () => {
   );
   await waitFor(win, `document.body.innerText.includes("from-source run")`,
     "the Launch at Login row to follow the refresh into its unsupported state");
+  await waitFor(win, `document.body.innerText.includes("Plow Latch (Probe (2))")`,
+    "the open Settings pane to show the newly assigned device name");
   const staleSettingsPane = {
     warnedWhileSignedOut,
     warningGoneAfterStatusChanged: await win.webContents.executeJavaScript(
       `!document.body.innerText.includes("Not signed in")`,
+    ),
+    deviceNameFollowed: await win.webContents.executeJavaScript(
+      `document.body.innerText.includes("Plow Latch (Probe (2))")`,
     ),
     launchUnsupportedFollowed: await win.webContents.executeJavaScript(`(() => {
       const box = [...document.querySelectorAll(".settings input")].find(
@@ -608,6 +611,10 @@ app.whenReady().then(async () => {
       return !!box && box.disabled && document.body.innerText.includes("from-source run");
     })()`),
   };
+
+  // Settings changed with first-run login, and every UI change gets an image.
+  const settingsShot = process.env.SETTINGS_OUT ?? "/tmp/settings-account.png";
+  await captureAfterPaint(win, settingsShot);
 
   // What used to sit here: the half-typed-key race — typing into the API-key
   // field while a status-driven refresh was parked mid-flight, proving the
@@ -2052,6 +2059,7 @@ app.whenReady().then(async () => {
     strandedOnDisk.modeStillStored &&
     staleSettingsPane.warnedWhileSignedOut &&
     staleSettingsPane.warningGoneAfterStatusChanged &&
+    staleSettingsPane.deviceNameFollowed &&
     optimisticMode.storedIsAdversarial &&
     optimisticMode.chipAgrees &&
     optimisticMode.purposeFieldStillOffered &&
