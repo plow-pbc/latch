@@ -1470,7 +1470,7 @@ function entityMark(name, client = false) {
 function rosterBadge(row) {
   if (row.isThisMac) return badge("blue", "This Mac");
   if (row.kind === "Plow web login") return badge("zinc", "Web login");
-  if (row.kind === "Legacy — full access") return badge("amber", "Legacy *:*");
+  if (row.kind === "Admin — full access") return badge("amber", "Admin *:*");
   if (row.kind === "Session") return badge("zinc", "Session");
   return null;
 }
