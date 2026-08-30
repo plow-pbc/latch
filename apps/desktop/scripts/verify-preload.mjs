@@ -351,6 +351,14 @@ async function waitForNode(predicate, label, timeoutMs = 10000) {
   }
 }
 
+async function clickCloudButton(win, label) {
+  const text = JSON.stringify(label);
+  await win.webContents.executeJavaScript(
+    `[...document.querySelectorAll(".cloud-modal button")]
+      .find((button) => button.textContent.trim() === ${text}).click()`,
+  );
+}
+
 /**
  * Capture the window to a PNG, after two frames have actually landed.
  *
@@ -703,10 +711,7 @@ app.whenReady().then(async () => {
       buttons: [...modal.querySelectorAll("button")].map((button) => button.textContent.trim()),
     };
   }})()`);
-  await win.webContents.executeJavaScript(
-    `[...document.querySelectorAll(".cloud-modal button")]
-      .find((button) => button.textContent.trim() === "New line").click()`,
-  );
+  await clickCloudButton(win, "New line");
   await waitFor(win, `document.querySelector(".cloud-modal .cloud-activation-code")`,
     "the New agent activation code");
   const cloudCreateCode = await win.webContents.executeJavaScript(`(${() => {
@@ -719,10 +724,7 @@ app.whenReady().then(async () => {
       buttons: [...modal.querySelectorAll("button")].map((button) => button.textContent.trim()),
     };
   }})()`);
-  await win.webContents.executeJavaScript(
-    `[...document.querySelectorAll(".cloud-modal button")]
-      .find((button) => button.textContent.trim() === "Cancel").click()`,
-  );
+  await clickCloudButton(win, "Cancel");
   await waitFor(win, `!document.querySelector(".cloud-modal")`, "the New agent flow to close");
 
   await win.webContents.executeJavaScript(
@@ -752,10 +754,7 @@ app.whenReady().then(async () => {
     };
   }})()`);
 
-  await win.webContents.executeJavaScript(
-    `[...document.querySelectorAll(".cloud-modal button")]
-      .find((button) => button.textContent.trim() === "Change line").click()`,
-  );
+  await clickCloudButton(win, "Change line");
   await waitFor(win, `document.querySelector(".cloud-modal .cloud-line-options")`,
     "the Change line picker");
   const cloudChangePicker = await win.webContents.executeJavaScript(`(${() => {
@@ -768,10 +767,7 @@ app.whenReady().then(async () => {
       buttons: [...modal.querySelectorAll("button")].map((button) => button.textContent.trim()),
     };
   }})()`);
-  await win.webContents.executeJavaScript(
-    `[...document.querySelectorAll(".cloud-modal button")]
-      .find((button) => button.textContent.trim() === "New line").click()`,
-  );
+  await clickCloudButton(win, "New line");
   await waitFor(win, `document.querySelector(".cloud-modal .cloud-activation-code")`,
     "the Change line activation code");
   const cloudChangeCode = await win.webContents.executeJavaScript(`(${() => {
@@ -783,10 +779,7 @@ app.whenReady().then(async () => {
       buttons: [...modal.querySelectorAll("button")].map((button) => button.textContent.trim()),
     };
   }})()`);
-  await win.webContents.executeJavaScript(
-    `[...document.querySelectorAll(".cloud-modal button")]
-      .find((button) => button.textContent.trim() === "Cancel").click()`,
-  );
+  await clickCloudButton(win, "Cancel");
   await waitFor(win, `!document.querySelector(".cloud-modal")`,
     "the Change line flow to close");
   await win.webContents.executeJavaScript(
@@ -795,10 +788,7 @@ app.whenReady().then(async () => {
   await waitFor(win, `document.querySelector(".cloud-modal .cloud-detail-threads")`,
     "the cloud-agent detail after Change line");
 
-  await win.webContents.executeJavaScript(
-    `[...document.querySelectorAll(".cloud-modal button")]
-      .find((button) => button.textContent.trim() === "Delete agent").click()`,
-  );
+  await clickCloudButton(win, "Delete agent");
   await waitFor(
     win,
     `document.querySelector(".cloud-modal .group-title")?.textContent.startsWith("Delete ")`,
@@ -812,10 +802,7 @@ app.whenReady().then(async () => {
       buttons: [...modal.querySelectorAll("button")].map((button) => button.textContent.trim()),
     };
   }})()`);
-  await win.webContents.executeJavaScript(
-    `[...document.querySelectorAll(".cloud-modal button")]
-      .find((button) => button.textContent.trim() === "Cancel").click()`,
-  );
+  await clickCloudButton(win, "Cancel");
   await waitFor(
     win,
     `document.querySelector(".cloud-modal .cloud-detail-threads")`,
@@ -826,10 +813,7 @@ app.whenReady().then(async () => {
   // in the new line-and-threads surface are visible in the required artifact.
   const agentsShot = process.env.AGENTS_OUT ?? "/tmp/agents.png";
   await captureAfterPaint(win, agentsShot);
-  await win.webContents.executeJavaScript(
-    `[...document.querySelectorAll(".cloud-modal button")]
-      .find((button) => button.textContent.trim() === "Close").click()`,
-  );
+  await clickCloudButton(win, "Close");
   await waitFor(win, `!document.querySelector(".cloud-modal")`, "the cloud-agent detail to close");
 
   cloudProbe = {
@@ -862,10 +846,7 @@ app.whenReady().then(async () => {
     `document.querySelector(".cloud-modal .cloud-thread-list li")?.textContent.trim() === ${JSON.stringify(cloudThreadTitle)}`,
     "the open cloud-agent detail to refresh with its loaded threads",
   );
-  await win.webContents.executeJavaScript(
-    `[...document.querySelectorAll(".cloud-modal button")]
-      .find((button) => button.textContent.trim() === "Close").click()`,
-  );
+  await clickCloudButton(win, "Close");
   await waitFor(win, `!document.querySelector(".cloud-modal")`,
     "the loading-thread detail to close");
 
@@ -894,10 +875,7 @@ app.whenReady().then(async () => {
       hidesRawLineUid: !modal.textContent.includes("lin_willow"),
     };
   }})()`);
-  await win.webContents.executeJavaScript(
-    `[...document.querySelectorAll(".cloud-modal button")]
-      .find((button) => button.textContent.trim() === "Close").click()`,
-  );
+  await clickCloudButton(win, "Close");
   await waitFor(win, `!document.querySelector(".cloud-modal")`,
     "the unavailable-thread detail to close");
 
@@ -933,10 +911,7 @@ app.whenReady().then(async () => {
       buttons: [...modal.querySelectorAll("button")].map((button) => button.textContent.trim()),
     };
   }})()`);
-  await win.webContents.executeJavaScript(
-    `[...document.querySelectorAll(".cloud-modal button")]
-      .find((button) => button.textContent.trim() === "Cancel").click()`,
-  );
+  await clickCloudButton(win, "Cancel");
   await waitFor(win, `!document.querySelector(".cloud-modal")`, "the unknown-lines picker to close");
 
   cloudProbe = {
@@ -955,20 +930,14 @@ app.whenReady().then(async () => {
   );
   await waitFor(win, `document.querySelector(".cloud-modal .cloud-line-options")`,
     "the create-error picker");
-  await win.webContents.executeJavaScript(
-    `[...document.querySelectorAll(".cloud-modal button")]
-      .find((button) => button.textContent.trim() === "Error line").click()`,
-  );
+  await clickCloudButton(win, "Error line");
   await waitFor(win, `document.querySelector(".cloud-modal .cloud-callout-title")?.textContent
     .includes("wasn't created")`, "the create error card");
   const cloudCreateErrorDetail = await win.webContents.executeJavaScript(
     `document.querySelector(".cloud-modal .cloud-callout p")?.textContent.trim() ===
       "No capacity for that line."`,
   );
-  await win.webContents.executeJavaScript(
-    `[...document.querySelectorAll(".cloud-modal button")]
-      .find((button) => button.textContent.trim() === "Cancel").click()`,
-  );
+  await clickCloudButton(win, "Cancel");
   await waitFor(win, `!document.querySelector(".cloud-modal")`, "the create error card to close");
 
   cloudProbe = {
@@ -994,10 +963,7 @@ app.whenReady().then(async () => {
   const failedCloudDetailButtons = await win.webContents.executeJavaScript(
     `[...document.querySelectorAll(".cloud-modal button")].map((button) => button.textContent.trim())`,
   );
-  await win.webContents.executeJavaScript(
-    `[...document.querySelectorAll(".cloud-modal button")]
-      .find((button) => button.textContent.trim() === "Close").click()`,
-  );
+  await clickCloudButton(win, "Close");
   await waitFor(win, `!document.querySelector(".cloud-modal")`, "the failed detail to close");
 
   cloudProbe = {
@@ -1020,26 +986,17 @@ app.whenReady().then(async () => {
   );
   await waitFor(win, `document.querySelector(".cloud-modal .cloud-detail-threads")`,
     "the change-error detail");
-  await win.webContents.executeJavaScript(
-    `[...document.querySelectorAll(".cloud-modal button")]
-      .find((button) => button.textContent.trim() === "Change line").click()`,
-  );
+  await clickCloudButton(win, "Change line");
   await waitFor(win, `document.querySelector(".cloud-modal .cloud-line-options")`,
     "the change-error picker");
-  await win.webContents.executeJavaScript(
-    `[...document.querySelectorAll(".cloud-modal button")]
-      .find((button) => button.textContent.trim() === "Error line").click()`,
-  );
+  await clickCloudButton(win, "Error line");
   await waitFor(win, `document.querySelector(".cloud-modal .cloud-callout-title")?.textContent
     .includes("wasn't changed")`, "the change-line error card");
   const cloudChangeErrorDetail = await win.webContents.executeJavaScript(
     `document.querySelector(".cloud-modal .cloud-callout p")?.textContent.trim() ===
       "Line service is restarting."`,
   );
-  await win.webContents.executeJavaScript(
-    `[...document.querySelectorAll(".cloud-modal button")]
-      .find((button) => button.textContent.trim() === "Cancel").click()`,
-  );
+  await clickCloudButton(win, "Cancel");
   await waitFor(win, `!document.querySelector(".cloud-modal")`, "the change error card to close");
 
   cloudProbe = {
@@ -1062,16 +1019,10 @@ app.whenReady().then(async () => {
   );
   await waitFor(win, `document.querySelector(".cloud-modal .cloud-detail-threads")`,
     "the agent-gone detail");
-  await win.webContents.executeJavaScript(
-    `[...document.querySelectorAll(".cloud-modal button")]
-      .find((button) => button.textContent.trim() === "Change line").click()`,
-  );
+  await clickCloudButton(win, "Change line");
   await waitFor(win, `document.querySelector(".cloud-modal .cloud-new-line")`,
     "the agent-gone line picker");
-  await win.webContents.executeJavaScript(
-    `[...document.querySelectorAll(".cloud-modal button")]
-      .find((button) => button.textContent.trim() === "New line").click()`,
-  );
+  await clickCloudButton(win, "New line");
   await waitFor(win, `document.querySelector(".cloud-modal .cloud-activation-code")`,
     "the agent-gone activation code");
   const cancelsBeforeAgentGone = cloudChangeCancelCount;
