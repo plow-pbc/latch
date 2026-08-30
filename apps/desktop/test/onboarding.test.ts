@@ -189,7 +189,7 @@ function build(extra: Partial<OnboardingDeps> = {}): Onboarding {
       plow.connected = true;
     },
     isConnected: () => plow.connected,
-    deviceName: "Plow Latch (test)",
+    deviceName: () => "Plow Latch (test)",
     now: () => clock,
     // No real timers: the poll loop's wait advances the same fake clock the
     // deadline is measured against, so a five-minute give-up takes microseconds
@@ -253,6 +253,16 @@ afterEach(() => {
 });
 
 describe("activation — the path a brand-new user takes", () => {
+  it("resolves the session name when the activation is created", async () => {
+    let deviceName = "Plow Latch (old-account-mac)";
+    const onboarding = build({ deviceName: () => deviceName });
+    deviceName = "Plow Latch (current-host.local)";
+
+    await onboarding.begin();
+
+    expect(plow.activations).toEqual(["Plow Latch (current-host.local)"]);
+  });
+
   it("shows a code, says where to text it, and connects when the text lands", async () => {
     plow.redeems = [{ status: "pending" }, { status: "verified", token: SESSION_TOKEN }];
     const onboarding = build();

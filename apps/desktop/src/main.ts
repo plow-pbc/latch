@@ -1174,7 +1174,7 @@ app.whenReady().then(async () => {
     home,
     startRelay,
     isConnected: () => connected,
-    deviceName: latchSessionName(registeredDeviceDisplayName, device.identity.name),
+    deviceName: () => latchSessionName(registeredDeviceDisplayName, hostName()),
     onChange: () => onboardingWindow?.webContents.send("onboarding:changed"),
     // RelayClient's redaction is not in play here, so nothing secret is ever
     // handed to this — see Onboarding's callers of `warn`.

@@ -1872,6 +1872,8 @@ async function renderSettings() {
         ? [
             el("div", { class: "field" }, [
               el("label", { text: "This Mac" }),
+              // main resolves the canonical display value in deviceNames.ts;
+              // this renderer only adds the product label around that value.
               el("div", { class: "mono faint", text: `Plow Latch (${status.name || "Mac"})` }),
             ]),
           ]

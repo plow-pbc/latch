@@ -9,9 +9,10 @@ describe("device display names", () => {
       .toBe("Plow Latch (plucas-mbp.local (2))");
   });
 
-  it("uses the hostname before registration and Mac only when neither name is usable", () => {
+  it("uses the hostname before registration and stays non-empty without a usable name", () => {
     expect(deviceDisplayName(null, "plucas-mbp.local")).toBe("plucas-mbp.local");
     expect(latchSessionName(null, "plucas-mbp.local")).toBe("Plow Latch (plucas-mbp.local)");
+    expect(latchSessionName(null, "  ")).toBe("Plow Latch (Mac)");
     expect(deviceDisplayName("  ", "  ")).toBe("Mac");
   });
 });
