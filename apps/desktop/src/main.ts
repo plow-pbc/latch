@@ -1024,7 +1024,11 @@ async function startRelay(): Promise<void> {
     beforeConnect: async () => {
       let registered;
       try {
-        registered = await new PlowApi(apiBaseUrl).registerRelayDevice(credential, deviceId, hostName());
+        registered = await new PlowApi(apiBaseUrl).registerRelayDevice(
+          credential,
+          deviceId,
+          `${hostName()}${instance.nameSuffix}`,
+        );
       } catch (error) {
         if (!(error instanceof PlowApiError) || error.kind !== "unauthorized") throw error;
         if (loadSettings(home).relayCredential.trim() !== credential) return;
@@ -1176,7 +1180,7 @@ app.whenReady().then(async () => {
   // because a row with an `agent_id` must be deleted as an agent and never
   // revoked as a key.
   const cloudApi = new PlowApi(apiBaseUrl, loggingFetch(home));
-  const cloudAgentsClient = new CloudAgentsClient(cloudApi);
+  const cloudAgentsClient = new CloudAgentsClient(cloudApi, device.identity.deviceId);
 
   connectClient = new ConnectClient({
     api: new PlowApi(apiBaseUrl),

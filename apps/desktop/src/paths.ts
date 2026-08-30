@@ -27,6 +27,8 @@ import { vaultStoreIdentity } from "@domo/device-core";
 export const HOME_PREFIX = "Plow-Latch";
 
 export interface InstancePaths {
+  /** Suffix shared by every human-readable name for this from-source home. */
+  nameSuffix: string;
   /** macOS app menu / dock title (set before ready via app.setName). */
   appName: string;
   /** Menu-bar (tray) tooltip. */
@@ -48,12 +50,14 @@ export function resolveInstancePaths(opts: {
   appData: string;
 }): InstancePaths {
   const branch = (opts.env.DOMO_BRANCH ?? "").trim();
+  const nameSuffix = branch ? ` (${branch})` : "";
   const home =
     opts.env.DOMO_HOME ??
     path.join(opts.appData, branch ? `${HOME_PREFIX}-${branch}` : HOME_PREFIX);
   return {
-    appName: branch ? `Plow Latch (${branch})` : "Plow Latch",
-    trayTooltip: branch ? `Plow Latch (${branch})` : "Plow Latch",
+    nameSuffix,
+    appName: `Plow Latch${nameSuffix}`,
+    trayTooltip: `Plow Latch${nameSuffix}`,
     home,
     electronData: path.join(home, "electron"),
     vaultIdentity: vaultStoreIdentity(branch),

@@ -42,6 +42,7 @@ const home = fs.mkdtempSync(path.join(os.tmpdir(), "connect-shot-"));
 const ACTIVE_AGENT = {
   agentId: "cag_groceries",
   name: "Household helper",
+  deviceName: "plucas-mbp.local (main)",
   line: { uid: "lin_willow", label: "Willow · +1 415-555-0142" },
   canMessage: true,
   canRetry: true,
@@ -417,6 +418,8 @@ const SCREENS = [
         stale.provider || stale.usedCopy || stale.messages !== 2 ||
         stale.names.join("|") !== "Trip planner|Household helper" ||
         !stale.contexts[0]?.includes("Created today") ||
+        stale.contexts[0]?.includes("drives:") ||
+        !stale.contexts[1]?.includes("drives: plucas-mbp.local (main)") ||
         !stale.contexts[1]?.includes("Created Aug 24")
       ) {
         throw new Error(`cloud roster order or copy is wrong: ${JSON.stringify(stale)}`);
@@ -703,6 +706,7 @@ const SCREENS = [
     },
     expect: [
       "Household helper", "Line", "Willow · +1 415-555-0142", "Status", "Ready",
+      "Drives", "plucas-mbp.local (main)",
       "Threads", CHAT_TITLE, "Close", "Message", "Change line", "Delete agent",
     ],
   },

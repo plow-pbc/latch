@@ -15,6 +15,7 @@ function agent(overrides: Partial<CloudAgentResource> = {}): CloudAgentResource 
     status: "provisioning",
     failureReason: null,
     createdAt: "2026-08-24T18:02:11Z",
+    deviceName: null,
     sessionId: "session_old",
     ...overrides,
   };
@@ -31,6 +32,7 @@ describe("cloud-agent pure mappings", () => {
 
     expect(row).toMatchObject({
       agentId: "agent_stable",
+      deviceName: null,
       line: { uid: "lin_willow", label: "Willow · +1 415-555-0100" },
       canMessage: true,
       canRetry: true,
@@ -38,6 +40,16 @@ describe("cloud-agent pure mappings", () => {
     });
     expect(JSON.stringify(row)).not.toContain("session_old");
     expect(JSON.stringify(row)).not.toContain("provider.internal");
+  });
+
+  it("passes a pinned device name to the renderer and scrubs credential echoes", () => {
+    const sessionId = "session_sensitive_123";
+    const row = toCloudAgentDisplayRow(agent({
+      deviceName: `plucas-mbp.local (${sessionId})`,
+      sessionId,
+    }));
+
+    expect(row.deviceName).toBe("plucas-mbp.local ([credential])");
   });
 
   it("scrubs a session id embedded in every renderer-bound display string", () => {

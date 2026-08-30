@@ -1285,6 +1285,10 @@ function syncCloudModal(state, redraw) {
           el("span", { class: "faint", text: "Status" }),
           cloudStatusNode(agent),
         ]),
+        agent.deviceName ? el("div", { class: "cloud-detail-field" }, [
+          el("span", { class: "faint", text: "Drives" }),
+          el("span", { text: agent.deviceName }),
+        ]) : null,
       ]),
       el("div", { class: "cloud-detail-threads" }, [
         el("div", { class: "cloud-detail-heading", text: "Threads" }),
@@ -1550,6 +1554,7 @@ function cloudContext(agent, state) {
   const created = rosterDate(agent?.createdAt);
   return [
     cloudLine(agent, state),
+    agent?.deviceName ? `drives: ${agent.deviceName}` : null,
     created ? `Created ${created}` : null,
   ].filter(Boolean).join(" · ");
 }

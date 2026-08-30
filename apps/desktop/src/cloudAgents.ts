@@ -26,6 +26,8 @@ export interface CloudAgentResource {
   failureCode?: string | null;
   failureReason: string | null;
   createdAt: string | null;
+  /** Human-readable Latch home this agent's relay URL is pinned to. */
+  deviceName: string | null;
   /** Credential identity only. Never use this as the agent's identity. */
   sessionId: string | null;
 }
@@ -78,6 +80,7 @@ export function isTerminalCloudAgent(agent: Pick<CloudAgentResource, "status">):
 export class CloudAgentsClient {
   constructor(
     private readonly api: PlowApi,
+    private readonly deviceUid: string | null = null,
     private readonly wait: Wait = defaultWait,
   ) {}
 
@@ -85,12 +88,16 @@ export class CloudAgentsClient {
     deviceCredential: string,
     request: CreateCloudAgentRequest,
   ): Promise<CloudAgentResource> {
+    if (!this.deviceUid) {
+      throw new Error("Cloud agent creation requires this home's device id.");
+    }
     const path = "/v1/agents/cloud";
     const response = await this.api.request("POST", path, {
       token: deviceCredential,
       body: {
         line_uid: request.lineUid,
         provider: request.provider,
+        device_uid: this.deviceUid,
         ...(request.name.trim() ? { name: request.name } : {}),
       },
     });
@@ -251,6 +258,7 @@ function parseResource(
     failureCode: optionalString(decoded.failure_code),
     failureReason: optionalString(decoded.failure_reason),
     createdAt: optionalString(decoded.created_at),
+    deviceName: optionalString(decoded.device_name),
     sessionId: optionalString(decoded.session_id),
   };
 

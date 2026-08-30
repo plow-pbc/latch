@@ -23,6 +23,7 @@ describe("resolveInstancePaths", () => {
     const p = resolveInstancePaths({ env: {}, appData });
     expect(p.home).toBe(path.join(appData, "Plow-Latch"));
     expect(p.electronData).toBe(path.join(appData, "Plow-Latch", "electron"));
+    expect(p.nameSuffix).toBe("");
     expect(p.appName).toBe("Plow Latch");
     expect(p.trayTooltip).toBe("Plow Latch");
   });
@@ -31,6 +32,7 @@ describe("resolveInstancePaths", () => {
     const p = resolveInstancePaths({ env: { DOMO_BRANCH: "feature-test" }, appData });
     expect(p.home).toBe(path.join(appData, "Plow-Latch-feature-test"));
     expect(p.electronData).toBe(path.join(appData, "Plow-Latch-feature-test", "electron"));
+    expect(p.nameSuffix).toBe(" (feature-test)");
     expect(p.appName).toBe("Plow Latch (feature-test)");
     expect(p.trayTooltip).toBe("Plow Latch (feature-test)");
   });

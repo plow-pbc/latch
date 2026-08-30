@@ -8,6 +8,7 @@ import {
 import { FetchLike, PlowApi, PlowApiError, REQUEST_TIMEOUT_MS } from "../src/plowApi.js";
 
 const CREDENTIAL = "plow_dev_credential_123456789";
+const DEVICE_UID = "e39f7456efa3841b";
 
 beforeEach(() => {
   vi.spyOn(console, "error").mockImplementation(() => {});
@@ -52,6 +53,10 @@ describe("CloudAgentsClient resources", () => {
       chatUids: ["cht_home"],
       name: "Kitchen",
       status: "running",
+      deviceName: null,
+    }],
+    ["device-pinned shape", wireAgent({ device_name: "plucas-mbp.local (main)" }), {
+      deviceName: "plucas-mbp.local (main)",
     }],
     ["omitted status", wireAgent({ status: undefined }), { status: "provisioning" }],
     ["failure metadata", wireAgent({
@@ -114,10 +119,20 @@ describe("CloudAgentsClient resources", () => {
 });
 
 describe("CloudAgentsClient creation", () => {
+  it("refuses to create an unpinned agent when no home identity was loaded", async () => {
+    const { calls, fetchImpl } = recordingFetch([]);
+
+    await expect(new CloudAgentsClient(new PlowApi("https://api.plow.co", fetchImpl)).create(
+      CREDENTIAL,
+      { lineUid: "lin_willow", name: "Kitchen", provider: "exe:life" },
+    )).rejects.toThrow("requires this home's device id");
+    expect(calls).toEqual([]);
+  });
+
   it.each([200, 202])("accepts %s and sends the selected provider", async (status) => {
     const { calls, fetchImpl } = recordingFetch([{ status, body: wireAgent() }]);
 
-    await new CloudAgentsClient(new PlowApi("https://api.plow.co", fetchImpl)).create(
+    await new CloudAgentsClient(new PlowApi("https://api.plow.co", fetchImpl), DEVICE_UID).create(
       CREDENTIAL,
       { lineUid: "lin_willow", name: "Kitchen", provider: "exe:life" },
     );
@@ -128,6 +143,7 @@ describe("CloudAgentsClient creation", () => {
       line_uid: "lin_willow",
       name: "Kitchen",
       provider: "exe:life",
+      device_uid: DEVICE_UID,
     });
     expect(String(calls[0].init.body)).not.toContain("chat_uids");
   });
@@ -135,7 +151,7 @@ describe("CloudAgentsClient creation", () => {
   it("omits a blank optional name", async () => {
     const { calls, fetchImpl } = recordingFetch([{ status: 200, body: wireAgent() }]);
 
-    await new CloudAgentsClient(new PlowApi("https://api.plow.co", fetchImpl)).create(
+    await new CloudAgentsClient(new PlowApi("https://api.plow.co", fetchImpl), DEVICE_UID).create(
       CREDENTIAL,
       { lineUid: "lin_willow", name: "", provider: "exe:hermes" },
     );
@@ -143,6 +159,7 @@ describe("CloudAgentsClient creation", () => {
     expect(JSON.parse(String(calls[0].init.body))).toEqual({
       line_uid: "lin_willow",
       provider: "exe:hermes",
+      device_uid: DEVICE_UID,
     });
   });
 
@@ -152,7 +169,7 @@ describe("CloudAgentsClient creation", () => {
       body: { detail: { code: "NO_HOME_CHAT", message: `echo ${CREDENTIAL}` } },
     }]);
 
-    await expect(new CloudAgentsClient(new PlowApi("https://api.plow.co", fetchImpl)).create(
+    await expect(new CloudAgentsClient(new PlowApi("https://api.plow.co", fetchImpl), DEVICE_UID).create(
       CREDENTIAL,
       { lineUid: "lin_willow", name: "Kitchen", provider: "exe:hermes" },
     )).rejects.toThrow("Text this line once first, then try again.");
@@ -172,7 +189,7 @@ describe("CloudAgentsClient creation", () => {
       },
     }]);
 
-    const error = await new CloudAgentsClient(new PlowApi("https://api.plow.co", fetchImpl))
+    const error = await new CloudAgentsClient(new PlowApi("https://api.plow.co", fetchImpl), DEVICE_UID)
       .create(CREDENTIAL, {
         lineUid: "lin_willow",
         name: "Kitchen",
@@ -274,6 +291,7 @@ describe("CloudAgentsClient polling", () => {
     failureCode: null,
     failureReason: null,
     createdAt: null,
+    deviceName: null,
     sessionId: null,
   });
 
@@ -283,7 +301,11 @@ describe("CloudAgentsClient polling", () => {
       { status: 200, body: wireAgent({ status: "running" }) },
     ]);
     const transitions: string[] = [];
-    const client = new CloudAgentsClient(new PlowApi("https://api.plow.co", fetchImpl), async () => {});
+    const client = new CloudAgentsClient(
+      new PlowApi("https://api.plow.co", fetchImpl),
+      null,
+      async () => {},
+    );
 
     const final = await client.poll(CREDENTIAL, receipt(), (agent) => {
       transitions.push(`${agent.agentId}:${agent.status}`);
@@ -305,7 +327,7 @@ describe("CloudAgentsClient polling", () => {
     };
     const controller = new AbortController();
 
-    await new CloudAgentsClient(new PlowApi("https://api.plow.co", fetchImpl), async () => {})
+    await new CloudAgentsClient(new PlowApi("https://api.plow.co", fetchImpl), null, async () => {})
       .poll(CREDENTIAL, receipt(), undefined, controller.signal);
 
     expect(seen[0].signal).toBeInstanceOf(AbortSignal);
@@ -327,6 +349,7 @@ describe("CloudAgentsClient polling", () => {
 
     const final = await new CloudAgentsClient(
       new PlowApi("https://api.plow.co", fetchImpl),
+      null,
       async () => {},
     ).poll(CREDENTIAL, receipt());
 
@@ -345,6 +368,7 @@ describe("CloudAgentsClient polling", () => {
 
     await expect(new CloudAgentsClient(
       new PlowApi("https://api.plow.co", fetchImpl),
+      null,
       async () => { now += 5 * 60_000; },
     ).poll(CREDENTIAL, receipt()))
       .rejects.toThrow("Cloud-agent provisioning is unavailable right now.");
@@ -360,6 +384,7 @@ describe("CloudAgentsClient polling", () => {
 
     await expect(new CloudAgentsClient(
       new PlowApi("https://api.plow.co", fetchImpl),
+      null,
       async () => {},
     ).poll(CREDENTIAL, receipt())).rejects.toThrow("Plow returned 409.");
 
@@ -378,6 +403,7 @@ describe("CloudAgentsClient polling", () => {
     };
     const polling = new CloudAgentsClient(
       new PlowApi("https://api.plow.co", fetchImpl),
+      null,
       async () => {},
     ).poll(CREDENTIAL, receipt(), undefined, controller.signal);
 
