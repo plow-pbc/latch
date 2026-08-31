@@ -62,6 +62,10 @@ export function send(
       },
       (res) => {
         const chunks: Buffer[] = [];
+        // A body that stops early fails the RESPONSE, not the request: the
+        // `error` below never fires, `end` never comes, and the promise hangs —
+        // the exact never-settling await this file's timeout exists to end.
+        res.once("error", reject);
         res.on("data", (c: Buffer) => chunks.push(c));
         res.once("end", () =>
           resolve({ status: res.statusCode ?? 0, body: Buffer.concat(chunks).toString("utf8") }),
@@ -125,8 +129,15 @@ export function decString(enc: string, encKey: Buffer, macKey: Buffer): Buffer {
   return Buffer.concat([d.update(ct), d.final()]);
 }
 
-/** Sign in and unwrap the account key, which everything else is built on. */
-export async function signIn(http: VaultHttp, email: string, password: string) {
+/**
+ * Sign in and unwrap the account key, which everything else is built on.
+ *
+ * Untimed unless the caller asks: signing in commits nothing itself, but a
+ * caller can be reading the answer as evidence about a write that did — see
+ * `settlePendingChange`, where a timeout would read as "the vault never took
+ * this pair" and overwrite the working credentials with the obsolete ones.
+ */
+export async function signIn(http: VaultHttp, email: string, password: string, timeoutMs = 0) {
   const { hash, stretchedEnc, stretchedMac } = masterKeyAndHash(email, password);
   const form = new URLSearchParams({
     grant_type: "password",
@@ -144,8 +155,7 @@ export async function signIn(http: VaultHttp, email: string, password: string) {
     "/identity/connect/token",
     form,
     "application/x-www-form-urlencoded",
-    // Signing in commits nothing, and opening the Vault tab waits on it.
-    VAULT_READ_TIMEOUT_MS,
+    timeoutMs,
   );
   if (res.status !== 200) throw new Error(`vault sign-in failed (HTTP ${res.status})`);
   const t = JSON.parse(res.body) as { access_token: string; Key: string };

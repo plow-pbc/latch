@@ -72,7 +72,9 @@ export class VaultClient {
     const account = this.server.account;
     if (!account) throw new Error("this machine has no vault account yet");
     const http: VaultHttp = { url: this.server.url, ca: httpCa(this.server.certPath) };
-    const { userKey } = await signIn(http, account.email, account.password);
+    // Opening the Vault tab waits on this one, and nothing is riding on the
+    // answer but the tab itself.
+    const { userKey } = await signIn(http, account.email, account.password, VAULT_READ_TIMEOUT_MS);
     this.session = { http, key: splitKey(userKey) };
     return this.session;
   }

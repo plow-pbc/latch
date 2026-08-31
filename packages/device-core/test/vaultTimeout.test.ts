@@ -8,7 +8,12 @@
  * timed-out write would report a failure that did happen, and the retry would
  * strand a second account or a duplicate item.
  */
+import { execFileSync } from "node:child_process";
+import fs from "node:fs";
 import net from "node:net";
+import os from "node:os";
+import path from "node:path";
+import tls from "node:tls";
 import { describe, expect, it } from "vitest";
 import { send, VAULT_READ_TIMEOUT_MS } from "../src/browser/vaultCrypto.js";
 
@@ -23,6 +28,43 @@ async function deafServer(): Promise<{ url: string; close: () => void }> {
     close: () => {
       for (const s of sockets) s.destroy();
       server.close();
+    },
+  };
+}
+
+/** A TLS listener that promises a body and then drops the connection — the shape
+ *  of a vault that dies mid-answer. `openssl` mints the cert here for the same
+ *  reason `VaultServer` uses it: it ships with the OS. */
+async function diesMidAnswer(): Promise<{ url: string; ca: Buffer; close: () => void }> {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "vault-stall-"));
+  const cert = path.join(dir, "cert.pem");
+  const key = path.join(dir, "key.pem");
+  execFileSync("openssl", [
+    "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "1",
+    "-keyout", key, "-out", cert,
+    "-subj", "/CN=127.0.0.1", "-addext", "subjectAltName=IP:127.0.0.1",
+  ], { stdio: "ignore" });
+
+  const sockets: tls.TLSSocket[] = [];
+  const server = tls.createServer(
+    { cert: fs.readFileSync(cert), key: fs.readFileSync(key) },
+    (s) => {
+      sockets.push(s);
+      s.once("data", () => {
+        // Content-Length promises 99 bytes; one is sent, then the socket goes.
+        s.write("HTTP/1.1 200 OK\r\nContent-Length: 99\r\n\r\n{");
+        setTimeout(() => s.destroy(), 50);
+      });
+    },
+  );
+  await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+  return {
+    url: `https://127.0.0.1:${(server.address() as net.AddressInfo).port}`,
+    ca: fs.readFileSync(cert),
+    close: () => {
+      for (const s of sockets) s.destroy();
+      server.close();
+      fs.rmSync(dir, { recursive: true, force: true });
     },
   };
 }
@@ -57,6 +99,21 @@ describe("send", () => {
     try {
       expect(VAULT_READ_TIMEOUT_MS).toBeGreaterThan(WINDOW_MS);
       await expect(settled).resolves.toBe("pending");
+    } finally {
+      server.close();
+    }
+  });
+
+  it("fails a read whose answer stops early, instead of hanging on it", async () => {
+    const server = await diesMidAnswer();
+    try {
+      // Deliberately untimed: a truncated body fails the response object, which
+      // the request's own `error` never hears about. Listening only there left
+      // this promise unsettled forever — a hang the timeout cannot save, since
+      // headers arrived and the socket is already gone.
+      await expect(
+        send({ url: server.url, ca: server.ca }, "GET", "/api/ciphers"),
+      ).rejects.toThrow();
     } finally {
       server.close();
     }
