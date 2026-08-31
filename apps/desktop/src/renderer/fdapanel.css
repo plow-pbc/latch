@@ -36,7 +36,9 @@ html, body { height: 100%; background: transparent; overflow: hidden; }
   cursor: pointer; display: flex; align-items: center; justify-content: center;
 }
 .fda-close:hover { background: rgba(0, 0, 0, 0.2); }
-.fda-close-glyph { width: 14px; height: 14px; }
+/* dom.js's close glyph fills its viewBox, so the box stays well inside the
+   20px circle. */
+.fda-close-glyph { width: 10px; height: 10px; }
 
 /* The drag card: app icon + name, "Drag" hand hint on the right. */
 .fda-drag-tile {

@@ -16,9 +16,10 @@
 import { spawn, ChildProcess } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import readline from "node:readline";
 import { BrowserWindow, screen } from "electron";
 import {
-  createFrameStreamParser,
+  decodeFrameLine,
   fallbackPanelFrame,
   panelFrame,
   Rect,
@@ -167,31 +168,34 @@ export class FdaGrantFlow {
     if (!fs.existsSync(this.deps.helperPath)) return;
     const helper = spawn(this.deps.helperPath, [], { stdio: ["ignore", "pipe", "ignore"] });
     this.helper = helper;
-    const parse = createFrameStreamParser();
-    helper.stdout!.setEncoding("utf8");
-    helper.stdout!.on("data", (chunk: string) => {
-      const { frames, gone } = parse(chunk);
-      if (gone) {
+    // readline frames the stream — the same seam the browser host uses for
+    // child NDJSON; decodeFrameLine only decodes.
+    readline.createInterface({ input: helper.stdout! }).on("line", (line) => {
+      const decoded = decodeFrameLine(line);
+      if (decoded === null) return;
+      if (decoded === "gone") {
         // Settings closed; the flow's reason to float is gone with it.
         this.stop();
         return;
       }
-      const frame = frames.at(-1);
-      if (frame) {
-        this.snapTo(frame);
-        this.wantVisible = frame.front;
-        this.applyVisibility();
-      }
+      this.snapTo(decoded);
+      this.wantVisible = decoded.front;
+      this.applyVisibility();
     });
-    // A helper crash just ends following — the panel holds its last position,
-    // and with no frontmost signal left it stays visible rather than stuck
+    // A helper that dies — or never spawns: `error` fires for a binary the
+    // existsSync check passed but posix_spawn refused, say a wrong-arch
+    // slice, and with no listener that exception would take down the main
+    // process — just ends following. The panel holds its last position, and
+    // with no frontmost signal left it stays visible rather than stuck
     // hidden.
-    helper.on("exit", () => {
+    const degrade = () => {
       if (this.helper !== helper) return;
       this.helper = null;
       this.wantVisible = true;
       this.applyVisibility();
-    });
+    };
+    helper.on("exit", degrade);
+    helper.on("error", degrade);
   }
 
   /** Keep (or stop keeping) the panel on screen regardless of the frontmost

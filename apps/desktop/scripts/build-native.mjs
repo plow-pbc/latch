@@ -57,27 +57,20 @@ const compile = (arch, out) =>
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "domo-native-"));
 try {
-  const slices = [];
-  for (const arch of ["arm64", "x86_64"]) {
+  // BOTH slices are mandatory: a helper missing one arch would still package
+  // into a "universal" app, and the other arch's users would then spawn an
+  // incompatible binary at runtime. Either slice failing fails the build —
+  // and the output and stamp are written only after both succeed, so a
+  // half-built helper can never be mistaken for a cached good one.
+  const slices = ["arm64", "x86_64"].map((arch) => {
     const out = path.join(tmp, arch);
-    try {
-      compile(arch, out);
-      slices.push(out);
-    } catch (err) {
-      // A toolchain that can't cross-compile still covers the host arch; a
-      // host-arch failure is a real build error and stops the build.
-      if (arch === (process.arch === "arm64" ? "arm64" : "x86_64")) throw err;
-      console.warn(`build-native: ${arch} slice failed to build; emitting host-arch only`);
-    }
-  }
-  if (slices.length > 1) {
-    execFileSync("lipo", ["-create", ...slices, "-output", output], { stdio: "inherit" });
-  } else {
-    fs.copyFileSync(slices[0], output);
-  }
+    compile(arch, out);
+    return out;
+  });
+  execFileSync("lipo", ["-create", ...slices, "-output", output], { stdio: "inherit" });
   fs.chmodSync(output, 0o755);
   fs.writeFileSync(stampFile, stamp);
-  console.log(`built native helper (${slices.length > 1 ? "universal" : "host arch"}) → ${output}`);
+  console.log(`built native helper (universal) → ${output}`);
 } finally {
   fs.rmSync(tmp, { recursive: true, force: true });
 }

@@ -36,21 +36,32 @@ const ICONS = {
   generate: [["path", { d: "M21 12a9 9 0 1 1-2.6-6.4" }], ["path", { d: "M21 3v5h-5" }]],
   plus: [["path", { d: "M12 5v14M5 12h14" }]],
   close: [["path", { d: "M18 6L6 18M6 6l12 12" }]],
+
+  // The Full Disk Access grant panel's pair (fdapanel.js). arrowUp is drawn
+  // FILLED (PermissionFlow's arrowshape.up.fill) via icon()'s fill option.
+  arrowUp: [["path", { d: "M12 2.5 L20.5 11.5 H15.5 V21 H8.5 V11.5 H3.5 Z" }]],
+  hand: [["path", { d: "M9 12V5a1.4 1.4 0 0 1 2.8 0v5.5" }],
+         ["path", { d: "M11.8 10.5V4.4a1.4 1.4 0 0 1 2.8 0V11" }],
+         ["path", { d: "M14.6 11V6.4a1.4 1.4 0 0 1 2.8 0v7.1c0 3.6-2.4 6-6 6h-.8c-2 0-3.6-.9-4.7-2.4l-2.3-3.3a1.7 1.7 0 0 1 2.7-2L9 14.5" }]],
 };
 
 /**
  * One glyph. `class` defaults to the stroked-line-art class the audit and
  * agent panes style; the Vault tab passes its own stroke width because its
- * design draws the same shapes a little lighter.
+ * design draws the same shapes a little lighter. `fill: true` draws a solid
+ * shape in currentColor instead of stroked line art (the grant panel's
+ * arrow).
  */
 export function icon(name, opts = {}) {
   const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
   svg.setAttribute("viewBox", "0 0 24 24");
   svg.setAttribute("class", opts.class ?? "ico");
-  svg.setAttribute("fill", "none");
-  svg.setAttribute("stroke", "currentColor");
-  svg.setAttribute("stroke-linecap", "round");
-  svg.setAttribute("stroke-linejoin", "round");
+  svg.setAttribute("fill", opts.fill ? "currentColor" : "none");
+  if (!opts.fill) {
+    svg.setAttribute("stroke", "currentColor");
+    svg.setAttribute("stroke-linecap", "round");
+    svg.setAttribute("stroke-linejoin", "round");
+  }
   if (opts.strokeWidth) svg.setAttribute("stroke-width", opts.strokeWidth);
   for (const [tag, attrs] of ICONS[name] ?? ICONS.info) {
     const node = document.createElementNS("http://www.w3.org/2000/svg", tag);

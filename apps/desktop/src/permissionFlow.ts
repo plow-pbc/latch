@@ -111,39 +111,26 @@ export interface SettingsFrame extends Rect {
 }
 
 /**
- * Parser for the helper's stdout: newline-delimited JSON, arriving in
- * arbitrary chunks. Returns the frames completed by this chunk and whether the
- * stream announced the Settings window gone; a partial trailing line is held
- * for the next chunk, and a malformed line is dropped rather than ending
- * tracking — the next frame report supersedes it anyway.
+ * Decoder for ONE line of the helper's stdout — framing is readline's job
+ * (the same seam the browser host uses for child NDJSON). "gone" is the
+ * Settings-closed sentinel; null is a malformed or shape-less line, dropped
+ * rather than ending tracking, because the next report supersedes it anyway.
  */
-export function createFrameStreamParser(): (chunk: string) => { frames: SettingsFrame[]; gone: boolean } {
-  let rest = "";
-  return (chunk: string) => {
-    const lines = (rest + chunk).split("\n");
-    rest = lines.pop() ?? "";
-    const frames: SettingsFrame[] = [];
-    let gone = false;
-    for (const line of lines) {
-      if (!line.trim()) continue;
-      let parsed: unknown;
-      try {
-        parsed = JSON.parse(line);
-      } catch {
-        continue;
-      }
-      const o = parsed as Record<string, unknown>;
-      if (o.gone === true) gone = true;
-      else if (
-        typeof o.x === "number" && typeof o.y === "number" &&
-        typeof o.width === "number" && typeof o.height === "number"
-      ) {
-        frames.push({
-          x: o.x, y: o.y, width: o.width, height: o.height,
-          front: o.front !== false,
-        });
-      }
-    }
-    return { frames, gone };
-  };
+export function decodeFrameLine(line: string): SettingsFrame | "gone" | null {
+  if (!line.trim()) return null;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(line);
+  } catch {
+    return null;
+  }
+  const o = parsed as Record<string, unknown>;
+  if (o.gone === true) return "gone";
+  if (
+    typeof o.x === "number" && typeof o.y === "number" &&
+    typeof o.width === "number" && typeof o.height === "number"
+  ) {
+    return { x: o.x, y: o.y, width: o.width, height: o.height, front: o.front !== false };
+  }
+  return null;
 }

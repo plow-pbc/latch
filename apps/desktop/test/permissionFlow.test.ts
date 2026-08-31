@@ -8,7 +8,7 @@ import { describe, expect, it } from "vitest";
 import {
   appBundleName,
   appBundlePath,
-  createFrameStreamParser,
+  decodeFrameLine,
   fallbackPanelFrame,
   panelFrame,
 } from "../src/permissionFlow.js";
@@ -92,37 +92,24 @@ describe("fallbackPanelFrame", () => {
   });
 });
 
-describe("createFrameStreamParser", () => {
-  it("parses complete lines into frames, front defaulting true", () => {
-    const parse = createFrameStreamParser();
-    expect(parse('{"x":1,"y":2,"width":3,"height":4}\n')).toEqual({
-      frames: [{ x: 1, y: 2, width: 3, height: 4, front: true }],
-      gone: false,
-    });
+describe("decodeFrameLine", () => {
+  it("decodes a frame line, front defaulting true", () => {
+    expect(decodeFrameLine('{"x":1,"y":2,"width":3,"height":4}'))
+      .toEqual({ x: 1, y: 2, width: 3, height: 4, front: true });
   });
 
   it("carries the frontmost bit through", () => {
-    const parse = createFrameStreamParser();
-    expect(parse('{"x":1,"y":2,"width":3,"height":4,"front":false}\n').frames[0].front).toBe(false);
-  });
-
-  it("reassembles a line split across chunks", () => {
-    const parse = createFrameStreamParser();
-    expect(parse('{"x":1,"y":2,"wi').frames).toEqual([]);
-    expect(parse('dth":3,"height":4}\n{"x":5,"y":6,"width":7,"height":8}\n').frames).toEqual([
-      { x: 1, y: 2, width: 3, height: 4, front: true },
-      { x: 5, y: 6, width: 7, height: 8, front: true },
-    ]);
+    const frame = decodeFrameLine('{"x":1,"y":2,"width":3,"height":4,"front":false}');
+    expect(frame).toMatchObject({ front: false });
   });
 
   it("reports the gone sentinel", () => {
-    const parse = createFrameStreamParser();
-    expect(parse('{"gone":true}\n').gone).toBe(true);
+    expect(decodeFrameLine('{"gone":true}')).toBe("gone");
   });
 
-  it("drops malformed and shape-less lines without ending the stream", () => {
-    const parse = createFrameStreamParser();
-    const out = parse('not json\n{"x":"a"}\n{"x":1,"y":2,"width":3,"height":4}\n');
-    expect(out).toEqual({ frames: [{ x: 1, y: 2, width: 3, height: 4, front: true }], gone: false });
+  it("drops malformed and shape-less lines rather than ending tracking", () => {
+    expect(decodeFrameLine("not json")).toBeNull();
+    expect(decodeFrameLine('{"x":"a"}')).toBeNull();
+    expect(decodeFrameLine("")).toBeNull();
   });
 });
