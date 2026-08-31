@@ -25,7 +25,9 @@ SecItem access group in the packaged app, via Electron `safeStorage` under
 `LocalVault` (the Vault tab); the agent gets values only through the in-process
 credential broker (`BrokerCore`), which binds every release to the page being
 filled, refuses a login off its own site, and audits every release without
-ever logging a value.
+ever logging a value. Both sides open the vault through ONE path
+(`openVaultKey` in `vaultMigrate.ts`): migrate a legacy vault, mint a key for
+a genuinely fresh one, refuse a locked one — whichever side asks first.
 
 ## On disk
 
@@ -182,8 +184,9 @@ DESIGN.md §11a-ii.
 
 ## Migration from the Bitwarden vault (`vaultMigrate.ts`)
 
-Kept in-tree permanently. On the vault's first use, if `items.json` does not
-exist and a legacy vault does (`db.sqlite3` + `vault-account.enc`):
+Kept in-tree permanently. On the vault's first use — owner side or agent
+side, through the shared open path — if `items.json` does not exist and a
+legacy vault does (`db.sqlite3` + `vault-account.enc`):
 
 1. The old account is read through `VaultSecretStore` (safeStorage under the
    frozen identity — which is why that identity is still frozen).
@@ -195,7 +198,11 @@ exist and a legacy vault does (`db.sqlite3` + `vault-account.enc`):
    absent, or both complete (`items.json` is the single atomic write that
    finishes it).
 4. The old files stay put as the owner's backup; the new store's existence is
-   the migration marker.
+   the migration marker. A crash between the key write and the item write is
+   completed on the next open: migration retries whenever the legacy vault
+   exists and `items.json` does not, accepting an existing key only when it
+   equals the derived legacy user key (a different key halts it — that key
+   belongs to some other vault).
 
 A legacy vault whose account cannot be opened reads as **locked** and halts
 the migration — it never reads as empty, because empty is what would quietly

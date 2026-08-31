@@ -30,26 +30,42 @@ import {
 import { totpCode } from "./vaultTotp.js";
 import { decryptRaw, splitKey, RawItem } from "./vaultItems.js";
 import { VaultKeyStore } from "./vaultKeyStore.js";
+import { openVaultKey } from "./vaultMigrate.js";
 import { VaultStore } from "./vaultStore.js";
 
 export interface BrokerCoreConfig {
+  /** Where the vault lives — openVaultKey needs the directory to find a
+   * legacy vault awaiting migration. */
+  dir: string;
   store: VaultStore;
   keyStore: VaultKeyStore;
   /** One line per describe and per release attempt. Never a value. */
   auditPath?: string;
 }
 
-const LOCKED_MSG = "The vault could not be unlocked. Check this Mac's vault key.";
-
 export class BrokerCore {
   constructor(private readonly cfg: BrokerCoreConfig) {}
 
-  /** Every item, decrypted to the classifier's shape. Locked vault throws. */
+  /**
+   * Every item, decrypted to the classifier's shape — through the SAME open
+   * path the Vault tab uses, so a fresh install answers with an empty listing
+   * (minting its key) and a pending migration completes here too, whichever
+   * side asks first. Only a genuinely locked vault throws.
+   */
   private items(): RawItem[] {
-    const key = this.cfg.keyStore.readKey();
-    if (!key) throw new CredentialError("VaultLocked", LOCKED_MSG);
-    const split = splitKey(key);
+    const split = splitKey(this.openKey());
     return this.cfg.store.readAll().map((c) => decryptRaw(c, split));
+  }
+
+  private openKey(): Buffer {
+    try {
+      return openVaultKey(this.cfg.dir, this.cfg.keyStore, this.cfg.store);
+    } catch (err) {
+      throw new CredentialError(
+        "VaultLocked",
+        `The vault could not be unlocked: ${err instanceof Error ? err.message : String(err)}`,
+      );
+    }
   }
 
   private item(itemId: string): RawItem {

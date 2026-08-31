@@ -126,7 +126,7 @@ beforeAll(() => {
   keyStore.writeKey(key);
   const store = new VaultStore(dir);
   store.replaceAll(CASES.map((c) => encryptRaw(c.bitwarden, splitKey(key))));
-  broker = new BrokerCore({ store, keyStore });
+  broker = new BrokerCore({ dir, store, keyStore });
 
   for (const c of CASES) {
     const descriptors = broker.describeItem(c.bitwarden.id).fields;

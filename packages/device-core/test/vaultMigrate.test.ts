@@ -13,6 +13,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { encString, masterKeyAndHash } from "../src/browser/vaultCrypto.js";
 import { encryptCipher, splitKey, Cipher } from "../src/browser/vaultItems.js";
+import { BrokerCore } from "../src/browser/brokerCore.js";
 import { LocalVault } from "../src/browser/localVault.js";
 import { VaultKeyStore } from "../src/browser/vaultKeyStore.js";
 import { legacyVaultPresent, migrateLegacyVault } from "../src/browser/vaultMigrate.js";
@@ -145,6 +146,38 @@ describe("migrateLegacyVault", () => {
     const vault = new LocalVault(dir, new VaultKeyStore(dir, "test"));
     const login = (await vault.list()).find((i) => i.type === "login")!;
     expect(login.subtitle).toBe("jon"); // Username → username, decrypted fine
+  });
+
+  it("completes a migration that crashed between the key write and the item write", async () => {
+    // The crash window vaultMigrate deliberately leaves open: key on disk,
+    // items not yet. The next open must finish the copy, not skip it because
+    // a key exists — skipped, the owner's items read as an empty vault forever.
+    const { dir, userKey, rows } = legacyVault();
+    const keyStore = new VaultKeyStore(dir, "test");
+    keyStore.writeKey(userKey); // the state the crash leaves behind
+
+    const vault = new LocalVault(dir, keyStore);
+    expect((await vault.list()).map((i) => i.title).sort()).toEqual(["Door", "Pizza"]);
+    expect(await vault.reveal(rows[0].id!, "password")).toBe("hunter2");
+  });
+
+  it("refuses to migrate over a DIFFERENT existing key", () => {
+    // A key that is not the legacy user key belongs to some other vault;
+    // copying ciphertext it cannot open would read as an empty vault forever.
+    const { dir } = legacyVault();
+    const keyStore = new VaultKeyStore(dir, "test");
+    keyStore.writeKey(crypto.randomBytes(64));
+    expect(() => migrateLegacyVault(dir, keyStore, new VaultStore(dir))).toThrow(/different vault key/);
+    expect(new VaultStore(dir).exists()).toBe(false);
+  });
+
+  it("runs through the agent side too — the broker completes a pending migration", () => {
+    // plow_vault list on a just-upgraded machine, before the owner has opened
+    // the Vault tab: the broker shares the open path, so the listing works.
+    const { dir } = legacyVault();
+    const broker = new BrokerCore({ dir, store: new VaultStore(dir), keyStore: new VaultKeyStore(dir, "test") });
+    expect(broker.whatsHere().map((i) => i.title).sort()).toEqual(["Door", "Pizza"]);
+    expect(new VaultStore(dir).exists()).toBe(true);
   });
 
   it("refuses to migrate — and to start fresh — when the old account is locked", () => {

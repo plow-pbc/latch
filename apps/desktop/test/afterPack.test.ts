@@ -60,10 +60,41 @@ describe("the packaging hook refuses before it signs", () => {
     }
   };
 
+  /** A universal (fat) Mach-O header carrying x86_64 + arm64 — all the hook
+   * reads. 20-byte nfat_arch entries, cputype first, big-endian. */
+  const fatUniversalHeader = () => {
+    const buf = Buffer.alloc(8 + 2 * 20);
+    buf.writeUInt32BE(0xcafebabe, 0);
+    buf.writeUInt32BE(2, 4);
+    buf.writeUInt32BE(0x01000007, 8); // x86_64
+    buf.writeUInt32BE(0x0100000c, 28); // arm64
+    return buf;
+  };
+
+  /** A thin little-endian 64-bit Mach-O header for one arch. */
+  const thinHeader = (cputype: number) => {
+    const buf = Buffer.alloc(8);
+    buf.writeUInt32LE(0xfeedfacf, 0);
+    buf.writeUInt32LE(cputype, 4);
+    return buf;
+  };
+
+  const keychainAddonPath = () =>
+    path.join(
+      resourcesDir(), "app.asar.unpacked", "node_modules", "@domo", "native-keychain",
+      "build", "Release", "keychain.node",
+    );
+
+  const packKeychainAddon = (bytes: Buffer = fatUniversalHeader()) => {
+    fs.mkdirSync(path.dirname(keychainAddonPath()), { recursive: true });
+    fs.writeFileSync(keychainAddonPath(), bytes);
+  };
+
   /** A packed app whose payloads all carry something, minus `omit`. */
   const pack = (omit?: string) => {
     const runtime = runtimeDir();
     packProviders();
+    if (omit !== "keychain-addon") packKeychainAddon();
     for (const payload of PAYLOADS) {
       if (payload === omit) continue;
       fs.mkdirSync(path.join(runtime, payload), { recursive: true });
@@ -140,6 +171,29 @@ describe("the packaging hook refuses before it signs", () => {
     const runtime = pack("camoufox");
     fs.mkdirSync(path.join(runtime, "camoufox", "browsers", "official"), { recursive: true });
     await expect(afterPack(contextFor(dir))).rejects.toThrow("is missing camoufox —");
+  });
+
+  // The addon's install script is tolerant on purpose (dev boxes without
+  // Xcode CLT); the hook is where a release that lost the vault's SecItem
+  // provider gets stopped instead of silently downgrading to safeStorage.
+  it.each([
+    { how: "absent", damage: () => fs.rmSync(keychainAddonPath()) },
+    { how: "empty", damage: () => fs.writeFileSync(keychainAddonPath(), "") },
+  ])("refuses a pack whose native-keychain addon is $how", async ({ damage }) => {
+    pack();
+    damage();
+    await expect(afterPack(contextFor(dir))).rejects.toThrow(/no native-keychain addon/);
+  });
+
+  it.each([
+    { arch: "arm64-only", cputype: 0x0100000c, missing: "x86_64" },
+    { arch: "x86_64-only", cputype: 0x01000007, missing: "arm64" },
+  ])("refuses a THIN ($arch) addon — it lands broken on the other arch's users", async ({ cputype, missing }) => {
+    pack();
+    packKeychainAddon(thinHeader(cputype));
+    await expect(afterPack(contextFor(dir))).rejects.toThrow(
+      new RegExp(`native-keychain addon is missing ${missing}`),
+    );
   });
 
   it("does not require any vault payload — the vault is code, not a bundle", async () => {

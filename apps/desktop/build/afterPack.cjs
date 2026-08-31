@@ -38,6 +38,44 @@ function isMachO(file) {
   }
 }
 
+/**
+ * The architectures a Mach-O file carries, read from its own header — no
+ * `lipo` subprocess, so the check is deterministic and a test can assert it
+ * with crafted bytes. Fat headers list cputypes; a thin file reports its one.
+ */
+function machOArchs(file) {
+  const CPU = { 0x01000007: "x86_64", 0x0100000c: "arm64" };
+  let fd;
+  try {
+    fd = fs.openSync(file, "r");
+    const head = Buffer.alloc(8);
+    if (fs.readSync(fd, head, 0, 8, 0) < 8) return [];
+    const magic = head.readUInt32BE(0);
+    if (magic === 0xcafebabe) {
+      // Universal: nfat_arch entries of 20 bytes each, cputype first.
+      const count = head.readUInt32BE(4);
+      const archs = [];
+      for (let i = 0; i < count; i++) {
+        const entry = Buffer.alloc(4);
+        if (fs.readSync(fd, entry, 0, 4, 8 + i * 20) < 4) break;
+        const name = CPU[entry.readUInt32BE(0)];
+        if (name) archs.push(name);
+      }
+      return archs;
+    }
+    if (magic === 0xfeedfacf) return [CPU[head.readUInt32BE(4)] ?? "?"]; // big-endian file? not on macOS
+    if (magic === 0xcffaedfe) {
+      // Thin 64-bit, little-endian (the real case): cputype is LE at offset 4.
+      return [CPU[head.readUInt32LE(4)] ?? "?"];
+    }
+    return [];
+  } catch {
+    return [];
+  } finally {
+    if (fd !== undefined) fs.closeSync(fd);
+  }
+}
+
 function* walk(root) {
   for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
     const p = path.join(root, entry.name);
@@ -115,6 +153,34 @@ module.exports = async function afterPack(context) {
   // The BINARY, with a size — not `bare` on the directory, which passes for a
   // folder carrying only a stray .DS_Store the copy picked up.
   //
+  // The vault's Keychain root: the native-keychain addon MUST be in the packed
+  // app and universal. Its install script is tolerant on purpose (a dev box
+  // without Xcode CLT still installs, the key store falls back), but a RELEASE
+  // that shipped without it would silently downgrade every new vault from the
+  // SecItem access group to safeStorage — a guarantee this hook exists to
+  // enforce, not to hope for. Both arches checked for the same reason the
+  // providers are: a thin addon clears every gate on the packaging Mac and
+  // lands broken on the other arch's users.
+  const keychainAddon = path.join(
+    context.appOutDir, appName, "Contents", "Resources",
+    "app.asar.unpacked", "node_modules", "@domo", "native-keychain", "build", "Release", "keychain.node",
+  );
+  if (!fs.existsSync(keychainAddon) || fs.statSync(keychainAddon).size === 0) {
+    throw new Error(
+      "[afterPack] the packed app has no native-keychain addon — " +
+        "its build failed (see `npm rebuild @domo/native-keychain`); a release must carry the vault's SecItem provider",
+    );
+  }
+  const addonArchs = machOArchs(keychainAddon);
+  for (const arch of ["x86_64", "arm64"]) {
+    if (!addonArchs.includes(arch)) {
+      throw new Error(
+        `[afterPack] the native-keychain addon is missing ${arch} (carries: ${addonArchs.join(", ") || "nothing"}) — ` +
+          "rebuild it universal (binding.gyp forces both arches)",
+      );
+    }
+  }
+
   // `await import`, because the manifest is ESM and this hook is not. It is the
   // one list of providers; a literal here was true of one and false of two.
   const { VENDORED } = await import("../../../scripts/vendored-providers.mjs");

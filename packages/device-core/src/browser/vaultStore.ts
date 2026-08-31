@@ -52,15 +52,33 @@ export class VaultStore {
    * Write an item, assigning what the old server used to: an id for a new
    * item, and a fresh revision for every write (what staleEdit compares).
    * Returns the cipher as stored.
+   *
+   * `expectedRevision` is the authoritative half of the stale-edit guarantee:
+   * the caller's own staleEdit check is the fast path and the sentence the
+   * owner reads, but it runs against a snapshot taken before an await — two
+   * saves opened on the same revision can both pass it. The compare here runs
+   * against the LIVE row inside one synchronous turn with the write, so
+   * whichever save lands second is refused rather than silently winning (the
+   * old server did this inside its write; this store must too).
    */
-  upsert(cipher: Cipher): Cipher {
+  upsert(cipher: Cipher, expectedRevision?: string): Cipher {
+    const ciphers = this.readAll();
+    const at = ciphers.findIndex((c) => c.id === (cipher.id ?? ""));
+    if (at !== -1 && expectedRevision !== undefined && expectedRevision !== String(ciphers[at].revisionDate ?? "")) {
+      throw new Error("this item changed somewhere else while you had it open; reopen it and make the change again");
+    }
+    // The new revision must DIFFER from the old one, or the compare above (and
+    // staleEdit) cannot tell the versions apart — and two writes inside one
+    // millisecond otherwise mint the same ISO string. Clocks tie; nudge past.
+    let revision = new Date().toISOString();
+    if (at !== -1 && revision === String(ciphers[at].revisionDate ?? "")) {
+      revision = new Date(Date.parse(revision) + 1).toISOString();
+    }
     const stored: Cipher = {
       ...cipher,
       id: cipher.id ?? crypto.randomUUID(),
-      revisionDate: new Date().toISOString(),
+      revisionDate: revision,
     };
-    const ciphers = this.readAll();
-    const at = ciphers.findIndex((c) => c.id === stored.id);
     if (at === -1) ciphers.push(stored);
     else ciphers[at] = stored;
     this.writeAll(ciphers);

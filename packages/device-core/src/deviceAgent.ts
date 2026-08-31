@@ -275,7 +275,7 @@ export class DeviceAgent {
               timeoutMs: 12_000,
             }
           : {
-              local: new BrokerCore({ store: new VaultStore(vaultDir), keyStore, auditPath }),
+              local: new BrokerCore({ dir: vaultDir, store: new VaultStore(vaultDir), keyStore, auditPath }),
             },
       );
       this.credentialBroker = credentials;

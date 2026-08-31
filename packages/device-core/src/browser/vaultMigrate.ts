@@ -51,9 +51,9 @@ export function legacyVaultPresent(dir: string): boolean {
 }
 
 /**
- * Migrate, if there is anything to migrate. Called by LocalVault.open before
- * it would otherwise mint a fresh key; a machine with no legacy vault returns
- * without touching anything.
+ * Migrate, if there is anything to migrate. Called from openVaultKey — the
+ * shared open path — whenever the item file has not landed yet; a machine
+ * with no legacy vault returns without touching anything.
  */
 export function migrateLegacyVault(dir: string, keyStore: VaultKeyStore, store: VaultStore): void {
   if (store.exists() || !legacyVaultPresent(dir)) return;
@@ -74,11 +74,57 @@ export function migrateLegacyVault(dir: string, keyStore: VaultKeyStore, store: 
   const derived = masterKeyAndHash(email, password);
   const userKey = decString(db.akey, derived.stretchedEnc, derived.stretchedMac);
 
-  // Key first, items last: a crash in between leaves a key with no items,
-  // which the next run overwrites nothing to complete (replaceAll is the
-  // single atomic write that makes the migration "done").
-  if (keyStore.state().status === "empty") keyStore.writeKey(userKey);
+  // Key first, items last: a crash in between leaves a key with no items, and
+  // THIS run is the one that completes it — migration retries whenever the
+  // legacy vault exists and the item file does not, so the half-done state is
+  // finished rather than skipped. A key that is already here must be the
+  // legacy user key; anything else is some other vault's key, and copying
+  // ciphertext it cannot open would read as an empty vault forever.
+  const existing = keyStore.readKey();
+  if (existing) {
+    if (!existing.equals(userKey)) {
+      throw new Error(
+        "this machine already holds a different vault key; refusing to migrate the old vault over it",
+      );
+    }
+  } else if (keyStore.state().status === "locked") {
+    throw new Error("this vault's key cannot be opened on this machine, so the old vault cannot be migrated");
+  } else {
+    keyStore.writeKey(userKey);
+  }
   store.replaceAll(db.rows.map(cipherOf));
+}
+
+/**
+ * The one way a vault gets opened — shared by the owner's side (LocalVault)
+ * and the agent's (BrokerCore), so a fresh install and a pending migration
+ * behave the same whichever side asks first: migrate a legacy vault, mint a
+ * key for a genuinely empty one, and refuse a locked one. Returns the master
+ * key.
+ */
+export function openVaultKey(dir: string, keyStore: VaultKeyStore, store: VaultStore): Buffer {
+  // A legacy vault is migrated whenever its items have not landed yet — key
+  // present or not, so a crash between the key write and the item write is
+  // completed on the next open instead of stranding the items.
+  if (!store.exists() && legacyVaultPresent(dir)) {
+    migrateLegacyVault(dir, keyStore, store);
+  }
+  const key = keyStore.readKey();
+  if (key) return key;
+  const state = keyStore.state();
+  if (state.status === "empty") {
+    if (store.exists()) {
+      // Items without a key is a vault someone half-deleted; minting a fresh
+      // key would decrypt none of them and LOOK like an empty vault.
+      throw new Error("this vault has items but no key; its key file is missing");
+    }
+    return keyStore.createKey();
+  }
+  throw new Error(
+    state.status === "locked" && state.reason === "no-storage"
+      ? "this vault's key needs the app's secure storage, which is not available here"
+      : "this vault's key cannot be opened on this machine",
+  );
 }
 
 function readLegacyDb(dir: string): { akey: string; rows: LegacyRow[] } {

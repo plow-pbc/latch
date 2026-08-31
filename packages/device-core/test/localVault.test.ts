@@ -85,6 +85,23 @@ describe("LocalVault", () => {
     expect(lines.join("\n")).not.toContain("pw-secret");
   });
 
+  it("refuses the loser of a CONCURRENT edit race — the check is in the write", async () => {
+    // Both saves open on the same revision and both pass the snapshot check
+    // (it runs before an await); the store's own compare inside the write is
+    // what makes exactly one of them land.
+    const { vault } = vaultIn(tempDir());
+    const { id } = await vault.save({ type: "login", name: "A", urls: ["a.example"], password: "pw" });
+    const revision = (await vault.read(id)).revision;
+    const results = await Promise.allSettled([
+      vault.save({ itemId: id, revision, name: "first writer" }),
+      vault.save({ itemId: id, revision, name: "second writer" }),
+    ]);
+    const outcomes = results.map((r) => r.status).sort();
+    expect(outcomes).toEqual(["fulfilled", "rejected"]);
+    const loser = results.find((r) => r.status === "rejected") as PromiseRejectedResult;
+    expect(String(loser.reason)).toMatch(/changed somewhere else/);
+  });
+
   it("refuses a stale edit instead of overwriting the newer item", async () => {
     const { vault } = vaultIn(tempDir());
     const { id } = await vault.save({ type: "login", name: "A", urls: ["a.example"], password: "one" });

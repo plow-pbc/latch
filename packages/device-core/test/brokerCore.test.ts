@@ -39,7 +39,7 @@ async function fixture(): Promise<{ broker: BrokerCore; auditPath: string; login
     type: "card", name: "Amex", cardholderName: "Jon D",
     number: "4111111111111111", code: "737", expMonth: "12", expYear: "2030",
   });
-  const broker = new BrokerCore({ store: new VaultStore(dir), keyStore, auditPath });
+  const broker = new BrokerCore({ dir, store: new VaultStore(dir), keyStore, auditPath });
   return { broker, auditPath, loginId: login.id, cardId: card.id };
 }
 
@@ -89,12 +89,27 @@ describe("BrokerCore", () => {
     expect(lines(auditPath)).toMatch(/page=SEM-URL\s+-> RELEASED/);
   });
 
+  it("answers a FRESH vault with an empty listing, not VaultLocked", async () => {
+    // The agent side goes through the same open path as the Vault tab: a
+    // clean install mints its key on whichever side asks first, so plow_vault
+    // works before the owner has ever opened the tab.
+    const dir = tempDir();
+    const keyStore = new VaultKeyStore(dir, "test");
+    const broker = new BrokerCore({ dir, store: new VaultStore(dir), keyStore });
+    expect(broker.whatsHere()).toEqual([]);
+    expect(keyStore.state()).toEqual({ status: "ok" });
+    // And the Vault tab then opens the SAME vault, not a second one.
+    const vault = new LocalVault(dir, keyStore);
+    await vault.save({ type: "note", name: "N", notes: "x" });
+    expect(broker.whatsHere()).toHaveLength(1);
+  });
+
   it("answers a locked vault with VaultLocked, not an empty listing", async () => {
     const dir = tempDir();
     // A key blob that cannot be opened here.
     fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(path.join(dir, "vault-key.enc"), Buffer.concat([Buffer.from("KENC1"), Buffer.from("x")]));
-    const broker = new BrokerCore({ store: new VaultStore(dir), keyStore: new VaultKeyStore(dir, "test") });
+    const broker = new BrokerCore({ dir, store: new VaultStore(dir), keyStore: new VaultKeyStore(dir, "test") });
     expect(broker.status()).toEqual({ ok: true, signed_in: false });
     expect(() => broker.whatsHere()).toThrow(/could not be unlocked/);
   });

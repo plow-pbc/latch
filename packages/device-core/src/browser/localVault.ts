@@ -31,7 +31,7 @@ import {
 import { totpCode, totpParams, type TotpCode } from "./vaultTotp.js";
 import { VaultKeyStore } from "./vaultKeyStore.js";
 import { VaultStore } from "./vaultStore.js";
-import { migrateLegacyVault } from "./vaultMigrate.js";
+import { openVaultKey } from "./vaultMigrate.js";
 
 export class LocalVault {
   private readonly store: VaultStore;
@@ -46,34 +46,13 @@ export class LocalVault {
   }
 
   /**
-   * The key, minting one for a genuinely fresh vault and migrating a legacy
-   * Bitwarden one first. Run per call rather than cached: the key store is
-   * cheap to read, and a Keychain that unlocks mid-session should start
-   * working without a restart.
+   * The key, via the shared open path (openVaultKey: migrate a legacy vault,
+   * mint for a genuinely fresh one, refuse a locked one). Run per call rather
+   * than cached: the key store is cheap to read, and a Keychain that unlocks
+   * mid-session should start working without a restart.
    */
   private open(): VaultKey {
-    // A legacy vault is only migrated into a vault that does not exist yet —
-    // in items OR in key. A locked key blob is an existing vault we cannot
-    // open, never an invitation to build a new one over it.
-    if (!this.store.exists() && this.keyStore.state().status === "empty") {
-      migrateLegacyVault(this.dir, this.keyStore, this.store);
-    }
-    const key = this.keyStore.readKey();
-    if (key) return splitKey(key);
-    const state = this.keyStore.state();
-    if (state.status === "empty") {
-      if (this.store.exists()) {
-        // Items without a key is a vault someone half-deleted; minting a fresh
-        // key would decrypt none of them and LOOK like an empty vault.
-        throw new Error("this vault has items but no key; its key file is missing");
-      }
-      return splitKey(this.keyStore.createKey());
-    }
-    throw new Error(
-      state.status === "locked" && state.reason === "no-storage"
-        ? "this vault's key needs the app's secure storage, which is not available here"
-        : "this vault's key cannot be opened on this machine",
-    );
+    return splitKey(openVaultKey(this.dir, this.keyStore, this.store));
   }
 
   /**
@@ -177,7 +156,10 @@ export class LocalVault {
       throw new Error("an item needs a name");
     }
 
-    const saved = this.store.upsert(encryptCipher(input, existing, key));
+    // The revision travels into the write: the staleEdit check above ran
+    // against a snapshot taken before an await, and the store re-checks it
+    // against the live row atomically (see VaultStore.upsert).
+    const saved = this.store.upsert(encryptCipher(input, existing, key), input.itemId ? input.revision : undefined);
     this.audit(String(saved.id ?? ""), "(item)", input.itemId ? "UPDATED" : "CREATED");
     return { id: String(saved.id ?? ""), title: String(input.name ?? "") };
   }
