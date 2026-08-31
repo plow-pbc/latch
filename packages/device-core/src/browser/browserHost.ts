@@ -89,7 +89,6 @@ export class BrowserHost {
   /** A child killed after an action timeout, pending its exit event. It stays
    * here so no later command can queue onto the process while it is dying. */
   private terminatingChild: ChildProcess | null = null;
-  private crashReasons = new WeakMap<ChildProcess, string>();
   /** Browser version reported by the ready line (empty until started). */
   browserVersion = "";
 
@@ -330,8 +329,9 @@ export class BrowserHost {
 
       child.on("exit", (code, signal) => {
         const wasReady = ready;
+        const timedOut = this.terminatingChild === child;
         if (this.child === child) this.child = null;
-        if (this.terminatingChild === child) this.terminatingChild = null;
+        if (timedOut) this.terminatingChild = null;
         const reason = `browser server exited (code=${code}, signal=${signal})`;
         for (const [, p] of this.pending) {
           clearTimeout(p.timer);
@@ -349,8 +349,7 @@ export class BrowserHost {
           // a pending read, which nothing here can arrange and no test could
           // pin.
           const fields: { [k: string]: JSONValue } = { code: code ?? -1 };
-          const crashReason = this.crashReasons.get(child);
-          if (crashReason) fields.reason = crashReason;
+          if (timedOut) fields.reason = "action_timeout";
           this.cfg.audit?.("browser_crashed", fields);
           this.onCrash?.();
         }
@@ -383,7 +382,6 @@ export class BrowserHost {
     if (!this.pending.has(timedOutId)) return;
 
     this.terminatingChild = child;
-    this.crashReasons.set(child, "action_timeout");
     for (const [id, pending] of this.pending) {
       clearTimeout(pending.timer);
       pending.reject(

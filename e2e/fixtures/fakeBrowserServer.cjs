@@ -105,7 +105,7 @@ function handle(cmd) {
   if (a === "goto") {
     current().url = cmd.url;
     current().title = "page at " + cmd.url;
-    return { title: current().title };
+    return {};
   }
   if (a === "pages") {
     return {
@@ -116,9 +116,9 @@ function handle(cmd) {
   if (a === "use_page") {
     if (cmd.index < 0 || cmd.index >= state.pages.length) throw new Error("no page " + cmd.index);
     state.active = cmd.index;
-    return { ok: true, title: current().title };
+    return { ok: true };
   }
-  if (a === "back") return { title: current().title, moved: false };
+  if (a === "back") return { moved: false };
   if (a === "view") {
     return {
       data_b64: Buffer.from("fake-view-jpeg").toString("base64"),

@@ -38,6 +38,9 @@ import { registerImessageSkill } from "./imessageSkill.js";
 import { ensurePlowFolder, registerPlowFolderSkill } from "./plowFolder.js";
 import { registerWhatsappSkill } from "./whatsappSkill.js";
 
+/** Device-side backstop for one browser action. */
+export const BROWSER_ACTION_TIMEOUT_MS = 15_000;
+
 /**
  * A delegate that denies because the adversarial reviewer could not run for
  * want of Plow credits. Set as the decision's `source`, so it rides the channel
@@ -244,7 +247,7 @@ export class DeviceAgent {
         // a hung page/eval returns an error in time instead of a torn 504. The
         // cold start is separate (startTimeoutMs) and paid by the deferrable
         // plow_browser_open, so it does not need to fit this bound.
-        actionTimeoutMs: 15_000,
+        actionTimeoutMs: BROWSER_ACTION_TIMEOUT_MS,
         audit: auditFn,
       };
       // Launched from Finder there is no environment to speak of, so the vault

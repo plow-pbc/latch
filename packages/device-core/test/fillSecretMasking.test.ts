@@ -24,6 +24,7 @@ import {
   PaymentApprovalRequest,
 } from "@domo/device-core";
 import { havePython, runProbe } from "./pythonProbe.js";
+import { BROWSER_ACTION_TIMEOUT_MS } from "../src/deviceAgent.js";
 
 const FAKE_SERVER = fileURLToPath(
   new URL("../../../e2e/fixtures/fakeBrowserServer.cjs", import.meta.url),
@@ -1003,7 +1004,7 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
     // that do expose a timeout budget.
     const c = probed.constants;
     expect(c.document_check_timeout_ms + c.action_timeout_ms * 3 + c.typing_max_ms)
-      .toBeLessThan(hostCapMs());
+      .toBeLessThan(BROWSER_ACTION_TIMEOUT_MS);
     // And the tail draws on ONE budget, not one per key: handing each key the
     // tail's own would let them stack to TYPED_CHARS times it. A shared
     // deadline is already counting down by the first key, so no key is ever
@@ -1294,17 +1295,6 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
   });
 });
 
-/** The action cap the device arms, read from the one place it is declared. */
-function hostCapMs(): number {
-  const agent = fs.readFileSync(
-    fileURLToPath(new URL("../src/deviceAgent.ts", import.meta.url)),
-    "utf8",
-  );
-  const m = /actionTimeoutMs:\s*([\d_]+)/.exec(agent);
-  if (!m) throw new Error("actionTimeoutMs not found in deviceAgent.ts");
-  return Number(m[1].replace(/_/g, ""));
-}
-
 /** A `"""…"""` literal, lifted from the server so the test can't drift. */
 function loadScript(name: string): (el: unknown) => unknown {
   const src = fs.readFileSync(SERVER_PY, "utf8");
@@ -1425,11 +1415,10 @@ function stubPage(
 
 describe("the cap the fill's budgets are measured against", () => {
   // The sum that has to fit under it needs the server's constants, so that
-  // assertion is Python-gated. This is not: it only reads `deviceAgent.ts`, so
-  // a rename of `actionTimeoutMs` fails on every host rather than only on one
-  // with an interpreter, where the gated sum would be the first to notice.
+  // assertion is Python-gated. This import-level check is not, so the device's
+  // cap stays pinned even on a host without an interpreter.
   it("is a timer the device still arms", () => {
-    expect(hostCapMs()).toBeGreaterThan(0);
+    expect(BROWSER_ACTION_TIMEOUT_MS).toBeGreaterThan(0);
   });
 });
 
