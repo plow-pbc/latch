@@ -6,15 +6,12 @@ org as this repo) at commit `6d6da2aeb58a31875ec49adc76847155be107e0b`. The
 
 ## What is upstream and what is ours
 
-- **`seed_vault_broker/`** — vendored **unmodified** from upstream's
-  `broker/src/seed_vault_broker/` at commit
-  `38fc7576e758e29d5d33fc2a915e386eea7b3fd5`. (Upstream itself vendored its
-  1Password ancestor from `plow-pbc/seed-browser-usage` with substantial
-  changes; see the provenance notes in upstream's `broker/README.md`.) Domo
-  sets `SEED_VAULT_AUDIT` to `$DOMO_HOME/device/browser/credential-audit.log`
-  and `SEED_VAULT_BW` to the bundled CLI at spawn time — env overrides the code
-  already supports, not code changes. Its only dependency, `tldextract`, is
-  already in `requirements.txt` for the browser server.
+- **`seed_vault_broker/`** — was vendored unmodified from upstream's
+  `broker/src/seed_vault_broker/`; REMOVED when the Bitwarden-based vault was
+  replaced by the in-app Keychain-rooted vault. Its classification logic lives
+  on as a faithful TypeScript port in
+  `packages/device-core/src/browser/credentialClassify.ts`, asserted against
+  the same truth table (`e2e/fixtures/maskClassification.json`).
 - **`server.py`** — rewritten from the socket server embedded in upstream's
   `scripts/camoufox_cli.py` (`cmd_open`). Behavior kept: the action set
   (frames-aware `click`/`fill`, `forms` with labels, `links`, `tables`,

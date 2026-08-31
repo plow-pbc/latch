@@ -1,0 +1,19 @@
+{
+  "name": "@domo/native-keychain",
+  "version": "0.1.0",
+  "private": true,
+  "description": "One generic password in the macOS Keychain, via SecItem with an access group. The vault master key's most durable home; everything else about the vault lives in @domo/device-core.",
+  "os": [
+    "darwin"
+  ],
+  "main": "./index.cjs",
+  "scripts": {
+    "install": "node scripts/build.cjs"
+  },
+  "dependencies": {
+    "node-addon-api": "^8.3.0"
+  },
+  "devDependencies": {
+    "node-gyp": "^11.0.0"
+  }
+}

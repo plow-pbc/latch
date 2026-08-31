@@ -82,24 +82,21 @@ module.exports = async function afterPack(context) {
 
   const appName = `${context.packager.appInfo.productFilename}.app`;
   const runtime = path.join(context.appOutDir, appName, "Contents", "Resources", "browser-runtime");
-  // What a packaged build cannot work without. `vault-cli` is the one payload
-  // left out: the broker defaults SEED_VAULT_BW to a `bw` on PATH. `vault-server`
-  // is NOT its twin — SEED_VAULT_URL defaults to "" and the broker refuses every
-  // credential call as unconfigured, and deviceAgent only supplies a URL when
-  // this build ships the server, so omitting it ships dead credentials.
+  // What a packaged build cannot work without. The vault ships no payload any
+  // more: it is TypeScript in dist/ plus a Keychain item, so there is nothing
+  // of it here to verify.
   const framework = path.join(runtime, "python", "Python.framework");
   const sitePackages = path.join(runtime, "python", "site-packages");
   const server = path.join(runtime, "server");
   const camoufox = path.join(runtime, "camoufox");
-  const vaultServer = path.join(runtime, "vault-server");
   // Absent and empty are one condition: a payload carrying nothing signs
   // nothing, verifies vacuously, and ships the same app. walk() recurses and
   // stops at the first file, so a tree of empty directories still reads bare.
   const bare = (d) => !fs.existsSync(d) || walk(d).next().done === true;
-  // A bare runtime explains all five children, so it is named on its own.
+  // A bare runtime explains all four children, so it is named on its own.
   const missing = bare(runtime)
     ? ["browser-runtime"]
-    : [framework, sitePackages, server, camoufox, vaultServer]
+    : [framework, sitePackages, server, camoufox]
         .filter(bare)
         .map((d) => path.basename(d));
   if (missing.length > 0) {
@@ -133,24 +130,6 @@ module.exports = async function afterPack(context) {
           `run \`just fetch-vendored ${command}\``,
       );
     }
-  }
-  // vault-server has a known interior, and unlike camoufox it is NOT fused: it
-  // ships as two thin per-arch trees the merge passes through (x64ArchFiles),
-  // and vaultServerIn resolves <hostArch>/vaultwarden. So a tree carrying only
-  // the packaging Mac's arch clears every other gate and reaches the other
-  // arch's users with no vault at all — dead credentials, nothing downstream
-  // catches it. web-vault is the build's first step and the resolver's second
-  // requirement, so a run that stopped early leaves it alone here.
-  const missingVault = [
-    ...["arm64/vaultwarden", "x86_64/vaultwarden"].filter(
-      (rel) => !fs.existsSync(path.join(vaultServer, rel)),
-    ),
-    ...(bare(path.join(vaultServer, "web-vault")) ? ["web-vault"] : []),
-  ];
-  if (missingVault.length > 0) {
-    throw new Error(
-      `[afterPack] vault-server is missing ${missingVault.join(", ")} — a vault build that did not finish`,
-    );
   }
   // camoufox's interior: a fuse that stopped partway leaves files behind but no
   // bundle to sign.
@@ -210,19 +189,6 @@ module.exports = async function afterPack(context) {
       .sort((a, b) => b.split("/").length - a.split("/").length);
     for (const f of inResources) signFile(f, BROWSER_ENTITLEMENTS);
     signBundle(app, BROWSER_ENTITLEMENTS);
-  }
-
-  // 4b) vaultwarden, one loose Mach-O per arch.
-  for (const f of walk(vaultServer)) {
-    if (isMachO(f)) signFile(f, HELPER_ENTITLEMENTS);
-  }
-
-  // 4c) `bw`, when this build carries it — a Node build, so V8 needs JIT.
-  const vaultCli = path.join(runtime, "vault-cli");
-  if (fs.existsSync(vaultCli)) {
-    for (const f of walk(vaultCli)) {
-      if (isMachO(f)) signFile(f, HELPER_ENTITLEMENTS);
-    }
   }
 
   // 5) Verify EVERY Mach-O carries a Developer ID cert, hardened runtime, and a

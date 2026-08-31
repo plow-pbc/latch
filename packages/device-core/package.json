@@ -13,5 +13,8 @@
   },
   "dependencies": {
     "@domo/protocol": "*"
+  },
+  "optionalDependencies": {
+    "@domo/native-keychain": "*"
   }
 }

@@ -1,33 +1,46 @@
 /**
  * The §3.1 masking rule, asserted against the classifier that implements it:
- * `seed_vault_broker/cli.py`.
+ * credentialClassify.ts, driven through the real broker (BrokerCore) over a
+ * real encrypted store.
  *
- * There used to be a second one — the JS fake carried its own copy of the rules
- * so the python-free tier had something to assert against, and this file
- * checked the two agreed. The fake now answers with whatever a fixture states,
- * so there is no second opinion to keep honest and nothing to compare. What is
- * left is the real classifier and the table it has to satisfy.
+ * This table was born as a cross-language contract: the classifier lived in
+ * the vendored Python broker, and this file drove it through a probe. The
+ * classifier is TypeScript now and there is exactly one of it, but the table
+ * stays the spec — each case is one raw Bitwarden-shaped item and the
+ * descriptors that must be derived from it. The cases are encrypted into a
+ * real store here, so every assertion crosses the same path a live release
+ * does: EncString → decryptRaw → classify → release.
  *
- * The unit tier still needs no Python: this block skips when python3 is
- * missing. Where one exists — every dev Mac, since it ships with the OS — the
- * real classifier is executed.
- *
- * No field value is asserted on; the last test proves none come back.
+ * No field value is asserted on; the last test proves none come back for a
+ * concealed field.
  */
-import { describe, expect, it } from "vitest";
+import { beforeAll, afterAll, describe, expect, it } from "vitest";
+import crypto from "node:crypto";
 import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { CredentialFieldInfo } from "@domo/device-core";
-import { havePython, runProbe } from "./pythonProbe.js";
+import {
+  BrokerCore,
+  Cipher,
+  CredentialError,
+  CredentialFieldInfo,
+  RawItem,
+  VaultKeyStore,
+  VaultStore,
+  readField,
+  splitKey,
+} from "@domo/device-core";
+import { encString } from "../src/browser/vaultCrypto.js";
 
 const TABLE_PATH = fileURLToPath(
   new URL("../../../e2e/fixtures/maskClassification.json", import.meta.url),
 );
-const PROBE = fileURLToPath(new URL("../../../e2e/fixtures/classifyProbe.py", import.meta.url));
+
 interface Case {
   name: string;
   why: string;
-  bitwarden: { [k: string]: unknown };
+  bitwarden: RawItem & { [k: string]: unknown };
   expect: CredentialFieldInfo[];
 }
 
@@ -46,23 +59,145 @@ const SECRETS = [
   "concealed-custom",
 ];
 
-const HAVE_PYTHON = havePython();
+/**
+ * Encrypt one raw fixture item into the store's Cipher shape, under the
+ * account key. Hand-rolled rather than via encryptCipher, because the table
+ * deliberately holds shapes this app's own forms refuse to write (SSH keys,
+ * linked custom fields, passkeys) — the broker still has to classify them.
+ */
+function encryptRaw(raw: Case["bitwarden"], key: { enc: Buffer; mac: Buffer }): Cipher {
+  const enc = (v: unknown): string | null =>
+    typeof v === "string" && v !== "" ? encString(Buffer.from(v, "utf8"), key.enc, key.mac) : null;
+  const encRecord = (rec: unknown): Record<string, string | null> | null => {
+    if (!rec || typeof rec !== "object") return null;
+    const out: Record<string, string | null> = {};
+    for (const [k, v] of Object.entries(rec)) out[k] = enc(v);
+    return out;
+  };
+  const cipher: Cipher = {
+    id: raw.id,
+    type: raw.type,
+    name: enc(raw.name) ?? "",
+    notes: enc(raw.notes),
+    reprompt: 0,
+    key: null,
+  };
+  if (raw.login) {
+    cipher.login = {
+      username: enc(raw.login.username),
+      password: enc(raw.login.password),
+      totp: enc(raw.login.totp),
+      uris: (raw.login.uris ?? []).map((u) => ({ uri: enc(u.uri) })),
+    };
+  }
+  cipher.card = encRecord(raw.card);
+  cipher.identity = encRecord(raw.identity);
+  (cipher as { sshKey?: unknown }).sshKey = encRecord(raw.sshKey);
+  if (Array.isArray(raw.fields)) {
+    (cipher as { fields?: unknown }).fields = raw.fields.map((f) => ({
+      name: enc(f.name),
+      value: enc(f.value),
+      type: f.type,
+      linkedId: f.linkedId ?? null,
+    }));
+  }
+  return cipher;
+}
 
-describe.skipIf(!HAVE_PYTHON)("the real classifier in cli.py", () => {
-  const probed = (() => {
-    return runProbe<{
-      [name: string]: {
-        descriptors: CredentialFieldInfo[];
-        labels: string[];
-        releasable: { [label: string]: boolean };
-        release: { [label: string]: { answered: boolean; flagged: boolean; agrees: boolean } };
-        undescribedRefused: boolean;
-        released: { [label: string]: string | null };
-        unknownKeyReadable: boolean;
+/** What the old classify probe measured, per case, now computed through the
+ * real broker: descriptors, releasability, and release coherence. */
+interface Probed {
+  descriptors: CredentialFieldInfo[];
+  releasable: { [label: string]: boolean };
+  release: { [label: string]: { answered: boolean; flagged: boolean; agrees: boolean } };
+  released: { [label: string]: string | null };
+  undescribedRefused: boolean;
+  unknownKeyReadable: boolean;
+}
+
+let dir: string;
+let broker: BrokerCore;
+const probed: { [name: string]: Probed } = {};
+
+beforeAll(() => {
+  dir = fs.mkdtempSync(path.join(os.tmpdir(), "mask-classify-"));
+  const keyStore = new VaultKeyStore(dir, "mask-classify-test");
+  const key = crypto.randomBytes(64);
+  keyStore.writeKey(key);
+  const store = new VaultStore(dir);
+  store.replaceAll(CASES.map((c) => encryptRaw(c.bitwarden, splitKey(key))));
+  broker = new BrokerCore({ store, keyStore });
+
+  for (const c of CASES) {
+    const descriptors = broker.describeItem(c.bitwarden.id).fields;
+    const release: Probed["release"] = {};
+    const released: Probed["released"] = {};
+    const releasable: Probed["releasable"] = {};
+    for (const d of descriptors) {
+      if (d.label === "totp") {
+        // A TOTP release generates a code from the seed; whether the item HAS
+        // a seed is the releasable question (the fixture seeds are not valid
+        // otpauth keys, so the generated-code path is covered elsewhere:
+        // vaultTotp.test.ts owns RFC 6238).
+        releasable[d.label] = Boolean(c.bitwarden.login?.totp);
+        continue;
+      }
+      let answer: { value: string; hidden: boolean } | null = null;
+      try {
+        answer = broker.getField(c.bitwarden.id, d.label);
+      } catch {
+        answer = null;
+      }
+      releasable[d.label] = answer !== null;
+      release[d.label] = {
+        answered: typeof answer?.value === "string",
+        flagged: typeof answer?.hidden === "boolean",
+        agrees: answer !== null && answer.hidden === d.hidden,
       };
-    }>(PROBE, [TABLE_PATH]);
-  })();
+      // The value itself, and ONLY for a field the vault does not conceal — a
+      // masked value must not be able to reach this object whatever a test
+      // asks for.
+      if (answer && !d.hidden) released[d.label] = answer.value;
+    }
+    // A label the item can READ but does not OFFER must be refused. `full
+    // name` is the live example: it exists so a linked field can point at it
+    // and is deliberately not one of the item's own fields.
+    let undescribedRefused = true;
+    for (const label of ["full name"]) {
+      if (descriptors.some((d) => d.label === label)) continue;
+      if (readField(c.bitwarden, label) === null) continue;
+      try {
+        broker.getField(c.bitwarden.id, label);
+        undescribedRefused = false;
+      } catch (err) {
+        if (!(err instanceof CredentialError)) undescribedRefused = false;
+      }
+    }
+    probed[c.name] = {
+      descriptors,
+      releasable,
+      release,
+      released,
+      undescribedRefused,
+      // A key the pinned client does not define is refused, not released.
+      unknownKeyReadable: readField(c.bitwarden, "middleInitial") !== null,
+    };
+  }
+});
 
+afterAll(() => {
+  fs.rmSync(dir, { recursive: true, force: true });
+});
+
+const labelsOf = (name: string): string[] => {
+  const seen: string[] = [];
+  for (const d of probed[name].descriptors) {
+    if (!d.alias && !seen.includes(d.label)) seen.push(d.label);
+  }
+  return seen;
+};
+
+describe("the classifier, through the real broker over a real store", () => {
   for (const c of CASES) {
     it(`classifies ${c.name} as the table says`, () => {
       expect(probed[c.name].descriptors).toEqual(c.expect);
@@ -70,9 +205,9 @@ describe.skipIf(!HAVE_PYTHON)("the real classifier in cli.py", () => {
   }
 
   it("leaves the label list free of aliases, so the agent still sees the fields", () => {
-    // `_field_labels` is the "it has: ..." error text and the releasable set;
-    // an alias is another name for a slot already there, not another field.
-    expect(probed["card with a colliding custom field"].labels).toEqual([
+    // The deduped label list is the "it has: ..." error text and the
+    // releasable set; an alias is another name for a slot already there.
+    expect(labelsOf("card with a colliding custom field")).toEqual([
       "number",
       "code",
       "expiry month",
@@ -149,7 +284,7 @@ describe.skipIf(!HAVE_PYTHON)("the real classifier in cli.py", () => {
     // offered cannot be filled.
     const identity = probed["identity"];
     expect(identity.descriptors.find((d) => d.label === "middleInitial")).toBeUndefined();
-    expect(identity.labels).not.toContain("middleInitial");
+    expect(labelsOf("identity")).not.toContain("middleInitial");
     // Not listed and not readable: an unknown key is refused, not released
     // under a guessed flag.
     expect(identity.unknownKeyReadable).toBe(false);
@@ -177,11 +312,10 @@ describe.skipIf(!HAVE_PYTHON)("the real classifier in cli.py", () => {
 
   for (const c of CASES) {
     it(`answers value and concealment in one release for ${c.name}`, () => {
-      // The coherence property the design rests on: one command, one reading of
-      // the item, both answers. Ask twice and an edit between the two releases a
-      // concealed value under the flag the old one carried.
-      const shapes = Object.entries(probed[c.name].release);
-      for (const [label, shape] of shapes) {
+      // The coherence property the design rests on: one call, one reading of
+      // the item, both answers. Ask twice and an edit between the two releases
+      // a concealed value under the flag the old one carried.
+      for (const [label, shape] of Object.entries(probed[c.name].release)) {
         expect(shape.answered, `${label} answered`).toBe(true);
         expect(shape.flagged, `${label} carried a concealment flag`).toBe(true);
         expect(shape.agrees, `${label} agreed with its descriptor`).toBe(true);
@@ -202,22 +336,16 @@ describe.skipIf(!HAVE_PYTHON)("the real classifier in cli.py", () => {
     it(`refuses a label it can read but does not offer, for ${c.name}`, () => {
       // One resolution decides everything: a field with no descriptor has no
       // decision about whether it may be shown, so it is not released at all.
-      // `full name` is the live case — it exists for a linked field to point
-      // at, and is not one of the item's own fields.
       expect(probed[c.name].undescribedRefused).toBe(true);
     });
   }
 
-  it("returns no field value for any item in the table", () => {
-    const blob = JSON.stringify(probed);
+  it("returns no concealed field value for any item in the table", () => {
+    const blob = JSON.stringify(
+      Object.fromEntries(
+        Object.entries(probed).map(([name, p]) => [name, { ...p, released: p.released }]),
+      ),
+    );
     for (const secret of SECRETS) expect(blob).not.toContain(secret);
   });
-});
-
-it("says so rather than passing quietly when python3 is absent", () => {
-  // Not a skip: the suite must be honest about which classifier it just checked.
-  if (!HAVE_PYTHON) {
-    console.warn("[maskClassification] no python3 — cli.py's classifier was NOT executed");
-  }
-  expect(CASES.length).toBeGreaterThan(0);
 });

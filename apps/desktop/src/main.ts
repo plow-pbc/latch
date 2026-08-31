@@ -749,25 +749,20 @@ ipcMain.handle("settings:setAgentPurpose", async (_e, purpose: string) =>
  */
 ipcMain.handle("settings:getInference", async () => readInference(home));
 // The vault's contents, for the owner's own eyes and hands. This is the whole
-// point of the tab: the vault's web page is the only other way in, and reaching
-// it means a browser warning about a certificate the app issued to itself.
+// point of the tab: there is no other way in any more — the vault is a local
+// encrypted store whose key lives in the Keychain, and this app is its client.
 ipcMain.handle("vault:items", async () => {
   const vault = device?.vaultClient;
-  const server = device?.vaultServer;
-  if (!vault || !server) return null;
+  const dir = device?.vaultDir;
+  if (!vault || !dir) return null;
   // Locked and empty are different facts and the screen says different words.
-  // An account that is on disk and will not open must never be reported as a
-  // vault that has not started — that sent people to debug a running server.
-  // Read BEFORE starting: a locked account is the very case where the vault's
-  // own bootstrap cannot finish, and the explanation has to survive that.
-  const locked = readCredentialsState(server.dataDir);
-  if (locked.status === "locked") return { locked: true, reason: locked.reason };
-  // Started, not merely launched: the account is written by the vault's first
-  // run, so reading its state before that finishes reports an empty vault.
-  await server.start();
-  if (readCredentialsState(server.dataDir).status !== "ok") return null;
+  // A key (or a legacy account awaiting migration) that is on disk and will
+  // not open must never be reported as a vault that has not started.
+  const state = readCredentialsState(dir);
+  if (state.status === "locked") return { locked: true, reason: state.reason };
   // Every type, not only logins: a card and a note are things the owner keeps
-  // here too, and the tab is where they are kept.
+  // here too, and the tab is where they are kept. An empty state is fine —
+  // list() mints the vault's key on first use.
   return vault.list();
 });
 
@@ -1144,14 +1139,15 @@ app.whenReady().then(async () => {
       }
     };
   }
-  // Say, once, whether this Mac can open its vault account. It is the one fact
-  // about the vault that a log is good at: no secret, no noise, and it turns
-  // "the vault screen looks wrong" into a one-line answer. `locked` means the
-  // Keychain key for the frozen identity is not here — see vaultKeychain.ts.
-  if (device.vaultServer) {
-    const vaultState = readCredentialsState(device.vaultServer.dataDir);
+  // Say, once, whether this Mac can open its vault. It is the one fact about
+  // the vault that a log is good at: no secret, no noise, and it turns "the
+  // vault screen looks wrong" into a one-line answer. `locked` means the key
+  // (or a legacy account's Keychain identity) is not openable here — see
+  // vaultKeyStore.ts and vaultKeychain.ts.
+  if (device.vaultDir) {
+    const vaultState = readCredentialsState(device.vaultDir);
     console.log(
-      `[vault] account: ${vaultState.status}` +
+      `[vault] key: ${vaultState.status}` +
         (vaultState.status === "locked" ? ` (${vaultState.reason})` : ""),
     );
   }
