@@ -11,7 +11,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { encString, masterKeyAndHash } from "../src/browser/vaultCrypto.js";
+import { encString, masterKeys } from "../src/browser/vaultCrypto.js";
 import { encryptCipher, splitKey, Cipher } from "../src/browser/vaultItems.js";
 import { BrokerCore } from "../src/browser/brokerCore.js";
 import { LocalVault } from "../src/browser/localVault.js";
@@ -85,7 +85,7 @@ function legacyVault(
     new VaultSecretStore(dir).write({ email, password });
   }
 
-  const derived = masterKeyAndHash(email, password);
+  const derived = masterKeys(email, password);
   const userKey = crypto.randomBytes(64);
   const akey = encString(userKey, derived.stretchedEnc, derived.stretchedMac);
   const account = splitKey(userKey);

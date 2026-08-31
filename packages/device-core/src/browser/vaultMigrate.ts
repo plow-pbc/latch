@@ -10,7 +10,7 @@
  * new one absent, or both complete (the item file is written last, atomically).
  *
  * The old files are left in place as the owner's backup; the new store's
- * existence is the migration marker. Kept dependencies: masterKeyAndHash and
+ * existence is the migration marker. Kept dependencies: masterKeys and
  * decString (vaultCrypto.ts — the live item format anyway), VaultSecretStore
  * (reads the old account; its safeStorage identity is frozen in
  * vaultKeychain.ts, which is why old ciphertext still opens), and
@@ -22,7 +22,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { decString, encString, masterKeyAndHash } from "./vaultCrypto.js";
+import { decString, encString, masterKeys } from "./vaultCrypto.js";
 import { Cipher, splitKey } from "./vaultItems.js";
 import { VaultKeyStore } from "./vaultKeyStore.js";
 import { VaultSecretStore } from "./vaultSecretStore.js";
@@ -107,7 +107,7 @@ export function migrateLegacyVault(dir: string, keyStore: VaultKeyStore, store: 
   const pairs = [account, ...(account.pending ? [account.pending] : [])];
   let userKey: Buffer | null = null;
   for (const pair of pairs) {
-    const derived = masterKeyAndHash(pair.email, pair.password);
+    const derived = masterKeys(pair.email, pair.password);
     try {
       userKey = decString(db.akey, derived.stretchedEnc, derived.stretchedMac);
       break;

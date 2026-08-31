@@ -5,7 +5,7 @@
  * The Bitwarden SERVER is gone, but this format is the live one — every field
  * of every item in the local store is an EncString (type 2: AES-256-CBC then
  * HMAC-SHA256), which is what made migration a verbatim copy. The KDF half
- * (`masterKeyAndHash`) exists for migration alone: it turns the old account's
+ * (`masterKeys`) exists for migration alone: it turns the old account's
  * password into the keys that unwrap its user key. Nothing here does I/O.
  */
 import crypto from "node:crypto";
@@ -22,13 +22,14 @@ export function hkdfExpand(prk: Buffer, info: string, len: number): Buffer {
   return h.digest().subarray(0, len);
 }
 
-/** What the old server stored: a hash of the key derived from the password.
- * The stretched halves are what unwrap the account's user key. */
-export function masterKeyAndHash(email: string, password: string) {
+/** The keys a legacy account's password derives: the stretched halves are
+ * what unwrap that account's user key. (The old server-auth hash — a
+ * 1-iteration PBKDF2 of the password — died with the server; nothing here
+ * authenticates to anything.) */
+export function masterKeys(email: string, password: string) {
   const masterKey = pbkdf2(password, email.toLowerCase(), KDF_ITERATIONS, 32);
   return {
     masterKey,
-    hash: pbkdf2(masterKey, password, 1, 32).toString("base64"),
     stretchedEnc: hkdfExpand(masterKey, "enc", 32),
     stretchedMac: hkdfExpand(masterKey, "mac", 32),
   };

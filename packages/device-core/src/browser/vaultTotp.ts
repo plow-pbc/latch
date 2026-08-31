@@ -52,7 +52,12 @@ const ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
  * would produce a key that is wrong rather than one that is refused.
  */
 export function base32Decode(raw: string): Buffer {
-  const clean = raw.replace(/[\s-]/g, "").replace(/=+$/, "").toUpperCase();
+  // Trailing padding is trimmed by index, not by /=+$/ — that regex is
+  // quadratic on adversarial many-'=' input, and this runs on pasted text.
+  let stripped = raw.replace(/[\s-]/g, "").toUpperCase();
+  let end = stripped.length;
+  while (end > 0 && stripped[end - 1] === "=") end--;
+  const clean = stripped.slice(0, end);
   if (!clean) throw new Error("that authenticator key is empty");
   // The mistake worth naming, because it is the one everybody makes: "TOTP"
   // means the six digits to anyone who is not implementing one, and digits
