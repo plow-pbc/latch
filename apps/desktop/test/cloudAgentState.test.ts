@@ -1264,49 +1264,48 @@ describe("CloudAgentState self-hosted target", () => {
     expect(calls).not.toContain("delete@plow:agent_local");
   });
 
+  // One policy, one table: what a host address may be, and what it becomes.
+  // `stored: null` means refused — nothing reaches settings and the form says
+  // why.
   it.each([
-    ["a bare host:port that is not a URL", "192.168.15.12:8765"],
-    ["a scheme that is not http", "slowdown:8765"],
-    ["a local file", "file:///etc/passwd"],
-    // The security ones: each is a place a secret can be typed, and all three
-    // are stored, written to the wire log, and shown to the renderer.
-    ["credentials in the URL", "http://user:pass@192.168.15.12:8765"],
-    ["a password alone", "http://:pass@192.168.15.12:8765"],
-    ["a query string", "http://192.168.15.12:8765?token=abc"],
-    ["a fragment", "http://192.168.15.12:8765#abc"],
-    // A path is a secret in a URL wearing a different hat, and it reaches the
-    // renderer and the wire log like the rest. serve has no path to keep.
-    ["a path", "http://192.168.15.12:8765/serve-token-abc"],
-    ["even a one-segment path", "http://192.168.15.12:8765/api"],
-    // Cleartext to an address that routes across networks nobody here
-    // controls. No deployment needs it, and the bearer would be on the wire.
-    ["cleartext to a public host", "http://agents.example.com:8765"],
-    ["cleartext to a public IP", "http://93.184.216.34:8765"],
-  ])("refuses %s", (_why, baseUrl) => {
-    const { state } = build();
-
-    expect(state.addTarget({ baseUrl, bearer: "t" })).toBe(false);
-    expect(state.state().cloudActionError).toContain("isn't usable");
-    expect(state.state().cloudTargets).toHaveLength(1);
-  });
-
-  it.each([
-    // Every address the owner can actually reach agent-mgr at: the LAN, the
-    // tailnet, the box's own name, and loopback.
+    // Accepted: every address the owner can actually reach agent-mgr at.
     ["a private LAN address", "http://192.168.15.12:8765", "http://192.168.15.12:8765"],
     ["a 10/8 address", "http://10.0.0.5:8765", "http://10.0.0.5:8765"],
-    ["a tailnet address", "http://100.98.135.12:8765", "http://100.98.135.12:8765"],
     ["a MagicDNS name", "http://slowdown.tail1234.ts.net", "http://slowdown.tail1234.ts.net"],
     ["a bare hostname", "http://slowdown:8765", "http://slowdown:8765"],
     ["an mDNS name", "http://slowdown.local:8765", "http://slowdown.local:8765"],
     ["loopback", "http://127.0.0.1:8765", "http://127.0.0.1:8765"],
-    // And https anywhere, because the bearer is not on the wire.
+    // https anywhere, because the bearer is not on the wire.
     ["https to a public host", "https://agents.example.com", "https://agents.example.com"],
-  ])("accepts %s", (_why, typed, stored) => {
+    // Canonicalised: case folded, default port and trailing slash dropped, so
+    // one machine cannot become two hosts.
+    ["a shouted address", "HTTP://SLOWDOWN.local:80/", "http://slowdown.local"],
+
+    // Refused, because a URL is not a place to keep a secret: each of these
+    // would be stored, written to the wire log, and shown to the renderer.
+    ["credentials in the URL", "http://user:pass@192.168.15.12:8765", null],
+    ["a password alone", "http://:pass@192.168.15.12:8765", null],
+    ["a query string", "http://192.168.15.12:8765?token=abc", null],
+    ["a fragment", "http://192.168.15.12:8765#abc", null],
+    ["a path", "http://192.168.15.12:8765/serve-token-abc", null],
+    ["even a one-segment path", "http://192.168.15.12:8765/api", null],
+    // Refused, because the bearer would cross a network nobody here controls.
+    ["cleartext to a public host", "http://agents.example.com:8765", null],
+    ["cleartext to a public IP", "http://93.184.216.34:8765", null],
+    // 100.64/10 is the SHARED CGNAT range, not Tailscale's alone. With no
+    // tailnet route up it can follow a carrier route instead, and nothing in
+    // the URL says which — so the MagicDNS name above is the tailnet path.
+    ["cleartext to a raw CGNAT address", "http://100.98.135.12:8765", null],
+    // Not addresses at all.
+    ["a bare host:port that is not a URL", "192.168.15.12:8765", null],
+    ["a scheme that is not http", "slowdown:8765", null],
+    ["a local file", "file:///etc/passwd", null],
+  ])("%s", (_why, baseUrl, stored) => {
     const { state, home } = build();
 
-    expect(state.addTarget({ baseUrl: typed, bearer: "t" })).toBe(true);
-    expect(loadSettings(home).agentTarget?.baseUrl).toBe(stored);
+    expect(state.addTarget({ baseUrl, bearer: "t" })).toBe(stored !== null);
+    expect(loadSettings(home).agentTarget?.baseUrl ?? null).toBe(stored);
+    if (stored === null) expect(state.state().cloudActionError).toContain("isn't usable");
   });
 
   it("refuses a host with no token", () => {
@@ -1315,19 +1314,6 @@ describe("CloudAgentState self-hosted target", () => {
     expect(state.addTarget({ baseUrl: HOST, bearer: " " })).toBe(false);
     expect(state.state().cloudActionError).toBe("Paste the host's AGENT_MGR_SERVE_TOKEN.");
     expect(state.state().cloudTargets).toHaveLength(1);
-  });
-
-  it("canonicalises the address, so one machine stays one host", () => {
-    const { state, home } = build();
-
-    // A bare trailing slash IS the root path, and stays acceptable.
-    expect(state.addTarget({ baseUrl: "HTTP://192.168.15.12:8765/", bearer: "t" })).toBe(true);
-    // Case and a default port are the same machine. A regex that only trims
-    // slashes could not collapse these.
-    expect(loadSettings(home).agentTarget).toEqual({ baseUrl: HOST, bearer: "t" });
-    // Case folded and a default port dropped, so these are one machine too.
-    expect(state.addTarget({ baseUrl: "http://SLOWDOWN.local:80", bearer: "t" })).toBe(true);
-    expect(loadSettings(home).agentTarget?.baseUrl).toBe("http://slowdown.local");
   });
 
   it("re-entering the same host rotates its token and keeps its rows", async () => {

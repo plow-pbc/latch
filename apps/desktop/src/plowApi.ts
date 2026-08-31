@@ -131,9 +131,9 @@ export function normalizeApiBaseUrl(raw: string): ApiBaseUrl {
  *   port and serves `/v1/...` from the root, so there is no path to keep.
  *
  * **Plaintext `http://` is allowed only where the network is already local**
- * — loopback, a private or carrier-grade IPv4 range, an IPv6 unique-local or
- * link-local address, a bare hostname, or a `.local`/`.internal`/`.lan`/
- * `.ts.net` name. Everything else must be `https://`.
+ * — loopback, a private IPv4 range, an IPv6 unique-local or link-local
+ * address, a bare hostname, or a `.local`/`.internal`/`.lan`/`.ts.net` name.
+ * Everything else must be `https://`.
  *
  * Both halves of that matter. `agent-mgr serve` speaks plain HTTP and the
  * hosts this exists for are reached at a LAN or tailnet address, so refusing
@@ -184,8 +184,11 @@ function isLocalHostname(hostname: string): boolean {
     if (a === 192 && b === 168) return true;
     if (a === 172 && b >= 16 && b <= 31) return true;
     if (a === 169 && b === 254) return true;
-    // 100.64/10 — carrier-grade NAT, and what Tailscale hands out.
-    if (a === 100 && b >= 64 && b <= 127) return true;
+    // NOT 100.64/10. Tailscale hands out addresses there, but it is the
+    // shared CGNAT range — an ISP uses it too, and nothing in a URL says
+    // which. With no tailnet route up, a 100.x address can follow a carrier
+    // route instead, and the bearer would leave the tailnet in the clear. The
+    // MagicDNS name below is the tailnet path that is actually identifiable.
     return false;
   }
   // A name with no dot cannot be a public site; the rest are the suffixes that

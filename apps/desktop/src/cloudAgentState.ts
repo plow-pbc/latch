@@ -1335,7 +1335,9 @@ export class CloudAgentState {
     );
     if (!baseUrl) {
       this.failAction(
-        "That host address isn't usable. It looks like http://192.168.1.10:8765 — no user, password or query.",
+        "That host address isn't usable. It has to be a bare origin like " +
+        "http://192.168.1.10:8765 — no user, password, query or path — and only a LAN, " +
+        ".local or MagicDNS (.ts.net) address may use http://. Anything else needs https://.",
       );
       return false;
     }
