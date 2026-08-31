@@ -504,6 +504,31 @@ describe("CloudAgentsClient against a self-hosted host", () => {
     expect(String(error)).not.toContain("Unknown agent.");
   });
 
+  it("filters the response against the bearer that authorised it", async () => {
+    // A LIVE target, as `liveTarget` builds one: `bearer` may change between
+    // requests. Here it rotates DURING the exchange — after the request goes
+    // out, before the response is parsed. Read twice, the echo check would
+    // filter for the new token and let the old one through onto the screen.
+    let bearer = "old-token-aaaaaaaaaa";
+    const live: AgentTarget = {
+      id: "local",
+      baseUrl: LOCAL.baseUrl,
+      get bearer() { return bearer; },
+    };
+    const fetchImpl: FetchLike = async () => {
+      bearer = "rotated-token-bbbbbb";
+      // The host echoes the credential that actually authorised the call.
+      return new Response(
+        JSON.stringify([{ agent_id: "demo", chat_uids: [],
+                          failure_reason: `boom old-token-aaaaaaaaaa` }]),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    };
+
+    await expect(new CloudAgentsClient(() => new PlowApi(LOCAL.baseUrl, fetchImpl)).list(live))
+      .rejects.toThrow("unsafe");
+  });
+
   it("still answers 401 for a wrong bearer", async () => {
     const { fetchImpl } = recordingFetch([{ status: 401, body: { detail: "nope" } }]);
 

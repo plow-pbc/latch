@@ -75,6 +75,18 @@ export function isTerminalCloudAgent(agent: Pick<CloudAgentResource, "status">):
  * short and bounded; provisioning time belongs to the GET polling loop, never
  * to a long-running POST.
  */
+/**
+ * **Every method here reads `target.bearer` exactly ONCE, into a local, and
+ * uses that local for both the `Authorization` header and the response's
+ * credential-echo check.**
+ *
+ * `bearer` can be a live getter — `CloudAgentState.liveTarget` makes one so a
+ * poll that outlives a token rotation keeps working. Reading it a second time
+ * after the `await` would hand the echo check a NEWER credential than the one
+ * that authorised the request, so an echo of the OLD token would pass the
+ * filter and reach the screen. It may vary BETWEEN requests; it must not vary
+ * within one.
+ */
 export class CloudAgentsClient {
   /**
    * Takes a resolver rather than an api, because the host is chosen per call.
@@ -92,8 +104,9 @@ export class CloudAgentsClient {
     request: CreateCloudAgentRequest,
   ): Promise<CloudAgentResource> {
     const path = "/v1/agents/cloud";
+    const bearer = target.bearer;
     const response = await this.apiFor(target.baseUrl).request("POST", path, {
-      token: target.bearer,
+      token: bearer,
       body: {
         line_uid: request.lineUid,
         provider: request.provider,
@@ -103,7 +116,7 @@ export class CloudAgentsClient {
     if (!response.ok) {
       await throwCloudCallError(response, request.name);
     }
-    return this.resourceFor(response, target.bearer);
+    return this.resourceFor(response, bearer);
   }
 
   async changeLine(
@@ -112,23 +125,25 @@ export class CloudAgentsClient {
     lineUid: string,
   ): Promise<CloudAgentResource> {
     const path = `/v1/agents/cloud/${encodeURIComponent(agentId)}/line`;
+    const bearer = target.bearer;
     const response = await this.apiFor(target.baseUrl).request(
       "PUT",
       path,
       {
-        token: target.bearer,
+        token: bearer,
         body: { line_uid: lineUid },
       },
     );
     if (!response.ok) {
       await throwCloudCallError(response, "");
     }
-    return this.resourceFor(response, target.bearer);
+    return this.resourceFor(response, bearer);
   }
 
   async list(target: AgentTarget): Promise<CloudAgentResource[]> {
+    const bearer = target.bearer;
     const response = await this.apiFor(target.baseUrl).request("GET", "/v1/agents/cloud", {
-      token: target.bearer,
+      token: bearer,
     });
     if (!response.ok) throw errorFor(response.status);
 
@@ -141,14 +156,17 @@ export class CloudAgentsClient {
     if (!data) {
       throw invalidResponse(response.status);
     }
-    return data.map((entry) => parseResource(entry, target.bearer, response.status));
+    return data.map((entry) => parseResource(entry, bearer, response.status));
   }
 
   async delete(target: AgentTarget, agentId: string): Promise<void> {
+    const bearer = target.bearer;
     const response = await this.apiFor(target.baseUrl).request(
       "DELETE",
       `/v1/agents/cloud/${encodeURIComponent(agentId)}`,
-      { token: target.bearer },
+      // No response body to filter, but the invariant above is stated as
+      // absolute so it stays greppable and cannot rot into an exception.
+      { token: bearer },
     );
     // Delete is retry-safe from the app's perspective: a record already gone
     // is the requested outcome even though the API reports it as 404.
@@ -173,18 +191,19 @@ export class CloudAgentsClient {
       await this.wait(CLOUD_AGENT_POLL_INTERVAL_MS);
       signal?.throwIfAborted();
       let next: CloudAgentResource;
+      const bearer = target.bearer;
       try {
         const response = await this.apiFor(target.baseUrl).request(
           "GET",
           `/v1/agents/cloud/${encodeURIComponent(current.agentId)}`,
           {
-            token: target.bearer,
+            token: bearer,
             signal,
             timeoutMs: REQUEST_TIMEOUT_MS,
             callerAbortIsLifecycle: true,
           },
         );
-        next = await this.resourceFor(response, target.bearer);
+        next = await this.resourceFor(response, bearer);
       } catch (error) {
         signal?.throwIfAborted();
         if (isRetryablePollError(error)) {
@@ -215,9 +234,22 @@ export class CloudAgentsClient {
 
 }
 
+/**
+ * Worth another tick inside the retry window?
+ *
+ * `unauthorized` is in here for the poll ONLY, and only because the poll is
+ * already established: the agent exists, and the one credential it uses can be
+ * rotated underneath it. The ordinary way that happens is the owner rotating
+ * `AGENT_MGR_SERVE_TOKEN` on the host FIRST and pasting it into the app second
+ * — in that gap every request 401s through no fault of the agent. Failing fast
+ * there strands a provisioning row with no watcher, while retrying costs a
+ * bounded five minutes and then reports the same error.
+ */
 function isRetryablePollError(error: unknown): boolean {
   return error instanceof PlowApiError &&
-    (error.kind === "network" || (error.status !== undefined && error.status >= 500));
+    (error.kind === "network" ||
+      error.kind === "unauthorized" ||
+      (error.status !== undefined && error.status >= 500));
 }
 
 async function decodeJson(response: Response): Promise<unknown> {
