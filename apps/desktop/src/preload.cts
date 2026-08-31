@@ -48,6 +48,14 @@ contextBridge.exposeInMainWorld("domo", {
   // crosses the bridge, main starts the native drag itself.
   fullDiskDragInfo: () => ipcRenderer.invoke("fullDisk:dragInfo"),
   fullDiskDragStart: () => ipcRenderer.send("fullDisk:dragStart"),
+  // The panel's rasterized drag tile (a PNG data URL + backing scale): main
+  // uses it as the drag image so the item under the cursor is exactly the
+  // tile the panel shows. Display data only, like dragInfo — never a path.
+  fullDiskTileImage: (dataUrl: string, scale: number) =>
+    ipcRenderer.send("fullDisk:tileImage", dataUrl, scale),
+  // The drag session ended (dropped or cancelled): the tile, hidden while its
+  // image rode with the cursor, comes back.
+  onFullDiskDragEnd: (cb: () => void) => ipcRenderer.on("fullDisk:dragEnd", cb),
   // Start the grant flow: main opens the pane and floats the drag panel next
   // to System Settings (fdaGrantFlow.ts owns the whole lifecycle).
   fullDiskGrantFlow: () => ipcRenderer.invoke("fullDisk:grantFlow"),

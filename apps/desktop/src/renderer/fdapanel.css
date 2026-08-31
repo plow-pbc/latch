@@ -51,6 +51,10 @@ html, body { height: 100%; background: transparent; overflow: hidden; }
 }
 .fda-drag-tile:active { cursor: grabbing; }
 .fda-drag-tile.granted { opacity: 0.55; }
+/* While the native drag rides, its image IS this tile (fdapanel.js sends the
+   raster to main), so the tile leaves the panel with it — visibility keeps
+   the layout so nothing reflows when it comes back on dragEnd. */
+.fda-drag-tile.dragging { visibility: hidden; }
 .fda-drag-icon { width: 32px; height: 32px; flex: none; }
 .fda-drag-name { font-size: 16px; color: var(--fg); }
 .fda-drag-hint {
