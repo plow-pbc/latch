@@ -763,6 +763,32 @@ export async function renderVault(view, isCurrent = () => true) {
   // Everything the vault holds, edited here. This is why the tab exists: the
   // only other way in is the vault's own web page, and reaching it means a
   // browser warning about the certificate the app issued to itself.
+  const pane = el("div", { class: "vaultui" });
+  const masthead = el("div", { class: "masthead" }, [
+    el("div", {}, [
+      el("h1", { text: "Vault" }),
+      el("p", { class: "trust" }, [
+        el("span", { text: "Your agents can use these to act for you. " }),
+        el("span", { class: "lk", text: "The values are typed on this Mac, never handed to them" }),
+        el("span", { text: " — every use needs your approval and is logged." }),
+      ]),
+    ]),
+  ]);
+
+  // Paint BEFORE reading the vault. Nothing above this line waits on anything,
+  // and the wait below can be long when the vault is slow — this used to leave
+  // the previous tab's content on screen for the whole wait, so a stalled vault
+  // read as "the Vault tab is broken" instead of "the vault has not answered
+  // yet". The same `pane` is filled in below, so this costs one extra paint.
+  //
+  // This is the only mount: below, `pane` is already the node in `view`, and a
+  // render whose pane has since been replaced by a newer one is a render that
+  // must not put itself back on screen.
+  pane.replaceChildren(masthead, el("div", { class: "col" }, [
+    el("div", { class: "empty", text: "Opening the vault…" }),
+  ]));
+  view.replaceChildren(pane);
+
   let items = null;
   let failure = "";
   try {
@@ -775,18 +801,6 @@ export async function renderVault(view, isCurrent = () => true) {
   // moved to another tab. The view is shared: writing into it then would put
   // this pane on top of theirs.
   if (!isCurrent()) return;
-
-  const pane = el("div", { class: "vaultui" });
-  const masthead = el("div", { class: "masthead" }, [
-    el("div", {}, [
-      el("h1", { text: "Vault" }),
-      el("p", { class: "trust" }, [
-        el("span", { text: "Your agents can use these to act for you. " }),
-        el("span", { class: "lk", text: "The values are typed on this Mac, never handed to them" }),
-        el("span", { text: " — every use needs your approval and is logged." }),
-      ]),
-    ]),
-  ]);
 
   if ((items === null || (items && items.locked)) && !failure) {
     // Locked and empty are different facts and get different words. A vault
@@ -808,7 +822,6 @@ export async function renderVault(view, isCurrent = () => true) {
             : "The account file is present but cannot be opened. Usually that means the key is no longer in this Mac's Keychain — after a Keychain reset, a restore from backup, or a change to how the app identifies itself — and it can also mean the file itself is damaged. Either way the password cannot be recovered, here or anywhere: the vault would have to be set up again. Nothing has been deleted." })
         : null,
     ].filter(Boolean)));
-    view.replaceChildren(pane);
     return;
   }
 
@@ -840,5 +853,4 @@ export async function renderVault(view, isCurrent = () => true) {
     ]),
     el("div", { class: "toast" }),
   );
-  view.replaceChildren(pane);
 }

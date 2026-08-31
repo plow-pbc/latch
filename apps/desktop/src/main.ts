@@ -14,12 +14,13 @@
  */
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, powerMonitor, safeStorage as electronSafeStorage, screen, shell, systemPreferences, Tray } from "electron";
 import electronUpdater from "electron-updater";
-import { ChildProcess, spawn } from "node:child_process";
+import { ChildProcess, execFile, spawn } from "node:child_process";
 import fs from "node:fs/promises";
 import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { promisify } from "node:util";
 import { Intent } from "@domo/protocol";
 import {
   ApprovalStore,
@@ -37,6 +38,8 @@ import { createDomoMcpServer, DomoMcpServer } from "@domo/mcp-server";
 import { RelayClient } from "@domo/relay-client";
 import { approvalViewModel, auditActivities, CredentialTitles } from "./viewModel.js";
 import { probeFullDiskAccess } from "./fullDiskAccess.js";
+import { appBundleName, appBundlePath } from "./permissionFlow.js";
+import { FdaGrantFlow } from "./fdaGrantFlow.js";
 import { launchAtLoginState, LoginItemApi, setLaunchAtLogin } from "./loginItem.js";
 import { KeepAwake } from "./keepAwake.js";
 import { devIconScript } from "./devIcon.js";
@@ -839,6 +842,106 @@ ipcMain.handle("status:get", async () => ({
 ipcMain.handle("capabilities:get", async () => ({
   fullDiskAccess: await probeFullDiskAccess(),
 }));
+
+// MARK: Full Disk Access grant flow (permissionFlow.ts)
+
+const fdaHelperPath = app.isPackaged
+  ? path.join(process.resourcesPath, "native", "settings-window-frame")
+  : path.join(dirname, "native", "settings-window-frame");
+
+/**
+ * Which app the grant must name. TCC keys Full Disk Access on the RESPONSIBLE
+ * process, not the executable: a `just app` run out of a terminal is the
+ * terminal app's grant — dragging Electron.app into the list would grant
+ * nothing this run can use. The helper's --responsible mode asks the same SPI
+ * TCC keys on; without the helper (or an answer from it), the executable's
+ * own bundle is the remaining guess, and exactly right for the packaged app.
+ *
+ * Resolved once — responsibility cannot change while the process lives — and
+ * always through dragInfo before any drag can start, so dragStart reads the
+ * cache synchronously (the mouse is already down when that message arrives).
+ */
+let fdaDragTarget:
+  | { bundle: string; dragIcon: Electron.NativeImage; iconDataUrl: string }
+  | null = null;
+async function resolveFdaDragTarget(): Promise<typeof fdaDragTarget> {
+  if (fdaDragTarget) return fdaDragTarget;
+  const run = promisify(execFile);
+  let bundle: string | null = null;
+  try {
+    const { stdout } = await run(fdaHelperPath, ["--responsible"]);
+    if (stdout.trim().endsWith(".app")) bundle = stdout.trim();
+  } catch {
+    // No compiled helper on this host, or no responsible app to name.
+  }
+  bundle ??= appBundlePath(process.execPath);
+  if (!bundle) return null;
+  // The real bundle icon comes from NSWorkspace via the helper —
+  // app.getFileIcon answers with the generic app icon for bundles.
+  let icon: Electron.NativeImage | null = null;
+  try {
+    const { stdout } = await run(fdaHelperPath, ["--icon", bundle]);
+    icon = nativeImage.createFromDataURL(`data:image/png;base64,${stdout.trim()}`);
+    if (icon.isEmpty()) icon = null;
+  } catch {
+    // Same fallbacks as above.
+  }
+  icon ??= await app.getFileIcon(bundle, { size: "normal" });
+  // The drag image must be sized in POINTS: the helper's PNG is 128 raw
+  // pixels, which a bare nativeImage would drag at 128pt — twice
+  // PermissionFlow's 56pt drag image. Re-wrap 112px at 2x for a crisp 56pt.
+  const dragIcon = nativeImage.createFromBuffer(
+    icon.resize({ width: 112, height: 112, quality: "best" }).toPNG(),
+    { scaleFactor: 2 },
+  );
+  fdaDragTarget = { bundle, dragIcon, iconDataUrl: icon.toDataURL() };
+  return fdaDragTarget;
+}
+
+// Display data for the drag tile — name and icon only. The bundle path never
+// crosses the bridge: the drag itself runs here, where the path stays.
+ipcMain.handle("fullDisk:dragInfo", async () => {
+  const target = await resolveFdaDragTarget();
+  if (!target) return null;
+  return { name: appBundleName(target.bundle), iconDataUrl: target.iconDataUrl };
+});
+// The native drag: the bundle as payload, started on the gesturing window's
+// webContents. Dropping it on the Full Disk Access list is the same grant
+// gesture as the pane's "+" button.
+ipcMain.on("fullDisk:dragStart", (e) => {
+  const target = fdaDragTarget;
+  if (!target) return;
+  // Dim the panel while the drag rides over System Settings, the way
+  // PermissionFlow's panel does; restored when the drag session ends.
+  const win = BrowserWindow.fromWebContents(e.sender);
+  win?.setOpacity(0.72);
+  try {
+    e.sender.startDrag({ file: target.bundle, icon: target.dragIcon });
+  } finally {
+    if (win && !win.isDestroyed()) win.setOpacity(1);
+    // The drag session is over; the pointerdown that began it took the
+    // visibility hold, so the end of the gesture releases it.
+    fdaGrantFlow.setHold(false);
+  }
+});
+// The panel renderer's mid-gesture guard (see fdaGrantFlow.holdVisible).
+ipcMain.on("fullDisk:panelHold", (_e, on: boolean) => fdaGrantFlow.setHold(on === true));
+// The grant flow itself: opens the pane and floats the drag panel next to it,
+// following the System Settings window (fdaGrantFlow.ts owns the lifecycle —
+// this handler only starts it). The helper binary is optional by design: no
+// Swift toolchain at build time just means the panel doesn't follow.
+const fdaGrantFlow = new FdaGrantFlow({
+  rendererDir,
+  preloadPath: path.join(dirname, "preload.cjs"),
+  helperPath: fdaHelperPath,
+  probe: () => probeFullDiskAccess(),
+  openSettings: () => shell.openExternal(EXTERNAL_URLS.fullDiskSettings),
+});
+ipcMain.handle("fullDisk:grantFlow", async () => fdaGrantFlow.start());
+// The panel's own close button (PermissionFlow's xmark) — the panel is
+// non-focusable and cannot close itself.
+ipcMain.on("fullDisk:dismiss", () => fdaGrantFlow.stop());
+app.on("before-quit", () => fdaGrantFlow.stop());
 
 // Launch at Login. macOS owns the bit and loginItem.ts owns the rules (fresh
 // OS read per get, packaged-only writes); this is only the seam that hands it

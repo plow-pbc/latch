@@ -203,10 +203,12 @@ To attach DevTools to a running app: `npx electron --remote-debugging-port=9222 
 open `http://localhost:9222`. A normally-launched app has no debugging port — you cannot attach
 after the fact, so start it that way if you might need it.
 
-**Build before you run.** Every script loads from `dist/`, not `src/`:
+**Build before you run.** Every script loads from `dist/`, not `src/`. `just build` is the
+canonical build (tsc, renderer assets, and the compiled native helper); `npm run build` in
+`apps/desktop` runs the same three steps.
 
 ```bash
-npx tsc -b && node apps/desktop/scripts/copy-renderer.mjs   # or: just build
+just build
 ```
 
 **No top-level `await` in a script that boots the app.** Electron does not emit `ready` until the

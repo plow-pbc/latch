@@ -51,10 +51,13 @@ _default:
 install:
     npm install
 
-# Build every package + app (tsc) and copy the desktop renderer assets.
+# Build every package + app (tsc), copy the desktop renderer assets, and
+# compile the native helper (skipped with a warning if there's no Swift
+# toolchain — the app still builds and runs).
 build:
     npx tsc -b
     node apps/desktop/scripts/copy-renderer.mjs
+    node apps/desktop/scripts/build-native.mjs
 
 # Run the full test suite. Depends on `install` so a clean checkout — CI, the
 # review bot, a new machine — is one command; it is a ~1s no-op once installed.

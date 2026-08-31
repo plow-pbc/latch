@@ -22,12 +22,31 @@ export function httpCa(caPath?: string): Buffer | undefined {
   return caPath && fs.existsSync(caPath) ? fs.readFileSync(caPath) : undefined;
 }
 
+/**
+ * How long the local vault gets to answer before a read is given up on.
+ *
+ * None of these calls is long work: the server is on this Mac. Without this, a
+ * wedged vault — a suspended process, an orphan from an earlier install still
+ * holding the port — was an await that never settled, which surfaced to the
+ * owner as a Vault tab that simply never opened. A timeout turns that into the
+ * error state the UI already knows how to show.
+ *
+ * Opt-in per request, and only the reads and the sign-in that opening the tab
+ * waits on take it. A write has no such deadline to offer: the vault can commit
+ * a registration or an item before `destroy()` rejects here, so timing one out
+ * would report a failure that did happen, and the retry would strand a second
+ * account or a duplicate item. Those wait for a real answer until the server
+ * can tell a retry from a new request.
+ */
+export const VAULT_READ_TIMEOUT_MS = 10_000;
+
 export function send(
   http: VaultHttp,
   method: string,
   urlPath: string,
   body?: string,
   contentType = "application/json",
+  timeoutMs = 0,
 ): Promise<{ status: number; body: string }> {
   return new Promise((resolve, reject) => {
     const payload = body === undefined ? undefined : Buffer.from(body);
@@ -43,6 +62,10 @@ export function send(
       },
       (res) => {
         const chunks: Buffer[] = [];
+        // A body that stops early fails the RESPONSE, not the request: the
+        // `error` below never fires, `end` never comes, and the promise hangs —
+        // the exact never-settling await this file's timeout exists to end.
+        res.once("error", reject);
         res.on("data", (c: Buffer) => chunks.push(c));
         res.once("end", () =>
           resolve({ status: res.statusCode ?? 0, body: Buffer.concat(chunks).toString("utf8") }),
@@ -50,6 +73,14 @@ export function send(
       },
     );
     req.once("error", reject);
+    // `destroy(err)` surfaces as the `error` above, so a stall rejects with a
+    // sentence rather than hanging. Covers a connect that never completes and a
+    // response that stops mid-body alike.
+    if (timeoutMs > 0) {
+      req.setTimeout(timeoutMs, () =>
+        req.destroy(new Error(`the vault did not answer in ${Math.round(timeoutMs / 1000)}s`)),
+      );
+    }
     req.end(payload);
   });
 }
@@ -98,8 +129,15 @@ export function decString(enc: string, encKey: Buffer, macKey: Buffer): Buffer {
   return Buffer.concat([d.update(ct), d.final()]);
 }
 
-/** Sign in and unwrap the account key, which everything else is built on. */
-export async function signIn(http: VaultHttp, email: string, password: string) {
+/**
+ * Sign in and unwrap the account key, which everything else is built on.
+ *
+ * Untimed unless the caller asks: signing in commits nothing itself, but a
+ * caller can be reading the answer as evidence about a write that did — see
+ * `settlePendingChange`, where a timeout would read as "the vault never took
+ * this pair" and overwrite the working credentials with the obsolete ones.
+ */
+export async function signIn(http: VaultHttp, email: string, password: string, timeoutMs = 0) {
   const { hash, stretchedEnc, stretchedMac } = masterKeyAndHash(email, password);
   const form = new URLSearchParams({
     grant_type: "password",
@@ -111,7 +149,14 @@ export async function signIn(http: VaultHttp, email: string, password: string) {
     deviceIdentifier: crypto.randomUUID(),
     deviceName: "domo",
   }).toString();
-  const res = await send(http, "POST", "/identity/connect/token", form, "application/x-www-form-urlencoded");
+  const res = await send(
+    http,
+    "POST",
+    "/identity/connect/token",
+    form,
+    "application/x-www-form-urlencoded",
+    timeoutMs,
+  );
   if (res.status !== 200) throw new Error(`vault sign-in failed (HTTP ${res.status})`);
   const t = JSON.parse(res.body) as { access_token: string; Key: string };
   http.token = t.access_token;

@@ -13,7 +13,7 @@
  */
 import fs from "node:fs";
 import path from "node:path";
-import { httpCa, send, signIn, VaultHttp } from "./vaultCrypto.js";
+import { httpCa, send, signIn, VAULT_READ_TIMEOUT_MS, VaultHttp } from "./vaultCrypto.js";
 import {
   Cipher,
   checkedUrls,
@@ -72,7 +72,9 @@ export class VaultClient {
     const account = this.server.account;
     if (!account) throw new Error("this machine has no vault account yet");
     const http: VaultHttp = { url: this.server.url, ca: httpCa(this.server.certPath) };
-    const { userKey } = await signIn(http, account.email, account.password);
+    // Opening the Vault tab waits on this one, and nothing is riding on the
+    // answer but the tab itself.
+    const { userKey } = await signIn(http, account.email, account.password, VAULT_READ_TIMEOUT_MS);
     this.session = { http, key: splitKey(userKey) };
     return this.session;
   }
@@ -81,7 +83,17 @@ export class VaultClient {
   private async call(method: string, urlPath: string, body?: string): Promise<string> {
     for (const attempt of [0, 1]) {
       const { http } = await this.open();
-      const res = await send(http, method, urlPath, body);
+      // A GET commits nothing, so giving up on one costs nothing and is what
+      // keeps a wedged vault from hanging the Vault tab. A write is left to
+      // wait: see `VAULT_READ_TIMEOUT_MS`.
+      const res = await send(
+        http,
+        method,
+        urlPath,
+        body,
+        "application/json",
+        method === "GET" ? VAULT_READ_TIMEOUT_MS : 0,
+      );
       if (res.status === 401 && attempt === 0) {
         this.session = null; // expired token: sign in again, once
         continue;

@@ -42,6 +42,21 @@ contextBridge.exposeInMainWorld("domo", {
   // macOS permission ceilings (today just Full Disk Access). Read-only: the
   // grant itself happens in System Settings, via openExternal("fullDiskSettings").
   capabilitiesGet: () => ipcRenderer.invoke("capabilities:get"),
+  // The Full Disk Access grant flow (permissionFlow.ts, ported from
+  // PermissionFlow). dragInfo/dragStart serve the floating panel's drag tile:
+  // dragInfo is display data only — name and icon; the drag payload never
+  // crosses the bridge, main starts the native drag itself.
+  fullDiskDragInfo: () => ipcRenderer.invoke("fullDisk:dragInfo"),
+  fullDiskDragStart: () => ipcRenderer.send("fullDisk:dragStart"),
+  // Start the grant flow: main opens the pane and floats the drag panel next
+  // to System Settings (fdaGrantFlow.ts owns the whole lifecycle).
+  fullDiskGrantFlow: () => ipcRenderer.invoke("fullDisk:grantFlow"),
+  // The floating panel's close button; main owns the panel's lifecycle.
+  fullDiskDismiss: () => ipcRenderer.send("fullDisk:dismiss"),
+  // Mid-gesture guard: while the pointer is down on the drag tile, the panel
+  // must not hide on a frontmost flicker — hiding the drag source aborts the
+  // drag. Main releases the hold itself when the drag session ends.
+  fullDiskPanelHold: (on: boolean) => ipcRenderer.send("fullDisk:panelHold", on),
   // Launch at Login: one whole-state shape per read. macOS owns the bit
   // (System Settings can flip it behind the app's back), so every read
   // re-asks the OS, and set answers with what the OS then holds.
