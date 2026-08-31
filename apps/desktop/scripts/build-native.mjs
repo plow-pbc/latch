@@ -27,9 +27,15 @@ const stampFile = `${output}.stamp`;
 
 fs.mkdirSync(outDir, { recursive: true });
 
-// Keyed on the source bytes: recompiling an unchanged helper on every build
-// would put swiftc (~seconds) in the hot path of every `just build`.
-const stamp = crypto.createHash("sha256").update(fs.readFileSync(source)).digest("hex");
+// Keyed on the source bytes AND this script's own: recompiling an unchanged
+// helper on every build would put swiftc (~seconds) in the hot path of every
+// `just build`, but a change to how the helper is built (arch policy, flags)
+// must invalidate what an older policy produced — a cached artifact outlives
+// the script that made it.
+const stamp = crypto.createHash("sha256")
+  .update(fs.readFileSync(source))
+  .update(fs.readFileSync(fileURLToPath(import.meta.url)))
+  .digest("hex");
 if (fs.existsSync(output) && fs.existsSync(stampFile) && fs.readFileSync(stampFile, "utf8") === stamp) {
   console.log(`native helper up to date → ${output}`);
   process.exit(0);
