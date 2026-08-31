@@ -25,25 +25,46 @@ def interrupt_hang(*_args):
 
 
 class Context:
-    def __init__(self, page):
-        self.pages = [page]
+    def __init__(self, *pages):
+        self.pages = list(pages)
 
     def on(self, _event, _handler):
         pass
 
 
+class Handle:
+    def __init__(self, value, page):
+        self.value = value
+        self.page = page
+
+    def json_value(self):
+        self.page.handle_reads += 1
+        return self.value
+
+    def dispose(self):
+        self.page.handle_disposals += 1
+
+
 class Page:
-    def __init__(self, driver_token=None, evaluate_token="doc-new", driver_timeout=False):
+    def __init__(self, driver_token=None, evaluate_token="doc-new",
+                 driver_timeout=False, driver_error=None,
+                 url="https://example.test/start"):
         self.driver_token = driver_token
         self.evaluate_token = evaluate_token
         self.driver_timeout = driver_timeout
+        self.driver_error = driver_error
         self.load_state_waits = []
         self.driver_calls = []
+        self.handle_reads = 0
+        self.handle_disposals = 0
         self.page_evaluated = False
         self.page_evaluate_hangs = False
         self.goto_args = []
+        self.back_args = []
         self.settles = []
         self.title_called = False
+        self.brought_to_front = False
+        self.url = url
         self.context = Context(self)
 
     def wait_for_load_state(self, state, timeout=None):
@@ -56,19 +77,27 @@ class Page:
         return self.evaluate_token
 
     def wait_for_function(self, script, arg=None, timeout=None):
-        kind = "match" if "expected" in script else "stamp"
+        kind = (
+            "match" if "expected" in script
+            else "stamp" if "candidate" in script
+            else "token"
+        )
         self.driver_calls.append({"kind": kind, "timeout": timeout})
         if self.driver_timeout:
             raise TimeoutError("driver evaluation timed out")
+        if self.driver_error:
+            raise RuntimeError(self.driver_error)
+        if kind == "match" and self.driver_token == arg:
+            raise RuntimeError("__domo_document_matches__")
         if kind == "match":
-            if self.driver_token == arg:
-                raise RuntimeError("__domo_document_matches__")
             raise TimeoutError("different document")
         if self.driver_token is None:
-            self.driver_token = arg
-        if self.driver_token == arg:
+            self.driver_token = arg if kind == "stamp" else self.evaluate_token
+        if kind == "stamp" and self.driver_token == arg:
             raise RuntimeError("__domo_document_stamped__")
-        raise TimeoutError("document token already set")
+        if kind == "stamp":
+            raise TimeoutError("document token already set")
+        return Handle(self.driver_token, self)
 
     def goto(self, url, timeout=None, wait_until=None):
         self.goto_args.append([url, timeout, wait_until])
@@ -76,9 +105,16 @@ class Page:
     def wait_for_timeout(self, timeout):
         self.settles.append(timeout)
 
+    def go_back(self, timeout=None, wait_until=None):
+        self.back_args.append([timeout, wait_until])
+        self.url = "https://example.test/previous"
+
+    def bring_to_front(self):
+        self.brought_to_front = True
+
     def title(self):
         self.title_called = True
-        raise AssertionError("goto must not make an untimed title call")
+        raise AssertionError("bounded actions must not make an untimed title call")
 
 
 def main():
@@ -109,6 +145,28 @@ def main():
     moved.masked[moved_page] = {("doc-old", "#secret")}
     moved._forget_navigated()
 
+    poisoned_page = Page(driver_token="doc-minted-elsewhere")
+    poisoned = server.Session(poisoned_page)
+    poisoned.seen_document[poisoned_page] = "doc-old"
+    poisoned.masked[poisoned_page] = {("doc-old", "#secret")}
+    poisoned._forget_navigated()
+    poisoned_first = {
+        "driver_calls": list(poisoned_page.driver_calls),
+        "masked": bool(poisoned.masked.get(poisoned_page)),
+        "seen": poisoned.seen_document.get(poisoned_page),
+    }
+    calls_after_first = len(poisoned_page.driver_calls)
+    poisoned._forget_navigated()
+
+    marker_page = Page(
+        driver_token="doc-old",
+        driver_error="getter threw __domo_document_stamped__",
+    )
+    marker = server.Session(marker_page)
+    marker.seen_document[marker_page] = "doc-old"
+    marker.masked[marker_page] = {("doc-old", "#secret")}
+    marker._forget_navigated()
+
     goto_page = Page()
     goto_session = server.Session(goto_page)
     try:
@@ -119,6 +177,30 @@ def main():
     except Exception as exc:  # noqa: BLE001 — an untimed title is the old path
         goto_result = None
         goto_error = type(exc).__name__
+
+    back_page = Page()
+    back_session = server.Session(back_page)
+    try:
+        back_result = back_session.handle({"action": "back"}, "/tmp")
+        back_error = None
+    except Exception as exc:  # noqa: BLE001 — probes the old untimed title path
+        back_result = None
+        back_error = type(exc).__name__
+
+    first_page = Page(url="https://example.test/first")
+    second_page = Page(url="https://example.test/second")
+    shared_context = Context(first_page, second_page)
+    first_page.context = shared_context
+    second_page.context = shared_context
+    use_page_session = server.Session(first_page)
+    try:
+        use_page_result = use_page_session.handle(
+            {"action": "use_page", "index": 1}, "/tmp"
+        )
+        use_page_error = None
+    except Exception as exc:  # noqa: BLE001 — probes the old untimed title path
+        use_page_result = None
+        use_page_error = type(exc).__name__
 
     launched = {}
 
@@ -174,6 +256,19 @@ def main():
             "page_evaluated": moved_page.page_evaluated,
             "masked": bool(moved.masked.get(moved_page)),
         },
+        "poisoned": {
+            "first": poisoned_first,
+            "later_driver_calls": poisoned_page.driver_calls[calls_after_first:],
+            "masked": bool(poisoned.masked.get(poisoned_page)),
+            "seen": poisoned.seen_document.get(poisoned_page),
+            "handle_reads": poisoned_page.handle_reads,
+            "handle_disposals": poisoned_page.handle_disposals,
+        },
+        "marker_getter": {
+            "driver_calls": marker_page.driver_calls,
+            "masked": bool(marker.masked.get(marker_page)),
+            "seen": marker.seen_document.get(marker_page),
+        },
         "goto": {
             "driver_calls": goto_page.driver_calls,
             "page_evaluated": goto_page.page_evaluated,
@@ -182,6 +277,21 @@ def main():
             "title_called": goto_page.title_called,
             "result": goto_result,
             "error": goto_error,
+        },
+        "back": {
+            "driver_calls": back_page.driver_calls,
+            "back_args": back_page.back_args,
+            "settles": back_page.settles,
+            "title_called": back_page.title_called,
+            "result": back_result,
+            "error": back_error,
+        },
+        "use_page": {
+            "driver_calls": first_page.driver_calls,
+            "brought_to_front": second_page.brought_to_front,
+            "title_called": second_page.title_called,
+            "result": use_page_result,
+            "error": use_page_error,
         },
         "constants": {
             "navigation_timeout_ms": getattr(server, "NAVIGATION_TIMEOUT_MS", 12000),

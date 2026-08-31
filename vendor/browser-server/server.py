@@ -91,12 +91,12 @@ def _origin(url):
 DEFAULT_ACTION_TIMEOUT_MS = 3000
 
 # `page.evaluate()` has no timeout of its own. The best-effort document check
-# uses driver-timed wait_for_function calls instead, split across this one
-# budget so even a page the driver cannot evaluate cannot park an action.
+# uses one driver-timed wait_for_function call instead, so even a page the
+# driver cannot evaluate cannot park an action.
 DOCUMENT_CHECK_TIMEOUT_MS = 1000
 
-# A navigation plus its settle is the whole timed goto path. Keeping both
-# named lets the test compare their sum to the device's destructive backstop.
+# A navigation plus its settle is the whole timed goto/back path. Keeping both
+# named lets the tests compare their sum to the device's destructive backstop.
 NAVIGATION_TIMEOUT_MS = 12000
 
 # How often a click re-scans the frames for its selector while waiting for it to
@@ -249,28 +249,6 @@ DOC_TOKEN_JS = """() => {
     }
     return w.__domoDocumentToken;
 }"""
-
-# wait_for_function is the driver-bounded way to ask which document is live,
-# but it returns a JSHandle whose disposal would be another untimed call. These
-# functions signal their positive result by throwing a marker instead: success
-# and timeout both settle the one bounded driver command, with no handle left.
-_DOC_MATCHED = "__domo_document_matches__"
-_DOC_STAMPED = "__domo_document_stamped__"
-DOC_MATCH_JS = f"""(expected) => {{
-    if (window.__domoDocumentToken === expected) throw "{_DOC_MATCHED}";
-    return false;
-}}"""
-DOC_STAMP_JS = f"""(candidate) => {{
-    const w = window;
-    if (!w.__domoDocumentToken) {{
-        Object.defineProperty(w, "__domoDocumentToken", {{
-            value: candidate,
-            configurable: true,
-        }});
-    }}
-    if (w.__domoDocumentToken === candidate) throw "{_DOC_STAMPED}";
-    return false;
-}}"""
 
 # What KIND of typing this node takes, or "" for none. `type()` refuses nothing
 # -- it focuses whatever it is given and sends the keys -- so every node
@@ -551,41 +529,29 @@ class Session:
         A same-document navigation is not that: the nodes are still there, the
         values are still in them, and the marks still have to go back on.
         """
-        previous = self.seen_document.get(self.page)
-        step_timeout = (
-            DOCUMENT_CHECK_TIMEOUT_MS
-            if previous is None
-            else DOCUMENT_CHECK_TIMEOUT_MS // 2
-        )
-
-        if previous is not None:
-            try:
-                self.page.wait_for_function(
-                    DOC_MATCH_JS, previous, timeout=step_timeout
-                )
-            except Exception as exc:
-                if _DOC_MATCHED in str(exc):
-                    return
-            else:
-                # DOC_MATCH_JS never returns truthy. If a driver changes that
-                # contract, retain the ledger rather than guessing it is stale.
-                return
-
-        candidate = os.urandom(16).hex()
+        token_handle = None
         try:
-            self.page.wait_for_function(
-                DOC_STAMP_JS, candidate, timeout=step_timeout
+            # wait_for_function applies its timeout while page.evaluate does
+            # not. Returning the token also preserves a token already minted by
+            # locate or fill instead of trying to replace it with a candidate.
+            token_handle = self.page.wait_for_function(
+                DOC_TOKEN_JS, timeout=DOCUMENT_CHECK_TIMEOUT_MS
             )
-        except Exception as exc:
-            if _DOC_STAMPED not in str(exc):
-                # Mid-navigation, or a page the driver cannot evaluate. Keeping
-                # the record is safe: stale targets are dropped when unresolved,
-                # while a discarded record leaves nobody to restore its mask.
-                return
-        else:
+            token = token_handle.json_value()
+        except Exception:
+            # Mid-navigation, or a page the driver cannot evaluate. Keeping the
+            # record is safe: stale targets are dropped when unresolved, while
+            # a discarded record leaves nobody to restore its mask.
             return
-        self.seen_document[self.page] = candidate
-        self.masked.pop(self.page, None)
+        finally:
+            if token_handle is not None:
+                try:
+                    token_handle.dispose()
+                except Exception:
+                    pass
+        if self.seen_document.get(self.page) != token:
+            self.seen_document[self.page] = token
+            self.masked.pop(self.page, None)
 
     def remember_masked(self, document_token, selector):
         self.masked.setdefault(self.page, set()).add((document_token, selector))
@@ -950,9 +916,9 @@ class Session:
 
     def handle(self, cmd, screenshots_dir):
         action = cmd.get("action", "")
-        # goto replaces the document itself, so probing the old one only spends
-        # deadline before the navigation that makes the answer irrelevant.
-        if action != "goto":
+        # These actions replace the document or active page, so probing the old
+        # one only spends deadline before making the answer irrelevant.
+        if action not in ("goto", "back", "use_page"):
             self._forget_navigated()
 
         if action in ("screenshot", "forms"):
@@ -993,15 +959,17 @@ class Session:
                 raise RuntimeError("no page %d (have %d)" % (i, len(pages)))
             self.page = pages[i]
             self.page.bring_to_front()
-            return {"ok": True, "title": self.page.title()}
+            return {"ok": True}
 
         if action == "back":
             # Neither history.back() nor page.go_back() actually moves a tab
             # under Camoufox. Report whether the URL changed rather than lying.
             was = self.page.url
-            self.page.go_back(timeout=12000, wait_until="domcontentloaded")
+            self.page.go_back(
+                timeout=NAVIGATION_TIMEOUT_MS, wait_until="domcontentloaded"
+            )
             self.page.wait_for_timeout(SETTLE_MS)
-            return {"title": self.page.title(), "moved": self.page.url != was}
+            return {"moved": self.page.url != was}
 
         if action == "view":
             # Viewer frame for the owner's monitor window: like screenshot but
