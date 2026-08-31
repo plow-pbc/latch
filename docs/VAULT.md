@@ -4,7 +4,11 @@ The vault is where this Mac keeps the owner's logins, cards, identities and
 secure notes — the things an agent may ask to have typed into a page, and the
 things the owner manages in the app's **Vault** tab. It is entirely local: an
 encrypted item file plus one master key rooted in the macOS Keychain. There is
-no server, no separate password-manager process, and no account.
+no server, no separate password-manager process, and no account. One app
+process per home, enforced: `main.ts` takes Electron's single-instance lock
+(keyed on userData, which the per-branch homes make exactly the data
+boundary), so every write below is a single-writer fact — a second launch
+hands over to the first and exits.
 
 This document is the mechanical reference — what is on disk, who reads it, and
 what each path guarantees. The *decisions* behind it (and their history,
@@ -197,12 +201,26 @@ legacy vault does (`db.sqlite3` + `vault-account.enc`):
    and a crash at any point leaves either the old vault intact and the new
    absent, or both complete (`items.json` is the single atomic write that
    finishes it).
-4. The old files stay put as the owner's backup; the new store's existence is
+4. Organization-owned rows (the old web vault could create an org) are
+   re-wrapped first: the user's RSA private key (in the database, under the
+   user key) recovers each org key, and each org cipher's item key is
+   re-wrapped under the user key — field ciphertexts untouched. A row whose
+   org key cannot be recovered aborts the migration before anything is
+   written.
+5. Item types with no body slot here (the enum's 6–8) keep their encrypted
+   body verbatim under `legacyData` — listed as Unsupported, nothing dropped.
+6. The old files stay put as the owner's backup; the new store's existence is
    the migration marker. A crash between the key write and the item write is
    completed on the next open: migration retries whenever the legacy vault
    exists and `items.json` does not, accepting an existing key only when it
    equals the derived legacy user key (a different key halts it — that key
    belongs to some other vault).
+
+What counts as a legacy vault: a database WITH an account row in it. The old
+server created `db.sqlite3` at startup, before its account bootstrap, so an
+interrupted first run (valid, user-less database) reads as a fresh vault; an
+unreadable database falls back on the account file / bootstrap marker — the
+conservative direction.
 
 A legacy vault whose account cannot be opened reads as **locked** and halts
 the migration — it never reads as empty, because empty is what would quietly

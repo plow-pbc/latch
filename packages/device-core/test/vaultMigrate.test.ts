@@ -32,12 +32,13 @@ function tempDir(): string {
 }
 
 const SCHEMA = `
-CREATE TABLE users (uuid TEXT PRIMARY KEY, email TEXT, akey TEXT);
+CREATE TABLE users (uuid TEXT PRIMARY KEY, email TEXT, akey TEXT, private_key TEXT);
 CREATE TABLE ciphers (
   uuid TEXT PRIMARY KEY, atype INTEGER, name TEXT, notes TEXT, fields TEXT,
   data TEXT, password_history TEXT, reprompt INTEGER, "key" TEXT,
-  updated_at DATETIME, deleted_at DATETIME
-);`;
+  updated_at DATETIME, deleted_at DATETIME, organization_uuid TEXT
+);
+CREATE TABLE users_organizations (uuid TEXT PRIMARY KEY, user_uuid TEXT, org_uuid TEXT, akey TEXT);`;
 
 interface LegacyFixture {
   dir: string;
@@ -45,12 +46,30 @@ interface LegacyFixture {
   rows: Cipher[];
 }
 
+/** One INSERT for a cipher row built by encryptCipher. */
+function cipherInsert(c: Cipher, i: number, bodyKey: string, orgUuid: string | null = null): string {
+  return (
+    `INSERT INTO ciphers VALUES ('${c.id}', ${c.type}, '${c.name}', ` +
+    (c.notes ? `'${c.notes}', ` : "NULL, ") +
+    `'[]', '${JSON.stringify(c[bodyKey]).replace(/'/g, "''")}', NULL, 0, ` +
+    (c.key ? `'${c.key}', ` : "NULL, ") +
+    `'2026-08-2${i % 10} 10:00:0${i % 10}.123456', NULL, ` +
+    (orgUuid ? `'${orgUuid}');` : "NULL);")
+  );
+}
+
 /** A legacy vault on disk: account file + database, exactly as the old stack
  * left them (the account file lands on the test-tier plaintext fallback, the
  * same file VaultSecretStore has always read). With `pendingTakes`, the
  * database's key is wrapped under the PENDING pair — the state an interrupted
- * account change leaves when the old server accepted it before the crash. */
-function legacyVault(extraSql = "", opts: { pendingTakes?: boolean } = {}): LegacyFixture {
+ * account change leaves when the old server accepted it before the crash.
+ * With `org`, the user gets an RSA keypair and one organization login whose
+ * key chain runs cipher key -> org key -> RSA -> user private key -> user
+ * key, exactly as Vaultwarden stored it. */
+function legacyVault(
+  extraSql = "",
+  opts: { pendingTakes?: boolean; org?: "keyed" | "keyless" | "orphan" } = {},
+): LegacyFixture {
   const dir = tempDir();
   const email = "agent-3f2a@local";
   const password = crypto.randomBytes(24).toString("base64url");
@@ -81,21 +100,53 @@ function legacyVault(extraSql = "", opts: { pendingTakes?: boolean } = {}): Lega
   rows[0].id = "11111111-0000-0000-0000-000000000001";
   rows[1].id = "11111111-0000-0000-0000-000000000002";
 
-  const inserts = rows
-    .map((c, i) => {
-      const bodyKey = c.type === 1 ? "login" : "secureNote";
-      return (
-        `INSERT INTO ciphers VALUES ('${c.id}', ${c.type}, '${c.name}', ` +
-        (c.notes ? `'${c.notes}', ` : "NULL, ") +
-        `'[]', '${JSON.stringify(c[bodyKey]).replace(/'/g, "''")}', NULL, 0, '${c.key}', ` +
-        `'2026-08-2${i} 10:00:0${i}.123456', NULL);`
+  const inserts = [
+    ...rows.map((c, i) => cipherInsert(c, i, c.type === 1 ? "login" : "secureNote")),
+  ];
+
+  let privateKeySql = "NULL";
+  if (opts.org) {
+    const { publicKey, privateKey } = crypto.generateKeyPairSync("rsa", { modulusLength: 2048 });
+    privateKeySql = `'${encString(privateKey.export({ format: "der", type: "pkcs8" }) as Buffer, account.enc, account.mac)}'`;
+    const orgKey = crypto.randomBytes(64);
+    const orgCipher = encryptCipher(
+      { type: "login", name: "Team login", urls: ["https://team.example"], username: "team", password: "org-secret" },
+      null,
+      splitKey(orgKey),
+    );
+    orgCipher.id = "11111111-0000-0000-0000-00000000000o";
+    if (opts.org === "keyless") {
+      // Fields directly under the org key, the shape older org items have —
+      // no own item key at all.
+      inserts.push(cipherInsert({ ...keylessUnder(splitKey(orgKey)), id: orgCipher.id }, 7, "login", "org-1"));
+    } else {
+      inserts.push(cipherInsert(orgCipher, 7, "login", "org-1"));
+    }
+    if (opts.org !== "orphan") {
+      const wrapped = crypto.publicEncrypt(
+        { key: publicKey, padding: crypto.constants.RSA_PKCS1_OAEP_PADDING, oaepHash: "sha1" },
+        orgKey,
       );
-    })
-    .join("\n");
+      inserts.push(`INSERT INTO users_organizations VALUES ('uo1', 'u1', 'org-1', '4.${wrapped.toString("base64")}');`);
+    }
+  }
+
   execFileSync("/usr/bin/sqlite3", [path.join(dir, "db.sqlite3")], {
-    input: `${SCHEMA}\nINSERT INTO users VALUES ('u1', '${email}', '${akey}');\n${inserts}\n${extraSql}`,
+    input: `${SCHEMA}\nINSERT INTO users VALUES ('u1', '${email}', '${akey}', ${privateKeySql});\n${inserts.join("\n")}\n${extraSql}`,
   });
   return { dir, userKey, rows };
+}
+
+/** A login whose fields sit DIRECTLY under the given key — no own item key. */
+function keylessUnder(key: { enc: Buffer; mac: Buffer }): Cipher {
+  const enc = (v: string) => encString(Buffer.from(v, "utf8"), key.enc, key.mac);
+  return {
+    type: 1,
+    name: enc("Team login"),
+    notes: null,
+    key: null,
+    login: { username: enc("team"), password: enc("org-secret"), totp: null, uris: [{ uri: enc("https://team.example") }] },
+  };
 }
 
 describe("migrateLegacyVault", () => {
@@ -189,6 +240,64 @@ describe("migrateLegacyVault", () => {
     const broker = new BrokerCore({ dir, store: new VaultStore(dir), keyStore: new VaultKeyStore(dir, "test") });
     expect(broker.whatsHere().map((i) => i.title).sort()).toEqual(["Door", "Pizza"]);
     expect(new VaultStore(dir).exists()).toBe(true);
+  });
+
+  it.each(["keyed", "keyless"] as const)(
+    "rewraps an ORGANIZATION item (%s) so the whole vault still opens",
+    async (shape) => {
+      const { dir } = legacyVault("", { org: shape });
+      const vault = new LocalVault(dir, new VaultKeyStore(dir, "test"));
+      const items = await vault.list();
+      expect(items.map((i) => i.title).sort()).toEqual(["Door", "Pizza", "Team login"]);
+      const team = items.find((i) => i.title === "Team login")!;
+      // The field ciphertext was never touched — only its key wrapping moved.
+      expect(await vault.reveal(team.id, "password")).toBe("org-secret");
+    },
+  );
+
+  it("aborts BEFORE writing anything when an org item's key cannot be recovered", () => {
+    const { dir } = legacyVault("", { org: "orphan" });
+    const keyStore = new VaultKeyStore(dir, "test");
+    expect(() => migrateLegacyVault(dir, keyStore, new VaultStore(dir))).toThrow(/cannot recover/);
+    // Fail-closed with zero traces: no key minted, no marker written, so a
+    // later fix (or a repaired database) still gets to migrate.
+    expect(keyStore.state()).toEqual({ status: "empty" });
+    expect(new VaultStore(dir).exists()).toBe(false);
+  });
+
+  it("carries an unmapped legacy type's body through verbatim instead of dropping it", () => {
+    // Type 7 (driver's licence): our pinned server refused to WRITE these,
+    // but an older database can hold one, and silent loss is unretryable
+    // once items.json exists.
+    const body = JSON.stringify({ LicenseNumber: "2.aaa|bbb|ccc" });
+    const { dir } = legacyVault(
+      `INSERT INTO ciphers VALUES ('77777777-0000-0000-0000-000000000007', 7, '2.n|n|n', NULL, '[]', '${body}', NULL, 0, NULL, '2026-08-27 10:00:07.123456', NULL, NULL);`,
+    );
+    migrateLegacyVault(dir, new VaultKeyStore(dir, "test"), new VaultStore(dir));
+    const row = new VaultStore(dir).get("77777777-0000-0000-0000-000000000007")!;
+    expect(row.type).toBe(7);
+    expect(row.legacyData).toEqual({ licenseNumber: "2.aaa|bbb|ccc" });
+  });
+
+  it("treats a user-less database as NO legacy vault — an interrupted first run starts fresh", async () => {
+    // The old server created db.sqlite3 at startup, before account bootstrap;
+    // a valid empty database holds nothing worth locking a machine over.
+    const dir = tempDir();
+    execFileSync("/usr/bin/sqlite3", [path.join(dir, "db.sqlite3")], { input: SCHEMA });
+    expect(legacyVaultPresent(dir)).toBe(false);
+    const vault = new LocalVault(dir, new VaultKeyStore(dir, "test"));
+    expect(await vault.list()).toEqual([]);
+  });
+
+  it("falls back to the account traces when the database cannot be read", () => {
+    // An unreadable file that sits beside account evidence is treated as a
+    // legacy vault (locked) — "fresh" over real data is the one irreversible
+    // answer. Without any trace it is not.
+    const dir = tempDir();
+    fs.writeFileSync(path.join(dir, "db.sqlite3"), "not a database");
+    expect(legacyVaultPresent(dir)).toBe(false);
+    fs.writeFileSync(path.join(dir, "account-created"), "");
+    expect(legacyVaultPresent(dir)).toBe(true);
   });
 
   it("migrates through a PENDING account pair the old server had accepted", async () => {

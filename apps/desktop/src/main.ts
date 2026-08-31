@@ -94,6 +94,24 @@ app.setName(instance.vaultIdentity);
 app.setPath("userData", instance.electronData);
 app.setPath("sessionData", instance.electronData);
 
+// ONE app per home. The lock is keyed on userData — which the per-branch
+// homes above make exactly the data boundary — so two checkouts still run
+// side by side, while a second launch of the SAME instance (`open -n`, the
+// raw binary) hands its argv to the first and exits before it can touch
+// anything. This is what makes the vault store's read-modify-rename, the key
+// mint, the approvals directory and the audit log single-writer facts rather
+// than hopes; it is also why a second dial against the one relay credential
+// (which the relay refuses anyway) can no longer happen. Held by the OS for
+// the life of the process: a crash releases it, nothing stale to clean up.
+if (!app.requestSingleInstanceLock()) {
+  console.log("[app] another instance already runs for this home; handing over and exiting");
+  app.exit(0);
+}
+app.on("second-instance", () => {
+  // Whoever launched the second copy wanted the app on screen.
+  createMainWindow();
+});
+
 const dirname = path.dirname(fileURLToPath(import.meta.url));
 const rendererDir = path.join(dirname, "renderer");
 

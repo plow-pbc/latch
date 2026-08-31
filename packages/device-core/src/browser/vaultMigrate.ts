@@ -18,11 +18,12 @@
  * node:sqlite).
  */
 import { execFileSync } from "node:child_process";
+import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { decString, masterKeyAndHash } from "./vaultCrypto.js";
-import { Cipher } from "./vaultItems.js";
+import { decString, encString, masterKeyAndHash } from "./vaultCrypto.js";
+import { Cipher, splitKey } from "./vaultItems.js";
 import { VaultKeyStore } from "./vaultKeyStore.js";
 import { VaultSecretStore } from "./vaultSecretStore.js";
 import { VaultStore } from "./vaultStore.js";
@@ -44,13 +45,34 @@ interface LegacyRow {
   reprompt: number | null;
   key: string | null;
   updated_at: string;
+  organization_uuid: string | null;
 }
 
-/** The database ALONE is the evidence: it holds the items. An account file
- * without it has nothing to migrate; a database without the account file is a
- * vault whose items exist and cannot be opened — locked, never fresh. */
+/**
+ * Whether a legacy vault worth protecting is here. The database is the
+ * evidence — it holds the items — but only a database WITH an account in it:
+ * the old server created db.sqlite3 at startup, before its account bootstrap,
+ * so an interrupted first run leaves a valid, user-less database that holds
+ * nothing and must read as a fresh vault, not as locked forever. A database
+ * that cannot be read at all falls back on the other traces of a real
+ * account (the account file, the bootstrap marker) — the conservative
+ * direction, because "fresh" over real data is the one irreversible answer.
+ */
 export function legacyVaultPresent(dir: string): boolean {
-  return fs.existsSync(path.join(dir, "db.sqlite3"));
+  const db = path.join(dir, "db.sqlite3");
+  if (!fs.existsSync(db)) return false;
+  try {
+    const out = execFileSync(SQLITE, ["-readonly", db, "SELECT count(*) FROM users;"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"], // the CLI's stderr is our catch, not console noise
+    });
+    return Number(out.trim()) > 0;
+  } catch {
+    return (
+      fs.existsSync(path.join(dir, "vault-account.enc")) ||
+      fs.existsSync(path.join(dir, "account-created"))
+    );
+  }
 }
 
 /**
@@ -95,6 +117,10 @@ export function migrateLegacyVault(dir: string, keyStore: VaultKeyStore, store: 
     );
   }
 
+  // Anything that can refuse, refuses BEFORE the first write: an org row
+  // whose key cannot be recovered aborts here with the key store untouched.
+  rewrapOrganizationRows(db, userKey);
+
   // Key first, items last: a crash in between leaves a key with no items, and
   // THIS run is the one that completes it — migration retries whenever the
   // legacy vault exists and the item file does not, so the half-done state is
@@ -114,6 +140,62 @@ export function migrateLegacyVault(dir: string, keyStore: VaultKeyStore, store: 
     keyStore.writeKey(userKey);
   }
   store.replaceAll(db.rows.map(cipherOf));
+}
+
+/**
+ * An organization-owned cipher's key is wrapped by the ORG key, not the user
+ * key — copied verbatim it would fail its integrity check and take the whole
+ * listing down with it. The org key is reachable, though: the database holds
+ * it RSA-wrapped to the user's public key, and the user's private key sits
+ * beside it under the user key. So each org row's item key is re-wrapped
+ * under the user key — the field ciphertexts are never touched — and a row
+ * whose org key cannot be recovered ABORTS the migration before anything is
+ * written, rather than migrating a vault that cannot open.
+ */
+function rewrapOrganizationRows(db: LegacyDb, userKey: Buffer): void {
+  const orgRows = db.rows.filter((r) => r.organization_uuid);
+  if (orgRows.length === 0) return;
+  if (!db.privateKey) {
+    throw new Error("the old vault holds organization items but no private key to recover their key with");
+  }
+  const user = splitKey(userKey);
+  const privateKey = crypto.createPrivateKey({
+    key: decString(db.privateKey, user.enc, user.mac),
+    format: "der",
+    type: "pkcs8",
+  });
+  const orgKeyByUuid = new Map<string, Buffer>();
+  for (const { org_uuid, akey } of db.orgKeys) {
+    if (akey) orgKeyByUuid.set(org_uuid, decRsaString(akey, privateKey));
+  }
+  for (const row of orgRows) {
+    const orgKey = orgKeyByUuid.get(row.organization_uuid!);
+    if (!orgKey) {
+      throw new Error(
+        "the old vault holds an organization item whose key this account cannot recover; its items cannot be migrated",
+      );
+    }
+    const org = splitKey(orgKey);
+    // With its own key: unwrap from the org key, re-wrap under the user key.
+    // Without one: the fields sit directly under the org key, so the org key
+    // BECOMES the item's own key — the fields stay byte-identical either way.
+    const itemKey = row.key ? decString(row.key, org.enc, org.mac) : orgKey;
+    row.key = encString(itemKey, user.enc, user.mac);
+  }
+}
+
+/** A Bitwarden RSA EncString (types 3-6: OAEP sha256/sha1, with or without a
+ * trailing mac this side has no key for and Bitwarden's own clients ignore). */
+function decRsaString(enc: string, privateKey: crypto.KeyObject): Buffer {
+  const dot = enc.indexOf(".");
+  const type = enc.slice(0, dot);
+  const oaepHash = type === "3" || type === "5" ? "sha256" : type === "4" || type === "6" ? "sha1" : null;
+  if (!oaepHash) throw new Error(`unexpected RSA EncString type ${type}`);
+  const body = enc.slice(dot + 1).split("|")[0];
+  return crypto.privateDecrypt(
+    { key: privateKey, padding: crypto.constants.RSA_PKCS1_OAEP_PADDING, oaepHash },
+    Buffer.from(body, "base64"),
+  );
 }
 
 /**
@@ -148,7 +230,14 @@ export function openVaultKey(dir: string, keyStore: VaultKeyStore, store: VaultS
   );
 }
 
-function readLegacyDb(dir: string): { akey: string; rows: LegacyRow[] } {
+interface LegacyDb {
+  akey: string;
+  privateKey: string | null;
+  rows: LegacyRow[];
+  orgKeys: Array<{ org_uuid: string; akey: string | null }>;
+}
+
+function readLegacyDb(dir: string): LegacyDb {
   // Read a CLONE: the sqlite CLI may need to recover the WAL, and the old
   // files are the owner's backup — nothing writes to them, ever.
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "vault-migrate-"));
@@ -158,14 +247,21 @@ function readLegacyDb(dir: string): { akey: string; rows: LegacyRow[] } {
       if (fs.existsSync(from)) fs.copyFileSync(from, path.join(tmp, `db.sqlite3${suffix}`));
     }
     const dbPath = path.join(tmp, "db.sqlite3");
-    const users = query<{ akey: string }>(dbPath, "SELECT akey FROM users LIMIT 1;");
+    const users = query<{ akey: string; private_key: string | null }>(
+      dbPath,
+      "SELECT akey, private_key FROM users LIMIT 1;",
+    );
     if (users.length === 0) throw new Error("the old vault database has no account in it");
     const rows = query<LegacyRow>(
       dbPath,
-      "SELECT uuid, atype, name, notes, fields, data, password_history, reprompt, key, updated_at " +
+      "SELECT uuid, atype, name, notes, fields, data, password_history, reprompt, key, updated_at, organization_uuid " +
         "FROM ciphers WHERE deleted_at IS NULL;",
     );
-    return { akey: users[0].akey, rows };
+    const orgKeys = query<{ org_uuid: string; akey: string | null }>(
+      dbPath,
+      "SELECT org_uuid, akey FROM users_organizations;",
+    );
+    return { akey: users[0].akey, privateKey: users[0].private_key, rows, orgKeys };
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
   }
@@ -190,7 +286,15 @@ function cipherOf(row: LegacyRow): Cipher {
     passwordHistory: row.password_history ? lowerKeys(JSON.parse(row.password_history)) : null,
   };
   const bodyKey = BODY_KEY[row.atype];
-  if (bodyKey) cipher[bodyKey] = lowerKeys(JSON.parse(row.data || "{}"));
+  if (bodyKey) {
+    cipher[bodyKey] = lowerKeys(JSON.parse(row.data || "{}"));
+  } else {
+    // A type these forms have no body slot for (the enum's 6-8). The
+    // ciphertext is carried through VERBATIM under a neutral key rather than
+    // guessed into a shape or dropped: the row lists as Unsupported either
+    // way, and a future reader finds everything still there.
+    cipher.legacyData = lowerKeys(JSON.parse(row.data || "{}"));
+  }
   return cipher;
 }
 

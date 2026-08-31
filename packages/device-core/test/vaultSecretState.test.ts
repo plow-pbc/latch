@@ -7,6 +7,7 @@
  * screen. These run outside Electron, where `safeStorage` is unavailable, which
  * is itself one of the two locked cases.
  */
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -93,8 +94,21 @@ describe("readCredentialsState", () => {
 
   it("reports a legacy database with NO account file as locked — the items exist", () => {
     const dir = tempDir();
-    fs.writeFileSync(path.join(dir, "db.sqlite3"), "");
+    // A real database with a real account row: the evidence rule wants a
+    // user in it, not merely the file (the old server created the file at
+    // startup, before any account existed).
+    execFileSync("/usr/bin/sqlite3", [path.join(dir, "db.sqlite3")], {
+      input: "CREATE TABLE users (uuid TEXT, akey TEXT); INSERT INTO users VALUES ('u1', 'k');",
+    });
     expect(readCredentialsState(dir)).toEqual({ status: "locked", reason: "undecryptable" });
+  });
+
+  it("reports an empty pre-account database as a fresh vault, not locked", () => {
+    const dir = tempDir();
+    execFileSync("/usr/bin/sqlite3", [path.join(dir, "db.sqlite3")], {
+      input: "CREATE TABLE users (uuid TEXT, akey TEXT);",
+    });
+    expect(readCredentialsState(dir)).toEqual({ status: "empty" });
   });
 
   it("ignores a stray legacy account with no database — nothing is migratable from it", () => {
