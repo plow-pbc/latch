@@ -1,8 +1,9 @@
 // One generic password in the macOS Keychain, through SecItem, with an access
-// group — the API surface Electron's safeStorage cannot reach. Four functions,
+// group — the API surface Electron's safeStorage cannot reach. Three functions,
 // no state, no policy: which service/account/group to use is the caller's
 // decision (and a frozen constant in @domo/device-core, for the reasons its
-// comment gives).
+// comment gives). Read, write, probe — no delete: destroying a vault key is
+// not an operation anything owns, so the boundary does not offer it.
 //
 // Every function takes (service, account, accessGroup); accessGroup may be ""
 // to mean "no group" — that is what lets the same binary be probed in a build
@@ -83,16 +84,6 @@ Napi::Value Set(const Napi::CallbackInfo& info) {
   return env.Undefined();
 }
 
-// del(service, account, accessGroup) -> boolean (false when nothing was there)
-Napi::Value Del(const Napi::CallbackInfo& info) {
-  Napi::Env env = info.Env();
-  NSMutableDictionary* q = BaseQuery(ToNSString(info[0]), ToNSString(info[1]), ToNSString(info[2]));
-  OSStatus status = SecItemDelete((__bridge CFDictionaryRef)q);
-  if (status == errSecItemNotFound) return Napi::Boolean::New(env, false);
-  if (status != errSecSuccess) throw StatusError(env, status, "SecItemDelete");
-  return Napi::Boolean::New(env, true);
-}
-
 // probe(service, accessGroup) -> "ok" | "missing-entitlement" | "unavailable"
 // A read that expects to find nothing: errSecItemNotFound proves the keychain
 // answered for that group, which is all availability means.
@@ -111,7 +102,6 @@ Napi::Value Probe(const Napi::CallbackInfo& info) {
 Napi::Object Init(Napi::Env env, Napi::Object exports) {
   exports.Set("get", Napi::Function::New(env, Get));
   exports.Set("set", Napi::Function::New(env, Set));
-  exports.Set("del", Napi::Function::New(env, Del));
   exports.Set("probe", Napi::Function::New(env, Probe));
   return exports;
 }

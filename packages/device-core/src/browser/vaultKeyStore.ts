@@ -66,7 +66,6 @@ export type VaultKeyState =
 interface NativeKeychain {
   get(service: string, account: string, group: string): string | null;
   set(service: string, account: string, group: string, value: string): void;
-  del(service: string, account: string, group: string): boolean;
   probe(service: string, group: string): "ok" | "missing-entitlement" | "unavailable";
 }
 

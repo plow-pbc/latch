@@ -14,7 +14,7 @@
  */
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, safeStorage as electronSafeStorage, screen, shell, systemPreferences, Tray } from "electron";
 import electronUpdater from "electron-updater";
-import { execFile } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
 import fs from "node:fs/promises";
 import { createRequire } from "node:module";
 import os from "node:os";
@@ -1216,6 +1216,16 @@ app.whenReady().then(async () => {
   // in memory. It also bounds the wait: an approval nobody answers expires and
   // fails closed instead of pending forever.
   approvals = new ApprovalStore(path.join(home, "device/approvals"), new ElectronPolicy());
+  // A vaultwarden orphaned by a hard quit of a PRE-cutover build outlives its
+  // app: it was launched detached, and nothing in this build knows it exists —
+  // left alone it keeps serving the old vault database and web UI on loopback
+  // until reboot. Sweep it here, once, before the vault opens. Three guards
+  // keep this from ever touching the wrong process: only OUR payload paths
+  // (a self-hosted Vaultwarden matches neither fragment), only this user, and
+  // only a process whose parent is launchd — a vault server still OWNED by a
+  // live pre-cutover app (a sibling worktree's `just app`) has that app as
+  // its parent and is left alone.
+  reapOrphanedLegacyVaultServers();
   // Packaged: the browser runtime lives in Contents/Resources/browser-runtime
   // (extraResources). In dev the resolver falls back to the repo's vendor/.
   device = new DeviceAgent(
@@ -1614,6 +1624,37 @@ function simulatedUpdater(value: string): SimulatedUpdater {
       app.quit();
     },
   });
+}
+
+/**
+ * Terminate vaultwarden processes orphaned by a hard quit of a pre-cutover
+ * build. Matched by OUR OWN payload paths only — `browser-runtime/vault-server/`
+ * (packaged) and `/vendor/vault-server/` (from-source) — for this user, and
+ * only when re-parented to launchd (ppid 1): an orphan by definition, never a
+ * sibling checkout's still-owned server. Best-effort: a sweep that cannot run
+ * must not stop the app.
+ */
+function reapOrphanedLegacyVaultServers(): void {
+  for (const fragment of ["browser-runtime/vault-server/", "/vendor/vault-server/"]) {
+    let pids: string[] = [];
+    try {
+      pids = execFileSync("/usr/bin/pgrep", ["-U", String(process.getuid?.() ?? 0), "-f", fragment], { encoding: "utf8" })
+        .split("\n")
+        .filter(Boolean);
+    } catch {
+      continue; // pgrep exits nonzero when nothing matches
+    }
+    for (const pid of pids) {
+      try {
+        const ppid = execFileSync("/bin/ps", ["-o", "ppid=", "-p", pid], { encoding: "utf8" }).trim();
+        if (ppid !== "1") continue;
+        process.kill(Number(pid), "SIGTERM");
+        console.log(`[vault] terminated orphaned legacy vaultwarden (pid ${pid})`);
+      } catch {
+        /* raced its own exit, or not ours to signal — either way, done */
+      }
+    }
+  }
 }
 
 function hostName(): string {
