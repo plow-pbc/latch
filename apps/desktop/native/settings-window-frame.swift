@@ -86,6 +86,20 @@ if CommandLine.arguments.contains("--responsible") {
     exit(1)
 }
 
+// One-shot mode: wait for the left mouse button to come back up, print one
+// line, exit. Electron's startDrag on macOS begins the drag session and
+// returns immediately (beginDraggingSession under the hood), so the parent
+// has no signal for when the session ends — the button state IS that signal.
+// Read from the window server's combined session state: no event tap, no
+// Accessibility trust, no prompt, same permissionless tier as the frame poll.
+if CommandLine.arguments.contains("--drag-end") {
+    while CGEventSource.buttonState(.combinedSessionState, button: .left) {
+        Thread.sleep(forTimeInterval: 0.03)
+    }
+    print("{\"up\":true}") // exit flushes stdout; emit() is declared below us
+    exit(0)
+}
+
 func settingsPid() -> pid_t? {
     // Prefer a UI-capable instance over prohibited activation-policy helpers.
     NSRunningApplication.runningApplications(withBundleIdentifier: settingsBundleId)
