@@ -39,7 +39,11 @@ const TRIP_CHAT_TITLE = "+1 628-555-0144 · You";
 
 const home = fs.mkdtempSync(path.join(os.tmpdir(), "connect-shot-"));
 
+/** A Plow row's key, the shape `cloudAgentMapper` builds. */
+const plowKey = (agentId) => `plow\u0000${agentId}`;
+
 const ACTIVE_AGENT = {
+  rowKey: plowKey("cag_groceries"),
   agentId: "cag_groceries",
   name: "Household helper",
   line: { uid: "lin_willow", label: "Willow · +1 415-555-0142" },
@@ -51,6 +55,7 @@ const ACTIVE_AGENT = {
   createdAt: "2026-08-24T18:00:00.000Z",
 };
 const PROVISIONING_AGENT = {
+  rowKey: plowKey("cag_trip"),
   agentId: "cag_trip",
   name: "Trip planner",
   line: { uid: "lin_trip", label: "+1 628-555-0144" },
@@ -140,7 +145,7 @@ const CLOUD_EMPTY = {
     phase: "idle",
     activation: null,
     message: null,
-    completedAgentId: null,
+    completedRowKey: null,
     retryNewLine: false,
   },
   cloudAgentsError: null,
@@ -246,7 +251,7 @@ async function setUp() {
           phase: "error",
           activation: null,
           message: "Plow returned 422.",
-          completedAgentId: null,
+          completedRowKey: null,
           retryNewLine: false,
         },
       };
@@ -258,7 +263,7 @@ async function setUp() {
           phase: "error",
           activation: null,
           message: "No numbers are available right now. Try again later.",
-          completedAgentId: null,
+          completedRowKey: null,
           retryNewLine: false,
           terminal: "no_numbers",
         },
@@ -274,12 +279,13 @@ async function setUp() {
             smsBody: "Plow Activate: LINE42",
           },
           message: null,
-          completedAgentId: null,
+          completedRowKey: null,
           retryNewLine: false,
         },
       };
     } else if (typeof input?.lineUid === "string") {
       const created = {
+        rowKey: plowKey("cag_created"),
         agentId: "cag_created",
         name: input.name || "Cloud agent",
         line: { uid: input.lineUid, label: "Ash · +1 415-555-0199" },
@@ -296,7 +302,7 @@ async function setUp() {
         cloudFreeLines: [],
         cloudLineFlow: {
           ...CLOUD_EMPTY.cloudLineFlow,
-          completedAgentId: created.agentId,
+          completedRowKey: created.rowKey,
         },
       };
     }
@@ -316,14 +322,14 @@ async function setUp() {
             smsBody: "Plow Activate: MOVE42",
           },
           message: null,
-          completedAgentId: null,
+          completedRowKey: null,
           retryNewLine: false,
         },
       };
     } else if (typeof input?.lineUid === "string") {
       cloudFixture = {
         ...cloudFixture,
-        cloudAgents: cloudFixture.cloudAgents.map((agent) => agent.agentId === input.agentId
+        cloudAgents: cloudFixture.cloudAgents.map((agent) => agent.rowKey === input.rowKey
           ? {
               ...agent,
               line: { uid: input.lineUid, label: "Ash · +1 415-555-0199" },
@@ -333,7 +339,7 @@ async function setUp() {
         cloudFreeLines: [],
         cloudLineFlow: {
           ...CLOUD_EMPTY.cloudLineFlow,
-          completedAgentId: input.agentId,
+          completedRowKey: input.rowKey,
         },
       };
     }
@@ -351,11 +357,11 @@ async function setUp() {
     };
     return state();
   });
-  ipcMain.handle("cloud:remove", async (_e, agentId) => {
-    cloudRemovals.push(agentId);
+  ipcMain.handle("cloud:remove", async (_e, key) => {
+    cloudRemovals.push(key);
     cloudFixture = {
       ...cloudFixture,
-      cloudAgents: cloudFixture.cloudAgents.filter((agent) => agent.agentId !== agentId),
+      cloudAgents: cloudFixture.cloudAgents.filter((agent) => agent.rowKey !== key),
     };
     return state();
   });
@@ -551,6 +557,7 @@ const SCREENS = [
       await waitFor(win, `document.querySelector(".cloud-modal .cloud-activation-code")`,
         "the confirmed-code activation screen");
       const created = {
+        rowKey: plowKey("cag_confirmed"),
         agentId: "cag_confirmed",
         name: "Cloud agent",
         line: { uid: "lin_new", label: "+1 415-555-0999" },
@@ -567,7 +574,7 @@ const SCREENS = [
         cloudFreeLines: [],
         cloudLineFlow: {
           ...CLOUD_EMPTY.cloudLineFlow,
-          completedAgentId: created.agentId,
+          completedRowKey: created.rowKey,
         },
       };
       win.webContents.send("connect:changed");
@@ -898,8 +905,8 @@ const SCREENS = [
       await clickText(win, "Delete agent", 0);
       await waitFor(win, `!document.querySelector(".cloud-modal")`,
         "the cloud delete confirmation to close");
-      if (cloudRemovals.at(-1) !== ACTIVE_AGENT.agentId) {
-        throw new Error("detail delete did not use cloud:remove with the agent id");
+      if (cloudRemovals.at(-1) !== ACTIVE_AGENT.rowKey) {
+        throw new Error("detail delete did not use cloud:remove with the agent's row key");
       }
     },
   },
