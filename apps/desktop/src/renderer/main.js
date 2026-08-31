@@ -1345,6 +1345,7 @@ function openCloudChangeLine(agent, state, redraw) {
     kind: "line-flow",
     mode: "change",
     agentId: agent.agentId,
+    targetId: agent.targetId,
     selectedLineUid: undefined,
     started: false,
     phase: "idle",
@@ -1373,8 +1374,12 @@ function syncCloudModal(state, redraw) {
     syncCloudLineModal(state, redraw);
     return;
   }
-  const agent = (state.cloudAgents ?? [])
-    .find((candidate) => candidate.agentId === cloudModal.agentId);
+  // Matched on the PAIR. An agent's id is unique to its host, not globally —
+  // a local agent can be named exactly a Plow agent_id — so matching the id
+  // alone could rebind this modal to the OTHER host's row and point Delete or
+  // Change line at the wrong machine.
+  const agent = (state.cloudAgents ?? []).find((candidate) =>
+    candidate.agentId === cloudModal.agentId && candidate.targetId === cloudModal.targetId);
   if (!agent) {
     closeCloudModal();
     return;
@@ -1473,7 +1478,12 @@ function syncCloudModal(state, redraw) {
 /** Show one agent's line, read-only threads, and lifecycle controls. */
 function openCloudDetail(trigger, agent, state, redraw) {
   if (!openCloudModal(trigger, [], null)) return;
-  Object.assign(cloudModal, { kind: "detail", agentId: agent.agentId, confirmingDelete: false });
+  Object.assign(cloudModal, {
+    kind: "detail",
+    agentId: agent.agentId,
+    targetId: agent.targetId,
+    confirmingDelete: false,
+  });
   syncCloudModal(state, redraw);
 }
 

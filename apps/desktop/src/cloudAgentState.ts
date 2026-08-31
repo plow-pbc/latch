@@ -494,7 +494,15 @@ export class CloudAgentState {
       return null;
     }
 
-    const request: CloudLineRequest = { kind: "change", agentId, lineUid };
+    // The host rides ALONG, not just into the validation above: `finishLineFlow`
+    // rebuilds the key from the request, so dropping it here sent the PUT to
+    // Plow for an agent that lives on the self-host.
+    const request: CloudLineRequest = {
+      kind: "change",
+      agentId,
+      lineUid,
+      targetId: input?.targetId ?? BUILTIN_TARGET_ID,
+    };
     const flow = this.beginLineFlow(request);
 
     if (lineUid !== null) return this.finishLineFlow(request, this.generation, flow);

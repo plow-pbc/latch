@@ -1250,53 +1250,56 @@ describe("CloudAgentState self-hosted target", () => {
     expect(after.state().cloudAgentsError).toBe(`${HOST}: Couldn't reach Plow at ${HOST}.`);
   });
 
-  it("deletes an agent on the host that holds it", async () => {
-    const { state, calls, home } = build({
-      listAgentsFor: async (targetId) =>
-        targetId === BUILTIN_TARGET_ID ? [] : [agent({ agentId: "agent_local" })],
-    });
-    withHost(home);
-    await state.refresh();
-    calls.length = 0;
-
-    await state.remove("agent_local", LOCAL_TARGET_ID);
-
-    expect(calls).toContain("delete@local:agent_local");
-    expect(calls).not.toContain("delete@plow:agent_local");
-  });
-
-  it("a local agent named like a Plow agent cannot divert the Plow delete", async () => {
-    // `agent-mgr` answers with the NAME its owner typed, so a local agent CAN
-    // be called exactly what a Plow agent_id is called. Keyed on the raw id,
-    // the local row overwrote the Plow one and the Plow removal followed it to
-    // the self-host — deleting a different machine's agent.
+  // `agent-mgr` answers with the NAME its owner typed, so a local agent CAN be
+  // called exactly what a Plow agent_id is called. Keyed on the raw id, the
+  // local row overwrote the Plow one and a Plow removal followed it to the
+  // self-host — deleting a different machine's agent. Identity is the pair, so
+  // each row is removed on its OWN host and neither can divert the other.
+  it.each([
+    ["the self-hosted one", LOCAL_TARGET_ID, "delete@local:agent_1", "delete@plow:agent_1"],
+    ["the Plow one", BUILTIN_TARGET_ID, "delete@plow:agent_1", "delete@local:agent_1"],
+  ])("removes %s on its own host when both share an id", async (_which, targetId, expected, other) => {
     const collision = "agent_1";
     const { state, calls, home } = build({
-      listAgentsFor: async (targetId) => [
-        agent({ agentId: collision, name: targetId === BUILTIN_TARGET_ID ? "Cloud" : "Local" }),
+      listAgentsFor: async (host) => [
+        agent({ agentId: collision, name: host === BUILTIN_TARGET_ID ? "Cloud" : "Local" }),
       ],
     });
     withHost(home);
     await state.refresh();
 
-    // BOTH survive the merge: identity is host + id, so neither overwrites.
+    // BOTH survive the merge: neither overwrites the other.
     expect(state.state().cloudAgents.map((row) => `${row.targetId}:${row.name}`).sort())
       .toEqual(["local:Local", "plow:Cloud"]);
 
     calls.length = 0;
-    await state.remove(collision, BUILTIN_TARGET_ID);
+    await state.remove(collision, targetId);
 
-    expect(calls).toContain("delete@plow:agent_1");
-    expect(calls).not.toContain("delete@local:agent_1");
-    // The self-hosted one is untouched and still on screen. (The fake host
-    // keeps re-listing the Plow agent, so this asserts the survivor rather
-    // than the removal.)
-    expect(state.state().cloudAgents.some((row) => row.targetId === LOCAL_TARGET_ID)).toBe(true);
+    expect(calls).toContain(expected);
+    expect(calls).not.toContain(other);
   });
 
-  // One policy, one table: what a host address may be, and what it becomes.
-  // `stored: null` means refused — nothing reaches settings and the form says
-  // why.
+  it("changes a self-hosted agent's line on its own host", async () => {
+    const { state, calls, home } = build({
+      listAgentsFor: async (host) =>
+        host === BUILTIN_TARGET_ID ? [] : [agent({ agentId: "agent_local" })],
+    });
+    withHost(home);
+    await state.refresh();
+    calls.length = 0;
+
+    // The host has to survive INTO the request: `finishLineFlow` rebuilds the
+    // key from it, so dropping it sent the PUT to Plow for a local agent.
+    await state.changeLine({
+      agentId: "agent_local",
+      targetId: LOCAL_TARGET_ID,
+      lineUid: "lin_ash",
+    });
+
+    expect(calls).toContain("changeLine@local:agent_local:lin_ash");
+    expect(calls).not.toContain("changeLine@plow:agent_local:lin_ash");
+  });
+
   it.each([
     // Accepted: every address the owner can actually reach agent-mgr at.
     ["a private LAN address", "http://192.168.15.12:8765", "http://192.168.15.12:8765"],
