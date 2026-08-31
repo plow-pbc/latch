@@ -1369,6 +1369,74 @@ describe("CloudAgentState self-hosted target", () => {
     expect(state.state().cloudAgents).toEqual([]);
   });
 
+  it("a poll picks up a token rotated while its agent is provisioning", async () => {
+    const bearers: string[] = [];
+    const gate = deferred<void>();
+    const { state, home } = build({
+      // Provisioning: the poll ticks, and the second tick happens after the
+      // owner has re-entered the host with a new token.
+      pollAgent: async (receipt, transition) => {
+        await gate.promise;
+        await transition?.(receipt);
+        return { ...receipt, status: "running" };
+      },
+    });
+    withHost(home);
+
+    const created = state.create({
+      name: "demo",
+      provider: "local:docker",
+      lineUid: "lin_willow",
+      targetId: LOCAL_TARGET_ID,
+    });
+    await vi.waitFor(() => expect(bearers.length >= 0).toBe(true));
+
+    // Same machine, new token. This deliberately keeps the rows, so it must
+    // not strand the poll on the credential it captured.
+    expect(state.addTarget({ baseUrl: HOST, bearer: "rotated-token" })).toBe(true);
+    gate.resolve();
+    await created;
+
+    // No false "Not authorized" from a credential the owner already replaced.
+    expect(state.state().cloudActionError).toBe(null);
+  });
+
+  it("the live target reads the bearer at request time, not at poll start", async () => {
+    const seen: string[] = [];
+    const { state, home } = build({
+      listAgentsFor: async () => [],
+      pollAgent: async (receipt, transition) => {
+        await transition?.(receipt);
+        return { ...receipt, status: "running" };
+      },
+    });
+    withHost(home);
+
+    // Drive the client slice directly: capture the bearer the poll would send
+    // before and after a rotation on the SAME origin.
+    const deps = (state as unknown as { deps: { agents: CloudAgentsApi } }).deps;
+    const original = deps.agents.poll.bind(deps.agents);
+    deps.agents.poll = async (target, receipt, onTransition, signal) => {
+      seen.push(target.bearer);
+      saveSettings(home, {
+        ...loadSettings(home),
+        agentTarget: { baseUrl: HOST, bearer: "rotated-token" },
+      });
+      seen.push(target.bearer);
+      return original(target, receipt, onTransition, signal);
+    };
+
+    await state.create({
+      name: "demo",
+      provider: "local:docker",
+      lineUid: "lin_willow",
+      targetId: LOCAL_TARGET_ID,
+    });
+
+    // Same object, read twice, across a rotation: the second read is current.
+    expect(seen).toEqual(["serve-token-abc", "rotated-token"]);
+  });
+
   it("forgetting the host drops its rows without deleting its agents", async () => {
     const { state, calls, home } = build({
       listAgentsFor: async (targetId) =>

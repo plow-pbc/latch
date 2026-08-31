@@ -819,6 +819,38 @@ export class CloudAgentState {
     void this.pollToTerminal(target, receipt, request, generation, controller.signal);
   }
 
+  /**
+   * The same host, but reading its bearer at REQUEST time rather than now.
+   *
+   * A poll outlives its own credential: provisioning can run for minutes, and
+   * re-entering the host to rotate a `AGENT_MGR_SERVE_TOKEN` deliberately
+   * keeps the rows (same machine, new token) — so it does not abort the poll.
+   * A captured bearer then goes stale mid-flight, the next tick 401s, and the
+   * loop dies with a "Not authorized" banner the owner has already fixed,
+   * leaving a provisioning row with nothing watching it.
+   *
+   * A getter rather than a restart-on-401: the defect is that the credential
+   * was copied, so the fix is to stop copying it. The client reads
+   * `target.bearer` once per request, which is exactly when the current value
+   * is wanted. Falls back to the captured one when the host is gone, and that
+   * poll is being aborted anyway.
+   */
+  private liveTarget(target: AgentTarget): AgentTarget {
+    // Matched on ORIGIN as well as id: `local` is a slot, so if the owner
+    // pointed it at a different box mid-poll, its bearer belongs to that box
+    // and must not be sent to this one. That case aborts the poll anyway.
+    const currentBearer = (): string =>
+      this.targets().find((row) => row.id === target.id && row.baseUrl === target.baseUrl)
+        ?.bearer ?? target.bearer;
+    return {
+      id: target.id,
+      baseUrl: target.baseUrl,
+      get bearer(): string {
+        return currentBearer();
+      },
+    };
+  }
+
   private async pollToTerminal(
     target: AgentTarget,
     receipt: CloudAgentResource,
@@ -828,7 +860,7 @@ export class CloudAgentState {
   ): Promise<void> {
     try {
       await this.deps.agents.poll(
-        target,
+        this.liveTarget(target),
         receipt,
         (agent) => {
           if (generation === this.generation) this.observe(agent, request, target);
