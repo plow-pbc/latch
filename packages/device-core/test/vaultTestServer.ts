@@ -8,6 +8,7 @@
  */
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
+import net from "node:net";
 import path from "node:path";
 import tls from "node:tls";
 
@@ -44,6 +45,37 @@ export function listen(
   return new Promise((resolve) => {
     server.listen(0, "127.0.0.1", () => {
       server.port = (server.address() as { port: number }).port;
+      resolve(server);
+    });
+  });
+}
+
+/**
+ * A listener that accepts the connection and never speaks TLS.
+ *
+ * Two failures wear this shape and both are tested against it: a vault that has
+ * bound its port but is not serving on it yet, and one that is wedged and will
+ * never serve again. `close()` takes the accepted sockets with it — they were
+ * never answered, so nothing else will end them.
+ */
+export function listenSilently(): Promise<net.Server & { port: number; hits: number; url: string }> {
+  const sockets: net.Socket[] = [];
+  const server = Object.assign(
+    net.createServer((sock) => {
+      server.hits++;
+      sockets.push(sock);
+    }),
+    { port: 0, hits: 0, url: "" },
+  );
+  const closeServer = server.close.bind(server);
+  server.close = ((cb?: (err?: Error) => void) => {
+    for (const sock of sockets) sock.destroy();
+    return closeServer(cb);
+  }) as typeof server.close;
+  return new Promise((resolve) => {
+    server.listen(0, "127.0.0.1", () => {
+      server.port = (server.address() as { port: number }).port;
+      server.url = `https://127.0.0.1:${server.port}`;
       resolve(server);
     });
   });

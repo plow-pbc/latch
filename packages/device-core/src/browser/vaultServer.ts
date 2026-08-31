@@ -29,7 +29,23 @@ export interface VaultServerConfig {
   /** Whose machine this is — names the account created on first run. */
   person?: string;
   startTimeoutMs?: number;
+  /** How long a port that is listening gets to say whose vault it is. */
+  identifyTimeoutMs?: number;
 }
+
+/**
+ * Who is on this loopback port.
+ *
+ * `ours` presented the certificate in this data directory; `stranger` presented
+ * another one, or nothing is listening; `silent` accepted the connection and
+ * then said nothing before the deadline.
+ *
+ * `silent` is its own answer because it is not the same fact as `stranger`, and
+ * conflating them is what put two vaultwardens on one data directory: a vault
+ * of ours that is merely slow to finish its handshake read as somebody else's,
+ * and the caller spawned beside it.
+ */
+export type PortHolder = "ours" | "stranger" | "silent";
 
 /**
  * Does whatever is listening on this loopback port present THIS certificate?
@@ -38,22 +54,22 @@ export interface VaultServerConfig {
  * nothing about whose vault is behind it, and the certificate is the only
  * thing that does.
  */
-export function servesCertificate(port: number, certPath: string, timeoutMs = 1_000): Promise<boolean> {
+export function servesCertificate(port: number, certPath: string, timeoutMs = 1_000): Promise<PortHolder> {
   return new Promise((resolve) => {
     const ca = fs.readFileSync(certPath);
-    const done = (ok: boolean) => {
+    const done = (who: PortHolder) => {
       sock.destroy();
-      resolve(ok);
+      resolve(who);
     };
     // No SNI: it names a host, and an IP is not one — Node 26 throws on the IP
     // that Node 24 only deprecated. Identity falls to `host`, which the cert
     // `ensureCert` mints covers with an IP SAN.
     const sock = tls.connect(
       { host: "127.0.0.1", port, ca, timeout: timeoutMs },
-      () => done(sock.authorized),
+      () => done(sock.authorized ? "ours" : "stranger"),
     );
-    sock.once("error", () => done(false));
-    sock.once("timeout", () => done(false));
+    sock.once("error", () => done("stranger"));
+    sock.once("timeout", () => done("silent"));
   });
 }
 
@@ -110,8 +126,26 @@ export class VaultServer {
    * The certificate is the identity: ours is the only one signed by the key in
    * this data directory.
    */
-  private oursOnPort(): Promise<boolean> {
+  private whoIsOnPort(): Promise<PortHolder> {
     return servesCertificate(this.port, this.certPath);
+  }
+
+  /**
+   * Wait for the port to say who it is, up to `budgetMs`.
+   *
+   * A vault of ours is `silent` before it is `ours`: vaultwarden binds the
+   * socket well before it is serving TLS on it. Both callers below need the
+   * settled answer — one to know the server it just spawned is actually up, the
+   * other to know whether the server already there is ours to join — and asking
+   * once gets whichever answer the first quarter-second happened to hold.
+   */
+  private async settleOnPort(budgetMs: number): Promise<PortHolder> {
+    const deadline = Date.now() + budgetMs;
+    for (;;) {
+      const who = await this.whoIsOnPort();
+      if (who !== "silent" || Date.now() >= deadline) return who;
+      await new Promise((r) => setTimeout(r, 250));
+    }
   }
 
   private portOpen(): Promise<boolean> {
@@ -162,7 +196,21 @@ export class VaultServer {
     for (let i = 0; i < 20; i++) {
       this.port = first + i;
       if (!(await this.portOpen())) return false;
-      if (await this.oursOnPort()) return true; // our own server, already up
+      // Something is listening, so ask who — and wait out a slow handshake
+      // before believing the answer. Treating "has not answered yet" as
+      // "somebody else's" is what let a vault of ours still booting be walked
+      // past, and the vault spawned beside it shared this same data directory:
+      // two vaultwardens, one SQLite file.
+      const who = await this.settleOnPort(this.cfg.identifyTimeoutMs ?? 10_000);
+      if (who === "ours") return true; // our own server, already up
+      if (who === "silent") {
+        // Never spawn beside a server that will not say who it is: if it is
+        // ours, a second one corrupts the database it is already holding. An
+        // error the owner can act on is the safer end — the Vault tab shows it.
+        throw new Error(
+          `something is holding ${this.url} without answering; if it is an old copy of this app, quit it (or kill the process on port ${this.port}) and try again`,
+        );
+      }
     }
     this.port = first;
     throw new Error(`nothing is free between ${first} and ${first + 19} for this Mac's vault`);
@@ -207,9 +255,13 @@ export class VaultServer {
       this.child = null;
     });
 
+    // Up means SERVING, not bound. vaultwarden accepts on the port well before
+    // it is answering TLS there, so waiting on a bare connect handed the first
+    // read a server that accepts and then says nothing — the stall that reached
+    // the owner as a Vault tab which never opened (#193).
     const deadline = Date.now() + (this.cfg.startTimeoutMs ?? 30_000);
     while (Date.now() < deadline) {
-      if (await this.portOpen()) {
+      if ((await this.whoIsOnPort()) === "ours") {
         await this.bootstrap();
         return;
       }
