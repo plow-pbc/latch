@@ -92,8 +92,12 @@ DEFAULT_ACTION_TIMEOUT_MS = 3000
 
 # `page.evaluate()` has no timeout, while `wait_for_function()` returns a
 # JSHandle whose value read and disposal are separate untimed driver calls.
-# The best-effort document check uses locator.evaluate's timeout and direct
-# return value so this code owns no handle and adds no follow-up round trip.
+# `locator.evaluate()` returns the value directly, but in Playwright 1.60 its
+# timeout bounds only selector resolution; execution after that is deliberately
+# unbounded, and the driver still creates and disposes a handle internally. The
+# resolution gate catches the accidental no-execution-context wedge. A
+# page-controlled spin reaches the device's 15 s backstop instead, which kills
+# the process group, audits the crash, and closes the session.
 DOCUMENT_CHECK_TIMEOUT_MS = 1000
 
 # A navigation plus its settle is the whole timed goto/back path. Keeping both
