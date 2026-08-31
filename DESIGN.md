@@ -321,7 +321,7 @@ repo can prove they broke nothing.
 | `domo-mcp` | exec | stdio↔socket MCP shim for Claude Code |
 | `DomoApp` | exec | AppKit shell: status item, NSAlert approvals, Goals/Rules/Audit window, agent spin-up |
 
-## 11a. Local browsing (Camoufox + local vault)
+## 11a. Local browsing (Camoufox + self-hosted vault)
 
 The device can host a real anti-detection Firefox (Camoufox, driven by
 Playwright through a vendored Python server — `vendor/browser-server/`,
@@ -419,22 +419,19 @@ and asks for no approval; it is recorded in the owner's audit log as
 `credential_metadata` with `source: "vault"`. There was a second, session-scoped
 `access: "metadata"` capability whose grant nothing consumed; it was removed
 rather than wired, so inventory is ungated in one place instead of being
-documented as gated in two. The broker runs **in-process**
-(`brokerCore.ts` over the local vault store; the classifier that decides what
-each item offers and conceals is `credentialClassify.ts`, a faithful port of
-the Python broker this replaced, still asserted against
-`fixtures/maskClassification.json`). `fill_secret`
+documented as gated in two. The vendored
+`seed_vault_broker` CLI wraps the bundled `bw` (an agent account scoped to one
+vault's collections). `fill_secret`
 is the strongest gate, in order: item ∈ approved set → the selector is located
 to its owning frame → the frame's origin ∈ session scope → **a fill whose
 device-observed destination matches the bundled v1 bank registry additionally
 requires a separate, single-use owner payment approval, consumed from plow's
 `POST /v1/payment-approvals/consume`; the release proceeds ONLY when that
 returns `approved`, and any other answer — not approved, a non-2xx, an
-unreachable service, or no client wired — blocks fail-closed** → the broker's
-`getField` against the **device-observed** frame URL (its own item/site check
-applies, by label-suffix host match — no PSL, same rule as everywhere else in
-this repo; credit cards deliberately pass it — they are meant for any
-merchant) → a frame-targeted fill → the value is dropped. Secret
+unreachable service, or no client wired — blocks fail-closed** → `seed-vault-broker
+get-field` against the **device-observed** frame URL (its own eTLD+1 item/site
+check applies; credit cards deliberately pass the broker's own check — they are
+meant for any merchant) → a frame-targeted fill → the value is dropped. Secret
 values never traverse MCP, never appear in the results these tools return, and
 never appear in either audit log. **Scope of that guarantee:** it covers what
 `plow_vault` and `fill_secret` hand back, and — through masking (§11a-ii) — what
@@ -522,43 +519,10 @@ server + fake `op` fixtures make the whole flow CI-testable without Python,
 and `just test-browser` runs the real browser against a local checkout
 fixture site.
 
-### 11a-i. The vault's key lives in the Keychain, and its identity is frozen
+### 11a-i. The vault's Keychain identity is frozen, and it is not the app's name
 
-(Mechanical reference — formats, providers, flows, audit lines — in
-[docs/VAULT.md](docs/VAULT.md); this section keeps the decisions and their
-history.)
-
-The vault is a local encrypted store: items in `items.json` (every field a
-Bitwarden-format EncString — the format outlived the Bitwarden removal because
-it is sound, already frozen by tests, and keeping it made migration a verbatim
-ciphertext copy),
-and one 64-byte master key rooted in the macOS Keychain via `vaultKeyStore.ts`.
-There is no vault server, no bundled `bw`, no web vault and no vault account
-any more; ~470 MB of payload left the app with them. Three providers can hold
-the key, chosen once at write time and recorded in the key blob:
-
-1. **SecItem + access group** (`@domo/native-keychain`, group
-   `3559PD337Z.co.plow.vault`, service `co.plow.vault` — both frozen literals)
-   — the packaged, signed app. The access group, not the bundle id, is what
-   the item is keyed to, so a rename or bundle-id change cannot orphan a key.
-   Chosen only when the entitlement is real (packaged builds; the probe falls
-   through otherwise).
-2. **`safeStorage` under the frozen identity** — `just app`: the stock
-   Electron binary has no entitlement, and safeStorage's Keychain item is at
-   least ACL-bound to the binary.
-3. **A 0600 key file** — tests and anything with neither. Hermetic by
-   construction; the file provider is what vitest exercises.
-
-Migration from the Bitwarden vault (`vaultMigrate.ts`, permanent by decision):
-the new master key IS the old account's user key, so cipher rows are copied
-out of the old SQLite verbatim — no plaintext moment, crash-safe (the item
-file is the single atomic write that completes it), old files left in place as
-the owner's backup. That migration — and the dev-mode key
-provider — is why the frozen `safeStorage` identity below still matters: it is
-what decrypts the old account file, and what wraps a `just app` vault's key.
-
-The rest of this section is the history of that identity, kept because the
-relay credential still encrypts under it today. Three facts about
+The vault account's password is stored as ciphertext on disk and the key lives
+in the macOS Keychain, via Electron's `safeStorage`. Three facts about
 `safeStorage` decide the design, and all three were learned by breaking it:
 
 1. It has no key of its own. On macOS it looks up a Keychain item named
@@ -606,20 +570,21 @@ Two rejected alternatives, recorded so they are not re-proposed:
   the only copy of their credentials.
 
 There is no recovery for a genuinely lost key, and the UI must not invent one:
-ciphertext without its key is unreadable, here or anywhere. The copy says so —
-the items are on disk, nothing is deleted, and if the key is gone the vault
+an account that cannot be decrypted cannot be signed in with, here or anywhere,
+because the password it would need is the thing that is unreadable. The copy says
+so — the account is on disk, nothing is deleted, and if the key is gone the vault
 has to be set up again.
 
-The owner reaches the vault's contents in the app and nowhere else:
-`LocalVault` reads and writes the store directly, so there is no CLI process,
-no local port and no session key on disk. The tab shows the locked state from
-`readCredentialsState()` and nothing else about the key.
+The owner reaches the vault's CONTENTS in the app, never on the vault's own page:
+`VaultClient` signs in with the account this Mac already holds and reads and
+writes items over the vault's API, so there is no CLI process, no local port and
+no session key on disk. The tab shows the locked state from
+`readCredentialsState()` and nothing else about the account.
 
-A locked vault must also never be reported as an empty one.
-`readCredentialsState()` distinguishes empty / locked / ok — for the key blob,
-and for a legacy account still awaiting migration — because a Keychain reset
-or a Mac restored from backup lands in exactly this state, and an "empty"
-answer is what quietly mints a fresh vault beside the owner's real one.
+A locked vault must also never be reported as an empty one. `readState()`
+distinguishes empty / locked / ok, because a Keychain reset or a Mac restored
+from backup lands in exactly this state, and "The vault has not started yet"
+sends people to debug a server that is running fine.
 
 ### 11a-ii. A filled secret is masked from what the agent sees
 
@@ -629,8 +594,7 @@ answer is what quietly mints a fresh vault beside the owner's real one.
 number and CVC plainly legible in a returned screenshot.
 
 **A field is masked from the agent if and only if the vault itself masks it.**
-The classification is Bitwarden's (ported verbatim into
-`credentialClassify.ts`), and thereby the human's who made the item —
+The classification is Bitwarden's, and thereby the human's who made the item —
 a password, a card number and code, an ssn, a Hidden custom field. Addresses
 and names stay legible on purpose: the agent has to be able to check a shipping
 address before submitting a form. One deliberate exception: a generated TOTP

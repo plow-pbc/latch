@@ -1,11 +1,10 @@
 #!/usr/bin/env node
 /**
- * Fake credential broker for unit tests: speaks the subprocess CLI surface
+ * Fake seed-vault-broker for unit tests: speaks the same CLI surface
  * (whats-here / describe-item / get-field / status), backed by a JSON vault
- * file. Production runs the broker in-process (brokerCore.ts, whose classifier
- * is asserted against the shared table by maskClassification.test.ts); this
- * fake keeps the subprocess seam alive so the fill path above the broker can
- * be driven with scripted answers.
+ * file. The REAL seed_vault_broker is exercised by e2e/fixtures/classifyProbe.py
+ * against the same table; this fake exists so the TS layer above it can be
+ * tested without Python.
  *
  * It holds NO policy. Which fields an item has, and which of them the vault
  * conceals, are stated outright in the fixture — this used to re-derive them

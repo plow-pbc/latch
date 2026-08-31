@@ -9,13 +9,5 @@
   <true/>
   <key>com.apple.security.automation.apple-events</key>
   <true/>
-  <!-- The vault's master key lives in the data-protection Keychain under this
-       access group (vaultKeyStore.ts). The group — not the bundle id — is what
-       the item is keyed to, so the app can be renamed or re-identified without
-       orphaning anyone's vault. Team prefix required by macOS. -->
-  <key>keychain-access-groups</key>
-  <array>
-    <string>3559PD337Z.co.plow.vault</string>
-  </array>
 </dict>
 </plist>

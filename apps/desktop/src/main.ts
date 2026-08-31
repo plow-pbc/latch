@@ -38,7 +38,7 @@ import { createDomoMcpServer, DomoMcpServer } from "@domo/mcp-server";
 import { RelayClient } from "@domo/relay-client";
 import { approvalViewModel, auditActivities, CredentialTitles } from "./viewModel.js";
 import { probeFullDiskAccess } from "./fullDiskAccess.js";
-import { appBundleName, appBundlePath, decodeTileImage } from "./permissionFlow.js";
+import { appBundleName, appBundlePath } from "./permissionFlow.js";
 import { FdaGrantFlow } from "./fdaGrantFlow.js";
 import { launchAtLoginState, LoginItemApi, setLaunchAtLogin } from "./loginItem.js";
 import { KeepAwake } from "./keepAwake.js";
@@ -98,26 +98,6 @@ if (migrateLegacyHome(instance.home)) {
 app.setName(instance.vaultIdentity);
 app.setPath("userData", instance.electronData);
 app.setPath("sessionData", instance.electronData);
-
-// ONE app per home. The lock is keyed on userData — which the per-branch
-// homes above make exactly the data boundary — so two checkouts still run
-// side by side, while a second launch of the SAME instance (`open -n`, the
-// raw binary) hands its argv to the first and exits before it can touch
-// anything. This is what makes the vault store's read-modify-rename, the key
-// mint, the approvals directory and the audit log single-writer facts rather
-// than hopes; it is also why a second dial against the one relay credential
-// (which the relay refuses anyway) can no longer happen. Held by the OS for
-// the life of the process: a crash releases it, nothing stale to clean up.
-if (!app.requestSingleInstanceLock()) {
-  console.log("[app] another instance already runs for this home; handing over and exiting");
-  app.exit(0);
-}
-app.on("second-instance", () => {
-  // Whoever launched the second copy wanted the app on screen — but WHICH
-  // window is the gate's decision alone (windowGate.ts: a signed-out Mac gets
-  // setup, never the main window beside it).
-  gate.sync();
-});
 
 const dirname = path.dirname(fileURLToPath(import.meta.url));
 const rendererDir = path.join(dirname, "renderer");
@@ -774,20 +754,25 @@ ipcMain.handle("settings:setAgentPurpose", async (_e, purpose: string) =>
  */
 ipcMain.handle("settings:getInference", async () => readInference(home));
 // The vault's contents, for the owner's own eyes and hands. This is the whole
-// point of the tab: there is no other way in any more — the vault is a local
-// encrypted store whose key lives in the Keychain, and this app is its client.
+// point of the tab: the vault's web page is the only other way in, and reaching
+// it means a browser warning about a certificate the app issued to itself.
 ipcMain.handle("vault:items", async () => {
   const vault = device?.vaultClient;
-  const dir = device?.vaultDir;
-  if (!vault || !dir) return null;
+  const server = device?.vaultServer;
+  if (!vault || !server) return null;
   // Locked and empty are different facts and the screen says different words.
-  // A key (or a legacy account awaiting migration) that is on disk and will
-  // not open must never be reported as a vault that has not started.
-  const state = readCredentialsState(dir);
-  if (state.status === "locked") return { locked: true, reason: state.reason };
+  // An account that is on disk and will not open must never be reported as a
+  // vault that has not started — that sent people to debug a running server.
+  // Read BEFORE starting: a locked account is the very case where the vault's
+  // own bootstrap cannot finish, and the explanation has to survive that.
+  const locked = readCredentialsState(server.dataDir);
+  if (locked.status === "locked") return { locked: true, reason: locked.reason };
+  // Started, not merely launched: the account is written by the vault's first
+  // run, so reading its state before that finishes reports an empty vault.
+  await server.start();
+  if (readCredentialsState(server.dataDir).status !== "ok") return null;
   // Every type, not only logins: a card and a note are things the owner keeps
-  // here too, and the tab is where they are kept. An empty state is fine —
-  // list() mints the vault's key on first use.
+  // here too, and the tab is where they are kept.
   return vault.list();
 });
 
@@ -920,49 +905,6 @@ ipcMain.handle("fullDisk:dragInfo", async () => {
   if (!target) return null;
   return { name: appBundleName(target.bundle), iconDataUrl: target.iconDataUrl };
 });
-// The panel's rasterization of its own drag tile (display data flowing the
-// other way). Held so the drag image under the cursor is exactly the tile the
-// panel showed; the bare app icon remains the fallback when no (valid) raster
-// has arrived. Latest wins — the renderer re-sends when the panel resizes,
-// and again on every pointerdown, padded so Electron's center-on-cursor
-// placement puts the grab point back under the pointer (dragImage.js).
-let fdaTileDragIcon: Electron.NativeImage | null = null;
-ipcMain.on("fullDisk:tileImage", (_e, dataUrl: unknown, scale: unknown) => {
-  const decoded = decodeTileImage(dataUrl, scale);
-  if (decoded) {
-    fdaTileDragIcon = nativeImage.createFromBuffer(decoded.png, {
-      scaleFactor: decoded.scaleFactor,
-    });
-  }
-});
-// When the drag session has actually ended. startDrag on macOS begins the
-// session and RETURNS IMMEDIATELY (beginDraggingSession under the hood), so
-// the end must be watched, not awaited: the helper's --drag-end mode blocks
-// until the left mouse button comes back up. The slide-back delay lets a
-// cancelled drag's image finish animating home before the tile reappears
-// under it; on a successful drop the image is already gone and the delay is
-// just unnoticeable. Without the helper the fallback timer restores things
-// on a clock — cosmetic at worst, since the payload rode out at startDrag.
-const DRAG_SLIDE_BACK_MS = 350;
-const DRAG_END_FALLBACK_MS = 4000;
-function watchDragSessionEnd(onEnd: () => void): void {
-  let done = false;
-  const finish = (delay: number) => {
-    if (done) return;
-    done = true;
-    setTimeout(onEnd, delay);
-  };
-  try {
-    const watcher = spawn(fdaHelperPath, ["--drag-end"], {
-      stdio: ["ignore", "pipe", "ignore"],
-    });
-    watcher.stdout!.on("data", () => finish(DRAG_SLIDE_BACK_MS));
-    watcher.on("exit", () => finish(DRAG_SLIDE_BACK_MS));
-    watcher.on("error", () => finish(DRAG_END_FALLBACK_MS));
-  } catch {
-    finish(DRAG_END_FALLBACK_MS);
-  }
-}
 // The native drag: the bundle as payload, started on the gesturing window's
 // webContents. Dropping it on the Full Disk Access list is the same grant
 // gesture as the pane's "+" button.
@@ -970,26 +912,17 @@ ipcMain.on("fullDisk:dragStart", (e) => {
   const target = fdaDragTarget;
   if (!target) return;
   // Dim the panel while the drag rides over System Settings, the way
-  // PermissionFlow's panel does. The tile itself is hidden by the renderer
-  // for the same stretch — the drag image is that very tile, so showing both
-  // would double it. All of it holds until the session actually ends: the
-  // dim, the hidden tile, and the mid-gesture visibility hold (released any
-  // earlier, a frontmost flicker could hide the drag source and abort the
-  // session).
+  // PermissionFlow's panel does; restored when the drag session ends.
   const win = BrowserWindow.fromWebContents(e.sender);
-  const restore = () => {
-    if (win && !win.isDestroyed()) win.setOpacity(1);
-    if (!e.sender.isDestroyed()) e.sender.send("fullDisk:dragEnd");
-    fdaGrantFlow.setHold(false);
-  };
   win?.setOpacity(0.72);
   try {
-    e.sender.startDrag({ file: target.bundle, icon: fdaTileDragIcon ?? target.dragIcon });
-  } catch {
-    restore(); // no session began; nothing to watch
-    return;
+    e.sender.startDrag({ file: target.bundle, icon: target.dragIcon });
+  } finally {
+    if (win && !win.isDestroyed()) win.setOpacity(1);
+    // The drag session is over; the pointerdown that began it took the
+    // visibility hold, so the end of the gesture releases it.
+    fdaGrantFlow.setHold(false);
   }
-  watchDragSessionEnd(restore);
 });
 // The panel renderer's mid-gesture guard (see fdaGrantFlow.holdVisible).
 ipcMain.on("fullDisk:panelHold", (_e, on: boolean) => fdaGrantFlow.setHold(on === true));
@@ -1323,15 +1256,14 @@ app.whenReady().then(async () => {
       }
     };
   }
-  // Say, once, whether this Mac can open its vault. It is the one fact about
-  // the vault that a log is good at: no secret, no noise, and it turns "the
-  // vault screen looks wrong" into a one-line answer. `locked` means the key
-  // (or a legacy account's Keychain identity) is not openable here — see
-  // vaultKeyStore.ts and vaultKeychain.ts.
-  if (device.vaultDir) {
-    const vaultState = readCredentialsState(device.vaultDir);
+  // Say, once, whether this Mac can open its vault account. It is the one fact
+  // about the vault that a log is good at: no secret, no noise, and it turns
+  // "the vault screen looks wrong" into a one-line answer. `locked` means the
+  // Keychain key for the frozen identity is not here — see vaultKeychain.ts.
+  if (device.vaultServer) {
+    const vaultState = readCredentialsState(device.vaultServer.dataDir);
     console.log(
-      `[vault] key: ${vaultState.status}` +
+      `[vault] account: ${vaultState.status}` +
         (vaultState.status === "locked" ? ` (${vaultState.reason})` : ""),
     );
   }

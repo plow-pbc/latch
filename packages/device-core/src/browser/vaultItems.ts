@@ -80,11 +80,7 @@ export interface Cipher {
 export interface VaultItemSummary {
   id: string;
   title: string;
-  /** One of the four editable types, or "unsupported": a shape migrated from
-   * the old vault (an SSH key, say) that this app's forms cannot edit. Listed
-   * rather than hidden or fatal — hidden reads as a lost item, and one such
-   * item must never take the whole vault down with it. */
-  type: VaultItemType | "unsupported";
+  type: VaultItemType;
   /** One line of context: the username, or the card's brand, or the name on an identity. */
   subtitle: string;
   urls: string[];
@@ -169,33 +165,21 @@ function subtitleOf(type: number, fields: Record<string, string>): string {
 /**
  * The type this item is, or a refusal.
  *
- * The enum reserves 5-8 (SSH key, bank account, licence, passport), and a
- * vault migrated from the old server can hold a 5. Treating one of those as a
- * login would show a form of empty login fields and accept a save that
- * silently went nowhere — the item's real body is not the one being written.
+ * The vault's enum reserves 5-8 (SSH key, bank account, licence, passport) and
+ * its web client can create them. Treating one of those as a login would show
+ * a form of empty login fields and accept a save that silently went nowhere —
+ * the item's real body is not the one being written.
  */
 function typeOf(cipher: Cipher): number {
   const type = cipher.type ?? 1;
   if (!TYPE_NAME[type]) {
-    throw new Error(`this app cannot edit item type ${type}; it can only be deleted here`);
+    throw new Error(`this app cannot show item type ${type}; use the vault's own page for it`);
   }
   return type;
 }
 
 export function decryptSummary(cipher: Cipher, account: VaultKey): VaultItemSummary {
   const key = itemKey(cipher, account);
-  if (!TYPE_NAME[cipher.type ?? 1]) {
-    // A shape the forms cannot edit still gets a row: its name decrypts like
-    // any other (the name is outside the typed body), and one such item must
-    // not make the whole listing fail — the only other way in is gone.
-    return {
-      id: String(cipher.id ?? ""),
-      title: dec(cipher.name, key),
-      type: "unsupported",
-      subtitle: "",
-      urls: [],
-    };
-  }
   const type = typeOf(cipher);
   const raw = body(cipher);
   const shown: Record<string, string> = {};
@@ -294,7 +278,7 @@ export function encryptCipher(
     // travels as a blank holding its place. A row is therefore the entry that
     // sits at its own position — which is only sound because a save built on a
     // version of the item the vault has since replaced never gets here:
-    // staleEdit refuses it first. See LocalVault.save.
+    // staleEdit refuses it first. See VaultClient.save.
     const previous = existing?.login?.uris ?? [];
     delete out.uris;
     let uris = previous;
@@ -322,73 +306,6 @@ export function encryptCipher(
     cipher.identity = out;
   }
   return cipher;
-}
-
-/**
- * One item in the clear, in the wire shape the Bitwarden CLI used to print —
- * which is the shape the credential classifier (credentialClassify.ts) was
- * written against and the mask-classification fixture freezes. Total over
- * item types on purpose, unlike decryptItem: the broker must be able to LOOK
- * at anything a migrated vault holds (an SSH key made in the old web vault,
- * say), even though this app's own forms refuse to edit it.
- */
-export interface RawItem {
-  id: string;
-  type: number;
-  name: string;
-  notes?: string;
-  login?: {
-    username?: string;
-    password?: string;
-    totp?: string;
-    uris?: Array<{ uri: string }>;
-  };
-  card?: Record<string, string>;
-  identity?: Record<string, string>;
-  sshKey?: Record<string, string>;
-  fields?: Array<{ name?: string; value?: string; type?: number; linkedId?: number | null }>;
-}
-
-function decryptRecord(raw: Record<string, string | null> | null | undefined, key: VaultKey): Record<string, string> | undefined {
-  if (!raw) return undefined;
-  const out: Record<string, string> = {};
-  for (const [k, v] of Object.entries(raw)) {
-    if (typeof v === "string" && v) out[k] = dec(v, key);
-  }
-  return out;
-}
-
-export function decryptRaw(cipher: Cipher, account: VaultKey): RawItem {
-  const key = itemKey(cipher, account);
-  const out: RawItem = {
-    id: String(cipher.id ?? ""),
-    type: cipher.type ?? 1,
-    name: dec(cipher.name, key),
-  };
-  if (cipher.notes) out.notes = dec(cipher.notes, key);
-  if (cipher.login) {
-    out.login = {
-      ...(cipher.login.username ? { username: dec(cipher.login.username, key) } : {}),
-      ...(cipher.login.password ? { password: dec(cipher.login.password, key) } : {}),
-      ...(cipher.login.totp ? { totp: dec(cipher.login.totp, key) } : {}),
-      uris: (cipher.login.uris ?? [])
-        .map((u) => ({ uri: dec(u?.uri, key) }))
-        .filter((u) => u.uri),
-    };
-  }
-  out.card = decryptRecord(cipher.card, key);
-  out.identity = decryptRecord(cipher.identity, key);
-  out.sshKey = decryptRecord(cipher.sshKey as Record<string, string | null> | null | undefined, key);
-  const customs = cipher.fields as Array<{ name?: string | null; value?: string | null; type?: number; linkedId?: number | null }> | null | undefined;
-  if (Array.isArray(customs)) {
-    out.fields = customs.map((f) => ({
-      ...(f.name ? { name: dec(f.name, key) } : {}),
-      ...(typeof f.value === "string" && f.value !== "" ? { value: dec(f.value, key) } : {}),
-      ...(typeof f.type === "number" ? { type: f.type } : {}),
-      ...(f.linkedId !== undefined ? { linkedId: f.linkedId } : {}),
-    }));
-  }
-  return out;
 }
 
 /**

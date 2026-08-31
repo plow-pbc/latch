@@ -18,15 +18,11 @@ npm workspaces. Libraries in `packages/`, executables/apps in `apps/`:
 - `packages/device-core` (`@domo/device-core`) — `DeviceAgent`, `PolicyEngine`,
   `FileOps`, `Executor` (+ generated seatbelt profile), `SkillRegistry`,
   `AuditLog`, identity/key store; `src/browser/` is the local
-  browsing subsystem (session grants, origin enforcement, credential gate,
-  and the vault: items in a local EncString store, master key in the macOS
-  Keychain — DESIGN.md §11a/§11a-i). `vendor/browser-server/` is the vendored
-  Python Camoufox server (pins in `runtime.lock.json`;
+  browsing subsystem (session grants, origin enforcement, credential gate —
+  DESIGN.md §11a). `vendor/browser-server/` is the vendored Python
+  Camoufox server + 1Password broker (pins in `runtime.lock.json`;
   `just fetch-browser-runtime`/`fetch-browser` build the gitignored runtime;
   tests use fake servers and need no Python).
-- `packages/native-keychain` (`@domo/native-keychain`) — one tiny N-API addon:
-  a generic password in the data-protection Keychain under our access group.
-  Optional at build time; the key store falls back without it.
 - `packages/mcp-server` (`@domo/mcp-server`) — the MCP server this Mac serves
   (revision 2026-07-28): the reduced tool surface (including the `plow_browser_*`
   tools), capability construction from tool arguments, and the deferred-result

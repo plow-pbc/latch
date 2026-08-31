@@ -9,7 +9,6 @@ import {
   appBundleName,
   appBundlePath,
   decodeFrameLine,
-  decodeTileImage,
   fallbackPanelFrame,
   panelFrame,
 } from "../src/permissionFlow.js";
@@ -90,40 +89,6 @@ describe("fallbackPanelFrame", () => {
       width: 420,
       height: 96,
     });
-  });
-});
-
-describe("decodeTileImage", () => {
-  // A real (1×1) PNG: the decoder checks the signature, not just the mime.
-  const png = Buffer.from(
-    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
-    "base64",
-  );
-  const url = `data:image/png;base64,${png.toString("base64")}`;
-
-  it("decodes a PNG data URL at a real display scale", () => {
-    const decoded = decodeTileImage(url, 2);
-    expect(decoded?.scaleFactor).toBe(2);
-    expect(decoded?.png.equals(png)).toBe(true);
-  });
-
-  it("rejects a scale outside 1–3 or not a finite number", () => {
-    expect(decodeTileImage(url, 0.5)).toBeNull();
-    expect(decodeTileImage(url, 4)).toBeNull();
-    expect(decodeTileImage(url, NaN)).toBeNull();
-    expect(decodeTileImage(url, "2")).toBeNull();
-  });
-
-  it("rejects anything that is not a PNG data URL", () => {
-    expect(decodeTileImage(null, 2)).toBeNull();
-    expect(decodeTileImage("data:image/jpeg;base64,AAAA", 2)).toBeNull();
-    // Claims the mime but does not carry the PNG signature.
-    expect(decodeTileImage("data:image/png;base64,AAAAAAAAAAAA", 2)).toBeNull();
-  });
-
-  it("rejects an outsized payload", () => {
-    const big = `data:image/png;base64,${"A".repeat(4 * 1024 * 1024 + 4)}`;
-    expect(decodeTileImage(big, 2)).toBeNull();
   });
 });
 

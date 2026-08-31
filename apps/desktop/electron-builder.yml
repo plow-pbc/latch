@@ -91,6 +91,12 @@ extraResources:
   - from: ../../vendor/providers
     to: providers
     filter: ["**/*", "!*/VERSION"]
+  - from: ../../vendor/vault-cli
+    to: browser-runtime/vault-cli
+    filter: ["**/*", "!*/.sha256"]
+  - from: ../../vendor/vault-server
+    to: browser-runtime/vault-server
+    filter: ["**/*", "!*/.commit", "!.web-vault.sha256"]
   # The Full Disk Access flow's window tracker (scripts/build-native.mjs, a
   # `just build` step). Lipo-fused universal like the python runtime, so both
   # electron-builder arch passes carry identical bytes and the merge copies it
@@ -127,13 +133,16 @@ mac:
   signIgnore:
     - "browser-runtime/.*"
   # The Python runtime and the fused Camoufox tree are universal2, so the merge
-  # passes them through untouched. Vendored provider CLIs are not: two THIN
-  # per-arch binaries copied identically into both electron slices, so the
-  # merger would try to lipo a thin binary against its identical twin and fail.
-  # This pattern passes them through instead. The native-keychain addon is
-  # built universal2 (binding.gyp forces both arches) but is byte-identical in
-  # both slices, which the merger also refuses without this exemption.
-  x64ArchFiles: "**/{providers,node_modules/@domo/native-keychain}/**"
+  # passes them through untouched. The vault and its CLI are not: each ships as
+  # two THIN per-arch trees (<payload>/arm64, <payload>/x86_64) copied
+  # identically into both electron slices, and the merger would try to lipo a
+  # thin binary against its identical twin and fail. This pattern passes those
+  # two through instead. Fusing them the way Camoufox is fused is issue #15.
+  # Vendored provider CLIs are the same shape as the vault payloads and need the
+  # same treatment: two THIN per-arch binaries copied identically into both
+  # electron slices, so the merger would lipo a thin binary against its
+  # identical twin and fail. One `providers` alternation covers all of them.
+  x64ArchFiles: "**/{browser-runtime/{vault-cli,vault-server},providers}/**"
   notarize: true
   extendInfo:
     NSAppleEventsUsageDescription: "Plow Latch sends the Messages and automation commands you approve on this Mac."

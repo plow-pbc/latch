@@ -1559,16 +1559,16 @@ app.whenReady().then(async () => {
   // Wait for the settled state, not for any `.empty`: the tab now paints an
   // "Opening the vault…" row in that same slot before it reads, so waiting on
   // the node would snapshot the placeholder and fail every assertion below.
-  await waitFor(win, `document.body.innerText.includes("can't unlock its vault")`, "the vault pane to settle on locked");
+  await waitFor(win, `document.body.innerText.includes("can't unlock its vault account")`, "the vault pane to settle on locked");
   const vaultLocked = await win.webContents.executeJavaScript(`(${() => {
     const text = document.body.innerText;
     return {
-      saysCannotUnlock: text.includes("can't unlock its vault"),
-      doesNotClaimEmpty: !text.includes("has not started yet") && !text.includes("isn't available"),
-      explains: text.includes("The vault's key can't be opened"),
-      // `undecryptable` covers a Keychain key that is gone AND a damaged file.
-      // The copy must not pick one and state it as fact.
-      hedgesTheCause: text.includes("Usually the key") && text.includes("damaged"),
+      saysCannotUnlock: text.includes("can't unlock its vault account"),
+      doesNotClaimEmpty: !text.includes("has not started yet"),
+      explains: text.includes("The account file is present but cannot be opened"),
+      // `undecryptable` covers a wrong key AND a damaged file. The copy must not
+      // pick one and state it as fact.
+      hedgesTheCause: text.includes("Usually that means") && text.includes("damaged"),
       // The copy must NOT promise a recovery that does not exist: an account
       // that cannot be decrypted cannot be signed in with either.
       promisesNoFakeRecovery: !text.includes("Signing in again"),

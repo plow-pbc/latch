@@ -7,7 +7,6 @@
  * screen. These run outside Electron, where `safeStorage` is unavailable, which
  * is itself one of the two locked cases.
  */
-import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -62,59 +61,21 @@ describe("VaultSecretStore.readState", () => {
 });
 
 describe("readCredentialsState", () => {
-  it("carries a locked KEY through to the screen instead of flattening it", () => {
+  it("carries locked through to the screen instead of flattening it", () => {
     const dir = tempDir();
-    // A safeStorage-wrapped key blob outside Electron: ciphertext with no key
-    // to open it — the modern version of the rename incident's shape.
-    fs.writeFileSync(path.join(dir, "vault-key.enc"), Buffer.concat([Buffer.from("KENC1"), Buffer.from("x")]));
+    fs.writeFileSync(path.join(dir, "vault-account.enc"), Buffer.concat([Buffer.from("ENC1"), Buffer.from("x")]));
     expect(readCredentialsState(dir)).toEqual({
       status: "locked",
       reason: "no-storage",
     });
   });
 
-  it("says ok for a readable key — and hands over nothing else", () => {
+  it("says ok when it can read the account — and hands over nothing else", () => {
     const dir = tempDir();
-    fs.writeFileSync(path.join(dir, "vault-key.enc"), "KRAW1" + "ab".repeat(64));
-    expect(readCredentialsState(dir)).toEqual({ status: "ok" });
-  });
-
-  it("reports a legacy vault awaiting migration by its ACCOUNT's state", () => {
-    const dir = tempDir();
-    // Old Bitwarden vault: database + account file, no new-store key yet.
-    fs.writeFileSync(path.join(dir, "db.sqlite3"), "");
-    fs.writeFileSync(path.join(dir, "vault-account.enc"), Buffer.concat([Buffer.from("ENC1"), Buffer.from("x")]));
-    // Its account cannot be opened here → locked, never "empty": empty is what
-    // quietly mints a fresh vault beside the owner's real one.
-    expect(readCredentialsState(dir)).toEqual({ status: "locked", reason: "no-storage" });
-
     new VaultSecretStore(dir).write({ email: "a@local", password: "pw" });
+    // The state is a fact about the account, never the account: the only code
+    // that needs the password reads the store itself.
     expect(readCredentialsState(dir)).toEqual({ status: "ok" });
-  });
-
-  it("reports a legacy database with NO account file as locked — the items exist", () => {
-    const dir = tempDir();
-    // A real database with a real account row: the evidence rule wants a
-    // user in it, not merely the file (the old server created the file at
-    // startup, before any account existed).
-    execFileSync("/usr/bin/sqlite3", [path.join(dir, "db.sqlite3")], {
-      input: "CREATE TABLE users (uuid TEXT, akey TEXT); INSERT INTO users VALUES ('u1', 'k');",
-    });
-    expect(readCredentialsState(dir)).toEqual({ status: "locked", reason: "undecryptable" });
-  });
-
-  it("reports an empty pre-account database as a fresh vault, not locked", () => {
-    const dir = tempDir();
-    execFileSync("/usr/bin/sqlite3", [path.join(dir, "db.sqlite3")], {
-      input: "CREATE TABLE users (uuid TEXT, akey TEXT);",
-    });
-    expect(readCredentialsState(dir)).toEqual({ status: "empty" });
-  });
-
-  it("ignores a stray legacy account with no database — nothing is migratable from it", () => {
-    const dir = tempDir();
-    fs.writeFileSync(path.join(dir, "vault-account.enc"), Buffer.concat([Buffer.from("ENC1"), Buffer.from("x")]));
-    expect(readCredentialsState(dir)).toEqual({ status: "empty" });
   });
 
   it("says empty when there is genuinely nothing", () => {

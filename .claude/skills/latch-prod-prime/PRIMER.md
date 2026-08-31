@@ -11,6 +11,7 @@ You are working against the production Plow Latch install on this Mac (`/Applica
 **App bundle** — `/Applications/Plow Latch.app`:
 
 - Running processes match `pgrep -f "Plow Latch.app/Contents/MacOS"`.
+- A `vaultwarden` child runs from `Contents/Resources/browser-runtime/vault-server/`.
 
 **App support root** — `~/Library/Application Support/Plow-Latch/`:
 

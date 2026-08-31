@@ -1,14 +1,11 @@
 /**
- * Where the OLD vault account's password lives — kept for migration.
+ * Where the one vault account's password lives.
  *
- * The Bitwarden-based vault stored one account whose password unwrapped the
- * user key; this reads it so vaultMigrate.ts can carry that key into the new
- * store. Inside the app that is Electron's secure storage, which hands the
- * encryption key to the OS (Keychain on macOS, under the frozen identity in
- * vaultKeychain.ts) — so the password on disk is ciphertext. Outside Electron
- * (tests) it falls back to a file only the user can read, because there is
- * nothing better available there. Nothing writes a NEW account any more;
- * `write` survives for the tests that build legacy vaults to migrate.
+ * Inside the app that is Electron's secure storage, which on every platform
+ * hands the encryption key to the OS (Keychain on macOS) — so the password on
+ * disk is ciphertext and we never write Keychain entries of our own. Outside
+ * Electron (tests, the headless runner) it falls back to a file only the user
+ * can read, because there is nothing better available there.
  */
 import fs from "node:fs";
 import path from "node:path";
@@ -29,10 +26,8 @@ export interface VaultAccount {
   pending?: { email: string; password: string };
 }
 
-/** Electron's safeStorage when we are running inside the app, else null.
- * Exported for the vault key store, which wraps the master key with the same
- * storage (and the same frozen identity — see vaultKeychain.ts). */
-export function safeStorage(): { isEncryptionAvailable(): boolean; encryptString(s: string): Buffer; decryptString(b: Buffer): string } | null {
+/** Electron's safeStorage when we are running inside the app, else null. */
+function safeStorage(): { isEncryptionAvailable(): boolean; encryptString(s: string): Buffer; decryptString(b: Buffer): string } | null {
   try {
     const require_ = createRequire(import.meta.url);
     const electron = require_("electron") as { safeStorage?: ReturnType<typeof safeStorage> };
@@ -79,9 +74,12 @@ export class VaultSecretStore {
   }
 
   /**
-   * The account, or null when there is not one we can read. Anything wanting
-   * to TELL locked and empty apart asks `readState` — migration does, because
-   * a locked legacy account must halt it rather than read as "nothing there".
+   * The account, or null when there is not one we can read.
+   *
+   * Kept exactly as it was, because callers depend on the conservative
+   * reading: `ensureVaultAccount` treats null as "no usable account" and then
+   * refuses to mint a second one when the `account-created` marker is present.
+   * Anything wanting to TELL the two apart asks `readState`.
    */
   read(): VaultAccount | null {
     const state = this.readState();

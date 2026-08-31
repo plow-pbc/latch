@@ -202,21 +202,13 @@ describe("an edit", () => {
 });
 
 describe("an item this app cannot hold", () => {
-  it("is refused as a form, and listed as an inert row rather than failing the vault", () => {
-    // The enum reserves 5-8, and a migrated vault can hold a 5; showing one
-    // as a login would take an edit and write it nowhere. But the LISTING
-    // must survive it: the only other way into the vault is gone, so one such
-    // item failing the whole list would read as a lost vault.
+  it("is refused rather than shown as an empty login", () => {
+    // The vault's enum reserves 5-8 and its web page can create them; showing
+    // one as a login would take an edit and write it nowhere.
     const sshKey = { ...encryptCipher({ type: "login", name: "server", password: "x", urls: ["https://a.example"] }, null, account), id: "k", type: 5 };
-    expect(() => decryptItem(sshKey, account)).toThrow(/cannot edit item type 5/);
-    expect(() => encryptCipher({ itemId: "k", name: "server" }, sshKey, account)).toThrow(/cannot edit item type 5/);
-    expect(decryptSummary(sshKey, account)).toEqual({
-      id: "k",
-      title: "server", // its name still decrypts; hidden reads as lost
-      type: "unsupported",
-      subtitle: "",
-      urls: [],
-    });
+    expect(() => decryptItem(sshKey, account)).toThrow(/cannot show item type 5/);
+    expect(() => decryptSummary(sshKey, account)).toThrow(/cannot show item type 5/);
+    expect(() => encryptCipher({ itemId: "k", name: "server" }, sshKey, account)).toThrow(/cannot show item type 5/);
   });
 });
 

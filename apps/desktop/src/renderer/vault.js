@@ -556,10 +556,7 @@ export async function vaultConfirmLeave() {
 /** One saved item: her row, and the form it opens into. */
 function vitem(summary, reload) {
   const type = summary.type || "login";
-  // "unsupported": a shape migrated from the old vault that these forms can't
-  // edit. It still gets a row — hidden reads as a lost item — that opens into
-  // an explanation and a delete button instead of a form.
-  const spec = VAULT_TYPES[type] || { icon: "key", label: "Unsupported" };
+  const spec = VAULT_TYPES[type];
   const article = el("article", { class: "vitem", attrs: { "data-type": type } });
 
   const row = el("button", { class: "vrow", attrs: { type: "button" } }, [
@@ -602,34 +599,6 @@ function vitem(summary, reload) {
     article.classList.add("open");
     if (loaded) return;
     loaded = true;
-    if (!VAULT_TYPES[type]) {
-      const del = el("button", { class: "btn danger", attrs: { type: "button" }, text: "Delete" });
-      del.addEventListener("click", async () => {
-        const yes = await vconfirm(
-          "Delete this item?",
-          `"${summary.title || "(untitled)"}" is permanently deleted — there is no trash and no undo. Agents lose it immediately.`,
-          "Delete",
-        );
-        if (!yes) return;
-        try {
-          await vbusy(async () => {
-            await window.domo.vaultDeleteItem(summary.id);
-            release();
-            vtoast("Deleted");
-            await reload();
-          });
-        } catch (err) {
-          vtoast("Could not delete it: " + errText(err));
-        }
-      });
-      inner.replaceChildren(
-        el("p", { class: "use-note", text:
-          "This item was saved by the old vault in a shape this app can't edit (an SSH key, for example). " +
-          "Agents can still be granted it for filling; here it can only be deleted." }),
-        el("div", { class: "row" }, [del]),
-      );
-      return;
-    }
     inner.replaceChildren(el("p", { class: "use-note", text: "Opening…" }));
     try {
       const item = await window.domo.vaultItem(summary.id);
@@ -639,7 +608,7 @@ function vitem(summary, reload) {
       del.addEventListener("click", async () => {
         const yes = await vconfirm(
           "Delete this item?",
-          `"${item.name}" is permanently deleted — there is no trash and no undo. Agents lose it immediately, and anything filled with it stops working.`,
+          `"${item.name}" goes to the vault's trash. Agents lose it immediately, and anything filled with it stops working.`,
           "Delete",
         );
         if (!yes) return;
@@ -841,18 +810,16 @@ export async function renderVault(view, isCurrent = () => true) {
     const locked = !!(items && items.locked);
     pane.replaceChildren(masthead, el("div", { class: "col" }, [
       el("div", { class: "empty", text: locked
-        ? "This Mac can't unlock its vault."
-        : "The vault isn't available in this build." }),
+        ? "This Mac can't unlock its vault account."
+        : "The vault has not started yet." }),
       // No invented recovery, and no asserting a cause the code cannot tell
-      // apart: `undecryptable` is one answer covering a Keychain key that is
-      // gone, a damaged key file, AND an old vault awaiting migration whose
-      // account can't be opened — so the copy leads with what is certain,
-      // names the likely cause as likely, and gives the remedy, which is the
-      // same either way.
+      // apart: `undecryptable` is one `catch` covering a wrong key AND a
+      // damaged file, so the copy leads with what is certain, names the likely
+      // cause as likely, and gives the remedy — the same either way.
       locked
         ? el("p", { class: "use-note", text: items.reason === "no-storage"
-            ? "The vault's key is sealed for the app's secure storage, which this build doesn't have. Nothing is lost; a build with secure storage will open it."
-            : "The vault's key can't be opened. Usually the key is no longer in this Mac's Keychain — after a Keychain reset or a restore from backup — and it can also mean the key file, or an old vault's account file, is damaged or missing. Either way the key can't be recovered, here or anywhere: the vault would have to be set up again. Nothing has been deleted." })
+            ? "The encrypted account is on disk, but this build has no secure storage to open it with. Nothing is lost; a build with secure storage will read it."
+            : "The account file is present but cannot be opened. Usually that means the key is no longer in this Mac's Keychain — after a Keychain reset, a restore from backup, or a change to how the app identifies itself — and it can also mean the file itself is damaged. Either way the password cannot be recovered, here or anywhere: the vault would have to be set up again. Nothing has been deleted." })
         : null,
     ].filter(Boolean)));
     return;

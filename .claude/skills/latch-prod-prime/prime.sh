@@ -193,11 +193,11 @@ probe_client_configs() {
 probe_browser_runtime() {
   local dir="$APP_SUPPORT/device/browser"
   [[ -d "$dir" ]] || { PROBE_EVIDENCE="device/browser missing"; return 1; }
-  local shots vault
-  # The vault is in-process now (items.json + Keychain key) — no server child.
-  if [[ -f "$dir/vault/items.json" ]]; then vault="vault store present"; else vault="vault store not yet created"; fi
+  local vw_pid vw shots
+  vw_pid=$(pgrep -f "browser-runtime/vault-server" | head -1)
+  if [[ -n "$vw_pid" ]]; then vw="vaultwarden PID $vw_pid"; else vw="vaultwarden not running"; fi
   shots=$(find "$dir/screenshots" -type f 2>/dev/null | wc -l | tr -d ' ')
-  PROBE_EVIDENCE="present · $vault · $shots screenshots"
+  PROBE_EVIDENCE="present · $vw · $shots screenshots"
   return 0
 }
 

@@ -230,15 +230,18 @@ describe("AuditLog", () => {
 });
 
 describe("shutting the machine down", () => {
-  it("surfaces a browser-cleanup failure — there is no vault process left to stop", async () => {
-    // The vault used to run as a detached child that shutdown had to stop even
-    // when browser cleanup threw. It is a file and a Keychain item now, so
-    // shutdown's only job here is to close sessions and report honestly.
+  it("stops the vault even when the browser cleanup fails", async () => {
+    // The vault runs as a detached child: it survives the app unless it is
+    // told to stop. A close that throws — a full disk on the audit append —
+    // used to skip that line and leave the vault serving after the app quit.
     const device = new DeviceAgent(tempDir(), "Test Mac", new HeadlessPolicy({ intent: "allow_once" }));
+    let stopped = false;
     Object.assign(device, {
       browserSessions: { closeAll: () => Promise.reject(new Error("audit log is full")) },
+      vaultServer: { stop: () => { stopped = true; } },
     });
 
     await expect(device.shutdown()).rejects.toThrow("audit log is full");
+    expect(stopped).toBe(true);
   });
 });
