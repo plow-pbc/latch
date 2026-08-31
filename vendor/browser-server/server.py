@@ -90,11 +90,14 @@ def _origin(url):
 # instead when the agent knows the page is slow; the device clamps it.
 DEFAULT_ACTION_TIMEOUT_MS = 3000
 
-# `page.evaluate()` has no timeout of its own. Before the best-effort document
-# check sends script into a page, give an unresolved navigation only this long
-# to settle. Added to the longest action below, this still fits inside the
-# device's 15-second backstop.
+# `page.evaluate()` has no timeout of its own. The best-effort document check
+# uses driver-timed wait_for_function calls instead, split across this one
+# budget so even a page the driver cannot evaluate cannot park an action.
 DOCUMENT_CHECK_TIMEOUT_MS = 1000
+
+# A navigation plus its settle is the whole timed goto path. Keeping both
+# named lets the test compare their sum to the device's destructive backstop.
+NAVIGATION_TIMEOUT_MS = 12000
 
 # How often a click re-scans the frames for its selector while waiting for it to
 # appear. The scan itself is instant; this is just how long it sleeps between.
@@ -246,6 +249,28 @@ DOC_TOKEN_JS = """() => {
     }
     return w.__domoDocumentToken;
 }"""
+
+# wait_for_function is the driver-bounded way to ask which document is live,
+# but it returns a JSHandle whose disposal would be another untimed call. These
+# functions signal their positive result by throwing a marker instead: success
+# and timeout both settle the one bounded driver command, with no handle left.
+_DOC_MATCHED = "__domo_document_matches__"
+_DOC_STAMPED = "__domo_document_stamped__"
+DOC_MATCH_JS = f"""(expected) => {{
+    if (window.__domoDocumentToken === expected) throw "{_DOC_MATCHED}";
+    return false;
+}}"""
+DOC_STAMP_JS = f"""(candidate) => {{
+    const w = window;
+    if (!w.__domoDocumentToken) {{
+        Object.defineProperty(w, "__domoDocumentToken", {{
+            value: candidate,
+            configurable: true,
+        }});
+    }}
+    if (w.__domoDocumentToken === candidate) throw "{_DOC_STAMPED}";
+    return false;
+}}"""
 
 # What KIND of typing this node takes, or "" for none. `type()` refuses nothing
 # -- it focuses whatever it is given and sends the keys -- so every node
@@ -526,23 +551,41 @@ class Session:
         A same-document navigation is not that: the nodes are still there, the
         values are still in them, and the marks still have to go back on.
         """
+        previous = self.seen_document.get(self.page)
+        step_timeout = (
+            DOCUMENT_CHECK_TIMEOUT_MS
+            if previous is None
+            else DOCUMENT_CHECK_TIMEOUT_MS // 2
+        )
+
+        if previous is not None:
+            try:
+                self.page.wait_for_function(
+                    DOC_MATCH_JS, previous, timeout=step_timeout
+                )
+            except Exception as exc:
+                if _DOC_MATCHED in str(exc):
+                    return
+            else:
+                # DOC_MATCH_JS never returns truthy. If a driver changes that
+                # contract, retain the ledger rather than guessing it is stale.
+                return
+
+        candidate = os.urandom(16).hex()
         try:
-            # A cancelled top-level navigation can leave Playwright waiting
-            # forever for an evaluate reply. The load-state call is bounded;
-            # if the document cannot settle, keep the safety ledger unchanged.
-            self.page.wait_for_load_state(
-                "domcontentloaded", timeout=DOCUMENT_CHECK_TIMEOUT_MS
+            self.page.wait_for_function(
+                DOC_STAMP_JS, candidate, timeout=step_timeout
             )
-            token = self.page.evaluate(DOC_TOKEN_JS)
-        except Exception:
-            # Mid-navigation, or a page that will not evaluate. Keeping the
-            # record is the safe answer: a mask that no longer matches anything
-            # is dropped when it fails to resolve, whereas a record thrown away
-            # here is a field nobody puts the mark back on.
+        except Exception as exc:
+            if _DOC_STAMPED not in str(exc):
+                # Mid-navigation, or a page the driver cannot evaluate. Keeping
+                # the record is safe: stale targets are dropped when unresolved,
+                # while a discarded record leaves nobody to restore its mask.
+                return
+        else:
             return
-        if self.seen_document.get(self.page) != token:
-            self.seen_document[self.page] = token
-            self.masked.pop(self.page, None)
+        self.seen_document[self.page] = candidate
+        self.masked.pop(self.page, None)
 
     def remember_masked(self, document_token, selector):
         self.masked.setdefault(self.page, set()).add((document_token, selector))
@@ -907,7 +950,10 @@ class Session:
 
     def handle(self, cmd, screenshots_dir):
         action = cmd.get("action", "")
-        self._forget_navigated()
+        # goto replaces the document itself, so probing the old one only spends
+        # deadline before the navigation that makes the answer irrelevant.
+        if action != "goto":
+            self._forget_navigated()
 
         if action in ("screenshot", "forms"):
             # Nothing the agent looks at goes out over a field that should be
@@ -923,9 +969,14 @@ class Session:
             # 12s + 1s settle keeps the whole action under the device's 15s host
             # cap and the relay's exchange ceiling; a genuinely slower page
             # fails cleanly (the agent retries) rather than parking a torn 504.
-            self.page.goto(cmd["url"], timeout=12000, wait_until="domcontentloaded")
+            self.page.goto(
+                cmd["url"], timeout=NAVIGATION_TIMEOUT_MS,
+                wait_until="domcontentloaded"
+            )
             self.page.wait_for_timeout(SETTLE_MS)
-            return {"title": self.page.title()}
+            # page.title() has no timeout. The URL is already in the envelope;
+            # an agent that needs the title can ask after this bounded action.
+            return {}
 
         if action == "pages":
             return {
@@ -1065,6 +1116,7 @@ def main():
     kwargs = {
         "headless": not args.headed,
         "os": "macos",
+        # Origin enforcement is ours; the decision is recorded in DESIGN.md §11a.
         "exclude_addons": [DefaultAddons.UBO],
     }
     if args.executable:

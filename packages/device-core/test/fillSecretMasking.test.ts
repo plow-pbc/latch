@@ -752,6 +752,7 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
       constants: {
         typed_chars: number;
         action_timeout_ms: number;
+        document_check_timeout_ms: number;
         typing_max_ms: number;
       };
       two_frames: {

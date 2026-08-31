@@ -292,6 +292,10 @@ class Page:
         # What `DOC_TOKEN_JS` would return. A scenario changes it to say "a new
         # document"; changing only `url` says "a route change within this one".
         self.document_token = "doc-1"
+        # The driver's bounded document check stamps its own token. Kept apart
+        # from the DOM-node token only because this stub models the two APIs
+        # independently; in a browser both live on the same window.
+        self.navigation_token = None
 
         class _Context:
             pages = [self]
@@ -305,8 +309,16 @@ class Page:
     def evaluate(self, expression, *args, **kwargs):
         return self.document_token
 
-    def wait_for_load_state(self, _state, timeout=None):
-        pass
+    def wait_for_function(self, expression, arg=None, timeout=None):
+        if "expected" in expression:
+            if self.navigation_token == arg:
+                raise RuntimeError("__domo_document_matches__")
+            raise TimeoutError("different document")
+        if self.navigation_token is None:
+            self.navigation_token = arg
+        if self.navigation_token == arg:
+            raise RuntimeError("__domo_document_stamped__")
+        raise TimeoutError("document token already set")
 
     def wait_for_timeout(self, _ms):
         pass
@@ -435,6 +447,7 @@ def ledger(server, script):
             page.url = step["navigate"]
             frame.url = step["navigate"]
             page.document_token = "doc-%s" % step["navigate"]
+            page.navigation_token = None
             steps.append({"step": "navigate", "result": None})
             continue
         if step.get("route"):

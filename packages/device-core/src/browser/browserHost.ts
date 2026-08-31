@@ -155,10 +155,12 @@ export class BrowserHost {
   }
 
   /**
-   * One screenshot frame for the owner's viewer window. Strictly best-effort:
-   * returns null when the browser isn't running (and never starts it — a
-   * viewer poll must not be able to launch Camoufox), and null on any failure
-   * (frame mid-navigation, action timeout, crash). `BrowserSessions.viewFrame()`
+   * One screenshot frame for the owner's viewer window. It never starts a
+   * browser and reports failures as null, so an ordinary viewer poll remains
+   * best-effort. A view action that reaches the host deadline is different:
+   * this server handles actions serially, so that timeout means every agent
+   * action is wedged behind it; sendAction tears the browser down and the
+   * session layer closes its books. `BrowserSessions.viewFrame()`
    * picks WHICH host to ask — the session the owner is watching — but the frame
    * it returns deliberately bypasses session SCOPE and the audit: it is for the
    * device owner's own eyes, so an out-of-scope page is exactly what they
