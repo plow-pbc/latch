@@ -34,7 +34,7 @@ apphome   := if env_var_or_default("DOMO_HOME", "") != "" {
   }
 # Where the evidence scripts drop screenshots. Per-worktree so simultaneous
 # runs don't clobber each other's output; explicit OUT/OUT_DIR/SETTINGS_OUT/
-# AGENTS_OUT/AGENTS_OPEN_OUT/VAULT_OUT env vars still win inside the
+# AGENTS_OUT/AGENTS_OPEN_OUT/VAULT_OUT/LOCAL_AGENT_OUT env vars still win inside the
 # recipes. EVERY capture a script can write needs its variable passed below —
 # one that is missed silently falls back to bare /tmp and two checkouts
 # overwrite each other's evidence while both runs still report success.
@@ -245,6 +245,7 @@ verify-preload: build
       APPROVALS_OUT="${APPROVALS_OUT:-{{outdir}}/agents-approvals.png}" \
       APPROVALS_ASK_OUT="${APPROVALS_ASK_OUT:-{{outdir}}/agents-approvals-ask.png}" \
       VAULT_OUT="${VAULT_OUT:-{{outdir}}/vault-locked.png}" \
+      LOCAL_AGENT_OUT="${LOCAL_AGENT_OUT:-{{outdir}}/agents-local.png}" \
       npx electron apps/desktop/scripts/verify-preload.mjs
 
 # Screenshot the audit screen's live-browser thumbnail (evidence the owner can watch the browser).
