@@ -853,21 +853,11 @@ ipcMain.handle("launch:set", async (_e, on: boolean) =>
 );
 
 // Keep Mac Awake. keepAwake.ts owns the rules (AC-only hold, debounced
-// release, revert on an acquire the OS refuses); this is only the seam that
-// hands it Electron's blocker + power monitor, so it is built in whenReady —
-// powerMonitor cannot be touched earlier. Before then the handlers answer
-// from the stored opt-in, which is all a renderer that early could show.
+// release, revert on an acquire the OS refuses); main only hands it the
+// seams, in whenReady — powerMonitor cannot be touched earlier, and its IPC
+// handlers register there too, beside the construction, because no renderer
+// exists to call them until gate.sync() runs after it.
 let keepAwake: KeepAwake | null = null;
-ipcMain.handle("power:getKeepAwake", async () => ({
-  enabled: keepAwake ? keepAwake.isEnabled : loadSettings(home).keepAwakeWhileRunning,
-}));
-ipcMain.handle("power:setKeepAwake", async (_e, on: boolean) => {
-  if (keepAwake) return { enabled: keepAwake.setEnabled(!!on) };
-  const settings = loadSettings(home);
-  settings.keepAwakeWhileRunning = !!on;
-  saveSettings(home, settings);
-  return { enabled: settings.keepAwakeWhileRunning };
-});
 
 /**
  * The one-time first-run default: a user who just set this Mac up wants it
@@ -1293,7 +1283,7 @@ app.whenReady().then(async () => {
   // in-process assertion, a child can die out from under us; the exit
   // handler reports the loss so the hold is re-acquired, not silently gone.
   let caffeinated: { child: ChildProcess; stopped: boolean } | null = null;
-  keepAwake = new KeepAwake({
+  const awake = new KeepAwake({
     blocker: {
       start: () => {
         const child = spawn("/usr/bin/caffeinate", ["-dims"], { stdio: "ignore" });
@@ -1341,6 +1331,11 @@ app.whenReady().then(async () => {
       saveSettings(home, settings);
     },
   });
+  keepAwake = awake;
+  ipcMain.handle("power:getKeepAwake", async () => ({ enabled: awake.isEnabled }));
+  ipcMain.handle("power:setKeepAwake", async (_e, on: boolean) => ({
+    enabled: awake.setEnabled(!!on),
+  }));
   // A crash between setup saving the credential and the hand-over would leave
   // the first-run default pending on disk with no setup window left to close —
   // and this launch goes straight to the main window, so the hand-over hook

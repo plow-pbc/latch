@@ -18,7 +18,6 @@ import {
 } from "../dist/settingsActions.js";
 import { loadSettings, saveSettings } from "../dist/settings.js";
 import { launchAtLoginState, setLaunchAtLogin } from "../dist/loginItem.js";
-import { KeepAwake } from "../dist/keepAwake.js";
 
 const dir = path.dirname(fileURLToPath(import.meta.url));
 const dist = path.join(dir, "../dist");
@@ -67,18 +66,11 @@ const loginItemApi = {
 };
 ipcMain.handle("launch:get", async () => launchAtLoginState(launchSupported, loginItemApi));
 ipcMain.handle("launch:set", async (_e, on) => setLaunchAtLogin(launchSupported, loginItemApi, on));
-// Keep Mac Awake: the REAL class over fakes, like Launch at Login above — a
-// blocker that always grants, AC power, an in-memory store. No caffeinate
-// child is ever spawned in the probe.
-let keepAwakeStored = false;
-const keepAwake = new KeepAwake({
-  blocker: { start: () => 1, stop: () => {} },
-  power: { current: () => "ac", subscribe: () => () => {} },
-  load: () => keepAwakeStored,
-  save: (on) => (keepAwakeStored = on),
-});
-ipcMain.handle("power:getKeepAwake", async () => ({ enabled: keepAwake.isEnabled }));
-ipcMain.handle("power:setKeepAwake", async (_e, on) => ({ enabled: keepAwake.setEnabled(!!on) }));
+// Keep Mac Awake: a boolean stub — the probe proves the pane's wiring, and
+// keepAwake.test.ts owns the lifecycle. No caffeinate child in the probe.
+let keepAwakeOn = false;
+ipcMain.handle("power:getKeepAwake", async () => ({ enabled: keepAwakeOn }));
+ipcMain.handle("power:setKeepAwake", async (_e, on) => ({ enabled: (keepAwakeOn = !!on) }));
 // These four are the real handlers, running the real guards against real
 // on-disk settings. A signed-in Mac with no Anthropic key: Plow is usable and
 // selected, the Anthropic provider is not.

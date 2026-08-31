@@ -122,8 +122,13 @@ export class KeepAwake {
    * The toggle. Answers with what actually took: an acquire the OS refuses
    * reverts to false, and that is what is persisted and what the caller
    * shows — never the state that was merely asked for.
+   *
+   * The ask is persisted BEFORE anything is assigned or touched: a save that
+   * throws then changes nothing — memory, disk, and the hold all keep the
+   * last agreed state, instead of three different answers.
    */
   setEnabled(on: boolean): boolean {
+    this.save(on);
     this.enabled = on;
     this.applyEnabled();
     return this.enabled;
@@ -166,16 +171,13 @@ export class KeepAwake {
     this.release();
   }
 
-  /** Brings the held blocker in line with `enabled` + power source, reverting
-   * `enabled` on an acquire failure. Persists the ask BEFORE touching the
-   * blocker: a save that throws then leaves the hold as it was, instead of a
-   * released hold with a stale true on disk resurrecting the block on the
-   * next launch. The compensating write stays for a refused acquire. */
+  /** Brings the held blocker in line with `enabled` + power source. An
+   * acquire failure reverts `enabled` and writes the false down, so the file
+   * never promises a hold the OS refused. */
   private applyEnabled(): void {
-    this.save(this.enabled);
     if (!this.reconcile()) {
       this.enabled = false;
-      this.save(this.enabled);
+      this.save(false);
     }
   }
 

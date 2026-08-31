@@ -1953,7 +1953,12 @@ async function renderSettings() {
   ]);
   const applyAwake = () => { awakeBox.checked = awake.enabled; };
   awakeBox.addEventListener("change", async () => {
-    awake = await window.domo.keepAwakeSet(awakeBox.checked);
+    try {
+      awake = await window.domo.keepAwakeSet(awakeBox.checked);
+    } catch {
+      // The write failed, so nothing changed — put the box back on the last
+      // state main acknowledged rather than leaving the click's optimism.
+    }
     applyAwake();
   });
   applyAwake();

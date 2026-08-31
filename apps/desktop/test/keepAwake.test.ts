@@ -251,36 +251,6 @@ describe("KeepAwake", () => {
     expect(h.blocker.starts).toBe(1);
   });
 
-  it("persists the ask before touching the blocker", () => {
-    // A save that throws must leave the hold as it was — never a released
-    // hold with a stale true on disk resurrecting the block next launch.
-    const sequence: string[] = [];
-    const blocker = new FakeBlocker();
-    let stored = false;
-    const ka = new KeepAwake({
-      blocker: {
-        start: () => {
-          sequence.push("start");
-          return blocker.start();
-        },
-        stop: (id) => {
-          sequence.push("stop");
-          blocker.stop(id);
-        },
-      },
-      power: { current: () => "ac", subscribe: () => () => {} },
-      load: () => stored,
-      save: (on) => {
-        sequence.push(`save:${on}`);
-        stored = on;
-      },
-      schedule: new FakeScheduler().schedule,
-    });
-    ka.setEnabled(true);
-    ka.setEnabled(false);
-    expect(sequence).toEqual(["save:false", "save:true", "start", "save:false", "stop"]);
-  });
-
   it("a save that throws while disabling leaves the hold in place", () => {
     const blocker = new FakeBlocker();
     let stored = false;
@@ -298,8 +268,9 @@ describe("KeepAwake", () => {
     ka.setEnabled(true);
     explode = true;
     expect(() => ka.setEnabled(false)).toThrow("disk full");
-    // Disk still says true and the hold still stands — consistent across a
-    // relaunch, instead of a released hold the file promises is held.
+    // Nothing changed: memory, disk, and the hold all still say the last
+    // agreed state — never three different answers.
+    expect(ka.isEnabled).toBe(true);
     expect(stored).toBe(true);
     expect(blocker.held).toBe(1);
   });
