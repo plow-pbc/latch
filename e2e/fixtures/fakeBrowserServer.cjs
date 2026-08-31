@@ -49,6 +49,7 @@
 "use strict";
 const fs = require("node:fs");
 const readline = require("node:readline");
+const { spawn } = require("node:child_process");
 
 /** Refusals waiting for the next reply, most recent first, exactly as
  * server.py's reply_with_failures hands them over. `failedNext` is one that
@@ -256,6 +257,20 @@ function handle(cmd) {
 }
 
 function main() {
+  // A child that inherits this server's process group. Timeout supervision
+  // tests use it to distinguish killing only the stdio server from tearing
+  // down the Firefox-like process tree it owns.
+  let grandchild = null;
+  if (process.env.FAKE_CHILD_PID_LOG) {
+    grandchild = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
+      stdio: "ignore",
+    });
+    fs.writeFileSync(process.env.FAKE_CHILD_PID_LOG, String(grandchild.pid));
+  }
+  // Graceful fixture shutdown should not leak the test child. SIGKILL cannot
+  // run this hook; in that case the process-group signal must reap both.
+  process.on("exit", () => grandchild?.kill("SIGKILL"));
+
   // One line per launch, so a test can see the window mode the host chose —
   // --headed is a spawn flag, invisible on the protocol channel.
   if (process.env.FAKE_ARGV_LOG) {

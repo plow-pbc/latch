@@ -86,6 +86,10 @@ export class BrowserHost {
   private stderrTail: string[] = [];
   private failedRequests: JSONValue[] = [];
   private shuttingDown = false;
+  /** A child killed after an action timeout, pending its exit event. It stays
+   * here so no later command can queue onto the process while it is dying. */
+  private terminatingChild: ChildProcess | null = null;
+  private crashReasons = new WeakMap<ChildProcess, string>();
   /** Browser version reported by the ready line (empty until started). */
   browserVersion = "";
 
@@ -101,7 +105,7 @@ export class BrowserHost {
   }
 
   get running(): boolean {
-    return this.child !== null;
+    return this.child !== null && this.child !== this.terminatingChild;
   }
 
   /** Whether the next (or current) browser shows a window. */
@@ -133,8 +137,7 @@ export class BrowserHost {
     const child = this.child!;
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
-        this.pending.delete(id);
-        reject(new BrowserCrashedError("browser action timed out"));
+        this.terminateAfterActionTimeout(child, id);
       }, this.cfg.actionTimeoutMs ?? 60_000);
       timer.unref?.();
       this.pending.set(id, { resolve, reject, timer });
@@ -162,7 +165,7 @@ export class BrowserHost {
    * should see, and a ~1/s poll must not flood the log.
    */
   async viewFrame(): Promise<ViewerFrame | null> {
-    if (!this.child || this.shuttingDown) return null;
+    if (!this.running || this.shuttingDown) return null;
     try {
       const result = await this.sendAction({ action: "view" });
       const dataB64 = typeof result.data_b64 === "string" ? result.data_b64 : null;
@@ -195,6 +198,11 @@ export class BrowserHost {
   }
 
   private ensureStarted(): Promise<void> {
+    if (this.terminatingChild) {
+      return Promise.reject(
+        new BrowserCrashedError("browser is terminating after an action timeout"),
+      );
+    }
     if (this.child) return Promise.resolve();
     if (this.starting) return this.starting;
 
@@ -320,7 +328,8 @@ export class BrowserHost {
 
       child.on("exit", (code, signal) => {
         const wasReady = ready;
-        this.child = null;
+        if (this.child === child) this.child = null;
+        if (this.terminatingChild === child) this.terminatingChild = null;
         const reason = `browser server exited (code=${code}, signal=${signal})`;
         for (const [, p] of this.pending) {
           clearTimeout(p.timer);
@@ -337,7 +346,10 @@ export class BrowserHost {
           // in the ring; it is lost only if the kernel dispatched exit ahead of
           // a pending read, which nothing here can arrange and no test could
           // pin.
-          this.cfg.audit?.("browser_crashed", { code: code ?? -1 });
+          const fields: { [k: string]: JSONValue } = { code: code ?? -1 };
+          const crashReason = this.crashReasons.get(child);
+          if (crashReason) fields.reason = crashReason;
+          this.cfg.audit?.("browser_crashed", fields);
           this.onCrash?.();
         }
         if (!ready) {
@@ -350,7 +362,8 @@ export class BrowserHost {
       });
 
       child.on("error", (err) => {
-        this.child = null;
+        if (this.child === child) this.child = null;
+        if (this.terminatingChild === child) this.terminatingChild = null;
         if (!ready) {
           ready = true;
           clearTimeout(startTimer);
@@ -360,8 +373,31 @@ export class BrowserHost {
     });
   }
 
-  private killGroup(signal: NodeJS.Signals): void {
-    const pid = this.child?.pid;
+  /** Fail every request owned by a server that missed an action deadline, then
+   * kill its process group. The exit event records the crash and closes the
+   * owning browser session; until then ensureStarted refuses new work. */
+  private terminateAfterActionTimeout(child: ChildProcess, timedOutId: number): void {
+    if (this.child !== child || this.terminatingChild === child) return;
+    if (!this.pending.has(timedOutId)) return;
+
+    this.terminatingChild = child;
+    this.crashReasons.set(child, "action_timeout");
+    for (const [id, pending] of this.pending) {
+      clearTimeout(pending.timer);
+      pending.reject(
+        new BrowserCrashedError(
+          id === timedOutId
+            ? "browser action timed out"
+            : "browser terminated after another action timed out",
+        ),
+      );
+    }
+    this.pending.clear();
+    this.killGroup("SIGKILL", child);
+  }
+
+  private killGroup(signal: NodeJS.Signals, child: ChildProcess | null = this.child): void {
+    const pid = child?.pid;
     if (!pid) return;
     try {
       process.kill(-pid, signal);

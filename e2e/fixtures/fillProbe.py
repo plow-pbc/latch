@@ -305,6 +305,9 @@ class Page:
     def evaluate(self, expression, *args, **kwargs):
         return self.document_token
 
+    def wait_for_load_state(self, _state, timeout=None):
+        pass
+
     def wait_for_timeout(self, _ms):
         pass
 
@@ -694,6 +697,7 @@ def main() -> int:
     result["constants"] = {
         "typed_chars": server.TYPED_CHARS,
         "action_timeout_ms": server.DEFAULT_ACTION_TIMEOUT_MS,
+        "document_check_timeout_ms": server.DOCUMENT_CHECK_TIMEOUT_MS,
         "typing_max_ms": server.TYPING_MAX_MS,
     }
     out.write(json.dumps(result))

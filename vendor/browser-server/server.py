@@ -90,6 +90,12 @@ def _origin(url):
 # instead when the agent knows the page is slow; the device clamps it.
 DEFAULT_ACTION_TIMEOUT_MS = 3000
 
+# `page.evaluate()` has no timeout of its own. Before the best-effort document
+# check sends script into a page, give an unresolved navigation only this long
+# to settle. Added to the longest action below, this still fits inside the
+# device's 15-second backstop.
+DOCUMENT_CHECK_TIMEOUT_MS = 1000
+
 # How often a click re-scans the frames for its selector while waiting for it to
 # appear. The scan itself is instant; this is just how long it sleeps between.
 SCAN_INTERVAL_MS = 50
@@ -521,6 +527,12 @@ class Session:
         values are still in them, and the marks still have to go back on.
         """
         try:
+            # A cancelled top-level navigation can leave Playwright waiting
+            # forever for an evaluate reply. The load-state call is bounded;
+            # if the document cannot settle, keep the safety ledger unchanged.
+            self.page.wait_for_load_state(
+                "domcontentloaded", timeout=DOCUMENT_CHECK_TIMEOUT_MS
+            )
             token = self.page.evaluate(DOC_TOKEN_JS)
         except Exception:
             # Mid-navigation, or a page that will not evaluate. Keeping the
@@ -1044,12 +1056,17 @@ def main():
     args = _parse_args()
     os.makedirs(args.screenshots_dir, exist_ok=True)
 
+    from camoufox import DefaultAddons
     from camoufox.sync_api import Camoufox
 
     # Always present a macOS fingerprint: this device IS a Mac, and the pin is
     # what lets the packaged app drop Camoufox's bundled Windows/Linux spoofing
     # fonts (~360 MB/arch) — a macOS fingerprint renders with the system fonts.
-    kwargs = {"headless": not args.headed, "os": "macos"}
+    kwargs = {
+        "headless": not args.headed,
+        "os": "macos",
+        "exclude_addons": [DefaultAddons.UBO],
+    }
     if args.executable:
         kwargs["executable_path"] = args.executable
     if args.profile_dir:

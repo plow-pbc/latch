@@ -157,6 +157,33 @@ describe("session lifecycle", () => {
     expect(r.get("status").str).toBe("error");
   });
 
+  it("an action timeout kills the browser and closes the session as crashed", async () => {
+    ctx = makeCtx({ HANG_ACTION: "eval" });
+    ctx.browsers.actionTimeoutMs = 300;
+    const s = await openSession(["pizza.example"]);
+
+    const timedOut = jv(await ctx.sessions.command(s, {
+      action: "eval",
+      expression: "while(true){}",
+    }));
+    expect(timedOut.get("status").str).toBe("error");
+    expect(timedOut.get("error").str).toContain("browser action timed out");
+
+    const deadline = Date.now() + 3000;
+    while (!eventNames().includes("browser_session_closed") && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    expect(ctx.events.find((e) => e.event === "browser_crashed")?.fields.reason)
+      .toBe("action_timeout");
+    expect(ctx.events.find((e) => e.event === "browser_session_closed")?.fields.reason)
+      .toBe("crashed");
+    expect(ctx.events.find((e) => e.event === "browser_command")?.fields.error)
+      .toContain("browser action timed out");
+    expect(ctx.sessions.current()).toBeNull();
+    expect(jv(await ctx.sessions.command(s, { action: "url" })).get("status").str)
+      .toBe("error");
+  });
+
   it("exposes current() for the owner's live-browser view", async () => {
     expect(ctx.sessions.current()).toBeNull();
 

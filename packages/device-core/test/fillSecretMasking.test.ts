@@ -994,12 +994,15 @@ describe.skipIf(!HAVE_PYTHON)("the server's fill branch, as Python runs it", () 
     // fill that ran past that would go on typing a credential into a page whose
     // answer nobody is waiting for. Read the cap from the one place it is
     // declared — a copy in server.py would only be a second thing to drift.
-    // The TIMED steps a fill can spend: resolve the node, assign the head, type
-    // the tail, and — when the keys were dropped — assign the whole value. Two
-    // spends are outside this and neither is bounded: a caller that names no
-    // frame pays for the search (#96), and `evaluate` takes no timeout at all.
+    // The TIMED steps a fill can spend: wait for a settled document, resolve
+    // the node, assign the head, type the tail, and — when the keys were
+    // dropped — assign the whole value. A caller that names no frame can still
+    // pay for more than one frame search (#96), and the fill's own DOM
+    // evaluations have no Playwright timeout; this assertion covers the calls
+    // that do expose a timeout budget.
     const c = probed.constants;
-    expect(c.action_timeout_ms * 3 + c.typing_max_ms).toBeLessThan(hostCapMs());
+    expect(c.document_check_timeout_ms + c.action_timeout_ms * 3 + c.typing_max_ms)
+      .toBeLessThan(hostCapMs());
     // And the tail draws on ONE budget, not one per key: handing each key the
     // tail's own would let them stack to TYPED_CHARS times it. A shared
     // deadline is already counting down by the first key, so no key is ever
