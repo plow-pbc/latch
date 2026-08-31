@@ -14,6 +14,7 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { writeFileDurable } from "./durableFile.js";
 import { Cipher } from "./vaultItems.js";
 
 const FILE_NAME = "items.json";
@@ -105,9 +106,8 @@ export class VaultStore {
   private writeAll(ciphers: Cipher[]): void {
     fs.mkdirSync(path.dirname(this.file), { recursive: true, mode: 0o700 });
     const body = JSON.stringify({ version: 1, ciphers } satisfies StoreFile);
-    // Atomic on the same filesystem: a crash leaves the old file whole.
-    const tmp = `${this.file}.tmp-${process.pid}`;
-    fs.writeFileSync(tmp, body, { mode: 0o600 });
-    fs.renameSync(tmp, this.file);
+    // Atomic AND durable: a crash leaves the old file whole, and a power cut
+    // cannot persist this file ahead of the key blob it depends on.
+    writeFileDurable(this.file, body);
   }
 }

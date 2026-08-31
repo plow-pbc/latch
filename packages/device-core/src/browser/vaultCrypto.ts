@@ -29,7 +29,6 @@ export function hkdfExpand(prk: Buffer, info: string, len: number): Buffer {
 export function masterKeys(email: string, password: string) {
   const masterKey = pbkdf2(password, email.toLowerCase(), KDF_ITERATIONS, 32);
   return {
-    masterKey,
     stretchedEnc: hkdfExpand(masterKey, "enc", 32),
     stretchedMac: hkdfExpand(masterKey, "mac", 32),
   };

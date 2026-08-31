@@ -38,7 +38,7 @@ CREATE TABLE ciphers (
   data TEXT, password_history TEXT, reprompt INTEGER, "key" TEXT,
   updated_at DATETIME, deleted_at DATETIME, organization_uuid TEXT, user_uuid TEXT
 );
-CREATE TABLE users_organizations (uuid TEXT PRIMARY KEY, user_uuid TEXT, org_uuid TEXT, akey TEXT);`;
+CREATE TABLE users_organizations (uuid TEXT PRIMARY KEY, user_uuid TEXT, org_uuid TEXT, akey TEXT, access_all INTEGER, atype INTEGER);`;
 
 interface LegacyFixture {
   dir: string;
@@ -69,7 +69,7 @@ function cipherInsert(c: Cipher, i: number, bodyKey: string, orgUuid: string | n
  * key, exactly as Vaultwarden stored it. */
 function legacyVault(
   extraSql = "",
-  opts: { pendingTakes?: boolean; org?: "keyed" | "keyless" | "orphan" | "foreign" } = {},
+  opts: { pendingTakes?: boolean; org?: "keyed" | "keyless" | "orphan" | "foreign" | "restricted" } = {},
 ): LegacyFixture {
   const dir = tempDir();
   const email = "agent-3f2a@local";
@@ -123,20 +123,24 @@ function legacyVault(
     } else {
       inserts.push(cipherInsert(orgCipher, 7, "login", "org-1"));
     }
+    const wrapped = crypto.publicEncrypt(
+      { key: publicKey, padding: crypto.constants.RSA_PKCS1_OAEP_PADDING, oaepHash: "sha1" },
+      orgKey,
+    );
     if (opts.org === "orphan") {
       // A membership whose key was never delivered (invited, not confirmed):
       // the row is visible to this account but its key is unrecoverable.
-      inserts.push(`INSERT INTO users_organizations VALUES ('uo1', 'u1', 'org-1', NULL);`);
+      inserts.push(`INSERT INTO users_organizations VALUES ('uo1', 'u1', 'org-1', NULL, 1, 2);`);
     } else if (opts.org === "foreign") {
       // The org belongs to somebody else entirely: no membership row for u1.
       inserts.push(`INSERT INTO users VALUES ('u2', 'other@local', '2.x|x|x', NULL);`);
-      inserts.push(`INSERT INTO users_organizations VALUES ('uo2', 'u2', 'org-1', '4.${crypto.randomBytes(256).toString("base64")}');`);
+      inserts.push(`INSERT INTO users_organizations VALUES ('uo2', 'u2', 'org-1', '4.${crypto.randomBytes(256).toString("base64")}', 1, 0);`);
+    } else if (opts.org === "restricted") {
+      // A collection-scoped member: holds the org key, but the old server
+      // withheld rows by ACL this side does not replicate.
+      inserts.push(`INSERT INTO users_organizations VALUES ('uo1', 'u1', 'org-1', '4.${wrapped.toString("base64")}', 0, 2);`);
     } else {
-      const wrapped = crypto.publicEncrypt(
-        { key: publicKey, padding: crypto.constants.RSA_PKCS1_OAEP_PADDING, oaepHash: "sha1" },
-        orgKey,
-      );
-      inserts.push(`INSERT INTO users_organizations VALUES ('uo1', 'u1', 'org-1', '4.${wrapped.toString("base64")}');`);
+      inserts.push(`INSERT INTO users_organizations VALUES ('uo1', 'u1', 'org-1', '4.${wrapped.toString("base64")}', 1, 2);`);
     }
   }
 
@@ -272,6 +276,14 @@ describe("migrateLegacyVault", () => {
     expect(() => migrateLegacyVault(dir, keyStore, new VaultStore(dir))).toThrow(/cannot recover/);
     // Zero traces: no key minted, no marker written, so a later fix (or a
     // repaired database) still gets to migrate.
+    expect(keyStore.state()).toEqual({ status: "empty" });
+    expect(new VaultStore(dir).exists()).toBe(false);
+  });
+
+  it("refuses a collection-scoped membership rather than migrating withheld rows", () => {
+    const { dir } = legacyVault("", { org: "restricted" });
+    const keyStore = new VaultKeyStore(dir, "test");
+    expect(() => migrateLegacyVault(dir, keyStore, new VaultStore(dir))).toThrow(/specific collections/);
     expect(keyStore.state()).toEqual({ status: "empty" });
     expect(new VaultStore(dir).exists()).toBe(false);
   });

@@ -40,7 +40,7 @@ Everything sits in one directory, `$DOMO_HOME/device/browser/vault/`:
 | File | What it is | Written by |
 |---|---|---|
 | `items.json` | `{version: 1, ciphers: [...]}` — Bitwarden-format cipher rows, every string field an EncString. 0600, written atomically (tmp + rename). | `vaultStore.ts` |
-| `vault-key.enc` | The master-key blob. A 5-byte marker names the provider (`KSEC1` / `KENC1` / `KRAW1`), then the provider's payload. 0600. | `vaultKeyStore.ts` |
+| `vault-key.enc` | The master-key blob. A 5-byte marker names the provider (`KSEC1` / `KENC1` / `KRAW1`), then the provider's payload — for `KSEC1`, the unique per-vault Keychain account the key is filed under, minted at first write (two `DOMO_HOME`s must never share one item). Written durably (fsync file + dir), like `items.json`. 0600. | `vaultKeyStore.ts` |
 | `db.sqlite3`, `vault-account.enc`, … | The OLD Bitwarden vault, when this machine had one. Never written again; kept as the owner's backup after migration. | (legacy) |
 | `credential-audit.log` | One line per describe/release/reveal — item id, field label, page, outcome. **Never a value.** | `localVault.ts`, `brokerCore.ts` |
 
@@ -209,9 +209,9 @@ legacy vault does (`db.sqlite3` + `vault-account.enc`):
    recovers each org key, and each org cipher's item key is re-wrapped under
    the user key — field ciphertexts untouched. A member row whose org key
    cannot be recovered aborts the migration before anything is written.
-   (Collection-level ACLs are deliberately not replicated: they governed what
-   the server would list, not what the org key decrypts, and this is one
-   person's Mac. Attachments are NOT migrated — the app never offered them,
+   A collection-scoped membership (not access_all, not owner/admin) refuses
+   the migration outright rather than guessing at ACLs this side does not
+   replicate. Attachments are NOT migrated — the app never offered them,
    only the old web vault could add one; the encrypted files stay in the
    backup directory, openable by a future tool since the master key is the
    old user key.)

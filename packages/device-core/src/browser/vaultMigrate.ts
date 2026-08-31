@@ -169,7 +169,18 @@ function rewrapOrganizationRows(db: LegacyDb, userKey: Buffer): void {
     type: "pkcs8",
   });
   const orgKeyByUuid = new Map<string, Buffer>();
-  for (const { org_uuid, akey } of db.orgKeys) {
+  for (const { org_uuid, akey, access_all, atype } of db.orgKeys) {
+    // Only a membership that saw the WHOLE organization migrates its rows:
+    // access_all, or the owner/admin roles that imply it. A collection-scoped
+    // member holds the org key but the old server withheld rows by ACL, and
+    // this side does not replicate that policy — so it refuses to guess,
+    // before anything is written, rather than migrating what was withheld.
+    if (!access_all && atype > 1) {
+      throw new Error(
+        "the old vault's organization membership is limited to specific collections; " +
+          "its items cannot be migrated automatically",
+      );
+    }
     if (akey) orgKeyByUuid.set(org_uuid, decRsaString(akey, privateKey));
   }
   for (const row of orgRows) {
@@ -212,10 +223,9 @@ function decRsaString(enc: string, privateKey: crypto.KeyObject): Buffer {
 export function openVaultKey(dir: string, keyStore: VaultKeyStore, store: VaultStore): Buffer {
   // A legacy vault is migrated whenever its items have not landed yet — key
   // present or not, so a crash between the key write and the item write is
-  // completed on the next open instead of stranding the items.
-  if (!store.exists() && legacyVaultPresent(dir)) {
-    migrateLegacyVault(dir, keyStore, store);
-  }
+  // completed on the next open instead of stranding the items. Eligibility
+  // (including the sqlite probe) is migrateLegacyVault's own first line.
+  if (!store.exists()) migrateLegacyVault(dir, keyStore, store);
   const key = keyStore.readKey();
   if (key) return key;
   const state = keyStore.state();
@@ -238,7 +248,7 @@ interface LegacyDb {
   akey: string;
   privateKey: string | null;
   rows: LegacyRow[];
-  orgKeys: Array<{ org_uuid: string; akey: string | null }>;
+  orgKeys: Array<{ org_uuid: string; akey: string | null; access_all: number; atype: number }>;
 }
 
 interface LegacyUser {
@@ -277,9 +287,9 @@ function readLegacyDb(dir: string, emails: string[]): LegacyDb {
     if (!user) {
       throw new Error("the saved account is not in the old vault database, so its items cannot be migrated");
     }
-    const memberships = query<{ org_uuid: string; akey: string | null; user_uuid: string }>(
+    const memberships = query<{ org_uuid: string; akey: string | null; user_uuid: string; access_all: number; atype: number }>(
       dbPath,
-      "SELECT org_uuid, akey, user_uuid FROM users_organizations;",
+      "SELECT org_uuid, akey, user_uuid, access_all, atype FROM users_organizations;",
     ).filter((m) => m.user_uuid === user.uuid);
     const orgIds = new Set(memberships.map((m) => m.org_uuid));
     const rows = query<LegacyRow>(

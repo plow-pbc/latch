@@ -32,6 +32,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { createRequire } from "node:module";
+import { writeFileDurable } from "./durableFile.js";
 import { safeStorage } from "./vaultSecretStore.js";
 import { vaultStoreIdentity } from "./vaultKeychain.js";
 
@@ -163,7 +164,11 @@ export class VaultKeyStore {
       if (marker === M_SECITEM) {
         const native = nativeKeychain();
         if (!native) return null;
-        const hex = native.get(VAULT_KEY_SERVICE, this.account, VAULT_KEY_ACCESS_GROUP);
+        // The blob RECORDS which Keychain account holds this vault's key —
+        // never recomputed, because two vaults (two DOMO_HOMEs) on one Mac
+        // must not resolve to one item and clobber each other.
+        const meta = JSON.parse(body.toString("utf8")) as { account?: string };
+        const hex = native.get(VAULT_KEY_SERVICE, meta.account ?? this.account, VAULT_KEY_ACCESS_GROUP);
         return hex ? this.checked(Buffer.from(hex, "hex")) : null;
       }
       if (marker === M_SAFESTORAGE) {
@@ -199,8 +204,13 @@ export class VaultKeyStore {
 
     const native = secItemEligible() ? nativeKeychain() : null;
     if (native && native.probe(VAULT_KEY_SERVICE, VAULT_KEY_ACCESS_GROUP) === "ok") {
-      native.set(VAULT_KEY_SERVICE, this.account, VAULT_KEY_ACCESS_GROUP, hex);
-      this.writeBlob(M_SECITEM, Buffer.from(JSON.stringify({ account: this.account })));
+      // A UNIQUE account per vault, minted at first write and recorded in the
+      // blob. The instance identity alone is not enough: DOMO_HOME is honored
+      // everywhere, so two packaged homes on one Mac would share one item and
+      // the second key write would silently orphan the first vault.
+      const account = `${this.account} ${crypto.randomUUID()}`;
+      native.set(VAULT_KEY_SERVICE, account, VAULT_KEY_ACCESS_GROUP, hex);
+      this.writeBlob(M_SECITEM, Buffer.from(JSON.stringify({ account })));
       return;
     }
     const s = safeStorageEligible() ? safeStorage() : null;
@@ -224,8 +234,8 @@ export class VaultKeyStore {
   }
 
   private writeBlob(marker: string, body: Buffer): void {
-    const tmp = `${this.file}.tmp-${process.pid}`;
-    fs.writeFileSync(tmp, Buffer.concat([Buffer.from(marker, "utf8"), body]), { mode: 0o600 });
-    fs.renameSync(tmp, this.file);
+    // Durable, not merely atomic: migration's recovery logic assumes the key
+    // blob is on disk before the item file — see durableFile.ts.
+    writeFileDurable(this.file, Buffer.concat([Buffer.from(marker, "utf8"), body]));
   }
 }
