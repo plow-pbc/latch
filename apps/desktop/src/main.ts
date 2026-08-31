@@ -1286,7 +1286,16 @@ app.whenReady().then(async () => {
   const awake = new KeepAwake({
     blocker: {
       start: () => {
-        const child = spawn("/usr/bin/caffeinate", ["-dims"], { stdio: "ignore" });
+        // -w binds the hold to this process: caffeinate exits on its own the
+        // moment Latch is gone, HOWEVER it goes — a crash or Force Quit skips
+        // before-quit, and an orphaned caffeinate would otherwise hold "never
+        // sleep" on this Mac until someone found it. Phoenix never had this
+        // exposure (in-process assertions die with the process), so parity of
+        // robustness requires it. The explicit kill below still handles
+        // toggle-off and clean teardown.
+        const child = spawn("/usr/bin/caffeinate", ["-dims", "-w", String(process.pid)], {
+          stdio: "ignore",
+        });
         // A spawn that failed outright (no such binary, fork refused) has no
         // pid, and its 'error' event must have a listener or it takes the
         // process down. Nothing to read from it beyond that — the null pid
