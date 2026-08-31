@@ -455,6 +455,12 @@ vault release, with every box located up front and required to sit in the one
 document whose origin was checked. Each box then gets exactly one character
 (masked when the field is), and a fill that fails part-way erases the boxes it
 already wrote before reporting, so no partial live code is left in the form.
+The erase rides the same mask the characters went in under — the browser's
+unmasked fill path takes the mark off before it learns what the node kept, so
+a controlled input that undoes the empty write would otherwise show its
+character to every later screenshot — and a box the page refuses to empty is
+named in the error and the owner's log rather than claimed cleared, its mark
+still on.
 The browser server deliberately refuses to type a whole code into box one
 (`server.py` `_type_value`: per-key refocus keeps every character in the node
 the mark is on); this is the "one fill per box" that trade was designed around.

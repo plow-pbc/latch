@@ -1168,25 +1168,52 @@ export class BrowserSessions {
     const done: string[] = [];
     /**
      * Best-effort erase after a split fill that could not finish, so the boxes
-     * already written do not keep most of a live code between them. An empty
-     * box conceals nothing, so no mask rides along; a clear that itself fails
-     * must not bury the error about to be reported.
+     * already written do not keep most of a live code between them. Each clear
+     * rides the SAME mask the characters went in under: the browser's unmasked
+     * fill path takes the mark off and forgets the field BEFORE it learns what
+     * the node ended up holding, so a controlled input that undoes the empty
+     * write would be left showing its character to every later screenshot. The
+     * masked path keeps the mark and the ledger entry when the value comes
+     * back changed. Returns the boxes the page would not empty — a clear that
+     * failed must not be reported as a clear, and the owner's log hears about
+     * it; a clear that itself fails must not bury the error about to be
+     * reported.
      */
-    const clearBoxes = async (also?: string): Promise<void> => {
+    const clearBoxes = async (also?: string): Promise<string[]> => {
+      const kept: string[] = [];
       for (const box of also === undefined ? done : [...done, also]) {
         try {
-          await s.host.sendAction({
+          const cleared = await s.host.sendAction({
             action: "fill",
             selector: box,
             value: "",
             frame,
             ...(frameToken === null ? {} : { frame_token: frameToken }),
+            ...(mask ? { mask: true } : {}),
           });
+          if (cleared.ok !== true || cleared.altered === true) kept.push(box);
         } catch {
-          /* the error the caller reports is the fill's, not the clear's */
+          kept.push(box);
         }
       }
+      if (kept.length > 0) {
+        this.audit("credential_fill_failed", {
+          session: s.auditId,
+          item: itemId,
+          field,
+          origin: frameHost,
+          selector: kept.join(" "),
+          reason: "the page kept a character after the fill was rolled back",
+        });
+      }
+      return kept;
     };
+    /** The honest tail of a split-fill error: what the rollback achieved. */
+    const clearedNote = (kept: string[]): string =>
+      kept.length === 0
+        ? "Every box this fill touched was cleared."
+        : `Every box this fill touched was cleared, except ${kept.join(", ")}, which the ` +
+          `page would not empty${mask ? " (what it kept stays masked on screen)" : ""}.`;
 
     let current = targets[0];
     try {
@@ -1223,12 +1250,12 @@ export class BrowserSessions {
             reason: `the field holds only ${jv(filled).get("cap").num} characters`,
           });
           if (boxes !== null) {
-            await clearBoxes();
+            const kept = await clearBoxes();
             return {
               status: "error",
               error:
                 `${field} was not filled: ${current} will not hold even one character, so it ` +
-                `is not one of the code's boxes. The boxes already filled were cleared.`,
+                `is not one of the code's boxes. ${clearedNote(kept)}`,
             };
           }
           return {
@@ -1255,13 +1282,12 @@ export class BrowserSessions {
             reason: "the field is holding a changed copy of the value",
           });
           if (boxes !== null) {
-            await clearBoxes(current);
+            const kept = await clearBoxes(current);
             return {
               status: "error",
               error:
                 `${field} did not go in as stored: ${current} rewrote the character it was ` +
-                `given, so this control cannot be filled by an agent. Every box this fill ` +
-                `touched was cleared.`,
+                `given, so this control cannot be filled by an agent. ${clearedNote(kept)}`,
             };
           }
           return {
@@ -1304,13 +1330,12 @@ export class BrowserSessions {
             reason: "the page prevented the value from being masked",
           });
           if (boxes !== null) {
-            await clearBoxes();
+            const kept = await clearBoxes();
             return {
               status: "error",
               error:
                 `${field} was not filled: this page stops the value from being hidden on ` +
-                `screen, so ${current} was not typed and the boxes already filled were ` +
-                `cleared. Fill it by hand.`,
+                `screen, so ${current} was not typed. ${clearedNote(kept)} Fill it by hand.`,
             };
           }
           return {
@@ -1341,13 +1366,13 @@ export class BrowserSessions {
         selector: current,
         reason: "the browser could not type it into that field",
       });
-      if (boxes !== null) await clearBoxes(current);
+      const kept = boxes === null ? [] : await clearBoxes(current);
       return {
         status: "error",
         error:
           `could not type ${field} into ${current} — the field may be the wrong one, ` +
           `hidden, or not ready yet. Screenshot the page and check the selector.` +
-          (boxes === null ? "" : " The boxes already filled were cleared."),
+          (boxes === null ? "" : ` ${clearedNote(kept)}`),
       };
     } finally {
       secret = "";

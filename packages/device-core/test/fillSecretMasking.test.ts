@@ -719,7 +719,7 @@ describe("fill_secret split across single-character boxes", () => {
     });
   });
 
-  it("clears every box it touched when one part-way rewrites its character", async () => {
+  it("clears the boxes it touched, under their mask, and owns up to one that would not empty", async () => {
     await ctx.sessions.closeAll("teardown");
     ctx = makeCtx({ FAKE_ALTERED_SELECTOR: "#c3" });
     const handle = await session();
@@ -729,25 +729,43 @@ describe("fill_secret split across single-character boxes", () => {
     });
     expect(jv(result).get("status").str).toBe("error");
     expect(jv(result).get("error").str).toContain("#c3 rewrote the character");
-    expect(jv(result).get("error").str).toContain("cleared");
+    // #c3 undoes the empty write too (the fixture alters every fill of it), the
+    // way a controlled input restores its value — so the result names it as
+    // not emptied instead of claiming every box was cleared.
+    expect(jv(result).get("error").str).toContain("cleared, except #c3");
+    expect(jv(result).get("error").str).toContain("stays masked");
     // Three characters went in (#c3's came back changed); then every touched
-    // box was erased. An empty box conceals nothing, so the clears carry no
-    // mask, and boxes four through six were never written at all.
+    // box was erased UNDER ITS MASK. An unmasked clear would take the mark off
+    // and drop the field from the browser's ledger before it learns what the
+    // node kept — a controlled input that undoes the empty write would then
+    // show its character to every later screenshot. Boxes four through six
+    // were never written at all.
     expect(sentFills().map((c) => ({ selector: c.selector, value: c.value, masked: c.mask === true }))).toEqual([
       { selector: "#c1", value: "<1 chars>", masked: true },
       { selector: "#c2", value: "<1 chars>", masked: true },
       { selector: "#c3", value: "<1 chars>", masked: true },
-      { selector: "#c1", value: "<0 chars>", masked: false },
-      { selector: "#c2", value: "<0 chars>", masked: false },
-      { selector: "#c3", value: "<0 chars>", masked: false },
+      { selector: "#c1", value: "<0 chars>", masked: true },
+      { selector: "#c2", value: "<0 chars>", masked: true },
+      { selector: "#c3", value: "<0 chars>", masked: true },
     ]);
-    expect(ctx.events.slice(before).at(-1)).toEqual({
-      event: "credential_fill_failed",
-      fields: {
-        session: audited(), item: "L1", field: "totp", origin: "pizza.example",
-        selector: "#c3", reason: "the field is holding a changed copy of the value",
+    // The owner's log hears both: the fill that failed, and the box the
+    // rollback could not empty.
+    expect(ctx.events.slice(before)).toEqual([
+      {
+        event: "credential_fill_failed",
+        fields: {
+          session: audited(), item: "L1", field: "totp", origin: "pizza.example",
+          selector: "#c3", reason: "the field is holding a changed copy of the value",
+        },
       },
-    });
+      {
+        event: "credential_fill_failed",
+        fields: {
+          session: audited(), item: "L1", field: "totp", origin: "pizza.example",
+          selector: "#c3", reason: "the page kept a character after the fill was rolled back",
+        },
+      },
+    ]);
     expect(JSON.stringify(ctx.events)).not.toContain("483920");
   });
 });
