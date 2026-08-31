@@ -257,11 +257,7 @@ function parseResource(
     sessionId: optionalString(decoded.session_id),
   };
 
-  if (
-    Object.values(resource)
-      .flatMap((value) => (Array.isArray(value) ? value : [value]))
-      .some((value) => typeof value === "string" && echoesCredential(value, deviceCredential))
-  ) {
+  if (echoesCredential(resource, deviceCredential)) {
     throw new PlowApiError("http", "Plow returned an unsafe cloud-agent response.", statusCode);
   }
   return resource;

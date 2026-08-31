@@ -103,13 +103,6 @@ export class PlowApiError extends Error {
   }
 }
 
-export function echoesCredential(text: string, credential: string): boolean {
-  const secret = credential.trim();
-  if (!secret) return false;
-  if (text.includes(secret)) return true;
-  return secret.length > 10 && text.includes(secret.slice(0, 10));
-}
-
 export interface RelayInfo {
   uid: string;
 }
@@ -341,13 +334,14 @@ function provisionedActivationShape(
   };
 }
 
-function valueEchoesSecret(value: unknown, secret: string): boolean {
+export function echoesCredential(value: unknown, credential: string): boolean {
+  const secret = credential.trim();
   if (!secret) return false;
   const needles = secret.length > 10 ? [secret, secret.slice(0, 10)] : [secret];
   if (typeof value === "string") return needles.some((needle) => value.includes(needle));
-  if (Array.isArray(value)) return value.some((entry) => valueEchoesSecret(entry, secret));
+  if (Array.isArray(value)) return value.some((entry) => echoesCredential(entry, secret));
   if (value && typeof value === "object") {
-    return Object.values(value).some((entry) => valueEchoesSecret(entry, secret));
+    return Object.values(value).some((entry) => echoesCredential(entry, secret));
   }
   return false;
 }
@@ -451,7 +445,7 @@ export class PlowApi {
     const parsed = parseActivationChat(data.chat);
     return {
       status: "verified",
-      chat: parsed && !valueEchoesSecret(parsed, token) ? parsed : null,
+      chat: parsed && !echoesCredential(parsed, token) ? parsed : null,
       shape,
     };
   }
