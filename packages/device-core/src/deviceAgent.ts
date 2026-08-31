@@ -15,7 +15,6 @@ import { capabilityDisplay, Intent, intentIsExpired, JSONValue, jv } from "@domo
 import { PROVIDERS, vendoredProvider, type VendoredProvider } from "./providers/registry.js";
 import { MintError, type MintedAccounts, type Minter } from "./providers/mint.js";
 import { gogExitReason, mergeFanout, planPlowGog } from "./providers/plowGog.js";
-import os from "node:os";
 import fs from "node:fs";
 import path from "node:path";
 import { APPROVAL_SOURCE_EXPIRED } from "./approvalStore.js";
@@ -24,8 +23,10 @@ import { BrowserHostConfig, ViewerFrame } from "./browser/browserHost.js";
 import { BrowserSessions } from "./browser/browserSessions.js";
 import { CredentialBroker } from "./browser/credentialBroker.js";
 import { PaymentApprovalClient } from "./browser/financialGate.js";
-import { VaultServer } from "./browser/vaultServer.js";
-import { VaultClient } from "./browser/vaultClient.js";
+import { BrokerCore } from "./browser/brokerCore.js";
+import { LocalVault } from "./browser/localVault.js";
+import { VaultKeyStore } from "./browser/vaultKeyStore.js";
+import { VaultStore } from "./browser/vaultStore.js";
 import { ResolvedBrowserRuntime } from "./browser/browserRuntime.js";
 import { BROWSING_SKILL } from "./browser/browsingSkill.js";
 import { ExecResult, Executor, REAPED_MESSAGE } from "./executor.js";
@@ -145,10 +146,10 @@ export class DeviceAgent {
   readonly browserSessions: BrowserSessions | null = null;
   /** Exposed so the approval UI can resolve credential item titles locally. */
   readonly credentialBroker: CredentialBroker | null = null;
-  /** The vault this machine runs, when this build ships one. */
-  readonly vaultServer: VaultServer | null = null;
-  /** The owner's own way into the vault: no CLI, no port, no session on disk. */
-  readonly vaultClient: VaultClient | null = null;
+  /** Where the vault keeps its items (used to report state; the data path). */
+  readonly vaultDir: string | null = null;
+  /** The owner's own way into the vault — what the Vault tab talks to. */
+  readonly vaultClient: LocalVault | null = null;
   /** How the sessions build a browser each: one config, many hosts. */
   private readonly browserConfig: BrowserHostConfig | null = null;
   private readonly seenNonces = new Set<string>();
@@ -247,67 +248,36 @@ export class DeviceAgent {
         actionTimeoutMs: 15_000,
         audit: auditFn,
       };
-      // Launched from Finder there is no environment to speak of, so the vault
-      // and the broker agree on one identity for this machine rather than each
-      // falling back to a different default.
-      const vaultPerson = process.env.DOMO_VAULT_PERSON ?? `${os.userInfo().username}@local`;
-      // When this build ships its own vault, run it here rather than talking to
-      // one we host: same broker, same CLI, just pointed at 127.0.0.1 with the
-      // cert this machine minted for itself.
-      const vault = browserRuntime.vaultServer
-        ? new VaultServer({
-            binary: browserRuntime.vaultServer.binary,
-            webVaultDir: browserRuntime.vaultServer.webVaultDir,
-            dataDir: path.join(browserDir, "vault"),
-            person: vaultPerson,
-          })
-        : null;
-      this.vaultServer = vault;
-      // What the Vault tab talks to. The broker below stays for the AGENT,
-      // where a release is bound to the page on screen; this is the owner's.
-      this.vaultClient = vault
-        ? new VaultClient(vault, path.join(browserDir, "credential-audit.log"))
-        : null;
-      // Up with the app, not on first use: the Vault tab has to be able to show
-      // the owner their own items whenever Domo is running, not only after an
-      // agent happens to ask for a credential.
-      void vault
-        ?.start()
-        .then(() => this.credentialBroker?.warm())
-        .catch(() => {
-          /* the broker surfaces this as a locked vault when it next runs */
-        });
-      const credentials = new CredentialBroker({
-        command: browserRuntime.credentialBrokerCommand,
-        env: browserRuntime.env,
-        // Resolved per call: the account is created by the vault's first run,
-        // which happens after this object exists. Getters in a spread would be
-        // read once, right here, and freeze an empty account in place.
-        envFor: vault
-          ? () => ({
-              SEED_VAULT_URL: vault.url,
-              SEED_VAULT_CA: vault.certPath,
-              SEED_VAULT_USER: vault.account?.email ?? "",
-              SEED_VAULT_PASSWORD: vault.account?.password ?? "",
-              // Its own client state, beside its own vault. Sharing the
-              // standalone default means inheriting whatever server and
-              // account a previous install was pointed at.
-              SEED_VAULT_STATE: path.join(vault.dataDir, "client"),
-              // Below the per-action ceiling on purpose: an unreachable vault
-              // must come back as an error the agent can report, not as a call
-              // that never returns and takes the session down with it.
-              SEED_VAULT_TIMEOUT: "10",
-            })
-          : undefined,
-        beforeRun: vault ? () => vault.start() : undefined,
-        auditPath: path.join(browserDir, "credential-audit.log"),
-        // Innermost of three nested deadlines: the broker fails inside the
-        // per-action cap, which sits inside the relay's own ceiling. It has to
-        // give up first or the session dies with it.
-        timeoutMs: 12_000,
-        person: vaultPerson,
-        fleetToken: process.env.DOMO_VAULT_TOKEN,
-      });
+      // The vault: items in an encrypted local file, master key in the
+      // Keychain (vaultKeyStore.ts). Same directory the old server kept its
+      // data in, which is what lets migration find a legacy vault beside the
+      // new store.
+      const vaultDir = path.join(browserDir, "vault");
+      this.vaultDir = vaultDir;
+      const keyStore = new VaultKeyStore(vaultDir);
+      const auditPath = path.join(browserDir, "credential-audit.log");
+      // What the Vault tab talks to. The broker below is for the AGENT, where
+      // a release is bound to the page on screen; this is the owner's.
+      this.vaultClient = new LocalVault(vaultDir, keyStore, auditPath);
+      // The broker: in-process against the same store — no server, no CLI, no
+      // subprocess, and the master key never leaves this process. A command in
+      // the resolved runtime is the test seam (DOMO_VAULT_BROKER_CMD) and wins,
+      // so the fill path can still be driven against a scripted fake.
+      const credentials = new CredentialBroker(
+        browserRuntime.credentialBrokerCommand
+          ? {
+              command: browserRuntime.credentialBrokerCommand,
+              env: browserRuntime.env,
+              auditPath,
+              // Innermost of three nested deadlines: the broker fails inside
+              // the per-action cap, which sits inside the relay's own ceiling.
+              // It has to give up first or the session dies with it.
+              timeoutMs: 12_000,
+            }
+          : {
+              local: new BrokerCore({ dir: vaultDir, store: new VaultStore(vaultDir), keyStore, auditPath }),
+            },
+      );
       this.credentialBroker = credentials;
       this.browserSessions = new BrowserSessions(
         this.browserConfig,
@@ -355,16 +325,10 @@ export class DeviceAgent {
     return { status: "completed", ...item };
   }
 
-  /** Close any live browser session, and the vault if we are running one. */
+  /** Close any live browser session. The vault needs no stopping any more —
+   * it is a file and a Keychain item, not a process. */
   async shutdown(): Promise<void> {
-    // The vault runs as a detached child, so it outlives us unless we stop it:
-    // a browser cleanup that throws must not be what leaves it running after
-    // the app is gone. The failure still reaches the caller.
-    try {
-      await this.browserSessions?.closeAll("shutdown");
-    } finally {
-      this.vaultServer?.stop();
-    }
+    await this.browserSessions?.closeAll("shutdown");
   }
 
   /**

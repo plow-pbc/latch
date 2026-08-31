@@ -103,6 +103,31 @@ export function fallbackPanelFrame(workArea: Rect, size: { width: number; height
   };
 }
 
+/**
+ * Decoder for the panel's rasterized drag tile. The renderer draws the exact
+ * tile it shows and sends it over as a PNG data URL plus its backing scale;
+ * main re-wraps that as the native drag image, so the item under the cursor
+ * IS the tile (which hides itself while the drag rides). Null for anything
+ * that is not a plausible small PNG at a real display scale — main then falls
+ * back to the bare app icon, which always exists.
+ */
+const TILE_IMAGE_PREFIX = "data:image/png;base64,";
+// A tile is ~400×60pt at up to 3x — even uncompressed that is far under this.
+const TILE_IMAGE_MAX_BASE64 = 4 * 1024 * 1024;
+export function decodeTileImage(
+  dataUrl: unknown,
+  scale: unknown,
+): { png: Buffer; scaleFactor: number } | null {
+  if (typeof scale !== "number" || !Number.isFinite(scale) || scale < 1 || scale > 3) return null;
+  if (typeof dataUrl !== "string" || !dataUrl.startsWith(TILE_IMAGE_PREFIX)) return null;
+  const base64 = dataUrl.slice(TILE_IMAGE_PREFIX.length);
+  if (base64.length > TILE_IMAGE_MAX_BASE64) return null;
+  const png = Buffer.from(base64, "base64");
+  // The PNG signature — reject anything that merely claims the mime type.
+  if (png.length < 8 || png.readUInt32BE(0) !== 0x89504e47) return null;
+  return { png, scaleFactor: scale };
+}
+
 /** One tracker report: where System Settings is, and whether it is the
  * frontmost app — the panel only belongs on screen while it is. `front`
  * defaults to true when a frame line omits it. */

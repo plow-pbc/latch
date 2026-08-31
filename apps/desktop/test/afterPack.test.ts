@@ -15,19 +15,14 @@ const afterPack = createRequire(import.meta.url)("../build/afterPack.cjs") as (
   context: unknown,
 ) => Promise<void>;
 
-/** What a packaged build cannot work without. `vault-cli` is absent on purpose:
- * the broker falls back to a `bw` on PATH. `vault-server` is not its twin. */
+/** What a packaged build cannot work without. The vault ships no payload:
+ * it is TypeScript in dist/ plus a Keychain item. */
 const PAYLOADS = [
   "python/Python.framework",
   "python/site-packages",
   "server",
   "camoufox",
-  "vault-server",
 ];
-
-/** vault-server is not fused: both arch binaries ship, plus the shared web UI.
- * Keyed by the piece the hook names when it is the one missing. */
-const VAULT_INTERIOR = ["arm64/vaultwarden", "x86_64/vaultwarden", "web-vault/index.html"];
 
 // @ts-expect-error — a build-time .mjs with no type declarations.
 import { VENDORED } from "../../../scripts/vendored-providers.mjs";
@@ -65,24 +60,49 @@ describe("the packaging hook refuses before it signs", () => {
     }
   };
 
+  /** A universal (fat) Mach-O header carrying x86_64 + arm64 — all the hook
+   * reads. 20-byte nfat_arch entries, cputype first, big-endian. */
+  const fatUniversalHeader = () => {
+    const buf = Buffer.alloc(8 + 2 * 20);
+    buf.writeUInt32BE(0xcafebabe, 0);
+    buf.writeUInt32BE(2, 4);
+    buf.writeUInt32BE(0x01000007, 8); // x86_64
+    buf.writeUInt32BE(0x0100000c, 28); // arm64
+    return buf;
+  };
+
+  /** A thin little-endian 64-bit Mach-O header for one arch. */
+  const thinHeader = (cputype: number) => {
+    const buf = Buffer.alloc(8);
+    buf.writeUInt32LE(0xfeedfacf, 0);
+    buf.writeUInt32LE(cputype, 4);
+    return buf;
+  };
+
+  const keychainAddonPath = () =>
+    path.join(
+      resourcesDir(), "app.asar.unpacked", "node_modules", "@domo", "native-keychain",
+      "build", "Release", "keychain.node",
+    );
+
+  const packKeychainAddon = (bytes: Buffer = fatUniversalHeader()) => {
+    fs.mkdirSync(path.dirname(keychainAddonPath()), { recursive: true });
+    fs.writeFileSync(keychainAddonPath(), bytes);
+  };
+
   /** A packed app whose payloads all carry something, minus `omit`. */
   const pack = (omit?: string) => {
     const runtime = runtimeDir();
     packProviders();
+    if (omit !== "keychain-addon") packKeychainAddon();
     for (const payload of PAYLOADS) {
       if (payload === omit) continue;
       fs.mkdirSync(path.join(runtime, payload), { recursive: true });
       fs.writeFileSync(path.join(runtime, payload, "carried"), "");
     }
-    // The two payloads the hook looks inside, built as production ships them.
+    // The payload the hook looks inside, built as production ships it.
     if (omit !== "camoufox") {
       fs.mkdirSync(path.join(runtime, "camoufox", "Camoufox.app"), { recursive: true });
-    }
-    if (omit !== "vault-server") {
-      for (const f of VAULT_INTERIOR) {
-        fs.mkdirSync(path.join(runtime, "vault-server", path.dirname(f)), { recursive: true });
-        fs.writeFileSync(path.join(runtime, "vault-server", f), "");
-      }
     }
     return runtime;
   };
@@ -153,8 +173,31 @@ describe("the packaging hook refuses before it signs", () => {
     await expect(afterPack(contextFor(dir))).rejects.toThrow("is missing camoufox —");
   });
 
-  it("does not require the vault CLI, which falls back to a bw on PATH", async () => {
-    // pack() never writes vault-cli. `server` is named alone only if that
+  // The addon's install script is tolerant on purpose (dev boxes without
+  // Xcode CLT); the hook is where a release that lost the vault's SecItem
+  // provider gets stopped instead of silently downgrading to safeStorage.
+  it.each([
+    { how: "absent", damage: () => fs.rmSync(keychainAddonPath()) },
+    { how: "empty", damage: () => fs.writeFileSync(keychainAddonPath(), "") },
+  ])("refuses a pack whose native-keychain addon is $how", async ({ damage }) => {
+    pack();
+    damage();
+    await expect(afterPack(contextFor(dir))).rejects.toThrow(/no native-keychain addon/);
+  });
+
+  it.each([
+    { arch: "arm64-only", cputype: 0x0100000c, missing: "x86_64" },
+    { arch: "x86_64-only", cputype: 0x01000007, missing: "arm64" },
+  ])("refuses a THIN ($arch) addon — it lands broken on the other arch's users", async ({ cputype, missing }) => {
+    pack();
+    packKeychainAddon(thinHeader(cputype));
+    await expect(afterPack(contextFor(dir))).rejects.toThrow(
+      new RegExp(`native-keychain addon is missing ${missing}`),
+    );
+  });
+
+  it("does not require any vault payload — the vault is code, not a bundle", async () => {
+    // pack() writes no vault-anything. `server` is named alone only if that
     // absence is not also a refusal.
     pack("server");
     await expect(afterPack(contextFor(dir))).rejects.toThrow("is missing server —");
@@ -163,19 +206,6 @@ describe("the packaging hook refuses before it signs", () => {
   it("refuses a build whose identity is explicitly null", async () => {
     pack();
     await expect(afterPack(contextFor(dir, { identity: null }))).rejects.toThrow(/ships unsigned/);
-  });
-
-  // One arch present and the other not is the shipping case: it clears every
-  // other gate on the packaging Mac and lands on the other arch's users.
-  it.each(VAULT_INTERIOR)("refuses a vault-server packed without %s", async (piece) => {
-    const runtime = pack("vault-server");
-    for (const f of VAULT_INTERIOR.filter((other) => other !== piece)) {
-      fs.mkdirSync(path.join(runtime, "vault-server", path.dirname(f)), { recursive: true });
-      fs.writeFileSync(path.join(runtime, "vault-server", f), "");
-    }
-    await expect(afterPack(contextFor(dir))).rejects.toThrow(
-      `vault-server is missing ${path.dirname(piece) === "web-vault" ? "web-vault" : piece}`,
-    );
   });
 
   // One expectation over every way an arch can be unusable, for every arch of

@@ -31,6 +31,8 @@ packages/
                                      tool surface, capability construction, and deferred results
   relay-client/  @domo/relay-client  dials the Plow relay, speaks plow's channel handshake, and
                                      serves the HTTP exchanges the relay tunnels down the socket
+  native-keychain/ @domo/native-keychain  one N-API addon: a generic password in the data-protection
+                                     Keychain under our access group (vault master key; optional)
 apps/
   desktop/       Electron app: device-core in the main process; tray, approval windows,
                  Rules/Audit/Settings UI (visual direction from docs/mockups/audit-mockups.html)
