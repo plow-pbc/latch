@@ -3,8 +3,10 @@
  * lockout, extend, the fill_secret gate chain, and that no secret value ever
  * appears in results or the audit stream.
  */
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { execFileSync } from "node:child_process";
+import sqlite3 from "node-sqlite3-wasm";
+const { Database } = sqlite3;
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -716,52 +718,52 @@ describe("the handle is a capability, so the log never carries it", () => {
 const ON_MAC = process.platform === "darwin";
 
 describe.skipIf(!ON_MAC)("every browser opens as the user, already signed in", () => {
-  const PYTHON = process.env.DOMO_TEST_PYTHON ?? "python3";
-  /** The program the app ships and runs for real. */
-  const MERGE_SCRIPT = fileURLToPath(
-    new URL("../../../vendor/browser-server/merge_cookies.py", import.meta.url),
+  // The program the app ships and runs for real — the ported TS merger. Built
+  // once here (idempotent, fast when up to date) because it is spawned as a real
+  // subprocess (the WASM sqlite merge is synchronous, so it runs off the loop).
+  const MERGE_JS = fileURLToPath(
+    new URL("../../browser-server/dist/mergeCookies.js", import.meta.url),
   );
+  beforeAll(() => {
+    execFileSync("npx", ["tsc", "-b", "packages/browser-server"], {
+      cwd: fileURLToPath(new URL("../../..", import.meta.url)),
+    });
+  });
 
   /** A real Firefox-shaped cookie store holding the sites named.
    *
    * `host` or `host=value` — the value is what a refreshed token changes and a
    * read does not, which is what the merge has to tell apart. */
   const cookieStore = (file: string, hosts: string[], usedAt = 1, expiry = 0): void => {
-    const rows = hosts
-      .map((h, i) => {
-        const [host, value = "yes"] = h.split("=");
-        return `('sid','${value}','${host}','/',${expiry},${usedAt + i},1,1,1,0,0,0,1,'')`;
-      })
-      .join(",");
-    execFileSync(PYTHON, [
-      "-c",
-      `import sqlite3,sys
-db = sqlite3.connect(sys.argv[1])
-db.execute("CREATE TABLE IF NOT EXISTS moz_cookies (id INTEGER PRIMARY KEY, name TEXT, value TEXT,"
-  " host TEXT, path TEXT, expiry INTEGER, lastAccessed INTEGER, creationTime INTEGER, isSecure INTEGER,"
-  " isHttpOnly INTEGER, inBrowserElement INTEGER, sameSite INTEGER, rawSameSite INTEGER, schemeMap INTEGER,"
-  " originAttributes TEXT, CONSTRAINT moz_uniqueid UNIQUE (name, host, path, originAttributes))")
-db.execute("INSERT OR REPLACE INTO moz_cookies (name,value,host,path,expiry,lastAccessed,creationTime,"
-  "isSecure,isHttpOnly,inBrowserElement,sameSite,rawSameSite,schemeMap,originAttributes) VALUES ${rows}")
-db.commit()`,
-      file,
-    ]);
+    const db = new Database(file);
+    db.exec(
+      "CREATE TABLE IF NOT EXISTS moz_cookies (id INTEGER PRIMARY KEY, name TEXT, value TEXT," +
+        " host TEXT, path TEXT, expiry INTEGER, lastAccessed INTEGER, creationTime INTEGER, isSecure INTEGER," +
+        " isHttpOnly INTEGER, inBrowserElement INTEGER, sameSite INTEGER, rawSameSite INTEGER, schemeMap INTEGER," +
+        " originAttributes TEXT, CONSTRAINT moz_uniqueid UNIQUE (name, host, path, originAttributes))",
+    );
+    const ins = db.prepare(
+      "INSERT OR REPLACE INTO moz_cookies (name,value,host,path,expiry,lastAccessed,creationTime," +
+        "isSecure,isHttpOnly,inBrowserElement,sameSite,rawSameSite,schemeMap,originAttributes)" +
+        " VALUES ('sid',?,?,'/',?,?,1,1,1,0,0,0,1,'')",
+    );
+    hosts.forEach((h, i) => {
+      const [host, value = "yes"] = h.split("=");
+      ins.run([value, host, expiry, usedAt + i]);
+    });
+    db.close();
   };
 
   /** Which sites a profile is signed into, and with what. */
-  const signedInto = (dir: string, withValues = false): string[] =>
-    execFileSync(PYTHON, [
-      "-c",
-      `import sqlite3,sys
-rows = sqlite3.connect(sys.argv[1]).execute("SELECT host, value FROM moz_cookies ORDER BY host")
-show = len(sys.argv) > 2
-print("\\n".join((h + "=" + v) if show else h for h, v in rows))`,
-      path.join(dir, "cookies.sqlite"),
-      ...(withValues ? ["values"] : []),
-    ])
-      .toString()
-      .split("\n")
-      .filter(Boolean);
+  const signedInto = (dir: string, withValues = false): string[] => {
+    const db = new Database(path.join(dir, "cookies.sqlite"), { readOnly: true });
+    const rows = db.prepare("SELECT host, value FROM moz_cookies ORDER BY host").all() as {
+      host: string;
+      value: string;
+    }[];
+    db.close();
+    return rows.map((r) => (withValues ? `${r.host}=${r.value}` : r.host));
+  };
 
   /**
    * Sessions cloned from a profile that is already signed in somewhere.
@@ -787,7 +789,7 @@ print("\\n".join((h + "=" + v) if show else h for h, v in rows))`,
           ...ctx.browsers,
           profileDir: path.join(home, "profiles"),
           seedProfile: seed,
-          mergeCookiesCommand: opts.merger ?? [PYTHON, MERGE_SCRIPT],
+          mergeCookiesCommand: opts.merger ?? [process.execPath, MERGE_JS],
         },
         null,
         opts.audit ?? (() => {}),
@@ -799,30 +801,18 @@ print("\\n".join((h + "=" + v) if show else h for h, v in rows))`,
   };
 
   /** When a cookie in a profile runs out. */
-  const expiryOf = (dir: string, host: string): number =>
-    Number(
-      execFileSync(PYTHON, [
-        "-c",
-        `import sqlite3,sys
-print(sqlite3.connect(sys.argv[1]).execute("SELECT expiry FROM moz_cookies WHERE host = ?", (sys.argv[2],)).fetchone()[0])`,
-        path.join(dir, "cookies.sqlite"),
-        host,
-      ])
-        .toString()
-        .trim(),
-    );
+  const expiryOf = (dir: string, host: string): number => {
+    const db = new Database(path.join(dir, "cookies.sqlite"), { readOnly: true });
+    const row = db.prepare("SELECT expiry FROM moz_cookies WHERE host = ?").get([host]) as unknown as { expiry: number };
+    db.close();
+    return row.expiry;
+  };
 
   /** Signed out inside a session: the cookie is gone from its clone. */
   const signOut = (file: string, host: string): void => {
-    execFileSync(PYTHON, [
-      "-c",
-      `import sqlite3,sys
-db = sqlite3.connect(sys.argv[1])
-db.execute("DELETE FROM moz_cookies WHERE host = ?", (sys.argv[2],))
-db.commit()`,
-      file,
-      host,
-    ]);
+    const db = new Database(file);
+    db.prepare("DELETE FROM moz_cookies WHERE host = ?").run([host]);
+    db.close();
   };
 
   /** The one profile directory a session made, whichever it is. */
@@ -925,7 +915,7 @@ db.commit()`,
     // sign-in silently — the exact thing this feature exists to prevent.
     const events: string[] = [];
     const { sessions, seed, profiles } = signedIn({
-      merger: [PYTHON, "-c", "raise SystemExit('disk is full')"],
+      merger: [process.execPath, "-e", "process.exit(1)"],
       audit: (event) => events.push(event),
     });
     const handle = jv(await sessions.open("int-1", AGENT, ["a.example"])).get("session").str!;

@@ -1,5 +1,5 @@
 {
-  "name": "@domo/device-core",
+  "name": "@domo/browser-server",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -9,14 +9,16 @@
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
-    }
+    },
+    "./package.json": "./package.json"
+  },
+  "bin": {
+    "domo-browser-server": "./dist/server.js",
+    "domo-merge-cookies": "./dist/mergeCookies.js"
   },
   "dependencies": {
-    "@domo/browser-server": "*",
     "@domo/protocol": "*",
-    "tldts": "7.4.11"
-  },
-  "optionalDependencies": {
-    "@domo/native-keychain": "*"
+    "node-sqlite3-wasm": "^0.8.60",
+    "playwright-core": "1.60.0"
   }
 }

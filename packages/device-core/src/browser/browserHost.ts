@@ -1,5 +1,5 @@
 /**
- * Supervises the long-lived Camoufox server process (vendor/browser-server).
+ * Supervises the long-lived Camoufox server process (@domo/browser-server).
  * Protocol: JSON lines over stdio — requests {"id", "action", ...} on the
  * child's stdin, responses {"id", "result"|"error"} on its stdout, preceded by
  * a single {"status":"ready"} line once the browser is actually up.
@@ -10,7 +10,6 @@
  */
 import { spawn, type ChildProcess } from "node:child_process";
 import fs from "node:fs";
-import path from "node:path";
 import readline from "node:readline";
 import { JSONValue, jv } from "@domo/protocol";
 
@@ -30,7 +29,7 @@ export class BrowserCrashedError extends Error {
 }
 
 export interface BrowserHostConfig {
-  /** Argv for the server (python + server.py, or a fake in tests). */
+  /** Argv for the server ([node, server.js], or a fake in tests). */
   command: string[];
   env?: Record<string, string>;
   screenshotsDir: string;
@@ -44,13 +43,9 @@ export interface BrowserHostConfig {
    * that clone started from. Comes from the runtime, so a machine pointed at
    * its own install runs that install's program. */
   mergeCookiesCommand?: string[];
-  /** Camoufox install dir (config.json + browsers/). When set, the server is
-   * spawned with an app-scoped $HOME whose Library/Caches/camoufox symlinks
-   * to it — camoufox finds a ready install, the user's shared cache is never
-   * touched, and no network fetch can happen at launch. */
-  camoufoxInstallDir?: string | null;
-  /** The app-scoped $HOME for the server (required with camoufoxInstallDir). */
-  isolatedHome?: string;
+  /** The Camoufox executable playwright launches. Passed to the server as
+   * --executable; null/unset lets a scripted fake ignore it. */
+  executablePath?: string | null;
   /** Default window mode when a session does not ask for one (ensureReady). */
   headed?: boolean;
   audit?: (event: string, fields: { [k: string]: JSONValue }) => void;
@@ -218,25 +213,11 @@ export class BrowserHost {
   private start(): Promise<void> {
     fs.mkdirSync(this.cfg.screenshotsDir, { recursive: true });
     const extraEnv: Record<string, string> = { ...this.cfg.env };
-    if (this.cfg.camoufoxInstallDir) {
-      const home = this.cfg.isolatedHome;
-      if (!home) throw new BrowserCrashedError("camoufoxInstallDir requires isolatedHome");
-      const caches = path.join(home, "Library", "Caches");
-      fs.mkdirSync(caches, { recursive: true });
-      const link = path.join(caches, "camoufox");
-      try {
-        fs.unlinkSync(link);
-      } catch {
-        /* absent or a real dir — rmSync below covers the dir case */
-      }
-      fs.rmSync(link, { recursive: true, force: true });
-      fs.symlinkSync(this.cfg.camoufoxInstallDir, link);
-      extraEnv.HOME = home;
-    }
     const argv = [
       ...this.cfg.command,
       "--screenshots-dir",
       this.cfg.screenshotsDir,
+      ...(this.cfg.executablePath ? ["--executable", this.cfg.executablePath] : []),
       ...(this.cfg.profileDir ? ["--profile-dir", this.cfg.profileDir] : []),
       ...(this.headedNow ? ["--headed"] : []),
     ];

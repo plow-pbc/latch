@@ -4,15 +4,15 @@
  *
  * The universal merger rewrites every Info.plist it finds (injecting
  * ElectronAsarIntegrity), which breaks the code-signature seal of the nested
- * Camoufox and Python BUNDLES under Contents/Resources/browser-runtime — and
- * electron-builder exposes no way to exclude them. So we re-sign that tree here
- * with the correct per-payload entitlements. `mac.signIgnore` then keeps
- * electron-builder's own signer off it, and notarization sees valid,
- * hardened-runtime, timestamped signatures sealing the current plists.
+ * Camoufox BUNDLE under Contents/Resources/browser-runtime — and
+ * electron-builder exposes no way to exclude it. So we re-sign that tree here
+ * with Mozilla's entitlements. `mac.signIgnore` then keeps electron-builder's
+ * own signer off it, and notarization sees valid, hardened-runtime, timestamped
+ * signatures sealing the current plists. (No Python ships any more; the browser
+ * server is a Node script in app.asar.unpacked, signed by electron-builder's own
+ * signer with the app entitlements, like the native-keychain addon.)
  *
- * Bundles (Python.framework, each Camoufox.app) are deep-signed so their
- * Info.plist seals are regenerated; loose Mach-O files (site-packages .so, the
- * Playwright node driver) are signed individually, deepest first.
+ * Each Camoufox.app is deep-signed so its Info.plist seal is regenerated.
  *
  * We also drop non-signable build leftovers (.o objects, .a archives) that
  * would otherwise fail notarization ("binary is not signed").
@@ -21,7 +21,6 @@ const { execFileSync, spawnSync } = require("node:child_process");
 const fs = require("node:fs");
 const path = require("node:path");
 
-const HELPER_ENTITLEMENTS = path.join(__dirname, "entitlements.helper.plist");
 const BROWSER_ENTITLEMENTS = path.join(__dirname, "entitlements.browser.plist");
 
 function isMachO(file) {
@@ -106,8 +105,7 @@ module.exports = async function afterPack(context) {
   const identity = configured ?? process.env.CODESIGN_IDENTITY;
   if (!identity) {
     // An ad-hoc Mach-O carries no team id, so the hardened runtime refuses to
-    // map Python.framework into the python that loads it and browsing is dead
-    // in an app that otherwise looks healthy.
+    // load it and browsing is dead in an app that otherwise looks healthy.
     throw new Error(
       "[afterPack] no signing identity — package with `just package` or `just package-unnotarized`",
     );
@@ -120,26 +118,17 @@ module.exports = async function afterPack(context) {
 
   const appName = `${context.packager.appInfo.productFilename}.app`;
   const runtime = path.join(context.appOutDir, appName, "Contents", "Resources", "browser-runtime");
-  // What a packaged build cannot work without. The vault ships no payload any
-  // more: it is TypeScript in dist/ plus a Keychain item, so there is nothing
-  // of it here to verify.
-  const framework = path.join(runtime, "python", "Python.framework");
-  const sitePackages = path.join(runtime, "python", "site-packages");
-  const server = path.join(runtime, "server");
+  // What a packaged build cannot work without. The runtime under browser-runtime
+  // is now just the Camoufox tree; the server ships in app.asar.unpacked and the
+  // vault ships no payload (TypeScript + a Keychain item).
   const camoufox = path.join(runtime, "camoufox");
   // Absent and empty are one condition: a payload carrying nothing signs
   // nothing, verifies vacuously, and ships the same app. walk() recurses and
   // stops at the first file, so a tree of empty directories still reads bare.
   const bare = (d) => !fs.existsSync(d) || walk(d).next().done === true;
-  // A bare runtime explains all four children, so it is named on its own.
-  const missing = bare(runtime)
-    ? ["browser-runtime"]
-    : [framework, sitePackages, server, camoufox]
-        .filter(bare)
-        .map((d) => path.basename(d));
-  if (missing.length > 0) {
+  if (bare(camoufox)) {
     throw new Error(
-      `[afterPack] the packed app is missing ${missing.join(", ")} — ` +
+      "[afterPack] the packed app is missing the camoufox browser payload — " +
         "package with `just package` or `just package-unnotarized`",
     );
   }
@@ -222,27 +211,7 @@ module.exports = async function afterPack(context) {
   const signBundle = (target, entitlements) =>
     codesign(["--force", "--deep", "--timestamp", "--options", "runtime", "--entitlements", entitlements, "--sign", identity, target]);
 
-  // 2) Python framework. `codesign --deep` on a FRAMEWORK bundle does not
-  // traverse into lib/ and lib-dynload/, so the dylibs and .so we relocated
-  // (with install_name_tool, then ad-hoc signed) keep invalid, un-timestamped
-  // signatures. Sign every Mach-O in the framework INDIVIDUALLY (deepest
-  // first) so each carries a Developer ID cert, hardened runtime, and a secure
-  // timestamp. Then seal the nested Python.app bundle (bin/python3.12 execs its
-  // binary) and the framework bundle — plain codesign, NOT --deep, so the
-  // individually-signed nested Mach-Os keep their timestamps; sealing only
-  // re-signs each bundle's main binary and regenerates CodeResources over the
-  // merge-rewritten Info.plists.
-  const machos = [...walk(framework)].filter(isMachO).sort((a, b) => b.split("/").length - a.split("/").length);
-  for (const f of machos) signFile(f, HELPER_ENTITLEMENTS);
-  for (const nested of findBundles(framework, ".app")) signFile(nested, HELPER_ENTITLEMENTS);
-  signFile(framework, HELPER_ENTITLEMENTS);
-
-  // 3) Loose site-packages Mach-O (the .so extensions and the Playwright node
-  // driver) — individually, deepest first so leaves precede loaders.
-  const loose = [...walk(sitePackages)].filter(isMachO).sort((a, b) => b.split("/").length - a.split("/").length);
-  for (const f of loose) signFile(f, HELPER_ENTITLEMENTS);
-
-  // 4) Camoufox — deep-sign the (universal) Camoufox.app with Mozilla's set.
+  // 2) Camoufox — deep-sign the (universal) Camoufox.app with Mozilla's set.
   // `--deep` only discovers nested code in the standard locations (MacOS,
   // Frameworks, PlugIns, …); a Mach-O under Resources — gmp-clearkey's CDM
   // stub — keeps whatever signature it shipped with (Mozilla's ad-hoc, which
@@ -257,7 +226,7 @@ module.exports = async function afterPack(context) {
     signBundle(app, BROWSER_ENTITLEMENTS);
   }
 
-  // 5) Verify EVERY Mach-O carries a Developer ID cert, hardened runtime, and a
+  // 3) Verify EVERY Mach-O carries a Developer ID cert, hardened runtime, and a
   // secure timestamp — the three things notarization checks. Fails the build in
   // seconds instead of after a ~15-minute notarization round-trip.
   const problems = [];
@@ -281,8 +250,8 @@ module.exports = async function afterPack(context) {
   }
 
   console.log(
-    `[afterPack] re-signed browser-runtime: Python.framework + site-packages, ` +
-      `${camoufoxApps.length} Camoufox.app, dropped ${dropped} non-signable files; ` +
+    `[afterPack] re-signed browser-runtime: ${camoufoxApps.length} Camoufox.app, ` +
+      `dropped ${dropped} non-signable files; ` +
       `verified ${verified} Mach-O (Developer ID + hardened runtime + timestamp)`,
   );
 };
@@ -302,18 +271,3 @@ function findApps(root) {
   return apps;
 }
 
-/** All bundles ending in `suffix` under root, deepest first (sign inside-out). */
-function findBundles(root, suffix) {
-  const found = [];
-  const rec = (dir) => {
-    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
-      if (!e.isDirectory() || e.name.startsWith(".")) continue;
-      const p = path.join(dir, e.name);
-      rec(p);
-      if (e.name.endsWith(suffix)) found.push(p);
-    }
-  };
-  rec(root);
-  // Deepest paths first so a nested bundle is signed before its container.
-  return found.sort((a, b) => b.split("/").length - a.split("/").length);
-}

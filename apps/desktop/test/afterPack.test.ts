@@ -15,14 +15,10 @@ const afterPack = createRequire(import.meta.url)("../build/afterPack.cjs") as (
   context: unknown,
 ) => Promise<void>;
 
-/** What a packaged build cannot work without. The vault ships no payload:
- * it is TypeScript in dist/ plus a Keychain item. */
-const PAYLOADS = [
-  "python/Python.framework",
-  "python/site-packages",
-  "server",
-  "camoufox",
-];
+/** What a packaged build cannot work under browser-runtime: only the Camoufox
+ * tree now. No Python ships, the server is a Node script in app.asar.unpacked,
+ * and the vault ships no payload (TypeScript in dist/ plus a Keychain item). */
+const PAYLOADS = ["camoufox"];
 
 // @ts-expect-error — a build-time .mjs with no type declarations.
 import { VENDORED } from "../../../scripts/vendored-providers.mjs";
@@ -129,10 +125,10 @@ describe("the packaging hook refuses before it signs", () => {
   });
 
   it("falls back to the environment when the packager configured none", async () => {
-    // Past both identity guards on the env alone: `server` is named, which only
+    // Past both identity guards on the env alone: the camoufox refusal only
     // happens after an identity resolved.
-    pack("server");
-    await expect(afterPack(contextFor(dir, {}))).rejects.toThrow("is missing server —");
+    pack("camoufox");
+    await expect(afterPack(contextFor(dir, {}))).rejects.toThrow("camoufox browser payload");
   });
 
   it("refuses an environment identity that is not the one sealing the app", async () => {
@@ -142,35 +138,22 @@ describe("the packaging hook refuses before it signs", () => {
     ).rejects.toThrow(/is not the packager's identity/);
   });
 
+  // However the camoufox payload comes up carrying no file — the runtime never
+  // packed, packed empty, or all empty directories — it is the same refusal.
   it.each([
-    { how: "never packed", empty: false },
-    { how: "packed empty", empty: true },
-  ])("names the runtime alone when it was $how", async ({ empty }) => {
-    if (empty) fs.mkdirSync(runtimeDir(), { recursive: true });
-    await expect(afterPack(contextFor(dir))).rejects.toThrow(
-      /missing browser-runtime — package with/,
-    );
-  });
-
-  // One expectation over every column is the claim: however a payload comes up
-  // carrying no file, it is the same refusal, named the same way.
-  it.each(
-    PAYLOADS.flatMap((payload) => [
-      { payload, how: "left out" },
-      { payload, how: "packed empty", make: payload },
-    ]),
-  )("names $payload when it was $how", async ({ payload, make }) => {
-    const runtime = pack(payload);
-    if (make) fs.mkdirSync(path.join(runtime, make), { recursive: true });
-    await expect(afterPack(contextFor(dir))).rejects.toThrow(
-      `is missing ${path.basename(payload)} —`,
-    );
-  });
-
-  it("names a payload that is all empty directories and no file", async () => {
-    const runtime = pack("camoufox");
-    fs.mkdirSync(path.join(runtime, "camoufox", "browsers", "official"), { recursive: true });
-    await expect(afterPack(contextFor(dir))).rejects.toThrow("is missing camoufox —");
+    { how: "never packed", prep: () => {} },
+    { how: "runtime packed empty", prep: () => fs.mkdirSync(runtimeDir(), { recursive: true }) },
+    { how: "camoufox left out", prep: () => pack("camoufox") },
+    {
+      how: "camoufox all empty directories",
+      prep: () => {
+        const runtime = pack("camoufox");
+        fs.mkdirSync(path.join(runtime, "camoufox", "browsers", "official"), { recursive: true });
+      },
+    },
+  ])("refuses when the camoufox payload was $how", async ({ prep }) => {
+    prep();
+    await expect(afterPack(contextFor(dir))).rejects.toThrow("camoufox browser payload");
   });
 
   // The addon's install script is tolerant on purpose (dev boxes without
@@ -194,13 +177,6 @@ describe("the packaging hook refuses before it signs", () => {
     await expect(afterPack(contextFor(dir))).rejects.toThrow(
       new RegExp(`native-keychain addon is missing ${missing}`),
     );
-  });
-
-  it("does not require any vault payload — the vault is code, not a bundle", async () => {
-    // pack() writes no vault-anything. `server` is named alone only if that
-    // absence is not also a refusal.
-    pack("server");
-    await expect(afterPack(contextFor(dir))).rejects.toThrow("is missing server —");
   });
 
   it("refuses a build whose identity is explicitly null", async () => {

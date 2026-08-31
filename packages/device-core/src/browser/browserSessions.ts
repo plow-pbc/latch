@@ -75,8 +75,8 @@ export function stripQuery(url: string): string {
 /**
  * Requests the site itself refused during an action, rebuilt from the fields
  * this side knows: origins, a status, a method, two headers. Rebuilt rather
- * than forwarded because `audit.ndjson` is durable and `server.py` is vendored
- * (see its UPSTREAM.md) — a sync that reintroduced a url would otherwise write
+ * than forwarded because `audit.ndjson` is durable and the browser server
+ * (@domo/browser-server) rebuilds them — a sync that reintroduced a url would otherwise write
  * paths into the owner's log with nothing here to stop it.
  */
 function failedRequests(value: JSONValue[]): JSONValue[] {
@@ -146,7 +146,7 @@ const DEFAULT_IDLE_MS = 15 * 60_000;
  * tunnelled call at its own ceiling (`CLAUDE.md` § Layout owns the value) and
  * `browser` is non-deferrable, so every action must
  * answer well inside that; `wait` and `goto` are the only ones that can run
- * long by design and are bounded (here and in server.py / BrowserHost). A
+ * long by design and are bounded (here and in @domo/browser-server / BrowserHost). A
  * longer pause is expressed as several waits.
  */
 const MAX_WAIT_SECONDS = 12;
@@ -384,7 +384,6 @@ export class BrowserSessions {
       ...this.browser,
       screenshotsDir: path.join(this.browser.screenshotsDir, profile),
       ...(this.browser.profileDir ? { profileDir: path.join(this.browser.profileDir, profile) } : {}),
-      ...(this.browser.isolatedHome ? { isolatedHome: path.join(this.browser.isolatedHome, profile) } : {}),
     });
   }
 
@@ -443,7 +442,7 @@ export class BrowserSessions {
    * close decides what the user is signed into, which loses the other one's
    * login and can even undo a logout. What this session did to its cookies —
    * changes and sign-outs both — is reconciled into the profile against the
-   * baseline it started from; `merge_cookies.py` holds that contract.
+   * baseline it started from; @domo/browser-server's mergeCookies holds that contract.
    *
    * ponytail: cookies only. A site that keeps its session in localStorage or
    * IndexedDB still signs out with the clone, and a logout inside a session
