@@ -32,17 +32,22 @@ class Context:
         pass
 
 
-class Handle:
-    def __init__(self, value, page):
-        self.value = value
+class Locator:
+    def __init__(self, page, selector):
         self.page = page
+        self.selector = selector
 
-    def json_value(self):
-        self.page.handle_reads += 1
-        return self.value
-
-    def dispose(self):
-        self.page.handle_disposals += 1
+    def evaluate(self, _script, timeout=None):
+        self.page.driver_calls.append({
+            "kind": "token", "selector": self.selector, "timeout": timeout,
+        })
+        if self.page.driver_timeout:
+            raise TimeoutError("driver evaluation timed out")
+        if self.page.driver_error:
+            raise RuntimeError(self.page.driver_error)
+        if self.page.driver_token is None:
+            self.page.driver_token = self.page.evaluate_token
+        return self.page.driver_token
 
 
 class Page:
@@ -55,8 +60,6 @@ class Page:
         self.driver_error = driver_error
         self.load_state_waits = []
         self.driver_calls = []
-        self.handle_reads = 0
-        self.handle_disposals = 0
         self.page_evaluated = False
         self.page_evaluate_hangs = False
         self.goto_args = []
@@ -76,28 +79,8 @@ class Page:
             time.sleep(10)
         return self.evaluate_token
 
-    def wait_for_function(self, script, arg=None, timeout=None):
-        kind = (
-            "match" if "expected" in script
-            else "stamp" if "candidate" in script
-            else "token"
-        )
-        self.driver_calls.append({"kind": kind, "timeout": timeout})
-        if self.driver_timeout:
-            raise TimeoutError("driver evaluation timed out")
-        if self.driver_error:
-            raise RuntimeError(self.driver_error)
-        if kind == "match" and self.driver_token == arg:
-            raise RuntimeError("__domo_document_matches__")
-        if kind == "match":
-            raise TimeoutError("different document")
-        if self.driver_token is None:
-            self.driver_token = arg if kind == "stamp" else self.evaluate_token
-        if kind == "stamp" and self.driver_token == arg:
-            raise RuntimeError("__domo_document_stamped__")
-        if kind == "stamp":
-            raise TimeoutError("document token already set")
-        return Handle(self.driver_token, self)
+    def locator(self, selector):
+        return Locator(self, selector)
 
     def goto(self, url, timeout=None, wait_until=None):
         self.goto_args.append([url, timeout, wait_until])
@@ -261,8 +244,6 @@ def main():
             "later_driver_calls": poisoned_page.driver_calls[calls_after_first:],
             "masked": bool(poisoned.masked.get(poisoned_page)),
             "seen": poisoned.seen_document.get(poisoned_page),
-            "handle_reads": poisoned_page.handle_reads,
-            "handle_disposals": poisoned_page.handle_disposals,
         },
         "marker_getter": {
             "driver_calls": marker_page.driver_calls,

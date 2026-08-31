@@ -42,9 +42,6 @@ class _Handle:
     def __init__(self, value):
         self.value = value
 
-    def json_value(self):
-        return self.value
-
     def dispose(self):
         pass
 
@@ -286,6 +283,14 @@ class Frame:
         return node
 
 
+class _Locator:
+    def __init__(self, page):
+        self.page = page
+
+    def evaluate(self, expression, timeout=None):
+        return self.page.document_token
+
+
 class Page:
     def __init__(self, frame, extra_frames=()):
         self.url = "https://pizza.example/login"
@@ -308,8 +313,8 @@ class Page:
     def evaluate(self, expression, *args, **kwargs):
         return self.document_token
 
-    def wait_for_function(self, expression, arg=None, timeout=None):
-        return _Handle(self.document_token)
+    def locator(self, _selector):
+        return _Locator(self)
 
     def wait_for_timeout(self, _ms):
         pass

@@ -90,9 +90,10 @@ def _origin(url):
 # instead when the agent knows the page is slow; the device clamps it.
 DEFAULT_ACTION_TIMEOUT_MS = 3000
 
-# `page.evaluate()` has no timeout of its own. The best-effort document check
-# uses one driver-timed wait_for_function call instead, so even a page the
-# driver cannot evaluate cannot park an action.
+# `page.evaluate()` has no timeout, while `wait_for_function()` returns a
+# JSHandle whose value read and disposal are separate untimed driver calls.
+# The best-effort document check uses locator.evaluate's timeout and direct
+# return value so this code owns no handle and adds no follow-up round trip.
 DOCUMENT_CHECK_TIMEOUT_MS = 1000
 
 # A navigation plus its settle is the whole timed goto/back path. Keeping both
@@ -239,7 +240,7 @@ MASK_JS = """(el) => {
 # replacing the document, and treating that as a new page threw away the record
 # of which fields were masked -- while a re-rendered controlled input kept the
 # secret and lost the marker, so the next screenshot showed it.
-DOC_TOKEN_JS = """() => {
+DOC_TOKEN_JS = """(_root) => {
     const w = window;
     if (!w.__domoDocumentToken) {
         Object.defineProperty(w, "__domoDocumentToken", {
@@ -529,26 +530,17 @@ class Session:
         A same-document navigation is not that: the nodes are still there, the
         values are still in them, and the marks still have to go back on.
         """
-        token_handle = None
         try:
-            # wait_for_function applies its timeout while page.evaluate does
-            # not. Returning the token also preserves a token already minted by
-            # locate or fill instead of trying to replace it with a candidate.
-            token_handle = self.page.wait_for_function(
+            # Returning the token preserves one already minted by locate or
+            # fill instead of trying to replace it with a candidate.
+            token = self.page.locator(":root").evaluate(
                 DOC_TOKEN_JS, timeout=DOCUMENT_CHECK_TIMEOUT_MS
             )
-            token = token_handle.json_value()
         except Exception:
             # Mid-navigation, or a page the driver cannot evaluate. Keeping the
             # record is safe: stale targets are dropped when unresolved, while
             # a discarded record leaves nobody to restore its mask.
             return
-        finally:
-            if token_handle is not None:
-                try:
-                    token_handle.dispose()
-                except Exception:
-                    pass
         if self.seen_document.get(self.page) != token:
             self.seen_document[self.page] = token
             self.masked.pop(self.page, None)

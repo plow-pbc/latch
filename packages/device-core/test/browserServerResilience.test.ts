@@ -20,29 +20,27 @@ describe.skipIf(!havePython())("the browser server resilience backstops", () => 
   const probed = runProbe<{
     wedge: {
       load_state_responsive: boolean;
-      driver_calls: { kind: string; timeout: number }[];
+      driver_calls: { kind: string; selector: string; timeout: number }[];
       page_evaluated: boolean;
       masked: boolean;
     };
     moved: {
-      driver_calls: { kind: string; timeout: number }[];
+      driver_calls: { kind: string; selector: string; timeout: number }[];
       page_evaluated: boolean;
       masked: boolean;
     };
     poisoned: {
       first: {
-        driver_calls: { kind: string; timeout: number }[];
+        driver_calls: { kind: string; selector: string; timeout: number }[];
         masked: boolean;
         seen: string;
       };
-      later_driver_calls: { kind: string; timeout: number }[];
+      later_driver_calls: { kind: string; selector: string; timeout: number }[];
       masked: boolean;
       seen: string;
-      handle_reads: number;
-      handle_disposals: number;
     };
     marker_getter: {
-      driver_calls: { kind: string; timeout: number }[];
+      driver_calls: { kind: string; selector: string; timeout: number }[];
       masked: boolean;
       seen: string;
     };
@@ -78,10 +76,10 @@ describe.skipIf(!havePython())("the browser server resilience backstops", () => 
     expect(probed.ubo_excluded).toBe(true);
   });
 
-  it("driver-bounds the document check when load state answers but page evaluate wedges", () => {
+  it("routes the document check through one timed locator evaluation", () => {
     expect(probed.wedge.load_state_responsive).toBe(true);
     expect(probed.wedge.driver_calls).toEqual([
-      { kind: "token", timeout: 1000 },
+      { kind: "token", selector: ":root", timeout: 1000 },
     ]);
     expect(probed.wedge.page_evaluated).toBe(false);
     // A timeout keeps the old safety ledger; it must not expose a value merely
@@ -91,7 +89,7 @@ describe.skipIf(!havePython())("the browser server resilience backstops", () => 
 
   it("still forgets masks after a completed new-document navigation", () => {
     expect(probed.moved.driver_calls).toEqual([
-      { kind: "token", timeout: 1000 },
+      { kind: "token", selector: ":root", timeout: 1000 },
     ]);
     expect(probed.moved.page_evaluated).toBe(false);
     expect(probed.moved.masked).toBe(false);
@@ -99,22 +97,20 @@ describe.skipIf(!havePython())("the browser server resilience backstops", () => 
 
   it("adopts a token minted by another code path and converges on later checks", () => {
     expect(probed.poisoned.first).toEqual({
-      driver_calls: [{ kind: "token", timeout: 1000 }],
+      driver_calls: [{ kind: "token", selector: ":root", timeout: 1000 }],
       masked: false,
       seen: "doc-minted-elsewhere",
     });
     expect(probed.poisoned.later_driver_calls).toEqual([
-      { kind: "token", timeout: 1000 },
+      { kind: "token", selector: ":root", timeout: 1000 },
     ]);
     expect(probed.poisoned.masked).toBe(false);
     expect(probed.poisoned.seen).toBe("doc-minted-elsewhere");
-    expect(probed.poisoned.handle_reads).toBe(2);
-    expect(probed.poisoned.handle_disposals).toBe(2);
   });
 
   it("does not trust a document-token getter error that contains an old marker", () => {
     expect(probed.marker_getter.driver_calls).toEqual([
-      { kind: "token", timeout: 1000 },
+      { kind: "token", selector: ":root", timeout: 1000 },
     ]);
     expect(probed.marker_getter.masked).toBe(true);
     expect(probed.marker_getter.seen).toBe("doc-old");
