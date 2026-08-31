@@ -779,6 +779,17 @@ textarea.text { min-height: 70px; resize: vertical; }
 }
 .live-cap span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .live-cap .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--green-fg); flex: none; }
+/* Expanded: the same box goes full-window so the owner can actually read the
+   page the agent is on. Toggled by a click on the box, in either direction. */
+.live-corner img { cursor: zoom-in; }
+.live-corner.expanded {
+  position: fixed; inset: 0; z-index: 60; padding: 24px; gap: 10px;
+  align-items: center; justify-content: center; cursor: zoom-out;
+  background: rgba(0, 0, 0, 0.72);
+}
+.live-corner.expanded img { width: auto; max-width: 100%; max-height: calc(100vh - 90px); cursor: zoom-out; }
+.live-corner.expanded .live-cap { max-width: 100%; color: #fafafa; }
+
 .live-corner.offscope img { border-color: var(--red-bd); }
 .live-corner.offscope .live-cap { color: var(--red-fg); }
 .live-corner.offscope .live-cap .dot { background: var(--red-fg); }
