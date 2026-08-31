@@ -15,6 +15,7 @@ const dirs: string[] = [];
 afterEach(() => {
   while (dirs.length) fs.rmSync(dirs.pop()!, { recursive: true, force: true });
   delete process.env.SEED_VAULT_BW;
+  delete process.env.PLAYWRIGHT_NODEJS_PATH;
 });
 
 /**
@@ -102,6 +103,37 @@ describe("resolveBrowserRuntime", () => {
   it("reports no vault when this build ships none, so we can still point at a hosted one", () => {
     const runtime = resolveBrowserRuntime(fakePayload({ withVaultCli: true }).resources)!;
     expect(runtime.vaultServer).toBeNull();
+  });
+
+  // The runtime ships playwright without its bundled node driver binary; a
+  // resolution that doesn't name a substitute leaves the browser unable to
+  // launch at all.
+  it("points playwright's driver at the host process's own runtime", () => {
+    const runtime = resolveBrowserRuntime(fakePayload({ withVaultCli: false }).resources)!;
+    expect(runtime.env.PLAYWRIGHT_NODEJS_PATH).toBe(process.execPath);
+    // Under a plain-node host (this test) there must be no stray
+    // ELECTRON_RUN_AS_NODE — execPath IS a node.
+    expect(runtime.env.ELECTRON_RUN_AS_NODE).toBeUndefined();
+  });
+
+  // Only the branch is testable here: execPath must ride with RUN_AS_NODE or
+  // the app binary launches the app instead of a node. Whether a packaged,
+  // fused, hardened binary honors it is the test machine's smoke to prove.
+  it("adds ELECTRON_RUN_AS_NODE under an Electron host, whose execPath is not a node", () => {
+    Object.defineProperty(process.versions, "electron", { value: "33.4.11", configurable: true });
+    try {
+      const runtime = resolveBrowserRuntime(fakePayload({ withVaultCli: false }).resources)!;
+      expect(runtime.env.ELECTRON_RUN_AS_NODE).toBe("1");
+      expect(runtime.env.PLAYWRIGHT_NODEJS_PATH).toBe(process.execPath);
+    } finally {
+      Reflect.deleteProperty(process.versions, "electron");
+    }
+  });
+
+  it("lets an explicit PLAYWRIGHT_NODEJS_PATH win over the host runtime", () => {
+    process.env.PLAYWRIGHT_NODEJS_PATH = "/usr/local/bin/node";
+    const runtime = resolveBrowserRuntime(fakePayload({ withVaultCli: false }).resources)!;
+    expect(runtime.env.PLAYWRIGHT_NODEJS_PATH).toBe("/usr/local/bin/node");
   });
 
   it("lets an explicit SEED_VAULT_BW win over the bundled copy", () => {

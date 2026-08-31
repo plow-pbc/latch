@@ -113,6 +113,15 @@ function fromLayout(layout: Layout): ResolvedBrowserRuntime | null {
       PYTHONNOUSERSITE: "1",
       ...(fs.existsSync(caBundle) ? { SSL_CERT_FILE: caBundle } : {}),
       ...(bw ? { SEED_VAULT_BW: bw } : {}),
+      // Playwright's Python client is a shim over a Node driver. The wheel's
+      // bundled node (~110MB/arch) is pruned from the runtime; the driver runs
+      // on the host process's own runtime instead — the app binary in
+      // RUN_AS_NODE mode under Electron, or the plain node hosting a test or
+      // headless run. ELECTRON_RUN_AS_NODE rides through the server's env to
+      // the driver spawn; nothing else in that tree is an Electron binary, so
+      // it changes nothing else. Requires the RunAsNode fuse to stay enabled.
+      PLAYWRIGHT_NODEJS_PATH: process.env.PLAYWRIGHT_NODEJS_PATH ?? process.execPath,
+      ...(process.versions.electron ? { ELECTRON_RUN_AS_NODE: "1" } : {}),
     },
     vaultServer: vaultServerIn(layout.vaultServerDir),
     camoufoxInstallDir: process.env.DOMO_CAMOUFOX ?? camoufoxIn(layout.camoufoxDir),

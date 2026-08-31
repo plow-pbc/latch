@@ -500,7 +500,15 @@ fused, the arch-independent payload shipped once), built deterministically by
 camoufox 0.5.4 ↔ playwright 1.60.0 ↔ browser 152.0.4-beta.28 is strict). The
 build prunes what can never load at runtime (Camoufox's bundled Windows/Linux
 spoofing fonts — the vendored server pins the fingerprint to macOS — plus
-Python test suites, dSYMs, headers, bytecode caches). The payload is
+Python test suites, dSYMs, headers, bytecode caches). Playwright's Python
+client is a shim over a Node driver, and the wheel's bundled node binary
+(~110 MB/arch) is pruned too: `browserRuntime.ts` points
+`PLAYWRIGHT_NODEJS_PATH` at the host process's own runtime — the app binary
+under `ELECTRON_RUN_AS_NODE`, or the plain node hosting a test. **This
+commits the app to keeping Electron's `RunAsNode` fuse enabled.** Disabling
+that fuse is a standard Electron hardening step; here it would silently break
+every browser launch, so anyone reaching for a fuses config must either skip
+`runAsNode` or bring the bundled driver node back first. The payload is
 byte-identical in both electron-builder arch passes so the universal merge
 copies it through. The Camoufox payload is a complete
 `camoufox fetch`-layout install dir; `BrowserHost` spawns the server with an
