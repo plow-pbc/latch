@@ -11,10 +11,71 @@ boundary), so every write below is a single-writer fact — a second launch
 hands over to the first and exits.
 
 This document is the mechanical reference — what is on disk, who reads it, and
-what each path guarantees. The *decisions* behind it (and their history,
-including the Bitwarden stack this replaced and the app-rename incident that
-shaped the Keychain handling) live in [DESIGN.md](../DESIGN.md) §11a and
-§11a-i; this file does not repeat the rationale.
+what each path guarantees — plus the two architecture justifications below.
+The remaining decision history (including the app-rename incident that shaped
+the Keychain handling) lives in [DESIGN.md](../DESIGN.md) §11a and §11a-i.
+
+## Why not Bitwarden
+
+The vault used to BE Bitwarden: a bundled Vaultwarden server, the `bw` CLI,
+and the web vault. It was removed (Aug 2026) because the app was using all of
+it as a transport, not as a password manager:
+
+- **All the cryptography already lived here.** Items were encrypted and
+  decrypted in this repo's own TypeScript (`vaultItems.ts`/`vaultCrypto.ts`);
+  the server only ever stored ciphertext blobs and served them back over
+  localhost HTTPS. Vaultwarden was a ~470 MB CRUD store (~115 MB of the DMG)
+  for JSON the app could keep in one file.
+- **The moving parts were the failure surface.** A local server meant a port
+  hunt, a self-minted TLS certificate, a detached child process to start and
+  stop, a generated account whose password needed its own secure storage, a
+  Python broker shelling out to `bw` with a session key on disk — and a
+  string of real bugs lived exactly there (server-readiness races, wedged
+  reads hanging the Vault tab, orphan processes holding the port). The
+  replacement is a file read: none of those failure modes exist to fix.
+- **The one thing Bitwarden bought was compatibility** — pointing a real
+  Bitwarden client at the local server, or swapping in bitwarden.com later.
+  That was never a product goal, and the web vault it implied was served but
+  unreachable in practice (a self-signed certificate warning away).
+- **What was worth keeping, was kept.** The EncString item format is sound,
+  frozen by tests, and made migration a verbatim ciphertext copy; the
+  classification rules (what a vault conceals) are still Bitwarden's, ported
+  line-for-line. The format would even round-trip back into a Bitwarden
+  client if that ever mattered again.
+
+## Why one encrypted file, not a Keychain entry per item
+
+The trust root is in the Keychain either way; the question was where the
+ITEMS live. One master key in the Keychain unlocking a local encrypted file —
+the Safari/Chrome/1Password model — won over per-item Keychain entries:
+
+- **Structured items don't fit a keychain slot.** A generic password is
+  (service, account, one secret blob). A card has six fields, an identity
+  eighteen, a login carries URLs and a TOTP seed — per-item storage means
+  inventing a JSON schema inside the password field anyway, and then either
+  every listing decrypts every item or the metadata lives in a sidecar file
+  (both worlds, no benefit).
+- **ACL prompts multiply.** Each Keychain item carries its own ACL; any
+  change of the reading binary (an Electron upgrade in dev, a re-signed
+  build) can mean one authorization prompt PER ITEM. This app has already
+  been burned once by Keychain-identity coupling (DESIGN.md §11a-i); one
+  item means one consent, ever.
+- **The Keychain is global; homes are not.** Everything here honors
+  `DOMO_HOME` — worktree checkouts and the packaged install each own a
+  vault. Files inherit that isolation for free; per-item entries would share
+  one global namespace and need every item name qualified by instance.
+- **Migration never touches plaintext.** Because the file keeps the EncString
+  format under the old user key, cipher rows copy verbatim. Per-item entries
+  would require decrypting every secret and re-inserting it through Keychain
+  APIs — a plaintext moment for the whole vault, and a partially-migrated
+  state to recover from.
+- **It has to be testable headless.** CI cannot touch a real Keychain, so
+  per-item storage needs a fake Keychain layer anyway — at which point the
+  "no crypto code of ours" argument evaporates. The file store runs the whole
+  suite against the real code with a file-backed key.
+
+What per-item storage would have bought — items visible in Keychain Access —
+matters little when the Vault tab is deliberately the only UI.
 
 All code lives in `packages/device-core/src/browser/`, file names given
 per-section below.
