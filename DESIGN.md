@@ -516,6 +516,10 @@ fixture site.
 
 ### 11a-i. The vault's key lives in the Keychain, and its identity is frozen
 
+(Mechanical reference — formats, providers, flows, audit lines — in
+[docs/VAULT.md](docs/VAULT.md); this section keeps the decisions and their
+history.)
+
 The vault is a local encrypted store: items in `items.json` (every field a
 Bitwarden-format EncString — the format outlived the Bitwarden removal because
 it is sound, already frozen by tests, and keeping it made migration a verbatim
