@@ -13,9 +13,9 @@ import {
 import { CloudAgentLineError, CloudAgentResource } from "../src/cloudAgents.js";
 import {
   Activation,
-  AgentTarget,
   BUILTIN_TARGET_ID,
   KeyInfo,
+  LOCAL_TARGET_ID,
   PlowApi,
   PlowApiError,
   ProvisionedActivationRedeem,
@@ -235,9 +235,7 @@ describe("CloudAgentState line and thread display", () => {
       cloudChatsNeedReactivation: false,
       cloudActionError: null,
       cloudChatsLoaded: false,
-      cloudTargets: [
-        { id: BUILTIN_TARGET_ID, label: "Plow", baseUrl: BASE_URL, builtin: true },
-      ],
+      cloudTargets: [{ id: BUILTIN_TARGET_ID, baseUrl: BASE_URL, builtin: true }],
     });
   });
 
@@ -1163,38 +1161,34 @@ describe("Plow line display metadata", () => {
 });
 
 /**
- * A self-hosted host is a SECOND origin with its OWN bearer, and everything
+ * The self-hosted host is a SECOND origin with its OWN bearer, and everything
  * here is about the app never confusing the two: which host a call goes to,
  * whose failure it is when one is unreachable, and what the Mac's own Plow
  * credential is not handed to.
  */
-describe("CloudAgentState self-hosted targets", () => {
-  /** Save one host the way `addTarget` does, before the state is built. */
-  function withHost(home: string, overrides: Partial<AgentTarget> = {}): AgentTarget {
-    const target: AgentTarget = {
-      id: "tgt_slowdown",
-      label: "slowdown",
-      baseUrl: "http://192.168.15.12:8765",
-      bearer: "serve-token-abc",
-      ...overrides,
-    };
-    const settings = loadSettings(home);
-    saveSettings(home, { ...settings, agentTargets: [...settings.agentTargets, target] });
-    return target;
+describe("CloudAgentState self-hosted target", () => {
+  const HOST = "http://192.168.15.12:8765";
+
+  /** Save the host the way `addTarget` does, before the state is built. */
+  function withHost(home: string, baseUrl = HOST): void {
+    saveSettings(home, {
+      ...loadSettings(home),
+      agentTarget: { baseUrl, bearer: "serve-token-abc" },
+    });
   }
 
-  it("offers the built-in Plow first and never leaks a host's bearer", () => {
+  it("offers the built-in Plow first and never leaks the host's bearer", () => {
     const { state, home } = build();
     withHost(home);
 
     expect(state.state().cloudTargets).toEqual([
-      { id: BUILTIN_TARGET_ID, label: "Plow", baseUrl: BASE_URL, builtin: true },
-      { id: "tgt_slowdown", label: "slowdown", baseUrl: "http://192.168.15.12:8765", builtin: false },
+      { id: BUILTIN_TARGET_ID, baseUrl: BASE_URL, builtin: true },
+      { id: LOCAL_TARGET_ID, baseUrl: HOST, builtin: false },
     ]);
     expect(JSON.stringify(state.state())).not.toContain("serve-token-abc");
   });
 
-  it("creates on the named host as local:docker, and polls the same host", async () => {
+  it("creates on the host as local:docker, and polls the same host", async () => {
     const { state, calls, home } = build();
     withHost(home);
     await state.refresh();
@@ -1204,23 +1198,23 @@ describe("CloudAgentState self-hosted targets", () => {
       name: "Garden",
       provider: "local:docker",
       lineUid: "lin_willow",
-      targetId: "tgt_slowdown",
+      targetId: LOCAL_TARGET_ID,
     });
 
-    expect(calls).toContain("create@tgt_slowdown:lin_willow:Garden:local:docker");
-    await vi.waitFor(() => expect(calls).toContain("poll@tgt_slowdown:agent_1"));
+    expect(calls).toContain("create@local:lin_willow:Garden:local:docker");
+    await vi.waitFor(() => expect(calls).toContain("poll@local:agent_1"));
     // The Mac's Plow credential was NOT what authorised any of it.
     expect(calls.some((call) => call.startsWith("create@plow"))).toBe(false);
   });
 
-  it("refuses to create on a host this Mac has not been told about", async () => {
+  it("refuses to create on a host this Mac does not have", async () => {
     const { state, calls } = build();
 
     await state.create({
       name: "Garden",
       provider: "local:docker",
       lineUid: "lin_willow",
-      targetId: "tgt_gone",
+      targetId: LOCAL_TARGET_ID,
     });
 
     expect(calls.some((call) => call.startsWith("create@"))).toBe(false);
@@ -1230,29 +1224,29 @@ describe("CloudAgentState self-hosted targets", () => {
 
   it("keeps an unreachable host's rows and names it, without losing Plow's", async () => {
     const { state, home } = build({
-      listAgentsFor: async (targetId) => {
-        if (targetId === BUILTIN_TARGET_ID) return [agent({ agentId: "agent_cloud", name: "Cloud" })];
-        return [agent({ agentId: "agent_local", name: "Local" })];
-      },
+      listAgentsFor: async (targetId) => [
+        agent(targetId === BUILTIN_TARGET_ID
+          ? { agentId: "agent_cloud", name: "Cloud" }
+          : { agentId: "agent_local", name: "Local" }),
+      ],
     });
     withHost(home);
     await state.refresh();
     expect(state.state().cloudAgents.map((row) => row.agentId).sort())
       .toEqual(["agent_cloud", "agent_local"]);
 
-    // The laptop went to sleep. Plow is fine.
+    // The box went to sleep. Plow is fine.
     const { state: after, home: afterHome } = build({
       listAgentsFor: async (targetId) => {
         if (targetId === BUILTIN_TARGET_ID) return [agent({ agentId: "agent_cloud", name: "Cloud" })];
-        throw new PlowApiError("network", "Couldn't reach Plow at http://192.168.15.12:8765.");
+        throw new PlowApiError("network", `Couldn't reach Plow at ${HOST}.`);
       },
     });
     withHost(afterHome);
     await after.refresh();
 
     expect(after.state().cloudAgents.map((row) => row.agentId)).toEqual(["agent_cloud"]);
-    expect(after.state().cloudAgentsError)
-      .toBe("slowdown: Couldn't reach Plow at http://192.168.15.12:8765.");
+    expect(after.state().cloudAgentsError).toBe(`${HOST}: Couldn't reach Plow at ${HOST}.`);
   });
 
   it("deletes an agent on the host that holds it", async () => {
@@ -1266,7 +1260,7 @@ describe("CloudAgentState self-hosted targets", () => {
 
     await state.remove("agent_local");
 
-    expect(calls).toContain("delete@tgt_slowdown:agent_local");
+    expect(calls).toContain("delete@local:agent_local");
     expect(calls).not.toContain("delete@plow:agent_local");
   });
 
@@ -1274,8 +1268,8 @@ describe("CloudAgentState self-hosted targets", () => {
     ["a bare host:port that is not a URL", "192.168.15.12:8765"],
     ["a scheme that is not http", "slowdown:8765"],
     ["a local file", "file:///etc/passwd"],
-    // The security ones: each of these is a place a secret can be typed, and
-    // all three are stored, written to the wire log, and shown to the renderer.
+    // The security ones: each is a place a secret can be typed, and all three
+    // are stored, written to the wire log, and shown to the renderer.
     ["credentials in the URL", "http://user:pass@192.168.15.12:8765"],
     ["a password alone", "http://:pass@192.168.15.12:8765"],
     ["a query string", "http://192.168.15.12:8765?token=abc"],
@@ -1283,7 +1277,7 @@ describe("CloudAgentState self-hosted targets", () => {
   ])("refuses %s", (_why, baseUrl) => {
     const { state } = build();
 
-    expect(state.addTarget({ label: "x", baseUrl, bearer: "t" })).toBe(null);
+    expect(state.addTarget({ baseUrl, bearer: "t" })).toBe(false);
     expect(state.state().cloudActionError).toContain("isn't usable");
     expect(state.state().cloudTargets).toHaveLength(1);
   });
@@ -1291,57 +1285,57 @@ describe("CloudAgentState self-hosted targets", () => {
   it("refuses a host with no token", () => {
     const { state } = build();
 
-    expect(state.addTarget({ label: "x", baseUrl: "http://192.168.15.12:8765", bearer: " " }))
-      .toBe(null);
+    expect(state.addTarget({ baseUrl: HOST, bearer: " " })).toBe(false);
     expect(state.state().cloudActionError).toBe("Paste the host's AGENT_MGR_SERVE_TOKEN.");
     expect(state.state().cloudTargets).toHaveLength(1);
   });
 
-  it("stores one host for spellings of the same origin", () => {
-    const { state } = build();
-
-    const first = state.addTarget({
-      label: "slowdown",
-      baseUrl: "HTTP://192.168.15.12:8765/",
-      bearer: "t",
-    });
-    // Case and a default port are the same machine. A regex that only trims
-    // slashes would have made three hosts out of these.
-    const upper = state.addTarget({ label: "s", baseUrl: "http://192.168.15.12:8765", bearer: "t" });
-    const plain = state.addTarget({ label: "s", baseUrl: "http://PLOW.example:80", bearer: "t" });
-    const port = state.addTarget({ label: "s", baseUrl: "http://plow.example", bearer: "t" });
-
-    expect(upper).toBe(first);
-    expect(port).toBe(plain);
-    expect(state.state().cloudTargets.filter((target) => !target.builtin)
-      .map((target) => target.baseUrl))
-      .toEqual(["http://192.168.15.12:8765", "http://plow.example"]);
-  });
-
-  it("replaces a host entered twice rather than listing it again", () => {
+  it("canonicalises the address, so one machine stays one host", () => {
     const { state, home } = build();
 
-    const first = state.addTarget({
-      label: "slowdown",
-      baseUrl: "http://192.168.15.12:8765/",
-      bearer: "old-token",
-    });
-    const again = state.addTarget({
-      label: "slowdown",
-      baseUrl: "http://192.168.15.12:8765",
-      bearer: "rotated-token",
-    });
-
-    expect(again).toBe(first);
-    expect(state.state().cloudTargets).toHaveLength(2);
-    // The trailing slash is not a second machine, and the new token is the one
-    // kept — re-entering a host is how a rotated token gets in.
-    expect(loadSettings(home).agentTargets).toEqual([
-      { id: first, label: "slowdown", baseUrl: "http://192.168.15.12:8765", bearer: "rotated-token" },
-    ]);
+    expect(state.addTarget({ baseUrl: "HTTP://192.168.15.12:8765/", bearer: "t" })).toBe(true);
+    // Case and a default port are the same machine. A regex that only trims
+    // slashes could not collapse these.
+    expect(loadSettings(home).agentTarget).toEqual({ baseUrl: HOST, bearer: "t" });
+    expect(state.addTarget({ baseUrl: "http://PLOW.example:80", bearer: "t" })).toBe(true);
+    expect(loadSettings(home).agentTarget?.baseUrl).toBe("http://plow.example");
   });
 
-  it("forgetting a host drops its rows without deleting its agents", async () => {
+  it("re-entering the same host rotates its token and keeps its rows", async () => {
+    const { state, home } = build({
+      listAgentsFor: async (targetId) =>
+        targetId === BUILTIN_TARGET_ID ? [] : [agent({ agentId: "agent_local" })],
+    });
+    withHost(home);
+    await state.refresh();
+
+    expect(state.addTarget({ baseUrl: `${HOST}/`, bearer: "rotated-token" })).toBe(true);
+
+    // Same machine, new token: the agents on screen are still that machine's.
+    expect(loadSettings(home).agentTarget)
+      .toEqual({ baseUrl: HOST, bearer: "rotated-token" });
+    expect(state.state().cloudAgents.map((row) => row.agentId)).toEqual(["agent_local"]);
+  });
+
+  it("pointing at a different box drops the old box's rows", async () => {
+    const { state, home } = build({
+      listAgentsFor: async (targetId) =>
+        targetId === BUILTIN_TARGET_ID
+          ? [agent({ agentId: "agent_cloud" })]
+          : [agent({ agentId: "agent_local" })],
+    });
+    withHost(home);
+    await state.refresh();
+
+    state.addTarget({ baseUrl: "http://192.168.15.99:8765", bearer: "t" });
+
+    // `agent_local` is an id on a machine we are no longer pointed at, and
+    // agent-mgr ids are NAMES — reconciling it against a different box could
+    // put someone else's "demo" under it.
+    expect(state.state().cloudAgents.map((row) => row.agentId)).toEqual(["agent_cloud"]);
+  });
+
+  it("forgetting the host drops its rows without deleting its agents", async () => {
     const { state, calls, home } = build({
       listAgentsFor: async (targetId) =>
         targetId === BUILTIN_TARGET_ID
@@ -1352,20 +1346,10 @@ describe("CloudAgentState self-hosted targets", () => {
     await state.refresh();
     calls.length = 0;
 
-    state.forgetTarget("tgt_slowdown");
+    state.forgetTarget();
 
     expect(state.state().cloudAgents.map((row) => row.agentId)).toEqual(["agent_cloud"]);
     expect(state.state().cloudTargets).toHaveLength(1);
     expect(calls.some((call) => call.startsWith("delete@"))).toBe(false);
-  });
-
-  it("will not forget the built-in Plow", () => {
-    const { state, home } = build();
-    withHost(home);
-
-    state.forgetTarget(BUILTIN_TARGET_ID);
-
-    expect(state.state().cloudTargets.map((target) => target.id))
-      .toEqual([BUILTIN_TARGET_ID, "tgt_slowdown"]);
   });
 });

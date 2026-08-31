@@ -36,6 +36,7 @@ import {
   BUILTIN_TARGET_ID,
   BUILTIN_TARGET_LABEL,
   KeyInfo,
+  LOCAL_TARGET_ID,
   PlowApi,
   PlowApiError,
   ProvisionedActivationRedeem,
@@ -51,7 +52,6 @@ import {
   formatNumber,
   withoutCredentialEchoes,
 } from "./chatRows.js";
-import { randomUUID } from "node:crypto";
 import { loadSettings, saveSettings } from "./settings.js";
 
 /**
@@ -128,12 +128,11 @@ export interface CloudCreateInput {
 /**
  * One host, as the renderer is allowed to see it.
  *
- * `AgentTarget` minus its bearer, and the omission is the point: the picker
+ * `AgentTarget` minus its bearer, and the omission is the point: the form
  * needs to name a host, never to authenticate to one.
  */
 export interface CloudTargetOption {
   id: string;
-  label: string;
   baseUrl: string;
   /** The derived Plow target, which cannot be edited or forgotten. */
   builtin: boolean;
@@ -322,7 +321,6 @@ export class CloudAgentState {
       cloudChatsLoaded: this.chatsLoaded,
       cloudTargets: this.targets().map((target) => ({
         id: target.id,
-        label: target.label,
         baseUrl: target.baseUrl,
         builtin: target.id === BUILTIN_TARGET_ID,
       })),
@@ -1273,6 +1271,7 @@ export class CloudAgentState {
     const settings = loadSettings(this.deps.home);
     const bearer = settings.relayCredential.trim();
     if (!bearer) return [];
+    const host = settings.agentTarget;
     return [
       {
         id: BUILTIN_TARGET_ID,
@@ -1280,7 +1279,11 @@ export class CloudAgentState {
         baseUrl: this.deps.baseUrl,
         bearer,
       },
-      ...settings.agentTargets,
+      // The address is the name: with one host there is nothing to tell apart,
+      // and a label the owner had to invent was a field for no reader.
+      ...(host
+        ? [{ id: LOCAL_TARGET_ID, label: host.baseUrl, baseUrl: host.baseUrl, bearer: host.bearer }]
+        : []),
     ];
   }
 
@@ -1310,65 +1313,65 @@ export class CloudAgentState {
   }
 
   /**
-   * Add a self-hosted host, or replace one that has the same origin.
+   * Set this Mac's self-hosted host, replacing whatever was there.
    *
-   * Same-origin replace rather than a second row: re-entering a host is how a
-   * rotated `AGENT_MGR_SERVE_TOKEN` gets in, and two rows for one machine
-   * would leave the agents listed twice under whichever token still works.
+   * A REPLACE, not an append: there is one slot. Re-entering the host is also
+   * how a rotated `AGENT_MGR_SERVE_TOKEN` gets in, and that has to overwrite
+   * rather than leave a stale row beside the new one.
    */
-  addTarget(input: { label?: unknown; baseUrl?: unknown; bearer?: unknown }): string | null {
-    const label = typeof input?.label === "string" ? input.label.trim() : "";
+  addTarget(input: { baseUrl?: unknown; bearer?: unknown }): boolean {
     const bearer = typeof input?.bearer === "string" ? input.bearer.trim() : "";
-    const rawUrl = typeof input?.baseUrl === "string" ? input.baseUrl : "";
     // Canonical, and refused outright if it carries anything a host address
     // has no business carrying — see `canonicalAgentHostUrl`.
-    const baseUrl = canonicalAgentHostUrl(rawUrl);
+    const baseUrl = canonicalAgentHostUrl(
+      typeof input?.baseUrl === "string" ? input.baseUrl : "",
+    );
     if (!baseUrl) {
-      return this.failAction(
+      this.failAction(
         "That host address isn't usable. It looks like http://192.168.1.10:8765 — no user, password or query.",
       );
+      return false;
     }
-    if (!bearer) return this.failAction("Paste the host's AGENT_MGR_SERVE_TOKEN.");
+    if (!bearer) {
+      this.failAction("Paste the host's AGENT_MGR_SERVE_TOKEN.");
+      return false;
+    }
 
     const settings = loadSettings(this.deps.home);
-    const existing = settings.agentTargets.find((target) => target.baseUrl === baseUrl);
-    const id = existing?.id ?? randomUUID();
-    const target: AgentTarget = { id, label: label || baseUrl, baseUrl, bearer };
-    saveSettings(this.deps.home, {
-      ...settings,
-      agentTargets: existing
-        ? settings.agentTargets.map((row) => (row.id === id ? target : row))
-        : [...settings.agentTargets, target],
-    });
+    // Pointing at a DIFFERENT box: the rows on screen belong to the old one and
+    // its ids mean nothing here, so they go with it rather than being reconciled
+    // against a machine that never had them.
+    if (settings.agentTarget && settings.agentTarget.baseUrl !== baseUrl) this.dropLocalRows();
+    saveSettings(this.deps.home, { ...settings, agentTarget: { baseUrl, bearer } });
     this.actionError = null;
     this.publish();
-    return id;
+    return true;
   }
 
   /**
-   * Forget a host. Its agents go off the roster with it — they live on that
-   * machine, and this app has just given up the only way it had to ask.
-   * Nothing is torn down: forgetting a host is not deleting its agents.
+   * Forget the self-hosted host. Its agents go off the roster with it — they
+   * live on that machine, and this app has just given up the only way it had
+   * to ask. Nothing is torn down: forgetting a host is not deleting its agents.
    */
-  forgetTarget(targetId: string): void {
-    const id = (targetId ?? "").trim();
-    if (!id || id === BUILTIN_TARGET_ID) return;
+  forgetTarget(): void {
     const settings = loadSettings(this.deps.home);
-    if (!settings.agentTargets.some((target) => target.id === id)) return;
-    saveSettings(this.deps.home, {
-      ...settings,
-      agentTargets: settings.agentTargets.filter((target) => target.id !== id),
-    });
+    if (!settings.agentTarget) return;
+    saveSettings(this.deps.home, { ...settings, agentTarget: null });
+    this.dropLocalRows();
+    this.actionError = null;
+    this.publish();
+  }
+
+  /** Everything this Mac knew about the self-hosted host's agents. */
+  private dropLocalRows(): void {
     for (const [agentId, row] of [...this.rows]) {
-      if (row.targetId !== id) continue;
+      if (row.targetId !== LOCAL_TARGET_ID) continue;
       this.abortPoll(agentId);
       this.rows.delete(agentId);
       this.homeChatUids.delete(agentId);
       this.pending.delete(agentId);
       this.retainedCreates.delete(agentId);
     }
-    this.actionError = null;
-    this.publish();
   }
 
   /** Report what the click could not do, and answer `null` to every caller

@@ -9,7 +9,7 @@
  */
 import fs from "node:fs";
 import path from "node:path";
-import { AgentTarget, BUILTIN_TARGET_ID, canonicalAgentHostUrl } from "./plowApi.js";
+import { canonicalAgentHostUrl } from "./plowApi.js";
 
 /**
  * How the credential is encrypted at rest, when the OS offers a way.
@@ -117,6 +117,13 @@ export const DEFAULT_APPROVAL_MODE: ApprovalMode = "adversarial";
  * Local because nothing on the server knows about it: adversarial review is
  * this app's reviewer, not a property of the machine Plow provisioned.
  */
+/** The one self-hosted host, as it is kept on disk. */
+export interface SelfHostedHost {
+  baseUrl: string;
+  /** A SECRET: sealed at rest, and never sent to the renderer. */
+  bearer: string;
+}
+
 export interface Settings {
   /* There is deliberately NO API base URL here. It is baked into the build
    * (`resolveApiBaseUrl`), because a credential is only valid against the
@@ -140,19 +147,23 @@ export interface Settings {
   /** This installation's server-authored MCP endpoint. */
   mcpUrl: string;
   /**
-   * Self-hosted agent hosts the owner added, in the order they added them.
+   * The one self-hosted `agent-mgr` host this Mac drives, or `null`.
    *
-   * The built-in Plow target is NOT here — it is derived from the build's base
-   * URL and `relayCredential` — so everything in this list is an origin a human
-   * typed, and every bearer in it is that host's own token. The relay
-   * credential must never be copied into one: it carries the owner's full Plow
-   * authority, and handing it to a URL someone typed is how a support request
-   * becomes an account compromise.
+   * ONE, not a list. A Mac points at its own box; `agent-mgr` also answers with
+   * the agent's NAME as its `agent_id` rather than a uuid, so a second host
+   * holding a same-named agent would collapse onto the first one's roster row.
+   * A registry that makes that reachable buys nothing a single slot does not.
    *
-   * Each bearer is a secret and is sealed at rest exactly as `relayCredential`
-   * is, under a per-entry `bearerEnc`.
+   * The built-in Plow target is not here either — it is derived from the
+   * build's base URL and `relayCredential`. So this is the one origin a human
+   * typed, and `bearer` is that host's own `AGENT_MGR_SERVE_TOKEN`. The relay
+   * credential must never be copied into it: it carries the owner's full Plow
+   * authority, and handing that to a URL someone typed is how a support
+   * request becomes an account compromise.
+   *
+   * `bearer` is a secret, sealed at rest exactly as `relayCredential` is.
    */
-  agentTargets: AgentTarget[];
+  agentTarget: SelfHostedHost | null;
   /** The last-selected main-window tab, restored across launches.
    *
    * The default is the FIRST launch's landing, not a fallback anyone returns
@@ -232,7 +243,7 @@ export function loadSettings(home: string): Settings {
     agentPurpose: "",
     provisionedChatUid: "",
     provisionedChatLabel: "",
-    agentTargets: [],
+    agentTarget: null,
     autoCheckUpdates: true,
     autoInstallUpdates: true,
     keepAwakeWhileRunning: false,
@@ -257,7 +268,7 @@ export function loadSettings(home: string): Settings {
   delete settings.inferenceProvider;
 
   const loaded = { ...defaults, ...settings };
-  loaded.agentTargets = readAgentTargets(settings.agentTargets);
+  loaded.agentTarget = readAgentTarget(settings.agentTarget);
   // The encrypted field wins where it exists. A decrypt that fails is treated
   // as signed out rather than as a crash, and the unreadable value is cleared
   // below along with the account-local display state.
@@ -322,15 +333,18 @@ export function saveSettings(home: string, settings: Settings): void {
   } else {
     delete stored.relayCredentialEnc;
   }
-  stored.agentTargets = (settings.agentTargets ?? []).map((target) => {
-    const bearer = target.bearer.trim();
+  const host = settings.agentTarget;
+  if (host) {
+    const bearer = host.bearer.trim();
     const sealed = seal(bearer, active);
     // Same shape as the relay credential above: sealed where the OS can, and
     // plaintext inside a 0600 file where it cannot — never both.
-    return sealed
-      ? { id: target.id, label: target.label, baseUrl: target.baseUrl, bearer: "", bearerEnc: sealed }
-      : { id: target.id, label: target.label, baseUrl: target.baseUrl, bearer };
-  });
+    stored.agentTarget = sealed
+      ? { baseUrl: host.baseUrl, bearer: "", bearerEnc: sealed }
+      : { baseUrl: host.baseUrl, bearer };
+  } else {
+    stored.agentTarget = null;
+  }
   const credentialInClear = !encrypted && credential !== "";
   if (credentialInClear && codec && !warnedUnavailable) {
     warnedUnavailable = true;
@@ -369,37 +383,27 @@ export function saveSettings(home: string, settings: Settings): void {
 }
 
 /**
- * The stored host list, normalised.
+ * The stored self-hosted host, or `null` when there is not a usable one.
  *
- * A hand-edited or truncated file can put anything here, and every reader
- * treats an entry as a live request target — so this is a trust boundary, not
- * housekeeping. An entry is kept only if it can actually be used:
+ * A trust boundary, not housekeeping: every reader treats this as a live
+ * request target, and a hand-edited file can put anything here. It survives
+ * only if it can actually be used —
  *
- * - **No bearer, no target.** A sealed bearer this Mac can no longer decrypt
- *   (a restored backup, a new login keychain) leaves a host that answers 401 to
- *   everything. Dropping it costs the owner two fields to re-enter; keeping it
- *   costs them an error with no explanation.
- * - **The built-in id is reserved**, so nothing on disk can shadow Plow itself
- *   and take the relay credential's place in the picker.
- * - **First id wins**, because rows are keyed on it downstream.
+ * - **No bearer, no host.** A sealed bearer this Mac can no longer decrypt (a
+ *   restored backup, a new login keychain) leaves an origin that answers 401
+ *   to everything. Dropping it costs the owner two fields to re-enter; keeping
+ *   it costs them an error with no explanation.
+ * - **The address is canonicalised or refused** — see `canonicalAgentHostUrl`.
+ *   Applied here and not only on entry, so a host written by hand, or by a
+ *   build from before the rule existed, gets it too.
  */
-function readAgentTargets(raw: unknown): AgentTarget[] {
-  if (!Array.isArray(raw)) return [];
+function readAgentTarget(raw: unknown): SelfHostedHost | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const row = raw as Record<string, unknown>;
   const text = (value: unknown): string => (typeof value === "string" ? value.trim() : "");
-  const targets: AgentTarget[] = [];
-  const seen = new Set<string>();
-  for (const entry of raw) {
-    if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue;
-    const row = entry as Record<string, unknown>;
-    const id = text(row.id);
-    // Canonicalised on the way in too, not only when it was added: a host
-    // written by an older build, or by hand, gets the same refusals.
-    const baseUrl = canonicalAgentHostUrl(text(row.baseUrl));
-    const sealedBearer = text(row.bearerEnc);
-    const bearer = sealedBearer ? unseal(sealedBearer).trim() : text(row.bearer);
-    if (!id || id === BUILTIN_TARGET_ID || seen.has(id) || !baseUrl || !bearer) continue;
-    seen.add(id);
-    targets.push({ id, label: text(row.label) || baseUrl, baseUrl, bearer });
-  }
-  return targets;
+  const baseUrl = canonicalAgentHostUrl(text(row.baseUrl));
+  const sealedBearer = text(row.bearerEnc);
+  const bearer = sealedBearer ? unseal(sealedBearer).trim() : text(row.bearer);
+  if (!baseUrl || !bearer) return null;
+  return { baseUrl, bearer };
 }

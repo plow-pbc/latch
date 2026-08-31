@@ -379,11 +379,11 @@ describe("the credential at rest", () => {
 });
 
 /**
- * A self-hosted host's bearer is a second secret in this file, and every reader
- * treats a stored entry as a live request target — so the list is a trust
+ * The self-hosted host's bearer is a second secret in this file, and every
+ * reader treats a stored host as a live request target — so it is a trust
  * boundary, not a preference.
  */
-describe("self-hosted agent targets", () => {
+describe("the self-hosted agent host", () => {
   const fakeCodec = {
     available: () => true,
     encrypt: (plain: string) => `sealed:${Buffer.from(plain).toString("base64")}`,
@@ -398,25 +398,22 @@ describe("self-hosted agent targets", () => {
   const fileOf = (home: string) =>
     JSON.parse(fs.readFileSync(path.join(home, "app/settings.json"), "utf8")) as Record<string, unknown>;
 
-  it("seals each host's bearer, exactly as it seals the relay credential", () => {
+  it("seals the host's bearer, exactly as it seals the relay credential", () => {
     useCredentialCodec(fakeCodec);
     const home = tempHome();
-    const settings = loadSettings(home);
-    settings.agentTargets = [
-      { id: "tgt_1", label: "slowdown", baseUrl: "http://192.168.15.12:8765", bearer: "serve_token_xyz" },
-    ];
-    saveSettings(home, settings);
+    saveSettings(home, {
+      ...loadSettings(home),
+      agentTarget: { baseUrl: "http://192.168.15.12:8765", bearer: "serve_token_xyz" },
+    });
 
     expect(fs.readFileSync(path.join(home, "app/settings.json"), "utf8"))
       .not.toContain("serve_token_xyz");
-    expect((fileOf(home).agentTargets as Record<string, unknown>[])[0]).toEqual({
-      id: "tgt_1",
-      label: "slowdown",
+    expect(fileOf(home).agentTarget).toEqual({
       baseUrl: "http://192.168.15.12:8765",
       bearer: "",
       bearerEnc: `sealed:${Buffer.from("serve_token_xyz").toString("base64")}`,
     });
-    expect(loadSettings(home).agentTargets[0].bearer).toBe("serve_token_xyz");
+    expect(loadSettings(home).agentTarget?.bearer).toBe("serve_token_xyz");
   });
 
   it("drops a host whose sealed bearer this Mac can no longer read", () => {
@@ -424,79 +421,48 @@ describe("self-hosted agent targets", () => {
     const home = tempHome();
     saveSettings(home, {
       ...loadSettings(home),
-      agentTargets: [
-        { id: "tgt_1", label: "slowdown", baseUrl: "http://192.168.15.12:8765", bearer: "serve_token_xyz" },
-      ],
+      agentTarget: { baseUrl: "http://192.168.15.12:8765", bearer: "serve_token_xyz" },
     });
     // A restored backup, or a new login keychain: the seal is there and
     // unreadable. A host that answers 401 to everything is not a host.
     useCredentialCodec({ ...fakeCodec, decrypt: () => { throw new Error("gone"); } });
 
-    expect(loadSettings(home).agentTargets).toEqual([]);
+    expect(loadSettings(home).agentTarget).toBe(null);
   });
 
-  it("refuses a stored entry that would shadow the built-in Plow", () => {
+  it.each([
+    ["credentials in the URL", "http://user:pass@192.168.15.12:8765"],
+    ["a query string", "http://192.168.15.12:8765?token=abc"],
+    ["a fragment", "http://192.168.15.12:8765#abc"],
+    ["a scheme that is not http", "file:///etc/passwd"],
+  ])("drops a stored host carrying %s", (_why, baseUrl) => {
     const home = tempHome();
-    write(home, JSON.stringify({
-      agentTargets: [
-        { id: "plow", label: "Not Plow", baseUrl: "http://evil.example", bearer: "t" },
-        { id: "tgt_ok", label: "", baseUrl: "http://192.168.15.12:8765/", bearer: "t" },
-      ],
-    }));
+    // Written by hand, or by a build from before the address was
+    // canonicalised. A URL is not a place to keep a secret, and this one is
+    // logged and shown to the renderer.
+    write(home, JSON.stringify({ agentTarget: { baseUrl, bearer: "t" } }));
 
-    // The reserved id is gone; the survivor keeps its origin normalised and
-    // falls back to naming itself by address.
-    expect(loadSettings(home).agentTargets).toEqual([
-      { id: "tgt_ok", label: "http://192.168.15.12:8765", baseUrl: "http://192.168.15.12:8765", bearer: "t" },
-    ]);
+    expect(loadSettings(home).agentTarget).toBe(null);
   });
 
-  it("ignores junk a hand-edited file can put in the list", () => {
+  it("canonicalises a stored address on the way in", () => {
     const home = tempHome();
-    write(home, JSON.stringify({
-      agentTargets: [
-        null,
-        "http://192.168.15.12:8765",
-        { id: "tgt_1", baseUrl: "http://192.168.15.12:8765" },
-        { id: "tgt_2", baseUrl: "", bearer: "t" },
-        { id: "", baseUrl: "http://192.168.15.12:8765", bearer: "t" },
-        { id: "tgt_3", baseUrl: "http://a.example", bearer: "t", label: "a" },
-        { id: "tgt_3", baseUrl: "http://b.example", bearer: "t", label: "b" },
-      ],
-    }));
+    write(home, JSON.stringify({ agentTarget: { baseUrl: "HTTP://192.168.15.12:8765/", bearer: "t" } }));
 
-    // No bearer, no origin, no id — no target. And the first id wins, because
-    // rows are keyed on it downstream.
-    expect(loadSettings(home).agentTargets).toEqual([
-      { id: "tgt_3", label: "a", baseUrl: "http://a.example", bearer: "t" },
-    ]);
-    expect(loadSettings(home).agentTargets).toEqual(
-      loadSettings(home).agentTargets.filter(Boolean),
-    );
+    expect(loadSettings(home).agentTarget)
+      .toEqual({ baseUrl: "http://192.168.15.12:8765", bearer: "t" });
   });
 
-  it("drops a stored host carrying credentials in its URL", () => {
+  it.each([
+    ["no bearer", { baseUrl: "http://192.168.15.12:8765" }],
+    ["no address", { bearer: "t" }],
+    ["a string where a host belongs", "http://192.168.15.12:8765"],
+    ["a list, from the build that kept several", [{ baseUrl: "http://a.example", bearer: "t" }]],
+    ["null", null],
+  ])("reads %s as no host at all", (_why, agentTarget) => {
     const home = tempHome();
-    write(home, JSON.stringify({
-      agentTargets: [
-        // Written by hand, or by a build before the address was canonicalised.
-        // A URL is not a place to keep a secret, and this one is logged and
-        // shown to the renderer.
-        { id: "tgt_1", label: "a", baseUrl: "http://user:pass@192.168.15.12:8765", bearer: "t" },
-        { id: "tgt_2", label: "b", baseUrl: "http://192.168.15.12:8765?token=abc", bearer: "t" },
-        { id: "tgt_3", label: "c", baseUrl: "HTTP://192.168.15.12:8765/", bearer: "t" },
-      ],
-    }));
+    write(home, JSON.stringify({ agentTarget }));
 
-    expect(loadSettings(home).agentTargets).toEqual([
-      { id: "tgt_3", label: "c", baseUrl: "http://192.168.15.12:8765", bearer: "t" },
-    ]);
-  });
-
-  it("reads a non-array as no hosts at all", () => {
-    const home = tempHome();
-    write(home, JSON.stringify({ agentTargets: { id: "tgt_1" } }));
-
-    expect(loadSettings(home).agentTargets).toEqual([]);
+    expect(loadSettings(home).agentTarget).toBe(null);
   });
 });

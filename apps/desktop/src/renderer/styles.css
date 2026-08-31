@@ -606,7 +606,9 @@ textarea.text { min-height: 70px; resize: vertical; }
 .list-section-actions { display: flex; align-items: center; gap: 6px; }
 /* The host select takes the width; Forget keeps its own. */
 .cloud-host-row { display: flex; align-items: center; gap: 6px; }
-.cloud-host-row select { flex: 1; min-width: 0; }
+.cloud-host-row .cloud-host-url {
+  flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 .entity-list {
   background: var(--card); border: 1px solid var(--border);
   border-radius: var(--radius); box-shadow: var(--shadow);

@@ -30,7 +30,6 @@ const NEW_LINE_VALUE = "__new_line__";
  * here would just be three ways to reach one 400.
  */
 const LOCAL_PROVIDER = "local:docker";
-const ADD_HOST_VALUE = "__add_host__";
 
 
 // Null until boot() picks one: the HTML marks Audit active for the first paint,
@@ -980,26 +979,22 @@ function cloudActivationScreen(panel, flow) {
 }
 
 /**
- * The host field of the New local agent form: pick a saved host, or enter one.
+ * The host field of the New local agent form: the one saved host, or the two
+ * fields that set it.
  *
- * The token field is write-only from here on. It goes to the main process and
- * is never sent back — `cloudTargets` carries a label and an origin and
- * nothing else — so a saved host shows its address, never its bearer, and
- * re-entering a rotated token means typing it again rather than editing one on
- * screen.
+ * ONE host, so there is nothing to pick between — no select, no label to
+ * invent, no forgetting the right row. The address IS the name.
+ *
+ * The token is write-only from here on. It goes to the main process and never
+ * comes back — `cloudTargets` carries an origin and nothing else — so a saved
+ * host shows its address, never its bearer, and a rotated token is re-entered
+ * rather than edited on screen.
  */
 function cloudHostFieldNodes(state, modal, redraw) {
-  const hosts = (state.cloudTargets ?? []).filter((target) => !target.builtin);
-  if (modal.targetId && !hosts.some((host) => host.id === modal.targetId)) {
-    modal.targetId = null;
-  }
-  const adding = modal.addingHost === true || hosts.length === 0;
+  const host = (state.cloudTargets ?? []).find((target) => !target.builtin) ?? null;
+  modal.targetId = host?.id ?? null;
 
-  if (adding) {
-    const label = el("input", {
-      class: "text",
-      attrs: { placeholder: "slowdown", "aria-label": "Host name" },
-    });
+  if (!host || modal.addingHost === true) {
     const baseUrl = el("input", {
       class: "text",
       // A LAN or tailnet address, not loopback: the host that runs the agents
@@ -1014,23 +1009,18 @@ function cloudHostFieldNodes(state, modal, redraw) {
     save.addEventListener("click", async () => {
       save.disabled = true;
       const next = await window.domo.cloudAddTarget({
-        label: label.value.trim(),
         baseUrl: baseUrl.value,
         bearer: bearer.value,
       });
       if (cloudModal?.kind === "line-flow") {
-        // Main says which row it wrote. A rejected host answers with no id and
-        // leaves the form up with the reason on it; only a saved one closes
-        // the form and selects itself.
-        if (next?.addedTargetId) {
-          Object.assign(cloudModal, { targetId: next.addedTargetId, addingHost: false });
-        }
+        // A rejected host answers `added: false` and leaves the form up with
+        // the reason on it; only an accepted one closes it.
+        if (next?.added) cloudModal.addingHost = false;
         syncCloudLineModal(next ?? state, redraw);
       }
       await redraw();
     });
     const nodes = [
-      el("div", { class: "field" }, [el("label", { text: "Host name" }), label]),
       el("div", { class: "field" }, [
         el("label", { text: "Host address" }),
         baseUrl,
@@ -1043,8 +1033,8 @@ function cloudHostFieldNodes(state, modal, redraw) {
       el("div", { class: "field" }, [el("label", { text: "Host token" }), bearer]),
       el("div", { class: "row cloud-modal-actions" }, [el("div", { class: "spacer" }), save]),
     ];
-    if (hosts.length) {
-      const back = el("button", { class: "linkbtn", text: "Use a saved host", attrs: { type: "button" } });
+    if (host) {
+      const back = el("button", { class: "linkbtn", text: "Keep the saved host", attrs: { type: "button" } });
       back.addEventListener("click", () => {
         modal.addingHost = false;
         syncCloudLineModal(state, redraw);
@@ -1054,22 +1044,15 @@ function cloudHostFieldNodes(state, modal, redraw) {
     return nodes;
   }
 
-  modal.targetId = modal.targetId ?? hosts[0].id;
-  const hostSelect = el("select", { class: "text", attrs: { "aria-label": "Host" } }, [
-    ...hosts.map((host) =>
-      el("option", { text: `${host.label} · ${host.baseUrl}`, attrs: { value: host.id } })),
-    el("option", { text: "Add a host…", attrs: { value: ADD_HOST_VALUE } }),
-  ]);
-  hostSelect.value = modal.targetId;
-  hostSelect.addEventListener("change", () => {
-    if (hostSelect.value === ADD_HOST_VALUE) modal.addingHost = true;
-    else modal.targetId = hostSelect.value;
+  const change = el("button", { class: "btn small", text: "Change" });
+  change.addEventListener("click", () => {
+    modal.addingHost = true;
     syncCloudLineModal(state, redraw);
   });
   const forget = el("button", { class: "btn small", text: "Forget" });
   forget.addEventListener("click", async () => {
     forget.disabled = true;
-    const next = await window.domo.cloudForgetTarget(modal.targetId);
+    const next = await window.domo.cloudForgetTarget();
     if (cloudModal?.kind === "line-flow") {
       // Forgetting a host does not tear its agents down; it drops the only way
       // this Mac had to reach them.
@@ -1081,7 +1064,11 @@ function cloudHostFieldNodes(state, modal, redraw) {
   return [
     el("div", { class: "field" }, [
       el("label", { text: "Host" }),
-      el("div", { class: "row cloud-host-row" }, [hostSelect, forget]),
+      el("div", { class: "row cloud-host-row" }, [
+        el("span", { class: "cloud-host-url", text: host.baseUrl }),
+        change,
+        forget,
+      ]),
     ]),
   ];
 }
@@ -1702,7 +1689,7 @@ function cloudContext(agent, state) {
 function cloudHostLabel(agent, state) {
   if (!agent || !agent.targetId) return null;
   const target = (state.cloudTargets ?? []).find((row) => row.id === agent.targetId);
-  return !target || target.builtin ? null : target.label;
+  return !target || target.builtin ? null : target.baseUrl;
 }
 
 function cloudStatusNode(agent) {

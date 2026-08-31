@@ -684,20 +684,15 @@ ipcMain.handle("cloud:create", async (_e, input: unknown) => {
  */
 ipcMain.handle("cloud:addTarget", async (_e, input: unknown) => {
   const raw = input && typeof input === "object" ? input as Record<string, unknown> : {};
-  // The id comes back so the form can select what it just saved. Without it
-  // the renderer had to re-derive the canonical origin to find the row, which
-  // meant a second copy of the canonicalisation rules living where the
-  // untrusted input is typed.
-  const addedTargetId = cloudAgents?.addTarget({
-    label: raw.label,
-    baseUrl: raw.baseUrl,
-    bearer: raw.bearer,
-  }) ?? null;
-  if (addedTargetId) await cloudAgents?.refresh();
-  return { ...agentsTabState(), addedTargetId };
+  // Whether it was accepted comes back, so the form knows to close rather than
+  // re-deriving the canonical origin to look for its own row — a second copy of
+  // the canonicalisation rules, living where the untrusted input is typed.
+  const added = cloudAgents?.addTarget({ baseUrl: raw.baseUrl, bearer: raw.bearer }) === true;
+  if (added) await cloudAgents?.refresh();
+  return { ...agentsTabState(), added };
 });
-ipcMain.handle("cloud:forgetTarget", async (_e, targetId: unknown) => {
-  cloudAgents?.forgetTarget(typeof targetId === "string" ? targetId : "");
+ipcMain.handle("cloud:forgetTarget", async () => {
+  cloudAgents?.forgetTarget();
   return agentsTabState();
 });
 ipcMain.handle("cloud:cancelLineFlow", async () => {

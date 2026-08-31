@@ -148,9 +148,7 @@ let cloudProbe = {
   cloudChatsLoaded: true,
   // Only the built-in Plow to begin with, so the local form has to be the
   // add-a-host one on a Mac that has never added one.
-  cloudTargets: [
-    { id: "plow", label: "Plow", baseUrl: "https://api.plow.co", builtin: true },
-  ],
+  cloudTargets: [{ id: "plow", baseUrl: "https://api.plow.co", builtin: true }],
 };
 let cloudChangeRequest = null;
 let cloudChangeCancelCount = 0;
@@ -194,26 +192,22 @@ ipcMain.handle("cloud:cancelLineFlow", async () => {
 });
 ipcMain.handle("cloud:addTarget", async (_e, input) => {
   cloudAddedTargets.push(input);
-  // What main does on a good host: store it and hand back a bearer-free row.
+  // What main does on a good host: store the ONE host and hand back a
+  // bearer-free row.
   cloudProbe = {
     ...cloudProbe,
     cloudTargets: [
-      ...cloudProbe.cloudTargets,
-      {
-        id: "tgt_probe",
-        label: input.label || input.baseUrl,
-        baseUrl: String(input.baseUrl ?? "").trim().replace(/\/+$/, ""),
-        builtin: false,
-      },
+      ...cloudProbe.cloudTargets.filter((target) => target.builtin),
+      { id: "local", baseUrl: new URL(String(input.baseUrl ?? "")).origin, builtin: false },
     ],
   };
-  return agentsTabProbeState();
+  return { ...agentsTabProbeState(), added: true };
 });
-ipcMain.handle("cloud:forgetTarget", async (_e, targetId) => {
-  cloudForgottenTargets.push(targetId);
+ipcMain.handle("cloud:forgetTarget", async () => {
+  cloudForgottenTargets.push("local");
   cloudProbe = {
     ...cloudProbe,
-    cloudTargets: cloudProbe.cloudTargets.filter((target) => target.id !== targetId),
+    cloudTargets: cloudProbe.cloudTargets.filter((target) => target.builtin),
   };
   return agentsTabProbeState();
 });
@@ -906,6 +900,8 @@ app.whenReady().then(async () => {
       // and Create button are deliberately absent.
       noLinePicker: modal.querySelector('select[aria-label="Line"]') === null,
       noAgentType: modal.querySelector('select[aria-label="Agent type"]') === null,
+      // One host: no name to invent for it, and nothing to pick between.
+      noHostNameField: modal.querySelector('input[aria-label="Host name"]') === null,
       tokenIsMasked:
         modal.querySelector('input[aria-label="Host token"]')?.type === "password",
       namePlaceholder: modal.querySelector('input[aria-label="Agent name"]')?.placeholder,
@@ -917,19 +913,17 @@ app.whenReady().then(async () => {
   }})()`);
   await win.webContents.executeJavaScript(`(() => {
     const modal = document.querySelector(".cloud-modal");
-    modal.querySelector('input[aria-label="Host name"]').value = "slowdown";
     modal.querySelector('input[aria-label="Host address"]').value = "http://192.168.15.12:8765/";
     modal.querySelector('input[aria-label="Host token"]').value = "serve-token-abc";
   })()`);
   await clickCloudButton(win, "Save host");
-  await waitFor(win, `document.querySelector('.cloud-modal select[aria-label="Host"]')`,
-    "the saved host to be selected");
+  await waitFor(win, `document.querySelector(".cloud-modal .cloud-host-url")`,
+    "the saved host to be shown");
   const cloudLocalHostSaved = await win.webContents.executeJavaScript(`(${() => {
     const modal = document.querySelector(".cloud-modal");
-    const host = modal.querySelector('select[aria-label="Host"]');
     return {
-      hosts: [...host.options].map((option) => option.textContent.trim()),
-      selected: host.selectedOptions[0]?.textContent.trim(),
+      host: modal.querySelector(".cloud-host-url")?.textContent.trim(),
+      noHostSelect: modal.querySelector('select[aria-label="Host"]') === null,
       // The bearer went one way. Nothing on screen can show it again.
       tokenNotOnScreen: !modal.textContent.includes("serve-token-abc") &&
         [...modal.querySelectorAll("input")].every((input) => input.value !== "serve-token-abc"),
@@ -2120,6 +2114,27 @@ app.whenReady().then(async () => {
     cloudCreateRequest?.provider === "exe:life" &&
     cloudCreateRequest?.lineUid === null &&
     cloudCreateCancelled &&
+    cloudLocalHostForm.title === "New local agent" &&
+    cloudLocalHostForm.noLinePicker &&
+    cloudLocalHostForm.noAgentType &&
+    cloudLocalHostForm.noHostNameField &&
+    cloudLocalHostForm.tokenIsMasked &&
+    cloudLocalHostForm.namePlaceholder === "Local agent" &&
+    cloudLocalHostForm.placeholderIsNotLoopback &&
+    cloudLocalHostForm.buttons.join("|") === "Save host|Cancel" &&
+    localAddRequest?.baseUrl === "http://192.168.15.12:8765/" &&
+    localAddRequest?.bearer === "serve-token-abc" &&
+    localAddRequest?.label === undefined &&
+    cloudLocalHostSaved.host === "http://192.168.15.12:8765" &&
+    cloudLocalHostSaved.noHostSelect &&
+    cloudLocalHostSaved.tokenNotOnScreen &&
+    cloudLocalHostSaved.offersLine &&
+    cloudLocalHostSaved.noAgentType &&
+    cloudLocalHostSaved.buttons.includes("Forget") &&
+    cloudLocalHostSaved.buttons.includes("Change") &&
+    cloudLocalCreateRequest?.provider === "local:docker" &&
+    cloudLocalCreateRequest?.targetId === "local" &&
+    cloudLocalCreateRequest?.lineUid === null &&
     cloudCreateCode.title === "New line" &&
     cloudCreateCode.code === "LINE42" &&
     cloudCreateCode.copy &&

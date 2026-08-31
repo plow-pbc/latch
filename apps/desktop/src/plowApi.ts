@@ -47,6 +47,17 @@ export interface AgentTarget {
 export const BUILTIN_TARGET_ID = "plow";
 export const BUILTIN_TARGET_LABEL = "Plow";
 
+/**
+ * The id of the one self-hosted target, when this Mac has one.
+ *
+ * A CONSTANT, not a generated id, because a Mac drives at most one
+ * self-hosted host. `agent-mgr` answers with the agent's NAME as its
+ * `agent_id` rather than a uuid, so two self-hosted hosts each holding a
+ * "demo" would collapse into one roster row — the registry that made that
+ * reachable bought nothing, and is gone.
+ */
+export const LOCAL_TARGET_ID = "local";
+
 export const PRODUCTION_API_BASE_URL = "https://api.plow.co";
 
 /** Developer-only escape hatch, so retargeting does not need a rebuild. */
