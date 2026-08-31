@@ -108,8 +108,10 @@ if (!app.requestSingleInstanceLock()) {
   app.exit(0);
 }
 app.on("second-instance", () => {
-  // Whoever launched the second copy wanted the app on screen.
-  createMainWindow();
+  // Whoever launched the second copy wanted the app on screen — but WHICH
+  // window is the gate's decision alone (windowGate.ts: a signed-out Mac gets
+  // setup, never the main window beside it).
+  gate.sync();
 });
 
 const dirname = path.dirname(fileURLToPath(import.meta.url));

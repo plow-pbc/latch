@@ -36,7 +36,7 @@ CREATE TABLE users (uuid TEXT PRIMARY KEY, email TEXT, akey TEXT, private_key TE
 CREATE TABLE ciphers (
   uuid TEXT PRIMARY KEY, atype INTEGER, name TEXT, notes TEXT, fields TEXT,
   data TEXT, password_history TEXT, reprompt INTEGER, "key" TEXT,
-  updated_at DATETIME, deleted_at DATETIME, organization_uuid TEXT
+  updated_at DATETIME, deleted_at DATETIME, organization_uuid TEXT, user_uuid TEXT
 );
 CREATE TABLE users_organizations (uuid TEXT PRIMARY KEY, user_uuid TEXT, org_uuid TEXT, akey TEXT);`;
 
@@ -46,15 +46,16 @@ interface LegacyFixture {
   rows: Cipher[];
 }
 
-/** One INSERT for a cipher row built by encryptCipher. */
-function cipherInsert(c: Cipher, i: number, bodyKey: string, orgUuid: string | null = null): string {
+/** One INSERT for a cipher row built by encryptCipher. Vaultwarden's rule:
+ * a personal row carries user_uuid, an org row carries organization_uuid. */
+function cipherInsert(c: Cipher, i: number, bodyKey: string, orgUuid: string | null = null, userUuid = "u1"): string {
   return (
     `INSERT INTO ciphers VALUES ('${c.id}', ${c.type}, '${c.name}', ` +
     (c.notes ? `'${c.notes}', ` : "NULL, ") +
     `'[]', '${JSON.stringify(c[bodyKey]).replace(/'/g, "''")}', NULL, 0, ` +
     (c.key ? `'${c.key}', ` : "NULL, ") +
     `'2026-08-2${i % 10} 10:00:0${i % 10}.123456', NULL, ` +
-    (orgUuid ? `'${orgUuid}');` : "NULL);")
+    (orgUuid ? `'${orgUuid}', NULL);` : `NULL, '${userUuid}');`)
   );
 }
 
@@ -68,7 +69,7 @@ function cipherInsert(c: Cipher, i: number, bodyKey: string, orgUuid: string | n
  * key, exactly as Vaultwarden stored it. */
 function legacyVault(
   extraSql = "",
-  opts: { pendingTakes?: boolean; org?: "keyed" | "keyless" | "orphan" } = {},
+  opts: { pendingTakes?: boolean; org?: "keyed" | "keyless" | "orphan" | "foreign" } = {},
 ): LegacyFixture {
   const dir = tempDir();
   const email = "agent-3f2a@local";
@@ -122,7 +123,15 @@ function legacyVault(
     } else {
       inserts.push(cipherInsert(orgCipher, 7, "login", "org-1"));
     }
-    if (opts.org !== "orphan") {
+    if (opts.org === "orphan") {
+      // A membership whose key was never delivered (invited, not confirmed):
+      // the row is visible to this account but its key is unrecoverable.
+      inserts.push(`INSERT INTO users_organizations VALUES ('uo1', 'u1', 'org-1', NULL);`);
+    } else if (opts.org === "foreign") {
+      // The org belongs to somebody else entirely: no membership row for u1.
+      inserts.push(`INSERT INTO users VALUES ('u2', 'other@local', '2.x|x|x', NULL);`);
+      inserts.push(`INSERT INTO users_organizations VALUES ('uo2', 'u2', 'org-1', '4.${crypto.randomBytes(256).toString("base64")}');`);
+    } else {
       const wrapped = crypto.publicEncrypt(
         { key: publicKey, padding: crypto.constants.RSA_PKCS1_OAEP_PADDING, oaepHash: "sha1" },
         orgKey,
@@ -255,13 +264,35 @@ describe("migrateLegacyVault", () => {
     },
   );
 
-  it("aborts BEFORE writing anything when an org item's key cannot be recovered", () => {
+  it("aborts BEFORE writing anything when a member org item's key cannot be recovered", () => {
+    // A membership without a delivered key: the row is this account's to see
+    // but not to open — refuse the whole migration, fail-closed.
     const { dir } = legacyVault("", { org: "orphan" });
     const keyStore = new VaultKeyStore(dir, "test");
     expect(() => migrateLegacyVault(dir, keyStore, new VaultStore(dir))).toThrow(/cannot recover/);
-    // Fail-closed with zero traces: no key minted, no marker written, so a
-    // later fix (or a repaired database) still gets to migrate.
+    // Zero traces: no key minted, no marker written, so a later fix (or a
+    // repaired database) still gets to migrate.
     expect(keyStore.state()).toEqual({ status: "empty" });
+    expect(new VaultStore(dir).exists()).toBe(false);
+  });
+
+  it("skips another account's organization entirely — scoped to the saved account", async () => {
+    // A multi-member database: an org this account never belonged to, with
+    // another member's RSA-wrapped key that our private key could never open.
+    // Its rows were never this account's to see; they are left behind, and
+    // the other member's akey must not poison the rewrap.
+    const { dir, rows } = legacyVault("", { org: "foreign" });
+    const vault = new LocalVault(dir, new VaultKeyStore(dir, "test"));
+    expect((await vault.list()).map((i) => i.title).sort()).toEqual(["Door", "Pizza"]);
+    expect(await vault.reveal(rows[0].id!, "password")).toBe("hunter2");
+  });
+
+  it("refuses a database that does not contain the saved account", () => {
+    const { dir } = legacyVault();
+    new VaultSecretStore(dir).write({ email: "somebody-else@local", password: "pw" });
+    expect(() => migrateLegacyVault(dir, new VaultKeyStore(dir, "test"), new VaultStore(dir))).toThrow(
+      /saved account is not in the old vault database/,
+    );
     expect(new VaultStore(dir).exists()).toBe(false);
   });
 
@@ -271,7 +302,7 @@ describe("migrateLegacyVault", () => {
     // once items.json exists.
     const body = JSON.stringify({ LicenseNumber: "2.aaa|bbb|ccc" });
     const { dir } = legacyVault(
-      `INSERT INTO ciphers VALUES ('77777777-0000-0000-0000-000000000007', 7, '2.n|n|n', NULL, '[]', '${body}', NULL, 0, NULL, '2026-08-27 10:00:07.123456', NULL, NULL);`,
+      `INSERT INTO ciphers VALUES ('77777777-0000-0000-0000-000000000007', 7, '2.n|n|n', NULL, '[]', '${body}', NULL, 0, NULL, '2026-08-27 10:00:07.123456', NULL, NULL, 'u1');`,
     );
     migrateLegacyVault(dir, new VaultKeyStore(dir, "test"), new VaultStore(dir));
     const row = new VaultStore(dir).get("77777777-0000-0000-0000-000000000007")!;

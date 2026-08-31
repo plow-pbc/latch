@@ -46,6 +46,7 @@ interface LegacyRow {
   key: string | null;
   updated_at: string;
   organization_uuid: string | null;
+  user_uuid: string | null;
 }
 
 /**
@@ -95,7 +96,10 @@ export function migrateLegacyVault(dir: string, keyStore: VaultKeyStore, store: 
   }
   const account = secretState.account;
 
-  const db = readLegacyDb(dir);
+  const db = readLegacyDb(
+    dir,
+    [account.email, ...(account.pending ? [account.pending.email] : [])],
+  );
   // An interrupted account change left BOTH pairs on disk on purpose (see
   // VaultAccount.pending): the old server may have accepted either before the
   // crash, and only the pair it took unwraps the user key. Try each against
@@ -237,7 +241,26 @@ interface LegacyDb {
   orgKeys: Array<{ org_uuid: string; akey: string | null }>;
 }
 
-function readLegacyDb(dir: string): LegacyDb {
+interface LegacyUser {
+  uuid: string;
+  email: string;
+  akey: string;
+  private_key: string | null;
+}
+
+/**
+ * The database, scoped to THE SAVED ACCOUNT — never "the first user". A
+ * multi-user database (the old web vault allowed invitations) holds other
+ * accounts' keys and other members' RSA-wrapped org keys, none of which this
+ * machine's credentials can open: the user row is matched by the saved
+ * emails, memberships are that user's rows alone, and ciphers are that
+ * user's own plus those of organizations it belongs to. Rows outside that
+ * set were never this account's to see and are not this key's to decrypt.
+ * (Collection-level ACLs are deliberately NOT replicated: they governed what
+ * the server would LIST, not what the org key decrypts, and this is one
+ * person's Mac.)
+ */
+function readLegacyDb(dir: string, emails: string[]): LegacyDb {
   // Read a CLONE: the sqlite CLI may need to recover the WAL, and the old
   // files are the owner's backup — nothing writes to them, ever.
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "vault-migrate-"));
@@ -247,21 +270,24 @@ function readLegacyDb(dir: string): LegacyDb {
       if (fs.existsSync(from)) fs.copyFileSync(from, path.join(tmp, `db.sqlite3${suffix}`));
     }
     const dbPath = path.join(tmp, "db.sqlite3");
-    const users = query<{ akey: string; private_key: string | null }>(
-      dbPath,
-      "SELECT akey, private_key FROM users LIMIT 1;",
-    );
+    const users = query<LegacyUser>(dbPath, "SELECT uuid, email, akey, private_key FROM users;");
     if (users.length === 0) throw new Error("the old vault database has no account in it");
+    const wanted = emails.map((e) => e.toLowerCase());
+    const user = users.find((u) => wanted.includes(u.email.toLowerCase()));
+    if (!user) {
+      throw new Error("the saved account is not in the old vault database, so its items cannot be migrated");
+    }
+    const memberships = query<{ org_uuid: string; akey: string | null; user_uuid: string }>(
+      dbPath,
+      "SELECT org_uuid, akey, user_uuid FROM users_organizations;",
+    ).filter((m) => m.user_uuid === user.uuid);
+    const orgIds = new Set(memberships.map((m) => m.org_uuid));
     const rows = query<LegacyRow>(
       dbPath,
-      "SELECT uuid, atype, name, notes, fields, data, password_history, reprompt, key, updated_at, organization_uuid " +
+      "SELECT uuid, atype, name, notes, fields, data, password_history, reprompt, key, updated_at, organization_uuid, user_uuid " +
         "FROM ciphers WHERE deleted_at IS NULL;",
-    );
-    const orgKeys = query<{ org_uuid: string; akey: string | null }>(
-      dbPath,
-      "SELECT org_uuid, akey FROM users_organizations;",
-    );
-    return { akey: users[0].akey, privateKey: users[0].private_key, rows, orgKeys };
+    ).filter((r) => (r.organization_uuid ? orgIds.has(r.organization_uuid) : r.user_uuid === user.uuid));
+    return { akey: user.akey, privateKey: user.private_key, rows, orgKeys: memberships };
   } finally {
     fs.rmSync(tmp, { recursive: true, force: true });
   }

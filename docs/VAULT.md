@@ -201,12 +201,20 @@ legacy vault does (`db.sqlite3` + `vault-account.enc`):
    and a crash at any point leaves either the old vault intact and the new
    absent, or both complete (`items.json` is the single atomic write that
    finishes it).
-4. Organization-owned rows (the old web vault could create an org) are
-   re-wrapped first: the user's RSA private key (in the database, under the
-   user key) recovers each org key, and each org cipher's item key is
-   re-wrapped under the user key — field ciphertexts untouched. A row whose
-   org key cannot be recovered aborts the migration before anything is
-   written.
+4. Everything is scoped to THE SAVED ACCOUNT (matched by email — never "the
+   first user"): that user's own ciphers, plus those of organizations it
+   belongs to; another account's rows and memberships are left behind.
+   Member-org rows (the old web vault could create an org) are re-wrapped
+   first: the user's RSA private key (in the database, under the user key)
+   recovers each org key, and each org cipher's item key is re-wrapped under
+   the user key — field ciphertexts untouched. A member row whose org key
+   cannot be recovered aborts the migration before anything is written.
+   (Collection-level ACLs are deliberately not replicated: they governed what
+   the server would list, not what the org key decrypts, and this is one
+   person's Mac. Attachments are NOT migrated — the app never offered them,
+   only the old web vault could add one; the encrypted files stay in the
+   backup directory, openable by a future tool since the master key is the
+   old user key.)
 5. Item types with no body slot here (the enum's 6–8) keep their encrypted
    body verbatim under `legacyData` — listed as Unsupported, nothing dropped.
 6. The old files stay put as the owner's backup; the new store's existence is
