@@ -23,6 +23,7 @@ export interface CloudAgentLine {
 export interface CloudAgentDisplayRow {
   agentId: string;
   name: string;
+  deviceName: string | null;
   line: CloudAgentLine | null;
   /** Whether the resolved line has an E.164 destination for Messages. */
   canMessage: boolean;
@@ -63,6 +64,7 @@ export function toCloudAgentDisplayRow(
   return {
     agentId: scrub(agent.agentId),
     name: scrub(agent.name ?? "cloud agent"),
+    deviceName: agent.deviceName === null ? null : scrub(agent.deviceName),
     line: line === null ? null : { uid: scrub(line.uid), label: scrub(line.label) },
     canMessage: context.canMessage === true,
     canRetry: context.canRetry === true,

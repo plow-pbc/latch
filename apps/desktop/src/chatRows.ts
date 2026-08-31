@@ -1,4 +1,4 @@
-import { echoesCredential } from "./cloudAgents.js";
+import { echoesCredential } from "./plowApi.js";
 
 /**
  * How a chat reads in the picker: one entry per position — the number it runs

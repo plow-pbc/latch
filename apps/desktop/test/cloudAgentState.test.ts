@@ -42,6 +42,7 @@ function agent(overrides: Partial<CloudAgentResource> = {}): CloudAgentResource 
     failureCode: null,
     failureReason: null,
     createdAt: "2026-08-24T18:02:11Z",
+    deviceName: null,
     sessionId: null,
     ...overrides,
   };

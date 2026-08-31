@@ -186,9 +186,37 @@ describe("PlowApi", () => {
 
     expect(calls[0].url).toBe("https://api.plow.co/v1/relay/devices/device%2Fone");
     expect(JSON.parse(String(calls[0].init.body))).toEqual({ hostname: "mbp" });
-    expect(device).toEqual({ mcpUrl: "https://api.plow.co/v1/relay/devices/device%2Fone/mcp" });
+    expect(device).toEqual({
+      mcpUrl: "https://api.plow.co/v1/relay/devices/device%2Fone/mcp",
+      displayName: "mbp (2)",
+    });
   });
 
+  it("replaces a registered display name that echoes the device credential", async () => {
+    const credential = "plow_device_credential_secret";
+    const { fetchImpl } = recordingFetch([
+      {
+        status: 200,
+        body: {
+          device_id: "device/one",
+          display_name: `Mac ${credential}`,
+          mcp_url: "https://api.plow.co/v1/relay/devices/device%2Fone/mcp",
+        },
+      },
+    ]);
+
+    const device = await new PlowApi("https://api.plow.co", fetchImpl).registerRelayDevice(
+      credential,
+      "device/one",
+      "mbp",
+    );
+
+    expect(device).toEqual({
+      mcpUrl: "https://api.plow.co/v1/relay/devices/device%2Fone/mcp",
+      displayName: "mbp",
+    });
+    expect(JSON.stringify(device)).not.toContain(credential.slice(0, 10));
+  });
 
   it("consumes a payment approval by posting the session id and domain, credential in the header", async () => {
     const { calls, fetchImpl } = recordingFetch([{ status: 200, body: { approved: true } }]);

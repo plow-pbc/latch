@@ -8,6 +8,7 @@ import {
 import { FetchLike, PlowApi, PlowApiError, REQUEST_TIMEOUT_MS } from "../src/plowApi.js";
 
 const CREDENTIAL = "plow_dev_credential_123456789";
+const ENCODED_CREDENTIAL = Buffer.from(CREDENTIAL).toString("base64");
 
 beforeEach(() => {
   vi.spyOn(console, "error").mockImplementation(() => {});
@@ -52,6 +53,10 @@ describe("CloudAgentsClient resources", () => {
       chatUids: ["cht_home"],
       name: "Kitchen",
       status: "running",
+      deviceName: null,
+    }],
+    ["device-pinned shape", wireAgent({ device_name: "plucas-mbp.local (2)" }), {
+      deviceName: "plucas-mbp.local (2)",
     }],
     ["omitted status", wireAgent({ status: undefined }), { status: "provisioning" }],
     ["failure metadata", wireAgent({
@@ -114,7 +119,7 @@ describe("CloudAgentsClient resources", () => {
 });
 
 describe("CloudAgentsClient creation", () => {
-  it.each([200, 202])("accepts %s and sends the selected provider", async (status) => {
+  it.each([200, 202])("accepts %s and sends the deployed strict request shape", async (status) => {
     const { calls, fetchImpl } = recordingFetch([{ status, body: wireAgent() }]);
 
     await new CloudAgentsClient(new PlowApi("https://api.plow.co", fetchImpl)).create(
@@ -130,6 +135,7 @@ describe("CloudAgentsClient creation", () => {
       provider: "exe:life",
     });
     expect(String(calls[0].init.body)).not.toContain("chat_uids");
+    expect(String(calls[0].init.body)).not.toContain("device_uid");
   });
 
   it("omits a blank optional name", async () => {
@@ -161,16 +167,35 @@ describe("CloudAgentsClient creation", () => {
     );
   });
 
-  it("uses fixed copy and logs only status for an unknown authenticated error", async () => {
-    const encoded = Buffer.from(CREDENTIAL).toString("base64");
-    const { fetchImpl } = recordingFetch([{
-      status: 422,
+  it.each([
+    {
+      case: "an unknown structured code",
       body: {
-        detail: { code: "LINE_CAPACITY", message: `Rejected bearer ${encoded}` },
+        detail: {
+          code: "LINE_CAPACITY",
+          message: `Rejected bearer ${ENCODED_CREDENTIAL}`,
+        },
         token: CREDENTIAL,
         debug: "body-only marker",
       },
-    }]);
+      expectedLog: "[cloud-agent] request failed status=422",
+      hidden: [ENCODED_CREDENTIAL, "LINE_CAPACITY", "body-only marker"],
+    },
+    {
+      case: "FastAPI list-shaped validation detail",
+      body: {
+        detail: [{
+          type: "extra_forbidden",
+          loc: ["body", "device_uid"],
+          msg: `Extra input ${CREDENTIAL} is not permitted`,
+          input: CREDENTIAL,
+        }],
+      },
+      expectedLog: "[cloud-agent] request failed status=422 code=VALIDATION_ERROR",
+      hidden: ["extra_forbidden"],
+    },
+  ])("sanitizes $case", async ({ body, expectedLog, hidden }) => {
+    const { fetchImpl } = recordingFetch([{ status: 422, body }]);
 
     const error = await new CloudAgentsClient(new PlowApi("https://api.plow.co", fetchImpl))
       .create(CREDENTIAL, {
@@ -182,15 +207,12 @@ describe("CloudAgentsClient creation", () => {
 
     expect(error.message).toBe("Plow returned 422.");
     expect(console.error).toHaveBeenCalledTimes(1);
-    expect(console.error).toHaveBeenCalledWith(
-      "[cloud-agent] request failed status=422",
-    );
+    expect(console.error).toHaveBeenCalledWith(expectedLog);
     const stderr = vi.mocked(console.error).mock.calls.flat().join(" ");
-    expect(error.message).not.toContain(encoded);
-    expect(stderr).not.toContain(encoded);
-    expect(stderr).not.toContain(CREDENTIAL);
-    expect(stderr).not.toContain("LINE_CAPACITY");
-    expect(stderr).not.toContain("body-only marker");
+    for (const marker of [CREDENTIAL, ...hidden]) {
+      expect(error.message).not.toContain(marker);
+      expect(stderr).not.toContain(marker);
+    }
   });
 });
 
@@ -225,7 +247,9 @@ describe("CloudAgentsClient line changes", () => {
       body: { detail: { code: wireCode, message: `echo ${CREDENTIAL}` } },
     }]);
 
-    const error = await new CloudAgentsClient(new PlowApi("https://api.plow.co", fetchImpl))
+    const error = await new CloudAgentsClient(
+      new PlowApi("https://api.plow.co", fetchImpl),
+    )
       .changeLine(CREDENTIAL, "agent_123", "lin_ash")
       .catch((caught: unknown) => caught);
 
@@ -274,6 +298,7 @@ describe("CloudAgentsClient polling", () => {
     failureCode: null,
     failureReason: null,
     createdAt: null,
+    deviceName: null,
     sessionId: null,
   });
 
@@ -283,7 +308,10 @@ describe("CloudAgentsClient polling", () => {
       { status: 200, body: wireAgent({ status: "running" }) },
     ]);
     const transitions: string[] = [];
-    const client = new CloudAgentsClient(new PlowApi("https://api.plow.co", fetchImpl), async () => {});
+    const client = new CloudAgentsClient(
+      new PlowApi("https://api.plow.co", fetchImpl),
+      async () => {},
+    );
 
     const final = await client.poll(CREDENTIAL, receipt(), (agent) => {
       transitions.push(`${agent.agentId}:${agent.status}`);
@@ -305,7 +333,10 @@ describe("CloudAgentsClient polling", () => {
     };
     const controller = new AbortController();
 
-    await new CloudAgentsClient(new PlowApi("https://api.plow.co", fetchImpl), async () => {})
+    await new CloudAgentsClient(
+      new PlowApi("https://api.plow.co", fetchImpl),
+      async () => {},
+    )
       .poll(CREDENTIAL, receipt(), undefined, controller.signal);
 
     expect(seen[0].signal).toBeInstanceOf(AbortSignal);

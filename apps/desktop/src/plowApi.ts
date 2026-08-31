@@ -109,6 +109,7 @@ export interface RelayInfo {
 
 export interface RelayDeviceInfo {
   mcpUrl: string;
+  displayName: string;
 }
 
 export interface MintedCredential {
@@ -333,13 +334,14 @@ function provisionedActivationShape(
   };
 }
 
-function valueEchoesSecret(value: unknown, secret: string): boolean {
+export function echoesCredential(value: unknown, credential: string): boolean {
+  const secret = credential.trim();
   if (!secret) return false;
   const needles = secret.length > 10 ? [secret, secret.slice(0, 10)] : [secret];
   if (typeof value === "string") return needles.some((needle) => value.includes(needle));
-  if (Array.isArray(value)) return value.some((entry) => valueEchoesSecret(entry, secret));
+  if (Array.isArray(value)) return value.some((entry) => echoesCredential(entry, secret));
   if (value && typeof value === "object") {
-    return Object.values(value).some((entry) => valueEchoesSecret(entry, secret));
+    return Object.values(value).some((entry) => echoesCredential(entry, secret));
   }
   return false;
 }
@@ -443,7 +445,7 @@ export class PlowApi {
     const parsed = parseActivationChat(data.chat);
     return {
       status: "verified",
-      chat: parsed && !valueEchoesSecret(parsed, token) ? parsed : null,
+      chat: parsed && !echoesCredential(parsed, token) ? parsed : null,
       shape,
     };
   }
@@ -487,17 +489,26 @@ export class PlowApi {
     const data = await this.call<{
       device_id?: unknown;
       mcp_url?: unknown;
+      display_name?: unknown;
     }>("PUT", `/v1/relay/devices/${encodeURIComponent(deviceId)}`, {
       token,
       body: { hostname },
     });
     if (
-      data.device_id !== deviceId || typeof data.mcp_url !== "string"
+      data.device_id !== deviceId ||
+      typeof data.mcp_url !== "string" ||
+      typeof data.display_name !== "string"
     ) {
       throw new PlowApiError("http", "Plow did not register this Mac correctly.");
     }
+    let displayName = data.display_name;
+    if (echoesCredential(displayName, token)) {
+      displayName = hostname.trim();
+      if (!displayName || echoesCredential(displayName, token)) displayName = "Mac";
+    }
     return {
       mcpUrl: data.mcp_url,
+      displayName,
     };
   }
 

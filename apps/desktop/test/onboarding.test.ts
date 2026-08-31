@@ -10,6 +10,7 @@ import {
   Onboarding,
   OnboardingDeps,
 } from "../src/onboarding.js";
+import { latchSessionName } from "../src/deviceNames.js";
 import { ActivationChat, PlowApi, PlowApiError, parseActivationChat } from "../src/plowApi.js";
 import { loadSettings, saveSettings } from "../src/settings.js";
 import { signOutOfPlow } from "../src/settingsActions.js";
@@ -189,7 +190,7 @@ function build(extra: Partial<OnboardingDeps> = {}): Onboarding {
       plow.connected = true;
     },
     isConnected: () => plow.connected,
-    deviceName: "Plow Latch (test)",
+    deviceName: () => "Plow Latch (test)",
     now: () => clock,
     // No real timers: the poll loop's wait advances the same fake clock the
     // deadline is measured against, so a five-minute give-up takes microseconds
@@ -253,6 +254,19 @@ afterEach(() => {
 });
 
 describe("activation — the path a brand-new user takes", () => {
+  it("drops the former account's device name before the next activation", async () => {
+    let registeredDisplayName: string | null = "old-account-mac";
+    const onboarding = build({
+      deviceName: () => latchSessionName(registeredDisplayName, "current-host.local"),
+    });
+    // Sign-out clears this account-owned slot while the Onboarding instance lives on.
+    registeredDisplayName = null;
+
+    await onboarding.begin();
+
+    expect(plow.activations).toEqual(["Plow Latch (current-host.local)"]);
+  });
+
   it("shows a code, says where to text it, and connects when the text lands", async () => {
     plow.redeems = [{ status: "pending" }, { status: "verified", token: SESSION_TOKEN }];
     const onboarding = build();

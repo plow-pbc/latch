@@ -1,4 +1,4 @@
-import { PlowApi, PlowApiError, REQUEST_TIMEOUT_MS } from "./plowApi.js";
+import { echoesCredential, PlowApi, PlowApiError, REQUEST_TIMEOUT_MS } from "./plowApi.js";
 
 export const CLOUD_AGENT_POLL_INTERVAL_MS = 2_000;
 const CLOUD_AGENT_POLL_RETRY_WINDOW_MS = 5 * 60_000;
@@ -26,6 +26,8 @@ export interface CloudAgentResource {
   failureCode?: string | null;
   failureReason: string | null;
   createdAt: string | null;
+  /** Human-readable Latch home this agent's relay URL is pinned to. */
+  deviceName: string | null;
   /** Credential identity only. Never use this as the agent's identity. */
   sessionId: string | null;
 }
@@ -251,14 +253,11 @@ function parseResource(
     failureCode: optionalString(decoded.failure_code),
     failureReason: optionalString(decoded.failure_reason),
     createdAt: optionalString(decoded.created_at),
+    deviceName: optionalString(decoded.device_name),
     sessionId: optionalString(decoded.session_id),
   };
 
-  if (
-    Object.values(resource)
-      .flatMap((value) => (Array.isArray(value) ? value : [value]))
-      .some((value) => typeof value === "string" && echoesCredential(value, deviceCredential))
-  ) {
+  if (echoesCredential(resource, deviceCredential)) {
     throw new PlowApiError("http", "Plow returned an unsafe cloud-agent response.", statusCode);
   }
   return resource;
@@ -300,7 +299,12 @@ function invalidResponse(status: number): PlowApiError {
 }
 
 function responseCode(decoded: unknown): string | null {
-  if (!isRecord(decoded) || !isRecord(decoded.detail)) return null;
+  if (!isRecord(decoded)) return null;
+  // FastAPI's request-schema failures are a list, not the structured error
+  // object used by the cloud-agent lifecycle. Name the class without copying
+  // any server-provided validation text into the log.
+  if (Array.isArray(decoded.detail)) return "VALIDATION_ERROR";
+  if (!isRecord(decoded.detail)) return null;
   if (typeof decoded.detail.code !== "string") return null;
   const code = decoded.detail.code.trim().toUpperCase();
   return Object.prototype.hasOwnProperty.call(LINE_ERRORS, code) ? code : null;
@@ -352,13 +356,6 @@ const LINE_ERRORS: Readonly<Record<string, {
     message: "Another kind of agent already uses that line.",
   },
 });
-
-export function echoesCredential(text: string, credential: string): boolean {
-  const secret = credential.trim();
-  if (!secret) return false;
-  if (text.includes(secret)) return true;
-  return secret.length > 10 && text.includes(secret.slice(0, 10));
-}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);

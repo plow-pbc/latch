@@ -15,6 +15,7 @@ function agent(overrides: Partial<CloudAgentResource> = {}): CloudAgentResource 
     status: "provisioning",
     failureReason: null,
     createdAt: "2026-08-24T18:02:11Z",
+    deviceName: null,
     sessionId: "session_old",
     ...overrides,
   };
@@ -31,6 +32,7 @@ describe("cloud-agent pure mappings", () => {
 
     expect(row).toMatchObject({
       agentId: "agent_stable",
+      deviceName: null,
       line: { uid: "lin_willow", label: "Willow · +1 415-555-0100" },
       canMessage: true,
       canRetry: true,
@@ -41,7 +43,7 @@ describe("cloud-agent pure mappings", () => {
   });
 
   it("scrubs a session id embedded in every renderer-bound display string", () => {
-    const sessionId = "session_sensitive_123";
+    const sessionId = "session-sensitive-123";
     const row = toCloudAgentDisplayRow(
       agent({
         agentId: `agent-${sessionId}`,
@@ -50,6 +52,7 @@ describe("cloud-agent pure mappings", () => {
         provider: `provider ${sessionId}`,
         failureReason: `credential ${sessionId} rejected`,
         createdAt: `created ${sessionId}`,
+        deviceName: `${sessionId}.local (2)`,
         sessionId,
       }),
       {
@@ -59,6 +62,7 @@ describe("cloud-agent pure mappings", () => {
     );
 
     expect(row.failureReason).toBe("credential [credential] rejected");
+    expect(row.deviceName).toBe("[credential].local (2)");
     expect(JSON.stringify(row)).not.toContain(sessionId);
   });
 

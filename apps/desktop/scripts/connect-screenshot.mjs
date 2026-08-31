@@ -42,6 +42,7 @@ const home = fs.mkdtempSync(path.join(os.tmpdir(), "connect-shot-"));
 const ACTIVE_AGENT = {
   agentId: "cag_groceries",
   name: "Household helper",
+  deviceName: "plucas-mbp.local (2)",
   line: { uid: "lin_willow", label: "Willow · +1 415-555-0142" },
   canMessage: true,
   canRetry: true,
@@ -359,7 +360,11 @@ async function setUp() {
     };
     return state();
   });
-  ipcMain.handle("status:get", async () => ({ deviceId: "dev_example", name: "Example Mac", connected: true }));
+  ipcMain.handle("status:get", async () => ({
+    deviceId: "dev_example",
+    name: "plucas-mbp.local (2)",
+    connected: true,
+  }));
   ipcMain.handle("rules:list", async () => RULES);
   ipcMain.handle("rules:remove", async () => {});
   ipcMain.handle("settings:getInference", async () => readInference(home));
@@ -417,12 +422,15 @@ const SCREENS = [
         stale.provider || stale.usedCopy || stale.messages !== 2 ||
         stale.names.join("|") !== "Trip planner|Household helper" ||
         !stale.contexts[0]?.includes("Created today") ||
+        stale.contexts[0]?.includes("drives:") ||
+        !stale.contexts[1]?.includes("drives: plucas-mbp.local (2)") ||
         !stale.contexts[1]?.includes("Created Aug 24")
       ) {
         throw new Error(`cloud roster order or copy is wrong: ${JSON.stringify(stale)}`);
       }
     },
     expect: [
+      "Connected · plucas-mbp.local (2)",
       "Cloud agents", "2 agents", "New agent", "Household helper", "Ready",
       "Willow · +1 415-555-0142", "Created Aug 24", "Trip planner", "Setting up…",
       "+1 628-555-0144", "Created today", "Message",
@@ -703,6 +711,7 @@ const SCREENS = [
     },
     expect: [
       "Household helper", "Line", "Willow · +1 415-555-0142", "Status", "Ready",
+      "Drives", "plucas-mbp.local (2)",
       "Threads", CHAT_TITLE, "Close", "Message", "Change line", "Delete agent",
     ],
   },

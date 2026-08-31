@@ -201,8 +201,8 @@ export interface OnboardingDeps {
   /** (Re)start the relay from stored settings. */
   startRelay: () => Promise<void>;
   isConnected: () => boolean;
-  /** Names this Mac in the activation request. */
-  deviceName: string;
+  /** Names this Mac in the activation request using current account and host state. */
+  deviceName: () => string;
   onChange?: () => void;
   now?: () => number;
   /** How the poll loop waits. Injectable so tests need no real timers. */
@@ -320,7 +320,7 @@ export class Onboarding {
         this.activationSecret = null;
         this.activationStale = false;
         this.step = "activate";
-        const created = await this.deps.api.createActivation(this.deps.deviceName);
+        const created = await this.deps.api.createActivation(this.deps.deviceName());
         this.activationSecret = created.activationSecret;
         this.activation = {
           displayCode: created.displayCode,
