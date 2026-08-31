@@ -70,6 +70,11 @@ contextBridge.exposeInMainWorld("domo", {
   // re-asks the OS, and set answers with what the OS then holds.
   launchGet: () => ipcRenderer.invoke("launch:get"),
   launchSet: (on: boolean) => ipcRenderer.invoke("launch:set", on),
+  // Keep Mac Awake: the opt-in behind an AC-only sleep blocker (keepAwake.ts).
+  // set answers with what actually took — an acquire the OS refuses reverts
+  // to off, and the toggle shows that rather than a hold that isn't held.
+  keepAwakeGet: () => ipcRenderer.invoke("power:getKeepAwake"),
+  keepAwakeSet: (on: boolean) => ipcRenderer.invoke("power:setKeepAwake", on),
   onAuditChanged: (cb: () => void) => ipcRenderer.on("audit:changed", cb),
   onStatusChanged: (cb: () => void) => ipcRenderer.on("status:changed", cb),
 
