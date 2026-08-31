@@ -12,8 +12,6 @@ import { fileURLToPath } from "node:url";
 import { rowKey } from "../dist/cloudAgentMapper.js";
 import { BUILTIN_TARGET_ID } from "../dist/plowApi.js";
 
-/** A Plow row key. Roster metadata is Plow's, so its host always is. */
-const plowKey = (agentId) => rowKey(BUILTIN_TARGET_ID, agentId);
 // The REAL settings actions, so the inference handlers below are the ones the
 // app runs rather than stubs that agree with the renderer by construction.
 import {
@@ -98,7 +96,7 @@ ipcMain.handle("settings:setAgentPurpose", async (_e, purpose) => setAgentPurpos
 const cloudThreadTitle = "Willow · You · Robin";
 const cloudAgent = {
   // The renderer's handle: host + id, as `cloudAgentMapper` builds it.
-  rowKey: plowKey("cag_probe"),
+  rowKey: rowKey(BUILTIN_TARGET_ID, "cag_probe"),
   agentId: "cag_probe",
   name: "Household helper",
   line: { uid: "lin_willow", label: "Willow · +1 415-555-0142" },
@@ -116,7 +114,7 @@ const rosterProbe = {
     kind: "Agent",
     createdAt: cloudAgent.createdAt,
     lastSeenAt: "2026-08-25T17:55:00.000Z",
-    rowKey: plowKey(cloudAgent.agentId),
+    rowKey: rowKey(BUILTIN_TARGET_ID, cloudAgent.agentId),
     agentId: cloudAgent.agentId,
     chatUids: [cloudAgent.threads[0].uid],
     chatAccess: "listed",
@@ -251,7 +249,7 @@ ipcMain.handle("cloud:create", async (_e, input) => {
     };
   } else if (input?.lineUid === "lin_ash") {
     const created = {
-      rowKey: plowKey("cag_created"),
+      rowKey: rowKey(BUILTIN_TARGET_ID, "cag_created"),
       agentId: "cag_created",
       name: input.name || "Cloud agent",
       line: { uid: "lin_ash", label: "Ash · +1 415-555-0199" },
@@ -270,7 +268,7 @@ ipcMain.handle("cloud:create", async (_e, input) => {
         phase: "idle",
         activation: null,
         message: null,
-        completedRowKey: plowKey(created.agentId),
+        completedRowKey: rowKey(BUILTIN_TARGET_ID, created.agentId),
         retryNewLine: false,
       },
     };
@@ -1026,8 +1024,7 @@ app.whenReady().then(async () => {
   await waitFor(win, `document.querySelector(".cloud-modal .cloud-activation-code")`,
     "the confirmed-code activation screen");
   const confirmedAgent = {
-    rowKey: plowKey("cag_confirmed"),
-    rowKey: plowKey("cag_confirmed"),
+    rowKey: rowKey(BUILTIN_TARGET_ID, "cag_confirmed"),
     agentId: "cag_confirmed",
     name: "Cloud agent",
     line: { uid: "lin_new", label: "+1 415-555-0999" },
@@ -1220,7 +1217,7 @@ app.whenReady().then(async () => {
       { id: "local", baseUrl: "http://192.168.15.12:8765", builtin: false },
     ],
     cloudAgents: [
-      { ...cloudAgent, rowKey: plowKey(cloudAgent.agentId), targetId: "plow", name: "Cloud twin" },
+      { ...cloudAgent, rowKey: rowKey(BUILTIN_TARGET_ID, cloudAgent.agentId), targetId: "plow", name: "Cloud twin" },
       { ...cloudAgent, rowKey: `local\u0000${cloudAgent.agentId}`, targetId: "local", name: "Local twin" },
     ],
     cloudFreeLines: [{ uid: "lin_ash", label: "Ash · +1 415-555-0199" }],

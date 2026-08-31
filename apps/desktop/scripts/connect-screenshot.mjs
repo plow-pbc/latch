@@ -26,8 +26,6 @@ import { fileURLToPath } from "node:url";
 import { rowKey } from "../dist/cloudAgentMapper.js";
 import { BUILTIN_TARGET_ID } from "../dist/plowApi.js";
 
-/** A Plow row key. Roster metadata is Plow's, so its host always is. */
-const plowKey = (agentId) => rowKey(BUILTIN_TARGET_ID, agentId);
 import { clickText, failLoudly, shootScreens, shotWindow, waitFor } from "./screenshot-harness.mjs";
 
 const dir = path.dirname(fileURLToPath(import.meta.url));
@@ -46,8 +44,7 @@ const TRIP_CHAT_TITLE = "+1 628-555-0144 · You";
 const home = fs.mkdtempSync(path.join(os.tmpdir(), "connect-shot-"));
 
 const ACTIVE_AGENT = {
-  rowKey: plowKey("cag_groceries"),
-  rowKey: plowKey("cag_groceries"),
+  rowKey: rowKey(BUILTIN_TARGET_ID, "cag_groceries"),
   agentId: "cag_groceries",
   name: "Household helper",
   line: { uid: "lin_willow", label: "Willow · +1 415-555-0142" },
@@ -59,8 +56,7 @@ const ACTIVE_AGENT = {
   createdAt: "2026-08-24T18:00:00.000Z",
 };
 const PROVISIONING_AGENT = {
-  rowKey: plowKey("cag_trip"),
-  rowKey: plowKey("cag_trip"),
+  rowKey: rowKey(BUILTIN_TARGET_ID, "cag_trip"),
   agentId: "cag_trip",
   name: "Trip planner",
   line: { uid: "lin_trip", label: "+1 628-555-0144" },
@@ -90,7 +86,7 @@ const ROSTER = {
     {
       id: 201, name: ACTIVE_AGENT.name, kind: "Agent",
       createdAt: "2026-08-24T18:00:00.000Z", lastSeenAt: new Date(Date.now() - 4 * 60_000).toISOString(),
-      rowKey: plowKey(ACTIVE_AGENT.agentId),
+      rowKey: rowKey(BUILTIN_TARGET_ID, ACTIVE_AGENT.agentId),
       agentId: ACTIVE_AGENT.agentId, chatUids: [], chatAccess: "none",
       permissions: { canReadAndReply: true, canReachMac: true, canSpendInference: true },
       isActive: true, isThisMac: false,
@@ -98,7 +94,7 @@ const ROSTER = {
     {
       id: 202, name: PROVISIONING_AGENT.name, kind: "Agent",
       createdAt: new Date().toISOString(), lastSeenAt: null,
-      rowKey: plowKey(PROVISIONING_AGENT.agentId),
+      rowKey: rowKey(BUILTIN_TARGET_ID, PROVISIONING_AGENT.agentId),
       agentId: PROVISIONING_AGENT.agentId, chatUids: ["chat_trip"], chatAccess: "listed",
       permissions: { canReadAndReply: true, canReachMac: false, canSpendInference: false },
       isActive: true, isThisMac: false,
@@ -292,8 +288,7 @@ async function setUp() {
       };
     } else if (typeof input?.lineUid === "string") {
       const created = {
-        rowKey: plowKey("cag_created"),
-        rowKey: plowKey("cag_created"),
+        rowKey: rowKey(BUILTIN_TARGET_ID, "cag_created"),
         agentId: "cag_created",
         name: input.name || "Cloud agent",
         line: { uid: input.lineUid, label: "Ash · +1 415-555-0199" },
@@ -565,8 +560,7 @@ const SCREENS = [
       await waitFor(win, `document.querySelector(".cloud-modal .cloud-activation-code")`,
         "the confirmed-code activation screen");
       const created = {
-        rowKey: plowKey("cag_confirmed"),
-        rowKey: plowKey("cag_confirmed"),
+        rowKey: rowKey(BUILTIN_TARGET_ID, "cag_confirmed"),
         agentId: "cag_confirmed",
         name: "Cloud agent",
         line: { uid: "lin_new", label: "+1 415-555-0999" },
