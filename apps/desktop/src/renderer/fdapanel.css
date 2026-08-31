@@ -1,0 +1,59 @@
+/* The floating grant panel (fdaGrantFlow.ts), matched to PermissionFlow's
+   panel: an 18pt-rounded translucent card holding a header (wiggling up-arrow
+   + instruction + close) and a 16pt-rounded drag card. The WINDOW is
+   transparent; this card is the only chrome, so the corners really round.
+   Main owns the geometry — this file only fills it. */
+html, body { height: 100%; background: transparent; overflow: hidden; }
+#root { height: 100%; }
+
+.fda-panel {
+  display: flex; flex-direction: column; gap: 6px;
+  height: 100%; box-sizing: border-box;
+  padding: 8px 12px 12px;
+  background: rgba(238, 238, 240, 0.94);
+  border: 1px solid rgba(0, 0, 0, 0.14);
+  border-radius: 18px;
+}
+
+.fda-header { display: flex; align-items: flex-start; gap: 6px; }
+.fda-header-text { font-size: 14px; line-height: 1.4; color: var(--fg); }
+.fda-header-text b { font-weight: 700; }
+
+/* PermissionFlow wiggles the arrow (±12°, fast alternate) until the grant
+   lands; then it holds still. */
+.fda-arrow { width: 16px; height: 16px; flex: none; margin-top: 1px; color: var(--fg);
+  animation: fda-wiggle 0.22s ease-in-out infinite alternate; }
+.fda-arrow.granted { animation: none; color: var(--green-fg); }
+@keyframes fda-wiggle {
+  from { transform: rotate(-12deg) translateY(1px); }
+  to { transform: rotate(12deg) translateY(-2px); }
+}
+
+.fda-close {
+  flex: none; width: 20px; height: 20px; padding: 0; margin: 0;
+  border: none; border-radius: 50%;
+  background: rgba(0, 0, 0, 0.12); color: var(--fg);
+  cursor: pointer; display: flex; align-items: center; justify-content: center;
+}
+.fda-close:hover { background: rgba(0, 0, 0, 0.2); }
+.fda-close-glyph { width: 14px; height: 14px; }
+
+/* The drag card: app icon + name, "Drag" hand hint on the right. */
+.fda-drag-tile {
+  display: flex; align-items: center; gap: 8px;
+  flex: 1; padding: 6px;
+  background: rgba(255, 255, 255, 0.65);
+  border: 1px solid rgba(0, 0, 0, 0.085);
+  border-radius: 16px;
+  cursor: grab; -webkit-user-select: none; user-select: none;
+}
+.fda-drag-tile:active { cursor: grabbing; }
+.fda-drag-tile.granted { opacity: 0.55; }
+.fda-drag-icon { width: 32px; height: 32px; flex: none; }
+.fda-drag-name { font-size: 16px; color: var(--fg); }
+.fda-drag-hint {
+  display: flex; flex-direction: column; align-items: center; gap: 1px;
+  padding-right: 6px; color: var(--muted);
+}
+.fda-drag-hint span { font-size: 8px; font-weight: 300; }
+.fda-hand { width: 15px; height: 15px; }
