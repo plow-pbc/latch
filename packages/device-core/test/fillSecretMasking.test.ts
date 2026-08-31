@@ -92,9 +92,15 @@ function makeCtx(
         descriptors: [
           { label: "username", hidden: false, custom: false, alias: false },
           { label: "password", hidden: true, custom: false, alias: false },
+          { label: "totp", hidden: true, custom: false, alias: false },
           { label: "shipping address", hidden: false, custom: true, alias: false },
         ],
-        values: { username: "jon", password: "hunter2", "shipping address": "1 Elm St" },
+        values: {
+          username: "jon",
+          password: "hunter2",
+          totp: "483920",
+          "shipping address": "1 Elm St",
+        },
       },
       {
         // A bank login, for the financial-gate cases below. chase.com is on the
@@ -206,13 +212,17 @@ const released = (): string[] =>
     : [];
 
 /** Every command the device sent, values already redacted by the fixture. */
-function commands(): { action: string; selector?: string; mask?: boolean; frame_token?: string }[] {
+function commands(): {
+  action: string; selector?: string; mask?: boolean; frame_token?: string; value?: string;
+}[] {
   return fs
     .readFileSync(ctx.cmdLog, "utf8")
     .trim()
     .split("\n")
     .filter(Boolean)
-    .map((l) => JSON.parse(l) as { action: string; selector?: string; mask?: boolean; frame_token?: string });
+    .map((l) => JSON.parse(l) as {
+      action: string; selector?: string; mask?: boolean; frame_token?: string; value?: string;
+    });
 }
 
 /**
@@ -606,6 +616,157 @@ describe("fill_secret marking", () => {
       },
     ]);
     for (const e of ctx.events) expect(JSON.stringify(e)).not.toContain("hunter2");
+  });
+});
+
+describe("fill_secret split across single-character boxes", () => {
+  // A segmented one-time-code control: six boxes, one character each. The agent
+  // never has the value, so the split happens on the device — one vault
+  // release, one approved document, one masked character per box.
+  const BOXES = ["#c1", "#c2", "#c3", "#c4", "#c5", "#c6"];
+
+  /** Every fill the fixture saw, with the redacted value length it logged. */
+  const sentFills = () => commands().filter((c) => c.action === "fill");
+
+  it("splits a code across its boxes: one release, one masked character each", async () => {
+    const handle = await session();
+    const result = await ctx.sessions.command(handle, {
+      action: "fill_secret", selectors: BOXES, item: "L1", field: "totp",
+    });
+    expect(result).toEqual({ status: "completed", ok: true, frame: 0 });
+    // Six one-character fills, each masked, each pinned to the one approved
+    // document, in the order the code is read.
+    expect(fills()).toEqual(BOXES.map((selector) => ({ selector, mask: true })));
+    for (const c of sentFills()) {
+      expect(c.value).toBe("<1 chars>");
+      expect(c.frame_token).toBe("doc-top");
+    }
+    // Every box was located before the vault was asked, and the vault was
+    // asked exactly once — six releases would be six chances for a rotating
+    // code to change mid-fill.
+    expect(commands().filter((c) => c.action === "locate").map((c) => c.selector)).toEqual(BOXES);
+    expect(released().length).toBe(1);
+    expect(ctx.events.at(-1)).toEqual({
+      event: "credential_filled",
+      fields: { session: audited(), item: "L1", field: "totp", origin: "pizza.example", boxes: 6 },
+    });
+    expect(JSON.stringify(ctx.events)).not.toContain("483920");
+  });
+
+  it("refuses a box count the value does not fill, and types nothing", async () => {
+    const handle = await session();
+    const before = ctx.events.length;
+    const result = await ctx.sessions.command(handle, {
+      action: "fill_secret", selectors: BOXES.slice(0, 5), item: "L1", field: "totp",
+    });
+    expect(jv(result).get("status").str).toBe("error");
+    expect(jv(result).get("error").str).toContain("does not split into 5 one-character boxes");
+    expect(fills()).toEqual([]);
+    expect(ctx.events.slice(before).at(-1)).toEqual({
+      event: "credential_fill_failed",
+      fields: {
+        session: audited(), item: "L1", field: "totp", origin: "pizza.example",
+        selector: BOXES.slice(0, 5).join(" "),
+        reason: "the value does not have one character per box",
+      },
+    });
+    expect(JSON.stringify(result)).not.toContain("483920");
+  });
+
+  it.each([
+    { what: "one box only", params: { selectors: ["#c1"] }, says: "at least two" },
+    { what: "a non-string entry", params: { selectors: ["#c1", 2] }, says: "at least two" },
+    { what: "a duplicate box", params: { selectors: ["#c1", "#c1"] }, says: "the same box twice" },
+    {
+      what: "both selector and selectors",
+      params: { selector: "#pass", selectors: ["#c1", "#c2"] },
+      says: "never both",
+    },
+    {
+      what: "more boxes than any code has",
+      params: { selectors: Array.from({ length: 17 }, (_, i) => `#x${i}`) },
+      says: "at most 16",
+    },
+  ])("refuses $what before anything is located or released", async ({ params, says }) => {
+    const handle = await session();
+    const result = await ctx.sessions.command(handle, {
+      action: "fill_secret", item: "L1", field: "totp", ...params,
+    });
+    expect(jv(result).get("status").str).toBe("error");
+    expect(jv(result).get("error").str).toContain(says);
+    expect(commands().some((c) => c.action === "locate" || c.action === "fill")).toBe(false);
+    expect(released()).toEqual([]);
+  });
+
+  it("refuses boxes scattered across documents, before the vault is asked", async () => {
+    // The fixture puts "#card*" selectors in the payment iframe and everything
+    // else in the top document — so this pair straddles two documents.
+    const handle = await session();
+    const before = ctx.events.length;
+    const result = await ctx.sessions.command(handle, {
+      action: "fill_secret", selectors: ["#c1", "#card-2"], item: "L1", field: "totp",
+    });
+    expect(jv(result).get("status").str).toBe("error");
+    expect(jv(result).get("error").str).toContain("#card-2 is in a different document than #c1");
+    expect(fills()).toEqual([]);
+    expect(released()).toEqual([]);
+    expect(ctx.events.slice(before).at(-1)).toEqual({
+      event: "credential_denied",
+      fields: {
+        session: audited(), item: "L1", field: "totp", origin: "payframe.example",
+        reason: "the boxes are not all in one document",
+      },
+    });
+  });
+
+  it("clears the boxes it touched, under their mask, and owns up to one that would not empty", async () => {
+    await ctx.sessions.closeAll("teardown");
+    ctx = makeCtx({ FAKE_ALTERED_SELECTOR: "#c3" });
+    const handle = await session();
+    const before = ctx.events.length;
+    const result = await ctx.sessions.command(handle, {
+      action: "fill_secret", selectors: BOXES, item: "L1", field: "totp",
+    });
+    expect(jv(result).get("status").str).toBe("error");
+    expect(jv(result).get("error").str).toContain("#c3 rewrote the character");
+    // #c3 undoes the empty write too (the fixture alters every fill of it), the
+    // way a controlled input restores its value — so the result names it as
+    // not emptied instead of claiming every box was cleared.
+    expect(jv(result).get("error").str).toContain("cleared, except #c3");
+    expect(jv(result).get("error").str).toContain("stays masked");
+    // Three characters went in (#c3's came back changed); then every touched
+    // box was erased UNDER ITS MASK. An unmasked clear would take the mark off
+    // and drop the field from the browser's ledger before it learns what the
+    // node kept — a controlled input that undoes the empty write would then
+    // show its character to every later screenshot. Boxes four through six
+    // were never written at all.
+    expect(sentFills().map((c) => ({ selector: c.selector, value: c.value, masked: c.mask === true }))).toEqual([
+      { selector: "#c1", value: "<1 chars>", masked: true },
+      { selector: "#c2", value: "<1 chars>", masked: true },
+      { selector: "#c3", value: "<1 chars>", masked: true },
+      { selector: "#c1", value: "<0 chars>", masked: true },
+      { selector: "#c2", value: "<0 chars>", masked: true },
+      { selector: "#c3", value: "<0 chars>", masked: true },
+    ]);
+    // The owner's log hears both: the fill that failed, and the box the
+    // rollback could not empty.
+    expect(ctx.events.slice(before)).toEqual([
+      {
+        event: "credential_fill_failed",
+        fields: {
+          session: audited(), item: "L1", field: "totp", origin: "pizza.example",
+          selector: "#c3", reason: "the field is holding a changed copy of the value",
+        },
+      },
+      {
+        event: "credential_fill_failed",
+        fields: {
+          session: audited(), item: "L1", field: "totp", origin: "pizza.example",
+          selector: "#c3", reason: "the page kept a character after the fill was rolled back",
+        },
+      },
+    ]);
+    expect(JSON.stringify(ctx.events)).not.toContain("483920");
   });
 });
 

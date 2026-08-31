@@ -93,7 +93,10 @@ url, title, links, forms, tables, pages.
   rewrite what goes into them — a card box adds spaces to the digits, a phone box
   drops the dashes — and that is usually fine. It is not fine when the value had
   to arrive intact. You are told the difference happened, not whether it matters;
-  screenshot the field and decide. A fill without it landed exactly.
+  screenshot the field and decide. A fill without it landed exactly. One shape of
+  it has a fix: a code the page takes as separate one-character boxes keeps only
+  the first character of a whole-value \`fill_secret\` — pass \`selectors\` instead
+  (see Credentials).
 - **A popup is not the active page.** Every result includes \`page_count\`; when it grows,
   run \`pages\` and switch with \`use_page\`.
 - \`eval\` runs a JS expression in the top frame — use it to extract structured data after
@@ -133,6 +136,13 @@ item's, and \`fill_secret\` types them into the page the same way.
    cardholder name and a username are vault fields too, and \`fill_secret\` is the only way to
    put one in a page. Plain \`fill\` is for text you already have, not for anything the vault
    holds. Cards may fill on any approved origin; logins only on their own site.
+   **A code split across single-character boxes** — a 2FA screen's six one-digit
+   inputs, a PIN pad — cannot be filled as one field: pass \`selectors\` in place of
+   \`selector\`, naming every box in the order the code is read:
+   \`{action: "fill_secret", selectors: ["#code-1", ..., "#code-6"], item, field: "totp"}\`.
+   The value is split on the Mac, one character per box; every box must be in the
+   same frame, and a fill that fails part-way erases what it already typed so no
+   partial code is left sitting in the form.
    **A destination in the bundled v1 bank registry needs a separate owner payment
    approval.** When the page you are filling matches that registry, \`fill_secret\` needs
    more than item rights: the owner

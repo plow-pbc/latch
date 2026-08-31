@@ -41,8 +41,8 @@ function writeVault(dir: string): string {
     JSON.stringify([
       { id: "L1", title: "Pizza Login", category: "LOGIN", username: "jon",
         urls: ["https://pizza.example/"],
-        descriptors: [{ label: "password", hidden: true, custom: false, alias: false }, { label: "username", hidden: false, custom: false, alias: false }],
-        values: { password: "hunter2", username: "jon" } },
+        descriptors: [{ label: "password", hidden: true, custom: false, alias: false }, { label: "username", hidden: false, custom: false, alias: false }, { label: "totp", hidden: true, custom: false, alias: false }],
+        values: { password: "hunter2", username: "jon", totp: "483920" } },
       { id: "C1", title: "Visa", category: "CREDIT_CARD", username: "", urls: [],
         descriptors: [{ label: "number", hidden: true, custom: false, alias: false }, { label: "cvv", hidden: true, custom: false, alias: true }],
         values: { number: "4111111111111111", cvv: "123" } },
@@ -176,6 +176,28 @@ describe("browser tools (fake runtime)", () => {
       expect(names, e).toContain(e);
     }
     expect(fs.readFileSync(device.audit.file, "utf8")).not.toContain("hunter2");
+  });
+
+  it("splits a code across single-character boxes when 'selectors' crosses the seam", async () => {
+    // End to end through the MCP tool surface: 'selectors' has to survive the
+    // argument copy in tools.ts, and the split itself happens on the device —
+    // the fixture's fill log shows one character landing in each box, in order.
+    const { server, fillLog } = makeServer();
+    const session = await open(server, ["pizza.example"]);
+    await act(server, session, "goto", { url: "https://pizza.example/" });
+    await callTool(server, "plow_browser_request", { session, credential_items: ["L1"] }, AGENT);
+
+    const filled = await act(server, session, "fill_secret", {
+      selectors: ["#c1", "#c2", "#c3", "#c4", "#c5", "#c6"],
+      item: "L1",
+      field: "totp",
+    });
+    expect(filled.isError, JSON.stringify(filled.payload)).toBe(false);
+    expect(filled.payload.ok).toBe(true);
+    expect(JSON.stringify(filled.payload)).not.toContain("483920");
+    expect(fs.readFileSync(fillLog, "utf8").trim().split("\n")).toEqual([
+      "#c1\t4\t0", "#c2\t8\t0", "#c3\t3\t0", "#c4\t9\t0", "#c5\t2\t0", "#c6\t0\t0",
+    ]);
   });
 
   it("defers a slow fill_secret as running without filling twice", async () => {
