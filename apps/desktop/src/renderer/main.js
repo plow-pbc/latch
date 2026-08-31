@@ -1948,22 +1948,53 @@ async function renderSettings() {
   applyLaunch();
 
   // Capabilities: what macOS lets the app itself reach. Full Disk Access has
-  // no prompt an app can raise — the only grant path is the switch in System
-  // Settings — so the button deep-links there (a key into main's table, like
-  // every external open) and the status re-probes when focus comes back to
-  // this window (the boot()-installed focus listener), which is the first
-  // moment the pane can learn what happened over there.
+  // no prompt an app can raise — the only grant path is in System Settings —
+  // so the button starts main's grant flow (fdaGrantFlow), ported from
+  // PermissionFlow (see permissionFlow.ts): the pane opens, a small floating
+  // panel with the app as a native drag source follows the System Settings
+  // window, and the status re-probes on a short interval so the grant lands
+  // green without waiting for the boot()-installed focus refresh. The drag
+  // source lives ONLY in that panel — a tile here would be a second copy of
+  // the same gesture, in the window System Settings is about to cover.
   const capDot = el("span", { class: "status-dot" });
   const capStatus = el("span", { class: "faint", text: "…" });
+
+  // While the flow runs, this card re-probes every 2s so its own dot flips
+  // green in step with the floating panel main is running. Display only —
+  // the flow's lifecycle (panel, tracker, timeout) lives in main's
+  // fdaGrantFlow. Ends on grant, on leaving this tab (the tick sees
+  // currentTab moved on), or after 3 minutes.
+  let fdaGranted = false;
+  let grantTicks = 0;
+  let grantTimer = null;
+  const stopGrantFlow = () => {
+    if (grantTimer === null) return;
+    clearInterval(grantTimer);
+    grantTimer = null;
+  };
   const applyCapabilities = (caps) => {
+    fdaGranted = caps.fullDiskAccess;
     capDot.className = "status-dot" + (caps.fullDiskAccess ? " on" : "");
     capStatus.textContent = caps.fullDiskAccess ? "Granted" : "Not granted";
+    if (caps.fullDiskAccess) stopGrantFlow();
+  };
+  const startGrantFlow = () => {
+    if (grantTimer !== null || fdaGranted) return;
+    grantTicks = 0;
+    grantTimer = setInterval(async () => {
+      if (currentTab !== "settings" || ++grantTicks > 90) return stopGrantFlow();
+      applyCapabilities(await window.domo.capabilitiesGet());
+    }, 2000);
   };
   applyCapabilities(await window.domo.capabilitiesGet());
   // Ellipsis, not ↗ (see extArrow): the click only starts this — the user
-  // still has to flip the toggle over there.
+  // still has to grant over there, by dragging the app into the list or
+  // flipping the switch. Main opens the pane and floats the helper panel.
   const openFullDisk = el("button", { class: "btn", text: "Open System Settings…" });
-  openFullDisk.addEventListener("click", () => window.domo.openExternal("fullDiskSettings"));
+  openFullDisk.addEventListener("click", () => {
+    window.domo.fullDiskGrantFlow();
+    startGrantFlow();
+  });
 
   // One Support destination: icon, title + blurb, and a button that asks main
   // to open the URL behind `key` — the renderer never holds the URL itself.
@@ -2020,7 +2051,8 @@ async function renderSettings() {
           el("p", { class: "faint", text:
             "macOS blocks Messages, Mail, Safari data, and Time Machine backups until you grant this. " +
             "Agents need it to do things like read a sign-in code texted to you in Messages, or search your Mail archive for a receipt. " +
-            "To grant it, turn on Plow Latch under Privacy & Security → Full Disk Access. macOS may ask to quit and reopen the app." }),
+            "To grant it, click Open System Settings and drag the app from the panel that appears into the Full Disk Access list. " +
+            "macOS may ask to quit and reopen the app." }),
         ]),
         el("div", { class: "spacer" }),
         openFullDisk,

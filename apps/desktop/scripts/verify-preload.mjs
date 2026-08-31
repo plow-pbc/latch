@@ -55,6 +55,16 @@ ipcMain.handle("settings:setApprovalMode", async (_e, m) => setApprovalMode(prob
 // A Mac that has NOT granted Full Disk Access — the state the Capabilities
 // section exists to explain.
 ipcMain.handle("capabilities:get", async () => ({ fullDiskAccess: false }));
+// The drag-to-authorize tile's display data: a fake bundle name and a 1px
+// icon, so the tile renders in the probe without a real .app behind it.
+ipcMain.handle("fullDisk:dragInfo", async () => ({
+  name: "Plow Latch",
+  iconDataUrl:
+    "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==",
+}));
+// The grant flow is main-process behavior (panel + tracker); the bridge call
+// just has to resolve.
+ipcMain.handle("fullDisk:grantFlow", async () => {});
 // Launch at Login: the REAL rules from loginItem.js over a fake OS bit.
 // Packaged-looking at first so the toggle renders live; flipped unsupported
 // mid-run to prove the status refresh re-reads it and the note appears.
@@ -504,6 +514,9 @@ app.whenReady().then(async () => {
       fdaOffersSystemSettings: [...document.querySelectorAll("button")].some(
         (b) => b.textContent.trim() === "Open System Settings…",
       ),
+      // The drag source lives only in the floating grant panel (checked
+      // below), never in this pane.
+      fdaNoInlineDragTile: !document.querySelector(".fda-drag-tile"),
       // The marks split by meaning: the macOS "…" on the one hand-off the user
       // must finish over there (System Settings), the external-link ↗ on the
       // buttons whose click just happens in the browser (Discord, Livestream)
@@ -1883,6 +1896,27 @@ app.whenReady().then(async () => {
     };
   }})()`);
 
+  // The floating grant panel (fdaGrantFlow.ts) comes up through the same
+  // sandboxed preload as every other window. Loaded directly — the probe
+  // drives windows, not the flow, so no System Settings is involved.
+  const panelWin = offscreen();
+  await panelWin.loadFile(path.join(dist, "renderer/fdapanel.html"));
+  await waitFor(panelWin, `document.querySelector(".fda-panel")`, "the grant panel to render");
+  const grantPanel = await panelWin.webContents.executeJavaScript(`(${() => {
+    const tile = document.querySelector(".fda-drag-tile");
+    return {
+      // The drag source, showing the bundle the dragInfo stub named.
+      tileDraggable: tile?.getAttribute("draggable") === "true",
+      namesBundle: (tile?.innerText ?? "").includes("Plow Latch"),
+      // The PermissionFlow-style header instruction, un-granted phrasing (the
+      // probe stub says denied), and a close button to bail out with.
+      saysWaiting: document.querySelector(".fda-header-text")?.textContent ===
+        "Drag Plow Latch to the list above to allow Full Disk Access.",
+      hasClose: !!document.querySelector(".fda-close"),
+    };
+  }})()`);
+  panelWin.destroy();
+
   const ok =
     agentsOpen.opensModal &&
     agentsOpen.formInModal &&
@@ -2038,6 +2072,7 @@ app.whenReady().then(async () => {
     settings.fdaSaysNotGranted &&
     settings.fdaNamesMessages &&
     settings.fdaOffersSystemSettings &&
+    settings.fdaNoInlineDragTile &&
     settings.supportMarks &&
     settings.launchTitle &&
     settings.launchToggleLive &&
@@ -2094,10 +2129,14 @@ app.whenReady().then(async () => {
     reviewerNote.noMarkupInjected &&
     reviewerNote.spinnerCleared &&
     !reviewerNote.leaksCredential &&
+    grantPanel.tileDraggable &&
+    grantPanel.namesBundle &&
+    grantPanel.saysWaiting &&
+    grantPanel.hasClose &&
     errors.length === 0;
   console.log(
     "PROBE:" +
-      JSON.stringify({ main, settings, strandedOnDisk, settingsPane, connect, cloudRoster, cloudCreatePicker, cloudCreateSelection, cloudCreateSelectionOnly, cloudCreateRequest, cloudCreateCancelled, cloudCreateCode, cloudExistingCreate, cloudExistingCreateRequest, cloudCodeConfirmed, cloudCodeConfirmedClosed, cloudNoFreeLines, cloudNoNumbers, cloudDetail, cloudChangePicker, cloudChangeSelection, cloudChangeSelectionOnly, cloudChangeCode, cloudChangeRequest, cloudUnknownLines, cloudCreateErrorDetail, failedCloudDetailButtons, cloudChangeErrorDetail, cloudAgentGoneCancelled, cloudDeleteConfirm, loadingCloudDetail, unavailableCloudDetail, agentsShot, approvalsReviewer, approvalsShot, purposeRoundTrip, approvalsAsk, askWithoutReviewer, approvalsShotAsk, agentsOpen, modalClosed, vaultLocked, vaultUnsaved, vaultShot, agentsOpenShot, staleSettingsPane, optimisticMode, settingsShot, approval, reviewerNote, consoleErrors: errors, ok }),
+      JSON.stringify({ main, settings, strandedOnDisk, settingsPane, connect, cloudRoster, cloudCreatePicker, cloudCreateSelection, cloudCreateSelectionOnly, cloudCreateRequest, cloudCreateCancelled, cloudCreateCode, cloudExistingCreate, cloudExistingCreateRequest, cloudCodeConfirmed, cloudCodeConfirmedClosed, cloudNoFreeLines, cloudNoNumbers, cloudDetail, cloudChangePicker, cloudChangeSelection, cloudChangeSelectionOnly, cloudChangeCode, cloudChangeRequest, cloudUnknownLines, cloudCreateErrorDetail, failedCloudDetailButtons, cloudChangeErrorDetail, cloudAgentGoneCancelled, cloudDeleteConfirm, loadingCloudDetail, unavailableCloudDetail, agentsShot, approvalsReviewer, approvalsShot, purposeRoundTrip, approvalsAsk, askWithoutReviewer, approvalsShotAsk, agentsOpen, modalClosed, vaultLocked, vaultUnsaved, vaultShot, agentsOpenShot, staleSettingsPane, optimisticMode, settingsShot, approval, reviewerNote, grantPanel, consoleErrors: errors, ok }),
   );
   app.exit(ok ? 0 : 1);
 }).catch((err) => {

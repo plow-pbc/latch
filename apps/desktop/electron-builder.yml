@@ -37,6 +37,9 @@ publish:
 # LICENSE/NOTICE files are deliberately shipped — redistribution requires them.
 files:
   - dist/**/*
+  # The compiled native helper ships as an extraResource below — inside the
+  # asar it could not be spawned at all.
+  - "!dist/native/**"
   - "!dist/**/*.d.ts"
   - "!dist/**/*.d.cts"
   - "!dist/**/*.map"
@@ -89,6 +92,15 @@ extraResources:
   - from: ../../vendor/vault-server
     to: browser-runtime/vault-server
     filter: ["**/*", "!*/.commit", "!.web-vault.sha256"]
+  # The Full Disk Access flow's window tracker (scripts/build-native.mjs, a
+  # `just build` step). Lipo-fused universal like the python runtime, so both
+  # electron-builder arch passes carry identical bytes and the merge copies it
+  # through. Signed by electron-builder with the app's entitlements — a plain
+  # CLI, nothing extra needed. The .stamp is the build script's cache key, not
+  # payload.
+  - from: dist/native
+    to: native
+    filter: ["**/*", "!*.stamp"]
 
 mac:
   icon: ../../artwork/domo-desktop-icon.png

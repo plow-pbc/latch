@@ -6,7 +6,7 @@
   "type": "module",
   "main": "./dist/main.js",
   "scripts": {
-    "build": "tsc -b && node scripts/copy-renderer.mjs",
+    "build": "tsc -b && node scripts/copy-renderer.mjs && node scripts/build-native.mjs",
     "start": "electron ."
   },
   "dependencies": {
