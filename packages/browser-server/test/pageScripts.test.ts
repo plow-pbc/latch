@@ -1,9 +1,12 @@
 /**
- * The page-side scripts, run as the page runs them — no Python, no browser. These
- * used to be lifted out of server.py's `"""…"""` literals by `loadScript`; now
- * they are TS exports, so the tests evaluate them directly. This is the other
- * half of the masking guarantee (the fill BRANCH is fillBranch.test.ts): what the
- * page ends up carrying, which nodes take typing, and whether keys landed.
+ * The page-side scripts, as pure functions — no Python, no browser. These used
+ * to be lifted out of `"""…"""` string literals and eval'd; now they are real
+ * functions (so Playwright actually CALLS them — see pageScripts.ts), and the
+ * tests call them directly against stub nodes.
+ *
+ * This tier tests the ALGORITHMS. That a real browser actually invokes them and
+ * masks the field is maskReal.integration.test.ts — the coverage that would have
+ * caught the string-vs-function bug, which this tier structurally cannot.
  */
 import { describe, expect, it } from "vitest";
 import {
@@ -16,11 +19,9 @@ import {
   VALUE_SNAPSHOT_JS,
 } from "../src/pageScripts.js";
 
-// eslint-disable-next-line @typescript-eslint/no-implied-eval
-const asFn = <T>(src: string): T => new Function(`return (${src})`)() as T;
+/* eslint-disable @typescript-eslint/no-explicit-any */
 
 describe("which nodes take typing", () => {
-  const typeable = asFn<(el: unknown) => string>(TYPEABLE_JS);
   const input = (type: string, extra: Record<string, unknown> = {}) => ({
     tagName: "INPUT", type, disabled: false, readOnly: false,
     getAttribute: (k: string) => (k === "type" ? type : null), ...extra,
@@ -60,14 +61,11 @@ describe("which nodes take typing", () => {
     { what: "a span", el: element("SPAN"), kind: "" },
     { what: "a contenteditable div", el: element("DIV", { getAttribute: (k: string) => (k === "contenteditable" ? "true" : null) }), kind: "" },
   ])("$what: kind=$kind", ({ el, kind }) => {
-    expect(typeable(el)).toBe(kind);
+    expect(TYPEABLE_JS(el as any)).toBe(kind);
   });
 });
 
 describe("whether the keys landed", () => {
-  const dropped = asFn<(el: { value?: string; textContent?: string }, wanted: string) => boolean>(
-    KEYS_DROPPED_JS,
-  );
   it.each([
     { what: "an empty field", el: { value: "" }, wanted: "hunter2", fallback: true },
     { what: "a truncated field", el: { value: "hunt" }, wanted: "hunter2", fallback: true },
@@ -77,21 +75,16 @@ describe("whether the keys landed", () => {
     { what: "a contenteditable holding the value", el: { textContent: "hunter2" }, wanted: "hunter2", fallback: false },
     { what: "an empty contenteditable", el: { textContent: "" }, wanted: "hunter2", fallback: true },
   ])("$what needs the assignment: $fallback", ({ el, wanted, fallback }) => {
-    expect(dropped(el, wanted)).toBe(fallback);
+    expect(KEYS_DROPPED_JS(el as any, wanted)).toBe(fallback);
   });
 });
 
 describe("whether a fill that failed left anything behind", () => {
-  const nothingLanded = asFn<(el: { value?: string; textContent?: string }, previous: string) => boolean>(
-    NOTHING_LANDED_JS,
-  );
-  const snapshot = asFn<(el: { value?: string; textContent?: string }) => string>(VALUE_SNAPSHOT_JS);
-
   it.each([
     { what: "an input", el: { value: "1 Elm" } },
     { what: "a contenteditable", el: { textContent: "1 Elm" } },
   ])("captures what $what was holding", ({ el }) => {
-    expect(snapshot(el)).toBe("1 Elm");
+    expect(VALUE_SNAPSHOT_JS(el as any)).toBe("1 Elm");
   });
 
   it.each([
@@ -102,86 +95,83 @@ describe("whether a fill that failed left anything behind", () => {
     { what: "an emptied contenteditable", el: { textContent: "" }, before: "1 Elm", nothing: true },
     { what: "a contenteditable holding more", el: { textContent: "1 Elm Sec" }, before: "1 Elm", nothing: false },
   ])("$what: nothing landed is $nothing", ({ el, before, nothing }) => {
-    expect(nothingLanded(el, before)).toBe(nothing);
+    expect(NOTHING_LANDED_JS(el as any, before)).toBe(nothing);
   });
 });
 
+interface StubEl {
+  attrs: Record<string, string>;
+  style: { props: Record<string, string>; setProperty(k: string, v: string): void; removeProperty(k: string): void; webkitTextSecurity?: string };
+  setAttribute(k: string, v: string): void;
+  removeAttribute(k: string): void;
+  hasAttribute(k: string): boolean;
+  getAttribute(k: string): string | null;
+  ownerDocument: StubDoc;
+  tagName: string;
+  type: string;
+  name: string;
+  id: string;
+  labels: never[];
+  value: string;
+  options: never[];
+}
+interface StubDoc {
+  styles: { id: string; textContent: string }[];
+  head: { appendChild(node: { id: string; textContent: string }): void };
+  getElementById(id: string): { id: string } | null;
+  createElement(tag: string): { id: string; textContent: string };
+  defaultView: { getComputedStyle(el: StubEl): { getPropertyValue(p: string): string } };
+}
+
+function stubPage(opts: { stylesheets?: boolean; inlineProperties?: boolean } = {}): {
+  doc: StubDoc;
+  el: () => StubEl;
+} {
+  const stylesheets = opts.stylesheets ?? true;
+  const inlineProperties = opts.inlineProperties ?? true;
+  const doc = {
+    styles: [] as { id: string; textContent: string }[],
+    head: { appendChild: (node: { id: string; textContent: string }) => void doc.styles.push(node) },
+    getElementById: (id: string) => doc.styles.find((s) => s.id === id) ?? null,
+    createElement: () => ({ id: "", textContent: "" }),
+    defaultView: {
+      getComputedStyle: (el: StubEl) => ({
+        getPropertyValue: (prop: string) => {
+          if (prop !== "-webkit-text-security") return "";
+          if (inlineProperties && el.style.props[prop]) return el.style.props[prop];
+          const sheet = doc.styles.some((s) => s.id === "domo-secret-style");
+          return stylesheets && sheet && "data-domo-secret" in el.attrs ? "disc" : "";
+        },
+      }),
+    },
+  } as StubDoc;
+  return {
+    doc,
+    el: () => {
+      const attrs: Record<string, string> = {};
+      const props: Record<string, string> = {};
+      return {
+        attrs, tagName: "INPUT", type: "text", name: "cc-number", id: "", labels: [], value: "", options: [],
+        style: {
+          props,
+          setProperty: (k: string, v: string) => { if (inlineProperties) props[k] = v; },
+          removeProperty: (k: string) => { delete props[k]; },
+        },
+        setAttribute(k: string, v: string) { attrs[k] = v; },
+        removeAttribute(k: string) { delete attrs[k]; },
+        hasAttribute: (k: string) => k in attrs,
+        getAttribute: (k: string) => (k in attrs ? attrs[k] : null),
+        ownerDocument: doc,
+      } as StubEl;
+    },
+  };
+}
+
 describe("the mark the page ends up carrying", () => {
-  interface StubEl {
-    attrs: Record<string, string>;
-    style: { props: Record<string, string>; setProperty(k: string, v: string): void; removeProperty(k: string): void; webkitTextSecurity?: string };
-    setAttribute(k: string, v: string): void;
-    removeAttribute(k: string): void;
-    hasAttribute(k: string): boolean;
-    getAttribute(k: string): string | null;
-    ownerDocument: StubDoc;
-    tagName: string;
-    type: string;
-    name: string;
-    id: string;
-    labels: never[];
-    value: string;
-    options: never[];
-  }
-  interface StubDoc {
-    styles: { id: string; textContent: string }[];
-    head: { appendChild(node: { id: string; textContent: string }): void };
-    getElementById(id: string): { id: string } | null;
-    createElement(tag: string): { id: string; textContent: string };
-    defaultView: { getComputedStyle(el: StubEl): { getPropertyValue(p: string): string } };
-  }
-
-  function stubPage(opts: { stylesheets?: boolean; inlineProperties?: boolean } = {}): {
-    doc: StubDoc;
-    el: () => StubEl;
-  } {
-    const stylesheets = opts.stylesheets ?? true;
-    const inlineProperties = opts.inlineProperties ?? true;
-    const doc = {
-      styles: [] as { id: string; textContent: string }[],
-      head: { appendChild: (node: { id: string; textContent: string }) => void doc.styles.push(node) },
-      getElementById: (id: string) => doc.styles.find((s) => s.id === id) ?? null,
-      createElement: () => ({ id: "", textContent: "" }),
-      defaultView: {
-        getComputedStyle: (el: StubEl) => ({
-          getPropertyValue: (prop: string) => {
-            if (prop !== "-webkit-text-security") return "";
-            if (inlineProperties && el.style.props[prop]) return el.style.props[prop];
-            const sheet = doc.styles.some((s) => s.id === "domo-secret-style");
-            return stylesheets && sheet && "data-domo-secret" in el.attrs ? "disc" : "";
-          },
-        }),
-      },
-    } as StubDoc;
-    return {
-      doc,
-      el: () => {
-        const attrs: Record<string, string> = {};
-        const props: Record<string, string> = {};
-        return {
-          attrs, tagName: "INPUT", type: "text", name: "cc-number", id: "", labels: [], value: "", options: [],
-          style: {
-            props,
-            setProperty: (k: string, v: string) => { if (inlineProperties) props[k] = v; },
-            removeProperty: (k: string) => { delete props[k]; },
-          },
-          setAttribute(k: string, v: string) { attrs[k] = v; },
-          removeAttribute(k: string) { delete attrs[k]; },
-          hasAttribute: (k: string) => k in attrs,
-          getAttribute: (k: string) => (k in attrs ? attrs[k] : null),
-          ownerDocument: doc,
-        } as StubEl;
-      },
-    };
-  }
-
-  const mark = asFn<(el: StubEl) => string>(MASK_JS);
-  const unmark = asFn<(el: StubEl) => boolean>(UNMASK_JS);
-
   it("puts the attribute the forms scan looks for on the element, and nothing else", () => {
     const page = stubPage();
     const el = page.el();
-    expect(mark(el)).toBe("stylesheet");
+    expect(MASK_JS(el as any)).toBe("stylesheet");
     expect(el.attrs).toEqual({ "data-domo-secret": "" });
     expect(page.doc.styles.length).toBe(1);
     expect(el.style.props).toEqual({});
@@ -189,8 +179,8 @@ describe("the mark the page ends up carrying", () => {
 
   it("injects the stylesheet once across repeated fills", () => {
     const page = stubPage();
-    expect(mark(page.el())).toBe("stylesheet");
-    expect(mark(page.el())).toBe("stylesheet");
+    expect(MASK_JS(page.el() as any)).toBe("stylesheet");
+    expect(MASK_JS(page.el() as any)).toBe("stylesheet");
     expect(page.doc.styles.length).toBe(1);
     expect(page.doc.styles[0].textContent).toBe("[data-domo-secret]{-webkit-text-security:disc}");
   });
@@ -198,7 +188,7 @@ describe("the mark the page ends up carrying", () => {
   it("falls back to the element's own style when a CSP blocks the stylesheet", () => {
     const page = stubPage({ stylesheets: false });
     const el = page.el();
-    expect(mark(el)).toBe("inline");
+    expect(MASK_JS(el as any)).toBe("inline");
     expect(el.attrs).toEqual({ "data-domo-secret": "" });
     expect(el.style.props["-webkit-text-security"]).toBe("disc");
   });
@@ -206,7 +196,7 @@ describe("the mark the page ends up carrying", () => {
   it("takes its own tag back off when the mark did not take", () => {
     const page = stubPage({ stylesheets: false, inlineProperties: false });
     const el = page.el();
-    expect(mark(el)).toBe("unmasked");
+    expect(MASK_JS(el as any)).toBe("unmasked");
     expect(el.attrs).toEqual({});
     expect(el.style.props).toEqual({});
   });
@@ -215,37 +205,40 @@ describe("the mark the page ends up carrying", () => {
     const page = stubPage({ stylesheets: false, inlineProperties: false });
     const el = page.el();
     el.setAttribute("data-domo-secret", "");
-    expect(mark(el)).toBe("unmasked");
+    expect(MASK_JS(el as any)).toBe("unmasked");
     expect(el.attrs).toEqual({ "data-domo-secret": "" });
   });
 
   it("clears the mark and the fallback when a node is reused for a visible field", () => {
     const page = stubPage({ stylesheets: false });
     const el = page.el();
-    mark(el);
-    unmark(el);
+    MASK_JS(el as any);
+    UNMASK_JS(el as any);
     expect(el.attrs).toEqual({});
     expect(el.style.props).toEqual({});
   });
 
   it("lets the forms scan report a cleared node normally again", () => {
-    const scan = asFn<(document: unknown) => { value: string; secret: boolean; filled: boolean }[]>(
-      `() => (${FIELD_JS})()`,
-    );
+    // FIELD_JS reads the global `document`; inject a stub around the call.
     const page = stubPage();
     const el = page.el();
-    mark(el);
+    MASK_JS(el as any);
     el.value = "jon@example.com";
-    const runScan = new Function("document", `return (${FIELD_JS})();`) as (
-      doc: unknown,
-    ) => { value: string; secret: boolean; filled: boolean }[];
-    const [masked] = runScan({ querySelectorAll: () => [el] });
+    const scan = (): { value: string; secret: boolean; filled: boolean }[] => {
+      (globalThis as any).document = { querySelectorAll: () => [el] };
+      try {
+        return FIELD_JS() as any;
+      } finally {
+        delete (globalThis as any).document;
+      }
+    };
+    const [masked] = scan();
     expect(masked.secret).toBe(true);
     expect(masked.value).toBe("");
-    unmark(el);
-    const [plain] = runScan({ querySelectorAll: () => [el] });
+
+    UNMASK_JS(el as any);
+    const [plain] = scan();
     expect(plain.secret).toBe(false);
     expect(plain.value).toBe("jon@example.com");
-    void scan;
   });
 });

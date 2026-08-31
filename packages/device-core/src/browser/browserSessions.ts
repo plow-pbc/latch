@@ -470,8 +470,29 @@ export class BrowserSessions {
     fs.rmSync(dir, { recursive: true, force: true });
   }
 
-  /** The merge itself: sqlite, on the interpreter this runtime already ships. */
-  private async mergeCookies(dir: string): Promise<void> {
+  /** Serializes merges into the shared seed profile. Shutdown closes every
+   * session at once, and each merge opens the SAME seed `cookies.sqlite`;
+   * several processes opening it concurrently made node-sqlite3-wasm fail with
+   * "unable to open database file", so the loser's sign-ins were never written
+   * back. One seed profile per instance, so one queue. */
+  private mergeQueue: Promise<void> = Promise.resolve();
+
+  /** The merge, serialized against every other merge into the same profile. */
+  private mergeCookies(dir: string): Promise<void> {
+    const run = (): Promise<void> => this.mergeCookiesLocked(dir);
+    // Run after the previous merge regardless of whether it settled; return THIS
+    // merge's own result to the caller, but keep the queue non-rejecting so one
+    // failure cannot wedge every later close.
+    const next = this.mergeQueue.then(run, run);
+    this.mergeQueue = next.then(
+      () => {},
+      () => {},
+    );
+    return next;
+  }
+
+  /** The merge itself: WASM sqlite, on the node this runtime already runs on. */
+  private async mergeCookiesLocked(dir: string): Promise<void> {
     const seed = this.browser.seedProfile;
     const from = path.join(dir, "cookies.sqlite");
     if (!seed || !fs.existsSync(from)) return;

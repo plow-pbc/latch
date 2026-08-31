@@ -76,25 +76,34 @@ export function loadPool(poolDir: string): FingerprintPool {
  */
 export function pinnedEntry(pool: FingerprintPool, pinPath?: string): FingerprintEntry {
   const byId = new Map(pool.entries.map((e) => [e.id, e]));
-  if (pinPath) {
+  const readPin = (): FingerprintEntry | undefined => {
     try {
-      const pinned = JSON.parse(fs.readFileSync(pinPath, "utf8")) as { id?: string };
-      const hit = pinned.id ? byId.get(pinned.id) : undefined;
-      if (hit) return hit;
+      const { id } = JSON.parse(fs.readFileSync(pinPath!, "utf8")) as { id?: string };
+      return id ? byId.get(id) : undefined;
     } catch {
-      /* absent or unreadable — fall through and pick one */
+      return undefined;
     }
+  };
+  if (pinPath) {
+    const hit = readPin();
+    if (hit) return hit;
   }
   const chosen = pool.entries[crypto.randomInt(pool.entries.length)];
-  if (pinPath) {
-    try {
-      fs.mkdirSync(path.dirname(pinPath), { recursive: true });
-      fs.writeFileSync(pinPath, JSON.stringify({ id: chosen.id }), { mode: 0o600 });
-    } catch {
-      /* best effort: an unrecordable pin just re-picks next launch */
-    }
+  if (!pinPath) return chosen;
+  try {
+    fs.mkdirSync(path.dirname(pinPath), { recursive: true });
+    // Exclusive create ("wx"): if another first launch wrote the pin between our
+    // read above and here, this throws EEXIST and we adopt THEIR pick — so
+    // simultaneous first launches converge on one fingerprint instead of each
+    // overwriting the file with its own (a persistent browser must not present
+    // several devices to the same site).
+    fs.writeFileSync(pinPath, JSON.stringify({ id: chosen.id }), { flag: "wx", mode: 0o600 });
+    return chosen;
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === "EEXIST") return readPin() ?? chosen;
+    // Unwritable for another reason: best effort, re-pick next launch.
+    return chosen;
   }
-  return chosen;
 }
 
 /** Launch the browser and hand back its first page. Camoufox yields a Browser

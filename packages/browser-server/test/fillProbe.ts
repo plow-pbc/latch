@@ -20,8 +20,24 @@ import {
   type FrameLike,
   type HandleLike,
   type JSHandleLike,
+  type PageFunction,
   type PageLike,
 } from "../src/index.js";
+// The page scripts are now FUNCTIONS; the stub matches on identity (===), which
+// also makes the stub track the real call surface — a renamed/dropped script
+// fails to match instead of silently returning a canned value.
+import {
+  DOC_TOKEN_JS,
+  FIELD_CAP_JS,
+  HELD_MATCHES_JS,
+  KEYS_DROPPED_JS,
+  MASK_JS,
+  NOTHING_LANDED_JS,
+  TYPEABLE_JS,
+  UNMASK_JS,
+  VALUE_SNAPSHOT_JS,
+  WAS_MARKED_JS,
+} from "../src/pageScripts.js";
 
 type Any = unknown;
 
@@ -80,40 +96,39 @@ class Handle implements HandleLike {
     this.value = o.value ?? "";
   }
 
-  async evaluate(js: string, arg?: Any): Promise<Any> {
-    // Ordered most specific first, matching the Python probe.
-    if (js.includes("__domoDocumentToken")) return this.o.documentToken ?? "doc-1";
-    if (js.includes("maxLength")) return this.o.maxLength ?? -1;
-    if (js.includes("=== wanted")) return (this.value || "") === (arg ?? "");
-    if (js.includes("tagName")) return this.o.typeable ?? "single-line";
-    if (js.includes("startsWith(now)")) {
+  async evaluate(fn: PageFunction, arg?: Any): Promise<Any> {
+    if (fn === DOC_TOKEN_JS) return this.o.documentToken ?? "doc-1";
+    if (fn === FIELD_CAP_JS) return this.o.maxLength ?? -1;
+    if (fn === HELD_MATCHES_JS) return (this.value || "") === (arg ?? "");
+    if (fn === TYPEABLE_JS) return this.o.typeable ?? "single-line";
+    if (fn === KEYS_DROPPED_JS) {
       const wanted = (arg as string) ?? "";
       const now = this.value || "";
       return now !== wanted && wanted.startsWith(now);
     }
-    if (js.includes("=== previous")) {
+    if (fn === NOTHING_LANDED_JS) {
       const previous = arg instanceof HandleRef ? (arg.value as string) : (arg as string);
       const now = this.value || "";
       return now === "" || now === previous;
     }
-    if (js.includes("el.value")) return this.value || "";
-    if (js.includes("setAttribute") && js.includes("data-domo-secret")) {
+    if (fn === VALUE_SNAPSHOT_JS) return this.value || "";
+    if (fn === MASK_JS) {
       this.marked = true;
       this.trace.push("handle.evaluate:mark");
       return this.o.maskResult ?? "stylesheet";
     }
-    if (js.includes("removeAttribute") && js.includes("data-domo-secret")) {
+    if (fn === UNMASK_JS) {
       this.marked = false;
       this.trace.push("handle.evaluate:unmark");
       return true;
     }
-    if (js.includes("hasAttribute")) return this.marked;
+    if (fn === WAS_MARKED_JS) return this.marked;
     this.trace.push("handle.evaluate:other");
     return null;
   }
 
-  async evaluateHandle(js: string, arg?: Any): Promise<JSHandleLike> {
-    return new HandleRef(await this.evaluate(js, arg));
+  async evaluateHandle(fn: PageFunction, arg?: Any): Promise<JSHandleLike> {
+    return new HandleRef(await this.evaluate(fn, arg));
   }
 
   async fill(value: string): Promise<void> {
@@ -191,11 +206,11 @@ class Frame implements FrameLike {
   url(): string {
     return "https://pizza.example/login";
   }
-  async evaluate(js: string): Promise<Any> {
-    if (js.includes("__domoDocumentToken")) return this.o.documentToken ?? "doc-1";
+  async evaluate(fn: PageFunction): Promise<Any> {
+    if (fn === DOC_TOKEN_JS) return this.o.documentToken ?? "doc-1";
     return [];
   }
-  async querySelector(selector: string): Promise<HandleLike | null> {
+  async $(selector: string): Promise<HandleLike | null> {
     return this.node(selector);
   }
   isDetached(): boolean {

@@ -72,18 +72,10 @@ export function mergeCookies(into: string, extra: string, baseline: string): voi
         `${match("mine", "theirs", keys)} AND mine.lastAccessed >= theirs.lastAccessed)`,
     ];
 
-    if (fs.existsSync(baseline)) {
+    const hasBaseline = fs.existsSync(baseline);
+    if (hasBaseline) {
+      // ATTACH cannot run inside a transaction, so it precedes BEGIN.
       db.run("ATTACH ? AS base", [baseline]);
-      // Signed out here: gone from the clone, and the profile still holds
-      // exactly what this session started from.
-      db.run(
-        "DELETE FROM main.moz_cookies WHERE EXISTS (" +
-          `  SELECT 1 FROM base.moz_cookies AS was WHERE ${match("was", "moz_cookies", keys)} ` +
-          `AND ${match("was", "moz_cookies", state)}` +
-          ") AND NOT EXISTS (" +
-          `  SELECT 1 FROM extra.moz_cookies AS theirs WHERE ${match("theirs", "moz_cookies", keys)}` +
-          ")",
-      );
       // Changed here: some state column differs from what it started as.
       conditions.push(
         "NOT EXISTS (SELECT 1 FROM base.moz_cookies AS was WHERE " +
@@ -91,10 +83,37 @@ export function mergeCookies(into: string, extra: string, baseline: string): voi
       );
     }
 
-    db.run(
-      `INSERT OR REPLACE INTO main.moz_cookies (${names}) ` +
-        `SELECT ${names} FROM extra.moz_cookies AS theirs WHERE ${conditions.join(" AND ")}`,
-    );
+    // The delete (sign-outs) and the insert (changes) are one atomic write: a
+    // crash or a lock timeout between them must not leave the profile with the
+    // sign-outs applied but the new tokens missing — that is a half-merged
+    // login. ROLLBACK on any failure leaves the profile exactly as it was.
+    db.run("BEGIN IMMEDIATE");
+    try {
+      if (hasBaseline) {
+        // Signed out here: gone from the clone, and the profile still holds
+        // exactly what this session started from.
+        db.run(
+          "DELETE FROM main.moz_cookies WHERE EXISTS (" +
+            `  SELECT 1 FROM base.moz_cookies AS was WHERE ${match("was", "moz_cookies", keys)} ` +
+            `AND ${match("was", "moz_cookies", state)}` +
+            ") AND NOT EXISTS (" +
+            `  SELECT 1 FROM extra.moz_cookies AS theirs WHERE ${match("theirs", "moz_cookies", keys)}` +
+            ")",
+        );
+      }
+      db.run(
+        `INSERT OR REPLACE INTO main.moz_cookies (${names}) ` +
+          `SELECT ${names} FROM extra.moz_cookies AS theirs WHERE ${conditions.join(" AND ")}`,
+      );
+      db.run("COMMIT");
+    } catch (err) {
+      try {
+        db.run("ROLLBACK");
+      } catch {
+        /* the transaction was already undone by the failure */
+      }
+      throw err;
+    }
   } finally {
     db.close();
   }

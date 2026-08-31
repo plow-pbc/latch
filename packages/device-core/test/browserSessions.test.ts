@@ -910,6 +910,35 @@ describe.skipIf(!ON_MAC)("every browser opens as the user, already signed in", (
     expect(signedInto(seed, true)).toEqual(["first.example=new-token"]);
   });
 
+  it("serializes concurrent closes so no merge is lost to a locked profile", async () => {
+    // Shutdown closes every session at once; each merges its clone into the SAME
+    // seed cookies.sqlite via a real subprocess. Concurrent opens of that file
+    // made the WASM sqlite fail with "unable to open database file", and the
+    // loser's sign-ins were silently dropped. The per-profile merge queue makes
+    // them run one at a time, so every site lands.
+    const { sessions, seed, profiles } = signedIn({ has: ["home.example"] });
+    const handles: string[] = [];
+    for (let i = 0; i < 4; i++) {
+      handles.push(jv(await sessions.open(`int-${i}`, AGENT, ["a.example"])).get("session").str!);
+    }
+    // Each session signs into its own distinct site, in its own clone.
+    fs.readdirSync(profiles).forEach((d, i) =>
+      cookieStore(path.join(profiles, d, "cookies.sqlite"), [`site${i}.example`], 50 + i),
+    );
+    // Close all four at once — the shutdown path, all merges racing the seed.
+    await Promise.all(handles.map((h) => sessions.close(h, "agent")));
+    // Every session's sign-in made it back, plus the owner's original — none
+    // lost to a lock, and every clone cleaned up.
+    expect(signedInto(seed).sort()).toEqual([
+      "home.example",
+      "site0.example",
+      "site1.example",
+      "site2.example",
+      "site3.example",
+    ]);
+    expect(fs.readdirSync(profiles)).toEqual([]);
+  });
+
   it("keeps the session's copy when the merge fails, rather than deleting the only one", async () => {
     // A swallowed merge failure that also removed the clone would lose the
     // sign-in silently — the exact thing this feature exists to prevent.

@@ -33,19 +33,27 @@ import {
 // ---- Structural Playwright seam ------------------------------------------
 // Just the surface Session touches. Real Playwright satisfies it; so do stubs.
 
+/** What `evaluate` accepts: a real function (Playwright serializes and CALLS it
+ * with the element/page + arg) or a plain expression string. A string is
+ * evaluated, never called — see pageScripts.ts for why the page logic is
+ * functions, not strings. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export type PageFunction = string | ((...args: any[]) => unknown);
+
 export interface JSHandleLike {
   dispose(): Promise<void> | void;
 }
 export interface HandleLike {
-  evaluate(js: string, arg?: unknown): Promise<unknown>;
-  evaluateHandle(js: string, arg?: unknown): Promise<JSHandleLike>;
+  evaluate(pageFunction: PageFunction, arg?: unknown): Promise<unknown>;
+  evaluateHandle(pageFunction: PageFunction, arg?: unknown): Promise<JSHandleLike>;
   fill(value: string, opts?: { timeout?: number }): Promise<void>;
   type(text: string, opts?: { delay?: number; timeout?: number }): Promise<void>;
 }
 export interface FrameLike {
   url(): string;
-  evaluate(js: string, arg?: unknown): Promise<unknown>;
-  querySelector(selector: string): Promise<HandleLike | null>;
+  evaluate(pageFunction: PageFunction, arg?: unknown): Promise<unknown>;
+  /** querySelector — Playwright names it `$`, NOT `querySelector`. */
+  $(selector: string): Promise<HandleLike | null>;
   waitForSelector(selector: string, opts?: { timeout?: number }): Promise<HandleLike | null>;
   click(selector: string, opts?: { timeout?: number }): Promise<void>;
   isDetached(): boolean;
@@ -71,7 +79,7 @@ export interface PageLike {
   title(): Promise<string>;
   frames(): FrameLike[];
   context(): ContextLike;
-  evaluate(js: string, arg?: unknown): Promise<unknown>;
+  evaluate(pageFunction: PageFunction, arg?: unknown): Promise<unknown>;
   goto(url: string, opts?: { timeout?: number; waitUntil?: string }): Promise<unknown>;
   goBack(opts?: { timeout?: number; waitUntil?: string }): Promise<unknown>;
   screenshot(opts?: {
@@ -252,7 +260,7 @@ export class Session {
       }
       let el: HandleLike | null;
       try {
-        el = await frame.querySelector(selector);
+        el = await frame.$(selector);
       } catch {
         targets.delete(key);
         continue;
@@ -370,7 +378,7 @@ export class Session {
   /** Does this frame have the selector right now? Instant, never waits. */
   private async holds(frame: FrameLike, selector: string): Promise<boolean> {
     try {
-      return (await frame.querySelector(selector)) !== null;
+      return (await frame.$(selector)) !== null;
     } catch {
       return false;
     }
@@ -631,7 +639,7 @@ export class Session {
         const fr = frames[i];
         let el: HandleLike | null;
         try {
-          el = await fr.querySelector(sel);
+          el = await fr.$(sel);
         } catch {
           continue;
         }
