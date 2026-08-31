@@ -1542,7 +1542,7 @@ app.whenReady().then(async () => {
   // Wait for the settled state, not for any `.empty`: the tab now paints an
   // "Opening the vault…" row in that same slot before it reads, so waiting on
   // the node would snapshot the placeholder and fail every assertion below.
-  await waitFor(win, `document.body.innerText.includes("can't unlock its vault account")`, "the vault pane to settle on locked");
+  await waitFor(win, `document.body.innerText.includes("can't unlock its vault")`, "the vault pane to settle on locked");
   const vaultLocked = await win.webContents.executeJavaScript(`(${() => {
     const text = document.body.innerText;
     return {
