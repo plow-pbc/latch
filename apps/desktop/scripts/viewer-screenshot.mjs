@@ -136,12 +136,19 @@ app.whenReady().then(async () => {
 
   const small = probe.width;
   const big = await clickThumb();
+  // The class flip is synchronous, the repaint is not: capturePage() without
+  // this returns the pre-click frame, so the expanded shot came out
+  // byte-identical to the collapsed one while every assertion below passed.
+  await win.webContents.executeJavaScript("new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)))");
   fs.writeFileSync(outBig, (await win.webContents.capturePage()).toPNG());
   const back = await clickThumb();
 
   const ok = probe.thumbVisible && probe.outsideScroll && probe.caption.includes("pizza.example")
     && big.expanded && big.fixed && big.width > small
-    && !back.expanded && back.width === small;
+    && !back.expanded && back.width === small
+    // The DOM measurements above all passed on a shot that never repainted, so
+    // the images themselves have to be what says the expanded capture is real.
+    && !fs.readFileSync(out).equals(fs.readFileSync(outBig));
   console.log("SHOT:" + JSON.stringify({ out, outBig, ...probe, small, big, back, ok }));
   app.exit(ok ? 0 : 1);
 });
