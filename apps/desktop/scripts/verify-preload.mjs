@@ -1526,7 +1526,10 @@ app.whenReady().then(async () => {
   // The vault's honest failure state: locked is not empty, and the screen has to
   // say so — the old copy sent people to debug a server that was running fine.
   await win.webContents.executeJavaScript(`window.__domoSelectTab("vault")`);
-  await waitFor(win, `document.querySelector("#view .empty")`, "the vault pane to render");
+  // Wait for the settled state, not for any `.empty`: the tab now paints an
+  // "Opening the vault…" row in that same slot before it reads, so waiting on
+  // the node would snapshot the placeholder and fail every assertion below.
+  await waitFor(win, `document.body.innerText.includes("can't unlock its vault account")`, "the vault pane to settle on locked");
   const vaultLocked = await win.webContents.executeJavaScript(`(${() => {
     const text = document.body.innerText;
     return {
