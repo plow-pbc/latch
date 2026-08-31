@@ -14,7 +14,7 @@
  */
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, powerMonitor, safeStorage as electronSafeStorage, screen, shell, systemPreferences, Tray } from "electron";
 import electronUpdater from "electron-updater";
-import { ChildProcess, execFile, spawn } from "node:child_process";
+import { ChildProcess, execFile, execFileSync, spawn } from "node:child_process";
 import fs from "node:fs/promises";
 import { createRequire } from "node:module";
 import os from "node:os";
@@ -24,6 +24,7 @@ import { promisify } from "node:util";
 import { Intent } from "@domo/protocol";
 import {
   ApprovalStore,
+  LEGACY_VAULT_SERVER_FRAGMENTS,
   DeviceAgent,
   PaymentApprovalClient,
   PaymentApprovalRequest,
@@ -98,6 +99,26 @@ if (migrateLegacyHome(instance.home)) {
 app.setName(instance.vaultIdentity);
 app.setPath("userData", instance.electronData);
 app.setPath("sessionData", instance.electronData);
+
+// ONE app per home. The lock is keyed on userData — which the per-branch
+// homes above make exactly the data boundary — so two checkouts still run
+// side by side, while a second launch of the SAME instance (`open -n`, the
+// raw binary) hands its argv to the first and exits before it can touch
+// anything. This is what makes the vault store's read-modify-rename, the key
+// mint, the approvals directory and the audit log single-writer facts rather
+// than hopes; it is also why a second dial against the one relay credential
+// (which the relay refuses anyway) can no longer happen. Held by the OS for
+// the life of the process: a crash releases it, nothing stale to clean up.
+if (!app.requestSingleInstanceLock()) {
+  console.log("[app] another instance already runs for this home; handing over and exiting");
+  app.exit(0);
+}
+app.on("second-instance", () => {
+  // Whoever launched the second copy wanted the app on screen — but WHICH
+  // window is the gate's decision alone (windowGate.ts: a signed-out Mac gets
+  // setup, never the main window beside it).
+  gate.sync();
+});
 
 const dirname = path.dirname(fileURLToPath(import.meta.url));
 const rendererDir = path.join(dirname, "renderer");
@@ -754,25 +775,20 @@ ipcMain.handle("settings:setAgentPurpose", async (_e, purpose: string) =>
  */
 ipcMain.handle("settings:getInference", async () => readInference(home));
 // The vault's contents, for the owner's own eyes and hands. This is the whole
-// point of the tab: the vault's web page is the only other way in, and reaching
-// it means a browser warning about a certificate the app issued to itself.
+// point of the tab: there is no other way in any more — the vault is a local
+// encrypted store whose key lives in the Keychain, and this app is its client.
 ipcMain.handle("vault:items", async () => {
   const vault = device?.vaultClient;
-  const server = device?.vaultServer;
-  if (!vault || !server) return null;
+  const dir = device?.vaultDir;
+  if (!vault || !dir) return null;
   // Locked and empty are different facts and the screen says different words.
-  // An account that is on disk and will not open must never be reported as a
-  // vault that has not started — that sent people to debug a running server.
-  // Read BEFORE starting: a locked account is the very case where the vault's
-  // own bootstrap cannot finish, and the explanation has to survive that.
-  const locked = readCredentialsState(server.dataDir);
-  if (locked.status === "locked") return { locked: true, reason: locked.reason };
-  // Started, not merely launched: the account is written by the vault's first
-  // run, so reading its state before that finishes reports an empty vault.
-  await server.start();
-  if (readCredentialsState(server.dataDir).status !== "ok") return null;
+  // A key (or a legacy account awaiting migration) that is on disk and will
+  // not open must never be reported as a vault that has not started.
+  const state = readCredentialsState(dir);
+  if (state.status === "locked") return { locked: true, reason: state.reason };
   // Every type, not only logins: a card and a note are things the owner keeps
-  // here too, and the tab is where they are kept.
+  // here too, and the tab is where they are kept. An empty state is fine —
+  // list() mints the vault's key on first use.
   return vault.list();
 });
 
@@ -1261,6 +1277,16 @@ app.whenReady().then(async () => {
   // in memory. It also bounds the wait: an approval nobody answers expires and
   // fails closed instead of pending forever.
   approvals = new ApprovalStore(path.join(home, "device/approvals"), new ElectronPolicy());
+  // A vaultwarden orphaned by a hard quit of a PRE-cutover build outlives its
+  // app: it was launched detached, and nothing in this build knows it exists —
+  // left alone it keeps serving the old vault database and web UI on loopback
+  // until reboot. Sweep it here, once, before the vault opens. Three guards
+  // keep this from ever touching the wrong process: only OUR payload paths
+  // (a self-hosted Vaultwarden matches neither fragment), only this user, and
+  // only a process whose parent is launchd — a vault server still OWNED by a
+  // live pre-cutover app (a sibling worktree's `just app`) has that app as
+  // its parent and is left alone.
+  await reapOrphanedLegacyVaultServers();
   // Packaged: the browser runtime lives in Contents/Resources/browser-runtime
   // (extraResources). In dev the resolver falls back to the repo's vendor/.
   device = new DeviceAgent(
@@ -1308,14 +1334,15 @@ app.whenReady().then(async () => {
       }
     };
   }
-  // Say, once, whether this Mac can open its vault account. It is the one fact
-  // about the vault that a log is good at: no secret, no noise, and it turns
-  // "the vault screen looks wrong" into a one-line answer. `locked` means the
-  // Keychain key for the frozen identity is not here — see vaultKeychain.ts.
-  if (device.vaultServer) {
-    const vaultState = readCredentialsState(device.vaultServer.dataDir);
+  // Say, once, whether this Mac can open its vault. It is the one fact about
+  // the vault that a log is good at: no secret, no noise, and it turns "the
+  // vault screen looks wrong" into a one-line answer. `locked` means the key
+  // (or a legacy account's Keychain identity) is not openable here — see
+  // vaultKeyStore.ts and vaultKeychain.ts.
+  if (device.vaultDir) {
+    const vaultState = readCredentialsState(device.vaultDir);
     console.log(
-      `[vault] account: ${vaultState.status}` +
+      `[vault] key: ${vaultState.status}` +
         (vaultState.status === "locked" ? ` (${vaultState.reason})` : ""),
     );
   }
@@ -1732,6 +1759,74 @@ function simulatedUpdater(value: string): SimulatedUpdater {
       app.quit();
     },
   });
+}
+
+/**
+ * Terminate vaultwarden processes orphaned by a hard quit of a pre-cutover
+ * build. Matched by OUR OWN payload paths only — `browser-runtime/vault-server/`
+ * (packaged) and `/vendor/vault-server/` (from-source) — for this user, and
+ * only when re-parented to launchd (ppid 1): an orphan by definition, never a
+ * sibling checkout's still-owned server. Best-effort: a sweep that cannot run
+ * must not stop the app.
+ */
+async function reapOrphanedLegacyVaultServers(): Promise<void> {
+  const targets: number[] = [];
+  for (const fragment of LEGACY_VAULT_SERVER_FRAGMENTS) {
+    let pids: string[] = [];
+    try {
+      pids = execFileSync("/usr/bin/pgrep", ["-U", String(process.getuid?.() ?? 0), "-f", fragment], { encoding: "utf8" })
+        .split("\n")
+        .filter(Boolean);
+    } catch {
+      continue; // pgrep exits nonzero when nothing matches
+    }
+    for (const pid of pids) {
+      try {
+        const ppid = execFileSync("/bin/ps", ["-o", "ppid=", "-p", pid], { encoding: "utf8" }).trim();
+        if (ppid !== "1") continue;
+        process.kill(Number(pid), "SIGTERM");
+        targets.push(Number(pid));
+        console.log(`[vault] terminating orphaned legacy vaultwarden (pid ${pid})`);
+      } catch {
+        /* raced its own exit, or not ours to signal — either way, done */
+      }
+    }
+  }
+  if (targets.length === 0) return;
+  // WAIT for the exits: a SIGTERM'd server checkpoints its WAL on the way
+  // out, and migration cloning the database beside that checkpoint can
+  // silently lose committed credentials. TERM gets a grace period, then KILL
+  // — a killed server leaves its WAL un-truncated, which sqlite recovery
+  // handles; only a LIVE writer is dangerous. Migration itself also refuses
+  // while any server on this data dir is alive (vaultMigrate.ts), so even a
+  // survivor here cannot corrupt anything — it just defers migration.
+  const alive = (pid: number) => {
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  const waitGone = async (deadlineMs: number) => {
+    const until = Date.now() + deadlineMs;
+    while (Date.now() < until && targets.some(alive)) {
+      await new Promise((r) => setTimeout(r, 100));
+    }
+  };
+  await waitGone(4_000);
+  for (const pid of targets.filter(alive)) {
+    try {
+      process.kill(pid, "SIGKILL");
+      console.log(`[vault] SIGKILLed legacy vaultwarden that ignored SIGTERM (pid ${pid})`);
+    } catch {
+      /* exited in between */
+    }
+  }
+  await waitGone(2_000);
+  for (const pid of targets.filter(alive)) {
+    console.warn(`[vault] legacy vaultwarden pid ${pid} survived SIGKILL; migration will refuse while it lives`);
+  }
 }
 
 function hostName(): string {

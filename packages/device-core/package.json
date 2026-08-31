@@ -12,6 +12,10 @@
     }
   },
   "dependencies": {
-    "@domo/protocol": "*"
+    "@domo/protocol": "*",
+    "tldts": "7.4.11"
+  },
+  "optionalDependencies": {
+    "@domo/native-keychain": "*"
   }
 }

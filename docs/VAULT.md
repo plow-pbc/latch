@@ -1,0 +1,341 @@
+# The vault: how it works
+
+The vault is where this Mac keeps the owner's logins, cards, identities and
+secure notes — the things an agent may ask to have typed into a page, and the
+things the owner manages in the app's **Vault** tab. It is entirely local: an
+encrypted item file plus one master key rooted in the macOS Keychain. There is
+no server, no separate password-manager process, and no account. One app
+process per home, enforced: `main.ts` takes Electron's single-instance lock
+(keyed on userData, which the per-branch homes make exactly the data
+boundary), so every write below is a single-writer fact — a second launch
+hands over to the first and exits.
+
+This document is the mechanical reference — what is on disk, who reads it, and
+what each path guarantees — plus the two architecture justifications below.
+The remaining decision history (including the app-rename incident that shaped
+the Keychain handling) lives in [DESIGN.md](../DESIGN.md) §11a and §11a-i.
+
+## Why not Bitwarden
+
+The vault used to BE Bitwarden: a bundled Vaultwarden server, the `bw` CLI,
+and the web vault. It was removed (Aug 2026) because the app was using all of
+it as a transport, not as a password manager:
+
+- **All the cryptography already lived here.** Items were encrypted and
+  decrypted in this repo's own TypeScript (`vaultItems.ts`/`vaultCrypto.ts`);
+  the server only ever stored ciphertext blobs and served them back over
+  localhost HTTPS. Vaultwarden was a ~470 MB CRUD store (~115 MB of the DMG)
+  for JSON the app could keep in one file.
+- **The moving parts were the failure surface.** A local server meant a port
+  hunt, a self-minted TLS certificate, a detached child process to start and
+  stop, a generated account whose password needed its own secure storage, a
+  Python broker shelling out to `bw` with a session key on disk — and a
+  string of real bugs lived exactly there (server-readiness races, wedged
+  reads hanging the Vault tab, orphan processes holding the port). The
+  replacement is a file read: none of those failure modes exist to fix.
+- **The one thing Bitwarden bought was compatibility** — pointing a real
+  Bitwarden client at the local server, or swapping in bitwarden.com later.
+  That was never a product goal, and the web vault it implied was served but
+  unreachable in practice (a self-signed certificate warning away).
+- **What was worth keeping, was kept.** The EncString item format is sound,
+  frozen by tests, and made migration a verbatim ciphertext copy; the
+  classification rules (what a vault conceals) are still Bitwarden's, ported
+  line-for-line. The format would even round-trip back into a Bitwarden
+  client if that ever mattered again.
+
+## Why one encrypted file, not a Keychain entry per item
+
+The trust root is in the Keychain either way; the question was where the
+ITEMS live. One master key in the Keychain unlocking a local encrypted file —
+the Safari/Chrome/1Password model — won over per-item Keychain entries:
+
+- **Structured items don't fit a keychain slot.** A generic password is
+  (service, account, one secret blob). A card has six fields, an identity
+  eighteen, a login carries URLs and a TOTP seed — per-item storage means
+  inventing a JSON schema inside the password field anyway, and then either
+  every listing decrypts every item or the metadata lives in a sidecar file
+  (both worlds, no benefit).
+- **ACL prompts multiply.** Each Keychain item carries its own ACL; any
+  change of the reading binary (an Electron upgrade in dev, a re-signed
+  build) can mean one authorization prompt PER ITEM. This app has already
+  been burned once by Keychain-identity coupling (DESIGN.md §11a-i); one
+  item means one consent, ever.
+- **The Keychain is global; homes are not.** Everything here honors
+  `DOMO_HOME` — worktree checkouts and the packaged install each own a
+  vault. Files inherit that isolation for free; per-item entries would share
+  one global namespace and need every item name qualified by instance.
+- **Migration never touches plaintext.** Because the file keeps the EncString
+  format under the old user key, cipher rows copy verbatim. Per-item entries
+  would require decrypting every secret and re-inserting it through Keychain
+  APIs — a plaintext moment for the whole vault, and a partially-migrated
+  state to recover from.
+- **It has to be testable headless.** CI cannot touch a real Keychain, so
+  per-item storage needs a fake Keychain layer anyway — at which point the
+  "no crypto code of ours" argument evaporates. The file store runs the whole
+  suite against the real code with a file-backed key.
+
+What per-item storage would have bought — items visible in Keychain Access —
+matters little when the Vault tab is deliberately the only UI.
+
+All code lives in `packages/device-core/src/browser/`, file names given
+per-section below.
+
+## The one-paragraph version
+
+Items are Bitwarden-format ciphers in `items.json`, every field an EncString
+(AES-256-CBC + HMAC-SHA256) under a per-item key that is itself wrapped by one
+64-byte **master key**. The master key lives in the macOS Keychain — via a
+SecItem access group in the packaged app, via Electron `safeStorage` under
+`just app`, via a 0600 file in tests. The owner reads and writes items through
+`LocalVault` (the Vault tab); the agent gets values only through the in-process
+credential broker (`BrokerCore`), which binds every release to the page being
+filled, refuses a login off its own site, and audits every release without
+ever logging a value. Both sides open the vault through ONE path
+(`openVaultKey` in `vaultMigrate.ts`): migrate a legacy vault, mint a key for
+a genuinely fresh one, refuse a locked one — whichever side asks first.
+
+## On disk
+
+Everything sits in one directory, `$DOMO_HOME/device/browser/vault/`:
+
+| File | What it is | Written by |
+|---|---|---|
+| `items.json` | `{version: 1, ciphers: [...]}` — Bitwarden-format cipher rows, every string field an EncString. 0600, written atomically (tmp + rename). | `vaultStore.ts` |
+| `vault-key.enc` | The master-key blob. A 5-byte marker names the provider (`KSEC1` / `KENC1` / `KRAW1`), then the provider's payload — for `KSEC1`, the unique per-vault Keychain account the key is filed under, minted at first write (two `DOMO_HOME`s must never share one item). Written durably (fsync file + dir), like `items.json`. 0600. | `vaultKeyStore.ts` |
+| `db.sqlite3`, `vault-account.enc`, … | The OLD Bitwarden vault, when this machine had one. Never written again; kept as the owner's backup after migration. | (legacy) |
+| `credential-audit.log` | One line per describe/release/reveal — item id, field label, page, outcome. **Never a value.** | `localVault.ts`, `brokerCore.ts` |
+
+The item file holds ciphertext and structure only, so its confidentiality
+floor is the key's, not the disk's. What IS visible in `items.json`: how many
+items exist, their types, and their revision dates — names, usernames, URLs
+and all field values are EncStrings.
+
+### The item format (`vaultItems.ts`)
+
+Bitwarden's cipher shape, kept deliberately: types 1–4 (login, secure note,
+card, identity), each field an EncString `2.<iv>|<ct>|<mac>` (base64). Newer
+items carry their own 64-byte item key, wrapped by the master key
+(`cipher.key`); older/migrated ones may be encrypted with the master key
+directly — both are read, and an item is always written back under the key it
+already had. Login URLs carry the checksum other Bitwarden clients verify, so
+the data would still be portable. `staleEdit` compares the revision a form was
+opened on against the stored `revisionDate` and refuses a save composed
+against an item that changed underneath it.
+
+The broker can additionally *read* shapes the app's forms refuse to create —
+SSH keys (type 5), custom fields, linked fields — because a migrated vault may
+hold them (`decryptRaw`).
+
+## The master key (`vaultKeyStore.ts`)
+
+One 64 random bytes: the first 32 are the AES key, the last 32 the HMAC key
+(`splitKey`). It is minted on the vault's first use and never rotates. Three
+providers can hold it; the provider is chosen once at write time and recorded
+in the blob's marker, so a key written under one provider is never silently
+re-read through another:
+
+1. **`KSEC1` — SecItem + access group** (packaged app only). The key is a
+   generic password in the data-protection Keychain: service `co.plow.vault`,
+   access group `3559PD337Z.co.plow.vault` — both frozen literals, chosen so
+   the item is keyed to our signing identity's group rather than to a bundle
+   id or product name that could be renamed. Reached through
+   `packages/native-keychain` (a ~150-line N-API addon over
+   `SecItemCopyMatching`/`SecItemAdd`); requires the `keychain-access-groups`
+   entitlement in `entitlements.mac.plist`, so only the signed, packaged app
+   can select it — the runtime probe returns `missing-entitlement` everywhere
+   else and the store falls through. Gated to `app.isPackaged` besides, so a
+   dev run or a test can never write into the real login Keychain.
+2. **`KENC1` — Electron `safeStorage`** (`just app`). The blob is the key
+   wrapped by safeStorage, whose own AES key sits in the login Keychain under
+   the frozen `VAULT_STORE_IDENTITY` (see `vaultKeychain.ts` — the identity
+   is a literal, not the app name, for reasons that file explains at length)
+   and is ACL-bound to the Electron binary.
+3. **`KRAW1` — a 0600 file** (tests, anything with neither). The key itself,
+   hex. Hermetic by construction — this is the provider vitest exercises.
+
+The Keychain **account** name starts from the branch-suffixed instance
+identity, so two worktree checkouts never share a key. (There is deliberately
+no environment override for the provider: an env var that can steer a
+packaged app's key into the plain file provider is a downgrade lever, not a
+diagnostic.)
+
+Three states, kept strictly apart (the distinction is load-bearing — see the
+rename incident in DESIGN.md §11a-i): **empty** (no blob — fine, a fresh
+vault mints a key on first use), **ok**, and **locked** (a blob exists that
+cannot be opened here: safeStorage ciphertext outside Electron, a SecItem
+marker without the addon, a garbled blob). Locked is surfaced as locked all
+the way to the Vault tab; nothing ever builds a fresh vault over a locked one
+(`createKey` refuses while any blob exists, and `LocalVault` refuses items
+that exist without a key rather than minting a key that opens nothing).
+
+## The owner's path (`localVault.ts` → the Vault tab)
+
+`LocalVault` is what the `vault:*` IPC handlers in `apps/desktop/src/main.ts`
+call. Surface: `list`, `read`, `reveal`, `totp`, `save`, `remove`, plus the
+`onReprompt` hook.
+
+- `list` returns summaries — never a secret value. `read` returns the whole
+  item with secret fields present-but-null (the form shows the slot; the
+  value is fetched one at a time via `reveal`).
+- `reveal` decrypts one field because the owner asked to see it on their own
+  screen; audited as `SHOWN in app`.
+- `totp` derives the current six-digit code from the stored authenticator
+  key (`vaultTotp.ts`, RFC 6238 — base32 setup keys and full `otpauth://`
+  URIs both parse). `save` refuses a pasted six-digit code where the key
+  belongs, while the owner is still looking at the box.
+- An item marked **reprompt** stays shut until `onReprompt` answers — in the
+  app that is a Touch ID prompt, because this vault has no master password to
+  re-ask for.
+- `save` enforces: a name; at least one usable site URL on a login (else it
+  could never be filled); stale-edit refusal; omitted secret fields keep
+  their stored value, a field sent empty is cleared.
+- `remove` is final — there is no server-side trash any more.
+
+## The agent's path (`brokerCore.ts` — the credential broker)
+
+The broker is the ONLY way a vault value reaches a page, and it runs
+in-process: no subprocess, no port, and the master key never leaves the app's
+process. `CredentialBroker` (`credentialBroker.ts`) is the seam the fill path
+calls; in production it delegates to `BrokerCore`, and a subprocess mode
+survives purely so tests can script a fake broker
+(`DOMO_VAULT_BROKER_CMD` → `e2e/fixtures/fakeVaultBroker.cjs`).
+
+Four operations:
+
+- **`status`** — is there a key we can open.
+- **`whatsHere(url?)`** — every item, metadata only (id, title, category,
+  username, urls, and whether the item's own site is the page on screen —
+  advice for the agent, not a filter). Reached by the agent as `plow_vault
+  list`; no capability, no approval, audited as `credential_metadata`.
+- **`describeItem(id)`** — one item's field *labels*, each with `hidden`
+  (does the vault conceal it), `custom`, and `alias` flags. Never values.
+  `plow_vault describe`.
+- **`getField(id, field, pageUrl)`** — one value, released against the
+  device-observed URL of the frame being filled. Only `fill_secret` calls
+  this, and it sits behind the rest of the fill gate (approved item set,
+  session origin scope, the banking payment approval — see DESIGN.md §11a).
+
+The broker's own rules, applied on top of the session gates:
+
+- **A login belongs to its site.** With a page URL present, a login releases
+  only when the page's host and a stored URL's host match by **label
+  suffix** (`www.chase.com` ↔ `chase.com`, either direction), and the shorter
+  host must be a registrable domain by the pinned Public Suffix List — a
+  login stored for `co.uk` or `github.io` must not release on every site
+  under it. This is the repo's ONE PSL use: session-grant origin patterns
+  are owner-approved literals and stay PSL-free (DESIGN.md §11a); this
+  comparison is the code inferring relatedness on its own, which is what the
+  old broker used its PSL for too. A login storing *no* site is refused
+  outright — "no sites" must never mean "every site". Cards, identities and
+  notes are not site-bound by nature and release anywhere (cards are for any
+  merchant); the audit line records the page, or `SEM-URL` when no page bound
+  the release.
+- **One reading answers everything.** The value and its `hidden` flag come
+  from a single resolution of the item, so a caller can never act on a stale
+  answer to either half. A field without a descriptor is refused, never
+  released under a guessed classification.
+- **`totp` releases the current code, never the seed** — and is always
+  `hidden`, the one place we mask something Bitwarden's own client shows: an
+  agent fills a code, it never needs to read one back.
+
+### Classification (`credentialClassify.ts`)
+
+Which fields an item offers, which the vault conceals, and what each label
+resolves to — ported line-for-line from the Python broker this replaced. The
+rules are Bitwarden's own (a password, card number and CVV, SSN and passport,
+Hidden custom fields are concealed; usernames, addresses, expiry are not),
+plus the alias table (`cvv` → `code`, `email` → a login's `username`), the
+`custom:` prefix that disambiguates a custom field colliding with a built-in
+slot, and linked-field resolution (a link resolves to a fixed slot or to
+nothing — never through to a custom field). The truth table is
+`e2e/fixtures/maskClassification.json`;
+`packages/device-core/test/maskClassification.test.ts` drives the real broker
+over a real encrypted store against it. What `hidden` means downstream —
+masking the value out of screenshots and `forms` after a fill — is
+DESIGN.md §11a-ii.
+
+## Migration from the Bitwarden vault (`vaultMigrate.ts`)
+
+Kept in-tree permanently. On the vault's first use — owner side or agent
+side, through the shared open path — if `items.json` does not exist and a
+legacy vault does (`db.sqlite3` + `vault-account.enc`):
+
+1. The old account is read through `VaultSecretStore` (safeStorage under the
+   frozen identity — which is why that identity is still frozen).
+2. Its password derives the old master key (PBKDF2-SHA256, 600k), which
+   unwraps the account's user key from the database.
+3. **The new master key := that user key**, so every cipher row is copied
+   verbatim — ciphertext is never decrypted, there is no plaintext moment,
+   and a crash at any point leaves either the old vault intact and the new
+   absent, or both complete (`items.json` is the single atomic write that
+   finishes it).
+4. Everything is scoped to THE SAVED ACCOUNT (matched by email — never "the
+   first user"): that user's own ciphers, plus those of organizations it
+   belongs to; another account's rows and memberships are left behind.
+   Member-org rows (the old web vault could create an org) are re-wrapped
+   first: the user's RSA private key (in the database, under the user key)
+   recovers each org key, and each org cipher's item key is re-wrapped under
+   the user key — field ciphertexts untouched. A member row whose org key
+   cannot be recovered aborts the migration before anything is written.
+   A collection-scoped membership (not access_all, not owner/admin) refuses
+   the migration outright rather than guessing at ACLs this side does not
+   replicate. Attachments are NOT migrated — the app never offered them,
+   only the old web vault could add one; the encrypted files stay in the
+   backup directory, openable by a future tool since the master key is the
+   old user key.)
+5. Item types with no body slot here (the enum's 6–8) keep their encrypted
+   body verbatim under `legacyData` — listed as Unsupported, nothing dropped.
+6. The old files stay put as the owner's backup; the new store's existence is
+   the migration marker. A crash between the key write and the item write is
+   completed on the next open: migration retries whenever the legacy vault
+   exists and `items.json` does not, accepting an existing key only when it
+   equals the derived legacy user key (a different key halts it — that key
+   belongs to some other vault).
+
+Migration also refuses, before cloning, while any legacy vault server whose
+`DATA_FOLDER` is this vault directory is alive (matched through the process
+environment, so a sibling checkout's server never false-positives) — live,
+owned or orphaned, it is a concurrent writer whose WAL checkpoint could leave
+the clone silently missing committed credentials. The app's startup reaper
+kills orphans and WAITS for their exit for the same reason.
+
+What counts as a legacy vault: a database WITH an account row in it. The old
+server created `db.sqlite3` at startup, before its account bootstrap, so an
+interrupted first run (valid, user-less database) reads as a fresh vault; an
+unreadable database falls back on the account file / bootstrap marker — the
+conservative direction.
+
+A legacy vault whose account cannot be opened reads as **locked** and halts
+the migration — it never reads as empty, because empty is what would quietly
+mint a fresh vault beside the owner's real one. Soft-deleted rows (the old
+trash) are left behind. The database is read via `/usr/bin/sqlite3 -json`
+against a temp clone (Electron 33's Node has no `node:sqlite`, and the
+originals are never written to).
+
+## Auditing
+
+The audit log is the vault's oracle, in tests and in production:
+
+- Owner actions (`localVault.ts`): `CREATED` / `UPDATED` / `DELETED` /
+  `SHOWN in app` / `CODE READ in app`, page recorded as `OWNER`.
+- Broker actions (`brokerCore.ts`): `DESCRIBED`, `RELEASED`,
+  `DENIED origin mismatch`, `DENIED no site on item`, `ERROR <type>`, against
+  the releasing page or `SEM-URL`.
+- Device-level events (`credential_metadata`, `credential_filled`,
+  `credential_denied`, …) land in `audit.ndjson` via the fill path
+  (`browserSessions.ts`).
+
+No line in any of them ever carries a field value.
+
+## Testing
+
+Headless, no Keychain, no Electron: the file key provider is what the suite
+runs on. `vaultKeyStore.test.ts` (states and refusals),
+`vaultStore` behavior inside `localVault.test.ts` (round-trips all four types,
+audit oracle, stale edits, reprompt), `brokerCore.test.ts` (site rules, audit,
+locked vault), `vaultMigrate.test.ts` (builds a real legacy SQLite with real
+EncStrings and migrates it), `maskClassification.test.ts` (the classification
+truth table through the real broker), and the whole fill/masking tier above
+the seam (`fillSecretMasking.test.ts` and friends) against the scripted fake
+broker. What needs a real machine: the SecItem provider (entitlements only
+exist packaged) and the Vault tab itself.
