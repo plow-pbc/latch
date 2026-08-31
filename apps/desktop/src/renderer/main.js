@@ -918,9 +918,14 @@ function cloudLine(agent, state) {
     : "Line unavailable";
 }
 
-function focusCloudAgent(agentId) {
+/** A roster row's key. Its metadata is Plow's, so its host is always Plow. */
+function plowRowKey(agentId) {
+  return `plow\u0000${agentId}`;
+}
+
+function focusCloudAgent(rowKey) {
   const row = [...document.querySelectorAll(".cloud-agent-row")]
-    .find((candidate) => candidate.dataset.cloudAgentId === agentId);
+    .find((candidate) => candidate.dataset.cloudRowKey === rowKey);
   row?.querySelector(".cloud-agent-open")?.focus();
 }
 
@@ -1151,8 +1156,7 @@ function syncCloudLineModal(state, redraw) {
   // the id alone picks the Plow row for a local agent that shares its id — and
   // then hands that row's targetId to the PUT.
   const agent = changing
-    ? (state.cloudAgents ?? []).find((candidate) =>
-      candidate.agentId === modal.agentId && candidate.targetId === modal.targetId)
+    ? (state.cloudAgents ?? []).find((candidate) => candidate.rowKey === modal.rowKey)
     : null;
   if (changing && !agent) {
     void window.domo.cloudCancelLineFlow();
@@ -1163,8 +1167,8 @@ function syncCloudLineModal(state, redraw) {
   const { panel } = modal;
   modal.phase = flow.phase;
 
-  if (modal.started && flow.completedAgentId) {
-    const completedAgentId = flow.completedAgentId;
+  if (modal.started && flow.completedRowKey) {
+    const completedRowKey = flow.completedRowKey;
     if (modal.selectedLineUid === null) {
       if (!modal.confirmationTimer) {
         const confirmedModal = modal;
@@ -1173,13 +1177,13 @@ function syncCloudLineModal(state, redraw) {
         modal.confirmationTimer = setTimeout(() => {
           if (cloudModal !== confirmedModal) return;
           closeCloudModal();
-          focusCloudAgent(completedAgentId);
+          focusCloudAgent(completedRowKey);
         }, 1_500);
       }
       return;
     }
     closeCloudModal();
-    focusCloudAgent(completedAgentId);
+    focusCloudAgent(completedRowKey);
     return;
   }
 
@@ -1269,7 +1273,7 @@ function syncCloudLineModal(state, redraw) {
       title,
     );
     if (changing) {
-      await window.domo.cloudChangeLine({ agentId: agent.agentId, targetId: agent.targetId, lineUid });
+      await window.domo.cloudChangeLine({ rowKey: agent.rowKey, lineUid });
     } else {
       await window.domo.cloudCreate({
         name: modal.nameInput.value.trim(),
@@ -1348,8 +1352,7 @@ function openCloudChangeLine(agent, state, redraw) {
   Object.assign(cloudModal, {
     kind: "line-flow",
     mode: "change",
-    agentId: agent.agentId,
-    targetId: agent.targetId,
+    rowKey: agent.rowKey,
     selectedLineUid: undefined,
     started: false,
     phase: "idle",
@@ -1382,8 +1385,8 @@ function syncCloudModal(state, redraw) {
   // a local agent can be named exactly a Plow agent_id — so matching the id
   // alone could rebind this modal to the OTHER host's row and point Delete or
   // Change line at the wrong machine.
-  const agent = (state.cloudAgents ?? []).find((candidate) =>
-    candidate.agentId === cloudModal.agentId && candidate.targetId === cloudModal.targetId);
+  const agent = (state.cloudAgents ?? [])
+    .find((candidate) => candidate.rowKey === cloudModal.rowKey);
   if (!agent) {
     closeCloudModal();
     return;
@@ -1400,7 +1403,7 @@ function syncCloudModal(state, redraw) {
     const message = agent.canMessage ? el("button", { class: "btn", text: "Message" }) : null;
     const remove = el("button", { class: "btn danger", text: "Delete agent" });
     close.addEventListener("click", closeCloudModal);
-    message?.addEventListener("click", () => window.domo.cloudOpenMessages(agent.agentId, agent.targetId));
+    message?.addEventListener("click", () => window.domo.cloudOpenMessages(agent.rowKey));
     changeLine?.addEventListener("click", () => openCloudChangeLine(agent, state, redraw));
     remove.addEventListener("click", () => {
       cloudModal.confirmingDelete = true;
@@ -1455,7 +1458,7 @@ function syncCloudModal(state, redraw) {
       back.disabled = true;
       confirm.disabled = true;
       note.textContent = "Deleting…";
-      await window.domo.cloudRemove(agent.agentId, agent.targetId);
+      await window.domo.cloudRemove(agent.rowKey);
       closeCloudModal();
       await redraw();
     });
@@ -1482,12 +1485,7 @@ function syncCloudModal(state, redraw) {
 /** Show one agent's line, read-only threads, and lifecycle controls. */
 function openCloudDetail(trigger, agent, state, redraw) {
   if (!openCloudModal(trigger, [], null)) return;
-  Object.assign(cloudModal, {
-    kind: "detail",
-    agentId: agent.agentId,
-    targetId: agent.targetId,
-    confirmingDelete: false,
-  });
+  Object.assign(cloudModal, { kind: "detail", rowKey: agent.rowKey, confirmingDelete: false });
   syncCloudModal(state, redraw);
 }
 
@@ -1757,13 +1755,17 @@ function cloudEntityRow(row, agent, state, redraw) {
         attrs: { "aria-label": `Message ${name}` },
       })
     : null;
-  message?.addEventListener("click", () => window.domo.cloudOpenMessages(agent.agentId, agent.targetId));
+  message?.addEventListener("click", () => window.domo.cloudOpenMessages(agent.rowKey));
   retry?.addEventListener("click", async () => {
     retry.disabled = true;
-    await window.domo.cloudRetryFailed(agent.agentId, agent.targetId);
+    await window.domo.cloudRetryFailed(agent.rowKey);
     await redraw();
   });
-  return el("div", { class: "entity-row cloud-agent-row", attrs: { "data-cloud-agent-id": agent?.agentId ?? row?.agentId ?? "" } }, [
+  const rowKeyAttr = agent?.rowKey ?? (row?.agentId ? plowRowKey(row.agentId) : "");
+  return el("div", {
+    class: "entity-row cloud-agent-row",
+    attrs: { "data-cloud-row-key": rowKeyAttr },
+  }, [
     entityMark(name),
     main,
     message || retry ? el("div", { class: "entity-actions" }, [message, retry]) : null,
@@ -1817,12 +1819,15 @@ function cloudSection(s, redraw) {
   const actions = el("div", { class: "row list-section-actions" }, [addLocal, add]);
   const rosterRows = s.roster?.cloud ?? [];
   const agents = s.cloudAgents;
-  const rosterByAgentId = new Map(rosterRows.map((row) => [row.agentId, row]));
-  const seen = new Set(agents.map((agent) => agent.agentId));
+  // Roster rows come from `/v1/api-keys`, which only PLOW serves — so they are
+  // keyed to the Plow row. Joining on the bare id pinned Plow's name onto a
+  // self-hosted agent that happened to share it.
+  const rosterByKey = new Map(rosterRows.map((row) => [plowRowKey(row.agentId), row]));
+  const seen = new Set(agents.map((agent) => agent.rowKey));
   const rows = agents.map((agent) =>
-    cloudEntityRow(rosterByAgentId.get(agent.agentId), agent, s, redraw));
+    cloudEntityRow(rosterByKey.get(agent.rowKey), agent, s, redraw));
   const rosterOnly = rosterRows
-    .filter((row) => !seen.has(row.agentId))
+    .filter((row) => !seen.has(plowRowKey(row.agentId)))
     .sort((a, b) => rosterName(a, "Cloud agent").localeCompare(rosterName(b, "Cloud agent")));
   for (const row of rosterOnly) {
     rows.push(cloudEntityRow(row, null, s, redraw));

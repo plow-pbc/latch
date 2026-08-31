@@ -123,10 +123,10 @@ contextBridge.exposeInMainWorld("domo", {
   // Remove a cloud agent by its own id. For the agent whose credential row is
   // missing — an inactive credential on a still-running agent — where there is
   // no roster row to name and none is needed.
-  // An agent is identified by HOST + id: `agent-mgr` uses the name its owner
-  // typed, so a bare id is ambiguous and a DELETE must not guess.
-  cloudRemove: (agentId: string, targetId?: string) =>
-    ipcRenderer.invoke("cloud:remove", agentId, targetId),
+  // Every agent call takes the row's own opaque `rowKey`, which names the HOST
+  // as well as the id: `agent-mgr` uses the name its owner typed, so a bare id
+  // can match a row on either machine and a DELETE must not guess.
+  cloudRemove: (rowKey: string) => ipcRenderer.invoke("cloud:remove", rowKey),
   cloudRefresh: () => ipcRenderer.invoke("cloud:refresh"),
   cloudCreate: (input: {
     name: string;
@@ -142,12 +142,10 @@ contextBridge.exposeInMainWorld("domo", {
   cloudForgetTarget: () => ipcRenderer.invoke("cloud:forgetTarget"),
   cloudCancelLineFlow: () => ipcRenderer.invoke("cloud:cancelLineFlow"),
   cloudRetryLineFlow: () => ipcRenderer.invoke("cloud:retryLineFlow"),
-  cloudRetryFailed: (agentId: string, targetId?: string) =>
-    ipcRenderer.invoke("cloud:retryFailed", agentId, targetId),
-  cloudChangeLine: (input: { agentId: string; lineUid: string | null; targetId?: string }) =>
+  cloudRetryFailed: (rowKey: string) => ipcRenderer.invoke("cloud:retryFailed", rowKey),
+  cloudChangeLine: (input: { rowKey: string; lineUid: string | null }) =>
     ipcRenderer.invoke("cloud:changeLine", input),
-  cloudOpenMessages: (agentId?: string, targetId?: string) =>
-    ipcRenderer.invoke("cloud:openMessages", agentId, targetId),
+  cloudOpenMessages: (rowKey?: string) => ipcRenderer.invoke("cloud:openMessages", rowKey),
   onConnectChanged: (cb: () => void) => ipcRenderer.on("connect:changed", cb),
 
   // Any external destination the app links to. A key, never a URL: main

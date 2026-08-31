@@ -13,6 +13,10 @@
 import {
   CloudAgentLine,
   CloudAgentDisplayRow,
+  RowKey,
+  agentIdOf,
+  rowKey,
+  targetIdOf,
   toCloudAgentDisplayRow,
 } from "./cloudAgentMapper.js";
 import {
@@ -107,7 +111,9 @@ export interface CloudLineFlowUiState {
     smsBody: string;
   } | null;
   message: string | null;
-  completedAgentId: string | null;
+  /** The finished agent's opaque row key, for the renderer to focus by. An
+   * agent id alone would focus whichever host's row sorted first. */
+  completedRowKey: string | null;
   /** Whether retry must mint a fresh line instead of repeating the final mutation. */
   retryNewLine: boolean;
   /** A terminal condition for which repeating the same request cannot help. */
@@ -138,9 +144,8 @@ export interface CloudTargetOption {
 }
 
 export interface CloudChangeLineInput {
-  agentId: string;
-  /** Which host holds it. Absent means the built-in Plow. */
-  targetId?: string;
+  /** The opaque row key; it names the host as well as the agent. */
+  rowKey: RowKey;
   /** `null` asks Plow to provision a new line through activation. */
   lineUid: string | null;
 }
@@ -239,25 +244,6 @@ export interface CloudAgentStateDeps {
   wait?: (milliseconds: number) => Promise<void>;
   /** Value-free diagnostics only; anything passed here may reach a log. */
   warn?: (message: string) => void;
-}
-
-/**
- * How an agent is identified in this file's lifecycle maps: the HOST it lives
- * on plus its id on that host.
- *
- * `agent_id` alone is not an identity. Plow mints uuids, but `agent-mgr`
- * answers with the NAME its owner typed at `agent-mgr register` — so a local
- * agent can be named exactly a Plow `agent_id`, and a raw-id map would let it
- * overwrite the Plow row. The next removal of that Plow credential would then
- * resolve the overwritten row's target and send `DELETE` to the self-host,
- * destroying a different agent. Branded so the compiler, not a reader,
- * enforces that no caller passes a bare id.
- */
-type RowKey = string & { readonly __rowKey: unique symbol };
-
-/** NUL joins the two halves: it cannot occur in either, so the pair round-trips. */
-function rowKey(targetId: string, agentId: string): RowKey {
-  return `${targetId}\u0000${agentId}` as RowKey;
 }
 
 export class CloudAgentState {
@@ -477,8 +463,8 @@ export class CloudAgentState {
 
   /** Move an agent to a known line, or mint a new one. */
   async changeLine(input: CloudChangeLineInput): Promise<string | null> {
-    const agentId = typeof input?.agentId === "string" ? input.agentId.trim() : "";
-    const key = rowKey(input?.targetId ?? BUILTIN_TARGET_ID, agentId);
+    const key = input?.rowKey;
+    const agentId = key ? agentIdOf(key) : "";
     const rawLineUid = input?.lineUid;
     const lineUid = typeof rawLineUid === "string" ? rawLineUid.trim() : null;
     if (!agentId || !this.rows.has(key)) {
@@ -497,12 +483,7 @@ export class CloudAgentState {
     // The host rides ALONG, not just into the validation above: `finishLineFlow`
     // rebuilds the key from the request, so dropping it here sent the PUT to
     // Plow for an agent that lives on the self-host.
-    const request: CloudLineRequest = {
-      kind: "change",
-      agentId,
-      lineUid,
-      targetId: input?.targetId ?? BUILTIN_TARGET_ID,
-    };
+    const request: CloudLineRequest = { kind: "change", rowKey: key, lineUid };
     const flow = this.beginLineFlow(request);
 
     if (lineUid !== null) return this.finishLineFlow(request, this.generation, flow);
@@ -510,9 +491,7 @@ export class CloudAgentState {
   }
 
   /** Re-post the exact create body retained for a failed roster row. */
-  async retryFailed(agentId: string, targetId?: string): Promise<string | null> {
-    const id = (agentId ?? "").trim();
-    const key = rowKey(targetId ?? BUILTIN_TARGET_ID, id);
+  async retryFailed(key: RowKey): Promise<string | null> {
     const retained = this.retainedCreates.get(key);
     if (!retained || retained.lineUid === null || this.rows.get(key)?.status !== "failed") return null;
     if (!this.target(retained.targetId)) {
@@ -533,8 +512,8 @@ export class CloudAgentState {
   }
 
   /** A Messages deep link for one resolved agent line, kept in main-process state. */
-  agentSmsUrl(agentId: string, targetId?: string): string | null {
-    const lineUid = this.rows.get(rowKey(targetId ?? BUILTIN_TARGET_ID, agentId))?.line?.uid;
+  agentSmsUrl(key: RowKey): string | null {
+    const lineUid = this.rows.get(key)?.line?.uid;
     return this.lineDetails(lineUid ?? null).smsUrl;
   }
 
@@ -565,7 +544,7 @@ export class CloudAgentState {
         smsBody: activationSmsBody(created.displayCode),
       },
       message: null,
-      completedAgentId: null,
+      completedRowKey: null,
       retryNewLine: false,
       terminal: null,
     };
@@ -746,13 +725,7 @@ export class CloudAgentState {
         generation,
         flow,
       )
-      : this.moveToLine(
-        rowKey(request.targetId ?? BUILTIN_TARGET_ID, request.agentId),
-        request.agentId,
-        lineUid,
-        generation,
-        flow,
-      );
+      : this.moveToLine(request.rowKey, agentIdOf(request.rowKey), lineUid, generation, flow);
   }
 
   private async provision(
@@ -781,7 +754,7 @@ export class CloudAgentState {
     this.observe(receipt, request, target);
     this.startAgentPoll(target, receipt, request, generation);
     if (flow !== null) {
-      this.completeLineFlow(receipt.agentId);
+      this.completeLineFlow(rowKey(target.id, receipt.agentId));
       this.publish();
     }
     return receipt.agentId;
@@ -840,7 +813,7 @@ export class CloudAgentState {
     // Changing a line does not move an agent between hosts: it is still on the
     // one that answered this PUT, so the key is unchanged.
     this.rows.set(key, this.rowFor(display, target));
-    this.completeLineFlow(agentId);
+    this.completeLineFlow(key);
     this.publish();
     return agentId;
   }
@@ -949,12 +922,12 @@ export class CloudAgentState {
     return flow;
   }
 
-  private completeLineFlow(agentId: string): void {
+  private completeLineFlow(key: RowKey): void {
     if (!this.lineFlow) return;
     this.lineFlow = {
       ...this.lineFlow,
       request: null,
-      ui: { ...idleLineFlowUi(), completedAgentId: agentId },
+      ui: { ...idleLineFlowUi(), completedRowKey: key },
     };
   }
 
@@ -993,14 +966,12 @@ export class CloudAgentState {
   }
 
   /** Remove an agent — the machine and its hold on the line, not just a key. */
-  async remove(agentId: string, targetId?: string): Promise<void> {
+  async remove(key: RowKey): Promise<void> {
     this.actionError = null;
-    const id = (agentId ?? "").trim();
+    const id = agentIdOf(key);
     if (!id) return;
-    // The HOST comes from the caller, never from a row lookup: a row that a
-    // same-named local agent had overwritten would send this DELETE to the
-    // wrong machine.
-    const key = rowKey(targetId ?? BUILTIN_TARGET_ID, id);
+    // The host is IN the key, so it cannot be resolved from a row a same-named
+    // agent on another machine had replaced.
     const target = this.targetForKey(key);
     if (!target) {
       this.failAction("This Mac isn't signed in yet.");
@@ -1240,6 +1211,7 @@ export class CloudAgentState {
     const details = this.lineDetails(lineUid);
     const retained = this.retainedCreates.get(key);
     return toCloudAgentDisplayRow(displayAgent, {
+      rowKey: key,
       targetId: target.id,
       line: details.line,
       canMessage: details.canMessage,
@@ -1397,7 +1369,7 @@ export class CloudAgentState {
     const row = this.rows.get(key);
     // The key already names the host, so a missing row is not a reason to
     // guess: fall back to the host the key names, not to Plow.
-    return row ? this.target(row.targetId) : this.target(key.split("\u0000")[0]);
+    return row ? this.target(row.targetId) : this.target(targetIdOf(key));
   }
 
   /**
@@ -1491,7 +1463,7 @@ function idleLineFlowUi(): CloudLineFlowUiState {
     phase: "idle",
     activation: null,
     message: null,
-    completedAgentId: null,
+    completedRowKey: null,
     retryNewLine: false,
     terminal: null,
   };

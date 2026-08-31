@@ -10,6 +10,36 @@ const FAILURE_LABELS: Record<string, string> = {
   provision_timeout: "Provision timed out",
 };
 
+/**
+ * How an agent is identified everywhere: the HOST it lives on plus its id on
+ * that host.
+ *
+ * `agent_id` alone is not an identity. Plow mints uuids, but `agent-mgr`
+ * answers with the NAME its owner typed — so a local agent can be called
+ * exactly what a Plow agent is called. Keyed on the raw id, one silently
+ * replaced the other, a Plow removal followed the survivor to the wrong host,
+ * and the roster pinned Plow's metadata onto the local twin.
+ *
+ * ONE key, and it crosses to the renderer. Comparing the pair at each seam was
+ * tried and kept missing one; a single opaque value has nothing to forget.
+ */
+export type RowKey = string & { readonly __rowKey: unique symbol };
+
+/** NUL joins the halves: it occurs in neither, so the pair round-trips. */
+export function rowKey(targetId: string, agentId: string): RowKey {
+  return `${targetId}\u0000${agentId}` as RowKey;
+}
+
+/** The host half, for callers that must address a request to it. */
+export function targetIdOf(key: RowKey): string {
+  return key.split("\u0000")[0];
+}
+
+/** The agent half, as the host itself knows it. */
+export function agentIdOf(key: RowKey): string {
+  return key.slice(key.indexOf("\u0000") + 1);
+}
+
 /** The complete cloud-agent shape allowed to cross into the renderer. */
 export interface CloudAgentThread {
   uid: string;
@@ -22,6 +52,11 @@ export interface CloudAgentLine {
 }
 
 export interface CloudAgentDisplayRow {
+  /**
+   * The renderer's handle for this agent. Opaque: the renderer joins, focuses,
+   * stores and sends this, and never rebuilds it from parts.
+   */
+  rowKey: RowKey;
   agentId: string;
   /**
    * Which host this agent lives on — `BUILTIN_TARGET_ID` for Plow itself.
@@ -47,6 +82,8 @@ export interface CloudAgentDisplayRow {
 export interface CloudAgentDisplayContext {
   /** The host this agent was listed from. Defaults to the built-in Plow. */
   targetId?: string;
+  /** The lifecycle key, when the caller already holds it. */
+  rowKey?: RowKey;
   /** The agent's line resolved through its home chat. */
   line?: CloudAgentLine | null;
   /** Whether the resolved line has an E.164 destination for Messages. */
@@ -80,10 +117,12 @@ export function toCloudAgentDisplayRow(
       ? "Reason unavailable"
       : null;
   const line = context.line ?? null;
+  const targetId = context.targetId ?? BUILTIN_TARGET_ID;
   return {
+    // Never scrubbed: both halves are this app's own or already scrubbed.
+    rowKey: context.rowKey ?? rowKey(targetId, scrub(agent.agentId)),
     agentId: scrub(agent.agentId),
-    // Never scrubbed: a target id is this app's own, not server-authored.
-    targetId: context.targetId ?? BUILTIN_TARGET_ID,
+    targetId,
     name: scrub(agent.name ?? "cloud agent"),
     line: line === null ? null : { uid: scrub(line.uid), label: scrub(line.label) },
     canMessage: context.canMessage === true,

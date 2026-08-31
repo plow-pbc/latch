@@ -91,6 +91,8 @@ ipcMain.handle("settings:getAgentPurpose", async () => readAgentPurpose(probeHom
 ipcMain.handle("settings:setAgentPurpose", async (_e, purpose) => setAgentPurpose(probeHome, purpose));
 const cloudThreadTitle = "Willow · You · Robin";
 const cloudAgent = {
+  // The renderer's handle: host + id, as `cloudAgentMapper` builds it.
+  rowKey: "plow\u0000cag_probe",
   agentId: "cag_probe",
   name: "Household helper",
   line: { uid: "lin_willow", label: "Willow · +1 415-555-0142" },
@@ -138,7 +140,7 @@ let cloudProbe = {
     phase: "idle",
     activation: null,
     message: null,
-    completedAgentId: null,
+    completedRowKey: null,
     retryNewLine: false,
   },
   cloudAgentsError: null,
@@ -153,7 +155,8 @@ let cloudProbe = {
 let cloudChangeRequest = null;
 let cloudChangeCancelCount = 0;
 let exhaustNextCloudActivation = false;
-const cloudMessageAgentIds = [];
+/** What Message actually sends now: the row's opaque key, not a bare id. */
+const cloudMessageRowKeys = [];
 const cloudCreateRequests = [];
 const cloudAddedTargets = [];
 
@@ -183,7 +186,7 @@ ipcMain.handle("cloud:cancelLineFlow", async () => {
       phase: "idle",
       activation: null,
       message: null,
-      completedAgentId: null,
+      completedRowKey: null,
       retryNewLine: false,
     },
   };
@@ -219,7 +222,7 @@ ipcMain.handle("cloud:create", async (_e, input) => {
         phase: "error",
         activation: null,
         message: "No numbers are available right now. Try again later.",
-        completedAgentId: null,
+        completedRowKey: null,
         retryNewLine: false,
         terminal: "no_numbers",
       },
@@ -235,7 +238,7 @@ ipcMain.handle("cloud:create", async (_e, input) => {
           smsBody: "Plow Activate: LINE42",
         },
         message: null,
-        completedAgentId: null,
+        completedRowKey: null,
         retryNewLine: false,
       },
     };
@@ -259,7 +262,7 @@ ipcMain.handle("cloud:create", async (_e, input) => {
         phase: "idle",
         activation: null,
         message: null,
-        completedAgentId: created.agentId,
+        completedRowKey: `plow\u0000${created.agentId}`,
         retryNewLine: false,
       },
     };
@@ -270,7 +273,7 @@ ipcMain.handle("cloud:create", async (_e, input) => {
         phase: "error",
         activation: null,
         message: "Plow returned 422.",
-        completedAgentId: null,
+        completedRowKey: null,
         retryNewLine: false,
       },
     };
@@ -290,7 +293,7 @@ ipcMain.handle("cloud:changeLine", async (_e, input) => {
         phase: "idle",
         activation: null,
         message: null,
-        completedAgentId: input.agentId,
+        completedRowKey: input.rowKey,
         retryNewLine: false,
       },
     };
@@ -307,7 +310,7 @@ ipcMain.handle("cloud:changeLine", async (_e, input) => {
           smsBody: "Plow Activate: MOVE42",
         },
         message: null,
-        completedAgentId: null,
+        completedRowKey: null,
         retryNewLine: false,
       },
     };
@@ -318,7 +321,7 @@ ipcMain.handle("cloud:changeLine", async (_e, input) => {
         phase: "error",
         activation: null,
         message: "Line service is restarting.",
-        completedAgentId: null,
+        completedRowKey: null,
         retryNewLine: false,
       },
     };
@@ -326,7 +329,7 @@ ipcMain.handle("cloud:changeLine", async (_e, input) => {
   return agentsTabProbeState();
 });
 ipcMain.handle("cloud:openMessages", async (_e, agentId) => {
-  if (typeof agentId === "string") cloudMessageAgentIds.push(agentId);
+  if (typeof agentId === "string") cloudMessageRowKeys.push(agentId);
   return true;
 });
 ipcMain.handle("cloud:remove", async (_e, agentId) => {
@@ -820,7 +823,7 @@ app.whenReady().then(async () => {
     `document.querySelector(".cloud-agent-row .message-btn").click()`,
   );
   await waitForNode(
-    () => cloudMessageAgentIds.at(-1) === cloudAgent.agentId,
+    () => cloudMessageRowKeys.at(-1) === cloudAgent.rowKey,
     "the roster Message IPC",
   );
 
@@ -1033,7 +1036,7 @@ app.whenReady().then(async () => {
       phase: "idle",
       activation: null,
       message: null,
-      completedAgentId: confirmedAgent.agentId,
+      completedRowKey: confirmedAgent.agentId,
       retryNewLine: false,
     },
   };
@@ -1133,10 +1136,10 @@ app.whenReady().then(async () => {
     };
   }})()`);
 
-  cloudMessageAgentIds.length = 0;
+  cloudMessageRowKeys.length = 0;
   await clickCloudButton(win, "Message");
   await waitForNode(
-    () => cloudMessageAgentIds.at(-1) === cloudAgent.agentId,
+    () => cloudMessageRowKeys.at(-1) === cloudAgent.rowKey,
     "the detail Message IPC",
   );
 
@@ -1207,8 +1210,8 @@ app.whenReady().then(async () => {
       { id: "local", baseUrl: "http://192.168.15.12:8765", builtin: false },
     ],
     cloudAgents: [
-      { ...cloudAgent, targetId: "plow", name: "Cloud twin" },
-      { ...cloudAgent, targetId: "local", name: "Local twin" },
+      { ...cloudAgent, rowKey: `plow\u0000${cloudAgent.agentId}`, targetId: "plow", name: "Cloud twin" },
+      { ...cloudAgent, rowKey: `local\u0000${cloudAgent.agentId}`, targetId: "local", name: "Local twin" },
     ],
     cloudFreeLines: [{ uid: "lin_ash", label: "Ash · +1 415-555-0199" }],
   };
@@ -1217,6 +1220,11 @@ app.whenReady().then(async () => {
   // position: the probe lists Plow first, exactly as the real roster does.
   await waitFor(win, `document.querySelectorAll(".cloud-agent-row").length === 2`,
     "both twins on the roster");
+  // Roster metadata is PLOW's. Joined on the bare id it also landed on the
+  // local twin, so the self-hosted agent displayed the Plow agent's name.
+  const collidingRosterNames = await win.webContents.executeJavaScript(`(${() => [
+    ...document.querySelectorAll(".cloud-agent-row .entity-name"),
+  ].map((node) => node.textContent.trim())})()`);
   await win.webContents.executeJavaScript(
     `document.querySelectorAll(".cloud-agent-row")[1]
        .querySelector(".cloud-agent-open").click()`,
@@ -1236,11 +1244,10 @@ app.whenReady().then(async () => {
   })()`);
   const changeBeforeCollision = cloudChangeRequest;
   await clickCloudButton(win, "Change line");
-  // The fake host only completes a flow for a NEW line, so the modal stays up
-  // for a picked one. The request is what this is about, not the closing.
-  for (let tick = 0; tick < 50 && cloudChangeRequest === changeBeforeCollision; tick += 1) {
-    await new Promise((resolve) => setTimeout(resolve, 100));
-  }
+  await waitForNode(
+    () => cloudChangeRequest !== changeBeforeCollision,
+    "the local twin's change request to reach the host",
+  );
   const collidingChangeRequest = cloudChangeRequest;
   await waitFor(win, `!document.querySelector(".cloud-modal")`,
     "the local twin's change to finish");
@@ -1369,7 +1376,7 @@ app.whenReady().then(async () => {
       phase: "idle",
       activation: null,
       message: null,
-      completedAgentId: null,
+      completedRowKey: null,
       retryNewLine: false,
     },
     cloudChatsError: "Plow returned 503.",
@@ -1434,7 +1441,7 @@ app.whenReady().then(async () => {
       phase: "idle",
       activation: null,
       message: null,
-      completedAgentId: null,
+      completedRowKey: null,
       retryNewLine: false,
     },
   };
@@ -1460,7 +1467,7 @@ app.whenReady().then(async () => {
       phase: "idle",
       activation: null,
       message: null,
-      completedAgentId: null,
+      completedRowKey: null,
       retryNewLine: false,
     },
   };
@@ -1498,7 +1505,7 @@ app.whenReady().then(async () => {
       phase: "idle",
       activation: null,
       message: null,
-      completedAgentId: null,
+      completedRowKey: null,
       retryNewLine: false,
     },
   };
@@ -2250,13 +2257,13 @@ app.whenReady().then(async () => {
     cloudChangeCode.code === "MOVE42" &&
     cloudChangeCode.exactMessage &&
     cloudChangeCode.buttons.join("|") === "Copy|Cancel|Open Messages…" &&
-    cloudChangeRequest?.agentId === cloudAgent.agentId &&
+    cloudChangeRequest?.rowKey === cloudAgent.rowKey &&
     cloudChangeRequest?.lineUid === null &&
     // Same id on two hosts: the modal opened on the LOCAL twin and the change
     // was addressed to the local host, not to the Plow row listed first.
+    collidingRosterNames.join("|") === "Household helper|Local twin" &&
     collidingDetail.title === "Local twin" &&
-    collidingChangeRequest?.agentId === cloudAgent.agentId &&
-    collidingChangeRequest?.targetId === "local" &&
+    collidingChangeRequest?.rowKey === `local\u0000${cloudAgent.agentId}` &&
     cloudUnknownLines.showsSafeError &&
     cloudUnknownLines.hidesRawError &&
     cloudUnknownLines.buttons.join("|") === "Cancel" &&
@@ -2352,7 +2359,7 @@ app.whenReady().then(async () => {
     errors.length === 0;
   console.log(
     "PROBE:" +
-      JSON.stringify({ main, settings, strandedOnDisk, settingsPane, connect, cloudRoster, cloudCreatePicker, cloudCreateSelection, cloudCreateSelectionOnly, cloudCreateRequest, cloudCreateCancelled, cloudLocalHostForm, cloudLocalHostSaved, localAddRequest, localAgentShot, cloudLocalCreateRequest, cloudCreateCode, cloudExistingCreate, cloudExistingCreateRequest, cloudCodeConfirmed, cloudCodeConfirmedClosed, cloudNoFreeLines, cloudNoNumbers, cloudDetail, cloudChangePicker, cloudChangeSelection, cloudChangeSelectionOnly, cloudChangeCode, cloudChangeRequest, collidingDetail, collidingChangeRequest, cloudUnknownLines, cloudCreateErrorDetail, failedCloudDetailButtons, cloudChangeErrorDetail, cloudAgentGoneCancelled, cloudDeleteConfirm, loadingCloudDetail, unavailableCloudDetail, agentsShot, approvalsReviewer, approvalsShot, purposeRoundTrip, approvalsAsk, askWithoutReviewer, approvalsShotAsk, agentsOpen, modalClosed, vaultLocked, vaultUnsaved, vaultShot, agentsOpenShot, staleSettingsPane, optimisticMode, settingsShot, approval, reviewerNote, grantPanel, consoleErrors: errors, ok }),
+      JSON.stringify({ main, settings, strandedOnDisk, settingsPane, connect, cloudRoster, cloudCreatePicker, cloudCreateSelection, cloudCreateSelectionOnly, cloudCreateRequest, cloudCreateCancelled, cloudLocalHostForm, cloudLocalHostSaved, localAddRequest, localAgentShot, cloudLocalCreateRequest, cloudCreateCode, cloudExistingCreate, cloudExistingCreateRequest, cloudCodeConfirmed, cloudCodeConfirmedClosed, cloudNoFreeLines, cloudNoNumbers, cloudDetail, cloudChangePicker, cloudChangeSelection, cloudChangeSelectionOnly, cloudChangeCode, cloudChangeRequest, collidingRosterNames, collidingDetail, collidingChangeRequest, cloudUnknownLines, cloudCreateErrorDetail, failedCloudDetailButtons, cloudChangeErrorDetail, cloudAgentGoneCancelled, cloudDeleteConfirm, loadingCloudDetail, unavailableCloudDetail, agentsShot, approvalsReviewer, approvalsShot, purposeRoundTrip, approvalsAsk, askWithoutReviewer, approvalsShotAsk, agentsOpen, modalClosed, vaultLocked, vaultUnsaved, vaultShot, agentsOpenShot, staleSettingsPane, optimisticMode, settingsShot, approval, reviewerNote, grantPanel, consoleErrors: errors, ok }),
   );
   app.exit(ok ? 0 : 1);
 }).catch((err) => {

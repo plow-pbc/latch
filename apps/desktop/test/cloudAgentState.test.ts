@@ -11,6 +11,7 @@ import {
   CloudLinesClient,
 } from "../src/cloudAgentState.js";
 import { CloudAgentLineError, CloudAgentResource } from "../src/cloudAgents.js";
+import { rowKey } from "../src/cloudAgentMapper.js";
 import {
   Activation,
   BUILTIN_TARGET_ID,
@@ -227,7 +228,7 @@ describe("CloudAgentState line and thread display", () => {
         phase: "idle",
         activation: null,
         message: null,
-        completedAgentId: null,
+        completedRowKey: null,
         retryNewLine: false,
         terminal: null,
       },
@@ -264,7 +265,7 @@ describe("CloudAgentState line and thread display", () => {
     const { state } = build();
     await state.refresh();
 
-    expect(state.agentSmsUrl("agent_1")).toBe("sms:+15550100");
+    expect(state.agentSmsUrl(rowKey(BUILTIN_TARGET_ID, "agent_1"))).toBe("sms:+15550100");
     expect(state.state().cloudAgents[0].canMessage).toBe(true);
 
     const { state: unresolved } = build({
@@ -292,7 +293,7 @@ describe("CloudAgentState line and thread display", () => {
       line: { uid: "lin_willow", label: "Willow · not-a-number" },
       canMessage: false,
     });
-    expect(state.agentSmsUrl("agent_1")).toBeNull();
+    expect(state.agentSmsUrl(rowKey(BUILTIN_TARGET_ID, "agent_1"))).toBeNull();
   });
 
   it("filters an agent's read-only threads by its home chat's line", async () => {
@@ -444,7 +445,7 @@ describe("CloudAgentState line and thread display", () => {
     chats.resolve([chat()]);
     await refresh;
     expect(state.state().cloudAgents[0].canRetry).toBe(true);
-    await state.retryFailed("agent_1");
+    await state.retryFailed(rowKey(BUILTIN_TARGET_ID, "agent_1"));
 
     expect(requests).toEqual([{
       lineUid: "lin_willow",
@@ -476,7 +477,7 @@ describe("CloudAgentState line and thread display", () => {
     });
     await vi.waitFor(() => expect(state.state().cloudAgents[0]?.status).toBe("failed"));
     expect(state.state().cloudAgents[0]).toMatchObject({ line: null, canRetry: true });
-    await state.retryFailed("agent_1");
+    await state.retryFailed(rowKey(BUILTIN_TARGET_ID, "agent_1"));
 
     expect(requests).toEqual([
       { lineUid: "lin_willow", name: "Kitchen", provider: "exe:pirate", targetId: BUILTIN_TARGET_ID },
@@ -497,7 +498,7 @@ describe("CloudAgentState line and thread display", () => {
       status: "failed",
       canRetry: false,
     });
-    expect(await state.retryFailed("agent_1")).toBeNull();
+    expect(await state.retryFailed(rowKey(BUILTIN_TARGET_ID, "agent_1"))).toBeNull();
     expect(createAgent).not.toHaveBeenCalled();
   });
 });
@@ -545,7 +546,7 @@ describe("CloudAgentState new agent flow", () => {
     }]);
     expect(calls).not.toContain("createActivation");
     expect(state.state().cloudAgents).toHaveLength(1);
-    expect(state.state().cloudLineFlow.completedAgentId).toBe("agent_new");
+    expect(state.state().cloudLineFlow.completedRowKey).toBe(rowKey(BUILTIN_TARGET_ID, "agent_new"));
   });
 
   it("always activates for New line, then creates from the verified line uid", async () => {
@@ -593,7 +594,7 @@ describe("CloudAgentState new agent flow", () => {
     }]));
 
     expect(calls).toContain("createActivation");
-    expect(state.state().cloudLineFlow.completedAgentId).toBe("agent_new");
+    expect(state.state().cloudLineFlow.completedRowKey).toBe(rowKey(BUILTIN_TARGET_ID, "agent_new"));
     expect(state.state().cloudAgents[0].line).toEqual({
       uid: "lin_new",
       label: "+1 415-555-0999",
@@ -654,7 +655,7 @@ describe("CloudAgentState new agent flow", () => {
     await state.create({ name: "Garden", provider: "exe:hermes", lineUid: null });
     await vi.waitFor(() => expect(calls).toContain("listKeys"));
 
-    expect(state.state().cloudLineFlow.completedAgentId).toBe("agent_1");
+    expect(state.state().cloudLineFlow.completedRowKey).toBe(rowKey(BUILTIN_TARGET_ID, "agent_1"));
     listing.resolve([]);
     await vi.waitFor(() => expect(audit).toHaveLength(1));
   });
@@ -737,7 +738,7 @@ describe("CloudAgentState new agent flow", () => {
     await state.create({ name: "Kitchen", provider: "exe:hermes", lineUid: "lin_willow", targetId: BUILTIN_TARGET_ID });
 
     expect(state.state().cloudAgents).toHaveLength(1);
-    expect(state.state().cloudLineFlow.completedAgentId).toBe("agent_existing");
+    expect(state.state().cloudLineFlow.completedRowKey).toBe(rowKey(BUILTIN_TARGET_ID, "agent_existing"));
   });
 
   it("reports a verified payload with no agent line and logs only its safe shape", async () => {
@@ -861,7 +862,7 @@ describe("CloudAgentState new agent flow", () => {
 
     await state.create({ name: "Kitchen", provider: "exe:hermes", lineUid: "lin_willow", targetId: BUILTIN_TARGET_ID });
     expect(state.state().cloudLineFlow.message).toBe("Text this line once first, then try again.");
-    await state.retryFailed("agent_1");
+    await state.retryFailed(rowKey(BUILTIN_TARGET_ID, "agent_1"));
 
     expect(requests).toEqual([
       { name: "Kitchen", provider: "exe:hermes", lineUid: "lin_willow", targetId: BUILTIN_TARGET_ID },
@@ -890,7 +891,7 @@ describe("CloudAgentState change-line flow", () => {
     });
     await state.refresh();
 
-    await state.changeLine({ agentId: "agent_1", lineUid: "lin_ash" });
+    await state.changeLine({ rowKey: rowKey(BUILTIN_TARGET_ID, "agent_1"), lineUid: "lin_ash" });
 
     expect(moved).toEqual([{ agentId: "agent_1", lineUid: "lin_ash" }]);
     expect(calls).not.toContain("createActivation");
@@ -898,7 +899,7 @@ describe("CloudAgentState change-line flow", () => {
       line: { uid: "lin_ash", label: "Ash · +15550200" },
       threads: [{ uid: "cht_ash" }],
     });
-    expect(state.state().cloudLineFlow.completedAgentId).toBe("agent_1");
+    expect(state.state().cloudLineFlow.completedRowKey).toBe(rowKey(BUILTIN_TARGET_ID, "agent_1"));
   });
 
   it("reuses new-line activation before moving an existing agent", async () => {
@@ -929,7 +930,7 @@ describe("CloudAgentState change-line flow", () => {
     });
     await state.refresh();
 
-    await state.changeLine({ agentId: "agent_1", lineUid: null });
+    await state.changeLine({ rowKey: rowKey(BUILTIN_TARGET_ID, "agent_1"), lineUid: null });
     await vi.waitFor(() => expect(moved).toEqual([
       { agentId: "agent_1", lineUid: "lin_new" },
     ]));
@@ -940,7 +941,7 @@ describe("CloudAgentState change-line flow", () => {
       uid: "lin_new",
       label: "+1 415-555-0999",
     });
-    expect(state.state().cloudLineFlow.completedAgentId).toBe("agent_1");
+    expect(state.state().cloudLineFlow.completedRowKey).toBe(rowKey(BUILTIN_TARGET_ID, "agent_1"));
   });
 
   it("shows no-home-chat copy and keeps the same PUT available to retry", async () => {
@@ -961,7 +962,7 @@ describe("CloudAgentState change-line flow", () => {
     });
     await state.refresh();
 
-    await state.changeLine({ agentId: "agent_1", lineUid: "lin_ash" });
+    await state.changeLine({ rowKey: rowKey(BUILTIN_TARGET_ID, "agent_1"), lineUid: "lin_ash" });
     expect(state.state().cloudLineFlow).toMatchObject({
       phase: "error",
       message: "Text this line once first, then try again.",
@@ -969,7 +970,7 @@ describe("CloudAgentState change-line flow", () => {
     await state.retryLineFlow();
 
     expect(moved).toEqual(["agent_1:lin_ash", "agent_1:lin_ash"]);
-    expect(state.state().cloudLineFlow.completedAgentId).toBe("agent_1");
+    expect(state.state().cloudLineFlow.completedRowKey).toBe(rowKey(BUILTIN_TARGET_ID, "agent_1"));
   });
 
   it("refreshes the picker after another agent claims the chosen line", async () => {
@@ -996,7 +997,7 @@ describe("CloudAgentState change-line flow", () => {
     await state.refresh();
     expect(state.state().cloudFreeLines.map((line) => line.uid)).toEqual(["lin_ash"]);
 
-    await state.changeLine({ agentId: "agent_1", lineUid: "lin_ash" });
+    await state.changeLine({ rowKey: rowKey(BUILTIN_TARGET_ID, "agent_1"), lineUid: "lin_ash" });
 
     expect(state.state().cloudLineFlow).toMatchObject({
       phase: "idle",
@@ -1015,7 +1016,7 @@ describe("CloudAgentState deletion", () => {
     });
     await state.refresh();
 
-    await state.remove("agent_1");
+    await state.remove(rowKey(BUILTIN_TARGET_ID, "agent_1"));
 
     expect(calls).toContain("delete@plow:agent_1");
     expect(state.state().cloudAgents).toEqual([]);
@@ -1040,7 +1041,7 @@ describe("CloudAgentState deletion", () => {
     });
     await state.refresh();
 
-    await state.remove("agent_1");
+    await state.remove(rowKey(BUILTIN_TARGET_ID, "agent_1"));
 
     expect(state.state().cloudAgents).toHaveLength(1);
     expect(state.state().cloudActionError).toBe("Plow returned 503.");
@@ -1273,7 +1274,7 @@ describe("CloudAgentState self-hosted target", () => {
       .toEqual(["local:Local", "plow:Cloud"]);
 
     calls.length = 0;
-    await state.remove(collision, targetId);
+    await state.remove(rowKey(targetId, collision));
 
     expect(calls).toContain(expected);
     expect(calls).not.toContain(other);
@@ -1288,11 +1289,9 @@ describe("CloudAgentState self-hosted target", () => {
     await state.refresh();
     calls.length = 0;
 
-    // The host has to survive INTO the request: `finishLineFlow` rebuilds the
-    // key from it, so dropping it sent the PUT to Plow for a local agent.
+    // The key names the host, so the PUT cannot land on Plow for a local agent.
     await state.changeLine({
-      agentId: "agent_local",
-      targetId: LOCAL_TARGET_ID,
+      rowKey: rowKey(LOCAL_TARGET_ID, "agent_local"),
       lineUid: "lin_ash",
     });
 
