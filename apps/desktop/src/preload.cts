@@ -123,7 +123,10 @@ contextBridge.exposeInMainWorld("domo", {
   // Remove a cloud agent by its own id. For the agent whose credential row is
   // missing — an inactive credential on a still-running agent — where there is
   // no roster row to name and none is needed.
-  cloudRemove: (agentId: string) => ipcRenderer.invoke("cloud:remove", agentId),
+  // An agent is identified by HOST + id: `agent-mgr` uses the name its owner
+  // typed, so a bare id is ambiguous and a DELETE must not guess.
+  cloudRemove: (agentId: string, targetId?: string) =>
+    ipcRenderer.invoke("cloud:remove", agentId, targetId),
   cloudRefresh: () => ipcRenderer.invoke("cloud:refresh"),
   cloudCreate: (input: {
     name: string;
@@ -139,10 +142,12 @@ contextBridge.exposeInMainWorld("domo", {
   cloudForgetTarget: () => ipcRenderer.invoke("cloud:forgetTarget"),
   cloudCancelLineFlow: () => ipcRenderer.invoke("cloud:cancelLineFlow"),
   cloudRetryLineFlow: () => ipcRenderer.invoke("cloud:retryLineFlow"),
-  cloudRetryFailed: (agentId: string) => ipcRenderer.invoke("cloud:retryFailed", agentId),
-  cloudChangeLine: (input: { agentId: string; lineUid: string | null }) =>
+  cloudRetryFailed: (agentId: string, targetId?: string) =>
+    ipcRenderer.invoke("cloud:retryFailed", agentId, targetId),
+  cloudChangeLine: (input: { agentId: string; lineUid: string | null; targetId?: string }) =>
     ipcRenderer.invoke("cloud:changeLine", input),
-  cloudOpenMessages: (agentId?: string) => ipcRenderer.invoke("cloud:openMessages", agentId),
+  cloudOpenMessages: (agentId?: string, targetId?: string) =>
+    ipcRenderer.invoke("cloud:openMessages", agentId, targetId),
   onConnectChanged: (cb: () => void) => ipcRenderer.on("connect:changed", cb),
 
   // Any external destination the app links to. A key, never a URL: main

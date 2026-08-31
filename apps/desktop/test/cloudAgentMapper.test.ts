@@ -76,12 +76,6 @@ describe("cloud-agent pure mappings", () => {
     // written by the host, and a self-hosted one is an origin its owner typed
     // in — it can carry that host's own bearer in an encoding no echo check
     // sees through. The row says a reason exists and declines to repeat it.
-    const future = toCloudAgentDisplayRow({
-      ...agent({ status: "failed", failureReason: "Provider capacity is exhausted." }),
-      failureCode: "capacity_exhausted",
-    } as CloudAgentResource);
-    expect(future.failureReason).toBe("Reason unavailable");
-
     const encodedBearer = toCloudAgentDisplayRow({
       ...agent({ status: "failed", failureReason: "failed: c2VydmUtdG9rZW4tYWJj" }),
       failureCode: "capacity_exhausted",

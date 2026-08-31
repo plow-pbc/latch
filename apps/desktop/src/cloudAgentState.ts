@@ -139,6 +139,8 @@ export interface CloudTargetOption {
 
 export interface CloudChangeLineInput {
   agentId: string;
+  /** Which host holds it. Absent means the built-in Plow. */
+  targetId?: string;
   /** `null` asks Plow to provision a new line through activation. */
   lineUid: string | null;
 }
@@ -239,16 +241,35 @@ export interface CloudAgentStateDeps {
   warn?: (message: string) => void;
 }
 
+/**
+ * How an agent is identified in this file's lifecycle maps: the HOST it lives
+ * on plus its id on that host.
+ *
+ * `agent_id` alone is not an identity. Plow mints uuids, but `agent-mgr`
+ * answers with the NAME its owner typed at `agent-mgr register` — so a local
+ * agent can be named exactly a Plow `agent_id`, and a raw-id map would let it
+ * overwrite the Plow row. The next removal of that Plow credential would then
+ * resolve the overwritten row's target and send `DELETE` to the self-host,
+ * destroying a different agent. Branded so the compiler, not a reader,
+ * enforces that no caller passes a bare id.
+ */
+type RowKey = string & { readonly __rowKey: unique symbol };
+
+/** NUL joins the two halves: it cannot occur in either, so the pair round-trips. */
+function rowKey(targetId: string, agentId: string): RowKey {
+  return `${targetId}\u0000${agentId}` as RowKey;
+}
+
 export class CloudAgentState {
   /** Keyed on `agent_id`, which is stable for the agent's whole life. */
-  private rows = new Map<string, CloudAgentDisplayRow>();
+  private rows = new Map<RowKey, CloudAgentDisplayRow>();
   /** Home-chat identity stays private while chat results resolve each line. */
-  private homeChatUids = new Map<string, string>();
+  private homeChatUids = new Map<RowKey, string>();
   /** Fresh receipts stay visible until the account list catches up. */
-  private pending = new Set<string>();
-  private polls = new Map<string, AbortController>();
+  private pending = new Set<RowKey>();
+  private polls = new Map<RowKey, AbortController>();
   /** Create choices retained in main; chats may resolve the line after agents load. */
-  private retainedCreates = new Map<string, CloudCreateInput>();
+  private retainedCreates = new Map<RowKey, CloudCreateInput>();
   private lineFlowGeneration = 0;
   /** SECRET. Never crosses `state()` and is discarded on every terminal path. */
   private activationSecret: string | null = null;
@@ -301,7 +322,7 @@ export class CloudAgentState {
   private viewSettled: Promise<void> = Promise.resolve();
   private lines: CloudLineOption[] | null = null;
   /** Agents whose stuck delete is being retried right now — one at a time each. */
-  private tearingDown = new Set<string>();
+  private tearingDown = new Set<RowKey>();
   /**
    * Bumped whenever the self-hosted host changes or goes away.
    *
@@ -457,9 +478,10 @@ export class CloudAgentState {
   /** Move an agent to a known line, or mint a new one. */
   async changeLine(input: CloudChangeLineInput): Promise<string | null> {
     const agentId = typeof input?.agentId === "string" ? input.agentId.trim() : "";
+    const key = rowKey(input?.targetId ?? BUILTIN_TARGET_ID, agentId);
     const rawLineUid = input?.lineUid;
     const lineUid = typeof rawLineUid === "string" ? rawLineUid.trim() : null;
-    if (!agentId || !this.rows.has(agentId)) {
+    if (!agentId || !this.rows.has(key)) {
       this.setLineFlowError("change", "That agent is no longer available.", false);
       return null;
     }
@@ -480,10 +502,11 @@ export class CloudAgentState {
   }
 
   /** Re-post the exact create body retained for a failed roster row. */
-  async retryFailed(agentId: string): Promise<string | null> {
+  async retryFailed(agentId: string, targetId?: string): Promise<string | null> {
     const id = (agentId ?? "").trim();
-    const retained = this.retainedCreates.get(id);
-    if (!retained || retained.lineUid === null || this.rows.get(id)?.status !== "failed") return null;
+    const key = rowKey(targetId ?? BUILTIN_TARGET_ID, id);
+    const retained = this.retainedCreates.get(key);
+    if (!retained || retained.lineUid === null || this.rows.get(key)?.status !== "failed") return null;
     if (!this.target(retained.targetId)) {
       return this.failAction("That host is no longer set up on this Mac.");
     }
@@ -502,8 +525,8 @@ export class CloudAgentState {
   }
 
   /** A Messages deep link for one resolved agent line, kept in main-process state. */
-  agentSmsUrl(agentId: string): string | null {
-    const lineUid = this.rows.get(agentId)?.line?.uid;
+  agentSmsUrl(agentId: string, targetId?: string): string | null {
+    const lineUid = this.rows.get(rowKey(targetId ?? BUILTIN_TARGET_ID, agentId))?.line?.uid;
     return this.lineDetails(lineUid ?? null).smsUrl;
   }
 
@@ -715,7 +738,13 @@ export class CloudAgentState {
         generation,
         flow,
       )
-      : this.moveToLine(request.agentId, lineUid, generation, flow);
+      : this.moveToLine(
+        rowKey(request.targetId ?? BUILTIN_TARGET_ID, request.agentId),
+        request.agentId,
+        lineUid,
+        generation,
+        flow,
+      );
   }
 
   private async provision(
@@ -740,7 +769,7 @@ export class CloudAgentState {
       return null;
     }
 
-    this.pending.add(receipt.agentId);
+    this.pending.add(rowKey(target.id, receipt.agentId));
     this.observe(receipt, request, target);
     this.startAgentPoll(target, receipt, request, generation);
     if (flow !== null) {
@@ -751,12 +780,13 @@ export class CloudAgentState {
   }
 
   private async moveToLine(
+    key: RowKey,
     agentId: string,
     lineUid: string,
     generation: number,
     flow: number,
   ): Promise<string | null> {
-    const target = this.targetForAgent(agentId);
+    const target = this.targetForKey(key);
     if (!target || !this.isCurrentLineFlow("change", generation, flow)) return null;
     let moved: CloudAgentResource;
     try {
@@ -783,25 +813,25 @@ export class CloudAgentState {
     }
     if (!this.isCurrentLineFlow("change", generation, flow)) return null;
 
-    const previous = this.rows.get(agentId);
+    const previous = this.rows.get(key);
     const display = moved.name || !previous?.name
       ? moved
       : { ...moved, name: previous.name };
     const provider = moved.provider?.trim() ||
-      this.retainedCreates.get(agentId)?.provider;
+      this.retainedCreates.get(key)?.provider;
     if (provider) {
-      this.retainedCreates.set(agentId, {
+      this.retainedCreates.set(key, {
         lineUid,
         name: moved.name ?? previous?.name ?? "",
         provider,
         targetId: target.id,
       });
     } else {
-      this.retainedCreates.delete(agentId);
+      this.retainedCreates.delete(key);
     }
     // Changing a line does not move an agent between hosts: it is still on the
-    // one that answered this PUT.
-    this.rows.set(agentId, this.rowFor(display, target));
+    // one that answered this PUT, so the key is unchanged.
+    this.rows.set(key, this.rowFor(display, target));
     this.completeLineFlow(agentId);
     this.publish();
     return agentId;
@@ -813,9 +843,9 @@ export class CloudAgentState {
     request: CloudCreateInput,
     generation: number,
   ): void {
-    this.abortPoll(receipt.agentId);
+    this.abortPoll(rowKey(target.id, receipt.agentId));
     const controller = new AbortController();
-    this.polls.set(receipt.agentId, controller);
+    this.polls.set(rowKey(target.id, receipt.agentId), controller);
     void this.pollToTerminal(target, receipt, request, generation, controller.signal);
   }
 
@@ -872,16 +902,17 @@ export class CloudAgentState {
         this.failAction(messageOf(error));
       }
     } finally {
-      this.pending.delete(receipt.agentId);
-      if (this.polls.get(receipt.agentId)?.signal === signal) this.polls.delete(receipt.agentId);
+      const key = rowKey(target.id, receipt.agentId);
+      this.pending.delete(key);
+      if (this.polls.get(key)?.signal === signal) this.polls.delete(key);
     }
     if (generation === this.generation && !signal.aborted) await this.refresh();
   }
 
-  private abortPoll(agentId: string): void {
-    const controller = this.polls.get(agentId);
+  private abortPoll(key: RowKey): void {
+    const controller = this.polls.get(key);
     if (!controller) return;
-    this.polls.delete(agentId);
+    this.polls.delete(key);
     controller.abort();
   }
 
@@ -954,18 +985,22 @@ export class CloudAgentState {
   }
 
   /** Remove an agent — the machine and its hold on the line, not just a key. */
-  async remove(agentId: string): Promise<void> {
+  async remove(agentId: string, targetId?: string): Promise<void> {
     this.actionError = null;
     const id = (agentId ?? "").trim();
     if (!id) return;
-    const target = this.targetForAgent(id);
+    // The HOST comes from the caller, never from a row lookup: a row that a
+    // same-named local agent had overwritten would send this DELETE to the
+    // wrong machine.
+    const key = rowKey(targetId ?? BUILTIN_TARGET_ID, id);
+    const target = this.targetForKey(key);
     if (!target) {
       this.failAction("This Mac isn't signed in yet.");
       return;
     }
 
     const generation = this.generation;
-    this.abortPoll(id);
+    this.abortPoll(key);
     const refresh = await this.sequence(async () => {
       if (generation !== this.generation) return false;
       this.actionError = null;
@@ -976,10 +1011,10 @@ export class CloudAgentState {
         return false;
       }
       if (generation !== this.generation) return false;
-      this.rows.delete(id);
-      this.homeChatUids.delete(id);
-      this.pending.delete(id);
-      this.retainedCreates.delete(id);
+      this.rows.delete(key);
+      this.homeChatUids.delete(key);
+      this.pending.delete(key);
+      this.retainedCreates.delete(key);
       this.publish();
       return true;
     });
@@ -997,7 +1032,7 @@ export class CloudAgentState {
     this.activationSecret = null;
     this.lineFlow = null;
     this.tearingDown.clear();
-    for (const agentId of [...this.polls.keys()]) this.abortPoll(agentId);
+    for (const key of [...this.polls.keys()]) this.abortPoll(key);
     this.rows.clear();
     this.homeChatUids.clear();
     this.pending.clear();
@@ -1024,22 +1059,23 @@ export class CloudAgentState {
    * DELETE onto the same machine.
    */
   private retryTeardown(target: AgentTarget, agentId: string, generation: number): void {
-    if (this.tearingDown.has(agentId)) return;
-    this.tearingDown.add(agentId);
+    const key = rowKey(target.id, agentId);
+    if (this.tearingDown.has(key)) return;
+    this.tearingDown.add(key);
     void this.sequence(async () => {
       try {
         if (generation !== this.generation) return;
         await this.deps.agents.delete(target, agentId);
         if (generation !== this.generation) return;
-        this.rows.delete(agentId);
-        this.homeChatUids.delete(agentId);
-        this.pending.delete(agentId);
-        this.retainedCreates.delete(agentId);
+        this.rows.delete(key);
+        this.homeChatUids.delete(key);
+        this.pending.delete(key);
+        this.retainedCreates.delete(key);
         this.publish();
       } catch {
         // Still in teardown. The next refresh will find it and try again.
       } finally {
-        this.tearingDown.delete(agentId);
+        this.tearingDown.delete(key);
       }
     });
   }
@@ -1078,7 +1114,7 @@ export class CloudAgentState {
     // whatever they say describes a machine this Mac is no longer pointed at.
     if (generation !== this.generation || revision !== this.hostRevision) return;
 
-    const listed = new Map<string, CloudAgentDisplayRow>();
+    const listed = new Map<RowKey, CloudAgentDisplayRow>();
     const errors: string[] = [];
     for (const { target, agents, error } of reads) {
       if (agents === null) {
@@ -1086,35 +1122,36 @@ export class CloudAgentState {
         // bare sentence it always has — there is nothing to disambiguate when
         // it is the only host on the Mac.
         errors.push(target.id === BUILTIN_TARGET_ID ? error : `${target.baseUrl}: ${error}`);
-        for (const [agentId, row] of this.rows) {
-          if (row.targetId === target.id) listed.set(agentId, row);
+        for (const [key, row] of this.rows) {
+          if (row.targetId === target.id) listed.set(key, row);
         }
         continue;
       }
       for (const agent of agents) {
-        const retained = this.retainedCreates.get(agent.agentId);
+        const key = rowKey(target.id, agent.agentId);
+        const retained = this.retainedCreates.get(key);
         const resourceProvider = agent.provider?.trim() || null;
         const provider = resourceProvider ?? retained?.provider;
         const lineUid = this.agentLineUid(agent);
         if (provider) {
-          this.retainedCreates.set(agent.agentId, {
+          this.retainedCreates.set(key, {
             lineUid: lineUid ?? retained?.lineUid ?? null,
             name: agent.name ?? retained?.name ?? "",
             provider,
             targetId: target.id,
           });
-        } else this.retainedCreates.delete(agent.agentId);
-        listed.set(agent.agentId, this.rowFor(agent, target));
+        } else this.retainedCreates.delete(key);
+        listed.set(key, this.rowFor(agent, target));
       }
     }
-    for (const [agentId, row] of this.rows) {
-      if (!listed.has(agentId) && this.pending.has(agentId)) listed.set(agentId, row);
+    for (const [key, row] of this.rows) {
+      if (!listed.has(key) && this.pending.has(key)) listed.set(key, row);
     }
-    for (const agentId of this.homeChatUids.keys()) {
-      if (!listed.has(agentId)) this.homeChatUids.delete(agentId);
+    for (const key of this.homeChatUids.keys()) {
+      if (!listed.has(key)) this.homeChatUids.delete(key);
     }
-    for (const agentId of this.retainedCreates.keys()) {
-      if (!listed.has(agentId) && !this.pending.has(agentId)) this.retainedCreates.delete(agentId);
+    for (const key of this.retainedCreates.keys()) {
+      if (!listed.has(key) && !this.pending.has(key)) this.retainedCreates.delete(key);
     }
     this.rows = listed;
     this.agentsError = errors.length ? errors.join(" · ") : null;
@@ -1175,8 +1212,9 @@ export class CloudAgentState {
     request: CloudCreateInput,
     target: AgentTarget,
   ): void {
-    this.retainedCreates.set(agent.agentId, { ...request, targetId: target.id });
-    this.rows.set(agent.agentId, this.rowFor(agent, target, request.name));
+    const key = rowKey(target.id, agent.agentId);
+    this.retainedCreates.set(key, { ...request, targetId: target.id });
+    this.rows.set(key, this.rowFor(agent, target, request.name));
     this.publish();
   }
 
@@ -1186,12 +1224,13 @@ export class CloudAgentState {
     fallbackName = "",
   ): CloudAgentDisplayRow {
     const displayAgent = fallbackName && !agent.name ? { ...agent, name: fallbackName } : agent;
+    const key = rowKey(target.id, agent.agentId);
     const homeChatUid = agent.chatUids[0];
-    if (homeChatUid) this.homeChatUids.set(agent.agentId, homeChatUid);
-    else this.homeChatUids.delete(agent.agentId);
+    if (homeChatUid) this.homeChatUids.set(key, homeChatUid);
+    else this.homeChatUids.delete(key);
     const lineUid = this.agentLineUid(agent);
     const details = this.lineDetails(lineUid);
-    const retained = this.retainedCreates.get(agent.agentId);
+    const retained = this.retainedCreates.get(key);
     return toCloudAgentDisplayRow(displayAgent, {
       targetId: target.id,
       line: details.line,
@@ -1346,9 +1385,11 @@ export class CloudAgentState {
    * forgotten host's id no longer resolves would ask the wrong server about
    * someone else's agent id.
    */
-  private targetForAgent(agentId: string): AgentTarget | null {
-    const row = this.rows.get(agentId);
-    return row ? this.target(row.targetId) : this.builtinTarget();
+  private targetForKey(key: RowKey): AgentTarget | null {
+    const row = this.rows.get(key);
+    // The key already names the host, so a missing row is not a reason to
+    // guess: fall back to the host the key names, not to Plow.
+    return row ? this.target(row.targetId) : this.target(key.split("\u0000")[0]);
   }
 
   /**

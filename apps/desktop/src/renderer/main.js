@@ -1265,7 +1265,7 @@ function syncCloudLineModal(state, redraw) {
       title,
     );
     if (changing) {
-      await window.domo.cloudChangeLine({ agentId: agent.agentId, lineUid });
+      await window.domo.cloudChangeLine({ agentId: agent.agentId, targetId: agent.targetId, lineUid });
     } else {
       await window.domo.cloudCreate({
         name: modal.nameInput.value.trim(),
@@ -1391,7 +1391,7 @@ function syncCloudModal(state, redraw) {
     const message = agent.canMessage ? el("button", { class: "btn", text: "Message" }) : null;
     const remove = el("button", { class: "btn danger", text: "Delete agent" });
     close.addEventListener("click", closeCloudModal);
-    message?.addEventListener("click", () => window.domo.cloudOpenMessages(agent.agentId));
+    message?.addEventListener("click", () => window.domo.cloudOpenMessages(agent.agentId, agent.targetId));
     changeLine?.addEventListener("click", () => openCloudChangeLine(agent, state, redraw));
     remove.addEventListener("click", () => {
       cloudModal.confirmingDelete = true;
@@ -1446,7 +1446,7 @@ function syncCloudModal(state, redraw) {
       back.disabled = true;
       confirm.disabled = true;
       note.textContent = "Deleting…";
-      await window.domo.cloudRemove(agent.agentId);
+      await window.domo.cloudRemove(agent.agentId, agent.targetId);
       closeCloudModal();
       await redraw();
     });
@@ -1743,10 +1743,10 @@ function cloudEntityRow(row, agent, state, redraw) {
         attrs: { "aria-label": `Message ${name}` },
       })
     : null;
-  message?.addEventListener("click", () => window.domo.cloudOpenMessages(agent.agentId));
+  message?.addEventListener("click", () => window.domo.cloudOpenMessages(agent.agentId, agent.targetId));
   retry?.addEventListener("click", async () => {
     retry.disabled = true;
-    await window.domo.cloudRetryFailed(agent.agentId);
+    await window.domo.cloudRetryFailed(agent.agentId, agent.targetId);
     await redraw();
   });
   return el("div", { class: "entity-row cloud-agent-row", attrs: { "data-cloud-agent-id": agent?.agentId ?? row?.agentId ?? "" } }, [

@@ -1259,10 +1259,39 @@ describe("CloudAgentState self-hosted target", () => {
     await state.refresh();
     calls.length = 0;
 
-    await state.remove("agent_local");
+    await state.remove("agent_local", LOCAL_TARGET_ID);
 
     expect(calls).toContain("delete@local:agent_local");
     expect(calls).not.toContain("delete@plow:agent_local");
+  });
+
+  it("a local agent named like a Plow agent cannot divert the Plow delete", async () => {
+    // `agent-mgr` answers with the NAME its owner typed, so a local agent CAN
+    // be called exactly what a Plow agent_id is called. Keyed on the raw id,
+    // the local row overwrote the Plow one and the Plow removal followed it to
+    // the self-host — deleting a different machine's agent.
+    const collision = "agent_1";
+    const { state, calls, home } = build({
+      listAgentsFor: async (targetId) => [
+        agent({ agentId: collision, name: targetId === BUILTIN_TARGET_ID ? "Cloud" : "Local" }),
+      ],
+    });
+    withHost(home);
+    await state.refresh();
+
+    // BOTH survive the merge: identity is host + id, so neither overwrites.
+    expect(state.state().cloudAgents.map((row) => `${row.targetId}:${row.name}`).sort())
+      .toEqual(["local:Local", "plow:Cloud"]);
+
+    calls.length = 0;
+    await state.remove(collision, BUILTIN_TARGET_ID);
+
+    expect(calls).toContain("delete@plow:agent_1");
+    expect(calls).not.toContain("delete@local:agent_1");
+    // The self-hosted one is untouched and still on screen. (The fake host
+    // keeps re-listing the Plow agent, so this asserts the survivor rather
+    // than the removal.)
+    expect(state.state().cloudAgents.some((row) => row.targetId === LOCAL_TARGET_ID)).toBe(true);
   });
 
   // One policy, one table: what a host address may be, and what it becomes.

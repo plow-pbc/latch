@@ -48,7 +48,7 @@ import { migrateLegacyHome } from "./migrateHome.js";
 import { buildMinter, vendorDirs } from "./providerWiring.js";
 import { resolveInstancePaths } from "./paths.js";
 import { loadSettings, saveSettings, useCredentialCodec, WindowBounds } from "./settings.js";
-import { PlowApi, PlowApiError, relaySocketUrl, resolveApiBaseUrl } from "./plowApi.js";
+import { PlowApi, PlowApiError, relaySocketUrl, resolveApiBaseUrl, BUILTIN_TARGET_ID} from "./plowApi.js";
 import { Onboarding } from "./onboarding.js";
 import { ConnectClient } from "./connectClient.js";
 import { CloudAgentsClient } from "./cloudAgents.js";
@@ -657,8 +657,11 @@ ipcMain.handle("connect:create", async (_e, name: string) => {
  * The roster is re-read afterwards because the credential row, if there was
  * one, is gone with it.
  */
-ipcMain.handle("cloud:remove", async (_e, agentId: string) => {
-  await cloudAgents?.remove(agentId);
+ipcMain.handle("cloud:remove", async (_e, agentId: string, targetId?: unknown) => {
+  // The HOST comes with the id. An agent's identity is the pair — `agent-mgr`
+  // uses the name its owner typed, so a bare id could name a row on either
+  // machine and a DELETE is not something to guess about.
+  await cloudAgents?.remove(agentId, typeof targetId === "string" ? targetId : undefined);
   await connectClient?.refreshRoster();
   return agentsTabState();
 });
@@ -704,8 +707,8 @@ ipcMain.handle("cloud:retryLineFlow", async () => {
   await connectClient?.refreshRoster();
   return agentsTabState();
 });
-ipcMain.handle("cloud:retryFailed", async (_e, agentId: string) => {
-  await cloudAgents?.retryFailed(agentId);
+ipcMain.handle("cloud:retryFailed", async (_e, agentId: string, targetId?: unknown) => {
+  await cloudAgents?.retryFailed(agentId, typeof targetId === "string" ? targetId : undefined);
   await connectClient?.refreshRoster();
   return agentsTabState();
 });
@@ -714,13 +717,14 @@ ipcMain.handle("cloud:changeLine", async (_e, input: unknown) => {
   await cloudAgents?.changeLine({
     agentId: typeof raw.agentId === "string" ? raw.agentId : "",
     lineUid: raw.lineUid === null ? null : typeof raw.lineUid === "string" ? raw.lineUid : "",
+    ...(typeof raw.targetId === "string" ? { targetId: raw.targetId } : {}),
   });
   await connectClient?.refreshRoster();
   return agentsTabState();
 });
-ipcMain.handle("cloud:openMessages", async (_e, agentId?: unknown) => {
+ipcMain.handle("cloud:openMessages", async (_e, agentId?: unknown, targetId?: unknown) => {
   const url = typeof agentId === "string"
-    ? cloudAgents?.agentSmsUrl(agentId)
+    ? cloudAgents?.agentSmsUrl(agentId, typeof targetId === "string" ? targetId : undefined)
     : cloudAgents?.createSmsUrl();
   if (!url) return false;
   await shell.openExternal(url);
@@ -1408,8 +1412,12 @@ app.whenReady().then(async () => {
     isConnected: () => connected,
     // Through the state that owns the agent's poll, row and settings — not the
     // raw client, which would leave all three behind.
+    // A credential row belongs to PLOW by construction — it comes from
+    // `/v1/api-keys`, which only Plow serves — so it is named explicitly
+    // rather than left to a default that a same-named local agent could have
+    // shadowed.
     removeCloudAgent: async (agentId: string) => {
-      await cloudAgents?.remove(agentId);
+      await cloudAgents?.remove(agentId, BUILTIN_TARGET_ID);
     },
     signOutThisMac,
     onChange: () => notifyRenderer("connect:changed"),
