@@ -99,11 +99,6 @@ function secItemEligible(): boolean {
   }
 }
 
-function safeStorageEligible(): boolean {
-  const forced = process.env.DOMO_VAULT_KEY_PROVIDER;
-  return forced ? forced === "safestorage" : true;
-}
-
 export class VaultKeyStore {
   private readonly file: string;
   private readonly account: string;
@@ -212,7 +207,7 @@ export class VaultKeyStore {
       this.writeBlob(M_SECITEM, Buffer.from(JSON.stringify({ account })));
       return;
     }
-    const s = safeStorageEligible() ? safeStorage() : null;
+    const s = safeStorage();
     if (s) {
       this.writeBlob(M_SAFESTORAGE, s.encryptString(hex));
       return;

@@ -432,8 +432,10 @@ requires a separate, single-use owner payment approval, consumed from plow's
 returns `approved`, and any other answer — not approved, a non-2xx, an
 unreachable service, or no client wired — blocks fail-closed** → the broker's
 `getField` against the **device-observed** frame URL (its own item/site check
-applies, by label-suffix host match — no PSL, same rule as everywhere else in
-this repo; credit cards deliberately pass it — they are meant for any
+applies, by label-suffix host match whose root is checked against the pinned
+Public Suffix List — the one PSL use in this repo, because here the code
+infers site relatedness on its own rather than matching an owner-approved
+pattern; credit cards deliberately pass the check — they are meant for any
 merchant) → a frame-targeted fill → the value is dropped. Secret
 values never traverse MCP, never appear in the results these tools return, and
 never appear in either audit log. **Scope of that guarantee:** it covers what

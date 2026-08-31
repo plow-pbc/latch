@@ -7,8 +7,9 @@
  * encryption key to the OS (Keychain on macOS, under the frozen identity in
  * vaultKeychain.ts) — so the password on disk is ciphertext. Outside Electron
  * (tests) it falls back to a file only the user can read, because there is
- * nothing better available there. Nothing writes a NEW account any more;
- * `write` survives for the tests that build legacy vaults to migrate.
+ * nothing better available there. Read-only by design: nothing writes an
+ * account any more — tests that build legacy vaults write the plaintext
+ * fallback file themselves.
  */
 import fs from "node:fs";
 import path from "node:path";
@@ -75,27 +76,6 @@ export class VaultSecretStore {
     } catch {
       // A file that exists and will not decrypt is locked, never empty.
       return { status: "locked", reason: "undecryptable" };
-    }
-  }
-
-  /**
-   * The account, or null when there is not one we can read. Anything wanting
-   * to TELL locked and empty apart asks `readState` — migration does, because
-   * a locked legacy account must halt it rather than read as "nothing there".
-   */
-  read(): VaultAccount | null {
-    const state = this.readState();
-    return state.status === "ok" ? state.account : null;
-  }
-
-  write(account: VaultAccount): void {
-    fs.mkdirSync(path.dirname(this.file), { recursive: true, mode: 0o700 });
-    const s = safeStorage();
-    const body = JSON.stringify(account);
-    if (s) {
-      fs.writeFileSync(this.file, Buffer.concat([Buffer.from("ENC1"), s.encryptString(body)]), { mode: 0o600 });
-    } else {
-      fs.writeFileSync(this.file, body, { mode: 0o600 });
     }
   }
 }

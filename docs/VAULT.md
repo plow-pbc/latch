@@ -153,9 +153,11 @@ re-read through another:
 3. **`KRAW1` — a 0600 file** (tests, anything with neither). The key itself,
    hex. Hermetic by construction — this is the provider vitest exercises.
 
-`DOMO_VAULT_KEY_PROVIDER=secitem|safestorage|file` forces a provider, for
-diagnostics and tests. The Keychain **account** name is the branch-suffixed
-instance identity, so two worktree checkouts never share a key.
+The Keychain **account** name starts from the branch-suffixed instance
+identity, so two worktree checkouts never share a key. (There is deliberately
+no environment override for the provider: an env var that can steer a
+packaged app's key into the plain file provider is a downgrade lever, not a
+diagnostic.)
 
 Three states, kept strictly apart (the distinction is load-bearing — see the
 rename incident in DESIGN.md §11a-i): **empty** (no blob — fine, a fresh
@@ -217,8 +219,13 @@ The broker's own rules, applied on top of the session gates:
 
 - **A login belongs to its site.** With a page URL present, a login releases
   only when the page's host and a stored URL's host match by **label
-  suffix** (`www.chase.com` ↔ `chase.com`, either direction; no public-suffix
-  list, the repo's convention). A login storing *no* site is refused
+  suffix** (`www.chase.com` ↔ `chase.com`, either direction), and the shorter
+  host must be a registrable domain by the pinned Public Suffix List — a
+  login stored for `co.uk` or `github.io` must not release on every site
+  under it. This is the repo's ONE PSL use: session-grant origin patterns
+  are owner-approved literals and stay PSL-free (DESIGN.md §11a); this
+  comparison is the code inferring relatedness on its own, which is what the
+  old broker used its PSL for too. A login storing *no* site is refused
   outright — "no sites" must never mean "every site". Cards, identities and
   notes are not site-bound by nature and release anywhere (cards are for any
   merchant); the audit line records the page, or `SEM-URL` when no page bound
@@ -284,6 +291,13 @@ legacy vault does (`db.sqlite3` + `vault-account.enc`):
    exists and `items.json` does not, accepting an existing key only when it
    equals the derived legacy user key (a different key halts it — that key
    belongs to some other vault).
+
+Migration also refuses, before cloning, while any legacy vault server whose
+`DATA_FOLDER` is this vault directory is alive (matched through the process
+environment, so a sibling checkout's server never false-positives) — live,
+owned or orphaned, it is a concurrent writer whose WAL checkpoint could leave
+the clone silently missing committed credentials. The app's startup reaper
+kills orphans and WAITS for their exit for the same reason.
 
 What counts as a legacy vault: a database WITH an account row in it. The old
 server created `db.sqlite3` at startup, before its account bootstrap, so an

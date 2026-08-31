@@ -24,6 +24,7 @@ import { promisify } from "node:util";
 import { Intent } from "@domo/protocol";
 import {
   ApprovalStore,
+  LEGACY_VAULT_SERVER_FRAGMENTS,
   DeviceAgent,
   PaymentApprovalClient,
   PaymentApprovalRequest,
@@ -1285,7 +1286,7 @@ app.whenReady().then(async () => {
   // only a process whose parent is launchd — a vault server still OWNED by a
   // live pre-cutover app (a sibling worktree's `just app`) has that app as
   // its parent and is left alone.
-  reapOrphanedLegacyVaultServers();
+  await reapOrphanedLegacyVaultServers();
   // Packaged: the browser runtime lives in Contents/Resources/browser-runtime
   // (extraResources). In dev the resolver falls back to the repo's vendor/.
   device = new DeviceAgent(
@@ -1768,8 +1769,9 @@ function simulatedUpdater(value: string): SimulatedUpdater {
  * sibling checkout's still-owned server. Best-effort: a sweep that cannot run
  * must not stop the app.
  */
-function reapOrphanedLegacyVaultServers(): void {
-  for (const fragment of ["browser-runtime/vault-server/", "/vendor/vault-server/"]) {
+async function reapOrphanedLegacyVaultServers(): Promise<void> {
+  const targets: number[] = [];
+  for (const fragment of LEGACY_VAULT_SERVER_FRAGMENTS) {
     let pids: string[] = [];
     try {
       pids = execFileSync("/usr/bin/pgrep", ["-U", String(process.getuid?.() ?? 0), "-f", fragment], { encoding: "utf8" })
@@ -1783,11 +1785,47 @@ function reapOrphanedLegacyVaultServers(): void {
         const ppid = execFileSync("/bin/ps", ["-o", "ppid=", "-p", pid], { encoding: "utf8" }).trim();
         if (ppid !== "1") continue;
         process.kill(Number(pid), "SIGTERM");
-        console.log(`[vault] terminated orphaned legacy vaultwarden (pid ${pid})`);
+        targets.push(Number(pid));
+        console.log(`[vault] terminating orphaned legacy vaultwarden (pid ${pid})`);
       } catch {
         /* raced its own exit, or not ours to signal — either way, done */
       }
     }
+  }
+  if (targets.length === 0) return;
+  // WAIT for the exits: a SIGTERM'd server checkpoints its WAL on the way
+  // out, and migration cloning the database beside that checkpoint can
+  // silently lose committed credentials. TERM gets a grace period, then KILL
+  // — a killed server leaves its WAL un-truncated, which sqlite recovery
+  // handles; only a LIVE writer is dangerous. Migration itself also refuses
+  // while any server on this data dir is alive (vaultMigrate.ts), so even a
+  // survivor here cannot corrupt anything — it just defers migration.
+  const alive = (pid: number) => {
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  const waitGone = async (deadlineMs: number) => {
+    const until = Date.now() + deadlineMs;
+    while (Date.now() < until && targets.some(alive)) {
+      await new Promise((r) => setTimeout(r, 100));
+    }
+  };
+  await waitGone(4_000);
+  for (const pid of targets.filter(alive)) {
+    try {
+      process.kill(pid, "SIGKILL");
+      console.log(`[vault] SIGKILLed legacy vaultwarden that ignored SIGTERM (pid ${pid})`);
+    } catch {
+      /* exited in between */
+    }
+  }
+  await waitGone(2_000);
+  for (const pid of targets.filter(alive)) {
+    console.warn(`[vault] legacy vaultwarden pid ${pid} survived SIGKILL; migration will refuse while it lives`);
   }
 }
 

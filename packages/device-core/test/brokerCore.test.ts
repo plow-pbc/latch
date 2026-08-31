@@ -121,6 +121,33 @@ describe("BrokerCore", () => {
 });
 
 describe("hostsRelated", () => {
+  it("refuses a suffix relation whose root is a PUBLIC suffix", () => {
+    // A login stored for `co.uk` must not release on every site under co.uk:
+    // label-suffix logic alone cannot tell a public suffix from somebody's
+    // domain, so the suffix branch is gated on the pinned PSL — the private
+    // section too (github.io is as public as co.uk). Exact matches stay
+    // PSL-free so localhost and bare-IP fills keep working.
+    expect(hostsRelated("co.uk", "attacker.co.uk")).toBe(false);
+    expect(hostsRelated("github.io", "victim.github.io")).toBe(false);
+    expect(hostsRelated("co.uk", "co.uk")).toBe(true); // exact stays exact
+    expect(hostsRelated("localhost", "localhost")).toBe(true);
+  });
+
+  it("still refuses a public-suffix login at the release gate itself", async () => {
+    const dir = tempDir();
+    const keyStore = new VaultKeyStore(dir, "test");
+    const vault = new LocalVault(dir, keyStore);
+    const login = await vault.save({
+      type: "login", name: "Oops", urls: ["co.uk"], username: "x", password: "pw-oops",
+    });
+    const broker = new BrokerCore({ dir, store: new VaultStore(dir), keyStore });
+    expect(() => broker.getField(login.id, "password", "https://attacker.co.uk/login")).toThrow(
+      /belongs to co\.uk/,
+    );
+    // The exact host still releases — the item is odd, not unusable.
+    expect(broker.getField(login.id, "password", "https://co.uk/").value).toBe("pw-oops");
+  });
+
   it("matches equal hosts and dot-suffix relations only", () => {
     expect(hostsRelated("pizza.example", "pizza.example")).toBe(true);
     expect(hostsRelated("www.pizza.example", "pizza.example")).toBe(true);

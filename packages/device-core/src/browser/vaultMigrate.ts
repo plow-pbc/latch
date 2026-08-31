@@ -30,6 +30,44 @@ import { VaultStore } from "./vaultStore.js";
 
 const SQLITE = "/usr/bin/sqlite3";
 
+/** The argv fragments that identify OUR OWN old vault server and nothing
+ * else: the packaged payload path and the from-source vendor path. Shared
+ * with the startup reaper in the app. */
+export const LEGACY_VAULT_SERVER_FRAGMENTS = ["browser-runtime/vault-server/", "/vendor/vault-server/"];
+
+/**
+ * Pids of live legacy vault servers serving THIS vault directory — matched by
+ * the DATA_FOLDER in their environment (`ps eww` shows it for our own
+ * processes), so a sibling checkout's server on a different home can never
+ * false-positive. Live means live: owned or orphaned alike, because either
+ * one is a concurrent WRITER of the database migration is about to clone.
+ */
+export function liveLegacyVaultServerPids(dir: string): number[] {
+  const pids = new Set<number>();
+  for (const fragment of LEGACY_VAULT_SERVER_FRAGMENTS) {
+    try {
+      const out = execFileSync("/usr/bin/pgrep", ["-U", String(process.getuid?.() ?? 0), "-f", fragment], {
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      for (const line of out.split("\n")) if (line.trim()) pids.add(Number(line.trim()));
+    } catch {
+      /* pgrep exits nonzero when nothing matches */
+    }
+  }
+  const marker = `DATA_FOLDER=${dir}`;
+  return [...pids].filter((pid) => {
+    try {
+      return execFileSync("/bin/ps", ["eww", "-o", "command=", "-p", String(pid)], {
+        encoding: "utf8",
+        stdio: ["ignore", "pipe", "pipe"],
+      }).includes(marker);
+    } catch {
+      return false; // raced its own exit
+    }
+  });
+}
+
 /** Where each type keeps its body inside a cipher — including type 5, which
  * this app's forms refuse but a migrated vault may hold. */
 const BODY_KEY: Record<number, string> = { 1: "login", 2: "secureNote", 3: "card", 4: "identity", 5: "sshKey" };
@@ -83,6 +121,17 @@ export function legacyVaultPresent(dir: string): boolean {
  */
 export function migrateLegacyVault(dir: string, keyStore: VaultKeyStore, store: VaultStore): void {
   if (store.exists() || !legacyVaultPresent(dir)) return;
+
+  // A live old server is a concurrent WRITER of the database about to be
+  // cloned: a clone taken beside its WAL checkpoint can silently omit
+  // committed credentials, and items.json is the permanent marker. Refuse —
+  // owned or orphaned alike (an old app still running through a manual
+  // upgrade never took the single-instance lock).
+  if (liveLegacyVaultServerPids(dir).length > 0) {
+    throw new Error(
+      "the old vault's server is still running; quit any previous Plow Latch (its server dies with it) and try again — nothing was migrated",
+    );
+  }
 
   const secretState = new VaultSecretStore(dir).readState();
   if (secretState.status !== "ok") {

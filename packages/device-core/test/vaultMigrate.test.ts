@@ -16,8 +16,8 @@ import { encryptCipher, splitKey, Cipher } from "../src/browser/vaultItems.js";
 import { BrokerCore } from "../src/browser/brokerCore.js";
 import { LocalVault } from "../src/browser/localVault.js";
 import { VaultKeyStore } from "../src/browser/vaultKeyStore.js";
-import { legacyVaultPresent, migrateLegacyVault } from "../src/browser/vaultMigrate.js";
-import { VaultSecretStore } from "../src/browser/vaultSecretStore.js";
+import { legacyVaultPresent, liveLegacyVaultServerPids, migrateLegacyVault } from "../src/browser/vaultMigrate.js";
+import { VaultAccount } from "../src/browser/vaultSecretStore.js";
 import { VaultStore } from "../src/browser/vaultStore.js";
 
 const cleanups: (() => void)[] = [];
@@ -44,6 +44,13 @@ interface LegacyFixture {
   dir: string;
   userKey: Buffer;
   rows: Cipher[];
+}
+
+/** The plaintext legacy account file, exactly as the old stack's test-tier
+ * fallback wrote it. Written directly: production no longer writes accounts. */
+function writeLegacyAccount(dir: string, account: VaultAccount): void {
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  fs.writeFileSync(path.join(dir, "vault-account.enc"), JSON.stringify(account), { mode: 0o600 });
 }
 
 /** One INSERT for a cipher row built by encryptCipher. Vaultwarden's rule:
@@ -76,13 +83,13 @@ function legacyVault(
   const password = crypto.randomBytes(24).toString("base64url");
   if (opts.pendingTakes) {
     // The current pair is the superseded one; only `pending` opens the key.
-    new VaultSecretStore(dir).write({
+    writeLegacyAccount(dir, {
       email,
       password: crypto.randomBytes(24).toString("base64url"),
       pending: { email, password },
     });
   } else {
-    new VaultSecretStore(dir).write({ email, password });
+    writeLegacyAccount(dir, { email, password });
   }
 
   const derived = masterKeys(email, password);
@@ -299,9 +306,41 @@ describe("migrateLegacyVault", () => {
     expect(await vault.reveal(rows[0].id!, "password")).toBe("hunter2");
   });
 
+  it("refuses to migrate while a legacy server is still WRITING this database", async () => {
+    // A live vaultwarden — owned or orphaned — is a concurrent writer of the
+    // database migration clones; a clone taken beside its WAL checkpoint can
+    // silently omit committed credentials, and items.json is permanent. The
+    // decoy is any process whose argv carries our payload-path fragment and
+    // whose env names THIS data dir, which is exactly how the guard looks.
+    const { dir } = legacyVault();
+    const decoyDir = path.join(tempDir(), "vendor", "vault-server");
+    fs.mkdirSync(decoyDir, { recursive: true });
+    const decoyScript = path.join(decoyDir, "decoy.cjs");
+    fs.writeFileSync(decoyScript, "setInterval(() => {}, 1000);\n");
+    const { spawn } = await import("node:child_process");
+    const decoy = spawn(process.execPath, [decoyScript], {
+      env: { ...process.env, DATA_FOLDER: dir },
+      stdio: "ignore",
+    });
+    try {
+      await new Promise((r) => setTimeout(r, 200)); // let it register
+      expect(liveLegacyVaultServerPids(dir)).toContain(decoy.pid);
+      const keyStore = new VaultKeyStore(dir, "test");
+      expect(() => migrateLegacyVault(dir, keyStore, new VaultStore(dir))).toThrow(/still running/);
+      expect(keyStore.state()).toEqual({ status: "empty" });
+      expect(new VaultStore(dir).exists()).toBe(false);
+    } finally {
+      decoy.kill("SIGKILL");
+    }
+    // Gone means migratable: the same vault opens once the writer is dead.
+    await new Promise((r) => setTimeout(r, 200));
+    migrateLegacyVault(dir, new VaultKeyStore(dir, "test"), new VaultStore(dir));
+    expect(new VaultStore(dir).exists()).toBe(true);
+  });
+
   it("refuses a database that does not contain the saved account", () => {
     const { dir } = legacyVault();
-    new VaultSecretStore(dir).write({ email: "somebody-else@local", password: "pw" });
+    writeLegacyAccount(dir, { email: "somebody-else@local", password: "pw" });
     expect(() => migrateLegacyVault(dir, new VaultKeyStore(dir, "test"), new VaultStore(dir))).toThrow(
       /saved account is not in the old vault database/,
     );

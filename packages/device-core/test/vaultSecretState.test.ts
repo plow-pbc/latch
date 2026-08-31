@@ -12,7 +12,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { VaultSecretStore } from "../src/browser/vaultSecretStore.js";
+import { VaultAccount, VaultSecretStore } from "../src/browser/vaultSecretStore.js";
 import { readCredentialsState } from "../src/browser/vaultCredentials.js";
 
 const cleanups: (() => void)[] = [];
@@ -26,6 +26,10 @@ function tempDir(): string {
   return dir;
 }
 
+function writeLegacyAccount(dir: string, account: VaultAccount): void {
+  fs.writeFileSync(path.join(dir, "vault-account.enc"), JSON.stringify(account), { mode: 0o600 });
+}
+
 describe("VaultSecretStore.readState", () => {
   it("is empty when no account has ever been written", () => {
     expect(new VaultSecretStore(tempDir()).readState()).toEqual({ status: "empty" });
@@ -33,7 +37,7 @@ describe("VaultSecretStore.readState", () => {
 
   it("is ok, and readable, for a plaintext account", () => {
     const dir = tempDir();
-    new VaultSecretStore(dir).write({ email: "a@local", password: "pw" });
+    writeLegacyAccount(dir, { email: "a@local", password: "pw" });
     expect(new VaultSecretStore(dir).readState()).toEqual({
       status: "ok",
       account: { email: "a@local", password: "pw" },
@@ -54,11 +58,6 @@ describe("VaultSecretStore.readState", () => {
     expect(new VaultSecretStore(dir).readState()).toEqual({ status: "locked", reason: "undecryptable" });
   });
 
-  it("read() still reports null for both, because bootstrap depends on it", () => {
-    const dir = tempDir();
-    fs.writeFileSync(path.join(dir, "vault-account.enc"), Buffer.concat([Buffer.from("ENC1"), Buffer.from("x")]));
-    expect(new VaultSecretStore(dir).read()).toBeNull();
-  });
 });
 
 describe("readCredentialsState", () => {
@@ -88,7 +87,7 @@ describe("readCredentialsState", () => {
     // quietly mints a fresh vault beside the owner's real one.
     expect(readCredentialsState(dir)).toEqual({ status: "locked", reason: "no-storage" });
 
-    new VaultSecretStore(dir).write({ email: "a@local", password: "pw" });
+    writeLegacyAccount(dir, { email: "a@local", password: "pw" });
     expect(readCredentialsState(dir)).toEqual({ status: "ok" });
   });
 
