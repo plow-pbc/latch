@@ -22,6 +22,12 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+// The REAL encoder, not a second spelling of `targetId + NUL + agentId`.
+import { rowKey } from "../dist/cloudAgentMapper.js";
+import { BUILTIN_TARGET_ID } from "../dist/plowApi.js";
+
+/** A Plow row key. Roster metadata is Plow's, so its host always is. */
+const plowKey = (agentId) => rowKey(BUILTIN_TARGET_ID, agentId);
 import { clickText, failLoudly, shootScreens, shotWindow, waitFor } from "./screenshot-harness.mjs";
 
 const dir = path.dirname(fileURLToPath(import.meta.url));
@@ -39,12 +45,9 @@ const TRIP_CHAT_TITLE = "+1 628-555-0144 · You";
 
 const home = fs.mkdtempSync(path.join(os.tmpdir(), "connect-shot-"));
 
-/** A Plow row's key, the shape `cloudAgentMapper` builds. */
-const plowKey = (agentId) => `plow\u0000${agentId}`;
-
 const ACTIVE_AGENT = {
   rowKey: plowKey("cag_groceries"),
-  rowKey: `plow\u0000cag_groceries`,
+  rowKey: plowKey("cag_groceries"),
   agentId: "cag_groceries",
   name: "Household helper",
   line: { uid: "lin_willow", label: "Willow · +1 415-555-0142" },
@@ -57,7 +60,7 @@ const ACTIVE_AGENT = {
 };
 const PROVISIONING_AGENT = {
   rowKey: plowKey("cag_trip"),
-  rowKey: `plow\u0000cag_trip`,
+  rowKey: plowKey("cag_trip"),
   agentId: "cag_trip",
   name: "Trip planner",
   line: { uid: "lin_trip", label: "+1 628-555-0144" },
@@ -87,7 +90,7 @@ const ROSTER = {
     {
       id: 201, name: ACTIVE_AGENT.name, kind: "Agent",
       createdAt: "2026-08-24T18:00:00.000Z", lastSeenAt: new Date(Date.now() - 4 * 60_000).toISOString(),
-      rowKey: `plow\u0000${ACTIVE_AGENT.agentId}`,
+      rowKey: plowKey(ACTIVE_AGENT.agentId),
       agentId: ACTIVE_AGENT.agentId, chatUids: [], chatAccess: "none",
       permissions: { canReadAndReply: true, canReachMac: true, canSpendInference: true },
       isActive: true, isThisMac: false,
@@ -95,7 +98,7 @@ const ROSTER = {
     {
       id: 202, name: PROVISIONING_AGENT.name, kind: "Agent",
       createdAt: new Date().toISOString(), lastSeenAt: null,
-      rowKey: `plow\u0000${PROVISIONING_AGENT.agentId}`,
+      rowKey: plowKey(PROVISIONING_AGENT.agentId),
       agentId: PROVISIONING_AGENT.agentId, chatUids: ["chat_trip"], chatAccess: "listed",
       permissions: { canReadAndReply: true, canReachMac: false, canSpendInference: false },
       isActive: true, isThisMac: false,
@@ -290,7 +293,7 @@ async function setUp() {
     } else if (typeof input?.lineUid === "string") {
       const created = {
         rowKey: plowKey("cag_created"),
-        rowKey: `plow\u0000cag_created`,
+        rowKey: plowKey("cag_created"),
         agentId: "cag_created",
         name: input.name || "Cloud agent",
         line: { uid: input.lineUid, label: "Ash · +1 415-555-0199" },
@@ -563,7 +566,7 @@ const SCREENS = [
         "the confirmed-code activation screen");
       const created = {
         rowKey: plowKey("cag_confirmed"),
-        rowKey: `plow\u0000cag_confirmed`,
+        rowKey: plowKey("cag_confirmed"),
         agentId: "cag_confirmed",
         name: "Cloud agent",
         line: { uid: "lin_new", label: "+1 415-555-0999" },
