@@ -1308,7 +1308,7 @@ app.whenReady().then(async () => {
         child.on("exit", () => {
           if (entry.stopped || caffeinated !== entry) return;
           caffeinated = null;
-          console.log("[keep-awake] caffeinate exited unexpectedly; reacquiring");
+          console.log("[keep-awake] caffeinate exited unexpectedly");
           keepAwake?.blockerLost(entry.child.pid!);
         });
         return child.pid;

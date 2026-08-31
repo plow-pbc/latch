@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { KeepAwake, KeepAwakeOptions, PowerSource } from "../src/keepAwake.js";
+import { KeepAwake, KeepAwakeOptions, PowerSource, SHORT_LIVED_HOLD_MS } from "../src/keepAwake.js";
 
 /**
  * Ported alongside keepAwake.ts from the Phoenix app's KeepMacAwakeTests: all
@@ -71,6 +71,7 @@ function harness(opts: { seeded?: boolean; power?: PowerSource; refuse?: boolean
   blocker.refuse = opts.refuse ?? false;
   const power = new FakePower(opts.power ?? "ac");
   const scheduler = new FakeScheduler();
+  const clock = { t: 0 };
   let stored = opts.seeded ?? false;
   const saves: boolean[] = [];
   const options: KeepAwakeOptions = {
@@ -82,9 +83,10 @@ function harness(opts: { seeded?: boolean; power?: PowerSource; refuse?: boolean
       saves.push(on);
     },
     schedule: scheduler.schedule,
+    now: () => clock.t,
   };
   const keepAwake = new KeepAwake(options);
-  return { keepAwake, blocker, power, scheduler, saves, stored: () => stored };
+  return { keepAwake, blocker, power, scheduler, clock, saves, stored: () => stored };
 }
 
 describe("KeepAwake", () => {
@@ -249,9 +251,63 @@ describe("KeepAwake", () => {
     expect(h.blocker.starts).toBe(1);
   });
 
+  it("persists the ask before touching the blocker", () => {
+    // A save that throws must leave the hold as it was — never a released
+    // hold with a stale true on disk resurrecting the block next launch.
+    const sequence: string[] = [];
+    const blocker = new FakeBlocker();
+    let stored = false;
+    const ka = new KeepAwake({
+      blocker: {
+        start: () => {
+          sequence.push("start");
+          return blocker.start();
+        },
+        stop: (id) => {
+          sequence.push("stop");
+          blocker.stop(id);
+        },
+      },
+      power: { current: () => "ac", subscribe: () => () => {} },
+      load: () => stored,
+      save: (on) => {
+        sequence.push(`save:${on}`);
+        stored = on;
+      },
+      schedule: new FakeScheduler().schedule,
+    });
+    ka.setEnabled(true);
+    ka.setEnabled(false);
+    expect(sequence).toEqual(["save:false", "save:true", "start", "save:false", "stop"]);
+  });
+
+  it("a save that throws while disabling leaves the hold in place", () => {
+    const blocker = new FakeBlocker();
+    let stored = false;
+    let explode = false;
+    const ka = new KeepAwake({
+      blocker,
+      power: { current: () => "ac", subscribe: () => () => {} },
+      load: () => stored,
+      save: (on) => {
+        if (explode) throw new Error("disk full");
+        stored = on;
+      },
+      schedule: new FakeScheduler().schedule,
+    });
+    ka.setEnabled(true);
+    explode = true;
+    expect(() => ka.setEnabled(false)).toThrow("disk full");
+    // Disk still says true and the hold still stands — consistent across a
+    // relaunch, instead of a released hold the file promises is held.
+    expect(stored).toBe(true);
+    expect(blocker.held).toBe(1);
+  });
+
   it("a lost hold is reacquired while it should stand", () => {
     const h = harness();
     h.keepAwake.setEnabled(true);
+    h.clock.t += SHORT_LIVED_HOLD_MS; // an established hold, not a young one
     h.keepAwake.blockerLost(1); // the id FakeBlocker handed out
     expect(h.blocker.starts).toBe(2);
     // The dead hold is forgotten, not released — nothing stops a pid that
@@ -273,6 +329,7 @@ describe("KeepAwake", () => {
   it("a hold lost on battery — inside the debounce window — is not reacquired", () => {
     const h = harness();
     h.keepAwake.setEnabled(true);
+    h.clock.t += SHORT_LIVED_HOLD_MS; // past the young-hold guard, so battery is the reason
     h.power.fire("battery");
     h.keepAwake.blockerLost(1);
     expect(h.blocker.starts).toBe(1);
@@ -289,9 +346,26 @@ describe("KeepAwake", () => {
     expect(h.blocker.held).toBe(0);
   });
 
+  it("a hold that dies young is not respawned, and the next transition retries", () => {
+    const h = harness();
+    h.keepAwake.setEnabled(true);
+    h.clock.t += SHORT_LIVED_HOLD_MS - 1;
+    h.keepAwake.blockerLost(1);
+    // No respawn: something is killing caffeinate on sight, and a per-exit
+    // reacquire would be a spawn loop.
+    expect(h.blocker.starts).toBe(1);
+    expect(h.keepAwake.isEnabled).toBe(true);
+    expect(h.stored()).toBe(true);
+    h.power.fire("battery");
+    h.scheduler.flush();
+    h.power.fire("ac");
+    expect(h.blocker.starts).toBe(2);
+  });
+
   it("a refused reacquire after a lost hold keeps the opt-in", () => {
     const h = harness();
     h.keepAwake.setEnabled(true);
+    h.clock.t += SHORT_LIVED_HOLD_MS;
     h.blocker.refuse = true;
     h.keepAwake.blockerLost(1);
     expect(h.keepAwake.isEnabled).toBe(true);

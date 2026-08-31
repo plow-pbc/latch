@@ -57,10 +57,17 @@ export interface KeepAwakeOptions {
    * promises a hold the OS refused. */
   save(enabled: boolean): void;
   schedule?: DebounceScheduler;
+  /** Clock for hold-age checks; the production default is Date.now. */
+  now?: () => number;
 }
 
 /** AC→battery debounce window (ms). */
 export const AC_TRANSITION_DEBOUNCE_MS = 750;
+
+/** A lost hold younger than this is not reacquired: something on this Mac is
+ * killing caffeinate on sight, and respawning per exit would be a spawn loop.
+ * The opt-in stands; the next toggle or power transition retries. */
+export const SHORT_LIVED_HOLD_MS = 5_000;
 
 const defaultScheduler: DebounceScheduler = (delayMs, work) => {
   const timer = setTimeout(work, delayMs);
@@ -73,10 +80,13 @@ export class KeepAwake {
   private readonly load: () => boolean;
   private readonly save: (enabled: boolean) => void;
   private readonly schedule: DebounceScheduler;
+  private readonly now: () => number;
 
   private enabled: boolean;
   private powerSource: PowerSource;
   private blockId: number | null = null;
+  /** When the current hold was acquired — the age check in blockerLost. */
+  private acquiredAt = 0;
   /** Cancel handle for the in-flight AC→battery debounce, if any. Cleared
    * when it fires, when an AC transition supersedes it, or by teardown. */
   private pendingDebounceCancel: (() => void) | null = null;
@@ -92,6 +102,7 @@ export class KeepAwake {
     this.load = options.load;
     this.save = options.save;
     this.schedule = options.schedule ?? defaultScheduler;
+    this.now = options.now ?? Date.now;
     // Power first, then the stored opt-in, then apply: the first reconcile
     // must see the real power state, or a seeded-true launch on battery would
     // briefly hold a blocker it has no business holding.
@@ -131,6 +142,13 @@ export class KeepAwake {
     if (this.tornDown) return;
     if (this.blockId !== id) return;
     this.blockId = null;
+    // A hold that died this young is being killed on sight, and reacquiring
+    // per exit would be a spawn loop. Treated like a refused acquire: the
+    // opt-in stands, and the next toggle or power transition retries.
+    if (this.now() - this.acquiredAt < SHORT_LIVED_HOLD_MS) {
+      console.log("[keep-awake] hold died young; not respawning until the next transition");
+      return;
+    }
     this.reconcile();
   }
 
@@ -149,10 +167,16 @@ export class KeepAwake {
   }
 
   /** Brings the held blocker in line with `enabled` + power source, reverting
-   * `enabled` on an acquire failure, then persists the outcome. */
+   * `enabled` on an acquire failure. Persists the ask BEFORE touching the
+   * blocker: a save that throws then leaves the hold as it was, instead of a
+   * released hold with a stale true on disk resurrecting the block on the
+   * next launch. The compensating write stays for a refused acquire. */
   private applyEnabled(): void {
-    if (!this.reconcile()) this.enabled = false;
     this.save(this.enabled);
+    if (!this.reconcile()) {
+      this.enabled = false;
+      this.save(this.enabled);
+    }
   }
 
   /** Drives the blocker toward `enabled && powerSource === "ac"`. Answers
@@ -166,6 +190,7 @@ export class KeepAwake {
         return false;
       }
       this.blockId = id;
+      this.acquiredAt = this.now();
     }
     if (!shouldHold && this.blockId !== null) this.release();
     return true;
