@@ -18,6 +18,7 @@ import {
 } from "../dist/settingsActions.js";
 import { loadSettings, saveSettings } from "../dist/settings.js";
 import { launchAtLoginState, setLaunchAtLogin } from "../dist/loginItem.js";
+import { KeepAwake } from "../dist/keepAwake.js";
 
 const dir = path.dirname(fileURLToPath(import.meta.url));
 const dist = path.join(dir, "../dist");
@@ -66,6 +67,18 @@ const loginItemApi = {
 };
 ipcMain.handle("launch:get", async () => launchAtLoginState(launchSupported, loginItemApi));
 ipcMain.handle("launch:set", async (_e, on) => setLaunchAtLogin(launchSupported, loginItemApi, on));
+// Keep Mac Awake: the REAL class over fakes, like Launch at Login above — a
+// blocker that always grants, AC power, an in-memory store. No caffeinate
+// child is ever spawned in the probe.
+let keepAwakeStored = false;
+const keepAwake = new KeepAwake({
+  blocker: { start: () => 1, stop: () => {} },
+  power: { current: () => "ac", subscribe: () => () => {} },
+  load: () => keepAwakeStored,
+  save: (on) => (keepAwakeStored = on),
+});
+ipcMain.handle("power:getKeepAwake", async () => ({ enabled: keepAwake.isEnabled }));
+ipcMain.handle("power:setKeepAwake", async (_e, on) => ({ enabled: keepAwake.setEnabled(!!on) }));
 // These four are the real handlers, running the real guards against real
 // on-disk settings. A signed-in Mac with no Anthropic key: Plow is usable and
 // selected, the Anthropic provider is not.
@@ -515,7 +528,7 @@ app.whenReady().then(async () => {
         return btns.length === 3 && arrowed.length === 2 && handoffs.length === 1 &&
           !handoffs[0].querySelector(".ext-arrow");
       })(),
-      // Launch at Login, in Capabilities: on this packaged-looking probe the
+      // Launch at Login, in Availability: on this packaged-looking probe the
       // toggle is live and unchecked, and the from-source note is hidden
       // (innerText omits hidden nodes).
       launchTitle: document.body.innerText.includes("Launch at Login"),
@@ -527,6 +540,18 @@ app.whenReady().then(async () => {
         return !!box && !box.disabled && !box.checked;
       })(),
       launchNoteHidden: !document.body.innerText.includes("from-source run"),
+      // Keep Mac Awake, beside it: off by default, and the toggle is live —
+      // the probe's blocker always grants, so a checked box would mean the
+      // renderer showed a state it never asked main for.
+      hasAvailabilityGroup: document.body.innerText.includes("Availability"),
+      awakeTitle: document.body.innerText.includes("Keep Mac Awake"),
+      awakeToggleLiveAndOff: (() => {
+        const box = [...document.querySelectorAll(".settings input")].find(
+          (i) => i.type === "checkbox" &&
+            (i.closest("label")?.textContent ?? "").includes("Keep this Mac awake while plugged in"),
+        );
+        return !!box && !box.disabled && !box.checked;
+      })(),
     };
   }})()`);
 
