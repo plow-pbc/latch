@@ -780,6 +780,10 @@ export async function renderVault(view, isCurrent = () => true) {
   // the previous tab's content on screen for the whole wait, so a stalled vault
   // read as "the Vault tab is broken" instead of "the vault has not answered
   // yet". The same `pane` is filled in below, so this costs one extra paint.
+  //
+  // This is the only mount: below, `pane` is already the node in `view`, and a
+  // render whose pane has since been replaced by a newer one is a render that
+  // must not put itself back on screen.
   pane.replaceChildren(masthead, el("div", { class: "col" }, [
     el("div", { class: "empty", text: "Opening the vault…" }),
   ]));
@@ -818,7 +822,6 @@ export async function renderVault(view, isCurrent = () => true) {
             : "The account file is present but cannot be opened. Usually that means the key is no longer in this Mac's Keychain — after a Keychain reset, a restore from backup, or a change to how the app identifies itself — and it can also mean the file itself is damaged. Either way the password cannot be recovered, here or anywhere: the vault would have to be set up again. Nothing has been deleted." })
         : null,
     ].filter(Boolean)));
-    view.replaceChildren(pane);
     return;
   }
 
@@ -850,5 +853,4 @@ export async function renderVault(view, isCurrent = () => true) {
     ]),
     el("div", { class: "toast" }),
   );
-  view.replaceChildren(pane);
 }

@@ -23,16 +23,22 @@ export function httpCa(caPath?: string): Buffer | undefined {
 }
 
 /**
- * How long the local vault gets to answer before a request is given up on.
+ * How long the local vault gets to answer before a read is given up on.
  *
- * Every vault call goes through `send`, and none of them is long work: the
- * server is on this Mac. Without this, a wedged vault — a suspended process, an
- * orphan from an earlier install still holding the port — was an await that
- * never settled, which surfaced to the owner as a Vault tab that simply never
- * opened. A timeout turns that into the error state the UI already knows how
- * to show.
+ * None of these calls is long work: the server is on this Mac. Without this, a
+ * wedged vault — a suspended process, an orphan from an earlier install still
+ * holding the port — was an await that never settled, which surfaced to the
+ * owner as a Vault tab that simply never opened. A timeout turns that into the
+ * error state the UI already knows how to show.
+ *
+ * Opt-in per request, and only the reads and the sign-in that opening the tab
+ * waits on take it. A write has no such deadline to offer: the vault can commit
+ * a registration or an item before `destroy()` rejects here, so timing one out
+ * would report a failure that did happen, and the retry would strand a second
+ * account or a duplicate item. Those wait for a real answer until the server
+ * can tell a retry from a new request.
  */
-export const VAULT_REQUEST_TIMEOUT_MS = 10_000;
+export const VAULT_READ_TIMEOUT_MS = 10_000;
 
 export function send(
   http: VaultHttp,
@@ -40,7 +46,7 @@ export function send(
   urlPath: string,
   body?: string,
   contentType = "application/json",
-  timeoutMs = VAULT_REQUEST_TIMEOUT_MS,
+  timeoutMs = 0,
 ): Promise<{ status: number; body: string }> {
   return new Promise((resolve, reject) => {
     const payload = body === undefined ? undefined : Buffer.from(body);
@@ -66,9 +72,11 @@ export function send(
     // `destroy(err)` surfaces as the `error` above, so a stall rejects with a
     // sentence rather than hanging. Covers a connect that never completes and a
     // response that stops mid-body alike.
-    req.setTimeout(timeoutMs, () =>
-      req.destroy(new Error(`the vault did not answer in ${Math.round(timeoutMs / 1000)}s`)),
-    );
+    if (timeoutMs > 0) {
+      req.setTimeout(timeoutMs, () =>
+        req.destroy(new Error(`the vault did not answer in ${Math.round(timeoutMs / 1000)}s`)),
+      );
+    }
     req.end(payload);
   });
 }
@@ -130,7 +138,15 @@ export async function signIn(http: VaultHttp, email: string, password: string) {
     deviceIdentifier: crypto.randomUUID(),
     deviceName: "domo",
   }).toString();
-  const res = await send(http, "POST", "/identity/connect/token", form, "application/x-www-form-urlencoded");
+  const res = await send(
+    http,
+    "POST",
+    "/identity/connect/token",
+    form,
+    "application/x-www-form-urlencoded",
+    // Signing in commits nothing, and opening the Vault tab waits on it.
+    VAULT_READ_TIMEOUT_MS,
+  );
   if (res.status !== 200) throw new Error(`vault sign-in failed (HTTP ${res.status})`);
   const t = JSON.parse(res.body) as { access_token: string; Key: string };
   http.token = t.access_token;
