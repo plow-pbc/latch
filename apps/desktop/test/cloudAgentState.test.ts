@@ -1278,12 +1278,35 @@ describe("CloudAgentState self-hosted target", () => {
     // renderer and the wire log like the rest. serve has no path to keep.
     ["a path", "http://192.168.15.12:8765/serve-token-abc"],
     ["even a one-segment path", "http://192.168.15.12:8765/api"],
+    // Cleartext to an address that routes across networks nobody here
+    // controls. No deployment needs it, and the bearer would be on the wire.
+    ["cleartext to a public host", "http://agents.example.com:8765"],
+    ["cleartext to a public IP", "http://93.184.216.34:8765"],
   ])("refuses %s", (_why, baseUrl) => {
     const { state } = build();
 
     expect(state.addTarget({ baseUrl, bearer: "t" })).toBe(false);
     expect(state.state().cloudActionError).toContain("isn't usable");
     expect(state.state().cloudTargets).toHaveLength(1);
+  });
+
+  it.each([
+    // Every address the owner can actually reach agent-mgr at: the LAN, the
+    // tailnet, the box's own name, and loopback.
+    ["a private LAN address", "http://192.168.15.12:8765", "http://192.168.15.12:8765"],
+    ["a 10/8 address", "http://10.0.0.5:8765", "http://10.0.0.5:8765"],
+    ["a tailnet address", "http://100.98.135.12:8765", "http://100.98.135.12:8765"],
+    ["a MagicDNS name", "http://slowdown.tail1234.ts.net", "http://slowdown.tail1234.ts.net"],
+    ["a bare hostname", "http://slowdown:8765", "http://slowdown:8765"],
+    ["an mDNS name", "http://slowdown.local:8765", "http://slowdown.local:8765"],
+    ["loopback", "http://127.0.0.1:8765", "http://127.0.0.1:8765"],
+    // And https anywhere, because the bearer is not on the wire.
+    ["https to a public host", "https://agents.example.com", "https://agents.example.com"],
+  ])("accepts %s", (_why, typed, stored) => {
+    const { state, home } = build();
+
+    expect(state.addTarget({ baseUrl: typed, bearer: "t" })).toBe(true);
+    expect(loadSettings(home).agentTarget?.baseUrl).toBe(stored);
   });
 
   it("refuses a host with no token", () => {
@@ -1302,8 +1325,9 @@ describe("CloudAgentState self-hosted target", () => {
     // Case and a default port are the same machine. A regex that only trims
     // slashes could not collapse these.
     expect(loadSettings(home).agentTarget).toEqual({ baseUrl: HOST, bearer: "t" });
-    expect(state.addTarget({ baseUrl: "http://PLOW.example:80", bearer: "t" })).toBe(true);
-    expect(loadSettings(home).agentTarget?.baseUrl).toBe("http://plow.example");
+    // Case folded and a default port dropped, so these are one machine too.
+    expect(state.addTarget({ baseUrl: "http://SLOWDOWN.local:80", bearer: "t" })).toBe(true);
+    expect(loadSettings(home).agentTarget?.baseUrl).toBe("http://slowdown.local");
   });
 
   it("re-entering the same host rotates its token and keeps its rows", async () => {

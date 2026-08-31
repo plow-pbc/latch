@@ -1026,8 +1026,9 @@ function cloudHostFieldNodes(state, modal, redraw) {
         baseUrl,
         el("p", {
           class: "faint conn-note",
-          text: "Where agent-mgr serve is listening — reachable from this Mac. " +
-            "Over plain http:// the token is sent in the clear, so use a network you trust.",
+          text: "Where agent-mgr serve is listening — a LAN, tailnet or .local " +
+            "address. Over plain http:// the token is sent in the clear on that " +
+            "network, so a public address has to be https://.",
         }),
       ]),
       el("div", { class: "field" }, [el("label", { text: "Host token" }), bearer]),

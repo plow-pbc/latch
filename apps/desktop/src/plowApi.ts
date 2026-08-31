@@ -130,13 +130,21 @@ export function normalizeApiBaseUrl(raw: string): ApiBaseUrl {
  *   in a URL wearing a different hat. `agent-mgr serve` binds a host and a
  *   port and serves `/v1/...` from the root, so there is no path to keep.
  *
- * **Plaintext `http://` to a host that is not loopback is allowed**, and that
- * is a deliberate accepted risk rather than an oversight: `agent-mgr serve`
- * speaks plain HTTP, and the hosts this exists for are reached over a LAN or
- * tailnet address. Refusing them would reject the only deployment this
- * feature has. The bearer is a per-host serve token — not the Mac's Plow
- * session — so the blast radius of someone sniffing that segment is that one
- * host, and the form says so where the address is typed.
+ * **Plaintext `http://` is allowed only where the network is already local**
+ * — loopback, a private or carrier-grade IPv4 range, an IPv6 unique-local or
+ * link-local address, a bare hostname, or a `.local`/`.internal`/`.lan`/
+ * `.ts.net` name. Everything else must be `https://`.
+ *
+ * Both halves of that matter. `agent-mgr serve` speaks plain HTTP and the
+ * hosts this exists for are reached at a LAN or tailnet address, so refusing
+ * cleartext outright would reject every deployment this feature has. But a
+ * bearer sent unencrypted to a PUBLIC address is a different thing entirely:
+ * it crosses networks nobody here controls, and no deployment needs it. The
+ * split keeps the first and closes the second.
+ *
+ * What remains is the LAN segment itself, which is an accepted risk named
+ * where the address is typed: the token is that host's own serve token, not
+ * the Mac's Plow session, so sniffing it reaches one box.
  */
 export function canonicalAgentHostUrl(raw: string): ApiBaseUrl | null {
   let url: URL;
@@ -148,9 +156,42 @@ export function canonicalAgentHostUrl(raw: string): ApiBaseUrl | null {
   if (url.protocol !== "http:" && url.protocol !== "https:") return null;
   if (url.username || url.password || url.search || url.hash) return null;
   if (url.pathname !== "/") return null;
+  if (url.protocol === "http:" && !isLocalHostname(url.hostname)) return null;
   // The origin and nothing else — `URL` has already lowercased the host and
   // dropped a default port, so this is the one spelling of this machine.
   return url.origin;
+}
+
+/**
+ * Is this a name that can only resolve on a network the owner is already on?
+ *
+ * The test for whether cleartext is defensible. Deliberately a NAME test and
+ * not a reachability one: what matters is that the address cannot route across
+ * the public internet, which is decidable here, rather than where the packet
+ * actually goes, which is not.
+ *
+ * `URL` gives IPv6 hostnames in brackets, so they are unwrapped first.
+ */
+function isLocalHostname(hostname: string): boolean {
+  const host = hostname.toLowerCase().replace(/^\[|\]$/g, "");
+  if (host === "localhost" || host === "::1") return true;
+  // IPv6 unique-local (fc00::/7) and link-local (fe80::/10).
+  if (/^f[cd][0-9a-f]{2}:/.test(host) || /^fe[89ab][0-9a-f]:/.test(host)) return true;
+  const v4 = host.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (v4) {
+    const [a, b] = v4.slice(1).map(Number);
+    if (a === 127 || a === 10) return true;
+    if (a === 192 && b === 168) return true;
+    if (a === 172 && b >= 16 && b <= 31) return true;
+    if (a === 169 && b === 254) return true;
+    // 100.64/10 — carrier-grade NAT, and what Tailscale hands out.
+    if (a === 100 && b >= 64 && b <= 127) return true;
+    return false;
+  }
+  // A name with no dot cannot be a public site; the rest are the suffixes that
+  // only ever name something on the owner's own network.
+  if (!host.includes(".")) return true;
+  return [".local", ".internal", ".lan", ".ts.net"].some((suffix) => host.endsWith(suffix));
 }
 
 /**
