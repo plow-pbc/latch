@@ -281,6 +281,21 @@ ipcMain.handle("cloud:retryLineFlow", async () => agentsTabProbeState());
 ipcMain.handle("cloud:retryFailed", async () => agentsTabProbeState());
 ipcMain.handle("cloud:changeLine", async (_e, input) => {
   cloudChangeRequest = input;
+  if (typeof input?.lineUid === "string" && input.lineUid !== "lin_error") {
+    // A picked line has no machine to boot, so the real flow completes on the
+    // answer and the modal closes.
+    cloudProbe = {
+      ...cloudProbe,
+      cloudLineFlow: {
+        phase: "idle",
+        activation: null,
+        message: null,
+        completedAgentId: input.agentId,
+        retryNewLine: false,
+      },
+    };
+    return agentsTabProbeState();
+  }
   if (input?.lineUid === null) {
     cloudProbe = {
       ...cloudProbe,
@@ -1176,6 +1191,69 @@ app.whenReady().then(async () => {
   await clickCloudButton(win, "Cancel");
   await waitFor(win, `!document.querySelector(".cloud-modal")`,
     "the Change line flow to close");
+
+  // ---- the same id on two hosts -------------------------------------------
+  // `agent-mgr` answers with the NAME its owner typed, so a local agent can
+  // share a Plow agent_id. The roster lists Plow FIRST, so any lookup matching
+  // the id alone silently picks the Plow row — and a Change line opened on the
+  // local twin is then addressed to the wrong machine. Same defect has now
+  // appeared at three separate seams, so it is pinned here rather than fixed a
+  // fourth time and hoped about.
+  const beforeCollision = cloudProbe;
+  cloudProbe = {
+    ...cloudProbe,
+    cloudTargets: [
+      { id: "plow", baseUrl: "https://api.plow.co", builtin: true },
+      { id: "local", baseUrl: "http://192.168.15.12:8765", builtin: false },
+    ],
+    cloudAgents: [
+      { ...cloudAgent, targetId: "plow", name: "Cloud twin" },
+      { ...cloudAgent, targetId: "local", name: "Local twin" },
+    ],
+    cloudFreeLines: [{ uid: "lin_ash", label: "Ash · +1 415-555-0199" }],
+  };
+  win.webContents.send("connect:changed");
+  // Both rows carry the same roster name, so the LOCAL twin is identified by
+  // position: the probe lists Plow first, exactly as the real roster does.
+  await waitFor(win, `document.querySelectorAll(".cloud-agent-row").length === 2`,
+    "both twins on the roster");
+  await win.webContents.executeJavaScript(
+    `document.querySelectorAll(".cloud-agent-row")[1]
+       .querySelector(".cloud-agent-open").click()`,
+  );
+  await waitFor(win, `document.querySelector(".cloud-modal .cloud-detail-threads")`,
+    "the local twin's detail");
+  const collidingDetail = await win.webContents.executeJavaScript(`(${() => ({
+    title: document.querySelector(".cloud-modal .group-title")?.textContent.trim(),
+  })})()`);
+  await clickCloudButton(win, "Change line");
+  await waitFor(win, `document.querySelector('.cloud-modal select[aria-label="Line"]')`,
+    "the local twin's Change line picker");
+  await win.webContents.executeJavaScript(`(() => {
+    const line = document.querySelector('.cloud-modal select[aria-label="Line"]');
+    line.value = "lin_ash";
+    line.dispatchEvent(new Event("change"));
+  })()`);
+  const changeBeforeCollision = cloudChangeRequest;
+  await clickCloudButton(win, "Change line");
+  // The fake host only completes a flow for a NEW line, so the modal stays up
+  // for a picked one. The request is what this is about, not the closing.
+  for (let tick = 0; tick < 50 && cloudChangeRequest === changeBeforeCollision; tick += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  const collidingChangeRequest = cloudChangeRequest;
+  await waitFor(win, `!document.querySelector(".cloud-modal")`,
+    "the local twin's change to finish");
+  // `cloudChangeRequest` is one shared slot; put the earlier probe's value
+  // back so this walk cannot rewrite what that assertion reads.
+  cloudChangeRequest = changeBeforeCollision;
+  cloudProbe = beforeCollision;
+  // Tell the renderer, or it keeps painting the twins and the next section
+  // clicks a row that no longer exists in the state behind it.
+  win.webContents.send("connect:changed");
+  await waitFor(win, `document.querySelectorAll(".cloud-agent-row").length === 1`,
+    "the roster back to one agent");
+
   await win.webContents.executeJavaScript(
     `document.querySelector(".cloud-agent-row .cloud-agent-open").click()`,
   );
@@ -2174,6 +2252,11 @@ app.whenReady().then(async () => {
     cloudChangeCode.buttons.join("|") === "Copy|Cancel|Open Messages…" &&
     cloudChangeRequest?.agentId === cloudAgent.agentId &&
     cloudChangeRequest?.lineUid === null &&
+    // Same id on two hosts: the modal opened on the LOCAL twin and the change
+    // was addressed to the local host, not to the Plow row listed first.
+    collidingDetail.title === "Local twin" &&
+    collidingChangeRequest?.agentId === cloudAgent.agentId &&
+    collidingChangeRequest?.targetId === "local" &&
     cloudUnknownLines.showsSafeError &&
     cloudUnknownLines.hidesRawError &&
     cloudUnknownLines.buttons.join("|") === "Cancel" &&
@@ -2269,7 +2352,7 @@ app.whenReady().then(async () => {
     errors.length === 0;
   console.log(
     "PROBE:" +
-      JSON.stringify({ main, settings, strandedOnDisk, settingsPane, connect, cloudRoster, cloudCreatePicker, cloudCreateSelection, cloudCreateSelectionOnly, cloudCreateRequest, cloudCreateCancelled, cloudLocalHostForm, cloudLocalHostSaved, localAddRequest, localAgentShot, cloudLocalCreateRequest, cloudCreateCode, cloudExistingCreate, cloudExistingCreateRequest, cloudCodeConfirmed, cloudCodeConfirmedClosed, cloudNoFreeLines, cloudNoNumbers, cloudDetail, cloudChangePicker, cloudChangeSelection, cloudChangeSelectionOnly, cloudChangeCode, cloudChangeRequest, cloudUnknownLines, cloudCreateErrorDetail, failedCloudDetailButtons, cloudChangeErrorDetail, cloudAgentGoneCancelled, cloudDeleteConfirm, loadingCloudDetail, unavailableCloudDetail, agentsShot, approvalsReviewer, approvalsShot, purposeRoundTrip, approvalsAsk, askWithoutReviewer, approvalsShotAsk, agentsOpen, modalClosed, vaultLocked, vaultUnsaved, vaultShot, agentsOpenShot, staleSettingsPane, optimisticMode, settingsShot, approval, reviewerNote, grantPanel, consoleErrors: errors, ok }),
+      JSON.stringify({ main, settings, strandedOnDisk, settingsPane, connect, cloudRoster, cloudCreatePicker, cloudCreateSelection, cloudCreateSelectionOnly, cloudCreateRequest, cloudCreateCancelled, cloudLocalHostForm, cloudLocalHostSaved, localAddRequest, localAgentShot, cloudLocalCreateRequest, cloudCreateCode, cloudExistingCreate, cloudExistingCreateRequest, cloudCodeConfirmed, cloudCodeConfirmedClosed, cloudNoFreeLines, cloudNoNumbers, cloudDetail, cloudChangePicker, cloudChangeSelection, cloudChangeSelectionOnly, cloudChangeCode, cloudChangeRequest, collidingDetail, collidingChangeRequest, cloudUnknownLines, cloudCreateErrorDetail, failedCloudDetailButtons, cloudChangeErrorDetail, cloudAgentGoneCancelled, cloudDeleteConfirm, loadingCloudDetail, unavailableCloudDetail, agentsShot, approvalsReviewer, approvalsShot, purposeRoundTrip, approvalsAsk, askWithoutReviewer, approvalsShotAsk, agentsOpen, modalClosed, vaultLocked, vaultUnsaved, vaultShot, agentsOpenShot, staleSettingsPane, optimisticMode, settingsShot, approval, reviewerNote, grantPanel, consoleErrors: errors, ok }),
   );
   app.exit(ok ? 0 : 1);
 }).catch((err) => {

@@ -1147,8 +1147,12 @@ function syncCloudLineModal(state, redraw) {
   const modal = cloudModal;
   const changing = modal.mode === "change";
   const title = changing ? "Change line" : modal.local ? "New local agent" : "New agent";
+  // The PAIR, like the detail modal: the roster lists Plow first, so matching
+  // the id alone picks the Plow row for a local agent that shares its id — and
+  // then hands that row's targetId to the PUT.
   const agent = changing
-    ? (state.cloudAgents ?? []).find((candidate) => candidate.agentId === modal.agentId)
+    ? (state.cloudAgents ?? []).find((candidate) =>
+      candidate.agentId === modal.agentId && candidate.targetId === modal.targetId)
     : null;
   if (changing && !agent) {
     void window.domo.cloudCancelLineFlow();
