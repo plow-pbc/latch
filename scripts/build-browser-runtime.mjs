@@ -47,7 +47,7 @@ const wantBoth = args.includes("--browser-both");
 
 // Bump when the pruning/merging logic below changes, so cached trees (which
 // are keyed on the download pins) rebuild with the new slimming applied.
-const PRUNE_VERSION = "2";
+const PRUNE_VERSION = "3";
 
 function log(msg) {
   process.stdout.write(`[browser-runtime] ${msg}\n`);
@@ -583,20 +583,6 @@ function fetchBrowser(arch) {
   );
   fs.writeFileSync(path.join(installRoot, ".0.5_FLAG"), "");
 
-  // Pre-bundle the default addon (uBlock Origin): camoufox downloads it at
-  // first launch when missing, and in a packaged app the payload is sealed by
-  // the signature — a runtime write would break it. AMO's "latest" URL can't
-  // be hash-pinned; the addon is an ad-blocker, not protocol-critical.
-  const uboDir = path.join(installRoot, "addons", "UBO");
-  const uboZip = path.join(downloadsDir, "ubo-latest.xpi");
-  if (!fs.existsSync(uboZip)) {
-    log("downloading uBlock Origin addon");
-    run("curl", ["-fsSL", "-o", uboZip,
-      "https://addons.mozilla.org/firefox/downloads/latest/ublock-origin/latest.xpi"]);
-  }
-  fs.mkdirSync(uboDir, { recursive: true });
-  run("ditto", ["-x", "-k", uboZip, uboDir]);
-
   fs.writeFileSync(marker, markerValue);
   log(`camoufox ${arch} install ready at ${installRoot}`);
 }
@@ -606,7 +592,7 @@ function fetchBrowser(arch) {
  * vendor/camoufox-browser/universal — what `just package` bundles. lipo saves
  * nothing on the binaries themselves (a fat file is the two thin slices
  * concatenated); the win is everything else: the arch-independent payload
- * (omni.ja, addons, …) ships once instead of twice.
+ * (omni.ja, localization, …) ships once instead of twice.
  *
  * Merge rules, enforced loudly so a future browser bump can't silently ship a
  * broken merge: every Mach-O must have a twin in the other arch (lipo-fused);
@@ -739,8 +725,6 @@ function mergeCamoufoxUniversal() {
     JSON.stringify({ active_version: `browsers/${repo}/${folder}` }),
   );
   fs.writeFileSync(path.join(outRoot, ".0.5_FLAG"), "");
-  run("ditto", [path.join(browserDir, "arm64", "addons"), path.join(outRoot, "addons")]);
-
   fs.writeFileSync(marker, markerValue);
   log(`camoufox universal install ready at ${outRoot}`);
 }

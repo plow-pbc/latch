@@ -155,12 +155,17 @@ describe("BrowserHost", () => {
   });
 
   it("kills and audits a browser whose action reaches actionTimeoutMs", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "domo-bh-tree-"));
+    const pidLog = path.join(dir, "child.pid");
     const { host, records, auditFile } = makeHost(
-      { HANG_ACTION: "eval" },
+      { HANG_ACTION: "eval", FAKE_CHILD_PID_LOG: pidLog },
       { actionTimeoutMs: 300 },
     );
     await host.sendAction({ action: "goto", url: "https://one.example/" });
-    const firstPid = records.find((r) => r.event === "browser_started")!.fields.pid;
+    const firstPid = Number(records.find((r) => r.event === "browser_started")!.fields.pid);
+    const childPid = Number(fs.readFileSync(pidLog, "utf8"));
+    expect(processExists(firstPid)).toBe(true);
+    expect(processExists(childPid)).toBe(true);
     let crashed!: () => void;
     const crash = new Promise<void>((resolve) => { crashed = resolve; });
     host.onCrash = crashed;
@@ -177,6 +182,8 @@ describe("BrowserHost", () => {
       .map((line) => JSON.parse(line) as { event: string; reason?: string });
     expect(audit.find((entry) => entry.event === "browser_crashed")?.reason)
       .toBe("action_timeout");
+    await waitForProcessExit(firstPid);
+    await waitForProcessExit(childPid);
 
     // The next action gets a fresh browser, not a reply queued behind the
     // action the old server never answered.
@@ -186,29 +193,6 @@ describe("BrowserHost", () => {
       .map((r) => r.fields.pid);
     expect(startedPids).toHaveLength(2);
     expect(startedPids[1]).not.toBe(firstPid);
-  });
-
-  it("kills the timed-out server's whole process group", async () => {
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "domo-bh-tree-"));
-    const pidLog = path.join(dir, "child.pid");
-    const { host, records } = makeHost(
-      { HANG_ACTION: "eval", FAKE_CHILD_PID_LOG: pidLog },
-      { actionTimeoutMs: 300 },
-    );
-    await host.ensureReady();
-    const serverPid = Number(records.find((r) => r.event === "browser_started")!.fields.pid);
-    const childPid = Number(fs.readFileSync(pidLog, "utf8"));
-    expect(processExists(serverPid)).toBe(true);
-    expect(processExists(childPid)).toBe(true);
-
-    let crashed!: () => void;
-    const crash = new Promise<void>((resolve) => { crashed = resolve; });
-    host.onCrash = crashed;
-    await expect(host.sendAction({ action: "eval", expression: "while(true){}" }))
-      .rejects.toThrow(/timed out/);
-    await crash;
-    await waitForProcessExit(serverPid);
-    await waitForProcessExit(childPid);
   });
 
   it("ensureReady starts the browser up front (warm before the first action)", async () => {
