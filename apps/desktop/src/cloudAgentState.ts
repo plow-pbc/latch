@@ -34,7 +34,6 @@ import {
   AgentTarget,
   ApiBaseUrl,
   BUILTIN_TARGET_ID,
-  BUILTIN_TARGET_LABEL,
   KeyInfo,
   LOCAL_TARGET_ID,
   PlowApi,
@@ -303,6 +302,17 @@ export class CloudAgentState {
   private lines: CloudLineOption[] | null = null;
   /** Agents whose stuck delete is being retried right now — one at a time each. */
   private tearingDown = new Set<string>();
+  /**
+   * Bumped whenever the self-hosted host changes or goes away.
+   *
+   * A roster read is in flight for as long as the slowest host takes to
+   * answer, and `LOCAL_TARGET_ID` is a SLOT, not a machine — so a read that
+   * started against the old box would otherwise land after the swap and put
+   * its rows back under an id that now points somewhere else. The next Delete
+   * would then be addressed to a machine that never had that agent. Same
+   * shape as `generation` and `viewReads`: the answer is dropped, not merged.
+   */
+  private hostRevision = 0;
 
   constructor(private readonly deps: CloudAgentStateDeps) {}
 
@@ -340,6 +350,7 @@ export class CloudAgentState {
     const credential = this.credential();
     if (!credential) return;
     const generation = this.generation;
+    const revision = this.hostRevision;
     const read = ++this.viewReads;
     let view = Promise.all([
       this.refreshChats(credential, generation, read),
@@ -347,7 +358,7 @@ export class CloudAgentState {
     ]).then(() => {});
     this.viewSettled = view;
     await Promise.all([
-      this.sequence(() => this.refreshAgents(this.targets(), generation)),
+      this.sequence(() => this.refreshAgents(this.targets(), generation, revision)),
       view,
     ]);
     // A newer chat or line read started while ours was in flight. Ours DROPPED
@@ -1021,6 +1032,7 @@ export class CloudAgentState {
   private async refreshAgents(
     targets: readonly AgentTarget[],
     generation: number,
+    revision: number,
   ): Promise<void> {
     if (generation !== this.generation) return;
     const reads = await Promise.all(targets.map(async (target) => {
@@ -1030,7 +1042,9 @@ export class CloudAgentState {
         return { target, agents: null, error: messageOf(error) };
       }
     }));
-    if (generation !== this.generation) return;
+    // The host was replaced or forgotten while these reads were in flight, so
+    // whatever they say describes a machine this Mac is no longer pointed at.
+    if (generation !== this.generation || revision !== this.hostRevision) return;
 
     const listed = new Map<string, CloudAgentDisplayRow>();
     const errors: string[] = [];
@@ -1039,7 +1053,7 @@ export class CloudAgentState {
         // Named only for an added host. Plow's failure keeps reading as the
         // bare sentence it always has — there is nothing to disambiguate when
         // it is the only host on the Mac.
-        errors.push(target.id === BUILTIN_TARGET_ID ? error : `${target.label}: ${error}`);
+        errors.push(target.id === BUILTIN_TARGET_ID ? error : `${target.baseUrl}: ${error}`);
         for (const [agentId, row] of this.rows) {
           if (row.targetId === target.id) listed.set(agentId, row);
         }
@@ -1273,17 +1287,10 @@ export class CloudAgentState {
     if (!bearer) return [];
     const host = settings.agentTarget;
     return [
-      {
-        id: BUILTIN_TARGET_ID,
-        label: BUILTIN_TARGET_LABEL,
-        baseUrl: this.deps.baseUrl,
-        bearer,
-      },
+      { id: BUILTIN_TARGET_ID, baseUrl: this.deps.baseUrl, bearer },
       // The address is the name: with one host there is nothing to tell apart,
       // and a label the owner had to invent was a field for no reader.
-      ...(host
-        ? [{ id: LOCAL_TARGET_ID, label: host.baseUrl, baseUrl: host.baseUrl, bearer: host.bearer }]
-        : []),
+      ...(host ? [{ id: LOCAL_TARGET_ID, baseUrl: host.baseUrl, bearer: host.bearer }] : []),
     ];
   }
 
@@ -1362,8 +1369,14 @@ export class CloudAgentState {
     this.publish();
   }
 
-  /** Everything this Mac knew about the self-hosted host's agents. */
+  /**
+   * Everything this Mac knew about the self-hosted host's agents.
+   *
+   * Bumps `hostRevision` too, so a roster read already in flight against the
+   * old machine cannot land afterwards and put these rows straight back.
+   */
   private dropLocalRows(): void {
+    this.hostRevision += 1;
     for (const [agentId, row] of [...this.rows]) {
       if (row.targetId !== LOCAL_TARGET_ID) continue;
       this.abortPoll(agentId);

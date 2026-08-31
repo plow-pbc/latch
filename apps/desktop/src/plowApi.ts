@@ -23,10 +23,8 @@ export type ApiBaseUrl = string;
  * takes an origin and a token apart.
  */
 export interface AgentTarget {
-  /** Stable for the target's life. Rows and the picker join on it. */
+  /** Stable for the target's life. Rows join on it. */
   id: string;
-  /** What the picker shows. Never used to address anything. */
-  label: string;
   baseUrl: ApiBaseUrl;
   /**
    * A SECRET, exactly like `relayCredential`: it rides in an `Authorization`
@@ -45,7 +43,6 @@ export interface AgentTarget {
  * carrying it is dropped on load.
  */
 export const BUILTIN_TARGET_ID = "plow";
-export const BUILTIN_TARGET_LABEL = "Plow";
 
 /**
  * The id of the one self-hosted target, when this Mac has one.
@@ -129,6 +126,9 @@ export function normalizeApiBaseUrl(raw: string): ApiBaseUrl {
  *   a place to keep one.
  * - **query and fragment** are not part of an origin, and a token pasted into
  *   one would ride into exactly the same three places.
+ * - **a path**, for the same reason: `http://host/serve-token-abc` is a secret
+ *   in a URL wearing a different hat. `agent-mgr serve` binds a host and a
+ *   port and serves `/v1/...` from the root, so there is no path to keep.
  *
  * **Plaintext `http://` to a host that is not loopback is allowed**, and that
  * is a deliberate accepted risk rather than an oversight: `agent-mgr serve`
@@ -147,7 +147,10 @@ export function canonicalAgentHostUrl(raw: string): ApiBaseUrl | null {
   }
   if (url.protocol !== "http:" && url.protocol !== "https:") return null;
   if (url.username || url.password || url.search || url.hash) return null;
-  return `${url.origin}${url.pathname.replace(/\/+$/, "")}`;
+  if (url.pathname !== "/") return null;
+  // The origin and nothing else — `URL` has already lowercased the host and
+  // dropped a default port, so this is the one spelling of this machine.
+  return url.origin;
 }
 
 /**

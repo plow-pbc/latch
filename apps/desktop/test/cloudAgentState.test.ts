@@ -1274,6 +1274,10 @@ describe("CloudAgentState self-hosted target", () => {
     ["a password alone", "http://:pass@192.168.15.12:8765"],
     ["a query string", "http://192.168.15.12:8765?token=abc"],
     ["a fragment", "http://192.168.15.12:8765#abc"],
+    // A path is a secret in a URL wearing a different hat, and it reaches the
+    // renderer and the wire log like the rest. serve has no path to keep.
+    ["a path", "http://192.168.15.12:8765/serve-token-abc"],
+    ["even a one-segment path", "http://192.168.15.12:8765/api"],
   ])("refuses %s", (_why, baseUrl) => {
     const { state } = build();
 
@@ -1293,6 +1297,7 @@ describe("CloudAgentState self-hosted target", () => {
   it("canonicalises the address, so one machine stays one host", () => {
     const { state, home } = build();
 
+    // A bare trailing slash IS the root path, and stays acceptable.
     expect(state.addTarget({ baseUrl: "HTTP://192.168.15.12:8765/", bearer: "t" })).toBe(true);
     // Case and a default port are the same machine. A regex that only trims
     // slashes could not collapse these.
@@ -1333,6 +1338,25 @@ describe("CloudAgentState self-hosted target", () => {
     // agent-mgr ids are NAMES — reconciling it against a different box could
     // put someone else's "demo" under it.
     expect(state.state().cloudAgents.map((row) => row.agentId)).toEqual(["agent_cloud"]);
+  });
+
+  it("drops a roster read that lands after the host was replaced", async () => {
+    const listing = deferred<CloudAgentResource[]>();
+    const { state, home } = build({
+      listAgentsFor: async (targetId) =>
+        targetId === BUILTIN_TARGET_ID ? [] : listing.promise,
+    });
+    withHost(home);
+
+    // Host A's read is still in flight when the owner points at host B.
+    const inFlight = state.refresh();
+    state.addTarget({ baseUrl: "http://192.168.15.99:8765", bearer: "t" });
+    listing.resolve([agent({ agentId: "agent_on_host_a" })]);
+    await inFlight;
+
+    // `local` is a SLOT, not a machine. Letting A's rows land under it would
+    // address the next Delete to a box that never had that agent.
+    expect(state.state().cloudAgents).toEqual([]);
   });
 
   it("forgetting the host drops its rows without deleting its agents", async () => {

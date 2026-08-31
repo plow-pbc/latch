@@ -156,7 +156,6 @@ let exhaustNextCloudActivation = false;
 const cloudMessageAgentIds = [];
 const cloudCreateRequests = [];
 const cloudAddedTargets = [];
-const cloudForgottenTargets = [];
 
 // Connect state also carries the cloud-agent display state. It contains no
 // credential, session id or worker URL.
@@ -204,7 +203,6 @@ ipcMain.handle("cloud:addTarget", async (_e, input) => {
   return { ...agentsTabProbeState(), added: true };
 });
 ipcMain.handle("cloud:forgetTarget", async () => {
-  cloudForgottenTargets.push("local");
   cloudProbe = {
     ...cloudProbe,
     cloudTargets: cloudProbe.cloudTargets.filter((target) => target.builtin),
