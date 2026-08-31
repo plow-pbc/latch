@@ -12,8 +12,9 @@
  *     HTML, and the enforceable bound shown is the capability set the sandbox
  *     is derived from — not the goal text.
  */
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, safeStorage as electronSafeStorage, screen, shell, systemPreferences, Tray } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, powerMonitor, safeStorage as electronSafeStorage, screen, shell, systemPreferences, Tray } from "electron";
 import electronUpdater from "electron-updater";
+import { ChildProcess, spawn } from "node:child_process";
 import fs from "node:fs/promises";
 import { createRequire } from "node:module";
 import os from "node:os";
@@ -37,6 +38,7 @@ import { RelayClient } from "@domo/relay-client";
 import { approvalViewModel, auditActivities, CredentialTitles } from "./viewModel.js";
 import { probeFullDiskAccess } from "./fullDiskAccess.js";
 import { launchAtLoginState, LoginItemApi, setLaunchAtLogin } from "./loginItem.js";
+import { KeepAwake } from "./keepAwake.js";
 import { devIconScript } from "./devIcon.js";
 import { migrateLegacyHome } from "./migrateHome.js";
 import { buildMinter, vendorDirs } from "./providerWiring.js";
@@ -850,6 +852,23 @@ ipcMain.handle("launch:set", async (_e, on: boolean) =>
   setLaunchAtLogin(app.isPackaged, loginItems, on),
 );
 
+// Keep Mac Awake. keepAwake.ts owns the rules (AC-only hold, debounced
+// release, revert on an acquire the OS refuses); this is only the seam that
+// hands it Electron's blocker + power monitor, so it is built in whenReady —
+// powerMonitor cannot be touched earlier. Before then the handlers answer
+// from the stored opt-in, which is all a renderer that early could show.
+let keepAwake: KeepAwake | null = null;
+ipcMain.handle("power:getKeepAwake", async () => ({
+  enabled: keepAwake ? keepAwake.isEnabled : loadSettings(home).keepAwakeWhileRunning,
+}));
+ipcMain.handle("power:setKeepAwake", async (_e, on: boolean) => {
+  if (keepAwake) return { enabled: keepAwake.setEnabled(!!on) };
+  const settings = loadSettings(home);
+  settings.keepAwakeWhileRunning = !!on;
+  saveSettings(home, settings);
+  return { enabled: settings.keepAwakeWhileRunning };
+});
+
 /**
  * The one-time first-run default: a user who just set this Mac up wants it
  * reachable, so launch at login turns ON the moment setup hands over to the
@@ -1266,6 +1285,62 @@ app.whenReady().then(async () => {
       (err) => console.log(`[dev-icon] badge failed, keeping plain icon: ${err}`),
     );
   }
+  // Keep Mac Awake: honor a stored opt-in from launch, not from the first
+  // Settings visit. The hold is a `caffeinate -dims` child — the tool that
+  // holds exactly the four IOKit assertions the Phoenix app held. Electron's
+  // own powerSaveBlocker exposes only two of the four (display + idle-system
+  // sleep), so the child process is what feature parity costs. Unlike an
+  // in-process assertion, a child can die out from under us; the exit
+  // handler reports the loss so the hold is re-acquired, not silently gone.
+  let caffeinated: { child: ChildProcess; stopped: boolean } | null = null;
+  keepAwake = new KeepAwake({
+    blocker: {
+      start: () => {
+        const child = spawn("/usr/bin/caffeinate", ["-dims"], { stdio: "ignore" });
+        // A spawn that failed outright (no such binary, fork refused) has no
+        // pid, and its 'error' event must have a listener or it takes the
+        // process down. Nothing to read from it beyond that — the null pid
+        // already answered.
+        child.on("error", () => {});
+        if (child.pid === undefined) return null;
+        const entry = { child, stopped: false };
+        caffeinated = entry;
+        child.on("exit", () => {
+          if (entry.stopped || caffeinated !== entry) return;
+          caffeinated = null;
+          console.log("[keep-awake] caffeinate exited unexpectedly; reacquiring");
+          keepAwake?.blockerLost(entry.child.pid!);
+        });
+        return child.pid;
+      },
+      stop: (id) => {
+        if (caffeinated?.child.pid !== id) return;
+        caffeinated.stopped = true;
+        caffeinated.child.kill();
+        caffeinated = null;
+      },
+    },
+    power: {
+      current: () => (powerMonitor.isOnBatteryPower() ? "battery" : "ac"),
+      subscribe: (callback) => {
+        const onAc = () => callback("ac");
+        const onBattery = () => callback("battery");
+        powerMonitor.on("on-ac", onAc);
+        powerMonitor.on("on-battery", onBattery);
+        return () => {
+          powerMonitor.off("on-ac", onAc);
+          powerMonitor.off("on-battery", onBattery);
+        };
+      },
+    },
+    load: () => loadSettings(home).keepAwakeWhileRunning,
+    save: (enabled) => {
+      const settings = loadSettings(home);
+      if (settings.keepAwakeWhileRunning === enabled) return;
+      settings.keepAwakeWhileRunning = enabled;
+      saveSettings(home, settings);
+    },
+  });
   // A crash between setup saving the credential and the hand-over would leave
   // the first-run default pending on disk with no setup window left to close —
   // and this launch goes straight to the main window, so the hand-over hook
@@ -1344,6 +1419,10 @@ app.on("before-quit", (event) => {
     // seconds — seconds in which another editor could be opened and typed into,
     // and destroyed by the quit below without ever being asked about.
     mainWindow?.destroy();
+    // Release the sleep blocker deterministically — the OS reclaims it at
+    // process exit anyway, but the seconds of teardown below shouldn't run
+    // under an assertion held for an app that is already gone.
+    keepAwake?.teardown();
     // Kill any live Camoufox session/process group so Firefox children don't
     // outlive us. Every step is timeout-bounded, so this waits seconds, not forever.
     void Promise.allSettled([relay?.stop(), device?.shutdown()]).then(() => {

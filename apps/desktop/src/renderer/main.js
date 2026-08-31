@@ -1941,6 +1941,23 @@ async function renderSettings() {
   });
   applyLaunch();
 
+  // Keep Mac Awake. The blocker is held only while plugged in — on battery
+  // the Mac sleeps normally — and set answers with what actually took: an
+  // acquire the OS refuses comes back off, and the box shows that rather
+  // than a hold that isn't held.
+  let awake = await window.domo.keepAwakeGet();
+  const awakeBox = el("input", { attrs: { type: "checkbox" } });
+  const awakeLabel = el("label", { class: "check" }, [
+    awakeBox,
+    el("span", { text: "Keep this Mac awake while plugged in" }),
+  ]);
+  const applyAwake = () => { awakeBox.checked = awake.enabled; };
+  awakeBox.addEventListener("change", async () => {
+    awake = await window.domo.keepAwakeSet(awakeBox.checked);
+    applyAwake();
+  });
+  applyAwake();
+
   // Capabilities: what macOS lets the app itself reach. Full Disk Access has
   // no prompt an app can raise — the only grant path is the switch in System
   // Settings — so the button deep-links there (a key into main's table, like
@@ -1982,6 +1999,8 @@ async function renderSettings() {
       applyCapabilities(await window.domo.capabilitiesGet());
       launch = await window.domo.launchGet();
       applyLaunch();
+      awake = await window.domo.keepAwakeGet();
+      applyAwake();
     },
     refreshUpdates: async () => {
       u = await window.domo.updatesGet();
@@ -2019,13 +2038,24 @@ async function renderSettings() {
         el("div", { class: "spacer" }),
         openFullDisk,
       ]),
+    ]),
+    group("Availability", "Agents can reach this Mac only while Plow Latch is running and the Mac is awake.", [
       el("div", { class: "support-row" }, [
         el("div", { class: "support-copy" }, [
           el("div", { class: "support-title", text: "Launch at Login" }),
           el("p", { class: "faint", text:
-            "Agents can reach this Mac only while Plow Latch is running." }),
+            "Open Plow Latch automatically, so a restart doesn't take this Mac off the roster." }),
           launchLabel,
           launchNote,
+        ]),
+      ]),
+      el("div", { class: "support-row" }, [
+        el("div", { class: "support-copy" }, [
+          el("div", { class: "support-title", text: "Keep Mac Awake" }),
+          el("p", { class: "faint", text:
+            "Prevent idle and display sleep while plugged in, so the screen never locks out work an agent is doing on it. " +
+            "On battery it sleeps normally to conserve power, and closing the lid still sleeps it." }),
+          awakeLabel,
         ]),
       ]),
     ]),

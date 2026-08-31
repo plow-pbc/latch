@@ -189,6 +189,10 @@ export interface Settings {
    */
   provisionedChatUid: string;
   provisionedChatLabel: string;
+  /** Keep this Mac awake while plugged in (default off). The opt-in only —
+   * keepAwake.ts owns when a blocker is actually held (AC power only, and an
+   * acquire the OS refuses writes this back to false). */
+  keepAwakeWhileRunning: boolean;
   /** The first-run launch-at-login default has been applied (main.ts's
    * `applyFirstRunLaunchAtLogin`). NOT a mirror of the OS's login-item bit —
    * loginItem.ts explains why none exists — only the record that the one-time
@@ -215,6 +219,7 @@ export function loadSettings(home: string): Settings {
     provisionedChatLabel: "",
     autoCheckUpdates: true,
     autoInstallUpdates: true,
+    keepAwakeWhileRunning: false,
     launchAtLoginDefaulted: false,
   };
   let parsed: unknown;
