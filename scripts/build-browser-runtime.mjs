@@ -47,7 +47,7 @@ const wantBoth = args.includes("--browser-both");
 
 // Bump when the pruning/merging logic below changes, so cached trees (which
 // are keyed on the download pins) rebuild with the new slimming applied.
-const PRUNE_VERSION = "1";
+const PRUNE_VERSION = "2";
 
 function log(msg) {
   process.stdout.write(`[browser-runtime] ${msg}\n`);
@@ -263,27 +263,11 @@ function buildRuntime() {
       "--platform", "macosx_11_0_universal2",
       "--quiet",
     ]);
-    // Playwright's "universal2" wheel bundles an x86_64-only node driver
-    // (Rosetta-dependent). Replace it with the true per-arch wheel — exact
-    // platform tags so pip cannot prefer universal2 again — and the merge
-    // step lipo-fuses a genuinely universal driver.
-    const pwPin = fs.readFileSync(requirementsPath, "utf8").match(/^playwright==\S+/m)?.[0];
-    if (pwPin) {
-      for (const f of fs.readdirSync(dir)) {
-        if (/^playwright-.*universal2/.test(f)) fs.rmSync(path.join(dir, f));
-      }
-      const exactPlatform = arch === "arm64" ? "macosx_11_0_arm64" : "macosx_10_13_x86_64";
-      run("python3", [
-        "-m", "pip", "download", pwPin,
-        "--dest", dir, "--no-deps",
-        "--only-binary", ":all:",
-        "--implementation", "cp",
-        "--python-version", PYVER,
-        "--abi", "cp312", "--abi", "abi3", "--abi", "none",
-        "--platform", exactPlatform,
-        "--quiet",
-      ]);
-    }
+    // Playwright's "universal2" wheel is fine as-is: its only Mach-O is the
+    // bundled node driver (x86_64-only despite the tag), and the prune below
+    // deletes that binary entirely — the driver runs on the host process's
+    // node instead (PLAYWRIGHT_NODEJS_PATH, set by browserRuntime.ts). The
+    // universality verification would catch it if the prune ever misses.
   }
 
   // 6. Merge into a universal wheel set ----------------------------------
@@ -368,6 +352,11 @@ function buildRuntime() {
     "playwright/driver/package/protocol.yml",
     "playwright/driver/package/types",
     "playwright/driver/package/lib/vite",
+    // The driver's bundled node (~110MB/arch, and x86_64-only in the
+    // universal2 wheel). The Python client launches the driver JS on
+    // whatever PLAYWRIGHT_NODEJS_PATH names; browserRuntime.ts points it at
+    // the host process's own runtime (Electron RUN_AS_NODE / plain node).
+    "playwright/driver/node",
   ]) {
     rmrf(path.join(sitePackages, doomed));
   }
@@ -444,6 +433,12 @@ function buildRuntime() {
     run("arch", ["-x86_64", pybin, "-c", smoke], { env: smokeEnv, quiet: true });
     log("  x86_64 (Rosetta) smoke import ok");
   }
+  // The driver ships without its bundled node (pruned above) and runs on the
+  // host's runtime at launch — prove the pruned driver JS still starts on an
+  // external node before shipping it.
+  const driverCli = path.join(sitePackages, "playwright", "driver", "package", "cli.js");
+  run(process.execPath, [driverCli, "--version"], { quiet: true });
+  log("  driver runs on external node ok");
 
   fs.writeFileSync(stampPath, stamp);
   log("runtime build complete");

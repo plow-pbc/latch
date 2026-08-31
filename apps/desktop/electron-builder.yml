@@ -55,6 +55,11 @@ electronLanguages:
 # "Start agent". The shim and that feature went with the broker — the MCP server
 # now runs inside this process and is reached through the relay.
 
+# No fuses config — and the RunAsNode fuse MUST stay enabled. Playwright's
+# driver ships without its bundled node (pruned by build-browser-runtime.mjs)
+# and runs on this app binary via ELECTRON_RUN_AS_NODE; flipping runAsNode off
+# breaks every browser launch. See DESIGN.md §11a, Runtime & packaging.
+
 # The browser stack: universal Python runtime + vendored server + the
 # lipo-fused universal Camoufox tree. Built by scripts/build-browser-runtime.mjs
 # (a `just package` dependency) and byte-identical in both electron-builder
