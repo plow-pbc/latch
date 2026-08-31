@@ -38,7 +38,7 @@ import { createDomoMcpServer, DomoMcpServer } from "@domo/mcp-server";
 import { RelayClient } from "@domo/relay-client";
 import { approvalViewModel, auditActivities, CredentialTitles } from "./viewModel.js";
 import { probeFullDiskAccess } from "./fullDiskAccess.js";
-import { appBundleName, appBundlePath } from "./permissionFlow.js";
+import { appBundleName, appBundlePath, decodeTileImage } from "./permissionFlow.js";
 import { FdaGrantFlow } from "./fdaGrantFlow.js";
 import { launchAtLoginState, LoginItemApi, setLaunchAtLogin } from "./loginItem.js";
 import { KeepAwake } from "./keepAwake.js";
@@ -920,6 +920,49 @@ ipcMain.handle("fullDisk:dragInfo", async () => {
   if (!target) return null;
   return { name: appBundleName(target.bundle), iconDataUrl: target.iconDataUrl };
 });
+// The panel's rasterization of its own drag tile (display data flowing the
+// other way). Held so the drag image under the cursor is exactly the tile the
+// panel showed; the bare app icon remains the fallback when no (valid) raster
+// has arrived. Latest wins — the renderer re-sends when the panel resizes,
+// and again on every pointerdown, padded so Electron's center-on-cursor
+// placement puts the grab point back under the pointer (dragImage.js).
+let fdaTileDragIcon: Electron.NativeImage | null = null;
+ipcMain.on("fullDisk:tileImage", (_e, dataUrl: unknown, scale: unknown) => {
+  const decoded = decodeTileImage(dataUrl, scale);
+  if (decoded) {
+    fdaTileDragIcon = nativeImage.createFromBuffer(decoded.png, {
+      scaleFactor: decoded.scaleFactor,
+    });
+  }
+});
+// When the drag session has actually ended. startDrag on macOS begins the
+// session and RETURNS IMMEDIATELY (beginDraggingSession under the hood), so
+// the end must be watched, not awaited: the helper's --drag-end mode blocks
+// until the left mouse button comes back up. The slide-back delay lets a
+// cancelled drag's image finish animating home before the tile reappears
+// under it; on a successful drop the image is already gone and the delay is
+// just unnoticeable. Without the helper the fallback timer restores things
+// on a clock — cosmetic at worst, since the payload rode out at startDrag.
+const DRAG_SLIDE_BACK_MS = 350;
+const DRAG_END_FALLBACK_MS = 4000;
+function watchDragSessionEnd(onEnd: () => void): void {
+  let done = false;
+  const finish = (delay: number) => {
+    if (done) return;
+    done = true;
+    setTimeout(onEnd, delay);
+  };
+  try {
+    const watcher = spawn(fdaHelperPath, ["--drag-end"], {
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    watcher.stdout!.on("data", () => finish(DRAG_SLIDE_BACK_MS));
+    watcher.on("exit", () => finish(DRAG_SLIDE_BACK_MS));
+    watcher.on("error", () => finish(DRAG_END_FALLBACK_MS));
+  } catch {
+    finish(DRAG_END_FALLBACK_MS);
+  }
+}
 // The native drag: the bundle as payload, started on the gesturing window's
 // webContents. Dropping it on the Full Disk Access list is the same grant
 // gesture as the pane's "+" button.
@@ -927,17 +970,26 @@ ipcMain.on("fullDisk:dragStart", (e) => {
   const target = fdaDragTarget;
   if (!target) return;
   // Dim the panel while the drag rides over System Settings, the way
-  // PermissionFlow's panel does; restored when the drag session ends.
+  // PermissionFlow's panel does. The tile itself is hidden by the renderer
+  // for the same stretch — the drag image is that very tile, so showing both
+  // would double it. All of it holds until the session actually ends: the
+  // dim, the hidden tile, and the mid-gesture visibility hold (released any
+  // earlier, a frontmost flicker could hide the drag source and abort the
+  // session).
   const win = BrowserWindow.fromWebContents(e.sender);
+  const restore = () => {
+    if (win && !win.isDestroyed()) win.setOpacity(1);
+    if (!e.sender.isDestroyed()) e.sender.send("fullDisk:dragEnd");
+    fdaGrantFlow.setHold(false);
+  };
   win?.setOpacity(0.72);
   try {
-    e.sender.startDrag({ file: target.bundle, icon: target.dragIcon });
-  } finally {
-    if (win && !win.isDestroyed()) win.setOpacity(1);
-    // The drag session is over; the pointerdown that began it took the
-    // visibility hold, so the end of the gesture releases it.
-    fdaGrantFlow.setHold(false);
+    e.sender.startDrag({ file: target.bundle, icon: fdaTileDragIcon ?? target.dragIcon });
+  } catch {
+    restore(); // no session began; nothing to watch
+    return;
   }
+  watchDragSessionEnd(restore);
 });
 // The panel renderer's mid-gesture guard (see fdaGrantFlow.holdVisible).
 ipcMain.on("fullDisk:panelHold", (_e, on: boolean) => fdaGrantFlow.setHold(on === true));
