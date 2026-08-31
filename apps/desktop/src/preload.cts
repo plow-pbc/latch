@@ -125,7 +125,13 @@ contextBridge.exposeInMainWorld("domo", {
   // no roster row to name and none is needed.
   cloudRemove: (agentId: string) => ipcRenderer.invoke("cloud:remove", agentId),
   cloudRefresh: () => ipcRenderer.invoke("cloud:refresh"),
-  cloudCreate: (input: { name: string; provider: string; lineUid: string | null }) =>
+  cloudCreate: (input: {
+    name: string;
+    provider: string;
+    lineUid: string | null;
+    /** Which host provisions it. Absent means the built-in Plow. */
+    targetId?: string;
+  }) =>
     ipcRenderer.invoke("cloud:create", input),
   // A host's bearer goes one way only: in. Nothing reads it back out.
   cloudAddTarget: (input: { baseUrl: string; bearer: string }) =>

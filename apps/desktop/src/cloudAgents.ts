@@ -75,18 +75,6 @@ export function isTerminalCloudAgent(agent: Pick<CloudAgentResource, "status">):
  * short and bounded; provisioning time belongs to the GET polling loop, never
  * to a long-running POST.
  */
-/**
- * **Every method here reads `target.bearer` exactly ONCE, into a local, and
- * uses that local for both the `Authorization` header and the response's
- * credential-echo check.**
- *
- * `bearer` can be a live getter — `CloudAgentState.liveTarget` makes one so a
- * poll that outlives a token rotation keeps working. Reading it a second time
- * after the `await` would hand the echo check a NEWER credential than the one
- * that authorised the request, so an echo of the OLD token would pass the
- * filter and reach the screen. It may vary BETWEEN requests; it must not vary
- * within one.
- */
 export class CloudAgentsClient {
   /**
    * Takes a resolver rather than an api, because the host is chosen per call.
@@ -99,14 +87,38 @@ export class CloudAgentsClient {
     private readonly wait: Wait = defaultWait,
   ) {}
 
+  /**
+   * One request against one target, with the bearer it used handed back.
+   *
+   * The whole point is the RETURN of `bearer`: it is read once here and the
+   * caller filters the response against that same value. Rotation is a
+   * permanent fact of a self-hosted host — a serve token can always be
+   * rotated, and `liveTarget` deliberately lets a poll see the new one — so a
+   * second read after the await would filter for a NEWER credential than the
+   * one that authorised the call, and an echo of the old one would walk past
+   * the check onto the screen. Making that structural beats asking five call
+   * sites to remember it, and every endpoint added later inherits it.
+   */
+  private async send(
+    target: AgentTarget,
+    method: string,
+    path: string,
+    options: { body?: unknown; signal?: AbortSignal; timeoutMs?: number;
+               callerAbortIsLifecycle?: boolean } = {},
+  ): Promise<{ response: Response; bearer: string }> {
+    const bearer = target.bearer;
+    const response = await this.apiFor(target.baseUrl).request(method, path, {
+      token: bearer,
+      ...options,
+    });
+    return { response, bearer };
+  }
+
   async create(
     target: AgentTarget,
     request: CreateCloudAgentRequest,
   ): Promise<CloudAgentResource> {
-    const path = "/v1/agents/cloud";
-    const bearer = target.bearer;
-    const response = await this.apiFor(target.baseUrl).request("POST", path, {
-      token: bearer,
+    const { response, bearer } = await this.send(target, "POST", "/v1/agents/cloud", {
       body: {
         line_uid: request.lineUid,
         provider: request.provider,
@@ -124,15 +136,11 @@ export class CloudAgentsClient {
     agentId: string,
     lineUid: string,
   ): Promise<CloudAgentResource> {
-    const path = `/v1/agents/cloud/${encodeURIComponent(agentId)}/line`;
-    const bearer = target.bearer;
-    const response = await this.apiFor(target.baseUrl).request(
+    const { response, bearer } = await this.send(
+      target,
       "PUT",
-      path,
-      {
-        token: bearer,
-        body: { line_uid: lineUid },
-      },
+      `/v1/agents/cloud/${encodeURIComponent(agentId)}/line`,
+      { body: { line_uid: lineUid } },
     );
     if (!response.ok) {
       await throwCloudCallError(response, "");
@@ -141,10 +149,7 @@ export class CloudAgentsClient {
   }
 
   async list(target: AgentTarget): Promise<CloudAgentResource[]> {
-    const bearer = target.bearer;
-    const response = await this.apiFor(target.baseUrl).request("GET", "/v1/agents/cloud", {
-      token: bearer,
-    });
+    const { response, bearer } = await this.send(target, "GET", "/v1/agents/cloud");
     if (!response.ok) throw errorFor(response.status);
 
     const decoded = await decodeJson(response);
@@ -160,13 +165,10 @@ export class CloudAgentsClient {
   }
 
   async delete(target: AgentTarget, agentId: string): Promise<void> {
-    const bearer = target.bearer;
-    const response = await this.apiFor(target.baseUrl).request(
+    const { response } = await this.send(
+      target,
       "DELETE",
       `/v1/agents/cloud/${encodeURIComponent(agentId)}`,
-      // No response body to filter, but the invariant above is stated as
-      // absolute so it stays greppable and cannot rot into an exception.
-      { token: bearer },
     );
     // Delete is retry-safe from the app's perspective: a record already gone
     // is the requested outcome even though the API reports it as 404.
@@ -191,17 +193,12 @@ export class CloudAgentsClient {
       await this.wait(CLOUD_AGENT_POLL_INTERVAL_MS);
       signal?.throwIfAborted();
       let next: CloudAgentResource;
-      const bearer = target.bearer;
       try {
-        const response = await this.apiFor(target.baseUrl).request(
+        const { response, bearer } = await this.send(
+          target,
           "GET",
           `/v1/agents/cloud/${encodeURIComponent(current.agentId)}`,
-          {
-            token: bearer,
-            signal,
-            timeoutMs: REQUEST_TIMEOUT_MS,
-            callerAbortIsLifecycle: true,
-          },
+          { signal, timeoutMs: REQUEST_TIMEOUT_MS, callerAbortIsLifecycle: true },
         );
         next = await this.resourceFor(response, bearer);
       } catch (error) {

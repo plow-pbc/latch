@@ -58,11 +58,13 @@ describe("cloud-agent pure mappings", () => {
       },
     );
 
-    expect(row.failureReason).toBe("credential [credential] rejected");
+    // Prose is no longer forwarded at all, so there is nothing left here for a
+    // session id to hide in — see the allowlist test below.
+    expect(row.failureReason).toBe("Reason unavailable");
     expect(JSON.stringify(row)).not.toContain(sessionId);
   });
 
-  it("allows only known failure labels or legacy prose into the renderer", () => {
+  it("allows ONLY known failure labels into the renderer, never server prose", () => {
     const row = toCloudAgentDisplayRow({
       ...agent({ status: "failed", failureReason: "legacy reason" }),
       failureCode: "validation_failed",
@@ -70,11 +72,21 @@ describe("cloud-agent pure mappings", () => {
 
     expect(row.failureReason).toMatch(/validation failed.*retrying will not help.*human/i);
 
+    // An unknown code's prose is WITHHELD, not forwarded. `failure_reason` is
+    // written by the host, and a self-hosted one is an origin its owner typed
+    // in — it can carry that host's own bearer in an encoding no echo check
+    // sees through. The row says a reason exists and declines to repeat it.
     const future = toCloudAgentDisplayRow({
       ...agent({ status: "failed", failureReason: "Provider capacity is exhausted." }),
       failureCode: "capacity_exhausted",
     } as CloudAgentResource);
-    expect(future.failureReason).toBe("Provider capacity is exhausted.");
+    expect(future.failureReason).toBe("Reason unavailable");
+
+    const encodedBearer = toCloudAgentDisplayRow({
+      ...agent({ status: "failed", failureReason: "failed: c2VydmUtdG9rZW4tYWJj" }),
+      failureCode: "capacity_exhausted",
+    } as CloudAgentResource);
+    expect(encodedBearer.failureReason).toBe("Reason unavailable");
 
     const encodedCredential = toCloudAgentDisplayRow({
       ...agent({ status: "failed", failureReason: null }),

@@ -67,9 +67,18 @@ export function toCloudAgentDisplayRow(
   context: CloudAgentDisplayContext = {},
 ): CloudAgentDisplayRow {
   const scrub = (value: string): string => scrubSessionId(value, agent.sessionId);
+  // ALLOWLIST ONLY. `failure_reason` is prose written by the host, and a
+  // self-hosted one is an origin its owner typed in — it can put anything
+  // there, including its own bearer in an encoding no echo check can see
+  // through. Forwarding it is the same seam the 400-detail passthrough was
+  // deleted for, so the same answer applies here: a known code becomes a
+  // label WE wrote, and anything else says nothing rather than repeating the
+  // server.
   const failureReason = agent.failureCode && Object.hasOwn(FAILURE_LABELS, agent.failureCode)
     ? FAILURE_LABELS[agent.failureCode]
-    : agent.failureReason;
+    : agent.failureReason
+      ? "Reason unavailable"
+      : null;
   const line = context.line ?? null;
   return {
     agentId: scrub(agent.agentId),
