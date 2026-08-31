@@ -8,6 +8,7 @@
  */
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
+import net from "node:net";
 import path from "node:path";
 import tls from "node:tls";
 
@@ -41,6 +42,21 @@ export function listen(
     { port: 0, hits: 0 },
   );
   server.on("secureConnection", (sock) => sock.once("data", () => (server.hits++, answer(sock))));
+  return new Promise((resolve) => {
+    server.listen(0, "127.0.0.1", () => {
+      server.port = (server.address() as { port: number }).port;
+      resolve(server);
+    });
+  });
+}
+
+/**
+ * A listener that accepts the connection and never speaks TLS — a vault that
+ * has bound its port but is not serving on it yet.
+ */
+export function listenSilently(): Promise<net.Server & { port: number; hits: number }> {
+  const server = Object.assign(net.createServer(), { port: 0, hits: 0 });
+  server.on("connection", () => server.hits++);
   return new Promise((resolve) => {
     server.listen(0, "127.0.0.1", () => {
       server.port = (server.address() as { port: number }).port;

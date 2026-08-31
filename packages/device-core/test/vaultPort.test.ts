@@ -14,7 +14,7 @@ import tls from "node:tls";
 import { afterAll, describe, expect, it } from "vitest";
 import { servesCertificate } from "@domo/device-core";
 import { VaultClient, type OwnVault } from "../src/browser/vaultClient.js";
-import { listen, mint } from "./vaultTestServer.js";
+import { listen, listenSilently, mint } from "./vaultTestServer.js";
 
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), "vault-port-"));
 
@@ -27,8 +27,8 @@ afterAll(() => servers.forEach((s) => s.close()));
 describe("servesCertificate", () => {
   // The stranger is the old install still holding 8222 after its app went away.
   it.each([
-    ["our own vault", ours, true],
-    ["somebody else's vault on our port", stranger, false],
+    ["our own vault", ours, "ours"],
+    ["somebody else's vault on our port", stranger, "stranger"],
   ])("identifies %s", async (_name, pair, expected) => {
     const server = await listen(pair);
     servers.push(server);
@@ -39,7 +39,19 @@ describe("servesCertificate", () => {
     const server = await listen(ours);
     const port = server.port;
     await new Promise((r) => server.close(r));
-    expect(await servesCertificate(port, ours.cert)).toBe(false);
+    expect(await servesCertificate(port, ours.cert)).toBe("stranger");
+  });
+
+  /**
+   * The distinction the whole fix turns on. A vault of ours that has bound the
+   * port but not finished its handshake used to answer the same `false` as
+   * somebody else's — so the caller walked past it and spawned a second
+   * vaultwarden on this same data directory.
+   */
+  it("does not call a server that has not answered yet somebody else's", async () => {
+    const server = await listenSilently();
+    servers.push(server);
+    expect(await servesCertificate(server.port, ours.cert, 200)).toBe("silent");
   });
 });
 
