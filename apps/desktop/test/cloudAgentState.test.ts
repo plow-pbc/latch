@@ -273,7 +273,7 @@ describe("CloudAgentState line and thread display", () => {
     });
     await unresolved.refresh();
 
-    expect(unresolved.agentSmsUrl("agent_1")).toBeNull();
+    expect(unresolved.agentSmsUrl(rowKey(BUILTIN_TARGET_ID, "agent_1"))).toBeNull();
     expect(unresolved.state().cloudAgents[0].canMessage).toBe(false);
   });
 

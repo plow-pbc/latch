@@ -918,11 +918,6 @@ function cloudLine(agent, state) {
     : "Line unavailable";
 }
 
-/** A roster row's key. Its metadata is Plow's, so its host is always Plow. */
-function plowRowKey(agentId) {
-  return `plow\u0000${agentId}`;
-}
-
 function focusCloudAgent(rowKey) {
   const row = [...document.querySelectorAll(".cloud-agent-row")]
     .find((candidate) => candidate.dataset.cloudRowKey === rowKey);
@@ -1761,7 +1756,7 @@ function cloudEntityRow(row, agent, state, redraw) {
     await window.domo.cloudRetryFailed(agent.rowKey);
     await redraw();
   });
-  const rowKeyAttr = agent?.rowKey ?? (row?.agentId ? plowRowKey(row.agentId) : "");
+  const rowKeyAttr = agent?.rowKey ?? row?.rowKey ?? "";
   return el("div", {
     class: "entity-row cloud-agent-row",
     attrs: { "data-cloud-row-key": rowKeyAttr },
@@ -1822,12 +1817,12 @@ function cloudSection(s, redraw) {
   // Roster rows come from `/v1/api-keys`, which only PLOW serves — so they are
   // keyed to the Plow row. Joining on the bare id pinned Plow's name onto a
   // self-hosted agent that happened to share it.
-  const rosterByKey = new Map(rosterRows.map((row) => [plowRowKey(row.agentId), row]));
+  const rosterByKey = new Map(rosterRows.map((row) => [row.rowKey, row]));
   const seen = new Set(agents.map((agent) => agent.rowKey));
   const rows = agents.map((agent) =>
     cloudEntityRow(rosterByKey.get(agent.rowKey), agent, s, redraw));
   const rosterOnly = rosterRows
-    .filter((row) => !seen.has(plowRowKey(row.agentId)))
+    .filter((row) => !seen.has(row.rowKey))
     .sort((a, b) => rosterName(a, "Cloud agent").localeCompare(rosterName(b, "Cloud agent")));
   for (const row of rosterOnly) {
     rows.push(cloudEntityRow(row, null, s, redraw));

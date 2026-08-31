@@ -752,7 +752,30 @@ function agentsTabState(): Record<string, unknown> | null {
   const connect = connectClient?.state() ?? null;
   const cloud = cloudAgents?.state() ?? null;
   if (!connect) return null;
-  return { ...connect, ...(cloud ?? {}) };
+  return { ...connect, ...(cloud ?? {}), roster: rosterWithRowKeys(connect.roster) };
+}
+
+/**
+ * Stamp each cloud roster row with the key its agent is known by.
+ *
+ * A roster row comes from `/v1/api-keys`, which only PLOW serves, so its key
+ * is always the built-in target's. Built HERE rather than in the renderer:
+ * `rowKey` is meant to be opaque on the other side, and a second encoder over
+ * there is one that can drift from this one.
+ */
+function rosterWithRowKeys(roster: unknown): unknown {
+  if (!roster || typeof roster !== "object") return roster;
+  const rows = (roster as { cloud?: unknown }).cloud;
+  if (!Array.isArray(rows)) return roster;
+  return {
+    ...(roster as Record<string, unknown>),
+    cloud: rows.map((row) => {
+      const agentId = (row as { agentId?: unknown }).agentId;
+      return typeof agentId === "string"
+        ? { ...(row as Record<string, unknown>), rowKey: rowKey(BUILTIN_TARGET_ID, agentId) }
+        : row;
+    }),
+  };
 }
 
 // MARK: IPC for the first-run setup window

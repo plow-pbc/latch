@@ -110,6 +110,7 @@ const rosterProbe = {
     kind: "Agent",
     createdAt: cloudAgent.createdAt,
     lastSeenAt: "2026-08-25T17:55:00.000Z",
+    rowKey: `plow\u0000${cloudAgent.agentId}`,
     agentId: cloudAgent.agentId,
     chatUids: [cloudAgent.threads[0].uid],
     chatAccess: "listed",
@@ -244,6 +245,7 @@ ipcMain.handle("cloud:create", async (_e, input) => {
     };
   } else if (input?.lineUid === "lin_ash") {
     const created = {
+      rowKey: `plow\u0000cag_created`,
       agentId: "cag_created",
       name: input.name || "Cloud agent",
       line: { uid: "lin_ash", label: "Ash · +1 415-555-0199" },
@@ -1018,6 +1020,8 @@ app.whenReady().then(async () => {
   await waitFor(win, `document.querySelector(".cloud-modal .cloud-activation-code")`,
     "the confirmed-code activation screen");
   const confirmedAgent = {
+    rowKey: "plow\u0000cag_confirmed",
+    rowKey: `plow\u0000cag_confirmed`,
     agentId: "cag_confirmed",
     name: "Cloud agent",
     line: { uid: "lin_new", label: "+1 415-555-0999" },
@@ -1036,7 +1040,7 @@ app.whenReady().then(async () => {
       phase: "idle",
       activation: null,
       message: null,
-      completedRowKey: confirmedAgent.agentId,
+      completedRowKey: confirmedAgent.rowKey,
       retryNewLine: false,
     },
   };

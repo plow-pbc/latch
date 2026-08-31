@@ -274,6 +274,16 @@ function parseResource(
   const chatUids = readChatUids(decoded);
   if (chatUids === null) throw invalidResponse(statusCode);
 
+  // An agent id that CONTAINS this resource's session id is refused outright.
+  // The id is not just displayed any more — it is half of the row key, and the
+  // key crosses into the sandboxed renderer whole. The mapper scrubs session
+  // ids out of the prose it emits, but a key must round-trip byte-for-byte to
+  // address the agent, so it cannot be scrubbed. A host that puts credential
+  // identity in the one field that has to survive intact is refused rather
+  // than repaired.
+  const sessionId = typeof decoded.session_id === "string" ? decoded.session_id : "";
+  if (sessionId && decoded.agent_id.includes(sessionId)) throw invalidResponse(statusCode);
+
   const optionalString = (value: unknown): string | null =>
     typeof value === "string" ? value : null;
   const resource: CloudAgentResource = {
