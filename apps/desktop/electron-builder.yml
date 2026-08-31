@@ -37,6 +37,9 @@ publish:
 # LICENSE/NOTICE files are deliberately shipped — redistribution requires them.
 files:
   - dist/**/*
+  # The compiled native helper ships as an extraResource below — inside the
+  # asar it could not be spawned at all.
+  - "!dist/native/**"
   - "!dist/**/*.d.ts"
   - "!dist/**/*.d.cts"
   - "!dist/**/*.map"
@@ -54,6 +57,11 @@ electronLanguages:
 # No asarUnpack: it existed so a plain `node` could run the domo-mcp shim for
 # "Start agent". The shim and that feature went with the broker — the MCP server
 # now runs inside this process and is reached through the relay.
+
+# No fuses config — and the RunAsNode fuse MUST stay enabled. Playwright's
+# driver ships without its bundled node (pruned by build-browser-runtime.mjs)
+# and runs on this app binary via ELECTRON_RUN_AS_NODE; flipping runAsNode off
+# breaks every browser launch. See DESIGN.md §11a, Runtime & packaging.
 
 # The browser stack: universal Python runtime + vendored server + the
 # lipo-fused universal Camoufox tree. Built by scripts/build-browser-runtime.mjs
@@ -83,6 +91,15 @@ extraResources:
   - from: ../../vendor/providers
     to: providers
     filter: ["**/*", "!*/VERSION"]
+  # The Full Disk Access flow's window tracker (scripts/build-native.mjs, a
+  # `just build` step). Lipo-fused universal like the python runtime, so both
+  # electron-builder arch passes carry identical bytes and the merge copies it
+  # through. Signed by electron-builder with the app's entitlements — a plain
+  # CLI, nothing extra needed. The .stamp is the build script's cache key, not
+  # payload.
+  - from: dist/native
+    to: native
+    filter: ["**/*", "!*.stamp"]
 
 mac:
   icon: ../../artwork/domo-desktop-icon.png
