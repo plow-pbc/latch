@@ -46,8 +46,11 @@ interface LegacyRow {
   updated_at: string;
 }
 
+/** The database ALONE is the evidence: it holds the items. An account file
+ * without it has nothing to migrate; a database without the account file is a
+ * vault whose items exist and cannot be opened — locked, never fresh. */
 export function legacyVaultPresent(dir: string): boolean {
-  return fs.existsSync(path.join(dir, "db.sqlite3")) && fs.existsSync(path.join(dir, "vault-account.enc"));
+  return fs.existsSync(path.join(dir, "db.sqlite3"));
 }
 
 /**
@@ -68,11 +71,29 @@ export function migrateLegacyVault(dir: string, keyStore: VaultKeyStore, store: 
         : "the old vault has items but no account file; its items cannot be migrated",
     );
   }
-  const { email, password } = secretState.account;
+  const account = secretState.account;
 
   const db = readLegacyDb(dir);
-  const derived = masterKeyAndHash(email, password);
-  const userKey = decString(db.akey, derived.stretchedEnc, derived.stretchedMac);
+  // An interrupted account change left BOTH pairs on disk on purpose (see
+  // VaultAccount.pending): the old server may have accepted either before the
+  // crash, and only the pair it took unwraps the user key. Try each against
+  // the database's own akey — its HMAC says which one is real.
+  const pairs = [account, ...(account.pending ? [account.pending] : [])];
+  let userKey: Buffer | null = null;
+  for (const pair of pairs) {
+    const derived = masterKeyAndHash(pair.email, pair.password);
+    try {
+      userKey = decString(db.akey, derived.stretchedEnc, derived.stretchedMac);
+      break;
+    } catch {
+      /* not the pair the vault took; try the other */
+    }
+  }
+  if (!userKey) {
+    throw new Error(
+      "the old vault's account does not open its key — the account file and the database disagree, so its items cannot be migrated",
+    );
+  }
 
   // Key first, items last: a crash in between leaves a key with no items, and
   // THIS run is the one that completes it — migration retries whenever the

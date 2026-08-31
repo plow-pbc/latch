@@ -31,6 +31,9 @@ export function readCredentialsState(dir: string, keyStore = new VaultKeyStore(d
     const legacy = new VaultSecretStore(dir).readState();
     if (legacy.status === "ok") return { status: "ok" };
     if (legacy.status === "locked") return { status: "locked", reason: legacy.reason };
+    // A legacy database with NO account file: the items exist and nothing
+    // will ever decrypt them here — locked, never a fresh vault beside them.
+    return { status: "locked", reason: "undecryptable" };
   }
   return { status: "empty" };
 }

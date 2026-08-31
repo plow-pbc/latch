@@ -102,6 +102,43 @@ describe("LocalVault", () => {
     expect(String(loser.reason)).toMatch(/changed somewhere else/);
   });
 
+  it("refuses an edit whose item was deleted underneath it — a save must not undo a delete", async () => {
+    const dir = tempDir();
+    const { vault } = vaultIn(dir);
+    const { id } = await vault.save({ type: "login", name: "A", urls: ["a.example"], password: "pw" });
+    const revision = (await vault.read(id)).revision;
+    const store = new VaultStore(dir);
+    const snapshot = store.get(id)!;
+    await vault.remove(id);
+    // The ordinary path notices first.
+    await expect(vault.save({ itemId: id, revision, name: "resurrected" })).rejects.toThrow(/no such item/);
+    // And a save that raced past that read (snapshot already in hand) is
+    // refused by the store's own write, not re-inserted under the deleted id.
+    expect(() => store.upsert(snapshot, revision)).toThrow(/deleted while you had it open/);
+    expect(await vault.list()).toEqual([]);
+  });
+
+  it("lists an unsupported migrated item as an inert row instead of failing the vault", async () => {
+    const dir = tempDir();
+    const { vault } = vaultIn(dir);
+    await vault.save({ type: "note", name: "N", notes: "x" });
+    // An SSH key the old web vault created, migrated verbatim: type 5 with an
+    // encrypted name. Plant it the way migration would.
+    const store = new VaultStore(dir);
+    const note = store.readAll()[0];
+    store.replaceAll([note, { ...note, id: "ssh-1", type: 5, sshKey: {}, secureNote: null }]);
+
+    const items = await vault.list();
+    expect(items).toHaveLength(2);
+    const odd = items.find((i) => i.id === "ssh-1")!;
+    expect(odd.type).toBe("unsupported");
+    expect(odd.title).toBe("N"); // its name still decrypts
+    // The forms refuse it; deleting it works.
+    await expect(vault.read("ssh-1")).rejects.toThrow(/cannot edit item type 5/);
+    await vault.remove("ssh-1");
+    expect(await vault.list()).toHaveLength(1);
+  });
+
   it("refuses a stale edit instead of overwriting the newer item", async () => {
     const { vault } = vaultIn(tempDir());
     const { id } = await vault.save({ type: "login", name: "A", urls: ["a.example"], password: "one" });

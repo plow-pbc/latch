@@ -91,6 +91,12 @@ describe("readCredentialsState", () => {
     expect(readCredentialsState(dir)).toEqual({ status: "ok" });
   });
 
+  it("reports a legacy database with NO account file as locked — the items exist", () => {
+    const dir = tempDir();
+    fs.writeFileSync(path.join(dir, "db.sqlite3"), "");
+    expect(readCredentialsState(dir)).toEqual({ status: "locked", reason: "undecryptable" });
+  });
+
   it("ignores a stray legacy account with no database — nothing is migratable from it", () => {
     const dir = tempDir();
     fs.writeFileSync(path.join(dir, "vault-account.enc"), Buffer.concat([Buffer.from("ENC1"), Buffer.from("x")]));

@@ -47,12 +47,23 @@ interface LegacyFixture {
 
 /** A legacy vault on disk: account file + database, exactly as the old stack
  * left them (the account file lands on the test-tier plaintext fallback, the
- * same file VaultSecretStore has always read). */
-function legacyVault(extraSql = ""): LegacyFixture {
+ * same file VaultSecretStore has always read). With `pendingTakes`, the
+ * database's key is wrapped under the PENDING pair — the state an interrupted
+ * account change leaves when the old server accepted it before the crash. */
+function legacyVault(extraSql = "", opts: { pendingTakes?: boolean } = {}): LegacyFixture {
   const dir = tempDir();
   const email = "agent-3f2a@local";
   const password = crypto.randomBytes(24).toString("base64url");
-  new VaultSecretStore(dir).write({ email, password });
+  if (opts.pendingTakes) {
+    // The current pair is the superseded one; only `pending` opens the key.
+    new VaultSecretStore(dir).write({
+      email,
+      password: crypto.randomBytes(24).toString("base64url"),
+      pending: { email, password },
+    });
+  } else {
+    new VaultSecretStore(dir).write({ email, password });
+  }
 
   const derived = masterKeyAndHash(email, password);
   const userKey = crypto.randomBytes(64);
@@ -178,6 +189,30 @@ describe("migrateLegacyVault", () => {
     const broker = new BrokerCore({ dir, store: new VaultStore(dir), keyStore: new VaultKeyStore(dir, "test") });
     expect(broker.whatsHere().map((i) => i.title).sort()).toEqual(["Door", "Pizza"]);
     expect(new VaultStore(dir).exists()).toBe(true);
+  });
+
+  it("migrates through a PENDING account pair the old server had accepted", async () => {
+    // An interrupted password change keeps both pairs on disk on purpose; the
+    // database's own key says which one the server took before the crash.
+    const { dir, rows } = legacyVault("", { pendingTakes: true });
+    const vault = new LocalVault(dir, new VaultKeyStore(dir, "test"));
+    expect((await vault.list()).map((i) => i.title).sort()).toEqual(["Door", "Pizza"]);
+    expect(await vault.reveal(rows[0].id!, "password")).toBe("hunter2");
+  });
+
+  it("treats a legacy database with NO account file as locked, never as fresh", async () => {
+    // The items exist and nothing here can open them: minting a new key would
+    // report an empty vault sitting beside the owner's real one.
+    const { dir } = legacyVault();
+    fs.rmSync(path.join(dir, "vault-account.enc"));
+    expect(legacyVaultPresent(dir)).toBe(true);
+
+    const keyStore = new VaultKeyStore(dir, "test");
+    const vault = new LocalVault(dir, keyStore);
+    await expect(vault.list()).rejects.toThrow(/no account file/);
+    // Nothing was minted or written.
+    expect(keyStore.state()).toEqual({ status: "empty" });
+    expect(new VaultStore(dir).exists()).toBe(false);
   });
 
   it("refuses to migrate — and to start fresh — when the old account is locked", () => {

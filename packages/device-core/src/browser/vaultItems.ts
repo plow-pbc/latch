@@ -80,7 +80,11 @@ export interface Cipher {
 export interface VaultItemSummary {
   id: string;
   title: string;
-  type: VaultItemType;
+  /** One of the four editable types, or "unsupported": a shape migrated from
+   * the old vault (an SSH key, say) that this app's forms cannot edit. Listed
+   * rather than hidden or fatal — hidden reads as a lost item, and one such
+   * item must never take the whole vault down with it. */
+  type: VaultItemType | "unsupported";
   /** One line of context: the username, or the card's brand, or the name on an identity. */
   subtitle: string;
   urls: string[];
@@ -165,21 +169,33 @@ function subtitleOf(type: number, fields: Record<string, string>): string {
 /**
  * The type this item is, or a refusal.
  *
- * The vault's enum reserves 5-8 (SSH key, bank account, licence, passport) and
- * its web client can create them. Treating one of those as a login would show
- * a form of empty login fields and accept a save that silently went nowhere —
- * the item's real body is not the one being written.
+ * The enum reserves 5-8 (SSH key, bank account, licence, passport), and a
+ * vault migrated from the old server can hold a 5. Treating one of those as a
+ * login would show a form of empty login fields and accept a save that
+ * silently went nowhere — the item's real body is not the one being written.
  */
 function typeOf(cipher: Cipher): number {
   const type = cipher.type ?? 1;
   if (!TYPE_NAME[type]) {
-    throw new Error(`this app cannot show item type ${type}; use the vault's own page for it`);
+    throw new Error(`this app cannot edit item type ${type}; it can only be deleted here`);
   }
   return type;
 }
 
 export function decryptSummary(cipher: Cipher, account: VaultKey): VaultItemSummary {
   const key = itemKey(cipher, account);
+  if (!TYPE_NAME[cipher.type ?? 1]) {
+    // A shape the forms cannot edit still gets a row: its name decrypts like
+    // any other (the name is outside the typed body), and one such item must
+    // not make the whole listing fail — the only other way in is gone.
+    return {
+      id: String(cipher.id ?? ""),
+      title: dec(cipher.name, key),
+      type: "unsupported",
+      subtitle: "",
+      urls: [],
+    };
+  }
   const type = typeOf(cipher);
   const raw = body(cipher);
   const shown: Record<string, string> = {};

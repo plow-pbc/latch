@@ -67,6 +67,11 @@ export class VaultStore {
     if (at !== -1 && expectedRevision !== undefined && expectedRevision !== String(ciphers[at].revisionDate ?? "")) {
       throw new Error("this item changed somewhere else while you had it open; reopen it and make the change again");
     }
+    // An edit whose row is GONE is the same race with a delete for a rival:
+    // re-inserting it under the deleted id would quietly undo the delete.
+    if (at === -1 && expectedRevision !== undefined) {
+      throw new Error("this item was deleted while you had it open; the edit was not saved");
+    }
     // The new revision must DIFFER from the old one, or the compare above (and
     // staleEdit) cannot tell the versions apart — and two writes inside one
     // millisecond otherwise mint the same ISO string. Clocks tie; nudge past.
