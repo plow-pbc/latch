@@ -75,6 +75,21 @@ function machOArchs(file) {
   }
 }
 
+/**
+ * The two-arch invariant every shipped binary answers to: a thin file clears
+ * every gate on the packaging Mac and lands broken on the other arch's
+ * users. `hint` is the remedy worth naming when there is one.
+ */
+function assertUniversalMachO(what, file, hint = "") {
+  const archs = machOArchs(file);
+  const missing = ["x86_64", "arm64"].find((arch) => !archs.includes(arch));
+  if (missing) {
+    throw new Error(
+      `[afterPack] the ${what} is missing ${missing} (carries: ${archs.join(", ") || "nothing"})${hint ? ` — ${hint}` : ""}`,
+    );
+  }
+}
+
 function* walk(root) {
   for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
     const p = path.join(root, entry.name);
@@ -160,15 +175,7 @@ module.exports = async function afterPack(context) {
         "its build failed (see `npm rebuild @domo/native-keychain`); a release must carry the vault's SecItem provider",
     );
   }
-  const addonArchs = machOArchs(keychainAddon);
-  for (const arch of ["x86_64", "arm64"]) {
-    if (!addonArchs.includes(arch)) {
-      throw new Error(
-        `[afterPack] the native-keychain addon is missing ${arch} (carries: ${addonArchs.join(", ") || "nothing"}) — ` +
-          "rebuild it universal (binding.gyp forces both arches)",
-      );
-    }
-  }
+  assertUniversalMachO("native-keychain addon", keychainAddon, "rebuild it universal (binding.gyp forces both arches)");
 
   // `await import`, because the manifest is ESM and this hook is not. It is the
   // one list of providers; a literal here was true of one and false of two.
@@ -246,12 +253,7 @@ module.exports = async function afterPack(context) {
       if (!fs.existsSync(file) || fs.statSync(file).size === 0) {
         throw new Error(`[afterPack] the packed app has no ${what} — credential exchange would silently stop working`);
       }
-      const archs = machOArchs(file);
-      for (const arch of ["x86_64", "arm64"]) {
-        if (!archs.includes(arch)) {
-          throw new Error(`[afterPack] the ${what} is missing ${arch} (carries: ${archs.join(", ") || "nothing"})`);
-        }
-      }
+      assertUniversalMachO(what, file);
     }
     if (!fs.existsSync(path.join(appexSource, "Contents", "MacOS", "PlowLatchCredentialProvider"))) {
       throw new Error(
@@ -269,14 +271,7 @@ module.exports = async function afterPack(context) {
     fs.mkdirSync(path.dirname(appex), { recursive: true });
     fs.cpSync(appexSource, appex, { recursive: true });
     const appexBinary = path.join(appex, "Contents", "MacOS", "PlowLatchCredentialProvider");
-    const appexArchs = machOArchs(appexBinary);
-    for (const arch of ["x86_64", "arm64"]) {
-      if (!appexArchs.includes(arch)) {
-        throw new Error(
-          `[afterPack] the credential-provider appex is missing ${arch} (carries: ${appexArchs.join(", ") || "nothing"})`,
-        );
-      }
-    }
+    assertUniversalMachO("credential-provider appex", appexBinary);
     // macOS expects a nested bundle's versions to match its app's, and the
     // app's are stamped at package time — so the appex is stamped here, from
     // the same source of truth, before its seal goes on.

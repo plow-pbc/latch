@@ -229,7 +229,7 @@ export function finishImportedLogin(
 
 /** The hostname a URL names, or "" — the display-name fallback for a login
  * whose export carried no title. */
-export function hostOf(url: string): string {
+function hostOf(url: string): string {
   try {
     return new URL(url).hostname;
   } catch {
@@ -244,7 +244,7 @@ export function hostOf(url: string): string {
  * quote a character of what was pasted, and this one is going on screen next
  * to a hundred others.
  */
-export function checkTotp(raw: string | undefined, warnings: string[]): string {
+function checkTotp(raw: string | undefined, warnings: string[]): string {
   const totp = (raw ?? "").trim();
   if (!totp) return "";
   try {
