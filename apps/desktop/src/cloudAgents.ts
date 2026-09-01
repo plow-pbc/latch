@@ -1,4 +1,11 @@
-import { AgentTarget, ApiBaseUrl, PlowApi, PlowApiError, REQUEST_TIMEOUT_MS } from "./plowApi.js";
+import {
+  AgentTarget,
+  ApiBaseUrl,
+  BUILTIN_TARGET_ID,
+  PlowApi,
+  PlowApiError,
+  REQUEST_TIMEOUT_MS,
+} from "./plowApi.js";
 
 export const CLOUD_AGENT_POLL_INTERVAL_MS = 2_000;
 const CLOUD_AGENT_POLL_RETRY_WINDOW_MS = 5 * 60_000;
@@ -128,7 +135,7 @@ export class CloudAgentsClient {
     if (!response.ok) {
       await throwCloudCallError(response, request.name);
     }
-    return this.resourceFor(response, bearer);
+    return this.resourceFor(response, target, bearer);
   }
 
   async changeLine(
@@ -145,7 +152,7 @@ export class CloudAgentsClient {
     if (!response.ok) {
       await throwCloudCallError(response, "");
     }
-    return this.resourceFor(response, bearer);
+    return this.resourceFor(response, target, bearer);
   }
 
   async list(target: AgentTarget): Promise<CloudAgentResource[]> {
@@ -161,7 +168,8 @@ export class CloudAgentsClient {
     if (!data) {
       throw invalidResponse(response.status);
     }
-    return data.map((entry) => parseResource(entry, bearer, response.status));
+    return data.map((entry) =>
+      parseResource(entry, bearer, response.status, target.id === BUILTIN_TARGET_ID));
   }
 
   async delete(target: AgentTarget, agentId: string): Promise<void> {
@@ -200,7 +208,7 @@ export class CloudAgentsClient {
           `/v1/agents/cloud/${encodeURIComponent(current.agentId)}`,
           { signal, timeoutMs: REQUEST_TIMEOUT_MS, callerAbortIsLifecycle: true },
         );
-        next = await this.resourceFor(response, bearer);
+        next = await this.resourceFor(response, target, bearer);
       } catch (error) {
         signal?.throwIfAborted();
         if (isRetryablePollError(error)) {
@@ -222,11 +230,12 @@ export class CloudAgentsClient {
 
   private async resourceFor(
     response: Response,
+    target: AgentTarget,
     bearer: string,
   ): Promise<CloudAgentResource> {
     if (!response.ok) throw errorFor(response.status);
     const decoded = await decodeJson(response);
-    return parseResource(decoded, bearer, response.status);
+    return parseResource(decoded, bearer, response.status, target.id === BUILTIN_TARGET_ID);
   }
 
 }
@@ -257,10 +266,55 @@ async function decodeJson(response: Response): Promise<unknown> {
   }
 }
 
+/** The only provider a self-hosted host may claim; it refuses anything else. */
+const SELF_HOSTED_PROVIDER = "local:docker";
+
+/** Statuses this app knows how to act on. */
+const KNOWN_STATUSES = new Set(["provisioning", "running", "failed", "teardown"]);
+
+/**
+ * **The one place a self-hosted host's strings are neutralised.**
+ *
+ * Every field of a `CloudAgentResource` is written by the host, and for a
+ * self-hosted one that host is an origin its owner typed in. Sanitising per
+ * SINK was tried and kept losing: the same string turned up next in the row
+ * key, then the display, then `plow-wire.log`, then the retry cache, then the
+ * error copy — each round finding a sink nobody had enumerated. So it happens
+ * HERE, at the single boundary where a response becomes a resource, and
+ * nothing downstream can see an untrusted string to leak.
+ *
+ * What survives, and why:
+ * - `agentId` and `chatUids` — the only two this app must send back to address
+ *   the agent. Neither reaches the renderer (it holds a minted handle) nor the
+ *   wire log (Plow-only), and an unmatched chat uid resolves to nothing.
+ * - `provider` — allowlisted to the one value a local host may serve.
+ * - `status` — allowlisted; anything else is `failed`.
+ *
+ * Everything else is dropped outright: a name (the screen uses the owner's), a
+ * creation date, a provider URL, a failure code or prose, and a session id.
+ * Add a field to the resource and it arrives here `null` until someone decides
+ * otherwise, which is the failure direction to have.
+ */
+function sanitizeSelfHosted(resource: CloudAgentResource): CloudAgentResource {
+  return {
+    agentId: resource.agentId,
+    chatUids: resource.chatUids,
+    url: null,
+    provider: resource.provider === SELF_HOSTED_PROVIDER ? SELF_HOSTED_PROVIDER : null,
+    name: null,
+    status: KNOWN_STATUSES.has(resource.status) ? resource.status : "failed",
+    failureCode: null,
+    failureReason: null,
+    createdAt: null,
+    sessionId: null,
+  };
+}
+
 function parseResource(
   decoded: unknown,
   bearer: string,
   statusCode: number,
+  trusted = true,
 ): CloudAgentResource {
   if (
     !isRecord(decoded) ||
@@ -306,7 +360,7 @@ function parseResource(
   ) {
     throw new PlowApiError("http", "The agent host returned an unsafe response.", statusCode);
   }
-  return resource;
+  return trusted ? resource : sanitizeSelfHosted(resource);
 }
 
 /**

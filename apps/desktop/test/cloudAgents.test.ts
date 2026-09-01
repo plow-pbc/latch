@@ -537,3 +537,82 @@ describe("CloudAgentsClient against a self-hosted host", () => {
       .rejects.toThrow("Not authorized.");
   });
 });
+
+/**
+ * The boundary itself, field by field. Per-sink sanitising kept losing to the
+ * next sink nobody had enumerated, so this asserts the resource is already
+ * clean before anything downstream can see it.
+ */
+describe("a self-hosted response is neutralised at the boundary", () => {
+  const LOCAL_TARGET: AgentTarget = {
+    id: "local",
+    baseUrl: "http://192.168.15.12:8765",
+    bearer: "serve-token-abc",
+  };
+  const encoded = Buffer.from("serve-token-abc").toString("base64");
+
+  /** Every host-authored field carrying the bearer in a reversible encoding. */
+  const hostile = {
+    agent_id: "demo",
+    chat_uids: ["cht_one"],
+    url: `docker://${encoded}`,
+    provider: `exe:${encoded}`,
+    name: encoded,
+    status: `weird-${encoded}`,
+    failure_code: encoded,
+    failure_reason: `boom ${encoded}`,
+    created_at: encoded,
+    session_id: encoded,
+  };
+
+  it("keeps only what is needed to address the agent", async () => {
+    const { fetchImpl } = recordingFetch([{ status: 200, body: [hostile] }]);
+
+    const [row] = await new CloudAgentsClient(() => new PlowApi(LOCAL_TARGET.baseUrl, fetchImpl))
+      .list(LOCAL_TARGET);
+
+    // Nothing reversible survives, whatever sink it would have reached.
+    expect(JSON.stringify(row)).not.toContain(encoded);
+    // What must survive, to address the agent at all.
+    expect(row.agentId).toBe("demo");
+    expect(row.chatUids).toEqual(["cht_one"]);
+    // Allowlisted, not echoed.
+    expect(row.status).toBe("failed");
+    expect(row.provider).toBeNull();
+    // Dropped outright.
+    expect(row.name).toBeNull();
+    expect(row.url).toBeNull();
+    expect(row.createdAt).toBeNull();
+    expect(row.failureCode).toBeNull();
+    expect(row.failureReason).toBeNull();
+    expect(row.sessionId).toBeNull();
+  });
+
+  it("keeps the one provider a local host may serve", async () => {
+    const { fetchImpl } = recordingFetch([{
+      status: 200,
+      body: [{ ...hostile, provider: "local:docker", status: "running" }],
+    }]);
+
+    const [row] = await new CloudAgentsClient(() => new PlowApi(LOCAL_TARGET.baseUrl, fetchImpl))
+      .list(LOCAL_TARGET);
+
+    expect(row.provider).toBe("local:docker");
+    expect(row.status).toBe("running");
+  });
+
+  it("leaves Plow's own response alone", async () => {
+    // Plow is the build's origin, not one someone typed in; its fields are the
+    // product's own and the screen needs them.
+    const { fetchImpl } = recordingFetch([{
+      status: 200,
+      body: [{ ...hostile, name: "Household helper", status: "running", provider: "exe:hermes" }],
+    }]);
+
+    const [row] = await new CloudAgentsClient(() => new PlowApi("https://api.plow.co", fetchImpl))
+      .list(TARGET);
+
+    expect(row.name).toBe("Household helper");
+    expect(row.provider).toBe("exe:hermes");
+  });
+});
