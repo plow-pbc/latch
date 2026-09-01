@@ -1,13 +1,12 @@
 import { el, icon } from "./dom.js";
-import { errText, vbusy, vreleaseEditor, vtakeEditor, vtoast } from "./vault.js";
 
-/* The Import sheet: passwords in from Apple Passwords or 1Password.
+/* The Import sheet: passwords in from Apple Passwords, 1Password or Chrome.
 
-   Step one is WHERE FROM: two cards wearing the apps' own icons (fetched by
-   main from the installed apps, as display-only data URLs). 1Password's card
-   only exists when 1Password is actually installed — otherwise there is no
-   choice to make, and the sheet opens straight onto the Apple guidance. The
-   chosen app's walkthrough and inputs render underneath the cards.
+   Step one is WHERE FROM: cards wearing the apps' own icons (fetched by main
+   from the installed apps, as display-only data URLs). 1Password and Chrome
+   only appear when actually installed — with nothing else there is no choice
+   to make, and the sheet opens straight onto the Apple guidance. The chosen
+   app's walkthrough and inputs render underneath the cards.
 
    Two doors, matching what those apps can produce. A CSV file, which main
    reads itself behind its own open dialog, so a file of plain-text passwords
@@ -16,8 +15,13 @@ import { errText, vbusy, vreleaseEditor, vtakeEditor, vtoast } from "./vault.js"
 
    Either way the parsed passwords are STAGED IN MAIN. What comes back here is
    a preview stripped of every secret: titles, usernames, sites, and whether a
-   password or a 2FA key is there. Import commits whatever main staged; the
-   paste box is emptied the moment its text has been handed over. */
+   password or a 2FA key is there — plus, for an item the vault already holds,
+   which of its secrets changed. Import commits whatever main staged; the
+   paste box is emptied the moment its text has been handed over.
+
+   The sheet OWNS NOTHING of the pane's shared state. The editor seat, the
+   busy lock and the toast belong to vault.js, which hands them in as `host`
+   — the sheet calls them and never reaches back into that module. */
 
 /** Numbered steps under a small header; header optional. */
 function steps(head, items) {
@@ -27,27 +31,18 @@ function steps(head, items) {
   ]);
 }
 
-export async function vimportSheet(reload) {
-  const overlay = el("div", { class: "overlay show" });
-  let staged = false; // main is holding parsed passwords for this sheet
-  const close = () => {
-    document.removeEventListener("keydown", onKey);
-    vreleaseEditor(seat);
-    overlay.remove();
-    // Main keeps the parsed passwords between inspect and commit. A sheet
-    // that closes without importing must have them dropped now, not left
-    // until some later inspect happens to replace them.
-    if (staged) void window.domo.vaultImportCancel();
-  };
-  // Nothing typed here is worth guarding: the paste box holds a paste, which
-  // is still on the clipboard, so dirty() never blocks a close. Taking the
-  // seat still matters, because it is what asks about an already-dirty row
-  // before this sheet covers it.
-  const seat = { dirty: () => false, close };
-  if (!(await vtakeEditor(seat))) return;
+/**
+ * @param reload redraw the vault pane (called after a commit lands)
+ * @param host vault.js's pane seams: { errText, vbusy, vtakeEditor,
+ *             vreleaseEditor, vtoast }
+ */
+export async function vimportSheet(reload, host) {
+  const { errText, vbusy, vtakeEditor, vreleaseEditor, vtoast } = host;
 
-  // Which apps are here to import from. If the ask fails, the sheet still
-  // works: Apple's Passwords app ships with macOS, so that guidance stands.
+  // Which apps are here to import from — asked BEFORE the sheet takes the
+  // editor seat or puts anything on screen, so nothing can try to close a
+  // half-built sheet while this answer is in flight. If the ask fails, the
+  // sheet still works: Apple's Passwords app ships with macOS.
   let sources = { apple: { icon: null }, onePassword: null, chrome: null };
   try {
     sources = await window.domo.vaultImportSources();
@@ -57,6 +52,39 @@ export async function vimportSheet(reload) {
   // With only one possible source there is nothing to choose: preselected.
   const choices = !!(sources.onePassword || sources.chrome);
   let source = choices ? null : "apple";
+
+  const overlay = el("div", { class: "overlay show" });
+  // Hoisted, so close() can be called from the editor seat the moment the
+  // seat is taken — a window closing mid-open must find this defined.
+  function onKey(e) {
+    // Not while a commit is running: the pane is inert, and the work in main
+    // finishes either way — closing under it would just hide the outcome.
+    if (e.key === "Escape" && !document.querySelector(".vaultui")?.inert) close();
+  }
+  const close = () => {
+    document.removeEventListener("keydown", onKey);
+    vreleaseEditor(seat);
+    overlay.remove();
+    // Main may be holding parsed passwords — staged, or still being parsed
+    // by an inspect in flight. Cancel UNCONDITIONALLY: main's epoch guard is
+    // what makes this cover the in-flight case too, and cancelling when
+    // nothing is held costs nothing.
+    void window.domo.vaultImportCancel();
+  };
+  // Nothing typed here is worth guarding: the paste box holds a paste, which
+  // is still on the clipboard, so dirty() never blocks a close. Taking the
+  // seat still matters, because it is what asks about an already-dirty row
+  // before this sheet covers it.
+  const seat = { dirty: () => false, close };
+  if (!(await vtakeEditor(seat))) return;
+
+  /** The sheet closed while an answer was in flight. The answer may have
+   * staged passwords in main after close() cancelled — cancel again. */
+  const gone = () => {
+    if (overlay.isConnected) return false;
+    void window.domo.vaultImportCancel();
+    return true;
+  };
 
   const title = el("h2", { text: "Import passwords" });
   const back = el("button", { class: "sheet-back", attrs: { type: "button", title: "Back", hidden: "" } }, [icon("chevron", { class: "vico", strokeWidth: "2.2" })]);
@@ -88,7 +116,8 @@ export async function vimportSheet(reload) {
         b.disabled = true;
         try {
           const found = await window.domo.vaultImportFile();
-          if (found) { staged = true; preview(found); }
+          if (gone()) return;
+          if (found) preview(found);
         } catch (e) {
           oops(e);
         }
@@ -155,10 +184,10 @@ export async function vimportSheet(reload) {
         readBtn.disabled = true;
         try {
           const found = await window.domo.vaultImportInspect(text);
+          if (gone()) return;
           // The text has been handed to main; a box of passwords has no
           // business staying on screen behind the preview.
           paste.value = "";
-          staged = true;
           preview(found);
         } catch (e) {
           oops(e);
@@ -331,7 +360,6 @@ export async function vimportSheet(reload) {
       try {
         await vbusy(async () => {
           const res = await window.domo.vaultImportCommit([...chosen]);
-          staged = false;
           close();
           await reload();
           vtoast([
@@ -357,12 +385,7 @@ export async function vimportSheet(reload) {
   // No click-outside dismissal, deliberately: a drag-select that starts in
   // the sheet and lets go over the scrim lands a "click" on the overlay, and
   // losing the sheet to a text selection is worse than an extra Escape. Only
-  // Escape and the close button leave.
-  const onKey = (e) => {
-    // Not while a commit is running: the pane is inert, and the work in main
-    // finishes either way — closing under it would just hide the outcome.
-    if (e.key === "Escape" && !document.querySelector(".vaultui")?.inert) close();
-  };
+  // Escape and the close buttons leave.
   document.addEventListener("keydown", onKey);
   pick();
   document.querySelector(".vaultui").appendChild(overlay);

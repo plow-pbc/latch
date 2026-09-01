@@ -17,7 +17,7 @@
  * of passwords, and everything this module returns is shown on screen.
  */
 import type { LocalVault } from "./localVault.js";
-import { checkedUrls } from "./vaultItems.js";
+import { checkedUrls, type VaultItemSummary } from "./vaultItems.js";
 import { totpParams } from "./vaultTotp.js";
 
 /** One login as the export described it, normalized and ready to save. */
@@ -329,27 +329,62 @@ const dupKey = (title: string, username: string, url: string): string =>
 
 /**
  * Sort each row against what the vault already holds: the same name, username
- * and first site is THE SAME ITEM, and then the secrets decide. Identical
+ * and first site names THE SAME ITEM, and then the secrets decide. Identical
  * secrets flag a duplicate the commit leaves alone — running an export twice
  * must not double the vault. A password or key that CHANGED in the source
  * flags an update instead: the row becomes an edit of the matched item,
  * pinned to the revision read here so a save landing in between is refused,
  * not overwritten. The comparison happens inside the vault (secretsDiffer);
  * no stored value surfaces to make it.
+ *
+ * A vault can hold SEVERAL items under one identity, and an update must
+ * never guess between them: a row is compared against every match, an
+ * identical one wins as a duplicate, and an update happens only when exactly
+ * one candidate remains — anything else is left alone and says so. An item
+ * one row is updating is off the table for the rows after it, or two rows in
+ * one export would take turns rewriting the same item.
  */
 export async function markAgainstVault(vault: LocalVault, logins: ImportedLogin[]): Promise<void> {
-  const existing = new Map(
-    (await vault.list())
-      .filter((s) => s.type === "login")
-      .map((s) => [dupKey(s.title, s.subtitle, s.urls[0] ?? ""), s]),
-  );
+  const groups = new Map<string, VaultItemSummary[]>();
+  for (const s of await vault.list()) {
+    if (s.type !== "login") continue;
+    const k = dupKey(s.title, s.subtitle, s.urls[0] ?? "");
+    const held = groups.get(k);
+    if (held) held.push(s);
+    else groups.set(k, [s]);
+  }
+  const claimed = new Set<string>(); // items an earlier row is already updating
   for (const login of logins) {
-    const match = existing.get(dupKey(login.title, login.username, login.urls[0] ?? ""));
-    if (!match) continue;
-    const diff = await vault.secretsDiffer(match.id, { password: login.password, totp: login.totp });
-    const fields = (["password", "totp"] as const).filter((f) => diff[f]);
-    if (fields.length) login.update = { itemId: match.id, revision: diff.revision, fields: [...fields] };
-    else login.duplicate = true;
+    const matches = groups.get(dupKey(login.title, login.username, login.urls[0] ?? "")) ?? [];
+    if (matches.length === 0) continue;
+    let identical = false;
+    const candidates: NonNullable<ImportedLogin["update"]>[] = [];
+    for (const match of matches) {
+      const diff = await vault.secretsDiffer(match.id, { password: login.password, totp: login.totp });
+      const fields = (["password", "totp"] as const).filter((f) => diff[f]);
+      if (fields.length === 0) {
+        identical = true;
+        break;
+      }
+      if (!claimed.has(match.id)) {
+        candidates.push({ itemId: match.id, revision: diff.revision, fields: [...fields] });
+      }
+    }
+    if (identical) {
+      login.duplicate = true;
+    } else if (candidates.length === 1) {
+      login.update = candidates[0]!;
+      claimed.add(candidates[0]!.itemId);
+    } else {
+      // Which of several differing items would this row mean? No answer is
+      // safe to guess, so none is written — said out loud, not silently.
+      login.duplicate = true;
+      login.warnings.push(
+        candidates.length === 0
+          ? "another row in this import already updates the matching vault item, so this one was left alone"
+          : "more than one item in your vault matches it, so none was updated",
+      );
+    }
   }
 }
 

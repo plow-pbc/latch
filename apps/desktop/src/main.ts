@@ -846,13 +846,21 @@ ipcMain.handle("vault:saveItem", async (_e, input: VaultItemInput) => {
  * outlive the sheet they were pasted for.
  */
 let stagedImport: ImportedLogin[] | null = null;
+/**
+ * Bumped by every cancel and commit. An inspect captures it before parsing
+ * and stages only if it still holds afterwards — a sheet that closed while
+ * the parse was in flight has already cancelled, and its answer must not
+ * quietly re-stage the plaintext the cancel existed to drop.
+ */
+let importEpoch = 0;
 
 async function inspectImport(text: string) {
   const vault = device?.vaultClient;
   if (!vault) throw new Error("the vault is not running");
+  const epoch = importEpoch;
   const parsed = parsePasswordExport(text);
   await markAgainstVault(vault, parsed.logins);
-  stagedImport = parsed.logins;
+  if (epoch === importEpoch) stagedImport = parsed.logins;
   return importPreview(parsed);
 }
 
@@ -865,24 +873,7 @@ async function inspectImport(text: string) {
 ipcMain.handle("vault:importSources", async () => {
   const iconOf = async (appPath: string): Promise<string | null> => {
     if (!(await fs.stat(appPath).catch(() => null))) return null;
-    // The real bundle icon comes from NSWorkspace via the native helper, the
-    // same way the FDA drag tile gets its own (resolveFdaDragTarget): Electron
-    // answers a bundle with the generic app icon — and asking getFileIcon for
-    // "large" is a hard CRASH on macOS (a NOTREACHED on the icon thread), so
-    // only the "normal" size this file already uses is safe as the fallback.
-    try {
-      const { stdout } = await promisify(execFile)(fdaHelperPath, ["--icon", appPath]);
-      const img = nativeImage.createFromDataURL(`data:image/png;base64,${stdout.trim()}`);
-      if (!img.isEmpty()) return img.toDataURL();
-    } catch {
-      // No compiled helper on this host; the generic icon below still reads.
-    }
-    try {
-      const img = await app.getFileIcon(appPath, { size: "normal" });
-      return img.isEmpty() ? null : img.toDataURL();
-    } catch {
-      return null;
-    }
+    return (await bundleIcon(appPath))?.toDataURL() ?? null;
   };
   const installed = async (name: string): Promise<string | undefined> => {
     const candidates = [
@@ -928,6 +919,7 @@ ipcMain.handle("vault:importCommit", async (_e, selected?: number[]) => {
   if (!vault) throw new Error("the vault is not running");
   const logins = stagedImport;
   stagedImport = null;
+  importEpoch++;
   if (!logins) throw new Error("nothing is staged to import; choose a file or paste again");
   const chosen = Array.isArray(selected)
     ? logins.filter((_, i) => selected.includes(i))
@@ -936,9 +928,12 @@ ipcMain.handle("vault:importCommit", async (_e, selected?: number[]) => {
 });
 
 // The sheet closed without importing: drop the staged passwords now rather
-// than holding them until the next inspect happens to replace them.
+// than holding them until the next inspect happens to replace them. The
+// epoch bump also voids any inspect still parsing, whose answer would
+// otherwise land here right after this cleared the slot.
 ipcMain.handle("vault:importCancel", async () => {
   stagedImport = null;
+  importEpoch++;
 });
 
 // The live-browser thumbnail's whole state, one shape per poll (like
@@ -977,6 +972,32 @@ const fdaHelperPath = app.isPackaged
   : path.join(dirname, "native", "settings-window-frame");
 
 /**
+ * The REAL icon of a bundle on disk, for every screen that shows one (the
+ * FDA drag tile, the import sheet's source cards). Electron's app.getFileIcon
+ * answers a bundle with the generic app icon — and asking it for "large" is
+ * a hard CRASH on macOS (a NOTREACHED on the icon thread) — so NSWorkspace
+ * via the native helper is the real path (128px, crisp on retina), and the
+ * one Electron size known safe is the fallback for hosts without the
+ * compiled helper.
+ */
+async function bundleIcon(bundle: string): Promise<Electron.NativeImage | null> {
+  try {
+    const { stdout } = await promisify(execFile)(fdaHelperPath, ["--icon", bundle]);
+    const img = nativeImage.createFromDataURL(`data:image/png;base64,${stdout.trim()}`);
+    if (!img.isEmpty()) return img;
+  } catch {
+    // No compiled helper on this host; the fallback below still answers.
+  }
+  try {
+    const img = await app.getFileIcon(bundle, { size: "normal" });
+    if (!img.isEmpty()) return img;
+  } catch {
+    /* nothing to show; every caller has a face for that */
+  }
+  return null;
+}
+
+/**
  * Which app the grant must name. TCC keys Full Disk Access on the RESPONSIBLE
  * process, not the executable: a `just app` run out of a terminal is the
  * terminal app's grant — dragging Electron.app into the list would grant
@@ -1003,17 +1024,8 @@ async function resolveFdaDragTarget(): Promise<typeof fdaDragTarget> {
   }
   bundle ??= appBundlePath(process.execPath);
   if (!bundle) return null;
-  // The real bundle icon comes from NSWorkspace via the helper —
-  // app.getFileIcon answers with the generic app icon for bundles.
-  let icon: Electron.NativeImage | null = null;
-  try {
-    const { stdout } = await run(fdaHelperPath, ["--icon", bundle]);
-    icon = nativeImage.createFromDataURL(`data:image/png;base64,${stdout.trim()}`);
-    if (icon.isEmpty()) icon = null;
-  } catch {
-    // Same fallbacks as above.
-  }
-  icon ??= await app.getFileIcon(bundle, { size: "normal" });
+  // The real bundle icon, or an empty image the tile still renders around.
+  const icon = (await bundleIcon(bundle)) ?? nativeImage.createEmpty();
   // The drag image must be sized in POINTS: the helper's PNG is 128 raw
   // pixels, which a bare nativeImage would drag at 128pt — twice
   // PermissionFlow's 56pt drag image. Re-wrap 112px at 2x for a crisp 56pt.

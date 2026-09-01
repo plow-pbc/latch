@@ -267,6 +267,22 @@ describe("into the vault", () => {
     "Notion,https://notion.so,jon,notion-secret,team space,",
   ].join("\n");
 
+  /** A vault already holding this export — what every re-import case opens on. */
+  async function seededAppleVault() {
+    const seeded = tempVault();
+    const parsed = parsePasswordExport(apple);
+    await markAgainstVault(seeded.vault, parsed.logins);
+    await importLogins(seeded.vault, parsed.logins);
+    return seeded;
+  }
+
+  /** Parse, classify against the vault, and import — the whole inspect+commit. */
+  async function runImport(vault: import("../src/browser/localVault.js").LocalVault, text: string) {
+    const parsed = parsePasswordExport(text);
+    await markAgainstVault(vault, parsed.logins);
+    return { parsed, result: await importLogins(vault, parsed.logins) };
+  }
+
   it("imports through the vault's own save: items land, secrets seal, audit says CREATED", async () => {
     const { vault, auditPath } = tempVault();
     const parsed = parsePasswordExport(apple);
@@ -287,24 +303,15 @@ describe("into the vault", () => {
   });
 
   it("running the same export twice doubles nothing: the second pass is all duplicates", async () => {
-    const { vault } = tempVault();
-    const first = parsePasswordExport(apple);
-    await markAgainstVault(vault, first.logins);
-    await importLogins(vault, first.logins);
-
-    const second = parsePasswordExport(apple);
-    await markAgainstVault(vault, second.logins);
-    expect(second.logins.every((l) => l.duplicate)).toBe(true);
-    const result = await importLogins(vault, second.logins);
+    const { vault } = await seededAppleVault();
+    const { parsed, result } = await runImport(vault, apple);
+    expect(parsed.logins.every((l) => l.duplicate)).toBe(true);
     expect(result).toEqual({ saved: 0, updated: 0, duplicates: 2, failed: [] });
     expect(await vault.list()).toHaveLength(2);
   });
 
   it("a changed password becomes an update of the existing item, not a double", async () => {
-    const { vault, auditPath } = tempVault();
-    const first = parsePasswordExport(apple);
-    await markAgainstVault(vault, first.logins);
-    await importLogins(vault, first.logins);
+    const { vault, auditPath } = await seededAppleVault();
 
     const again = parsePasswordExport(apple.replace("notion-secret", "notion-rotated"));
     await markAgainstVault(vault, again.logins);
@@ -326,10 +333,7 @@ describe("into the vault", () => {
   });
 
   it("a changed key updates only the key; the same key respelled is no change at all", async () => {
-    const { vault } = tempVault();
-    const first = parsePasswordExport(apple);
-    await markAgainstVault(vault, first.logins);
-    await importLogins(vault, first.logins);
+    const { vault } = await seededAppleVault();
 
     // The same secret as a bare key instead of an otpauth URI: one key, two
     // spellings — flagging it changed would rewrite items on every re-import.
@@ -350,10 +354,7 @@ describe("into the vault", () => {
   });
 
   it("an export that carries no key does not read as removing the stored one", async () => {
-    const { vault } = tempVault();
-    const first = parsePasswordExport(apple);
-    await markAgainstVault(vault, first.logins);
-    await importLogins(vault, first.logins);
+    const { vault } = await seededAppleVault();
 
     // The same login out of a manager whose CSV has no OTPAuth column.
     const bare = parsePasswordExport(
@@ -367,10 +368,7 @@ describe("into the vault", () => {
   });
 
   it("refuses an update composed against an item the vault rewrote in between", async () => {
-    const { vault } = tempVault();
-    const first = parsePasswordExport(apple);
-    await markAgainstVault(vault, first.logins);
-    await importLogins(vault, first.logins);
+    const { vault } = await seededAppleVault();
 
     const again = parsePasswordExport(apple.replace("notion-secret", "notion-rotated"));
     await markAgainstVault(vault, again.logins); // revision pinned here
@@ -381,6 +379,54 @@ describe("into the vault", () => {
     expect(result.updated).toBe(0);
     expect(result.failed[0]!.reason).toMatch(/changed somewhere else/);
     expect(await vault.reveal(notion.id, "password")).toBe("typed-by-hand"); // the hand edit stands
+  });
+
+  // Two entries sharing a name, username and site are legal in every source
+  // app, so one identity can mean SEVERAL vault items and several export rows.
+  const twins = [
+    "Title,URL,Username,Password,Notes,OTPAuth",
+    "Mail,https://mail.example,jon,first-secret,,",
+    "Mail,https://mail.example,jon,second-secret,,",
+  ].join("\n");
+
+  it("re-importing twin rows unchanged updates nothing — each finds its identical item", async () => {
+    const { vault } = tempVault();
+    await runImport(vault, twins); // both new: two items, one identity
+    const { result } = await runImport(vault, twins);
+    expect(result).toEqual({ saved: 0, updated: 0, duplicates: 2, failed: [] });
+    // Neither password was cross-written by the other row.
+    const passwords = await Promise.all(
+      (await vault.list()).map((i) => vault.reveal(i.id, "password")),
+    );
+    expect(passwords.sort()).toEqual(["first-secret", "second-secret"]);
+  });
+
+  it("leaves a row alone, and says so, when several differing items could be its target", async () => {
+    const { vault } = tempVault();
+    await runImport(vault, twins);
+    const { parsed, result } = await runImport(
+      vault,
+      "Title,URL,Username,Password,Notes,OTPAuth\nMail,https://mail.example,jon,third-secret,,",
+    );
+    expect(result).toEqual({ saved: 0, updated: 0, duplicates: 1, failed: [] });
+    expect(parsed.logins[0]!.warnings.join(" ")).toMatch(/more than one item/);
+    const passwords = await Promise.all(
+      (await vault.list()).map((i) => vault.reveal(i.id, "password")),
+    );
+    expect(passwords.sort()).toEqual(["first-secret", "second-secret"]); // untouched
+  });
+
+  it("lets only one row of an export claim an item; the second is left alone, not raced", async () => {
+    const { vault } = tempVault();
+    await runImport(
+      vault,
+      "Title,URL,Username,Password,Notes,OTPAuth\nMail,https://mail.example,jon,old-secret,,",
+    );
+    const { parsed, result } = await runImport(vault, twins); // both rows differ from the one item
+    expect(result).toEqual({ saved: 0, updated: 1, duplicates: 1, failed: [] });
+    expect(parsed.logins[1]!.warnings.join(" ")).toMatch(/another row in this import/);
+    const item = (await vault.list())[0]!;
+    expect(await vault.reveal(item.id, "password")).toBe("first-secret");
   });
 
   it("collects a bad row's failure instead of sinking the rest", async () => {

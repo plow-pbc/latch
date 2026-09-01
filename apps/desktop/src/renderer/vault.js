@@ -1,7 +1,8 @@
 import { el, icon } from "./dom.js";
-// A deliberate module cycle: the Import sheet lives in its own file (this one
-// is long enough) but shares this pane's editor seat, busy lock and toast.
-// Safe because every cross-call happens at runtime, never during evaluation.
+// The Import sheet lives in its own file (this one is long enough) but works
+// the same pane. This module stays the sole owner of the editor seat, the
+// busy lock and the toast: the sheet is handed them as callbacks (the `host`
+// argument below) and never imports back into here.
 import { vimportSheet } from "./vaultImport.js";
 
 /* The Vault tab, built to the design file (vault.html).
@@ -87,7 +88,7 @@ const VAULT_TYPES = {
   },
 };
 
-export function errText(err) {
+function errText(err) {
   // A throw from the main process arrives wrapped: "Error invoking remote
   // method 'vault:saveItem': Error: the sentence we wrote". The owner should
   // read the sentence, not the plumbing that carried it.
@@ -98,7 +99,7 @@ export function errText(err) {
 
 /** Her toast: one line, bottom of the pane, gone on its own. */
 let toastTimer = null;
-export function vtoast(message) {
+function vtoast(message) {
   const node = document.querySelector(".vaultui .toast");
   if (!node) return;
   node.textContent = message;
@@ -174,7 +175,7 @@ function vpane() {
  */
 let vinflight = null;
 
-export async function vbusy(fn) {
+async function vbusy(fn) {
   vpane()?.toggleAttribute("inert", true);
   const done = fn();
   vinflight = done.then(() => {}, () => {}); // settles either way, never rejects
@@ -523,7 +524,7 @@ function vmayDiscard() {
 }
 
 /** Hand the seat to `next`, asking whoever holds it to give up their edits. */
-export async function vtakeEditor(next) {
+async function vtakeEditor(next) {
   if (editor === next) return true;
   if (!(await vmayDiscard())) return false;
   editor?.close();
@@ -532,7 +533,7 @@ export async function vtakeEditor(next) {
 }
 
 /** The seat is free — the holder saved, closed, or was torn down. */
-export function vreleaseEditor(who) {
+function vreleaseEditor(who) {
   if (editor === who) editor = null;
 }
 
@@ -866,7 +867,8 @@ export async function renderVault(view, isCurrent = () => true) {
     icon("intake", { class: "vico", strokeWidth: "2" }),
     el("span", { text: " Import" }),
   ]);
-  importBtn.addEventListener("click", () => vimportSheet(renderVaultIn));
+  importBtn.addEventListener("click", () =>
+    vimportSheet(renderVaultIn, { errText, vbusy, vtakeEditor, vreleaseEditor, vtoast }));
   const newBtn = el("button", { class: "btn-primary", attrs: { type: "button" } }, [
     icon("plus", { class: "vico", strokeWidth: "2.2" }),
     el("span", { text: " New" }),

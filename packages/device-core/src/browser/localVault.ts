@@ -125,17 +125,17 @@ export class LocalVault {
    * key having changed. A TOTP compare is by the KEY the strings decode to —
    * the bare base32 and its otpauth:// spelling are the same key.
    *
-   * Deliberately not behind the reprompt gate: nothing is shown or changed,
-   * and the one bit this leaks (that a value the owner is already holding in
-   * an export matches) is theirs. The UPDATE that may follow goes through
-   * save, which asks.
+   * Behind the reprompt gate like reveal, and for the same reason: an exact
+   * equality answer IS an oracle — paste a guess, read the verdict — and an
+   * item that demands proof of presence before it is shown must demand it
+   * before it will confirm a guess.
    */
   async secretsDiffer(
     itemId: string,
     candidate: { password: string; totp: string },
   ): Promise<{ password: boolean; totp: boolean; revision: string }> {
     const key = this.open();
-    const cipher = this.cipher(itemId);
+    const cipher = await this.cleared(this.cipher(itemId));
     const stored = (field: string): string => {
       try {
         return decryptField(cipher, key, field);
