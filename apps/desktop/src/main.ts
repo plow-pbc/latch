@@ -21,6 +21,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
+import { PostHog } from "posthog-node";
 import { Intent } from "@domo/protocol";
 import {
   ApprovalStore,
@@ -48,6 +49,7 @@ import { migrateLegacyHome } from "./migrateHome.js";
 import { buildMinter, vendorDirs } from "./providerWiring.js";
 import { resolveInstancePaths } from "./paths.js";
 import { loadSettings, saveSettings, useCredentialCodec, WindowBounds } from "./settings.js";
+import { resolveTelemetryConfig, Telemetry } from "./telemetry.js";
 import { PlowApi, PlowApiError, relaySocketUrl, resolveApiBaseUrl } from "./plowApi.js";
 import { Onboarding } from "./onboarding.js";
 import { ConnectClient } from "./connectClient.js";
@@ -203,6 +205,20 @@ let connectClient: ConnectClient | null = null;
 let cloudAgents: CloudAgentState | null = null;
 let onboardingWindow: BrowserWindow | null = null;
 let updates: UpdateController | null = null;
+let telemetry: Telemetry | null = null;
+
+// Error reporting for the main process. `uncaughtExceptionMonitor` observes
+// without handling — whatever Electron was going to do with the crash (the
+// error dialog, the exit) still happens exactly as before. Rejections have no
+// monitor-only hook; Electron's main process logs them without exiting, and
+// this listener keeps that visible on the console while also reporting it.
+process.on("uncaughtExceptionMonitor", (error) => {
+  telemetry?.trackError("uncaught_exception", error);
+});
+process.on("unhandledRejection", (reason) => {
+  console.error("[app] unhandled rejection:", reason);
+  telemetry?.trackError("unhandled_rejection", reason);
+});
 
 /**
  * Policy delegate that drives Electron approval windows. Each decision opens a
@@ -564,6 +580,9 @@ async function signOutThisMac(): Promise<void> {
   // out; going round again would reset the setup window and mint a fresh code
   // over the one the user may have just texted.
   if (!isSignedIn(home)) return;
+  // Before the credential is cleared, so the event still keys on the account
+  // that is signing out rather than the anonymous install id.
+  telemetry?.track("signed_out");
   // Started first: it clears the stored credential synchronously, before its
   // own first await, so everything below already sees a signed-out Mac.
   const revoking = revokeAndSignOut(home, (credential) =>
@@ -760,7 +779,12 @@ ipcMain.handle("onboarding:submitCode", async (_e, code: string) => onboarding?.
 ipcMain.handle("onboarding:finish", async () => {
   gate.sync();
 });
-ipcMain.handle("settings:setApprovalMode", async (_e, mode: string) => setApprovalMode(home, mode));
+ipcMain.handle("settings:setApprovalMode", async (_e, mode: string) => {
+  // The validated enum, not the raw argument.
+  const applied = setApprovalMode(home, mode);
+  telemetry?.track("approval_mode_changed", { mode: applied });
+  return applied;
+});
 // What the owner says agents are for. This pair is the only way the text is
 // written or read on the renderer's behalf; nothing an agent can reach touches
 // it, which is what makes it trusted context for the reviewer.
@@ -821,13 +845,23 @@ ipcMain.handle("vault:totp", async (_e, itemId: string, key?: string) => {
 ipcMain.handle("vault:deleteItem", async (_e, itemId: string) => {
   const vault = device?.vaultClient;
   if (!vault) throw new Error("the vault is not running");
-  return vault.remove(String(itemId));
+  const result = await vault.remove(String(itemId));
+  telemetry?.track("vault_item_deleted");
+  return result;
 });
 
 ipcMain.handle("vault:saveItem", async (_e, input: VaultItemInput) => {
   const vault = device?.vaultClient;
   if (!vault) throw new Error("the vault is not running");
-  return vault.save(input);
+  const result = await vault.save(input);
+  // After the save took, so a refused write is not counted. Counts and the
+  // fixed type enum only — never the name, urls, or field values.
+  const knownTypes = ["login", "card", "identity", "note"];
+  telemetry?.track("vault_item_saved", {
+    created: !input.itemId,
+    item_type: knownTypes.includes(String(input.type)) ? String(input.type) : "other",
+  });
+  return result;
 });
 
 // The live-browser thumbnail's whole state, one shape per poll (like
@@ -1222,6 +1256,10 @@ async function startRelay(): Promise<void> {
     },
     serve: (request, auth) => server.fetch(request, auth),
     onStatusChange: (isConnected) => {
+      // Transitions only — the client can restate an unchanged status.
+      if (isConnected !== connected) {
+        telemetry?.track(isConnected ? "relay_connected" : "relay_disconnected");
+      }
       connected = isConnected;
       notifyRenderer("status:changed");
     },
@@ -1272,6 +1310,60 @@ app.whenReady().then(async () => {
     encrypt: (plain) => electronSafeStorage.encryptString(plain).toString("base64"),
     decrypt: (cipher) => electronSafeStorage.decryptString(Buffer.from(cipher, "base64")),
   });
+  // Usage statistics + error reporting (telemetry.ts owns what leaves the
+  // Mac and what never does). A from-source run gets no key, so worktree
+  // instances and the test machine report nothing; the packaged app reports
+  // to the baked-in project unless the owner turns the Settings toggle off.
+  const telemetryConfig = resolveTelemetryConfig({ env: process.env, packaged: app.isPackaged });
+  if (telemetryConfig.apiKey) {
+    const posthog = new PostHog(telemetryConfig.apiKey, { host: telemetryConfig.host });
+    telemetry = new Telemetry({
+      home,
+      sink: {
+        capture: (message) => posthog.capture(message),
+        flush: () => posthog.flush(),
+        // Two seconds, not the SDK's 30-second default: this rides the quit
+        // teardown, and an offline Mac must not look like an app refusing to
+        // quit. What a flush this short drops, the crash spool never held —
+        // ordinary events are not worth 30 seconds of anyone's time.
+        shutdown: () => posthog.shutdown(2_000),
+      },
+      enabled: () => loadSettings(home).telemetryEnabled,
+      accountUid: () => loadSettings(home).accountUid,
+      // The relay credential is the one secret this process holds in a string;
+      // read per event because it changes on sign-in/out.
+      secrets: () => [loadSettings(home).relayCredential],
+      ownerHome: os.homedir(),
+      baseProps: {
+        app_version: app.getVersion(),
+        packaged: app.isPackaged,
+        platform: process.platform,
+        arch: process.arch,
+      },
+    });
+    // A crash the previous run spooled but could not send before it died.
+    telemetry.reportSpooledCrash();
+    telemetry.track("app_launched", {
+      approval_mode: loadSettings(home).approvalMode,
+      signed_in: isSignedIn(home),
+    });
+  }
+  // Testing seam for the error-reporting pipeline, in the DOMO_SIMULATE_UPDATE
+  // mold: DOMO_SIMULATE_ERROR=rejection fires an unhandled rejection (the app
+  // survives), anything else throws an uncaught exception (the app may not —
+  // which is exactly what the immediate flush in trackError is for). Fires a
+  // few seconds after boot so the report proves the whole live pipeline.
+  const simulateError = (process.env.DOMO_SIMULATE_ERROR ?? "").trim();
+  if (simulateError) {
+    console.log(`[telemetry] SIMULATED error armed (${simulateError}) — fires in 3s, not a real fault`);
+    setTimeout(() => {
+      if (simulateError === "rejection") {
+        void Promise.reject(new Error("DOMO_SIMULATE_ERROR: simulated unhandled rejection"));
+      } else {
+        throw new Error("DOMO_SIMULATE_ERROR: simulated uncaught exception");
+      }
+    }, 3_000);
+  }
   // The dialog answers; the store writes down what was asked before it is
   // asked, so a pending approval is a record on disk rather than only a promise
   // in memory. It also bounds the wait: an approval nobody answers expires and
@@ -1348,6 +1440,10 @@ app.whenReady().then(async () => {
   }
   // Live-refresh the audit view whenever a new event is recorded.
   device.audit.events.on("change", () => notifyRenderer("audit:changed"));
+  // Usage stats ride the same funnel as the audit log — one source of truth
+  // for what happened, with telemetry.ts's allowlist deciding the little that
+  // leaves the Mac.
+  device.audit.events.on("recorded", (entry) => telemetry?.auditEntryRecorded(entry));
   // The version rides the MCP handshake, so it has to be the app's real one.
   mcp = createDomoMcpServer(device, { version: app.getVersion() });
   await startRelay();
@@ -1527,6 +1623,22 @@ app.whenReady().then(async () => {
   ipcMain.handle("power:setKeepAwake", async (_e, on: boolean) => ({
     enabled: awake.setEnabled(!!on),
   }));
+  // The telemetry opt-out. Takes effect on the next event — Telemetry reads
+  // the setting per event, so no relaunch and no client teardown here.
+  ipcMain.handle("telemetry:get", async () => ({
+    enabled: loadSettings(home).telemetryEnabled,
+  }));
+  ipcMain.handle("telemetry:set", async (_e, on: boolean) => {
+    // Turning OFF is announced before the save, while sending is still
+    // allowed — the one event that explains why this install went quiet.
+    // Turning ON is announced after, symmetric and honest either way.
+    if (!on) telemetry?.track("telemetry_disabled");
+    const settings = loadSettings(home);
+    settings.telemetryEnabled = !!on;
+    saveSettings(home, settings);
+    if (on) telemetry?.track("telemetry_enabled");
+    return { enabled: settings.telemetryEnabled };
+  });
   // A crash between setup saving the credential and the hand-over would leave
   // the first-run default pending on disk with no setup window left to close —
   // and this launch goes straight to the main window, so the hand-over hook
@@ -1611,7 +1723,10 @@ app.on("before-quit", (event) => {
     keepAwake?.teardown();
     // Kill any live Camoufox session/process group so Firefox children don't
     // outlive us. Every step is timeout-bounded, so this waits seconds, not forever.
-    void Promise.allSettled([relay?.stop(), device?.shutdown()]).then(() => {
+    // Telemetry's flush rides the same bounded teardown: a buffer that will
+    // not send in these seconds is dropped, never waited on.
+    telemetry?.track("app_quit");
+    void Promise.allSettled([relay?.stop(), device?.shutdown(), telemetry?.shutdown()]).then(() => {
       cleanedUp = true;
       app.quit();
     });

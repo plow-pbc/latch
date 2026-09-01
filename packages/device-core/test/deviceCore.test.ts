@@ -227,6 +227,19 @@ describe("AuditLog", () => {
     expect(() => log.clear()).not.toThrow();
     expect(log.entries()).toHaveLength(0);
   });
+
+  it('emits "recorded" with the entry itself, under the same never-fail contract', () => {
+    const log = new AuditLog(path.join(tempDir(), "audit.ndjson"));
+    const seen: unknown[] = [];
+    log.events.on("recorded", (entry) => {
+      seen.push(entry);
+      // The telemetry tap could throw too; record() must still succeed.
+      throw new Error("sink offline");
+    });
+    expect(() => log.record("exec_end", { intentId: "I", exit_code: 0 })).not.toThrow();
+    expect(seen).toEqual([{ event: "exec_end", fields: { intentId: "I", exit_code: 0 } }]);
+    expect(log.entries()).toHaveLength(1);
+  });
 });
 
 describe("shutting the machine down", () => {

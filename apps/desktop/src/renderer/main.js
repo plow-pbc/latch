@@ -1969,6 +1969,27 @@ async function renderSettings() {
   });
   applyAwake();
 
+  // Usage statistics + error reports. Allowlisted (telemetry.ts), linked to
+  // the signed-in account, and honored on the very next event — no relaunch.
+  // Not called "anonymous": events key on the account uid, and the label
+  // must not promise more privacy than the wire delivers.
+  let stats = await window.domo.telemetryGet();
+  const statsBox = el("input", { attrs: { type: "checkbox" } });
+  const statsLabel = el("label", { class: "check" }, [
+    statsBox,
+    el("span", { text: "Share usage statistics and error reports" }),
+  ]);
+  const applyStats = () => { statsBox.checked = stats.enabled; };
+  statsBox.addEventListener("change", async () => {
+    try {
+      stats = await window.domo.telemetrySet(statsBox.checked);
+    } catch {
+      // The write failed, so nothing changed — show the last acknowledged state.
+    }
+    applyStats();
+  });
+  applyStats();
+
   // Capabilities: what macOS lets the app itself reach. Full Disk Access has
   // no prompt an app can raise — the only grant path is in System Settings —
   // so the button starts main's grant flow (fdaGrantFlow), ported from
@@ -2106,6 +2127,18 @@ async function renderSettings() {
       el("div", { class: "row" }, [updateStatus, el("div", { class: "spacer" }), updateAction]),
       autoCheckLabel,
       autoInstallLabel,
+    ]),
+    group("Privacy", null, [
+      el("div", { class: "support-row" }, [
+        el("div", { class: "support-copy" }, [
+          el("div", { class: "support-title", text: "Usage Statistics" }),
+          el("p", { class: "faint", text:
+            "Help improve Plow Latch by sharing which features are used and when something breaks, " +
+            "linked to your Plow account. " +
+            "Never shared: file paths, commands, goal text, credentials, or anything an agent typed." }),
+          statsLabel,
+        ]),
+      ]),
     ]),
     group("Support", null, [
       supportRow(

@@ -75,6 +75,9 @@ contextBridge.exposeInMainWorld("domo", {
   // to off, and the toggle shows that rather than a hold that isn't held.
   keepAwakeGet: () => ipcRenderer.invoke("power:getKeepAwake"),
   keepAwakeSet: (on: boolean) => ipcRenderer.invoke("power:setKeepAwake", on),
+  // Usage statistics + error reporting opt-out (telemetry.ts).
+  telemetryGet: () => ipcRenderer.invoke("telemetry:get"),
+  telemetrySet: (on: boolean) => ipcRenderer.invoke("telemetry:set", on),
   onAuditChanged: (cb: () => void) => ipcRenderer.on("audit:changed", cb),
   onStatusChanged: (cb: () => void) => ipcRenderer.on("status:changed", cb),
 
