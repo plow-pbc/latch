@@ -41,8 +41,10 @@ const wantBrowser = args.includes("--browser") || args.includes("--browser-both"
 const wantBoth = args.includes("--browser-both");
 
 // Bump when the pruning/merging logic below changes, so cached trees (which
-// are keyed on the download pins) rebuild with the new slimming applied.
-const PRUNE_VERSION = "2";
+// are keyed on the download pins) rebuild with the new slimming applied. v3
+// drops the bundled UBO addon — a warm v2 tree still carries the previously
+// downloaded, unverified xpi, so it must rebuild clean.
+const PRUNE_VERSION = "3";
 
 function log(msg) {
   process.stdout.write(`[browser-runtime] ${msg}\n`);
@@ -360,7 +362,10 @@ function mergeCamoufoxUniversal() {
     JSON.stringify({ active_version: `browsers/${repo}/${folder}` }),
   );
   fs.writeFileSync(path.join(outRoot, ".0.5_FLAG"), "");
-  run("ditto", [path.join(browserDir, "arm64", "addons"), path.join(outRoot, "addons")]);
+  // No addons are fused: none is bundled (see fetchBrowser). Deliberately NOT
+  // copying arm64/addons — a copy would both fail on a clean tree (no such dir)
+  // and, worse, re-import a leftover UBO from a cache built before it was
+  // dropped. The PRUNE_VERSION bump below rebuilds any such cache clean.
 
   fs.writeFileSync(marker, markerValue);
   log(`camoufox universal install ready at ${outRoot}`);

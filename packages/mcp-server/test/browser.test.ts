@@ -69,7 +69,7 @@ function makeServer(
       FAKE_ARGV_LOG: argvLog,
       ...brokerEnv,
     },
-    camoufoxInstallDir: null,
+    executablePath: null,
   };
   const device = new DeviceAgent(path.join(dir, "home"), "Test Mac", delegate, runtime);
   const server = createDomoMcpServer(device, budgetMs === undefined ? {} : { budgetMs });

@@ -64,8 +64,8 @@ jobs:
         uses: actions/cache@v4
         with:
           path: |
-            vendor/python-runtime
             vendor/camoufox-browser
+            packages/browser-server/fingerprints.json
           key: browser-runtime-${{ runner.arch }}-${{ hashFiles('vendor/browser-server/runtime.lock.json', 'scripts/build-browser-runtime.mjs') }}
 
       - name: Load secrets from 1Password

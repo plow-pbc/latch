@@ -5,7 +5,7 @@
  * credential broker still runs in-process (brokerCore.ts) unless the test seam
  * (DOMO_VAULT_BROKER_CMD) names one.
  */
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -15,22 +15,24 @@ import { resolveBrowserRuntime } from "@domo/device-core";
 const dirs: string[] = [];
 
 // A materialized runtime requires the frozen pool at the @domo/browser-server
-// package root. It is gitignored build output, so a CI checkout that has not run
-// `just fetch-browser` lacks it; ensure a stub so these resolution tests (which
-// are about paths, not the pool) are deterministic, and remove it if we made it.
+// package root. It is gitignored build output that a sibling suite
+// (maskReal.integration.test.ts) launches from IN PARALLEL, so these tests must
+// not touch the real file. Instead spy fs.existsSync to control ONLY the pool's
+// presence (default: present), delegating everything else to real fs — so the
+// tests are deterministic whether or not the pool was fetched, and race nothing.
 const POOL = fileURLToPath(new URL("../../browser-server/fingerprints.json", import.meta.url));
-let madePool = false;
-beforeAll(() => {
-  if (!fs.existsSync(POOL)) {
-    fs.writeFileSync(POOL, JSON.stringify({ browserVersion: "official/152.0.4-beta.28", entries: [] }));
-    madePool = true;
-  }
-});
-afterAll(() => {
-  if (madePool) fs.rmSync(POOL, { force: true });
+const realExistsSync = fs.existsSync;
+let poolPresent = true;
+
+beforeEach(() => {
+  poolPresent = true;
+  vi.spyOn(fs, "existsSync").mockImplementation((p) =>
+    p === POOL ? poolPresent : realExistsSync(p),
+  );
 });
 
 afterEach(() => {
+  vi.restoreAllMocks();
   while (dirs.length) fs.rmSync(dirs.pop()!, { recursive: true, force: true });
   delete process.env.DOMO_BROWSER_CMD;
   delete process.env.DOMO_VAULT_BROKER_CMD;
@@ -163,15 +165,11 @@ describe("resolveBrowserRuntime", () => {
   });
 
   it("offers no browsing when the fingerprint pool is missing", () => {
-    // The pool ships with the package, so all layouts share it; hiding it makes
-    // every layout (and the vendor fallback) incomplete.
+    // The pool ships with the package, so all layouts share it; without it every
+    // layout (and the vendor fallback) is incomplete. Toggled via the spy — the
+    // real file is never touched, so the parallel real-browser suite is unaffected.
     const { resources } = fakePayload(); // has the Camoufox binary
-    const hidden = `${POOL}.hidden`;
-    fs.renameSync(POOL, hidden);
-    try {
-      expect(resolveBrowserRuntime(resources)).toBeNull();
-    } finally {
-      fs.renameSync(hidden, POOL);
-    }
+    poolPresent = false;
+    expect(resolveBrowserRuntime(resources)).toBeNull();
   });
 });

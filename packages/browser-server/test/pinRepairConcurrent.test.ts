@@ -82,4 +82,26 @@ describe("concurrent stale-pin repair (multi-process)", () => {
     expect(rec.entry.id).toBe(ids[0]);
     expect(fs.existsSync(`${pinPath}.lock`)).toBe(false); // lock released
   }, 30_000);
+
+  it("concurrent FIRST launches (no pin yet) also converge on one fingerprint", async () => {
+    // The `wx` fast path created the pin EMPTY before writing it, so a peer could
+    // read the empty file, call it corrupt, and publish a different entry. With
+    // every publish going through the lock + atomic rename, no peer sees a partial
+    // file and all first launches converge.
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), "pinrace-"));
+    const poolFile = path.join(dir, "pool.json");
+    fs.writeFileSync(poolFile, JSON.stringify(pool));
+    const pinPath = path.join(dir, "device", "browser", "pin.json"); // NOT created
+
+    const startAt = Date.now() + 500;
+    const ids = await Promise.all(
+      Array.from({ length: 40 }, () => child(poolFile, pinPath, startAt)),
+    );
+
+    expect(new Set(ids).size).toBe(1);
+    expect(pool.entries.some((e) => e.id === ids[0])).toBe(true);
+    const rec = JSON.parse(fs.readFileSync(pinPath, "utf8"));
+    expect(rec.entry.id).toBe(ids[0]);
+    expect(fs.existsSync(`${pinPath}.lock`)).toBe(false);
+  }, 30_000);
 });

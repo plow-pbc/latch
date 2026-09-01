@@ -96,25 +96,17 @@ export function pinnedEntry(pool: FingerprintPool, pinPath?: string): Fingerprin
   const existing = readPinned();
   if (existing) return existing;
 
-  // No usable pin. Choose one and publish {browserVersion, entry}.
+  // No usable pin (absent, corrupt, or for another browser version). Choose one
+  // and publish {browserVersion, entry} through the LOCK, never a `wx` fast path:
+  // `writeFileSync(..., {flag:"wx"})` creates the file EMPTY before it writes the
+  // payload, so a concurrent first launch could read the empty file, call it
+  // corrupt, and publish a different entry — two simultaneous first opens would
+  // diverge. repairPin elects one writer under a lock and publishes the complete
+  // JSON atomically (temp file + rename), so every concurrent caller returns the
+  // SAME entry and no one ever sees a partial file.
   fs.mkdirSync(path.dirname(pinPath), { recursive: true });
   const chosen = pool.entries[crypto.randomInt(pool.entries.length)];
   const payload = JSON.stringify({ browserVersion: pool.browserVersion, entry: chosen });
-  try {
-    // Absent file: exclusive create, so simultaneous FIRST launches converge —
-    // the loser gets EEXIST and adopts the winner's pin via the repair path.
-    fs.writeFileSync(pinPath, payload, { flag: "wx", mode: 0o600 });
-    return chosen;
-  } catch (e) {
-    if ((e as NodeJS.ErrnoException).code !== "EEXIST") return chosen; // unwritable
-  }
-  // The file exists. Either a concurrent launch just wrote a usable pin (adopt
-  // it), or the pin is for another browser version / corrupt and must be
-  // replaced — otherwise every launch re-picks and never converges. Elect ONE
-  // repairer under a lock so every concurrent caller returns the SAME entry: an
-  // atomic rename alone converges the FILE, but lets an in-flight launch return
-  // its own pick before another's rename lands (40 concurrent repairs otherwise
-  // yielded several fingerprints).
   return repairPin(pinPath, chosen, payload, readPinned);
 }
 
@@ -129,10 +121,12 @@ function sleepSync(ms: number): void {
   }
 }
 
-/** Repair a stale/corrupt pin under a lock so concurrent repairers all adopt one
- * pick. The winner of an exclusive-create on `<pin>.lock` writes the pin; the
- * losers wait and read the winner's id. A lock a crashed repairer left is
- * reclaimed after a timeout, so the mechanism self-heals. */
+/** Publish a pin under a lock so concurrent callers all adopt one pick — the sole
+ * writer of the pin (first launch, and replacing a stale/corrupt one alike). The
+ * winner of an exclusive-create on `<pin>.lock` writes the pin via a temp file +
+ * atomic rename (so no caller ever reads a partial file); the losers wait and
+ * read the winner's entry. A lock a crashed writer left is reclaimed after a
+ * timeout, so the mechanism self-heals. */
 function repairPin(
   pinPath: string,
   chosen: FingerprintEntry,
