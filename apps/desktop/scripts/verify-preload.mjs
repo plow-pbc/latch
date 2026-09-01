@@ -196,6 +196,13 @@ ipcMain.handle("cloud:cancelLineFlow", async () => {
 });
 ipcMain.handle("cloud:addTarget", async (_e, input) => {
   cloudAddedTargets.push(input);
+  // What main does with an address it refuses: no row, and the reason on the
+  // action error for the form to show.
+  if (String(input.baseUrl ?? "").includes("nope")) {
+    cloudProbe = { ...cloudProbe, cloudActionError: "That host address isn't usable." };
+    return { ...agentsTabProbeState(), added: false };
+  }
+  cloudProbe = { ...cloudProbe, cloudActionError: null };
   // What main does on a good host: store the ONE host and hand back a
   // bearer-free row.
   cloudProbe = {
@@ -930,6 +937,28 @@ app.whenReady().then(async () => {
       buttons: [...modal.querySelectorAll("button")].map((button) => button.textContent.trim()),
     };
   }})()`);
+  // A REJECTED submission first: the owner must keep what they typed and see
+  // why, in the modal rather than in the roster behind it.
+  await win.webContents.executeJavaScript(`(() => {
+    const modal = document.querySelector(".cloud-modal");
+    modal.querySelector('input[aria-label="Host address"]').value = "http://nope";
+    modal.querySelector('input[aria-label="Host token"]').value = "kept-token";
+  })()`);
+  await clickCloudButton(win, "Save host");
+  await waitForNode(
+    () => cloudAddedTargets.at(-1)?.baseUrl === "http://nope",
+    "the rejected host submission to reach the host",
+  );
+  const cloudLocalHostRejected = await win.webContents.executeJavaScript(`(${() => {
+    const modal = document.querySelector(".cloud-modal");
+    return {
+      addressKept: modal.querySelector('input[aria-label="Host address"]')?.value,
+      tokenKept: modal.querySelector('input[aria-label="Host token"]')?.value,
+      reasonInModal: modal.textContent.includes("isn't usable"),
+      stillOnForm: modal.querySelector('input[aria-label="Host token"]') !== null,
+    };
+  }})()`);
+
   await win.webContents.executeJavaScript(`(() => {
     const modal = document.querySelector(".cloud-modal");
     modal.querySelector('input[aria-label="Host address"]').value = "http://192.168.15.12:8765/";
@@ -2209,6 +2238,10 @@ app.whenReady().then(async () => {
     cloudLocalHostForm.namePlaceholder === "Local agent" &&
     cloudLocalHostForm.placeholderIsNotLoopback &&
     cloudLocalHostForm.buttons.join("|") === "Save host|Cancel" &&
+    cloudLocalHostRejected.addressKept === "http://nope" &&
+    cloudLocalHostRejected.tokenKept === "kept-token" &&
+    cloudLocalHostRejected.reasonInModal &&
+    cloudLocalHostRejected.stillOnForm &&
     localAddRequest?.baseUrl === "http://192.168.15.12:8765/" &&
     localAddRequest?.bearer === "serve-token-abc" &&
     localAddRequest?.label === undefined &&
@@ -2363,7 +2396,7 @@ app.whenReady().then(async () => {
     errors.length === 0;
   console.log(
     "PROBE:" +
-      JSON.stringify({ main, settings, strandedOnDisk, settingsPane, connect, cloudRoster, cloudCreatePicker, cloudCreateSelection, cloudCreateSelectionOnly, cloudCreateRequest, cloudCreateCancelled, cloudLocalHostForm, cloudLocalHostSaved, localAddRequest, localAgentShot, cloudLocalCreateRequest, cloudCreateCode, cloudExistingCreate, cloudExistingCreateRequest, cloudCodeConfirmed, cloudCodeConfirmedClosed, cloudNoFreeLines, cloudNoNumbers, cloudDetail, cloudChangePicker, cloudChangeSelection, cloudChangeSelectionOnly, cloudChangeCode, cloudChangeRequest, collidingRosterNames, collidingDetail, collidingChangeRequest, cloudUnknownLines, cloudCreateErrorDetail, failedCloudDetailButtons, cloudChangeErrorDetail, cloudAgentGoneCancelled, cloudDeleteConfirm, loadingCloudDetail, unavailableCloudDetail, agentsShot, approvalsReviewer, approvalsShot, purposeRoundTrip, approvalsAsk, askWithoutReviewer, approvalsShotAsk, agentsOpen, modalClosed, vaultLocked, vaultUnsaved, vaultShot, agentsOpenShot, staleSettingsPane, optimisticMode, settingsShot, approval, reviewerNote, grantPanel, consoleErrors: errors, ok }),
+      JSON.stringify({ main, settings, strandedOnDisk, settingsPane, connect, cloudRoster, cloudCreatePicker, cloudCreateSelection, cloudCreateSelectionOnly, cloudCreateRequest, cloudCreateCancelled, cloudLocalHostForm, cloudLocalHostRejected, cloudLocalHostSaved, localAddRequest, localAgentShot, cloudLocalCreateRequest, cloudCreateCode, cloudExistingCreate, cloudExistingCreateRequest, cloudCodeConfirmed, cloudCodeConfirmedClosed, cloudNoFreeLines, cloudNoNumbers, cloudDetail, cloudChangePicker, cloudChangeSelection, cloudChangeSelectionOnly, cloudChangeCode, cloudChangeRequest, collidingRosterNames, collidingDetail, collidingChangeRequest, cloudUnknownLines, cloudCreateErrorDetail, failedCloudDetailButtons, cloudChangeErrorDetail, cloudAgentGoneCancelled, cloudDeleteConfirm, loadingCloudDetail, unavailableCloudDetail, agentsShot, approvalsReviewer, approvalsShot, purposeRoundTrip, approvalsAsk, askWithoutReviewer, approvalsShotAsk, agentsOpen, modalClosed, vaultLocked, vaultUnsaved, vaultShot, agentsOpenShot, staleSettingsPane, optimisticMode, settingsShot, approval, reviewerNote, grantPanel, consoleErrors: errors, ok }),
   );
   app.exit(ok ? 0 : 1);
 }).catch((err) => {

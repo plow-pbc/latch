@@ -1260,11 +1260,23 @@ export class CloudAgentState {
   }
 
   /** Resolve an agent's line through its first (home) chat. */
+  /** Does this Mac know this line, from Plow's own list or its own chats? */
+  private knowsLine(lineUid: string): boolean {
+    return (this.lines?.some((line) => line.uid === lineUid) ?? false) ||
+      this.chats.some((chat) => chat.lineUid === lineUid);
+  }
+
   private agentLineUid(agent: Pick<CloudAgentResource, "chatUids" | "lineUid">): string | null {
-    // The host's own answer first: agents are line-scoped since #241, and a
-    // response may name the line with no chats at all. Falling back to the
-    // home chat keeps the older shape working.
-    if (agent.lineUid) return agent.lineUid;
+    // The host's own answer first — agents are line-scoped since #241 and a
+    // response may name its line with no chats — but ONLY if this Mac knows
+    // that line.
+    //
+    // I previously reasoned an unmatched uid was harmless because it is "just
+    // a join key". It is not: `lineDetails` puts the uid straight into
+    // `row.line.uid`, so an unmatched one is host-authored text sitting in
+    // renderer state. Matching it against what Plow told us is what actually
+    // makes it a join key.
+    if (agent.lineUid && this.knowsLine(agent.lineUid)) return agent.lineUid;
     const homeChatUid = agent.chatUids[0];
     return this.chats.find((chat) => chat.uid === homeChatUid)?.lineUid ?? null;
   }

@@ -1534,6 +1534,25 @@ describe("CloudAgentState self-hosted target", () => {
     expect(state.state().cloudAgents[0].canMessage).toBe(true);
   });
 
+  it("refuses a line uid this Mac has never heard of", async () => {
+    // `lineDetails` puts the uid straight into `row.line.uid`, so an unmatched
+    // one is not a harmless join miss — it is host text in renderer state.
+    const encoded = Buffer.from("serve-token-abc").toString("base64");
+    const { state, home } = build({
+      listAgentsFor: async (host) =>
+        host === BUILTIN_TARGET_ID
+          ? []
+          : [{ ...agent({ agentId: "demo", name: null }), chatUids: [], lineUid: encoded }],
+    });
+    withHost(home);
+    await state.refresh();
+
+    const row = state.state().cloudAgents[0];
+    expect(JSON.stringify(row)).not.toContain(encoded);
+    expect(row.line).toBeNull();
+    expect(row.canMessage).toBe(false);
+  });
+
   it("keeps remembered names when the same host's token is rotated", async () => {
     const listed = async (host: string) =>
       host === BUILTIN_TARGET_ID ? [] : [agent({ agentId: "demo", name: null, status: "running" })];

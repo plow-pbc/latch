@@ -995,16 +995,23 @@ function cloudHostFieldNodes(state, modal, redraw) {
   modal.targetId = host?.id ?? null;
 
   if (!host || modal.addingHost === true) {
-    const baseUrl = el("input", {
-      class: "text",
-      // A LAN or tailnet address, not loopback: the host that runs the agents
-      // is normally another machine.
-      attrs: { placeholder: "http://192.168.1.10:8765", "aria-label": "Host address" },
-    });
-    const bearer = el("input", {
-      class: "text",
-      attrs: { type: "password", placeholder: "AGENT_MGR_SERVE_TOKEN", "aria-label": "Host token" },
-    });
+    // The inputs LIVE ON THE MODAL, not on this render. A rejected submission
+    // repaints the form, and rebuilding them threw away both values — so the
+    // owner lost a pasted token and never saw why Save failed, because the
+    // error rendered in the roster behind the modal.
+    modal.hostInputs ??= {
+      baseUrl: el("input", {
+        class: "text",
+        // A LAN or tailnet address, not loopback: the host that runs the
+        // agents is normally another machine.
+        attrs: { placeholder: "http://192.168.1.10:8765", "aria-label": "Host address" },
+      }),
+      bearer: el("input", {
+        class: "text",
+        attrs: { type: "password", placeholder: "AGENT_MGR_SERVE_TOKEN", "aria-label": "Host token" },
+      }),
+    };
+    const { baseUrl, bearer } = modal.hostInputs;
     const save = el("button", { class: "btn primary", text: "Save host" });
     save.addEventListener("click", async () => {
       save.disabled = true;
@@ -1015,7 +1022,7 @@ function cloudHostFieldNodes(state, modal, redraw) {
       if (cloudModal?.kind === "line-flow") {
         // A rejected host answers `added: false` and leaves the form up with
         // the reason on it; only an accepted one closes it.
-        if (next?.added) cloudModal.addingHost = false;
+        if (next?.added) Object.assign(cloudModal, { addingHost: false, hostInputs: null });
         syncCloudLineModal(next ?? state, redraw);
       }
       await redraw();
@@ -1032,12 +1039,19 @@ function cloudHostFieldNodes(state, modal, redraw) {
         }),
       ]),
       el("div", { class: "field" }, [el("label", { text: "Host token" }), bearer]),
+      // Beside Save, where the person who pressed it is looking — not in the
+      // roster behind the modal.
+      ...(state.cloudActionError
+        ? [el("div", { class: "cloud-callout cloud-error" }, [
+          el("p", { class: "faint", text: state.cloudActionError }),
+        ])]
+        : []),
       el("div", { class: "row cloud-modal-actions" }, [el("div", { class: "spacer" }), save]),
     ];
     if (host) {
       const back = el("button", { class: "linkbtn", text: "Keep the saved host", attrs: { type: "button" } });
       back.addEventListener("click", () => {
-        modal.addingHost = false;
+        Object.assign(modal, { addingHost: false, hostInputs: null });
         syncCloudLineModal(state, redraw);
       });
       nodes.push(el("p", { class: "chat-list-alt" }, [back]));
