@@ -48,6 +48,47 @@ files:
   - "!node_modules/**/*.d.cts"
   - "!node_modules/**/*.map"
   - "!node_modules/**/{README,Readme,readme,CHANGELOG,Changelog,changelog,HISTORY,History,history}*"
+  # Dead weight verified unreferenced at runtime (see the audit that added each
+  # line — every entry below was traced to zero require/import paths in the
+  # packaged process graph before being excluded):
+  # playwright-core: we only load index.js → coreBundle/utilsBundle. The vite
+  # web UIs (trace viewer, recorder, html report, dashboard), the CLI and its
+  # registry, the reinstall scripts in bin/, and the Linux xdg-open shim are
+  # only reachable from playwright's own CLI/recorder features, which nothing
+  # in this app invokes.
+  - "!node_modules/playwright-core/lib/vite/**"
+  - "!node_modules/playwright-core/lib/tools/**"
+  - "!node_modules/playwright-core/lib/serverRegistry.js"
+  - "!node_modules/playwright-core/lib/serverRegistry.js.LICENSE"
+  - "!node_modules/playwright-core/bin/**"
+  - "!node_modules/playwright-core/lib/xdg-open"
+  - "!node_modules/playwright-core/cli.js"
+  # native-keychain ships only the prebuilt addon and its loader; the gyp
+  # sources and install script are build-time.
+  - "!node_modules/@domo/native-keychain/scripts/**"
+  - "!node_modules/@domo/native-keychain/src/**"
+  # Every consumer of zod and @modelcontextprotocol/* in the app is ESM, so the
+  # parallel CJS builds are never resolved; zod's src/ is TypeScript source
+  # shipped for sourcemap tooling only.
+  - "!node_modules/zod/src/**"
+  - "!node_modules/zod/**/*.cjs"
+  - "!node_modules/@modelcontextprotocol/**/*.cjs"
+  # js-yaml is only required (CJS) by electron-updater, which resolves
+  # index.js → lib/; dist/ holds the browser/ESM bundles. argparse is js-yaml's
+  # CLI-only dependency; the library never loads it.
+  - "!node_modules/js-yaml/dist/**"
+  - "!node_modules/argparse/**"
+  # tldts has no "exports" map, so Node resolves main → dist/cjs for both
+  # import and require; the es6 trees, minified browser bundles, and TS
+  # sources are bundler-only artifacts.
+  - "!node_modules/tldts/dist/es6/**"
+  - "!node_modules/tldts/dist/index.*.min.js"
+  - "!node_modules/tldts/src/**"
+  - "!node_modules/tldts-core/dist/es6/**"
+  - "!node_modules/tldts-core/src/**"
+  # Vitest leaves *_vite_proxy.tmp.* droppings inside node_modules when a test
+  # run is interrupted; never ship one.
+  - "!node_modules/**/*_vite_proxy.tmp.*"
 
 # Keep only English in Electron's own locale payload (~55 lproj dirs, ~40 MB);
 # the app UI ships no other localization.
