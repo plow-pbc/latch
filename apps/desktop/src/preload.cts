@@ -25,6 +25,8 @@ contextBridge.exposeInMainWorld("domo", {
   approvalModeSet: (mode: string) => ipcRenderer.invoke("settings:setApprovalMode", mode),
   // The vault's own contents, edited here instead of on its web page.
   vaultItems: () => ipcRenderer.invoke("vault:items"),
+  // The ids matching a search, decided in main so no secret comes here for it.
+  vaultSearch: (query: string) => ipcRenderer.invoke("vault:search", query),
   vaultItem: (itemId: string) => ipcRenderer.invoke("vault:item", itemId),
   vaultReveal: (itemId: string, field: string) => ipcRenderer.invoke("vault:reveal", itemId, field),
   // The code the key produces — with `key` set, for one being typed.

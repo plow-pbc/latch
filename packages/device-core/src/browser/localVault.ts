@@ -17,6 +17,7 @@ import {
   checkedUrls,
   staleEdit,
   decryptField,
+  decryptHaystack,
   decryptItem,
   decryptSummary,
   splitKey,
@@ -28,6 +29,7 @@ import {
   VaultItemSummary,
   VaultKey,
 } from "./vaultItems.js";
+import { haystackMatches, searchWords } from "./vaultSearch.js";
 import { totpCode, totpKeyEquals, totpParams, type TotpCode } from "./vaultTotp.js";
 import { VaultKeyStore } from "./vaultKeyStore.js";
 import { VaultStore } from "./vaultStore.js";
@@ -83,6 +85,21 @@ export class LocalVault {
     // tab says so. Skipping it quietly was worse: a vault holding only such an
     // item read as an empty vault.
     return this.store.readAll().map((c) => decryptSummary(c, key));
+  }
+
+  /**
+   * The ids of every item that matches a query, for the tab's search box.
+   * Each item is read in the clear HERE and only the ids leave, so the
+   * listing the tab holds stays secret-free while a password still finds its
+   * item. No audit line: nothing was shown. The reprompt gate is honoured
+   * inside `decryptHaystack` — a gated item matches on its open fields only.
+   */
+  async search(query: string): Promise<string[]> {
+    const key = this.open();
+    const words = searchWords(query);
+    return this.store.readAll()
+      .filter((c) => haystackMatches(decryptHaystack(c, key), words))
+      .map((c) => String(c.id ?? ""));
   }
 
   /** One whole item, with its secret values null — what a form is filled from. */

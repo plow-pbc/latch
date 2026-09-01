@@ -211,6 +211,59 @@ export function decryptSummary(cipher: Cipher, account: VaultKey): VaultItemSumm
   };
 }
 
+/** What the tab calls each type, so "card" finds the cards and "note" the notes. */
+const TYPE_LABEL: Record<VaultItemType, string> = { login: "Login", card: "Card", identity: "Identity", note: "Secure note" };
+
+/**
+ * Every string of one item, in the clear, for the tab's search — which runs
+ * HERE, so the listing the renderer holds stays secret-free. The name, the
+ * notes, every URL, every typed field, every custom field a migrated item
+ * still carries, and the type's name.
+ *
+ * Secrets are in it too — the owner wants a password to be searchable —
+ * except for an item marked `reprompt`. That item demands proof of presence
+ * before a value is shown, and a search hit is an oracle for the value (type
+ * a guess, see whether the row stays), so it matches on its open fields only.
+ * A custom field's value is treated as a secret when the field is hidden
+ * (type 1) and open otherwise; its name is always open.
+ *
+ * An item of a type the forms refuse is still searchable by what it holds:
+ * the search is the only way its owner can reach it by content. A migrated
+ * SSH key's public key and fingerprint are open and its private key is a
+ * secret; the enum's 6-8 (bank account, licence, passport) are all of them
+ * details a gated item must not answer for, so their body is a secret whole.
+ */
+export function decryptHaystack(cipher: Cipher, account: VaultKey): string[] {
+  const key = itemKey(cipher, account);
+  const gated = !!cipher.reprompt;
+  const out: string[] = [dec(cipher.name, key), dec(cipher.notes, key), ...urlsOf(cipher, key)];
+  const type = cipher.type ?? 1;
+  if (TYPE_NAME[type]) {
+    out.push(TYPE_LABEL[TYPE_NAME[type]]);
+    const raw = body(cipher);
+    const secret = SECRET_KEYS[type] ?? [];
+    for (const field of KEYS_FOR[type] ?? []) {
+      if (gated && secret.includes(field)) continue;
+      out.push(dec(raw[field], key));
+    }
+  } else {
+    const ssh = decryptRecord(cipher.sshKey as Record<string, string | null> | null | undefined, key) ?? {};
+    for (const [field, value] of Object.entries(ssh)) {
+      if (!(gated && field === "privateKey")) out.push(value);
+    }
+    if (!gated) {
+      const legacy = decryptRecord(cipher.legacyData as Record<string, string | null> | null | undefined, key) ?? {};
+      out.push(...Object.values(legacy));
+    }
+  }
+  const customs = cipher.fields as Array<{ name?: string | null; value?: string | null; type?: number }> | null | undefined;
+  for (const f of Array.isArray(customs) ? customs : []) {
+    out.push(dec(f?.name, key));
+    if (!(gated && f?.type === 1)) out.push(dec(f?.value, key));
+  }
+  return out.filter(Boolean);
+}
+
 /** The whole item an edit form is filled from — with every secret left out. */
 export function decryptItem(cipher: Cipher, account: VaultKey): VaultItem {
   const key = itemKey(cipher, account);

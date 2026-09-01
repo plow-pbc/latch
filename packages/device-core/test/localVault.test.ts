@@ -70,6 +70,41 @@ describe("LocalVault", () => {
     expect((await vault.totp(login.id)).code).toMatch(/^\d{6}$/);
   });
 
+  it("searches every field, secrets included, and hands back only ids", async () => {
+    const dir = tempDir();
+    const { vault, auditPath } = vaultIn(dir);
+    const pizza = await vault.save({ type: "login", name: "Pizza", urls: ["pizza.example"], username: "jon", password: "hunter2", notes: "the good one" });
+    const bank = await vault.save({ type: "login", name: "Bank", urls: ["bank.example"], username: "jon", password: "s3cret-bank" });
+    const card = await vault.save({ type: "card", name: "Amex", cardholderName: "Jon D", number: "4111111111111111", code: "737" });
+    const ids = async (q: string) => (await vault.search(q)).sort();
+
+    expect(await ids("")).toEqual([pizza.id, bank.id, card.id].sort());
+    expect(await ids("hunter2")).toEqual([pizza.id]);           // a password finds its item
+    expect(await ids("4111")).toEqual([card.id]);               // so does a card number
+    expect(await ids("jon good")).toEqual([pizza.id]);          // every word, any field
+    expect(await ids("card")).toEqual([card.id]);               // the type's name
+    expect(await ids("nothing-here")).toEqual([]);
+    // A search shows nothing, so it writes nothing.
+    expect(auditLines(auditPath).filter((l) => /SHOWN|READ/.test(l))).toEqual([]);
+    // "jon" is the two usernames and the name on the card: every field, every type.
+    expect(await ids("jon")).toEqual([pizza.id, bank.id, card.id].sort());
+  });
+
+  it("does not let a search stand in for the reprompt gate", async () => {
+    const dir = tempDir();
+    const { vault } = vaultIn(dir);
+    const saved = await vault.save({ type: "login", name: "Bank", urls: ["bank.example"], username: "jon", password: "s3cret-bank" });
+    // Mark it as asking for the owner, the way a migrated item arrives.
+    const store = new VaultStore(dir);
+    store.upsert({ ...store.get(saved.id)!, reprompt: 1 });
+    // No proof of presence is on offer here, so the reveal is refused...
+    await expect(vault.reveal(saved.id, "password")).rejects.toThrow(/confirm/);
+    // ...and the search does not answer for it either: the open fields still
+    // find the item, the password does not.
+    expect(await vault.search("jon")).toEqual([saved.id]);
+    expect(await vault.search("s3cret")).toEqual([]);
+  });
+
   it("audits reveals, code reads, saves and deletes — values never", async () => {
     const dir = tempDir();
     const { vault, auditPath } = vaultIn(dir);

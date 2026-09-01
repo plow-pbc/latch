@@ -787,6 +787,12 @@ const PTYPE_BLURB = {
   note: "Freeform private text",
 };
 
+/* What the search box holds. Module-level, because a save or delete redraws
+   the whole pane: the list the owner had narrowed down should still be
+   narrowed down when their item comes back into it. It is never hidden —
+   the box shows it — so nothing filters the list silently. */
+let vquery = "";
+
 export async function renderVault(view, isCurrent = () => true) {
   /** Redraw this same pane — what every action hands to its callers. */
   const renderVaultIn = () => renderVault(view, isCurrent);
@@ -874,22 +880,90 @@ export async function renderVault(view, isCurrent = () => true) {
   masthead.appendChild(el("div", { class: "mast-acts" }, [importBtn, newBtn]));
 
   const list = el("div", { class: "vlist" });
+  const count = el("span", { class: "lc" });
+  const head = [el("span", { class: "lt", text: "Saved items" })];
   if (failure) {
     list.replaceChildren(el("div", { class: "empty", text: "Could not read the vault: " + failure }));
   } else if (items.length === 0) {
     list.replaceChildren(el("div", { class: "empty", text: "Nothing saved yet." }));
   } else {
-    list.replaceChildren(...items.map((i) => vitem(i, renderVaultIn)));
+    // Every row is built once; the search only hides. A row that is hidden
+    // is not torn down — an open form under it keeps its edits, and comes back
+    // as it was when the query lets it. The MATCHING is the vault's, in main:
+    // it reads every field there, secrets included, and only the matching ids
+    // come back — so this listing never holds a secret for the sake of a
+    // search. An item that asks for the owner first matches on its open
+    // fields only; that is decided there too.
+    const rows = items.map((summary) => ({ summary, node: vitem(summary, renderVaultIn) }));
+    const none = el("div", { class: "empty vnone" });
+    list.replaceChildren(...rows.map((r) => r.node), none);
+    const search = el("input", { class: "vsearch", attrs: {
+      type: "search", placeholder: "Search", "aria-label": "Search saved items",
+      autocomplete: "off", autocorrect: "off", autocapitalize: "off", spellcheck: "false",
+    } });
+    search.value = vquery;
+    const show = (q, ids) => {
+      let shown = 0;
+      for (const { summary, node } of rows) {
+        const keep = ids === null || ids.has(summary.id);
+        node.hidden = !keep;
+        if (keep) shown += 1;
+      }
+      none.hidden = shown > 0;
+      none.textContent = `Nothing matches “${q}”.`;
+      count.textContent = q
+        ? `${shown} of ${items.length}`
+        : `${items.length} item${items.length === 1 ? "" : "s"}`;
+    };
+    // One query in flight at a time, and only the latest answer applied:
+    // keystrokes are debounced, and an answer to a query the box has since
+    // moved on from is dropped rather than drawn over the newer one.
+    let timer = null;
+    let latest = 0;
+    const apply = () => {
+      vquery = search.value;
+      const q = vquery.trim();
+      const seq = ++latest;
+      if (timer) clearTimeout(timer);
+      if (!q) { show(q, null); return; }
+      timer = setTimeout(async () => {
+        timer = null;
+        let ids;
+        try {
+          ids = new Set(await window.domo.vaultSearch(q));
+        } catch (err) {
+          if (seq !== latest) return;
+          vtoast("Could not search the vault: " + errText(err));
+          return;
+        }
+        if (seq !== latest) return;
+        show(q, ids);
+      }, 120);
+    };
+    search.addEventListener("input", apply);
+    search.addEventListener("keydown", (e) => {
+      // Escape clears the box before it does anything else; an empty box
+      // leaves it alone so the key still means what it usually does.
+      if (e.key === "Escape" && search.value !== "") {
+        e.preventDefault();
+        search.value = "";
+        apply();
+      }
+    });
+    if (vquery.trim()) {
+      // Redrawn with a query still in the box: keep the rows as they were
+      // until the vault answers again, rather than flashing the whole list.
+      show(vquery.trim(), null);
+    }
+    apply();
+    head.push(el("span", { class: "vsearch-wrap" }, [icon("search", { class: "vico", strokeWidth: "2" }), search]));
   }
+  head.push(count);
 
-  const count = failure ? "" : `${items.length} item${items.length === 1 ? "" : "s"}`;
   pane.replaceChildren(
     masthead,
     el("div", { class: "col" }, [
-      el("div", { class: "list-head" }, [
-        el("span", { class: "lt", text: "Saved items" }),
-        el("span", { class: "lc", text: count }),
-      ]),
+      el("div", { class: "list-head" }, head),
       list,
     ]),
     el("div", { class: "toast" }),
