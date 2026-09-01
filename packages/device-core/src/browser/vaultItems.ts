@@ -226,6 +226,12 @@ const TYPE_LABEL: Record<VaultItemType, string> = { login: "Login", card: "Card"
  * a guess, see whether the row stays), so it matches on its open fields only.
  * A custom field's value is treated as a secret when the field is hidden
  * (type 1) and open otherwise; its name is always open.
+ *
+ * An item of a type the forms refuse is still searchable by what it holds:
+ * the search is the only way its owner can reach it by content. A migrated
+ * SSH key's public key and fingerprint are open and its private key is a
+ * secret; the enum's 6-8 (bank account, licence, passport) are all of them
+ * details a gated item must not answer for, so their body is a secret whole.
  */
 export function decryptHaystack(cipher: Cipher, account: VaultKey): string[] {
   const key = itemKey(cipher, account);
@@ -241,7 +247,14 @@ export function decryptHaystack(cipher: Cipher, account: VaultKey): string[] {
       out.push(dec(raw[field], key));
     }
   } else {
-    out.push("Unsupported");
+    const ssh = decryptRecord(cipher.sshKey as Record<string, string | null> | null | undefined, key) ?? {};
+    for (const [field, value] of Object.entries(ssh)) {
+      if (!(gated && field === "privateKey")) out.push(value);
+    }
+    if (!gated) {
+      const legacy = decryptRecord(cipher.legacyData as Record<string, string | null> | null | undefined, key) ?? {};
+      out.push(...Object.values(legacy));
+    }
   }
   const customs = cipher.fields as Array<{ name?: string | null; value?: string | null; type?: number }> | null | undefined;
   for (const f of Array.isArray(customs) ? customs : []) {

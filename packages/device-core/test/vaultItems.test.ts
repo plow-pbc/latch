@@ -284,6 +284,30 @@ describe("the other three types", () => {
     expect(decryptHaystack(withCustom, account)).toEqual(expect.arrayContaining(["Member no", "M-77"]));
   });
 
+  it("searches a migrated SSH key by its fingerprint and public key", () => {
+    // The forms refuse a type 5, so the search is the one way its owner can
+    // reach it by content. Its body sits where migration put it, under the
+    // item's own key.
+    const login = encryptCipher({ type: "login", name: "deploy key", password: "x" }, null, account);
+    const key = splitKey(decString(login.key as string, account.enc, account.mac));
+    const enc = (v: string) => encString(Buffer.from(v, "utf8"), key.enc, key.mac);
+    const sshKey = { ...login, id: "k", type: 5, login: undefined, sshKey: {
+      privateKey: enc("-----BEGIN OPENSSH PRIVATE KEY-----"), publicKey: enc("ssh-ed25519 AAAAC3 jon@mac"), keyFingerprint: enc("SHA256:abc123"),
+    } };
+    const hay = decryptHaystack(sshKey, account);
+    expect(hay).toEqual(expect.arrayContaining(["deploy key", "ssh-ed25519 AAAAC3 jon@mac", "SHA256:abc123", "-----BEGIN OPENSSH PRIVATE KEY-----"]));
+    expect(hay).not.toContain("Unsupported");
+    // Gated: the key material is a secret, the rest still finds it.
+    const gated = decryptHaystack({ ...sshKey, reprompt: 1 }, account);
+    expect(gated).toEqual(expect.arrayContaining(["deploy key", "ssh-ed25519 AAAAC3 jon@mac", "SHA256:abc123"]));
+    expect(gated).not.toContain("-----BEGIN OPENSSH PRIVATE KEY-----");
+    // The enum's 6-8 carry their body verbatim under legacyData: searchable
+    // when open, a secret whole when gated.
+    const passport = { ...login, id: "p", type: 7, login: undefined, legacyData: { number: enc("P1234567"), country: enc("US") } };
+    expect(decryptHaystack(passport, account)).toEqual(expect.arrayContaining(["P1234567", "US"]));
+    expect(decryptHaystack({ ...passport, reprompt: 1 }, account)).not.toContain("P1234567");
+  });
+
   it("leaves the secrets of an item that asks for the owner out of the haystack", () => {
     // A search hit is an oracle — type a guess, see whether the row stays —
     // so an item that demands proof of presence before a reveal must demand
