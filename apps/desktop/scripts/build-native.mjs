@@ -23,6 +23,15 @@
 // FDA flow falls back to the fixed-position panel, credential exchange
 // reports itself unavailable). The output directory is always created so
 // electron-builder's extraResources entry never points at a missing source.
+//
+// The shim has a second floor: the macOS 26 SDK (Xcode 26). #available guards
+// only weak-link symbols the SDK DECLARES, and the ASImportable* types the
+// shim transcribes were reshaped in 26 — against Xcode 16's SDK the source
+// does not compile at all. So on an older SDK the shim is skipped with a
+// warning, exactly like the no-toolchain case, and credential exchange is
+// unavailable in that build. This is deliberately not a stub dylib: a missing
+// shim is what build/afterPack.cjs refuses to package, so a Mac that cannot
+// build the feature cannot ship a release that silently lacks it either.
 import { execFileSync } from "node:child_process";
 import crypto from "node:crypto";
 import fs from "node:fs";
@@ -38,11 +47,13 @@ fs.mkdirSync(outDir, { recursive: true });
 
 let swiftc;
 let sdk;
+let sdkVersion;
 try {
   swiftc = execFileSync("xcrun", ["-f", "swiftc"], { encoding: "utf8" }).trim();
   // swiftc run outside of `xcrun` needs the SDK named explicitly, or it can't
   // find the standard library for an -target it wasn't launched under.
   sdk = execFileSync("xcrun", ["--show-sdk-path", "--sdk", "macosx"], { encoding: "utf8" }).trim();
+  sdkVersion = execFileSync("xcrun", ["--show-sdk-version", "--sdk", "macosx"], { encoding: "utf8" }).trim();
 } catch {
   console.warn(
     "build-native: swiftc not found (no Xcode command line tools) — " +
@@ -115,16 +126,30 @@ const compileUniversal = (tmp, output, { sources, target, extraArgs = [] }) => {
 }
 
 // 2) The credential-exchange shim (a dylib the app dlopens in-process).
+// Needs the macOS 26 SDK to compile (header comment); an older one skips it.
 {
   const source = path.join(nativeDir, "credential-import.swift");
   const output = path.join(outDir, "libdomo-credential-import.dylib");
-  build("shim credential-import", [source], output, (tmp) => {
-    compileUniversal(tmp, output, {
-      sources: [source],
-      target: "macos13.0",
-      extraArgs: ["-emit-library", "-parse-as-library", "-framework", "AuthenticationServices"],
+  const sdkMajor = Number.parseInt(sdkVersion, 10);
+  if (!(sdkMajor >= 26)) {
+    console.warn(
+      `build-native: the macOS SDK is ${sdkVersion} and the credential-import shim needs 26 or later ` +
+        "(install Xcode 26) — skipping it; credential exchange will be unavailable in this build " +
+        "and `just package` will refuse to ship it",
+    );
+    // A shim an earlier toolchain left behind would outlive the SDK that made
+    // it and ride into a package this Mac can no longer rebuild; the tree
+    // reflects what THIS toolchain can produce.
+    for (const stale of [output, `${output}.stamp`]) fs.rmSync(stale, { force: true });
+  } else {
+    build("shim credential-import", [source], output, (tmp) => {
+      compileUniversal(tmp, output, {
+        sources: [source],
+        target: "macos13.0",
+        extraArgs: ["-emit-library", "-parse-as-library", "-framework", "AuthenticationServices"],
+      });
     });
-  });
+  }
 }
 
 // 3) The credential-provider extension bundle (registration only; vends
