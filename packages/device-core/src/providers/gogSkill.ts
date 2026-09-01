@@ -106,7 +106,9 @@ exactly what you need — the flags exist:
 
 - **Always cap lists.** \`--max <n>\` (default 10) and continue with
   \`--page <cursor>\` when you truly need more. Never \`--all-pages\` on an
-  open-ended query.
+  open-ended query. On a fan-out read the cap applies PER ACCOUNT before the
+  merge — a \`--max 10\` across 4 accounts can return up to 40 items, so size
+  it for the merged total you actually want.
 - **Select fields on lists**: \`--fields\` (or \`--select\` with dot paths in
   JSON mode) instead of taking every property of every row.
 - **\`gmail get\` defaults to the ENTIRE message.** Unless you need the body,
