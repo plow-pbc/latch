@@ -8,6 +8,7 @@
  * Knobs (env):
  *   SLOW_START=ms      delay the ready line
  *   NO_READY=1         never emit the ready line (start-timeout tests)
+ *   FAKE_ACTION_DELAY_MS=ms  delay each action while preserving serial handling
  *   CRASH_AFTER=n      after n commands, say one last thing (a 599 refusal),
  *                      then exit(9) a beat later so the parent reads the line
  *                      before the death — collapsing that beat re-opens a race
@@ -292,7 +293,7 @@ function main() {
   else start();
 
   const rl = readline.createInterface({ input: process.stdin });
-  rl.on("line", (line) => {
+  const processLine = async (line) => {
     line = line.trim();
     if (!line) return;
     let cmd;
@@ -338,7 +339,12 @@ function main() {
     }
     // HANG_ACTION=<name>: never answer that action, to exercise the host's
     // per-action timeout backstop.
-    if (process.env.HANG_ACTION && cmd.action === process.env.HANG_ACTION) return;
+    if (process.env.HANG_ACTION && cmd.action === process.env.HANG_ACTION) {
+      await new Promise(() => {});
+      return;
+    }
+    const actionDelay = Number(process.env.FAKE_ACTION_DELAY_MS || 0);
+    if (actionDelay > 0) await new Promise((resolve) => setTimeout(resolve, actionDelay));
     let reply;
     try {
       reply = { id: cmd.id, result: envelope(handle(cmd)) };
@@ -346,6 +352,10 @@ function main() {
       reply = { id: cmd.id, error: String(e.message || e).slice(0, 500) };
     }
     respond(withFailures(reply));
+  };
+  let commandQueue = Promise.resolve();
+  rl.on("line", (line) => {
+    commandQueue = commandQueue.then(() => processLine(line));
   });
   rl.on("close", () => process.exit(0));
 }

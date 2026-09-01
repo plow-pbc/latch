@@ -79,6 +79,9 @@ export class BrowserHost {
   private stderrTail: string[] = [];
   private failedRequests: JSONValue[] = [];
   private shuttingDown = false;
+  /** Mirror the server's SerialQueue so queue wait never spends an action's
+   * execution budget. A rejection releases the next turn too. */
+  private actionTail: Promise<void> = Promise.resolve();
   /** A child killed after an action timeout, pending its exit event. It stays
    * here so no later command can queue onto the process while it is dying. */
   private terminatingChild: ChildProcess | null = null;
@@ -125,8 +128,20 @@ export class BrowserHost {
   async sendAction(action: { [k: string]: JSONValue }): Promise<{ [k: string]: JSONValue }> {
     if (this.shuttingDown) throw new BrowserCrashedError("browser host is shut down");
     await this.ensureStarted();
-    const id = this.nextId++;
     const child = this.child!;
+    const request = this.actionTail.then(() => this.dispatchAction(child, action));
+    this.actionTail = request.then(() => undefined, () => undefined);
+    return request;
+  }
+
+  private dispatchAction(
+    child: ChildProcess,
+    action: { [k: string]: JSONValue },
+  ): Promise<{ [k: string]: JSONValue }> {
+    if (this.shuttingDown || this.child !== child || this.terminatingChild === child) {
+      return Promise.reject(new BrowserCrashedError("browser exited before queued action started"));
+    }
+    const id = this.nextId++;
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         this.terminateAfterActionTimeout(child, id);

@@ -153,14 +153,20 @@ describe("BrowserHost", () => {
     await expect(host.sendAction({ action: "url" })).rejects.toThrow(/giving up/);
   });
 
-  it("kills and audits a browser whose action reaches actionTimeoutMs", async () => {
+  it("times actions from dispatch, then kills and audits a wedged front action", async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "domo-bh-tree-"));
     const pidLog = path.join(dir, "child.pid");
     const { host, records, auditFile } = makeHost(
-      { HANG_ACTION: "eval", FAKE_CHILD_PID_LOG: pidLog },
+      { HANG_ACTION: "eval", FAKE_ACTION_DELAY_MS: "200", FAKE_CHILD_PID_LOG: pidLog },
       { actionTimeoutMs: 300 },
     );
-    await host.sendAction({ action: "goto", url: "https://one.example/" });
+    const slow = host.sendAction({ action: "goto", url: "https://one.example/" });
+    const queued = host.sendAction({ action: "view" });
+    await expect(Promise.all([slow, queued])).resolves.toEqual([
+      expect.objectContaining({ url: "https://one.example/" }),
+      expect.objectContaining({ mime: "image/jpeg" }),
+    ]);
+    expect(host.running).toBe(true);
     const firstPid = Number(records.find((r) => r.event === "browser_started")!.fields.pid);
     const childPid = Number(fs.readFileSync(pidLog, "utf8"));
     expect(processExists(firstPid)).toBe(true);
