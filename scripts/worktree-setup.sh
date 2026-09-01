@@ -2,10 +2,10 @@
 # scripts/worktree-setup.sh — everything needed after `git worktree add` to
 # make the new checkout buildable and runnable alongside the main checkout:
 #
-#   1. copies the gitignored browser runtime (Python + Camoufox + download
-#      cache, ~500 MB+) from the main checkout
-#      instead of re-downloading or recompiling it (APFS clones, so it is
-#      instant and costs no disk on the same volume)
+#   1. copies the gitignored browser runtime (Camoufox tree + download cache +
+#      the frozen fingerprint pool, ~350 MB) from the main checkout instead of
+#      re-downloading it (APFS clones, so it is instant and costs no disk on the
+#      same volume). No Python: the browser server is TypeScript.
 #   2. installs workspace dependencies and builds everything
 #
 # Per-checkout isolation is handled by the justfile and the app, keyed on the
@@ -36,15 +36,19 @@ echo "worktree:      $name"
 echo "main checkout: $main_root"
 
 # --- browser runtime: clone from the main checkout -------------------------
-for dir in vendor/python-runtime vendor/camoufox-browser vendor/downloads vendor/providers; do
+# The Camoufox tree and the frozen fingerprint pool are BOTH required for a ready
+# browser stack — browserRuntime.ts refuses to offer browsing without either, so
+# the pool (packages/browser-server/fingerprints.json, gitignored build output)
+# is cloned alongside the browser, not left for a launch to discover missing.
+for dir in vendor/camoufox-browser vendor/downloads vendor/providers packages/browser-server/fingerprints.json; do
   if [[ -e "$dir" ]]; then
     echo "$dir already present — leaving it alone"
-  elif [[ -d "$main_root/$dir" ]]; then
+  elif [[ -e "$main_root/$dir" ]]; then
     echo "cloning $dir from the main checkout…"
     # -c uses APFS clonefile; fall back to a plain copy on other filesystems.
     cp -Rpc "$main_root/$dir" "$dir" 2>/dev/null || cp -Rp "$main_root/$dir" "$dir"
   else
-    echo "note: $main_root/$dir does not exist — skipping (run \`just fetch-browser-runtime fetch-browser\` later if you need the browser stack)"
+    echo "note: $main_root/$dir does not exist — skipping (run \`just fetch-browser\` later if you need the browser stack)"
   fi
 done
 

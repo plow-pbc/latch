@@ -242,3 +242,25 @@ describe("shutting the machine down", () => {
     await expect(device.shutdown()).rejects.toThrow("audit log is full");
   });
 });
+
+describe("browser fingerprint pinning is wired to the runtime", () => {
+  it("sets DOMO_FINGERPRINT_PIN to a stable per-install path in the browser env", () => {
+    // The frozen pool is pinned per install only if the device hands the server
+    // a persistent path to record its pick at; a runtime whose env omitted it
+    // fell back to a random fingerprint every launch (the property DESIGN.md §11a
+    // relies on, silently lost).
+    const home = tempDir();
+    const runtime = {
+      serverCommand: ["node", "/x/server.js"],
+      credentialBrokerCommand: null,
+      mergeCookiesCommand: ["node", "/x/mergeCookies.js"],
+      env: { ELECTRON_RUN_AS_NODE: "1" },
+      executablePath: "/x/camoufox",
+    };
+    const device = new DeviceAgent(home, "Test Mac", new HeadlessPolicy({ intent: "allow_once" }), runtime);
+    const env = (device as unknown as { browserConfig: { env: Record<string, string> } }).browserConfig.env;
+    expect(env.DOMO_FINGERPRINT_PIN).toBe(path.join(home, "device/browser", "fingerprint-pin.json"));
+    // The runtime's own env survives alongside it.
+    expect(env.ELECTRON_RUN_AS_NODE).toBe("1");
+  });
+});

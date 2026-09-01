@@ -54,20 +54,29 @@ files:
 electronLanguages:
   - en
 
-# No asarUnpack: it existed so a plain `node` could run the domo-mcp shim for
-# "Start agent". The shim and that feature went with the broker — the MCP server
-# now runs inside this process and is reached through the relay.
+# The browser server is a Node script (@domo/browser-server) spawned on the app
+# binary under ELECTRON_RUN_AS_NODE; it and its runtime deps are UNPACKED from the
+# asar so the spawned node reads real files (playwright-core's package files,
+# node-sqlite3-wasm's .wasm). NO native modules ship: the cookie-merge SQLite is
+# node-sqlite3-wasm — a WASM build, arch-neutral, loads under Electron with no
+# rebuild (better-sqlite3 was ABI-locked and rejected). camoufox-js is BUILD-only
+# (a root devDependency) and never collected.
+asarUnpack:
+  - "**/node_modules/@domo/browser-server/**"
+  - "**/node_modules/playwright-core/**"
+  - "**/node_modules/node-sqlite3-wasm/**"
 
-# No fuses config — and the RunAsNode fuse MUST stay enabled. Playwright's
-# driver ships without its bundled node (pruned by build-browser-runtime.mjs)
-# and runs on this app binary via ELECTRON_RUN_AS_NODE; flipping runAsNode off
-# breaks every browser launch. See DESIGN.md §11a, Runtime & packaging.
+# No fuses config — and the RunAsNode fuse MUST stay enabled. The browser server
+# and the cookie merger run on this app binary via ELECTRON_RUN_AS_NODE; flipping
+# runAsNode off breaks every browser launch. (A future cleanup could move them to
+# utilityProcess and drop the requirement.) See DESIGN.md §11a, Runtime & packaging.
 
-# The browser stack: universal Python runtime + vendored server + the
-# lipo-fused universal Camoufox tree. Built by scripts/build-browser-runtime.mjs
-# (a `just package` dependency) and byte-identical in both electron-builder
-# arch passes, so the universal merge copies it through untouched. Runtime code
-# resolves it via process.resourcesPath ("browser-runtime/...").
+# The browser stack: the lipo-fused universal Camoufox tree. Built by
+# scripts/build-browser-runtime.mjs (a `just package` dependency) and
+# byte-identical in both electron-builder arch passes, so the universal merge
+# copies it through untouched. Runtime code resolves it via process.resourcesPath
+# ("browser-runtime/camoufox"). The server ships in node_modules (above), and the
+# frozen fingerprint pool ships beside it (packages/browser-server/fingerprints.json).
 extraResources:
   # The repo's own redistribution terms ride inside the bundle — recipients of
   # the DMG/update ZIP get them, not just readers of the source tree.
@@ -75,11 +84,6 @@ extraResources:
     to: LICENSE
   - from: ../../NOTICE
     to: NOTICE
-  - from: ../../vendor/python-runtime
-    to: browser-runtime/python
-    filter: ["**/*", "!.stamp"]
-  - from: ../../vendor/browser-server
-    to: browser-runtime/server
   - from: ../../vendor/camoufox-browser/universal
     to: browser-runtime/camoufox
     filter: ["**/*", "!.sha256"]
@@ -117,22 +121,21 @@ mac:
   gatekeeperAssess: false
   entitlements: build/entitlements.mac.plist
   entitlementsInherit: build/entitlements.mac.plist
-  # The browser runtime (Python + Camoufox) is already Developer-ID signed by
-  # scripts/build-browser-runtime.mjs with its OWN entitlements (Python: JIT +
-  # unsigned-exec-memory; Camoufox: Mozilla's full set incl. library-validation
-  # off). Tell electron-builder's signer to leave it alone — a re-sign would
-  # stamp the app's minimal entitlements onto Firefox and break it at runtime.
-  # The outer app signature still seals these files; notarization sees our
-  # hardened-runtime + timestamped signatures on them.
+  # The Camoufox tree is already Developer-ID signed by
+  # scripts/build-browser-runtime.mjs with Mozilla's own entitlements (full set,
+  # incl. library-validation off). Tell electron-builder's signer to leave it
+  # alone — a re-sign would stamp the app's minimal entitlements onto Firefox and
+  # break it at runtime. The outer app signature still seals these files;
+  # notarization sees our hardened-runtime + timestamped signatures on them.
   signIgnore:
     - "browser-runtime/.*"
-  # The Python runtime and the fused Camoufox tree are universal2, so the merge
-  # passes them through untouched. Vendored provider CLIs are not: two THIN
-  # per-arch binaries copied identically into both electron slices, so the
-  # merger would try to lipo a thin binary against its identical twin and fail.
-  # This pattern passes them through instead. The native-keychain addon is
-  # built universal2 (binding.gyp forces both arches) but is byte-identical in
-  # both slices, which the merger also refuses without this exemption.
+  # The fused Camoufox tree is universal2, so the merge passes it through
+  # untouched. Vendored provider CLIs are not: two THIN per-arch binaries copied
+  # identically into both electron slices, so the merger would try to lipo a thin
+  # binary against its identical twin and fail. This pattern passes them through
+  # instead. The native-keychain addon (universal2, byte-identical in both
+  # slices) is refused by the merger the same way. (No SQLite entry: the WASM
+  # cookie-merge module is arch-neutral, so the merge handles it like any file.)
   x64ArchFiles: "**/{providers,node_modules/@domo/native-keychain}/**"
   notarize: true
   extendInfo:

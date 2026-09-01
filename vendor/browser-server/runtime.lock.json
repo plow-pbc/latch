@@ -1,9 +1,5 @@
 {
-  "python": {
-    "version": "3.12.10",
-    "url": "https://www.python.org/ftp/python/3.12.10/python-3.12.10-macos11.pkg",
-    "sha256": "8373e58da4ea146b3eb1c1f9834f19a319440b6b679b06050b1f9ee3237aa8e4"
-  },
+  "_note": "No Python ships. The runtime is @domo/browser-server (playwright-core, pinned in package.json). The fingerprint pool is sampled at build time by camoufox-js, whose version is pinned in the root package.json devDependencies and coupled to the browser build below: camoufox-js 0.12.0 <-> playwright-core 1.60.0 <-> browser 152.0.4-beta.28.",
   "camoufox": {
     "browserVersion": "official/152.0.4-beta.28",
     "assets": {

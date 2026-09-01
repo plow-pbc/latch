@@ -3,6 +3,7 @@
   "references": [
     { "path": "packages/protocol" },
     { "path": "packages/transport" },
+    { "path": "packages/browser-server" },
     { "path": "packages/device-core" },
     { "path": "packages/mcp-server" },
     { "path": "packages/relay-client" },

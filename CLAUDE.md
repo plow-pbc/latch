@@ -20,10 +20,20 @@ npm workspaces. Libraries in `packages/`, executables/apps in `apps/`:
   `AuditLog`, identity/key store; `src/browser/` is the local
   browsing subsystem (session grants, origin enforcement, credential gate,
   and the vault: items in a local EncString store, master key in the macOS
-  Keychain — DESIGN.md §11a/§11a-i). `vendor/browser-server/` is the vendored
-  Python Camoufox server (pins in `runtime.lock.json`;
-  `just fetch-browser-runtime`/`fetch-browser` build the gitignored runtime;
-  tests use fake servers and need no Python).
+  Keychain — DESIGN.md §11a/§11a-i). The Camoufox browser server is
+  `@domo/browser-server` (TypeScript over playwright-core; no Python ships);
+  `just fetch-browser` fetches the gitignored browser and freezes the
+  fingerprint pool (pins in `vendor/browser-server/runtime.lock.json`). Tests
+  drive the ported server logic against stub Playwright objects and fake
+  servers — no browser, no Python.
+- `packages/browser-server` (`@domo/browser-server`) — the Camoufox browser
+  server, a faithful TS port of the retired `vendor/browser-server/server.py`
+  driving playwright-core; keeps the exact JSON-lines stdio wire, so
+  `BrowserHost`, the `DOMO_BROWSER_CMD` seam, and the fakes are unchanged. Two
+  executables (`dist/server.js`, `dist/mergeCookies.js`), a frozen fingerprint
+  pool (`fingerprints.json`, build output), and `pageScripts.ts` (the in-page
+  masking/extractor literals). No native modules ship: the cookie-store merge
+  uses `node-sqlite3-wasm` (WASM, arch-neutral, no Electron rebuild).
 - `packages/native-keychain` (`@domo/native-keychain`) — one tiny N-API addon:
   a generic password in the data-protection Keychain under our access group.
   Optional at build time; the key store falls back without it.

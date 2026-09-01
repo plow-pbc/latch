@@ -324,8 +324,9 @@ repo can prove they broke nothing.
 ## 11a. Local browsing (Camoufox + local vault)
 
 The device can host a real anti-detection Firefox (Camoufox, driven by
-Playwright through a vendored Python server — `vendor/browser-server/`,
-provenance in its `UPSTREAM.md`) so a remote agent browses **as the local
+playwright-core through a TypeScript server — `@domo/browser-server`, ported
+from the retired vendored Python and keeping the same JSON-lines stdio wire, so
+no Python ships) so a remote agent browses **as the local
 user**: local IP, local cookies, and local credentials that are typed into the
 page here rather than handed to the agent — which is driving that page, and can
 read it. Several browsers can run at once and they are all the user's: Firefox
@@ -514,33 +515,39 @@ Owner-authored skills in `$DOMO_HOME/device/skills` load **last** and win a
 name collision — a file the owner wrote is a deliberate act, and a built-in
 default should not silently replace it.
 
-**Runtime & packaging.** The stack ships inside the app: a relocated
-python.org universal2 Python 3.12 + lipo-merged (delocate) universal
-site-packages + one lipo-fused universal Camoufox tree (both arches' Mach-Os
-fused, the arch-independent payload shipped once), built deterministically by
+**Runtime & packaging.** No Python ships. The stack inside the app is the
+`@domo/browser-server` package (playwright-core, pure JS) plus one lipo-fused
+universal Camoufox tree (both arches' Mach-Os fused, the arch-independent
+payload shipped once), built deterministically by
 `scripts/build-browser-runtime.mjs` from hash pins in
 `vendor/browser-server/runtime.lock.json` (version coupling
-camoufox 0.5.4 ↔ playwright 1.60.0 ↔ browser 152.0.4-beta.28 is strict). The
-build prunes what can never load at runtime (Camoufox's bundled Windows/Linux
-spoofing fonts — the vendored server pins the fingerprint to macOS — plus
-Python test suites, dSYMs, headers, bytecode caches). Playwright's Python
-client is a shim over a Node driver, and the wheel's bundled node binary
-(~110 MB/arch) is pruned too: `browserRuntime.ts` points
-`PLAYWRIGHT_NODEJS_PATH` at the host process's own runtime — the app binary
-under `ELECTRON_RUN_AS_NODE`, or the plain node hosting a test. **This
-commits the app to keeping Electron's `RunAsNode` fuse enabled.** Disabling
-that fuse is a standard Electron hardening step; here it would silently break
-every browser launch, so anyone reaching for a fuses config must either skip
-`runAsNode` or bring the bundled driver node back first. The payload is
-byte-identical in both electron-builder arch passes so the universal merge
-copies it through. The Camoufox payload is a complete
-`camoufox fetch`-layout install dir; `BrowserHost` spawns the server with an
-app-scoped `$HOME` whose `Library/Caches/camoufox` symlinks to it — the
-user's shared cache is never touched and no fetch happens at launch. Audit
-events (`browser_*`, `credential_*`) are the test oracle; the fake browser
-server + fake `op` fixtures make the whole flow CI-testable without Python,
-and `just test-browser` runs the real browser against a local checkout
-fixture site.
+camoufox-js 0.12.0 ↔ playwright-core 1.60.0 ↔ browser 152.0.4-beta.28 is
+strict). The build prunes Camoufox's bundled Windows/Linux spoofing fonts (the
+fingerprint is pinned to macOS, which renders with the system fonts). **The
+fingerprint is not generated at runtime.** A build step samples a POOL of macOS
+launch configs with camoufox-js — a build-only dependency, so its native deps
+(better-sqlite3 for the WebGL model, a Rust HTTP binding) never ship — and
+freezes them as `packages/browser-server/fingerprints.json`. At runtime the
+server picks ONE, **pinned per install** (recorded at a per-install path, reused
+every launch): a persistent browser carrying the owner's real profile and logins
+wants a STABLE Mac fingerprint, and a device whose screen size or GPU changed
+between sessions would be a bot signal, not a defense. The server and the cookie
+merger run as Node scripts on the host process's own runtime — the app binary
+under `ELECTRON_RUN_AS_NODE`, or the plain node hosting a test. **This still
+commits the app to keeping Electron's `RunAsNode` fuse enabled** (a future
+cleanup could move them to `utilityProcess` and drop the requirement); anyone
+reaching for a fuses config must skip `runAsNode`. NO native module ships: the
+cookie-store merge uses `node-sqlite3-wasm`, a WASM SQLite build that is
+arch-neutral and loads under Electron with no rebuild (better-sqlite3 was tried
+and rejected — it is ABI-locked, so it would have needed an Electron rebuild per
+arch). Everything on the runtime path is pure JS or WASM. `browserRuntime.ts`
+points playwright at
+the Camoufox binary directly (no `$HOME`/cache symlink; no fetch at launch).
+Audit events (`browser_*`, `credential_*`) are the test oracle; the whole flow
+is CI-testable with no browser — the ported Session logic runs against stub
+Playwright objects in `@domo/browser-server`'s tests, and the fake browser
+server + fake `op` fixtures drive the device layer — and `just test-browser`
+runs the real browser against a local checkout fixture site.
 
 ### 11a-i. The vault's key lives in the Keychain, and its identity is frozen
 
@@ -732,8 +739,9 @@ Decisions and their reasons:
   comment in the justfile walks through it.
 
 Known cost: the DMG and zip each carry the full browser runtime (the fused
-universal Camoufox tree + Python — the DMG-halving work in §11a shrank it,
-but it still dominates the artifact), so updates are large. Blockmap
+universal Camoufox tree — dropping the bundled Python removed ~374 MB of
+payload and its thousands of signed files, but the browser still dominates the
+artifact), so updates are large. Blockmap
 differential downloads may soften this; shipping the browser runtime
 out-of-band (it is already pinned by `runtime.lock.json`) is the eventual fix
 if update size becomes a problem.

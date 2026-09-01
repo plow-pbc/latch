@@ -230,7 +230,13 @@ export class DeviceAgent {
         // plow_browser_open carries the agent's per-session choice, so the owner
         // can ask to watch (or to hide it) in the moment.
         headed: process.env.DOMO_BROWSER_HEADED === "1",
-        env: browserRuntime.env,
+        // The frozen-fingerprint pin lives at a stable per-install path, so the
+        // browser presents the SAME macOS fingerprint every launch (a persistent
+        // browser carrying the owner's real logins wants one stable device, not a
+        // new one each session — DESIGN.md §11a). `@domo/browser-server` records
+        // its pick here on first launch and reuses it after; the whole Mac is one
+        // person's, so every session shares it.
+        env: { ...browserRuntime.env, DOMO_FINGERPRINT_PIN: path.join(browserDir, "fingerprint-pin.json") },
         screenshotsDir: path.join(browserDir, "screenshots"),
         // Sessions run in here, each on a clone of the user's own profile
         // below — Firefox locks a profile to one process, so several browsers
@@ -238,8 +244,7 @@ export class DeviceAgent {
         profileDir: path.join(browserDir, "profiles"),
         seedProfile: path.join(browserDir, "profile"),
         mergeCookiesCommand: browserRuntime.mergeCookiesCommand,
-        camoufoxInstallDir: browserRuntime.camoufoxInstallDir,
-        isolatedHome: path.join(browserDir, "pyhome"),
+        executablePath: browserRuntime.executablePath,
         // Every `browser` action is non-deferrable and must answer inside the
         // relay's per-exchange ceiling; cap the per-action wait below it so
         // a hung page/eval returns an error in time instead of a torn 504. The

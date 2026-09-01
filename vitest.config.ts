@@ -9,6 +9,7 @@ export default defineConfig({
     alias: {
       "@domo/protocol": p("packages/protocol/src/index.ts"),
       "@domo/transport": p("packages/transport/src/index.ts"),
+      "@domo/browser-server": p("packages/browser-server/src/index.ts"),
       "@domo/device-core": p("packages/device-core/src/index.ts"),
       "@domo/mcp-server": p("packages/mcp-server/src/index.ts"),
       "@domo/relay-client": p("packages/relay-client/src/index.ts"),

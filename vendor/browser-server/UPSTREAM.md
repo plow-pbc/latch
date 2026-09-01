@@ -12,11 +12,18 @@ org as this repo) at commit `6d6da2aeb58a31875ec49adc76847155be107e0b`. The
   on as a faithful TypeScript port in
   `packages/device-core/src/browser/credentialClassify.ts`, asserted against
   the same truth table (`e2e/fixtures/maskClassification.json`).
-- **`server.py`** — rewritten from the socket server embedded in upstream's
-  `scripts/camoufox_cli.py` (`cmd_open`). Behavior kept: the action set
-  (frames-aware `click`/`fill`, `forms` with labels, `links`, `tables`,
+- **`server.py`** — was rewritten from the socket server embedded in upstream's
+  `scripts/camoufox_cli.py` (`cmd_open`); **REMOVED and ported to TypeScript**
+  when the bundled Python was dropped from the product. The port lives at
+  `packages/browser-server/src/session.ts` (the `Session` logic, driven by
+  playwright-core), `src/pageScripts.ts` (the in-page JS literals), `src/launch.ts`
+  (the frozen-fingerprint-pool launcher), and `src/mergeCookies.ts` (the cookie
+  merge, over better-sqlite3). It keeps the exact JSON-lines stdio wire, so
+  BrowserHost, the fakes, and the tests are unchanged; the fillProbe/failedRequest
+  probes are now TypeScript in `packages/browser-server/test/`. Behavior kept: the
+  action set (frames-aware `click`/`fill`, `forms` with labels, `links`, `tables`,
   `pages`/`use_page`, honest `back` reporting `moved`) and the
-  field/links/tables JS extractors. Changed:
+  field/links/tables JS extractors. Changed (against upstream, still true of the port):
   - `goto`/`back` page-load timeout cut from 30 s to 12 s (+1 s settle) so a
     single action answers inside Domo's host cap and the relay's per-exchange
     ceiling; a genuinely slower page fails cleanly and the agent retries rather
@@ -83,6 +90,7 @@ Domo replacement is the built-in `camoufox-browsing` skill in
 
 ## Version coupling (do not bump independently)
 
-`camoufox==0.5.4` ↔ `playwright==1.60.0` ↔ browser `official/152.0.4-beta.28`
-(see `runtime.lock.json`). Upstream's README: mismatches crash rather than
-degrade.
+`camoufox-js==0.12.0` (build-time pool sampling) ↔ `playwright-core==1.60.0`
+(runtime driver) ↔ browser `official/152.0.4-beta.28` (see `runtime.lock.json`
+for the browser pins; the npm versions are pinned in the repo's package.json
+files). Upstream's README: mismatches crash rather than degrade.

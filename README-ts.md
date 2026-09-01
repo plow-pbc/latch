@@ -27,6 +27,8 @@ packages/
   transport/     @domo/transport     the Connection seam and the WebSocket (ws) client half
   device-core/   @domo/device-core   DeviceAgent, PolicyEngine, FileOps, Executor + SBPL, AuditLog,
                                      SkillRegistry, identity/key store  (twin of DomoDeviceCore)
+  browser-server/ @domo/browser-server  the Camoufox browser server (TS over playwright-core, a port
+                                     of the retired vendor Python; same JSON-lines stdio wire) + cookie merge
   mcp-server/    @domo/mcp-server    the MCP server on this Mac (revision 2026-07-28): the reduced
                                      tool surface, capability construction, and deferred results
   relay-client/  @domo/relay-client  dials the Plow relay, speaks plow's channel handshake, and

@@ -75,8 +75,8 @@ export function stripQuery(url: string): string {
 /**
  * Requests the site itself refused during an action, rebuilt from the fields
  * this side knows: origins, a status, a method, two headers. Rebuilt rather
- * than forwarded because `audit.ndjson` is durable and `server.py` is vendored
- * (see its UPSTREAM.md) — a sync that reintroduced a url would otherwise write
+ * than forwarded because `audit.ndjson` is durable and the browser server
+ * (@domo/browser-server) rebuilds them — a sync that reintroduced a url would otherwise write
  * paths into the owner's log with nothing here to stop it.
  */
 function failedRequests(value: JSONValue[]): JSONValue[] {
@@ -146,7 +146,7 @@ const DEFAULT_IDLE_MS = 15 * 60_000;
  * tunnelled call at its own ceiling (`CLAUDE.md` § Layout owns the value) and
  * `browser` is non-deferrable, so every action must
  * answer well inside that; `wait` and `goto` are the only ones that can run
- * long by design and are bounded (here and in server.py / BrowserHost). A
+ * long by design and are bounded (here and in @domo/browser-server / BrowserHost). A
  * longer pause is expressed as several waits.
  */
 const MAX_WAIT_SECONDS = 12;
@@ -392,7 +392,6 @@ export class BrowserSessions {
       ...this.browser,
       screenshotsDir: path.join(this.browser.screenshotsDir, profile),
       ...(this.browser.profileDir ? { profileDir: path.join(this.browser.profileDir, profile) } : {}),
-      ...(this.browser.isolatedHome ? { isolatedHome: path.join(this.browser.isolatedHome, profile) } : {}),
     });
   }
 
@@ -451,7 +450,7 @@ export class BrowserSessions {
    * close decides what the user is signed into, which loses the other one's
    * login and can even undo a logout. What this session did to its cookies —
    * changes and sign-outs both — is reconciled into the profile against the
-   * baseline it started from; `merge_cookies.py` holds that contract.
+   * baseline it started from; @domo/browser-server's mergeCookies holds that contract.
    *
    * ponytail: cookies only. A site that keeps its session in localStorage or
    * IndexedDB still signs out with the clone, and a logout inside a session
@@ -479,8 +478,29 @@ export class BrowserSessions {
     fs.rmSync(dir, { recursive: true, force: true });
   }
 
-  /** The merge itself: sqlite, on the interpreter this runtime already ships. */
-  private async mergeCookies(dir: string): Promise<void> {
+  /** Serializes merges into the shared seed profile. Shutdown closes every
+   * session at once, and each merge opens the SAME seed `cookies.sqlite`;
+   * several processes opening it concurrently made node-sqlite3-wasm fail with
+   * "unable to open database file", so the loser's sign-ins were never written
+   * back. One seed profile per instance, so one queue. */
+  private mergeQueue: Promise<void> = Promise.resolve();
+
+  /** The merge, serialized against every other merge into the same profile. */
+  private mergeCookies(dir: string): Promise<void> {
+    const run = (): Promise<void> => this.mergeCookiesLocked(dir);
+    // Run after the previous merge regardless of whether it settled; return THIS
+    // merge's own result to the caller, but keep the queue non-rejecting so one
+    // failure cannot wedge every later close.
+    const next = this.mergeQueue.then(run, run);
+    this.mergeQueue = next.then(
+      () => {},
+      () => {},
+    );
+    return next;
+  }
+
+  /** The merge itself: WASM sqlite, on the node this runtime already runs on. */
+  private async mergeCookiesLocked(dir: string): Promise<void> {
     const seed = this.browser.seedProfile;
     const from = path.join(dir, "cookies.sqlite");
     if (!seed || !fs.existsSync(from)) return;

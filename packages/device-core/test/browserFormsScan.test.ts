@@ -6,15 +6,10 @@
  * populated, so the agent can tell a filled form from a half-empty one.
  *
  * The scanner runs inside the page, so this drives the exact source string
- * `server.py` evaluates against a stub document — no Python, no browser.
+ * the browser server evaluates against a stub document — no browser.
  */
 import { describe, expect, it } from "vitest";
-import fs from "node:fs";
-import { fileURLToPath } from "node:url";
-
-const SERVER_PY = fileURLToPath(
-  new URL("../../../vendor/browser-server/server.py", import.meta.url),
-);
+import { pageScripts } from "@domo/browser-server";
 
 /** Values planted in the stub page. Never asserted on — only searched for. */
 const SECRETS = ["hunter2", "4111111111111111", "737"];
@@ -30,10 +25,7 @@ interface Field {
 
 /** The `FIELD_JS` literal, lifted from the server so the test can't drift. */
 function loadScanner(): (doc: unknown) => Field[] {
-  const src = fs.readFileSync(SERVER_PY, "utf8");
-  const m = /^FIELD_JS = """([\s\S]*?)"""$/m.exec(src);
-  if (!m) throw new Error("FIELD_JS literal not found in server.py");
-  const fn = new Function("document", `return (${m[1]})();`);
+  const fn = new Function("document", `return (${pageScripts.FIELD_JS})();`);
   return fn as (doc: unknown) => Field[];
 }
 
