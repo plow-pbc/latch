@@ -108,9 +108,13 @@ exactly what you need — the flags exist:
   \`--page <cursor>\` when you truly need more. Never \`--all-pages\` on an
   open-ended query. On a fan-out read the cap applies PER ACCOUNT before the
   merge — a \`--max 10\` across 4 accounts can return up to 40 items, so size
-  it for the merged total you actually want.
+  it for the merged total you actually want. A fan-out result carries NO page
+  cursor (items and degraded accounts only); to paginate, narrow to one
+  \`--account\` and request JSON.
 - **Select fields on lists**: \`--fields\` (or \`--select\` with dot paths in
-  JSON mode) instead of taking every property of every row.
+  JSON mode) instead of taking every property of every row. On a fan-out,
+  keep the merge's sort key in the selection — \`date\` for gmail, \`start\`
+  for calendar — or the merged order degrades to grouped-by-account.
 - **\`gmail get\` defaults to the ENTIRE message.** Unless you need the body,
   pass \`--format metadata --headers From,To,Subject,Date\`. Fetch \`full\`
   for one message you are about to act on, not for triage.
