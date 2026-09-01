@@ -99,15 +99,31 @@ ACL changes need a sharing scope. Those commands exist in the binary and this
 Mac will let you run them — Google refuses them. Treat a 403 as "not granted",
 not as a bug to work around.
 
+## Keep results small
+
+Every byte you fetch lands in your own context and stays there, so ask for
+exactly what you need — the flags exist:
+
+- **Always cap lists.** \`--max <n>\` (default 10) and continue with
+  \`--page <cursor>\` when you truly need more. Never \`--all-pages\` on an
+  open-ended query.
+- **Select fields on lists**: \`--fields\` (or \`--select\` with dot paths in
+  JSON mode) instead of taking every property of every row.
+- **\`gmail get\` defaults to the ENTIRE message.** Unless you need the body,
+  pass \`--format metadata --headers From,To,Subject,Date\`. Fetch \`full\`
+  for one message you are about to act on, not for triage.
+- **Summarize, don't replay.** Extract the facts into your reply; never echo
+  a raw JSON result back into the conversation.
+
 Useful starting points:
 
     ["plow-gog","accounts"]
-    ["plow-gog","gmail","search","from:someone newer_than:30d"]
-    ["plow-gog","gmail","get","<messageId>","--account","<the item's account>","--json"]
+    ["plow-gog","gmail","search","from:someone newer_than:30d","--max","10"]
+    ["plow-gog","gmail","get","<messageId>","--format","metadata","--headers","From,To,Subject,Date","--account","<the item's account>","--json"]
     ["plow-gog","gmail","drafts","reply","<messageId>","--body","...","--account","..."]  # draft, for review
     ["plow-gog","gmail","send","--to","a@b.com","--subject","...","--body","...","--account","..."]
     ["plow-gog","gmail","send","--to","a@b.com","--subject","...","--body","...","--attach","/Users/me/Plow/receipt.jpg","--account","..."]
-    ["plow-gog","calendar","events","primary","--from","2026-09-01T00:00:00Z","--to","2026-09-08T00:00:00Z"]
+    ["plow-gog","calendar","events","primary","--from","2026-09-01T00:00:00Z","--to","2026-09-08T00:00:00Z","--fields","summary,start,end,attendees"]
     ["plow-gog","calendar","conflicts","--from","...","--to","..."]   # overlaps, every account
     ["plow-gog","calendar","create","primary","--summary","...","--from","...","--to","...","--account","..."]
 
