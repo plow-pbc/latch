@@ -43,11 +43,16 @@ const POOL_DIR = fileURLToPath(new URL("..", import.meta.url)); // packages/brow
 const CFX = findCamoufox();
 const HAVE_BROWSER = CFX !== null && fs.existsSync(path.join(POOL_DIR, "fingerprints.json"));
 
+// A real function + arg, never a string built from `id`: Playwright serializes
+// the function and passes `id` as data, so nothing interpolates a value into
+// evaluated code.
 const security = (page: any, id: string): Promise<string> =>
-  page.evaluate(
-    `(() => { const e = document.getElementById(${JSON.stringify(id)}); if (!e) return "no-el";
-      const cs = getComputedStyle(e); return cs.getPropertyValue("-webkit-text-security") || cs.webkitTextSecurity || ""; })()`,
-  );
+  page.evaluate((elId: string) => {
+    const e = (globalThis as any).document.getElementById(elId);
+    if (!e) return "no-el";
+    const cs = (globalThis as any).getComputedStyle(e);
+    return cs.getPropertyValue("-webkit-text-security") || cs.webkitTextSecurity || "";
+  }, id);
 
 describe.skipIf(!HAVE_BROWSER)("page scripts against a real Camoufox", () => {
   let browser: LaunchedBrowser;
