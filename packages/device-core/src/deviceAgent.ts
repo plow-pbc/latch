@@ -386,6 +386,9 @@ export class DeviceAgent {
       decision: grant.decision,
       source: grant.source,
     });
+    // After the append, never before: the delegate's own record of the
+    // question is what survives a crash between the answer and this line.
+    await this.delegate.decisionRecorded?.(intent.intentId);
     if (grant.decision === "deny") {
       // Most denials need no explanation — the owner said no, and why is
       // between them and their Mac. A few are standing conditions the calling

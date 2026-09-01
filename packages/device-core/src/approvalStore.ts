@@ -9,7 +9,7 @@
  * lunch, nothing anywhere says an agent asked to read their SSH key.
  *
  * So every pending approval is written down before the human is asked, and the
- * record goes when the answer lands. This is a decorator around whatever
+ * record goes once the answer is in the audit log. This is a decorator around whatever
  * normally answers — the Electron dialog, a scripted policy in tests — and it
  * changes neither the question asked nor the decision made. It adds three
  * things:
@@ -24,7 +24,11 @@
  * the deadline's and the startup sweep's, and it is the one history the owner
  * reads. Keeping a second copy beside it — one file per approval, each holding
  * the goal and the paths asked for, never read again and never removed — grew
- * without bound on a long-lived install.
+ * without bound on a long-lived install. The hand-off is ordered: the record
+ * stays until `decisionRecorded` says the audit line is down. Removing it at
+ * settlement left a gap where a crash between the answer and its audit line
+ * lost the human's decision from every durable place at once; now that crash
+ * leaves a `pending` record the next start closes out as abandoned.
  *
  * The window is fifteen minutes, matching the deferred handle's, so a decision
  * that lands at any point before the deadline still has a handle to land on.
@@ -188,6 +192,14 @@ export class ApprovalStore implements PolicyDelegate {
     await fs.rm(this.file(intentId), { force: true });
   }
 
+  /** The audit log has the decision, so the record has nothing left to say.
+   * An intent a stored rule answered never had a record; removing nothing is
+   * fine. Forwarded, like every other delegate method. */
+  async decisionRecorded(intentId: string): Promise<void> {
+    await this.remove(intentId);
+    await this.inner.decisionRecorded?.(intentId);
+  }
+
   /**
    * A `pending` record from a previous run has nobody waiting on it — the call
    * it belonged to is long gone. Report it abandoned and remove it, rather than
@@ -282,11 +294,9 @@ export class ApprovalStore implements PolicyDelegate {
 
     const { decision } = await answered;
     this.waiting.delete(intent.intentId);
-
-    // Answered, so no longer in flight. The caller writes the decision to the
-    // audit log; this directory's job — to say what was asked while nothing
-    // else could — is over.
-    await this.remove(intent.intentId);
+    // Still on disk, on purpose: the caller writes the decision to the audit
+    // log next and calls decisionRecorded() once it is there. Until then this
+    // record is the only durable thing that knows an answer was given.
     return decision;
   }
 }

@@ -155,6 +155,19 @@ def read_config(config_file, server_name=None):
     return url, token, None
 
 
+def rotated(log_path):
+    """The generation before `log_path`: `audit.ndjson` → `audit.1.ndjson`.
+
+    `AuditLog` rolls the log over by rename once it is full, so this call's
+    `intent_received` can move here between two polls. A reader that opened
+    only the current file then lost the correlation point and reported a call
+    that succeeded as timed out. Both generations are one log, this one first.
+    """
+    head, tail = os.path.split(log_path)
+    stem, ext = os.path.splitext(tail)
+    return os.path.join(head, f"{stem}.1{ext}")
+
+
 def remote_cat(log_path, home):
     """The shell command that reads the log on the far side.
 
@@ -169,13 +182,19 @@ def remote_cat(log_path, home):
     def q(p):
         return f'"$HOME"/{shlex.quote(p[2:])}' if p.startswith("~/") else shlex.quote(p)
 
-    quoted = q(log_path)
+    current = q(log_path)
+    previous = q(rotated(log_path))
     # And the HOME, at exit 4, ahead of both. A missing log is normal on a
     # fresh install, so collapsing the two makes a wrong --home over ssh
     # silent — and remote is where it is most likely wrong, since the
     # environment cannot answer there and the default is the PACKAGED install.
+    # Either generation present is a log; each one present is read, previous
+    # first, and a `cat` that fails is still a failed read.
     return (f"if [ ! -d {q(home)} ]; then exit 4; "
-            f"elif [ -e {quoted} ]; then cat -- {quoted}; else exit 3; fi")
+            f"elif [ -e {current} ] || [ -e {previous} ]; then "
+            f"for f in {previous} {current}; do "
+            f'if [ -e "$f" ]; then cat -- "$f" || exit 1; fi; done; '
+            f"else exit 3; fi")
 
 
 def read_log(log_path, ssh, budget, home):
@@ -213,13 +232,15 @@ def read_log(log_path, ssh, budget, home):
             return [], f"ssh {ssh}: {detail[-1] if detail else 'exit ' + str(proc.returncode)}"
         raw = proc.stdout
     else:
-        try:
-            with open(log_path, errors="replace") as handle:
-                raw = handle.read()
-        except FileNotFoundError:
-            raw = ""
-        except OSError as error:
-            return [], f"{log_path}: {error.strerror}"
+        raw = ""
+        for generation in (rotated(log_path), log_path):
+            try:
+                with open(generation, errors="replace") as handle:
+                    raw += handle.read()
+            except FileNotFoundError:
+                continue
+            except OSError as error:
+                return [], f"{generation}: {error.strerror}"
     records = []
     for line in raw.splitlines():
         try:

@@ -273,7 +273,7 @@ $DOMO_HOME (default ~/Library/Application Support/Plow-Latch)
 ├── device/rules.json                    # always-allow rules
 ├── device/approvals/<intentId>.json     # 0700 dir; approvals IN FLIGHT only
 ├── device/audit.ndjson                  # append-only audit log
-├── device/audit.1.ndjson                # the generation before it, once rotated
+├── device/audit.1.ndjson                # the generation before it, once rotated (readers take both)
 ├── device/browser/fingerprint-pin.json  # the one fingerprint this install presents
 ├── device/browser/profile/              # the owner's browser profile (seed)
 ├── device/browser/profiles/<session>/   # per-session clones; merged and removed on close
@@ -284,8 +284,8 @@ $DOMO_HOME (default ~/Library/Application Support/Plow-Latch)
 
 Everything honors `DOMO_HOME` so tests run against throwaway roots.
 
-Nothing here grows without bound. An approval record exists only while it is
-unanswered; its decision is in the audit log, which rolls over by rename at
+Nothing here grows without bound. An approval record exists from before the
+human is asked until its decision is in the audit log, which rolls over by rename at
 `AUDIT_ROTATE_BYTES` (one previous generation kept). A session's profile clone
 goes when the session closes. Screenshots are never written to disk: the agent
 gets them inline and the owner's viewer takes live frames. An install from

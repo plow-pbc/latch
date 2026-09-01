@@ -113,6 +113,9 @@ describe("the budget fires while persisting the approval is still in flight", ()
     ).payload;
     expect(poll.status).toBe("ready");
     expect(poll.result.content).toBe("the numbers");
+    // Decided, recorded, run: the approvals directory holds in-flight
+    // questions only, and this one is answered.
+    expect(fs.readdirSync(path.join(home, "device/approvals"))).toEqual([]);
   });
 
   it("the record is on disk before the human is asked, not after", async () => {

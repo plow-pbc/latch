@@ -40,6 +40,16 @@ export interface PolicyDelegate {
    * where the delegate decides as it would have the first time.
    */
   mayGrantFromStoredRule?(intent: Intent): boolean | Promise<boolean>;
+  /**
+   * The decision for this intent is now in the audit log. A delegate that
+   * kept its own record of the question while it was open may let go of it
+   * here, and not before: between an answer and its audit line the record is
+   * the only durable account of what the human said.
+   *
+   * Optional. Called once per decided intent, after the audit append, and
+   * awaited so a delegate's cleanup finishes before the intent runs.
+   */
+  decisionRecorded?(intentId: string): void | Promise<void>;
 }
 
 export class PolicyEngine {
