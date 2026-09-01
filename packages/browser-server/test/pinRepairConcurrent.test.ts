@@ -60,8 +60,12 @@ describe("concurrent stale-pin repair (multi-process)", () => {
     fs.writeFileSync(poolFile, JSON.stringify(pool));
     const pinPath = path.join(dir, "device", "browser", "pin.json");
     fs.mkdirSync(path.dirname(pinPath), { recursive: true });
-    // Stale: this id is not in the current pool (a browser bump regenerated it).
-    fs.writeFileSync(pinPath, JSON.stringify({ id: "id-removed-by-a-bump" }));
+    // A pin for an OLDER browser version — every launch must re-pick and
+    // re-record for the current build, so they all contend on the repair.
+    fs.writeFileSync(
+      pinPath,
+      JSON.stringify({ browserVersion: "official/151.0.0-old", entry: { id: "old" } }),
+    );
 
     // Spawn all children, then release them together at a shared barrier so they
     // truly contend on the repair (without the barrier, spawn jitter lets one win
@@ -73,7 +77,9 @@ describe("concurrent stale-pin repair (multi-process)", () => {
 
     expect(new Set(ids).size).toBe(1); // all 40 converged on one fingerprint
     expect(pool.entries.some((e) => e.id === ids[0])).toBe(true); // a current entry
-    expect(JSON.parse(fs.readFileSync(pinPath, "utf8"))).toEqual({ id: ids[0] }); // recorded
+    const rec = JSON.parse(fs.readFileSync(pinPath, "utf8"));
+    expect(rec.browserVersion).toBe(pool.browserVersion); // re-recorded for this build
+    expect(rec.entry.id).toBe(ids[0]);
     expect(fs.existsSync(`${pinPath}.lock`)).toBe(false); // lock released
   }, 30_000);
 });

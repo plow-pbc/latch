@@ -5,13 +5,30 @@
  * credential broker still runs in-process (brokerCore.ts) unless the test seam
  * (DOMO_VAULT_BROKER_CMD) names one.
  */
-import { afterEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { resolveBrowserRuntime } from "@domo/device-core";
 
 const dirs: string[] = [];
+
+// A materialized runtime requires the frozen pool at the @domo/browser-server
+// package root. It is gitignored build output, so a CI checkout that has not run
+// `just fetch-browser` lacks it; ensure a stub so these resolution tests (which
+// are about paths, not the pool) are deterministic, and remove it if we made it.
+const POOL = fileURLToPath(new URL("../../browser-server/fingerprints.json", import.meta.url));
+let madePool = false;
+beforeAll(() => {
+  if (!fs.existsSync(POOL)) {
+    fs.writeFileSync(POOL, JSON.stringify({ browserVersion: "official/152.0.4-beta.28", entries: [] }));
+    madePool = true;
+  }
+});
+afterAll(() => {
+  if (madePool) fs.rmSync(POOL, { force: true });
+});
 
 afterEach(() => {
   while (dirs.length) fs.rmSync(dirs.pop()!, { recursive: true, force: true });
@@ -19,6 +36,7 @@ afterEach(() => {
   delete process.env.DOMO_VAULT_BROKER_CMD;
   delete process.env.DOMO_MERGE_COOKIES_CMD;
   delete process.env.DOMO_CAMOUFOX;
+  delete process.env.DOMO_BROWSER_RUNTIME;
 });
 
 /**
@@ -130,5 +148,30 @@ describe("resolveBrowserRuntime", () => {
     // A bare path that is not an install tree falls back to itself.
     process.env.DOMO_CAMOUFOX = "/opt/camoufox-bin";
     expect(resolveBrowserRuntime(resources)!.executablePath).toBe("/opt/camoufox-bin");
+  });
+
+  // Readiness contract: a runtime is offered only when the browser AND the pool
+  // are materialized, so browsing is not registered against a runtime that would
+  // fail at first launch.
+  it("offers no browsing when the Camoufox binary is not fetched", () => {
+    const runtimeDir = fs.mkdtempSync(path.join(os.tmpdir(), "domo-runtime-"));
+    dirs.push(runtimeDir);
+    // Resolve ONLY against this dir (DOMO_BROWSER_RUNTIME), so the repo's own
+    // vendor/ tree is not used as a dev fallback. No Camoufox here.
+    process.env.DOMO_BROWSER_RUNTIME = runtimeDir;
+    expect(resolveBrowserRuntime()).toBeNull();
+  });
+
+  it("offers no browsing when the fingerprint pool is missing", () => {
+    // The pool ships with the package, so all layouts share it; hiding it makes
+    // every layout (and the vendor fallback) incomplete.
+    const { resources } = fakePayload(); // has the Camoufox binary
+    const hidden = `${POOL}.hidden`;
+    fs.renameSync(POOL, hidden);
+    try {
+      expect(resolveBrowserRuntime(resources)).toBeNull();
+    } finally {
+      fs.renameSync(hidden, POOL);
+    }
   });
 });

@@ -69,48 +69,53 @@ export function loadPool(poolDir: string): FingerprintPool {
 }
 
 /**
- * The entry pinned for this install. Reads the id recorded at `pinPath`; if none
- * is recorded (or it names an entry no longer in the pool — a pool regenerated
- * on a browser bump), picks one at random and records it. With no pinPath the
- * pick is per launch, for dev runs that do not care about stability.
+ * The entry pinned for this install. The pin stores the WHOLE entry plus the
+ * browser version it was chosen for, and is reused for as long as that version
+ * matches — NOT keyed on the id still being in the pool. The pool is resampled on
+ * every package build, so an id-keyed pin would be invalidated by every ordinary
+ * app update and present a new fingerprint; storing the entry itself keeps it
+ * stable until the browser version actually changes. With no pinPath the pick is
+ * per launch, for dev runs that do not care about stability.
  */
 export function pinnedEntry(pool: FingerprintPool, pinPath?: string): FingerprintEntry {
-  const byId = new Map(pool.entries.map((e) => [e.id, e]));
-  /** The VALID entry the pin names, or undefined when the pin is absent, corrupt,
-   * or names an id no longer in the pool (e.g. after a browser bump regenerated
-   * the pool with fresh ids). */
-  const readValid = (): FingerprintEntry | undefined => {
+  /** The pinned entry, if the pin was chosen for the CURRENT browser version;
+   * undefined when the pin is absent, corrupt, or for another browser build. */
+  const readPinned = (): FingerprintEntry | undefined => {
     try {
-      const { id } = JSON.parse(fs.readFileSync(pinPath!, "utf8")) as { id?: string };
-      return id ? byId.get(id) : undefined;
+      const data = JSON.parse(fs.readFileSync(pinPath!, "utf8")) as {
+        browserVersion?: string;
+        entry?: FingerprintEntry;
+      };
+      return data.browserVersion === pool.browserVersion && data.entry?.id ? data.entry : undefined;
     } catch {
       return undefined;
     }
   };
   if (!pinPath) return pool.entries[crypto.randomInt(pool.entries.length)];
 
-  const existing = readValid();
+  const existing = readPinned();
   if (existing) return existing;
 
-  // No valid pin. Choose one and publish it.
+  // No usable pin. Choose one and publish {browserVersion, entry}.
   fs.mkdirSync(path.dirname(pinPath), { recursive: true });
   const chosen = pool.entries[crypto.randomInt(pool.entries.length)];
+  const payload = JSON.stringify({ browserVersion: pool.browserVersion, entry: chosen });
   try {
     // Absent file: exclusive create, so simultaneous FIRST launches converge —
-    // the loser gets EEXIST and adopts the winner's valid pin (via the repair
-    // path below, which returns the valid pin without touching it).
-    fs.writeFileSync(pinPath, JSON.stringify({ id: chosen.id }), { flag: "wx", mode: 0o600 });
+    // the loser gets EEXIST and adopts the winner's pin via the repair path.
+    fs.writeFileSync(pinPath, payload, { flag: "wx", mode: 0o600 });
     return chosen;
   } catch (e) {
     if ((e as NodeJS.ErrnoException).code !== "EEXIST") return chosen; // unwritable
   }
-  // The file exists. Either a concurrent launch just wrote a VALID pin (adopt
-  // it), or the pin is STALE/CORRUPT and must be repaired — otherwise every
-  // launch re-randomizes and never converges. Elect ONE repairer under a lock so
-  // every concurrent caller returns the SAME id: an atomic rename alone converges
-  // the FILE, but lets an in-flight launch return its own pick before another's
-  // rename lands (40 concurrent repairs otherwise yielded several fingerprints).
-  return repairPin(pinPath, chosen, readValid);
+  // The file exists. Either a concurrent launch just wrote a usable pin (adopt
+  // it), or the pin is for another browser version / corrupt and must be
+  // replaced — otherwise every launch re-picks and never converges. Elect ONE
+  // repairer under a lock so every concurrent caller returns the SAME entry: an
+  // atomic rename alone converges the FILE, but lets an in-flight launch return
+  // its own pick before another's rename lands (40 concurrent repairs otherwise
+  // yielded several fingerprints).
+  return repairPin(pinPath, chosen, payload, readPinned);
 }
 
 /** Block this thread briefly. pinnedEntry is synchronous and runs ONCE per
@@ -131,12 +136,13 @@ function sleepSync(ms: number): void {
 function repairPin(
   pinPath: string,
   chosen: FingerprintEntry,
-  readValid: () => FingerprintEntry | undefined,
+  payload: string,
+  readPinned: () => FingerprintEntry | undefined,
 ): FingerprintEntry {
   const lock = `${pinPath}.lock`;
   const stealAfter = Date.now() + 2000;
   for (;;) {
-    const valid = readValid();
+    const valid = readPinned();
     if (valid) return valid; // the winner already published — adopt it
     try {
       fs.writeFileSync(lock, String(process.pid), { flag: "wx", mode: 0o600 });
@@ -156,10 +162,10 @@ function repairPin(
     }
     // We hold the lock: repair once, unless a prior holder already did.
     try {
-      const again = readValid();
+      const again = readPinned();
       if (again) return again;
       const tmp = `${pinPath}.${process.pid}.${crypto.randomInt(1_000_000_000)}`;
-      fs.writeFileSync(tmp, JSON.stringify({ id: chosen.id }), { mode: 0o600 });
+      fs.writeFileSync(tmp, payload, { mode: 0o600 });
       fs.renameSync(tmp, pinPath);
       return chosen;
     } finally {

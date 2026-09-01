@@ -37,24 +37,29 @@ afterEach(() => {
 });
 
 describe("fingerprint pinning", () => {
-  it("records the pick on first launch and reuses it after", () => {
+  it("records the pick (entry + browser version) on first launch and reuses it", () => {
     const p = pinPath();
     const first = pinnedEntry(pool, p);
     const second = pinnedEntry(pool, p);
     const third = pinnedEntry(pool, p);
     expect(second.id).toBe(first.id);
     expect(third.id).toBe(first.id);
-    expect(JSON.parse(fs.readFileSync(p, "utf8"))).toEqual({ id: first.id });
+    expect(JSON.parse(fs.readFileSync(p, "utf8"))).toEqual({
+      browserVersion: pool.browserVersion,
+      entry: first,
+    });
   });
 
-  it("adopts an existing pin instead of overwriting it (the race loser's path)", () => {
+  it("reuses the pinned entry even when its id is no longer in a resampled pool", () => {
+    // Every package build resamples the pool with fresh ids; the pin stores the
+    // ENTRY, not just the id, so an ordinary update keeps the same fingerprint.
     const p = pinPath();
     fs.mkdirSync(path.dirname(p), { recursive: true });
-    // A pin written by whoever won the race.
-    fs.writeFileSync(p, JSON.stringify({ id: "id-7" }));
+    const gone = { id: "id-not-in-this-pool", env: { CAMOU_CONFIG_1: "x" }, firefoxUserPrefs: {}, args: [] };
+    fs.writeFileSync(p, JSON.stringify({ browserVersion: pool.browserVersion, entry: gone }));
     const chosen = pinnedEntry(pool, p);
-    expect(chosen.id).toBe("id-7"); // adopted, not re-picked
-    expect(JSON.parse(fs.readFileSync(p, "utf8"))).toEqual({ id: "id-7" }); // unchanged
+    expect(chosen).toEqual(gone); // the recorded entry, though its id is not in the pool
+    expect(JSON.parse(fs.readFileSync(p, "utf8")).entry).toEqual(gone); // unchanged
   });
 
   it("writes the pin exclusively, so an already-present file is never clobbered", () => {
@@ -73,16 +78,21 @@ describe("fingerprint pinning", () => {
     for (let i = 0; i < 1000; i++) expect(pool.entries).toContain(pinnedEntry(pool));
   });
 
-  it("repairs a STALE pin whose id is gone after a pool refresh, then converges", () => {
-    // The regression: a browser bump regenerates the pool with fresh ids, so the
-    // recorded id no longer resolves — and the old code re-randomised on every
-    // launch, never repairing the file.
+  it("re-picks when the pin is for a DIFFERENT browser version, then converges", () => {
+    // A real browser bump: the pin was chosen for an older build, so its config
+    // may not fit the new browser — re-pick from the current pool and re-record.
     const p = pinPath();
     fs.mkdirSync(path.dirname(p), { recursive: true });
-    fs.writeFileSync(p, JSON.stringify({ id: "id-removed-by-a-browser-bump" }));
+    fs.writeFileSync(
+      p,
+      JSON.stringify({ browserVersion: "official/151.0.0-beta.1", entry: pool.entries[3] }),
+    );
     const first = pinnedEntry(pool, p);
-    expect(pool.entries.some((e) => e.id === first.id)).toBe(true); // a CURRENT entry
-    expect(JSON.parse(fs.readFileSync(p, "utf8"))).toEqual({ id: first.id }); // file repaired
+    expect(pool.entries.some((e) => e.id === first.id)).toBe(true);
+    expect(JSON.parse(fs.readFileSync(p, "utf8"))).toEqual({
+      browserVersion: pool.browserVersion, // re-recorded for the current build
+      entry: first,
+    });
     for (let i = 0; i < 10; i++) expect(pinnedEntry(pool, p).id).toBe(first.id); // converges
   });
 

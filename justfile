@@ -61,7 +61,11 @@ build:
 
 # Run the full test suite. Depends on `install` so a clean checkout — CI, the
 # review bot, a new machine — is one command; it is a ~1s no-op once installed.
+# Builds @domo/browser-server first: the cookie-merge and pin-repair tests spawn
+# its COMPILED server/merger, so the dist must exist before Vitest (incremental,
+# a no-op once built).
 test: install
+    npx tsc -b packages/browser-server
     npx vitest run
 
 # Just the golden-vector conformance (fast). fixtures/ is the frozen protocol

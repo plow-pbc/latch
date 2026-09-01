@@ -93,16 +93,27 @@ function hostNode(): { argv: string[]; env: Record<string, string> } {
 function fromLayout(layout: Layout): ResolvedBrowserRuntime | null {
   const server = path.join(layout.serverPkgDir, "dist", "server.js");
   const merger = path.join(layout.serverPkgDir, "dist", "mergeCookies.js");
-  if (!layout.serverPkgDir || !fs.existsSync(server)) return null;
+  const pool = path.join(layout.serverPkgDir, "fingerprints.json");
+  const executablePath = process.env.DOMO_CAMOUFOX
+    ? camoufoxBinaryIn(process.env.DOMO_CAMOUFOX) ?? process.env.DOMO_CAMOUFOX
+    : camoufoxBinaryIn(layout.camoufoxDir);
+  // A materialized browser runtime needs ALL THREE: the built server, a Camoufox
+  // to drive, and the frozen fingerprint pool. Missing any — a checkout that
+  // never ran `just fetch-browser`, a worktree cloned without the pool — means
+  // browsing is not offered: return null so DeviceAgent registers no browsing
+  // skill and no sessions, rather than a runtime that only fails at first launch.
+  // (The DOMO_BROWSER_CMD test seam is handled in resolveBrowserRuntime, before
+  // this, and never reaches here.)
+  if (!layout.serverPkgDir || !fs.existsSync(server) || !executablePath || !fs.existsSync(pool)) {
+    return null;
+  }
   const host = hostNode();
   return {
     serverCommand: [...host.argv, server],
     credentialBrokerCommand: null,
     mergeCookiesCommand: [...host.argv, merger],
     env: host.env,
-    executablePath: process.env.DOMO_CAMOUFOX
-      ? camoufoxBinaryIn(process.env.DOMO_CAMOUFOX) ?? process.env.DOMO_CAMOUFOX
-      : camoufoxBinaryIn(layout.camoufoxDir),
+    executablePath,
   };
 }
 

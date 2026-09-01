@@ -211,19 +211,12 @@ function fetchBrowser(arch) {
   );
   fs.writeFileSync(path.join(installRoot, ".0.5_FLAG"), "");
 
-  // Pre-bundle the default addon (uBlock Origin): camoufox downloads it at
-  // first launch when missing, and in a packaged app the payload is sealed by
-  // the signature — a runtime write would break it. AMO's "latest" URL can't
-  // be hash-pinned; the addon is an ad-blocker, not protocol-critical.
-  const uboDir = path.join(installRoot, "addons", "UBO");
-  const uboZip = path.join(downloadsDir, "ubo-latest.xpi");
-  if (!fs.existsSync(uboZip)) {
-    log("downloading uBlock Origin addon");
-    run("curl", ["-fsSL", "-o", uboZip,
-      "https://addons.mozilla.org/firefox/downloads/latest/ublock-origin/latest.xpi"]);
-  }
-  fs.mkdirSync(uboDir, { recursive: true });
-  run("ditto", ["-x", "-k", uboZip, uboDir]);
+  // No addon is bundled. The frozen fingerprint pool is generated with
+  // `exclude_addons: ["UBO"]`, so no session loads uBlock Origin — bundling it
+  // would ship a signed copy of AMO's MUTABLE "latest" xpi (no digest to pin),
+  // giving a replaced upstream artifact browser-level access to the owner's
+  // sessions for no functional gain. Reintroducing uBlock would mean loading it
+  // in the pool config AND pinning an exact version + immutable URL + sha256.
 
   fs.writeFileSync(marker, markerValue);
   log(`camoufox ${arch} install ready at ${installRoot}`);
