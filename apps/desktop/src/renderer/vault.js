@@ -1,4 +1,8 @@
 import { el, icon } from "./dom.js";
+// A deliberate module cycle: the Import sheet lives in its own file (this one
+// is long enough) but shares this pane's editor seat, busy lock and toast.
+// Safe because every cross-call happens at runtime, never during evaluation.
+import { vimportSheet } from "./vaultImport.js";
 
 /* The Vault tab, built to the design file (vault.html).
    Its own pane, its own file: this screen keeps being redesigned, and it has
@@ -83,7 +87,7 @@ const VAULT_TYPES = {
   },
 };
 
-function errText(err) {
+export function errText(err) {
   // A throw from the main process arrives wrapped: "Error invoking remote
   // method 'vault:saveItem': Error: the sentence we wrote". The owner should
   // read the sentence, not the plumbing that carried it.
@@ -94,7 +98,7 @@ function errText(err) {
 
 /** Her toast: one line, bottom of the pane, gone on its own. */
 let toastTimer = null;
-function vtoast(message) {
+export function vtoast(message) {
   const node = document.querySelector(".vaultui .toast");
   if (!node) return;
   node.textContent = message;
@@ -170,7 +174,7 @@ function vpane() {
  */
 let vinflight = null;
 
-async function vbusy(fn) {
+export async function vbusy(fn) {
   vpane()?.toggleAttribute("inert", true);
   const done = fn();
   vinflight = done.then(() => {}, () => {}); // settles either way, never rejects
@@ -519,7 +523,7 @@ function vmayDiscard() {
 }
 
 /** Hand the seat to `next`, asking whoever holds it to give up their edits. */
-async function vtakeEditor(next) {
+export async function vtakeEditor(next) {
   if (editor === next) return true;
   if (!(await vmayDiscard())) return false;
   editor?.close();
@@ -528,7 +532,7 @@ async function vtakeEditor(next) {
 }
 
 /** The seat is free — the holder saved, closed, or was torn down. */
-function vreleaseEditor(who) {
+export function vreleaseEditor(who) {
   if (editor === who) editor = null;
 }
 
@@ -858,12 +862,17 @@ export async function renderVault(view, isCurrent = () => true) {
     return;
   }
 
+  const importBtn = el("button", { class: "btn imp", attrs: { type: "button" } }, [
+    icon("intake", { class: "vico", strokeWidth: "2" }),
+    el("span", { text: " Import" }),
+  ]);
+  importBtn.addEventListener("click", () => vimportSheet(renderVaultIn));
   const newBtn = el("button", { class: "btn-primary", attrs: { type: "button" } }, [
     icon("plus", { class: "vico", strokeWidth: "2.2" }),
     el("span", { text: " New" }),
   ]);
   newBtn.addEventListener("click", () => vsheet(renderVaultIn));
-  masthead.appendChild(newBtn);
+  masthead.appendChild(el("div", { class: "mast-acts" }, [importBtn, newBtn]));
 
   const list = el("div", { class: "vlist" });
   if (failure) {

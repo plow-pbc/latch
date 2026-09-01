@@ -30,6 +30,11 @@ import {
   PaymentApprovalRequest,
   plowFolderPath,
   PolicyDelegate,
+  importLogins,
+  importPreview,
+  ImportedLogin,
+  markDuplicates,
+  parsePasswordExport,
   readCredentialsState,
   resolveBrowserRuntime,
   totpCode,
@@ -828,6 +833,112 @@ ipcMain.handle("vault:saveItem", async (_e, input: VaultItemInput) => {
   const vault = device?.vaultClient;
   if (!vault) throw new Error("the vault is not running");
   return vault.save(input);
+});
+
+/*
+ * Importing passwords (the Vault tab's Import sheet).
+ *
+ * The parsed logins stay HERE, in main, between inspect and commit — the
+ * renderer is shown a preview (title, username, site, has-a-password) and
+ * holds a claim ticket of nothing: commit imports whatever the last inspect
+ * staged. One staging slot, because the sheet is modal: a new inspect
+ * replaces it, and commit or cancel clears it, so pasted passwords do not
+ * outlive the sheet they were pasted for.
+ */
+let stagedImport: ImportedLogin[] | null = null;
+
+async function inspectImport(text: string) {
+  const vault = device?.vaultClient;
+  if (!vault) throw new Error("the vault is not running");
+  const parsed = parsePasswordExport(text);
+  markDuplicates(parsed.logins, await vault.list());
+  stagedImport = parsed.logins;
+  return importPreview(parsed);
+}
+
+/**
+ * The apps the Import sheet can guide the owner out of, with their real icons.
+ * Apple's Passwords app ships with macOS; 1Password is only offered when it is
+ * actually installed, so nobody is walked through an app they don't have. The
+ * icons are display data (a PNG data URL) — never a path the renderer could use.
+ */
+ipcMain.handle("vault:importSources", async () => {
+  const iconOf = async (appPath: string): Promise<string | null> => {
+    if (!(await fs.stat(appPath).catch(() => null))) return null;
+    // The real bundle icon comes from NSWorkspace via the native helper, the
+    // same way the FDA drag tile gets its own (resolveFdaDragTarget): Electron
+    // answers a bundle with the generic app icon — and asking getFileIcon for
+    // "large" is a hard CRASH on macOS (a NOTREACHED on the icon thread), so
+    // only the "normal" size this file already uses is safe as the fallback.
+    try {
+      const { stdout } = await promisify(execFile)(fdaHelperPath, ["--icon", appPath]);
+      const img = nativeImage.createFromDataURL(`data:image/png;base64,${stdout.trim()}`);
+      if (!img.isEmpty()) return img.toDataURL();
+    } catch {
+      // No compiled helper on this host; the generic icon below still reads.
+    }
+    try {
+      const img = await app.getFileIcon(appPath, { size: "normal" });
+      return img.isEmpty() ? null : img.toDataURL();
+    } catch {
+      return null;
+    }
+  };
+  const installed = async (name: string): Promise<string | undefined> => {
+    const candidates = [
+      path.join("/Applications", name),
+      path.join(os.homedir(), "Applications", name),
+    ];
+    return (
+      await Promise.all(candidates.map(async (p) => ((await fs.stat(p).catch(() => null)) ? p : null)))
+    ).find(Boolean) ?? undefined;
+  };
+  const onePwApp = await installed("1Password.app");
+  const chromeApp = await installed("Google Chrome.app");
+  return {
+    apple: { icon: await iconOf("/System/Applications/Passwords.app") },
+    onePassword: onePwApp ? { icon: await iconOf(onePwApp) } : null,
+    chrome: chromeApp ? { icon: await iconOf(chromeApp) } : null,
+  };
+});
+
+// Pasted text: 1Password's "Copy item JSON", or CSV text.
+ipcMain.handle("vault:importInspect", async (_e, text: string) => inspectImport(String(text)));
+
+// A chosen file: main shows the dialog and reads the file itself, so the CSV
+// full of passwords never crosses into the renderer at all.
+ipcMain.handle("vault:importFile", async () => {
+  const picked = await dialog.showOpenDialog({
+    title: "Choose a passwords export",
+    properties: ["openFile"],
+    filters: [{ name: "CSV export", extensions: ["csv", "txt"] }],
+  });
+  const file = picked.filePaths[0];
+  if (picked.canceled || !file) return null;
+  const stat = await fs.stat(file);
+  if (stat.size > 20 * 1024 * 1024) throw new Error("that file is too large to be a passwords export");
+  return inspectImport(await fs.readFile(file, "utf8"));
+});
+
+// `selected` names the rows the owner ticked, as indices into the preview's
+// item order (which IS the staged order). Omitted means all of them — the
+// single-item paste has no checkboxes to send.
+ipcMain.handle("vault:importCommit", async (_e, selected?: number[]) => {
+  const vault = device?.vaultClient;
+  if (!vault) throw new Error("the vault is not running");
+  const logins = stagedImport;
+  stagedImport = null;
+  if (!logins) throw new Error("nothing is staged to import; choose a file or paste again");
+  const chosen = Array.isArray(selected)
+    ? logins.filter((_, i) => selected.includes(i))
+    : logins;
+  return importLogins(vault, chosen);
+});
+
+// The sheet closed without importing: drop the staged passwords now rather
+// than holding them until the next inspect happens to replace them.
+ipcMain.handle("vault:importCancel", async () => {
+  stagedImport = null;
 });
 
 // The live-browser thumbnail's whole state, one shape per poll (like

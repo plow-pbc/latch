@@ -31,6 +31,15 @@ contextBridge.exposeInMainWorld("domo", {
   vaultTotp: (itemId: string | null, key?: string) => ipcRenderer.invoke("vault:totp", itemId, key),
   vaultSaveItem: (input: unknown) => ipcRenderer.invoke("vault:saveItem", input),
   vaultDeleteItem: (itemId: string) => ipcRenderer.invoke("vault:deleteItem", itemId),
+  // Importing passwords. Inspect stages the parsed logins in MAIN and answers
+  // with a secret-free preview; commit imports whatever is staged. The file
+  // path never touches the renderer either — main runs the open dialog and
+  // reads the file itself.
+  vaultImportSources: () => ipcRenderer.invoke("vault:importSources"),
+  vaultImportInspect: (text: string) => ipcRenderer.invoke("vault:importInspect", text),
+  vaultImportFile: () => ipcRenderer.invoke("vault:importFile"),
+  vaultImportCommit: (selected?: number[]) => ipcRenderer.invoke("vault:importCommit", selected),
+  vaultImportCancel: () => ipcRenderer.invoke("vault:importCancel"),
   // What the owner says agents are for. The renderer's only route to the text
   // in either direction — it is device-owner data, so nothing else may write it.
   // The setter answers with what was stored, not what was sent.

@@ -234,6 +234,71 @@
 .vaultui .confirm-overlay { z-index: 90; }
 .vaultui .confirm-p { font-size: 12.5px; font-weight: 300; color: var(--muted); line-height: 1.55; margin: 9px 0 20px; }
 
+/* The Import sheet (vaultImport.js): the masthead pair, the two app guides,
+   the file-or-paste doors, and the secret-free preview rows. */
+.vaultui .mast-acts { display: flex; align-items: center; gap: 9px; }
+.vaultui .mast-acts .btn.imp { display: inline-flex; align-items: center; gap: 8px; white-space: nowrap;
+    font-size: 13px; padding: 9px 15px; border-radius: 10px; background: var(--bg); }
+.vaultui .mast-acts .btn.imp:hover { background: var(--hover); }
+.vaultui .mast-acts .btn.imp svg { width: 15px; height: 15px; }
+/* One equal column per installed app, however many that turns out to be. */
+.vaultui .imp-src-grid { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 11px; margin-bottom: 18px; }
+.vaultui .imp-src { display: flex; flex-direction: column; align-items: center; gap: 9px; padding: 16px 12px 13px;
+    border: 1px solid var(--border-strong); border-radius: 13px; background: var(--bg); cursor: pointer;
+    color: inherit; font-family: var(--sans); transition: border-color .14s, background .14s, transform .06s; }
+.vaultui .imp-src:hover { border-color: var(--focus); background: var(--hover); }
+.vaultui .imp-src:active { transform: translateY(.5px); }
+.vaultui .imp-src.sel { border-color: var(--blue-fg); background: var(--sel); box-shadow: 0 0 0 1px var(--blue-fg) inset; }
+.vaultui .imp-src .src-ic { width: 44px; height: 44px; }
+.vaultui .imp-src .src-ic.glyph { display: grid; place-items: center; border-radius: 11px; background: var(--hover); color: var(--muted); }
+.vaultui .imp-src .src-ic.glyph svg { width: 22px; height: 22px; }
+.vaultui .imp-src .sn { font-size: 12.5px; font-weight: 600; letter-spacing: -.01em; }
+.vaultui .imp-hint { font-size: 12px; font-weight: 300; color: var(--faint); text-align: center; margin: 8px 0 0; }
+.vaultui .imp-h { font-family: var(--mono); text-transform: uppercase; font-size: 9px; font-weight: 500; letter-spacing: .16em;
+    color: var(--blue-fg); margin: 18px 0 10px; opacity: .85; }
+.vaultui .imp-steps { margin: 0 0 2px; padding-left: 19px; font-size: 12px; font-weight: 300; color: var(--muted); line-height: 1.6; }
+.vaultui .imp-steps li { margin-bottom: 7px; }
+.vaultui .imp-steps li:last-child { margin-bottom: 0; }
+.vaultui .imp-actions { display: flex; flex-direction: column; align-items: stretch; gap: 10px; margin-top: 16px; }
+.vaultui .imp-actions .btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; padding: 10px 15px; }
+.vaultui .imp-actions .btn svg { width: 15px; height: 15px; }
+.vaultui .imp-actions textarea.inp { font-family: var(--mono); font-size: 11.5px; min-height: 92px; }
+.vaultui .imp-or { display: flex; align-items: center; gap: 10px; font-family: var(--mono); text-transform: uppercase;
+    font-size: 9px; letter-spacing: .16em; color: var(--faint); }
+.vaultui .imp-or::before, .vaultui .imp-or::after { content: ""; flex: 1; height: 1px; background: var(--border); }
+.vaultui .imp-err { font-size: 12px; color: var(--red-fg); line-height: 1.5; margin: 10px 0 0; }
+.vaultui .imp-err:empty { display: none; }
+.vaultui .imp-note { display: flex; align-items: flex-start; gap: 9px; font-size: 11.5px; line-height: 1.55;
+    color: var(--amber-fg); background: var(--amber-bg); border: 1px solid var(--amber-bd); border-radius: 10px;
+    padding: 10px 12px; margin-top: 16px; }
+.vaultui .imp-note svg { width: 14px; height: 14px; flex: none; margin-top: 1px; }
+.vaultui .imp-selhead { display: flex; align-items: baseline; justify-content: space-between; margin: -4px 0 10px; }
+.vaultui .imp-selhead .sc { font-family: var(--mono); font-size: 10px; color: var(--muted); }
+.vaultui .imp-selhead .add-link { margin-top: 0; }
+.vaultui .imp-list { display: flex; flex-direction: column; gap: 7px; }
+.vaultui .imp-row.pick { cursor: pointer; user-select: none; transition: border-color .14s, opacity .14s; }
+.vaultui .imp-row.pick:hover { border-color: var(--border-strong); }
+.vaultui .imp-row input[type="checkbox"] { flex: none; width: 15px; height: 15px; margin: 0; accent-color: var(--blue-fg); cursor: pointer; }
+.vaultui .imp-row.off { opacity: .45; }
+.vaultui .imp-row { display: flex; align-items: center; gap: 11px; border: 1px solid var(--border); border-radius: 10px;
+    background: var(--bg); padding: 9px 12px; }
+.vaultui .imp-row.dup { opacity: .55; }
+.vaultui .imp-row .vicon { width: 28px; height: 28px; border-radius: 8px; }
+.vaultui .imp-row .vicon svg { width: 14px; height: 14px; }
+.vaultui .imp-row .m { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+.vaultui .imp-row .t { font-size: 12.5px; font-weight: 600; letter-spacing: -.01em; }
+.vaultui .imp-row .c { font-family: var(--mono); font-size: 10.5px; color: var(--muted);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.vaultui .imp-row .w { font-size: 10.5px; color: var(--amber-fg); }
+.vaultui .imp-badge { flex: none; font-family: var(--mono); text-transform: uppercase; font-size: 8px; font-weight: 500;
+    letter-spacing: .1em; padding: 3px 7px; border-radius: 5px; }
+.vaultui .imp-badge.ok { color: var(--green-fg); background: var(--green-bg); border: 1px solid var(--green-bd); }
+.vaultui .imp-badge.warn { color: var(--amber-fg); background: var(--amber-bg); border: 1px solid var(--amber-bd); }
+.vaultui .imp-badge.dup { color: var(--zinc-fg); background: var(--zinc-bg); border: 1px solid var(--zinc-bd); }
+.vaultui .imp-skip { margin-top: 18px; }
+.vaultui .imp-skip ul { margin: 0; padding-left: 19px; }
+.vaultui .imp-skip li { font-size: 11.5px; font-weight: 300; color: var(--muted); line-height: 1.55; margin-bottom: 5px; }
+
 /* The code an authenticator key is showing, under the box it was pasted into.
    Digits in the mono face, because they are read off the screen and typed. */
 .vaultui .totp-read:empty { display: none; }
