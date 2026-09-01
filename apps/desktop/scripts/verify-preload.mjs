@@ -10,7 +10,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 // The REAL encoder, not a second spelling of `targetId + NUL + agentId`.
 import { rowKey } from "../dist/cloudAgentMapper.js";
-import { BUILTIN_TARGET_ID } from "../dist/plowApi.js";
+import { BUILTIN_TARGET_ID, LOCAL_TARGET_ID } from "../dist/plowApi.js";
 
 // The REAL settings actions, so the inference handlers below are the ones the
 // app runs rather than stubs that agree with the renderer by construction.
@@ -1218,7 +1218,7 @@ app.whenReady().then(async () => {
     ],
     cloudAgents: [
       { ...cloudAgent, rowKey: rowKey(BUILTIN_TARGET_ID, cloudAgent.agentId), targetId: "plow", name: "Cloud twin" },
-      { ...cloudAgent, rowKey: `local\u0000${cloudAgent.agentId}`, targetId: "local", name: "Local twin" },
+      { ...cloudAgent, rowKey: rowKey(LOCAL_TARGET_ID, cloudAgent.agentId), targetId: "local", name: "Local twin" },
     ],
     cloudFreeLines: [{ uid: "lin_ash", label: "Ash · +1 415-555-0199" }],
   };
@@ -2270,7 +2270,7 @@ app.whenReady().then(async () => {
     // was addressed to the local host, not to the Plow row listed first.
     collidingRosterNames.join("|") === "Household helper|Local twin" &&
     collidingDetail.title === "Local twin" &&
-    collidingChangeRequest?.rowKey === `local\u0000${cloudAgent.agentId}` &&
+    collidingChangeRequest?.rowKey === rowKey(LOCAL_TARGET_ID, cloudAgent.agentId) &&
     cloudUnknownLines.showsSafeError &&
     cloudUnknownLines.hidesRawError &&
     cloudUnknownLines.buttons.join("|") === "Cancel" &&

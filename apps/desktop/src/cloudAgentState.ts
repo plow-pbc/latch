@@ -1069,12 +1069,6 @@ export class CloudAgentState {
    * could not be asked is treated as UNKNOWN rather than empty: its rows stay
    * on screen with an error naming it, exactly as the whole roster used to
    * survive a failed read.
-   *
-   * Rows stay keyed on `agent_id` alone. Two hosts minting the same 32-hex id
-   * would collide and the second would win — accepted, because the id comes
-   * from a uuid on both sides; keying rows on host+id instead would rewrite
-   * every id that crosses to the renderer. Revisit if a host is ever allowed
-   * to choose its own ids.
    */
   private async refreshAgents(
     targets: readonly AgentTarget[],

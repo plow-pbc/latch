@@ -252,25 +252,27 @@ describe("the retired bring-your-own-key fields are scrubbed on read", () => {
   });
 });
 
+/** A codec that is obviously not encryption — the point is the SHAPE: one
+ * value in the file, decrypted only through the port, never the plaintext. */
+const fakeCodec = (available = true) => ({
+  available: () => available,
+  encrypt: (plain: string) => `sealed:${Buffer.from(plain).toString("base64")}`,
+  decrypt: (cipher: string) => {
+    if (!cipher.startsWith("sealed:")) throw new Error("not ours");
+    return Buffer.from(cipher.slice("sealed:".length), "base64").toString();
+  },
+});
+
+const fileOf = (home: string) =>
+  JSON.parse(fs.readFileSync(path.join(home, "app/settings.json"), "utf8")) as Record<string, unknown>;
+
 describe("the credential at rest", () => {
-  /** A codec that is obviously not encryption — the point is the SHAPE: one
-   * value in the file, decrypted only through the port, never the plaintext. */
-  const fakeCodec = (available = true) => ({
-    available: () => available,
-    encrypt: (plain: string) => `sealed:${Buffer.from(plain).toString("base64")}`,
-    decrypt: (cipher: string) => {
-      if (!cipher.startsWith("sealed:")) throw new Error("not ours");
-      return Buffer.from(cipher.slice("sealed:".length), "base64").toString();
-    },
-  });
 
   afterEach(() => {
     useCredentialCodec(null);
     vi.restoreAllMocks();
   });
 
-  const fileOf = (home: string) =>
-    JSON.parse(fs.readFileSync(path.join(home, "app/settings.json"), "utf8")) as Record<string, unknown>;
 
   it("writes the credential sealed and never in the clear", () => {
     useCredentialCodec(fakeCodec());
@@ -384,22 +386,11 @@ describe("the credential at rest", () => {
  * boundary, not a preference.
  */
 describe("the self-hosted agent host", () => {
-  const fakeCodec = {
-    available: () => true,
-    encrypt: (plain: string) => `sealed:${Buffer.from(plain).toString("base64")}`,
-    decrypt: (cipher: string) => {
-      if (!cipher.startsWith("sealed:")) throw new Error("not ours");
-      return Buffer.from(cipher.slice("sealed:".length), "base64").toString();
-    },
-  };
-
   afterEach(() => useCredentialCodec(null));
 
-  const fileOf = (home: string) =>
-    JSON.parse(fs.readFileSync(path.join(home, "app/settings.json"), "utf8")) as Record<string, unknown>;
 
   it("seals the host's bearer, exactly as it seals the relay credential", () => {
-    useCredentialCodec(fakeCodec);
+    useCredentialCodec(fakeCodec());
     const home = tempHome();
     saveSettings(home, {
       ...loadSettings(home),
@@ -417,7 +408,7 @@ describe("the self-hosted agent host", () => {
   });
 
   it("drops a host whose sealed bearer this Mac can no longer read", () => {
-    useCredentialCodec(fakeCodec);
+    useCredentialCodec(fakeCodec());
     const home = tempHome();
     saveSettings(home, {
       ...loadSettings(home),
@@ -425,7 +416,7 @@ describe("the self-hosted agent host", () => {
     });
     // A restored backup, or a new login keychain: the seal is there and
     // unreadable. A host that answers 401 to everything is not a host.
-    useCredentialCodec({ ...fakeCodec, decrypt: () => { throw new Error("gone"); } });
+    useCredentialCodec({ ...fakeCodec(), decrypt: () => { throw new Error("gone"); } });
 
     expect(loadSettings(home).agentTarget).toBe(null);
   });
