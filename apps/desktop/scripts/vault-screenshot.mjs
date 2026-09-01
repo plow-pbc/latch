@@ -127,8 +127,8 @@ const SCREENS = [
   {
     name: "list",
     prepare: async () => {},
-    expect: ["Vault", "typed on this Mac, never handed to them", "Saved items", "2 items",
-             "Product Hunt", "Login", "Amex", "Card"],
+    expect: ["Vault", "The values never leave this Mac", "Saved items", "2 items",
+             "Product Hunt", "Amex"],
   },
   {
     name: "types",

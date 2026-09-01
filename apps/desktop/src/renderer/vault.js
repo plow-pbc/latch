@@ -573,7 +573,6 @@ function vitem(summary, reload) {
       el("span", { class: "vtitle", text: summary.title || "(untitled)" }),
       el("span", { class: "vctx", text: [summary.subtitle, (summary.urls || [])[0]].filter(Boolean).join(" · ") }),
     ]),
-    el("span", { class: "vtag", text: spec.label }),
     el("span", { class: "vchev" }, [icon("chevron", { class: "vico", strokeWidth: "2" })]),
   ]);
   const inner = el("div", { class: "vbody-inner" });
@@ -804,9 +803,7 @@ export async function renderVault(view, isCurrent = () => true) {
     el("div", {}, [
       el("h1", { text: "Vault" }),
       el("p", { class: "trust" }, [
-        el("span", { text: "Your agents can use these to act for you. " }),
-        el("span", { class: "lk", text: "The values are typed on this Mac, never handed to them" }),
-        el("span", { text: " — every use needs your approval and is logged." }),
+        el("span", { text: "Logins, credit cards, identities and notes your agents may need while working in the browser. When an agent needs one, this Mac fills it in for them. The values never leave this Mac." }),
       ]),
     ]),
   ]);
