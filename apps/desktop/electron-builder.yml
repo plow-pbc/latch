@@ -120,7 +120,15 @@ mac:
   hardenedRuntime: true
   gatekeeperAssess: false
   entitlements: build/entitlements.mac.plist
-  entitlementsInherit: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.inherit.plist
+  # keychain-access-groups is a restricted entitlement: without a provisioning
+  # profile authorizing it, AMFI kills the app at exec (Finder shows a bare
+  # "can't be opened"). This is a Developer ID Application profile for
+  # co.plow.domo-desktop from the portal; its keychain-access-groups grant is
+  # the team wildcard (3559PD337Z.*), which covers the vault group. Embedded as
+  # Contents/embedded.provisionprofile. Helpers deliberately inherit a plist
+  # WITHOUT the group — the embedded profile does not cover nested code.
+  provisioningProfile: build/PlowLatch-DeveloperID.provisionprofile
   # The Camoufox tree is already Developer-ID signed by
   # scripts/build-browser-runtime.mjs with Mozilla's own entitlements (full set,
   # incl. library-validation off). Tell electron-builder's signer to leave it
