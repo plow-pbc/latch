@@ -193,6 +193,11 @@ export interface Settings {
    * keepAwake.ts owns when a blocker is actually held (AC power only, and an
    * acquire the OS refuses writes this back to false). */
   keepAwakeWhileRunning: boolean;
+  /** Share anonymous usage statistics and error reports (default on; a
+   * Settings toggle turns it off). telemetry.ts owns what "usage" means —
+   * an allowlist of audit events with paths, argv, goal text and credential
+   * material never sent. */
+  telemetryEnabled: boolean;
   /** The first-run launch-at-login default has been applied (main.ts's
    * `applyFirstRunLaunchAtLogin`). NOT a mirror of the OS's login-item bit —
    * loginItem.ts explains why none exists — only the record that the one-time
@@ -220,6 +225,7 @@ export function loadSettings(home: string): Settings {
     autoCheckUpdates: true,
     autoInstallUpdates: true,
     keepAwakeWhileRunning: false,
+    telemetryEnabled: true,
     launchAtLoginDefaulted: false,
   };
   let parsed: unknown;

@@ -44,6 +44,15 @@ export class AuditLog {
     entry.ts = isoNow();
     this.rotateIfFull();
     fs.appendFileSync(this.file, canonicalJSON(entry as JSONValue) + "\n");
+    // "recorded" carries the entry itself (telemetry's allowlist tap wants the
+    // fields, not just a refresh signal); "change" stays the UI's cue. Same
+    // best-effort contract as notify(): the event is already durably appended,
+    // so a throwing listener must not fail the record.
+    try {
+      this.events.emit("recorded", { event, fields: { ...fields } });
+    } catch (error: unknown) {
+      console.error("[audit] recorded listener failed after a recorded event:", error);
+    }
     this.notify();
   }
 

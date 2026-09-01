@@ -269,6 +269,8 @@ Swift sources; none of it ships.
 ```
 $DOMO_HOME (default ~/Library/Application Support/Plow-Latch)
 ├── app/settings.json                    # 0600; the relay credential, sealed
+├── app/telemetry.json                   # the install id telemetry reports under
+├── app/crash-report.json                # one spooled crash, removed once sent
 ├── device/identity.json                 # 0600; device keypair
 ├── device/rules.json                    # always-allow rules
 ├── device/approvals/<intentId>.json     # 0700 dir; approvals IN FLIGHT only
@@ -757,6 +759,67 @@ artifact), so updates are large. Blockmap
 differential downloads may soften this; shipping the browser runtime
 out-of-band (it is already pinned by `runtime.lock.json`) is the eventual fix
 if update size becomes a problem.
+
+## 11c. Telemetry (PostHog)
+
+Usage statistics and error reporting go to PostHog — the same product family
+the Plow API server (`api/plow/analytics.py` in the plow repo) and the plow.co
+pages already report to — via `posthog-node` in the Electron **main process
+only**. The sandboxed renderer stays network-silent and the CSP untouched;
+`apps/desktop/src/telemetry.ts` is the one outbound funnel.
+
+Decisions and their reasons:
+
+- **The audit log is the source of usage events.** Telemetry taps
+  `AuditLog`'s `recorded` emission rather than adding capture calls all over,
+  so "what happened" has one spelling. An explicit **allowlist** in
+  `telemetry.ts` decides which events and which fields leave the Mac; an event
+  or field not named there is never sent, including every future one. Paths,
+  argv, goal text, agent display names, intent ids and vault item
+  ids/origins/titles are deliberately absent; the opaque server-minted agent
+  id may ride, for per-agent counts.
+- **Error reports carry no free-form text.** An error's message can embed
+  anything the throwing code interpolated (a vault item's site, an otpauth
+  parameter, a path), and no scrubber can enumerate what it doesn't know — so
+  the message never leaves. What leaves is the error's name — only if it is
+  a built-in one (`Error.name` is writable text, so anything else reports as
+  "Error") — and its stack frames, in a `$exception` payload `trackError`
+  **builds itself** — never the SDK's `captureException`, whose node
+  entrypoint reads the local files named in stack frames and attaches
+  surrounding source lines after any sanitising. A frame must match the full
+  V8 `file:line:col` shape, after the stack's message region is cut off by
+  exact prefix (a multiline message puts free-form text on `at`-shaped lines
+  of its own); what matches is still scrubbed of the credential and the home
+  path, and what doesn't is dropped, never shipped verbatim.
+  `uncaughtExceptionMonitor` observes crashes without altering what Electron
+  does with them.
+- **A fatal crash spools its report to disk first** (synchronously, to
+  `app/crash-report.json`), because the process usually exits before an async
+  send completes; the spool is deleted only when an ORDERED send resolves
+  (`sendNow` — not capture-then-flush, which can flush an empty queue before
+  the SDK's async prepare enqueues the event and falsely report it safe), and
+  a spool that outlives its process is reported by the next launch — which
+  keeps the file until its own send resolves, so an offline launch retries
+  rather than losing the report (only a spool that will not parse is deleted
+  unsent). The
+  quit-path flush is bounded (2s, not the SDK's 30s default) so an offline
+  Mac never looks like an app refusing to quit.
+- **`posthog-node` is pinned exactly** (5.21.2, no caret): 5.22.0 narrowed
+  its Node engines past what Electron embeds (Node 20.18 in Electron 33), so
+  a caret would drift the packaged app onto an unsupported runtime. Revisit
+  the pin when Electron's Node crosses 20.20/22.22.
+- **Only the packaged install reports** — same `app.isPackaged` gate as
+  updates (§11b), so worktree runs and the test suite pollute nothing. The
+  project key is baked into `telemetry.ts` like the API base URL (a PostHog
+  project key is not a secret; plow.co ships one in HTML), with
+  `DOMO_POSTHOG_KEY`/`DOMO_POSTHOG_HOST` env overrides for pointing a build at
+  a scratch project.
+- **The owner can turn it off**: `telemetryEnabled` in settings (default on),
+  a toggle in the Settings tab's Privacy section, honored on the next event
+  with no relaunch.
+- **The distinct id is the signed-in account uid** — the same keying the Plow
+  API server uses, so one person's server and desktop events line up — else an
+  anonymous per-install UUID persisted beside `settings.json`.
 
 ## 12. Roadmap
 

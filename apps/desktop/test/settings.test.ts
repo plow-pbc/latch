@@ -112,6 +112,15 @@ describe("settings storage", () => {
     expect(loadSettings(home).approvalMode).toBe("ask");
   });
 
+  it("defaults telemetry on, and keeps an opt-out", () => {
+    expect(loadSettings(tempHome()).telemetryEnabled).toBe(true);
+    const home = tempHome();
+    const settings = loadSettings(home);
+    settings.telemetryEnabled = false;
+    saveSettings(home, settings);
+    expect(loadSettings(home).telemetryEnabled).toBe(false);
+  });
+
   it("leaves a home that already chose a tab exactly where it was", () => {
     const home = tempHome();
     const settings = loadSettings(home);
