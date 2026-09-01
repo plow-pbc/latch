@@ -35,6 +35,18 @@ const browserDir = path.join(vendorDir, "camoufox-browser");
 
 const lock = JSON.parse(fs.readFileSync(path.join(serverDir, "runtime.lock.json"), "utf8"));
 
+// camoufox-js (the fingerprint sampler below) pulls in better-sqlite3 13.x,
+// which has no Node 20 build: on Node 20 it segfaults at load (signal 11) with
+// no message, which is how a release run died once. Fail here, with words.
+const MIN_NODE_MAJOR = 22;
+const nodeMajor = Number(process.versions.node.split(".")[0]);
+if (nodeMajor < MIN_NODE_MAJOR) {
+  process.stderr.write(
+    `[browser-runtime] Node ${process.versions.node} is too old: the fingerprint pool ` +
+      `needs Node ${MIN_NODE_MAJOR}+ (better-sqlite3 ships no build for older Node).\n`,
+  );
+  process.exit(1);
+}
 
 const args = process.argv.slice(2);
 const wantBrowser = args.includes("--browser") || args.includes("--browser-both");
