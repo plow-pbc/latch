@@ -517,10 +517,10 @@ not flood the audit log. `viewFrame` never starts the browser and never throws;
 an ordinary poll writes nothing to the audit log. The thumbnail appears only
 while a session is active and disappears when it closes. A `view` action that
 reaches the browser host's deadline is not a harmless missed thumbnail: the
-Python server handles actions serially, so every agent command is then queued
-behind the same stuck call. The host kills that browser, records the crash and
-closes the session; `viewFrame()` still returns `null` rather than throwing to
-the renderer.
+TypeScript server handles actions serially through `SerialQueue`, so every
+agent command is then queued behind the same stuck call. The host kills that
+browser, records the crash and closes the session; `viewFrame()` still returns
+`null` rather than throwing to the renderer.
 
 **Skills.** Devices publish skills (name/description/markdown body,
 `SkillRegistry`); agents discover them via `plow_list_skills` and read them

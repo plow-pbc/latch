@@ -41,10 +41,10 @@ const wantBrowser = args.includes("--browser") || args.includes("--browser-both"
 const wantBoth = args.includes("--browser-both");
 
 // Bump when the pruning/merging logic below changes, so cached trees (which
-// are keyed on the download pins) rebuild with the new slimming applied. v4
-// combines the driver-free runtime pruning with removal of the bundled UBO
-// addon — an older tree may still carry the previously
-// downloaded, unverified xpi, so it must rebuild clean.
+// are keyed on the download pins) rebuild with the new slimming applied. Two
+// incompatible v3 trees exist: main's driver-pruned tree still bundled UBO,
+// while the branch's v3 removed UBO without the driver pruning. v4 identifies
+// the tree that applies both changes so neither v3 cache can be reused.
 const PRUNE_VERSION = "4";
 
 function log(msg) {

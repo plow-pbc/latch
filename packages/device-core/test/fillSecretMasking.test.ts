@@ -26,6 +26,8 @@ import {
 import {
   DEFAULT_ACTION_TIMEOUT_MS,
   DOCUMENT_CHECK_TIMEOUT_MS,
+  NAVIGATION_TIMEOUT_MS,
+  SETTLE_MS,
   TYPING_MAX_MS,
 } from "@domo/browser-server";
 import { BROWSER_ACTION_TIMEOUT_MS } from "../src/deviceAgent.js";
@@ -885,5 +887,6 @@ describe("the cap the fill's budgets are measured against", () => {
     expect(
       DOCUMENT_CHECK_TIMEOUT_MS + DEFAULT_ACTION_TIMEOUT_MS * 3 + TYPING_MAX_MS,
     ).toBeLessThan(BROWSER_ACTION_TIMEOUT_MS);
+    expect(NAVIGATION_TIMEOUT_MS + SETTLE_MS).toBeLessThan(BROWSER_ACTION_TIMEOUT_MS);
   });
 });
