@@ -122,7 +122,7 @@ describe("CloudAgentsClient resources", () => {
     }]);
 
     await expect(new CloudAgentsClient(() => new PlowApi("https://api.plow.co", fetchImpl))
-      .list(TARGET)).rejects.toThrow("Plow returned an invalid cloud-agent response.");
+      .list(TARGET)).rejects.toThrow("The agent host returned an invalid response.");
   });
 
 });
@@ -194,7 +194,7 @@ describe("CloudAgentsClient creation", () => {
       })
       .catch((caught: unknown) => caught as Error);
 
-    expect(error.message).toBe("Plow returned 422.");
+    expect(error.message).toBe("The agent host returned 422.");
     expect(console.error).toHaveBeenCalledTimes(1);
     expect(console.error).toHaveBeenCalledWith(
       "[cloud-agent] request failed status=422",
@@ -375,7 +375,7 @@ describe("CloudAgentsClient polling", () => {
     await expect(new CloudAgentsClient(
       () => new PlowApi("https://api.plow.co", fetchImpl),
       async () => {},
-    ).poll(TARGET, receipt())).rejects.toThrow("Plow returned 409.");
+    ).poll(TARGET, receipt())).rejects.toThrow("The agent host returned 409.");
 
     expect(calls).toHaveLength(1);
   });

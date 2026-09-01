@@ -1432,10 +1432,15 @@ app.whenReady().then(async () => {
   // seconds. Bounded by the hosts the owner has added — nothing here is
   // reachable without a settings entry someone typed.
   const apisByBaseUrl = new Map<string, PlowApi>([[cloudApi.baseUrl, cloudApi]]);
+  // WIRE LOGGING IS PLOW-ONLY. `plow-wire.log` records request paths, and a
+  // self-hosted agent's id goes in the poll URL — a host returning
+  // `base64(bearer)` as its id would otherwise persist a reversible credential
+  // to disk. The log exists because there is no server-side request log for
+  // Plow during the rollout; a self-hosted box's owner has the box.
   const apiForBaseUrl = (baseUrl: string): PlowApi => {
     const existing = apisByBaseUrl.get(baseUrl);
     if (existing) return existing;
-    const api = new PlowApi(baseUrl, loggingFetch(home));
+    const api = baseUrl === apiBaseUrl ? new PlowApi(baseUrl, loggingFetch(home)) : new PlowApi(baseUrl);
     apisByBaseUrl.set(baseUrl, api);
     return api;
   };

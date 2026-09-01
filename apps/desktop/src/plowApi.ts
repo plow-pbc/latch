@@ -895,10 +895,15 @@ export class PlowApi {
       // wrong or you are offline", the other is "Plow took the request and went
       // quiet". Telling someone their network is down when the server is simply
       // not answering sends them to fix the wrong thing.
+      // NAMED BY ORIGIN, not by "Plow". This class now also talks to a
+      // self-hosted agent host, and telling an owner that PLOW is unreachable
+      // when their own box is asleep sends them to troubleshoot a service that
+      // is fine. The origin is both neutral and more specific than either
+      // label would be.
       if (isTimeout(error)) {
-        throw new PlowApiError("network", "Plow didn't answer in time. Try again.");
+        throw new PlowApiError("network", `${this.baseUrl} didn't answer in time. Try again.`);
       }
-      throw new PlowApiError("network", `Couldn't reach Plow at ${this.baseUrl}.`);
+      throw new PlowApiError("network", `Couldn't reach ${this.baseUrl}.`);
     }
   }
 

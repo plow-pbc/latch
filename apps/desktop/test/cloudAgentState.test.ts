@@ -1253,14 +1253,14 @@ describe("CloudAgentState self-hosted target", () => {
     const { state: after, home: afterHome } = build({
       listAgentsFor: async (targetId) => {
         if (targetId === BUILTIN_TARGET_ID) return [agent({ agentId: "agent_cloud", name: "Cloud" })];
-        throw new PlowApiError("network", `Couldn't reach Plow at ${HOST}.`);
+        throw new PlowApiError("network", `Couldn't reach ${HOST}.`);
       },
     });
     withHost(afterHome);
     await after.refresh();
 
     expect(after.state().cloudAgents.map((row) => row.targetId)).toEqual([BUILTIN_TARGET_ID]);
-    expect(after.state().cloudAgentsError).toBe(`${HOST}: Couldn't reach Plow at ${HOST}.`);
+    expect(after.state().cloudAgentsError).toBe(`${HOST}: Couldn't reach ${HOST}.`);
   });
 
   // `agent-mgr` answers with the NAME its owner typed, so a local agent CAN be
@@ -1478,6 +1478,41 @@ describe("CloudAgentState self-hosted target", () => {
     expect(row.name).toBe("Local agent");
     // The handle still addresses it.
     expect(row.rowKey).toMatch(/^r\d+$/);
+  });
+
+  it("does not invent a retryable self-hosted create after a relaunch", async () => {
+    // `retainedCreates` is the OWNER'S request. Rebuilt from a listing it would
+    // carry an empty name and light up Retry for a create this Mac never made
+    // — and re-post a different body than the one that made the agent.
+    const { state, home } = build({
+      listAgentsFor: async (host) =>
+        host === BUILTIN_TARGET_ID ? [] : [agent({ agentId: "demo", name: "whatever" })],
+    });
+    withHost(home);
+    await state.refresh();
+
+    const row = state.state().cloudAgents[0];
+    expect(row.targetId).toBe(LOCAL_TARGET_ID);
+    expect(row.canRetry).toBe(false);
+  });
+
+  it("a change-line response cannot rewrite a self-hosted row's name", async () => {
+    const encoded = Buffer.from("serve-token-abc").toString("base64");
+    const { state, home } = build({
+      listAgentsFor: async (host) =>
+        host === BUILTIN_TARGET_ID ? [] : [agent({ agentId: "demo" })],
+      changeAgentLine: async (agentId) => agent({ agentId, name: encoded }),
+    });
+    withHost(home);
+    await state.refresh();
+
+    await state.changeLine({
+      rowKey: rowKey(LOCAL_TARGET_ID, "demo"),
+      lineUid: "lin_ash",
+    });
+
+    // The PUT's body is host-authored like any other response.
+    expect(JSON.stringify(state.state().cloudAgents)).not.toContain(encoded);
   });
 
   it("forgetting the host drops its rows without deleting its agents", async () => {

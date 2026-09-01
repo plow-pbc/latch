@@ -122,7 +122,7 @@ describe("PlowApi", () => {
     expect((error as PlowApiError).kind).toBe("network");
     // Honest about which failure it was: "didn't answer" sends you somewhere
     // different from "couldn't reach".
-    expect((error as PlowApiError).message).toBe("Plow didn't answer in time. Try again.");
+    expect((error as PlowApiError).message).toBe("https://api.plow.co didn't answer in time. Try again.");
   });
 
 
@@ -135,7 +135,7 @@ describe("PlowApi", () => {
       .catch((e) => e);
 
     expect((error as PlowApiError).kind).toBe("network");
-    expect((error as PlowApiError).message).toBe("Couldn't reach Plow at http://localhost:4242.");
+    expect((error as PlowApiError).message).toBe("Couldn't reach http://localhost:4242.");
   });
 
   it("returns the token from verify and flags a bad code as unauthorized", async () => {

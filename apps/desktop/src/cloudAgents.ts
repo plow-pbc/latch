@@ -304,7 +304,7 @@ function parseResource(
       .flatMap((value) => (Array.isArray(value) ? value : [value]))
       .some((value) => typeof value === "string" && echoesCredential(value, bearer))
   ) {
-    throw new PlowApiError("http", "Plow returned an unsafe cloud-agent response.", statusCode);
+    throw new PlowApiError("http", "The agent host returned an unsafe response.", statusCode);
   }
   return resource;
 }
@@ -337,11 +337,11 @@ function errorFor(status: number): PlowApiError {
       status,
     );
   }
-  return new PlowApiError("http", `Plow returned ${status}.`, status);
+  return new PlowApiError("http", `The agent host returned ${status}.`, status);
 }
 
 function invalidResponse(status: number): PlowApiError {
-  return new PlowApiError("http", "Plow returned an invalid cloud-agent response.", status);
+  return new PlowApiError("http", "The agent host returned an invalid response.", status);
 }
 
 function responseCode(decoded: unknown): string | null {

@@ -281,9 +281,9 @@ describe("the static-credential fallback", () => {
 
   it("turns a failed mint into a sentence, not a spinner", async () => {
     signIn();
-    plow.fails = new PlowApiError("network", "Couldn't reach Plow at http://localhost:18804.");
+    plow.fails = new PlowApiError("network", "Couldn't reach http://localhost:18804.");
     const state = await build().createCredential("Claude Code");
-    expect(state.message).toBe("Couldn't reach Plow at http://localhost:18804.");
+    expect(state.message).toBe("Couldn't reach http://localhost:18804.");
     expect(state.busy).toBe(false);
     expect(state.credential).toBeNull();
   });

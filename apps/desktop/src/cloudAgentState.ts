@@ -816,7 +816,12 @@ export class CloudAgentState {
     if (provider) {
       this.retainedCreates.set(key, {
         lineUid,
-        name: moved.name ?? previous?.name ?? "",
+        // Same rule as the listing: a self-hosted host's response may not
+        // rewrite the owner's name. `previous?.name` is this row's DISPLAY
+        // name, which for a self-hosted row is already local-only.
+        name: target.id === BUILTIN_TARGET_ID
+          ? moved.name ?? previous?.name ?? ""
+          : this.retainedCreates.get(key)?.name ?? "",
         provider,
         targetId: target.id,
       });
@@ -1130,19 +1135,24 @@ export class CloudAgentState {
         const resourceProvider = agent.provider?.trim() || null;
         const provider = resourceProvider ?? retained?.provider;
         const lineUid = this.agentLineUid(agent);
-        if (provider) {
+        // `retainedCreates` is the OWNER'S request, not a cache rebuilt from
+        // what a host says. For Plow it may be reconstructed from a listing —
+        // Plow authored the create. For a self-hosted host it may only be
+        // UPDATED where a local request already exists: after a relaunch there
+        // is none, and synthesising one would both invent an empty name and
+        // light up Retry for a create this Mac never made.
+        const localOnly = target.id !== BUILTIN_TARGET_ID;
+        if (provider && (!localOnly || retained)) {
           this.retainedCreates.set(key, {
             lineUid: lineUid ?? retained?.lineUid ?? null,
             // A self-hosted host's echo of the name is host-authored text and
             // must not overwrite what the owner typed — the display projection
             // reads this field precisely to avoid trusting that echo.
-            name: target.id === BUILTIN_TARGET_ID
-              ? agent.name ?? retained?.name ?? ""
-              : retained?.name ?? "",
+            name: localOnly ? retained?.name ?? "" : agent.name ?? retained?.name ?? "",
             provider,
             targetId: target.id,
           });
-        } else this.retainedCreates.delete(key);
+        } else if (!localOnly || !retained) this.retainedCreates.delete(key);
         listed.set(key, this.rowFor(agent, target));
       }
     }
