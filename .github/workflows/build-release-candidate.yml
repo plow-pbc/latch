@@ -49,10 +49,14 @@ jobs:
 
       - uses: taiki-e/install-action@just
 
+      # Node 22+: the fingerprint pool `just package` freezes is sampled with
+      # camoufox-js, whose better-sqlite3 (13.x) ships no Node 20 build — on 20
+      # it segfaults inside build-browser-runtime.mjs (signal 11, no message).
+      # The root package.json engines field says the same; keep them in step.
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
           cache: npm
 
       # The browser stack `just package` bundles: universal Python runtime +
