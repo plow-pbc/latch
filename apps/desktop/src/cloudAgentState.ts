@@ -1336,8 +1336,13 @@ export class CloudAgentState {
    */
   private relabelRows(): void {
     for (const [agentId, row] of this.rows) {
+      // The row's OWN line wins. A resource that named its line directly has
+      // no home chat to recompute from, so recomputing cleared it — killing
+      // Message and leaving an occupied line looking free.
       const homeChatUid = this.homeChatUids.get(agentId);
-      const lineUid = this.chats.find((chat) => chat.uid === homeChatUid)?.lineUid ?? null;
+      const lineUid = row.line?.uid
+        ?? this.chats.find((chat) => chat.uid === homeChatUid)?.lineUid
+        ?? null;
       const details = this.lineDetails(lineUid);
       const threads = this.threadsFor(lineUid);
       const retained = this.retainedCreates.get(agentId);
@@ -1485,8 +1490,16 @@ export class CloudAgentState {
     // Pointing at a DIFFERENT box: the rows on screen belong to the old one and
     // its ids mean nothing here, so they go with it rather than being reconciled
     // against a machine that never had them.
-    if (settings.agentTarget && settings.agentTarget.baseUrl !== baseUrl) this.dropLocalRows();
-    saveSettings(this.deps.home, { ...settings, agentTarget: { baseUrl, bearer } });
+    const replacing = settings.agentTarget !== null && settings.agentTarget.baseUrl !== baseUrl;
+    if (replacing) this.dropLocalRows();
+    // Rotating a token is the SAME machine, so the owner's names for its
+    // agents come with it. They are dropped only when the slot is pointed at a
+    // DIFFERENT box, where those digests name nothing.
+    const carried = replacing ? undefined : settings.agentTarget?.agentNames;
+    saveSettings(this.deps.home, {
+      ...settings,
+      agentTarget: { baseUrl, bearer, ...(carried ? { agentNames: carried } : {}) },
+    });
     this.actionError = null;
     this.publish();
     return true;

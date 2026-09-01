@@ -1507,6 +1507,60 @@ describe("CloudAgentState self-hosted target", () => {
     expect(raw).not.toContain("demo");
   });
 
+  it("keeps a directly-named line when relabelling runs on a kept row", async () => {
+    // A line-scoped resource carries no home chat, so recomputing the line
+    // from one cleared it — Message died and the occupied line looked free.
+    //
+    // The second read must FAIL the agent list: a successful one rebuilds the
+    // row through `rowFor` and hides the relabel path entirely, which is what
+    // made my first attempt at this test pass with the bug present.
+    let listFails = false;
+    const { state, home } = build({
+      listAgentsFor: async (host) => {
+        if (host === BUILTIN_TARGET_ID) return [];
+        if (listFails) throw new PlowApiError("network", "asleep");
+        return [{ ...agent({ agentId: "demo", name: null }), chatUids: [], lineUid: "lin_willow" }];
+      },
+    });
+    withHost(home);
+    await state.refresh();
+    expect(state.state().cloudAgents[0].line?.uid).toBe("lin_willow");
+
+    // Rows survive the failed list; chats and lines still relabel them.
+    listFails = true;
+    await state.refresh();
+
+    expect(state.state().cloudAgents[0].line?.uid).toBe("lin_willow");
+    expect(state.state().cloudAgents[0].canMessage).toBe(true);
+  });
+
+  it("keeps remembered names when the same host's token is rotated", async () => {
+    const listed = async (host: string) =>
+      host === BUILTIN_TARGET_ID ? [] : [agent({ agentId: "demo", name: null, status: "running" })];
+    const { state, home } = build({
+      listAgentsFor: listed,
+      createAgent: async (request) =>
+        agent({ agentId: "demo", name: request.name, status: "running" }),
+    });
+    withHost(home);
+    await state.create({
+      name: "Kitchen helper",
+      provider: "local:docker",
+      lineUid: "lin_willow",
+      targetId: LOCAL_TARGET_ID,
+    });
+    await vi.waitFor(() =>
+      expect(state.state().cloudAgents.some((row) => row.name === "Kitchen helper")).toBe(true));
+
+    // Re-entering the SAME address is how a rotated token gets in. It is the
+    // same machine, so its agents keep their names.
+    expect(state.addTarget({ baseUrl: `${HOST}/`, bearer: "rotated-token" })).toBe(true);
+
+    const relaunched = build({ listAgentsFor: listed, home });
+    await relaunched.state.refresh();
+    expect(relaunched.state.state().cloudAgents[0].name).toBe("Kitchen helper");
+  });
+
   it("does not invent a retryable self-hosted create after a relaunch", async () => {
     // `retainedCreates` is the OWNER'S request. Rebuilt from a listing it would
     // carry an empty name and light up Retry for a create this Mac never made
