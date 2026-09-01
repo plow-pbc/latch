@@ -63,10 +63,12 @@ files:
   - "!node_modules/playwright-core/bin/**"
   - "!node_modules/playwright-core/lib/xdg-open"
   - "!node_modules/playwright-core/cli.js"
-  # native-keychain ships only the prebuilt addon and its loader; the gyp
-  # sources and install script are build-time.
+  # native-keychain and native-credential-import ship only the prebuilt addon
+  # and its loader; the gyp sources and install scripts are build-time.
   - "!node_modules/@domo/native-keychain/scripts/**"
   - "!node_modules/@domo/native-keychain/src/**"
+  - "!node_modules/@domo/native-credential-import/scripts/**"
+  - "!node_modules/@domo/native-credential-import/src/**"
   # Every consumer of zod and @modelcontextprotocol/* in the app is ESM, so the
   # parallel CJS builds are never resolved; zod's src/ is TypeScript source
   # shipped for sourcemap tooling only.
@@ -136,15 +138,18 @@ extraResources:
   - from: ../../vendor/providers
     to: providers
     filter: ["**/*", "!*/VERSION"]
-  # The Full Disk Access flow's window tracker (scripts/build-native.mjs, a
-  # `just build` step). Lipo-fused universal like the python runtime, so both
-  # electron-builder arch passes carry identical bytes and the merge copies it
-  # through. Signed by electron-builder with the app's entitlements — a plain
-  # CLI, nothing extra needed. The .stamp is the build script's cache key, not
-  # payload.
+  # The native helpers (scripts/build-native.mjs, a `just build` step): the
+  # Full Disk Access flow's window tracker and the credential-exchange shim
+  # dylib. Lipo-fused universal like the python runtime, so both
+  # electron-builder arch passes carry identical bytes and the merge copies
+  # them through. Signed by electron-builder with the app's entitlements —
+  # nothing extra needed. The .stamp files are the build script's cache keys,
+  # not payload, and the credential-provider .appex is not a resource at all:
+  # build/afterPack.cjs embeds it under Contents/PlugIns (profile-gated),
+  # which is the only place macOS looks for it.
   - from: dist/native
     to: native
-    filter: ["**/*", "!*.stamp"]
+    filter: ["**/*", "!*.stamp", "!PlowLatchCredentialProvider.appex/**"]
 
 mac:
   icon: ../../artwork/domo-desktop-icon.png
@@ -178,17 +183,31 @@ mac:
   # notarization sees our hardened-runtime + timestamped signatures on them.
   signIgnore:
     - "browser-runtime/.*"
+    # The credential-provider appex is signed by afterPack.cjs with its OWN
+    # entitlements + embedded provisioning profile; electron-builder's signer
+    # re-signing it with the app's would strip both. The outer app signature
+    # still seals it.
+    - "PlugIns/.*"
   # The fused Camoufox tree is universal2, so the merge passes it through
   # untouched. Vendored provider CLIs are not: two THIN per-arch binaries copied
   # identically into both electron slices, so the merger would try to lipo a thin
   # binary against its identical twin and fail. This pattern passes them through
-  # instead. The native-keychain addon (universal2, byte-identical in both
-  # slices) is refused by the merger the same way. (No SQLite entry: the WASM
-  # cookie-merge module is arch-neutral, so the merge handles it like any file.)
-  x64ArchFiles: "**/{providers,node_modules/@domo/native-keychain}/**"
+  # instead. The native-keychain and native-credential-import addons
+  # (universal2, byte-identical in both slices) are refused by the merger the
+  # same way. (No SQLite entry: the WASM cookie-merge module is arch-neutral,
+  # so the merge handles it like any file.)
+  x64ArchFiles: "**/{providers,node_modules/@domo/native-keychain,node_modules/@domo/native-credential-import}/**"
   notarize: true
   extendInfo:
     NSAppleEventsUsageDescription: "Plow Latch sends the Messages and automation commands you approve on this Mac."
+    # How macOS hands the app a credential-exchange import token (Apple
+    # Passwords' "Export to another app…"): an NSUserActivity of this type,
+    # which AppKit only delivers when the type is declared here. Electron
+    # surfaces it as app.on("continue-activity") — see src/main.ts. Harmless
+    # to declare in every build; without the profile-gated entitlement the
+    # activity simply never arrives.
+    NSUserActivityTypes:
+      - ASCredentialExchangeActivity
 
 # Re-sign browser-runtime after the universal merge (which rewrites nested
 # Info.plists and breaks their seals) and before signing/notarization.

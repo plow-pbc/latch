@@ -1,0 +1,14 @@
+{
+  "name": "@domo/native-credential-import",
+  "version": "0.1.0",
+  "private": true,
+  "description": "The in-process bridge to macOS 26's credential-exchange import (ASCredentialImportManager): loads the app's Swift shim and hands its answer to the main process as a promise. The mapping to vault shapes lives in @domo/device-core.",
+  "main": "./index.cjs",
+  "scripts": {
+    "install": "node scripts/build.cjs"
+  },
+  "devDependencies": {
+    "node-addon-api": "^8.3.0",
+    "node-gyp": "^11.0.0"
+  }
+}

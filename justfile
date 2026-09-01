@@ -177,7 +177,12 @@ _package profile flags: build
     sha="$(git -C "{{root}}" rev-parse --short=12 HEAD)"; \
     [ -z "$(git -C "{{root}}" status --porcelain)" ] || sha="${sha}-dirty"; \
     echo "packaging Plow Latch ${version} (${sha})"; \
-    cd "{{root}}/apps/desktop" && CODESIGN_IDENTITY="The Plow Collective, Inc (3559PD337Z)" APPLE_KEYCHAIN_PROFILE="{{profile}}" npx electron-builder --mac --publish never -c.extraMetadata.version="$version" -c.extraMetadata.gitCommit="$sha" -c.buildVersion="$build" -c.mac.extendInfo.DomoGitCommit="$sha" {{flags}}
+    cd "{{root}}/apps/desktop"; \
+    for p in build/PlowLatch-DeveloperID.provisionprofile build/PlowLatchCredentialProvider-DeveloperID.provisionprofile; do \
+        security cms -D -i "$p" 2>/dev/null | plutil -extract Entitlements xml1 -o - - 2>/dev/null | grep -q autofill-credential-provider \
+            || { echo "error: $p does not grant the AutoFill Credential Provider capability — the signed app would exceed its profile and be killed at launch; regenerate the profile (docs/CREDENTIAL-EXCHANGE.md)" >&2; exit 1; }; \
+    done; \
+    CODESIGN_IDENTITY="The Plow Collective, Inc (3559PD337Z)" APPLE_KEYCHAIN_PROFILE="{{profile}}" npx electron-builder --mac --publish never -c.extraMetadata.version="$version" -c.extraMetadata.gitCommit="$sha" -c.buildVersion="$build" -c.mac.extendInfo.DomoGitCommit="$sha" {{flags}}
 
 # Build, sign, notarize, and upload a versioned release candidate to
 # s3://releases.plow.co/domo/releases/<version>-<build>/. Stable keys are NOT

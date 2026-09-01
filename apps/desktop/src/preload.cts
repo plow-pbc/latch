@@ -40,8 +40,18 @@ contextBridge.exposeInMainWorld("domo", {
   vaultImportSources: () => ipcRenderer.invoke("vault:importSources"),
   vaultImportInspect: (text: string) => ipcRenderer.invoke("vault:importInspect", text),
   vaultImportFile: () => ipcRenderer.invoke("vault:importFile"),
-  vaultImportCommit: (selected?: number[]) => ipcRenderer.invoke("vault:importCommit", selected),
-  vaultImportCancel: () => ipcRenderer.invoke("vault:importCancel"),
+  // `ticket` names the staging the sheet is answering for (it rode in on the
+  // preview); main only lets a sheet commit or drop its own — see
+  // importStaging.ts for why a stale sheet must not touch its successor's.
+  vaultImportCommit: (selected?: number[], ticket?: number | null) =>
+    ipcRenderer.invoke("vault:importCommit", selected, ticket),
+  vaultImportCancel: (ticket?: number | null) => ipcRenderer.invoke("vault:importCancel", ticket),
+  // A credential exchange another app just handed main (Apple Passwords'
+  // "Export to another app…"): the event says one arrived, the pending call
+  // answers with its secret-free preview — the logins themselves are staged
+  // in main like every import, and commit/cancel above answer it.
+  vaultExchangePending: () => ipcRenderer.invoke("vault:exchangePending"),
+  onVaultExchange: (cb: () => void) => ipcRenderer.on("vault:exchange", cb),
   // What the owner says agents are for. The renderer's only route to the text
   // in either direction — it is device-owner data, so nothing else may write it.
   // The setter answers with what was stored, not what was sent.

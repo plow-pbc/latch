@@ -112,6 +112,9 @@ describe("the packaging hook refuses before it signs", () => {
     fs.rmSync(dir, { recursive: true, force: true });
     if (realIdentity === undefined) delete process.env.CODESIGN_IDENTITY;
     else process.env.CODESIGN_IDENTITY = realIdentity;
+    // Credential-exchange path knobs some tests set; never set outside them.
+    delete process.env.DOMO_CX_APPEX_SOURCE;
+    delete process.env.DOMO_CX_PROFILE;
   });
 
   it("leaves the per-arch temp packs to the universal merge", async () => {
@@ -182,6 +185,81 @@ describe("the packaging hook refuses before it signs", () => {
   it("refuses a build whose identity is explicitly null", async () => {
     pack();
     await expect(afterPack(contextFor(dir, { identity: null }))).rejects.toThrow(/ships unsigned/);
+  });
+
+  // Credential exchange (docs/CREDENTIAL-EXCHANGE.md) is UNCONDITIONAL in a
+  // packaged build: the app is always signed with the AutoFill entitlement,
+  // so a pack that quietly dropped the extension, the addon, or the Swift
+  // shim would ship a release where the feature silently stopped. Every
+  // piece missing is a refusal, exactly like the keychain addon's.
+  describe("the credential-exchange pieces are mandatory", () => {
+    const receivingPaths = () => [
+      path.join(
+        resourcesDir(), "app.asar.unpacked", "node_modules",
+        "@domo", "native-credential-import", "build", "Release", "credential_import.node",
+      ),
+      path.join(resourcesDir(), "native", "libdomo-credential-import.dylib"),
+    ];
+
+    /** The addon + shim as production packs them: one universal binary each. */
+    const packReceiving = () => {
+      for (const file of receivingPaths()) {
+        fs.mkdirSync(path.dirname(file), { recursive: true });
+        fs.writeFileSync(file, fatUniversalHeader());
+      }
+    };
+
+    /** A built appex as build-native.mjs leaves it, minus nothing. */
+    const packAppex = (bytes: Buffer = fatUniversalHeader()) => {
+      const appex = path.join(dir, "fixture.appex");
+      fs.mkdirSync(path.join(appex, "Contents", "MacOS"), { recursive: true });
+      fs.writeFileSync(path.join(appex, "Contents", "MacOS", "PlowLatchCredentialProvider"), bytes);
+      process.env.DOMO_CX_APPEX_SOURCE = appex;
+      return appex;
+    };
+
+    beforeEach(() => {
+      pack();
+      packReceiving();
+    });
+
+    it.each([
+      { what: "addon", at: 0 },
+      { what: "shim", at: 1 },
+    ])("refuses a pack whose credential-import $what is absent", async ({ at }) => {
+      fs.rmSync(receivingPaths()[at]!);
+      await expect(afterPack(contextFor(dir))).rejects.toThrow(/no credential-import/);
+    });
+
+    it("refuses a THIN shim — it lands broken on the other arch's users", async () => {
+      fs.writeFileSync(receivingPaths()[1]!, thinHeader(0x0100000c));
+      await expect(afterPack(contextFor(dir))).rejects.toThrow(/credential-import shim is missing x86_64/);
+    });
+
+    it("refuses when no appex was built", async () => {
+      process.env.DOMO_CX_APPEX_SOURCE = path.join(dir, "never-built.appex");
+      process.env.DOMO_CX_PROFILE = path.join(dir, "unused.provisionprofile");
+      await expect(afterPack(contextFor(dir))).rejects.toThrow(/no built credential-provider appex/);
+    });
+
+    it("refuses when the extension's provisioning profile is missing", async () => {
+      packAppex();
+      process.env.DOMO_CX_PROFILE = path.join(dir, "missing.provisionprofile");
+      await expect(afterPack(contextFor(dir))).rejects.toThrow(/provisionprofile is missing/);
+    });
+
+    it.each([
+      { arch: "arm64-only", cputype: 0x0100000c, missing: "x86_64" },
+      { arch: "x86_64-only", cputype: 0x01000007, missing: "arm64" },
+    ])("refuses a THIN ($arch) appex — it lands broken on the other arch's users", async ({ cputype, missing }) => {
+      packAppex(thinHeader(cputype));
+      const profile = path.join(dir, "fixture.provisionprofile");
+      fs.writeFileSync(profile, "not a real profile; the arch gate fires first");
+      process.env.DOMO_CX_PROFILE = profile;
+      await expect(afterPack(contextFor(dir))).rejects.toThrow(
+        new RegExp(`credential-provider appex is missing ${missing}`),
+      );
+    });
   });
 
   // One expectation over every way an arch can be unusable, for every arch of

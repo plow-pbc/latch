@@ -75,6 +75,21 @@ function machOArchs(file) {
   }
 }
 
+/**
+ * The two-arch invariant every shipped binary answers to: a thin file clears
+ * every gate on the packaging Mac and lands broken on the other arch's
+ * users. `hint` is the remedy worth naming when there is one.
+ */
+function assertUniversalMachO(what, file, hint = "") {
+  const archs = machOArchs(file);
+  const missing = ["x86_64", "arm64"].find((arch) => !archs.includes(arch));
+  if (missing) {
+    throw new Error(
+      `[afterPack] the ${what} is missing ${missing} (carries: ${archs.join(", ") || "nothing"})${hint ? ` — ${hint}` : ""}`,
+    );
+  }
+}
+
 function* walk(root) {
   for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
     const p = path.join(root, entry.name);
@@ -160,15 +175,7 @@ module.exports = async function afterPack(context) {
         "its build failed (see `npm rebuild @domo/native-keychain`); a release must carry the vault's SecItem provider",
     );
   }
-  const addonArchs = machOArchs(keychainAddon);
-  for (const arch of ["x86_64", "arm64"]) {
-    if (!addonArchs.includes(arch)) {
-      throw new Error(
-        `[afterPack] the native-keychain addon is missing ${arch} (carries: ${addonArchs.join(", ") || "nothing"}) — ` +
-          "rebuild it universal (binding.gyp forces both arches)",
-      );
-    }
-  }
+  assertUniversalMachO("native-keychain addon", keychainAddon, "rebuild it universal (binding.gyp forces both arches)");
 
   // `await import`, because the manifest is ESM and this hook is not. It is the
   // one list of providers; a literal here was true of one and false of two.
@@ -210,6 +217,75 @@ module.exports = async function afterPack(context) {
     codesign(["--force", "--timestamp", "--options", "runtime", "--entitlements", entitlements, "--sign", identity, target]);
   const signBundle = (target, entitlements) =>
     codesign(["--force", "--deep", "--timestamp", "--options", "runtime", "--entitlements", entitlements, "--sign", identity, target]);
+
+  // 1.5) Credential exchange (docs/CREDENTIAL-EXCHANGE.md): embed and sign the
+  // credential-provider appex. UNCONDITIONAL, like the keychain addon above:
+  // the app is always signed with the AutoFill entitlement now
+  // (entitlements.mac.plist, authorized by the checked-in profiles the
+  // packaging recipe has already asserted grant it), and a package that kept
+  // the entitlement while quietly dropping the extension — or the addon, or
+  // the Swift shim — would ship a release where the feature silently stopped.
+  // Missing pieces fail the build here, in seconds, not in a user report.
+  {
+    // The two _CX_ overrides exist for afterPack.test.ts alone: the refusals
+    // below are pure fs + throw and must be reachable from vitest whatever
+    // this checkout happens to have built or fetched. Nothing else sets them.
+    const appexSource = process.env.DOMO_CX_APPEX_SOURCE ||
+      path.join(__dirname, "..", "dist", "native", "PlowLatchCredentialProvider.appex");
+    const appexProfile = process.env.DOMO_CX_PROFILE ||
+      path.join(__dirname, "PlowLatchCredentialProvider-DeveloperID.provisionprofile");
+    const appexEntitlements = path.join(__dirname, "entitlements.appex.plist");
+    const contents = path.join(context.appOutDir, appName, "Contents");
+    // The receiving half beside the registration half: the N-API addon that
+    // redeems the token and the Swift shim it dlopens. Their builds are
+    // tolerant on purpose (dev boxes without Xcode CLT); this is where a
+    // release that lost either gets stopped. Universal for the same reason
+    // the keychain addon is checked: a thin binary clears every gate on the
+    // packaging Mac and lands broken on the other arch's users.
+    const receiving = [
+      ["credential-import addon", path.join(
+        contents, "Resources", "app.asar.unpacked", "node_modules",
+        "@domo", "native-credential-import", "build", "Release", "credential_import.node",
+      )],
+      ["credential-import shim", path.join(contents, "Resources", "native", "libdomo-credential-import.dylib")],
+    ];
+    for (const [what, file] of receiving) {
+      if (!fs.existsSync(file) || fs.statSync(file).size === 0) {
+        throw new Error(`[afterPack] the packed app has no ${what} — credential exchange would silently stop working`);
+      }
+      assertUniversalMachO(what, file);
+    }
+    if (!fs.existsSync(path.join(appexSource, "Contents", "MacOS", "PlowLatchCredentialProvider"))) {
+      throw new Error(
+        "[afterPack] dist/native has no built credential-provider appex — " +
+          "scripts/build-native.mjs skipped it (no Swift toolchain?)",
+      );
+    }
+    if (!fs.existsSync(appexProfile)) {
+      throw new Error(
+        "[afterPack] build/PlowLatchCredentialProvider-DeveloperID.provisionprofile is missing",
+      );
+    }
+    const appex = path.join(contents, "PlugIns", "PlowLatchCredentialProvider.appex");
+    fs.rmSync(appex, { recursive: true, force: true });
+    fs.mkdirSync(path.dirname(appex), { recursive: true });
+    fs.cpSync(appexSource, appex, { recursive: true });
+    const appexBinary = path.join(appex, "Contents", "MacOS", "PlowLatchCredentialProvider");
+    assertUniversalMachO("credential-provider appex", appexBinary);
+    // macOS expects a nested bundle's versions to match its app's, and the
+    // app's are stamped at package time — so the appex is stamped here, from
+    // the same source of truth, before its seal goes on.
+    const appPlist = path.join(contents, "Info.plist");
+    const readPlist = (key) =>
+      execFileSync("/usr/libexec/PlistBuddy", ["-c", `Print :${key}`, appPlist], { encoding: "utf8" }).trim();
+    const appexPlist = path.join(appex, "Contents", "Info.plist");
+    for (const key of ["CFBundleShortVersionString", "CFBundleVersion"]) {
+      execFileSync("/usr/libexec/PlistBuddy", ["-c", `Set :${key} ${readPlist(key)}`, appexPlist]);
+    }
+    fs.copyFileSync(appexProfile, path.join(appex, "Contents", "embedded.provisionprofile"));
+    signFile(appex, appexEntitlements);
+    console.log("[afterPack] embedded + signed the credential-provider appex");
+  }
 
   // 2) Camoufox — deep-sign the (universal) Camoufox.app with Mozilla's set.
   // `--deep` only discovers nested code in the standard locations (MacOS,

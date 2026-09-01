@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!-- The credential-provider extension (registration only; vends nothing —
+       see native/credential-provider/). Sandboxed like every appex; the
+       AutoFill entitlement is what makes the system read its capabilities at
+       all; the application-identifier ties it to the extension's own Developer
+       ID provisioning profile, which afterPack.cjs embeds beside it. Both are
+       restricted — authorized by that profile, or the system refuses the
+       extension. -->
+  <key>com.apple.security.app-sandbox</key>
+  <true/>
+  <key>com.apple.developer.authentication-services.autofill-credential-provider</key>
+  <true/>
+  <key>com.apple.application-identifier</key>
+  <string>3559PD337Z.co.plow.domo-desktop.credential-provider</string>
+</dict>
+</plist>

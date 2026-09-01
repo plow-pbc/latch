@@ -2228,6 +2228,15 @@ window.domo.onConfirmLeave(async () => {
 window.domo.onShowSettings(async () => {
   if (await selectTab("settings")) window.domo.updatesCheck();
 });
+// Another app handed main a credential exchange (Apple Passwords' export):
+// land on the Vault tab, whose render finds the staged preview and opens the
+// Import sheet on it. Already there means re-render — selectTab dedupes and
+// would leave the pane as it is — but never over unsaved edits: an open form
+// gets its say first, exactly as a tab switch would give it.
+window.domo.onVaultExchange(async () => {
+  if (currentTab !== "vault") await selectTab("vault");
+  else if (await vaultConfirmLeave()) render();
+});
 // Granting Full Disk Access happens in System Settings, and no event reaches
 // this app when it does — the moment the pane can learn the outcome is when
 // the person comes back.
@@ -2242,5 +2251,11 @@ async function boot() {
   const saved = await window.domo.uiGetTab();
   const known = ["agents", "audit", "rules", "vault", "settings"];
   selectTab(known.includes(saved) ? saved : "audit");
+  // A credential exchange can arrive before this window exists (the system
+  // launches the app for it); the push above then had no listener, so ask.
+  // Only when landing elsewhere: a boot onto the Vault tab found it already.
+  if (currentTab !== "vault" && (await window.domo.vaultExchangePending().catch(() => null))) {
+    selectTab("vault");
+  }
 }
 boot();

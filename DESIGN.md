@@ -692,6 +692,40 @@ changes that. Accepted residual: the threat model is accidental exposure — a
 well-behaved agent looking at a page in the ordinary course of its work — and
 an agent reaching for `eval` to read a field it just filled is outside it.
 
+### 11a-iii. Receiving an Apple Passwords export app-to-app
+
+macOS 26's credential exchange (Apple Passwords 26.4+, "Export to Another
+App…") moves credentials process-to-process — no plain-text CSV on disk, which
+is exactly the exposure the Import sheet's file door has to warn about. The
+app is a destination for it. Mechanics in
+[docs/CREDENTIAL-EXCHANGE.md](docs/CREDENTIAL-EXCHANGE.md); the decisions:
+
+- **The Swift surface stays a transcription.** The APIs are Swift-only, so a
+  shim dylib (`apps/desktop/native/credential-import.swift`, loaded in-process
+  by the `@domo/native-credential-import` addon) redeems the token — and then
+  does nothing but re-emit a small versioned wire JSON of ours. Every mapping
+  decision lives in `device-core`'s `parseCredentialExchange`, pure and
+  vitest-frozen, and from staging onward the flow IS the existing import flow
+  (§ the Vault tab's Import sheet): same staging slot in main, same preview,
+  same commit, same audit lines.
+- **The required provider extension vends nothing.** macOS only lists apps
+  that carry an AutoFill credential-provider extension advertising
+  `SupportsCredentialExchange`; there is no import-only registration. The
+  shipped appex declares no `Provides*` capability and cancels every request —
+  the vault's values stay owner-typed and broker-filled (§11a), never offered
+  to system AutoFill.
+- **Packaged builds carry it unconditionally, and packaging asserts.** The
+  entitlement is profile-backed (an app carrying it beyond what its embedded
+  Developer ID provisioning profile authorizes is killed at launch), so
+  `just package` decodes the checked-in profiles and FAILS unless both
+  actually grant the AutoFill capability — an assertion, not a switch,
+  because the only alternative to failing there is signing an app the OS
+  kills. afterPack then refuses a pack missing the appex, the addon, or the
+  shim, exactly as it refuses one missing the keychain addon: a release
+  where the feature silently stopped is what these gates exist to prevent.
+  macOS 15 stays supported: the 26-only symbols are weak-linked behind
+  `#available`, and the appex's `LSMinimumSystemVersion` keeps it unloaded.
+
 ## 11b. Software updates
 
 The packaged app self-updates via **electron-updater** (generic provider — no

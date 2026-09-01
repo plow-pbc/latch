@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!-- The registration that puts "Plow Latch" in Apple Passwords' export-to-app
+       list (SupportsCredentialExchange), and NOTHING else: no ProvidesPasswords,
+       no ProvidesPasskeys — this extension vends no credentials, ever (see
+       CredentialProviderViewController.swift). CFBundleShortVersionString and
+       CFBundleVersion are placeholders; build/afterPack.cjs stamps the app's own
+       before signing, because macOS expects a nested bundle to match its app. -->
+  <key>CFBundleDevelopmentRegion</key>
+  <string>en</string>
+  <key>CFBundleDisplayName</key>
+  <string>Plow Latch</string>
+  <key>CFBundleExecutable</key>
+  <string>PlowLatchCredentialProvider</string>
+  <key>CFBundleIdentifier</key>
+  <string>co.plow.domo-desktop.credential-provider</string>
+  <key>CFBundleInfoDictionaryVersion</key>
+  <string>6.0</string>
+  <key>CFBundleName</key>
+  <string>PlowLatchCredentialProvider</string>
+  <key>CFBundlePackageType</key>
+  <string>XPC!</string>
+  <key>CFBundleShortVersionString</key>
+  <string>0.0.0</string>
+  <key>CFBundleVersion</key>
+  <string>0</string>
+  <key>LSMinimumSystemVersion</key>
+  <string>26.0</string>
+  <key>NSExtension</key>
+  <dict>
+    <key>NSExtensionAttributes</key>
+    <dict>
+      <key>ASCredentialProviderExtensionCapabilities</key>
+      <dict>
+        <key>SupportsCredentialExchange</key>
+        <true/>
+        <key>SupportedCredentialExchangeVersions</key>
+        <array>
+          <string>1.0</string>
+        </array>
+      </dict>
+      <key>ASCredentialProviderExtensionShowsConfigurationUI</key>
+      <false/>
+    </dict>
+    <key>NSExtensionPointIdentifier</key>
+    <string>com.apple.authentication-services-credential-provider-ui</string>
+    <key>NSExtensionPrincipalClass</key>
+    <string>PlowLatchCredentialProvider.CredentialProviderViewController</string>
+  </dict>
+</dict>
+</plist>

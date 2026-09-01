@@ -35,6 +35,9 @@ packages/
                                      serves the HTTP exchanges the relay tunnels down the socket
   native-keychain/ @domo/native-keychain  one N-API addon: a generic password in the data-protection
                                      Keychain under our access group (vault master key; optional)
+  native-credential-import/ @domo/native-credential-import  one N-API addon: bridges the app's Swift
+                                     shim for macOS 26 credential exchange (Apple Passwords
+                                     "Export to Another App…"; optional — docs/CREDENTIAL-EXCHANGE.md)
 apps/
   desktop/       Electron app: device-core in the main process; tray, approval windows,
                  Rules/Audit/Settings UI (visual direction from docs/mockups/audit-mockups.html)

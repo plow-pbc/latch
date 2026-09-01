@@ -33,8 +33,8 @@ import {
   PolicyDelegate,
   importLogins,
   importPreview,
-  ImportedLogin,
   markAgainstVault,
+  parseCredentialExchange,
   parsePasswordExport,
   readCredentialsState,
   resolveBrowserRuntime,
@@ -53,6 +53,7 @@ import { devIconScript } from "./devIcon.js";
 import { migrateLegacyHome } from "./migrateHome.js";
 import { buildMinter, vendorDirs } from "./providerWiring.js";
 import { resolveInstancePaths } from "./paths.js";
+import { ImportStaging, passwordsAppCanHandOff } from "./importStaging.js";
 import { loadSettings, saveSettings, useCredentialCodec, WindowBounds } from "./settings.js";
 import { resolveTelemetryConfig, Telemetry } from "./telemetry.js";
 import { PlowApi, PlowApiError, relaySocketUrl, resolveApiBaseUrl } from "./plowApi.js";
@@ -886,32 +887,25 @@ ipcMain.handle("vault:saveItem", async (_e, input: VaultItemInput) => {
  * Importing passwords (the Vault tab's Import sheet).
  *
  * The parsed logins stay HERE, in main, between inspect and commit — the
- * renderer is shown a preview (title, username, site, has-a-password) and
- * holds a claim ticket of nothing: commit imports whatever the last inspect
- * staged. One staging slot, because the sheet is modal: a new inspect
- * replaces it, and commit or cancel clears it, so pasted passwords do not
- * outlive the sheet they were pasted for.
+ * renderer is shown a preview (title, username, site, has-a-password) plus a
+ * TICKET naming the staging it describes: commit and cancel quote it back,
+ * so a sheet only ever consumes or drops its own work. The slot, its epoch
+ * (voiding in-flight inspects), and the ticket rules — including how a
+ * credential exchange stages over an open sheet and survives that sheet's
+ * close — live in importStaging.ts, where vitest holds them to account.
  */
-let stagedImport: ImportedLogin[] | null = null;
-/**
- * Bumped by every cancel and commit. An inspect captures it before parsing
- * and stages only if it still holds afterwards — a sheet that closed while
- * the parse was in flight has already cancelled, and its answer must not
- * quietly re-stage the plaintext the cancel existed to drop.
- */
-let importEpoch = 0;
+const staging = new ImportStaging();
 
-// `epoch` is the value of importEpoch when THIS request began — for a file
-// pick that is before the dialog even opened, so a dialog left open across a
-// sheet close (and a replacement sheet's fresh staging) cannot land its stale
-// contents on top when finally answered.
-async function inspectImport(text: string, epoch = importEpoch) {
+// `epoch` is captured when THIS request began — for a file pick that is
+// before the dialog even opened, so a dialog left open across a sheet close
+// (and a replacement sheet's fresh staging) cannot land its stale contents on
+// top when finally answered. stageSheet refuses a stale epoch.
+async function inspectImport(text: string, epoch = staging.epoch) {
   const vault = device?.vaultClient;
   if (!vault) throw new Error("the vault is not running");
   const parsed = parsePasswordExport(text);
   await markAgainstVault(vault, parsed.logins);
-  if (epoch === importEpoch) stagedImport = parsed.logins;
-  return importPreview(parsed);
+  return staging.stageSheet(epoch, parsed.logins, importPreview(parsed));
 }
 
 /**
@@ -936,8 +930,16 @@ ipcMain.handle("vault:importSources", async () => {
   };
   const onePwApp = await installed("1Password.app");
   const chromeApp = await installed("Google Chrome.app");
+  // Whether the Apple guidance may offer the direct hand-off (macOS 26.4's
+  // "Export … to App…" menu) instead of only the CSV walk: purely whether
+  // the menu exists on this Mac. A packaged build always carries the
+  // receiving pieces — the recipe and afterPack.cjs refuse to produce one
+  // without them — and a from-source run can never receive (stock
+  // Info.plist, no entitlement) but shows the steps anyway: it is how the
+  // guidance itself gets worked on and screenshotted.
+  const exchange = passwordsAppCanHandOff(process.getSystemVersion());
   return {
-    apple: { icon: await iconOf("/System/Applications/Passwords.app") },
+    apple: { icon: await iconOf("/System/Applications/Passwords.app"), exchange },
     onePassword: onePwApp ? { icon: await iconOf(onePwApp) } : null,
     chrome: chromeApp ? { icon: await iconOf(chromeApp) } : null,
   };
@@ -949,7 +951,7 @@ ipcMain.handle("vault:importInspect", async (_e, text: string) => inspectImport(
 // A chosen file: main shows the dialog and reads the file itself, so the CSV
 // full of passwords never crosses into the renderer at all.
 ipcMain.handle("vault:importFile", async () => {
-  const epoch = importEpoch;
+  const epoch = staging.epoch;
   const picked = await dialog.showOpenDialog({
     title: "Choose a passwords export",
     properties: ["openFile"],
@@ -963,15 +965,13 @@ ipcMain.handle("vault:importFile", async () => {
 });
 
 // `selected` names the rows the owner ticked, as indices into the preview's
-// item order (which IS the staged order). Omitted means all of them — the
+// item order (which IS the staged order — the ticket is what guarantees the
+// two are still the same staging). Omitted means all of them — the
 // single-item paste has no checkboxes to send.
-ipcMain.handle("vault:importCommit", async (_e, selected?: number[]) => {
+ipcMain.handle("vault:importCommit", async (_e, selected?: number[], ticket?: number) => {
   const vault = device?.vaultClient;
   if (!vault) throw new Error("the vault is not running");
-  const logins = stagedImport;
-  stagedImport = null;
-  importEpoch++;
-  if (!logins) throw new Error("nothing is staged to import; choose a file or paste again");
+  const logins = staging.take(typeof ticket === "number" ? ticket : undefined);
   const chosen = Array.isArray(selected)
     ? logins.filter((_, i) => selected.includes(i))
     : logins;
@@ -979,13 +979,118 @@ ipcMain.handle("vault:importCommit", async (_e, selected?: number[]) => {
 });
 
 // The sheet closed without importing: drop the staged passwords now rather
-// than holding them until the next inspect happens to replace them. The
-// epoch bump also voids any inspect still parsing, whose answer would
-// otherwise land here right after this cleared the slot.
-ipcMain.handle("vault:importCancel", async () => {
-  stagedImport = null;
-  importEpoch++;
+// than holding them until the next inspect happens to replace them — but
+// only the passwords that sheet was showing (the quoted ticket, or its own
+// unseen inspect answer when it closed before one arrived). A credential
+// exchange that staged over the sheet is not its to drop: the close still
+// lands, and the exchange's own sheet opens on the staging that survived.
+ipcMain.handle("vault:importCancel", async (_e, ticket?: number | null) => {
+  staging.cancel(typeof ticket === "number" ? ticket : null);
 });
+
+/*
+ * Credential exchange: Apple Passwords' "Export to another app…" (macOS 26+).
+ *
+ * The system launches (or foregrounds) this app with an NSUserActivity whose
+ * userInfo carries a one-shot import token; Electron surfaces it as
+ * `continue-activity` (the Info.plist NSUserActivityTypes entry that makes
+ * AppKit deliver it at all is packaging config — electron-builder.yml — so a
+ * from-source run never receives one). The token is redeemed in-process by
+ * the Swift shim behind @domo/native-credential-import, whose wire JSON
+ * parseCredentialExchange turns into the same staged logins the Import
+ * sheet's other doors make; from there the flow IS the import sheet —
+ * preview in the renderer, secrets staged here, commit/cancel as ever.
+ *
+ * Everything is guarded: no addon, no shim, or macOS < 26 becomes one error
+ * dialog, and nothing 26-only is ever touched on an older Mac.
+ */
+const CREDENTIAL_EXCHANGE_ACTIVITY = "ASCredentialExchangeActivity";
+const CREDENTIAL_IMPORT_TOKEN_KEY = "ASCredentialImportToken";
+const UUID_IN_STRING = /[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}/;
+
+// The preview of an exchange staged and not yet answered — what the vault
+// pane asks for so it can open the Import sheet on it. Secret-free, like
+// every preview, and cleared with the staging (commit/cancel above).
+ipcMain.handle("vault:exchangePending", async () => staging.pendingExchange());
+
+interface CredentialImportAddon {
+  osSupported(): boolean;
+  importCredentials(shimPath: string, token: string): Promise<string>;
+}
+
+/** The N-API bridge, or null on a build that could not compile it — its
+ * loader (index.cjs) already answers null rather than throwing. */
+function credentialImportAddon(): CredentialImportAddon | null {
+  try {
+    return createRequire(import.meta.url)("@domo/native-credential-import") as CredentialImportAddon | null;
+  } catch {
+    return null;
+  }
+}
+
+// The Swift shim the addon dlopens (same resolution as fdaHelperPath below).
+const credentialShimPath = () =>
+  app.isPackaged
+    ? path.join(process.resourcesPath, "native", "libdomo-credential-import.dylib")
+    : path.join(dirname, "native", "libdomo-credential-import.dylib");
+
+// Registered at module scope: the first activity can land the moment launch
+// finishes, before whenReady's own work is done. `will-continue-activity`
+// answered affirmatively is what tells AppKit the app handles this type
+// itself rather than falling back to a webpage URL it does not have.
+app.on("will-continue-activity", (event, type) => {
+  if (type === CREDENTIAL_EXCHANGE_ACTIVITY) event.preventDefault();
+});
+app.on("continue-activity", (event, type, userInfo) => {
+  if (type !== CREDENTIAL_EXCHANGE_ACTIVITY) return;
+  event.preventDefault();
+  void handleCredentialExchange(userInfo as Record<string, unknown>);
+});
+
+async function handleCredentialExchange(userInfo: Record<string, unknown>): Promise<void> {
+  try {
+    // Electron's userInfo bridge has no NSUUID conversion of its own — the
+    // token arrives through the generic `description` fallback, so it is
+    // fished out of whatever string shape that produced rather than trusted
+    // to be bare.
+    const raw = userInfo?.[CREDENTIAL_IMPORT_TOKEN_KEY];
+    const token = typeof raw === "string" ? (raw.match(UUID_IN_STRING)?.[0] ?? null) : null;
+    if (!token) throw new Error("the hand-off from the other app carried no import token");
+    const addon = credentialImportAddon();
+    if (!addon) throw new Error("this build was made without its credential-import module");
+    if (!addon.osSupported()) throw new Error("receiving passwords this way needs macOS 26 or later");
+    // Redeem the token FIRST — it is the short-lived half. The system runs
+    // its own consent UI inside this call; the answer is the shim's wire
+    // JSON, parsed pure in device-core.
+    const parsed = parseCredentialExchange(await addon.importCredentials(credentialShimPath(), token));
+    // The activity can arrive while whenReady is still constructing the
+    // device. The redemption above usually outlasts that; waiting here is
+    // what makes it a guarantee instead of a habit.
+    for (let waited = 0; !device && waited < 15000; waited += 250) {
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+    const vault = device?.vaultClient;
+    if (!vault) throw new Error("the vault is not running");
+    await markAgainstVault(vault, parsed.logins);
+    // Same staging slot as the sheet's own doors — commit and cancel already
+    // know it. Staging an exchange voids any inspect still parsing AND takes
+    // a fresh ticket, so a sheet that was open when this landed can close
+    // without cancelling it away (importStaging.ts tells the whole story).
+    staging.stageExchange(parsed.logins, importPreview(parsed));
+    // On screen: whichever window the gate says this Mac gets, then the
+    // renderer is told there is an exchange to show (main.js routes it to
+    // the Vault tab, whose render opens the sheet on the preview).
+    gate.sync();
+    notifyRenderer("vault:exchange");
+  } catch (err) {
+    // Shown, not only logged: the owner just approved an export in another
+    // app, and silence here reads as data loss. Messages carry reasons,
+    // never values (the shim, the parser and the vault all hold that line).
+    const message = err instanceof Error ? err.message : String(err);
+    console.log(`[vault] credential exchange failed: ${message}`);
+    dialog.showErrorBox("Couldn't receive passwords", message);
+  }
+}
 
 // The live-browser thumbnail's whole state, one shape per poll (like
 // onboarding:get). Frames come from the browser host directly, bypassing
