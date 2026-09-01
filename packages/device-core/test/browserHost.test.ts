@@ -63,13 +63,11 @@ async function waitForProcessExit(pid: number): Promise<void> {
 }
 
 describe("BrowserHost", () => {
-  it("starts lazily, reports ready, and correlates responses by id", async () => {
+  it("starts lazily, reports ready, and returns action responses", async () => {
     const { host, events } = makeHost();
     expect(host.running).toBe(false);
-    const [a, b] = await Promise.all([
-      host.sendAction({ action: "goto", url: "https://one.example/" }),
-      host.sendAction({ action: "text" }),
-    ]);
+    const a = await host.sendAction({ action: "goto", url: "https://one.example/" });
+    const b = await host.sendAction({ action: "text" });
     expect(a.url).toBe("https://one.example/");
     expect(typeof b.text).toBe("string");
     expect(host.running).toBe(true);
@@ -153,19 +151,26 @@ describe("BrowserHost", () => {
     await expect(host.sendAction({ action: "url" })).rejects.toThrow(/giving up/);
   });
 
-  it("times actions from dispatch, then kills and audits a wedged front action", async () => {
+  it("rejects overlaps, then kills and audits a wedged front action", async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "domo-bh-tree-"));
     const pidLog = path.join(dir, "child.pid");
     const { host, records, auditFile } = makeHost(
       { HANG_ACTION: "eval", FAKE_ACTION_DELAY_MS: "200", FAKE_CHILD_PID_LOG: pidLog },
       { actionTimeoutMs: 300 },
     );
+    await host.ensureReady();
     const slow = host.sendAction({ action: "goto", url: "https://one.example/" });
-    const queued = host.sendAction({ action: "view" });
-    await expect(Promise.all([slow, queued])).resolves.toEqual([
-      expect.objectContaining({ url: "https://one.example/" }),
-      expect.objectContaining({ mime: "image/jpeg" }),
-    ]);
+    let slowSettled = false;
+    void slow.then(() => { slowSettled = true; });
+    await Promise.resolve();
+    const overlapping = host.sendAction({ action: "title" });
+    const viewer = host.viewFrame();
+    await expect(overlapping).rejects.toThrow(/busy with another action/);
+    expect(await viewer).toBeNull();
+    expect(slowSettled).toBe(false);
+    await expect(slow).resolves.toEqual(expect.objectContaining({
+      url: "https://one.example/",
+    }));
     expect(host.running).toBe(true);
     const firstPid = Number(records.find((r) => r.event === "browser_started")!.fields.pid);
     const childPid = Number(fs.readFileSync(pidLog, "utf8"));

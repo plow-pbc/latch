@@ -79,9 +79,9 @@ export class BrowserHost {
   private stderrTail: string[] = [];
   private failedRequests: JSONValue[] = [];
   private shuttingDown = false;
-  /** Mirror the server's SerialQueue so queue wait never spends an action's
-   * execution budget. A rejection releases the next turn too. */
-  private actionTail: Promise<void> = Promise.resolve();
+  /** The server is serial; overlapping calls fail instead of outliving the
+   * caller's transport budget while waiting for their turn. */
+  private actionInFlight = false;
   /** A child killed after an action timeout, pending its exit event. It stays
    * here so no later command can queue onto the process while it is dying. */
   private terminatingChild: ChildProcess | null = null;
@@ -128,10 +128,13 @@ export class BrowserHost {
   async sendAction(action: { [k: string]: JSONValue }): Promise<{ [k: string]: JSONValue }> {
     if (this.shuttingDown) throw new BrowserCrashedError("browser host is shut down");
     await this.ensureStarted();
-    const child = this.child!;
-    const request = this.actionTail.then(() => this.dispatchAction(child, action));
-    this.actionTail = request.then(() => undefined, () => undefined);
-    return request;
+    if (this.actionInFlight) throw new Error("browser is busy with another action");
+    this.actionInFlight = true;
+    try {
+      return await this.dispatchAction(this.child!, action);
+    } finally {
+      this.actionInFlight = false;
+    }
   }
 
   private dispatchAction(
@@ -139,7 +142,9 @@ export class BrowserHost {
     action: { [k: string]: JSONValue },
   ): Promise<{ [k: string]: JSONValue }> {
     if (this.shuttingDown || this.child !== child || this.terminatingChild === child) {
-      return Promise.reject(new BrowserCrashedError("browser exited before queued action started"));
+      return Promise.reject(new BrowserCrashedError(
+        "browser cannot start action: host is shutting down, or browser is terminating or inactive",
+      ));
     }
     const id = this.nextId++;
     return new Promise((resolve, reject) => {
@@ -370,20 +375,13 @@ export class BrowserHost {
    * owning browser session; until then ensureStarted refuses new work. */
   private terminateAfterActionTimeout(child: ChildProcess, timedOutId: number): void {
     if (this.child !== child || this.terminatingChild === child) return;
-    if (!this.pending.has(timedOutId)) return;
+    const pending = this.pending.get(timedOutId);
+    if (!pending) return;
 
     this.terminatingChild = child;
-    for (const [id, pending] of this.pending) {
-      clearTimeout(pending.timer);
-      pending.reject(
-        new BrowserCrashedError(
-          id === timedOutId
-            ? "browser action timed out"
-            : "browser terminated after another action timed out",
-        ),
-      );
-    }
-    this.pending.clear();
+    this.pending.delete(timedOutId);
+    clearTimeout(pending.timer);
+    pending.reject(new BrowserCrashedError("browser action timed out"));
     this.killGroup("SIGKILL", child);
   }
 
