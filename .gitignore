@@ -28,3 +28,4 @@ packages/browser-server/fingerprints.json
 # a stray bw run once defaulted its app data here
 Library/
 packages/native-keychain/build/
+packages/native-credential-import/build/

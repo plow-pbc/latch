@@ -177,7 +177,22 @@ _package profile flags: build
     sha="$(git -C "{{root}}" rev-parse --short=12 HEAD)"; \
     [ -z "$(git -C "{{root}}" status --porcelain)" ] || sha="${sha}-dirty"; \
     echo "packaging Plow Latch ${version} (${sha})"; \
-    cd "{{root}}/apps/desktop" && CODESIGN_IDENTITY="The Plow Collective, Inc (3559PD337Z)" APPLE_KEYCHAIN_PROFILE="{{profile}}" npx electron-builder --mac --publish never -c.extraMetadata.version="$version" -c.extraMetadata.gitCommit="$sha" -c.buildVersion="$build" -c.mac.extendInfo.DomoGitCommit="$sha" {{flags}}
+    cd "{{root}}/apps/desktop"; \
+    exchange=""; exchange_entitlements=""; \
+    profile_grants() { security cms -D -i "$1" 2>/dev/null | plutil -extract Entitlements xml1 -o - - 2>/dev/null | grep -q autofill-credential-provider; }; \
+    ext_profile="build/PlowLatchCredentialProvider-DeveloperID.provisionprofile"; \
+    if profile_grants build/PlowLatch-DeveloperID.provisionprofile; then app_ok=1; else app_ok=""; fi; \
+    if [ -f "$ext_profile" ] && profile_grants "$ext_profile"; then ext_ok=1; else ext_ok=""; fi; \
+    if [ -n "$app_ok" ] && [ -n "$ext_ok" ]; then \
+        echo "credential exchange: ON (both provisioning profiles grant the AutoFill capability)"; \
+        exchange="1"; \
+        exchange_entitlements="-c.mac.entitlements=build/entitlements.mac.import.plist"; \
+    else \
+        echo "credential exchange: OFF (docs/CREDENTIAL-EXCHANGE.md) — packaging without the AutoFill entitlement or the provider extension:"; \
+        [ -n "$app_ok" ] || echo "  - build/PlowLatch-DeveloperID.provisionprofile does not grant the AutoFill Credential Provider capability (regenerate it after enabling the capability on the app id)"; \
+        [ -n "$ext_ok" ] || echo "  - no extension profile granting it at apps/desktop/$ext_profile"; \
+    fi; \
+    DOMO_CREDENTIAL_EXCHANGE="$exchange" CODESIGN_IDENTITY="The Plow Collective, Inc (3559PD337Z)" APPLE_KEYCHAIN_PROFILE="{{profile}}" npx electron-builder --mac --publish never -c.extraMetadata.version="$version" -c.extraMetadata.gitCommit="$sha" -c.buildVersion="$build" -c.mac.extendInfo.DomoGitCommit="$sha" $exchange_entitlements {{flags}}
 
 # Build, sign, notarize, and upload a versioned release candidate to
 # s3://releases.plow.co/domo/releases/<version>-<build>/. Stable keys are NOT

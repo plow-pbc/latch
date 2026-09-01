@@ -793,6 +793,11 @@ const PTYPE_BLURB = {
    the box shows it — so nothing filters the list silently. */
 let vquery = "";
 
+/** One credential-exchange sheet at a time: renders can overlap (the push
+ * from main and a tab click land close together), and two sheets fighting
+ * over the editor seat would cancel each other's staging. */
+let exchangeOpening = false;
+
 export async function renderVault(view, isCurrent = () => true) {
   /** Redraw this same pane — what every action hands to its callers. */
   const renderVaultIn = () => renderVault(view, isCurrent);
@@ -878,6 +883,25 @@ export async function renderVault(view, isCurrent = () => true) {
   ]);
   newBtn.addEventListener("click", () => vsheet(renderVaultIn));
   masthead.appendChild(el("div", { class: "mast-acts" }, [importBtn, newBtn]));
+
+  // A credential exchange main staged (Apple Passwords' "Export to another
+  // app…") opens the Import sheet by itself, straight on its preview — the
+  // owner already chose the export in the other app; making them find the
+  // Import button would be a second ask. Checked on every render because the
+  // pane may be built after the push event fired (window opened by the
+  // hand-off itself); pending survives in main until commit or cancel.
+  void (async () => {
+    if (exchangeOpening) return;
+    exchangeOpening = true;
+    try {
+      const exchange = await window.domo.vaultExchangePending().catch(() => null);
+      if (exchange && isCurrent() && pane.isConnected) {
+        await vimportSheet(renderVaultIn, { errText, vbusy, vtakeEditor, vreleaseEditor, vtoast }, exchange);
+      }
+    } finally {
+      exchangeOpening = false;
+    }
+  })();
 
   const list = el("div", { class: "vlist" });
   const count = el("span", { class: "lc" });

@@ -211,6 +211,65 @@ module.exports = async function afterPack(context) {
   const signBundle = (target, entitlements) =>
     codesign(["--force", "--deep", "--timestamp", "--options", "runtime", "--entitlements", entitlements, "--sign", identity, target]);
 
+  // 1.5) Credential exchange (docs/CREDENTIAL-EXCHANGE.md): embed and sign the
+  // credential-provider appex. Only when the packaging recipe verified both
+  // Developer ID provisioning profiles grant the AutoFill capability and said
+  // so — the appex carries a profile-backed entitlement, and an app that
+  // ships it without an authorizing profile beside it is an app whose
+  // extension the system refuses. Under the flag, every piece is MANDATORY:
+  // the recipe is already signing the app's half of the promise (the import
+  // entitlement, under the always-embedded app profile), and a package that
+  // kept that while quietly dropping the extension would carry the risk with
+  // none of the feature.
+  if (process.env.DOMO_CREDENTIAL_EXCHANGE === "1") {
+    // The two _CX_ overrides exist for afterPack.test.ts alone: the refusals
+    // below are pure fs + throw and must be reachable from vitest whatever
+    // this checkout happens to have built or fetched. Nothing else sets them.
+    const appexSource = process.env.DOMO_CX_APPEX_SOURCE ||
+      path.join(__dirname, "..", "dist", "native", "PlowLatchCredentialProvider.appex");
+    const appexProfile = process.env.DOMO_CX_PROFILE ||
+      path.join(__dirname, "PlowLatchCredentialProvider-DeveloperID.provisionprofile");
+    const appexEntitlements = path.join(__dirname, "entitlements.appex.plist");
+    const contents = path.join(context.appOutDir, appName, "Contents");
+    if (!fs.existsSync(path.join(appexSource, "Contents", "MacOS", "PlowLatchCredentialProvider"))) {
+      throw new Error(
+        "[afterPack] DOMO_CREDENTIAL_EXCHANGE=1 but dist/native has no built appex — " +
+          "scripts/build-native.mjs skipped it (no Swift toolchain?)",
+      );
+    }
+    if (!fs.existsSync(appexProfile)) {
+      throw new Error(
+        "[afterPack] DOMO_CREDENTIAL_EXCHANGE=1 but build/PlowLatchCredentialProvider-DeveloperID.provisionprofile is missing",
+      );
+    }
+    const appex = path.join(contents, "PlugIns", "PlowLatchCredentialProvider.appex");
+    fs.rmSync(appex, { recursive: true, force: true });
+    fs.mkdirSync(path.dirname(appex), { recursive: true });
+    fs.cpSync(appexSource, appex, { recursive: true });
+    const appexBinary = path.join(appex, "Contents", "MacOS", "PlowLatchCredentialProvider");
+    const appexArchs = machOArchs(appexBinary);
+    for (const arch of ["x86_64", "arm64"]) {
+      if (!appexArchs.includes(arch)) {
+        throw new Error(
+          `[afterPack] the credential-provider appex is missing ${arch} (carries: ${appexArchs.join(", ") || "nothing"})`,
+        );
+      }
+    }
+    // macOS expects a nested bundle's versions to match its app's, and the
+    // app's are stamped at package time — so the appex is stamped here, from
+    // the same source of truth, before its seal goes on.
+    const appPlist = path.join(contents, "Info.plist");
+    const readPlist = (key) =>
+      execFileSync("/usr/libexec/PlistBuddy", ["-c", `Print :${key}`, appPlist], { encoding: "utf8" }).trim();
+    const appexPlist = path.join(appex, "Contents", "Info.plist");
+    for (const key of ["CFBundleShortVersionString", "CFBundleVersion"]) {
+      execFileSync("/usr/libexec/PlistBuddy", ["-c", `Set :${key} ${readPlist(key)}`, appexPlist]);
+    }
+    fs.copyFileSync(appexProfile, path.join(appex, "Contents", "embedded.provisionprofile"));
+    signFile(appex, appexEntitlements);
+    console.log("[afterPack] embedded + signed the credential-provider appex (credential exchange ON)");
+  }
+
   // 2) Camoufox — deep-sign the (universal) Camoufox.app with Mozilla's set.
   // `--deep` only discovers nested code in the standard locations (MacOS,
   // Frameworks, PlugIns, …); a Mach-O under Resources — gmp-clearkey's CDM

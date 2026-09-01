@@ -84,6 +84,28 @@ export function base32Decode(raw: string): Buffer {
   return Buffer.from(bytes);
 }
 
+/**
+ * Base32 (RFC 4648) without padding — the spelling every authenticator app
+ * accepts and the vault's own decoder round-trips. The credential-exchange
+ * import uses this to turn the raw secret bytes another app hands over into
+ * the key string this vault stores.
+ */
+export function base32Encode(data: Buffer): string {
+  let out = "";
+  let bits = 0;
+  let value = 0;
+  for (const byte of data) {
+    value = (value << 8) | byte;
+    bits += 8;
+    while (bits >= 5) {
+      out += ALPHABET[(value >>> (bits - 5)) & 31];
+      bits -= 5;
+    }
+  }
+  if (bits > 0) out += ALPHABET[(value << (5 - bits)) & 31];
+  return out;
+}
+
 const HASHES = new Set(["sha1", "sha256", "sha512"]);
 
 /**

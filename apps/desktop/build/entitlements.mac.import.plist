@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!-- entitlements.mac.plist PLUS credential exchange. `just package` swaps
+       this in ONLY when both provisioning profiles grant the AutoFill
+       Credential Provider capability (docs/CREDENTIAL-EXCHANGE.md): the
+       entitlement added at the bottom is restricted like the base file's
+       keychain pair — an app signed with it whose embedded profile does not
+       authorize it is killed by AMFI at exec — so the base file stays the
+       default and this one is opted into by capability, not by hope.
+       KEEP THE COMMON PART IN STEP WITH entitlements.mac.plist. -->
+  <key>com.apple.security.cs.allow-jit</key>
+  <true/>
+  <key>com.apple.security.automation.apple-events</key>
+  <true/>
+  <key>keychain-access-groups</key>
+  <array>
+    <string>3559PD337Z.co.plow.vault</string>
+  </array>
+  <key>com.apple.application-identifier</key>
+  <string>3559PD337Z.co.plow.domo-desktop</string>
+  <!-- Receiving an Apple Passwords export (ASCredentialImportManager) requires
+       the AutoFill credential-provider entitlement on the app itself, not only
+       on the extension. It does NOT put the app in anyone's AutoFill flow —
+       the extension declines that role (see native/credential-provider/). -->
+  <key>com.apple.developer.authentication-services.autofill-credential-provider</key>
+  <true/>
+</dict>
+</plist>

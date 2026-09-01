@@ -1,6 +1,10 @@
 import { el, icon } from "./dom.js";
 
-/* The Import sheet: passwords in from Apple Passwords, 1Password or Chrome.
+/* The Import sheet: passwords in from Apple Passwords, 1Password or Chrome —
+   and, on macOS 26+, the credential exchange Apple Passwords hands over
+   app-to-app ("Export to another app…"). That third door has no steps here at
+   all: main staged it before this sheet existed, and the sheet opens straight
+   on its preview (the `exchange` parameter below).
 
    Step one is WHERE FROM: cards wearing the apps' own icons (fetched by main
    from the installed apps, as display-only data URLs). 1Password and Chrome
@@ -35,23 +39,39 @@ function steps(head, items) {
  * @param reload redraw the vault pane (called after a commit lands)
  * @param host vault.js's pane seams: { errText, vbusy, vtakeEditor,
  *             vreleaseEditor, vtoast }
+ * @param exchange a credential exchange main already staged (Apple Passwords'
+ *                 "Export to another app…"): its secret-free preview. The
+ *                 sheet then opens straight on it — the owner already chose
+ *                 what to hand over in the other app, so there is no source
+ *                 to pick and no file to choose — and commit imports the
+ *                 exchange main is holding, like any other staging.
  */
-export async function vimportSheet(reload, host) {
+export async function vimportSheet(reload, host, exchange = null) {
   const { errText, vbusy, vtakeEditor, vreleaseEditor, vtoast } = host;
 
   // Which apps are here to import from — asked BEFORE the sheet takes the
   // editor seat or puts anything on screen, so nothing can try to close a
   // half-built sheet while this answer is in flight. If the ask fails, the
-  // sheet still works: Apple's Passwords app ships with macOS.
+  // sheet still works: Apple's Passwords app ships with macOS. An exchange
+  // sheet never shows the cards, so it skips the ask altogether.
   let sources = { apple: { icon: null }, onePassword: null, chrome: null };
-  try {
-    sources = await window.domo.vaultImportSources();
-  } catch {
-    /* apple-only fallback above */
+  if (!exchange) {
+    try {
+      sources = await window.domo.vaultImportSources();
+    } catch {
+      /* apple-only fallback above */
+    }
   }
   // With only one possible source there is nothing to choose: preselected.
   const choices = !!(sources.onePassword || sources.chrome);
   let source = choices ? null : "apple";
+
+  // The staging this sheet is showing, named by the ticket that rode in on
+  // its preview (null before one arrives). Quoted on commit and on close, so
+  // main only lets this sheet consume or drop its OWN staging — a credential
+  // exchange that staged over an open sheet survives that sheet's close and
+  // gets its own sheet, instead of being cancelled away by a stale one.
+  let ticket = exchange?.ticket ?? null;
 
   const overlay = el("div", { class: "overlay show" });
   // Hoisted, so close() can be called from the editor seat the moment the
@@ -66,10 +86,10 @@ export async function vimportSheet(reload, host) {
     vreleaseEditor(seat);
     overlay.remove();
     // Main may be holding parsed passwords — staged, or still being parsed
-    // by an inspect in flight. Cancel UNCONDITIONALLY: main's epoch guard is
-    // what makes this cover the in-flight case too, and cancelling when
-    // nothing is held costs nothing.
-    void window.domo.vaultImportCancel();
+    // by an inspect in flight. Cancel with the ticket this sheet saw: main's
+    // epoch guard covers the in-flight case, the ticket says which staging
+    // is ours to drop, and cancelling when nothing is held costs nothing.
+    void window.domo.vaultImportCancel(ticket);
   };
   // Nothing typed here is worth guarding: the paste box holds a paste, which
   // is still on the clipboard, so dirty() never blocks a close. Taking the
@@ -136,8 +156,24 @@ export async function vimportSheet(reload, host) {
     const renderGuide = () => {
       err.textContent = "";
       if (source === "apple") {
-        guide.replaceChildren(
-          steps(null, [
+        // On macOS 26.4+, Passwords can hand the items straight across, app
+        // to app, no file on disk — main decides whether to offer it (see
+        // vault:importSources: a packaged install must actually be able to
+        // receive; a from-source run shows the steps on OS alone). That door
+        // leads first; the CSV walk stays for every Mac, and is the only
+        // door elsewhere. When the hand-off lands, main stages it and this
+        // sheet is replaced by the preview — the last step describes that.
+        const direct = !!sources.apple?.exchange;
+        guide.replaceChildren(...[
+          direct
+            ? steps("Send them straight across — no file", [
+                "In the Passwords app, choose File > Export All Items to App… (or select some items and choose Export Selected Items to App…).",
+                "Click Continue on the Export Passwords dialog, and approve with Touch ID or your password.",
+                "Select Plow Latch as the destination, click Continue, then Continue in Plow Latch.",
+                "What arrived appears right here, to review before anything is saved.",
+              ])
+            : null,
+          steps(direct ? "Or: export a file" : null, [
             "In the Passwords app, choose File > Export All Passwords to File… (or select some items and choose Export Selected Passwords…).",
             "Confirm with Export Passwords…, pick where to save the file (it is named Passwords.csv), and approve with Touch ID or your password.",
             "Choose that file below.",
@@ -145,7 +181,7 @@ export async function vimportSheet(reload, host) {
           el("div", { class: "imp-actions" }, [fileBtn()]),
           err,
           note,
-        );
+        ].filter(Boolean));
         return;
       }
       if (source === "chrome") {
@@ -250,8 +286,10 @@ export async function vimportSheet(reload, host) {
 
   /** What was read, before anything is written: counts, rows, and reasons. */
   const preview = (p) => {
+    ticket = p.ticket ?? null;
     title.textContent = "Ready to import";
-    back.removeAttribute("hidden");
+    // No step to go back to when the passwords arrived by hand-off.
+    if (!exchange) back.removeAttribute("hidden");
     foot.removeAttribute("hidden");
 
     const coming = p.items.filter((i) => !i.duplicate);
@@ -344,7 +382,9 @@ export async function vimportSheet(reload, host) {
             el("ul", {}, p.skipped.map((s) => el("li", { text: `${s.title}: ${s.reason}` }))),
           ])
         : null,
-      el("div", { class: "imp-note" }, [
+      // The hand-off wrote no file anywhere — that is its whole point — so
+      // the cleanup reminder would be an instruction with nothing to do.
+      exchange ? null : el("div", { class: "imp-note" }, [
         icon("shield", { class: "vico", strokeWidth: "1.8" }),
         el("span", { text:
           "Remember to delete the exported file and empty the Trash once this is done. " +
@@ -358,7 +398,7 @@ export async function vimportSheet(reload, host) {
       go.disabled = true;
       try {
         await vbusy(async () => {
-          const res = await window.domo.vaultImportCommit([...chosen]);
+          const res = await window.domo.vaultImportCommit([...chosen], ticket);
           close();
           await reload();
           vtoast([
@@ -386,6 +426,7 @@ export async function vimportSheet(reload, host) {
   // losing the sheet to a text selection is worse than an extra Escape. Only
   // Escape and the close buttons leave.
   document.addEventListener("keydown", onKey);
-  pick();
+  if (exchange) preview(exchange);
+  else pick();
   document.querySelector(".vaultui").appendChild(overlay);
 }
