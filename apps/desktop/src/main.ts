@@ -1652,6 +1652,7 @@ app.whenReady().then(async () => {
     agents: cloudAgentsClient,
     activation: cloudApi,
     chats: new CloudChatsClient(cloudApi),
+    providers: cloudApi,
     lines: new CloudLinesClient(cloudApi),
     home,
     recordAudit: (event, fields) => device?.audit.record(event, fields),

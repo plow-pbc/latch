@@ -136,13 +136,17 @@ interface CloudLineFlow {
 /**
  * Everything the Agents tab renders about cloud agents, in one shape.
  *
- * The three error fields are deliberately separate: the agent list and chat
- * list are independent requests, while an action failure says the thing the
- * user just clicked did not happen. Collapsing either pair can hide the chat
- * failure that makes thread detail unavailable or mislabel a background refresh.
+ * The four error fields are deliberately separate: the provider, agent and
+ * chat lists are independent requests, while an action failure says the thing
+ * the user just clicked did not happen. Collapsing them can hide one failure
+ * behind another request's success or mislabel a background refresh.
  */
 export interface CloudAgentsUiState {
   cloudAgents: CloudAgentDisplayRow[];
+  /** Opaque ids accepted by the create endpoint, or null before one succeeds. */
+  cloudProviders: string[] | null;
+  /** A provider-list failure, and nothing else. */
+  cloudProvidersError: string | null;
   /** Lines found on the owner's chats that no current agent occupies. */
   cloudFreeLines: CloudAgentLine[];
   cloudLineFlow: CloudLineFlowUiState;
@@ -197,10 +201,15 @@ export interface CloudChatsApi {
   list(deviceCredential: string): Promise<CloudChatOption[]>;
 }
 
+export interface CloudProvidersApi {
+  listCloudAgentProviders(deviceCredential: string): Promise<string[]>;
+}
+
 export interface CloudAgentStateDeps {
   agents: CloudAgentsApi;
   activation: CloudActivationApi;
   chats: CloudChatsApi;
+  providers: CloudProvidersApi;
   /** Plow's pool numbers, used as display metadata for chat rows. */
   lines?: { list(credential: string): Promise<CloudLineOption[]> };
   home: string;
@@ -255,6 +264,9 @@ export class CloudAgentState {
   private actionError: string | null = null;
   private chats: CloudChatOption[] = [];
   private chatsLoaded = false;
+  /** Live provider list; unavailable until the latest refresh succeeds. */
+  private providers: string[] | null = null;
+  private providersError: string | null = null;
   /**
    * Bumped by `signedOut`. Every list result belongs
    * to the account that was signed in when it started; one that lands after a
@@ -284,6 +296,8 @@ export class CloudAgentState {
   state(): CloudAgentsUiState {
     return {
       cloudAgents: [...this.rows.values()].sort(byNewestFirst),
+      cloudProviders: this.providers === null ? null : [...this.providers],
+      cloudProvidersError: this.providersError,
       cloudFreeLines: this.freeLines(),
       cloudLineFlow: {
         ...(this.lineFlow?.ui ?? idleLineFlowUi()),
@@ -298,13 +312,14 @@ export class CloudAgentState {
   }
 
   /**
-   * Re-read server truth: the agents, their chats, and the line names that
-   * identify those chats.
+   * Re-read server truth: the providers, agents, their chats, and the line
+   * names that identify those chats.
    *
    * Called on tab activation and after every mutation.
-   * All three run together and none can fail the others — a chat list that
-   * 403s still leaves the roster on screen, and a line failure still leaves
-   * chats identified by number.
+   * All four run together and none can fail the others — a provider-list
+   * failure does not hide the roster, a chat list that 403s still leaves the
+   * roster on screen, and a line failure still leaves chats identified by
+   * number.
    */
   async refresh(): Promise<void> {
     const credential = this.credential();
@@ -312,6 +327,7 @@ export class CloudAgentState {
     const generation = this.generation;
     const read = ++this.viewReads;
     let view = Promise.all([
+      this.refreshProviders(credential, generation, read),
       this.refreshChats(credential, generation, read),
       this.refreshLines(credential, generation, read),
     ]).then(() => {});
@@ -320,8 +336,8 @@ export class CloudAgentState {
       this.sequence(() => this.refreshAgents(credential, generation)),
       view,
     ]);
-    // A newer chat or line read started while ours was in flight. Ours DROPPED
-    // its own answer on purpose — a superseded read says nothing about now —
+    // A newer account-view read started while ours was in flight. Ours DROPPED
+    // its own answers on purpose — a superseded read says nothing about now —
     // so returning here would answer from before either of them. That is
     // exactly what a caller awaiting this must not be handed. Join whatever
     // replaced each read.
@@ -333,6 +349,30 @@ export class CloudAgentState {
       await view;
     }
     if (generation === this.generation) this.publish();
+  }
+
+  /** Ask Plow which opaque provider ids the create endpoint accepts now. */
+  private async refreshProviders(
+    credential: string,
+    generation: number,
+    read: number,
+  ): Promise<void> {
+    try {
+      const providers = await this.deps.providers.listCloudAgentProviders(credential);
+      if (generation !== this.generation || read !== this.viewReads) return;
+      if (providers.some((provider) => echoesCredential(provider, credential))) {
+        throw new PlowApiError(
+          "http",
+          "Plow returned an unsafe cloud-agent provider list.",
+        );
+      }
+      this.providers = providers;
+      this.providersError = null;
+    } catch (error) {
+      if (generation !== this.generation || read !== this.viewReads) return;
+      this.providers = null;
+      this.providersError = messageOf(error);
+    }
   }
 
   /** Ask Plow which line names identify the chats in the account. */
@@ -354,7 +394,7 @@ export class CloudAgentState {
   /** Start a new agent on a known line, or mint and watch a brand-new line. */
   async create(input: CloudCreateInput): Promise<string | null> {
     const name = typeof input?.name === "string" ? input.name.trim() : "";
-    const provider = typeof input?.provider === "string" ? input.provider.trim() : "";
+    const provider = typeof input?.provider === "string" ? input.provider : "";
     if (!provider) {
       this.setLineFlowError("create", "Pick an agent type.", false);
       return null;
@@ -727,7 +767,7 @@ export class CloudAgentState {
     const display = moved.name || !previous?.name
       ? moved
       : { ...moved, name: previous.name };
-    const provider = moved.provider?.trim() ||
+    const provider = moved.provider ||
       this.retainedCreates.get(agentId)?.provider;
     if (provider) {
       this.retainedCreates.set(agentId, {
@@ -911,6 +951,8 @@ export class CloudAgentState {
     this.chatsLoaded = false;
     this.chatsError = null;
     this.chatsNeedReactivation = false;
+    this.providers = null;
+    this.providersError = null;
     // Nothing in flight belongs to the next account either.
     this.viewReads += 1;
     this.currentAction = Promise.resolve();
@@ -960,7 +1002,7 @@ export class CloudAgentState {
       const listed = new Map<string, CloudAgentDisplayRow>();
       for (const agent of agents) {
         const retained = this.retainedCreates.get(agent.agentId);
-        const resourceProvider = agent.provider?.trim() || null;
+        const resourceProvider = agent.provider || null;
         const provider = resourceProvider ?? retained?.provider;
         const lineUid = this.agentLineUid(agent);
         if (provider) {

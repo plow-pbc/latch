@@ -135,6 +135,8 @@ const ROSTER = {
 };
 const CLOUD_EMPTY = {
   cloudAgents: [],
+  cloudProviders: ["exe:hermes", "exe:life"],
+  cloudProvidersError: null,
   cloudFreeLines: [],
   cloudLineFlow: {
     phase: "idle",
@@ -469,7 +471,7 @@ const SCREENS = [
         };
       })()`);
       if (
-        initial.options.join("|") !== "Hermes:exe:hermes|Life:exe:life|Pirate:exe:pirate" ||
+        initial.options.join("|") !== "exe:hermes:exe:hermes|exe:life:exe:life" ||
         initial.lines.join("|") !==
           "Choose a line…:|Ash · +1 415-555-0199:lin_ash|+1 628-555-0144:lin_trip|New line:__new_line__" ||
         initial.selectedLine !== "" || !initial.disabled ||
@@ -480,7 +482,7 @@ const SCREENS = [
       }
     },
     expect: [
-      "New agent", "Name (optional)", "Agent type", "Life", "Line",
+      "New agent", "Name (optional)", "Agent type", "exe:life", "Line",
       "Choose a line…", "Ash · +1 415-555-0199", "+1 628-555-0144",
       "New line", "Cancel", "Create agent",
     ],
@@ -521,7 +523,7 @@ const SCREENS = [
         "the existing-line New agent picker");
       await win.webContents.executeJavaScript(`(() => {
         document.querySelector('.cloud-modal input[aria-label="Agent name"]').value = "New helper";
-        document.querySelector('.cloud-modal select[aria-label="Agent type"]').value = "exe:pirate";
+        document.querySelector('.cloud-modal select[aria-label="Agent type"]').value = "exe:hermes";
         const line = document.querySelector('.cloud-modal select[aria-label="Line"]');
         line.value = "lin_ash";
         line.dispatchEvent(new Event("change"));

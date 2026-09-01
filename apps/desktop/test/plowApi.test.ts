@@ -563,6 +563,45 @@ describe("PlowApi", () => {
     expect(minted.token).toBe("plow_agenttok");
   });
 
+  it("lists cloud-agent providers with the credential only in the bearer header", async () => {
+    const credential = "plow_device_provider_list_secret";
+    const providers = [" provider/Zeta ", "exe:life"];
+    const { calls, fetchImpl } = recordingFetch([{ status: 200, body: providers }]);
+
+    await expect(
+      new PlowApi("https://api.plow.co", fetchImpl).listCloudAgentProviders(credential),
+    ).resolves.toEqual(providers);
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0].url).toBe("https://api.plow.co/v1/agents/cloud/providers");
+    expect(calls[0].url).not.toContain(credential);
+    expect(calls[0].init.method).toBe("GET");
+    expect(calls[0].init.body).toBeUndefined();
+    expect((calls[0].init.headers as Record<string, string>).authorization)
+      .toBe(`Bearer ${credential}`);
+  });
+
+  it("uses cloud-agent copy when the provider roster is unavailable", async () => {
+    const { fetchImpl } = recordingFetch([{ status: 503, body: {} }]);
+
+    await expect(
+      new PlowApi("https://api.plow.co", fetchImpl).listCloudAgentProviders("plow_device"),
+    ).rejects.toMatchObject({
+      status: 503,
+      message: "Plow couldn't load agent types right now. Try again.",
+    });
+  });
+
+  it("rejects a malformed cloud-agent provider list", async () => {
+    const { fetchImpl } = recordingFetch([{ status: 200, body: ["provider/valid", 7] }]);
+
+    await expect(
+      new PlowApi("https://api.plow.co", fetchImpl).listCloudAgentProviders("plow_device"),
+    ).rejects.toMatchObject({
+      message: "Plow did not return a usable cloud-agent provider list.",
+    });
+  });
+
   it("lists API keys and revokes one by id with bearer credentials", async () => {
     const credential = "plow_device_do_not_leak";
     const keys = [

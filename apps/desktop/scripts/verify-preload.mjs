@@ -138,6 +138,8 @@ const rosterProbe = {
 };
 let cloudProbe = {
   cloudAgents: [cloudAgent],
+  cloudProviders: ["exe:hermes", "exe:life"],
+  cloudProvidersError: null,
   cloudFreeLines: [{ uid: "lin_ash", label: "Ash · +1 415-555-0199" }],
   cloudLineFlow: {
     phase: "idle",
@@ -869,7 +871,7 @@ app.whenReady().then(async () => {
     "the existing-line New agent picker");
   await win.webContents.executeJavaScript(`(() => {
     document.querySelector('.cloud-modal input[aria-label="Agent name"]').value = "New helper";
-    document.querySelector('.cloud-modal select[aria-label="Agent type"]').value = "exe:pirate";
+    document.querySelector('.cloud-modal select[aria-label="Agent type"]').value = "exe:hermes";
     const line = document.querySelector('.cloud-modal select[aria-label="Line"]');
     line.value = "lin_ash";
     line.dispatchEvent(new Event("change"));
@@ -2006,7 +2008,7 @@ app.whenReady().then(async () => {
     cloudCreatePicker.hasName &&
     cloudCreatePicker.hasAgentType &&
     cloudCreatePicker.providers.join("|") ===
-      "Hermes:exe:hermes|Life:exe:life|Pirate:exe:pirate" &&
+      "exe:hermes:exe:hermes|exe:life:exe:life" &&
     cloudCreatePicker.lines.join("|") ===
       "Choose a line…:|Ash · +1 415-555-0199:lin_ash|New line:__new_line__" &&
     cloudCreatePicker.selectedLine === "" &&
@@ -2030,7 +2032,7 @@ app.whenReady().then(async () => {
     cloudExistingCreate.provisioning &&
     cloudExistingCreate.name === "New helper" &&
     cloudExistingCreateRequest?.name === "New helper" &&
-    cloudExistingCreateRequest?.provider === "exe:pirate" &&
+    cloudExistingCreateRequest?.provider === "exe:hermes" &&
     cloudExistingCreateRequest?.lineUid === "lin_ash" &&
     cloudCodeConfirmed.copy &&
     cloudCodeConfirmed.noButton &&
