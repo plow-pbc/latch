@@ -518,6 +518,19 @@ export class PlowApi {
     await this.call<unknown>("POST", "/v1/relay/devices/self/revoke", { token });
   }
 
+  /** List the provider ids accepted by the cloud-agent create endpoint.
+   * They are opaque server-owned values: preserve their bytes and order. */
+  async listCloudAgentProviders(token: string): Promise<string[]> {
+    const data = await this.call<unknown>("GET", "/v1/agents/cloud/providers", { token });
+    if (
+      !Array.isArray(data) ||
+      data.some((provider) => typeof provider !== "string" || provider.length === 0)
+    ) {
+      throw new PlowApiError("http", "Plow did not return a usable cloud-agent provider list.");
+    }
+    return data;
+  }
+
   /**
    * The provider mint: one short-lived token per connected account, for a
    * provider that fans out. The body says `all`; the route is the provider's.

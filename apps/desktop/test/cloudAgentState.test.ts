@@ -115,6 +115,7 @@ function build(options: {
   ) => Promise<CloudAgentResource>;
   listChats?: () => Promise<CloudChatOption[]>;
   listLines?: () => Promise<CloudLineOption[]>;
+  listProviders?: () => Promise<string[]>;
   createActivation?: () => Promise<Activation>;
   redeemActivation?: () => Promise<ProvisionedActivationRedeem>;
   listKeys?: () => Promise<KeyInfo[]>;
@@ -188,6 +189,12 @@ function build(options: {
         return options.listChats ? options.listChats() : [chat()];
       },
     },
+    providers: {
+      async listCloudAgentProviders() {
+        calls.push("listProviders");
+        return options.listProviders ? options.listProviders() : ["provider/default"];
+      },
+    },
     lines: {
       async list() {
         calls.push("listLines");
@@ -214,6 +221,8 @@ describe("CloudAgentState line and thread display", () => {
     expect(calls).toEqual([]);
     expect(state.state()).toEqual({
       cloudAgents: [],
+      cloudProviders: null,
+      cloudProvidersError: null,
       cloudFreeLines: [],
       cloudLineFlow: {
         phase: "idle",
@@ -229,6 +238,47 @@ describe("CloudAgentState line and thread display", () => {
       cloudActionError: null,
       cloudChatsLoaded: false,
     });
+  });
+
+  it("keeps live provider ids opaque and in the endpoint's order", async () => {
+    const providers = ["provider/Zeta", "exe:life"];
+    const { state, calls } = build({ listProviders: async () => providers });
+
+    await state.refresh();
+
+    expect(state.state().cloudProviders).toEqual(providers);
+    expect(state.state().cloudProvidersError).toBeNull();
+    expect(calls.filter((call) => call === "listProviders")).toHaveLength(1);
+  });
+
+  it("reports an initial provider-list failure without inventing a fallback roster", async () => {
+    const { state } = build({
+      listProviders: async () => {
+        throw new PlowApiError("forbidden", "Not permitted.", 403);
+      },
+    });
+
+    await state.refresh();
+
+    expect(state.state().cloudProviders).toBeNull();
+    expect(state.state().cloudProvidersError).toBe("Not permitted.");
+  });
+
+  it("reports a provider-list failure while retaining a previous in-memory list", async () => {
+    let fail = false;
+    const { state } = build({
+      listProviders: async () => {
+        if (fail) throw new PlowApiError("network", "Plow didn't answer in time. Try again.");
+        return ["provider/available"];
+      },
+    });
+    await state.refresh();
+
+    fail = true;
+    await state.refresh();
+
+    expect(state.state().cloudProviders).toEqual(["provider/available"]);
+    expect(state.state().cloudProvidersError).toBe("Plow didn't answer in time. Try again.");
   });
 
   it("sorts newest agents first and missing creation dates by name", async () => {

@@ -15,11 +15,6 @@ const view = document.getElementById("view");
 const seg = document.getElementById("seg");
 const statusDot = document.getElementById("statusDot");
 const statusText = document.getElementById("statusText");
-const CLOUD_PROVIDERS = [
-  { value: "exe:hermes", label: "Hermes" },
-  { value: "exe:life", label: "Life" },
-  { value: "exe:pirate", label: "Pirate" },
-];
 const NEW_LINE_VALUE = "__new_line__";
 
 // Null until boot() picks one: the HTML marks Audit active for the first paint,
@@ -1053,6 +1048,38 @@ function syncCloudLineModal(state, redraw) {
   const { panel } = modal;
   modal.phase = flow.phase;
 
+  const providers = !changing && Array.isArray(state.cloudProviders)
+    ? state.cloudProviders.filter((provider) => typeof provider === "string" && provider)
+    : null;
+  if (!changing && !modal.started && providers) {
+    const selected = modal.providerSelect.value;
+    modal.providerSelect.replaceChildren(...providers.map((provider) =>
+      el("option", { text: provider, attrs: { value: provider } })));
+    if (providers.includes(selected)) modal.providerSelect.value = selected;
+  }
+
+  if (!changing && !modal.started && (!providers || providers.length === 0)) {
+    const cancel = el("button", { class: "btn", text: "Cancel" });
+    cancel.addEventListener("click", dismissCloudLineModal);
+    const message = state.cloudProvidersError
+      ? cloudErrorCopy(state.cloudProvidersError)
+      : providers ? "Plow has no cloud agent types available right now."
+        : "Agent types couldn't be loaded yet. Try again.";
+    const heading = providers
+      ? "No agent types are available"
+      : "Agent types could not be loaded";
+    panel.replaceChildren(
+      el("div", { class: "group-title", text: title }),
+      el("div", { class: "cloud-callout cloud-error" }, [
+        el("div", { class: "cloud-callout-title", text: heading }),
+        el("p", { class: "faint", text: message }),
+      ]),
+      el("div", { class: "row cloud-modal-actions" }, [cancel]),
+    );
+    cancel.focus();
+    return;
+  }
+
   if (modal.started && flow.completedAgentId) {
     const completedAgentId = flow.completedAgentId;
     if (modal.selectedLineUid === null) {
@@ -1173,6 +1200,12 @@ function syncCloudLineModal(state, redraw) {
   cancel.addEventListener("click", dismissCloudLineModal);
   panel.replaceChildren(
     el("div", { class: "group-title", text: title }),
+    ...(!changing && state.cloudProvidersError ? [
+      el("div", { class: "cloud-callout cloud-error" }, [
+        el("div", { class: "cloud-callout-title", text: "Agent types could not be refreshed" }),
+        el("p", { class: "faint", text: cloudErrorCopy(state.cloudProvidersError) }),
+      ]),
+    ] : []),
     ...(changing ? [el("p", {
       class: "conn-note",
       text: "The agent keeps its name and memory and moves to the new number.",
@@ -1200,8 +1233,7 @@ function openCloudCreate(trigger, state, redraw) {
   const providerSelect = el("select", {
     class: "text",
     attrs: { "aria-label": "Agent type" },
-  }, CLOUD_PROVIDERS.map(({ value, label }) =>
-    el("option", { text: label, attrs: { value } })));
+  });
   if (!openCloudModal(trigger, [], nameInput, dismissCloudLineModal)) return;
   Object.assign(cloudModal, {
     kind: "line-flow",
