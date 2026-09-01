@@ -360,6 +360,12 @@ export class CloudAgentState {
     try {
       const providers = await this.deps.providers.listCloudAgentProviders(credential);
       if (generation !== this.generation || read !== this.viewReads) return;
+      if (providers.some((provider) => echoesCredential(provider, credential))) {
+        throw new PlowApiError(
+          "http",
+          "Plow returned an unsafe cloud-agent provider list.",
+        );
+      }
       this.providers = providers;
       this.providersError = null;
     } catch (error) {

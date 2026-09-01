@@ -251,6 +251,21 @@ describe("CloudAgentState line and thread display", () => {
     expect(calls.filter((call) => call === "listProviders")).toHaveLength(1);
   });
 
+  it("rejects the entire provider list when one id reflects the credential", async () => {
+    const reflected = `provider/${CREDENTIAL.slice(0, 10)}`;
+    const { state } = build({
+      listProviders: async () => ["provider/safe", reflected],
+    });
+
+    await state.refresh();
+
+    expect(state.state().cloudProviders).toBeNull();
+    expect(state.state().cloudProvidersError).toBe(
+      "Plow returned an unsafe cloud-agent provider list.",
+    );
+    expect(JSON.stringify(state.state())).not.toContain(CREDENTIAL.slice(0, 10));
+  });
+
   it("reports an initial provider-list failure without inventing a fallback roster", async () => {
     const { state } = build({
       listProviders: async () => {
