@@ -334,6 +334,17 @@ export class CloudAgentState {
    * back; only this side can turn it into an identity.
    */
   private readonly handles = new RowHandles();
+  /**
+   * The line each agent's host claimed, before this Mac could check it.
+   *
+   * MAIN-ONLY, and that is the point. A host-named line is believed only once
+   * this Mac knows it, but on a fresh tab the roster can answer before Plow's
+   * line and chat reads — so a VALID line would be rejected and, with the
+   * claim discarded, relabelling had nothing to recover it from. Keeping the
+   * claim here lets the row resolve as soon as the lines land, without the
+   * unverified string ever reaching a display row.
+   */
+  private claimedLines = new Map<RowKey, string>();
 
   constructor(private readonly deps: CloudAgentStateDeps) {}
 
@@ -1240,6 +1251,8 @@ export class CloudAgentState {
   ): CloudAgentDisplayRow {
     const displayAgent = fallbackName && !agent.name ? { ...agent, name: fallbackName } : agent;
     const key = rowKey(target.id, agent.agentId);
+    if (agent.lineUid) this.claimedLines.set(key, agent.lineUid);
+    else this.claimedLines.delete(key);
     const homeChatUid = agent.chatUids[0];
     if (homeChatUid) this.homeChatUids.set(key, homeChatUid);
     else this.homeChatUids.delete(key);
@@ -1352,7 +1365,12 @@ export class CloudAgentState {
       // no home chat to recompute from, so recomputing cleared it — killing
       // Message and leaving an occupied line looking free.
       const homeChatUid = this.homeChatUids.get(agentId);
+      // The row's own line, then the host's claim now that this Mac may know
+      // it, then the home chat. The claim is checked here for the first time
+      // on a roster that arrived before the account view did.
+      const claimed = this.claimedLines.get(agentId);
       const lineUid = row.line?.uid
+        ?? (claimed && this.knowsLine(claimed) ? claimed : undefined)
         ?? this.chats.find((chat) => chat.uid === homeChatUid)?.lineUid
         ?? null;
       const details = this.lineDetails(lineUid);
@@ -1440,7 +1458,11 @@ export class CloudAgentState {
       { id: BUILTIN_TARGET_ID, baseUrl: this.deps.baseUrl, bearer },
       // The address is the name: with one host there is nothing to tell apart,
       // and a label the owner had to invent was a field for no reader.
-      ...(host ? [{ id: LOCAL_TARGET_ID, baseUrl: host.baseUrl, bearer: host.bearer }] : []),
+      // A stored host equal to Plow's origin is ignored on READ too, so a
+      // hand-edited file cannot do what `addTarget` refuses.
+      ...(host && host.baseUrl !== this.deps.baseUrl
+        ? [{ id: LOCAL_TARGET_ID, baseUrl: host.baseUrl, bearer: host.bearer }]
+        : []),
     ];
   }
 
@@ -1495,6 +1517,14 @@ export class CloudAgentState {
     }
     if (!bearer) {
       this.failAction("Paste the host's AGENT_MGR_SERVE_TOKEN.");
+      return false;
+    }
+    // NOT PLOW. The two targets are kept apart precisely so each bearer only
+    // ever reaches the origin that issued it; letting the self-host slot name
+    // the build's own Plow would send a pasted `AGENT_MGR_SERVE_TOKEN` to
+    // Plow as an Authorization header on the next refresh.
+    if (baseUrl === this.deps.baseUrl) {
+      this.failAction("That is Plow's own address. A self-hosted host is a different machine.");
       return false;
     }
 

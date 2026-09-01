@@ -1342,6 +1342,11 @@ describe("CloudAgentState self-hosted target", () => {
     // tailnet route up it can follow a carrier route instead, and nothing in
     // the URL says which — so the MagicDNS name above is the tailnet path.
     ["cleartext to a raw CGNAT address", "http://100.98.135.12:8765", null],
+    // Plow's OWN origin. The targets are kept apart so each bearer only ever
+    // reaches the origin that issued it; accepting this would send a pasted
+    // AGENT_MGR_SERVE_TOKEN to Plow as an Authorization header.
+    ["Plow's own address", BASE_URL, null],
+    ["Plow's own address with a slash", `${BASE_URL}/`, null],
     // Not addresses at all.
     ["a bare host:port that is not a URL", "192.168.15.12:8765", null],
     ["a scheme that is not http", "slowdown:8765", null],
@@ -1351,7 +1356,9 @@ describe("CloudAgentState self-hosted target", () => {
 
     expect(state.addTarget({ baseUrl, bearer: "t" })).toBe(stored !== null);
     expect(loadSettings(home).agentTarget?.baseUrl ?? null).toBe(stored);
-    if (stored === null) expect(state.state().cloudActionError).toContain("isn't usable");
+    if (stored === null) {
+      expect(state.state().cloudActionError).toMatch(/isn't usable|Plow's own address/);
+    }
   });
 
   it("refuses a host with no token", () => {
@@ -1551,6 +1558,37 @@ describe("CloudAgentState self-hosted target", () => {
     expect(JSON.stringify(row)).not.toContain(encoded);
     expect(row.line).toBeNull();
     expect(row.canMessage).toBe(false);
+  });
+
+  it("resolves a claimed line once the account view lands", async () => {
+    // On a fresh tab the self-hosted roster can answer before Plow's line and
+    // chat reads. The line is unverifiable at that moment, so the row shows
+    // none — but the claim is kept, and relabelling honours it once the lines
+    // arrive. Without that the line was gone for good: Message stayed dead and
+    // an occupied line was offered as free.
+    const chats = deferred<CloudChatOption[]>();
+    const lines = deferred<CloudLineOption[]>();
+    const { state, home } = build({
+      listAgentsFor: async (host) =>
+        host === BUILTIN_TARGET_ID
+          ? []
+          : [{ ...agent({ agentId: "demo", name: null }), chatUids: [], lineUid: "lin_willow" }],
+      listChats: async () => chats.promise,
+      listLines: async () => lines.promise,
+    });
+    withHost(home);
+
+    const refresh = state.refresh();
+    await vi.waitFor(() => expect(state.state().cloudAgents).toHaveLength(1));
+    // Nothing known yet, so the claim cannot be believed.
+    expect(state.state().cloudAgents[0].line).toBeNull();
+
+    lines.resolve([{ uid: "lin_willow", displayName: "Willow", number: "+15550100" }]);
+    chats.resolve([chat()]);
+    await refresh;
+
+    expect(state.state().cloudAgents[0].line?.uid).toBe("lin_willow");
+    expect(state.state().cloudAgents[0].canMessage).toBe(true);
   });
 
   it("keeps remembered names when the same host's token is rotated", async () => {
