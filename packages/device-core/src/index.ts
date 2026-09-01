@@ -11,6 +11,7 @@ export * from "./browser/credentialClassify.js";
 export * from "./browser/localVault.js";
 export * from "./browser/passwordImport.js";
 export * from "./browser/vaultItems.js";
+export * from "./browser/vaultSearch.js";
 export * from "./browser/vaultTotp.js";
 export * from "./browser/vaultCredentials.js";
 export * from "./browser/vaultKeyStore.js";

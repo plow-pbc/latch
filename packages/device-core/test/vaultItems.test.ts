@@ -12,13 +12,23 @@ import {
   checkedUrls,
   staleEdit,
   decryptField,
+  decryptHaystack,
   decryptItem,
   decryptSummary,
   encryptCipher,
   splitKey,
+  type Cipher,
 } from "@domo/device-core";
+import { decString, encString } from "../src/browser/vaultCrypto.js";
 
 const account = splitKey(crypto.randomBytes(64));
+
+/** A custom field as a migrated item carries one: under the item's own key. */
+function custom(cipher: Cipher, name: string, value: string, type: number) {
+  const key = splitKey(decString(cipher.key as string, account.enc, account.mac));
+  const enc = (v: string) => encString(Buffer.from(v, "utf8"), key.enc, key.mac);
+  return { name: enc(name), value: enc(value), type };
+}
 
 describe("a login", () => {
   const cipher = encryptCipher(
@@ -48,17 +58,21 @@ describe("a login", () => {
     });
   });
 
-  it("keeps its secrets out of the item, and lists them only as secrets", () => {
-    // The form is filled from the item and never sees a secret; the listing
-    // carries them, apart, so the tab can search on one — never in the fields
-    // a row draws from.
-    const item = JSON.stringify(decryptItem({ ...cipher, id: "x" }, account));
-    expect(item).not.toContain("hunter2");
-    expect(item).not.toContain("JBSWY3DPEHPK3PXP");
-    const summary = decryptSummary({ ...cipher, id: "x" }, account);
-    expect(summary.secrets).toEqual({ password: "hunter2", totp: "JBSWY3DPEHPK3PXP" });
-    const { secrets: _, ...drawn } = summary;
-    expect(JSON.stringify(drawn)).not.toContain("hunter2");
+  it("keeps its secrets out of the item and the listing", () => {
+    const both = JSON.stringify([
+      decryptItem({ ...cipher, id: "x" }, account),
+      decryptSummary({ ...cipher, id: "x" }, account),
+    ]);
+    expect(both).not.toContain("hunter2");
+    expect(both).not.toContain("JBSWY3DPEHPK3PXP");
+  });
+
+  it("puts every string, secrets included, in the haystack the search reads", () => {
+    // The search runs in main, so the haystack may hold what the listing may
+    // not: the owner wants a password to find its item.
+    const hay = decryptHaystack({ ...cipher, id: "x" }, account);
+    expect(hay).toEqual(expect.arrayContaining(["GitHub", "hunter2", "JBSWY3DPEHPK3PXP", "Login"]));
+    expect(hay).toContain("https://github.com");
   });
 
   it("hands one over when it is asked for by name", () => {
@@ -220,9 +234,6 @@ describe("an item this app cannot hold", () => {
       type: "unsupported",
       subtitle: "",
       urls: [],
-      fields: {},
-      notes: "",
-      secrets: {},
     });
   });
 });
@@ -259,32 +270,31 @@ describe("the other three types", () => {
     expect(decryptSummary({ ...cipher, id: "c" }, account).subtitle).toBe("amex · 04/2030");
   });
 
-  it("lists every field in the clear, secrets included, so the tab can search them", () => {
-    // The tab searches the listing, and the owner wants a password to be
-    // searchable too. Secrets ride separately from the shown fields — the
-    // form still nulls them and asks for one at a time — and a secret that is
-    // not set is absent rather than "".
-    const cipher = encryptCipher(
-      { type: "card", name: "Amex", cardholderName: "Daniel Delattre", brand: "amex", number: "371449635398431", notes: "the travel one" },
+  it("searches a card by its number and a migrated item by its custom fields", () => {
+    const cipher = { ...encryptCipher(
+      { type: "card", name: "Amex", cardholderName: "Daniel Delattre", brand: "amex", number: "371449635398431", code: "1234", notes: "the travel one" },
       null,
       account,
-    );
-    const summary = decryptSummary({ ...cipher, id: "c" }, account);
-    expect(summary.fields).toEqual({ cardholderName: "Daniel Delattre", brand: "amex", expMonth: "", expYear: "" });
-    expect(summary.notes).toBe("the travel one");
-    expect(summary.secrets).toEqual({ number: "371449635398431" });
+    ), id: "c" };
+    expect(decryptHaystack(cipher, account)).toEqual(expect.arrayContaining(
+      ["Amex", "Daniel Delattre", "amex", "371449635398431", "1234", "the travel one", "Card"]));
+    // A custom field survives migration and an edit but no form shows it —
+    // the search is the one place the owner can still reach it by.
+    const withCustom = { ...cipher, fields: [custom(cipher, "Member no", "M-77", 0)] };
+    expect(decryptHaystack(withCustom, account)).toEqual(expect.arrayContaining(["Member no", "M-77"]));
   });
 
-  it("keeps the secrets of an item that asks for the owner out of the listing", () => {
+  it("leaves the secrets of an item that asks for the owner out of the haystack", () => {
     // A search hit is an oracle — type a guess, see whether the row stays —
     // so an item that demands proof of presence before a reveal must demand
-    // it before a match too. The listing carries no secret for it; the form
-    // still reaches them through the gate.
+    // it before a match too. Its open fields still find it.
     const cipher = { ...encryptCipher({ type: "login", name: "Bank", username: "me", password: "hunter2", urls: ["https://bank.example"] }, null, account), id: "b", reprompt: 1 };
-    const summary = decryptSummary(cipher, account);
-    expect(summary.fields).toEqual({ username: "me" });
-    expect(summary.secrets).toEqual({});
-    expect(JSON.stringify(summary)).not.toContain("hunter2");
+    const hidden = custom(cipher, "PIN", "9876", 1);
+    const open = custom(cipher, "Branch", "Downtown", 0);
+    const hay = decryptHaystack({ ...cipher, fields: [hidden, open] }, account);
+    expect(hay).toEqual(expect.arrayContaining(["Bank", "me", "https://bank.example", "PIN", "Branch", "Downtown"]));
+    expect(hay).not.toContain("hunter2");
+    expect(hay).not.toContain("9876");
   });
 
   it("keeps an identity's SSN back", () => {

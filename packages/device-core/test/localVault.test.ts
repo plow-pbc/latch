@@ -47,13 +47,9 @@ describe("LocalVault", () => {
 
     const items = await vault.list();
     expect(items.map((i) => i.type).sort()).toEqual(["card", "identity", "login", "note"]);
-    // The listing carries context, and the secrets kept apart for the tab's
-    // search — never a secret in what a row draws from.
-    for (const item of items) {
-      const { secrets: _, ...drawn } = item;
-      expect(JSON.stringify(drawn)).not.toMatch(/hunter2|4111111111111111|078-05-1120/);
-    }
-    expect(items.find((i) => i.type === "login")?.secrets).toEqual({ password: "hunter2", totp: "JBSWY3DPEHPK3PXP" });
+    // The listing carries context, never secrets.
+    expect(JSON.stringify(items)).not.toContain("hunter2");
+    expect(JSON.stringify(items)).not.toContain("4111111111111111");
 
     // What is on disk is ciphertext. Only tokens too long to appear by chance
     // inside base64 are scanned for — a 3-digit CVV shows up in ciphertext by
@@ -72,6 +68,41 @@ describe("LocalVault", () => {
     // Reveal hands the value to the owner; TOTP hands a code, not the key.
     expect(await vault.reveal(login.id, "password")).toBe("hunter2");
     expect((await vault.totp(login.id)).code).toMatch(/^\d{6}$/);
+  });
+
+  it("searches every field, secrets included, and hands back only ids", async () => {
+    const dir = tempDir();
+    const { vault, auditPath } = vaultIn(dir);
+    const pizza = await vault.save({ type: "login", name: "Pizza", urls: ["pizza.example"], username: "jon", password: "hunter2", notes: "the good one" });
+    const bank = await vault.save({ type: "login", name: "Bank", urls: ["bank.example"], username: "jon", password: "s3cret-bank" });
+    const card = await vault.save({ type: "card", name: "Amex", cardholderName: "Jon D", number: "4111111111111111", code: "737" });
+    const ids = async (q: string) => (await vault.search(q)).sort();
+
+    expect(await ids("")).toEqual([pizza.id, bank.id, card.id].sort());
+    expect(await ids("hunter2")).toEqual([pizza.id]);           // a password finds its item
+    expect(await ids("4111")).toEqual([card.id]);               // so does a card number
+    expect(await ids("jon good")).toEqual([pizza.id]);          // every word, any field
+    expect(await ids("card")).toEqual([card.id]);               // the type's name
+    expect(await ids("nothing-here")).toEqual([]);
+    // A search shows nothing, so it writes nothing.
+    expect(auditLines(auditPath).filter((l) => /SHOWN|READ/.test(l))).toEqual([]);
+    // "jon" is the two usernames and the name on the card: every field, every type.
+    expect(await ids("jon")).toEqual([pizza.id, bank.id, card.id].sort());
+  });
+
+  it("does not let a search stand in for the reprompt gate", async () => {
+    const dir = tempDir();
+    const { vault } = vaultIn(dir);
+    const saved = await vault.save({ type: "login", name: "Bank", urls: ["bank.example"], username: "jon", password: "s3cret-bank" });
+    // Mark it as asking for the owner, the way a migrated item arrives.
+    const store = new VaultStore(dir);
+    store.upsert({ ...store.get(saved.id)!, reprompt: 1 });
+    // No proof of presence is on offer here, so the reveal is refused...
+    await expect(vault.reveal(saved.id, "password")).rejects.toThrow(/confirm/);
+    // ...and the search does not answer for it either: the open fields still
+    // find the item, the password does not.
+    expect(await vault.search("jon")).toEqual([saved.id]);
+    expect(await vault.search("s3cret")).toEqual([]);
   });
 
   it("audits reveals, code reads, saves and deletes — values never", async () => {

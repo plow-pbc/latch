@@ -4,7 +4,6 @@ import { el, icon } from "./dom.js";
 // busy lock and the toast: the sheet is handed them as callbacks (the `host`
 // argument below) and never imports back into here.
 import { vimportSheet } from "./vaultImport.js";
-import { vaultMatches } from "./vaultSearch.js";
 
 /* The Vault tab, built to the design file (vault.html).
    Its own pane, its own file: this screen keeps being redesigned, and it has
@@ -890,10 +889,11 @@ export async function renderVault(view, isCurrent = () => true) {
   } else {
     // Every row is built once; the search only hides. A row that is hidden
     // is not torn down — an open form under it keeps its edits, and comes back
-    // as it was when the query lets it. The matching is in vaultSearch.js,
-    // over everything the listing carries: the title, the context line, every
-    // URL, every field (secrets too, except an item's that asks for the owner
-    // first), the notes, and the type's name. Nothing matched is drawn.
+    // as it was when the query lets it. The MATCHING is the vault's, in main:
+    // it reads every field there, secrets included, and only the matching ids
+    // come back — so this listing never holds a secret for the sake of a
+    // search. An item that asks for the owner first matches on its open
+    // fields only; that is decided there too.
     const rows = items.map((summary) => ({ summary, node: vitem(summary, renderVaultIn) }));
     const none = el("div", { class: "empty vnone" });
     list.replaceChildren(...rows.map((r) => r.node), none);
@@ -902,12 +902,10 @@ export async function renderVault(view, isCurrent = () => true) {
       autocomplete: "off", autocorrect: "off", autocapitalize: "off", spellcheck: "false",
     } });
     search.value = vquery;
-    const apply = () => {
-      vquery = search.value;
-      const q = vquery.trim();
+    const show = (q, ids) => {
       let shown = 0;
       for (const { summary, node } of rows) {
-        const keep = vaultMatches(summary, q, (VAULT_TYPES[summary.type] || {}).label || "");
+        const keep = ids === null || ids.has(summary.id);
         node.hidden = !keep;
         if (keep) shown += 1;
       }
@@ -916,6 +914,31 @@ export async function renderVault(view, isCurrent = () => true) {
       count.textContent = q
         ? `${shown} of ${items.length}`
         : `${items.length} item${items.length === 1 ? "" : "s"}`;
+    };
+    // One query in flight at a time, and only the latest answer applied:
+    // keystrokes are debounced, and an answer to a query the box has since
+    // moved on from is dropped rather than drawn over the newer one.
+    let timer = null;
+    let latest = 0;
+    const apply = () => {
+      vquery = search.value;
+      const q = vquery.trim();
+      const seq = ++latest;
+      if (timer) clearTimeout(timer);
+      if (!q) { show(q, null); return; }
+      timer = setTimeout(async () => {
+        timer = null;
+        let ids;
+        try {
+          ids = new Set(await window.domo.vaultSearch(q));
+        } catch (err) {
+          if (seq !== latest) return;
+          vtoast("Could not search the vault: " + errText(err));
+          return;
+        }
+        if (seq !== latest) return;
+        show(q, ids);
+      }, 120);
     };
     search.addEventListener("input", apply);
     search.addEventListener("keydown", (e) => {
@@ -927,6 +950,11 @@ export async function renderVault(view, isCurrent = () => true) {
         apply();
       }
     });
+    if (vquery.trim()) {
+      // Redrawn with a query still in the box: keep the rows as they were
+      // until the vault answers again, rather than flashing the whole list.
+      show(vquery.trim(), null);
+    }
     apply();
     head.push(el("span", { class: "vsearch-wrap" }, [icon("search", { class: "vico", strokeWidth: "2" }), search]));
   }

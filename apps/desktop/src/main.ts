@@ -797,6 +797,15 @@ ipcMain.handle("vault:items", async () => {
   return vault.list();
 });
 
+// The ids that match the tab's search box. The matching runs in the vault,
+// over every field including the secrets, so that the listing above can stay
+// secret-free and still let a password find its item.
+ipcMain.handle("vault:search", async (_e, query: string) => {
+  const vault = device?.vaultClient;
+  if (!vault) throw new Error("the vault is not running");
+  return vault.search(String(query ?? ""));
+});
+
 // One item to fill an edit form with — never a secret value; those are asked
 // for one at a time, below.
 ipcMain.handle("vault:item", async (_e, itemId: string) => {
