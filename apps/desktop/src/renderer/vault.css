@@ -19,9 +19,23 @@
     padding-bottom: 20px; margin-bottom: 22px; border-bottom: 1px solid var(--border);
   }
 .vaultui .masthead h1 { margin: 6px 0 6px; font-size: 17px; font-weight: 600; }
-.vaultui .list-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 15px; }
-.vaultui .list-head .lt { font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); }
-.vaultui .list-head .lc { font-size: 12px; color: var(--faint); }
+.vaultui .list-head { display: flex; align-items: center; gap: 12px; margin-bottom: 15px; }
+.vaultui .list-head .lt { font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); flex: 1; }
+.vaultui .list-head .lc { font-size: 12px; color: var(--faint); flex: none; white-space: nowrap; }
+/* The search box: the same box as a form field, at the label's weight. */
+.vaultui .vsearch-wrap { display: flex; align-items: center; gap: 6px; width: 220px; max-width: 50%; flex: none;
+    border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--bg);
+    padding: 0 8px; color: var(--muted); transition: border-color .14s; }
+.vaultui .vsearch-wrap:focus-within { border-color: var(--focus); }
+.vaultui .vsearch-wrap svg { width: 13px; height: 13px; flex: none; }
+.vaultui .vsearch { flex: 1; min-width: 0; background: none; border: 0; outline: none; color: var(--fg);
+    font: inherit; font-size: 12px; padding: 6px 0; line-height: 1.4; -webkit-appearance: none; appearance: none; }
+.vaultui .vsearch::placeholder { color: var(--faint); }
+.vaultui .vsearch::-webkit-search-cancel-button { -webkit-appearance: none; appearance: none; width: 12px; height: 12px; cursor: pointer;
+    background: currentColor; color: var(--muted);
+    -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.5' stroke-linecap='round'%3E%3Cpath d='M18 6L6 18M6 6l12 12'/%3E%3C/svg%3E") center / contain no-repeat;
+    mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2.5' stroke-linecap='round'%3E%3Cpath d='M18 6L6 18M6 6l12 12'/%3E%3C/svg%3E") center / contain no-repeat; }
+.vaultui .vitem[hidden], .vaultui .vnone[hidden] { display: none; }
 .vaultui .vlist { display: flex; flex-direction: column; gap: 11px; }
 .vaultui .vitem { border: 1px solid var(--border); border-radius: 13px; background: var(--card); overflow: hidden; transition: border-color .16s, background .16s; }
 .vaultui .vitem:hover { border-color: var(--border-strong); }

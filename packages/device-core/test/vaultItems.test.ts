@@ -48,13 +48,17 @@ describe("a login", () => {
     });
   });
 
-  it("keeps its secrets out of the item and the listing", () => {
-    const both = JSON.stringify([
-      decryptItem({ ...cipher, id: "x" }, account),
-      decryptSummary({ ...cipher, id: "x" }, account),
-    ]);
-    expect(both).not.toContain("hunter2");
-    expect(both).not.toContain("JBSWY3DPEHPK3PXP");
+  it("keeps its secrets out of the item, and lists them only as secrets", () => {
+    // The form is filled from the item and never sees a secret; the listing
+    // carries them, apart, so the tab can search on one — never in the fields
+    // a row draws from.
+    const item = JSON.stringify(decryptItem({ ...cipher, id: "x" }, account));
+    expect(item).not.toContain("hunter2");
+    expect(item).not.toContain("JBSWY3DPEHPK3PXP");
+    const summary = decryptSummary({ ...cipher, id: "x" }, account);
+    expect(summary.secrets).toEqual({ password: "hunter2", totp: "JBSWY3DPEHPK3PXP" });
+    const { secrets: _, ...drawn } = summary;
+    expect(JSON.stringify(drawn)).not.toContain("hunter2");
   });
 
   it("hands one over when it is asked for by name", () => {
@@ -216,6 +220,9 @@ describe("an item this app cannot hold", () => {
       type: "unsupported",
       subtitle: "",
       urls: [],
+      fields: {},
+      notes: "",
+      secrets: {},
     });
   });
 });
@@ -250,6 +257,34 @@ describe("the other three types", () => {
     expect(item.secrets).toEqual(["number", "code"]);
     expect(decryptField(cipher, account, "number")).toBe("371449635398431");
     expect(decryptSummary({ ...cipher, id: "c" }, account).subtitle).toBe("amex · 04/2030");
+  });
+
+  it("lists every field in the clear, secrets included, so the tab can search them", () => {
+    // The tab searches the listing, and the owner wants a password to be
+    // searchable too. Secrets ride separately from the shown fields — the
+    // form still nulls them and asks for one at a time — and a secret that is
+    // not set is absent rather than "".
+    const cipher = encryptCipher(
+      { type: "card", name: "Amex", cardholderName: "Daniel Delattre", brand: "amex", number: "371449635398431", notes: "the travel one" },
+      null,
+      account,
+    );
+    const summary = decryptSummary({ ...cipher, id: "c" }, account);
+    expect(summary.fields).toEqual({ cardholderName: "Daniel Delattre", brand: "amex", expMonth: "", expYear: "" });
+    expect(summary.notes).toBe("the travel one");
+    expect(summary.secrets).toEqual({ number: "371449635398431" });
+  });
+
+  it("keeps the secrets of an item that asks for the owner out of the listing", () => {
+    // A search hit is an oracle — type a guess, see whether the row stays —
+    // so an item that demands proof of presence before a reveal must demand
+    // it before a match too. The listing carries no secret for it; the form
+    // still reaches them through the gate.
+    const cipher = { ...encryptCipher({ type: "login", name: "Bank", username: "me", password: "hunter2", urls: ["https://bank.example"] }, null, account), id: "b", reprompt: 1 };
+    const summary = decryptSummary(cipher, account);
+    expect(summary.fields).toEqual({ username: "me" });
+    expect(summary.secrets).toEqual({});
+    expect(JSON.stringify(summary)).not.toContain("hunter2");
   });
 
   it("keeps an identity's SSN back", () => {

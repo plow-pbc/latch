@@ -47,9 +47,13 @@ describe("LocalVault", () => {
 
     const items = await vault.list();
     expect(items.map((i) => i.type).sort()).toEqual(["card", "identity", "login", "note"]);
-    // The listing carries context, never secrets.
-    expect(JSON.stringify(items)).not.toContain("hunter2");
-    expect(JSON.stringify(items)).not.toContain("4111111111111111");
+    // The listing carries context, and the secrets kept apart for the tab's
+    // search — never a secret in what a row draws from.
+    for (const item of items) {
+      const { secrets: _, ...drawn } = item;
+      expect(JSON.stringify(drawn)).not.toMatch(/hunter2|4111111111111111|078-05-1120/);
+    }
+    expect(items.find((i) => i.type === "login")?.secrets).toEqual({ password: "hunter2", totp: "JBSWY3DPEHPK3PXP" });
 
     // What is on disk is ciphertext. Only tokens too long to appear by chance
     // inside base64 are scanned for — a 3-digit CVV shows up in ciphertext by

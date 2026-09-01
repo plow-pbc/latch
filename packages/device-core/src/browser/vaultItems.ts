@@ -88,6 +88,18 @@ export interface VaultItemSummary {
   /** One line of context: the username, or the card's brand, or the name on an identity. */
   subtitle: string;
   urls: string[];
+  /** Every field of the type that is not a secret, in the clear, so the tab
+   * can search an item by anything it holds. */
+  fields: Record<string, string>;
+  notes: string;
+  /** The type's secret fields, in the clear, so a search can match on a
+   * password too — the owner asked for that. They go to the owner's own
+   * screen for MATCHING and are never drawn there; the form still asks for
+   * one at a time through `reveal`, which is what writes the audit line.
+   * EMPTY for an item marked `reprompt`: that item demands proof of presence
+   * before a value is shown, and a search hit is an oracle for the value
+   * (type a guess, see the row) — the gate has to hold for a listing too. */
+  secrets: Record<string, string>;
 }
 
 export interface VaultItem {
@@ -194,13 +206,18 @@ export function decryptSummary(cipher: Cipher, account: VaultKey): VaultItemSumm
       type: "unsupported",
       subtitle: "",
       urls: [],
+      fields: {},
+      notes: dec(cipher.notes, key),
+      secrets: {},
     };
   }
   const type = typeOf(cipher);
   const raw = body(cipher);
   const shown: Record<string, string> = {};
+  const secrets: Record<string, string> = {};
   for (const field of KEYS_FOR[type] ?? []) {
     if (!(SECRET_KEYS[type] ?? []).includes(field)) shown[field] = dec(raw[field], key);
+    else if (!cipher.reprompt && raw[field]) secrets[field] = dec(raw[field], key);
   }
   return {
     id: String(cipher.id ?? ""),
@@ -208,6 +225,9 @@ export function decryptSummary(cipher: Cipher, account: VaultKey): VaultItemSumm
     type: TYPE_NAME[type],
     subtitle: subtitleOf(type, shown),
     urls: urlsOf(cipher, key),
+    fields: shown,
+    notes: dec(cipher.notes, key),
+    secrets,
   };
 }
 

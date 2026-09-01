@@ -4,6 +4,7 @@ import { el, icon } from "./dom.js";
 // busy lock and the toast: the sheet is handed them as callbacks (the `host`
 // argument below) and never imports back into here.
 import { vimportSheet } from "./vaultImport.js";
+import { vaultMatches } from "./vaultSearch.js";
 
 /* The Vault tab, built to the design file (vault.html).
    Its own pane, its own file: this screen keeps being redesigned, and it has
@@ -787,6 +788,12 @@ const PTYPE_BLURB = {
   note: "Freeform private text",
 };
 
+/* What the search box holds. Module-level, because a save or delete redraws
+   the whole pane: the list the owner had narrowed down should still be
+   narrowed down when their item comes back into it. It is never hidden —
+   the box shows it — so nothing filters the list silently. */
+let vquery = "";
+
 export async function renderVault(view, isCurrent = () => true) {
   /** Redraw this same pane — what every action hands to its callers. */
   const renderVaultIn = () => renderVault(view, isCurrent);
@@ -874,22 +881,61 @@ export async function renderVault(view, isCurrent = () => true) {
   masthead.appendChild(el("div", { class: "mast-acts" }, [importBtn, newBtn]));
 
   const list = el("div", { class: "vlist" });
+  const count = el("span", { class: "lc" });
+  const head = [el("span", { class: "lt", text: "Saved items" })];
   if (failure) {
     list.replaceChildren(el("div", { class: "empty", text: "Could not read the vault: " + failure }));
   } else if (items.length === 0) {
     list.replaceChildren(el("div", { class: "empty", text: "Nothing saved yet." }));
   } else {
-    list.replaceChildren(...items.map((i) => vitem(i, renderVaultIn)));
+    // Every row is built once; the search only hides. A row that is hidden
+    // is not torn down — an open form under it keeps its edits, and comes back
+    // as it was when the query lets it. The matching is in vaultSearch.js,
+    // over everything the listing carries: the title, the context line, every
+    // URL, every field (secrets too, except an item's that asks for the owner
+    // first), the notes, and the type's name. Nothing matched is drawn.
+    const rows = items.map((summary) => ({ summary, node: vitem(summary, renderVaultIn) }));
+    const none = el("div", { class: "empty vnone" });
+    list.replaceChildren(...rows.map((r) => r.node), none);
+    const search = el("input", { class: "vsearch", attrs: {
+      type: "search", placeholder: "Search", "aria-label": "Search saved items",
+      autocomplete: "off", autocorrect: "off", autocapitalize: "off", spellcheck: "false",
+    } });
+    search.value = vquery;
+    const apply = () => {
+      vquery = search.value;
+      const q = vquery.trim();
+      let shown = 0;
+      for (const { summary, node } of rows) {
+        const keep = vaultMatches(summary, q, (VAULT_TYPES[summary.type] || {}).label || "");
+        node.hidden = !keep;
+        if (keep) shown += 1;
+      }
+      none.hidden = shown > 0;
+      none.textContent = `Nothing matches “${q}”.`;
+      count.textContent = q
+        ? `${shown} of ${items.length}`
+        : `${items.length} item${items.length === 1 ? "" : "s"}`;
+    };
+    search.addEventListener("input", apply);
+    search.addEventListener("keydown", (e) => {
+      // Escape clears the box before it does anything else; an empty box
+      // leaves it alone so the key still means what it usually does.
+      if (e.key === "Escape" && search.value !== "") {
+        e.preventDefault();
+        search.value = "";
+        apply();
+      }
+    });
+    apply();
+    head.push(el("span", { class: "vsearch-wrap" }, [icon("search", { class: "vico", strokeWidth: "2" }), search]));
   }
+  head.push(count);
 
-  const count = failure ? "" : `${items.length} item${items.length === 1 ? "" : "s"}`;
   pane.replaceChildren(
     masthead,
     el("div", { class: "col" }, [
-      el("div", { class: "list-head" }, [
-        el("span", { class: "lt", text: "Saved items" }),
-        el("span", { class: "lc", text: count }),
-      ]),
+      el("div", { class: "list-head" }, head),
       list,
     ]),
     el("div", { class: "toast" }),
