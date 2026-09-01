@@ -1246,8 +1246,8 @@ describe("CloudAgentState self-hosted target", () => {
     });
     withHost(home);
     await state.refresh();
-    expect(state.state().cloudAgents.map((row) => row.agentId).sort())
-      .toEqual(["agent_cloud", "agent_local"]);
+    expect(state.state().cloudAgents.map((row) => row.targetId).sort())
+      .toEqual([LOCAL_TARGET_ID, BUILTIN_TARGET_ID].sort());
 
     // The box went to sleep. Plow is fine.
     const { state: after, home: afterHome } = build({
@@ -1259,7 +1259,7 @@ describe("CloudAgentState self-hosted target", () => {
     withHost(afterHome);
     await after.refresh();
 
-    expect(after.state().cloudAgents.map((row) => row.agentId)).toEqual(["agent_cloud"]);
+    expect(after.state().cloudAgents.map((row) => row.targetId)).toEqual([BUILTIN_TARGET_ID]);
     expect(after.state().cloudAgentsError).toBe(`${HOST}: Couldn't reach Plow at ${HOST}.`);
   });
 
@@ -1283,7 +1283,7 @@ describe("CloudAgentState self-hosted target", () => {
 
     // BOTH survive the merge: neither overwrites the other.
     expect(state.state().cloudAgents.map((row) => `${row.targetId}:${row.name}`).sort())
-      .toEqual(["local:Local", "plow:Cloud"]);
+      .toEqual(["local:Local agent", "plow:Cloud"]);
 
     calls.length = 0;
     await state.remove(rowKey(targetId, collision));
@@ -1373,7 +1373,7 @@ describe("CloudAgentState self-hosted target", () => {
     // Same machine, new token: the agents on screen are still that machine's.
     expect(loadSettings(home).agentTarget)
       .toEqual({ baseUrl: HOST, bearer: "rotated-token" });
-    expect(state.state().cloudAgents.map((row) => row.agentId)).toEqual(["agent_local"]);
+    expect(state.state().cloudAgents.map((row) => row.targetId)).toEqual([LOCAL_TARGET_ID]);
   });
 
   it("pointing at a different box drops the old box's rows", async () => {
@@ -1391,7 +1391,7 @@ describe("CloudAgentState self-hosted target", () => {
     // `agent_local` is an id on a machine we are no longer pointed at, and
     // agent-mgr ids are NAMES — reconciling it against a different box could
     // put someone else's "demo" under it.
-    expect(state.state().cloudAgents.map((row) => row.agentId)).toEqual(["agent_cloud"]);
+    expect(state.state().cloudAgents.map((row) => row.targetId)).toEqual([BUILTIN_TARGET_ID]);
   });
 
   it("drops a roster read that lands after the host was replaced", async () => {
@@ -1449,6 +1449,37 @@ describe("CloudAgentState self-hosted target", () => {
     expect(state.state().cloudActionError).toBe(null);
   });
 
+  it("projects a self-hosted row from local facts, never the host's strings", async () => {
+    // The host is an origin the owner typed in, so every string it returns is
+    // attacker-controllable in the case that matters: `base64(bearer)` as the
+    // NAME walks past the literal credential scan and into the DOM.
+    const encoded = Buffer.from("serve-token-abc").toString("base64");
+    const { state, home } = build({
+      listAgentsFor: async (host) =>
+        host === BUILTIN_TARGET_ID ? [] : [agent({
+          agentId: encoded,
+          name: encoded,
+          createdAt: "2026-01-01T00:00:00.000Z",
+          status: `weird-${encoded}`,
+        })],
+    });
+    withHost(home);
+    await state.refresh();
+
+    const row = state.state().cloudAgents[0];
+    const rendered = JSON.stringify(row);
+    expect(rendered).not.toContain(encoded);
+    expect(rendered).not.toContain("serve-token-abc");
+    // Local facts only: no host id, no host date, an allowlisted status, and a
+    // name this Mac chose.
+    expect(row.agentId).toBe("");
+    expect(row.createdAt).toBe("");
+    expect(row.status).toBe("failed");
+    expect(row.name).toBe("Local agent");
+    // The handle still addresses it.
+    expect(row.rowKey).toMatch(/^r\d+$/);
+  });
+
   it("forgetting the host drops its rows without deleting its agents", async () => {
     const { state, calls, home } = build({
       listAgentsFor: async (targetId) =>
@@ -1462,7 +1493,7 @@ describe("CloudAgentState self-hosted target", () => {
 
     state.forgetTarget();
 
-    expect(state.state().cloudAgents.map((row) => row.agentId)).toEqual(["agent_cloud"]);
+    expect(state.state().cloudAgents.map((row) => row.targetId)).toEqual([BUILTIN_TARGET_ID]);
     expect(state.state().cloudTargets).toHaveLength(1);
     expect(calls.some((call) => call.startsWith("delete@"))).toBe(false);
   });

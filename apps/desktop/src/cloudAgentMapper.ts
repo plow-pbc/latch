@@ -124,7 +124,14 @@ export interface CloudAgentDisplayRow {
   createdAt: string;
 }
 
+/** Statuses the screen knows how to render. A self-host writes this field, so
+ * anything else becomes `failed` rather than reaching the DOM verbatim. */
+const KNOWN_STATUSES = new Set(["provisioning", "running", "failed", "teardown"]);
+
 export interface CloudAgentDisplayContext {
+  /** The name the OWNER typed when creating this agent, for a self-hosted row
+   * whose host-echoed name is not trusted. */
+  localName?: string;
   /** The host this agent was listed from. Defaults to the built-in Plow. */
   targetId?: string;
   /** The renderer-facing handle main minted for this row. */
@@ -163,6 +170,35 @@ export function toCloudAgentDisplayRow(
       : null;
   const line = context.line ?? null;
   const targetId = context.targetId ?? BUILTIN_TARGET_ID;
+  // A SELF-HOSTED row is projected from local facts only.
+  //
+  // Its host is an origin the owner typed in, and every string it returns is
+  // therefore attacker-controllable in the case that matters: a host echoing
+  // `base64(bearer)` as the agent's NAME walks past `echoesCredential`'s
+  // literal/prefix check and lands a reversible credential in the DOM. The
+  // handle already keeps host bytes out of the routing identity; this keeps
+  // them out of the display too. Plow is not treated this way — it is the
+  // build's own origin, not one someone typed.
+  const selfHosted = targetId !== BUILTIN_TARGET_ID;
+  if (selfHosted) {
+    return {
+      rowKey: context.rowKey ?? ("r0" as RowHandle),
+      // The renderer addresses rows by handle, so it never needs the id.
+      agentId: "",
+      targetId,
+      name: context.localName?.trim() || "Local agent",
+      line: context.line === null || context.line === undefined
+        ? null
+        : { uid: context.line.uid, label: context.line.label },
+      canMessage: context.canMessage === true,
+      canRetry: context.canRetry === true,
+      threads: (context.threads ?? []).map((thread) => ({ ...thread })),
+      status: KNOWN_STATUSES.has(agent.status) ? agent.status : "failed",
+      // A host-authored date string is prose; the row simply does not date it.
+      failureReason: failureReason === null ? null : failureReason,
+      createdAt: "",
+    };
+  }
   return {
     // Minted by main; contains nothing the host wrote, so nothing to scrub.
     rowKey: context.rowKey ?? ("r0" as RowHandle),

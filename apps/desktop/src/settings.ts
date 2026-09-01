@@ -313,7 +313,15 @@ export function loadSettings(home: string): Settings {
   // sealed on the first read that can — the same one-off shape the retired-key
   // scrub uses, and for the same reason: waiting for some unrelated write
   // leaves the plaintext on disk for as long as nobody changes a setting.
-  const needsSealing = !sealed && loaded.relayCredential.trim() !== "" && activeCodec() !== null;
+  // The host bearer counts too. `seal()` returns "" on a transient keychain
+  // failure and the caller falls back to plaintext — for the relay credential
+  // this line repairs that on the next readable load, and the bearer needs the
+  // same repair or it stays in the clear indefinitely.
+  const bearerInClear = (loaded.agentTarget?.bearer ?? "").trim() !== "" &&
+    typeof (parsed as { agentTarget?: { bearer?: unknown } })?.agentTarget?.bearer === "string" &&
+    ((parsed as { agentTarget?: { bearer?: string } }).agentTarget!.bearer ?? "").trim() !== "";
+  const needsSealing = activeCodec() !== null &&
+    ((!sealed && loaded.relayCredential.trim() !== "") || bearerInClear);
   if (retired || needsSealing || unreadableSeal) saveSettings(home, loaded);
   return loaded;
 }

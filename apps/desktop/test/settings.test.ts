@@ -457,3 +457,34 @@ describe("the self-hosted agent host", () => {
     expect(loadSettings(home).agentTarget).toBe(null);
   });
 });
+
+describe("a bearer written in the clear is resealed", () => {
+  afterEach(() => useCredentialCodec(null));
+
+  const fileOfHome = (home: string) =>
+    JSON.parse(fs.readFileSync(path.join(home, "app/settings.json"), "utf8")) as Record<string, unknown>;
+
+  it("reseals on the next load that can, even with no relay credential", () => {
+    // `seal()` answers "" when the keychain blinks, and the caller falls back
+    // to plaintext inside the 0600 file. The relay credential was repaired on
+    // the next readable load; the host bearer was not, so it stayed in the
+    // clear indefinitely.
+    const home = tempHome();
+    saveSettings(home, {
+      ...loadSettings(home),
+      relayCredential: "",
+      agentTarget: { baseUrl: "http://192.168.15.12:8765", bearer: "serve_token_xyz" },
+    });
+    expect((fileOfHome(home).agentTarget as Record<string, unknown>).bearer)
+      .toBe("serve_token_xyz");
+
+    useCredentialCodec(fakeCodec());
+    expect(loadSettings(home).agentTarget?.bearer).toBe("serve_token_xyz");
+
+    const stored = fileOfHome(home).agentTarget as Record<string, unknown>;
+    expect(stored.bearer).toBe("");
+    expect(stored.bearerEnc).toBe(`sealed:${Buffer.from("serve_token_xyz").toString("base64")}`);
+    expect(fs.readFileSync(path.join(home, "app/settings.json"), "utf8"))
+      .not.toContain("serve_token_xyz");
+  });
+});

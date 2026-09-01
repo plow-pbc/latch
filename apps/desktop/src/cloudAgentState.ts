@@ -1133,7 +1133,12 @@ export class CloudAgentState {
         if (provider) {
           this.retainedCreates.set(key, {
             lineUid: lineUid ?? retained?.lineUid ?? null,
-            name: agent.name ?? retained?.name ?? "",
+            // A self-hosted host's echo of the name is host-authored text and
+            // must not overwrite what the owner typed — the display projection
+            // reads this field precisely to avoid trusting that echo.
+            name: target.id === BUILTIN_TARGET_ID
+              ? agent.name ?? retained?.name ?? ""
+              : retained?.name ?? "",
             provider,
             targetId: target.id,
           });
@@ -1230,6 +1235,9 @@ export class CloudAgentState {
     const retained = this.retainedCreates.get(key);
     return toCloudAgentDisplayRow(displayAgent, {
       rowKey: this.handles.handleFor(key),
+      // What the OWNER typed, for a self-hosted row: the mapper will not trust
+      // the host's echo of it.
+      localName: retained?.name || fallbackName,
       targetId: target.id,
       line: details.line,
       canMessage: details.canMessage,
