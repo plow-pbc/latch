@@ -359,6 +359,18 @@ describe.skipIf(!havePython())("latch-smoke reads the log where it lives", () =>
     expect(call({ call: "read", path: path.join(dir, "absent.ndjson"), home: dir })).toEqual({ count: 0, problem: "" });
   });
 
+  // `AuditLog` rolls over by rename, so this call's own `intent_received` can
+  // be in the previous generation by the next poll. Both are one log.
+  it("reads the rotated generation ahead of the current one", () => {
+    const current = path.join(dir, "rolled.ndjson");
+    fs.writeFileSync(path.join(dir, "rolled.1.ndjson"), `{"event":"intent_received"}\n`);
+    fs.writeFileSync(current, `{"event":"exec_end"}\n`);
+    expect(call({ call: "read", path: current, home: dir })).toEqual({ count: 2, problem: "" });
+    // The previous generation alone is still a log, not a fresh install.
+    fs.rmSync(current);
+    expect(call({ call: "read", path: current, home: dir })).toEqual({ count: 1, problem: "" });
+  });
+
   // Root bypasses the permission bits, so this row inverts rather than failing
   // honestly — a red test meaning "cannot run here", on the row that guards
   // the refusal path.
@@ -396,19 +408,24 @@ describe.skipIf(!havePython())("latch-smoke reads the log where it lives", () =>
   // derivation — and is checked FIRST, at exit 4, because a missing log
   // (exit 3) is normal on a fresh install and collapsing the two makes a wrong
   // --home silent.
+  // Both generations are read, previous first, and each `cat` that fails is
+  // still a failed read (exit 1), not a silent partial.
+  const both = (previous: string, current: string) =>
+    `elif [ -e ${current} ] || [ -e ${previous} ]; then for f in ${previous} ${current}; do ` +
+    `if [ -e "$f" ]; then cat -- "$f" || exit 1; fi; done; else exit 3; fi`;
   const cases: [string, [string, string], string][] = [
     ["~ expands on the FAR side, for both paths",
       ["~/Library/Application Support/Plow-Latch/device/audit.ndjson",
        "~/Library/Application Support/Plow-Latch"],
       `if [ ! -d "$HOME"/'Library/Application Support/Plow-Latch' ]; then exit 4; ` +
-      `elif [ -e "$HOME"/'Library/Application Support/Plow-Latch/device/audit.ndjson' ]; ` +
-      `then cat -- "$HOME"/'Library/Application Support/Plow-Latch/device/audit.ndjson'; else exit 3; fi`],
+      both(`"$HOME"/'Library/Application Support/Plow-Latch/device/audit.1.ndjson'`,
+           `"$HOME"/'Library/Application Support/Plow-Latch/device/audit.ndjson'`)],
     ["an absolute path is quoted whole", ["/Users/x/L S/audit.ndjson", "/Users/x"],
       `if [ ! -d /Users/x ]; then exit 4; ` +
-      `elif [ -e '/Users/x/L S/audit.ndjson' ]; then cat -- '/Users/x/L S/audit.ndjson'; else exit 3; fi`],
+      both(`'/Users/x/L S/audit.1.ndjson'`, `'/Users/x/L S/audit.ndjson'`)],
     ["and a hostile one stays one argument", ["/tmp/a; rm -rf ~", "/tmp/b; whoami"],
       `if [ ! -d '/tmp/b; whoami' ]; then exit 4; ` +
-      `elif [ -e '/tmp/a; rm -rf ~' ]; then cat -- '/tmp/a; rm -rf ~'; else exit 3; fi`],
+      both(`'/tmp/a; rm -rf ~.1'`, `'/tmp/a; rm -rf ~'`)],
   ];
   it.each(cases)("%s", (_name, [logPath, home], expected) => {
     expect(call({ call: "remote", path: logPath, home })).toBe(expected);

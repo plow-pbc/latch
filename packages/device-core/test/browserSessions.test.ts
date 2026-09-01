@@ -74,7 +74,6 @@ function makeCtx(serverEnv: Record<string, string> = {}): Ctx {
   const browsers = {
     command: ["node", FAKE_SERVER],
     env: { FAKE_FILL_LOG: fillLog, FAKE_CMD_LOG: cmdLog, ...serverEnv },
-    screenshotsDir: path.join(dir, "shots"),
     profileDir: path.join(dir, "profiles"),
     audit,
   };
@@ -659,7 +658,6 @@ describe("access the owner's log could not record is not granted", () => {
     const browsers = {
       command: ["node", FAKE_SERVER],
       env: {},
-      screenshotsDir: path.join(ctx.dir, "shots2"),
       audit: (event: string) => {
         if (event === "browser_stopped" && !fired) {
           fired = true;

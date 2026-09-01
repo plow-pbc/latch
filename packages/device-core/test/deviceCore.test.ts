@@ -228,6 +228,41 @@ describe("AuditLog", () => {
     expect(log.entries()).toHaveLength(0);
   });
 
+  it("rolls over by rename once the file is full, and reads both generations as one log", () => {
+    const dir = tempDir();
+    const file = path.join(dir, "audit.ndjson");
+    // A ceiling one event fits under: the second append finds the file full.
+    const log = new AuditLog(file, 40);
+    log.record("first");
+    log.record("second");
+    log.record("third");
+
+    // Two generations, whole lines each, nothing rewritten and nothing lost.
+    expect(log.previous).toBe(path.join(dir, "audit.1.ndjson"));
+    const events = (f: string) =>
+      fs
+        .readFileSync(f, "utf8")
+        .split("\n")
+        .filter((l) => l.length > 0)
+        .map((l) => (JSON.parse(l) as { event: string }).event);
+    expect(events(file)).toEqual(["third"]);
+    expect(events(log.previous)).toEqual(["second"]);
+    expect(log.entries().map((e) => (e as { event: string }).event)).toEqual(["second", "third"]);
+
+    // Clearing takes both generations with it.
+    log.clear();
+    expect(fs.existsSync(log.previous)).toBe(false);
+    expect(log.entries()).toHaveLength(0);
+  });
+
+  it("never rotates a log that has not reached its ceiling", () => {
+    const dir = tempDir();
+    const log = new AuditLog(path.join(dir, "audit.ndjson"));
+    for (let i = 0; i < 50; i++) log.record("e", { i });
+    expect(fs.existsSync(log.previous)).toBe(false);
+    expect(log.entries()).toHaveLength(50);
+  });
+
   it('emits "recorded" with the entry itself, under the same never-fail contract', () => {
     const log = new AuditLog(path.join(tempDir(), "audit.ndjson"));
     const seen: unknown[] = [];

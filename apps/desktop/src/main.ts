@@ -1568,6 +1568,14 @@ app.whenReady().then(async () => {
   // not only in the approvals directory.
   approvals.onAbandoned = (record) =>
     device?.audit.record("approval_abandoned", { intentId: record.intentId });
+  // And one that WAS answered, by a process that died before writing the
+  // answer down: the same line DeviceAgent would have written, now.
+  approvals.onUnrecorded = (record) =>
+    device?.audit.record("intent_decision", {
+      intentId: record.intentId,
+      decision: record.decision ?? "deny",
+      source: record.source ?? "prompt",
+    });
   // An item the vault marked "ask again" is not opened on the strength of the
   // app being unlocked. There is no master password to ask for here — the vault
   // account is a random string this app generated — so the Mac asks who is at

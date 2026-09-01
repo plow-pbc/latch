@@ -783,7 +783,6 @@ export const TOOLS: ToolSpec[] = [
           const mimeType = r.get("mime").str ?? "image/jpeg";
           delete out.data_b64;
           delete out.mime;
-          delete out.path;
           return {
             __mcpContent: [
               { type: "image", data: imageB64, mimeType },

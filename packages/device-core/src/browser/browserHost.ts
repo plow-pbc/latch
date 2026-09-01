@@ -9,7 +9,6 @@
  * process group — Camoufox leaves Firefox grandchildren behind otherwise.
  */
 import { spawn, type ChildProcess } from "node:child_process";
-import fs from "node:fs";
 import readline from "node:readline";
 import { JSONValue, jv } from "@domo/protocol";
 
@@ -32,7 +31,6 @@ export interface BrowserHostConfig {
   /** Argv for the server ([node, server.js], or a fake in tests). */
   command: string[];
   env?: Record<string, string>;
-  screenshotsDir: string;
   profileDir?: string;
   /** The user's own browser profile. Every session opens on a clone of it, so
    * every browser is signed in wherever they are, and merges what it signed
@@ -211,12 +209,9 @@ export class BrowserHost {
   }
 
   private start(): Promise<void> {
-    fs.mkdirSync(this.cfg.screenshotsDir, { recursive: true });
     const extraEnv: Record<string, string> = { ...this.cfg.env };
     const argv = [
       ...this.cfg.command,
-      "--screenshots-dir",
-      this.cfg.screenshotsDir,
       ...(this.cfg.executablePath ? ["--executable", this.cfg.executablePath] : []),
       ...(this.cfg.profileDir ? ["--profile-dir", this.cfg.profileDir] : []),
       ...(this.headedNow ? ["--headed"] : []),

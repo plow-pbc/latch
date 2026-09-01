@@ -149,7 +149,6 @@ function makeCtx(
   const browsers = {
     command: [process.execPath, FAKE_SERVER],
     headed: false,
-    screenshotsDir: path.join(dir, "shots"),
     env: { FAKE_CMD_LOG: cmdLog, ...serverEnv },
     audit: () => {},
   };

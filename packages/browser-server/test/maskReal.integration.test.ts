@@ -71,7 +71,6 @@ describe.skipIf(!HAVE_BROWSER)("page scripts against a real Camoufox", () => {
     await browser.page.goto("data:text/html,<input id=pw type=text value=''>");
     const r = (await session.handle(
       { action: "fill", selector: "#pw", value: "hunter2", mask: true, frame: 0 },
-      "/tmp",
     )) as any;
 
     expect(r.ok).toBe(true);
@@ -83,7 +82,7 @@ describe.skipIf(!HAVE_BROWSER)("page scripts against a real Camoufox", () => {
   }, 60_000);
 
   it("reports the masked field to `forms` with its value hidden", async () => {
-    const forms = (await session.handle({ action: "forms" }, "/tmp")) as any;
+    const forms = (await session.handle({ action: "forms" })) as any;
     const f = (forms.forms as any[]).find((x) => x.id === "pw");
     expect(f).toBeDefined();
     expect(f.secret).toBe(true);
@@ -92,7 +91,7 @@ describe.skipIf(!HAVE_BROWSER)("page scripts against a real Camoufox", () => {
   }, 30_000);
 
   it("re-masks and returns a screenshot rather than exposing the field", async () => {
-    const shot = (await session.handle({ action: "screenshot" }, "/tmp")) as any;
+    const shot = (await session.handle({ action: "screenshot" })) as any;
     expect(typeof shot.data_b64).toBe("string");
     expect(shot.data_b64.length).toBeGreaterThan(0);
   }, 30_000);

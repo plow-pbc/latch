@@ -390,7 +390,6 @@ export class BrowserSessions {
     if (this.browser.profileDir) this.seedProfile(path.join(this.browser.profileDir, profile));
     return new BrowserHost({
       ...this.browser,
-      screenshotsDir: path.join(this.browser.screenshotsDir, profile),
       ...(this.browser.profileDir ? { profileDir: path.join(this.browser.profileDir, profile) } : {}),
     });
   }

@@ -302,7 +302,7 @@ export async function run(cmd: Record<string, Any>, o: RunOpts = {}): Promise<Pr
     asked_len: 0,
   };
   try {
-    const result = await session.handle({ ...cmd } as Record<string, never>, "/tmp");
+    const result = await session.handle({ ...cmd } as Record<string, never>);
     const keep: Record<string, Any> = {};
     for (const k of ["ok", "mask", "frame", "frame_url", "frame_token", "cap", "altered"]) {
       if (k in result) keep[k] = (result as Record<string, Any>)[k];
@@ -355,7 +355,6 @@ export async function twoFrames(): Promise<{
   try {
     result = (await session.handle(
       { action: "fill", selector: "#pass", value: "hunter2", mask: true },
-      "/tmp",
     )) as Record<string, Any>;
   } catch (exc) {
     const name = (exc as Error).name;
@@ -387,7 +386,7 @@ export async function ranked(
   const session = new Session(new Page(new Frame(trace, { nodes: {} }), siblings));
   let error: string | null = null;
   try {
-    await session.handle({ action: "fill", selector: "#pass", value: "x" }, "/tmp");
+    await session.handle({ action: "fill", selector: "#pass", value: "x" });
   } catch (exc) {
     const name = (exc as Error).name;
     error = name === "Error" ? "RuntimeError" : name;
@@ -450,7 +449,7 @@ export async function ledger(script: LedgerStep[]): Promise<{
     } else {
       let keep: Record<string, Any> | null;
       try {
-        const result = await session.handle({ ...step.cmd } as Record<string, never>, "/tmp");
+        const result = await session.handle({ ...step.cmd } as Record<string, never>);
         keep = {};
         for (const k of ["ok", "mask"]) if (k in result) keep[k] = (result as Record<string, Any>)[k];
       } catch (exc) {
