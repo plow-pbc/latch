@@ -124,10 +124,6 @@ export interface CloudAgentDisplayRow {
   createdAt: string;
 }
 
-/** Statuses the screen knows how to render. A self-host writes this field, so
- * anything else becomes `failed` rather than reaching the DOM verbatim. */
-const KNOWN_STATUSES = new Set(["provisioning", "running", "failed", "teardown"]);
-
 export interface CloudAgentDisplayContext {
   /** The name the OWNER typed when creating this agent, for a self-hosted row
    * whose host-echoed name is not trusted. */
@@ -193,7 +189,8 @@ export function toCloudAgentDisplayRow(
       canMessage: context.canMessage === true,
       canRetry: context.canRetry === true,
       threads: (context.threads ?? []).map((thread) => ({ ...thread })),
-      status: KNOWN_STATUSES.has(agent.status) ? agent.status : "failed",
+      // Already allowlisted at the response boundary; one owner for that policy.
+      status: agent.status,
       // A host-authored date string is prose; the row simply does not date it.
       failureReason: failureReason === null ? null : failureReason,
       createdAt: "",

@@ -24,6 +24,14 @@ export type CloudAgentStatus =
  */
 export interface CloudAgentResource {
   agentId: string;
+  /**
+   * The line this agent serves, when the host names it directly.
+   *
+   * Agents became line-scoped in #241, so a response may carry only this and
+   * no chats. A JOIN KEY, like `chatUids`: it is matched against Plow's own
+   * line list, so a value that names nothing resolves to nothing.
+   */
+  lineUid: string | null;
   /** The first entry is the home chat used to resolve this agent's line. */
   chatUids: string[];
   url: string | null;
@@ -298,6 +306,9 @@ const KNOWN_STATUSES = new Set(["provisioning", "running", "failed", "teardown"]
 function sanitizeSelfHosted(resource: CloudAgentResource): CloudAgentResource {
   return {
     agentId: resource.agentId,
+    // A join key against Plow's own line list, so an unmatched value resolves
+    // to nothing — and dropping it stranded the agent's line entirely.
+    lineUid: resource.lineUid,
     chatUids: resource.chatUids,
     url: null,
     provider: resource.provider === SELF_HOSTED_PROVIDER ? SELF_HOSTED_PROVIDER : null,
@@ -342,6 +353,7 @@ function parseResource(
     typeof value === "string" ? value : null;
   const resource: CloudAgentResource = {
     agentId: decoded.agent_id,
+    lineUid: optionalString(decoded.line_uid),
     chatUids,
     url: optionalString(decoded.url),
     provider: optionalString(decoded.provider),

@@ -124,6 +124,8 @@ function build(options: {
     target?: AgentTarget,
   ) => Promise<CloudAgentResource>;
   listAgentsFor?: (targetId: string) => Promise<CloudAgentResource[]>;
+  /** Reuse an existing home, to stand in for a relaunch over the same state. */
+  home?: string;
   listChats?: () => Promise<CloudChatOption[]>;
   listLines?: () => Promise<CloudLineOption[]>;
   createActivation?: () => Promise<Activation>;
@@ -168,7 +170,7 @@ function build(options: {
       return receipt;
     },
   };
-  const home = tempHome();
+  const home = options.home ?? tempHome();
   const state = new CloudAgentState({
     home,
     baseUrl: BASE_URL,
@@ -1449,35 +1451,60 @@ describe("CloudAgentState self-hosted target", () => {
     expect(state.state().cloudActionError).toBe(null);
   });
 
-  it("projects a self-hosted row from local facts, never the host's strings", async () => {
-    // The host is an origin the owner typed in, so every string it returns is
-    // attacker-controllable in the case that matters: `base64(bearer)` as the
-    // NAME walks past the literal credential scan and into the DOM.
-    const encoded = Buffer.from("serve-token-abc").toString("base64");
+  it("projects a self-hosted row from local facts", async () => {
+    // Resources reach this layer ALREADY neutralised — `parseResource` owns
+    // that, and `cloudAgents.test.ts` proves it field by field. What this
+    // asserts is the display half: given a sanitised resource, the row still
+    // shows a name this Mac chose rather than an empty one.
     const { state, home } = build({
       listAgentsFor: async (host) =>
         host === BUILTIN_TARGET_ID ? [] : [agent({
-          agentId: encoded,
-          name: encoded,
-          createdAt: "2026-01-01T00:00:00.000Z",
-          status: `weird-${encoded}`,
+          agentId: "demo",
+          name: null,
+          createdAt: null,
+          status: "failed",
         })],
     });
     withHost(home);
     await state.refresh();
 
     const row = state.state().cloudAgents[0];
-    const rendered = JSON.stringify(row);
-    expect(rendered).not.toContain(encoded);
-    expect(rendered).not.toContain("serve-token-abc");
-    // Local facts only: no host id, no host date, an allowlisted status, and a
-    // name this Mac chose.
     expect(row.agentId).toBe("");
     expect(row.createdAt).toBe("");
-    expect(row.status).toBe("failed");
     expect(row.name).toBe("Local agent");
-    // The handle still addresses it.
     expect(row.rowKey).toMatch(/^r\d+$/);
+  });
+
+  it("remembers the owner's name for a self-hosted agent across a relaunch", async () => {
+    const listed = async (host: string) =>
+      host === BUILTIN_TARGET_ID ? [] : [agent({ agentId: "demo", name: null, status: "running" })];
+    const { state, home } = build({
+      listAgentsFor: listed,
+      createAgent: async (request) =>
+        agent({ agentId: "demo", name: request.name, status: "running" }),
+    });
+    withHost(home);
+
+    await state.create({
+      name: "Kitchen helper",
+      provider: "local:docker",
+      lineUid: "lin_willow",
+      targetId: LOCAL_TARGET_ID,
+    });
+    await vi.waitFor(() =>
+      expect(state.state().cloudAgents.some((row) => row.name === "Kitchen helper")).toBe(true));
+
+    // A NEW state over the same home: the in-process record is gone, exactly
+    // as after a relaunch. Without the persisted name every row reads
+    // "Local agent" and several agents become indistinguishable.
+    const relaunched = build({ listAgentsFor: listed, home });
+    await relaunched.state.refresh();
+
+    expect(relaunched.state.state().cloudAgents[0].name).toBe("Kitchen helper");
+    // Filed under a digest, so the host-authored id never reaches the file.
+    const raw = fs.readFileSync(path.join(home, "app/settings.json"), "utf8");
+    expect(raw).toContain("Kitchen helper");
+    expect(raw).not.toContain("demo");
   });
 
   it("does not invent a retryable self-hosted create after a relaunch", async () => {

@@ -57,6 +57,7 @@ import {
   formatNumber,
   withoutCredentialEchoes,
 } from "./chatRows.js";
+import { createHash } from "node:crypto";
 import { loadSettings, saveSettings } from "./settings.js";
 
 /**
@@ -1023,6 +1024,7 @@ export class CloudAgentState {
       this.homeChatUids.delete(key);
       this.pending.delete(key);
       this.retainedCreates.delete(key);
+      if (target.id !== BUILTIN_TARGET_ID) this.forgetLocalName(id);
       this.publish();
       return true;
     });
@@ -1225,6 +1227,7 @@ export class CloudAgentState {
     target: AgentTarget,
   ): void {
     const key = rowKey(target.id, agent.agentId);
+    if (target.id !== BUILTIN_TARGET_ID) this.rememberLocalName(agent.agentId, request.name);
     this.retainedCreates.set(key, { ...request, targetId: target.id });
     this.rows.set(key, this.rowFor(agent, target, request.name));
     this.publish();
@@ -1247,7 +1250,7 @@ export class CloudAgentState {
       rowKey: this.handles.handleFor(key),
       // What the OWNER typed, for a self-hosted row: the mapper will not trust
       // the host's echo of it.
-      localName: retained?.name || fallbackName,
+      localName: retained?.name || fallbackName || this.localName(target.id, agent.agentId),
       targetId: target.id,
       line: details.line,
       canMessage: details.canMessage,
@@ -1257,7 +1260,11 @@ export class CloudAgentState {
   }
 
   /** Resolve an agent's line through its first (home) chat. */
-  private agentLineUid(agent: Pick<CloudAgentResource, "chatUids">): string | null {
+  private agentLineUid(agent: Pick<CloudAgentResource, "chatUids" | "lineUid">): string | null {
+    // The host's own answer first: agents are line-scoped since #241, and a
+    // response may name the line with no chats at all. Falling back to the
+    // home chat keeps the older shape working.
+    if (agent.lineUid) return agent.lineUid;
     const homeChatUid = agent.chatUids[0];
     return this.chats.find((chat) => chat.uid === homeChatUid)?.lineUid ?? null;
   }
@@ -1368,6 +1375,45 @@ export class CloudAgentState {
    * NO targets at all — not even its own hosts — because an agent is created
    * against a Plow line, and without a session there are no lines to pick.
    */
+  /** The digest a self-hosted agent's owner-given name is filed under. The id
+   * is host-authored, so it is never itself written to disk. */
+  private static nameDigest(agentId: string): string {
+    return createHash("sha256").update(agentId).digest("hex");
+  }
+
+  /** Remember what the owner called a self-hosted agent, so a relaunch does
+   * not turn every row into "Local agent". */
+  private rememberLocalName(agentId: string, name: string): void {
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    const settings = loadSettings(this.deps.home);
+    const host = settings.agentTarget;
+    if (!host) return;
+    const digest = CloudAgentState.nameDigest(agentId);
+    if (host.agentNames?.[digest] === trimmed) return;
+    saveSettings(this.deps.home, {
+      ...settings,
+      agentTarget: { ...host, agentNames: { ...host.agentNames, [digest]: trimmed } },
+    });
+  }
+
+  /** Drop a remembered name when its agent goes. */
+  private forgetLocalName(agentId: string): void {
+    const settings = loadSettings(this.deps.home);
+    const host = settings.agentTarget;
+    const digest = CloudAgentState.nameDigest(agentId);
+    if (!host?.agentNames?.[digest]) return;
+    const { [digest]: _gone, ...rest } = host.agentNames;
+    saveSettings(this.deps.home, { ...settings, agentTarget: { ...host, agentNames: rest } });
+  }
+
+  /** What the owner called this self-hosted agent, across relaunches. */
+  private localName(targetId: string, agentId: string): string {
+    if (targetId === BUILTIN_TARGET_ID) return "";
+    return loadSettings(this.deps.home)
+      .agentTarget?.agentNames?.[CloudAgentState.nameDigest(agentId)] ?? "";
+  }
+
   private targets(): AgentTarget[] {
     const settings = loadSettings(this.deps.home);
     const bearer = settings.relayCredential.trim();

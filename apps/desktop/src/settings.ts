@@ -122,6 +122,20 @@ export interface SelfHostedHost {
   baseUrl: string;
   /** A SECRET: sealed at rest, and never sent to the renderer. */
   bearer: string;
+  /**
+   * The names the OWNER gave this host's agents, so they survive a relaunch.
+   *
+   * Without this every self-hosted row reads "Local agent" after a restart:
+   * the host's own answer for a name is untrusted and dropped at the response
+   * boundary, and the in-process record of what the owner typed dies with the
+   * process. Several agents then become indistinguishable.
+   *
+   * KEYED BY DIGEST of the agent id, not the id. The id is host-authored, and
+   * this file is the one place the app keeps things long-term — a hostile host
+   * naming an agent `base64(bearer)` must not get that written to disk. A
+   * digest joins just as well and carries nothing back.
+   */
+  agentNames?: Record<string, string>;
 }
 
 export interface Settings {
@@ -347,9 +361,12 @@ export function saveSettings(home: string, settings: Settings): void {
     const sealed = seal(bearer, active);
     // Same shape as the relay credential above: sealed where the OS can, and
     // plaintext inside a 0600 file where it cannot — never both.
+    const names = host.agentNames && Object.keys(host.agentNames).length
+      ? { agentNames: host.agentNames }
+      : {};
     stored.agentTarget = sealed
-      ? { baseUrl: host.baseUrl, bearer: "", bearerEnc: sealed }
-      : { baseUrl: host.baseUrl, bearer };
+      ? { baseUrl: host.baseUrl, bearer: "", bearerEnc: sealed, ...names }
+      : { baseUrl: host.baseUrl, bearer, ...names };
   } else {
     stored.agentTarget = null;
   }
@@ -413,5 +430,16 @@ function readAgentTarget(raw: unknown): SelfHostedHost | null {
   const sealedBearer = text(row.bearerEnc);
   const bearer = sealedBearer ? unseal(sealedBearer).trim() : text(row.bearer);
   if (!baseUrl || !bearer) return null;
-  return { baseUrl, bearer };
+  const names: Record<string, string> = {};
+  const stored = row.agentNames;
+  if (stored && typeof stored === "object" && !Array.isArray(stored)) {
+    for (const [digest, name] of Object.entries(stored as Record<string, unknown>)) {
+      // A digest and a short name, or nothing: this map is read back into the
+      // screen, so a hand-edited file does not get to put arbitrary bulk there.
+      if (/^[0-9a-f]{64}$/.test(digest) && typeof name === "string" && name.trim()) {
+        names[digest] = name.trim().slice(0, 200);
+      }
+    }
+  }
+  return { baseUrl, bearer, ...(Object.keys(names).length ? { agentNames: names } : {}) };
 }
