@@ -268,17 +268,32 @@ Swift sources; none of it ships.
 
 ```
 $DOMO_HOME (default ~/Library/Application Support/Plow-Latch)
-├── run/agent.sock, run/device.sock      # 0700 dir
-├── broker/agents.json                   # agent identities, tokens, grants
-├── broker/devices.json                  # enrolled devices
-├── device/identity.json                 # device keypair
-├── device/known_agents.json             # pinned agent pubkeys
+├── app/settings.json                    # 0600; the relay credential, sealed
+├── app/telemetry.json                   # the install id telemetry reports under
+├── app/crash-report.json                # one spooled crash, removed once sent
+├── device/identity.json                 # 0600; device keypair
 ├── device/rules.json                    # always-allow rules
+├── device/approvals/<intentId>.json     # 0700 dir; approvals IN FLIGHT only
 ├── device/audit.ndjson                  # append-only audit log
-└── device/scratch/…                     # per-run sandbox scratch dirs
+├── device/audit.1.ndjson                # the generation before it, once rotated (readers take both)
+├── device/browser/fingerprint-pin.json  # the one fingerprint this install presents
+├── device/browser/profile/              # the owner's browser profile (seed)
+├── device/browser/profiles/<session>/   # per-session clones; merged and removed on close
+├── device/scratch/<run>/                # per-run sandbox scratch; removed after the run
+├── electron/                            # Electron's userData (Chromium caches)
+└── plow-wire.log                        # rolling 2MB: method, URL, status, ms — no bodies
 ```
 
 Everything honors `DOMO_HOME` so tests run against throwaway roots.
+
+Nothing here grows without bound. An approval record exists from before the
+human is asked until its decision is in the audit log (a crash in between is
+replayed from the record on the next start), which rolls over by rename at
+`AUDIT_ROTATE_BYTES` (one previous generation kept). A session's profile clone
+goes when the session closes. Screenshots are never written to disk: the agent
+gets them inline and the owner's viewer takes live frames. An install from
+before this held a `device/browser/screenshots/` directory of every page an
+agent had looked at; the app removes it on start.
 
 ## 10. Testing strategy
 
@@ -321,11 +336,12 @@ repo can prove they broke nothing.
 | `domo-mcp` | exec | stdio↔socket MCP shim for Claude Code |
 | `DomoApp` | exec | AppKit shell: status item, NSAlert approvals, Goals/Rules/Audit window, agent spin-up |
 
-## 11a. Local browsing (Camoufox + self-hosted vault)
+## 11a. Local browsing (Camoufox + local vault)
 
 The device can host a real anti-detection Firefox (Camoufox, driven by
-Playwright through a vendored Python server — `vendor/browser-server/`,
-provenance in its `UPSTREAM.md`) so a remote agent browses **as the local
+playwright-core through a TypeScript server — `@domo/browser-server`, ported
+from the retired vendored Python and keeping the same JSON-lines stdio wire, so
+no Python ships) so a remote agent browses **as the local
 user**: local IP, local cookies, and local credentials that are typed into the
 page here rather than handed to the agent — which is driving that page, and can
 read it. Several browsers can run at once and they are all the user's: Firefox
@@ -427,19 +443,24 @@ and asks for no approval; it is recorded in the owner's audit log as
 `credential_metadata` with `source: "vault"`. There was a second, session-scoped
 `access: "metadata"` capability whose grant nothing consumed; it was removed
 rather than wired, so inventory is ungated in one place instead of being
-documented as gated in two. The vendored
-`seed_vault_broker` CLI wraps the bundled `bw` (an agent account scoped to one
-vault's collections). `fill_secret`
+documented as gated in two. The broker runs **in-process**
+(`brokerCore.ts` over the local vault store; the classifier that decides what
+each item offers and conceals is `credentialClassify.ts`, a faithful port of
+the Python broker this replaced, still asserted against
+`fixtures/maskClassification.json`). `fill_secret`
 is the strongest gate, in order: item ∈ approved set → the selector is located
 to its owning frame → the frame's origin ∈ session scope → **a fill whose
 device-observed destination matches the bundled v1 bank registry additionally
 requires a separate, single-use owner payment approval, consumed from plow's
 `POST /v1/payment-approvals/consume`; the release proceeds ONLY when that
 returns `approved`, and any other answer — not approved, a non-2xx, an
-unreachable service, or no client wired — blocks fail-closed** → `seed-vault-broker
-get-field` against the **device-observed** frame URL (its own eTLD+1 item/site
-check applies; credit cards deliberately pass the broker's own check — they are
-meant for any merchant) → a frame-targeted fill → the value is dropped. Secret
+unreachable service, or no client wired — blocks fail-closed** → the broker's
+`getField` against the **device-observed** frame URL (its own item/site check
+applies, by label-suffix host match whose root is checked against the pinned
+Public Suffix List — the one PSL use in this repo, because here the code
+infers site relatedness on its own rather than matching an owner-approved
+pattern; credit cards deliberately pass the check — they are meant for any
+merchant) → a frame-targeted fill → the value is dropped. Secret
 values never traverse MCP, never appear in the results these tools return, and
 never appear in either audit log. **Scope of that guarantee:** it covers what
 `plow_vault` and `fill_secret` hand back, and — through masking (§11a-ii) — what
@@ -449,6 +470,24 @@ threat model is accidental exposure and an agent reaching for `eval` is
 outside it.
 Item ids on the approval card are resolved to titles **locally** (agent-supplied
 titles would be spoofable).
+
+**Segmented code controls** (a 2FA screen's six one-digit boxes) get a split
+variant of the same gate: `fill_secret` takes `selectors` — every box in
+order — instead of `selector`. The split cannot happen on the agent's side,
+because the agent never has the value; it happens on the device, after one
+vault release, with every box located up front and required to sit in the one
+document whose origin was checked. Each box then gets exactly one character
+(masked when the field is), and a fill that fails part-way erases the boxes it
+already wrote before reporting, so no partial live code is left in the form.
+The erase rides the same mask the characters went in under — the browser's
+unmasked fill path takes the mark off before it learns what the node kept, so
+a controlled input that undoes the empty write would otherwise show its
+character to every later screenshot — and a box the page refuses to empty is
+named in the error and the owner's log rather than claimed cleared, its mark
+still on.
+The browser server deliberately refuses to type a whole code into box one
+(`server.py` `_type_value`: per-key refocus keeps every character in the node
+the mark is on); this is the "one fill per box" that trade was designed around.
 
 **Banking-credential payment gate (v1 domain registry).**
 The owner grants the separate payment approval out of band — a link in the
@@ -503,38 +542,77 @@ Owner-authored skills in `$DOMO_HOME/device/skills` load **last** and win a
 name collision — a file the owner wrote is a deliberate act, and a built-in
 default should not silently replace it.
 
-**Runtime & packaging.** The stack ships inside the app: a relocated
-python.org universal2 Python 3.12 + lipo-merged (delocate) universal
-site-packages + one lipo-fused universal Camoufox tree (both arches' Mach-Os
-fused, the arch-independent payload shipped once), built deterministically by
+**Runtime & packaging.** No Python ships. The stack inside the app is the
+`@domo/browser-server` package (playwright-core, pure JS) plus one lipo-fused
+universal Camoufox tree (both arches' Mach-Os fused, the arch-independent
+payload shipped once), built deterministically by
 `scripts/build-browser-runtime.mjs` from hash pins in
 `vendor/browser-server/runtime.lock.json` (version coupling
-camoufox 0.5.4 ↔ playwright 1.60.0 ↔ browser 152.0.4-beta.28 is strict). The
-build prunes what can never load at runtime (Camoufox's bundled Windows/Linux
-spoofing fonts — the vendored server pins the fingerprint to macOS — plus
-Python test suites, dSYMs, headers, bytecode caches). Playwright's Python
-client is a shim over a Node driver, and the wheel's bundled node binary
-(~110 MB/arch) is pruned too: `browserRuntime.ts` points
-`PLAYWRIGHT_NODEJS_PATH` at the host process's own runtime — the app binary
-under `ELECTRON_RUN_AS_NODE`, or the plain node hosting a test. **This
-commits the app to keeping Electron's `RunAsNode` fuse enabled.** Disabling
-that fuse is a standard Electron hardening step; here it would silently break
-every browser launch, so anyone reaching for a fuses config must either skip
-`runAsNode` or bring the bundled driver node back first. The payload is
-byte-identical in both electron-builder arch passes so the universal merge
-copies it through. The Camoufox payload is a complete
-`camoufox fetch`-layout install dir; `BrowserHost` spawns the server with an
-app-scoped `$HOME` whose `Library/Caches/camoufox` symlinks to it — the
-user's shared cache is never touched and no fetch happens at launch. Audit
-events (`browser_*`, `credential_*`) are the test oracle; the fake browser
-server + fake `op` fixtures make the whole flow CI-testable without Python,
-and `just test-browser` runs the real browser against a local checkout
-fixture site.
+camoufox-js 0.12.0 ↔ playwright-core 1.60.0 ↔ browser 152.0.4-beta.28 is
+strict). The build prunes Camoufox's bundled Windows/Linux spoofing fonts (the
+fingerprint is pinned to macOS, which renders with the system fonts). **The
+fingerprint is not generated at runtime.** A build step samples a POOL of macOS
+launch configs with camoufox-js — a build-only dependency, so its native deps
+(better-sqlite3 for the WebGL model, a Rust HTTP binding) never ship — and
+freezes them as `packages/browser-server/fingerprints.json`. At runtime the
+server picks ONE, **pinned per install** (recorded at a per-install path, reused
+every launch): a persistent browser carrying the owner's real profile and logins
+wants a STABLE Mac fingerprint, and a device whose screen size or GPU changed
+between sessions would be a bot signal, not a defense. The server and the cookie
+merger run as Node scripts on the host process's own runtime — the app binary
+under `ELECTRON_RUN_AS_NODE`, or the plain node hosting a test. **This still
+commits the app to keeping Electron's `RunAsNode` fuse enabled** (a future
+cleanup could move them to `utilityProcess` and drop the requirement); anyone
+reaching for a fuses config must skip `runAsNode`. NO native module ships: the
+cookie-store merge uses `node-sqlite3-wasm`, a WASM SQLite build that is
+arch-neutral and loads under Electron with no rebuild (better-sqlite3 was tried
+and rejected — it is ABI-locked, so it would have needed an Electron rebuild per
+arch). Everything on the runtime path is pure JS or WASM. `browserRuntime.ts`
+points playwright at
+the Camoufox binary directly (no `$HOME`/cache symlink; no fetch at launch).
+Audit events (`browser_*`, `credential_*`) are the test oracle; the whole flow
+is CI-testable with no browser — the ported Session logic runs against stub
+Playwright objects in `@domo/browser-server`'s tests, and the fake browser
+server + fake `op` fixtures drive the device layer — and `just test-browser`
+runs the real browser against a local checkout fixture site.
 
-### 11a-i. The vault's Keychain identity is frozen, and it is not the app's name
+### 11a-i. The vault's key lives in the Keychain, and its identity is frozen
 
-The vault account's password is stored as ciphertext on disk and the key lives
-in the macOS Keychain, via Electron's `safeStorage`. Three facts about
+(Mechanical reference — formats, providers, flows, audit lines — in
+[docs/VAULT.md](docs/VAULT.md); this section keeps the decisions and their
+history.)
+
+The vault is a local encrypted store: items in `items.json` (every field a
+Bitwarden-format EncString — the format outlived the Bitwarden removal because
+it is sound, already frozen by tests, and keeping it made migration a verbatim
+ciphertext copy),
+and one 64-byte master key rooted in the macOS Keychain via `vaultKeyStore.ts`.
+There is no vault server, no bundled `bw`, no web vault and no vault account
+any more; ~470 MB of payload left the app with them. Three providers can hold
+the key, chosen once at write time and recorded in the key blob:
+
+1. **SecItem + access group** (`@domo/native-keychain`, group
+   `3559PD337Z.co.plow.vault`, service `co.plow.vault` — both frozen literals)
+   — the packaged, signed app. The access group, not the bundle id, is what
+   the item is keyed to, so a rename or bundle-id change cannot orphan a key.
+   Chosen only when the entitlement is real (packaged builds; the probe falls
+   through otherwise).
+2. **`safeStorage` under the frozen identity** — `just app`: the stock
+   Electron binary has no entitlement, and safeStorage's Keychain item is at
+   least ACL-bound to the binary.
+3. **A 0600 key file** — tests and anything with neither. Hermetic by
+   construction; the file provider is what vitest exercises.
+
+Migration from the Bitwarden vault (`vaultMigrate.ts`, permanent by decision):
+the new master key IS the old account's user key, so cipher rows are copied
+out of the old SQLite verbatim — no plaintext moment, crash-safe (the item
+file is the single atomic write that completes it), old files left in place as
+the owner's backup. That migration — and the dev-mode key
+provider — is why the frozen `safeStorage` identity below still matters: it is
+what decrypts the old account file, and what wraps a `just app` vault's key.
+
+The rest of this section is the history of that identity, kept because the
+relay credential still encrypts under it today. Three facts about
 `safeStorage` decide the design, and all three were learned by breaking it:
 
 1. It has no key of its own. On macOS it looks up a Keychain item named
@@ -582,21 +660,20 @@ Two rejected alternatives, recorded so they are not re-proposed:
   the only copy of their credentials.
 
 There is no recovery for a genuinely lost key, and the UI must not invent one:
-an account that cannot be decrypted cannot be signed in with, here or anywhere,
-because the password it would need is the thing that is unreadable. The copy says
-so — the account is on disk, nothing is deleted, and if the key is gone the vault
+ciphertext without its key is unreadable, here or anywhere. The copy says so —
+the items are on disk, nothing is deleted, and if the key is gone the vault
 has to be set up again.
 
-The owner reaches the vault's CONTENTS in the app, never on the vault's own page:
-`VaultClient` signs in with the account this Mac already holds and reads and
-writes items over the vault's API, so there is no CLI process, no local port and
-no session key on disk. The tab shows the locked state from
-`readCredentialsState()` and nothing else about the account.
+The owner reaches the vault's contents in the app and nowhere else:
+`LocalVault` reads and writes the store directly, so there is no CLI process,
+no local port and no session key on disk. The tab shows the locked state from
+`readCredentialsState()` and nothing else about the key.
 
-A locked vault must also never be reported as an empty one. `readState()`
-distinguishes empty / locked / ok, because a Keychain reset or a Mac restored
-from backup lands in exactly this state, and "The vault has not started yet"
-sends people to debug a server that is running fine.
+A locked vault must also never be reported as an empty one.
+`readCredentialsState()` distinguishes empty / locked / ok — for the key blob,
+and for a legacy account still awaiting migration — because a Keychain reset
+or a Mac restored from backup lands in exactly this state, and an "empty"
+answer is what quietly mints a fresh vault beside the owner's real one.
 
 ### 11a-ii. A filled secret is masked from what the agent sees
 
@@ -606,7 +683,8 @@ sends people to debug a server that is running fine.
 number and CVC plainly legible in a returned screenshot.
 
 **A field is masked from the agent if and only if the vault itself masks it.**
-The classification is Bitwarden's, and thereby the human's who made the item —
+The classification is Bitwarden's (ported verbatim into
+`credentialClassify.ts`), and thereby the human's who made the item —
 a password, a card number and code, an ssn, a Hidden custom field. Addresses
 and names stay legible on purpose: the agent has to be able to check a shipping
 address before submitting a form. One deliberate exception: a generated TOTP
@@ -688,11 +766,73 @@ Decisions and their reasons:
   comment in the justfile walks through it.
 
 Known cost: the DMG and zip each carry the full browser runtime (the fused
-universal Camoufox tree + Python — the DMG-halving work in §11a shrank it,
-but it still dominates the artifact), so updates are large. Blockmap
+universal Camoufox tree — dropping the bundled Python removed ~374 MB of
+payload and its thousands of signed files, but the browser still dominates the
+artifact), so updates are large. Blockmap
 differential downloads may soften this; shipping the browser runtime
 out-of-band (it is already pinned by `runtime.lock.json`) is the eventual fix
 if update size becomes a problem.
+
+## 11c. Telemetry (PostHog)
+
+Usage statistics and error reporting go to PostHog — the same product family
+the Plow API server (`api/plow/analytics.py` in the plow repo) and the plow.co
+pages already report to — via `posthog-node` in the Electron **main process
+only**. The sandboxed renderer stays network-silent and the CSP untouched;
+`apps/desktop/src/telemetry.ts` is the one outbound funnel.
+
+Decisions and their reasons:
+
+- **The audit log is the source of usage events.** Telemetry taps
+  `AuditLog`'s `recorded` emission rather than adding capture calls all over,
+  so "what happened" has one spelling. An explicit **allowlist** in
+  `telemetry.ts` decides which events and which fields leave the Mac; an event
+  or field not named there is never sent, including every future one. Paths,
+  argv, goal text, agent display names, intent ids and vault item
+  ids/origins/titles are deliberately absent; the opaque server-minted agent
+  id may ride, for per-agent counts.
+- **Error reports carry no free-form text.** An error's message can embed
+  anything the throwing code interpolated (a vault item's site, an otpauth
+  parameter, a path), and no scrubber can enumerate what it doesn't know — so
+  the message never leaves. What leaves is the error's name — only if it is
+  a built-in one (`Error.name` is writable text, so anything else reports as
+  "Error") — and its stack frames, in a `$exception` payload `trackError`
+  **builds itself** — never the SDK's `captureException`, whose node
+  entrypoint reads the local files named in stack frames and attaches
+  surrounding source lines after any sanitising. A frame must match the full
+  V8 `file:line:col` shape, after the stack's message region is cut off by
+  exact prefix (a multiline message puts free-form text on `at`-shaped lines
+  of its own); what matches is still scrubbed of the credential and the home
+  path, and what doesn't is dropped, never shipped verbatim.
+  `uncaughtExceptionMonitor` observes crashes without altering what Electron
+  does with them.
+- **A fatal crash spools its report to disk first** (synchronously, to
+  `app/crash-report.json`), because the process usually exits before an async
+  send completes; the spool is deleted only when an ORDERED send resolves
+  (`sendNow` — not capture-then-flush, which can flush an empty queue before
+  the SDK's async prepare enqueues the event and falsely report it safe), and
+  a spool that outlives its process is reported by the next launch — which
+  keeps the file until its own send resolves, so an offline launch retries
+  rather than losing the report (only a spool that will not parse is deleted
+  unsent). The
+  quit-path flush is bounded (2s, not the SDK's 30s default) so an offline
+  Mac never looks like an app refusing to quit.
+- **`posthog-node` is pinned exactly** (5.21.2, no caret): 5.22.0 narrowed
+  its Node engines past what Electron embeds (Node 20.18 in Electron 33), so
+  a caret would drift the packaged app onto an unsupported runtime. Revisit
+  the pin when Electron's Node crosses 20.20/22.22.
+- **Only the packaged install reports** — same `app.isPackaged` gate as
+  updates (§11b), so worktree runs and the test suite pollute nothing. The
+  project key is baked into `telemetry.ts` like the API base URL (a PostHog
+  project key is not a secret; plow.co ships one in HTML), with
+  `DOMO_POSTHOG_KEY`/`DOMO_POSTHOG_HOST` env overrides for pointing a build at
+  a scratch project.
+- **The owner can turn it off**: `telemetryEnabled` in settings (default on),
+  a toggle in the Settings tab's Privacy section, honored on the next event
+  with no relaunch.
+- **The distinct id is the signed-in account uid** — the same keying the Plow
+  API server uses, so one person's server and desktop events line up — else an
+  anonymous per-install UUID persisted beside `settings.json`.
 
 ## 12. Roadmap
 

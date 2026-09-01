@@ -80,7 +80,11 @@ export interface Cipher {
 export interface VaultItemSummary {
   id: string;
   title: string;
-  type: VaultItemType;
+  /** One of the four editable types, or "unsupported": a shape migrated from
+   * the old vault (an SSH key, say) that this app's forms cannot edit. Listed
+   * rather than hidden or fatal — hidden reads as a lost item, and one such
+   * item must never take the whole vault down with it. */
+  type: VaultItemType | "unsupported";
   /** One line of context: the username, or the card's brand, or the name on an identity. */
   subtitle: string;
   urls: string[];
@@ -165,21 +169,33 @@ function subtitleOf(type: number, fields: Record<string, string>): string {
 /**
  * The type this item is, or a refusal.
  *
- * The vault's enum reserves 5-8 (SSH key, bank account, licence, passport) and
- * its web client can create them. Treating one of those as a login would show
- * a form of empty login fields and accept a save that silently went nowhere —
- * the item's real body is not the one being written.
+ * The enum reserves 5-8 (SSH key, bank account, licence, passport), and a
+ * vault migrated from the old server can hold a 5. Treating one of those as a
+ * login would show a form of empty login fields and accept a save that
+ * silently went nowhere — the item's real body is not the one being written.
  */
 function typeOf(cipher: Cipher): number {
   const type = cipher.type ?? 1;
   if (!TYPE_NAME[type]) {
-    throw new Error(`this app cannot show item type ${type}; use the vault's own page for it`);
+    throw new Error(`this app cannot edit item type ${type}; it can only be deleted here`);
   }
   return type;
 }
 
 export function decryptSummary(cipher: Cipher, account: VaultKey): VaultItemSummary {
   const key = itemKey(cipher, account);
+  if (!TYPE_NAME[cipher.type ?? 1]) {
+    // A shape the forms cannot edit still gets a row: its name decrypts like
+    // any other (the name is outside the typed body), and one such item must
+    // not make the whole listing fail — the only other way in is gone.
+    return {
+      id: String(cipher.id ?? ""),
+      title: dec(cipher.name, key),
+      type: "unsupported",
+      subtitle: "",
+      urls: [],
+    };
+  }
   const type = typeOf(cipher);
   const raw = body(cipher);
   const shown: Record<string, string> = {};
@@ -193,6 +209,59 @@ export function decryptSummary(cipher: Cipher, account: VaultKey): VaultItemSumm
     subtitle: subtitleOf(type, shown),
     urls: urlsOf(cipher, key),
   };
+}
+
+/** What the tab calls each type, so "card" finds the cards and "note" the notes. */
+const TYPE_LABEL: Record<VaultItemType, string> = { login: "Login", card: "Card", identity: "Identity", note: "Secure note" };
+
+/**
+ * Every string of one item, in the clear, for the tab's search — which runs
+ * HERE, so the listing the renderer holds stays secret-free. The name, the
+ * notes, every URL, every typed field, every custom field a migrated item
+ * still carries, and the type's name.
+ *
+ * Secrets are in it too — the owner wants a password to be searchable —
+ * except for an item marked `reprompt`. That item demands proof of presence
+ * before a value is shown, and a search hit is an oracle for the value (type
+ * a guess, see whether the row stays), so it matches on its open fields only.
+ * A custom field's value is treated as a secret when the field is hidden
+ * (type 1) and open otherwise; its name is always open.
+ *
+ * An item of a type the forms refuse is still searchable by what it holds:
+ * the search is the only way its owner can reach it by content. A migrated
+ * SSH key's public key and fingerprint are open and its private key is a
+ * secret; the enum's 6-8 (bank account, licence, passport) are all of them
+ * details a gated item must not answer for, so their body is a secret whole.
+ */
+export function decryptHaystack(cipher: Cipher, account: VaultKey): string[] {
+  const key = itemKey(cipher, account);
+  const gated = !!cipher.reprompt;
+  const out: string[] = [dec(cipher.name, key), dec(cipher.notes, key), ...urlsOf(cipher, key)];
+  const type = cipher.type ?? 1;
+  if (TYPE_NAME[type]) {
+    out.push(TYPE_LABEL[TYPE_NAME[type]]);
+    const raw = body(cipher);
+    const secret = SECRET_KEYS[type] ?? [];
+    for (const field of KEYS_FOR[type] ?? []) {
+      if (gated && secret.includes(field)) continue;
+      out.push(dec(raw[field], key));
+    }
+  } else {
+    const ssh = decryptRecord(cipher.sshKey as Record<string, string | null> | null | undefined, key) ?? {};
+    for (const [field, value] of Object.entries(ssh)) {
+      if (!(gated && field === "privateKey")) out.push(value);
+    }
+    if (!gated) {
+      const legacy = decryptRecord(cipher.legacyData as Record<string, string | null> | null | undefined, key) ?? {};
+      out.push(...Object.values(legacy));
+    }
+  }
+  const customs = cipher.fields as Array<{ name?: string | null; value?: string | null; type?: number }> | null | undefined;
+  for (const f of Array.isArray(customs) ? customs : []) {
+    out.push(dec(f?.name, key));
+    if (!(gated && f?.type === 1)) out.push(dec(f?.value, key));
+  }
+  return out.filter(Boolean);
 }
 
 /** The whole item an edit form is filled from — with every secret left out. */
@@ -278,7 +347,7 @@ export function encryptCipher(
     // travels as a blank holding its place. A row is therefore the entry that
     // sits at its own position — which is only sound because a save built on a
     // version of the item the vault has since replaced never gets here:
-    // staleEdit refuses it first. See VaultClient.save.
+    // staleEdit refuses it first. See LocalVault.save.
     const previous = existing?.login?.uris ?? [];
     delete out.uris;
     let uris = previous;
@@ -306,6 +375,73 @@ export function encryptCipher(
     cipher.identity = out;
   }
   return cipher;
+}
+
+/**
+ * One item in the clear, in the wire shape the Bitwarden CLI used to print —
+ * which is the shape the credential classifier (credentialClassify.ts) was
+ * written against and the mask-classification fixture freezes. Total over
+ * item types on purpose, unlike decryptItem: the broker must be able to LOOK
+ * at anything a migrated vault holds (an SSH key made in the old web vault,
+ * say), even though this app's own forms refuse to edit it.
+ */
+export interface RawItem {
+  id: string;
+  type: number;
+  name: string;
+  notes?: string;
+  login?: {
+    username?: string;
+    password?: string;
+    totp?: string;
+    uris?: Array<{ uri: string }>;
+  };
+  card?: Record<string, string>;
+  identity?: Record<string, string>;
+  sshKey?: Record<string, string>;
+  fields?: Array<{ name?: string; value?: string; type?: number; linkedId?: number | null }>;
+}
+
+function decryptRecord(raw: Record<string, string | null> | null | undefined, key: VaultKey): Record<string, string> | undefined {
+  if (!raw) return undefined;
+  const out: Record<string, string> = {};
+  for (const [k, v] of Object.entries(raw)) {
+    if (typeof v === "string" && v) out[k] = dec(v, key);
+  }
+  return out;
+}
+
+export function decryptRaw(cipher: Cipher, account: VaultKey): RawItem {
+  const key = itemKey(cipher, account);
+  const out: RawItem = {
+    id: String(cipher.id ?? ""),
+    type: cipher.type ?? 1,
+    name: dec(cipher.name, key),
+  };
+  if (cipher.notes) out.notes = dec(cipher.notes, key);
+  if (cipher.login) {
+    out.login = {
+      ...(cipher.login.username ? { username: dec(cipher.login.username, key) } : {}),
+      ...(cipher.login.password ? { password: dec(cipher.login.password, key) } : {}),
+      ...(cipher.login.totp ? { totp: dec(cipher.login.totp, key) } : {}),
+      uris: (cipher.login.uris ?? [])
+        .map((u) => ({ uri: dec(u?.uri, key) }))
+        .filter((u) => u.uri),
+    };
+  }
+  out.card = decryptRecord(cipher.card, key);
+  out.identity = decryptRecord(cipher.identity, key);
+  out.sshKey = decryptRecord(cipher.sshKey as Record<string, string | null> | null | undefined, key);
+  const customs = cipher.fields as Array<{ name?: string | null; value?: string | null; type?: number; linkedId?: number | null }> | null | undefined;
+  if (Array.isArray(customs)) {
+    out.fields = customs.map((f) => ({
+      ...(f.name ? { name: dec(f.name, key) } : {}),
+      ...(typeof f.value === "string" && f.value !== "" ? { value: dec(f.value, key) } : {}),
+      ...(typeof f.type === "number" ? { type: f.type } : {}),
+      ...(f.linkedId !== undefined ? { linkedId: f.linkedId } : {}),
+    }));
+  }
+  return out;
 }
 
 /**

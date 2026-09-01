@@ -1,7 +1,8 @@
 /**
  * A tunnelled call cannot wait for a human, so the approval outlives the call.
  * That makes the record on disk the only thing that says what was asked while
- * it is still unanswered.
+ * it is still unanswered — and once the answer is in the audit log, that is
+ * the history, and the record goes.
  */
 import { afterEach, describe, expect, it } from "vitest";
 import fs from "node:fs";
@@ -112,18 +113,34 @@ describe("the record exists before the answer does", () => {
     expect(fs.statSync(dir).mode & 0o777).toBe(0o700);
   });
 
-  it("records the outcome next to the request when the answer lands", async () => {
+  it("keeps the record until the decision is in the audit log, then removes it", async () => {
     const dir = tempDir();
     const store = new ApprovalStore(dir, answersIn(20, { decision: "allow_once", source: "ask" }));
     const intent = intentFor();
     const decision = await store.decideIntent(intent);
     expect(decision).toEqual({ decision: "allow_once", source: "ask" });
 
-    const [record] = await store.all();
-    expect(record.status).toBe("decided");
-    expect(record.decision).toBe("allow_once");
-    expect(record.source).toBe("dialog");
-    expect(record.decidedAt).toBeTypeOf("string");
+    // Answered, but the caller has not yet written intent_decision. A crash
+    // here must not lose what the human said: the answer is in the record,
+    // marked not yet recorded, for the next start to replay.
+    const file = path.join(dir, `${intent.intentId}.json`);
+    expect(fs.existsSync(file)).toBe(true);
+    const [settled] = await store.all();
+    expect(settled.status).toBe("decided");
+    expect(settled.decision).toBe("allow_once");
+    expect(settled.source).toBe("ask");
+    expect(settled.recorded).toBe(false);
+    expect(settled.decidedAt).toBeTypeOf("string");
+
+    // The audit line is down; the record has nothing left to say.
+    await store.decisionRecorded(intent.intentId);
+    expect(fs.existsSync(file)).toBe(false);
+    expect(await store.all()).toEqual([]);
+  });
+
+  it("decisionRecorded() for an intent it never recorded is a no-op", async () => {
+    const store = new ApprovalStore(tempDir(), silent);
+    await expect(store.decisionRecorded("RULE-ANSWERED-IT")).resolves.toBeUndefined();
   });
 });
 
@@ -132,12 +149,17 @@ describe("the wait is bounded", () => {
     const dir = tempDir();
     // 30ms window: the human never answers.
     const store = new ApprovalStore(dir, silent, 30);
-    const decision = await store.decideIntent(intentFor());
+    const intent = intentFor();
+    const decision = await store.decideIntent(intent);
     expect(decision).toEqual({ decision: "deny", source: "expired" });
 
-    const [record] = await store.all();
-    expect(record.status).toBe("expired");
-    expect(record.decision).toBe("deny");
+    // The deadline's answer is written down like a human's, so a crash before
+    // the audit line replays a deny, not an abandonment.
+    const [settled] = await store.all();
+    expect(settled).toMatchObject({ status: "expired", decision: "deny", source: "expired", recorded: false });
+    // Settled by the deadline is settled: once recorded, nothing is left.
+    await store.decisionRecorded(intent.intentId);
+    expect(await store.all()).toEqual([]);
   });
 
   it("a delegate that throws denies rather than hanging", async () => {
@@ -154,9 +176,11 @@ describe("the wait is bounded", () => {
   it("an answer that arrives before the deadline wins", async () => {
     const dir = tempDir();
     const store = new ApprovalStore(dir, answersIn(10), 5_000);
-    const decision = await store.decideIntent(intentFor());
+    const intent = intentFor();
+    const decision = await store.decideIntent(intent);
     expect(typeof decision === "string" ? decision : decision.decision).toBe("allow_once");
-    expect((await store.all())[0].status).toBe("decided");
+    await store.decisionRecorded(intent.intentId);
+    expect(await store.all()).toEqual([]);
   });
 });
 
@@ -172,10 +196,8 @@ describe("an answer can arrive from somewhere other than the dialog", () => {
     expect(store.resolve(intent.intentId, "always_allow", "operator")).toBe(true);
     const decision = await pending;
     expect(typeof decision === "string" ? decision : decision.decision).toBe("always_allow");
-
-    const [record] = await store.all();
-    expect(record.status).toBe("decided");
-    expect(record.source).toBe("operator");
+    await store.decisionRecorded(intent.intentId);
+    expect(await store.all()).toEqual([]);
   });
 
   it("resolve() on something nobody is waiting for is refused", () => {
@@ -191,7 +213,7 @@ describe("an answer can arrive from somewhere other than the dialog", () => {
 });
 
 describe("across a restart", () => {
-  it("a pending record from a previous run is marked abandoned, not left claiming to be live", async () => {
+  it("a pending record from a previous run is reported abandoned and removed, not left claiming to be live", async () => {
     const dir = tempDir();
     const first = new ApprovalStore(dir, silent, 5_000);
     const intent = intentFor();
@@ -207,24 +229,72 @@ describe("across a restart", () => {
     const abandoned: string[] = [];
     second.onAbandoned = (r) => abandoned.push(r.intentId);
     await second.ready;
-    const [record] = await second.all();
-    expect(record.status).toBe("abandoned");
-    expect(record.decidedAt).toBeTypeOf("string");
-    // The hook saw it, so the abandonment can reach the audit log.
+    // The hook saw it, so the abandonment can reach the audit log — which is
+    // where it lives from here; the directory holds only what is in flight.
     expect(abandoned).toEqual([intent.intentId]);
+    expect(await second.all()).toEqual([]);
     // And it is no longer offered as something answerable.
     expect(await second.pending()).toHaveLength(0);
     expect(second.resolve(intent.intentId, "allow_once")).toBe(false);
   });
 
-  it("keeps decided records so the history survives", async () => {
+  it("replays an answer the previous process never got to record, and does not call it abandoned", async () => {
     const dir = tempDir();
-    const first = new ApprovalStore(dir, answersIn(5));
-    await first.decideIntent(intentFor());
+    const first = new ApprovalStore(dir, answersIn(5, { decision: "always_allow", source: "ask" }));
+    const intent = intentFor();
+    await first.decideIntent(intent);
+    // The human answered; the process dies before DeviceAgent's append and
+    // before decisionRecorded(). The record is on disk with the answer in it.
+    expect((await first.all())[0]).toMatchObject({ status: "decided", recorded: false });
+
     const second = new ApprovalStore(dir, silent);
+    const abandoned: string[] = [];
+    const replayed: { intentId: string; decision?: string; source?: string }[] = [];
+    second.onAbandoned = (r) => abandoned.push(r.intentId);
+    second.onUnrecorded = (r) => replayed.push({ intentId: r.intentId, decision: r.decision, source: r.source });
     await second.ready;
-    expect(await second.all()).toHaveLength(1);
-    expect((await second.all())[0].status).toBe("decided");
+    // Exactly the intent_decision the live path would have written.
+    expect(replayed).toEqual([{ intentId: intent.intentId, decision: "always_allow", source: "ask" }]);
+    expect(abandoned).toEqual([]);
+    expect(await second.all()).toEqual([]);
+  });
+
+  it("sweeps outcomes an earlier build left behind, without calling them abandoned or replaying them", async () => {
+    // Builds before this one rewrote the record with its outcome and kept it
+    // forever. Their audit log already has the decision, so the file is only
+    // weight — and it was answered, so the abandonment hook must not fire.
+    const dir = tempDir();
+    fs.mkdirSync(dir, { recursive: true });
+    const intent = intentFor();
+    fs.writeFileSync(
+      path.join(dir, `${intent.intentId}.json`),
+      JSON.stringify({
+        intentId: intent.intentId,
+        agentId: "sess_alice",
+        agentName: "Claude Code",
+        request: "read file: /tmp/x",
+        goal: "tidy up",
+        capabilities: ["Read: /tmp/x"],
+        createdAt: "2026-01-01T00:00:00Z",
+        expiresAt: "2026-01-01T00:15:00Z",
+        status: "decided",
+        decision: "allow_once",
+        source: "dialog",
+        decidedAt: "2026-01-01T00:01:00Z",
+      }),
+    );
+    const store = new ApprovalStore(dir, silent);
+    const abandoned: string[] = [];
+    const replayed: string[] = [];
+    store.onAbandoned = (r) => abandoned.push(r.intentId);
+    // No `recorded` marker: that build had already written its own
+    // intent_decision, and replaying it would double every line in history.
+    store.onUnrecorded = (r) => replayed.push(r.intentId);
+    await store.ready;
+    expect(abandoned).toEqual([]);
+    expect(replayed).toEqual([]);
+    expect(await store.all()).toEqual([]);
+    expect(fs.readdirSync(dir)).toEqual([]);
   });
 });
 
@@ -247,10 +317,8 @@ describe("failing closed does not depend on the timer (review finding 2)", () =>
     expect(store.resolve(intent.intentId, "allow_once", "human")).toBe(true);
     const decision = await pending;
     expect(decision).toEqual({ decision: "deny", source: "expired" });
-
-    const [record] = await store.all();
-    expect(record.status).toBe("expired");
-    expect(record.decision).toBe("deny");
+    await store.decisionRecorded(intent.intentId);
+    expect(await store.all()).toEqual([]);
   });
 
   it("the dialog's own late answer is denied on the same check", async () => {
@@ -294,6 +362,16 @@ describe("failing closed does not depend on the timer (review finding 2)", () =>
  * asks the store, not the delegate the app installed.
  */
 describe("the stored-rule veto passes through", () => {
+  it("forwards decisionRecorded to an inner delegate that wants it", async () => {
+    const seen: string[] = [];
+    const store = new ApprovalStore(tempDir(), {
+      decideIntent: async () => "deny" as const,
+      decisionRecorded: (id) => void seen.push(id),
+    });
+    await store.decisionRecorded("I-1");
+    expect(seen).toEqual(["I-1"]);
+  });
+
   it("forwards the inner delegate's answer, both ways", async () => {
     const inner = (allow: boolean): PolicyDelegate => ({
       decideIntent: async () => "deny" as const,

@@ -1,8 +1,16 @@
 /**
- * Locates the browser runtime (bundled Python + vendored server + Camoufox)
- * for whichever process is hosting device-core — the packaged Electron app,
- * the headless apps/device runner, or a test.
+ * Locates the browser runtime for whichever process is hosting device-core —
+ * the packaged Electron app, the headless apps/device runner, or a test.
+ *
+ * The runtime is now pure TypeScript (@domo/browser-server) driven by
+ * playwright-core; there is no bundled Python. The server and the cookie merger
+ * are Node scripts run on the host process's OWN runtime — the app binary under
+ * ELECTRON_RUN_AS_NODE, or the plain node hosting a test/headless run — and the
+ * browser is a Camoufox binary we point playwright at directly. The fingerprint
+ * config comes from a build-time pool that ships beside the server
+ * (fingerprints.json), so no fingerprint generator ships either.
  */
+import { createRequire } from "node:module";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -10,122 +18,121 @@ import { fileURLToPath } from "node:url";
 export interface ResolvedBrowserRuntime {
   /** Argv that starts the browser server (before server-specific flags). */
   serverCommand: string[];
-  /** Argv that runs the vault credential broker (before its subcommand). */
-  credentialBrokerCommand: string[];
-  /** Argv that reconciles a session's cookies into the user's (before its
-   * three paths: profile, clone, and the baseline the clone started from). */
+  /** Argv for a SUBPROCESS credential broker — only ever a test fake now
+   * (DOMO_VAULT_BROKER_CMD). Null means the real thing: the in-process
+   * BrokerCore over the local vault store. */
+  credentialBrokerCommand: string[] | null;
+  /** Argv that reconciles a session's cookies into the user's. */
   mergeCookiesCommand: string[];
-  /** Extra environment for both. */
+  /** Extra environment for the spawned server/merger — ELECTRON_RUN_AS_NODE so
+   * the app binary runs our script as node, nothing else. */
   env: Record<string, string>;
-  /** The vault this machine runs for itself, when one ships in this build. */
-  vaultServer: { binary: string; webVaultDir: string } | null;
-  /** A complete camoufox install dir (contains config.json + browsers/), the
-   * layout `camoufox fetch` creates. BrowserHost exposes it to the server via
-   * an app-scoped $HOME symlink. Null when the command embeds its own. */
-  camoufoxInstallDir: string | null;
+  /** The Camoufox executable playwright launches; null when nothing is
+   * installed (browser tools then report "not available"). */
+  executablePath: string | null;
 }
 
 interface Layout {
-  pythonRoot: string; // contains Python.framework and site-packages
-  serverDir: string; // contains server.py and seed_vault_broker/
-  camoufoxDir: string; // contains <arch>/ or universal/ install dirs (or one directly)
-  vaultCliDir: string; // contains <arch>/bw (or bw directly)
-  vaultServerDir: string; // contains <arch>/vaultwarden and web-vault/
+  /** The @domo/browser-server package root (dist/server.js, dist/mergeCookies.js,
+   * fingerprints.json live under it). It ships in node_modules — packaged
+   * (app.asar.unpacked) and dev alike — so it is resolved from device-core's own
+   * dependency graph, NOT from the resources dir. */
+  serverPkgDir: string;
+  /** A complete camoufox install dir (config.json + browsers/). This one DOES
+   * ship under the resources dir, so its location differs by layout. */
+  camoufoxDir: string;
 }
 
-/** Packaged: Contents/Resources/browser-runtime/{python,server,camoufox,vault-cli}. */
+/** Packaged: camoufox under Contents/Resources/browser-runtime/camoufox; the
+ * server package in the app's node_modules. */
 function packagedLayout(dir: string): Layout {
   return {
-    pythonRoot: path.join(dir, "python"),
-    serverDir: path.join(dir, "server"),
+    serverPkgDir: repoServerPkgDir() ?? "",
     camoufoxDir: path.join(dir, "camoufox"),
-    vaultCliDir: path.join(dir, "vault-cli"),
-    vaultServerDir: path.join(dir, "vault-server"),
   };
 }
 
-/** Dev: repo vendor/{python-runtime,browser-server,camoufox-browser,vault-cli}. */
+/** Dev: repo vendor/camoufox-browser + the built @domo/browser-server package. */
 function vendorLayout(dir: string): Layout {
   return {
-    pythonRoot: path.join(dir, "python-runtime"),
-    serverDir: path.join(dir, "browser-server"),
+    serverPkgDir: repoServerPkgDir() ?? "",
     camoufoxDir: path.join(dir, "camoufox-browser"),
-    vaultCliDir: path.join(dir, "vault-cli"),
-    vaultServerDir: path.join(dir, "vault-server"),
   };
 }
 
 const hostArch = (): string => (process.arch === "arm64" ? "arm64" : "x86_64");
 
-function camoufoxIn(dir: string): string | null {
-  // Dev checkouts have thin per-arch trees (`just fetch-browser`); a
-  // `fetch-browser-both` also leaves the lipo-fused universal tree, which is
-  // what the packaged app bundles — there the install dir IS `dir` itself.
-  const candidates = [path.join(dir, hostArch()), path.join(dir, "universal"), dir];
-  return candidates.find((c) => fs.existsSync(path.join(c, "config.json"))) ?? null;
+/** The Camoufox executable inside an install dir, or null. The `camoufox fetch`
+ * layout keeps it at browsers/official/<version>/Camoufox.app/Contents/MacOS/. A
+ * dev checkout has thin per-arch trees; a universal tree is the packaged shape,
+ * where the install dir IS `dir` itself. */
+function camoufoxBinaryIn(dir: string): string | null {
+  const roots = [path.join(dir, hostArch()), path.join(dir, "universal"), dir];
+  for (const root of roots) {
+    const official = path.join(root, "browsers", "official");
+    if (!fs.existsSync(official)) continue;
+    for (const build of fs.readdirSync(official)) {
+      const bin = path.join(official, build, "Camoufox.app", "Contents", "MacOS", "camoufox");
+      if (fs.existsSync(bin)) return bin;
+    }
+  }
+  return null;
 }
 
-/** The vault we ship: its binary for this arch plus the shared web interface.
- * Null when this build has no vault payload — the broker then talks to whatever
- * SEED_VAULT_URL points at, the way it did when we hosted it. */
-function vaultServerIn(dir: string): { binary: string; webVaultDir: string } | null {
-  const binary = path.join(dir, hostArch(), "vaultwarden");
-  const webVaultDir = path.join(dir, "web-vault");
-  if (!fs.existsSync(binary) || !fs.existsSync(webVaultDir)) return null;
-  return { binary, webVaultDir };
-}
-
-/** The `bw` we ship, this machine's arch. Null falls back to one on PATH. */
-function vaultCliIn(dir: string): string | null {
-  const candidates = [path.join(dir, hostArch(), "bw"), path.join(dir, "bw")];
-  return candidates.find((c) => fs.existsSync(c)) ?? null;
+/** The host node command: the app binary as node under Electron, else plain
+ * node. Both run our server.js/mergeCookies.js scripts. */
+function hostNode(): { argv: string[]; env: Record<string, string> } {
+  if (process.versions.electron) {
+    // The app binary launches the app unless told to be a node. Requires the
+    // RunAsNode fuse to stay enabled (DESIGN.md §11a).
+    return { argv: [process.execPath], env: { ELECTRON_RUN_AS_NODE: "1" } };
+  }
+  return { argv: [process.execPath], env: {} };
 }
 
 function fromLayout(layout: Layout): ResolvedBrowserRuntime | null {
-  const py = path.join(
-    layout.pythonRoot,
-    "Python.framework",
-    "Versions",
-    "3.12",
-    "bin",
-    "python3.12",
-  );
-  const server = path.join(layout.serverDir, "server.py");
-  if (!fs.existsSync(py) || !fs.existsSync(server)) return null;
-  // The broker ships as a module next to server.py and runs on the same
-  // bundled interpreter; the vault CLI it shells out to ships beside it. Both
-  // env vars are overrides the broker already supports, so a machine with its
-  // own install can still be pointed at that instead.
-  const bw = process.env.SEED_VAULT_BW ?? vaultCliIn(layout.vaultCliDir);
-  const sitePackages = path.join(layout.pythonRoot, "site-packages");
-  // python.org's framework hunts for CA certs under its ORIGINAL install path
-  // (/Library/Frameworks/...), which does not exist inside the app — every
-  // https call out of the broker then dies with CERTIFICATE_VERIFY_FAILED.
-  // Point it at the bundle certifi already ships.
-  const caBundle = path.join(sitePackages, "certifi", "cacert.pem");
+  const server = path.join(layout.serverPkgDir, "dist", "server.js");
+  const merger = path.join(layout.serverPkgDir, "dist", "mergeCookies.js");
+  const pool = path.join(layout.serverPkgDir, "fingerprints.json");
+  const executablePath = process.env.DOMO_CAMOUFOX
+    ? camoufoxBinaryIn(process.env.DOMO_CAMOUFOX) ?? process.env.DOMO_CAMOUFOX
+    : camoufoxBinaryIn(layout.camoufoxDir);
+  // A materialized browser runtime needs ALL THREE: the built server, a Camoufox
+  // to drive, and the frozen fingerprint pool. Missing any — a checkout that
+  // never ran `just fetch-browser`, a worktree cloned without the pool — means
+  // browsing is not offered: return null so DeviceAgent registers no browsing
+  // skill and no sessions, rather than a runtime that only fails at first launch.
+  // (The DOMO_BROWSER_CMD test seam is handled in resolveBrowserRuntime, before
+  // this, and never reaches here.)
+  if (!layout.serverPkgDir || !fs.existsSync(server) || !executablePath || !fs.existsSync(pool)) {
+    return null;
+  }
+  const host = hostNode();
   return {
-    serverCommand: [py, server],
-    credentialBrokerCommand: [py, "-m", "seed_vault_broker"],
-    mergeCookiesCommand: [py, path.join(layout.serverDir, "merge_cookies.py")],
-    env: {
-      PYTHONPATH: `${sitePackages}:${layout.serverDir}`,
-      PYTHONDONTWRITEBYTECODE: "1",
-      PYTHONNOUSERSITE: "1",
-      ...(fs.existsSync(caBundle) ? { SSL_CERT_FILE: caBundle } : {}),
-      ...(bw ? { SEED_VAULT_BW: bw } : {}),
-      // Playwright's Python client is a shim over a Node driver. The wheel's
-      // bundled node (~110MB/arch) is pruned from the runtime; the driver runs
-      // on the host process's own runtime instead — the app binary in
-      // RUN_AS_NODE mode under Electron, or the plain node hosting a test or
-      // headless run. ELECTRON_RUN_AS_NODE rides through the server's env to
-      // the driver spawn; nothing else in that tree is an Electron binary, so
-      // it changes nothing else. Requires the RunAsNode fuse to stay enabled.
-      PLAYWRIGHT_NODEJS_PATH: process.env.PLAYWRIGHT_NODEJS_PATH ?? process.execPath,
-      ...(process.versions.electron ? { ELECTRON_RUN_AS_NODE: "1" } : {}),
-    },
-    vaultServer: vaultServerIn(layout.vaultServerDir),
-    camoufoxInstallDir: process.env.DOMO_CAMOUFOX ?? camoufoxIn(layout.camoufoxDir),
+    serverCommand: [...host.argv, server],
+    credentialBrokerCommand: null,
+    mergeCookiesCommand: [...host.argv, merger],
+    env: host.env,
+    executablePath,
   };
+}
+
+/** The built @domo/browser-server package dir, resolved from device-core's own
+ * dependency graph (works in node_modules and in the dev workspace). */
+function repoServerPkgDir(): string | null {
+  try {
+    const require = createRequire(import.meta.url);
+    return path.dirname(require.resolve("@domo/browser-server/package.json"));
+  } catch {
+    // Dev fallback: walk up to the repo and point at the sibling package.
+    let dir = path.dirname(fileURLToPath(import.meta.url));
+    for (let i = 0; i < 6; i++) {
+      const pkg = path.join(dir, "packages", "browser-server");
+      if (fs.existsSync(path.join(pkg, "package.json"))) return pkg;
+      dir = path.dirname(dir);
+    }
+    return null;
+  }
 }
 
 /** Walk up from this module looking for the repo's vendor/ dir (dev mode). */
@@ -133,25 +140,16 @@ function repoVendorDir(): string | null {
   let dir = path.dirname(fileURLToPath(import.meta.url));
   for (let i = 0; i < 6; i++) {
     const vendor = path.join(dir, "vendor");
-    if (fs.existsSync(path.join(vendor, "browser-server", "server.py"))) return vendor;
+    if (fs.existsSync(path.join(vendor, "camoufox-browser"))) return vendor;
     dir = path.dirname(dir);
   }
   return null;
 }
 
 /**
- * Resolution order: DOMO_BROWSER_CMD (JSON argv — the test seam, paired with
- * DOMO_OP_BROKER_CMD) → DOMO_BROWSER_RUNTIME dir (either layout) → the
- * packaged resources dir passed by the caller → the repo's vendor/ tree (dev).
- * Null when nothing is installed; browser tools then report "not available"
- * rather than failing device startup.
- */
-/**
- * The merger that goes with a hand-written DOMO_BROWSER_CMD.
- *
- * Required, not optional: a runtime with no merger cannot write what a session
- * signed into back to the user's profile, and the quiet version of that is a
- * lost login. Better to say so when the seam is set up than at the first close.
+ * The merger that goes with a hand-written DOMO_BROWSER_CMD. Required, not
+ * optional: a runtime with no merger cannot write what a session signed into
+ * back to the user's profile, and the quiet version of that is a lost login.
  */
 function mergerFromEnv(): string[] {
   const cmd = process.env.DOMO_MERGE_COOKIES_CMD;
@@ -162,6 +160,12 @@ function mergerFromEnv(): string[] {
   return argv;
 }
 
+/**
+ * Resolution order: DOMO_BROWSER_CMD (JSON argv — the test seam, paired with
+ * DOMO_MERGE_COOKIES_CMD) → DOMO_BROWSER_RUNTIME dir (either layout) → the
+ * packaged resources dir passed by the caller → the repo (dev). Null when
+ * nothing is installed; browser tools then report "not available".
+ */
 export function resolveBrowserRuntime(resourcesDir?: string): ResolvedBrowserRuntime | null {
   const cmdEnv = process.env.DOMO_BROWSER_CMD;
   if (cmdEnv) {
@@ -174,11 +178,10 @@ export function resolveBrowserRuntime(resourcesDir?: string): ResolvedBrowserRun
     const brokerCmd = process.env.DOMO_VAULT_BROKER_CMD;
     return {
       serverCommand: argv,
-      credentialBrokerCommand: brokerCmd ? (JSON.parse(brokerCmd) as string[]) : argv,
+      credentialBrokerCommand: brokerCmd ? (JSON.parse(brokerCmd) as string[]) : null,
       mergeCookiesCommand: mergerFromEnv(),
       env: {},
-      vaultServer: null,
-      camoufoxInstallDir: process.env.DOMO_CAMOUFOX ?? null,
+      executablePath: process.env.DOMO_CAMOUFOX ?? null,
     };
   }
 

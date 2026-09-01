@@ -1,11 +1,15 @@
 /**
- * Where the one vault account's password lives.
+ * Where the OLD vault account's password lives — kept for migration.
  *
- * Inside the app that is Electron's secure storage, which on every platform
- * hands the encryption key to the OS (Keychain on macOS) — so the password on
- * disk is ciphertext and we never write Keychain entries of our own. Outside
- * Electron (tests, the headless runner) it falls back to a file only the user
- * can read, because there is nothing better available there.
+ * The Bitwarden-based vault stored one account whose password unwrapped the
+ * user key; this reads it so vaultMigrate.ts can carry that key into the new
+ * store. Inside the app that is Electron's secure storage, which hands the
+ * encryption key to the OS (Keychain on macOS, under the frozen identity in
+ * vaultKeychain.ts) — so the password on disk is ciphertext. Outside Electron
+ * (tests) it falls back to a file only the user can read, because there is
+ * nothing better available there. Read-only by design: nothing writes an
+ * account any more — tests that build legacy vaults write the plaintext
+ * fallback file themselves.
  */
 import fs from "node:fs";
 import path from "node:path";
@@ -26,8 +30,10 @@ export interface VaultAccount {
   pending?: { email: string; password: string };
 }
 
-/** Electron's safeStorage when we are running inside the app, else null. */
-function safeStorage(): { isEncryptionAvailable(): boolean; encryptString(s: string): Buffer; decryptString(b: Buffer): string } | null {
+/** Electron's safeStorage when we are running inside the app, else null.
+ * Exported for the vault key store, which wraps the master key with the same
+ * storage (and the same frozen identity — see vaultKeychain.ts). */
+export function safeStorage(): { isEncryptionAvailable(): boolean; encryptString(s: string): Buffer; decryptString(b: Buffer): string } | null {
   try {
     const require_ = createRequire(import.meta.url);
     const electron = require_("electron") as { safeStorage?: ReturnType<typeof safeStorage> };
@@ -70,30 +76,6 @@ export class VaultSecretStore {
     } catch {
       // A file that exists and will not decrypt is locked, never empty.
       return { status: "locked", reason: "undecryptable" };
-    }
-  }
-
-  /**
-   * The account, or null when there is not one we can read.
-   *
-   * Kept exactly as it was, because callers depend on the conservative
-   * reading: `ensureVaultAccount` treats null as "no usable account" and then
-   * refuses to mint a second one when the `account-created` marker is present.
-   * Anything wanting to TELL the two apart asks `readState`.
-   */
-  read(): VaultAccount | null {
-    const state = this.readState();
-    return state.status === "ok" ? state.account : null;
-  }
-
-  write(account: VaultAccount): void {
-    fs.mkdirSync(path.dirname(this.file), { recursive: true, mode: 0o700 });
-    const s = safeStorage();
-    const body = JSON.stringify(account);
-    if (s) {
-      fs.writeFileSync(this.file, Buffer.concat([Buffer.from("ENC1"), s.encryptString(body)]), { mode: 0o600 });
-    } else {
-      fs.writeFileSync(this.file, body, { mode: 0o600 });
     }
   }
 }

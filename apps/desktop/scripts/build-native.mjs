@@ -4,7 +4,7 @@
 // Full Disk Access grant flow follows System Settings with (see
 // src/permissionFlow.ts). Built universal (arm64 + x86_64, lipo-fused) so the
 // binary is byte-identical in both of electron-builder's arch passes and the
-// universal merge copies it through untouched — the python-runtime pattern,
+// universal merge copies it through untouched — the same lipo-fused pattern
 // not the thin-per-arch providers one.
 //
 // A Mac without the Swift toolchain (no Xcode CLT) still builds and runs the

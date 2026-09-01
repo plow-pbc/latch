@@ -1,11 +1,16 @@
 /**
- * Thin wrapper over the seed-vault-broker CLI (our self-hosted vault resolver).
- * Every call is a short-lived process; secrets appear only in getField's
- * return value, which the caller must hand straight to the browser fill and
- * drop — never to the agent, never to the audit log.
+ * The seam between the fill path and the vault.
+ *
+ * In production this runs in-process (`local`: a BrokerCore over the vault
+ * store — see brokerCore.ts); the subprocess mode below survives because the
+ * test fixture (e2e/fixtures/fakeVaultBroker.cjs) speaks it, and everything
+ * above this seam is tested against that fake. Secrets appear only in
+ * getField's return value, which the caller must hand straight to the browser
+ * fill and drop — never to the agent, never to the audit log.
  */
 import { execFile } from "node:child_process";
 import { JSONValue } from "@domo/protocol";
+import type { BrokerCore } from "./brokerCore.js";
 
 export class CredentialError extends Error {
   constructor(
@@ -18,15 +23,14 @@ export class CredentialError extends Error {
 }
 
 export interface CredentialBrokerConfig {
-  /** Argv prefix, e.g. ["seed-vault-broker"] or a test fake. */
-  command: string[];
+  /** The in-process broker. When set, every call goes here and the subprocess
+   * fields below are ignored. */
+  local?: BrokerCore;
+  /** Argv prefix for subprocess mode — today that is only ever a test fake. */
+  command?: string[];
   env?: Record<string, string>;
   /** Where the broker writes its own audit lines. */
   auditPath?: string;
-  /** Whose vault this machine reads, and the token that fetches that agent's
-   * access. Both come from the app's settings, not from a file next to the code. */
-  person?: string;
-  fleetToken?: string;
   timeoutMs?: number;
   /** Extra environment resolved AT CALL TIME. A plain object cannot carry the
    * vault account, because it does not exist yet when this is constructed. */
@@ -100,19 +104,21 @@ export class CredentialBroker {
   constructor(private readonly cfg: CredentialBrokerConfig) {}
 
   private async run(args: string[], timeoutMs?: number): Promise<string> {
+    const command = this.cfg.command;
+    if (!command || command.length === 0) {
+      throw new CredentialError("BrokerFailed", "no credential broker is configured");
+    }
     await this.cfg.beforeRun?.();
     return new Promise((resolve, reject) => {
       execFile(
-        this.cfg.command[0],
-        [...this.cfg.command.slice(1), ...args],
+        command[0],
+        [...command.slice(1), ...args],
         {
           env: {
             ...process.env,
             ...this.cfg.env,
             ...(this.cfg.envFor?.() ?? {}),
             ...(this.cfg.auditPath ? { SEED_VAULT_AUDIT: this.cfg.auditPath } : {}),
-            ...(this.cfg.person ? { SEED_VAULT_PERSON: this.cfg.person } : {}),
-            ...(this.cfg.fleetToken ? { SEED_VAULT_TOKEN: this.cfg.fleetToken } : {}),
           },
           timeout: timeoutMs ?? this.cfg.timeoutMs ?? 45_000,
           maxBuffer: 4 * 1024 * 1024,
@@ -149,6 +155,7 @@ export class CredentialBroker {
    * are the caller's problem later, not a reason to hold up startup.
    */
   async warm(): Promise<void> {
+    if (this.cfg.local) return; // nothing to warm: no process, no session
     try {
       await this.run(["status"], 60_000);
     } catch {
@@ -162,6 +169,7 @@ export class CredentialBroker {
    * this is simply what the vault holds.
    */
   async whatsHere(url?: string): Promise<CredentialItemSummary[]> {
+    if (this.cfg.local) return this.cfg.local.whatsHere(url);
     const out = await this.run(["whats-here", ...(url ? ["--url", url] : [])]);
     const items = JSON.parse(out) as Array<{ [k: string]: JSONValue }>;
     return items.map((i) => ({
@@ -178,6 +186,7 @@ export class CredentialBroker {
   async describeItem(
     itemId: string,
   ): Promise<{ id: string; title: string; category: string; fields: CredentialFieldInfo[] }> {
+    if (this.cfg.local) return this.cfg.local.describeItem(itemId);
     const out = await this.run(["describe-item", "--item-id", itemId]);
     const item = JSON.parse(out) as { [k: string]: JSONValue };
     return {
@@ -199,6 +208,7 @@ export class CredentialBroker {
    * and be dropped.
    */
   async getField(itemId: string, field: string, pageUrl: string): Promise<CredentialRelease> {
+    if (this.cfg.local) return this.cfg.local.getField(itemId, field, pageUrl);
     const out = await this.run(["get-field", "--item-id", itemId, "--field", field, "--url", pageUrl]);
     const parsed = JSON.parse(out) as { [k: string]: JSONValue };
     if (typeof parsed.value !== "string" || typeof parsed.hidden !== "boolean") {

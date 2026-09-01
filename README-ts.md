@@ -27,10 +27,14 @@ packages/
   transport/     @domo/transport     the Connection seam and the WebSocket (ws) client half
   device-core/   @domo/device-core   DeviceAgent, PolicyEngine, FileOps, Executor + SBPL, AuditLog,
                                      SkillRegistry, identity/key store  (twin of DomoDeviceCore)
+  browser-server/ @domo/browser-server  the Camoufox browser server (TS over playwright-core, a port
+                                     of the retired vendor Python; same JSON-lines stdio wire) + cookie merge
   mcp-server/    @domo/mcp-server    the MCP server on this Mac (revision 2026-07-28): the reduced
                                      tool surface, capability construction, and deferred results
   relay-client/  @domo/relay-client  dials the Plow relay, speaks plow's channel handshake, and
                                      serves the HTTP exchanges the relay tunnels down the socket
+  native-keychain/ @domo/native-keychain  one N-API addon: a generic password in the data-protection
+                                     Keychain under our access group (vault master key; optional)
 apps/
   desktop/       Electron app: device-core in the main process; tray, approval windows,
                  Rules/Audit/Settings UI (visual direction from docs/mockups/audit-mockups.html)

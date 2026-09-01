@@ -227,21 +227,88 @@ describe("AuditLog", () => {
     expect(() => log.clear()).not.toThrow();
     expect(log.entries()).toHaveLength(0);
   });
+
+  it("rolls over by rename once the file is full, and reads both generations as one log", () => {
+    const dir = tempDir();
+    const file = path.join(dir, "audit.ndjson");
+    // A ceiling one event fits under: the second append finds the file full.
+    const log = new AuditLog(file, 40);
+    log.record("first");
+    log.record("second");
+    log.record("third");
+
+    // Two generations, whole lines each, nothing rewritten and nothing lost.
+    expect(log.previous).toBe(path.join(dir, "audit.1.ndjson"));
+    const events = (f: string) =>
+      fs
+        .readFileSync(f, "utf8")
+        .split("\n")
+        .filter((l) => l.length > 0)
+        .map((l) => (JSON.parse(l) as { event: string }).event);
+    expect(events(file)).toEqual(["third"]);
+    expect(events(log.previous)).toEqual(["second"]);
+    expect(log.entries().map((e) => (e as { event: string }).event)).toEqual(["second", "third"]);
+
+    // Clearing takes both generations with it.
+    log.clear();
+    expect(fs.existsSync(log.previous)).toBe(false);
+    expect(log.entries()).toHaveLength(0);
+  });
+
+  it("never rotates a log that has not reached its ceiling", () => {
+    const dir = tempDir();
+    const log = new AuditLog(path.join(dir, "audit.ndjson"));
+    for (let i = 0; i < 50; i++) log.record("e", { i });
+    expect(fs.existsSync(log.previous)).toBe(false);
+    expect(log.entries()).toHaveLength(50);
+  });
+
+  it('emits "recorded" with the entry itself, under the same never-fail contract', () => {
+    const log = new AuditLog(path.join(tempDir(), "audit.ndjson"));
+    const seen: unknown[] = [];
+    log.events.on("recorded", (entry) => {
+      seen.push(entry);
+      // The telemetry tap could throw too; record() must still succeed.
+      throw new Error("sink offline");
+    });
+    expect(() => log.record("exec_end", { intentId: "I", exit_code: 0 })).not.toThrow();
+    expect(seen).toEqual([{ event: "exec_end", fields: { intentId: "I", exit_code: 0 } }]);
+    expect(log.entries()).toHaveLength(1);
+  });
 });
 
 describe("shutting the machine down", () => {
-  it("stops the vault even when the browser cleanup fails", async () => {
-    // The vault runs as a detached child: it survives the app unless it is
-    // told to stop. A close that throws — a full disk on the audit append —
-    // used to skip that line and leave the vault serving after the app quit.
+  it("surfaces a browser-cleanup failure — there is no vault process left to stop", async () => {
+    // The vault used to run as a detached child that shutdown had to stop even
+    // when browser cleanup threw. It is a file and a Keychain item now, so
+    // shutdown's only job here is to close sessions and report honestly.
     const device = new DeviceAgent(tempDir(), "Test Mac", new HeadlessPolicy({ intent: "allow_once" }));
-    let stopped = false;
     Object.assign(device, {
       browserSessions: { closeAll: () => Promise.reject(new Error("audit log is full")) },
-      vaultServer: { stop: () => { stopped = true; } },
     });
 
     await expect(device.shutdown()).rejects.toThrow("audit log is full");
-    expect(stopped).toBe(true);
+  });
+});
+
+describe("browser fingerprint pinning is wired to the runtime", () => {
+  it("sets DOMO_FINGERPRINT_PIN to a stable per-install path in the browser env", () => {
+    // The frozen pool is pinned per install only if the device hands the server
+    // a persistent path to record its pick at; a runtime whose env omitted it
+    // fell back to a random fingerprint every launch (the property DESIGN.md §11a
+    // relies on, silently lost).
+    const home = tempDir();
+    const runtime = {
+      serverCommand: ["node", "/x/server.js"],
+      credentialBrokerCommand: null,
+      mergeCookiesCommand: ["node", "/x/mergeCookies.js"],
+      env: { ELECTRON_RUN_AS_NODE: "1" },
+      executablePath: "/x/camoufox",
+    };
+    const device = new DeviceAgent(home, "Test Mac", new HeadlessPolicy({ intent: "allow_once" }), runtime);
+    const env = (device as unknown as { browserConfig: { env: Record<string, string> } }).browserConfig.env;
+    expect(env.DOMO_FINGERPRINT_PIN).toBe(path.join(home, "device/browser", "fingerprint-pin.json"));
+    // The runtime's own env survives alongside it.
+    expect(env.ELECTRON_RUN_AS_NODE).toBe("1");
   });
 });

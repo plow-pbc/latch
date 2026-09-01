@@ -10,16 +10,15 @@ import {
 
 import { el, icon } from "./dom.js";
 import { renderVault, vaultConfirmLeave } from "./vault.js";
+import {
+  cloudErrorCopy,
+  cloudProviderPickerViewModel,
+} from "../cloudAgentViewModel.js";
 
 const view = document.getElementById("view");
 const seg = document.getElementById("seg");
 const statusDot = document.getElementById("statusDot");
 const statusText = document.getElementById("statusText");
-const CLOUD_PROVIDERS = [
-  { value: "exe:hermes", label: "Hermes" },
-  { value: "exe:life", label: "Life" },
-  { value: "exe:pirate", label: "Pirate" },
-];
 const NEW_LINE_VALUE = "__new_line__";
 
 // Null until boot() picks one: the HTML marks Audit active for the first paint,
@@ -1053,6 +1052,30 @@ function syncCloudLineModal(state, redraw) {
   const { panel } = modal;
   modal.phase = flow.phase;
 
+  const providers = changing ? null : state.cloudProviders;
+  const providerView = cloudProviderPickerViewModel(
+    providers,
+    state.cloudProvidersError,
+  );
+  if (!changing && !modal.started && providers) {
+    const selected = modal.providerSelect.value;
+    modal.providerSelect.replaceChildren(...providers.map((provider) =>
+      el("option", { text: provider, attrs: { value: provider } })));
+    if (providers.includes(selected)) modal.providerSelect.value = selected;
+  }
+
+  if (!changing && !modal.started && providerView.mode === "blocked") {
+    const cancel = el("button", { class: "btn", text: "Cancel" });
+    cancel.addEventListener("click", dismissCloudLineModal);
+    panel.replaceChildren(
+      el("div", { class: "group-title", text: title }),
+      cloudErrorBanner(providerView.message, providerView.heading),
+      el("div", { class: "row cloud-modal-actions" }, [cancel]),
+    );
+    cancel.focus();
+    return;
+  }
+
   if (modal.started && flow.completedAgentId) {
     const completedAgentId = flow.completedAgentId;
     if (modal.selectedLineUid === null) {
@@ -1200,8 +1223,7 @@ function openCloudCreate(trigger, state, redraw) {
   const providerSelect = el("select", {
     class: "text",
     attrs: { "aria-label": "Agent type" },
-  }, CLOUD_PROVIDERS.map(({ value, label }) =>
-    el("option", { text: label, attrs: { value } })));
+  });
   if (!openCloudModal(trigger, [], nameInput, dismissCloudLineModal)) return;
   Object.assign(cloudModal, {
     kind: "line-flow",
@@ -1357,33 +1379,6 @@ function openCloudDetail(trigger, agent, state, redraw) {
   if (!openCloudModal(trigger, [], null)) return;
   Object.assign(cloudModal, { kind: "detail", agentId: agent.agentId, confirmingDelete: false });
   syncCloudModal(state, redraw);
-}
-
-const cloudHttpReasons = new Set([
-  "bad request",
-  "unauthorized",
-  "forbidden",
-  "not found",
-  "method not allowed",
-  "not acceptable",
-  "request timeout",
-  "conflict",
-  "gone",
-  "unprocessable entity",
-  "too many requests",
-  "internal server error",
-  "not implemented",
-  "bad gateway",
-  "service unavailable",
-  "gateway timeout",
-]);
-
-function cloudErrorCopy(message) {
-  const reason = String(message ?? "").trim().replace(/[.!]$/, "").toLowerCase();
-  if (cloudHttpReasons.has(reason) || /^(?:plow returned|http(?: error)?) \d{3}$/.test(reason)) {
-    return "Plow couldn't complete that request. Try again.";
-  }
-  return message;
 }
 
 function cloudErrorBanner(message, title = "Cloud agents could not be refreshed") {
@@ -1969,6 +1964,27 @@ async function renderSettings() {
   });
   applyAwake();
 
+  // Usage statistics + error reports. Allowlisted (telemetry.ts), linked to
+  // the signed-in account, and honored on the very next event — no relaunch.
+  // Not called "anonymous": events key on the account uid, and the label
+  // must not promise more privacy than the wire delivers.
+  let stats = await window.domo.telemetryGet();
+  const statsBox = el("input", { attrs: { type: "checkbox" } });
+  const statsLabel = el("label", { class: "check" }, [
+    statsBox,
+    el("span", { text: "Share usage statistics and error reports" }),
+  ]);
+  const applyStats = () => { statsBox.checked = stats.enabled; };
+  statsBox.addEventListener("change", async () => {
+    try {
+      stats = await window.domo.telemetrySet(statsBox.checked);
+    } catch {
+      // The write failed, so nothing changed — show the last acknowledged state.
+    }
+    applyStats();
+  });
+  applyStats();
+
   // Capabilities: what macOS lets the app itself reach. Full Disk Access has
   // no prompt an app can raise — the only grant path is in System Settings —
   // so the button starts main's grant flow (fdaGrantFlow), ported from
@@ -2106,6 +2122,18 @@ async function renderSettings() {
       el("div", { class: "row" }, [updateStatus, el("div", { class: "spacer" }), updateAction]),
       autoCheckLabel,
       autoInstallLabel,
+    ]),
+    group("Privacy", null, [
+      el("div", { class: "support-row" }, [
+        el("div", { class: "support-copy" }, [
+          el("div", { class: "support-title", text: "Usage Statistics" }),
+          el("p", { class: "faint", text:
+            "Help improve Plow Latch by sharing which features are used and when something breaks, " +
+            "linked to your Plow account. " +
+            "Never shared: file paths, commands, goal text, credentials, or anything an agent typed." }),
+          statsLabel,
+        ]),
+      ]),
     ]),
     group("Support", null, [
       supportRow(

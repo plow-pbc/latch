@@ -1,144 +1,175 @@
 /**
- * Runtime resolution against a fake vendor tree: the broker and the vault CLI
- * must both come from the app payload, so a machine with neither installed can
- * still fill a credential.
+ * Runtime resolution against a fake payload: the browser server is now a Node
+ * script (@domo/browser-server) run on the host process's own runtime — no
+ * bundled Python — and playwright launches a Camoufox binary we point it at. The
+ * credential broker still runs in-process (brokerCore.ts) unless the test seam
+ * (DOMO_VAULT_BROKER_CMD) names one.
  */
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { resolveBrowserRuntime } from "@domo/device-core";
 
-const arch = process.arch === "arm64" ? "arm64" : "x86_64";
 const dirs: string[] = [];
 
+// A materialized runtime requires the frozen pool at the @domo/browser-server
+// package root. It is gitignored build output that a sibling suite
+// (maskReal.integration.test.ts) launches from IN PARALLEL, so these tests must
+// not touch the real file. Instead spy fs.existsSync to control ONLY the pool's
+// presence (default: present), delegating everything else to real fs — so the
+// tests are deterministic whether or not the pool was fetched, and race nothing.
+const POOL = fileURLToPath(new URL("../../browser-server/fingerprints.json", import.meta.url));
+const realExistsSync = fs.existsSync;
+let poolPresent = true;
+
+beforeEach(() => {
+  poolPresent = true;
+  vi.spyOn(fs, "existsSync").mockImplementation((p) =>
+    p === POOL ? poolPresent : realExistsSync(p),
+  );
+});
+
 afterEach(() => {
+  vi.restoreAllMocks();
   while (dirs.length) fs.rmSync(dirs.pop()!, { recursive: true, force: true });
-  delete process.env.SEED_VAULT_BW;
-  delete process.env.PLAYWRIGHT_NODEJS_PATH;
+  delete process.env.DOMO_BROWSER_CMD;
+  delete process.env.DOMO_VAULT_BROKER_CMD;
+  delete process.env.DOMO_MERGE_COOKIES_CMD;
+  delete process.env.DOMO_CAMOUFOX;
+  delete process.env.DOMO_BROWSER_RUNTIME;
 });
 
 /**
- * A packaged Resources dir: python + server (+ vault CLI) under
- * browser-runtime/, the layout electron-builder produces. Returns the dir to
- * hand to resolveBrowserRuntime.
+ * A packaged Resources dir in the electron-builder layout: only the camoufox
+ * tree ships under browser-runtime/ (the server resolves from the app's
+ * node_modules — the real @domo/browser-server package, present in this repo).
+ * Returns the dir to hand to resolveBrowserRuntime.
  */
-/** Which vault-server tree to lay down. Only `per-arch` is a layout the build
- * produces; the rest are the shapes a stopped or hand-made build leaves. */
-type VaultShape = "per-arch" | "flat" | "binary-only";
-
-const VAULT_TREES: Record<VaultShape, string[]> = {
-  "per-arch": [`${arch}/vaultwarden`, "web-vault/.keep"],
-  flat: ["vaultwarden", "web-vault/.keep"],
-  "binary-only": [`${arch}/vaultwarden`],
-};
-
-function fakePayload(opts: { withVaultCli: boolean; vaultServer?: VaultShape }): { resources: string; root: string } {
+function fakePayload(): { resources: string; root: string; binary: string } {
   const resources = fs.mkdtempSync(path.join(os.tmpdir(), "domo-runtime-"));
   dirs.push(resources);
   const root = path.join(resources, "browser-runtime");
-  const pyBin = path.join(root, "python", "Python.framework", "Versions", "3.12", "bin");
-  fs.mkdirSync(pyBin, { recursive: true });
-  fs.writeFileSync(path.join(pyBin, "python3.12"), "");
-  fs.mkdirSync(path.join(root, "server"), { recursive: true });
-  fs.writeFileSync(path.join(root, "server", "server.py"), "");
-  const certifi = path.join(root, "python", "site-packages", "certifi");
-  fs.mkdirSync(certifi, { recursive: true });
-  fs.writeFileSync(path.join(certifi, "cacert.pem"), "");
-  if (opts.withVaultCli) {
-    fs.mkdirSync(path.join(root, "vault-cli", arch), { recursive: true });
-    fs.writeFileSync(path.join(root, "vault-cli", arch, "bw"), "");
-  }
-  for (const rel of opts.vaultServer ? VAULT_TREES[opts.vaultServer] : []) {
-    fs.mkdirSync(path.join(root, "vault-server", path.dirname(rel)), { recursive: true });
-    fs.writeFileSync(path.join(root, "vault-server", rel), "");
-  }
-  return { resources, root };
+  const app = path.join(
+    root,
+    "camoufox",
+    "browsers",
+    "official",
+    "152.0.4-beta.28-universal",
+    "Camoufox.app",
+    "Contents",
+    "MacOS",
+  );
+  fs.mkdirSync(app, { recursive: true });
+  const binary = path.join(app, "camoufox");
+  fs.writeFileSync(binary, "");
+  return { resources, root, binary };
 }
 
 describe("resolveBrowserRuntime", () => {
-  it("runs the bundled broker on the bundled interpreter, not a PATH install", () => {
-    const runtime = resolveBrowserRuntime(fakePayload({ withVaultCli: true }).resources)!;
+  it("runs the bundled Node server, resolved from @domo/browser-server in node_modules", () => {
+    const { resources } = fakePayload();
+    const runtime = resolveBrowserRuntime(resources)!;
     expect(runtime).not.toBeNull();
-    const [py, ...rest] = runtime.credentialBrokerCommand;
-    expect(py).toContain(path.join("Python.framework", "Versions", "3.12", "bin", "python3.12"));
-    expect(rest).toEqual(["-m", "seed_vault_broker"]);
+    const [node, server] = runtime.serverCommand;
+    expect(node).toBe(process.execPath);
+    // The real package's built entry — NOT a copy under the resources dir.
+    expect(server).toContain(path.join("browser-server", "dist", "server.js"));
+    expect(fs.existsSync(server)).toBe(true);
   });
 
-  it("points the broker at the vault CLI shipped for this arch", () => {
-    const { resources, root } = fakePayload({ withVaultCli: true });
+  it("names the cookie merger beside the server", () => {
+    const { resources } = fakePayload();
+    const [node, merger] = resolveBrowserRuntime(resources)!.mergeCookiesCommand;
+    expect(node).toBe(process.execPath);
+    expect(merger).toContain(path.join("browser-server", "dist", "mergeCookies.js"));
+    expect(fs.existsSync(merger)).toBe(true);
+  });
+
+  it("points playwright at the bundled Camoufox binary", () => {
+    const { resources, binary } = fakePayload();
+    expect(resolveBrowserRuntime(resources)!.executablePath).toBe(binary);
+  });
+
+  it("names no broker subprocess — the credential broker is in-process now", () => {
+    const { resources } = fakePayload();
+    expect(resolveBrowserRuntime(resources)!.credentialBrokerCommand).toBeNull();
+  });
+
+  it("ships no Python: no interpreter, framework, or PYTHONPATH in the resolution", () => {
+    const { resources } = fakePayload();
     const runtime = resolveBrowserRuntime(resources)!;
-    expect(runtime.env.SEED_VAULT_BW).toBe(path.join(root, "vault-cli", arch, "bw"));
+    // The server and merger are Node scripts, not a python interpreter, and the
+    // browser is a Camoufox binary, not a Python.framework. (A bare "python"
+    // substring check is unusable here — the worktree can be named that.)
+    expect(runtime.serverCommand[1].endsWith("server.js")).toBe(true);
+    expect(runtime.mergeCookiesCommand[1].endsWith("mergeCookies.js")).toBe(true);
+    expect(JSON.stringify(runtime)).not.toContain("Python.framework");
+    expect(JSON.stringify(runtime)).not.toContain("site-packages");
+    expect(runtime.env.PYTHONPATH).toBeUndefined();
+    expect(runtime.env.SSL_CERT_FILE).toBeUndefined();
   });
 
-  it("leaves SEED_VAULT_BW unset when nothing is bundled, so a PATH bw still works", () => {
-    const runtime = resolveBrowserRuntime(fakePayload({ withVaultCli: false }).resources)!;
-    expect(runtime.env.SEED_VAULT_BW).toBeUndefined();
+  it("honors the broker test seam beside a scripted browser", () => {
+    process.env.DOMO_BROWSER_CMD = JSON.stringify(["/usr/bin/true"]);
+    process.env.DOMO_MERGE_COOKIES_CMD = JSON.stringify(["/usr/bin/true"]);
+    process.env.DOMO_VAULT_BROKER_CMD = JSON.stringify(["/fake/broker"]);
+    expect(resolveBrowserRuntime()!.credentialBrokerCommand).toEqual(["/fake/broker"]);
   });
 
-  it("points the interpreter at the bundled CA bundle, or its https dies in the app", () => {
-    const { resources, root } = fakePayload({ withVaultCli: true });
-    const runtime = resolveBrowserRuntime(resources)!;
-    expect(runtime.env.SSL_CERT_FILE).toBe(
-      path.join(root, "python", "site-packages", "certifi", "cacert.pem"),
-    );
+  it("leaves the broker in-process even under a scripted browser, unless the seam names one", () => {
+    process.env.DOMO_BROWSER_CMD = JSON.stringify(["/usr/bin/true"]);
+    process.env.DOMO_MERGE_COOKIES_CMD = JSON.stringify(["/usr/bin/true"]);
+    expect(resolveBrowserRuntime()!.credentialBrokerCommand).toBeNull();
   });
 
-  it("finds the vault this build ships, binary plus web interface", () => {
-    const { resources, root } = fakePayload({ withVaultCli: true, vaultServer: "per-arch" });
-    const runtime = resolveBrowserRuntime(resources)!;
-    expect(runtime.vaultServer).toEqual({
-      binary: path.join(root, "vault-server", arch, "vaultwarden"),
-      webVaultDir: path.join(root, "vault-server", "web-vault"),
-    });
+  // Under a plain-node host (this test) execPath IS a node, so there must be no
+  // stray ELECTRON_RUN_AS_NODE.
+  it("adds no ELECTRON_RUN_AS_NODE under a plain-node host", () => {
+    const { resources } = fakePayload();
+    expect(resolveBrowserRuntime(resources)!.env.ELECTRON_RUN_AS_NODE).toBeUndefined();
   });
 
-  // Neither is a layout the build produces, and packaging refuses both — a
-  // resolver that took either would accept a tree that cannot ship.
-  it.each(["flat", "binary-only"] as const)("reports no vault for a %s tree", (shape) => {
-    const { resources } = fakePayload({ withVaultCli: false, vaultServer: shape });
-    expect(resolveBrowserRuntime(resources)!.vaultServer).toBeNull();
-  });
-
-  it("reports no vault when this build ships none, so we can still point at a hosted one", () => {
-    const runtime = resolveBrowserRuntime(fakePayload({ withVaultCli: true }).resources)!;
-    expect(runtime.vaultServer).toBeNull();
-  });
-
-  // The runtime ships playwright without its bundled node driver binary; a
-  // resolution that doesn't name a substitute leaves the browser unable to
-  // launch at all.
-  it("points playwright's driver at the host process's own runtime", () => {
-    const runtime = resolveBrowserRuntime(fakePayload({ withVaultCli: false }).resources)!;
-    expect(runtime.env.PLAYWRIGHT_NODEJS_PATH).toBe(process.execPath);
-    // Under a plain-node host (this test) there must be no stray
-    // ELECTRON_RUN_AS_NODE — execPath IS a node.
-    expect(runtime.env.ELECTRON_RUN_AS_NODE).toBeUndefined();
-  });
-
-  // Only the branch is testable here: execPath must ride with RUN_AS_NODE or
-  // the app binary launches the app instead of a node. Whether a packaged,
-  // fused, hardened binary honors it is the test machine's smoke to prove.
+  // Only the branch is testable here: the app binary must ride with RUN_AS_NODE
+  // or it launches the app instead of a node. Whether a packaged, fused,
+  // hardened binary honors it is the test machine's smoke to prove.
   it("adds ELECTRON_RUN_AS_NODE under an Electron host, whose execPath is not a node", () => {
     Object.defineProperty(process.versions, "electron", { value: "33.4.11", configurable: true });
     try {
-      const runtime = resolveBrowserRuntime(fakePayload({ withVaultCli: false }).resources)!;
+      const runtime = resolveBrowserRuntime(fakePayload().resources)!;
       expect(runtime.env.ELECTRON_RUN_AS_NODE).toBe("1");
-      expect(runtime.env.PLAYWRIGHT_NODEJS_PATH).toBe(process.execPath);
+      expect(runtime.serverCommand[0]).toBe(process.execPath);
     } finally {
       Reflect.deleteProperty(process.versions, "electron");
     }
   });
 
-  it("lets an explicit PLAYWRIGHT_NODEJS_PATH win over the host runtime", () => {
-    process.env.PLAYWRIGHT_NODEJS_PATH = "/usr/local/bin/node";
-    const runtime = resolveBrowserRuntime(fakePayload({ withVaultCli: false }).resources)!;
-    expect(runtime.env.PLAYWRIGHT_NODEJS_PATH).toBe("/usr/local/bin/node");
+  it("lets DOMO_CAMOUFOX override the bundled binary", () => {
+    const { resources } = fakePayload();
+    // A bare path that is not an install tree falls back to itself.
+    process.env.DOMO_CAMOUFOX = "/opt/camoufox-bin";
+    expect(resolveBrowserRuntime(resources)!.executablePath).toBe("/opt/camoufox-bin");
   });
 
-  it("lets an explicit SEED_VAULT_BW win over the bundled copy", () => {
-    process.env.SEED_VAULT_BW = "/usr/local/bin/bw";
-    const runtime = resolveBrowserRuntime(fakePayload({ withVaultCli: true }).resources)!;
-    expect(runtime.env.SEED_VAULT_BW).toBe("/usr/local/bin/bw");
+  // Readiness contract: a runtime is offered only when the browser AND the pool
+  // are materialized, so browsing is not registered against a runtime that would
+  // fail at first launch.
+  it("offers no browsing when the Camoufox binary is not fetched", () => {
+    const runtimeDir = fs.mkdtempSync(path.join(os.tmpdir(), "domo-runtime-"));
+    dirs.push(runtimeDir);
+    // Resolve ONLY against this dir (DOMO_BROWSER_RUNTIME), so the repo's own
+    // vendor/ tree is not used as a dev fallback. No Camoufox here.
+    process.env.DOMO_BROWSER_RUNTIME = runtimeDir;
+    expect(resolveBrowserRuntime()).toBeNull();
+  });
+
+  it("offers no browsing when the fingerprint pool is missing", () => {
+    // The pool ships with the package, so all layouts share it; without it every
+    // layout (and the vendor fallback) is incomplete. Toggled via the spy — the
+    // real file is never touched, so the parallel real-browser suite is unaffected.
+    const { resources } = fakePayload(); // has the Camoufox binary
+    poolPresent = false;
+    expect(resolveBrowserRuntime(resources)).toBeNull();
   });
 });

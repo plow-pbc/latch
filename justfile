@@ -61,7 +61,11 @@ build:
 
 # Run the full test suite. Depends on `install` so a clean checkout — CI, the
 # review bot, a new machine — is one command; it is a ~1s no-op once installed.
+# Builds @domo/browser-server first: the cookie-merge and pin-repair tests spawn
+# its COMPILED server/merger, so the dist must exist before Vitest (incremental,
+# a no-op once built).
 test: install
+    npx tsc -b packages/browser-server
     npx vitest run
 
 # Just the golden-vector conformance (fast). fixtures/ is the frozen protocol
@@ -83,27 +87,34 @@ fetch-vendored name="--all":
 
 
 # ---------------------------------------------------------------------------
-# Browser runtime (Camoufox + bundled Python) — see vendor/browser-server/
+# Browser runtime (Camoufox + build-time fingerprint pool — no Python)
 # ---------------------------------------------------------------------------
 
-# Build the universal Python 3.12 runtime for the browser stack into
-# vendor/python-runtime (cached by pin stamp; ~5 min + ~200 MB downloads cold).
-fetch-browser-runtime:
-    node scripts/build-browser-runtime.mjs
-
 # Fetch the Camoufox browser for THIS Mac's arch into vendor/camoufox-browser
-# (dev + integration tests; ~320 MB).
+# and sample the frozen fingerprint pool into packages/browser-server/
+# fingerprints.json (via camoufox-js, a build-only dep). ~320 MB, cached.
 fetch-browser:
     node scripts/build-browser-runtime.mjs --browser
 
 # Both arches, lipo-fused into one universal tree at
 # vendor/camoufox-browser/universal — what `just package` bundles into the DMG.
+# Also refreshes the fingerprint pool.
 fetch-browser-both:
     node scripts/build-browser-runtime.mjs --browser-both
 
-# Run the real-browser integration tier: real Python runtime + real Camoufox
-# ordering a pizza on a local fixture site through the MCP server on the Mac.
-# Needs `just fetch-browser-runtime fetch-browser` first.
+# Prove the shipped browser-stack modules load under ELECTRON'S Node (20.x for
+# Electron 33), not just the host's newer Node — the seam the vitest suite can't
+# reach. Runs the real cookie merger + a playwright-core load check under
+# electron-as-node; no browser, no display, CI-safe. Catches an ABI/loader
+# mismatch (e.g. a native module built for the wrong Node) before packaging.
+smoke-electron: build
+    ELECTRON_RUN_AS_NODE=1 "$(node -e "process.stdout.write(require('electron'))")" \
+        scripts/smoke-electron.mjs
+
+# Run the real-browser integration tier: the TS browser server (playwright-core)
+# driving the real Camoufox on a local fixture site through the MCP server on the
+# Mac. Needs `just fetch-browser` first (browser + pool), and `build` for the
+# server's dist. No Python.
 test-browser: build
     DOMO_BROWSER_RUNTIME="{{root}}/vendor" \
     DOMO_CAMOUFOX="{{root}}/vendor/camoufox-browser/$(uname -m)" \
@@ -280,9 +291,10 @@ connect-screenshot: build
 device-id:
     @node -e 'try{console.log(JSON.parse(require("fs").readFileSync("{{apphome}}/device/identity.json")).deviceId)}catch{console.log("(no device identity yet — launch the app once: just app)")}'
 
-# Show the device's audit log (the record of everything that happened).
+# Show the device's audit log (the record of everything that happened). Both
+# generations: the log rolls over by rename, and the older one comes first.
 audit:
-    @cat "{{apphome}}/device/audit.ndjson" 2>/dev/null || echo "(no audit log yet — approve something in the app first)"
+    @{ cat "{{apphome}}/device/audit.1.ndjson" 2>/dev/null; cat "{{apphome}}/device/audit.ndjson" 2>/dev/null; } | grep . || echo "(no audit log yet — approve something in the app first)"
 
 # Wipe THIS checkout's app home (identity, rules, audit log, settings) — that
 # is this branch's "Plow-Latch-<branch>" home, never another checkout's and

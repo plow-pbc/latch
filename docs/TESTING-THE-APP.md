@@ -75,9 +75,9 @@ app by hand, drive it by hand — keyboard and mouse, not the inspector.
 
 ## Browser behaviors the fill path rests on
 
-`_type_value` in `vendor/browser-server/server.py` decides what it can send as
-keystrokes from assumptions about what a real browser does with a key and with
-an assigned value. **The suite cannot check any of them** — `fillProbe.py`
+`typeValue` in `packages/browser-server/src/session.ts` decides what it can send
+as keystrokes from assumptions about what a real browser does with a key and with
+an assigned value. **The suite cannot check any of them** — `test/fillProbe.ts`
 drives fake nodes that answer a `typeable=` knob and read back exactly what was
 typed, so a scenario is green whether the assumption holds or not.
 

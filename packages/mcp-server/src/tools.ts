@@ -686,7 +686,11 @@ export const TOOLS: ToolSpec[] = [
       "Ask plow_vault what is in the vault; " +
       "'fill_secret' types any approved vault field into a form field on this Mac without " +
       "returning the value to you — use it for every vault-backed field, including ones that " +
-      "are not secret. A destination in the bundled v1 bank registry needs more than item " +
+      "are not secret. When the page takes a code as separate single-character boxes (a 2FA " +
+      "screen's six one-digit inputs), pass 'selectors' naming every box in order instead of " +
+      "'selector': the value is split on the Mac, one character per box, and a fill that " +
+      "fails part-way erases what it already typed. " +
+      "A destination in the bundled v1 bank registry needs more than item " +
       "rights: the owner must ALSO approve the payment separately (a link in their Plow " +
       "thread, or a 👍), and the fill proceeds only once they do — otherwise fill_secret " +
       "returns an error and types nothing. Ask the owner to approve it, then retry. " +
@@ -715,6 +719,13 @@ export const TOOLS: ToolSpec[] = [
         },
         url: { type: "string", description: "goto: target URL (within approved origins)" },
         selector: { type: "string", description: "click / fill / fill_secret: CSS selector" },
+        selectors: {
+          type: "array",
+          items: { type: "string" },
+          description:
+            "fill_secret: for a code the page takes as single-character boxes — every box's " +
+            "CSS selector in the order the code is read, instead of 'selector'",
+        },
         value: { type: "string", description: "fill: literal text to type (non-secret)" },
         expression: { type: "string", description: "eval: JS expression (top frame)" },
         index: { type: "integer", description: "use_page: page index from 'pages'" },
@@ -740,7 +751,7 @@ export const TOOLS: ToolSpec[] = [
       const action = a.get("action").str;
       if (action === null) throw new ToolError("missing 'action'");
       const params: { [k: string]: JSONValue } = { action };
-      for (const key of ["url", "selector", "value", "expression", "index", "item", "field", "direction", "seconds", "frame", "timeout_ms"]) {
+      for (const key of ["url", "selector", "selectors", "value", "expression", "index", "item", "field", "direction", "seconds", "frame", "timeout_ms"]) {
         const v = a.get(key).value;
         if (v !== null && v !== undefined) params[key] = v;
       }
@@ -772,7 +783,6 @@ export const TOOLS: ToolSpec[] = [
           const mimeType = r.get("mime").str ?? "image/jpeg";
           delete out.data_b64;
           delete out.mime;
-          delete out.path;
           return {
             __mcpContent: [
               { type: "image", data: imageB64, mimeType },

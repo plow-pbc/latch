@@ -1,4 +1,9 @@
 import { el, icon } from "./dom.js";
+// The Import sheet lives in its own file (this one is long enough) but works
+// the same pane. This module stays the sole owner of the editor seat, the
+// busy lock and the toast: the sheet is handed them as callbacks (the `host`
+// argument below) and never imports back into here.
+import { vimportSheet } from "./vaultImport.js";
 
 /* The Vault tab, built to the design file (vault.html).
    Its own pane, its own file: this screen keeps being redesigned, and it has
@@ -556,7 +561,10 @@ export async function vaultConfirmLeave() {
 /** One saved item: her row, and the form it opens into. */
 function vitem(summary, reload) {
   const type = summary.type || "login";
-  const spec = VAULT_TYPES[type];
+  // "unsupported": a shape migrated from the old vault that these forms can't
+  // edit. It still gets a row — hidden reads as a lost item — that opens into
+  // an explanation and a delete button instead of a form.
+  const spec = VAULT_TYPES[type] || { icon: "key", label: "Unsupported" };
   const article = el("article", { class: "vitem", attrs: { "data-type": type } });
 
   const row = el("button", { class: "vrow", attrs: { type: "button" } }, [
@@ -565,7 +573,6 @@ function vitem(summary, reload) {
       el("span", { class: "vtitle", text: summary.title || "(untitled)" }),
       el("span", { class: "vctx", text: [summary.subtitle, (summary.urls || [])[0]].filter(Boolean).join(" · ") }),
     ]),
-    el("span", { class: "vtag", text: spec.label }),
     el("span", { class: "vchev" }, [icon("chevron", { class: "vico", strokeWidth: "2" })]),
   ]);
   const inner = el("div", { class: "vbody-inner" });
@@ -599,6 +606,34 @@ function vitem(summary, reload) {
     article.classList.add("open");
     if (loaded) return;
     loaded = true;
+    if (!VAULT_TYPES[type]) {
+      const del = el("button", { class: "btn danger", attrs: { type: "button" }, text: "Delete" });
+      del.addEventListener("click", async () => {
+        const yes = await vconfirm(
+          "Delete this item?",
+          `"${summary.title || "(untitled)"}" is permanently deleted — there is no trash and no undo. Agents lose it immediately.`,
+          "Delete",
+        );
+        if (!yes) return;
+        try {
+          await vbusy(async () => {
+            await window.domo.vaultDeleteItem(summary.id);
+            release();
+            vtoast("Deleted");
+            await reload();
+          });
+        } catch (err) {
+          vtoast("Could not delete it: " + errText(err));
+        }
+      });
+      inner.replaceChildren(
+        el("p", { class: "use-note", text:
+          "This item was saved by the old vault in a shape this app can't edit (an SSH key, for example). " +
+          "Agents can still be granted it for filling; here it can only be deleted." }),
+        el("div", { class: "row" }, [del]),
+      );
+      return;
+    }
     inner.replaceChildren(el("p", { class: "use-note", text: "Opening…" }));
     try {
       const item = await window.domo.vaultItem(summary.id);
@@ -608,7 +643,7 @@ function vitem(summary, reload) {
       del.addEventListener("click", async () => {
         const yes = await vconfirm(
           "Delete this item?",
-          `"${item.name}" goes to the vault's trash. Agents lose it immediately, and anything filled with it stops working.`,
+          `"${item.name}" is permanently deleted — there is no trash and no undo. Agents lose it immediately, and anything filled with it stops working.`,
           "Delete",
         );
         if (!yes) return;
@@ -752,6 +787,12 @@ const PTYPE_BLURB = {
   note: "Freeform private text",
 };
 
+/* What the search box holds. Module-level, because a save or delete redraws
+   the whole pane: the list the owner had narrowed down should still be
+   narrowed down when their item comes back into it. It is never hidden —
+   the box shows it — so nothing filters the list silently. */
+let vquery = "";
+
 export async function renderVault(view, isCurrent = () => true) {
   /** Redraw this same pane — what every action hands to its callers. */
   const renderVaultIn = () => renderVault(view, isCurrent);
@@ -768,9 +809,7 @@ export async function renderVault(view, isCurrent = () => true) {
     el("div", {}, [
       el("h1", { text: "Vault" }),
       el("p", { class: "trust" }, [
-        el("span", { text: "Your agents can use these to act for you. " }),
-        el("span", { class: "lk", text: "The values are typed on this Mac, never handed to them" }),
-        el("span", { text: " — every use needs your approval and is logged." }),
+        el("span", { text: "Logins, credit cards, identities and notes your agents may need while working in the browser. When an agent needs one, this Mac fills it in for them. The values never leave this Mac." }),
       ]),
     ]),
   ]);
@@ -810,45 +849,121 @@ export async function renderVault(view, isCurrent = () => true) {
     const locked = !!(items && items.locked);
     pane.replaceChildren(masthead, el("div", { class: "col" }, [
       el("div", { class: "empty", text: locked
-        ? "This Mac can't unlock its vault account."
-        : "The vault has not started yet." }),
+        ? "This Mac can't unlock its vault."
+        : "The vault isn't available in this build." }),
       // No invented recovery, and no asserting a cause the code cannot tell
-      // apart: `undecryptable` is one `catch` covering a wrong key AND a
-      // damaged file, so the copy leads with what is certain, names the likely
-      // cause as likely, and gives the remedy — the same either way.
+      // apart: `undecryptable` is one answer covering a Keychain key that is
+      // gone, a damaged key file, AND an old vault awaiting migration whose
+      // account can't be opened — so the copy leads with what is certain,
+      // names the likely cause as likely, and gives the remedy, which is the
+      // same either way.
       locked
         ? el("p", { class: "use-note", text: items.reason === "no-storage"
-            ? "The encrypted account is on disk, but this build has no secure storage to open it with. Nothing is lost; a build with secure storage will read it."
-            : "The account file is present but cannot be opened. Usually that means the key is no longer in this Mac's Keychain — after a Keychain reset, a restore from backup, or a change to how the app identifies itself — and it can also mean the file itself is damaged. Either way the password cannot be recovered, here or anywhere: the vault would have to be set up again. Nothing has been deleted." })
+            ? "The vault's key is sealed for the app's secure storage, which this build doesn't have. Nothing is lost; a build with secure storage will open it."
+            : "The vault's key can't be opened. Usually the key is no longer in this Mac's Keychain — after a Keychain reset or a restore from backup — and it can also mean the key file, or an old vault's account file, is damaged or missing. Either way the key can't be recovered, here or anywhere: the vault would have to be set up again. Nothing has been deleted." })
         : null,
     ].filter(Boolean)));
     return;
   }
 
+  const importBtn = el("button", { class: "btn imp", attrs: { type: "button" } }, [
+    icon("intake", { class: "vico", strokeWidth: "2" }),
+    el("span", { text: " Import" }),
+  ]);
+  importBtn.addEventListener("click", () =>
+    vimportSheet(renderVaultIn, { errText, vbusy, vtakeEditor, vreleaseEditor, vtoast }));
   const newBtn = el("button", { class: "btn-primary", attrs: { type: "button" } }, [
     icon("plus", { class: "vico", strokeWidth: "2.2" }),
     el("span", { text: " New" }),
   ]);
   newBtn.addEventListener("click", () => vsheet(renderVaultIn));
-  masthead.appendChild(newBtn);
+  masthead.appendChild(el("div", { class: "mast-acts" }, [importBtn, newBtn]));
 
   const list = el("div", { class: "vlist" });
+  const count = el("span", { class: "lc" });
+  const head = [el("span", { class: "lt", text: "Saved items" })];
   if (failure) {
     list.replaceChildren(el("div", { class: "empty", text: "Could not read the vault: " + failure }));
   } else if (items.length === 0) {
     list.replaceChildren(el("div", { class: "empty", text: "Nothing saved yet." }));
   } else {
-    list.replaceChildren(...items.map((i) => vitem(i, renderVaultIn)));
+    // Every row is built once; the search only hides. A row that is hidden
+    // is not torn down — an open form under it keeps its edits, and comes back
+    // as it was when the query lets it. The MATCHING is the vault's, in main:
+    // it reads every field there, secrets included, and only the matching ids
+    // come back — so this listing never holds a secret for the sake of a
+    // search. An item that asks for the owner first matches on its open
+    // fields only; that is decided there too.
+    const rows = items.map((summary) => ({ summary, node: vitem(summary, renderVaultIn) }));
+    const none = el("div", { class: "empty vnone" });
+    list.replaceChildren(...rows.map((r) => r.node), none);
+    const search = el("input", { class: "vsearch", attrs: {
+      type: "search", placeholder: "Search", "aria-label": "Search saved items",
+      autocomplete: "off", autocorrect: "off", autocapitalize: "off", spellcheck: "false",
+    } });
+    search.value = vquery;
+    const show = (q, ids) => {
+      let shown = 0;
+      for (const { summary, node } of rows) {
+        const keep = ids === null || ids.has(summary.id);
+        node.hidden = !keep;
+        if (keep) shown += 1;
+      }
+      none.hidden = shown > 0;
+      none.textContent = `Nothing matches “${q}”.`;
+      count.textContent = q
+        ? `${shown} of ${items.length}`
+        : `${items.length} item${items.length === 1 ? "" : "s"}`;
+    };
+    // One query in flight at a time, and only the latest answer applied:
+    // keystrokes are debounced, and an answer to a query the box has since
+    // moved on from is dropped rather than drawn over the newer one.
+    let timer = null;
+    let latest = 0;
+    const apply = () => {
+      vquery = search.value;
+      const q = vquery.trim();
+      const seq = ++latest;
+      if (timer) clearTimeout(timer);
+      if (!q) { show(q, null); return; }
+      timer = setTimeout(async () => {
+        timer = null;
+        let ids;
+        try {
+          ids = new Set(await window.domo.vaultSearch(q));
+        } catch (err) {
+          if (seq !== latest) return;
+          vtoast("Could not search the vault: " + errText(err));
+          return;
+        }
+        if (seq !== latest) return;
+        show(q, ids);
+      }, 120);
+    };
+    search.addEventListener("input", apply);
+    search.addEventListener("keydown", (e) => {
+      // Escape clears the box before it does anything else; an empty box
+      // leaves it alone so the key still means what it usually does.
+      if (e.key === "Escape" && search.value !== "") {
+        e.preventDefault();
+        search.value = "";
+        apply();
+      }
+    });
+    if (vquery.trim()) {
+      // Redrawn with a query still in the box: keep the rows as they were
+      // until the vault answers again, rather than flashing the whole list.
+      show(vquery.trim(), null);
+    }
+    apply();
+    head.push(el("span", { class: "vsearch-wrap" }, [icon("search", { class: "vico", strokeWidth: "2" }), search]));
   }
+  head.push(count);
 
-  const count = failure ? "" : `${items.length} item${items.length === 1 ? "" : "s"}`;
   pane.replaceChildren(
     masthead,
     el("div", { class: "col" }, [
-      el("div", { class: "list-head" }, [
-        el("span", { class: "lt", text: "Saved items" }),
-        el("span", { class: "lc", text: count }),
-      ]),
+      el("div", { class: "list-head" }, head),
       list,
     ]),
     el("div", { class: "toast" }),

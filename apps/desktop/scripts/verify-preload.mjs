@@ -81,6 +81,11 @@ ipcMain.handle("launch:set", async (_e, on) => setLaunchAtLogin(launchSupported,
 let keepAwakeOn = false;
 ipcMain.handle("power:getKeepAwake", async () => ({ enabled: keepAwakeOn }));
 ipcMain.handle("power:setKeepAwake", async (_e, on) => ({ enabled: (keepAwakeOn = !!on) }));
+// The Privacy toggle: same boolean-stub shape as Keep Mac Awake. The probe
+// proves the pane renders; telemetry.test.ts owns what the setting gates.
+let telemetryOn = true;
+ipcMain.handle("telemetry:get", async () => ({ enabled: telemetryOn }));
+ipcMain.handle("telemetry:set", async (_e, on) => ({ enabled: (telemetryOn = !!on) }));
 // These four are the real handlers, running the real guards against real
 // on-disk settings. A signed-in Mac with no Anthropic key: Plow is usable and
 // selected, the Anthropic provider is not.
@@ -133,6 +138,8 @@ const rosterProbe = {
 };
 let cloudProbe = {
   cloudAgents: [cloudAgent],
+  cloudProviders: ["exe:hermes", "exe:life"],
+  cloudProvidersError: null,
   cloudFreeLines: [{ uid: "lin_ash", label: "Ash · +1 415-555-0199" }],
   cloudLineFlow: {
     phase: "idle",
@@ -864,7 +871,7 @@ app.whenReady().then(async () => {
     "the existing-line New agent picker");
   await win.webContents.executeJavaScript(`(() => {
     document.querySelector('.cloud-modal input[aria-label="Agent name"]').value = "New helper";
-    document.querySelector('.cloud-modal select[aria-label="Agent type"]').value = "exe:pirate";
+    document.querySelector('.cloud-modal select[aria-label="Agent type"]').value = "exe:hermes";
     const line = document.querySelector('.cloud-modal select[aria-label="Line"]');
     line.value = "lin_ash";
     line.dispatchEvent(new Event("change"));
@@ -1559,16 +1566,16 @@ app.whenReady().then(async () => {
   // Wait for the settled state, not for any `.empty`: the tab now paints an
   // "Opening the vault…" row in that same slot before it reads, so waiting on
   // the node would snapshot the placeholder and fail every assertion below.
-  await waitFor(win, `document.body.innerText.includes("can't unlock its vault account")`, "the vault pane to settle on locked");
+  await waitFor(win, `document.body.innerText.includes("can't unlock its vault")`, "the vault pane to settle on locked");
   const vaultLocked = await win.webContents.executeJavaScript(`(${() => {
     const text = document.body.innerText;
     return {
-      saysCannotUnlock: text.includes("can't unlock its vault account"),
-      doesNotClaimEmpty: !text.includes("has not started yet"),
-      explains: text.includes("The account file is present but cannot be opened"),
-      // `undecryptable` covers a wrong key AND a damaged file. The copy must not
-      // pick one and state it as fact.
-      hedgesTheCause: text.includes("Usually that means") && text.includes("damaged"),
+      saysCannotUnlock: text.includes("can't unlock its vault"),
+      doesNotClaimEmpty: !text.includes("has not started yet") && !text.includes("isn't available"),
+      explains: text.includes("The vault's key can't be opened"),
+      // `undecryptable` covers a Keychain key that is gone AND a damaged file.
+      // The copy must not pick one and state it as fact.
+      hedgesTheCause: text.includes("Usually the key") && text.includes("damaged"),
       // The copy must NOT promise a recovery that does not exist: an account
       // that cannot be decrypted cannot be signed in with either.
       promisesNoFakeRecovery: !text.includes("Signing in again"),
@@ -2001,7 +2008,7 @@ app.whenReady().then(async () => {
     cloudCreatePicker.hasName &&
     cloudCreatePicker.hasAgentType &&
     cloudCreatePicker.providers.join("|") ===
-      "Hermes:exe:hermes|Life:exe:life|Pirate:exe:pirate" &&
+      "exe:hermes:exe:hermes|exe:life:exe:life" &&
     cloudCreatePicker.lines.join("|") ===
       "Choose a line…:|Ash · +1 415-555-0199:lin_ash|New line:__new_line__" &&
     cloudCreatePicker.selectedLine === "" &&
@@ -2025,7 +2032,7 @@ app.whenReady().then(async () => {
     cloudExistingCreate.provisioning &&
     cloudExistingCreate.name === "New helper" &&
     cloudExistingCreateRequest?.name === "New helper" &&
-    cloudExistingCreateRequest?.provider === "exe:pirate" &&
+    cloudExistingCreateRequest?.provider === "exe:hermes" &&
     cloudExistingCreateRequest?.lineUid === "lin_ash" &&
     cloudCodeConfirmed.copy &&
     cloudCodeConfirmed.noButton &&

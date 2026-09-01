@@ -75,8 +75,8 @@ export function stripQuery(url: string): string {
 /**
  * Requests the site itself refused during an action, rebuilt from the fields
  * this side knows: origins, a status, a method, two headers. Rebuilt rather
- * than forwarded because `audit.ndjson` is durable and `server.py` is vendored
- * (see its UPSTREAM.md) — a sync that reintroduced a url would otherwise write
+ * than forwarded because `audit.ndjson` is durable and the browser server
+ * (@domo/browser-server) rebuilds them — a sync that reintroduced a url would otherwise write
  * paths into the owner's log with nothing here to stop it.
  */
 function failedRequests(value: JSONValue[]): JSONValue[] {
@@ -146,7 +146,7 @@ const DEFAULT_IDLE_MS = 15 * 60_000;
  * tunnelled call at its own ceiling (`CLAUDE.md` § Layout owns the value) and
  * `browser` is non-deferrable, so every action must
  * answer well inside that; `wait` and `goto` are the only ones that can run
- * long by design and are bounded (here and in server.py / BrowserHost). A
+ * long by design and are bounded (here and in @domo/browser-server / BrowserHost). A
  * longer pause is expressed as several waits.
  */
 const MAX_WAIT_SECONDS = 12;
@@ -162,6 +162,14 @@ const MAX_WAIT_SECONDS = 12;
 const MIN_CLICK_TIMEOUT_MS = 500;
 /** Exported because the agent-facing copy quotes it; one number, one source. */
 export const MAX_CLICK_TIMEOUT_MS = (MAX_WAIT_SECONDS - 1) * 1000;
+
+/**
+ * The most single-character boxes one split `fill_secret` will type into. A
+ * one-time code is six or eight characters and a card PIN four; a longer list
+ * is a mistake rather than a control, and every box is its own locate and fill
+ * round-trip inside the call budget.
+ */
+export const MAX_SPLIT_BOXES = 16;
 
 /** What the owner's viewer needs to know about the live session. */
 export interface BrowserSessionInfo {
@@ -382,9 +390,7 @@ export class BrowserSessions {
     if (this.browser.profileDir) this.seedProfile(path.join(this.browser.profileDir, profile));
     return new BrowserHost({
       ...this.browser,
-      screenshotsDir: path.join(this.browser.screenshotsDir, profile),
       ...(this.browser.profileDir ? { profileDir: path.join(this.browser.profileDir, profile) } : {}),
-      ...(this.browser.isolatedHome ? { isolatedHome: path.join(this.browser.isolatedHome, profile) } : {}),
     });
   }
 
@@ -443,7 +449,7 @@ export class BrowserSessions {
    * close decides what the user is signed into, which loses the other one's
    * login and can even undo a logout. What this session did to its cookies —
    * changes and sign-outs both — is reconciled into the profile against the
-   * baseline it started from; `merge_cookies.py` holds that contract.
+   * baseline it started from; @domo/browser-server's mergeCookies holds that contract.
    *
    * ponytail: cookies only. A site that keeps its session in localStorage or
    * IndexedDB still signs out with the clone, and a logout inside a session
@@ -471,8 +477,29 @@ export class BrowserSessions {
     fs.rmSync(dir, { recursive: true, force: true });
   }
 
-  /** The merge itself: sqlite, on the interpreter this runtime already ships. */
-  private async mergeCookies(dir: string): Promise<void> {
+  /** Serializes merges into the shared seed profile. Shutdown closes every
+   * session at once, and each merge opens the SAME seed `cookies.sqlite`;
+   * several processes opening it concurrently made node-sqlite3-wasm fail with
+   * "unable to open database file", so the loser's sign-ins were never written
+   * back. One seed profile per instance, so one queue. */
+  private mergeQueue: Promise<void> = Promise.resolve();
+
+  /** The merge, serialized against every other merge into the same profile. */
+  private mergeCookies(dir: string): Promise<void> {
+    const run = (): Promise<void> => this.mergeCookiesLocked(dir);
+    // Run after the previous merge regardless of whether it settled; return THIS
+    // merge's own result to the caller, but keep the queue non-rejecting so one
+    // failure cannot wedge every later close.
+    const next = this.mergeQueue.then(run, run);
+    this.mergeQueue = next.then(
+      () => {},
+      () => {},
+    );
+    return next;
+  }
+
+  /** The merge itself: WASM sqlite, on the node this runtime already runs on. */
+  private async mergeCookiesLocked(dir: string): Promise<void> {
     const seed = this.browser.seedProfile;
     const from = path.join(dir, "cookies.sqlite");
     if (!seed || !fs.existsSync(from)) return;
@@ -704,6 +731,7 @@ export class BrowserSessions {
           const filled = await this.fillSecret(
             s,
             p.get("selector").str ?? "",
+            p.get("selectors").value ?? null,
             p.get("item").str ?? "",
             p.get("field").str ?? "",
           );
@@ -916,17 +944,63 @@ export class BrowserSessions {
    *
    * The mask question is asked before the secret is fetched, so nothing is
    * holding a value while a second broker process runs.
+   *
+   * `selectors` is the segmented-control path — a one-time code the page takes
+   * as six single-character boxes, which one whole-value fill cannot land in
+   * (box one keeps a character and the rest is lost; server.py's `_type_value`
+   * owns why typing on is worse). The agent cannot split the value itself
+   * because it never has it, so the split happens here: every box is located
+   * up front and must sit in the ONE document whose origin is checked, the
+   * vault releases once, and each box gets exactly one character. A failure
+   * part-way erases the boxes already written before it is reported — a fill
+   * that could not finish must not leave most of a live code sitting in the
+   * form.
    */
   private async fillSecret(
     s: Session,
     selector: string,
+    selectorsGiven: JSONValue | null,
     itemId: string,
     field: string,
   ): Promise<{ [k: string]: JSONValue }> {
     if (!this.credentials) return { status: "error", error: "credential broker not available" };
-    if (selector === "" || itemId === "" || field === "") {
-      return { status: "error", error: "fill_secret requires selector, item, field" };
+    let boxes: string[] | null = null;
+    if (selectorsGiven !== null) {
+      if (selector !== "") {
+        return { status: "error", error: "fill_secret takes selector or selectors, never both" };
+      }
+      const list = Array.isArray(selectorsGiven)
+        ? selectorsGiven.map((v) => (typeof v === "string" ? v : ""))
+        : null;
+      if (list === null || list.length < 2 || list.some((v) => v === "")) {
+        return {
+          status: "error",
+          error:
+            "selectors must list at least two CSS selectors, one per single-character box in " +
+            "the order the code is read — for an ordinary field pass selector",
+        };
+      }
+      if (list.length > MAX_SPLIT_BOXES) {
+        return {
+          status: "error",
+          error: `selectors names ${list.length} boxes; a split fill takes at most ${MAX_SPLIT_BOXES}`,
+        };
+      }
+      if (new Set(list).size !== list.length) {
+        return {
+          status: "error",
+          error: "selectors names the same box twice — every box takes exactly one character",
+        };
+      }
+      boxes = list;
     }
+    if ((boxes === null && selector === "") || itemId === "" || field === "") {
+      return { status: "error", error: "fill_secret requires selector (or selectors), item, field" };
+    }
+    const targets = boxes ?? [selector];
+    // One string naming where this fill went, for the audit lines that speak
+    // about the fill as a whole rather than about one box.
+    const where = targets.join(" ");
     if (!s.credentialItems.has(itemId)) {
       this.audit("credential_denied", {
         session: s.auditId,
@@ -941,13 +1015,40 @@ export class BrowserSessions {
       };
     }
 
-    const located = await s.host.sendAction({ action: "locate", selector });
-    const frame = typeof located.frame === "number" ? located.frame : 0;
-    const frameUrl = typeof located.frame_url === "string" ? located.frame_url : "";
-    // What identifies the document this field is in. The url answers "may a
-    // credential go here"; this answers "is this still the same page", which a
-    // url cannot — an SPA rewrites it without replacing anything.
-    const frameToken = typeof located.frame_token === "string" ? located.frame_token : null;
+    const located: { frame: number; frameUrl: string; frameToken: string | null }[] = [];
+    for (const target of targets) {
+      const l = await s.host.sendAction({ action: "locate", selector: target });
+      located.push({
+        frame: typeof l.frame === "number" ? l.frame : 0,
+        frameUrl: typeof l.frame_url === "string" ? l.frame_url : "",
+        // What identifies the document this field is in. The url answers "may a
+        // credential go here"; this answers "is this still the same page", which
+        // a url cannot — an SPA rewrites it without replacing anything.
+        frameToken: typeof l.frame_token === "string" ? l.frame_token : null,
+      });
+    }
+    const { frame, frameUrl, frameToken } = located[0];
+    // Every box must sit in the ONE document whose origin is checked below. A
+    // page that put box four in a different iframe would otherwise be handed a
+    // character of the code in a document nobody approved.
+    const misplaced = located.findIndex(
+      (l) => l.frame !== frame || l.frameUrl !== frameUrl || l.frameToken !== frameToken,
+    );
+    if (misplaced !== -1) {
+      this.audit("credential_denied", {
+        session: s.auditId,
+        item: itemId,
+        field,
+        origin: hostOf(located[misplaced].frameUrl) ?? stripQuery(located[misplaced].frameUrl),
+        reason: "the boxes are not all in one document",
+      });
+      return {
+        status: "error",
+        error:
+          `${field} was not filled: ${targets[misplaced]} is in a different document than ` +
+          `${targets[0]}, and a split fill types into exactly one. Nothing was typed.`,
+      };
+    }
     const frameHost = hostOf(frameUrl);
     if (frameHost === null || !originMatches(frameHost, s.origins)) {
       this.audit("credential_denied", {
@@ -1042,7 +1143,7 @@ export class BrowserSessions {
         item: itemId,
         field,
         origin: frameHost,
-        selector,
+        selector: where,
         reason: "the session ended while the vault was being asked",
       });
       return {
@@ -1056,99 +1157,214 @@ export class BrowserSessions {
     const mask = release.hidden;
     let secret = release.value;
 
-    try {
-      const filled = await s.host.sendAction({
-        action: "fill",
-        selector,
-        value: secret,
-        frame,
-        // The origin was checked against this document before the vault was
-        // asked for the value. A frame index is not an identity — the site can
-        // swap the iframe out while that is in flight — so the browser is told
-        // which document was approved and refuses if the node is in another.
-        ...(frameToken === null ? {} : { frame_token: frameToken }),
-        // Only a masked field carries the mark; a visible one — an address, a
-        // username, a cardholder name — is filled exactly as it always was,
-        // with nothing added to the page.
-        ...(mask ? { mask: true } : {}),
+    // The split, when there is one, happens here — after the vault answered and
+    // before anything is typed. Code points rather than UTF-16 units: a box
+    // takes a character as a person reads them, and a box too small for its
+    // character is the browser's `too_long` refusal below.
+    const pieces = boxes === null ? [secret] : Array.from(secret);
+    if (boxes !== null && pieces.length !== targets.length) {
+      pieces.length = 0;
+      secret = "";
+      this.audit("credential_fill_failed", {
+        session: s.auditId,
+        item: itemId,
+        field,
+        origin: frameHost,
+        selector: where,
+        reason: "the value does not have one character per box",
       });
-      // The browser reports back whether the mark actually took. A page can
-      // defeat it — a Content-Security-Policy without 'unsafe-inline' in
-      // style-src blocks the stylesheet the mask rides on — and when it does,
-      // nothing was typed: the value would have been legible in every
-      // screenshot from that moment on, which is the whole thing this exists to
-      // prevent. Refused rather than filled.
-      if (filled.mask === "too_long") {
+      // Which way the count missed is deliberately not said: with the value
+      // masked, "too few boxes" and "too many" bracket its length.
+      return {
+        status: "error",
+        error:
+          `${field} was not filled: this value does not split into ${targets.length} ` +
+          `one-character boxes. Count the boxes on the page again — nothing was typed.`,
+      };
+    }
+
+    /** Boxes already holding their character, in the order they were filled. */
+    const done: string[] = [];
+    /**
+     * Best-effort erase after a split fill that could not finish, so the boxes
+     * already written do not keep most of a live code between them. Each clear
+     * rides the SAME mask the characters went in under: the browser's unmasked
+     * fill path takes the mark off and forgets the field BEFORE it learns what
+     * the node ended up holding, so a controlled input that undoes the empty
+     * write would be left showing its character to every later screenshot. The
+     * masked path keeps the mark and the ledger entry when the value comes
+     * back changed. Returns the boxes the page would not empty — a clear that
+     * failed must not be reported as a clear, and the owner's log hears about
+     * it; a clear that itself fails must not bury the error about to be
+     * reported.
+     */
+    const clearBoxes = async (also?: string): Promise<string[]> => {
+      const kept: string[] = [];
+      for (const box of also === undefined ? done : [...done, also]) {
+        try {
+          const cleared = await s.host.sendAction({
+            action: "fill",
+            selector: box,
+            value: "",
+            frame,
+            ...(frameToken === null ? {} : { frame_token: frameToken }),
+            ...(mask ? { mask: true } : {}),
+          });
+          if (cleared.ok !== true || cleared.altered === true) kept.push(box);
+        } catch {
+          kept.push(box);
+        }
+      }
+      if (kept.length > 0) {
         this.audit("credential_fill_failed", {
           session: s.auditId,
           item: itemId,
           field,
           origin: frameHost,
-          selector,
-          reason: `the field holds only ${jv(filled).get("cap").num} characters`,
+          selector: kept.join(" "),
+          reason: "the page kept a character after the fill was rolled back",
         });
-        return {
-          status: "error",
-          error:
-            `${field} was not filled: ${selector} holds only ${jv(filled).get("cap").num} ` +
-            `characters and this value is longer. It will have to be shortened where it is ` +
-            `stored before an agent can enter it.`,
-        };
       }
-      // The browser reports that the field is not holding what went into it; it
-      // does not judge whether that matters, because it cannot know what the
-      // value means. Here it can: this came out of the vault, so a field that
-      // changed it did not receive the credential, whatever its reason.
-      if (filled.altered === true) {
-        this.audit("credential_fill_failed", {
-          session: s.auditId,
-          item: itemId,
-          field,
-          origin: frameHost,
-          selector,
-          reason: "the field is holding a changed copy of the value",
+      return kept;
+    };
+    /** The honest tail of a split-fill error: what the rollback achieved. */
+    const clearedNote = (kept: string[]): string =>
+      kept.length === 0
+        ? "Every box this fill touched was cleared."
+        : `Every box this fill touched was cleared, except ${kept.join(", ")}, which the ` +
+          `page would not empty${mask ? " (what it kept stays masked on screen)" : ""}.`;
+
+    let current = targets[0];
+    try {
+      for (let i = 0; i < targets.length; i++) {
+        current = targets[i];
+        const filled = await s.host.sendAction({
+          action: "fill",
+          selector: current,
+          value: pieces[i],
+          frame,
+          // The origin was checked against this document before the vault was
+          // asked for the value. A frame index is not an identity — the site can
+          // swap the iframe out while that is in flight — so the browser is told
+          // which document was approved and refuses if the node is in another.
+          ...(frameToken === null ? {} : { frame_token: frameToken }),
+          // Only a masked field carries the mark; a visible one — an address, a
+          // username, a cardholder name — is filled exactly as it always was,
+          // with nothing added to the page.
+          ...(mask ? { mask: true } : {}),
         });
-        return {
-          status: "error",
-          error:
-            `${field} did not go in as stored: ${selector} took it and is holding a changed ` +
-            `copy — the page rewrites what is typed into it. That copy is still in the field; ` +
-            `clear it yourself if it must not be submitted. The value in the vault is not at ` +
-            `fault, and this field cannot be filled by an agent.`,
-        };
-      }
-      if (filled.mask === "moved") {
-        this.audit("credential_denied", {
-          session: s.auditId,
-          item: itemId,
-          field,
-          origin: frameHost,
-          selector,
-          reason: "the frame was replaced after its origin was approved",
-        });
-        return {
-          status: "error",
-          error:
-            `${field} was not filled: the frame holding ${selector} was replaced while the vault ` +
-            `was being asked for the value, so it is no longer the one whose origin was approved. ` +
-            `Screenshot the page and locate the field again.`,
-        };
-      }
-      if (filled.ok !== true) {
-        this.audit("credential_denied", {
-          session: s.auditId,
-          item: itemId,
-          field,
-          origin: frameHost,
-          selector,
-          reason: "the page prevented the value from being masked",
-        });
-        return {
-          status: "error",
-          error:
-            `${field} was not filled: this page stops the value from being hidden on screen, ` +
-            `so it was not typed. Fill it by hand, or use a field the vault does not conceal.`,
-        };
+        // The browser reports back whether the mark actually took. A page can
+        // defeat it — a Content-Security-Policy without 'unsafe-inline' in
+        // style-src blocks the stylesheet the mask rides on — and when it does,
+        // nothing was typed: the value would have been legible in every
+        // screenshot from that moment on, which is the whole thing this exists to
+        // prevent. Refused rather than filled.
+        if (filled.mask === "too_long") {
+          this.audit("credential_fill_failed", {
+            session: s.auditId,
+            item: itemId,
+            field,
+            origin: frameHost,
+            selector: current,
+            reason: `the field holds only ${jv(filled).get("cap").num} characters`,
+          });
+          if (boxes !== null) {
+            const kept = await clearBoxes();
+            return {
+              status: "error",
+              error:
+                `${field} was not filled: ${current} will not hold even one character, so it ` +
+                `is not one of the code's boxes. ${clearedNote(kept)}`,
+            };
+          }
+          return {
+            status: "error",
+            error:
+              `${field} was not filled: ${current} holds only ${jv(filled).get("cap").num} ` +
+              `characters and this value is longer. It will have to be shortened where it is ` +
+              `stored before an agent can enter it — unless the page splits this code across ` +
+              `single-character boxes, in which case call fill_secret again with 'selectors' ` +
+              `naming every box in order.`,
+          };
+        }
+        // The browser reports that the field is not holding what went into it; it
+        // does not judge whether that matters, because it cannot know what the
+        // value means. Here it can: this came out of the vault, so a field that
+        // changed it did not receive the credential, whatever its reason.
+        if (filled.altered === true) {
+          this.audit("credential_fill_failed", {
+            session: s.auditId,
+            item: itemId,
+            field,
+            origin: frameHost,
+            selector: current,
+            reason: "the field is holding a changed copy of the value",
+          });
+          if (boxes !== null) {
+            const kept = await clearBoxes(current);
+            return {
+              status: "error",
+              error:
+                `${field} did not go in as stored: ${current} rewrote the character it was ` +
+                `given, so this control cannot be filled by an agent. ${clearedNote(kept)}`,
+            };
+          }
+          return {
+            status: "error",
+            error:
+              `${field} did not go in as stored: ${current} took it and is holding a changed ` +
+              `copy — the page rewrites what is typed into it. That copy is still in the field; ` +
+              `clear it yourself if it must not be submitted. The value in the vault is not at ` +
+              `fault, and this field cannot be filled by an agent as one value. If the page ` +
+              `splits this code across single-character boxes, call fill_secret again with ` +
+              `'selectors' naming every box in order.`,
+          };
+        }
+        if (filled.mask === "moved") {
+          this.audit("credential_denied", {
+            session: s.auditId,
+            item: itemId,
+            field,
+            origin: frameHost,
+            selector: current,
+            reason: "the frame was replaced after its origin was approved",
+          });
+          // No clear: the boxes already written were in the document that was
+          // replaced, and it took them with it.
+          return {
+            status: "error",
+            error:
+              `${field} was not filled: the frame holding ${current} was replaced while the vault ` +
+              `was being asked for the value, so it is no longer the one whose origin was approved. ` +
+              `Screenshot the page and locate the field again.`,
+          };
+        }
+        if (filled.ok !== true) {
+          this.audit("credential_denied", {
+            session: s.auditId,
+            item: itemId,
+            field,
+            origin: frameHost,
+            selector: current,
+            reason: "the page prevented the value from being masked",
+          });
+          if (boxes !== null) {
+            const kept = await clearBoxes();
+            return {
+              status: "error",
+              error:
+                `${field} was not filled: this page stops the value from being hidden on ` +
+                `screen, so ${current} was not typed. ${clearedNote(kept)} Fill it by hand.`,
+            };
+          }
+          return {
+            status: "error",
+            error:
+              `${field} was not filled: this page stops the value from being hidden on screen, ` +
+              `so it was not typed. Fill it by hand, or use a field the vault does not conceal.`,
+          };
+        }
+        done.push(current);
       }
     } catch (error: unknown) {
       // Playwright reports what it tried to type: `filling "hunter2"` is part of
@@ -1166,23 +1382,27 @@ export class BrowserSessions {
         item: itemId,
         field,
         origin: frameHost,
-        selector,
+        selector: current,
         reason: "the browser could not type it into that field",
       });
+      const kept = boxes === null ? [] : await clearBoxes(current);
       return {
         status: "error",
         error:
-          `could not type ${field} into ${selector} — the field may be the wrong one, ` +
-          `hidden, or not ready yet. Screenshot the page and check the selector.`,
+          `could not type ${field} into ${current} — the field may be the wrong one, ` +
+          `hidden, or not ready yet. Screenshot the page and check the selector.` +
+          (boxes === null ? "" : ` ${clearedNote(kept)}`),
       };
     } finally {
       secret = "";
+      pieces.length = 0;
     }
     this.audit("credential_filled", {
       session: s.auditId,
       item: itemId,
       field,
       origin: frameHost,
+      ...(boxes === null ? {} : { boxes: targets.length }),
     });
     return { status: "completed", ok: true, frame };
   }

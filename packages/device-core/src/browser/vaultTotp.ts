@@ -52,7 +52,12 @@ const ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
  * would produce a key that is wrong rather than one that is refused.
  */
 export function base32Decode(raw: string): Buffer {
-  const clean = raw.replace(/[\s-]/g, "").replace(/=+$/, "").toUpperCase();
+  // Trailing padding is trimmed by index, not by /=+$/ — that regex is
+  // quadratic on adversarial many-'=' input, and this runs on pasted text.
+  let stripped = raw.replace(/[\s-]/g, "").toUpperCase();
+  let end = stripped.length;
+  while (end > 0 && stripped[end - 1] === "=") end--;
+  const clean = stripped.slice(0, end);
   if (!clean) throw new Error("that authenticator key is empty");
   // The mistake worth naming, because it is the one everybody makes: "TOTP"
   // means the six digits to anyone who is not implementing one, and digits
@@ -135,6 +140,27 @@ export function totpParams(stored: string): TotpParams {
     algorithm = named as TotpParams["algorithm"];
   }
   return { secret: base32Decode(secret), digits, period, algorithm };
+}
+
+/**
+ * Whether two stored keys are the SAME key, whatever they look like: the bare
+ * base32 a site prints and the otpauth:// URI its QR code encodes are one key
+ * in two spellings, and only the parameters that change the codes count.
+ * A string that parses as no key at all falls back to a literal compare.
+ */
+export function totpKeyEquals(a: string, b: string): boolean {
+  try {
+    const pa = totpParams(a);
+    const pb = totpParams(b);
+    return (
+      pa.secret.equals(pb.secret) &&
+      pa.digits === pb.digits &&
+      pa.period === pb.period &&
+      pa.algorithm === pb.algorithm
+    );
+  } catch {
+    return a.trim() === b.trim();
+  }
 }
 
 /** One code, for the counter step RFC 4226 calls C. */

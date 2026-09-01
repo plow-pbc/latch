@@ -12,13 +12,23 @@ import {
   checkedUrls,
   staleEdit,
   decryptField,
+  decryptHaystack,
   decryptItem,
   decryptSummary,
   encryptCipher,
   splitKey,
+  type Cipher,
 } from "@domo/device-core";
+import { decString, encString } from "../src/browser/vaultCrypto.js";
 
 const account = splitKey(crypto.randomBytes(64));
+
+/** A custom field as a migrated item carries one: under the item's own key. */
+function custom(cipher: Cipher, name: string, value: string, type: number) {
+  const key = splitKey(decString(cipher.key as string, account.enc, account.mac));
+  const enc = (v: string) => encString(Buffer.from(v, "utf8"), key.enc, key.mac);
+  return { name: enc(name), value: enc(value), type };
+}
 
 describe("a login", () => {
   const cipher = encryptCipher(
@@ -55,6 +65,14 @@ describe("a login", () => {
     ]);
     expect(both).not.toContain("hunter2");
     expect(both).not.toContain("JBSWY3DPEHPK3PXP");
+  });
+
+  it("puts every string, secrets included, in the haystack the search reads", () => {
+    // The search runs in main, so the haystack may hold what the listing may
+    // not: the owner wants a password to find its item.
+    const hay = decryptHaystack({ ...cipher, id: "x" }, account);
+    expect(hay).toEqual(expect.arrayContaining(["GitHub", "hunter2", "JBSWY3DPEHPK3PXP", "Login"]));
+    expect(hay).toContain("https://github.com");
   });
 
   it("hands one over when it is asked for by name", () => {
@@ -202,13 +220,21 @@ describe("an edit", () => {
 });
 
 describe("an item this app cannot hold", () => {
-  it("is refused rather than shown as an empty login", () => {
-    // The vault's enum reserves 5-8 and its web page can create them; showing
-    // one as a login would take an edit and write it nowhere.
+  it("is refused as a form, and listed as an inert row rather than failing the vault", () => {
+    // The enum reserves 5-8, and a migrated vault can hold a 5; showing one
+    // as a login would take an edit and write it nowhere. But the LISTING
+    // must survive it: the only other way into the vault is gone, so one such
+    // item failing the whole list would read as a lost vault.
     const sshKey = { ...encryptCipher({ type: "login", name: "server", password: "x", urls: ["https://a.example"] }, null, account), id: "k", type: 5 };
-    expect(() => decryptItem(sshKey, account)).toThrow(/cannot show item type 5/);
-    expect(() => decryptSummary(sshKey, account)).toThrow(/cannot show item type 5/);
-    expect(() => encryptCipher({ itemId: "k", name: "server" }, sshKey, account)).toThrow(/cannot show item type 5/);
+    expect(() => decryptItem(sshKey, account)).toThrow(/cannot edit item type 5/);
+    expect(() => encryptCipher({ itemId: "k", name: "server" }, sshKey, account)).toThrow(/cannot edit item type 5/);
+    expect(decryptSummary(sshKey, account)).toEqual({
+      id: "k",
+      title: "server", // its name still decrypts; hidden reads as lost
+      type: "unsupported",
+      subtitle: "",
+      urls: [],
+    });
   });
 });
 
@@ -242,6 +268,57 @@ describe("the other three types", () => {
     expect(item.secrets).toEqual(["number", "code"]);
     expect(decryptField(cipher, account, "number")).toBe("371449635398431");
     expect(decryptSummary({ ...cipher, id: "c" }, account).subtitle).toBe("amex · 04/2030");
+  });
+
+  it("searches a card by its number and a migrated item by its custom fields", () => {
+    const cipher = { ...encryptCipher(
+      { type: "card", name: "Amex", cardholderName: "Daniel Delattre", brand: "amex", number: "371449635398431", code: "1234", notes: "the travel one" },
+      null,
+      account,
+    ), id: "c" };
+    expect(decryptHaystack(cipher, account)).toEqual(expect.arrayContaining(
+      ["Amex", "Daniel Delattre", "amex", "371449635398431", "1234", "the travel one", "Card"]));
+    // A custom field survives migration and an edit but no form shows it —
+    // the search is the one place the owner can still reach it by.
+    const withCustom = { ...cipher, fields: [custom(cipher, "Member no", "M-77", 0)] };
+    expect(decryptHaystack(withCustom, account)).toEqual(expect.arrayContaining(["Member no", "M-77"]));
+  });
+
+  it("searches a migrated SSH key by its fingerprint and public key", () => {
+    // The forms refuse a type 5, so the search is the one way its owner can
+    // reach it by content. Its body sits where migration put it, under the
+    // item's own key.
+    const login = encryptCipher({ type: "login", name: "deploy key", password: "x" }, null, account);
+    const key = splitKey(decString(login.key as string, account.enc, account.mac));
+    const enc = (v: string) => encString(Buffer.from(v, "utf8"), key.enc, key.mac);
+    const sshKey = { ...login, id: "k", type: 5, login: undefined, sshKey: {
+      privateKey: enc("-----BEGIN OPENSSH PRIVATE KEY-----"), publicKey: enc("ssh-ed25519 AAAAC3 jon@mac"), keyFingerprint: enc("SHA256:abc123"),
+    } };
+    const hay = decryptHaystack(sshKey, account);
+    expect(hay).toEqual(expect.arrayContaining(["deploy key", "ssh-ed25519 AAAAC3 jon@mac", "SHA256:abc123", "-----BEGIN OPENSSH PRIVATE KEY-----"]));
+    expect(hay).not.toContain("Unsupported");
+    // Gated: the key material is a secret, the rest still finds it.
+    const gated = decryptHaystack({ ...sshKey, reprompt: 1 }, account);
+    expect(gated).toEqual(expect.arrayContaining(["deploy key", "ssh-ed25519 AAAAC3 jon@mac", "SHA256:abc123"]));
+    expect(gated).not.toContain("-----BEGIN OPENSSH PRIVATE KEY-----");
+    // The enum's 6-8 carry their body verbatim under legacyData: searchable
+    // when open, a secret whole when gated.
+    const passport = { ...login, id: "p", type: 7, login: undefined, legacyData: { number: enc("P1234567"), country: enc("US") } };
+    expect(decryptHaystack(passport, account)).toEqual(expect.arrayContaining(["P1234567", "US"]));
+    expect(decryptHaystack({ ...passport, reprompt: 1 }, account)).not.toContain("P1234567");
+  });
+
+  it("leaves the secrets of an item that asks for the owner out of the haystack", () => {
+    // A search hit is an oracle — type a guess, see whether the row stays —
+    // so an item that demands proof of presence before a reveal must demand
+    // it before a match too. Its open fields still find it.
+    const cipher = { ...encryptCipher({ type: "login", name: "Bank", username: "me", password: "hunter2", urls: ["https://bank.example"] }, null, account), id: "b", reprompt: 1 };
+    const hidden = custom(cipher, "PIN", "9876", 1);
+    const open = custom(cipher, "Branch", "Downtown", 0);
+    const hay = decryptHaystack({ ...cipher, fields: [hidden, open] }, account);
+    expect(hay).toEqual(expect.arrayContaining(["Bank", "me", "https://bank.example", "PIN", "Branch", "Downtown"]));
+    expect(hay).not.toContain("hunter2");
+    expect(hay).not.toContain("9876");
   });
 
   it("keeps an identity's SSN back", () => {

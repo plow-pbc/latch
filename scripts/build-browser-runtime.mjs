@@ -1,18 +1,21 @@
 #!/usr/bin/env node
 /**
- * Builds the universal (arm64 + x86_64) Python runtime for the browser stack
- * into gitignored vendor/ dirs, deterministically and cached:
+ * Fetches the Camoufox browser and freezes a fingerprint pool for the browser
+ * stack into gitignored vendor/ dirs, deterministically and cached. No Python
+ * ships: the runtime is @domo/browser-server (playwright-core) and the disguise
+ * comes from a build-time pool (DESIGN.md §11a).
  *
- *   vendor/python-runtime/Python.framework   relocatable python.org universal2 3.12
- *   vendor/python-runtime/site-packages      lipo-merged universal wheel install
  *   vendor/camoufox-browser/<arch>/Camoufox.app   (--browser: this arch only)
  *   vendor/camoufox-browser/universal/            (--browser-both: both arches
  *                                                  lipo-fused into one tree —
  *                                                  what `just package` bundles)
+ *   packages/browser-server/fingerprints.json     the frozen macOS config pool,
+ *                                                  sampled here via camoufox-js
+ *                                                  (a build-only dependency)
  *
- * Sources and pins live in vendor/browser-server/runtime.lock.json +
- * requirements.txt. Downloads are cached in vendor/downloads/. A stamp file
- * makes re-runs no-ops until the pins change.
+ * Sources and pins live in vendor/browser-server/runtime.lock.json. Downloads
+ * are cached in vendor/downloads/; a per-arch .sha256 marker makes re-runs
+ * no-ops until the pins change.
  *
  * Signing: binaries modified here (install_name_tool) are re-signed AD-HOC so
  * they run locally (arm64 kills invalid signatures). `just package` re-signs
@@ -27,27 +30,22 @@ import { fileURLToPath } from "node:url";
 const repoRoot = fileURLToPath(new URL("..", import.meta.url));
 const vendorDir = path.join(repoRoot, "vendor");
 const serverDir = path.join(vendorDir, "browser-server");
-const runtimeDir = path.join(vendorDir, "python-runtime");
 const downloadsDir = path.join(vendorDir, "downloads");
 const browserDir = path.join(vendorDir, "camoufox-browser");
-const vaultCliDir = path.join(vendorDir, "vault-cli");
-const vaultServerDir = path.join(vendorDir, "vault-server");
 
 const lock = JSON.parse(fs.readFileSync(path.join(serverDir, "runtime.lock.json"), "utf8"));
-const requirementsPath = path.join(serverDir, "requirements.txt");
 
-const PYVER = "3.12";
-const fw = path.join(runtimeDir, "Python.framework");
-const pybin = path.join(fw, "Versions", PYVER, "bin", `python${PYVER}`);
-const sitePackages = path.join(runtimeDir, "site-packages");
 
 const args = process.argv.slice(2);
 const wantBrowser = args.includes("--browser") || args.includes("--browser-both");
 const wantBoth = args.includes("--browser-both");
 
 // Bump when the pruning/merging logic below changes, so cached trees (which
-// are keyed on the download pins) rebuild with the new slimming applied.
-const PRUNE_VERSION = "3";
+// are keyed on the download pins) rebuild with the new slimming applied. v4
+// combines the driver-free runtime pruning with removal of the bundled UBO
+// addon — an older tree may still carry the previously
+// downloaded, unverified xpi, so it must rebuild clean.
+const PRUNE_VERSION = "4";
 
 function log(msg) {
   process.stdout.write(`[browser-runtime] ${msg}\n`);
@@ -110,339 +108,7 @@ function adhocSign(file) {
   run("codesign", ["--force", "--sign", "-", file], { quiet: true });
 }
 
-// ---------------------------------------------------------------------------
-// Stamp: skip everything when the pins haven't changed.
-// ---------------------------------------------------------------------------
-const stampPath = path.join(runtimeDir, ".stamp");
-const stamp = crypto
-  .createHash("sha256")
-  .update(fs.readFileSync(path.join(serverDir, "runtime.lock.json")))
-  .update(fs.readFileSync(requirementsPath))
-  .update(PRUNE_VERSION)
-  .digest("hex");
 
-function buildRuntime() {
-  if (fs.existsSync(stampPath) && fs.readFileSync(stampPath, "utf8") === stamp) {
-    log("runtime up to date (stamp matches)");
-    return;
-  }
-  fs.rmSync(runtimeDir, { recursive: true, force: true });
-  fs.mkdirSync(runtimeDir, { recursive: true });
-
-  // 1. python.org universal2 framework -----------------------------------
-  const pkgDest = path.join(downloadsDir, path.basename(lock.python.url));
-  download(lock.python.url, lock.python.sha256, pkgDest);
-
-  log("expanding Python.framework");
-  const expanded = path.join(downloadsDir, "python-pkg-expanded");
-  fs.rmSync(expanded, { recursive: true, force: true });
-  run("pkgutil", ["--expand-full", pkgDest, expanded]);
-  const fwPayload = path.join(expanded, "Python_Framework.pkg", "Payload");
-  if (!fs.existsSync(path.join(fwPayload, "Versions"))) {
-    throw new Error(`unexpected pkg layout: no Versions/ under ${fwPayload}`);
-  }
-  run("ditto", [fwPayload, fw]);
-  fs.rmSync(expanded, { recursive: true, force: true });
-
-  // 2. Prune what we never need (saves ~90 MB, removes GUI/Tcl payloads) ---
-  const v = path.join(fw, "Versions", PYVER);
-  for (const doomed of [
-    `lib/python${PYVER}/test`,
-    `lib/python${PYVER}/idlelib`,
-    `lib/python${PYVER}/tkinter`,
-    `lib/python${PYVER}/turtledemo`,
-    `lib/python${PYVER}/pydoc_data`,
-    `lib/python${PYVER}/lib2to3`,
-    "share",
-    "Resources/English.lproj",
-  ]) {
-    fs.rmSync(path.join(v, doomed), { recursive: true, force: true });
-  }
-  for (const bin of fs.readdirSync(path.join(v, "bin"))) {
-    // -intel64 is a thin Rosetta launcher; the fat python3.12 covers both archs.
-    if (/^(idle|2to3|pydoc)/.test(bin) || bin.endsWith("-intel64")) {
-      fs.rmSync(path.join(v, "bin", bin), { force: true });
-    }
-  }
-  for (const lib of fs.readdirSync(path.join(v, "lib"))) {
-    if (/^(libtcl|libtk|tcl|tk|itcl|Tk|thread)/i.test(lib)) {
-      fs.rmSync(path.join(v, "lib", lib), { recursive: true, force: true });
-    }
-  }
-  // _tkinter can't work without Tcl — drop it so a stray import fails cleanly.
-  const dynload = path.join(v, `lib/python${PYVER}/lib-dynload`);
-  for (const so of fs.readdirSync(dynload)) {
-    if (so.startsWith("_tkinter")) fs.rmSync(path.join(dynload, so), { force: true });
-  }
-  // Static archives (.a, an ar archive — not Mach-O magic) and relocatable
-  // objects (.o) are build-time artifacts, never loaded at runtime, and CANNOT
-  // carry a hardened signature — codesign stamps them "generic" with no secure
-  // timestamp and notarization rejects them. Sweep every one from the framework.
-  const sweepArtifacts = (dir) => {
-    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-      const p = path.join(dir, entry.name);
-      if (entry.isSymbolicLink()) continue;
-      if (entry.isDirectory()) sweepArtifacts(p);
-      else if (entry.name.endsWith(".o") || entry.name.endsWith(".a")) fs.rmSync(p, { force: true });
-    }
-  };
-  sweepArtifacts(fw);
-  // config-3.12-darwin exists only to compile/embed against libpython; nothing
-  // in it is needed to RUN scripts.
-  fs.rmSync(path.join(v, `lib/python${PYVER}/config-${PYVER}-darwin`), {
-    recursive: true,
-    force: true,
-  });
-
-  // 3. Make it relocatable (the python.org build hardcodes /Library/...) ---
-  // Every framework-internal reference (the Python dylib, OpenSSL in lib/,
-  // …) becomes @loader_path-relative in the file that holds it, so the tree
-  // works from any location with no rpath bookkeeping.
-  log("relocating install names");
-  const fwPrefix = `/Library/Frameworks/Python.framework/Versions/${PYVER}/`;
-  for (const macho of machOFiles(fw)) {
-    const changes = [];
-    const lines = capture("otool", ["-L", macho]).split("\n").slice(1);
-    const refs = lines
-      .map((l) => l.trim().split(" (")[0])
-      .filter((r) => r.startsWith(fwPrefix));
-    // A dylib's own id also appears in -L output; handle it as -id.
-    let id = "";
-    try {
-      id = capture("otool", ["-D", macho]).split("\n")[1]?.trim() ?? "";
-    } catch {
-      /* not a dylib */
-    }
-    if (id.startsWith(fwPrefix)) {
-      changes.push("-id", `@rpath/${id.slice(fwPrefix.length)}`);
-    }
-    for (const ref of refs) {
-      if (ref === id) continue;
-      const target = path.join(v, ref.slice(fwPrefix.length));
-      const rel = path.relative(path.dirname(macho), target);
-      changes.push("-change", ref, `@loader_path/${rel}`);
-    }
-    if (changes.length > 0) {
-      run("install_name_tool", [...changes, macho], { quiet: true });
-      adhocSign(macho); // modification invalidates the signature; arm64 kills unsigned
-    }
-  }
-
-  // Sweep: nothing may still reference /Library/Frameworks (ids excepted —
-  // they are names, not lookups — but we rewrote those too).
-  for (const macho of machOFiles(fw)) {
-    const links = capture("otool", ["-L", macho]);
-    if (links.includes("/Library/Frameworks/Python.framework")) {
-      throw new Error(`unrelocated reference in ${macho}:\n${links}`);
-    }
-  }
-
-  // 4. Sanity: the relocated interpreter must run from here ----------------
-  const versionOut = capture(pybin, ["--version"]).trim();
-  log(`relocated interpreter: ${versionOut}`);
-  run(pybin, ["-m", "ensurepip", "--upgrade"], { quiet: true });
-
-  // 5. Per-arch wheel download -------------------------------------------
-  // System python3 downloads; the wheels themselves are for OUR runtime
-  // (cp312, macOS). Target macosx_14_0 accepts every earlier per-arch tag.
-  const wheelDirs = { arm64: path.join(downloadsDir, "wheels-arm64"), x86_64: path.join(downloadsDir, "wheels-x86_64") };
-  for (const [arch, dir] of Object.entries(wheelDirs)) {
-    fs.rmSync(dir, { recursive: true, force: true });
-    fs.mkdirSync(dir, { recursive: true });
-    log(`pip download (${arch})`);
-    run("python3", [
-      "-m", "pip", "download",
-      "-r", requirementsPath,
-      "--dest", dir,
-      "--only-binary", ":all:",
-      "--implementation", "cp",
-      "--python-version", PYVER,
-      "--abi", "cp312", "--abi", "abi3", "--abi", "none",
-      "--platform", `macosx_14_0_${arch}`,
-      "--platform", "macosx_10_13_universal2",
-      "--platform", "macosx_11_0_universal2",
-      "--quiet",
-    ]);
-    // Playwright's "universal2" wheel is fine as-is: its only Mach-O is the
-    // bundled node driver (x86_64-only despite the tag), and the prune below
-    // deletes that binary entirely — the driver runs on the host process's
-    // node instead (PLAYWRIGHT_NODEJS_PATH, set by browserRuntime.ts). The
-    // universality verification would catch it if the prune ever misses.
-  }
-
-  // 6. Merge into a universal wheel set ----------------------------------
-  log("merging per-arch wheels (delocate)");
-  const delocateLib = path.join(downloadsDir, "delocate-lib");
-  if (!fs.existsSync(path.join(delocateLib, "delocate"))) {
-    run(pybin, ["-m", "pip", "install", "--quiet", "--target", delocateLib, "delocate"], {});
-  }
-  const mergedDir = path.join(downloadsDir, "wheels-merged");
-  fs.rmSync(mergedDir, { recursive: true, force: true });
-  fs.mkdirSync(mergedDir, { recursive: true });
-
-  const armWheels = fs.readdirSync(wheelDirs.arm64);
-  const intelWheels = fs.readdirSync(wheelDirs.x86_64);
-  const nameVer = (f) => f.split("-").slice(0, 2).join("-");
-  const isUniversal = (f) => f.includes("universal2");
-  // Cython is screeninfo's darwin-marker leftover build dep — its macOS code
-  // imports AppKit, never Cython. Its wheels are also ABI-mismatched across
-  // arches (cp312 vs abi3), so exclude it rather than fuse garbage.
-  const excluded = (f) => /^cython-/i.test(f);
-  for (const wheel of armWheels) {
-    if (excluded(wheel)) continue;
-    const armPath = path.join(wheelDirs.arm64, wheel);
-    if (intelWheels.includes(wheel) || isUniversal(wheel)) {
-      fs.copyFileSync(armPath, path.join(mergedDir, wheel)); // pure or already universal2
-      continue;
-    }
-    const partner = intelWheels.find((f) => nameVer(f) === nameVer(wheel));
-    if (!partner) throw new Error(`no x86_64 counterpart for ${wheel}`);
-    if (isUniversal(partner)) {
-      fs.copyFileSync(path.join(wheelDirs.x86_64, partner), path.join(mergedDir, partner));
-      continue;
-    }
-    log(`  fusing ${nameVer(wheel)}`);
-    run(pybin, [
-      "-c",
-      "import sys; from delocate.fuse import fuse_wheels; fuse_wheels(sys.argv[1], sys.argv[2], sys.argv[3])",
-      armPath,
-      path.join(wheelDirs.x86_64, partner),
-      path.join(mergedDir, wheel.replace(/macosx_[0-9_]+_arm64/, "macosx_10_13_universal2")),
-    ], { env: { ...process.env, PYTHONPATH: delocateLib } });
-  }
-  for (const wheel of intelWheels) {
-    if (excluded(wheel)) continue;
-    if (!armWheels.includes(wheel) && !armWheels.some((f) => nameVer(f) === nameVer(wheel))) {
-      throw new Error(`x86_64-only wheel with no arm64 counterpart: ${wheel}`);
-    }
-  }
-
-  // 7. Install the merged set --------------------------------------------
-  // --no-deps with the explicit wheel list: pip download already resolved the
-  // closure, and resolving again would re-demand the excluded Cython.
-  log("installing site-packages");
-  const mergedWheels = fs.readdirSync(mergedDir).map((f) => path.join(mergedDir, f));
-  run(pybin, [
-    "-m", "pip", "install",
-    "--quiet", "--no-index", "--no-deps", "--no-compile",
-    "--target", sitePackages,
-    ...mergedWheels,
-  ]);
-
-  // 8. Prune runtime-dead weight from the installed tree -------------------
-  // Nothing here is loadable at runtime: test suites, debug symbols, type
-  // stubs, C headers, static archives (which also can't carry a hardened
-  // signature — see the sweep above), and bytecode caches (the runtime sets
-  // PYTHONDONTWRITEBYTECODE=1, so shipped .pyc files are dead weight anyway).
-  // License files and .dist-info metadata are deliberately KEPT: redistributing
-  // these packages requires retaining their notices, and some packages resolve
-  // their own version via importlib.metadata. The smoke import below is the
-  // gate against over-pruning.
-  log("pruning site-packages");
-  const rmrf = (p) => fs.rmSync(p, { recursive: true, force: true });
-  rmrf(path.join(sitePackages, "PyObjCTest")); // pyobjc's bundled test suite (incl. dSYMs)
-  for (const doomed of [
-    "numpy/f2py", // Fortran-binding generator, a build tool
-    "numpy/_core/include",
-    "numpy/_core/lib",
-    "lxml/includes",
-    // Playwright's driver: doc-generation metadata, TS declarations, and the
-    // recorder/trace-viewer web bundles — none used by a headless launch.
-    "playwright/driver/package/api.json",
-    "playwright/driver/package/protocol.yml",
-    "playwright/driver/package/types",
-    "playwright/driver/package/lib/vite",
-    // The driver's bundled node (~110MB/arch, and x86_64-only in the
-    // universal2 wheel). The Python client launches the driver JS on
-    // whatever PLAYWRIGHT_NODEJS_PATH names; browserRuntime.ts points it at
-    // the host process's own runtime (Electron RUN_AS_NODE / plain node).
-    "playwright/driver/node",
-  ]) {
-    rmrf(path.join(sitePackages, doomed));
-  }
-  const pruneSweep = (dir) => {
-    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-      const p = path.join(dir, entry.name);
-      if (entry.isSymbolicLink()) continue;
-      if (entry.isDirectory()) {
-        if (
-          entry.name === "__pycache__" ||
-          entry.name === "tests" ||
-          entry.name === "test" ||
-          entry.name.endsWith(".dSYM")
-        ) {
-          rmrf(p);
-        } else {
-          pruneSweep(p);
-        }
-      } else if (/\.(pyi|h|a|o)$/.test(entry.name)) {
-        fs.rmSync(p, { force: true });
-      }
-    }
-  };
-  pruneSweep(sitePackages);
-  // Build-time-only framework payloads, removable now that pip has run: pip
-  // itself (ensurepip put it in the framework's site-packages), ensurepip,
-  // the C headers (plus the Headers symlinks that point at them), and the
-  // stdlib's shipped bytecode caches.
-  const fwSitePackages = path.join(v, `lib/python${PYVER}/site-packages`);
-  for (const entry of fs.readdirSync(fwSitePackages)) {
-    if (entry.startsWith("pip")) rmrf(path.join(fwSitePackages, entry));
-  }
-  rmrf(path.join(v, `lib/python${PYVER}/ensurepip`));
-  rmrf(path.join(v, "include"));
-  fs.rmSync(path.join(v, "Headers"), { force: true });
-  fs.rmSync(path.join(fw, "Headers"), { force: true });
-  const pycacheSweep = (dir) => {
-    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
-      if (entry.isSymbolicLink() || !entry.isDirectory()) continue;
-      const p = path.join(dir, entry.name);
-      if (entry.name === "__pycache__") rmrf(p);
-      else pycacheSweep(p);
-    }
-  };
-  pycacheSweep(path.join(v, `lib/python${PYVER}`));
-
-  // 9. Verify: every native module is universal; imports work natively ----
-  log("verifying universality");
-  let checked = 0;
-  for (const macho of machOFiles(sitePackages)) {
-    const archs = capture("lipo", ["-archs", macho]).trim().split(/\s+/);
-    if (!archs.includes("arm64") || !archs.includes("x86_64")) {
-      throw new Error(`${macho} is not universal (archs: ${archs.join(", ")})`);
-    }
-    checked++;
-  }
-  log(`  ${checked} Mach-O files universal`);
-  // camoufox.sync_api pulls the full launch-time import graph (screeninfo,
-  // browserforge, playwright.sync_api, …) — the canary against over-pruning.
-  const smoke =
-    "import camoufox.sync_api, playwright, lxml, numpy, orjson, tldextract; print('imports ok')";
-  // PYTHONDONTWRITEBYTECODE: the smoke run must not regenerate the __pycache__
-  // dirs the prune above just removed (the runtime sets the same flag).
-  const smokeEnv = {
-    ...process.env,
-    PYTHONPATH: sitePackages,
-    PYTHONNOUSERSITE: "1",
-    PYTHONDONTWRITEBYTECODE: "1",
-  };
-  run(pybin, ["-c", smoke], { env: smokeEnv, quiet: true });
-  log("  native smoke import ok");
-  const rosetta = spawnSync("arch", ["-x86_64", "/usr/bin/true"]).status === 0;
-  if (rosetta && process.arch === "arm64") {
-    run("arch", ["-x86_64", pybin, "-c", smoke], { env: smokeEnv, quiet: true });
-    log("  x86_64 (Rosetta) smoke import ok");
-  }
-  // The driver ships without its bundled node (pruned above) and runs on the
-  // host's runtime at launch — prove the pruned driver JS still starts on an
-  // external node before shipping it.
-  const driverCli = path.join(sitePackages, "playwright", "driver", "package", "cli.js");
-  run(process.execPath, [driverCli, "--version"], { quiet: true });
-  log("  driver runs on external node ok");
-
-  fs.writeFileSync(stampPath, stamp);
-  log("runtime build complete");
-}
 
 /**
  * Mark an app bundle LSUIElement so LaunchServices never gives it a Dock tile.
@@ -465,17 +131,6 @@ function patchDockPolicy(appBundle, { resign }) {
   if (resign) run("codesign", ["--force", "--sign", "-", appBundle], { quiet: true });
 }
 
-/**
- * Keep the browser server out of the Dock. `bin/python3.12` is a stub that
- * execs Resources/Python.app/Contents/MacOS/Python, and that bundle's
- * Info.plist is what LaunchServices reads when the process first connects to
- * the window server (camoufox → screeninfo → AppKit). Without LSUIElement the
- * registration is Foreground and a Python rocket appears in the Dock — the
- * in-process mitigation in server.py runs too late to stop a brief flash.
- */
-function patchPythonAppDockPolicy() {
-  patchDockPolicy(path.join(fw, "Versions", PYVER, "Resources", "Python.app"), { resign: true });
-}
 
 /**
  * Keep Camoufox out of the Dock. Even headless, Firefox launches with a
@@ -502,30 +157,6 @@ function patchCamoufoxDockPolicies() {
   }
 }
 
-/**
- * Sign the Python runtime with the Developer ID. Runs as its own pass (not
- * gated by the build cache) so a rebuild-less `just package` still signs.
- * Every Mach-O gets the helper entitlements; electron-builder is told to skip
- * this tree (signIgnore) so it can't re-sign with the wrong entitlements.
- */
-function signRuntime(identity) {
-  const entitlements = path.join(repoRoot, "apps/desktop/build/entitlements.helper.plist");
-  let n = 0;
-  // Inside-out: leaf dylibs/.so first, the framework's own Python dylib and
-  // the interpreter last (they load the leaves).
-  const files = [...machOFiles(fw), ...machOFiles(sitePackages)].sort(
-    (a, b) => b.split("/").length - a.split("/").length,
-  );
-  for (const macho of files) {
-    run(
-      "codesign",
-      ["--force", "--timestamp", "--options", "runtime", "--entitlements", entitlements, "--sign", identity, macho],
-      { quiet: true },
-    );
-    n++;
-  }
-  log(`signed ${n} runtime Mach-O files with Developer ID`);
-}
 
 // ---------------------------------------------------------------------------
 // Camoufox browser payload
@@ -563,10 +194,10 @@ function fetchBrowser(arch) {
   run("ditto", ["-x", "-k", zipDest, installPath]); // preserves symlinks + exec bits
 
   // Camoufox bundles ~360 MB of Windows/Linux fonts so a spoofed non-mac
-  // fingerprint can actually render its claimed fonts. server.py pins the
-  // fingerprint to macOS (which renders with the system fonts — camoufox's
-  // fonts.json mac list is entirely macOS-shipped families), so the bundle
-  // is dead weight. Fail loudly if the layout ever moves.
+  // fingerprint can actually render its claimed fonts. The pool below samples
+  // only macOS fingerprints (os: "macos"), which render with the system fonts
+  // (camoufox's fonts.json mac list is entirely macOS-shipped families), so the
+  // bundle is dead weight. Fail loudly if the layout ever moves.
   const fontsDir = path.join(installPath, "Camoufox.app", "Contents", "Resources", "fonts");
   if (!fs.existsSync(fontsDir)) {
     throw new Error(`expected bundled fonts at ${fontsDir} — did the zip layout change?`);
@@ -582,6 +213,13 @@ function fetchBrowser(arch) {
     JSON.stringify({ active_version: `browsers/${repo}/${folder}` }),
   );
   fs.writeFileSync(path.join(installRoot, ".0.5_FLAG"), "");
+
+  // No addon is bundled. The frozen fingerprint pool is generated with
+  // `exclude_addons: ["UBO"]`, so no session loads uBlock Origin — bundling it
+  // would ship a signed copy of AMO's MUTABLE "latest" xpi (no digest to pin),
+  // giving a replaced upstream artifact browser-level access to the owner's
+  // sessions for no functional gain. Reintroducing uBlock would mean loading it
+  // in the pool config AND pinning an exact version + immutable URL + sha256.
 
   fs.writeFileSync(marker, markerValue);
   log(`camoufox ${arch} install ready at ${installRoot}`);
@@ -725,6 +363,11 @@ function mergeCamoufoxUniversal() {
     JSON.stringify({ active_version: `browsers/${repo}/${folder}` }),
   );
   fs.writeFileSync(path.join(outRoot, ".0.5_FLAG"), "");
+  // No addons are fused: none is bundled (see fetchBrowser). Deliberately NOT
+  // copying arm64/addons — a copy would both fail on a clean tree (no such dir)
+  // and, worse, re-import a leftover UBO from a cache built before it was
+  // dropped. The PRUNE_VERSION bump above rebuilds any such cache clean.
+
   fs.writeFileSync(marker, markerValue);
   log(`camoufox universal install ready at ${outRoot}`);
 }
@@ -777,182 +420,75 @@ function signCamoufox(arch, identity) {
 }
 
 // ---------------------------------------------------------------------------
-// Vault server payload (the vault itself, running on the user's Mac)
+// Fingerprint pool
 // ---------------------------------------------------------------------------
 /**
- * Builds Vaultwarden from source into vendor/vault-server/<arch>/vaultwarden.
+ * Sample a pool of macOS Camoufox launch configs and freeze them as
+ * packages/browser-server/fingerprints.json — the "frozen pool" the runtime
+ * picks from, pinned per install (DESIGN.md §11a). This is the ONLY place
+ * camoufox-js runs: at build time, where its native deps (better-sqlite3 for the
+ * WebGL model, impit) are free. The runtime ships neither it nor Python.
  *
- * Upstream publishes Linux container images and nothing else — no macOS binary,
- * no Homebrew formula, and the crates.io entry is an empty 0.0.1 placeholder —
- * so this is the one payload we compile ourselves. Needs a Rust toolchain on
- * the packaging machine; the pinned rust-toolchain.toml in their tree decides
- * the compiler version, so `rustup` fetches it on first run.
- *
- * The web interface is NOT compiled: it ships as a hash-pinned prebuilt tarball.
+ * camoufox-js reads the browser's own properties.json to validate the config, so
+ * it needs the fetched tree; it resolves the install via CAMOUFOX_INSTALL_DIR,
+ * which it reads at module load — hence the shim dir and the dynamic import
+ * after the env is set. `os: "macos"` is the device's honest fingerprint;
+ * exclude_addons keeps the config free of build-time addon paths so a frozen
+ * entry is relocatable.
  */
-function fetchVaultServer(arch) {
-  const { repo, commit, version } = lock.vaultServer;
-  const installRoot = path.join(vaultServerDir, arch);
-  // Keyed by the recipe as well as the commit: the same source built the old
-  // way produced a binary linked against the build machine's OpenSSL, and a
-  // marker that only knew the commit would keep serving it from cache.
-  const marker = path.join(installRoot, ".commit");
-  const stamp = `${commit}:vendored-openssl:license-v1`;
-  if (fs.existsSync(marker) && fs.readFileSync(marker, "utf8") === stamp) {
-    log(`vault server ${arch} up to date`);
-    return;
-  }
-  const srcDir = path.join(downloadsDir, "vaultwarden-src");
-  if (!fs.existsSync(path.join(srcDir, ".git"))) {
-    fs.rmSync(srcDir, { recursive: true, force: true });
-    log(`cloning vaultwarden ${version}`);
-    run("git", ["clone", "--quiet", repo, srcDir]);
-  }
-  run("git", ["-C", srcDir, "fetch", "--quiet", "origin", commit], { quiet: true });
-  run("git", ["-C", srcDir, "checkout", "--quiet", commit], { quiet: true });
+const POOL_SIZE = Number(process.env.DOMO_FINGERPRINT_POOL_SIZE ?? "50");
 
-  const triple = arch === "arm64" ? "aarch64-apple-darwin" : "x86_64-apple-darwin";
-  // Their tree pins its own toolchain, and a target added to the default one is
-  // invisible to it — the build then fails deep in the dependency graph with
-  // "can't find crate for `core`". Run from their directory and rustup applies
-  // that pin itself; a no-op once the target is present.
-  run("rustup", ["target", "add", triple], { cwd: srcDir, quiet: true });
-  log(`compiling vaultwarden (${arch}) — slow, cached by commit`);
-  // vendored_openssl builds OpenSSL from source and links it statically. Two
-  // reasons, and the second is the important one: cross-compiling to x86_64
-  // finds no OpenSSL for that arch on an arm64 Mac, and without it the binary
-  // links whatever OpenSSL the BUILD machine had — /opt/homebrew/... — which is
-  // not on the machine of anyone we ship to.
-  run("cargo", [
-    "build", "--release", "--locked",
-    "--features", "sqlite,vendored_openssl",
-    "--target", triple,
-  ], { cwd: srcDir });
-  const built = path.join(srcDir, "target", triple, "release", "vaultwarden");
-  if (!fs.existsSync(built)) throw new Error(`cargo produced no binary at ${built}`);
-
-  fs.rmSync(installRoot, { recursive: true, force: true });
-  fs.mkdirSync(installRoot, { recursive: true });
-  fs.copyFileSync(built, path.join(installRoot, "vaultwarden"));
-  fs.chmodSync(path.join(installRoot, "vaultwarden"), 0o755);
-  // AGPL-3.0: the license and corresponding-source pointer must travel with
-  // the binary. The clone we just built from carries the canonical text.
-  const licenseSrc = path.join(srcDir, "LICENSE.txt");
-  if (!fs.existsSync(licenseSrc)) throw new Error(`no LICENSE.txt in vaultwarden source at ${srcDir}`);
-  fs.copyFileSync(licenseSrc, path.join(installRoot, "LICENSE.txt"));
+async function generateFingerprintPool(treeArch) {
+  const installRoot = path.join(browserDir, treeArch);
+  // browsers/official/<folder>/Camoufox.app — the one the fetch created.
+  const official = path.join(installRoot, "browsers", "official");
+  const folder = fs.readdirSync(official)[0];
+  const app = path.join(official, folder, "Camoufox.app");
+  const version = JSON.parse(
+    fs.readFileSync(path.join(official, folder, "version.json"), "utf8"),
+  );
+  // Shim in the layout camoufox-js expects: Camoufox.app + version.json
+  // {version, release}. Ours writes {version, build}; translate `build`.
+  const shim = fs.mkdtempSync(path.join(downloadsDir, "cfx-shim-"));
+  fs.mkdirSync(shim, { recursive: true });
+  fs.symlinkSync(app, path.join(shim, "Camoufox.app"));
   fs.writeFileSync(
-    path.join(installRoot, "PROVENANCE.txt"),
-    `Vaultwarden ${version} (AGPL-3.0-only)\nBuilt unmodified from ${repo} at commit ${commit}.\n`,
+    path.join(shim, "version.json"),
+    JSON.stringify({ version: version.version, release: version.build }),
   );
-  fs.writeFileSync(marker, stamp);
-  log(`vault server ${arch} ready at ${installRoot}`);
-}
+  process.env.CAMOUFOX_INSTALL_DIR = shim;
+  const { launchOptions } = await import("camoufox-js");
 
-/** The web interface — prebuilt upstream, arch-independent, hash-pinned. */
-function fetchVaultWebUi() {
-  const asset = lock.vaultServer.webVault;
-  const webRoot = path.join(vaultServerDir, "web-vault");
-  const marker = path.join(vaultServerDir, ".web-vault.sha256");
-  if (fs.existsSync(marker) && fs.readFileSync(marker, "utf8") === asset.sha256) {
-    log("vault web ui up to date");
-    return;
+  log(`sampling ${POOL_SIZE} macOS fingerprints from ${treeArch}`);
+  const entries = [];
+  for (let i = 0; i < POOL_SIZE; i++) {
+    const o = await launchOptions({ os: "macos", headless: true, exclude_addons: ["UBO"] });
+    // Only the CAMOU_CONFIG chunks are the disguise; nothing else camoufox-js
+    // put in env is a runtime dependency on macOS. firefoxUserPrefs and args
+    // ride along; args is empty for this config shape, but keep it for safety.
+    const env = {};
+    for (const [k, v] of Object.entries(o.env ?? {})) {
+      if (k.startsWith("CAMOU_CONFIG")) env[k] = v;
+    }
+    const id = crypto.createHash("sha256").update(JSON.stringify(env)).digest("hex").slice(0, 16);
+    entries.push({ id, env, firefoxUserPrefs: o.firefoxUserPrefs ?? {}, args: o.args ?? [] });
   }
-  const tgz = path.join(downloadsDir, path.basename(new URL(asset.url).pathname));
-  download(asset.url, asset.sha256, tgz);
-  log("extracting vault web ui");
-  fs.rmSync(webRoot, { recursive: true, force: true });
-  fs.mkdirSync(webRoot, { recursive: true });
-  // The tarball holds a single web-vault/ top level; strip it.
-  run("tar", ["-xzf", tgz, "-C", webRoot, "--strip-components", "1"]);
-  fs.writeFileSync(marker, asset.sha256);
-  log(`vault web ui ready at ${webRoot}`);
-}
+  fs.rmSync(shim, { recursive: true, force: true });
 
-/** Developer ID + helper entitlements, same as the other bundled executables. */
-function signVaultServer(arch, identity) {
-  const bin = path.join(vaultServerDir, arch, "vaultwarden");
-  if (!fs.existsSync(bin)) return;
-  const entitlements = path.join(repoRoot, "apps/desktop/build/entitlements.helper.plist");
-  run(
-    "codesign",
-    ["--force", "--timestamp", "--options", "runtime", "--entitlements", entitlements, "--sign", identity, bin],
-    { quiet: true },
-  );
-  log(`signed vault server (${arch}) with Developer ID`);
-}
-
-// ---------------------------------------------------------------------------
-// Vault CLI payload (the credential broker's `bw`)
-// ---------------------------------------------------------------------------
-/**
- * Unpacks Bitwarden's standalone CLI into vendor/vault-cli/<arch>/bw, so the
- * broker finds one inside the app and the user installs nothing. Same shape as
- * the camoufox payload: hash-pinned zip, per-arch tree, .sha256 marker.
- *
- * The pinned asset is the `bw-oss-*` build deliberately: the plain `bw-*` one
- * carries Bitwarden-Licensed code we have no right to redistribute.
- */
-function fetchVaultCli(arch) {
-  const asset = lock.vaultCli.assets[arch === "arm64" ? "arm64" : "x64"];
-  const installRoot = path.join(vaultCliDir, arch);
-  const marker = path.join(installRoot, ".sha256");
-  // Keyed by recipe as well as payload (like the vault server's stamp), so a
-  // cache from before the provenance file existed regenerates once.
-  const stamp = `${asset.sha256}:provenance-v3`;
-  if (fs.existsSync(marker) && fs.readFileSync(marker, "utf8") === stamp) {
-    log(`vault cli ${arch} up to date`);
-    return;
-  }
-  const zipDest = path.join(downloadsDir, path.basename(new URL(asset.url).pathname));
-  download(asset.url, asset.sha256, zipDest);
-  log(`extracting vault cli (${arch})`);
-  fs.rmSync(installRoot, { recursive: true, force: true });
-  fs.mkdirSync(installRoot, { recursive: true });
-  run("ditto", ["-x", "-k", zipDest, installRoot]);
-  const bw = path.join(installRoot, "bw");
-  if (!fs.existsSync(bw)) throw new Error(`no bw binary in ${asset.url}`);
-  fs.chmodSync(bw, 0o755); // the zip is built on CI; don't trust its mode bits
-  // Same mechanism as the vault server: a bare GPL binary needs its license
-  // and provenance shipped beside it (the OSS zip carries neither).
-  fs.copyFileSync(path.join(repoRoot, "scripts/licenses/GPL-3.0.txt"), path.join(installRoot, "LICENSE.txt"));
+  const outDir = path.join(repoRoot, "packages", "browser-server");
+  const out = path.join(outDir, "fingerprints.json");
   fs.writeFileSync(
-    path.join(installRoot, "PROVENANCE.txt"),
-    `Bitwarden CLI (bw-oss) ${lock.vaultCli.version} (GPL-3.0)\nPrebuilt upstream release: ${asset.url}\nCorresponding source: https://github.com/bitwarden/clients/tree/cli-v${lock.vaultCli.version}\n`,
+    out,
+    JSON.stringify({ browserVersion: lock.camoufox.browserVersion, entries }, null, 0),
   );
-  fs.writeFileSync(marker, stamp);
-  log(`vault cli ${arch} ready at ${installRoot}`);
-}
-
-/** Developer ID + helper entitlements (it is a Node build — V8 needs JIT). */
-function signVaultCli(arch, identity) {
-  const bw = path.join(vaultCliDir, arch, "bw");
-  if (!fs.existsSync(bw)) return;
-  const entitlements = path.join(repoRoot, "apps/desktop/build/entitlements.helper.plist");
-  run(
-    "codesign",
-    ["--force", "--timestamp", "--options", "runtime", "--entitlements", entitlements, "--sign", identity, bw],
-    { quiet: true },
-  );
-  log(`signed vault cli (${arch}) with Developer ID`);
+  log(`wrote ${entries.length} fingerprints to ${path.relative(repoRoot, out)}`);
 }
 
 // ---------------------------------------------------------------------------
 try {
   const builtArches = [];
-  const vaultArches = [];
-  buildRuntime(); // stamp-cached: fast no-op once built
-  patchPythonAppDockPolicy();
   if (wantBrowser) {
     const hostArch = process.arch === "arm64" ? "arm64" : "x86_64";
-    // The vault and its CLI stay per-arch: unlike Camoufox they are single
-    // binaries nobody has fused yet (issue #15), so both trees ship and
-    // electron-builder passes them through the universal merge.
-    fetchVaultWebUi();
-    for (const a of wantBoth ? ["arm64", "x86_64"] : [hostArch]) {
-      fetchVaultCli(a);
-      fetchVaultServer(a);
-      vaultArches.push(a);
-    }
     if (wantBoth) {
       // The per-arch trees are intermediates; the universal fuse is what gets
       // bundled (and therefore what gets the Developer ID signature).
@@ -968,17 +504,15 @@ try {
   // After the fetch/merge so freshly extracted trees are covered too.
   patchCamoufoxDockPolicies();
 
+  // The frozen fingerprint pool, sampled from whatever tree was just built.
+  if (builtArches.length) await generateFingerprintPool(builtArches[0]);
+
   // Signing is its own pass, cache-independent: a `just package` on an already
   // built tree must still produce Developer ID signatures, or notarization
   // rejects the ad-hoc ones. Without an identity we leave dev signatures alone.
   const identity = process.env.CODESIGN_IDENTITY;
   if (identity) {
-    signRuntime(identity);
     for (const a of builtArches) signCamoufox(a, identity);
-    for (const a of vaultArches) {
-      signVaultCli(a, identity);
-      signVaultServer(a, identity);
-    }
   } else {
     log("CODESIGN_IDENTITY not set — keeping existing/ad-hoc signatures (dev mode)");
   }

@@ -14,21 +14,28 @@
  */
 import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, powerMonitor, safeStorage as electronSafeStorage, screen, shell, systemPreferences, Tray } from "electron";
 import electronUpdater from "electron-updater";
-import { ChildProcess, execFile, spawn } from "node:child_process";
+import { ChildProcess, execFile, execFileSync, spawn } from "node:child_process";
 import fs from "node:fs/promises";
 import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
+import { PostHog } from "posthog-node";
 import { Intent } from "@domo/protocol";
 import {
   ApprovalStore,
+  LEGACY_VAULT_SERVER_FRAGMENTS,
   DeviceAgent,
   PaymentApprovalClient,
   PaymentApprovalRequest,
   plowFolderPath,
   PolicyDelegate,
+  importLogins,
+  importPreview,
+  ImportedLogin,
+  markAgainstVault,
+  parsePasswordExport,
   readCredentialsState,
   resolveBrowserRuntime,
   totpCode,
@@ -38,7 +45,7 @@ import { createDomoMcpServer, DomoMcpServer } from "@domo/mcp-server";
 import { RelayClient } from "@domo/relay-client";
 import { approvalViewModel, auditActivities, CredentialTitles } from "./viewModel.js";
 import { probeFullDiskAccess } from "./fullDiskAccess.js";
-import { appBundleName, appBundlePath } from "./permissionFlow.js";
+import { appBundleName, appBundlePath, decodeTileImage } from "./permissionFlow.js";
 import { FdaGrantFlow } from "./fdaGrantFlow.js";
 import { launchAtLoginState, LoginItemApi, setLaunchAtLogin } from "./loginItem.js";
 import { KeepAwake } from "./keepAwake.js";
@@ -47,6 +54,7 @@ import { migrateLegacyHome } from "./migrateHome.js";
 import { buildMinter, vendorDirs } from "./providerWiring.js";
 import { resolveInstancePaths } from "./paths.js";
 import { loadSettings, saveSettings, useCredentialCodec, WindowBounds } from "./settings.js";
+import { resolveTelemetryConfig, Telemetry } from "./telemetry.js";
 import { PlowApi, PlowApiError, relaySocketUrl, resolveApiBaseUrl } from "./plowApi.js";
 import { Onboarding } from "./onboarding.js";
 import { ConnectClient } from "./connectClient.js";
@@ -98,6 +106,26 @@ if (migrateLegacyHome(instance.home)) {
 app.setName(instance.vaultIdentity);
 app.setPath("userData", instance.electronData);
 app.setPath("sessionData", instance.electronData);
+
+// ONE app per home. The lock is keyed on userData — which the per-branch
+// homes above make exactly the data boundary — so two checkouts still run
+// side by side, while a second launch of the SAME instance (`open -n`, the
+// raw binary) hands its argv to the first and exits before it can touch
+// anything. This is what makes the vault store's read-modify-rename, the key
+// mint, the approvals directory and the audit log single-writer facts rather
+// than hopes; it is also why a second dial against the one relay credential
+// (which the relay refuses anyway) can no longer happen. Held by the OS for
+// the life of the process: a crash releases it, nothing stale to clean up.
+if (!app.requestSingleInstanceLock()) {
+  console.log("[app] another instance already runs for this home; handing over and exiting");
+  app.exit(0);
+}
+app.on("second-instance", () => {
+  // Whoever launched the second copy wanted the app on screen — but WHICH
+  // window is the gate's decision alone (windowGate.ts: a signed-out Mac gets
+  // setup, never the main window beside it).
+  gate.sync();
+});
 
 const dirname = path.dirname(fileURLToPath(import.meta.url));
 const rendererDir = path.join(dirname, "renderer");
@@ -182,6 +210,24 @@ let connectClient: ConnectClient | null = null;
 let cloudAgents: CloudAgentState | null = null;
 let onboardingWindow: BrowserWindow | null = null;
 let updates: UpdateController | null = null;
+let telemetry: Telemetry | null = null;
+
+// Error reporting for the main process. `uncaughtExceptionMonitor` observes
+// without handling — whatever Electron was going to do with the crash (the
+// error dialog, the exit) still happens exactly as before. Rejections have no
+// monitor-only hook; Electron's main process logs them without exiting, and
+// this listener keeps that visible on the console while also reporting it.
+process.on("uncaughtExceptionMonitor", (error) => {
+  telemetry?.trackError("uncaught_exception", error);
+});
+process.on("unhandledRejection", (reason) => {
+  // A fixed marker, NOT the reason: a rejection can carry anything the
+  // throwing code interpolated, and this listener replaced the default
+  // printer — so what it writes is now the one line that reaches the
+  // console, and it must carry nothing. The scrubbed frames go to telemetry.
+  console.error("[app] unhandled rejection (reported to telemetry; text withheld from logs)");
+  telemetry?.trackError("unhandled_rejection", reason);
+});
 
 /**
  * Policy delegate that drives Electron approval windows. Each decision opens a
@@ -543,6 +589,9 @@ async function signOutThisMac(): Promise<void> {
   // out; going round again would reset the setup window and mint a fresh code
   // over the one the user may have just texted.
   if (!isSignedIn(home)) return;
+  // Before the credential is cleared, so the event still keys on the account
+  // that is signing out rather than the anonymous install id.
+  telemetry?.track("signed_out");
   // Started first: it clears the stored credential synchronously, before its
   // own first await, so everything below already sees a signed-out Mac.
   const revoking = revokeAndSignOut(home, (credential) =>
@@ -739,7 +788,12 @@ ipcMain.handle("onboarding:submitCode", async (_e, code: string) => onboarding?.
 ipcMain.handle("onboarding:finish", async () => {
   gate.sync();
 });
-ipcMain.handle("settings:setApprovalMode", async (_e, mode: string) => setApprovalMode(home, mode));
+ipcMain.handle("settings:setApprovalMode", async (_e, mode: string) => {
+  // The validated enum, not the raw argument.
+  const applied = setApprovalMode(home, mode);
+  telemetry?.track("approval_mode_changed", { mode: applied });
+  return applied;
+});
 // What the owner says agents are for. This pair is the only way the text is
 // written or read on the renderer's behalf; nothing an agent can reach touches
 // it, which is what makes it trusted context for the reviewer.
@@ -754,26 +808,30 @@ ipcMain.handle("settings:setAgentPurpose", async (_e, purpose: string) =>
  */
 ipcMain.handle("settings:getInference", async () => readInference(home));
 // The vault's contents, for the owner's own eyes and hands. This is the whole
-// point of the tab: the vault's web page is the only other way in, and reaching
-// it means a browser warning about a certificate the app issued to itself.
+// point of the tab: there is no other way in any more — the vault is a local
+// encrypted store whose key lives in the Keychain, and this app is its client.
 ipcMain.handle("vault:items", async () => {
   const vault = device?.vaultClient;
-  const server = device?.vaultServer;
-  if (!vault || !server) return null;
+  const dir = device?.vaultDir;
+  if (!vault || !dir) return null;
   // Locked and empty are different facts and the screen says different words.
-  // An account that is on disk and will not open must never be reported as a
-  // vault that has not started — that sent people to debug a running server.
-  // Read BEFORE starting: a locked account is the very case where the vault's
-  // own bootstrap cannot finish, and the explanation has to survive that.
-  const locked = readCredentialsState(server.dataDir);
-  if (locked.status === "locked") return { locked: true, reason: locked.reason };
-  // Started, not merely launched: the account is written by the vault's first
-  // run, so reading its state before that finishes reports an empty vault.
-  await server.start();
-  if (readCredentialsState(server.dataDir).status !== "ok") return null;
+  // A key (or a legacy account awaiting migration) that is on disk and will
+  // not open must never be reported as a vault that has not started.
+  const state = readCredentialsState(dir);
+  if (state.status === "locked") return { locked: true, reason: state.reason };
   // Every type, not only logins: a card and a note are things the owner keeps
-  // here too, and the tab is where they are kept.
+  // here too, and the tab is where they are kept. An empty state is fine —
+  // list() mints the vault's key on first use.
   return vault.list();
+});
+
+// The ids that match the tab's search box. The matching runs in the vault,
+// over every field including the secrets, so that the listing above can stay
+// secret-free and still let a password find its item.
+ipcMain.handle("vault:search", async (_e, query: string) => {
+  const vault = device?.vaultClient;
+  if (!vault) throw new Error("the vault is not running");
+  return vault.search(String(query ?? ""));
 });
 
 // One item to fill an edit form with — never a secret value; those are asked
@@ -805,13 +863,128 @@ ipcMain.handle("vault:totp", async (_e, itemId: string, key?: string) => {
 ipcMain.handle("vault:deleteItem", async (_e, itemId: string) => {
   const vault = device?.vaultClient;
   if (!vault) throw new Error("the vault is not running");
-  return vault.remove(String(itemId));
+  const result = await vault.remove(String(itemId));
+  telemetry?.track("vault_item_deleted");
+  return result;
 });
 
 ipcMain.handle("vault:saveItem", async (_e, input: VaultItemInput) => {
   const vault = device?.vaultClient;
   if (!vault) throw new Error("the vault is not running");
-  return vault.save(input);
+  const result = await vault.save(input);
+  // After the save took, so a refused write is not counted. Counts and the
+  // fixed type enum only — never the name, urls, or field values.
+  const knownTypes = ["login", "card", "identity", "note"];
+  telemetry?.track("vault_item_saved", {
+    created: !input.itemId,
+    item_type: knownTypes.includes(String(input.type)) ? String(input.type) : "other",
+  });
+  return result;
+});
+
+/*
+ * Importing passwords (the Vault tab's Import sheet).
+ *
+ * The parsed logins stay HERE, in main, between inspect and commit — the
+ * renderer is shown a preview (title, username, site, has-a-password) and
+ * holds a claim ticket of nothing: commit imports whatever the last inspect
+ * staged. One staging slot, because the sheet is modal: a new inspect
+ * replaces it, and commit or cancel clears it, so pasted passwords do not
+ * outlive the sheet they were pasted for.
+ */
+let stagedImport: ImportedLogin[] | null = null;
+/**
+ * Bumped by every cancel and commit. An inspect captures it before parsing
+ * and stages only if it still holds afterwards — a sheet that closed while
+ * the parse was in flight has already cancelled, and its answer must not
+ * quietly re-stage the plaintext the cancel existed to drop.
+ */
+let importEpoch = 0;
+
+// `epoch` is the value of importEpoch when THIS request began — for a file
+// pick that is before the dialog even opened, so a dialog left open across a
+// sheet close (and a replacement sheet's fresh staging) cannot land its stale
+// contents on top when finally answered.
+async function inspectImport(text: string, epoch = importEpoch) {
+  const vault = device?.vaultClient;
+  if (!vault) throw new Error("the vault is not running");
+  const parsed = parsePasswordExport(text);
+  await markAgainstVault(vault, parsed.logins);
+  if (epoch === importEpoch) stagedImport = parsed.logins;
+  return importPreview(parsed);
+}
+
+/**
+ * The apps the Import sheet can guide the owner out of, with their real icons.
+ * Apple's Passwords app ships with macOS; 1Password is only offered when it is
+ * actually installed, so nobody is walked through an app they don't have. The
+ * icons are display data (a PNG data URL) — never a path the renderer could use.
+ */
+ipcMain.handle("vault:importSources", async () => {
+  const iconOf = async (appPath: string): Promise<string | null> => {
+    if (!(await fs.stat(appPath).catch(() => null))) return null;
+    return (await bundleIcon(appPath))?.toDataURL() ?? null;
+  };
+  const installed = async (name: string): Promise<string | undefined> => {
+    const candidates = [
+      path.join("/Applications", name),
+      path.join(os.homedir(), "Applications", name),
+    ];
+    return (
+      await Promise.all(candidates.map(async (p) => ((await fs.stat(p).catch(() => null)) ? p : null)))
+    ).find(Boolean) ?? undefined;
+  };
+  const onePwApp = await installed("1Password.app");
+  const chromeApp = await installed("Google Chrome.app");
+  return {
+    apple: { icon: await iconOf("/System/Applications/Passwords.app") },
+    onePassword: onePwApp ? { icon: await iconOf(onePwApp) } : null,
+    chrome: chromeApp ? { icon: await iconOf(chromeApp) } : null,
+  };
+});
+
+// Pasted text: 1Password's "Copy item JSON", or CSV text.
+ipcMain.handle("vault:importInspect", async (_e, text: string) => inspectImport(String(text)));
+
+// A chosen file: main shows the dialog and reads the file itself, so the CSV
+// full of passwords never crosses into the renderer at all.
+ipcMain.handle("vault:importFile", async () => {
+  const epoch = importEpoch;
+  const picked = await dialog.showOpenDialog({
+    title: "Choose a passwords export",
+    properties: ["openFile"],
+    filters: [{ name: "CSV export", extensions: ["csv", "txt"] }],
+  });
+  const file = picked.filePaths[0];
+  if (picked.canceled || !file) return null;
+  const stat = await fs.stat(file);
+  if (stat.size > 20 * 1024 * 1024) throw new Error("that file is too large to be a passwords export");
+  return inspectImport(await fs.readFile(file, "utf8"), epoch);
+});
+
+// `selected` names the rows the owner ticked, as indices into the preview's
+// item order (which IS the staged order). Omitted means all of them — the
+// single-item paste has no checkboxes to send.
+ipcMain.handle("vault:importCommit", async (_e, selected?: number[]) => {
+  const vault = device?.vaultClient;
+  if (!vault) throw new Error("the vault is not running");
+  const logins = stagedImport;
+  stagedImport = null;
+  importEpoch++;
+  if (!logins) throw new Error("nothing is staged to import; choose a file or paste again");
+  const chosen = Array.isArray(selected)
+    ? logins.filter((_, i) => selected.includes(i))
+    : logins;
+  return importLogins(vault, chosen);
+});
+
+// The sheet closed without importing: drop the staged passwords now rather
+// than holding them until the next inspect happens to replace them. The
+// epoch bump also voids any inspect still parsing, whose answer would
+// otherwise land here right after this cleared the slot.
+ipcMain.handle("vault:importCancel", async () => {
+  stagedImport = null;
+  importEpoch++;
 });
 
 // The live-browser thumbnail's whole state, one shape per poll (like
@@ -850,6 +1023,32 @@ const fdaHelperPath = app.isPackaged
   : path.join(dirname, "native", "settings-window-frame");
 
 /**
+ * The REAL icon of a bundle on disk, for every screen that shows one (the
+ * FDA drag tile, the import sheet's source cards). Electron's app.getFileIcon
+ * answers a bundle with the generic app icon — and asking it for "large" is
+ * a hard CRASH on macOS (a NOTREACHED on the icon thread) — so NSWorkspace
+ * via the native helper is the real path (128px, crisp on retina), and the
+ * one Electron size known safe is the fallback for hosts without the
+ * compiled helper.
+ */
+async function bundleIcon(bundle: string): Promise<Electron.NativeImage | null> {
+  try {
+    const { stdout } = await promisify(execFile)(fdaHelperPath, ["--icon", bundle]);
+    const img = nativeImage.createFromDataURL(`data:image/png;base64,${stdout.trim()}`);
+    if (!img.isEmpty()) return img;
+  } catch {
+    // No compiled helper on this host; the fallback below still answers.
+  }
+  try {
+    const img = await app.getFileIcon(bundle, { size: "normal" });
+    if (!img.isEmpty()) return img;
+  } catch {
+    /* nothing to show; every caller has a face for that */
+  }
+  return null;
+}
+
+/**
  * Which app the grant must name. TCC keys Full Disk Access on the RESPONSIBLE
  * process, not the executable: a `just app` run out of a terminal is the
  * terminal app's grant — dragging Electron.app into the list would grant
@@ -876,17 +1075,8 @@ async function resolveFdaDragTarget(): Promise<typeof fdaDragTarget> {
   }
   bundle ??= appBundlePath(process.execPath);
   if (!bundle) return null;
-  // The real bundle icon comes from NSWorkspace via the helper —
-  // app.getFileIcon answers with the generic app icon for bundles.
-  let icon: Electron.NativeImage | null = null;
-  try {
-    const { stdout } = await run(fdaHelperPath, ["--icon", bundle]);
-    icon = nativeImage.createFromDataURL(`data:image/png;base64,${stdout.trim()}`);
-    if (icon.isEmpty()) icon = null;
-  } catch {
-    // Same fallbacks as above.
-  }
-  icon ??= await app.getFileIcon(bundle, { size: "normal" });
+  // The real bundle icon, or an empty image the tile still renders around.
+  const icon = (await bundleIcon(bundle)) ?? nativeImage.createEmpty();
   // The drag image must be sized in POINTS: the helper's PNG is 128 raw
   // pixels, which a bare nativeImage would drag at 128pt — twice
   // PermissionFlow's 56pt drag image. Re-wrap 112px at 2x for a crisp 56pt.
@@ -905,6 +1095,49 @@ ipcMain.handle("fullDisk:dragInfo", async () => {
   if (!target) return null;
   return { name: appBundleName(target.bundle), iconDataUrl: target.iconDataUrl };
 });
+// The panel's rasterization of its own drag tile (display data flowing the
+// other way). Held so the drag image under the cursor is exactly the tile the
+// panel showed; the bare app icon remains the fallback when no (valid) raster
+// has arrived. Latest wins — the renderer re-sends when the panel resizes,
+// and again on every pointerdown, padded so Electron's center-on-cursor
+// placement puts the grab point back under the pointer (dragImage.js).
+let fdaTileDragIcon: Electron.NativeImage | null = null;
+ipcMain.on("fullDisk:tileImage", (_e, dataUrl: unknown, scale: unknown) => {
+  const decoded = decodeTileImage(dataUrl, scale);
+  if (decoded) {
+    fdaTileDragIcon = nativeImage.createFromBuffer(decoded.png, {
+      scaleFactor: decoded.scaleFactor,
+    });
+  }
+});
+// When the drag session has actually ended. startDrag on macOS begins the
+// session and RETURNS IMMEDIATELY (beginDraggingSession under the hood), so
+// the end must be watched, not awaited: the helper's --drag-end mode blocks
+// until the left mouse button comes back up. The slide-back delay lets a
+// cancelled drag's image finish animating home before the tile reappears
+// under it; on a successful drop the image is already gone and the delay is
+// just unnoticeable. Without the helper the fallback timer restores things
+// on a clock — cosmetic at worst, since the payload rode out at startDrag.
+const DRAG_SLIDE_BACK_MS = 350;
+const DRAG_END_FALLBACK_MS = 4000;
+function watchDragSessionEnd(onEnd: () => void): void {
+  let done = false;
+  const finish = (delay: number) => {
+    if (done) return;
+    done = true;
+    setTimeout(onEnd, delay);
+  };
+  try {
+    const watcher = spawn(fdaHelperPath, ["--drag-end"], {
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    watcher.stdout!.on("data", () => finish(DRAG_SLIDE_BACK_MS));
+    watcher.on("exit", () => finish(DRAG_SLIDE_BACK_MS));
+    watcher.on("error", () => finish(DRAG_END_FALLBACK_MS));
+  } catch {
+    finish(DRAG_END_FALLBACK_MS);
+  }
+}
 // The native drag: the bundle as payload, started on the gesturing window's
 // webContents. Dropping it on the Full Disk Access list is the same grant
 // gesture as the pane's "+" button.
@@ -912,17 +1145,26 @@ ipcMain.on("fullDisk:dragStart", (e) => {
   const target = fdaDragTarget;
   if (!target) return;
   // Dim the panel while the drag rides over System Settings, the way
-  // PermissionFlow's panel does; restored when the drag session ends.
+  // PermissionFlow's panel does. The tile itself is hidden by the renderer
+  // for the same stretch — the drag image is that very tile, so showing both
+  // would double it. All of it holds until the session actually ends: the
+  // dim, the hidden tile, and the mid-gesture visibility hold (released any
+  // earlier, a frontmost flicker could hide the drag source and abort the
+  // session).
   const win = BrowserWindow.fromWebContents(e.sender);
+  const restore = () => {
+    if (win && !win.isDestroyed()) win.setOpacity(1);
+    if (!e.sender.isDestroyed()) e.sender.send("fullDisk:dragEnd");
+    fdaGrantFlow.setHold(false);
+  };
   win?.setOpacity(0.72);
   try {
-    e.sender.startDrag({ file: target.bundle, icon: target.dragIcon });
-  } finally {
-    if (win && !win.isDestroyed()) win.setOpacity(1);
-    // The drag session is over; the pointerdown that began it took the
-    // visibility hold, so the end of the gesture releases it.
-    fdaGrantFlow.setHold(false);
+    e.sender.startDrag({ file: target.bundle, icon: fdaTileDragIcon ?? target.dragIcon });
+  } catch {
+    restore(); // no session began; nothing to watch
+    return;
   }
+  watchDragSessionEnd(restore);
 });
 // The panel renderer's mid-gesture guard (see fdaGrantFlow.holdVisible).
 ipcMain.on("fullDisk:panelHold", (_e, on: boolean) => fdaGrantFlow.setHold(on === true));
@@ -1154,6 +1396,10 @@ async function startRelay(): Promise<void> {
     },
     serve: (request, auth) => server.fetch(request, auth),
     onStatusChange: (isConnected) => {
+      // Transitions only — the client can restate an unchanged status.
+      if (isConnected !== connected) {
+        telemetry?.track(isConnected ? "relay_connected" : "relay_disconnected");
+      }
       connected = isConnected;
       notifyRenderer("status:changed");
     },
@@ -1204,11 +1450,92 @@ app.whenReady().then(async () => {
     encrypt: (plain) => electronSafeStorage.encryptString(plain).toString("base64"),
     decrypt: (cipher) => electronSafeStorage.decryptString(Buffer.from(cipher, "base64")),
   });
+  // Usage statistics + error reporting (telemetry.ts owns what leaves the
+  // Mac and what never does). A from-source run gets no key, so worktree
+  // instances and the test machine report nothing; the packaged app reports
+  // to the baked-in project unless the owner turns the Settings toggle off.
+  const telemetryConfig = resolveTelemetryConfig({ env: process.env, packaged: app.isPackaged });
+  if (telemetryConfig.apiKey) {
+    const posthog = new PostHog(telemetryConfig.apiKey, { host: telemetryConfig.host });
+    telemetry = new Telemetry({
+      home,
+      sink: {
+        capture: (message) => posthog.capture(message),
+        // The ordered send the crash paths need. `captureImmediate` awaits
+        // the actual POST — but swallows a failed one, emitting "error" and
+        // resolving anyway — so a listener spans the await and any error
+        // signal in that window rejects. A concurrent send's failure can
+        // reject a delivery that succeeded; that keeps a spool that was
+        // already reported, and a duplicate beats a lost crash.
+        sendNow: async (message) => {
+          let failed: unknown = null;
+          const off = posthog.on("error", (err: unknown) => {
+            failed = err ?? new Error("posthog send failed");
+          });
+          try {
+            await posthog.captureImmediate(message);
+          } finally {
+            off();
+          }
+          if (failed) throw failed;
+        },
+        // Two seconds, not the SDK's 30-second default: this rides the quit
+        // teardown, and an offline Mac must not look like an app refusing to
+        // quit. What a flush this short drops, the crash spool never held —
+        // ordinary events are not worth 30 seconds of anyone's time.
+        shutdown: () => posthog.shutdown(2_000),
+      },
+      enabled: () => loadSettings(home).telemetryEnabled,
+      accountUid: () => loadSettings(home).accountUid,
+      // The relay credential is the one secret this process holds in a string;
+      // read per event because it changes on sign-in/out.
+      secrets: () => [loadSettings(home).relayCredential],
+      ownerHome: os.homedir(),
+      baseProps: {
+        app_version: app.getVersion(),
+        packaged: app.isPackaged,
+        platform: process.platform,
+        arch: process.arch,
+      },
+    });
+    // A crash the previous run spooled but could not send before it died.
+    telemetry.reportSpooledCrash();
+    telemetry.track("app_launched", {
+      approval_mode: loadSettings(home).approvalMode,
+      signed_in: isSignedIn(home),
+    });
+  }
+  // Testing seam for the error-reporting pipeline, in the DOMO_SIMULATE_UPDATE
+  // mold: DOMO_SIMULATE_ERROR=rejection fires an unhandled rejection (the app
+  // survives), anything else throws an uncaught exception (the app may not —
+  // which is exactly what the immediate flush in trackError is for). Fires a
+  // few seconds after boot so the report proves the whole live pipeline.
+  const simulateError = (process.env.DOMO_SIMULATE_ERROR ?? "").trim();
+  if (simulateError) {
+    console.log(`[telemetry] SIMULATED error armed (${simulateError}) — fires in 3s, not a real fault`);
+    setTimeout(() => {
+      if (simulateError === "rejection") {
+        void Promise.reject(new Error("DOMO_SIMULATE_ERROR: simulated unhandled rejection"));
+      } else {
+        throw new Error("DOMO_SIMULATE_ERROR: simulated uncaught exception");
+      }
+    }, 3_000);
+  }
   // The dialog answers; the store writes down what was asked before it is
   // asked, so a pending approval is a record on disk rather than only a promise
   // in memory. It also bounds the wait: an approval nobody answers expires and
   // fails closed instead of pending forever.
   approvals = new ApprovalStore(path.join(home, "device/approvals"), new ElectronPolicy());
+  // A vaultwarden orphaned by a hard quit of a PRE-cutover build outlives its
+  // app: it was launched detached, and nothing in this build knows it exists —
+  // left alone it keeps serving the old vault database and web UI on loopback
+  // until reboot. Sweep it here, once, before the vault opens. Three guards
+  // keep this from ever touching the wrong process: only OUR payload paths
+  // (a self-hosted Vaultwarden matches neither fragment), only this user, and
+  // only a process whose parent is launchd — a vault server still OWNED by a
+  // live pre-cutover app (a sibling worktree's `just app`) has that app as
+  // its parent and is left alone.
+  await reapOrphanedLegacyVaultServers();
   // Packaged: the browser runtime lives in Contents/Resources/browser-runtime
   // (extraResources). In dev the resolver falls back to the repo's vendor/.
   device = new DeviceAgent(
@@ -1241,6 +1568,14 @@ app.whenReady().then(async () => {
   // not only in the approvals directory.
   approvals.onAbandoned = (record) =>
     device?.audit.record("approval_abandoned", { intentId: record.intentId });
+  // And one that WAS answered, by a process that died before writing the
+  // answer down: the same line DeviceAgent would have written, now.
+  approvals.onUnrecorded = (record) =>
+    device?.audit.record("intent_decision", {
+      intentId: record.intentId,
+      decision: record.decision ?? "deny",
+      source: record.source ?? "prompt",
+    });
   // An item the vault marked "ask again" is not opened on the strength of the
   // app being unlocked. There is no master password to ask for here — the vault
   // account is a random string this app generated — so the Mac asks who is at
@@ -1256,19 +1591,24 @@ app.whenReady().then(async () => {
       }
     };
   }
-  // Say, once, whether this Mac can open its vault account. It is the one fact
-  // about the vault that a log is good at: no secret, no noise, and it turns
-  // "the vault screen looks wrong" into a one-line answer. `locked` means the
-  // Keychain key for the frozen identity is not here — see vaultKeychain.ts.
-  if (device.vaultServer) {
-    const vaultState = readCredentialsState(device.vaultServer.dataDir);
+  // Say, once, whether this Mac can open its vault. It is the one fact about
+  // the vault that a log is good at: no secret, no noise, and it turns "the
+  // vault screen looks wrong" into a one-line answer. `locked` means the key
+  // (or a legacy account's Keychain identity) is not openable here — see
+  // vaultKeyStore.ts and vaultKeychain.ts.
+  if (device.vaultDir) {
+    const vaultState = readCredentialsState(device.vaultDir);
     console.log(
-      `[vault] account: ${vaultState.status}` +
+      `[vault] key: ${vaultState.status}` +
         (vaultState.status === "locked" ? ` (${vaultState.reason})` : ""),
     );
   }
   // Live-refresh the audit view whenever a new event is recorded.
   device.audit.events.on("change", () => notifyRenderer("audit:changed"));
+  // Usage stats ride the same funnel as the audit log — one source of truth
+  // for what happened, with telemetry.ts's allowlist deciding the little that
+  // leaves the Mac.
+  device.audit.events.on("recorded", (entry) => telemetry?.auditEntryRecorded(entry));
   // The version rides the MCP handshake, so it has to be the app's real one.
   mcp = createDomoMcpServer(device, { version: app.getVersion() });
   await startRelay();
@@ -1312,6 +1652,7 @@ app.whenReady().then(async () => {
     agents: cloudAgentsClient,
     activation: cloudApi,
     chats: new CloudChatsClient(cloudApi),
+    providers: cloudApi,
     lines: new CloudLinesClient(cloudApi),
     home,
     recordAudit: (event, fields) => device?.audit.record(event, fields),
@@ -1448,6 +1789,22 @@ app.whenReady().then(async () => {
   ipcMain.handle("power:setKeepAwake", async (_e, on: boolean) => ({
     enabled: awake.setEnabled(!!on),
   }));
+  // The telemetry opt-out. Takes effect on the next event — Telemetry reads
+  // the setting per event, so no relaunch and no client teardown here.
+  ipcMain.handle("telemetry:get", async () => ({
+    enabled: loadSettings(home).telemetryEnabled,
+  }));
+  ipcMain.handle("telemetry:set", async (_e, on: boolean) => {
+    // Turning OFF is announced before the save, while sending is still
+    // allowed — the one event that explains why this install went quiet.
+    // Turning ON is announced after, symmetric and honest either way.
+    if (!on) telemetry?.track("telemetry_disabled");
+    const settings = loadSettings(home);
+    settings.telemetryEnabled = !!on;
+    saveSettings(home, settings);
+    if (on) telemetry?.track("telemetry_enabled");
+    return { enabled: settings.telemetryEnabled };
+  });
   // A crash between setup saving the credential and the hand-over would leave
   // the first-run default pending on disk with no setup window left to close —
   // and this launch goes straight to the main window, so the hand-over hook
@@ -1532,7 +1889,10 @@ app.on("before-quit", (event) => {
     keepAwake?.teardown();
     // Kill any live Camoufox session/process group so Firefox children don't
     // outlive us. Every step is timeout-bounded, so this waits seconds, not forever.
-    void Promise.allSettled([relay?.stop(), device?.shutdown()]).then(() => {
+    // Telemetry's flush rides the same bounded teardown: a buffer that will
+    // not send in these seconds is dropped, never waited on.
+    telemetry?.track("app_quit");
+    void Promise.allSettled([relay?.stop(), device?.shutdown(), telemetry?.shutdown()]).then(() => {
       cleanedUp = true;
       app.quit();
     });
@@ -1680,6 +2040,74 @@ function simulatedUpdater(value: string): SimulatedUpdater {
       app.quit();
     },
   });
+}
+
+/**
+ * Terminate vaultwarden processes orphaned by a hard quit of a pre-cutover
+ * build. Matched by OUR OWN payload paths only — `browser-runtime/vault-server/`
+ * (packaged) and `/vendor/vault-server/` (from-source) — for this user, and
+ * only when re-parented to launchd (ppid 1): an orphan by definition, never a
+ * sibling checkout's still-owned server. Best-effort: a sweep that cannot run
+ * must not stop the app.
+ */
+async function reapOrphanedLegacyVaultServers(): Promise<void> {
+  const targets: number[] = [];
+  for (const fragment of LEGACY_VAULT_SERVER_FRAGMENTS) {
+    let pids: string[] = [];
+    try {
+      pids = execFileSync("/usr/bin/pgrep", ["-U", String(process.getuid?.() ?? 0), "-f", fragment], { encoding: "utf8" })
+        .split("\n")
+        .filter(Boolean);
+    } catch {
+      continue; // pgrep exits nonzero when nothing matches
+    }
+    for (const pid of pids) {
+      try {
+        const ppid = execFileSync("/bin/ps", ["-o", "ppid=", "-p", pid], { encoding: "utf8" }).trim();
+        if (ppid !== "1") continue;
+        process.kill(Number(pid), "SIGTERM");
+        targets.push(Number(pid));
+        console.log(`[vault] terminating orphaned legacy vaultwarden (pid ${pid})`);
+      } catch {
+        /* raced its own exit, or not ours to signal — either way, done */
+      }
+    }
+  }
+  if (targets.length === 0) return;
+  // WAIT for the exits: a SIGTERM'd server checkpoints its WAL on the way
+  // out, and migration cloning the database beside that checkpoint can
+  // silently lose committed credentials. TERM gets a grace period, then KILL
+  // — a killed server leaves its WAL un-truncated, which sqlite recovery
+  // handles; only a LIVE writer is dangerous. Migration itself also refuses
+  // while any server on this data dir is alive (vaultMigrate.ts), so even a
+  // survivor here cannot corrupt anything — it just defers migration.
+  const alive = (pid: number) => {
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  const waitGone = async (deadlineMs: number) => {
+    const until = Date.now() + deadlineMs;
+    while (Date.now() < until && targets.some(alive)) {
+      await new Promise((r) => setTimeout(r, 100));
+    }
+  };
+  await waitGone(4_000);
+  for (const pid of targets.filter(alive)) {
+    try {
+      process.kill(pid, "SIGKILL");
+      console.log(`[vault] SIGKILLed legacy vaultwarden that ignored SIGTERM (pid ${pid})`);
+    } catch {
+      /* exited in between */
+    }
+  }
+  await waitGone(2_000);
+  for (const pid of targets.filter(alive)) {
+    console.warn(`[vault] legacy vaultwarden pid ${pid} survived SIGKILL; migration will refuse while it lives`);
+  }
 }
 
 function hostName(): string {

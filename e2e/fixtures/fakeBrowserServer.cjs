@@ -20,6 +20,8 @@
  *   FAKE_TOO_LONG=n          answer every fill "too_long" with cap n: the field
  *                            says it holds less than the value
  *   FAKE_ALTERED=1           answer every fill ok, but holding something else
+ *   FAKE_ALTERED_SELECTOR=s  same, but only for fills of that one selector —
+ *                            how a test fails box three of a split fill
  *   FAKE_FRAME_MOVED=1       answer every masked fill "moved", the way the real
  *                            server does when the resolved node is in a
  *                            different document than the one approved
@@ -207,7 +209,11 @@ function handle(cmd) {
       };
     }
     // The field took it and is holding something else.
-    if (process.env.FAKE_ALTERED === "1") {
+    if (
+      process.env.FAKE_ALTERED === "1" ||
+      (process.env.FAKE_ALTERED_SELECTOR !== undefined &&
+        process.env.FAKE_ALTERED_SELECTOR === String(cmd.selector))
+    ) {
       return { ok: true, frame: cmd.frame ?? 0, altered: true, ...(cmd.mask ? { mask: "stylesheet" } : {}) };
     }
     if (process.env.FAKE_FRAME_MOVED === "1" && cmd.frame_token) {

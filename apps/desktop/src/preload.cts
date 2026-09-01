@@ -25,12 +25,23 @@ contextBridge.exposeInMainWorld("domo", {
   approvalModeSet: (mode: string) => ipcRenderer.invoke("settings:setApprovalMode", mode),
   // The vault's own contents, edited here instead of on its web page.
   vaultItems: () => ipcRenderer.invoke("vault:items"),
+  // The ids matching a search, decided in main so no secret comes here for it.
+  vaultSearch: (query: string) => ipcRenderer.invoke("vault:search", query),
   vaultItem: (itemId: string) => ipcRenderer.invoke("vault:item", itemId),
   vaultReveal: (itemId: string, field: string) => ipcRenderer.invoke("vault:reveal", itemId, field),
   // The code the key produces — with `key` set, for one being typed.
   vaultTotp: (itemId: string | null, key?: string) => ipcRenderer.invoke("vault:totp", itemId, key),
   vaultSaveItem: (input: unknown) => ipcRenderer.invoke("vault:saveItem", input),
   vaultDeleteItem: (itemId: string) => ipcRenderer.invoke("vault:deleteItem", itemId),
+  // Importing passwords. Inspect stages the parsed logins in MAIN and answers
+  // with a secret-free preview; commit imports whatever is staged. The file
+  // path never touches the renderer either — main runs the open dialog and
+  // reads the file itself.
+  vaultImportSources: () => ipcRenderer.invoke("vault:importSources"),
+  vaultImportInspect: (text: string) => ipcRenderer.invoke("vault:importInspect", text),
+  vaultImportFile: () => ipcRenderer.invoke("vault:importFile"),
+  vaultImportCommit: (selected?: number[]) => ipcRenderer.invoke("vault:importCommit", selected),
+  vaultImportCancel: () => ipcRenderer.invoke("vault:importCancel"),
   // What the owner says agents are for. The renderer's only route to the text
   // in either direction — it is device-owner data, so nothing else may write it.
   // The setter answers with what was stored, not what was sent.
@@ -48,6 +59,14 @@ contextBridge.exposeInMainWorld("domo", {
   // crosses the bridge, main starts the native drag itself.
   fullDiskDragInfo: () => ipcRenderer.invoke("fullDisk:dragInfo"),
   fullDiskDragStart: () => ipcRenderer.send("fullDisk:dragStart"),
+  // The panel's rasterized drag tile (a PNG data URL + backing scale): main
+  // uses it as the drag image so the item under the cursor is exactly the
+  // tile the panel shows. Display data only, like dragInfo — never a path.
+  fullDiskTileImage: (dataUrl: string, scale: number) =>
+    ipcRenderer.send("fullDisk:tileImage", dataUrl, scale),
+  // The drag session ended (dropped or cancelled): the tile, hidden while its
+  // image rode with the cursor, comes back.
+  onFullDiskDragEnd: (cb: () => void) => ipcRenderer.on("fullDisk:dragEnd", cb),
   // Start the grant flow: main opens the pane and floats the drag panel next
   // to System Settings (fdaGrantFlow.ts owns the whole lifecycle).
   fullDiskGrantFlow: () => ipcRenderer.invoke("fullDisk:grantFlow"),
@@ -67,6 +86,9 @@ contextBridge.exposeInMainWorld("domo", {
   // to off, and the toggle shows that rather than a hold that isn't held.
   keepAwakeGet: () => ipcRenderer.invoke("power:getKeepAwake"),
   keepAwakeSet: (on: boolean) => ipcRenderer.invoke("power:setKeepAwake", on),
+  // Usage statistics + error reporting opt-out (telemetry.ts).
+  telemetryGet: () => ipcRenderer.invoke("telemetry:get"),
+  telemetrySet: (on: boolean) => ipcRenderer.invoke("telemetry:set", on),
   onAuditChanged: (cb: () => void) => ipcRenderer.on("audit:changed", cb),
   onStatusChanged: (cb: () => void) => ipcRenderer.on("status:changed", cb),
 

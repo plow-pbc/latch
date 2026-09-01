@@ -1,5 +1,5 @@
 /**
- * The heavy tier: REAL Python runtime + REAL Camoufox driving a local
+ * The heavy tier: the REAL TS browser server (playwright-core) + REAL Camoufox driving a local
  * pizza-checkout fixture site through the whole MCP server, with a fake
  * credential broker standing in for the bundled seed_vault_broker.
  *

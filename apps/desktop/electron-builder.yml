@@ -48,26 +48,76 @@ files:
   - "!node_modules/**/*.d.cts"
   - "!node_modules/**/*.map"
   - "!node_modules/**/{README,Readme,readme,CHANGELOG,Changelog,changelog,HISTORY,History,history}*"
+  # Dead weight verified unreferenced at runtime (see the audit that added each
+  # line — every entry below was traced to zero require/import paths in the
+  # packaged process graph before being excluded):
+  # playwright-core: we only load index.js → coreBundle/utilsBundle. The vite
+  # web UIs (trace viewer, recorder, html report, dashboard), the CLI and its
+  # registry, the reinstall scripts in bin/, and the Linux xdg-open shim are
+  # only reachable from playwright's own CLI/recorder features, which nothing
+  # in this app invokes.
+  - "!node_modules/playwright-core/lib/vite/**"
+  - "!node_modules/playwright-core/lib/tools/**"
+  - "!node_modules/playwright-core/lib/serverRegistry.js"
+  - "!node_modules/playwright-core/lib/serverRegistry.js.LICENSE"
+  - "!node_modules/playwright-core/bin/**"
+  - "!node_modules/playwright-core/lib/xdg-open"
+  - "!node_modules/playwright-core/cli.js"
+  # native-keychain ships only the prebuilt addon and its loader; the gyp
+  # sources and install script are build-time.
+  - "!node_modules/@domo/native-keychain/scripts/**"
+  - "!node_modules/@domo/native-keychain/src/**"
+  # Every consumer of zod and @modelcontextprotocol/* in the app is ESM, so the
+  # parallel CJS builds are never resolved; zod's src/ is TypeScript source
+  # shipped for sourcemap tooling only.
+  - "!node_modules/zod/src/**"
+  - "!node_modules/zod/**/*.cjs"
+  - "!node_modules/@modelcontextprotocol/**/*.cjs"
+  # js-yaml is only required (CJS) by electron-updater, which resolves
+  # index.js → lib/; dist/ holds the browser/ESM bundles. argparse is js-yaml's
+  # CLI-only dependency; the library never loads it.
+  - "!node_modules/js-yaml/dist/**"
+  - "!node_modules/argparse/**"
+  # tldts has no "exports" map, so Node resolves main → dist/cjs for both
+  # import and require; the es6 trees, minified browser bundles, and TS
+  # sources are bundler-only artifacts.
+  - "!node_modules/tldts/dist/es6/**"
+  - "!node_modules/tldts/dist/index.*.min.js"
+  - "!node_modules/tldts/src/**"
+  - "!node_modules/tldts-core/dist/es6/**"
+  - "!node_modules/tldts-core/src/**"
+  # Vitest leaves *_vite_proxy.tmp.* droppings inside node_modules when a test
+  # run is interrupted; never ship one.
+  - "!node_modules/**/*_vite_proxy.tmp.*"
 
 # Keep only English in Electron's own locale payload (~55 lproj dirs, ~40 MB);
 # the app UI ships no other localization.
 electronLanguages:
   - en
 
-# No asarUnpack: it existed so a plain `node` could run the domo-mcp shim for
-# "Start agent". The shim and that feature went with the broker — the MCP server
-# now runs inside this process and is reached through the relay.
+# The browser server is a Node script (@domo/browser-server) spawned on the app
+# binary under ELECTRON_RUN_AS_NODE; it and its runtime deps are UNPACKED from the
+# asar so the spawned node reads real files (playwright-core's package files,
+# node-sqlite3-wasm's .wasm). NO native modules ship: the cookie-merge SQLite is
+# node-sqlite3-wasm — a WASM build, arch-neutral, loads under Electron with no
+# rebuild (better-sqlite3 was ABI-locked and rejected). camoufox-js is BUILD-only
+# (a root devDependency) and never collected.
+asarUnpack:
+  - "**/node_modules/@domo/browser-server/**"
+  - "**/node_modules/playwright-core/**"
+  - "**/node_modules/node-sqlite3-wasm/**"
 
-# No fuses config — and the RunAsNode fuse MUST stay enabled. Playwright's
-# driver ships without its bundled node (pruned by build-browser-runtime.mjs)
-# and runs on this app binary via ELECTRON_RUN_AS_NODE; flipping runAsNode off
-# breaks every browser launch. See DESIGN.md §11a, Runtime & packaging.
+# No fuses config — and the RunAsNode fuse MUST stay enabled. The browser server
+# and the cookie merger run on this app binary via ELECTRON_RUN_AS_NODE; flipping
+# runAsNode off breaks every browser launch. (A future cleanup could move them to
+# utilityProcess and drop the requirement.) See DESIGN.md §11a, Runtime & packaging.
 
-# The browser stack: universal Python runtime + vendored server + the
-# lipo-fused universal Camoufox tree. Built by scripts/build-browser-runtime.mjs
-# (a `just package` dependency) and byte-identical in both electron-builder
-# arch passes, so the universal merge copies it through untouched. Runtime code
-# resolves it via process.resourcesPath ("browser-runtime/...").
+# The browser stack: the lipo-fused universal Camoufox tree. Built by
+# scripts/build-browser-runtime.mjs (a `just package` dependency) and
+# byte-identical in both electron-builder arch passes, so the universal merge
+# copies it through untouched. Runtime code resolves it via process.resourcesPath
+# ("browser-runtime/camoufox"). The server ships in node_modules (above), and the
+# frozen fingerprint pool ships beside it (packages/browser-server/fingerprints.json).
 extraResources:
   # The repo's own redistribution terms ride inside the bundle — recipients of
   # the DMG/update ZIP get them, not just readers of the source tree.
@@ -75,11 +125,6 @@ extraResources:
     to: LICENSE
   - from: ../../NOTICE
     to: NOTICE
-  - from: ../../vendor/python-runtime
-    to: browser-runtime/python
-    filter: ["**/*", "!.stamp"]
-  - from: ../../vendor/browser-server
-    to: browser-runtime/server
   - from: ../../vendor/camoufox-browser/universal
     to: browser-runtime/camoufox
     filter: ["**/*", "!.sha256"]
@@ -91,12 +136,6 @@ extraResources:
   - from: ../../vendor/providers
     to: providers
     filter: ["**/*", "!*/VERSION"]
-  - from: ../../vendor/vault-cli
-    to: browser-runtime/vault-cli
-    filter: ["**/*", "!*/.sha256"]
-  - from: ../../vendor/vault-server
-    to: browser-runtime/vault-server
-    filter: ["**/*", "!*/.commit", "!.web-vault.sha256"]
   # The Full Disk Access flow's window tracker (scripts/build-native.mjs, a
   # `just build` step). Lipo-fused universal like the python runtime, so both
   # electron-builder arch passes carry identical bytes and the merge copies it
@@ -122,27 +161,31 @@ mac:
   hardenedRuntime: true
   gatekeeperAssess: false
   entitlements: build/entitlements.mac.plist
-  entitlementsInherit: build/entitlements.mac.plist
-  # The browser runtime (Python + Camoufox) is already Developer-ID signed by
-  # scripts/build-browser-runtime.mjs with its OWN entitlements (Python: JIT +
-  # unsigned-exec-memory; Camoufox: Mozilla's full set incl. library-validation
-  # off). Tell electron-builder's signer to leave it alone — a re-sign would
-  # stamp the app's minimal entitlements onto Firefox and break it at runtime.
-  # The outer app signature still seals these files; notarization sees our
-  # hardened-runtime + timestamped signatures on them.
+  entitlementsInherit: build/entitlements.mac.inherit.plist
+  # keychain-access-groups is a restricted entitlement: without a provisioning
+  # profile authorizing it, AMFI kills the app at exec (Finder shows a bare
+  # "can't be opened"). This is a Developer ID Application profile for
+  # co.plow.domo-desktop from the portal; its keychain-access-groups grant is
+  # the team wildcard (3559PD337Z.*), which covers the vault group. Embedded as
+  # Contents/embedded.provisionprofile. Helpers deliberately inherit a plist
+  # WITHOUT the group — the embedded profile does not cover nested code.
+  provisioningProfile: build/PlowLatch-DeveloperID.provisionprofile
+  # The Camoufox tree is already Developer-ID signed by
+  # scripts/build-browser-runtime.mjs with Mozilla's own entitlements (full set,
+  # incl. library-validation off). Tell electron-builder's signer to leave it
+  # alone — a re-sign would stamp the app's minimal entitlements onto Firefox and
+  # break it at runtime. The outer app signature still seals these files;
+  # notarization sees our hardened-runtime + timestamped signatures on them.
   signIgnore:
     - "browser-runtime/.*"
-  # The Python runtime and the fused Camoufox tree are universal2, so the merge
-  # passes them through untouched. The vault and its CLI are not: each ships as
-  # two THIN per-arch trees (<payload>/arm64, <payload>/x86_64) copied
-  # identically into both electron slices, and the merger would try to lipo a
-  # thin binary against its identical twin and fail. This pattern passes those
-  # two through instead. Fusing them the way Camoufox is fused is issue #15.
-  # Vendored provider CLIs are the same shape as the vault payloads and need the
-  # same treatment: two THIN per-arch binaries copied identically into both
-  # electron slices, so the merger would lipo a thin binary against its
-  # identical twin and fail. One `providers` alternation covers all of them.
-  x64ArchFiles: "**/{browser-runtime/{vault-cli,vault-server},providers}/**"
+  # The fused Camoufox tree is universal2, so the merge passes it through
+  # untouched. Vendored provider CLIs are not: two THIN per-arch binaries copied
+  # identically into both electron slices, so the merger would try to lipo a thin
+  # binary against its identical twin and fail. This pattern passes them through
+  # instead. The native-keychain addon (universal2, byte-identical in both
+  # slices) is refused by the merger the same way. (No SQLite entry: the WASM
+  # cookie-merge module is arch-neutral, so the merge handles it like any file.)
+  x64ArchFiles: "**/{providers,node_modules/@domo/native-keychain}/**"
   notarize: true
   extendInfo:
     NSAppleEventsUsageDescription: "Plow Latch sends the Messages and automation commands you approve on this Mac."

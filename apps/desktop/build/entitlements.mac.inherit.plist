@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <!-- Inherited by the Electron helper apps (GPU/Renderer/Plugin). JIT only:
+       the main app's keychain-access-groups is a RESTRICTED entitlement, and a
+       helper carrying it without its own embedded provisioning profile is
+       killed by AMFI at exec — the profile electron-builder embeds goes into
+       the outer app bundle alone. Helpers never touch the vault key, so they
+       must not carry the group. -->
+  <key>com.apple.security.cs.allow-jit</key>
+  <true/>
+</dict>
+</plist>
