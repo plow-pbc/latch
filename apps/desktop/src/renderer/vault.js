@@ -1,4 +1,9 @@
 import { el, icon } from "./dom.js";
+// The Import sheet lives in its own file (this one is long enough) but works
+// the same pane. This module stays the sole owner of the editor seat, the
+// busy lock and the toast: the sheet is handed them as callbacks (the `host`
+// argument below) and never imports back into here.
+import { vimportSheet } from "./vaultImport.js";
 
 /* The Vault tab, built to the design file (vault.html).
    Its own pane, its own file: this screen keeps being redesigned, and it has
@@ -858,12 +863,18 @@ export async function renderVault(view, isCurrent = () => true) {
     return;
   }
 
+  const importBtn = el("button", { class: "btn imp", attrs: { type: "button" } }, [
+    icon("intake", { class: "vico", strokeWidth: "2" }),
+    el("span", { text: " Import" }),
+  ]);
+  importBtn.addEventListener("click", () =>
+    vimportSheet(renderVaultIn, { errText, vbusy, vtakeEditor, vreleaseEditor, vtoast }));
   const newBtn = el("button", { class: "btn-primary", attrs: { type: "button" } }, [
     icon("plus", { class: "vico", strokeWidth: "2.2" }),
     el("span", { text: " New" }),
   ]);
   newBtn.addEventListener("click", () => vsheet(renderVaultIn));
-  masthead.appendChild(newBtn);
+  masthead.appendChild(el("div", { class: "mast-acts" }, [importBtn, newBtn]));
 
   const list = el("div", { class: "vlist" });
   if (failure) {

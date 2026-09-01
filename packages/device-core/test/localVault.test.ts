@@ -171,10 +171,16 @@ describe("LocalVault", () => {
     store.upsert({ ...store.get(id)!, reprompt: 1 });
 
     await expect(vault.reveal(id, "password")).rejects.toThrow(/confirm it is you/);
+    // The import's compare is an equality ORACLE about the stored value —
+    // paste a guess, read the verdict — so it answers only past the same gate.
+    await expect(vault.secretsDiffer(id, { password: "pw", totp: "" })).rejects.toThrow(
+      /confirm it is you/,
+    );
     vault.onReprompt = async () => false;
     await expect(vault.reveal(id, "password")).rejects.toThrow(/confirm it is you/);
     vault.onReprompt = async () => true;
     expect(await vault.reveal(id, "password")).toBe("pw");
+    expect((await vault.secretsDiffer(id, { password: "pw", totp: "" })).password).toBe(false);
   });
 
   it("refuses items-without-key rather than minting a key that opens nothing", async () => {
