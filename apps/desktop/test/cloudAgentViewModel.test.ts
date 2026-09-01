@@ -33,16 +33,6 @@ describe("cloudProviderPickerViewModel", () => {
         message: "Plow couldn't complete that request. Try again.",
       },
     ],
-    [
-      "a refresh failed after a list loaded",
-      ["provider/live"],
-      "Plow didn't answer in time. Try again.",
-      {
-        mode: "banner",
-        heading: "Agent types could not be refreshed",
-        message: "Plow didn't answer in time. Try again.",
-      },
-    ],
   ] as const)("renders %s", (_case, providers, error, expected) => {
     const providerList = providers === null ? null : [...providers];
     expect(cloudProviderPickerViewModel(providerList, error)).toEqual(expected);

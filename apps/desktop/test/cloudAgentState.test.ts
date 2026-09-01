@@ -241,7 +241,7 @@ describe("CloudAgentState line and thread display", () => {
   });
 
   it("keeps live provider ids opaque and in the endpoint's order", async () => {
-    const providers = ["provider/Zeta", "exe:life"];
+    const providers = [" provider/Zeta ", "exe:life"];
     const { state, calls } = build({ listProviders: async () => providers });
 
     await state.refresh();
@@ -264,7 +264,7 @@ describe("CloudAgentState line and thread display", () => {
     expect(state.state().cloudProvidersError).toBe("Not permitted.");
   });
 
-  it("reports a provider-list failure while retaining a previous in-memory list", async () => {
+  it("clears a previous provider list when its refresh fails", async () => {
     let fail = false;
     const { state } = build({
       listProviders: async () => {
@@ -277,7 +277,7 @@ describe("CloudAgentState line and thread display", () => {
     fail = true;
     await state.refresh();
 
-    expect(state.state().cloudProviders).toEqual(["provider/available"]);
+    expect(state.state().cloudProviders).toBeNull();
     expect(state.state().cloudProvidersError).toBe("Plow didn't answer in time. Try again.");
   });
 
@@ -469,7 +469,7 @@ describe("CloudAgentState line and thread display", () => {
     const chats = deferred<CloudChatOption[]>();
     const requests: Array<{ lineUid: string; name: string; provider: string }> = [];
     const { state } = build({
-      listAgents: async () => [agent({ status: "failed", provider: "exe:life" })],
+      listAgents: async () => [agent({ status: "failed", provider: " provider/live " })],
       listChats: async () => chats.promise,
       createAgent: async (request) => {
         requests.push(request);
@@ -490,7 +490,7 @@ describe("CloudAgentState line and thread display", () => {
     expect(requests).toEqual([{
       lineUid: "lin_willow",
       name: "Kitchen",
-      provider: "exe:life",
+      provider: " provider/live ",
     }]);
   });
 
@@ -511,7 +511,7 @@ describe("CloudAgentState line and thread display", () => {
 
     await state.create({
       name: "Kitchen",
-      provider: "exe:pirate",
+      provider: " provider/live ",
       lineUid: "lin_willow",
     });
     await vi.waitFor(() => expect(state.state().cloudAgents[0]?.status).toBe("failed"));
@@ -519,8 +519,8 @@ describe("CloudAgentState line and thread display", () => {
     await state.retryFailed("agent_1");
 
     expect(requests).toEqual([
-      { lineUid: "lin_willow", name: "Kitchen", provider: "exe:pirate" },
-      { lineUid: "lin_willow", name: "Kitchen", provider: "exe:pirate" },
+      { lineUid: "lin_willow", name: "Kitchen", provider: " provider/live " },
+      { lineUid: "lin_willow", name: "Kitchen", provider: " provider/live " },
     ]);
   });
 
@@ -909,6 +909,33 @@ describe("CloudAgentState new agent flow", () => {
 });
 
 describe("CloudAgentState change-line flow", () => {
+  it("retains a moved resource's provider bytes for a failed-agent retry", async () => {
+    const requests: Array<{ lineUid: string; name: string; provider: string }> = [];
+    const { state } = build({
+      listAgents: async () => [agent({ provider: null })],
+      changeAgentLine: async (agentId) => agent({
+        agentId,
+        chatUids: ["cht_ash"],
+        provider: " provider/moved ",
+        status: "failed",
+      }),
+      createAgent: async (request) => {
+        requests.push(request);
+        return agent({ status: "provisioning", provider: request.provider });
+      },
+    });
+    await state.refresh();
+
+    await state.changeLine({ agentId: "agent_1", lineUid: "lin_ash" });
+    await state.retryFailed("agent_1");
+
+    expect(requests).toEqual([{
+      lineUid: "lin_ash",
+      name: "Kitchen",
+      provider: " provider/moved ",
+    }]);
+  });
+
   it("moves an agent with no home chat to a picked free line without activating", async () => {
     const moved: Array<{ agentId: string; lineUid: string }> = [];
     const { state, calls } = build({

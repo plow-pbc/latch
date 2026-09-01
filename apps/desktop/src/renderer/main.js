@@ -1052,12 +1052,10 @@ function syncCloudLineModal(state, redraw) {
   const { panel } = modal;
   modal.phase = flow.phase;
 
-  const providers = !changing && Array.isArray(state.cloudProviders)
-    ? state.cloudProviders.filter((provider) => typeof provider === "string" && provider)
-    : null;
+  const providers = changing ? null : state.cloudProviders;
   const providerView = cloudProviderPickerViewModel(
     providers,
-    typeof state.cloudProvidersError === "string" ? state.cloudProvidersError : null,
+    state.cloudProvidersError,
   );
   if (!changing && !modal.started && providers) {
     const selected = modal.providerSelect.value;
@@ -1071,10 +1069,7 @@ function syncCloudLineModal(state, redraw) {
     cancel.addEventListener("click", dismissCloudLineModal);
     panel.replaceChildren(
       el("div", { class: "group-title", text: title }),
-      el("div", { class: "cloud-callout cloud-error" }, [
-        el("div", { class: "cloud-callout-title", text: providerView.heading }),
-        el("p", { class: "faint", text: providerView.message }),
-      ]),
+      cloudErrorBanner(providerView.message, providerView.heading),
       el("div", { class: "row cloud-modal-actions" }, [cancel]),
     );
     cancel.focus();
@@ -1201,12 +1196,6 @@ function syncCloudLineModal(state, redraw) {
   cancel.addEventListener("click", dismissCloudLineModal);
   panel.replaceChildren(
     el("div", { class: "group-title", text: title }),
-    ...(!changing && providerView.mode === "banner" ? [
-      el("div", { class: "cloud-callout cloud-error" }, [
-        el("div", { class: "cloud-callout-title", text: providerView.heading }),
-        el("p", { class: "faint", text: providerView.message }),
-      ]),
-    ] : []),
     ...(changing ? [el("p", {
       class: "conn-note",
       text: "The agent keeps its name and memory and moves to the new number.",

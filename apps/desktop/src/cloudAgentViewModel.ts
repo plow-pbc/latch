@@ -32,7 +32,7 @@ export function cloudErrorCopy(message: string): string {
 }
 
 export interface CloudProviderPickerViewModel {
-  mode: "ready" | "blocked" | "banner";
+  mode: "ready" | "blocked";
   heading: string | null;
   message: string | null;
 }
@@ -55,13 +55,6 @@ export function cloudProviderPickerViewModel(
       mode: "blocked",
       heading: "No agent types are available",
       message: error ?? "Plow has no cloud agent types available right now.",
-    };
-  }
-  if (error) {
-    return {
-      mode: "banner",
-      heading: "Agent types could not be refreshed",
-      message: error,
     };
   }
   return { mode: "ready", heading: null, message: null };

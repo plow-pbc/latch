@@ -264,7 +264,7 @@ export class CloudAgentState {
   private actionError: string | null = null;
   private chats: CloudChatOption[] = [];
   private chatsLoaded = false;
-  /** Last successful provider list; retained when a later refresh fails. */
+  /** Live provider list; unavailable until the latest refresh succeeds. */
   private providers: string[] | null = null;
   private providersError: string | null = null;
   /**
@@ -364,6 +364,7 @@ export class CloudAgentState {
       this.providersError = null;
     } catch (error) {
       if (generation !== this.generation || read !== this.viewReads) return;
+      this.providers = null;
       this.providersError = messageOf(error);
     }
   }
@@ -387,7 +388,7 @@ export class CloudAgentState {
   /** Start a new agent on a known line, or mint and watch a brand-new line. */
   async create(input: CloudCreateInput): Promise<string | null> {
     const name = typeof input?.name === "string" ? input.name.trim() : "";
-    const provider = typeof input?.provider === "string" ? input.provider.trim() : "";
+    const provider = typeof input?.provider === "string" ? input.provider : "";
     if (!provider) {
       this.setLineFlowError("create", "Pick an agent type.", false);
       return null;
@@ -760,7 +761,7 @@ export class CloudAgentState {
     const display = moved.name || !previous?.name
       ? moved
       : { ...moved, name: previous.name };
-    const provider = moved.provider?.trim() ||
+    const provider = moved.provider ||
       this.retainedCreates.get(agentId)?.provider;
     if (provider) {
       this.retainedCreates.set(agentId, {
@@ -995,7 +996,7 @@ export class CloudAgentState {
       const listed = new Map<string, CloudAgentDisplayRow>();
       for (const agent of agents) {
         const retained = this.retainedCreates.get(agent.agentId);
-        const resourceProvider = agent.provider?.trim() || null;
+        const resourceProvider = agent.provider || null;
         const provider = resourceProvider ?? retained?.provider;
         const lineUid = this.agentLineUid(agent);
         if (provider) {

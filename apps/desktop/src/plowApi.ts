@@ -521,7 +521,18 @@ export class PlowApi {
   /** List the provider ids accepted by the cloud-agent create endpoint.
    * They are opaque server-owned values: preserve their bytes and order. */
   async listCloudAgentProviders(token: string): Promise<string[]> {
-    const data = await this.call<unknown>("GET", "/v1/agents/cloud/providers", { token });
+    const data = await this.call<unknown>("GET", "/v1/agents/cloud/providers", { token })
+      .catch((error) => {
+        if (error instanceof PlowApiError && error.status === 503) {
+          throw new PlowApiError(
+            error.kind,
+            "Plow couldn't load agent types right now. Try again.",
+            error.status,
+            error.code,
+          );
+        }
+        throw error;
+      });
     if (
       !Array.isArray(data) ||
       data.some((provider) => typeof provider !== "string" || provider.length === 0)

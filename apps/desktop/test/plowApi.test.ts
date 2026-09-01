@@ -565,7 +565,7 @@ describe("PlowApi", () => {
 
   it("lists cloud-agent providers with the credential only in the bearer header", async () => {
     const credential = "plow_device_provider_list_secret";
-    const providers = ["provider/Zeta", "exe:life"];
+    const providers = [" provider/Zeta ", "exe:life"];
     const { calls, fetchImpl } = recordingFetch([{ status: 200, body: providers }]);
 
     await expect(
@@ -579,6 +579,17 @@ describe("PlowApi", () => {
     expect(calls[0].init.body).toBeUndefined();
     expect((calls[0].init.headers as Record<string, string>).authorization)
       .toBe(`Bearer ${credential}`);
+  });
+
+  it("uses cloud-agent copy when the provider roster is unavailable", async () => {
+    const { fetchImpl } = recordingFetch([{ status: 503, body: {} }]);
+
+    await expect(
+      new PlowApi("https://api.plow.co", fetchImpl).listCloudAgentProviders("plow_device"),
+    ).rejects.toMatchObject({
+      status: 503,
+      message: "Plow couldn't load agent types right now. Try again.",
+    });
   });
 
   it("rejects a malformed cloud-agent provider list", async () => {
