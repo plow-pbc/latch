@@ -81,6 +81,11 @@ ipcMain.handle("launch:set", async (_e, on) => setLaunchAtLogin(launchSupported,
 let keepAwakeOn = false;
 ipcMain.handle("power:getKeepAwake", async () => ({ enabled: keepAwakeOn }));
 ipcMain.handle("power:setKeepAwake", async (_e, on) => ({ enabled: (keepAwakeOn = !!on) }));
+// The Privacy toggle: same boolean-stub shape as Keep Mac Awake. The probe
+// proves the pane renders; telemetry.test.ts owns what the setting gates.
+let telemetryOn = true;
+ipcMain.handle("telemetry:get", async () => ({ enabled: telemetryOn }));
+ipcMain.handle("telemetry:set", async (_e, on) => ({ enabled: (telemetryOn = !!on) }));
 // These four are the real handlers, running the real guards against real
 // on-disk settings. A signed-in Mac with no Anthropic key: Plow is usable and
 // selected, the Anthropic provider is not.
