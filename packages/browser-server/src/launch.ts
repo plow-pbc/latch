@@ -97,27 +97,78 @@ export function pinnedEntry(pool: FingerprintPool, pinPath?: string): Fingerprin
   const chosen = pool.entries[crypto.randomInt(pool.entries.length)];
   try {
     // Absent file: exclusive create, so simultaneous FIRST launches converge —
-    // the loser gets EEXIST and adopts the winner's valid pin below.
+    // the loser gets EEXIST and adopts the winner's valid pin (via the repair
+    // path below, which returns the valid pin without touching it).
     fs.writeFileSync(pinPath, JSON.stringify({ id: chosen.id }), { flag: "wx", mode: 0o600 });
     return chosen;
   } catch (e) {
     if ((e as NodeJS.ErrnoException).code !== "EEXIST") return chosen; // unwritable
-    // The file exists. Either a concurrent launch just wrote a VALID pin (adopt
-    // it), or the pin is STALE/CORRUPT and must be repaired — otherwise every
-    // launch re-randomizes and never converges again.
-    const concurrent = readValid();
-    if (concurrent) return concurrent;
+  }
+  // The file exists. Either a concurrent launch just wrote a VALID pin (adopt
+  // it), or the pin is STALE/CORRUPT and must be repaired — otherwise every
+  // launch re-randomizes and never converges. Elect ONE repairer under a lock so
+  // every concurrent caller returns the SAME id: an atomic rename alone converges
+  // the FILE, but lets an in-flight launch return its own pick before another's
+  // rename lands (40 concurrent repairs otherwise yielded several fingerprints).
+  return repairPin(pinPath, chosen, readValid);
+}
+
+/** Block this thread briefly. pinnedEntry is synchronous and runs ONCE per
+ * launch in a dedicated process that is about to block on browser startup, so a
+ * bounded busy-wait during the rare repair race is fine. */
+function sleepSync(ms: number): void {
+  try {
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+  } catch {
+    /* SharedArrayBuffer disabled — skip the wait; still correct, just spins */
+  }
+}
+
+/** Repair a stale/corrupt pin under a lock so concurrent repairers all adopt one
+ * pick. The winner of an exclusive-create on `<pin>.lock` writes the pin; the
+ * losers wait and read the winner's id. A lock a crashed repairer left is
+ * reclaimed after a timeout, so the mechanism self-heals. */
+function repairPin(
+  pinPath: string,
+  chosen: FingerprintEntry,
+  readValid: () => FingerprintEntry | undefined,
+): FingerprintEntry {
+  const lock = `${pinPath}.lock`;
+  const stealAfter = Date.now() + 2000;
+  for (;;) {
+    const valid = readValid();
+    if (valid) return valid; // the winner already published — adopt it
     try {
-      // Atomic replace: write a unique temp then rename over the pin. rename is
-      // atomic on one filesystem, so no launch ever sees a half-written pin, and
-      // the file ends holding one valid id — future launches converge on it.
+      fs.writeFileSync(lock, String(process.pid), { flag: "wx", mode: 0o600 });
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== "EEXIST") return chosen; // cannot lock
+      // Another process holds the lock. Wait, then retry — adopting its pin, or
+      // reclaiming the lock if it looks abandoned.
+      if (Date.now() > stealAfter) {
+        try {
+          fs.unlinkSync(lock);
+        } catch {
+          /* someone else reclaimed it first */
+        }
+      }
+      sleepSync(15);
+      continue;
+    }
+    // We hold the lock: repair once, unless a prior holder already did.
+    try {
+      const again = readValid();
+      if (again) return again;
       const tmp = `${pinPath}.${process.pid}.${crypto.randomInt(1_000_000_000)}`;
       fs.writeFileSync(tmp, JSON.stringify({ id: chosen.id }), { mode: 0o600 });
       fs.renameSync(tmp, pinPath);
-    } catch {
-      /* best effort; the re-read below still converges if someone else wrote one */
+      return chosen;
+    } finally {
+      try {
+        fs.unlinkSync(lock);
+      } catch {
+        /* already gone */
+      }
     }
-    return readValid() ?? chosen;
   }
 }
 
