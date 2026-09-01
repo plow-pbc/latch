@@ -6,7 +6,7 @@ shows the installed apps that can receive, the owner authenticates, and the
 credentials move process-to-process — no plain-text CSV ever touches disk.
 This app can be such a destination. The decisions live in DESIGN.md §11a-iii;
 this file is the mechanical reference: the moving pieces, the wire schema,
-the packaging switch, and how to test it.
+the packaging assertions, and how to test it.
 
 ## The flow, end to end
 
@@ -44,13 +44,12 @@ dropped. TOTP keys come across, spelled bare-base32 or as an `otpauth://` URI
 when their parameters are off-default.
 
 The Import sheet's own Apple Passwords guidance advertises this flow (ahead
-of the CSV walk) when `vault:importSources` says the Passwords app has the
-menu at all (`passwordsAppCanHandOff`, macOS 26.4+) — and, for a PACKAGED
-install, only if the build also shipped the appex, addon and shim, because a
-real install offering steps whose Select Destination dialog would not list
-the app is worse than offering none. A from-source run shows the steps on OS
-alone even though it can never receive (stock Info.plist, no entitlement):
-that is how the guidance is worked on and screenshotted.
+of the CSV walk) whenever the Passwords app has the menu at all
+(`passwordsAppCanHandOff`, macOS 26.4+): a packaged build always carries the
+receiving pieces (packaging refuses to produce one without them — below),
+and a from-source run shows the steps even though it can never receive
+(stock Info.plist, no entitlement) — that is how the guidance is worked on
+and screenshotted.
 
 ## OS floors, and what runs where
 
@@ -84,51 +83,39 @@ nothing (every request is cancelled, and nothing is offered until the owner
 also enables it in System Settings → AutoFill), but prefer shipping without
 it until proven necessary.
 
-## The packaging switch: profile capability, not profile presence
+## Packaging: mandatory, and asserted
+
+Every packaged build carries the feature; there is no reduced mode. The app
+is signed with the AutoFill entitlement (`build/entitlements.mac.plist`), and
+`build/afterPack.cjs` refuses a pack that lost any piece — the appex, the
+N-API addon, or the Swift shim, each present and universal — the same way it
+refuses a pack without the keychain addon: loudly, in seconds, not in a user
+report about a feature that silently stopped.
 
 `com.apple.developer.authentication-services.autofill-credential-provider`
-is a **profile-backed entitlement**: under Developer ID it must be authorized
-by an embedded provisioning profile or the app is killed at launch. The app
-already ships a checked-in Developer ID profile either way —
-`build/PlowLatch-DeveloperID.provisionprofile`, always embedded, because the
-vault's keychain entitlements need one — so mere existence proves nothing.
-`just package` therefore decodes the profiles (`security cms -D`) and turns
-the feature ON only when **both** actually grant the AutoFill capability:
+is a **profile-backed entitlement**: under Developer ID a signature that
+exceeds its embedded provisioning profile is an app AMFI kills at launch. Two
+checked-in Developer ID profiles authorize the two signatures:
 
     build/PlowLatch-DeveloperID.provisionprofile
-        the app's existing profile, REGENERATED to carry the capability
+        the app's (embedded by electron-builder for the keychain pair too)
     build/PlowLatchCredentialProvider-DeveloperID.provisionprofile
-        a new profile for co.plow.domo-desktop.credential-provider (check it in)
+        the extension's (embedded into the appex by afterPack)
 
-Getting there (Apple Developer portal, once per account):
+Because file presence proves nothing about what a profile grants, `just
+package` **asserts** — `security cms -D` on both, checking the AutoFill
+grant — and fails the build with the remedy rather than sign an app the OS
+would kill. If a profile is ever regenerated (portal: both identifiers carry
+the AutoFill Credential Provider capability; Developer ID profiles against
+`The Plow Collective, Inc (3559PD337Z)`), download and replace the checked-in
+file; the assertion is what catches a re-download that lost the capability.
 
-1. Identifiers → `co.plow.domo-desktop`: enable the **AutoFill Credential
-   Provider** capability. Register `co.plow.domo-desktop.credential-provider`
-   and enable it there too.
-2. Profiles → the existing Developer ID profile for the app is now invalid
-   (its identifier changed capabilities): edit/regenerate it, download, and
-   **replace** the checked-in `PlowLatch-DeveloperID.provisionprofile`. Then a
-   new **Developer ID** profile for the extension identifier, against the same
-   "Developer ID Application" certificate
-   (`The Plow Collective, Inc (3559PD337Z)`); download and check it in as
-   `PlowLatchCredentialProvider-DeveloperID.provisionprofile`.
-
-With both granting the capability, `just package` says
-`credential exchange: ON` and:
-
-- signs the app with `build/entitlements.mac.import.plist` — the base set plus
-  the AutoFill entitlement (KEEP ITS COMMON PART IN STEP with
-  `entitlements.mac.plist`); the always-embedded app profile authorizes it;
-- `build/afterPack.cjs` copies the built appex under `Contents/PlugIns`,
-  stamps the app's `CFBundleVersion`/`CFBundleShortVersionString` into it,
-  embeds the extension profile, checks both arches, and signs it with
-  `build/entitlements.appex.plist` (electron-builder's own signer is kept off
-  it via `signIgnore` — it would strip the entitlements and profile).
-
-Otherwise the recipe prints exactly which half is missing and the package is
-byte-for-byte the app without the feature: no new entitlement, no PlugIns,
-nothing for an unauthorized entitlement to kill. The `NSUserActivityTypes` Info.plist entry
-ships either way and is harmless alone.
+At pack time, `afterPack.cjs` copies the built appex under
+`Contents/PlugIns`, stamps the app's
+`CFBundleVersion`/`CFBundleShortVersionString` into it, embeds the extension
+profile, checks both arches, and signs it with
+`build/entitlements.appex.plist` (electron-builder's own signer is kept off
+it via `signIgnore` — it would strip the entitlements and profile).
 
 ## Testing
 
@@ -150,15 +137,16 @@ ships either way and is harmless alone.
 
 ## Troubleshooting
 
-- **App not listed in the export sheet** — it isn't a packaged install with
-  profiles (`credential exchange: ON` in the package log), or the OS wants a
-  `Provides*` capability (see the knob above), or the appex was rejected:
+- **App not listed in the export sheet** — it isn't a packaged install
+  (from-source runs never appear), or the OS wants a `Provides*` capability
+  (see the knob above), or the appex was rejected:
   `codesign -dv --entitlements - <app>/Contents/PlugIns/*.appex` and check
   `pluginkit -m -p com.apple.authentication-services-credential-provider-ui`
   lists `co.plow.domo-desktop.credential-provider`.
 - **App launches then "Couldn't receive passwords: …error 1004"** — the token
   was redeemed twice or expired; re-run the export from Passwords.
-- **App killed at launch after packaging** — an entitlements/profile
-  mismatch: the profile files don't cover the identifiers or capability, or
-  `entitlements.mac.import.plist` drifted from `entitlements.mac.plist`'s
-  common part.
+- **App killed at launch after packaging** — the signature exceeds its
+  profile: a checked-in provisionprofile no longer covers its identifier or
+  the capability. `just package`'s assertion should have caught it; decode
+  with `security cms -D -i <profile>` and compare against
+  `entitlements.mac.plist` / `entitlements.appex.plist`.

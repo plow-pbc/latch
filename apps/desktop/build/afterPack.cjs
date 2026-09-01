@@ -212,16 +212,14 @@ module.exports = async function afterPack(context) {
     codesign(["--force", "--deep", "--timestamp", "--options", "runtime", "--entitlements", entitlements, "--sign", identity, target]);
 
   // 1.5) Credential exchange (docs/CREDENTIAL-EXCHANGE.md): embed and sign the
-  // credential-provider appex. Only when the packaging recipe verified both
-  // Developer ID provisioning profiles grant the AutoFill capability and said
-  // so — the appex carries a profile-backed entitlement, and an app that
-  // ships it without an authorizing profile beside it is an app whose
-  // extension the system refuses. Under the flag, every piece is MANDATORY:
-  // the recipe is already signing the app's half of the promise (the import
-  // entitlement, under the always-embedded app profile), and a package that
-  // kept that while quietly dropping the extension would carry the risk with
-  // none of the feature.
-  if (process.env.DOMO_CREDENTIAL_EXCHANGE === "1") {
+  // credential-provider appex. UNCONDITIONAL, like the keychain addon above:
+  // the app is always signed with the AutoFill entitlement now
+  // (entitlements.mac.plist, authorized by the checked-in profiles the
+  // packaging recipe has already asserted grant it), and a package that kept
+  // the entitlement while quietly dropping the extension — or the addon, or
+  // the Swift shim — would ship a release where the feature silently stopped.
+  // Missing pieces fail the build here, in seconds, not in a user report.
+  {
     // The two _CX_ overrides exist for afterPack.test.ts alone: the refusals
     // below are pure fs + throw and must be reachable from vitest whatever
     // this checkout happens to have built or fetched. Nothing else sets them.
@@ -231,15 +229,39 @@ module.exports = async function afterPack(context) {
       path.join(__dirname, "PlowLatchCredentialProvider-DeveloperID.provisionprofile");
     const appexEntitlements = path.join(__dirname, "entitlements.appex.plist");
     const contents = path.join(context.appOutDir, appName, "Contents");
+    // The receiving half beside the registration half: the N-API addon that
+    // redeems the token and the Swift shim it dlopens. Their builds are
+    // tolerant on purpose (dev boxes without Xcode CLT); this is where a
+    // release that lost either gets stopped. Universal for the same reason
+    // the keychain addon is checked: a thin binary clears every gate on the
+    // packaging Mac and lands broken on the other arch's users.
+    const receiving = [
+      ["credential-import addon", path.join(
+        contents, "Resources", "app.asar.unpacked", "node_modules",
+        "@domo", "native-credential-import", "build", "Release", "credential_import.node",
+      )],
+      ["credential-import shim", path.join(contents, "Resources", "native", "libdomo-credential-import.dylib")],
+    ];
+    for (const [what, file] of receiving) {
+      if (!fs.existsSync(file) || fs.statSync(file).size === 0) {
+        throw new Error(`[afterPack] the packed app has no ${what} — credential exchange would silently stop working`);
+      }
+      const archs = machOArchs(file);
+      for (const arch of ["x86_64", "arm64"]) {
+        if (!archs.includes(arch)) {
+          throw new Error(`[afterPack] the ${what} is missing ${arch} (carries: ${archs.join(", ") || "nothing"})`);
+        }
+      }
+    }
     if (!fs.existsSync(path.join(appexSource, "Contents", "MacOS", "PlowLatchCredentialProvider"))) {
       throw new Error(
-        "[afterPack] DOMO_CREDENTIAL_EXCHANGE=1 but dist/native has no built appex — " +
+        "[afterPack] dist/native has no built credential-provider appex — " +
           "scripts/build-native.mjs skipped it (no Swift toolchain?)",
       );
     }
     if (!fs.existsSync(appexProfile)) {
       throw new Error(
-        "[afterPack] DOMO_CREDENTIAL_EXCHANGE=1 but build/PlowLatchCredentialProvider-DeveloperID.provisionprofile is missing",
+        "[afterPack] build/PlowLatchCredentialProvider-DeveloperID.provisionprofile is missing",
       );
     }
     const appex = path.join(contents, "PlugIns", "PlowLatchCredentialProvider.appex");
@@ -267,7 +289,7 @@ module.exports = async function afterPack(context) {
     }
     fs.copyFileSync(appexProfile, path.join(appex, "Contents", "embedded.provisionprofile"));
     signFile(appex, appexEntitlements);
-    console.log("[afterPack] embedded + signed the credential-provider appex (credential exchange ON)");
+    console.log("[afterPack] embedded + signed the credential-provider appex");
   }
 
   // 2) Camoufox — deep-sign the (universal) Camoufox.app with Mozilla's set.

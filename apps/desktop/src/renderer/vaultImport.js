@@ -38,7 +38,8 @@ function steps(head, items) {
 /**
  * @param reload redraw the vault pane (called after a commit lands)
  * @param host vault.js's pane seams: { errText, vbusy, vtakeEditor,
- *             vreleaseEditor, vtoast }
+ *             vreleaseEditor, vtoast, alive } — `alive` answers whether the
+ *             pane this sheet was opened from is still the one on screen
  * @param exchange a credential exchange main already staged (Apple Passwords'
  *                 "Export to another app…"): its secret-free preview. The
  *                 sheet then opens straight on it — the owner already chose
@@ -47,7 +48,7 @@ function steps(head, items) {
  *                 exchange main is holding, like any other staging.
  */
 export async function vimportSheet(reload, host, exchange = null) {
-  const { errText, vbusy, vtakeEditor, vreleaseEditor, vtoast } = host;
+  const { errText, vbusy, vtakeEditor, vreleaseEditor, vtoast, alive = () => true } = host;
 
   // Which apps are here to import from — asked BEFORE the sheet takes the
   // editor seat or puts anything on screen, so nothing can try to close a
@@ -62,6 +63,12 @@ export async function vimportSheet(reload, host, exchange = null) {
       /* apple-only fallback above */
     }
   }
+  // The wait above is the one gap where the world can change under this
+  // opening: a credential exchange landing there replaces the pane and opens
+  // its own sheet. A stale opening pressing on would take the seat from that
+  // sheet — whose close would rightly cancel the one-shot hand-off — so it
+  // stands down instead.
+  if (!alive()) return;
   // With only one possible source there is nothing to choose: preselected.
   const choices = !!(sources.onePassword || sources.chrome);
   let source = choices ? null : "apple";

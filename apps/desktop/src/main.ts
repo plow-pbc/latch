@@ -931,23 +931,13 @@ ipcMain.handle("vault:importSources", async () => {
   const onePwApp = await installed("1Password.app");
   const chromeApp = await installed("Google Chrome.app");
   // Whether the Apple guidance may offer the direct hand-off (macOS 26.4's
-  // "Export … to App…" menu) instead of only the CSV walk. The menu item has
-  // to exist; beyond that, a PACKAGED app must also be able to receive — the
-  // appex under Contents/PlugIns is only shipped by a package run that
-  // verified the provisioning profiles (afterPack.cjs), and the addon +
-  // Swift shim do the receiving — because a real install offering steps
-  // whose destination list would not show this app is worse than offering
-  // none. A from-source run can never receive (stock Info.plist, no
-  // entitlement) but shows the steps on OS alone anyway: it is how the
+  // "Export … to App…" menu) instead of only the CSV walk: purely whether
+  // the menu exists on this Mac. A packaged build always carries the
+  // receiving pieces — the recipe and afterPack.cjs refuse to produce one
+  // without them — and a from-source run can never receive (stock
+  // Info.plist, no entitlement) but shows the steps anyway: it is how the
   // guidance itself gets worked on and screenshotted.
-  const exchange =
-    passwordsAppCanHandOff(process.getSystemVersion()) &&
-    (!app.isPackaged ||
-      (credentialImportAddon() !== null &&
-        !!(await fs.stat(credentialShimPath()).catch(() => null)) &&
-        !!(await fs.stat(
-          path.join(process.resourcesPath, "..", "PlugIns", "PlowLatchCredentialProvider.appex"),
-        ).catch(() => null))));
+  const exchange = passwordsAppCanHandOff(process.getSystemVersion());
   return {
     apple: { icon: await iconOf("/System/Applications/Passwords.app"), exchange },
     onePassword: onePwApp ? { icon: await iconOf(onePwApp) } : null,

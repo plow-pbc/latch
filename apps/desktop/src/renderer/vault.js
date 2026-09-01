@@ -875,8 +875,12 @@ export async function renderVault(view, isCurrent = () => true) {
     icon("intake", { class: "vico", strokeWidth: "2" }),
     el("span", { text: " Import" }),
   ]);
+  // `alive` says whether the pane this sheet was opened FROM is still the
+  // one on screen — a credential exchange arriving mid-open replaces the
+  // pane, and the stale opening must stand down (see vimportSheet).
+  const alive = () => isCurrent() && pane.isConnected;
   importBtn.addEventListener("click", () =>
-    vimportSheet(renderVaultIn, { errText, vbusy, vtakeEditor, vreleaseEditor, vtoast }));
+    vimportSheet(renderVaultIn, { errText, vbusy, vtakeEditor, vreleaseEditor, vtoast, alive }));
   const newBtn = el("button", { class: "btn-primary", attrs: { type: "button" } }, [
     icon("plus", { class: "vico", strokeWidth: "2.2" }),
     el("span", { text: " New" }),
@@ -895,8 +899,8 @@ export async function renderVault(view, isCurrent = () => true) {
     exchangeOpening = true;
     try {
       const exchange = await window.domo.vaultExchangePending().catch(() => null);
-      if (exchange && isCurrent() && pane.isConnected) {
-        await vimportSheet(renderVaultIn, { errText, vbusy, vtakeEditor, vreleaseEditor, vtoast }, exchange);
+      if (exchange && alive()) {
+        await vimportSheet(renderVaultIn, { errText, vbusy, vtakeEditor, vreleaseEditor, vtoast, alive }, exchange);
       }
     } finally {
       exchangeOpening = false;

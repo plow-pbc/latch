@@ -14,9 +14,10 @@
  * only, and no error message, warning or skip reason ever contains a field's
  * VALUE — everything returned is shown on screen.
  */
+import { finishImportedLogin } from "./passwordImport.js";
 import type { ImportedLogin, ParsedImport, SkippedRow } from "./passwordImport.js";
 import { checkedUrls } from "./vaultItems.js";
-import { base32Encode, totpParams } from "./vaultTotp.js";
+import { base32Encode } from "./vaultTotp.js";
 
 /** An authenticator key as the exchange carries it: raw bytes plus the
  * parameters, not yet any of the spellings the vault stores. */
@@ -164,59 +165,52 @@ function itemToLogin(item: ExchangeItem, skipped: SkippedRow[]): ImportedLogin |
   if (urls.length < rawUrls.length) {
     warnings.push("one of its website addresses could not be read and was left off");
   }
-  if (!password) warnings.push("the export holds no password for it");
-  const totp = item.totp ? totpKeyOf(item.totp, title, warnings) : "";
+  // The shared last mile (passwordImport.ts): title fallback, no-password
+  // warning, and the key checked and warned about in the one place that
+  // words those — this parser only SPELLS the key first (below).
+  const login = finishImportedLogin(
+    {
+      title,
+      urls,
+      username,
+      password,
+      totpRaw: item.totp ? totpKeySpelling(item.totp, title) : "",
+      notes: item.notes ?? "",
+    },
+    warnings,
+  );
   if (extras.length) {
-    warnings.push(`also carries ${listJoin([...new Set(extras)])}, which was not imported`);
+    login.warnings.push(`also carries ${listJoin([...new Set(extras)])}, which was not imported`);
   }
-  const name = title || hostOf(urls[0]!) || "(untitled)";
-  return { title: name, urls, username, password, totp, notes: item.notes ?? "", warnings };
-}
-
-function hostOf(url: string): string {
-  try {
-    return new URL(url).hostname;
-  } catch {
-    return "";
-  }
+  return login;
 }
 
 /**
  * The stored spelling of an exchanged authenticator key: bare base32 when the
  * parameters are the defaults every issuer uses, the full otpauth:// URI when
- * they are not — that URI is the only spelling that can carry them. Checked
- * through totpParams before it is returned, exactly like the CSV path's
- * checkTotp: a key the vault could never make codes from is dropped here,
- * where the import can still say so.
+ * they are not — that URI is the only spelling that can carry them. Spelling
+ * only: validation and the drop-with-a-warning live in checkTotp, inside
+ * finishImportedLogin above, so a secret that cannot become a key is handed
+ * over as a spelling checkTotp is certain to refuse rather than warned about
+ * in a second voice here.
  */
-function totpKeyOf(t: ExchangeTotp, title: string, warnings: string[]): string {
-  try {
-    const secret = Buffer.from(t.secretBase64 ?? "", "base64");
-    if (secret.length === 0) throw new Error("empty");
-    const b32 = base32Encode(secret);
-    const algorithm = (t.algorithm || "sha1").toLowerCase();
-    const digits = t.digits || 6;
-    const period = t.period || 30;
-    let key: string;
-    if (algorithm === "sha1" && digits === 6 && period === 30) {
-      key = b32;
-    } else {
-      const issuer = (t.issuer ?? "").trim();
-      const user = (t.userName ?? "").trim();
-      const label = issuer && user ? `${issuer}:${user}` : issuer || user || title || "login";
-      const params = new URLSearchParams({
-        secret: b32,
-        algorithm: algorithm.toUpperCase(),
-        digits: String(digits),
-        period: String(period),
-      });
-      if (issuer) params.set("issuer", issuer);
-      key = `otpauth://totp/${encodeURIComponent(label)}?${params.toString()}`;
-    }
-    totpParams(key);
-    return key;
-  } catch {
-    warnings.push("its one-time password key could not be read and was not imported");
-    return "";
-  }
+function totpKeySpelling(t: ExchangeTotp, title: string): string {
+  const secret = Buffer.from(t.secretBase64 ?? "", "base64");
+  if (secret.length === 0) return "!"; // no base32 alphabet — refused downstream
+  const b32 = base32Encode(secret);
+  const algorithm = (t.algorithm || "sha1").toLowerCase();
+  const digits = t.digits || 6;
+  const period = t.period || 30;
+  if (algorithm === "sha1" && digits === 6 && period === 30) return b32;
+  const issuer = (t.issuer ?? "").trim();
+  const user = (t.userName ?? "").trim();
+  const label = issuer && user ? `${issuer}:${user}` : issuer || user || title || "login";
+  const params = new URLSearchParams({
+    secret: b32,
+    algorithm: algorithm.toUpperCase(),
+    digits: String(digits),
+    period: String(period),
+  });
+  if (issuer) params.set("issuer", issuer);
+  return `otpauth://totp/${encodeURIComponent(label)}?${params.toString()}`;
 }

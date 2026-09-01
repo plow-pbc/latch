@@ -112,8 +112,7 @@ describe("the packaging hook refuses before it signs", () => {
     fs.rmSync(dir, { recursive: true, force: true });
     if (realIdentity === undefined) delete process.env.CODESIGN_IDENTITY;
     else process.env.CODESIGN_IDENTITY = realIdentity;
-    // Credential-exchange knobs some tests set; never set outside them.
-    delete process.env.DOMO_CREDENTIAL_EXCHANGE;
+    // Credential-exchange path knobs some tests set; never set outside them.
     delete process.env.DOMO_CX_APPEX_SOURCE;
     delete process.env.DOMO_CX_PROFILE;
   });
@@ -188,11 +187,28 @@ describe("the packaging hook refuses before it signs", () => {
     await expect(afterPack(contextFor(dir, { identity: null }))).rejects.toThrow(/ships unsigned/);
   });
 
-  // Credential exchange (docs/CREDENTIAL-EXCHANGE.md): once the recipe said
-  // ON — the app's half of the promise (entitlement + embedded profile) is
-  // already going to be signed in — a pack that would quietly drop the
-  // extension's half must refuse, not ship the risk without the feature.
-  describe("with DOMO_CREDENTIAL_EXCHANGE=1", () => {
+  // Credential exchange (docs/CREDENTIAL-EXCHANGE.md) is UNCONDITIONAL in a
+  // packaged build: the app is always signed with the AutoFill entitlement,
+  // so a pack that quietly dropped the extension, the addon, or the Swift
+  // shim would ship a release where the feature silently stopped. Every
+  // piece missing is a refusal, exactly like the keychain addon's.
+  describe("the credential-exchange pieces are mandatory", () => {
+    const receivingPaths = () => [
+      path.join(
+        resourcesDir(), "app.asar.unpacked", "node_modules",
+        "@domo", "native-credential-import", "build", "Release", "credential_import.node",
+      ),
+      path.join(resourcesDir(), "native", "libdomo-credential-import.dylib"),
+    ];
+
+    /** The addon + shim as production packs them: one universal binary each. */
+    const packReceiving = () => {
+      for (const file of receivingPaths()) {
+        fs.mkdirSync(path.dirname(file), { recursive: true });
+        fs.writeFileSync(file, fatUniversalHeader());
+      }
+    };
+
     /** A built appex as build-native.mjs leaves it, minus nothing. */
     const packAppex = (bytes: Buffer = fatUniversalHeader()) => {
       const appex = path.join(dir, "fixture.appex");
@@ -203,14 +219,27 @@ describe("the packaging hook refuses before it signs", () => {
     };
 
     beforeEach(() => {
-      process.env.DOMO_CREDENTIAL_EXCHANGE = "1";
       pack();
+      packReceiving();
+    });
+
+    it.each([
+      { what: "addon", at: 0 },
+      { what: "shim", at: 1 },
+    ])("refuses a pack whose credential-import $what is absent", async ({ at }) => {
+      fs.rmSync(receivingPaths()[at]!);
+      await expect(afterPack(contextFor(dir))).rejects.toThrow(/no credential-import/);
+    });
+
+    it("refuses a THIN shim — it lands broken on the other arch's users", async () => {
+      fs.writeFileSync(receivingPaths()[1]!, thinHeader(0x0100000c));
+      await expect(afterPack(contextFor(dir))).rejects.toThrow(/credential-import shim is missing x86_64/);
     });
 
     it("refuses when no appex was built", async () => {
       process.env.DOMO_CX_APPEX_SOURCE = path.join(dir, "never-built.appex");
       process.env.DOMO_CX_PROFILE = path.join(dir, "unused.provisionprofile");
-      await expect(afterPack(contextFor(dir))).rejects.toThrow(/no built appex/);
+      await expect(afterPack(contextFor(dir))).rejects.toThrow(/no built credential-provider appex/);
     });
 
     it("refuses when the extension's provisioning profile is missing", async () => {

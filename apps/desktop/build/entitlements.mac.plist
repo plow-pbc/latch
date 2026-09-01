@@ -24,5 +24,15 @@
        AMFI kills the app at exec if that profile is missing. -->
   <key>com.apple.application-identifier</key>
   <string>3559PD337Z.co.plow.domo-desktop</string>
+  <!-- Credential exchange (docs/CREDENTIAL-EXCHANGE.md): receiving an Apple
+       Passwords export requires this on the app itself, not only on the
+       provider extension. It does NOT put the app in anyone's AutoFill flow —
+       the extension declines that role (native/credential-provider/).
+       Restricted like the pair above, and authorized by the same profile;
+       `just package` asserts the checked-in profiles actually grant it before
+       signing anything, because a signature that exceeds its profile is an
+       app AMFI kills at exec. -->
+  <key>com.apple.developer.authentication-services.autofill-credential-provider</key>
+  <true/>
 </dict>
 </plist>

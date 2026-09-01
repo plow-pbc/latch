@@ -714,15 +714,17 @@ app is a destination for it. Mechanics in
   shipped appex declares no `Provides*` capability and cancels every request —
   the vault's values stay owner-typed and broker-filled (§11a), never offered
   to system AutoFill.
-- **The feature is a packaging switch, not a code path.** Its entitlement is
-  profile-backed (an app carrying it beyond what its embedded Developer ID
-  provisioning profile authorizes is killed at launch), and a profile is
-  always embedded now for the vault's keychain entitlements — so `just
-  package` decodes the checked-in profiles and turns the whole thing on only
-  when both actually GRANT the AutoFill capability; otherwise the package is
-  byte-for-byte the app without it. macOS 15 stays supported either way: the
-  26-only symbols are weak-linked behind `#available`, and the appex's
-  `LSMinimumSystemVersion` keeps it unloaded.
+- **Packaged builds carry it unconditionally, and packaging asserts.** The
+  entitlement is profile-backed (an app carrying it beyond what its embedded
+  Developer ID provisioning profile authorizes is killed at launch), so
+  `just package` decodes the checked-in profiles and FAILS unless both
+  actually grant the AutoFill capability — an assertion, not a switch,
+  because the only alternative to failing there is signing an app the OS
+  kills. afterPack then refuses a pack missing the appex, the addon, or the
+  shim, exactly as it refuses one missing the keychain addon: a release
+  where the feature silently stopped is what these gates exist to prevent.
+  macOS 15 stays supported: the 26-only symbols are weak-linked behind
+  `#available`, and the appex's `LSMinimumSystemVersion` keeps it unloaded.
 
 ## 11b. Software updates
 

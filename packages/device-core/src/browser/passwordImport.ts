@@ -205,14 +205,31 @@ function rowToLogin(rec: Record<string, string>, skipped: SkippedRow[]): Importe
     skipped.push({ title: title || "(untitled)", reason: "its website address could not be read" });
     return null;
   }
-  const warnings: string[] = [];
-  const name = title || hostOf(urls[0]!) || "(untitled)";
-  if (!password) warnings.push("the export holds no password for it");
-  const totp = checkTotp(rec.totp, warnings);
-  return { title: name, urls, username, password, totp, notes: rec.notes ?? "", warnings };
+  return finishImportedLogin({ title, urls, username, password, totpRaw: rec.totp, notes: rec.notes ?? "" }, []);
 }
 
-function hostOf(url: string): string {
+/**
+ * The last mile every export-shaped login walks — shared by the CSV rows and
+ * the credential-exchange items (credentialExchange.ts). The 1Password item
+ * JSON below keeps its own wording on purpose: it speaks about "the item",
+ * and its title is required rather than fallen back to. `warnings` may
+ * already hold facts the caller found (they stay first); the no-password
+ * warning and the key check append in the order both parsers always used.
+ */
+export function finishImportedLogin(
+  fields: { title: string; urls: string[]; username: string; password: string; totpRaw: string | undefined; notes: string },
+  warnings: string[],
+): ImportedLogin {
+  const { urls, username, password, notes } = fields;
+  const title = fields.title || hostOf(urls[0] ?? "") || "(untitled)";
+  if (!password) warnings.push("the export holds no password for it");
+  const totp = checkTotp(fields.totpRaw, warnings);
+  return { title, urls, username, password, totp, notes, warnings };
+}
+
+/** The hostname a URL names, or "" — the display-name fallback for a login
+ * whose export carried no title. */
+export function hostOf(url: string): string {
   try {
     return new URL(url).hostname;
   } catch {
@@ -227,7 +244,7 @@ function hostOf(url: string): string {
  * quote a character of what was pasted, and this one is going on screen next
  * to a hundred others.
  */
-function checkTotp(raw: string | undefined, warnings: string[]): string {
+export function checkTotp(raw: string | undefined, warnings: string[]): string {
   const totp = (raw ?? "").trim();
   if (!totp) return "";
   try {
