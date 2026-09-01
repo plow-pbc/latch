@@ -10,6 +10,10 @@ import {
 
 import { el, icon } from "./dom.js";
 import { renderVault, vaultConfirmLeave } from "./vault.js";
+import {
+  cloudErrorCopy,
+  cloudProviderPickerViewModel,
+} from "../cloudAgentViewModel.js";
 
 const view = document.getElementById("view");
 const seg = document.getElementById("seg");
@@ -1051,6 +1055,10 @@ function syncCloudLineModal(state, redraw) {
   const providers = !changing && Array.isArray(state.cloudProviders)
     ? state.cloudProviders.filter((provider) => typeof provider === "string" && provider)
     : null;
+  const providerView = cloudProviderPickerViewModel(
+    providers,
+    typeof state.cloudProvidersError === "string" ? state.cloudProvidersError : null,
+  );
   if (!changing && !modal.started && providers) {
     const selected = modal.providerSelect.value;
     modal.providerSelect.replaceChildren(...providers.map((provider) =>
@@ -1058,21 +1066,14 @@ function syncCloudLineModal(state, redraw) {
     if (providers.includes(selected)) modal.providerSelect.value = selected;
   }
 
-  if (!changing && !modal.started && (!providers || providers.length === 0)) {
+  if (!changing && !modal.started && providerView.mode === "blocked") {
     const cancel = el("button", { class: "btn", text: "Cancel" });
     cancel.addEventListener("click", dismissCloudLineModal);
-    const message = state.cloudProvidersError
-      ? cloudErrorCopy(state.cloudProvidersError)
-      : providers ? "Plow has no cloud agent types available right now."
-        : "Agent types couldn't be loaded yet. Try again.";
-    const heading = providers
-      ? "No agent types are available"
-      : "Agent types could not be loaded";
     panel.replaceChildren(
       el("div", { class: "group-title", text: title }),
       el("div", { class: "cloud-callout cloud-error" }, [
-        el("div", { class: "cloud-callout-title", text: heading }),
-        el("p", { class: "faint", text: message }),
+        el("div", { class: "cloud-callout-title", text: providerView.heading }),
+        el("p", { class: "faint", text: providerView.message }),
       ]),
       el("div", { class: "row cloud-modal-actions" }, [cancel]),
     );
@@ -1200,10 +1201,10 @@ function syncCloudLineModal(state, redraw) {
   cancel.addEventListener("click", dismissCloudLineModal);
   panel.replaceChildren(
     el("div", { class: "group-title", text: title }),
-    ...(!changing && state.cloudProvidersError ? [
+    ...(!changing && providerView.mode === "banner" ? [
       el("div", { class: "cloud-callout cloud-error" }, [
-        el("div", { class: "cloud-callout-title", text: "Agent types could not be refreshed" }),
-        el("p", { class: "faint", text: cloudErrorCopy(state.cloudProvidersError) }),
+        el("div", { class: "cloud-callout-title", text: providerView.heading }),
+        el("p", { class: "faint", text: providerView.message }),
       ]),
     ] : []),
     ...(changing ? [el("p", {
@@ -1389,33 +1390,6 @@ function openCloudDetail(trigger, agent, state, redraw) {
   if (!openCloudModal(trigger, [], null)) return;
   Object.assign(cloudModal, { kind: "detail", agentId: agent.agentId, confirmingDelete: false });
   syncCloudModal(state, redraw);
-}
-
-const cloudHttpReasons = new Set([
-  "bad request",
-  "unauthorized",
-  "forbidden",
-  "not found",
-  "method not allowed",
-  "not acceptable",
-  "request timeout",
-  "conflict",
-  "gone",
-  "unprocessable entity",
-  "too many requests",
-  "internal server error",
-  "not implemented",
-  "bad gateway",
-  "service unavailable",
-  "gateway timeout",
-]);
-
-function cloudErrorCopy(message) {
-  const reason = String(message ?? "").trim().replace(/[.!]$/, "").toLowerCase();
-  if (cloudHttpReasons.has(reason) || /^(?:plow returned|http(?: error)?) \d{3}$/.test(reason)) {
-    return "Plow couldn't complete that request. Try again.";
-  }
-  return message;
 }
 
 function cloudErrorBanner(message, title = "Cloud agents could not be refreshed") {
