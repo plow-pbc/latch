@@ -68,9 +68,15 @@ export type TelemetryProps = Record<string, string | number | boolean>;
  */
 export interface TelemetrySink {
   capture(message: { distinctId: string; event: string; properties: Record<string, unknown> }): void;
-  /** Push the buffer out now. Errors need it (see trackError); ordinary
-   * events ride the client's own batching. */
-  flush(): Promise<void>;
+  /**
+   * Deliver ONE event now, resolving only once it has actually been handed
+   * to the network, and rejecting on a known failure. Error reports need
+   * this ordering: the SDK's `capture()` enqueues behind an async prepare,
+   * so a `flush()` issued right after it can flush an EMPTY queue, resolve,
+   * and convince the caller the report is safe when it was never sent.
+   * Ordinary events ride `capture`'s batching.
+   */
+  sendNow(message: { distinctId: string; event: string; properties: Record<string, unknown> }): Promise<void>;
   shutdown(): Promise<void>;
 }
 
@@ -281,10 +287,13 @@ export class Telemetry {
       const frames = this.scrubbedFrames(original);
       const fatal = scope === "uncaught_exception";
       if (fatal) this.writeSpool({ name, frames, scope, ts: new Date().toISOString() });
-      this.captureExceptionEvent(name, frames, scope);
-      // Flush NOW, not on the batch timer. Fire-and-forget: if the process
-      // dies mid-send, the spool above is what carries the report.
-      this.deps.sink!.flush().then(
+      // An ORDERED send, not capture-then-flush: capture enqueues behind an
+      // async prepare, and a flush racing it can resolve against an empty
+      // queue — reporting the spool safe to delete while the event was never
+      // sent. sendNow resolves only once the event was handed to the
+      // network. Fire-and-forget: if the process dies mid-send, the spool
+      // above is what carries the report.
+      this.deps.sink!.sendNow(this.exceptionMessage(name, frames, scope)).then(
         () => {
           if (fatal) this.deleteSpool();
         },
@@ -321,7 +330,7 @@ export class Telemetry {
       const frames = Array.isArray(spooled.frames)
         ? spooled.frames.filter((f): f is string => typeof f === "string").slice(0, 30)
         : [];
-      this.captureExceptionEvent(
+      const message = this.exceptionMessage(
         typeof spooled.name === "string" && SAFE_ERROR_NAMES.has(spooled.name)
           ? spooled.name
           : "Error",
@@ -329,7 +338,9 @@ export class Telemetry {
         typeof spooled.scope === "string" ? spooled.scope : "uncaught_exception",
         { spooled: true },
       );
-      this.deps.sink!.flush().then(
+      // Same ordered send as the live path, for the same reason: the spool
+      // may be the only copy, and only a resolved send proves it isn't.
+      this.deps.sink!.sendNow(message).then(
         () => this.deleteSpool(),
         () => {},
       );
@@ -367,13 +378,14 @@ export class Telemetry {
   /** One `$exception` event, every property built here. `$exception_list`
    * follows PostHog's error-tracking shape with a raw stacktrace; no frame
    * carries context_line/pre_context/post_context, and nothing downstream
-   * adds them because nothing downstream processes this event. */
-  private captureExceptionEvent(
+   * adds them because nothing downstream processes this event. Returned
+   * rather than captured, because the callers need the ordered `sendNow`. */
+  private exceptionMessage(
     name: string,
     frames: string[],
     scope: string,
     extra: TelemetryProps = {},
-  ): void {
+  ): { distinctId: string; event: string; properties: Record<string, unknown> } {
     // Only lines the full frame shape vouches for — a line that fits nothing
     // is dropped, never shipped verbatim. This runs on spooled lines too, so
     // an old or hand-edited spool gets the same gate.
@@ -391,7 +403,7 @@ export class Telemetry {
         },
       ];
     });
-    this.deps.sink!.capture({
+    return {
       distinctId: this.distinctId(),
       event: "$exception",
       properties: {
@@ -408,7 +420,7 @@ export class Telemetry {
           },
         ],
       },
-    });
+    };
   }
 
   private spoolFile(): string {

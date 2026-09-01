@@ -29,19 +29,19 @@ function tempHome(): string {
 
 class FakeSink implements TelemetrySink {
   captured: { distinctId: string; event: string; properties: Record<string, unknown> }[] = [];
-  flushes = 0;
+  sent: { distinctId: string; event: string; properties: Record<string, unknown> }[] = [];
   shutdowns = 0;
   capture(message: { distinctId: string; event: string; properties: Record<string, unknown> }): void {
     this.captured.push(message);
   }
-  async flush(): Promise<void> {
-    this.flushes += 1;
+  async sendNow(message: { distinctId: string; event: string; properties: Record<string, unknown> }): Promise<void> {
+    this.sent.push(message);
   }
   async shutdown(): Promise<void> {
     this.shutdowns += 1;
   }
   exceptions() {
-    return this.captured.filter((c) => c.event === "$exception");
+    return this.sent.filter((c) => c.event === "$exception");
   }
 }
 
@@ -106,6 +106,7 @@ describe("usage events", () => {
     telemetry.track("app_launched");
     telemetry.trackError("uncaught_exception", new Error("boom"));
     expect(sink.captured).toHaveLength(0);
+    expect(sink.sent).toHaveLength(0);
   });
 
   it("is a no-op with no sink (no key baked)", () => {
@@ -343,15 +344,16 @@ describe("error reporting", () => {
     expect(JSON.stringify(sink.exceptions()[0])).not.toContain("plow_sk_whatever");
   });
 
-  it("flushes immediately — a crash report cannot wait out a batch timer", () => {
+  it("uses the ordered send, never the batched capture queue", () => {
     const { telemetry, sink } = makeTelemetry();
     telemetry.trackError("uncaught_exception", new Error("boom"));
-    expect(sink.flushes).toBe(1);
+    expect(sink.sent).toHaveLength(1);
+    expect(sink.captured).toHaveLength(0);
   });
 
-  it("survives a flush that rejects", () => {
+  it("survives a send that rejects", () => {
     const sink = new FakeSink();
-    sink.flush = async () => {
+    sink.sendNow = async () => {
       throw new Error("offline");
     };
     const { telemetry } = makeTelemetry({ sink });
@@ -373,23 +375,23 @@ describe("error reporting", () => {
 describe("the crash spool", () => {
   const spoolPath = (home: string) => path.join(home, "app/crash-report.json");
 
-  it("spools a fatal error to disk before the async send, and deletes it once the flush lands", async () => {
+  it("spools a fatal error to disk before the async send, and deletes it once the send lands", async () => {
     const { telemetry, sink, home } = makeTelemetry();
-    let releaseFlush = () => {};
-    sink.flush = () => new Promise((r) => { releaseFlush = r; });
+    let releaseSend = () => {};
+    sink.sendNow = () => new Promise((r) => { releaseSend = r; });
     telemetry.trackError("uncaught_exception", new Error("boom"));
     // The spool is on disk synchronously — this is what survives a process
     // that dies before the network write.
     expect(fs.existsSync(spoolPath(home))).toBe(true);
-    releaseFlush();
+    releaseSend();
     await new Promise((r) => setTimeout(r, 0));
     expect(fs.existsSync(spoolPath(home))).toBe(false);
   });
 
-  it("keeps the spool when the flush fails, and the next launch reports it", async () => {
+  it("keeps the spool when the send fails, and the next launch reports it", async () => {
     const home = tempHome();
     const first = makeTelemetry({ home });
-    first.sink.flush = async () => {
+    first.sink.sendNow = async () => {
       throw new Error("process died mid-send");
     };
     const error = new Error("boom");
@@ -398,10 +400,11 @@ describe("the crash spool", () => {
     await new Promise((r) => setTimeout(r, 0));
     expect(fs.existsSync(spoolPath(home))).toBe(true);
 
-    // An OFFLINE second launch reports but cannot flush — the spool stays
+    // An OFFLINE second launch reports but cannot deliver — the spool stays
     // for the next try, because a queued capture dies with its process.
     const offline = makeTelemetry({ home });
-    offline.sink.flush = async () => {
+    offline.sink.sendNow = async (message) => {
+      offline.sink.sent.push(message);
       throw new Error("still offline");
     };
     offline.telemetry.reportSpooledCrash();

@@ -216,7 +216,11 @@ process.on("uncaughtExceptionMonitor", (error) => {
   telemetry?.trackError("uncaught_exception", error);
 });
 process.on("unhandledRejection", (reason) => {
-  console.error("[app] unhandled rejection:", reason);
+  // A fixed marker, NOT the reason: a rejection can carry anything the
+  // throwing code interpolated, and this listener replaced the default
+  // printer — so what it writes is now the one line that reaches the
+  // console, and it must carry nothing. The scrubbed frames go to telemetry.
+  console.error("[app] unhandled rejection (reported to telemetry; text withheld from logs)");
   telemetry?.trackError("unhandled_rejection", reason);
 });
 
@@ -1321,7 +1325,24 @@ app.whenReady().then(async () => {
       home,
       sink: {
         capture: (message) => posthog.capture(message),
-        flush: () => posthog.flush(),
+        // The ordered send the crash paths need. `captureImmediate` awaits
+        // the actual POST — but swallows a failed one, emitting "error" and
+        // resolving anyway — so a listener spans the await and any error
+        // signal in that window rejects. A concurrent send's failure can
+        // reject a delivery that succeeded; that keeps a spool that was
+        // already reported, and a duplicate beats a lost crash.
+        sendNow: async (message) => {
+          let failed: unknown = null;
+          const off = posthog.on("error", (err: unknown) => {
+            failed = err ?? new Error("posthog send failed");
+          });
+          try {
+            await posthog.captureImmediate(message);
+          } finally {
+            off();
+          }
+          if (failed) throw failed;
+        },
         // Two seconds, not the SDK's 30-second default: this rides the quit
         // teardown, and an offline Mac must not look like an app refusing to
         // quit. What a flush this short drops, the crash spool never held —

@@ -773,10 +773,13 @@ Decisions and their reasons:
   does with them.
 - **A fatal crash spools its report to disk first** (synchronously, to
   `app/crash-report.json`), because the process usually exits before an async
-  send completes; the spool is deleted when the live flush lands, and a spool
-  that outlives its process is reported by the next launch — which also keeps
-  the file until ITS flush resolves, so an offline launch retries rather than
-  losing the report (only a spool that will not parse is deleted unsent). The
+  send completes; the spool is deleted only when an ORDERED send resolves
+  (`sendNow` — not capture-then-flush, which can flush an empty queue before
+  the SDK's async prepare enqueues the event and falsely report it safe), and
+  a spool that outlives its process is reported by the next launch — which
+  keeps the file until its own send resolves, so an offline launch retries
+  rather than losing the report (only a spool that will not parse is deleted
+  unsent). The
   quit-path flush is bounded (2s, not the SDK's 30s default) so an offline
   Mac never looks like an app refusing to quit.
 - **`posthog-node` is pinned exactly** (5.21.2, no caret): 5.22.0 narrowed
