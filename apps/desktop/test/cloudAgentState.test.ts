@@ -35,6 +35,11 @@ function tempHome(): string {
   return home;
 }
 
+/** The renderer handle a row carries — what `completedRowKey` must match. */
+function handleOf(state: CloudAgentState, agentId: string): string | undefined {
+  return state.state().cloudAgents.find((row) => row.agentId === agentId)?.rowKey;
+}
+
 function agent(overrides: Partial<CloudAgentResource> = {}): CloudAgentResource {
   return {
     agentId: "agent_1",
@@ -546,7 +551,8 @@ describe("CloudAgentState new agent flow", () => {
     }]);
     expect(calls).not.toContain("createActivation");
     expect(state.state().cloudAgents).toHaveLength(1);
-    expect(state.state().cloudLineFlow.completedRowKey).toBe(rowKey(BUILTIN_TARGET_ID, "agent_new"));
+    expect(state.state().cloudLineFlow.completedRowKey)
+      .toBe(handleOf(state, "agent_new"));
   });
 
   it("always activates for New line, then creates from the verified line uid", async () => {
@@ -594,7 +600,8 @@ describe("CloudAgentState new agent flow", () => {
     }]));
 
     expect(calls).toContain("createActivation");
-    expect(state.state().cloudLineFlow.completedRowKey).toBe(rowKey(BUILTIN_TARGET_ID, "agent_new"));
+    expect(state.state().cloudLineFlow.completedRowKey)
+      .toBe(handleOf(state, "agent_new"));
     expect(state.state().cloudAgents[0].line).toEqual({
       uid: "lin_new",
       label: "+1 415-555-0999",
@@ -655,7 +662,8 @@ describe("CloudAgentState new agent flow", () => {
     await state.create({ name: "Garden", provider: "exe:hermes", lineUid: null });
     await vi.waitFor(() => expect(calls).toContain("listKeys"));
 
-    expect(state.state().cloudLineFlow.completedRowKey).toBe(rowKey(BUILTIN_TARGET_ID, "agent_1"));
+    expect(state.state().cloudLineFlow.completedRowKey)
+      .toBe(handleOf(state, "agent_1"));
     listing.resolve([]);
     await vi.waitFor(() => expect(audit).toHaveLength(1));
   });
@@ -738,7 +746,8 @@ describe("CloudAgentState new agent flow", () => {
     await state.create({ name: "Kitchen", provider: "exe:hermes", lineUid: "lin_willow", targetId: BUILTIN_TARGET_ID });
 
     expect(state.state().cloudAgents).toHaveLength(1);
-    expect(state.state().cloudLineFlow.completedRowKey).toBe(rowKey(BUILTIN_TARGET_ID, "agent_existing"));
+    expect(state.state().cloudLineFlow.completedRowKey)
+      .toBe(handleOf(state, "agent_existing"));
   });
 
   it("reports a verified payload with no agent line and logs only its safe shape", async () => {
@@ -899,7 +908,8 @@ describe("CloudAgentState change-line flow", () => {
       line: { uid: "lin_ash", label: "Ash · +15550200" },
       threads: [{ uid: "cht_ash" }],
     });
-    expect(state.state().cloudLineFlow.completedRowKey).toBe(rowKey(BUILTIN_TARGET_ID, "agent_1"));
+    expect(state.state().cloudLineFlow.completedRowKey)
+      .toBe(handleOf(state, "agent_1"));
   });
 
   it("reuses new-line activation before moving an existing agent", async () => {
@@ -941,7 +951,8 @@ describe("CloudAgentState change-line flow", () => {
       uid: "lin_new",
       label: "+1 415-555-0999",
     });
-    expect(state.state().cloudLineFlow.completedRowKey).toBe(rowKey(BUILTIN_TARGET_ID, "agent_1"));
+    expect(state.state().cloudLineFlow.completedRowKey)
+      .toBe(handleOf(state, "agent_1"));
   });
 
   it("shows no-home-chat copy and keeps the same PUT available to retry", async () => {
@@ -970,7 +981,8 @@ describe("CloudAgentState change-line flow", () => {
     await state.retryLineFlow();
 
     expect(moved).toEqual(["agent_1:lin_ash", "agent_1:lin_ash"]);
-    expect(state.state().cloudLineFlow.completedRowKey).toBe(rowKey(BUILTIN_TARGET_ID, "agent_1"));
+    expect(state.state().cloudLineFlow.completedRowKey)
+      .toBe(handleOf(state, "agent_1"));
   });
 
   it("refreshes the picker after another agent claims the chosen line", async () => {

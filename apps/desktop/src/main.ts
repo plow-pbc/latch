@@ -661,8 +661,11 @@ ipcMain.handle("connect:create", async (_e, name: string) => {
 ipcMain.handle("cloud:remove", async (_e, key: unknown) => {
   // The renderer sends the row's own opaque key, which names the host too. A
   // bare id could match a row on either machine, and a DELETE must not guess.
-  if (typeof key !== "string") return agentsTabState();
-  await cloudAgents?.remove(key as RowKey);
+  // Resolved, never cast: the renderer holds a minted handle, and one this
+  // process did not mint resolves to nothing rather than to an agent.
+  const resolved = typeof key === "string" ? cloudAgents?.keyForHandle(key) : null;
+  if (!resolved) return agentsTabState();
+  await cloudAgents?.remove(resolved);
   await connectClient?.refreshRoster();
   return agentsTabState();
 });
@@ -709,23 +712,27 @@ ipcMain.handle("cloud:retryLineFlow", async () => {
   return agentsTabState();
 });
 ipcMain.handle("cloud:retryFailed", async (_e, key: unknown) => {
-  if (typeof key !== "string") return agentsTabState();
-  await cloudAgents?.retryFailed(key as RowKey);
+  const resolved = typeof key === "string" ? cloudAgents?.keyForHandle(key) : null;
+  if (!resolved) return agentsTabState();
+  await cloudAgents?.retryFailed(resolved);
   await connectClient?.refreshRoster();
   return agentsTabState();
 });
 ipcMain.handle("cloud:changeLine", async (_e, input: unknown) => {
   const raw = input && typeof input === "object" ? input as Record<string, unknown> : {};
+  const resolvedKey = typeof raw.rowKey === "string" ? cloudAgents?.keyForHandle(raw.rowKey) : null;
+  if (!resolvedKey) return agentsTabState();
   await cloudAgents?.changeLine({
-    rowKey: (typeof raw.rowKey === "string" ? raw.rowKey : "") as RowKey,
+    rowKey: resolvedKey,
     lineUid: raw.lineUid === null ? null : typeof raw.lineUid === "string" ? raw.lineUid : "",
   });
   await connectClient?.refreshRoster();
   return agentsTabState();
 });
 ipcMain.handle("cloud:openMessages", async (_e, key?: unknown) => {
-  const url = typeof key === "string"
-    ? cloudAgents?.agentSmsUrl(key as RowKey)
+  const resolvedSms = typeof key === "string" ? cloudAgents?.keyForHandle(key) : null;
+  const url = resolvedSms
+    ? cloudAgents?.agentSmsUrl(resolvedSms)
     : cloudAgents?.createSmsUrl();
   if (!url) return false;
   await shell.openExternal(url);
@@ -760,8 +767,9 @@ function agentsTabState(): Record<string, unknown> | null {
  *
  * A roster row comes from `/v1/api-keys`, which only PLOW serves, so its key
  * is always the built-in target's. Built HERE rather than in the renderer:
- * `rowKey` is meant to be opaque on the other side, and a second encoder over
- * there is one that can drift from this one.
+ * The handle is minted by the same table the agent rows use, so a roster row
+ * and its agent row carry the SAME value and join. Minting here also keeps the
+ * host-authored `agent_id` on this side of the boundary.
  */
 function rosterWithRowKeys(roster: unknown): unknown {
   if (!roster || typeof roster !== "object") return roster;
@@ -772,7 +780,10 @@ function rosterWithRowKeys(roster: unknown): unknown {
     cloud: rows.map((row) => {
       const agentId = (row as { agentId?: unknown }).agentId;
       return typeof agentId === "string"
-        ? { ...(row as Record<string, unknown>), rowKey: rowKey(BUILTIN_TARGET_ID, agentId) }
+        ? {
+          ...(row as Record<string, unknown>),
+          rowKey: cloudAgents?.handleForAgent(BUILTIN_TARGET_ID, agentId) ?? null,
+        }
         : row;
     }),
   };

@@ -20,8 +20,14 @@ const FAILURE_LABELS: Record<string, string> = {
  * replaced the other, a Plow removal followed the survivor to the wrong host,
  * and the roster pinned Plow's metadata onto the local twin.
  *
- * ONE key, and it crosses to the renderer. Comparing the pair at each seam was
- * tried and kept missing one; a single opaque value has nothing to forget.
+ * ONE key, used INSIDE the main process. Comparing the pair at each seam was
+ * tried and kept missing one; a single value has nothing to forget.
+ *
+ * It does NOT cross to the renderer. It embeds `agent_id`, which the host
+ * writes — a self-hosted one could return `base64(bearer)` there, walk past
+ * `echoesCredential`'s literal check, and land reversible credential material
+ * in the DOM. The renderer gets a `RowHandle` instead, which this process
+ * mints and which carries no host-authored bytes at all.
  */
 export type RowKey = string & { readonly __rowKey: unique symbol };
 
@@ -40,6 +46,44 @@ export function agentIdOf(key: RowKey): string {
   return key.slice(key.indexOf("\u0000") + 1);
 }
 
+/**
+ * What the renderer holds instead of a `RowKey`: a small minted token like
+ * `r7`, with no host bytes in it.
+ *
+ * Deliberately meaningless. Nothing may parse it — main maps it back to the
+ * real identity — so there is no encoding for a hostile host to hide inside.
+ */
+export type RowHandle = string & { readonly __rowHandle: unique symbol };
+
+/**
+ * Stable handles for row keys, for the life of the process.
+ *
+ * STABLE matters: the renderer stores a handle in open modal state, and a new
+ * one on every refresh would unbind the modal mid-interaction. Unbounded in
+ * principle, bounded in practice by the agents an account has ever listed in
+ * one session.
+ */
+export class RowHandles {
+  private readonly toHandle = new Map<RowKey, RowHandle>();
+  private readonly toKey = new Map<RowHandle, RowKey>();
+  private next = 1;
+
+  handleFor(key: RowKey): RowHandle {
+    const existing = this.toHandle.get(key);
+    if (existing) return existing;
+    const handle = `r${this.next++}` as RowHandle;
+    this.toHandle.set(key, handle);
+    this.toKey.set(handle, key);
+    return handle;
+  }
+
+  /** `null` for anything this process did not mint — including a handle the
+   * renderer invented, which is the case worth refusing. */
+  keyFor(handle: string): RowKey | null {
+    return this.toKey.get(handle as RowHandle) ?? null;
+  }
+}
+
 /** The complete cloud-agent shape allowed to cross into the renderer. */
 export interface CloudAgentThread {
   uid: string;
@@ -53,10 +97,11 @@ export interface CloudAgentLine {
 
 export interface CloudAgentDisplayRow {
   /**
-   * The renderer's handle for this agent. Opaque: the renderer joins, focuses,
-   * stores and sends this, and never rebuilds it from parts.
+   * The renderer's handle for this agent. Genuinely opaque — minted by main,
+   * carrying nothing the host wrote — so the renderer can join, focus, store
+   * and send it without ever holding a host-authored identifier.
    */
-  rowKey: RowKey;
+  rowKey: RowHandle;
   agentId: string;
   /**
    * Which host this agent lives on — `BUILTIN_TARGET_ID` for Plow itself.
@@ -82,8 +127,8 @@ export interface CloudAgentDisplayRow {
 export interface CloudAgentDisplayContext {
   /** The host this agent was listed from. Defaults to the built-in Plow. */
   targetId?: string;
-  /** The lifecycle key, when the caller already holds it. */
-  rowKey?: RowKey;
+  /** The renderer-facing handle main minted for this row. */
+  rowKey?: RowHandle;
   /** The agent's line resolved through its home chat. */
   line?: CloudAgentLine | null;
   /** Whether the resolved line has an E.164 destination for Messages. */
@@ -119,8 +164,8 @@ export function toCloudAgentDisplayRow(
   const line = context.line ?? null;
   const targetId = context.targetId ?? BUILTIN_TARGET_ID;
   return {
-    // Never scrubbed: both halves are this app's own or already scrubbed.
-    rowKey: context.rowKey ?? rowKey(targetId, scrub(agent.agentId)),
+    // Minted by main; contains nothing the host wrote, so nothing to scrub.
+    rowKey: context.rowKey ?? ("r0" as RowHandle),
     agentId: scrub(agent.agentId),
     targetId,
     name: scrub(agent.name ?? "cloud agent"),

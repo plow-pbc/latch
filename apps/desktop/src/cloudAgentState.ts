@@ -13,6 +13,8 @@
 import {
   CloudAgentLine,
   CloudAgentDisplayRow,
+  RowHandle,
+  RowHandles,
   RowKey,
   agentIdOf,
   rowKey,
@@ -111,8 +113,9 @@ export interface CloudLineFlowUiState {
     smsBody: string;
   } | null;
   message: string | null;
-  /** The finished agent's opaque row key, for the renderer to focus by. An
-   * agent id alone would focus whichever host's row sorted first. */
+  /** The finished agent's renderer HANDLE, to focus by. An agent id alone
+   * would focus whichever host's row sorted first, and a `RowKey` would carry
+   * host-authored bytes across the boundary. */
   completedRowKey: string | null;
   /** Whether retry must mint a fresh line instead of repeating the final mutation. */
   retryNewLine: boolean;
@@ -320,6 +323,16 @@ export class CloudAgentState {
    * shape as `generation` and `viewReads`: the answer is dropped, not merged.
    */
   private hostRevision = 0;
+  /**
+   * The renderer's handles for these rows.
+   *
+   * A `RowKey` embeds the host-authored `agent_id`, so it must not cross into
+   * the sandboxed renderer: a self-host could return `base64(bearer)` as its
+   * id, pass `echoesCredential`'s literal check, and put reversible credential
+   * material in the DOM. The renderer gets a minted token instead and hands it
+   * back; only this side can turn it into an identity.
+   */
+  private readonly handles = new RowHandles();
 
   constructor(private readonly deps: CloudAgentStateDeps) {}
 
@@ -927,7 +940,7 @@ export class CloudAgentState {
     this.lineFlow = {
       ...this.lineFlow,
       request: null,
-      ui: { ...idleLineFlowUi(), completedRowKey: key },
+      ui: { ...idleLineFlowUi(), completedRowKey: this.handles.handleFor(key) },
     };
   }
 
@@ -966,6 +979,17 @@ export class CloudAgentState {
   }
 
   /** Remove an agent — the machine and its hold on the line, not just a key. */
+  /** The renderer handle for one agent, minting it if this is its first sight.
+   * Used for roster rows, so a roster entry and its agent row share a value. */
+  handleForAgent(targetId: string, agentId: string): RowHandle {
+    return this.handles.handleFor(rowKey(targetId, agentId));
+  }
+
+  /** Resolve a renderer handle. `null` for one this process never minted. */
+  keyForHandle(handle: string): RowKey | null {
+    return this.handles.keyFor(handle);
+  }
+
   async remove(key: RowKey): Promise<void> {
     this.actionError = null;
     const id = agentIdOf(key);
@@ -1205,7 +1229,7 @@ export class CloudAgentState {
     const details = this.lineDetails(lineUid);
     const retained = this.retainedCreates.get(key);
     return toCloudAgentDisplayRow(displayAgent, {
-      rowKey: key,
+      rowKey: this.handles.handleFor(key),
       targetId: target.id,
       line: details.line,
       canMessage: details.canMessage,

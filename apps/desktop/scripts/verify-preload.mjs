@@ -8,9 +8,6 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-// The REAL encoder, not a second spelling of `targetId + NUL + agentId`.
-import { rowKey } from "../dist/cloudAgentMapper.js";
-import { BUILTIN_TARGET_ID, LOCAL_TARGET_ID } from "../dist/plowApi.js";
 
 // The REAL settings actions, so the inference handlers below are the ones the
 // app runs rather than stubs that agree with the renderer by construction.
@@ -96,7 +93,7 @@ ipcMain.handle("settings:setAgentPurpose", async (_e, purpose) => setAgentPurpos
 const cloudThreadTitle = "Willow · You · Robin";
 const cloudAgent = {
   // The renderer's handle: host + id, as `cloudAgentMapper` builds it.
-  rowKey: rowKey(BUILTIN_TARGET_ID, "cag_probe"),
+  rowKey: "r-probe",
   agentId: "cag_probe",
   name: "Household helper",
   line: { uid: "lin_willow", label: "Willow · +1 415-555-0142" },
@@ -114,7 +111,7 @@ const rosterProbe = {
     kind: "Agent",
     createdAt: cloudAgent.createdAt,
     lastSeenAt: "2026-08-25T17:55:00.000Z",
-    rowKey: rowKey(BUILTIN_TARGET_ID, cloudAgent.agentId),
+    rowKey: "r-probe",
     agentId: cloudAgent.agentId,
     chatUids: [cloudAgent.threads[0].uid],
     chatAccess: "listed",
@@ -249,7 +246,7 @@ ipcMain.handle("cloud:create", async (_e, input) => {
     };
   } else if (input?.lineUid === "lin_ash") {
     const created = {
-      rowKey: rowKey(BUILTIN_TARGET_ID, "cag_created"),
+      rowKey: "r-created",
       agentId: "cag_created",
       name: input.name || "Cloud agent",
       line: { uid: "lin_ash", label: "Ash · +1 415-555-0199" },
@@ -268,7 +265,7 @@ ipcMain.handle("cloud:create", async (_e, input) => {
         phase: "idle",
         activation: null,
         message: null,
-        completedRowKey: rowKey(BUILTIN_TARGET_ID, created.agentId),
+        completedRowKey: created.rowKey,
         retryNewLine: false,
       },
     };
@@ -338,10 +335,10 @@ ipcMain.handle("cloud:openMessages", async (_e, agentId) => {
   if (typeof agentId === "string") cloudMessageRowKeys.push(agentId);
   return true;
 });
-ipcMain.handle("cloud:remove", async (_e, agentId) => {
+ipcMain.handle("cloud:remove", async (_e, key) => {
   cloudProbe = {
     ...cloudProbe,
-    cloudAgents: cloudProbe.cloudAgents.filter((agent) => agent.agentId !== agentId),
+    cloudAgents: cloudProbe.cloudAgents.filter((agent) => agent.rowKey !== key),
   };
   return agentsTabProbeState();
 });
@@ -1024,7 +1021,7 @@ app.whenReady().then(async () => {
   await waitFor(win, `document.querySelector(".cloud-modal .cloud-activation-code")`,
     "the confirmed-code activation screen");
   const confirmedAgent = {
-    rowKey: rowKey(BUILTIN_TARGET_ID, "cag_confirmed"),
+    rowKey: "r-confirmed",
     agentId: "cag_confirmed",
     name: "Cloud agent",
     line: { uid: "lin_new", label: "+1 415-555-0999" },
@@ -1217,8 +1214,8 @@ app.whenReady().then(async () => {
       { id: "local", baseUrl: "http://192.168.15.12:8765", builtin: false },
     ],
     cloudAgents: [
-      { ...cloudAgent, rowKey: rowKey(BUILTIN_TARGET_ID, cloudAgent.agentId), targetId: "plow", name: "Cloud twin" },
-      { ...cloudAgent, rowKey: rowKey(LOCAL_TARGET_ID, cloudAgent.agentId), targetId: "local", name: "Local twin" },
+      { ...cloudAgent, rowKey: "r-probe", targetId: "plow", name: "Cloud twin" },
+      { ...cloudAgent, rowKey: "r-probe-local", targetId: "local", name: "Local twin" },
     ],
     cloudFreeLines: [{ uid: "lin_ash", label: "Ash · +1 415-555-0199" }],
   };
@@ -2270,7 +2267,7 @@ app.whenReady().then(async () => {
     // was addressed to the local host, not to the Plow row listed first.
     collidingRosterNames.join("|") === "Household helper|Local twin" &&
     collidingDetail.title === "Local twin" &&
-    collidingChangeRequest?.rowKey === rowKey(LOCAL_TARGET_ID, cloudAgent.agentId) &&
+    collidingChangeRequest?.rowKey === "r-probe-local" &&
     cloudUnknownLines.showsSafeError &&
     cloudUnknownLines.hidesRawError &&
     cloudUnknownLines.buttons.join("|") === "Cancel" &&
