@@ -460,8 +460,11 @@ async function generateFingerprintPool(treeArch) {
   );
   // Shim in the layout camoufox-js expects: Camoufox.app + version.json
   // {version, release}. Ours writes {version, build}; translate `build`.
+  // downloadsDir only exists as a side effect of download(); on a warm CI
+  // cache the fetch is skipped and nothing else creates it, and mkdtemp
+  // won't create the parent.
+  fs.mkdirSync(downloadsDir, { recursive: true });
   const shim = fs.mkdtempSync(path.join(downloadsDir, "cfx-shim-"));
-  fs.mkdirSync(shim, { recursive: true });
   fs.symlinkSync(app, path.join(shim, "Camoufox.app"));
   fs.writeFileSync(
     path.join(shim, "version.json"),
