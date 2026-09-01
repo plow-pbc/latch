@@ -218,6 +218,10 @@ export class DeviceAgent {
     if (browserRuntime) {
       this.skills.register(BROWSING_SKILL);
       const browserDir = path.join(home, "device/browser");
+      // Earlier builds wrote every agent screenshot under here and never
+      // removed one. Nothing reads them, so an install that still has the
+      // directory loses it on the next start.
+      fs.rmSync(path.join(browserDir, "screenshots"), { recursive: true, force: true });
       const auditFn = (event: string, fields: { [k: string]: JSONValue }) =>
         this.audit.record(event, fields);
       this.browserConfig = {
@@ -237,7 +241,6 @@ export class DeviceAgent {
         // its pick here on first launch and reuses it after; the whole Mac is one
         // person's, so every session shares it.
         env: { ...browserRuntime.env, DOMO_FINGERPRINT_PIN: path.join(browserDir, "fingerprint-pin.json") },
-        screenshotsDir: path.join(browserDir, "screenshots"),
         // Sessions run in here, each on a clone of the user's own profile
         // below — Firefox locks a profile to one process, so several browsers
         // at once need a directory each — and hand it back when they close.

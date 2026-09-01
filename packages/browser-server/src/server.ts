@@ -11,7 +11,6 @@
  * SIGTERM, a {"action":"quit"} request, or EOF on stdin — all close the browser
  * context so Firefox children die.
  */
-import fs from "node:fs";
 import readline from "node:readline";
 import { JSONValue } from "@domo/protocol";
 import { launchBrowser, type LaunchedBrowser } from "./launch.js";
@@ -21,7 +20,6 @@ import { Session } from "./session.js";
 const MAX_ERROR_LEN = 500;
 
 interface Args {
-  screenshotsDir: string;
   executable: string;
   profileDir?: string;
   headed: boolean;
@@ -31,12 +29,10 @@ function parseArgs(argv: string[]): Args {
   const out: Partial<Args> & { headed: boolean } = { headed: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
-    if (a === "--screenshots-dir") out.screenshotsDir = argv[++i];
-    else if (a === "--executable") out.executable = argv[++i];
+    if (a === "--executable") out.executable = argv[++i];
     else if (a === "--profile-dir") out.profileDir = argv[++i];
     else if (a === "--headed") out.headed = true;
   }
-  if (!out.screenshotsDir) throw new Error("--screenshots-dir is required");
   if (!out.executable) throw new Error("--executable is required");
   return out as Args;
 }
@@ -47,7 +43,6 @@ function respond(payload: { [k: string]: JSONValue }): void {
 
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2));
-  fs.mkdirSync(args.screenshotsDir, { recursive: true });
 
   // The frozen fingerprint pool lives at the package root (build-time output of
   // scripts/build-browser-runtime.mjs); this file is dist/server.js, one level
@@ -114,7 +109,7 @@ async function main(): Promise<void> {
     }
     let reply: { [k: string]: JSONValue };
     try {
-      const result = await session.run(cmd, args.screenshotsDir);
+      const result = await session.run(cmd);
       reply = { id: rid, result };
     } catch (exc) {
       reply = { id: rid, error: String((exc as Error).message).slice(0, MAX_ERROR_LEN) };

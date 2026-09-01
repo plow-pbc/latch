@@ -268,17 +268,29 @@ Swift sources; none of it ships.
 
 ```
 $DOMO_HOME (default ~/Library/Application Support/Plow-Latch)
-├── run/agent.sock, run/device.sock      # 0700 dir
-├── broker/agents.json                   # agent identities, tokens, grants
-├── broker/devices.json                  # enrolled devices
-├── device/identity.json                 # device keypair
-├── device/known_agents.json             # pinned agent pubkeys
+├── app/settings.json                    # 0600; the relay credential, sealed
+├── device/identity.json                 # 0600; device keypair
 ├── device/rules.json                    # always-allow rules
+├── device/approvals/<intentId>.json     # 0700 dir; approvals IN FLIGHT only
 ├── device/audit.ndjson                  # append-only audit log
-└── device/scratch/…                     # per-run sandbox scratch dirs
+├── device/audit.1.ndjson                # the generation before it, once rotated
+├── device/browser/fingerprint-pin.json  # the one fingerprint this install presents
+├── device/browser/profile/              # the owner's browser profile (seed)
+├── device/browser/profiles/<session>/   # per-session clones; merged and removed on close
+├── device/scratch/<run>/                # per-run sandbox scratch; removed after the run
+├── electron/                            # Electron's userData (Chromium caches)
+└── plow-wire.log                        # rolling 2MB: method, URL, status, ms — no bodies
 ```
 
 Everything honors `DOMO_HOME` so tests run against throwaway roots.
+
+Nothing here grows without bound. An approval record exists only while it is
+unanswered; its decision is in the audit log, which rolls over by rename at
+`AUDIT_ROTATE_BYTES` (one previous generation kept). A session's profile clone
+goes when the session closes. Screenshots are never written to disk: the agent
+gets them inline and the owner's viewer takes live frames. An install from
+before this held a `device/browser/screenshots/` directory of every page an
+agent had looked at; the app removes it on start.
 
 ## 10. Testing strategy
 

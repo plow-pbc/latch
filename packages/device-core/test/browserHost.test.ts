@@ -30,7 +30,6 @@ function makeHost(
   const host = new BrowserHost({
     command: ["node", FAKE],
     env,
-    screenshotsDir: path.join(dir, "shots"),
     audit: (event: string, _fields: { [k: string]: JSONValue }) => events.push(event),
     ...extra,
   });

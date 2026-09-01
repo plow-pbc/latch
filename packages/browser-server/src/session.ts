@@ -564,7 +564,7 @@ export class Session {
 
   // ---- the action dispatcher --------------------------------------------
 
-  async handle(cmd: Obj, screenshotsDir: string): Promise<Obj> {
+  async handle(cmd: Obj): Promise<Obj> {
     const action = typeof cmd.action === "string" ? cmd.action : "";
     await this.forgetNavigated();
 
@@ -614,10 +614,13 @@ export class Session {
     }
 
     if (action === "screenshot") {
+      // Inline only. This used to also land on disk under the session's
+      // directory, where nothing read it back — the MCP layer strips the path
+      // before the agent sees the result, and the owner's viewer takes `view`
+      // — and nothing removed it, so every page an agent ever looked at,
+      // signed in or out of scope, stayed on the Mac.
       const data = await this.page.screenshot({ type: "jpeg", quality: 70, fullPage: false });
-      const path = `${screenshotsDir}/shot-${Date.now()}.jpg`;
-      await writeFileBinary(path, data);
-      return { data_b64: data.toString("base64"), mime: "image/jpeg", path };
+      return { data_b64: data.toString("base64"), mime: "image/jpeg" };
     }
 
     if (action === "text") {
@@ -696,13 +699,7 @@ export class Session {
   }
 
   /** Public wrapper: run one action and wrap the result in the envelope. */
-  async run(cmd: Obj, screenshotsDir: string): Promise<Obj> {
-    return this.envelope(await this.handle(cmd, screenshotsDir));
+  async run(cmd: Obj): Promise<Obj> {
+    return this.envelope(await this.handle(cmd));
   }
-}
-
-// Imported lazily so the pure logic (and its tests) never pull in node:fs.
-async function writeFileBinary(path: string, data: Buffer): Promise<void> {
-  const { writeFile } = await import("node:fs/promises");
-  await writeFile(path, data);
 }

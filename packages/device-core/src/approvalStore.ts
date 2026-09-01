@@ -9,14 +9,22 @@
  * lunch, nothing anywhere says an agent asked to read their SSH key.
  *
  * So every pending approval is written down before the human is asked, and the
- * outcome is written next to it. This is a decorator around whatever normally
- * answers — the Electron dialog, a scripted policy in tests — and it changes
- * neither the question asked nor the decision made. It adds three things:
+ * record goes when the answer lands. This is a decorator around whatever
+ * normally answers — the Electron dialog, a scripted policy in tests — and it
+ * changes neither the question asked nor the decision made. It adds three
+ * things:
  *
  *  - a durable record of what was asked, while it is still unanswered;
  *  - a way for an answer to arrive from somewhere other than the dialog;
  *  - a deadline, so an unanswered approval fails closed instead of pending
  *    forever.
+ *
+ * The directory holds what is in flight and nothing else. The outcome is not
+ * kept here: the audit log records every intent and every decision, including
+ * the deadline's and the startup sweep's, and it is the one history the owner
+ * reads. Keeping a second copy beside it — one file per approval, each holding
+ * the goal and the paths asked for, never read again and never removed — grew
+ * without bound on a long-lived install.
  *
  * The window is fifteen minutes, matching the deferred handle's, so a decision
  * that lands at any point before the deadline still has a handle to land on.
@@ -53,9 +61,14 @@ export const APPROVAL_TTL_MS = 15 * 60_000;
  */
 export const APPROVAL_SOURCE_EXPIRED = "expired";
 
+/**
+ * Only `pending` is ever on disk. The others name how an approval settled, for
+ * the hook that carries a startup abandonment to the audit log and for anyone
+ * reading a record that reached them before it was removed.
+ */
 export type ApprovalStatus = "pending" | "decided" | "expired" | "abandoned";
 
-/** What is written to disk for one approval. */
+/** What is written to disk for one approval, while it is unanswered. */
 export interface ApprovalRecord {
   intentId: string;
   /** The isolation key. Never the name. */
@@ -169,21 +182,25 @@ export class ApprovalStore implements PolicyDelegate {
     return all.filter((r) => r.status === "pending" && this.waiting.has(r.intentId));
   }
 
+  /** The record is done with: its answer is in the audit log, or nobody can
+   * give one. ENOENT is fine — a swept directory already did this. */
+  private async remove(intentId: string): Promise<void> {
+    await fs.rm(this.file(intentId), { force: true });
+  }
+
   /**
    * A `pending` record from a previous run has nobody waiting on it — the call
-   * it belonged to is long gone. Mark it so, rather than leaving the directory
-   * claiming approvals are outstanding when nothing can answer them.
+   * it belonged to is long gone. Report it abandoned and remove it, rather than
+   * leaving the directory claiming approvals are outstanding when nothing can
+   * answer them. Anything else found here was settled by an earlier build that
+   * kept its outcomes on disk; the audit log has those, so they go too.
    */
   private async reapStale(): Promise<void> {
     for (const record of await this.all()) {
-      if (record.status !== "pending") continue;
-      const abandoned: ApprovalRecord = {
-        ...record,
-        status: "abandoned",
-        decidedAt: iso(this.now()),
-      };
-      await this.write(abandoned);
-      this.onAbandoned?.(abandoned);
+      if (record.status === "pending") {
+        this.onAbandoned?.({ ...record, status: "abandoned", decidedAt: iso(this.now()) });
+      }
+      await this.remove(record.intentId);
     }
   }
 
@@ -263,17 +280,13 @@ export class ApprovalStore implements PolicyDelegate {
       .then((decision) => settle(decision, "dialog"))
       .catch(() => settle({ decision: "deny", source: "error" }, "error"));
 
-    const { decision, source } = await answered;
+    const { decision } = await answered;
     this.waiting.delete(intent.intentId);
 
-    const resolved: Decision = typeof decision === "string" ? decision : decision.decision;
-    await this.write({
-      ...record,
-      status: source === APPROVAL_SOURCE_EXPIRED ? "expired" : "decided",
-      decision: resolved,
-      source,
-      decidedAt: iso(this.now()),
-    });
+    // Answered, so no longer in flight. The caller writes the decision to the
+    // audit log; this directory's job — to say what was asked while nothing
+    // else could — is over.
+    await this.remove(intent.intentId);
     return decision;
   }
 }

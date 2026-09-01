@@ -1,7 +1,8 @@
 /**
  * A tunnelled call cannot wait for a human, so the approval outlives the call.
  * That makes the record on disk the only thing that says what was asked while
- * it is still unanswered.
+ * it is still unanswered — and once it is answered, the audit log is the
+ * history, and the record goes.
  */
 import { afterEach, describe, expect, it } from "vitest";
 import fs from "node:fs";
@@ -112,18 +113,15 @@ describe("the record exists before the answer does", () => {
     expect(fs.statSync(dir).mode & 0o777).toBe(0o700);
   });
 
-  it("records the outcome next to the request when the answer lands", async () => {
+  it("removes the record when the answer lands — the audit log is the history", async () => {
     const dir = tempDir();
     const store = new ApprovalStore(dir, answersIn(20, { decision: "allow_once", source: "ask" }));
     const intent = intentFor();
     const decision = await store.decideIntent(intent);
     expect(decision).toEqual({ decision: "allow_once", source: "ask" });
 
-    const [record] = await store.all();
-    expect(record.status).toBe("decided");
-    expect(record.decision).toBe("allow_once");
-    expect(record.source).toBe("dialog");
-    expect(record.decidedAt).toBeTypeOf("string");
+    expect(await store.all()).toEqual([]);
+    expect(fs.existsSync(path.join(dir, `${intent.intentId}.json`))).toBe(false);
   });
 });
 
@@ -135,9 +133,8 @@ describe("the wait is bounded", () => {
     const decision = await store.decideIntent(intentFor());
     expect(decision).toEqual({ decision: "deny", source: "expired" });
 
-    const [record] = await store.all();
-    expect(record.status).toBe("expired");
-    expect(record.decision).toBe("deny");
+    // Settled by the deadline is settled: nothing is left claiming to wait.
+    expect(await store.all()).toEqual([]);
   });
 
   it("a delegate that throws denies rather than hanging", async () => {
@@ -156,7 +153,7 @@ describe("the wait is bounded", () => {
     const store = new ApprovalStore(dir, answersIn(10), 5_000);
     const decision = await store.decideIntent(intentFor());
     expect(typeof decision === "string" ? decision : decision.decision).toBe("allow_once");
-    expect((await store.all())[0].status).toBe("decided");
+    expect(await store.all()).toEqual([]);
   });
 });
 
@@ -172,10 +169,7 @@ describe("an answer can arrive from somewhere other than the dialog", () => {
     expect(store.resolve(intent.intentId, "always_allow", "operator")).toBe(true);
     const decision = await pending;
     expect(typeof decision === "string" ? decision : decision.decision).toBe("always_allow");
-
-    const [record] = await store.all();
-    expect(record.status).toBe("decided");
-    expect(record.source).toBe("operator");
+    expect(await store.all()).toEqual([]);
   });
 
   it("resolve() on something nobody is waiting for is refused", () => {
@@ -191,7 +185,7 @@ describe("an answer can arrive from somewhere other than the dialog", () => {
 });
 
 describe("across a restart", () => {
-  it("a pending record from a previous run is marked abandoned, not left claiming to be live", async () => {
+  it("a pending record from a previous run is reported abandoned and removed, not left claiming to be live", async () => {
     const dir = tempDir();
     const first = new ApprovalStore(dir, silent, 5_000);
     const intent = intentFor();
@@ -207,24 +201,46 @@ describe("across a restart", () => {
     const abandoned: string[] = [];
     second.onAbandoned = (r) => abandoned.push(r.intentId);
     await second.ready;
-    const [record] = await second.all();
-    expect(record.status).toBe("abandoned");
-    expect(record.decidedAt).toBeTypeOf("string");
-    // The hook saw it, so the abandonment can reach the audit log.
+    // The hook saw it, so the abandonment can reach the audit log — which is
+    // where it lives from here; the directory holds only what is in flight.
     expect(abandoned).toEqual([intent.intentId]);
+    expect(await second.all()).toEqual([]);
     // And it is no longer offered as something answerable.
     expect(await second.pending()).toHaveLength(0);
     expect(second.resolve(intent.intentId, "allow_once")).toBe(false);
   });
 
-  it("keeps decided records so the history survives", async () => {
+  it("sweeps outcomes an earlier build left behind, without calling them abandoned", async () => {
+    // Builds before this one rewrote the record with its outcome and kept it
+    // forever. Their audit log already has the decision, so the file is only
+    // weight — and it was answered, so the abandonment hook must not fire.
     const dir = tempDir();
-    const first = new ApprovalStore(dir, answersIn(5));
-    await first.decideIntent(intentFor());
-    const second = new ApprovalStore(dir, silent);
-    await second.ready;
-    expect(await second.all()).toHaveLength(1);
-    expect((await second.all())[0].status).toBe("decided");
+    fs.mkdirSync(dir, { recursive: true });
+    const intent = intentFor();
+    fs.writeFileSync(
+      path.join(dir, `${intent.intentId}.json`),
+      JSON.stringify({
+        intentId: intent.intentId,
+        agentId: "sess_alice",
+        agentName: "Claude Code",
+        request: "read file: /tmp/x",
+        goal: "tidy up",
+        capabilities: ["Read: /tmp/x"],
+        createdAt: "2026-01-01T00:00:00Z",
+        expiresAt: "2026-01-01T00:15:00Z",
+        status: "decided",
+        decision: "allow_once",
+        source: "dialog",
+        decidedAt: "2026-01-01T00:01:00Z",
+      }),
+    );
+    const store = new ApprovalStore(dir, silent);
+    const abandoned: string[] = [];
+    store.onAbandoned = (r) => abandoned.push(r.intentId);
+    await store.ready;
+    expect(abandoned).toEqual([]);
+    expect(await store.all()).toEqual([]);
+    expect(fs.readdirSync(dir)).toEqual([]);
   });
 });
 
@@ -247,10 +263,7 @@ describe("failing closed does not depend on the timer (review finding 2)", () =>
     expect(store.resolve(intent.intentId, "allow_once", "human")).toBe(true);
     const decision = await pending;
     expect(decision).toEqual({ decision: "deny", source: "expired" });
-
-    const [record] = await store.all();
-    expect(record.status).toBe("expired");
-    expect(record.decision).toBe("deny");
+    expect(await store.all()).toEqual([]);
   });
 
   it("the dialog's own late answer is denied on the same check", async () => {
