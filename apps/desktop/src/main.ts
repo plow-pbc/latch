@@ -854,10 +854,13 @@ let stagedImport: ImportedLogin[] | null = null;
  */
 let importEpoch = 0;
 
-async function inspectImport(text: string) {
+// `epoch` is the value of importEpoch when THIS request began — for a file
+// pick that is before the dialog even opened, so a dialog left open across a
+// sheet close (and a replacement sheet's fresh staging) cannot land its stale
+// contents on top when finally answered.
+async function inspectImport(text: string, epoch = importEpoch) {
   const vault = device?.vaultClient;
   if (!vault) throw new Error("the vault is not running");
-  const epoch = importEpoch;
   const parsed = parsePasswordExport(text);
   await markAgainstVault(vault, parsed.logins);
   if (epoch === importEpoch) stagedImport = parsed.logins;
@@ -899,6 +902,7 @@ ipcMain.handle("vault:importInspect", async (_e, text: string) => inspectImport(
 // A chosen file: main shows the dialog and reads the file itself, so the CSV
 // full of passwords never crosses into the renderer at all.
 ipcMain.handle("vault:importFile", async () => {
+  const epoch = importEpoch;
   const picked = await dialog.showOpenDialog({
     title: "Choose a passwords export",
     properties: ["openFile"],
@@ -908,7 +912,7 @@ ipcMain.handle("vault:importFile", async () => {
   if (picked.canceled || !file) return null;
   const stat = await fs.stat(file);
   if (stat.size > 20 * 1024 * 1024) throw new Error("that file is too large to be a passwords export");
-  return inspectImport(await fs.readFile(file, "utf8"));
+  return inspectImport(await fs.readFile(file, "utf8"), epoch);
 });
 
 // `selected` names the rows the owner ticked, as indices into the preview's

@@ -337,52 +337,71 @@ const dupKey = (title: string, username: string, url: string): string =>
  * not overwritten. The comparison happens inside the vault (secretsDiffer);
  * no stored value surfaces to make it.
  *
- * A vault can hold SEVERAL items under one identity, and an update must
- * never guess between them: a row is compared against every match, an
- * identical one wins as a duplicate, and an update happens only when exactly
- * one candidate remains — anything else is left alone and says so. An item
- * one row is updating is off the table for the rows after it, or two rows in
- * one export would take turns rewriting the same item.
+ * One identity can mean SEVERAL vault items and several export rows, so each
+ * identity is settled as a BATCH, never row by row — a first-come claim let
+ * whichever row happened to come first rewrite an item two rows were naming.
+ * Exact matches claim their items first; an update happens only when exactly
+ * one row and one item are left facing each other; rows left over with no
+ * items remaining are simply new; and any other leftover is ambiguous — left
+ * alone, with the reason said out loud, because every guess here writes over
+ * a password.
  */
 export async function markAgainstVault(vault: LocalVault, logins: ImportedLogin[]): Promise<void> {
-  const groups = new Map<string, VaultItemSummary[]>();
+  const itemGroups = new Map<string, VaultItemSummary[]>();
   for (const s of await vault.list()) {
     if (s.type !== "login") continue;
     const k = dupKey(s.title, s.subtitle, s.urls[0] ?? "");
-    const held = groups.get(k);
+    const held = itemGroups.get(k);
     if (held) held.push(s);
-    else groups.set(k, [s]);
+    else itemGroups.set(k, [s]);
   }
-  const claimed = new Set<string>(); // items an earlier row is already updating
+  const rowGroups = new Map<string, ImportedLogin[]>();
   for (const login of logins) {
-    const matches = groups.get(dupKey(login.title, login.username, login.urls[0] ?? "")) ?? [];
-    if (matches.length === 0) continue;
-    let identical = false;
-    const candidates: NonNullable<ImportedLogin["update"]>[] = [];
-    for (const match of matches) {
-      const diff = await vault.secretsDiffer(match.id, { password: login.password, totp: login.totp });
-      const fields = (["password", "totp"] as const).filter((f) => diff[f]);
-      if (fields.length === 0) {
-        identical = true;
-        break;
+    const k = dupKey(login.title, login.username, login.urls[0] ?? "");
+    const held = rowGroups.get(k);
+    if (held) held.push(login);
+    else rowGroups.set(k, [login]);
+  }
+
+  for (const [k, rows] of rowGroups) {
+    const items = itemGroups.get(k) ?? [];
+    if (items.length === 0) continue; // every row is a new item
+    // Every row against every item, once. Groups are almost always 1×1.
+    const diffs: { fields: ("password" | "totp")[]; revision: string }[][] = [];
+    for (const row of rows) {
+      const per = [];
+      for (const item of items) {
+        const d = await vault.secretsDiffer(item.id, { password: row.password, totp: row.totp });
+        per.push({ fields: (["password", "totp"] as const).filter((f) => d[f]), revision: d.revision });
       }
-      if (!claimed.has(match.id)) {
-        candidates.push({ itemId: match.id, revision: diff.revision, fields: [...fields] });
-      }
+      diffs.push(per);
     }
-    if (identical) {
-      login.duplicate = true;
-    } else if (candidates.length === 1) {
-      login.update = candidates[0]!;
-      claimed.add(candidates[0]!.itemId);
-    } else {
-      // Which of several differing items would this row mean? No answer is
-      // safe to guess, so none is written — said out loud, not silently.
-      login.duplicate = true;
-      login.warnings.push(
-        candidates.length === 0
-          ? "another row in this import already updates the matching vault item, so this one was left alone"
-          : "more than one item in your vault matches it, so none was updated",
+    // Exact matches first: a row identical to an item IS that item, and the
+    // pair leaves the table — which is what lets an unchanged twin stand
+    // aside so its rotated sibling can meet the one item actually left.
+    const freeItem = items.map(() => true);
+    const unmatched: number[] = [];
+    rows.forEach((row, r) => {
+      const at = items.findIndex((_, i) => freeItem[i] && diffs[r]![i]!.fields.length === 0);
+      if (at >= 0) {
+        row.duplicate = true;
+        freeItem[at] = false;
+      } else unmatched.push(r);
+    });
+    if (unmatched.length === 0) continue;
+    const leftover = items.flatMap((_, i) => (freeItem[i] ? [i] : []));
+    // No items left to mean: the extra rows are new items, like the source's.
+    if (leftover.length === 0) continue;
+    if (unmatched.length === 1 && leftover.length === 1) {
+      const r = unmatched[0]!;
+      const i = leftover[0]!;
+      rows[r]!.update = { itemId: items[i]!.id, revision: diffs[r]![i]!.revision, fields: diffs[r]![i]!.fields };
+      continue;
+    }
+    for (const r of unmatched) {
+      rows[r]!.duplicate = true;
+      rows[r]!.warnings.push(
+        "several entries share this name, username and site; left alone rather than guess which updates which",
       );
     }
   }

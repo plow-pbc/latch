@@ -78,13 +78,11 @@ export async function vimportSheet(reload, host) {
   const seat = { dirty: () => false, close };
   if (!(await vtakeEditor(seat))) return;
 
-  /** The sheet closed while an answer was in flight. The answer may have
-   * staged passwords in main after close() cancelled — cancel again. */
-  const gone = () => {
-    if (overlay.isConnected) return false;
-    void window.domo.vaultImportCancel();
-    return true;
-  };
+  /** The sheet closed while an answer was in flight: the answer is stale and
+   * only DROPPED. close() already cancelled, and the epoch main captured at
+   * the request's start keeps the stale answer from staging — cancelling
+   * again here would instead tear down a replacement sheet's staging. */
+  const gone = () => !overlay.isConnected;
 
   const title = el("h2", { text: "Import passwords" });
   const back = el("button", { class: "sheet-back", attrs: { type: "button", title: "Back", hidden: "" } }, [icon("chevron", { class: "vico", strokeWidth: "2.2" })]);
@@ -180,14 +178,15 @@ export async function vimportSheet(reload, host) {
       readBtn.addEventListener("click", async () => {
         const text = paste.value;
         if (!text.trim()) { err.textContent = "Paste something first."; return; }
+        // Emptied at CAPTURE, before the round-trip: the inspect can sit
+        // behind a Touch ID ask, and a box of passwords has no business
+        // staying on screen for that wait. An error costs a re-paste.
+        paste.value = "";
         err.textContent = "";
         readBtn.disabled = true;
         try {
           const found = await window.domo.vaultImportInspect(text);
           if (gone()) return;
-          // The text has been handed to main; a box of passwords has no
-          // business staying on screen behind the preview.
-          paste.value = "";
           preview(found);
         } catch (e) {
           oops(e);

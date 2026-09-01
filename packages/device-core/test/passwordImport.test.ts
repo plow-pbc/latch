@@ -409,24 +409,52 @@ describe("into the vault", () => {
       "Title,URL,Username,Password,Notes,OTPAuth\nMail,https://mail.example,jon,third-secret,,",
     );
     expect(result).toEqual({ saved: 0, updated: 0, duplicates: 1, failed: [] });
-    expect(parsed.logins[0]!.warnings.join(" ")).toMatch(/more than one item/);
+    expect(parsed.logins[0]!.warnings.join(" ")).toMatch(/left alone rather than guess/);
     const passwords = await Promise.all(
       (await vault.list()).map((i) => vault.reveal(i.id, "password")),
     );
     expect(passwords.sort()).toEqual(["first-secret", "second-secret"]); // untouched
   });
 
-  it("lets only one row of an export claim an item; the second is left alone, not raced", async () => {
+  it("two differing rows over one item update nothing — either guess writes over a password", async () => {
     const { vault } = tempVault();
     await runImport(
       vault,
       "Title,URL,Username,Password,Notes,OTPAuth\nMail,https://mail.example,jon,old-secret,,",
     );
     const { parsed, result } = await runImport(vault, twins); // both rows differ from the one item
-    expect(result).toEqual({ saved: 0, updated: 1, duplicates: 1, failed: [] });
-    expect(parsed.logins[1]!.warnings.join(" ")).toMatch(/another row in this import/);
+    expect(result).toEqual({ saved: 0, updated: 0, duplicates: 2, failed: [] });
+    expect(parsed.logins[0]!.warnings.join(" ")).toMatch(/left alone rather than guess/);
+    expect(parsed.logins[1]!.warnings.join(" ")).toMatch(/left alone rather than guess/);
     const item = (await vault.list())[0]!;
-    expect(await vault.reveal(item.id, "password")).toBe("first-secret");
+    expect(await vault.reveal(item.id, "password")).toBe("old-secret");
+  });
+
+  it("an unchanged twin claims its item, so its rotated sibling meets the one item left", async () => {
+    const { vault } = tempVault();
+    await runImport(vault, twins); // two items: first-secret, second-secret
+    const rotated = twins.replace("second-secret", "rotated-secret");
+    const { parsed, result } = await runImport(vault, rotated);
+    expect(result).toEqual({ saved: 0, updated: 1, duplicates: 1, failed: [] });
+    expect(parsed.logins[1]!.update?.fields).toEqual(["password"]);
+    const passwords = await Promise.all(
+      (await vault.list()).map((i) => vault.reveal(i.id, "password")),
+    );
+    expect(passwords.sort()).toEqual(["first-secret", "rotated-secret"]);
+  });
+
+  it("a twin row beyond every stored item is a new item, matching the source app", async () => {
+    const { vault } = tempVault();
+    await runImport(
+      vault,
+      "Title,URL,Username,Password,Notes,OTPAuth\nMail,https://mail.example,jon,first-secret,,",
+    );
+    const { result } = await runImport(vault, twins); // first row is the item; second is extra
+    expect(result).toEqual({ saved: 1, updated: 0, duplicates: 1, failed: [] });
+    const passwords = await Promise.all(
+      (await vault.list()).map((i) => vault.reveal(i.id, "password")),
+    );
+    expect(passwords.sort()).toEqual(["first-secret", "second-secret"]);
   });
 
   it("collects a bad row's failure instead of sinking the rest", async () => {
