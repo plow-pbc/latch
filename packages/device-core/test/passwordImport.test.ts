@@ -15,7 +15,7 @@ import {
   csvRows,
   importLogins,
   importPreview,
-  markDuplicates,
+  markAgainstVault,
   parsePasswordExport,
 } from "../src/browser/passwordImport.js";
 
@@ -270,9 +270,9 @@ describe("into the vault", () => {
   it("imports through the vault's own save: items land, secrets seal, audit says CREATED", async () => {
     const { vault, auditPath } = tempVault();
     const parsed = parsePasswordExport(apple);
-    markDuplicates(parsed.logins, await vault.list());
+    await markAgainstVault(vault, parsed.logins);
     const result = await importLogins(vault, parsed.logins);
-    expect(result).toEqual({ saved: 2, duplicates: 0, failed: [] });
+    expect(result).toEqual({ saved: 2, updated: 0, duplicates: 0, failed: [] });
 
     const items = await vault.list();
     expect(items.map((i) => i.title).sort()).toEqual(["Dropbox", "Notion"]);
@@ -289,15 +289,98 @@ describe("into the vault", () => {
   it("running the same export twice doubles nothing: the second pass is all duplicates", async () => {
     const { vault } = tempVault();
     const first = parsePasswordExport(apple);
-    markDuplicates(first.logins, await vault.list());
+    await markAgainstVault(vault, first.logins);
     await importLogins(vault, first.logins);
 
     const second = parsePasswordExport(apple);
-    markDuplicates(second.logins, await vault.list());
+    await markAgainstVault(vault, second.logins);
     expect(second.logins.every((l) => l.duplicate)).toBe(true);
     const result = await importLogins(vault, second.logins);
-    expect(result).toEqual({ saved: 0, duplicates: 2, failed: [] });
+    expect(result).toEqual({ saved: 0, updated: 0, duplicates: 2, failed: [] });
     expect(await vault.list()).toHaveLength(2);
+  });
+
+  it("a changed password becomes an update of the existing item, not a double", async () => {
+    const { vault, auditPath } = tempVault();
+    const first = parsePasswordExport(apple);
+    await markAgainstVault(vault, first.logins);
+    await importLogins(vault, first.logins);
+
+    const again = parsePasswordExport(apple.replace("notion-secret", "notion-rotated"));
+    await markAgainstVault(vault, again.logins);
+    const notion = again.logins.find((l) => l.title === "Notion")!;
+    expect(notion.duplicate).toBeUndefined();
+    expect(notion.update?.fields).toEqual(["password"]);
+    expect(again.logins.find((l) => l.title === "Dropbox")!.duplicate).toBe(true);
+
+    const result = await importLogins(vault, again.logins);
+    expect(result).toEqual({ saved: 0, updated: 1, duplicates: 1, failed: [] });
+    const items = await vault.list();
+    expect(items).toHaveLength(2); // updated in place, never doubled
+    const stored = items.find((i) => i.title === "Notion")!;
+    expect(stored.subtitle).toBe("jon"); // untouched fields stay as they were
+    expect(await vault.reveal(stored.id, "password")).toBe("notion-rotated");
+    const audit = fs.readFileSync(auditPath, "utf8");
+    expect(audit).toMatch(/UPDATED/);
+    expect(audit).not.toContain("notion-rotated");
+  });
+
+  it("a changed key updates only the key; the same key respelled is no change at all", async () => {
+    const { vault } = tempVault();
+    const first = parsePasswordExport(apple);
+    await markAgainstVault(vault, first.logins);
+    await importLogins(vault, first.logins);
+
+    // The same secret as a bare key instead of an otpauth URI: one key, two
+    // spellings — flagging it changed would rewrite items on every re-import.
+    const respelled = parsePasswordExport(apple.replace(`otpauth://totp/D?secret=${TOTP_KEY}`, TOTP_KEY));
+    await markAgainstVault(vault, respelled.logins);
+    expect(respelled.logins.find((l) => l.title === "Dropbox")!.duplicate).toBe(true);
+
+    // A genuinely different key is an update, and only of the key.
+    const rotated = parsePasswordExport(apple.replace(`secret=${TOTP_KEY}`, "secret=KRSXG5CTMVRXEZLU"));
+    await markAgainstVault(vault, rotated.logins);
+    const dropbox = rotated.logins.find((l) => l.title === "Dropbox")!;
+    expect(dropbox.update?.fields).toEqual(["totp"]);
+    const result = await importLogins(vault, rotated.logins);
+    expect(result.updated).toBe(1);
+    const stored = (await vault.list()).find((i) => i.title === "Dropbox")!;
+    expect(await vault.reveal(stored.id, "password")).toBe("drop-secret"); // untouched
+    expect(await vault.reveal(stored.id, "totp")).toContain("KRSXG5CTMVRXEZLU");
+  });
+
+  it("an export that carries no key does not read as removing the stored one", async () => {
+    const { vault } = tempVault();
+    const first = parsePasswordExport(apple);
+    await markAgainstVault(vault, first.logins);
+    await importLogins(vault, first.logins);
+
+    // The same login out of a manager whose CSV has no OTPAuth column.
+    const bare = parsePasswordExport(
+      "name,url,username,password,note\nDropbox,https://dropbox.com,so@plow.co,drop-secret,",
+    );
+    await markAgainstVault(vault, bare.logins);
+    expect(bare.logins[0]!.duplicate).toBe(true);
+    await importLogins(vault, bare.logins);
+    const stored = (await vault.list()).find((i) => i.title === "Dropbox")!;
+    expect((await vault.totp(stored.id)).code).toMatch(/^\d{6}$/); // key still there
+  });
+
+  it("refuses an update composed against an item the vault rewrote in between", async () => {
+    const { vault } = tempVault();
+    const first = parsePasswordExport(apple);
+    await markAgainstVault(vault, first.logins);
+    await importLogins(vault, first.logins);
+
+    const again = parsePasswordExport(apple.replace("notion-secret", "notion-rotated"));
+    await markAgainstVault(vault, again.logins); // revision pinned here
+    const notion = (await vault.list()).find((i) => i.title === "Notion")!;
+    await vault.save({ itemId: notion.id, revision: (await vault.read(notion.id)).revision, password: "typed-by-hand" });
+
+    const result = await importLogins(vault, again.logins);
+    expect(result.updated).toBe(0);
+    expect(result.failed[0]!.reason).toMatch(/changed somewhere else/);
+    expect(await vault.reveal(notion.id, "password")).toBe("typed-by-hand"); // the hand edit stands
   });
 
   it("collects a bad row's failure instead of sinking the rest", async () => {

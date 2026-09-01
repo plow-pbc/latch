@@ -17,7 +17,7 @@
  * of passwords, and everything this module returns is shown on screen.
  */
 import type { LocalVault } from "./localVault.js";
-import { checkedUrls, type VaultItemSummary } from "./vaultItems.js";
+import { checkedUrls } from "./vaultItems.js";
 import { totpParams } from "./vaultTotp.js";
 
 /** One login as the export described it, normalized and ready to save. */
@@ -32,9 +32,14 @@ export interface ImportedLogin {
   notes: string;
   /** Facts the owner should see before importing — "no password", say. */
   warnings: string[];
-  /** Set by markDuplicates: an item with the same name, username and site is
-   * already in the vault, so importing this row would double it. */
+  /** Set by markAgainstVault: an item with the same name, username and site
+   * is already in the vault holding the same secrets, so importing this row
+   * would double it. */
   duplicate?: boolean;
+  /** Set by markAgainstVault instead of `duplicate` when the matched item's
+   * password or key CHANGED in the source: the save this row becomes is an
+   * edit of that item, touching only the fields named here. */
+  update?: { itemId: string; revision: string; fields: ("password" | "totp")[] };
 }
 
 /** A row that will not be imported, and the reason it will not. */
@@ -323,21 +328,28 @@ const dupKey = (title: string, username: string, url: string): string =>
   `${title} ${username} ${url}`;
 
 /**
- * Flag the rows the vault already holds, so the preview can say "already in
- * your vault" and the commit can leave them alone. Passwords cannot be
- * compared without revealing them, so "the same" means the same name, the
- * same username and the same first site — running an export twice must not
- * double the vault, but a changed password in the source is NOT noticed:
- * delete the item here first to re-import it.
+ * Sort each row against what the vault already holds: the same name, username
+ * and first site is THE SAME ITEM, and then the secrets decide. Identical
+ * secrets flag a duplicate the commit leaves alone — running an export twice
+ * must not double the vault. A password or key that CHANGED in the source
+ * flags an update instead: the row becomes an edit of the matched item,
+ * pinned to the revision read here so a save landing in between is refused,
+ * not overwritten. The comparison happens inside the vault (secretsDiffer);
+ * no stored value surfaces to make it.
  */
-export function markDuplicates(logins: ImportedLogin[], existing: VaultItemSummary[]): void {
-  const seen = new Set(
-    existing
+export async function markAgainstVault(vault: LocalVault, logins: ImportedLogin[]): Promise<void> {
+  const existing = new Map(
+    (await vault.list())
       .filter((s) => s.type === "login")
-      .map((s) => dupKey(s.title, s.subtitle, s.urls[0] ?? "")),
+      .map((s) => [dupKey(s.title, s.subtitle, s.urls[0] ?? ""), s]),
   );
   for (const login of logins) {
-    if (seen.has(dupKey(login.title, login.username, login.urls[0] ?? ""))) login.duplicate = true;
+    const match = existing.get(dupKey(login.title, login.username, login.urls[0] ?? ""));
+    if (!match) continue;
+    const diff = await vault.secretsDiffer(match.id, { password: login.password, totp: login.totp });
+    const fields = (["password", "totp"] as const).filter((f) => diff[f]);
+    if (fields.length) login.update = { itemId: match.id, revision: diff.revision, fields: [...fields] };
+    else login.duplicate = true;
   }
 }
 
@@ -350,6 +362,9 @@ export interface ImportPreviewItem {
   hasTotp: boolean;
   warnings: string[];
   duplicate: boolean;
+  /** Which secrets changed on an item the vault already holds — importing
+   * this row updates that item's named fields. Empty for a new row. */
+  changed: ("password" | "totp")[];
 }
 
 export interface ImportPreview {
@@ -371,6 +386,7 @@ export function importPreview(parsed: ParsedImport): ImportPreview {
       hasTotp: l.totp !== "",
       warnings: l.warnings,
       duplicate: l.duplicate === true,
+      changed: l.update ? [...l.update.fields] : [],
     })),
     skipped: parsed.skipped,
   };
@@ -378,18 +394,25 @@ export function importPreview(parsed: ParsedImport): ImportPreview {
 
 export interface ImportResult {
   saved: number;
-  /** Rows left alone because markDuplicates flagged them. */
+  /** Existing items whose changed password or key was written over. */
+  updated: number;
+  /** Rows left alone because markAgainstVault flagged them identical. */
   duplicates: number;
   failed: SkippedRow[];
 }
 
 /**
  * Save every un-flagged login through the vault's own save — validation,
- * encryption and the CREATED audit line are all the ordinary ones. One bad
- * row must not sink the rest, so failures are collected, not thrown.
+ * encryption and the CREATED/UPDATED audit lines are all the ordinary ones.
+ * An update row edits ONLY the secret fields that changed: the name, sites,
+ * username and notes the owner may have tuned in the vault stay theirs, and
+ * the revision pinned at inspect makes a save that landed in between a
+ * refusal, not an overwrite. One bad row must not sink the rest, so failures
+ * are collected, not thrown.
  */
 export async function importLogins(vault: LocalVault, logins: ImportedLogin[]): Promise<ImportResult> {
   let saved = 0;
+  let updated = 0;
   let duplicates = 0;
   const failed: SkippedRow[] = [];
   for (const login of logins) {
@@ -398,6 +421,16 @@ export async function importLogins(vault: LocalVault, logins: ImportedLogin[]): 
       continue;
     }
     try {
+      if (login.update) {
+        await vault.save({
+          itemId: login.update.itemId,
+          revision: login.update.revision,
+          ...(login.update.fields.includes("password") ? { password: login.password } : {}),
+          ...(login.update.fields.includes("totp") ? { totp: login.totp } : {}),
+        });
+        updated++;
+        continue;
+      }
       await vault.save({
         type: "login",
         name: login.title,
@@ -412,5 +445,5 @@ export async function importLogins(vault: LocalVault, logins: ImportedLogin[]): 
       failed.push({ title: login.title, reason: err instanceof Error ? err.message : String(err) });
     }
   }
-  return { saved, duplicates, failed };
+  return { saved, updated, duplicates, failed };
 }

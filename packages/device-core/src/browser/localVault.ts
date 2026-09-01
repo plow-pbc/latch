@@ -28,7 +28,7 @@ import {
   VaultItemSummary,
   VaultKey,
 } from "./vaultItems.js";
-import { totpCode, totpParams, type TotpCode } from "./vaultTotp.js";
+import { totpCode, totpKeyEquals, totpParams, type TotpCode } from "./vaultTotp.js";
 import { VaultKeyStore } from "./vaultKeyStore.js";
 import { VaultStore } from "./vaultStore.js";
 import { openVaultKey } from "./vaultMigrate.js";
@@ -112,6 +112,42 @@ export class LocalVault {
     // digits on screen is not knowable from here.
     this.audit(itemId, "totp", "CODE READ in app");
     return code;
+  }
+
+  /**
+   * Whether the supplied secrets differ from what a login stores — the
+   * password-import update check. The stored values are decrypted HERE and
+   * compared; only booleans (and the item's revision, for the later save)
+   * leave, so no audit line claims a value was shown, because none was.
+   *
+   * An empty candidate is "the export did not carry one", never a removal:
+   * Chrome's CSV has no TOTP column, and that must not read as every stored
+   * key having changed. A TOTP compare is by the KEY the strings decode to —
+   * the bare base32 and its otpauth:// spelling are the same key.
+   *
+   * Deliberately not behind the reprompt gate: nothing is shown or changed,
+   * and the one bit this leaks (that a value the owner is already holding in
+   * an export matches) is theirs. The UPDATE that may follow goes through
+   * save, which asks.
+   */
+  async secretsDiffer(
+    itemId: string,
+    candidate: { password: string; totp: string },
+  ): Promise<{ password: boolean; totp: boolean; revision: string }> {
+    const key = this.open();
+    const cipher = this.cipher(itemId);
+    const stored = (field: string): string => {
+      try {
+        return decryptField(cipher, key, field);
+      } catch {
+        return ""; // the item holds no such value
+      }
+    };
+    return {
+      password: candidate.password.trim() !== "" && stored("password") !== candidate.password,
+      totp: candidate.totp.trim() !== "" && !totpKeyEquals(stored("totp"), candidate.totp),
+      revision: String(cipher.revisionDate ?? ""),
+    };
   }
 
   /** Create an item, or change one that is already there. */

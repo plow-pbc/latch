@@ -33,7 +33,7 @@ import {
   importLogins,
   importPreview,
   ImportedLogin,
-  markDuplicates,
+  markAgainstVault,
   parsePasswordExport,
   readCredentialsState,
   resolveBrowserRuntime,
@@ -851,7 +851,7 @@ async function inspectImport(text: string) {
   const vault = device?.vaultClient;
   if (!vault) throw new Error("the vault is not running");
   const parsed = parsePasswordExport(text);
-  markDuplicates(parsed.logins, await vault.list());
+  await markAgainstVault(vault, parsed.logins);
   stagedImport = parsed.logins;
   return importPreview(parsed);
 }

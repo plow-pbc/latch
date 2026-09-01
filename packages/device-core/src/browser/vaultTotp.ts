@@ -142,6 +142,27 @@ export function totpParams(stored: string): TotpParams {
   return { secret: base32Decode(secret), digits, period, algorithm };
 }
 
+/**
+ * Whether two stored keys are the SAME key, whatever they look like: the bare
+ * base32 a site prints and the otpauth:// URI its QR code encodes are one key
+ * in two spellings, and only the parameters that change the codes count.
+ * A string that parses as no key at all falls back to a literal compare.
+ */
+export function totpKeyEquals(a: string, b: string): boolean {
+  try {
+    const pa = totpParams(a);
+    const pb = totpParams(b);
+    return (
+      pa.secret.equals(pb.secret) &&
+      pa.digits === pb.digits &&
+      pa.period === pb.period &&
+      pa.algorithm === pb.algorithm
+    );
+  } catch {
+    return a.trim() === b.trim();
+  }
+}
+
 /** One code, for the counter step RFC 4226 calls C. */
 function hotp(params: TotpParams, counter: number): string {
   const message = Buffer.alloc(8);

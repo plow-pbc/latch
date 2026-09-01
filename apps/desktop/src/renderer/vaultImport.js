@@ -228,8 +228,10 @@ export async function vimportSheet(reload) {
 
     const coming = p.items.filter((i) => !i.duplicate);
     const dups = p.items.length - coming.length;
+    const updates = coming.filter((i) => i.changed.length).length;
     const summary = [
       `${coming.length} login${coming.length === 1 ? "" : "s"} from ${p.source}`,
+      updates ? `${updates} update${updates === 1 ? "s" : ""} an item you already have` : "",
       dups ? `${dups} already in your vault (left alone)` : "",
       p.skipped.length ? `${p.skipped.length} not imported` : "",
     ].filter(Boolean).join(" · ");
@@ -265,7 +267,12 @@ export async function vimportSheet(reload) {
     const row = (i, at) => {
       const badges = [];
       if (i.duplicate) badges.push(el("span", { class: "imp-badge dup", text: "already in vault" }));
-      else if (i.hasTotp) badges.push(el("span", { class: "imp-badge ok", text: "2FA" }));
+      else if (i.changed.length) {
+        // The row is an UPDATE of an item already in the vault: only the
+        // fields named here are written; everything else stays as it is.
+        if (i.changed.includes("password")) badges.push(el("span", { class: "imp-badge upd", text: "updated password" }));
+        if (i.changed.includes("totp")) badges.push(el("span", { class: "imp-badge upd", text: "updated 2FA key" }));
+      } else if (i.hasTotp) badges.push(el("span", { class: "imp-badge ok", text: "2FA" }));
       if (!i.hasPassword) badges.push(el("span", { class: "imp-badge warn", text: "no password" }));
       const tick = !i.duplicate && choosable
         ? el("input", { attrs: { type: "checkbox", checked: "" } })
@@ -327,11 +334,11 @@ export async function vimportSheet(reload) {
           staged = false;
           close();
           await reload();
-          vtoast(
-            res.failed.length
-              ? `Imported ${res.saved}, ${res.failed.length} failed`
-              : `Imported ${res.saved} password${res.saved === 1 ? "" : "s"}`,
-          );
+          vtoast([
+            `Imported ${res.saved}`,
+            res.updated ? `updated ${res.updated}` : "",
+            res.failed.length ? `${res.failed.length} failed` : "",
+          ].filter(Boolean).join(", "));
         });
         return;
       } catch (e) {

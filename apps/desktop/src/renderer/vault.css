@@ -295,6 +295,7 @@
 .vaultui .imp-badge.ok { color: var(--green-fg); background: var(--green-bg); border: 1px solid var(--green-bd); }
 .vaultui .imp-badge.warn { color: var(--amber-fg); background: var(--amber-bg); border: 1px solid var(--amber-bd); }
 .vaultui .imp-badge.dup { color: var(--zinc-fg); background: var(--zinc-bg); border: 1px solid var(--zinc-bd); }
+.vaultui .imp-badge.upd { color: var(--blue-fg); background: var(--blue-bg); border: 1px solid var(--blue-bd); }
 .vaultui .imp-skip { margin-top: 18px; }
 .vaultui .imp-skip ul { margin: 0; padding-left: 19px; }
 .vaultui .imp-skip li { font-size: 11.5px; font-weight: 300; color: var(--muted); line-height: 1.55; margin-bottom: 5px; }
