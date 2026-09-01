@@ -24,11 +24,12 @@
  * the deadline's and the startup sweep's, and it is the one history the owner
  * reads. Keeping a second copy beside it — one file per approval, each holding
  * the goal and the paths asked for, never read again and never removed — grew
- * without bound on a long-lived install. The hand-off is ordered: the record
- * stays until `decisionRecorded` says the audit line is down. Removing it at
- * settlement left a gap where a crash between the answer and its audit line
- * lost the human's decision from every durable place at once; now that crash
- * leaves a `pending` record the next start closes out as abandoned.
+ * without bound on a long-lived install. The hand-off is ordered: the answer
+ * is written into the record the moment it lands, marked not yet recorded,
+ * and the record stays until `decisionRecorded` says the audit line is down.
+ * A crash between the two leaves that marked record, and the next start
+ * replays its decision into the audit log before removing it — so what the
+ * human said survives, whichever side of the append the process died on.
  *
  * The window is fifteen minutes, matching the deferred handle's, so a decision
  * that lands at any point before the deadline still has a handle to land on.
@@ -65,11 +66,6 @@ export const APPROVAL_TTL_MS = 15 * 60_000;
  */
 export const APPROVAL_SOURCE_EXPIRED = "expired";
 
-/**
- * Only `pending` is ever on disk. The others name how an approval settled, for
- * the hook that carries a startup abandonment to the audit log and for anyone
- * reading a record that reached them before it was removed.
- */
 export type ApprovalStatus = "pending" | "decided" | "expired" | "abandoned";
 
 /** What is written to disk for one approval, while it is unanswered. */
@@ -87,9 +83,18 @@ export interface ApprovalRecord {
   expiresAt: string;
   status: ApprovalStatus;
   decision?: Decision;
-  /** How it was answered: the dialog, an external writer, or the deadline. */
+  /** Where the answer came from, as the audit log's `intent_decision` names
+   * it: the decision's own source when it carries one, "prompt" otherwise,
+   * and the deadline's own when nobody answered. */
   source?: string;
   decidedAt?: string;
+  /**
+   * `false` on a settled record whose decision is not yet in the audit log.
+   * Only this build writes it: a settled record WITHOUT it was left by an
+   * earlier build that kept outcomes forever and had already recorded them,
+   * so the startup sweep replays the first kind and silently drops the second.
+   */
+  recorded?: boolean;
 }
 
 function iso(ms: number): string {
@@ -106,6 +111,14 @@ export class ApprovalStore implements PolicyDelegate {
    * immediately never misses one.
    */
   onAbandoned?: (record: ApprovalRecord) => void;
+
+  /**
+   * Called for each settled record the startup sweep finds still marked
+   * `recorded: false`: the human answered, and the process died before the
+   * audit line. The hook writes that decision to the audit log now. Same
+   * same-tick contract as `onAbandoned`.
+   */
+  onUnrecorded?: (record: ApprovalRecord) => void;
 
   /**
    * Directory creation and the stale sweep, started at construction. Awaited by
@@ -201,16 +214,23 @@ export class ApprovalStore implements PolicyDelegate {
   }
 
   /**
-   * A `pending` record from a previous run has nobody waiting on it — the call
-   * it belonged to is long gone. Report it abandoned and remove it, rather than
-   * leaving the directory claiming approvals are outstanding when nothing can
-   * answer them. Anything else found here was settled by an earlier build that
-   * kept its outcomes on disk; the audit log has those, so they go too.
+   * Nothing on disk at startup is in flight — the call each record belonged
+   * to died with the previous process — so every record goes, after its
+   * story reaches the audit log:
+   *
+   *  - `pending`: nobody answered. Reported abandoned.
+   *  - settled and `recorded: false`: the human answered and the process died
+   *    before the audit append. The decision is replayed, not called abandoned.
+   *  - settled, no marker: left by an earlier build that kept outcomes forever
+   *    and had already recorded them. Removed without a word — a replay here
+   *    would write a second decision line for every approval in history.
    */
   private async reapStale(): Promise<void> {
     for (const record of await this.all()) {
       if (record.status === "pending") {
         this.onAbandoned?.({ ...record, status: "abandoned", decidedAt: iso(this.now()) });
+      } else if (record.recorded === false) {
+        this.onUnrecorded?.(record);
       }
       await this.remove(record.intentId);
     }
@@ -292,11 +312,23 @@ export class ApprovalStore implements PolicyDelegate {
       .then((decision) => settle(decision, "dialog"))
       .catch(() => settle({ decision: "deny", source: "error" }, "error"));
 
-    const { decision } = await answered;
+    const { decision, source } = await answered;
     this.waiting.delete(intent.intentId);
-    // Still on disk, on purpose: the caller writes the decision to the audit
-    // log next and calls decisionRecorded() once it is there. Until then this
-    // record is the only durable thing that knows an answer was given.
+
+    // The answer, on disk before it is returned, marked not yet recorded. The
+    // caller writes intent_decision next and calls decisionRecorded() once it
+    // is there; until then this record is the only durable thing that knows
+    // WHAT the human said, and a crash in between hands it to the next start.
+    // Source as the audit line will name it — PolicyEngine's derivation — so a
+    // replay writes the same line the live path would have.
+    await this.write({
+      ...record,
+      status: source === APPROVAL_SOURCE_EXPIRED ? "expired" : "decided",
+      decision: typeof decision === "string" ? decision : decision.decision,
+      source: typeof decision === "string" ? "prompt" : (decision.source ?? "prompt"),
+      decidedAt: iso(this.now()),
+      recorded: false,
+    });
     return decision;
   }
 }

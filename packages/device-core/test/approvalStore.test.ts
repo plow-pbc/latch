@@ -121,11 +121,16 @@ describe("the record exists before the answer does", () => {
     expect(decision).toEqual({ decision: "allow_once", source: "ask" });
 
     // Answered, but the caller has not yet written intent_decision. A crash
-    // here must not lose the fact that a question was open: the record stays,
-    // and the next start closes it out as abandoned in the audit log.
+    // here must not lose what the human said: the answer is in the record,
+    // marked not yet recorded, for the next start to replay.
     const file = path.join(dir, `${intent.intentId}.json`);
     expect(fs.existsSync(file)).toBe(true);
-    expect((await store.all())[0].status).toBe("pending");
+    const [settled] = await store.all();
+    expect(settled.status).toBe("decided");
+    expect(settled.decision).toBe("allow_once");
+    expect(settled.source).toBe("ask");
+    expect(settled.recorded).toBe(false);
+    expect(settled.decidedAt).toBeTypeOf("string");
 
     // The audit line is down; the record has nothing left to say.
     await store.decisionRecorded(intent.intentId);
@@ -148,6 +153,10 @@ describe("the wait is bounded", () => {
     const decision = await store.decideIntent(intent);
     expect(decision).toEqual({ decision: "deny", source: "expired" });
 
+    // The deadline's answer is written down like a human's, so a crash before
+    // the audit line replays a deny, not an abandonment.
+    const [settled] = await store.all();
+    expect(settled).toMatchObject({ status: "expired", decision: "deny", source: "expired", recorded: false });
     // Settled by the deadline is settled: once recorded, nothing is left.
     await store.decisionRecorded(intent.intentId);
     expect(await store.all()).toEqual([]);
@@ -229,7 +238,28 @@ describe("across a restart", () => {
     expect(second.resolve(intent.intentId, "allow_once")).toBe(false);
   });
 
-  it("sweeps outcomes an earlier build left behind, without calling them abandoned", async () => {
+  it("replays an answer the previous process never got to record, and does not call it abandoned", async () => {
+    const dir = tempDir();
+    const first = new ApprovalStore(dir, answersIn(5, { decision: "always_allow", source: "ask" }));
+    const intent = intentFor();
+    await first.decideIntent(intent);
+    // The human answered; the process dies before DeviceAgent's append and
+    // before decisionRecorded(). The record is on disk with the answer in it.
+    expect((await first.all())[0]).toMatchObject({ status: "decided", recorded: false });
+
+    const second = new ApprovalStore(dir, silent);
+    const abandoned: string[] = [];
+    const replayed: { intentId: string; decision?: string; source?: string }[] = [];
+    second.onAbandoned = (r) => abandoned.push(r.intentId);
+    second.onUnrecorded = (r) => replayed.push({ intentId: r.intentId, decision: r.decision, source: r.source });
+    await second.ready;
+    // Exactly the intent_decision the live path would have written.
+    expect(replayed).toEqual([{ intentId: intent.intentId, decision: "always_allow", source: "ask" }]);
+    expect(abandoned).toEqual([]);
+    expect(await second.all()).toEqual([]);
+  });
+
+  it("sweeps outcomes an earlier build left behind, without calling them abandoned or replaying them", async () => {
     // Builds before this one rewrote the record with its outcome and kept it
     // forever. Their audit log already has the decision, so the file is only
     // weight — and it was answered, so the abandonment hook must not fire.
@@ -255,9 +285,14 @@ describe("across a restart", () => {
     );
     const store = new ApprovalStore(dir, silent);
     const abandoned: string[] = [];
+    const replayed: string[] = [];
     store.onAbandoned = (r) => abandoned.push(r.intentId);
+    // No `recorded` marker: that build had already written its own
+    // intent_decision, and replaying it would double every line in history.
+    store.onUnrecorded = (r) => replayed.push(r.intentId);
     await store.ready;
     expect(abandoned).toEqual([]);
+    expect(replayed).toEqual([]);
     expect(await store.all()).toEqual([]);
     expect(fs.readdirSync(dir)).toEqual([]);
   });

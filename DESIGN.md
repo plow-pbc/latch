@@ -287,7 +287,8 @@ $DOMO_HOME (default ~/Library/Application Support/Plow-Latch)
 Everything honors `DOMO_HOME` so tests run against throwaway roots.
 
 Nothing here grows without bound. An approval record exists from before the
-human is asked until its decision is in the audit log, which rolls over by rename at
+human is asked until its decision is in the audit log (a crash in between is
+replayed from the record on the next start), which rolls over by rename at
 `AUDIT_ROTATE_BYTES` (one previous generation kept). A session's profile clone
 goes when the session closes. Screenshots are never written to disk: the agent
 gets them inline and the owner's viewer takes live frames. An install from

@@ -291,9 +291,10 @@ connect-screenshot: build
 device-id:
     @node -e 'try{console.log(JSON.parse(require("fs").readFileSync("{{apphome}}/device/identity.json")).deviceId)}catch{console.log("(no device identity yet — launch the app once: just app)")}'
 
-# Show the device's audit log (the record of everything that happened).
+# Show the device's audit log (the record of everything that happened). Both
+# generations: the log rolls over by rename, and the older one comes first.
 audit:
-    @cat "{{apphome}}/device/audit.ndjson" 2>/dev/null || echo "(no audit log yet — approve something in the app first)"
+    @{ cat "{{apphome}}/device/audit.1.ndjson" 2>/dev/null; cat "{{apphome}}/device/audit.ndjson" 2>/dev/null; } | grep . || echo "(no audit log yet — approve something in the app first)"
 
 # Wipe THIS checkout's app home (identity, rules, audit log, settings) — that
 # is this branch's "Plow-Latch-<branch>" home, never another checkout's and

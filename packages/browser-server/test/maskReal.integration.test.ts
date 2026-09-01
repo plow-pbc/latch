@@ -71,7 +71,6 @@ describe.skipIf(!HAVE_BROWSER)("page scripts against a real Camoufox", () => {
     await browser.page.goto("data:text/html,<input id=pw type=text value=''>");
     const r = (await session.handle(
       { action: "fill", selector: "#pw", value: "hunter2", mask: true, frame: 0 },
-      "/tmp",
     )) as any;
 
     expect(r.ok).toBe(true);

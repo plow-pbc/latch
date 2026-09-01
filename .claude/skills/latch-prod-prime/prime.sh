@@ -118,38 +118,46 @@ probe_identity() {
 }
 
 probe_audit_log() {
-  local f="$APP_SUPPORT/device/audit.ndjson"
-  [[ -f "$f" ]] || { PROBE_EVIDENCE="audit.ndjson missing"; return 1; }
-  local total age last_type
-  total=$(wc -l <"$f" | tr -d ' ')
-  age=$(( $(date +%s) - $(stat -f %m "$f") ))
+  # Two generations: the log rolls over by rename at 10MB, so the older half
+  # of the history is in audit.1.ndjson. Both count; the current file is the
+  # one whose latest line is the latest event.
+  local f="$APP_SUPPORT/device/audit.ndjson" prev="$APP_SUPPORT/device/audit.1.ndjson"
+  [[ -f "$f" || -f "$prev" ]] || { PROBE_EVIDENCE="audit.ndjson missing"; return 1; }
+  local total=0 age last_type newest="$f" generations=""
+  [[ -f "$f" ]] || newest="$prev"
+  [[ -f "$prev" ]] && { total=$(wc -l <"$prev" | tr -d ' '); generations=" (+ audit.1.ndjson)"; }
+  [[ -f "$f" ]] && total=$(( total + $(wc -l <"$f" | tr -d ' ') ))
+  age=$(( $(date +%s) - $(stat -f %m "$newest") ))
   if command -v jq >/dev/null 2>&1; then
-    last_type=$(tail -1 "$f" | jq -r '.event // "?"' 2>/dev/null || echo "?")
+    last_type=$(tail -1 "$newest" | jq -r '.event // "?"' 2>/dev/null || echo "?")
   else
     last_type="?"
   fi
-  PROBE_EVIDENCE="$total events · latest ${age}s ago ($last_type)"
+  PROBE_EVIDENCE="$total events$generations · latest ${age}s ago ($last_type)"
   return 0
 }
 
 probe_approvals() {
+  # In-flight questions only: a record is written before the owner is asked
+  # and removed once its decision is in the audit log. Empty is the normal,
+  # healthy state; the history is the audit log, not this directory.
   local dir="$APP_SUPPORT/device/approvals"
   [[ -d "$dir" ]] || { PROBE_EVIDENCE="approvals dir missing"; return 1; }
   local count latest
   count=$(find "$dir" -maxdepth 1 -name '*.json' | wc -l | tr -d ' ')
   if (( count == 0 )); then
-    PROBE_EVIDENCE="no approval records yet"
-    return 1
+    PROBE_EVIDENCE="none in flight (normal — decisions are in the audit log)"
+    return 0
   fi
   if ! command -v jq >/dev/null 2>&1; then
-    PROBE_EVIDENCE="$count records (jq missing — latest not read)"
+    PROBE_EVIDENCE="$count in flight (jq missing — latest not read)"
     return 0
   fi
   latest=$(ls -t "$dir"/*.json 2>/dev/null | head -1)
-  # decision/source only — Latch-internal enums. agentName is relay-controlled
+  # status/createdAt only — Latch-internal values. agentName is relay-controlled
   # display text; substituting it into the primer would hand a remote agent a
   # line of prose in the next Claude session's context.
-  PROBE_EVIDENCE="$count records · latest: $(jq -r '"\(.decision // "?") via \(.source // "?")"' "$latest" 2>/dev/null || echo "?")"
+  PROBE_EVIDENCE="$count in flight · latest: $(jq -r '"\(.status // "?") since \(.createdAt // "?")"' "$latest" 2>/dev/null || echo "?")"
   return 0
 }
 
@@ -193,11 +201,13 @@ probe_client_configs() {
 probe_browser_runtime() {
   local dir="$APP_SUPPORT/device/browser"
   [[ -d "$dir" ]] || { PROBE_EVIDENCE="device/browser missing"; return 1; }
-  local shots vault
+  local vault sessions
   # The vault is in-process now (items.json + Keychain key) — no server child.
   if [[ -f "$dir/vault/items.json" ]]; then vault="vault store present"; else vault="vault store not yet created"; fi
-  shots=$(find "$dir/screenshots" -type f 2>/dev/null | wc -l | tr -d ' ')
-  PROBE_EVIDENCE="present · $vault · $shots screenshots"
+  # Per-session profile clones are removed on close, so any here belong to
+  # browsers running right now (or to a merge that failed and kept its clone).
+  sessions=$(find "$dir/profiles" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l | tr -d ' ')
+  PROBE_EVIDENCE="present · $vault · $sessions session profiles"
   return 0
 }
 

@@ -355,7 +355,6 @@ export async function twoFrames(): Promise<{
   try {
     result = (await session.handle(
       { action: "fill", selector: "#pass", value: "hunter2", mask: true },
-      "/tmp",
     )) as Record<string, Any>;
   } catch (exc) {
     const name = (exc as Error).name;
