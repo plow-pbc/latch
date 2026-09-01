@@ -76,7 +76,10 @@ export function loadPool(poolDir: string): FingerprintPool {
  */
 export function pinnedEntry(pool: FingerprintPool, pinPath?: string): FingerprintEntry {
   const byId = new Map(pool.entries.map((e) => [e.id, e]));
-  const readPin = (): FingerprintEntry | undefined => {
+  /** The VALID entry the pin names, or undefined when the pin is absent, corrupt,
+   * or names an id no longer in the pool (e.g. after a browser bump regenerated
+   * the pool with fresh ids). */
+  const readValid = (): FingerprintEntry | undefined => {
     try {
       const { id } = JSON.parse(fs.readFileSync(pinPath!, "utf8")) as { id?: string };
       return id ? byId.get(id) : undefined;
@@ -84,32 +87,63 @@ export function pinnedEntry(pool: FingerprintPool, pinPath?: string): Fingerprin
       return undefined;
     }
   };
-  if (pinPath) {
-    const hit = readPin();
-    if (hit) return hit;
-  }
+  if (!pinPath) return pool.entries[crypto.randomInt(pool.entries.length)];
+
+  const existing = readValid();
+  if (existing) return existing;
+
+  // No valid pin. Choose one and publish it.
+  fs.mkdirSync(path.dirname(pinPath), { recursive: true });
   const chosen = pool.entries[crypto.randomInt(pool.entries.length)];
-  if (!pinPath) return chosen;
   try {
-    fs.mkdirSync(path.dirname(pinPath), { recursive: true });
-    // Exclusive create ("wx"): if another first launch wrote the pin between our
-    // read above and here, this throws EEXIST and we adopt THEIR pick — so
-    // simultaneous first launches converge on one fingerprint instead of each
-    // overwriting the file with its own (a persistent browser must not present
-    // several devices to the same site).
+    // Absent file: exclusive create, so simultaneous FIRST launches converge —
+    // the loser gets EEXIST and adopts the winner's valid pin below.
     fs.writeFileSync(pinPath, JSON.stringify({ id: chosen.id }), { flag: "wx", mode: 0o600 });
     return chosen;
   } catch (e) {
-    if ((e as NodeJS.ErrnoException).code === "EEXIST") return readPin() ?? chosen;
-    // Unwritable for another reason: best effort, re-pick next launch.
-    return chosen;
+    if ((e as NodeJS.ErrnoException).code !== "EEXIST") return chosen; // unwritable
+    // The file exists. Either a concurrent launch just wrote a VALID pin (adopt
+    // it), or the pin is STALE/CORRUPT and must be repaired — otherwise every
+    // launch re-randomizes and never converges again.
+    const concurrent = readValid();
+    if (concurrent) return concurrent;
+    try {
+      // Atomic replace: write a unique temp then rename over the pin. rename is
+      // atomic on one filesystem, so no launch ever sees a half-written pin, and
+      // the file ends holding one valid id — future launches converge on it.
+      const tmp = `${pinPath}.${process.pid}.${crypto.randomInt(1_000_000_000)}`;
+      fs.writeFileSync(tmp, JSON.stringify({ id: chosen.id }), { mode: 0o600 });
+      fs.renameSync(tmp, pinPath);
+    } catch {
+      /* best effort; the re-read below still converges if someone else wrote one */
+    }
+    return readValid() ?? chosen;
   }
+}
+
+/** The browser build a pool was generated for, comparable to Playwright's
+ * `browser.version()`: `runtime.lock.json` names it "official/152.0.4-beta.28",
+ * playwright reports "152.0.4-beta.28", so drop the repo prefix. */
+export function poolBrowserBuild(poolVersion: string): string {
+  return poolVersion.split("/").pop() ?? poolVersion;
+}
+
+/** Whether a pool may drive a browser reporting `version`. Unknown (empty)
+ * versions are permitted — refusing on a version we could not read would be a
+ * worse failure than the mismatch it guards against. */
+export function poolMatchesBrowser(pool: FingerprintPool, version: string): boolean {
+  if (!version) return true;
+  return poolBrowserBuild(pool.browserVersion) === version;
 }
 
 /** Launch the browser and hand back its first page. Camoufox yields a Browser
  * normally and a BrowserContext when persistent; a persistent context arrives
  * with a page ALREADY open, so we take pages()[0] there rather than opening a
- * second the owner cannot tell apart. */
+ * second the owner cannot tell apart.
+ *
+ * The pool's configs were validated (at generation time) against ONE browser
+ * build, so a stale pool or an overridden binary is refused rather than run with
+ * fingerprint data meant for a different version. */
 export async function launchBrowser(opts: LaunchOptions): Promise<LaunchedBrowser> {
   const pool = loadPool(opts.poolDir);
   const entry = pinnedEntry(pool, opts.pinPath);
@@ -121,15 +155,25 @@ export async function launchBrowser(opts: LaunchOptions): Promise<LaunchedBrowse
     firefoxUserPrefs: entry.firefoxUserPrefs,
   };
 
-  if (opts.profileDir) {
-    const context = await firefox.launchPersistentContext(opts.profileDir, common);
-    const page = (context.pages()[0] ?? (await context.newPage())) as unknown as PageLike;
-    const version = browserVersionOf(context.browser());
-    return { page, version, close: () => context.close() };
+  const context = opts.profileDir
+    ? await firefox.launchPersistentContext(opts.profileDir, common)
+    : null;
+  const browser = context ? context.browser() : await firefox.launch(common);
+  const close = context ? (): Promise<void> => context.close() : (): Promise<void> => browser!.close();
+  const version = browserVersionOf(browser);
+
+  if (!poolMatchesBrowser(pool, version)) {
+    await close();
+    throw new Error(
+      `fingerprint pool is for browser ${poolBrowserBuild(pool.browserVersion)} but launched ` +
+        `${version}; regenerate the pool (just fetch-browser) or fix DOMO_CAMOUFOX`,
+    );
   }
-  const browser = await firefox.launch(common);
-  const page = (await browser.newPage()) as unknown as PageLike;
-  return { page, version: browserVersionOf(browser), close: () => browser.close() };
+
+  const page = (
+    context ? (context.pages()[0] ?? (await context.newPage())) : await browser!.newPage()
+  ) as unknown as PageLike;
+  return { page, version, close };
 }
 
 function browserVersionOf(browser: { version(): string } | null): string {

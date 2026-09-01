@@ -12,6 +12,7 @@
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { launchBrowser, type LaunchedBrowser } from "../src/launch.js";
@@ -99,4 +100,20 @@ describe.skipIf(!HAVE_BROWSER)("page scripts against a real Camoufox", () => {
     expect(typeof tok).toBe("string");
     expect((tok as string).length).toBeGreaterThan(0);
   }, 30_000);
+
+  it("refuses a pool built for a different browser version (close + throw)", async () => {
+    const realPool = JSON.parse(fs.readFileSync(path.join(POOL_DIR, "fingerprints.json"), "utf8"));
+    const badDir = fs.mkdtempSync(path.join(os.tmpdir(), "badpool-"));
+    fs.writeFileSync(
+      path.join(badDir, "fingerprints.json"),
+      JSON.stringify({ ...realPool, browserVersion: "official/99.9.9-nope" }),
+    );
+    try {
+      await expect(
+        launchBrowser({ executablePath: CFX!, poolDir: badDir, headed: false }),
+      ).rejects.toThrow(/pool is for browser 99\.9\.9-nope/);
+    } finally {
+      fs.rmSync(badDir, { recursive: true, force: true });
+    }
+  }, 60_000);
 });
