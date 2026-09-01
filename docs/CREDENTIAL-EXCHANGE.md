@@ -59,6 +59,13 @@ and screenshotted.
   target — verified loadable anywhere), the addon's `osSupported()` gates the
   call, and the extension bundle's `LSMinimumSystemVersion 26.0` keeps it
   inert bytes on older systems.
+- **Building** the shim needs the **macOS 26 SDK** (Xcode 26), wherever the
+  build runs: `#available` only weak-links what the SDK declares, and the
+  `ASImportable*` shapes the shim transcribes changed in 26, so Xcode 16's
+  SDK cannot compile it. With an older Xcode, `scripts/build-native.mjs`
+  skips the shim with a warning and the build goes on — credential exchange
+  is then unavailable in that from-source build, and packaging refuses it
+  (below), the same as a missing toolchain.
 - Missing addon, missing shim, old OS, expired token — each is one error
   dialog ("Couldn't receive passwords"), never a crash and never a hang.
 

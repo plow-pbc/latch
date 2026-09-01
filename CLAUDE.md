@@ -170,7 +170,10 @@ Integration coverage, which owns that list.
 Use `just` (run `just` to list recipes):
 
 - `just install` — install workspace deps.
-- `just build` — `tsc -b` across all packages/apps + copy renderer assets.
+- `just build` — `tsc -b` across all packages/apps + copy renderer assets +
+  the Swift helpers. The credential-exchange shim needs Xcode 26's SDK; an
+  older Xcode skips it with a warning (the app still builds and runs, and
+  `just package` refuses a build without it).
 - `just test` — the suite; `just test-vectors` for just the fast conformance
   checks.
 - `just app` — launch the desktop app. `just verify-preload` is the headless
