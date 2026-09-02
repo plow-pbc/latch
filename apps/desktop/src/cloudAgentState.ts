@@ -31,6 +31,7 @@ import {
 } from "./onboarding.js";
 import {
   Activation,
+  CloudAgentProvider,
   KeyInfo,
   PlowApi,
   PlowApiError,
@@ -143,8 +144,8 @@ interface CloudLineFlow {
  */
 export interface CloudAgentsUiState {
   cloudAgents: CloudAgentDisplayRow[];
-  /** Opaque ids accepted by the create endpoint, or null before one succeeds. */
-  cloudProviders: string[] | null;
+  /** Provider ids and display names, or null before the roster succeeds. */
+  cloudProviders: CloudAgentProvider[] | null;
   /** A provider-list failure, and nothing else. */
   cloudProvidersError: string | null;
   /** Lines found on the owner's chats that no current agent occupies. */
@@ -202,7 +203,7 @@ export interface CloudChatsApi {
 }
 
 export interface CloudProvidersApi {
-  listCloudAgentProviders(deviceCredential: string): Promise<string[]>;
+  listCloudAgentProviders(deviceCredential: string): Promise<CloudAgentProvider[]>;
 }
 
 export interface CloudAgentStateDeps {
@@ -265,7 +266,7 @@ export class CloudAgentState {
   private chats: CloudChatOption[] = [];
   private chatsLoaded = false;
   /** Live provider list; unavailable until the latest refresh succeeds. */
-  private providers: string[] | null = null;
+  private providers: CloudAgentProvider[] | null = null;
   private providersError: string | null = null;
   /**
    * Bumped by `signedOut`. Every list result belongs
@@ -296,7 +297,9 @@ export class CloudAgentState {
   state(): CloudAgentsUiState {
     return {
       cloudAgents: [...this.rows.values()].sort(byNewestFirst),
-      cloudProviders: this.providers === null ? null : [...this.providers],
+      cloudProviders: this.providers === null
+        ? null
+        : this.providers.map((provider) => ({ ...provider })),
       cloudProvidersError: this.providersError,
       cloudFreeLines: this.freeLines(),
       cloudLineFlow: {
@@ -360,7 +363,10 @@ export class CloudAgentState {
     try {
       const providers = await this.deps.providers.listCloudAgentProviders(credential);
       if (generation !== this.generation || read !== this.viewReads) return;
-      if (providers.some((provider) => echoesCredential(provider, credential))) {
+      if (providers.some((provider) =>
+        echoesCredential(provider.id, credential) ||
+        echoesCredential(provider.name, credential)
+      )) {
         throw new PlowApiError(
           "http",
           "Plow returned an unsafe cloud-agent provider list.",

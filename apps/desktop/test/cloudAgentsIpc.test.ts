@@ -6,7 +6,7 @@ describe("cloud:agents IPC result", () => {
   it("returns only agents and their error while a line activation is pending", async () => {
     const pendingState: CloudAgentsUiState = {
       cloudAgents: [],
-      cloudProviders: ["provider-secret"],
+      cloudProviders: [{ id: "provider-secret", name: "Provider" }],
       cloudProvidersError: "provider error",
       cloudFreeLines: [{ uid: "line-free", displayName: "Free", number: "+15550100" }],
       cloudLineFlow: {

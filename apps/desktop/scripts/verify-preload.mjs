@@ -138,7 +138,10 @@ const rosterProbe = {
 };
 let cloudProbe = {
   cloudAgents: [cloudAgent],
-  cloudProviders: ["exe:hermes", "exe:life"],
+  cloudProviders: [
+    { id: "exe:hermes", name: "Hermes" },
+    { id: "exe:life", name: "Life" },
+  ],
   cloudProvidersError: null,
   cloudFreeLines: [{ uid: "lin_ash", label: "Ash · +1 415-555-0199" }],
   cloudLineFlow: {

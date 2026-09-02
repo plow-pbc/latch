@@ -119,6 +119,13 @@ export interface ConnectorsOverview {
   google: { accounts: ConnectorAccount[] };
 }
 
+/** Provider identity and display copy accepted by the cloud-agent picker. */
+export interface CloudAgentProvider {
+  /** Opaque server-owned value sent back to the create endpoint unchanged. */
+  id: string;
+  name: string;
+}
+
 export interface MintedCredential {
   /** Session id used to revoke a mint that cannot be handed to the user. */
   id: number;
@@ -512,9 +519,9 @@ export class PlowApi {
     await this.call<unknown>("POST", "/v1/relay/devices/self/revoke", { token });
   }
 
-  /** List the provider ids accepted by the cloud-agent create endpoint.
-   * They are opaque server-owned values: preserve their bytes and order. */
-  async listCloudAgentProviders(token: string): Promise<string[]> {
+  /** List the providers accepted by the cloud-agent create endpoint.
+   * Provider ids are opaque server-owned values: preserve their bytes and order. */
+  async listCloudAgentProviders(token: string): Promise<CloudAgentProvider[]> {
     const data = await this.call<unknown>("GET", "/v1/agents/cloud/providers", { token })
       .catch((error) => {
         if (error instanceof PlowApiError && error.status === 503) {
@@ -527,13 +534,26 @@ export class PlowApi {
         }
         throw error;
       });
-    if (
-      !Array.isArray(data) ||
-      data.some((provider) => typeof provider !== "string" || provider.length === 0)
-    ) {
+    if (!Array.isArray(data)) {
       throw new PlowApiError("http", "Plow did not return a usable cloud-agent provider list.");
     }
-    return data;
+    return data.map((provider) => {
+      const row = provider && typeof provider === "object" && !Array.isArray(provider)
+        ? provider as Record<string, unknown>
+        : null;
+      if (
+        !row ||
+        typeof row.id !== "string" ||
+        row.id.trim().length === 0 ||
+        (row.name !== undefined && typeof row.name !== "string")
+      ) {
+        throw new PlowApiError("http", "Plow did not return a usable cloud-agent provider list.");
+      }
+      const name = typeof row.name === "string" && row.name.trim().length > 0
+        ? row.name
+        : row.id;
+      return { id: row.id, name };
+    });
   }
 
   /** List the Google accounts available to Gmail and Calendar. */

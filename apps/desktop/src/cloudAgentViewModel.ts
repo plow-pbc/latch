@@ -1,5 +1,7 @@
 /** Pure cloud-agent presentation decisions, shared with the sandboxed renderer. */
 
+import type { CloudAgentProvider } from "./plowApi.js";
+
 const CLOUD_HTTP_REASONS = new Set([
   "bad request",
   "unauthorized",
@@ -39,7 +41,7 @@ export interface CloudProviderPickerViewModel {
 
 /** Decide whether the provider picker renders normally, blocks, or warns. */
 export function cloudProviderPickerViewModel(
-  cloudProviders: string[] | null,
+  cloudProviders: CloudAgentProvider[] | null,
   cloudProvidersError: string | null,
 ): CloudProviderPickerViewModel {
   const error = cloudProvidersError ? cloudErrorCopy(cloudProvidersError) : null;

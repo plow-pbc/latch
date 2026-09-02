@@ -153,7 +153,10 @@ const ROSTER = {
 };
 const CLOUD_EMPTY = {
   cloudAgents: [],
-  cloudProviders: ["exe:hermes", "exe:life"],
+  cloudProviders: [
+    { id: "exe:hermes", name: "Hermes" },
+    { id: "exe:life", name: "Life" },
+  ],
   cloudProvidersError: null,
   cloudFreeLines: [],
   cloudLineFlow: {
