@@ -41,5 +41,6 @@ export { overrideVar, resolveVendoredBinary } from "./providers/vendoredBinary.j
 export type { VendoredLocation } from "./providers/vendoredBinary.js";
 export { reservedFlagIn } from "./providers/gogFlags.js";
 export * from "./fileOps.js";
+export * from "./hostGate/index.js";
 export * from "./identity.js";
 export * from "./policyEngine.js";

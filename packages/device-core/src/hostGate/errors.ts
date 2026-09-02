@@ -1,0 +1,106 @@
+/**
+ * Reading an error for what it can actually tell us — and no more.
+ *
+ * A failure reaches the diagnosis as text: Node's own `EPERM: operation not
+ * permitted, open '/x'`, wrapped by `FileOpsError` as `read failed: …`, or a
+ * command's stderr, which is whatever the program chose to print. These
+ * helpers pull the errno, the syscall and the paths out of that text. They
+ * are the TRIGGER for a diagnosis, never its verdict: `hostGate/diagnose.ts`
+ * confirms what they suggest by probing.
+ */
+
+/** The errno names a refusal on this Mac can wear. Anything else is kept
+ *  verbatim, so an unexpected code still reaches the evidence. */
+export type Errno = "EPERM" | "EACCES" | "ENOENT" | "EROFS" | "ENOTDIR" | "EISDIR" | string;
+
+export interface ParsedError {
+  errno: Errno | null;
+  syscall: string | null;
+  /** The path the message names, if it names one. */
+  path: string | null;
+}
+
+/**
+ * Node's error message shape is `<CODE>: <description>, <syscall> '<path>'`
+ * (a rename names two paths; the first is the one that matters here). The
+ * code may be preceded by our own prefix (`read failed: `), so it is searched
+ * for rather than anchored.
+ */
+export function parseNodeError(message: string): ParsedError {
+  const m = /\b(E[A-Z]+): [^,]*, (\w+) '([^']*)'/.exec(message);
+  if (m) return { errno: m[1]!, syscall: m[2]!, path: m[3]! };
+  const code = /\b(E[A-Z]{3,})\b/.exec(message);
+  return { errno: code ? code[1]! : null, syscall: null, path: null };
+}
+
+/**
+ * What a command's stderr says about why it failed, reduced to the few shapes
+ * this Mac knows how to follow up on. Free text from a program is never a
+ * verdict, but it is a fine reason to go and probe.
+ */
+export type StderrHint =
+  | "operation_not_permitted"
+  | "permission_denied"
+  | "no_such_file"
+  | "sqlite_unable_to_open"
+  | "apple_event_not_permitted"
+  | "read_only_filesystem";
+
+export function stderrHint(output: string): StderrHint | null {
+  // Order matters only where two patterns can share a line, and the more
+  // specific one goes first.
+  if (/unable to open database file/i.test(output)) return "sqlite_unable_to_open";
+  if (/-1743\b|errAEEventNotPermitted|not authori[sz]ed to send apple events/i.test(output)) {
+    return "apple_event_not_permitted";
+  }
+  if (/read-only file system/i.test(output)) return "read_only_filesystem";
+  if (/operation not permitted/i.test(output)) return "operation_not_permitted";
+  if (/permission denied/i.test(output)) return "permission_denied";
+  if (/no such file or directory/i.test(output)) return "no_such_file";
+  return null;
+}
+
+/** The errno a stderr hint stands in for, where it stands in for one. */
+export function errnoFromHint(hint: StderrHint | null): Errno | null {
+  switch (hint) {
+    case "operation_not_permitted": return "EPERM";
+    case "permission_denied": return "EACCES";
+    case "no_such_file": return "ENOENT";
+    case "read_only_filesystem": return "EROFS";
+    default: return null;
+  }
+}
+
+/** How many paths a diagnosis will probe for one failure. Probing is cheap
+ *  but not free — each is a child process with a timeout — and a command
+ *  line can name hundreds. */
+export const MAX_CANDIDATE_PATHS = 8;
+
+/**
+ * Absolute (or `~`-relative) paths mentioned in a command line or its output,
+ * in order of appearance, deduplicated and bounded. Quotes and trailing
+ * punctuation are stripped because stderr wraps paths in both. Relative
+ * paths are not guessed at: the cwd they were relative to is the run's, and
+ * a wrong guess would probe the wrong file and confidently blame it.
+ */
+export function candidatePaths(texts: readonly string[], limit = MAX_CANDIDATE_PATHS): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const text of texts) {
+    for (const raw of text.split(/\s+/)) {
+      // A shell word may glue a flag or a key to the path: `--db=/x`, `key:/x`.
+      const at = raw.search(/(?:^|[=:'"`])(~?\/)/);
+      if (at < 0) continue;
+      let token = raw.slice(at).replace(/^[=:'"`]+/, "");
+      token = token.replace(/['"`,;:.)\]}>]+$/, "");
+      if (!(token.startsWith("/") || token === "~" || token.startsWith("~/"))) continue;
+      // A bare "/" is the filesystem, not a file anyone failed to open.
+      if (token === "/") continue;
+      if (seen.has(token)) continue;
+      seen.add(token);
+      out.push(token);
+      if (out.length >= limit) return out;
+    }
+  }
+  return out;
+}
