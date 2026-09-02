@@ -205,6 +205,24 @@ describe("BrowserHost", () => {
     expect(startedPids[1]).not.toBe(firstPid);
   });
 
+  it("lets an agent act during an in-flight viewer poll", async () => {
+    const { host } = makeHost(
+      { FAKE_ACTION_DELAY_MS: "100" },
+      { actionTimeoutMs: 300 },
+    );
+    await host.ensureReady();
+    const viewer = host.viewFrame();
+    let viewerSettled = false;
+    void viewer.then(() => { viewerSettled = true; });
+    await Promise.resolve();
+
+    const agent = host.sendAction({ action: "title" });
+    expect(viewerSettled).toBe(false);
+    await expect(viewer).resolves.not.toBeNull();
+    await expect(agent).resolves.toEqual(expect.objectContaining({ title: "blank" }));
+    expect(host.running).toBe(true);
+  });
+
   it("ensureReady starts the browser up front (warm before the first action)", async () => {
     const { host, events } = makeHost();
     await host.ensureReady();
@@ -233,17 +251,33 @@ describe("BrowserHost", () => {
     expect(frame!.url).toBe("about:blank");
   });
 
-  it("viewFrame is best-effort: a hung view action yields null, not a throw", async () => {
-    const { host } = makeHost({ HANG_ACTION: "view" }, { actionTimeoutMs: 300 });
+  it("a view timeout is harmless until an agent finds the server wedged", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "domo-bh-view-tree-"));
+    const pidLog = path.join(dir, "child.pid");
+    const { host, records } = makeHost(
+      { HANG_ACTION: "view", FAKE_CHILD_PID_LOG: pidLog },
+      { actionTimeoutMs: 300 },
+    );
     await host.ensureReady();
+    const firstPid = Number(records.find((r) => r.event === "browser_started")!.fields.pid);
+    const childPid = Number(fs.readFileSync(pidLog, "utf8"));
+
+    expect(await host.viewFrame()).toBeNull();
+    expect(host.running).toBe(true);
+    expect(records.some((r) => r.event === "browser_crashed")).toBe(false);
+    expect(processExists(firstPid)).toBe(true);
+    expect(processExists(childPid)).toBe(true);
+
     let crashed!: () => void;
     const crash = new Promise<void>((resolve) => { crashed = resolve; });
     host.onCrash = crashed;
-    expect(await host.viewFrame()).toBeNull();
+    await expect(host.sendAction({ action: "url" })).rejects.toThrow(/timed out/);
     await crash;
-    // A raw host can start again after teardown; BrowserSessions closes its
-    // owning session from onCrash instead.
-    expect((await host.sendAction({ action: "url" })).url).toBe("about:blank");
+    expect(records.find((r) => r.event === "browser_crashed")?.fields.reason)
+      .toBe("action_timeout");
+    expect(host.running).toBe(false);
+    await waitForProcessExit(firstPid);
+    await waitForProcessExit(childPid);
   });
 
   it("shutdown quits the server and audits browser_stopped", async () => {

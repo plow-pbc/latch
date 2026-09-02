@@ -158,14 +158,18 @@ describe("session lifecycle", () => {
     expect(r.get("status").str).toBe("error");
   });
 
-  it("an action timeout kills the browser and closes the session as crashed", async () => {
-    ctx = makeCtx({ HANG_ACTION: "eval" });
+  it("an agent timeout behind a wedged view kills the browser and closes the session", async () => {
+    ctx = makeCtx({ HANG_ACTION: "view" });
     ctx.browsers.actionTimeoutMs = 300;
     const s = await openSession(["pizza.example"]);
 
+    expect(await ctx.sessions.viewFrame()).toBeNull();
+    expect(ctx.sessions.current()).not.toBeNull();
+    expect(eventNames()).not.toContain("browser_crashed");
+    expect(eventNames()).not.toContain("browser_session_closed");
+
     const timedOut = jv(await ctx.sessions.command(s, {
-      action: "eval",
-      expression: "while(true){}",
+      action: "url",
     }));
     expect(timedOut.get("status").str).toBe("error");
     expect(timedOut.get("error").str).toContain("browser action timed out");

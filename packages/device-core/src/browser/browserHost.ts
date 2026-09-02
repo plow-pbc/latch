@@ -79,8 +79,8 @@ export class BrowserHost {
   private stderrTail: string[] = [];
   private failedRequests: JSONValue[] = [];
   private shuttingDown = false;
-  /** The server is serial; overlapping calls fail instead of outliving the
-   * caller's transport budget while waiting for their turn. */
+  /** Agent actions own admission and teardown. The owner's viewer never
+   * claims this slot and never acquires destructive timeout authority. */
   private actionInFlight = false;
   /** A child killed after an action timeout, pending its exit event. It stays
    * here so no later command can queue onto the process while it is dying. */
@@ -124,7 +124,7 @@ export class BrowserHost {
     return taken;
   }
 
-  /** Send one action to the server, lazily starting it. */
+  /** Send one agent action to the server, lazily starting it. */
   async sendAction(action: { [k: string]: JSONValue }): Promise<{ [k: string]: JSONValue }> {
     if (this.shuttingDown) throw new BrowserCrashedError("browser host is shut down");
     await this.ensureStarted();
@@ -140,6 +140,7 @@ export class BrowserHost {
   private dispatchAction(
     child: ChildProcess,
     action: { [k: string]: JSONValue },
+    timeoutAuthority: "agent" | "viewer" = "agent",
   ): Promise<{ [k: string]: JSONValue }> {
     if (this.shuttingDown || this.child !== child || this.terminatingChild === child) {
       return Promise.reject(new BrowserCrashedError(
@@ -149,7 +150,14 @@ export class BrowserHost {
     const id = this.nextId++;
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
-        this.terminateAfterActionTimeout(child, id);
+        if (timeoutAuthority === "agent") {
+          this.terminateAfterActionTimeout(child, id);
+          return;
+        }
+        const pending = this.pending.get(id);
+        if (!pending) return;
+        this.pending.delete(id);
+        pending.reject(new Error("browser view timed out"));
       }, this.cfg.actionTimeoutMs ?? 60_000);
       timer.unref?.();
       this.pending.set(id, { resolve, reject, timer });
@@ -168,20 +176,20 @@ export class BrowserHost {
 
   /**
    * One screenshot frame for the owner's viewer window. It never starts a
-   * browser and reports failures as null, so an ordinary viewer poll remains
-   * best-effort. A view action that reaches the host deadline is different:
-   * this server handles actions serially, so that timeout means every agent
-   * action is wedged behind it; sendAction tears the browser down and the
-   * session layer closes its books. `BrowserSessions.viewFrame()`
-   * picks WHICH host to ask — the session the owner is watching — but the frame
-   * it returns deliberately bypasses session SCOPE and the audit: it is for the
-   * device owner's own eyes, so an out-of-scope page is exactly what they
-   * should see, and a ~1/s poll must not flood the log.
+   * browser, claims the agent-action slot, or tears a browser down. Contention
+   * and its own bounded timeout both return null. When idle it dispatches
+   * read-only work directly; an agent arriving behind a stuck view still arms
+   * the destructive deadline that protects the serial server.
+   * `BrowserSessions.viewFrame()` picks WHICH host to ask — the session the
+   * owner is watching — but the frame it returns deliberately bypasses session
+   * SCOPE and the audit: it is for the device owner's own eyes, so an
+   * out-of-scope page is exactly what they should see, and a ~1/s poll must not
+   * flood the log.
    */
   async viewFrame(): Promise<ViewerFrame | null> {
-    if (!this.running || this.shuttingDown) return null;
+    if (!this.running || this.shuttingDown || this.actionInFlight) return null;
     try {
-      const result = await this.sendAction({ action: "view" });
+      const result = await this.dispatchAction(this.child!, { action: "view" }, "viewer");
       const dataB64 = typeof result.data_b64 === "string" ? result.data_b64 : null;
       if (dataB64 === null) return null;
       return {

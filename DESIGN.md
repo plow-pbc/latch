@@ -515,12 +515,13 @@ and the owner watching an out-of-scope page is exactly the oversight the view
 exists for (the caption flags "Out of approved scope"), and a ~1/s poll must
 not flood the audit log. `viewFrame` never starts the browser and never throws;
 an ordinary poll writes nothing to the audit log. The thumbnail appears only
-while a session is active and disappears when it closes. A `view` action that
-reaches the browser host's deadline is not a harmless missed thumbnail: the
-TypeScript server handles actions serially through `SerialQueue`, so every
-agent command is then queued behind the same stuck call. The host kills that
-browser, records the crash and closes the session; `viewFrame()` still returns
-`null` rather than throwing to the renderer.
+while a session is active and disappears when it closes. Only agent actions
+claim the host's action slot and destructive deadline. A viewer poll returns
+`null` immediately when that slot is occupied; when idle it dispatches without
+claiming the slot, and its own timeout only abandons that frame. If a view
+wedges the TypeScript server's `SerialQueue`, the next agent action dispatches
+behind it and owns the deadline that kills the browser, records the crash and
+closes the session.
 
 **Skills.** Devices publish skills (name/description/markdown body,
 `SkillRegistry`); agents discover them via `plow_list_skills` and read them
