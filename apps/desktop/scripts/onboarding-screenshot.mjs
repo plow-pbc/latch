@@ -86,9 +86,9 @@ app.whenReady().then(async () => {
       currentFullDiskAccess = fixture.fullDiskAccess === true;
       await win.loadFile(path.join(dist, "renderer/onboarding.html"));
       // The full Welcome resolves its last delayed reveal at about 2.08s. Shoot
-      // its resting state rather than a deliberately half-revealed frame.
+      // its resting state after the font and first-paint gate has also settled.
       const settleMs = fixture.name === "welcome"
-        ? 2400
+        ? 2800
         : fixture.name === "welcome-repeat" ? 450 : 400;
       await new Promise((resolve) => setTimeout(resolve, settleMs));
     },
