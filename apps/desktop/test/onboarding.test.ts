@@ -883,7 +883,36 @@ describe("signing out", () => {
   });
 });
 
-describe("a sign-out while the credential handoff is in the air", () => {
+describe("while the credential handoff is in the air", () => {
+  it("keeps the verified session when a new-code request lands during relayInfo", async () => {
+    let release = () => {};
+    const inAir = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    plow.redeems = [{ status: "verified", token: SESSION_TOKEN }];
+    const original = plow.relayInfo.bind(plow);
+    plow.relayInfo = async (token: string) => {
+      await inAir;
+      return original(token);
+    };
+    const onboarding = build();
+    await onboarding.advance();
+    await settle();
+    expect(onboarding.state().busy).toBe(true);
+
+    plow.redeems = [{ status: "pending" }];
+    const during = await onboarding.newActivationCode();
+    expect(during.busy).toBe(true);
+    expect(plow.activations).toHaveLength(1);
+
+    release();
+    await settle();
+
+    expect(plow.revoked).toEqual([]);
+    expect(loadSettings(home).relayCredential).toBe(SESSION_TOKEN);
+    expect(onboarding.state().step).toBe("verified");
+  });
+
   it("stays signed out when the sign-out lands during relayInfo", async () => {
     let release = () => {};
     const inAir = new Promise<void>((r) => {

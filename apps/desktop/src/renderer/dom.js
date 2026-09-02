@@ -79,6 +79,7 @@ export function icon(name, opts = {}) {
   const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
   svg.setAttribute("viewBox", "0 0 24 24");
   svg.setAttribute("class", opts.class ?? "ico");
+  svg.setAttribute("aria-hidden", "true");
   svg.setAttribute("fill", opts.fill ? "currentColor" : "none");
   if (!opts.fill) {
     svg.setAttribute("stroke", "currentColor");

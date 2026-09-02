@@ -190,6 +190,7 @@ export class Onboarding {
 
   /** Advance the presentational steps and commit the data-screen choice. */
   async advance(): Promise<OnboardingState> {
+    if (this.busy) return this.state();
     if (this.step === "welcome") {
       this.step = "privacy";
       return this.publish();
@@ -223,6 +224,7 @@ export class Onboarding {
 
   /** Return through the steps that have a Back affordance. */
   async back(): Promise<OnboardingState> {
+    if (this.busy) return this.state();
     if (this.step === "privacy") this.step = "welcome";
     else if (this.step === "activate" || this.step === "waiting") this.step = "privacy";
     else return this.state();
@@ -231,6 +233,7 @@ export class Onboarding {
 
   /** Change the pending choice; Continue from data is its only disk write. */
   setTelemetryEnabled(enabled: unknown): OnboardingState {
+    if (this.busy) return this.state();
     if (this.step === "data" && typeof enabled === "boolean") {
       this.telemetryEnabled = enabled;
       return this.publish();
@@ -270,6 +273,7 @@ export class Onboarding {
     // race before `activation` is set. Joining the flight in progress is the
     // only place that gap can be closed.
     if (this.pendingMint) return this.pendingMint;
+    if (this.busy) return this.state();
 
     if (this.activationSecret && this.activation) {
       // Same code, fresh clock — and one honest line about why sending again
@@ -325,6 +329,7 @@ export class Onboarding {
    * than leave them staring at a screen that still reads like a to-do.
    */
   messagesOpened(): OnboardingState {
+    if (this.busy) return this.state();
     if (this.step === "activate" && this.activation) this.step = "waiting";
     return this.publish();
   }
