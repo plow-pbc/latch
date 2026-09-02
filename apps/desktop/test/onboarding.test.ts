@@ -266,6 +266,7 @@ describe("wizard steps around the existing verification flow", () => {
     expect(plow.activations).toEqual([]);
 
     expect((await onboarding.advance()).step).toBe("privacy");
+    expect((await onboarding.begin()).step).toBe("privacy");
     expect(plow.activations).toEqual([]);
 
     const verify = await onboarding.advance();
@@ -275,23 +276,117 @@ describe("wizard steps around the existing verification flow", () => {
     onboarding.reset();
   });
 
-  it("backs through Welcome and keeps a verification code polling behind Privacy", async () => {
+  it("backs from Privacy to Welcome", async () => {
     const onboarding = build({}, false);
     await onboarding.advance();
-    expect(onboarding.back().step).toBe("welcome");
+    expect((await onboarding.back()).step).toBe("welcome");
+  });
 
-    await onboarding.advance();
+  it.each(["activate", "waiting"] as const)(
+    "backs from %s to Privacy without discarding the activation",
+    async (step) => {
+      const onboarding = build();
+      const verify = await onboarding.advance();
+      if (step === "waiting") onboarding.messagesOpened();
+
+      expect((await onboarding.back()).step).toBe("privacy");
+      expect(onboarding.state().activation?.displayCode).toBe(verify.activation?.displayCode);
+      expect(plow.activations).toHaveLength(1);
+      onboarding.reset();
+    },
+  );
+
+  it("re-enters a live verification on the activation-code view", async () => {
+    const pendingWaits: Array<() => void> = [];
+    const onboarding = build({
+      wait: () => new Promise<void>((resolve) => pendingWaits.push(resolve)),
+    });
     const verify = await onboarding.advance();
     const displayCode = verify.activation?.displayCode;
-    expect(onboarding.messagesOpened().step).toBe("waiting");
-    expect(onboarding.back().step).toBe("privacy");
+    onboarding.messagesOpened();
+    expect((await onboarding.back()).step).toBe("privacy");
 
-    await settleUntil(() => plow.redeemCalls.length > 0);
+    pendingWaits.shift()!();
+    await settleUntil(() => plow.redeemCalls.length === 1);
     const reentered = await onboarding.advance();
-    expect(["activate", "waiting"]).toContain(reentered.step);
+
+    expect(reentered.step).toBe("activate");
     expect(reentered.activation?.displayCode).toBe(displayCode);
     expect(plow.activations).toHaveLength(1);
     onboarding.reset();
+  });
+
+  it("re-enters a locally stale verification on its waiting view", async () => {
+    const pendingWaits: Array<() => void> = [];
+    const onboarding = build({
+      wait: () => new Promise<void>((resolve) => pendingWaits.push(resolve)),
+    });
+    const verify = await onboarding.advance();
+    const displayCode = verify.activation?.displayCode;
+    onboarding.messagesOpened();
+    await onboarding.back();
+
+    clock = verify.activation!.pollUntil + 1;
+    pendingWaits.shift()!();
+    await settleUntil(() => onboarding.state().activationStale);
+    const reentered = await onboarding.advance();
+
+    expect(reentered.step).toBe("waiting");
+    expect(reentered.activation?.displayCode).toBe(displayCode);
+    expect(plow.activations).toHaveLength(1);
+    onboarding.reset();
+  });
+
+  it.each(["phone", "code"] as const)(
+    "backs from the %s fallback to a fresh activation-code view",
+    async (step) => {
+      const onboarding = build();
+      await onboarding.advance();
+      onboarding.usePhoneCode();
+      if (step === "code") await onboarding.requestCode("+15551110000");
+
+      const verify = await onboarding.back();
+
+      expect(verify.step).toBe("activate");
+      expect(verify.activation?.displayCode).toBe("CODE2");
+      expect(plow.activations).toHaveLength(2);
+      onboarding.reset();
+    },
+  );
+
+  it("does not publish Back on Data or Done", async () => {
+    const settings = loadSettings(home);
+    settings.relayCredential = DEVICE_TOKEN;
+    saveSettings(home, settings);
+    let notifications = 0;
+    const onboarding = build(
+      {
+        onChange: () => {
+          notifications += 1;
+        },
+      },
+      false,
+    );
+
+    expect((await onboarding.back()).step).toBe("data");
+    expect(notifications).toBe(0);
+    await onboarding.advance();
+    notifications = 0;
+    expect((await onboarding.back()).step).toBe("done");
+    expect(notifications).toBe(0);
+  });
+
+  it("does not publish an ignored telemetry choice", () => {
+    let notifications = 0;
+    const onboarding = build({
+      onChange: () => {
+        notifications += 1;
+      },
+    });
+    notifications = 0;
+
+    expect(onboarding.setTelemetryEnabled(false).step).toBe("privacy");
+    expect(notifications).toBe(0);
   });
 
   it("moves a redeemed login directly to data", async () => {
@@ -327,7 +422,7 @@ describe("activation — the path a brand-new user takes", () => {
     plow.redeems = [{ status: "pending" }, { status: "verified", token: SESSION_TOKEN }];
     const onboarding = build();
 
-    const shown = await onboarding.begin();
+    const shown = await onboarding.advance();
     expect(shown.step).toBe("activate");
     expect(shown.activation?.displayCode).toBe("CODE1");
     // The exact body, because a wrong prefix is answered with silence.
@@ -359,7 +454,7 @@ describe("activation — the path a brand-new user takes", () => {
     plow.redeems = [{ status: "verified", token: SESSION_TOKEN, chat: CHAT }];
     const onboarding = build();
 
-    const shown = await onboarding.begin();
+    const shown = await onboarding.advance();
     // The screen shows the line THIS activation was assigned. The chat is only
     // provisioned if the code lands on that line, so a number chosen here would
     // sign the user in and silently create nothing.
@@ -391,7 +486,7 @@ describe("activation — the path a brand-new user takes", () => {
 
     plow.redeems = [{ status: "verified", token: SESSION_TOKEN }];
     const onboarding = build();
-    await onboarding.begin();
+    await onboarding.advance();
     await settle();
 
     expect(onboarding.state().step).toBe("data");
@@ -407,7 +502,7 @@ describe("activation — the path a brand-new user takes", () => {
     // nothing. A number for a chat is a pool line, reached by texting it.
     plow.redeems = [{ status: "verified", token: SESSION_TOKEN, chat: CHAT }];
     const onboarding = build();
-    const shown = await onboarding.begin();
+    const shown = await onboarding.advance();
     await settle();
 
     expect(shown.activation?.sendTo).toBe("+15550001111");
@@ -427,7 +522,7 @@ describe("activation — the path a brand-new user takes", () => {
     // would have persisted it and rendered it.
     plow.redeems = [{ status: "verified", token: SESSION_TOKEN, chat: make(SESSION_TOKEN) }];
     const onboarding = build();
-    await onboarding.begin();
+    await onboarding.advance();
     await settle();
 
     // The sign-in still completes — the chat is what is dropped, and the
@@ -452,7 +547,7 @@ describe("activation — the path a brand-new user takes", () => {
       chat: { ...CHAT, displayName: SESSION_TOKEN.slice(0, 12) },
     }];
     const onboarding = build();
-    await onboarding.begin();
+    await onboarding.advance();
     await settle();
 
     expect(loadSettings(home).provisionedChatUid).toBe(CHAT.uid);
@@ -463,7 +558,7 @@ describe("activation — the path a brand-new user takes", () => {
   it("has no chat to show on a Mac whose activation never made one", async () => {
     plow.redeems = [{ status: "verified", token: SESSION_TOKEN }];
     const onboarding = build();
-    await onboarding.begin();
+    await onboarding.advance();
     await settle();
 
     expect(loadSettings(home).provisionedChatUid).toBe("");
@@ -568,7 +663,7 @@ describe("activation — the path a brand-new user takes", () => {
   it("polls without waiting to be told to — a hand-typed message still gets in", async () => {
     plow.redeems = [{ status: "verified", token: SESSION_TOKEN }];
     const onboarding = build();
-    await onboarding.begin();
+    await onboarding.advance();
     // No messagesOpened() at all.
     await settle();
 
@@ -577,7 +672,7 @@ describe("activation — the path a brand-new user takes", () => {
 
   it("does not burn a second code when the window is reopened", async () => {
     const onboarding = build();
-    await onboarding.begin();
+    await onboarding.advance();
     await onboarding.begin();
 
     expect(plow.activations).toHaveLength(1);
@@ -590,7 +685,7 @@ describe("activation — the path a brand-new user takes", () => {
     // loop cancelled itself at five minutes. The Mac sat on "we haven't heard
     // from your phone" while the phone said "You're all set!".
     const onboarding = build();
-    await onboarding.begin();
+    await onboarding.advance();
     await settleUntil(() => onboarding.state().activationStale);
     expect(onboarding.state().step).toBe("waiting");
     expect(onboarding.state().busy).toBe(false);
@@ -617,7 +712,7 @@ describe("activation — the path a brand-new user takes", () => {
     // control, and their activation (which completed server-side just after the
     // loop stopped) could never be re-checked. Dead end.
     const onboarding = build();
-    await onboarding.begin();
+    await onboarding.advance();
     expect(onboarding.state().step).toBe("activate"); // never tapped Open Messages
     await settle();
 
@@ -647,7 +742,7 @@ describe("activation — the path a brand-new user takes", () => {
       plow = new FakePlow();
       plow.redeems = [...redeems];
       const onboarding = build();
-      await onboarding.begin();
+      await onboarding.advance();
       await settle();
 
       expect(onboarding.state().activationStale).toBe(true);
@@ -661,7 +756,7 @@ describe("activation — the path a brand-new user takes", () => {
     // already copied would succeed on the phone and strand the Mac — the same
     // stranding this PR exists to end.
     const onboarding = build();
-    await onboarding.begin();
+    await onboarding.advance();
     await settleUntil(() => onboarding.state().activationStale);
 
     const state = await onboarding.newActivationCode();
@@ -677,7 +772,7 @@ describe("activation — the path a brand-new user takes", () => {
 
   it("mints a fresh code only once the server has retired the old one", async () => {
     const onboarding = build();
-    await onboarding.begin();
+    await onboarding.advance();
     await settleUntil(() => onboarding.state().activationStale);
 
     // The POLL receives the 410 — the button never redeems. Only then does a
@@ -696,7 +791,7 @@ describe("activation — the path a brand-new user takes", () => {
     // outage must not mint over it: the abandoned code's completion has no
     // watcher — the stranding again, this time triggered by a blip.
     const onboarding = build();
-    await onboarding.begin();
+    await onboarding.advance();
     await settleUntil(() => onboarding.state().activationStale);
 
     plow.redeems = [new PlowApiError("network", "Couldn't reach Plow.")];
@@ -712,7 +807,7 @@ describe("activation — the path a brand-new user takes", () => {
   it("reads a verified activation exactly once, and never re-reads it", async () => {
     plow.redeems = [{ status: "verified", token: SESSION_TOKEN }];
     const onboarding = build();
-    await onboarding.begin();
+    await onboarding.advance();
     await settle();
 
     // One redeem saw the completion and got the token. A second would come back
@@ -724,7 +819,7 @@ describe("activation — the path a brand-new user takes", () => {
   it("says so, honestly, when verified comes back with no token to hand over", async () => {
     plow.redeems = [{ status: "verified", token: null }];
     const onboarding = build();
-    await onboarding.begin();
+    await onboarding.advance();
     await settle();
 
     const state = onboarding.state();
@@ -741,7 +836,7 @@ describe("activation — the path a brand-new user takes", () => {
   it("treats a 410 as authoritative and offers a fresh code", async () => {
     plow.redeems = [new PlowApiError("expired", "Activation expired", 410)];
     const onboarding = build();
-    await onboarding.begin();
+    await onboarding.advance();
     await settle();
 
     const state = onboarding.state();
@@ -756,7 +851,7 @@ describe("activation — the path a brand-new user takes", () => {
       { status: "verified", token: SESSION_TOKEN },
     ];
     const onboarding = build();
-    await onboarding.begin();
+    await onboarding.advance();
     await settle();
 
     expect(onboarding.state().step).toBe("data");
@@ -767,7 +862,7 @@ describe("activation — the path a brand-new user takes", () => {
     plow.createActivation = async () => {
       throw new PlowApiError("network", "Couldn't reach Plow at http://localhost:4242.");
     };
-    const state = await build().begin();
+    const state = await build().advance();
 
     expect(state.busy).toBe(false);
     expect(state.activation).toBeNull();
@@ -776,7 +871,7 @@ describe("activation — the path a brand-new user takes", () => {
 
   it("stops polling when the user switches to the phone-code fallback", async () => {
     const onboarding = build();
-    await onboarding.begin();
+    await onboarding.advance();
     expect(onboarding.usePhoneCode().step).toBe("phone");
     // Polls in flight when the user left are allowed to land; what must not
     // happen is the loop carrying on behind the fallback screen forever.
@@ -790,7 +885,7 @@ describe("activation — the path a brand-new user takes", () => {
   it("never lets the renderer see the activation secret", async () => {
     plow.redeems = [{ status: "verified", token: SESSION_TOKEN }];
     const onboarding = build();
-    const shown = await onboarding.begin();
+    const shown = await onboarding.advance();
     expect(JSON.stringify(shown)).not.toContain(ACTIVATION_SECRET);
 
     await settle();
@@ -811,7 +906,7 @@ describe("one code, however many callers ask for it", () => {
     plow.holdActivations();
     const onboarding = build();
 
-    const first = onboarding.begin();
+    const first = onboarding.advance();
     const second = onboarding.begin();
     const third = onboarding.newActivationCode();
     plow.releaseActivations();
@@ -846,7 +941,7 @@ describe("one code, however many callers ask for it", () => {
     // returns runs a real re-check rather than joining a spent flight — and
     // since the code is still live, the re-check re-arms it, not replaces it.
     const onboarding = build();
-    await onboarding.begin();
+    await onboarding.advance();
     expect(plow.activations).toHaveLength(1);
 
     const state = await onboarding.newActivationCode();
@@ -862,7 +957,7 @@ describe("one code, however many callers ask for it", () => {
     plow.createActivation = async () => {
       throw boom;
     };
-    const failed = await onboarding.begin();
+    const failed = await onboarding.advance();
     expect(failed.message).toBe("Couldn't reach Plow.");
     expect(failed.activation).toBeNull();
 
@@ -893,7 +988,7 @@ describe("signing out", () => {
     // the only way back to signing in was quitting the app.
     plow.redeems = [{ status: "verified", token: SESSION_TOKEN }];
     const onboarding = build();
-    await onboarding.begin();
+    await onboarding.advance();
     await settle();
     expect(onboarding.state().step).toBe("data");
 
@@ -944,10 +1039,10 @@ describe("signing out", () => {
     expect(state.activation?.displayCode).toBeTruthy();
     expect(plow.activations.length).toBe(1); // the first login used the OTP path
 
-    // `begin` starts a detached poll loop, and its injected `wait` advances the
-    // clock every test in this file shares. Left running it drifts the next
-    // test's deadlines — so stop it, the way every other exit from that screen
-    // does.
+    // Leaving Privacy starts a detached poll loop, and its injected `wait`
+    // advances the clock every test in this file shares. Left running it drifts
+    // the next test's deadlines — so stop it, the way every other exit from
+    // that screen does.
     onboarding.reset();
   });
 
@@ -1156,7 +1251,7 @@ describe("signing out", () => {
   async function signedIn(): Promise<Onboarding> {
     plow.redeems = [{ status: "verified", token: SESSION_TOKEN }];
     const onboarding = build();
-    await onboarding.begin();
+    await onboarding.advance();
     await settle();
     expect(onboarding.state().step).toBe("data");
     // Any activation minted from here on is a fresh code nobody has texted yet.
@@ -1167,7 +1262,7 @@ describe("signing out", () => {
   it("forgets the chat too — the next sign-in may be a different account", async () => {
     plow.redeems = [{ status: "verified", token: SESSION_TOKEN, chat: CHAT }];
     const onboarding = build();
-    await onboarding.begin();
+    await onboarding.advance();
     await settle();
     expect(loadSettings(home).provisionedChatUid).toBe("cht_D7hfWNK");
 
@@ -1312,7 +1407,7 @@ describe("a sign-out while the credential handoff is in the air", () => {
       return original(token);
     };
     const onboarding = build();
-    await onboarding.begin();
+    await onboarding.advance();
     await settle();
 
     signOutOfPlow(home);
@@ -1330,10 +1425,9 @@ describe("a sign-out while the credential handoff is in the air", () => {
 
 describe("a sign-out while startRelay is dialling", () => {
   it("is not overwritten by the post-login state", async () => {
-    // `startRelay` is a network round-trip, and a sign-out landing inside it
-    // resets this instance to `welcome`. The continuation then set
-    // `connected` on top, leaving a window reporting the session it had just
-    // been signed out of — with a credential the sign-out had already erased.
+    // The data step is assigned before `startRelay` begins its network round
+    // trip. A sign-out landing inside that await resets this instance to
+    // Welcome, and the completed relay call must not overwrite the reset.
     let release = () => {};
     const dialing = new Promise<void>((r) => {
       release = () => r();
@@ -1346,7 +1440,7 @@ describe("a sign-out while startRelay is dialling", () => {
         plow.connected = true;
       },
     });
-    const begun = onboarding.begin();
+    const begun = onboarding.advance();
     await settle();
 
     signOutOfPlow(home);

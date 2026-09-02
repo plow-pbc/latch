@@ -114,7 +114,6 @@ contextBridge.exposeInMainWorld("domo", {
   onboardingAdvance: () => ipcRenderer.invoke("onboarding:advance"),
   onboardingBack: () => ipcRenderer.invoke("onboarding:back"),
   onboardingSetTelemetry: (on: boolean) => ipcRenderer.invoke("onboarding:setTelemetry", on),
-  onboardingRequestFullDiskAccess: () => ipcRenderer.invoke("fullDisk:grantFlow"),
   // The renderer is sandboxed and cannot open a URL; main owns the `sms:` one,
   // so the renderer never has to build it or be trusted with it.
   onboardingOpenMessages: () => ipcRenderer.invoke("onboarding:openMessages"),

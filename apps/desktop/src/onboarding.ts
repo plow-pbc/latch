@@ -28,9 +28,9 @@ import { ActivationChat, PlowApi, PlowApiError } from "./plowApi.js";
 import { loadSettings, saveSettings, Settings } from "./settings.js";
 
 /**
- * The verification sub-steps retain their existing mechanics. `connected` is
- * only the handoff between a successful login and the post-login data choice;
- * it is never a screen the renderer waits on.
+ * The verification sub-steps retain their existing mechanics. A successful
+ * login proceeds directly to the post-login data choice; there is no connected
+ * confirmation screen for the renderer to wait on.
  */
 export type OnboardingStep =
   | "welcome"
@@ -285,10 +285,6 @@ export class Onboarding {
       }
       return this.newActivationCode();
     }
-    if (this.step === "connected") {
-      this.step = "data";
-      return this.publish();
-    }
     if (this.step === "data") {
       const settings = this.settings();
       settings.telemetryEnabled = this.telemetryEnabled;
@@ -300,10 +296,12 @@ export class Onboarding {
     return this.publish();
   }
 
-  /** Return through the pre-verification screens without cancelling a poll. */
-  back(): OnboardingState {
+  /** Return through the steps that have a Back affordance. */
+  async back(): Promise<OnboardingState> {
     if (this.step === "privacy") this.step = "welcome";
     else if (this.step === "activate" || this.step === "waiting") this.step = "privacy";
+    else if (this.step === "phone" || this.step === "code") return this.useActivation();
+    else return this.state();
     return this.publish();
   }
 
@@ -311,25 +309,18 @@ export class Onboarding {
   setTelemetryEnabled(enabled: unknown): OnboardingState {
     if (this.step === "data" && typeof enabled === "boolean") {
       this.telemetryEnabled = enabled;
+      return this.publish();
     }
-    return this.publish();
+    return this.state();
   }
 
   // MARK: activation — the path a brand-new user takes
 
-  /**
-   * Mint the code the user texts, and start polling immediately.
-   *
-   * Idempotent: opening the window twice must not burn a second code and leave
-   * two live activations on the account. The check below covers a second call
-   * once a code is on screen; the window *before* that — where the API has been
-   * asked and has not answered — is covered by the single flight in
-   * `newActivationCode`, which is the only thing here that mints.
-   */
+  /** Retry a mint only when the activation view is already waiting for one. */
   async begin(): Promise<OnboardingState> {
-    // Renderer boot is intentionally a read-like no-op on Welcome. The first
-    // activation is minted only by Continue from Privacy (`advance`).
-    if (this.step !== "privacy" && !(this.step === "activate" && !this.activation)) {
+    // Renderer boot is intentionally a read-like no-op on the presentational
+    // steps. The first activation is minted only by Continue from Privacy.
+    if (this.step !== "activate" || this.activation) {
       return this.state();
     }
     return this.newActivationCode();
@@ -350,12 +341,10 @@ export class Onboarding {
   async newActivationCode(): Promise<OnboardingState> {
     // SINGLE-FLIGHT. A display code IS a credential — whoever texts it gets the
     // account — so a second mint nobody is shown is a live credential loose on
-    // the account, and the screen can only ever show one of them. Two callers
-    // race here for real: `settings:signOut` calls `begin` and, in the same
-    // breath, opens the setup window whose renderer calls `begin` on boot.
-    // `activation` is not set until the API answers, so on a slow
-    // `/v1/auth/activate` both sail past that check. Joining the flight in
-    // progress is the only place this can be closed.
+    // the account, and the screen can only ever show one of them. A double-click
+    // on Privacy Continue and a retry arriving while its mint is in flight can
+    // race before `activation` is set. Joining the flight in progress is the
+    // only place that gap can be closed.
     if (this.pendingMint) return this.pendingMint;
 
     if (this.activationSecret && this.activation) {
@@ -774,21 +763,16 @@ export class Onboarding {
     // either sitting in memory or on a screen behind this one.
     //
     // BEFORE the dial, not after. `startRelay` is a network round-trip, and a
-    // sign-out landing inside it resets this instance to `activate` — which the
-    // continuation then overwrote with `connected`, leaving a window reporting
-    // a session that had just been signed out of. Everything here is derived
+    // sign-out landing inside it resets this instance to `welcome`. Assigning
+    // the post-login step before the await, with no continuation mutation after
+    // it, keeps that reset from being overwritten. Everything here is derived
     // from the save above; none of it needs the socket to be up.
     this.cancelPolling();
     this.activation = null;
     this.activationSecret = null;
     this.activationStale = false;
-    this.step = "connected";
     this.codeExpiresAt = null;
     this.message = "";
-
-    // There is no connected confirmation screen in this wizard. The state is
-    // assigned above only as the successful-login handoff, then immediately
-    // advances before any asynchronous relay work can hold it on screen.
     this.step = "data";
     this.telemetryEnabled = settings.telemetryEnabled;
 
