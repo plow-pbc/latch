@@ -54,7 +54,7 @@ import { migrateLegacyHome } from "./migrateHome.js";
 import { buildMinter, vendorDirs } from "./providerWiring.js";
 import { resolveInstancePaths } from "./paths.js";
 import { loadSettings, saveSettings, useCredentialCodec, WindowBounds } from "./settings.js";
-import { resolveTelemetryConfig, Telemetry } from "./telemetry.js";
+import { resolveTelemetryConfig, Telemetry, telemetryMaySend } from "./telemetry.js";
 import { PlowApi, PlowApiError, relaySocketUrl, resolveApiBaseUrl } from "./plowApi.js";
 import { Onboarding } from "./onboarding.js";
 import { ConnectClient } from "./connectClient.js";
@@ -1501,7 +1501,7 @@ app.whenReady().then(async () => {
         // ordinary events are not worth 30 seconds of anyone's time.
         shutdown: () => posthog.shutdown(2_000),
       },
-      enabled: () => loadSettings(home).telemetryEnabled,
+      enabled: () => telemetryMaySend(loadSettings(home)),
       accountUid: () => loadSettings(home).accountUid,
       // The relay credential is the one secret this process holds in a string;
       // read per event because it changes on sign-in/out.

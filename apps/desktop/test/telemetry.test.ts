@@ -14,6 +14,7 @@ import {
   Telemetry,
   TelemetryProps,
   TelemetrySink,
+  telemetryMaySend,
 } from "../src/telemetry.js";
 
 const cleanups: (() => void)[] = [];
@@ -89,6 +90,12 @@ describe("resolveTelemetryConfig", () => {
 });
 
 describe("usage events", () => {
+  it("stays silent until setup has recorded the owner's choice", () => {
+    expect(telemetryMaySend({ setupComplete: false, telemetryEnabled: true })).toBe(false);
+    expect(telemetryMaySend({ setupComplete: true, telemetryEnabled: false })).toBe(false);
+    expect(telemetryMaySend({ setupComplete: true, telemetryEnabled: true })).toBe(true);
+  });
+
   it("stamps base props and the event's own props", () => {
     const { telemetry, sink } = makeTelemetry();
     telemetry.track("app_launched", { signed_in: true });
