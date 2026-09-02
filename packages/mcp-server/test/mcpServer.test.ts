@@ -86,6 +86,7 @@ describe("the reduced tool surface (§4.5)", () => {
       "plow_browser_close",
       "plow_browser_open",
       "plow_browser_request",
+      "plow_device_status",
       "plow_get_output",
       "plow_get_result",
       "plow_list_skills",

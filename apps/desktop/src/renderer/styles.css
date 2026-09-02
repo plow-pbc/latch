@@ -377,6 +377,14 @@ textarea.text { min-height: 70px; resize: vertical; }
 /* Capabilities: the row is a support-row; this adds the inline status beside
    the title, reusing the titlebar's connection dot. */
 .cap-title { display: flex; align-items: center; gap: 7px; margin-bottom: 2px; }
+/* The inventory under the Full Disk Access row: one line per permission or
+   self-check. An unknown answer (the question could not be asked) is a
+   hollow dot, distinct from a plain no. */
+.inventory { margin-top: 12px; display: flex; flex-direction: column; gap: 6px; }
+.inventory-row { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+.inventory-row .status-dot { flex: none; }
+.inventory-title { color: var(--fg); }
+.status-dot.unknown { background: transparent; border: 1px solid var(--faint); box-sizing: border-box; }
 .cap-title .support-title { margin-bottom: 0; }
 .cap-title .status-dot { flex: none; }
 /* The from-source note sits right under the Launch at Login checkbox line;

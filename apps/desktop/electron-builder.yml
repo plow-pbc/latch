@@ -144,8 +144,9 @@ extraResources:
     to: providers
     filter: ["**/*", "!*/VERSION"]
   # The native helpers (scripts/build-native.mjs, a `just build` step): the
-  # Full Disk Access flow's window tracker and the credential-exchange shim
-  # dylib. Lipo-fused universal like the python runtime, so both
+  # Full Disk Access flow's window tracker, the permission-status helper the
+  # host-gate diagnosis asks about Automation, and the credential-exchange
+  # shim dylib. Lipo-fused universal like the python runtime, so both
   # electron-builder arch passes carry identical bytes and the merge copies
   # them through. Signed by electron-builder with the app's entitlements —
   # nothing extra needed. The .stamp files are the build script's cache keys,

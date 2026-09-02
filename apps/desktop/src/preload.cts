@@ -75,8 +75,10 @@ contextBridge.exposeInMainWorld("domo", {
   // Availability booleans and the active model — never a credential.
   inferenceGet: () => ipcRenderer.invoke("settings:getInference"),
   statusGet: () => ipcRenderer.invoke("status:get"),
-  // macOS permission ceilings (today just Full Disk Access). Read-only: the
-  // grant itself happens in System Settings, via openExternal("fullDiskSettings").
+  // macOS permission ceilings and the app's self-checks — the device's
+  // standing inventory, plus the flat Full Disk Access boolean the grant flow
+  // polls. Read-only: the grants themselves happen in System Settings, via
+  // openExternal("fullDiskSettings").
   capabilitiesGet: () => ipcRenderer.invoke("capabilities:get"),
   // The Full Disk Access grant flow (permissionFlow.ts, ported from
   // PermissionFlow). dragInfo/dragStart serve the floating panel's drag tile:

@@ -943,6 +943,27 @@ export const TOOLS: ToolSpec[] = [
     },
   },
   {
+    name: "plow_device_status",
+    title: "What this Mac lets the app do right now",
+    description:
+      "Which macOS permissions this app holds on the user's Mac, and whether its own machinery " +
+      "works — checked fresh each call, no approval needed. Call it BEFORE reading another app's " +
+      "data (Messages, Mail, Safari, Contacts, the Desktop/Documents/Downloads folders) or sending " +
+      "Apple events: if 'full_disk_access' is not granted, or an 'automation' target is 'denied', " +
+      "say so to the user up front instead of trying and being blocked. 'not_asked' means macOS " +
+      "will raise a dialog on the Mac's screen at the first attempt, which only someone at the Mac " +
+      "can answer; 'target_not_running' means macOS declines to say until that app is open. The " +
+      "other rows are self-checks — the sandbox spawns, a child of the app inherits its grants, the " +
+      "vault key opens — and a failed one is for the user to hear, not for you to work around.",
+    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+    // A read of what macOS has decided — no intent, no approval, nothing slow.
+    annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
+    deferrable: false,
+    async run(_args, ctx) {
+      return ctx.device.hostInventory() as unknown as Promise<JSONValue>;
+    },
+  },
+  {
     name: "plow_get_result",
     title: "Poll a pending result",
     description:
