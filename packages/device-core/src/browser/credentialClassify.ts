@@ -14,7 +14,7 @@
  * carry one.
  */
 import { RawItem } from "./vaultItems.js";
-import { expiryIso } from "./dateFormat.js";
+import { CARD_EXPIRY, DATE_OF_BIRTH, expiryIso } from "./dateFormat.js";
 
 const FIELD_PASSWORD = "password";
 const FIELD_TOTP = "totp";
@@ -39,10 +39,8 @@ const CARD_FIELDS: Record<string, string> = {
 // An identity item, by the label each part is released under. The order is the
 // order they are reported in; the keys are the vault's own. birthDate is not
 // Bitwarden's — it is this app's own, kept ISO so a fill can reshape it.
-
-/** This app's one extension of the pinned identity shape: ISO YYYY-MM-DD. */
-export const DATE_OF_BIRTH = "date of birth";
-
+// DATE_OF_BIRTH itself lives in dateFormat.ts, alongside CARD_EXPIRY and
+// DATE_LABELS — the one place a date label's shape is known.
 const IDENTITY_FIELDS: Record<string, string> = {
   "title": "title",
   "first name": "firstName",
@@ -63,19 +61,6 @@ const IDENTITY_FIELDS: Record<string, string> = {
   "postal code": "postalCode",
   "country": "country",
   [DATE_OF_BIRTH]: "birthDate",
-};
-
-/** A card's expiry as one date, composed at release from expMonth/expYear
- * (YYYY-MM). Listed, unlike full name: forms want it as one field far more
- * often than as two, and a format reshapes it. */
-export const CARD_EXPIRY = "expiry";
-
-/** The labels a fill may reshape with a format: the shape typed when no
- * format is given, and a sample value the pattern is checked against
- * before the vault is asked. */
-export const DATE_LABELS: Record<string, { shape: string; sample: string }> = {
-  [DATE_OF_BIRTH]: { shape: "YYYY-MM-DD", sample: "2000-01-01" },
-  [CARD_EXPIRY]: { shape: "MM/YY", sample: "2000-01" },
 };
 
 // What the client conceals on an identity, and all it conceals. A licence

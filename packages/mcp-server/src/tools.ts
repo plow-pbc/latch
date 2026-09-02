@@ -27,6 +27,7 @@ import {
 import { ToolAnnotations } from "@modelcontextprotocol/server";
 import {
   DATE_FORMAT_HELP,
+  DATE_LABELS,
   DeviceAgent,
   LIVE_WEB_ROUTING,
   MAX_CLICK_TIMEOUT_MS,
@@ -737,7 +738,9 @@ export const TOOLS: ToolSpec[] = [
         field: { type: "string", description: "fill_secret: field label from plow_vault describe (or 'totp')" },
         format: {
           type: "string",
-          description: `fill_secret, date fields only (date of birth, expiry): how the page wants it. ${DATE_FORMAT_HELP}`,
+          description:
+            `fill_secret, date fields only (${Object.keys(DATE_LABELS).join(", ")}): how the page ` +
+            `wants it. ${DATE_FORMAT_HELP}`,
         },
         direction: { type: "string", description: "scroll: down|up|bottom|top" },
         seconds: { type: "number", description: "wait: seconds" },

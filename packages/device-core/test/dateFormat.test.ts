@@ -73,11 +73,13 @@ describe("card expiry parts", () => {
   it.each([
     ["expMonth", "4", "04"], ["expMonth", "12", "12"], ["expMonth", "04", "04"],
     ["expYear", "31", "2031"], ["expYear", "2031", "2031"],
+    ["expMonth", " 4 ", "04"],
   ] as const)("%s %s stores as %s", (part, given, stored) => {
     expect(expiryPart(part, given)).toBe(stored);
   });
   it.each([
     ["expMonth", "0"], ["expMonth", "13"], ["expMonth", "Apr"], ["expYear", "1"], ["expYear", "203"], ["expYear", "20311"],
+    ["expMonth", "2031"],
   ] as const)("refuses %s %s", (part, given) => {
     expect(() => expiryPart(part, given)).toThrow(/card expiry/);
   });

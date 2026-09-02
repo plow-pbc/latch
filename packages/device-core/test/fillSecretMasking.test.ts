@@ -683,6 +683,18 @@ describe("fill_secret formats a date of birth", () => {
       },
     });
   });
+
+  it("types the same custom field as stored when no format is given at all", async () => {
+    // Same L1 custom field, no format this time: an empty shape means "as
+    // stored", so a non-date value fills fine — only a given format asks it
+    // to be reshaped into something it isn't.
+    const handle = await session();
+    const result = await ctx.sessions.command(handle, {
+      action: "fill_secret", selector: "#dob", item: "L1", field: "date of birth",
+    });
+    expect(result).toEqual({ status: "completed", ok: true, frame: 0 });
+    expect(typed()).toEqual(["#dob\tunknown\t0"]);
+  });
 });
 
 describe("fill_secret formats a card's expiry", () => {

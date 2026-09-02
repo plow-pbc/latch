@@ -13,11 +13,38 @@ const MONTHS = [
   "July", "August", "September", "October", "November", "December",
 ];
 
+/** This app's one extension of the pinned identity shape: ISO YYYY-MM-DD. */
+export const DATE_OF_BIRTH = "date of birth";
+
+/** A card's expiry as one date, composed at release from expMonth/expYear
+ * (YYYY-MM). Listed, unlike full name: forms want it as one field far more
+ * often than as two, and a format reshapes it. */
+export const CARD_EXPIRY = "expiry";
+
+/**
+ * The labels a fill may reshape with a format. `shape` is the pattern used
+ * when no format is given — empty means the value is typed exactly as
+ * stored, which is right for a date already kept ISO. `sample` is a value
+ * the given pattern is checked against before the vault is asked. `describe`
+ * puts `shape` into words for DATE_FORMAT_HELP, since an empty shape has no
+ * pattern of its own to show.
+ */
+export const DATE_LABELS: Record<string, { shape: string; sample: string; describe: string }> = {
+  [DATE_OF_BIRTH]: { shape: "", sample: "2000-01-01", describe: "as stored (YYYY-MM-DD)" },
+  [CARD_EXPIRY]: { shape: "MM/YY", sample: "2000-01", describe: "as MM/YY" },
+};
+
+const article = (word: string): string => (/^[aeiou]/i.test(word) ? "an" : "a");
+
+const OWN_SHAPES = Object.entries(DATE_LABELS)
+  .map(([label, d]) => `${article(label)} ${label} ${d.describe}`)
+  .join(", ");
+
 export const DATE_FORMAT_HELP =
   "format tokens: YYYY, YY, MMMM (November), MMM (Nov), MM (11), M (11 or 5), " +
   "DD (09), D (9), Do (9th); anything else is typed as written, e.g. 'MM/DD/YYYY' " +
-  "or 'MMMM Do, YYYY'. Omit it for the field's own shape: YYYY-MM-DD for a date of " +
-  "birth, MM/YY for a card's expiry.";
+  `or 'MMMM Do, YYYY'. Omit it for the field's own shape: ${OWN_SHAPES}. ` +
+  "A card's expiry has no day, so DD, D and Do are refused on it.";
 
 const TOKEN = /YYYY|YY|MMMM|MMM|MM|M|DD|Do|D|[A-Za-z]|[^A-Za-z]+/g;
 
@@ -72,14 +99,17 @@ export function formatDate(iso: string, pattern: string): string {
 
 const EXPIRY_ERROR = "a card expiry is a month 1-12 and a two- or four-digit year";
 
-/** One stored part of a card's expiry, normalised (04, 2031), or a refusal. */
+/** One stored part of a card's expiry, normalised (04, 2031), or a refusal.
+ * Trimmed first: a box copy-pasted from a card reader routinely carries
+ * surrounding whitespace. */
 export function expiryPart(part: "expMonth" | "expYear", given: string): string {
+  const trimmed = given.trim();
   if (part === "expMonth") {
-    if (/^\d{1,2}$/.test(given) && Number(given) >= 1 && Number(given) <= 12) return given.padStart(2, "0");
-  } else if (/^\d{2}$/.test(given)) {
-    return `20${given}`;
-  } else if (/^\d{4}$/.test(given)) {
-    return given;
+    if (/^\d{1,2}$/.test(trimmed) && Number(trimmed) >= 1 && Number(trimmed) <= 12) return trimmed.padStart(2, "0");
+  } else if (/^\d{2}$/.test(trimmed)) {
+    return `20${trimmed}`;
+  } else if (/^\d{4}$/.test(trimmed)) {
+    return trimmed;
   }
   throw new Error(EXPIRY_ERROR);
 }

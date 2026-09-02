@@ -28,8 +28,7 @@ import path from "node:path";
 import { JSONValue, jv, originMatches, normalizeOrigin } from "@domo/protocol";
 import { BrowserHost, BrowserHostConfig, ViewerFrame } from "./browserHost.js";
 import { CredentialBroker, CredentialError, CredentialRelease } from "./credentialBroker.js";
-import { DATE_LABELS } from "./credentialClassify.js";
-import { formatDate } from "./dateFormat.js";
+import { DATE_LABELS, formatDate } from "./dateFormat.js";
 import { isFinancialDestination, PaymentApprovalClient } from "./financialGate.js";
 
 type AuditFn = (event: string, fields: { [k: string]: JSONValue }) => void;
@@ -1003,7 +1002,9 @@ export class BrowserSessions {
     }
     // A shape is checked before the vault is asked: the pattern is the agent's
     // and needs no value to be judged. A non-date field takes no shape at all.
-    const date = DATE_LABELS[field];
+    // hasOwn, not a bare index: `field` is agent-supplied, and DATE_LABELS is
+    // a plain object — "constructor" would otherwise resolve off the prototype.
+    const date = Object.hasOwn(DATE_LABELS, field) ? DATE_LABELS[field] : undefined;
     if (format !== "") {
       if (date === undefined) {
         return {
@@ -1176,16 +1177,17 @@ export class BrowserSessions {
 
     const mask = release.hidden;
     let secret = release.value;
-    // A date label is always reshaped — its own shape when no format was
-    // given, the checked pattern otherwise — and cannot throw for THAT
-    // reason, since the pattern was checked above. But the VALUE can still
-    // fail: a CUSTOM field can carry a date label (customLabel only prefixes
-    // `custom:` when a fixed slot already owns the name) with whatever a
-    // person typed into it, never passed through the write-path validation a
-    // built-in date field gets.
-    if (date !== undefined) {
+    // A date label with a default shape (a card's expiry) is always
+    // reshaped; one whose shape is empty (a date of birth) is typed as
+    // stored unless a format was given — an empty pattern is a no-op, not a
+    // format. Only a CUSTOM field can carry a date label without holding a
+    // date (customLabel only prefixes `custom:` when a fixed slot already
+    // owns the name), so the reshape can still fail on the VALUE even though
+    // the pattern was already checked above.
+    const pattern = date !== undefined ? format || date.shape : "";
+    if (pattern !== "") {
       try {
-        secret = formatDate(secret, format || date.shape);
+        secret = formatDate(secret, pattern);
       } catch {
         secret = "";
         this.audit("credential_fill_failed", {
@@ -1199,8 +1201,8 @@ export class BrowserSessions {
         return {
           status: "error",
           error:
-            `${field} was not filled: the value stored under that name is not a date. A custom ` +
-            `field is carrying a date label; rename it, or fill it under its own name.`,
+            `${field} was not filled: the value stored under that name is not a date. Correct it ` +
+            `in the vault, or fill it without 'format' if it is a custom field.`,
         };
       }
     }
