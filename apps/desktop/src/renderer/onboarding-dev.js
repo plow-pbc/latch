@@ -1,89 +1,14 @@
-/* Static-browser fixture provider for onboarding.html's real renderer. It is
-   deliberately kept outside the shipping bridge: production still receives
-   one whole state from main and owns no renderer-side transition graph. */
+/* Static-browser provider for onboarding.html's real renderer. Fixture
+   selection is the preview's navigation; production transitions stay in main. */
 
-const DISPLAY_CODE = "Z1SWY";
-const SEND_TO = "+1 555 987 6543";
-const ACTIVATION = {
-  displayCode: DISPLAY_CODE,
-  sendTo: SEND_TO,
-  smsBody: `Plow Activate: ${DISPLAY_CODE}`,
-  smsUrl: `sms:${SEND_TO}?&body=Plow%20Activate%3A%20${DISPLAY_CODE}`,
-  pollUntil: Date.now() + 4 * 60_000 + 30_000,
-};
+import { onboardingFixtures } from "./onboarding-fixtures.js";
 
-const base = {
-  step: "welcome",
-  phone: "+1 555 123 4567",
-  message: "",
-  busy: false,
-  codeExpiresAt: null,
-  activation: null,
-  chat: null,
-  activationStale: false,
-  accountUid: "",
-  mcpUrl: "",
-  connected: false,
-  telemetryEnabled: true,
-  agent: null,
-};
-
-const fixtures = {
-  welcome: { ...base, step: "welcome", phone: "" },
-  privacy: { ...base, step: "privacy", phone: "" },
-  verify: { ...base, step: "activate", phone: "", activation: ACTIVATION },
-  "verify-waiting": { ...base, step: "waiting", phone: "", activation: ACTIVATION },
-  "verify-stale": {
-    ...base,
-    step: "waiting",
-    phone: "",
-    activation: ACTIVATION,
-    activationStale: true,
-    message:
-      "We haven't heard from your phone. Send the message exactly as shown — it has to start with “Plow Activate:” — or try again.",
-  },
-  verified: { ...base, step: "verified", phone: "", activation: ACTIVATION, connected: true },
-  "verified-otp": { ...base, step: "verified", phone: "+1 555 123 4567", connected: true },
-  phone: { ...base, step: "phone", phone: "" },
-  code: {
-    ...base,
-    step: "code",
-    message: "Check your phone for an 8-digit code.",
-    codeExpiresAt: Date.now() + 4 * 60_000 + 30_000,
-  },
-  "data-fda-off": {
-    ...base,
-    step: "data",
-    accountUid: "u_7Qk2p9",
-    connected: true,
-  },
-  "data-fda-on": {
-    ...base,
-    step: "data",
-    accountUid: "u_7Qk2p9",
-    connected: true,
-  },
-  "done-agent": {
-    ...base,
-    step: "done",
-    accountUid: "u_7Qk2p9",
-    connected: true,
-    agent: { name: "Elm", smsUrl: "sms:+15559876543" },
-  },
-  "done-noagent": {
-    ...base,
-    step: "done",
-    accountUid: "u_7Qk2p9",
-    connected: true,
-  },
-};
-
-const fixtureKeys = Object.keys(fixtures);
+const fixtures = onboardingFixtures(Date.now());
+const fixturesByName = new Map(fixtures.map((fixture) => [fixture.name, fixture]));
 const params = new URLSearchParams(window.location.search);
-let fixtureKey = params.get("state");
-if (!fixtureKeys.includes(fixtureKey)) fixtureKey = "welcome";
-let current = { ...fixtures[fixtureKey] };
-let fullDiskAccess = fixtureKey === "data-fda-on";
+let selected = fixturesByName.get(params.get("state")) ?? fixtures[0];
+let current = { ...selected.state };
+let fullDiskAccess = selected.fullDiskAccess === true;
 let changed = null;
 
 function publish(next) {
@@ -92,54 +17,30 @@ function publish(next) {
   return Promise.resolve(current);
 }
 
-function activationState() {
-  return { ...current, step: "activate", activation: ACTIVATION, activationStale: false };
-}
+const currentState = async () => current;
 
 window.domo = {
-  onboardingGet: async () => current,
-  onboardingBegin: async () => current,
-  onboardingAdvance: async () => {
-    if (current.step === "welcome") return publish({ ...current, step: "privacy" });
-    if (current.step === "privacy") return publish(activationState());
-    if (current.step === "verified") return publish({ ...current, step: "data", activation: null });
-    if (current.step === "data") return publish({ ...current, step: "done" });
-    return current;
-  },
-  onboardingBack: async () => {
-    if (current.step === "privacy") return publish({ ...current, step: "welcome" });
-    if (current.step === "activate" || current.step === "waiting") {
-      return publish({ ...current, step: "privacy" });
-    }
-    if (current.step === "phone" || current.step === "code") return publish(activationState());
-    return current;
-  },
-  onboardingOpenMessages: async () => publish({ ...current, step: "waiting" }),
-  onboardingNewCode: async () => publish(activationState()),
-  onboardingUsePhoneCode: async () => publish({ ...current, step: "phone" }),
-  onboardingUseActivation: async () => publish(activationState()),
-  onboardingRequestCode: async (phone) => publish({
-    ...current,
-    step: "code",
-    phone,
-    codeExpiresAt: Date.now() + 5 * 60_000,
-  }),
-  onboardingResendCode: async () => publish({ ...current, codeExpiresAt: Date.now() + 5 * 60_000 }),
-  onboardingEditPhone: async () => publish({ ...current, step: "phone" }),
-  onboardingSubmitCode: async () => publish({
-    ...current,
-    step: "verified",
-    message: "",
-    codeExpiresAt: null,
-    connected: true,
-  }),
-  onboardingSetTelemetry: async (enabled) => publish({ ...current, telemetryEnabled: enabled }),
+  onboardingGet: currentState,
+  onboardingBegin: currentState,
+  onboardingAdvance: currentState,
+  onboardingBack: currentState,
+  onboardingOpenMessages: currentState,
+  onboardingNewCode: currentState,
+  onboardingUsePhoneCode: currentState,
+  onboardingUseActivation: currentState,
+  onboardingRequestCode: currentState,
+  onboardingResendCode: currentState,
+  onboardingEditPhone: currentState,
+  onboardingSubmitCode: currentState,
+  onboardingSetTelemetry: async (enabled) =>
+    publish({ ...current, telemetryEnabled: enabled === true }),
   capabilitiesGet: async () => ({ fullDiskAccess }),
   fullDiskGrantFlow: async () => {
     fullDiskAccess = true;
   },
-  onboardingFinish: async () => current,
-  onboardingOpenAgentMessages: async () => true,
+  onboardingFinish: currentState,
+  cloudRefresh: async () => selected.cloud,
+  cloudOpenMessages: async () => true,
   onOnboardingChanged: (callback) => {
     changed = callback;
   },
@@ -147,20 +48,17 @@ window.domo = {
 
 const picker = document.getElementById("fixturePicker");
 picker.hidden = params.get("capture") === "1";
-for (const key of fixtureKeys) {
+for (const fixture of fixtures) {
   const option = document.createElement("option");
-  option.value = key;
-  option.textContent = key;
-  option.selected = key === fixtureKey;
+  option.value = fixture.name;
+  option.textContent = fixture.name;
+  option.selected = fixture.name === selected.name;
   picker.appendChild(option);
 }
 picker.addEventListener("change", () => {
-  fixtureKey = picker.value;
-  fullDiskAccess = fixtureKey === "data-fda-on";
   const url = new URL(window.location.href);
-  url.searchParams.set("state", fixtureKey);
-  window.history.replaceState(null, "", url);
-  publish(fixtures[fixtureKey]);
+  url.searchParams.set("state", picker.value);
+  window.location.assign(url);
 });
 
 await import("./onboarding.js");

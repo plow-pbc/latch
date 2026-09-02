@@ -41,6 +41,7 @@ files:
   # never installed in the app bundle.
   - "!dist/renderer/onboarding-dev.html"
   - "!dist/renderer/onboarding-dev.js"
+  - "!dist/renderer/onboarding-fixtures.js"
   # The compiled native helper ships as an extraResource below — inside the
   # asar it could not be spawned at all.
   - "!dist/native/**"
