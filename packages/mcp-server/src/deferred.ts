@@ -20,7 +20,7 @@
  * nothing open and cannot keep a process alive.
  */
 import crypto from "node:crypto";
-import { JSONValue } from "@domo/protocol";
+import { JSONValue, jv } from "@domo/protocol";
 
 /**
  * How long a tool may block before it must hand back a handle.
@@ -79,6 +79,18 @@ const PENDING_NOTES: Record<PendingReason, string> = {
     "original call.",
 };
 
+/**
+ * A settled failure as the handle answers it — the same three shapes a direct
+ * call gets (handler.ts renders those), with the handle added.
+ */
+export function terminalFailure(handle: string, error: unknown): JSONValue {
+  const message = error instanceof Error ? error.message : String(error);
+  if (error instanceof DeniedError) return { status: "denied", handle, reason: message };
+  if (error instanceof BlockedError) return { ...error.payload, status: "blocked", handle };
+  if (error instanceof DeviceError) return { status: "failed", handle, error: message, ...error.details };
+  return { status: "failed", handle, error: message };
+}
+
 /** §4.3's pending envelope, with the advice the caller needs to act on it. */
 function pendingEnvelope(handle: string, reason: PendingReason): JSONValue {
   return {
@@ -99,6 +111,44 @@ export class DeniedError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "DeniedError";
+  }
+}
+
+/**
+ * Thrown by a tool when this Mac ITSELF stopped an operation the owner had
+ * approved — a macOS privacy permission the app lacks, a consent dialog
+ * nobody at the Mac has answered, a path outside the approved bound
+ * (device-core's hostGate/). §4.3's third answer beside `denied` and `failed`,
+ * and kept apart from both: it is not the owner saying no, and it is not the
+ * operation breaking. It carries the device's whole answer — the verdict with
+ * its evidence and probes, and for a command its output, exit code and job
+ * handle — because that answer is what the agent has to relay.
+ */
+export class BlockedError extends Error {
+  constructor(public readonly payload: { [k: string]: JSONValue }) {
+    super(
+      jv(payload).get("diagnosis").get("owner_action").str ??
+        jv(payload).get("error").str ??
+        "blocked by this Mac",
+    );
+    this.name = "BlockedError";
+  }
+}
+
+/**
+ * Thrown by a tool for a device-side `error` that has more to say than its
+ * sentence — a diagnosis this Mac attached to a failure that was not a gate
+ * (a file that is simply missing, a refusal it could not place). The details
+ * ride the `failed` answer beside `error`, so the facts reach the agent
+ * without being flattened into prose.
+ */
+export class DeviceError extends Error {
+  constructor(
+    message: string,
+    public readonly details: { [k: string]: JSONValue } = {},
+  ) {
+    super(message);
+    this.name = "DeviceError";
   }
 }
 
@@ -180,12 +230,7 @@ export class DeferredResults {
         return { ok: true as const, result };
       },
       (error: unknown) => {
-        const message = error instanceof Error ? error.message : String(error);
-        record(
-          error instanceof DeniedError
-            ? { status: "denied", handle, reason: message }
-            : { status: "failed", handle, error: message },
-        );
+        record(terminalFailure(handle, error));
         return { ok: false as const, error };
       },
     );
