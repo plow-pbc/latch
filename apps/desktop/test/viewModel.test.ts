@@ -118,6 +118,28 @@ describe("auditActivities (grouping)", () => {
     expect(acts[0]!.timeline).toHaveLength(2);
   });
 
+  it.each([
+    ["connector_connected", "Connected Google account mary@x.com", "Google account connected — mary@x.com"],
+    ["connector_disconnected", "Disconnected Google account mary@x.com", "Google account disconnected — mary@x.com"],
+    ["connector_default_changed", "Made Google account mary@x.com the default", "Default Google account changed — mary@x.com"],
+  ])("renders %s as a completed account activity", (event, title, step) => {
+    const [activity] = auditActivities([{
+      event,
+      provider: "google",
+      account: "mary@x.com",
+      ts: "2026-09-02T12:00:00Z",
+    }]);
+
+    expect(activity).toMatchObject({
+      title,
+      status: "Completed",
+      tone: "green",
+      category: "approved",
+      kind: "access",
+      timeline: [{ text: step, state: "ok" }],
+    });
+  });
+
   it("separates distinct operations, drops device_started, orders newest first", () => {
     const acts = auditActivities([
       { event: "device_started", ts: "2026-08-09T12:00:00Z" }, // never surfaced

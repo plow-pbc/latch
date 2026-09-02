@@ -162,6 +162,7 @@ DOMO_HOME=/tmp/plow-latch-x just app                    # an explicit home alway
 ```
 
 There is no local default and no flag — you export the URL you want.
+Google connect URLs may use plain HTTP only on `localhost`, `127.0.0.1`, or `::1`; every other host still requires HTTPS.
 
 `<branch>` is this checkout's normalized branch name (`scripts/worktree-name.sh --branch`), so every
 checkout — main included — has its own home, and none of them is the packaged install's unsuffixed

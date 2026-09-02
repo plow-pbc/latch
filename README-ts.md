@@ -218,16 +218,17 @@ the stable `device_id` and has no `ready` frame. The two request/response frame
 
 ## First-run login
 
-Download the app and walk through five stages: Welcome → Privacy → Verify phone
-→ Data & permissions → You're all set. Verification is an SMS activation: the
-app shows the exact message to send from the phone, then notices the verified
-text and links the Mac. Nothing is pasted out of a browser and the user never
-visits the portal.
+Download the app and walk through six stages: Welcome → Privacy → Verify phone
+→ Data & permissions → Connect your accounts → You're all set. Verification is an
+SMS activation: the app shows the exact message to send from the phone, then
+notices the verified text and links the Mac. Nothing is pasted out of a browser
+and the user never visits the portal.
 
 `src/onboarding.ts` is the whole flow as a state machine — testable without
-Electron, renderable offscreen for screenshots — and `src/plowApi.ts` is the
-only place that talks HTTP to Plow. The window (`renderer/onboarding.html`)
-draws whatever state the main process hands it and owns no copy of its own.
+Electron, renderable offscreen for screenshots — `src/connectors.ts` is the
+account-flow state owner, and `src/plowApi.ts` is the only place that talks HTTP
+to Plow. The window (`renderer/onboarding.html`) draws whatever state the main
+process hands it and owns no copy of its own.
 
 - **Activation handoff:** Continue from Privacy calls `POST /v1/auth/activate`.
   Plow returns the display code, the destination number, and a main-process-only

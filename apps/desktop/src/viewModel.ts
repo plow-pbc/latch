@@ -320,6 +320,15 @@ function activityTitle(
   if (has("access_request") || has("access_decision")) {
     return `Access — ${value("access_request", "display") ?? "agent"}`;
   }
+  if (has("connector_connected")) {
+    return `Connected Google account ${value("connector_connected", "account") ?? ""}`.trim();
+  }
+  if (has("connector_disconnected")) {
+    return `Disconnected Google account ${value("connector_disconnected", "account") ?? ""}`.trim();
+  }
+  if (has("connector_default_changed")) {
+    return `Made Google account ${value("connector_default_changed", "account") ?? ""} the default`;
+  }
   if (has("activation_session_cleanup")) return "Activation session cleanup";
   if (has("agent_spawned")) return "Agent spawned";
   if (has("exec_end")) return "Command finished";
@@ -362,6 +371,13 @@ function classifyActivity(
         : { status: "Denied", tone: "red", category: "denied" };
     }
     return { status: "Pending", tone: "zinc", category: "other" };
+  }
+  if (
+    has("connector_connected") ||
+    has("connector_disconnected") ||
+    has("connector_default_changed")
+  ) {
+    return { status: "Completed", tone: "green", category: "approved" };
   }
   if (has("agent_spawned")) return { status: "Spawned", tone: "blue", category: "other" };
   // The decision outranks any browser events riding in the intent's group: a
@@ -483,6 +499,11 @@ function activityKind(
   if (has("agent_spawned")) return "agent";
   if (has("access_request") || has("access_decision")) return "access";
   if (
+    has("connector_connected") ||
+    has("connector_disconnected") ||
+    has("connector_default_changed")
+  ) return "access";
+  if (
     events.some((e) => {
       const name = jv(e).get("event").str ?? "";
       return name.startsWith("browser_") || name.startsWith("credential_");
@@ -544,6 +565,12 @@ function describeStep(e: JSONValue): AuditStep {
       state = ev.get("approved").bool ? "ok" : "bad";
       break;
     case "agent_spawned": text = `Agent spawned — ${ev.get("goal").str ?? ""}`; break;
+    case "connector_connected":
+      text = `Google account connected — ${ev.get("account").str ?? ""}`; state = "ok"; break;
+    case "connector_disconnected":
+      text = `Google account disconnected — ${ev.get("account").str ?? ""}`; state = "ok"; break;
+    case "connector_default_changed":
+      text = `Default Google account changed — ${ev.get("account").str ?? ""}`; state = "ok"; break;
     case "activation_session_cleanup": {
       const outcome = ev.get("outcome").str ?? "";
       const keyId = ev.get("keyId").int;

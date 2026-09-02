@@ -36,6 +36,24 @@ const DEVICE_TOKEN = "plow_EXAMPLEdeviceNOTreal_00000";
 const CLIENT_TOKEN = "plow_EXAMPLEclientNOTreal_00000";
 const CHAT_TITLE = "Willow · You · Robin";
 const TRIP_CHAT_TITLE = "+1 628-555-0144 · You";
+const CONNECTORS_EMPTY = {
+  busy: false,
+  message: "",
+  noteKind: "error",
+  google: { accounts: [], connecting: false },
+};
+const CONNECTOR_TIMEOUT_NOTE =
+  "We couldn't see a new account. If you reconnected one that was already listed, it's done.";
+const CONNECTORS_POPULATED = {
+  ...CONNECTORS_EMPTY,
+  google: {
+    connecting: false,
+    accounts: [
+      { email: "mary@gmail.com", isDefault: true },
+      { email: "mary@work.com", isDefault: false },
+    ],
+  },
+};
 
 const home = fs.mkdtempSync(path.join(os.tmpdir(), "connect-shot-"));
 
@@ -178,6 +196,7 @@ let cloudFixture = CLOUD_EMPTY;
 let rosterFixture = EMPTY_ROSTER;
 let exhaustNextCloudActivation = false;
 const cloudRemovals = [];
+let connectorsFixture = CONNECTORS_EMPTY;
 
 // Nothing is imported or registered at the top level: Electron does not emit
 // `ready` until this entry module finishes evaluating, and a top-level await
@@ -369,6 +388,41 @@ async function setUp() {
   ipcMain.handle("settings:getAgentPurpose", async () => readAgentPurpose(home));
   ipcMain.handle("settings:setAgentPurpose", async (_e, purpose) => setAgentPurpose(home, purpose));
   ipcMain.handle("settings:signOut", async () => {});
+  ipcMain.handle("settings:getRelay", async () => ({
+    accountUid: "u_7Qk2p9",
+    mcpUrl: MCP_URL,
+    hasCredential: true,
+    connected: true,
+  }));
+  ipcMain.handle("connectors:refresh", async () => connectorsFixture);
+  ipcMain.handle("connectors:connect", async () => connectorsFixture);
+  ipcMain.handle("connectors:disconnect", async (_e, account) => {
+    connectorsFixture = {
+      ...connectorsFixture,
+      google: {
+        connecting: false,
+        accounts: connectorsFixture.google.accounts.filter((candidate) => candidate.email !== account),
+      },
+    };
+    return connectorsFixture;
+  });
+  ipcMain.handle("connectors:setDefault", async (_e, account) => {
+    connectorsFixture = {
+      ...connectorsFixture,
+      google: {
+        connecting: false,
+        accounts: connectorsFixture.google.accounts.map((candidate) => ({
+          ...candidate,
+          isDefault: candidate.email === account,
+        })),
+      },
+    };
+    return connectorsFixture;
+  });
+  ipcMain.handle("capabilities:get", async () => ({ fullDiskAccess: false }));
+  ipcMain.handle("launch:get", async () => ({ supported: false, openAtLogin: false }));
+  ipcMain.handle("power:getKeepAwake", async () => ({ enabled: false }));
+  ipcMain.handle("telemetry:get", async () => ({ enabled: true }));
   ipcMain.handle("ui:getTab", async () => "agents");
   ipcMain.handle("ui:setTab", async () => {});
   ipcMain.handle("onboarding:open", async () => {});
@@ -389,8 +443,49 @@ async function setUp() {
   return connect;
 }
 
+async function showSettings(win) {
+  await win.webContents.executeJavaScript(`window.__domoSelectTab("settings")`);
+  await waitFor(win, `document.querySelector(".panel.settings .settings-connectors")`,
+    "the Connected accounts Settings section");
+}
+
 /** Each shot: how to get the screen into that state, and what must be on it. */
 const SCREENS = [
+  {
+    name: "settings-connected-accounts",
+    connectors: CONNECTORS_POPULATED,
+    prepare: showSettings,
+    expect: [
+      "Connected accounts", "Google", "mary@gmail.com", "Default",
+      "mary@work.com", "Set default", "Add another Google account",
+    ],
+    reject: ["Slack", CONNECTOR_TIMEOUT_NOTE],
+    expectAriaLabel: "Remove Google account",
+  },
+  {
+    name: "settings-connect-connecting",
+    connectors: {
+      ...CONNECTORS_EMPTY,
+      busy: true,
+      google: { accounts: [], connecting: true },
+    },
+    prepare: showSettings,
+    expect: ["Connected accounts", "Google", "Connecting…"],
+    reject: ["Slack", CONNECTOR_TIMEOUT_NOTE, "Add another Google account"],
+  },
+  {
+    name: "settings-connect-timeout",
+    connectors: {
+      ...CONNECTORS_EMPTY,
+      message: CONNECTOR_TIMEOUT_NOTE,
+      noteKind: "neutral",
+    },
+    prepare: showSettings,
+    expect: ["Connected accounts", "Google", "Connect", CONNECTOR_TIMEOUT_NOTE],
+    reject: ["Slack", "Connecting…"],
+    expectEnabled: "Connect",
+    expectNeutralNote: CONNECTOR_TIMEOUT_NOTE,
+  },
   {
     name: "agents-final",
     roster: ROSTER,
@@ -1154,6 +1249,7 @@ app.whenReady().then(async () => {
     load: async (screen) => {
       cloudFixture = screen.cloud ?? CLOUD_EMPTY;
       rosterFixture = screen.roster ?? EMPTY_ROSTER;
+      connectorsFixture = screen.connectors ?? CONNECTORS_EMPTY;
       await win.loadFile(path.join(dist, "renderer/index.html"));
       await waitFor(win, `document.querySelector("#view .panel.agents")`, "the Agents pane");
       await waitFor(win, `document.querySelector("#view .agents-roster .list-section")`, "the Agents inventory");

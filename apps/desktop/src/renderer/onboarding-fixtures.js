@@ -22,6 +22,14 @@ export function onboardingFixtures(now) {
     cloudAgentsError: null,
     cloudAgents: [{ agentId: "agent_elm", name: "Elm", canMessage: true }],
   };
+  const connectorsEmpty = {
+    busy: false,
+    message: "",
+    noteKind: "error",
+    google: { accounts: [], connecting: false },
+  };
+  const connectorTimeoutNote =
+    "We couldn't see a new account. If you reconnected one that was already listed, it's done.";
 
   return [
     {
@@ -201,6 +209,95 @@ export function onboardingFixtures(now) {
       ],
       reject: ["Request…"],
       expectFocus: "Continue",
+    },
+    {
+      name: "connect-empty",
+      state: { ...base, step: "connect" },
+      connectors: connectorsEmpty,
+      cloud: noAgents,
+      expect: [
+        "Connect your accounts",
+        "Connect Plow Latch to your most helpful accounts.",
+        "Google",
+        "Connect",
+        "Back",
+        "Skip",
+      ],
+      reject: ["Slack", "Done", "Add another Google account"],
+      expectFocus: "Connect",
+      expectDotCount: 4,
+    },
+    {
+      name: "connect-connecting",
+      state: { ...base, step: "connect" },
+      connectors: {
+        ...connectorsEmpty,
+        busy: true,
+        google: { accounts: [], connecting: true },
+      },
+      cloud: noAgents,
+      expect: [
+        "Connect your accounts",
+        "Google",
+        "Connecting…",
+        "Skip",
+      ],
+      reject: ["Slack", connectorTimeoutNote, "Done"],
+      expectEnabled: "Skip",
+      expectDotCount: 4,
+    },
+    {
+      name: "connect-timeout",
+      state: { ...base, step: "connect" },
+      connectors: {
+        ...connectorsEmpty,
+        message: connectorTimeoutNote,
+        noteKind: "neutral",
+      },
+      cloud: noAgents,
+      expect: [
+        "Connect your accounts",
+        "Google",
+        "Connect",
+        connectorTimeoutNote,
+        "Skip",
+      ],
+      reject: ["Slack"],
+      rejectButton: "Done",
+      expectFocus: "Connect",
+      expectEnabled: "Connect",
+      expectNeutralNote: connectorTimeoutNote,
+      expectDotCount: 4,
+    },
+    {
+      name: "connect-populated",
+      state: { ...base, step: "connect" },
+      connectors: {
+        ...connectorsEmpty,
+        google: {
+          connecting: false,
+          accounts: [
+            { email: "mary@gmail.com", isDefault: true },
+            { email: "mary@work.com", isDefault: false },
+          ],
+        },
+      },
+      cloud: noAgents,
+      expect: [
+        "Connect your accounts",
+        "Google",
+        "mary@gmail.com",
+        "Default",
+        "mary@work.com",
+        "Set default",
+        "Add another Google account",
+        "Done",
+      ],
+      reject: ["Slack", "Skip", connectorTimeoutNote],
+      expectFocus: "Add another Google account",
+      expectAriaLabel: "Remove Google account",
+      expectDotCount: 4,
+      expectBodyScrollTop: 0,
     },
     {
       name: "done-agent",

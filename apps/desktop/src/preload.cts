@@ -6,6 +6,16 @@
 import { contextBridge, ipcRenderer } from "electron";
 import type { CloudAgentsPreloadState } from "./cloudAgentsIpc.js";
 
+type ConnectorsState = {
+  busy: boolean;
+  message: string;
+  noteKind: "neutral" | "error";
+  google: {
+    accounts: Array<{ email: string; isDefault: boolean }>;
+    connecting: boolean;
+  };
+};
+
 contextBridge.exposeInMainWorld("domo", {
   // Main window data.
   auditList: () => ipcRenderer.invoke("audit:list"),
@@ -131,6 +141,17 @@ contextBridge.exposeInMainWorld("domo", {
   onboardingNewCode: () => ipcRenderer.invoke("onboarding:newCode"),
   onboardingFinish: () => ipcRenderer.invoke("onboarding:finish"),
   onOnboardingChanged: (cb: () => void) => ipcRenderer.on("onboarding:changed", cb),
+
+  // Connected accounts. OAuth stays in main: these calls carry only the
+  // selected account, when needed, and receive display-only connector state.
+  connectorsRefresh: (): Promise<ConnectorsState> => ipcRenderer.invoke("connectors:refresh"),
+  connectorsConnect: (): Promise<ConnectorsState> => ipcRenderer.invoke("connectors:connect"),
+  connectorsDisconnect: (account: string): Promise<ConnectorsState> =>
+    ipcRenderer.invoke("connectors:disconnect", account),
+  connectorsSetDefault: (account: string): Promise<ConnectorsState> =>
+    ipcRenderer.invoke("connectors:setDefault", account),
+  onConnectorsChanged: (cb: (state: ConnectorsState) => void) =>
+    ipcRenderer.on("connectors:changed", (_event, state: ConnectorsState) => cb(state)),
 
   // Connect a client (main window). Like the wizard, every call returns the
   // whole state so the screen renders from one shape. The minted credential

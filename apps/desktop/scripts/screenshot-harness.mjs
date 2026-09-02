@@ -69,6 +69,10 @@ export async function waitFor(win, expr, label, timeoutMs = 10_000) {
  * which is where a revealed secret lands. `expectFocus` is matched against the
  * focused element's label (its text, or an input's placeholder) — the screen's
  * promise that Return does what the highlighted control advertises.
+ * `expectEnabled` names a button that must remain actionable in that state.
+ * `rejectButton` names an exact button label that must not be rendered.
+ * `expectNeutralNote` names connector status copy that must use neutral rather
+ * than error styling.
  */
 export async function shootScreens({ win, outDir, prefix, screens, load, beforeShot }) {
   fs.mkdirSync(outDir, { recursive: true });
@@ -92,6 +96,21 @@ export async function shootScreens({ win, outDir, prefix, screens, load, beforeS
     const focused = await win.webContents.executeJavaScript(
       `(document.activeElement?.textContent || document.activeElement?.getAttribute("placeholder") || "").trim()`,
     );
+    const enabledButtons = await win.webContents.executeJavaScript(
+      `[...document.querySelectorAll("button:not(:disabled)")].map((button) => button.textContent.trim())`,
+    );
+    const buttonLabels = await win.webContents.executeJavaScript(
+      `[...document.querySelectorAll("button")].map((button) => button.textContent.trim())`,
+    );
+    const neutralNotes = await win.webContents.executeJavaScript(
+      `[...document.querySelectorAll(".connector-note.neutral:not(.error)")].map((note) => note.textContent.trim())`,
+    );
+    const dotCount = await win.webContents.executeJavaScript(
+      `document.querySelectorAll(".foot-dot").length`,
+    );
+    const bodyScrollTop = await win.webContents.executeJavaScript(
+      `document.querySelector(".wizard-body")?.scrollTop ?? 0`,
+    );
     const missing = [
       ...(screen.expect ?? []).filter((needle) => !text.includes(needle.toLowerCase())),
       ...(screen.reject ?? [])
@@ -106,6 +125,21 @@ export async function shootScreens({ win, outDir, prefix, screens, load, beforeS
         : []),
       ...(screen.expectFocus && !focused.includes(screen.expectFocus)
         ? [`focus on "${screen.expectFocus}" (focused: "${focused}")`]
+        : []),
+      ...(screen.expectEnabled && !enabledButtons.includes(screen.expectEnabled)
+        ? [`enabled button "${screen.expectEnabled}"`]
+        : []),
+      ...(screen.rejectButton && buttonLabels.includes(screen.rejectButton)
+        ? [`unexpected button "${screen.rejectButton}"`]
+        : []),
+      ...(screen.expectNeutralNote && !neutralNotes.includes(screen.expectNeutralNote)
+        ? [`neutral connector note "${screen.expectNeutralNote}"`]
+        : []),
+      ...(screen.expectDotCount !== undefined && dotCount !== screen.expectDotCount
+        ? [`${screen.expectDotCount} footer dots (found: ${dotCount})`]
+        : []),
+      ...(screen.expectBodyScrollTop !== undefined && bodyScrollTop !== screen.expectBodyScrollTop
+        ? [`wizard body scroll ${screen.expectBodyScrollTop} (found: ${bodyScrollTop})`]
         : []),
     ];
     if (missing.length) failures += 1;
