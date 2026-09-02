@@ -91,8 +91,8 @@ app.whenReady().then(async () => {
       currentFullDiskAccess = fixture.fullDiskAccess === true;
       currentConnectors = fixture.connectors ?? {
         busy: false,
-        error: null,
-        note: null,
+        message: "",
+        noteKind: "error",
         google: { accounts: [], connecting: false },
       };
       await win.loadFile(path.join(dist, "renderer/onboarding.html"));

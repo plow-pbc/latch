@@ -38,8 +38,8 @@ const CHAT_TITLE = "Willow · You · Robin";
 const TRIP_CHAT_TITLE = "+1 628-555-0144 · You";
 const CONNECTORS_EMPTY = {
   busy: false,
-  error: null,
-  note: null,
+  message: "",
+  noteKind: "error",
   google: { accounts: [], connecting: false },
 };
 const CONNECTOR_TIMEOUT_NOTE =
@@ -477,7 +477,8 @@ const SCREENS = [
     name: "settings-connect-timeout",
     connectors: {
       ...CONNECTORS_EMPTY,
-      note: CONNECTOR_TIMEOUT_NOTE,
+      message: CONNECTOR_TIMEOUT_NOTE,
+      noteKind: "neutral",
     },
     prepare: showSettings,
     expect: ["Connected accounts", "Google", "Connect", CONNECTOR_TIMEOUT_NOTE],

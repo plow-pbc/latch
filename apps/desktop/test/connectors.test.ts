@@ -140,8 +140,8 @@ describe("connecting a Google account", () => {
     expect(plow.listCredentials).toEqual([CREDENTIAL, CREDENTIAL, CREDENTIAL]);
     expect(state).toEqual({
       busy: false,
-      error: null,
-      note: null,
+      message: "",
+      noteKind: "error",
       google: {
         accounts: [account("ada@example.com", { isDefault: true })],
         connecting: false,
@@ -168,8 +168,8 @@ describe("connecting a Google account", () => {
     expect(plow.listCredentials).toHaveLength(2 + waits.length);
     expect(state.busy).toBe(false);
     expect(state.google.connecting).toBe(false);
-    expect(state.error).toBeNull();
-    expect(state.note).toBe(CONNECTOR_TIMEOUT_NOTE);
+    expect(state.message).toBe(CONNECTOR_TIMEOUT_NOTE);
+    expect(state.noteKind).toBe("neutral");
     expect(audits).toEqual([]);
   });
 
@@ -188,8 +188,7 @@ describe("connecting a Google account", () => {
     const state = await connectors.connect();
 
     expect(waits).toHaveLength(CONNECTOR_TIMEOUT_MS / CONNECTOR_POLL_INTERVAL_MS);
-    expect(state.error).toBeNull();
-    expect(state.note).toBeNull();
+    expect(state.message).toBe("");
     expect(state.google.accounts).toEqual([
       account("late@example.com", { isDefault: true }),
     ]);
@@ -220,8 +219,8 @@ describe("connecting a Google account", () => {
 
     expect(timeout).toHaveBeenCalledWith(CONNECTOR_TIMEOUT_MS);
     expect(state.busy).toBe(false);
-    expect(state.error).toBeNull();
-    expect(state.note).toBe(CONNECTOR_TIMEOUT_NOTE);
+    expect(state.message).toBe(CONNECTOR_TIMEOUT_NOTE);
+    expect(state.noteKind).toBe("neutral");
   });
 
   it("bounds a final refresh that never answers and releases the card", async () => {
@@ -247,8 +246,8 @@ describe("connecting a Google account", () => {
     const state = await pending;
     expect(state.busy).toBe(false);
     expect(state.google.connecting).toBe(false);
-    expect(state.error).toBeNull();
-    expect(state.note).toBe(CONNECTOR_TIMEOUT_NOTE);
+    expect(state.message).toBe(CONNECTOR_TIMEOUT_NOTE);
+    expect(state.noteKind).toBe("neutral");
   });
 
   it("refuses a second action while the first is in flight", async () => {
@@ -282,7 +281,8 @@ describe("connecting a Google account", () => {
     const state = await connectors.connect();
 
     expect(opened).toEqual([]);
-    expect(state.error).toBe("Plow couldn't open the connection page.");
+    expect(state.message).toBe("Plow couldn't open the connection page.");
+    expect(state.noteKind).toBe("error");
     expect(JSON.stringify(state)).not.toContain(String(plow.connectUrl));
   });
 
@@ -303,7 +303,7 @@ describe("connecting a Google account", () => {
     const state = await connectors.connect();
 
     expect(opened).toEqual([connectUrl]);
-    expect(state.error).toBeNull();
+    expect(state.message).toBe("");
   });
 });
 
@@ -362,7 +362,7 @@ describe("connector account actions", () => {
 });
 
 describe("connector account lifecycle", () => {
-  it("clears both windows on sign-out and ignores a late old-account poll", async () => {
+  it("publishes cleared state on sign-out and ignores a late old-account poll", async () => {
     const latePoll = deferred<ConnectorsOverview>();
     const plow = new FakePlow();
     const oldAccounts = overview([account("old@example.com", { isDefault: true })]);
@@ -372,14 +372,12 @@ describe("connector account lifecycle", () => {
       pollSignal = signal;
       return latePoll.promise;
     };
-    const onboardingWindowStates: ConnectorsState[] = [];
-    const mainWindowStates: ConnectorsState[] = [];
+    const publishedStates: ConnectorsState[] = [];
     let connectors!: Connectors;
     let audits!: Harness["audits"];
     ({ connectors, audits } = build(plow, {
       onChange: () => {
-        onboardingWindowStates.push(connectors.state());
-        mainWindowStates.push(connectors.state());
+        publishedStates.push(connectors.state());
       },
     }));
 
@@ -396,13 +394,12 @@ describe("connector account lifecycle", () => {
     expect(pollSignal!.aborted).toBe(true);
     expect(signedOut).toEqual({
       busy: false,
-      error: null,
-      note: null,
+      message: "",
+      noteKind: "error",
       google: { accounts: [], connecting: false },
     });
     expect(connectors.state()).toEqual(signedOut);
-    expect(onboardingWindowStates.at(-1)).toEqual(signedOut);
-    expect(mainWindowStates.at(-1)).toEqual(signedOut);
+    expect(publishedStates.at(-1)).toEqual(signedOut);
     expect(audits).toEqual([]);
   });
 });

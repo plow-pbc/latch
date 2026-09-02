@@ -307,8 +307,8 @@ ipcMain.handle("cloud:remove", async (_e, agentId) => {
 ipcMain.handle("settings:signOut", async () => {});
 const connectorProbe = {
   busy: false,
-  error: null,
-  note: null,
+  message: "",
+  noteKind: "error",
   google: {
     connecting: false,
     accounts: [

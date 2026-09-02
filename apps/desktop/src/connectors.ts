@@ -20,8 +20,8 @@ export const CONNECTOR_TIMEOUT_NOTE =
 
 export interface ConnectorsState {
   busy: boolean;
-  error: string | null;
-  note: string | null;
+  message: string;
+  noteKind: "neutral" | "error";
   google: {
     accounts: ConnectorAccount[];
     connecting: boolean;
@@ -53,8 +53,7 @@ const STALE_ACTION = Symbol("stale connector action");
 
 export class Connectors {
   private busy = false;
-  private error: string | null = null;
-  private note: string | null = null;
+  private notice: Pick<ConnectorsState, "message" | "noteKind"> = { message: "", noteKind: "error" };
   private connecting = false;
   private accounts: ConnectorAccount[] = [];
   private generation = 0;
@@ -65,8 +64,7 @@ export class Connectors {
   state(): ConnectorsState {
     return {
       busy: this.busy,
-      error: this.error,
-      note: this.note,
+      ...this.notice,
       google: {
         accounts: this.accounts.map((account) => ({ ...account })),
         connecting: this.connecting,
@@ -135,7 +133,7 @@ export class Connectors {
       } catch (error) {
         this.assertCurrent(action);
         if (!finalRefreshDeadline.aborted) throw error;
-        this.note = CONNECTOR_TIMEOUT_NOTE;
+        this.notice = { message: CONNECTOR_TIMEOUT_NOTE, noteKind: "neutral" };
         return;
       }
       const connected = connectedAccount(before, after);
@@ -146,7 +144,7 @@ export class Connectors {
         });
         return;
       }
-      this.note = CONNECTOR_TIMEOUT_NOTE;
+      this.notice = { message: CONNECTOR_TIMEOUT_NOTE, noteKind: "neutral" };
     });
   }
 
@@ -181,8 +179,7 @@ export class Connectors {
     this.actionAbort?.abort();
     this.actionAbort = null;
     this.accounts = [];
-    this.error = null;
-    this.note = null;
+    this.notice = { message: "", noteKind: "error" };
     this.busy = false;
     this.connecting = false;
     return this.publish();
@@ -199,8 +196,7 @@ export class Connectors {
 
     const credential = this.deps.credential().trim();
     if (!credential) {
-      this.error = "This Mac isn't signed in yet.";
-      this.note = null;
+      this.notice = { message: "This Mac isn't signed in yet.", noteKind: "error" };
       return this.publish();
     }
 
@@ -211,15 +207,14 @@ export class Connectors {
     this.actionAbort = action.controller;
     this.busy = true;
     this.connecting = connecting;
-    this.error = null;
-    this.note = null;
+    this.notice = { message: "", noteKind: "error" };
     this.publish();
     try {
       await body(credential, action);
       this.assertCurrent(action);
     } catch (error) {
       if (!this.isCurrent(action) || error === STALE_ACTION) return this.state();
-      this.error = messageOf(error);
+      this.notice = { message: messageOf(error), noteKind: "error" };
     } finally {
       if (this.actionAbort === action.controller) this.actionAbort = null;
       if (this.isCurrent(action)) {

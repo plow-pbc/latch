@@ -1884,8 +1884,8 @@ async function renderSettings() {
   // data only and does not need to know whether this pane has painted yet.
   let connectorState = {
     busy: true,
-    error: null,
-    note: null,
+    message: "",
+    noteKind: "error",
     loading: true,
     google: { accounts: [], connecting: false },
   };
@@ -1908,11 +1908,9 @@ async function renderSettings() {
   };
   const drawConnectors = () => {
     connectorBox.replaceChildren(googleConnectorCard(connectorState, connectorActions));
-    const message = connectorState.error ?? connectorState.note;
-    connectorNote.textContent = message ?? "";
-    connectorNote.hidden = !message;
-    connectorNote.classList.toggle("error", Boolean(connectorState.error));
-    connectorNote.classList.toggle("neutral", !connectorState.error && Boolean(connectorState.note));
+    connectorNote.textContent = connectorState.message;
+    connectorNote.hidden = !connectorState.message;
+    connectorNote.className = `connector-note ${connectorState.noteKind}`;
   };
   const applyConnectors = (next) => {
     if (!next) return;
@@ -1923,7 +1921,7 @@ async function renderSettings() {
     applyConnectors(await window.domo.connectorsRefresh());
   };
   drawConnectors();
-  await refreshConnectors();
+  void refreshConnectors();
 
   // Software updates: version + status + a check/restart action + the two
   // automation preferences. Everything renders from one updates:get shape.
@@ -2122,6 +2120,7 @@ async function renderSettings() {
   // otherwise leave this pane stale with no later event to correct it.
   await settingsMounted.refreshUpdates();
 
+  if (currentTab !== "settings") return;
   view.replaceChildren(el("div", { class: "panel settings" }, [
     // The old subtitle promised a phone number this screen never shows. The
     // activation flow learns it server-side from the inbound SMS, so say what

@@ -25,8 +25,8 @@ export function onboardingFixtures(now) {
   };
   const connectorsEmpty = {
     busy: false,
-    error: null,
-    note: null,
+    message: "",
+    noteKind: "error",
     google: { accounts: [], connecting: false },
   };
   const connectorTimeoutNote =
@@ -268,7 +268,8 @@ export function onboardingFixtures(now) {
       state: { ...base, step: "connect" },
       connectors: {
         ...connectorsEmpty,
-        note: connectorTimeoutNote,
+        message: connectorTimeoutNote,
+        noteKind: "neutral",
       },
       cloud: noAgents,
       expect: [

@@ -8,8 +8,8 @@ import type { CloudAgentsPreloadState } from "./cloudAgentsIpc.js";
 
 type ConnectorsState = {
   busy: boolean;
-  error: string | null;
-  note: string | null;
+  message: string;
+  noteKind: "neutral" | "error";
   google: {
     accounts: Array<{ email: string; isDefault: boolean }>;
     connecting: boolean;

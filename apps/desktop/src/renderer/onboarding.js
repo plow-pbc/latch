@@ -28,7 +28,7 @@ async function update(action) {
 }
 
 async function updateConnectors(action) {
-  await mutate(async () => applyConnectors(await action()));
+  applyConnectors(await action());
 }
 
 function svgElement(tag, attrs = {}) {
@@ -454,8 +454,8 @@ function dataScreen() {
 function connectScreen() {
   const current = connectorState ?? {
     busy: true,
-    error: null,
-    note: null,
+    message: "",
+    noteKind: "error",
     loading: true,
     google: { accounts: [], connecting: false },
   };
@@ -480,11 +480,10 @@ function connectScreen() {
       googleConnectorCard(current, actions),
     ]),
   ];
-  const connectorMessage = current.error ?? current.note;
-  if (connectorMessage) {
+  if (current.message) {
     parts.push(el("p", {
-      class: `state-note ${current.error ? "error" : "neutral"} connector-note`,
-      text: connectorMessage,
+      class: `state-note ${current.noteKind} connector-note`,
+      text: current.message,
       attrs: { role: "status" },
     }));
   }
