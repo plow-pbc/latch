@@ -81,6 +81,11 @@ describe("BrokerCore", () => {
     const release = broker.getField(cardId, "number", "https://shop.example/checkout");
     expect(release).toEqual({ value: "4111111111111111", hidden: true });
     expect(broker.getField(cardId, "cardholder name", "https://shop.example/").hidden).toBe(false);
+    // The composed date label: expMonth "12" + expYear "2030" as one YYYY-MM.
+    expect(broker.getField(cardId, "expiry", "https://shop.example/")).toEqual({
+      value: "2030-12",
+      hidden: false,
+    });
   });
 
   it("records SEM-URL when no page binds the release", async () => {

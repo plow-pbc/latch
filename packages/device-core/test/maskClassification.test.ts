@@ -214,6 +214,7 @@ describe("the classifier, through the real broker over a real store", () => {
       "expiry year",
       "cardholder name",
       "brand",
+      "expiry",
       "custom:cardholder name",
       "custom:number",
     ]);

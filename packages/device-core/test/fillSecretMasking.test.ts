@@ -89,6 +89,7 @@ function makeCtx(
           { label: "totp", hidden: true, custom: false, alias: false },
           { label: "shipping address", hidden: false, custom: true, alias: false },
           { label: "date of birth", hidden: false, custom: true, alias: false },
+          { label: "expiry", hidden: false, custom: true, alias: false },
         ],
         values: {
           username: "jon",
@@ -96,6 +97,7 @@ function makeCtx(
           totp: "483920",
           "shipping address": "1 Elm St",
           "date of birth": "unknown",
+          expiry: "N/A",
         },
       },
       {
@@ -122,8 +124,14 @@ function makeCtx(
           { label: "number", hidden: true, custom: false, alias: false },
           { label: "code", hidden: true, custom: false, alias: false },
           { label: "cardholder name", hidden: false, custom: false, alias: false },
+          { label: "expiry month", hidden: false, custom: false, alias: false },
+          { label: "expiry year", hidden: false, custom: false, alias: false },
+          { label: "expiry", hidden: false, custom: false, alias: false },
         ],
-        values: { number: "4111111111111111", code: "737", "cardholder name": "Jon Doe" },
+        values: {
+          number: "4111111111111111", code: "737", "cardholder name": "Jon Doe",
+          "expiry month": "04", "expiry year": "2031", expiry: "2031-04",
+        },
       },
       {
         id: "I1",
@@ -232,6 +240,11 @@ function fills(): { selector: string; mask?: boolean }[] {
     .filter((c) => c.action === "fill")
     .map((c) => ("mask" in c ? { selector: c.selector!, mask: c.mask } : { selector: c.selector! }));
 }
+
+/** What the browser typed, unredacted: `selector<TAB>value<TAB>frame` per fill. Only
+ * the date tests read it, and a date is not concealed. */
+const typed = (): string[] =>
+  fs.existsSync(ctx.fillLog) ? fs.readFileSync(ctx.fillLog, "utf8").trim().split("\n") : [];
 
 beforeEach(() => {
   ctx = makeCtx();
@@ -616,23 +629,26 @@ describe("fill_secret marking", () => {
   });
 });
 
-describe("fill_secret formats a date of birth", () => {
-  const typed = (): string[] =>
-    fs.existsSync(ctx.fillLog) ? fs.readFileSync(ctx.fillLog, "utf8").trim().split("\n") : [];
-
+describe("fill_secret formats a date field", () => {
+  const dob = { selector: "#dob", item: "I1", field: "date of birth" };
+  const expiry = { selector: "#exp", item: "C1", field: "expiry" };
   it.each([
-    { format: undefined, want: "1984-11-09" },
-    { format: "MM/DD/YYYY", want: "11/09/1984" },
-    { format: "MMMM", want: "November" },
-    { format: "YYYY", want: "1984" },
-  ])("types it as $format", async ({ format, want }) => {
+    { ...dob, format: undefined, want: "1984-11-09" },
+    { ...dob, format: "MM/DD/YYYY", want: "11/09/1984" },
+    { ...dob, format: "MMMM", want: "November" },
+    { ...dob, format: "YYYY", want: "1984" },
+    { ...expiry, format: undefined, want: "04/31" },
+    { ...expiry, format: "MM/YYYY", want: "04/2031" },
+    { ...expiry, format: "MMMM", want: "April" },
+    { ...expiry, format: "YYYY", want: "2031" },
+  ])("types $field as $format", async ({ selector, item, field, format, want }) => {
     const handle = await session();
     const result = await ctx.sessions.command(handle, {
-      action: "fill_secret", selector: "#dob", item: "I1", field: "date of birth",
+      action: "fill_secret", selector, item, field,
       ...(format === undefined ? {} : { format }),
     });
     expect(result).toEqual({ status: "completed", ok: true, frame: 0 });
-    expect(typed()).toEqual([`#dob\t${want}\t0`]);
+    expect(typed()).toEqual([`${selector}\t${want}\t0`]);
   });
 
   it("refuses a format for a field that is not a date, before asking the vault", async () => {
@@ -640,7 +656,7 @@ describe("fill_secret formats a date of birth", () => {
     const result = await ctx.sessions.command(handle, {
       action: "fill_secret", selector: "#city", item: "I1", field: "city", format: "MM",
     });
-    expect(result).toMatchObject({ status: "error", error: expect.stringMatching(/format.*date of birth/) });
+    expect(result).toMatchObject({ status: "error", error: expect.stringMatching(/format applies only to a date field/) });
     expect(released()).toEqual([]);
     expect(typed()).toEqual([]);
   });
@@ -676,6 +692,46 @@ describe("fill_secret formats a date of birth", () => {
         reason: "the stored value is not a date",
       },
     });
+  });
+
+  it("types the same custom field as stored when no format is given at all", async () => {
+    // Same L1 custom field, no format this time: an empty shape means "as
+    // stored", so a non-date value fills fine — only a given format asks it
+    // to be reshaped into something it isn't.
+    const handle = await session();
+    const result = await ctx.sessions.command(handle, {
+      action: "fill_secret", selector: "#dob", item: "L1", field: "date of birth",
+    });
+    expect(result).toEqual({ status: "completed", ok: true, frame: 0 });
+    expect(typed()).toEqual(["#dob\tunknown\t0"]);
+  });
+});
+
+describe("fill_secret refuses what a month-only date cannot be", () => {
+  it("refuses a day token for a month-only date before asking the vault", async () => {
+    const handle = await session();
+    const result = await ctx.sessions.command(handle, {
+      action: "fill_secret", selector: "#exp", item: "C1", field: "expiry", format: "MM/DD/YY",
+    });
+    expect(result).toMatchObject({ status: "error", error: expect.stringMatching(/no day/) });
+    expect(released()).toEqual([]);
+    expect(typed()).toEqual([]);
+  });
+
+  it("gives advice that fits, when a custom field coincidentally named 'expiry' isn't a date", async () => {
+    // Unlike date of birth, expiry's own default shape (MM/YY) is never
+    // empty, so omitting format never skips the reshape — "fill it without
+    // format" would be advice the caller already followed.
+    const handle = await session();
+    const result = await ctx.sessions.command(handle, {
+      action: "fill_secret", selector: "#exp", item: "L1", field: "expiry",
+    });
+    expect(result).toMatchObject({
+      status: "error",
+      error: expect.stringMatching(/not a date.*rename the field/),
+    });
+    expect(result).toMatchObject({ error: expect.not.stringMatching(/fill it without 'format'/) });
+    expect(typed()).toEqual([]);
   });
 });
 
