@@ -25,11 +25,13 @@
  * a model reasoning over them may do better than a tree that shipped once,
  * and for the audit trail that shows which branch was wrong when one is.
  */
-import { JSONValue } from "@domo/protocol";
+import path from "node:path";
+import { canonicalizeAsync, JSONValue } from "@domo/protocol";
 import {
   candidatePaths,
   Errno,
   errnoFromHint,
+  MAX_CANDIDATE_PATHS,
   parseNodeError,
   StderrHint,
   stderrHint,
@@ -132,9 +134,13 @@ export function isHostGate(cause: BlockedCause): boolean {
 /** What the diagnosis is told about the failure, by whoever caught it. */
 export interface FailureContext {
   op: "read" | "write" | "exec";
-  /** Paths implicated, canonical where the caller had them. A file op names
-   *  one; a command names what it declared and what appears in its argv. */
+  /** Paths implicated, verbatim (one path per entry, spaces and all),
+   *  canonical where the caller had them. A file op names one; a command
+   *  names what it declared and its working directory. */
   paths: readonly string[];
+  /** Free text to mine for further paths — a command's argv and its output.
+   *  Split on whitespace, so a path with a space in it must go in `paths`. */
+  texts?: readonly string[];
   /** The Node error text, for an in-process file op. */
   errorMessage?: string | null;
   /** The command's captured output, for a run. */
@@ -165,37 +171,73 @@ export async function collectFacts(
   const errno = parsed.errno ?? errnoFromHint(hint);
 
   // The paths worth asking about: what the caller named, what the error
-  // named, and what the command's output named — in that order of trust.
-  // Deduplicated AFTER `~` expansion: a path the caller named in full and
-  // stderr repeated as `~/…` is one path, and must be probed once.
-  const candidates = [
-    ...new Set(
-      candidatePaths([
-        ...ctx.paths,
-        ...(parsed.path ? [parsed.path] : []),
-        ...(ctx.stderr ? [ctx.stderr] : []),
-      ]).map((p) => expandHome(p, ownerHome)),
-    ),
+  // named, and what the command line and its output named — in that order
+  // of trust. Deduplicated AFTER `~` expansion: a path the caller named in
+  // full and stderr repeated as `~/…` is one path, and must be probed once.
+  // Canonical, like the sandbox profile and the gate table: a `/var/…` from
+  // stderr is `/private/var/…` to the kernel, and a symlink's target is what
+  // was refused.
+  // Where each candidate came from decides how much it is trusted: a path
+  // the failure itself named outranks one the command line mentioned, which
+  // outranks one the caller merely declared (a cwd, a read root).
+  type Source = "error" | "argv" | "declared";
+  const sourced: [string, Source][] = [
+    ...(parsed.path ? [[parsed.path, "error"] as [string, Source]] : []),
+    ...candidatePaths(ctx.stderr ? [ctx.stderr] : []).map((p): [string, Source] => [p, "error"]),
+    ...candidatePaths(ctx.texts ?? []).map((p): [string, Source] => [p, "argv"]),
+    ...ctx.paths.map((p): [string, Source] => [p, "declared"]),
   ];
+  const bySource = new Map<string, Source>();
+  for (const [raw, source] of sourced) {
+    const p = await canonicalizeAsync(expandHome(raw, ownerHome));
+    if (!bySource.has(p)) bySource.set(p, source);
+  }
+  const candidates = [...bySource.keys()].slice(0, MAX_CANDIDATE_PATHS);
 
   type Examined = {
     path: string;
+    source: Source;
     info: Awaited<ReturnType<HostProbes["inspect"]>>;
     open: OpenOutcome;
     gate: HostPermission | null;
     sip: boolean;
+    grants: { read: boolean; write: boolean } | null;
   };
-  const examined: Examined[] = [];
-  for (const path of candidates) {
-    const [info, open] = await Promise.all([probes.inspect(path), probes.openAsApp(path)]);
-    examined.push({ path, info, open, gate: guardedPrefix(path, ownerHome), sip: sipProtected(path) });
-  }
+  // Every candidate at once: each open-as-app probe runs to its own timeout
+  // when a dialog is holding it, and eight of those in sequence would outrun
+  // the call budget this runs inside of.
+  const examined: Examined[] = await Promise.all(
+    candidates.map(async (path) => {
+      const info = await probes.inspect(path);
+      // A path that is not there cannot be opened, but CREATING it is what a
+      // refused write was trying to do, and that is the parent's business: a
+      // consent dialog on the folder or a profile with no write grant there
+      // is the answer, and the probe that finds it is the parent's.
+      const open = info !== null ? await probes.openAsApp(path) : await parentOpen(probes, path);
+      return {
+        path,
+        source: bySource.get(path)!,
+        info,
+        open,
+        gate: guardedPrefix(path, ownerHome),
+        sip: sipProtected(path),
+        grants: ctx.sandbox ? ctx.sandbox(path) : null,
+      };
+    }),
+  );
 
-  // The path of interest: the first one the app itself could not open, else
-  // the first under a gate, else the first named. A command that touched
-  // three paths and was refused on one is diagnosed on that one.
+  // The path of interest, by how much each fact says: one the app itself
+  // could not open; else, for a sandboxed run, one the profile would not have
+  // allowed — the failure's own path before the command line's, and never a
+  // merely declared one, since a read-only cwd is not what went wrong; else
+  // one the failure named; else one under a gate; else the first. A command
+  // that touched three paths and was refused on one is diagnosed on that one.
+  const profileDenied = (e: Examined) => e.grants !== null && (!e.grants.write || !e.grants.read);
   const chosen =
-    examined.find((e) => e.open !== "ok") ??
+    examined.find((e) => e.open !== "ok" && e.open !== "ENOENT") ??
+    (ctx.ranSandboxed ? examined.find((e) => e.source === "error" && profileDenied(e)) : undefined) ??
+    (ctx.ranSandboxed ? examined.find((e) => e.source === "argv" && profileDenied(e)) : undefined) ??
+    examined.find((e) => e.source === "error") ??
     examined.find((e) => e.gate !== null) ??
     examined[0] ??
     null;
@@ -205,7 +247,7 @@ export async function collectFacts(
     ctx.automationTarget ? probes.automationStatus(ctx.automationTarget) : Promise.resolve(null),
   ]);
 
-  const grants = chosen && ctx.sandbox ? ctx.sandbox(chosen.path) : null;
+  const grants = chosen?.grants ?? null;
   return {
     op: ctx.op,
     path: chosen ? tildeRelative(chosen.path, ownerHome) : null,
@@ -231,9 +273,19 @@ export async function collectFacts(
   };
 }
 
-function expandHome(path: string, ownerHome: string): string {
-  if (path === "~") return ownerHome;
-  return path.startsWith("~/") ? ownerHome + path.slice(1) : path;
+function expandHome(p: string, ownerHome: string): string {
+  if (p === "~") return ownerHome;
+  return p.startsWith("~/") ? ownerHome + p.slice(1) : p;
+}
+
+/** The parent's open outcome stands in for a missing path's: `ok` becomes
+ *  `ENOENT` (the file really is just absent), anything else is the parent's
+ *  own refusal or hang. */
+async function parentOpen(probes: HostProbes, p: string): Promise<OpenOutcome> {
+  const parent = path.dirname(p);
+  if (parent === p) return "ENOENT";
+  const open = await probes.openAsApp(parent);
+  return open === "ok" ? "ENOENT" : open;
 }
 
 /**
@@ -324,11 +376,14 @@ export function diagnose(f: HostFacts): Diagnosis {
     }
   }
 
-  if (errno === "ENOENT" || f.path_exists === false) {
+  // Missing is the verdict only when nothing says otherwise: a write refused
+  // with EPERM leaves no file behind either, and that refusal is the story.
+  if (errno === "ENOENT" || (errno === null && f.path_exists === false)) {
     evidence.push(`${where} does not exist`);
     return verdict("not_found", "confirmed", null);
   }
   if (f.path_exists === true) ruledOut.push("file missing");
+  else if (f.path_exists === false) evidence.push(`${where} does not exist; the refusal is on creating it`);
 
   if (errno === "EROFS") {
     evidence.push(`${where} is on a read-only filesystem`);

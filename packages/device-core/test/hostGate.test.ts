@@ -15,6 +15,7 @@ import os from "node:os";
 import path from "node:path";
 import { canonicalize } from "@domo/protocol";
 import {
+  appleEventTarget,
   candidatePaths,
   collectFacts,
   diagnose,
@@ -160,6 +161,11 @@ describe("reading an error", () => {
     ]);
     // Glued to a flag or a key, wrapped in quotes, trailing punctuation.
     expect(candidatePaths(["--db=/a/b", "path:'/c/d',", "\"/e/f\"."])).toEqual(["/a/b", "/c/d", "/e/f"]);
+    // The program reporting a refusal is not the path it reports about —
+    // unless the line names nothing else.
+    expect(candidatePaths(["/bin/sh: /Users/x/Desktop/a: Operation not permitted"])).toEqual(["/Users/x/Desktop/a"]);
+    expect(candidatePaths(["sh: line 1: /Users/x/Desktop/a: Operation not permitted"])).toEqual(["/Users/x/Desktop/a"]);
+    expect(candidatePaths(["/Users/x/Desktop/a: Operation not permitted"])).toEqual(["/Users/x/Desktop/a"]);
     // Relative paths are never guessed at, and a bare "/" is not a file.
     expect(candidatePaths(["ls / ./x ../y"])).toEqual([]);
     const many = Array.from({ length: 20 }, (_, i) => `/p/${i}`).join(" ");
@@ -403,7 +409,7 @@ describe("collectFacts — the battery over scripted probes", () => {
     const f = await collectFacts(
       {
         op: "exec",
-        paths: ["/tmp/scratch", `${HOME}/Library/Messages/chat.db`],
+        paths: ["/opt/scratch", `${HOME}/Library/Messages/chat.db`],
         stderr: "Error: unable to open database \"~/Library/Messages/chat.db\": Operation not permitted",
         ranSandboxed: true,
         sandbox: () => ({ read: true, write: false }),
@@ -412,7 +418,8 @@ describe("collectFacts — the battery over scripted probes", () => {
       HOME,
     );
     expect(f.path).toBe("~/Library/Messages/chat.db");
-    expect(f.paths_examined).toEqual(["/tmp/scratch", "~/Library/Messages/chat.db"]);
+    // What the failure named comes first, what was merely declared last.
+    expect(f.paths_examined).toEqual(["~/Library/Messages/chat.db", "/opt/scratch"]);
     expect(f.errno).toBe("EPERM");
     expect(f.stderr_hint).toBe("operation_not_permitted");
     expect(f.app_process_open).toBe("EPERM");
@@ -424,6 +431,24 @@ describe("collectFacts — the battery over scripted probes", () => {
     expect(probes.calls.filter((c) => c.startsWith("openAsApp"))).toHaveLength(2);
     expect(probes.calls).toContain("fullDiskAccess");
     expect(diagnose(f).cause).toBe("macos_permission");
+  });
+
+  it("keeps a named path whole and mines argv text for more", async () => {
+    const spaced = `${HOME}/Documents/My Report/draft.txt`;
+    const probes = scriptedProbes({ openAsApp: { [spaced]: "EPERM" } });
+    const f = await collectFacts(
+      { op: "exec", paths: [spaced], texts: ["cat /opt/other.txt"], ranSandboxed: true },
+      probes,
+      HOME,
+    );
+    expect(f.paths_examined).toEqual(["/opt/other.txt", "~/Documents/My Report/draft.txt"]);
+    expect(f.path).toBe("~/Documents/My Report/draft.txt");
+  });
+
+  it("names the app an AppleScript addresses", () => {
+    expect(appleEventTarget(["osascript", "-e", 'tell application "Messages" to send "x" to buddy "y"'])).toBe("Messages");
+    expect(appleEventTarget(["osascript", "-e", 'tell app "Contacts"', "-e", 'tell application "Mail"'])).toBe("Contacts");
+    expect(appleEventTarget(["ls"])).toBeNull();
   });
 
   it("reads the path out of a Node error when the caller named none", async () => {
@@ -452,9 +477,59 @@ describe("collectFacts — the battery over scripted probes", () => {
     expect(probes.calls.filter((c) => c.startsWith("automationStatus"))).toHaveLength(1);
   });
 
+  it("judges a missing write target by its parent: a folder the app is refused", async () => {
+    const target = `${HOME}/Documents/new.txt`;
+    const probes = scriptedProbes({
+      inspect: { [target]: null },
+      openAsApp: { [`${HOME}/Documents`]: "EPERM" },
+      fullDiskAccess: false,
+    });
+    const f = await collectFacts(
+      { op: "write", paths: [target], errorMessage: `write failed: EPERM: operation not permitted, open '${target}'`, ranSandboxed: false },
+      probes,
+      HOME,
+    );
+    expect(f.path_exists).toBe(false);
+    expect(f.app_process_open).toBe("EPERM");
+    expect(probes.calls).toContain(`openAsApp ${HOME}/Documents`);
+    const d = diagnose(f);
+    expect(d.cause).toBe("macos_permission");
+    expect(d.permission).toBe("files_documents");
+    expect(d.evidence.join(" ")).toMatch(/refusal is on creating it/);
+  });
+
+  it("judges a missing write target the sandbox denied by the profile, not as missing", async () => {
+    const target = "/opt/elsewhere/new.txt";
+    const probes = scriptedProbes({ inspect: { [target]: null } });
+    const f = await collectFacts(
+      {
+        op: "exec",
+        paths: [],
+        texts: ["sh -c 'echo hi > /opt/elsewhere/new.txt'"],
+        stderr: "sh: /opt/elsewhere/new.txt: Operation not permitted",
+        ranSandboxed: true,
+        sandbox: () => ({ read: false, write: false }),
+      },
+      probes,
+      HOME,
+    );
+    expect(f.path).toBe(target);
+    expect(f.app_process_open).toBe("ENOENT");
+    expect(diagnose(f).cause).toBe("outside_approved_bound");
+  });
+
+  it("a missing path with no errno at all is simply missing", async () => {
+    const f = await collectFacts(
+      { op: "read", paths: ["/opt/nothing/here"], ranSandboxed: false },
+      scriptedProbes({ inspect: { "/opt/nothing/here": null } }),
+      HOME,
+    );
+    expect(diagnose(f).cause).toBe("not_found");
+  });
+
   it("prefers a guarded path over an unguarded one when neither was refused", async () => {
     const f = await collectFacts(
-      { op: "exec", paths: ["/tmp/a", `${HOME}/Downloads/b`], ranSandboxed: true, hung: true },
+      { op: "exec", paths: ["/opt/a", `${HOME}/Downloads/b`], ranSandboxed: true, hung: true },
       scriptedProbes(),
       HOME,
     );

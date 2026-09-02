@@ -87,7 +87,16 @@ export function candidatePaths(texts: readonly string[], limit = MAX_CANDIDATE_P
   const seen = new Set<string>();
   const out: string[] = [];
   for (const text of texts) {
-    for (const raw of text.split(/\s+/)) {
+    for (const line of text.split(/\r?\n/)) {
+      const words = line.split(/\s+/).filter((w) => w.length > 0);
+      // `/bin/sh: /x: Operation not permitted` — the first word of a stderr
+      // line, colon-terminated, is the program reporting, not the path it is
+      // reporting about. Dropped only when the line names something else,
+      // so a line that is nothing but a path keeps it.
+      if (words.length > 1 && words[0]!.endsWith(":") && words.slice(1).some((w) => /(?:^|[=:'"`])~?\//.test(w))) {
+        words.shift();
+      }
+      for (const raw of words) {
       // A shell word may glue a flag or a key to the path: `--db=/x`, `key:/x`.
       const at = raw.search(/(?:^|[=:'"`])(~?\/)/);
       if (at < 0) continue;
@@ -100,7 +109,19 @@ export function candidatePaths(texts: readonly string[], limit = MAX_CANDIDATE_P
       seen.add(token);
       out.push(token);
       if (out.length >= limit) return out;
+      }
     }
   }
   return out;
+}
+
+/**
+ * The application an AppleScript in `argv` addresses — `tell application
+ * "Messages"` — so a refused send can be checked against that target's
+ * Automation consent. The first target only: a script that drives two apps
+ * is diagnosed on the first, and the evidence says which.
+ */
+export function appleEventTarget(argv: readonly string[]): string | null {
+  const m = /tell\s+(?:application|app)\s+"([^"]+)"/i.exec(argv.join(" "));
+  return m ? m[1]! : null;
 }

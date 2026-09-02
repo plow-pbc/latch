@@ -30,7 +30,21 @@ import { VaultStore } from "./browser/vaultStore.js";
 import { ResolvedBrowserRuntime } from "./browser/browserRuntime.js";
 import { BROWSING_SKILL } from "./browser/browsingSkill.js";
 import { ExecResult, Executor, REAPED_MESSAGE } from "./executor.js";
-import { FileOps } from "./fileOps.js";
+import { FileOps, FileOpsError } from "./fileOps.js";
+import {
+  appleEventTarget,
+  collectFacts,
+  diagnose,
+  Diagnosis,
+  diagnosisPayload,
+  guardedPrefix,
+  HostFacts,
+  HostProbes,
+  isHostGate,
+  nodeProbes,
+  parseNodeError,
+  stderrHint,
+} from "./hostGate/index.js";
 import { DeviceIdentity, loadOrCreateIdentity } from "./identity.js";
 import { PolicyDelegate, PolicyEngine } from "./policyEngine.js";
 import { SkillRegistry } from "./skills.js";
@@ -115,6 +129,43 @@ const EXPLAINED_DENIALS: Record<string, string> = {
 };
 
 /**
+ * How long an in-process file operation on a TCC-guarded path may take before
+ * its silence is read as a consent dialog holding it.
+ *
+ * macOS does not refuse an unconsented open of the Desktop, Documents or
+ * Downloads folder — it parks the call until someone at the Mac answers a
+ * dialog, and this app's owner is routinely not at the Mac. An `fs.readFile`
+ * parked that way would leave the agent's call pending until the handle
+ * expired, with nothing anywhere saying why. Five seconds is far longer than a
+ * capped (8MB) read takes and far shorter than any human answering a dialog.
+ * Only guarded paths are raced: everything else fails or finishes on its own.
+ */
+const FILE_OP_HANG_MS = 5_000;
+
+/** Thrown when the race above is lost: the operation is still parked. */
+class FileOpHang extends Error {
+  constructor() {
+    super("the operation is waiting on a macOS permission dialog on this Mac's screen");
+    this.name = "FileOpHang";
+  }
+}
+
+/** A run's diagnosis, kept by handle so a later poll carries it too. */
+interface DiagnosedRun {
+  diagnosis: Diagnosis;
+  facts: HostFacts;
+}
+
+/** What a run's argv and capabilities give a diagnosis to work with. */
+interface ExecDiagnosisContext {
+  argv: readonly string[];
+  cwd: string | undefined;
+  readPaths: readonly string[];
+  writePaths: readonly string[];
+  appleEvents: boolean;
+}
+
+/**
  * One shape for a run, whether it is answering the call that started it or a
  * later `plow_get_output` poll. Written once because the two used to be
  * written twice and had already drifted: only the polling path told the agent
@@ -123,8 +174,14 @@ const EXPLAINED_DENIALS: Record<string, string> = {
  * A reaped run ends with no output and a signal exit — indistinguishable,
  * without `error`, from a command that genuinely produced nothing. The agent
  * holding the job is the one who has to tell the user, so it is told here.
+ *
+ * A run this Mac diagnosed carries the verdict and the facts (hostGate/). A
+ * finished run whose cause is a gate is `blocked` rather than `completed`; a
+ * run still going stays `running` with the diagnosis beside it, because a
+ * consent dialog the owner answers lets it finish — killing it would only
+ * make the owner's click pointless.
  */
-function runPayload(result: ExecResult): { [k: string]: JSONValue } {
+function runPayload(result: ExecResult, diagnosed: DiagnosedRun | null): { [k: string]: JSONValue } {
   const payload: { [k: string]: JSONValue } = {
     status: result.running ? "running" : "completed",
     output: result.output.toString("utf8"),
@@ -132,7 +189,25 @@ function runPayload(result: ExecResult): { [k: string]: JSONValue } {
   };
   if (result.exitCode !== null) payload.exit_code = result.exitCode;
   if (result.reaped) payload.error = REAPED_MESSAGE;
+  if (diagnosed) {
+    Object.assign(payload, diagnosisPayload(diagnosed.diagnosis, diagnosed.facts));
+    if (!result.running && isHostGate(diagnosed.diagnosis.cause)) payload.status = "blocked";
+  }
   return payload;
+}
+
+/** The diagnosis as the audit log carries it — the verdict, its evidence and
+ *  every probe's answer, so a wrong verdict can be traced to its branch. */
+function auditDiagnosis(d: DiagnosedRun): { [k: string]: JSONValue } {
+  return {
+    cause: d.diagnosis.cause,
+    confidence: d.diagnosis.confidence,
+    permission: d.diagnosis.permission,
+    evidence: d.diagnosis.evidence,
+    ruled_out: d.diagnosis.ruled_out,
+    owner_action: d.diagnosis.owner_action,
+    probes: d.facts as unknown as JSONValue,
+  };
 }
 
 export class DeviceAgent {
@@ -153,6 +228,19 @@ export class DeviceAgent {
   /** How the sessions build a browser each: one config, many hosts. */
   private readonly browserConfig: BrowserHostConfig | null = null;
   private readonly seenNonces = new Set<string>();
+  /** The owner's real home — what the guarded-path table is keyed on. */
+  private readonly ownerHome: string;
+  /** How a failure is investigated (hostGate/probes.ts). Real by default;
+   *  a test scripts the answers. */
+  readonly hostProbes: HostProbes;
+  /** Diagnoses by run handle, so a `plow_get_output` poll carries the one
+   *  the run's end produced. */
+  private readonly runDiagnoses = new Map<string, DiagnosedRun>();
+  /** Runs already recorded as blocked: one that was found parked while
+   *  running and then reaped is one story, not two audit rows. */
+  private readonly blockedRuns = new Set<string>();
+  /** `FILE_OP_HANG_MS`, overridable by a test that cannot wait it out. */
+  fileOpHangMs = FILE_OP_HANG_MS;
 
   constructor(
     public readonly home: string,
@@ -186,8 +274,16 @@ export class DeviceAgent {
      * (the default) fails closed — every financial release is blocked. The app
      * injects the real plow-consume client so production can obtain approvals. */
     approval: PaymentApprovalClient | null = null,
+    /**
+     * How a refused operation is investigated (hostGate/). Null builds the
+     * real probes over `ownerHome`; the app passes its own so the Automation
+     * helper it ships is found, and a test passes scripted answers.
+     */
+    hostProbes: HostProbes | null = null,
   ) {
     this.identity = loadOrCreateIdentity(home, name);
+    this.ownerHome = ownerHome;
+    this.hostProbes = hostProbes ?? nodeProbes({ ownerHome });
     this.audit = new AuditLog(path.join(home, "device/audit.ndjson"));
     this.policy = new PolicyEngine(path.join(home, "device/rules.json"));
     this.executor = new Executor(path.join(home, "device/scratch"), undefined, this.vendorDirs);
@@ -428,7 +524,7 @@ export class DeviceAgent {
     const p = cap.paths?.[0];
     if (p === undefined) return { status: "error", error: "missing path" };
     try {
-      const data = await FileOps.read(p, cap.paths ?? []);
+      const data = await this.guardedFileOp(p, () => FileOps.read(p, cap.paths ?? []));
       this.audit.record("file_read", {
         intentId: intent.intentId,
         path: p,
@@ -440,10 +536,78 @@ export class DeviceAgent {
         bytes: data.length,
       };
     } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : String(error);
-      this.audit.record("denied_operation", { intentId: intent.intentId, path: p, error: message });
+      return this.fileOpFailed(intent.intentId, "read", p, error);
+    }
+  }
+
+  /**
+   * Run a file operation, and on a TCC-guarded path refuse to wait forever
+   * for it: past `FILE_OP_HANG_MS` the operation is reported as parked on a
+   * consent dialog (`FileOpHang`) and left to finish or fail on its own —
+   * its eventual answer is dropped, because the call it belonged to has
+   * already been answered.
+   */
+  private async guardedFileOp<T>(p: string, op: () => Promise<T>): Promise<T> {
+    if (guardedPrefix(p, this.ownerHome) === null) return op();
+    const work = op();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const hang = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new FileOpHang()), this.fileOpHangMs);
+      timer.unref?.();
+    });
+    try {
+      return await Promise.race([work, hang]);
+    } finally {
+      clearTimeout(timer);
+      // The loser may still reject later; nobody is listening by then.
+      work.catch(() => {});
+    }
+  }
+
+  /**
+   * A file operation that did not happen: say why, as well as this Mac can
+   * tell (hostGate/diagnose.ts).
+   *
+   * Only a failure the kernel answered is investigated — one with an errno in
+   * it, or one that never returned. A path outside the approved scope is the
+   * policy speaking, not the host, and a size-limit refusal is this app's own
+   * rule; both already say exactly what they mean.
+   */
+  private async fileOpFailed(
+    intentId: string,
+    op: "read" | "write",
+    p: string,
+    error: unknown,
+  ): Promise<JSONValue> {
+    const message = error instanceof Error ? error.message : String(error);
+    const hung = error instanceof FileOpHang;
+    const outOfBounds = error instanceof FileOpsError && error.outOfBounds;
+    if (!hung && (outOfBounds || parseNodeError(message).errno === null)) {
+      this.audit.record("denied_operation", { intentId, path: p, error: message });
       return { status: "error", error: message };
     }
+    const facts = await collectFacts(
+      { op, paths: [p], errorMessage: hung ? null : message, ranSandboxed: false, hung },
+      this.hostProbes,
+      this.ownerHome,
+    );
+    const diagnosed: DiagnosedRun = { diagnosis: diagnose(facts), facts };
+    const blocked = isHostGate(diagnosed.diagnosis.cause);
+    if (blocked) {
+      this.audit.record("host_permission_blocked", { intentId, path: p, ...auditDiagnosis(diagnosed) });
+    } else {
+      this.audit.record("denied_operation", {
+        intentId,
+        path: p,
+        error: message,
+        cause: diagnosed.diagnosis.cause,
+      });
+    }
+    return {
+      status: blocked ? "blocked" : "error",
+      error: message,
+      ...diagnosisPayload(diagnosed.diagnosis, diagnosed.facts),
+    };
   }
 
   private async executeWrite(
@@ -457,7 +621,7 @@ export class DeviceAgent {
     if (contentBase64 === null) return { status: "error", error: "missing content" };
     const data = Buffer.from(contentBase64, "base64");
     try {
-      await FileOps.write(p, data, cap.paths ?? []);
+      await this.guardedFileOp(p, () => FileOps.write(p, data, cap.paths ?? []));
       this.audit.record("file_write", {
         intentId: intent.intentId,
         path: p,
@@ -465,9 +629,7 @@ export class DeviceAgent {
       });
       return { status: "completed", bytes: data.length };
     } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : String(error);
-      this.audit.record("denied_operation", { intentId: intent.intentId, path: p, error: message });
-      return { status: "error", error: message };
+      return this.fileOpFailed(intent.intentId, "write", p, error);
     }
   }
 
@@ -551,7 +713,7 @@ export class DeviceAgent {
         appleEvents,
         waitMs,
       });
-      return this.finishRun(intent.intentId, result);
+      return this.finishRun(intent.intentId, result, { argv, cwd: exec.cwd, readPaths, writePaths, appleEvents });
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
       return this.execError(intent.intentId, message);
@@ -566,16 +728,29 @@ export class DeviceAgent {
     return { status: "error", error };
   }
 
-  /** Record a run's `exec_end` — now, or on exit for a deferred run — and
+  /**
+   * Record a run's `exec_end` — now, or on exit for a deferred run — and
    * shape its payload. One spelling for the single-spawn path and the
-   * orchestrated plow-gog runs that answer with a child's output. */
-  private finishRun(intentId: string, result: ExecResult): JSONValue {
+   * orchestrated plow-gog runs that answer with a child's output.
+   *
+   * With `diag` (the plain exec path — a provider run's failures are
+   * account-level and travel in its own envelope), a run that ended badly
+   * or is sitting silent is investigated (`diagnoseRun`), now for a run that
+   * has already ended and again at exit for one that has not.
+   */
+  private async finishRun(
+    intentId: string,
+    result: ExecResult,
+    diag: ExecDiagnosisContext | null = null,
+  ): Promise<JSONValue> {
+    let diagnosed: DiagnosedRun | null = null;
     if (!result.running) {
       this.audit.record("exec_end", {
         intentId,
         exit_code: result.exitCode ?? -1,
         ...(result.reaped ? { reaped: true } : {}),
       });
+      if (diag && result.exitCode !== 0) diagnosed = await this.diagnoseRun(intentId, result, diag);
     } else {
       // A deferred run's end is recorded when it actually ends, keyed to the
       // intent — never from the polling path, which may run many times or
@@ -598,9 +773,70 @@ export class DeviceAgent {
           // failed — but the loss should at least be visible in a terminal.
           console.error(`[audit] exec_end lost for handle ${result.handle}:`, error);
         }
+        // The end of a run that was answered `running` is where a killed or
+        // failed run gets its diagnosis; the next poll carries it. Nothing
+        // awaits this — the exit event is not a call — so it may not throw.
+        if (diag && (reaped || exitCode !== 0)) {
+          this.diagnoseRun(intentId, this.executor.output(result.handle, 0), diag).catch((error) => {
+            console.error(`[hostGate] diagnosis lost for handle ${result.handle}:`, error);
+          });
+        }
+      });
+      // A run still going with nothing said yet may be parked on a consent
+      // dialog. Asked now, inside the call, so the agent hears it in seconds
+      // rather than at the reaper's fifteen minutes.
+      if (diag && result.outputLength === 0) diagnosed = await this.diagnoseRun(intentId, result, diag);
+    }
+    return { ...runPayload(result, diagnosed), handle: result.handle };
+  }
+
+  /**
+   * Investigate a run that ended badly, was killed, or is sitting silent.
+   *
+   * Investigated only when something says a gate might be the reason: the
+   * output carries a refusal this Mac knows how to follow up, the run was
+   * reaped, or it is still running and has said nothing. An ordinary non-zero
+   * exit (grep found nothing) is the command's own business and gets no
+   * probes. The verdict is kept only when it is worth carrying — a gate, a
+   * killed run's facts, or a running run that is confirmed parked; a silent
+   * run that is simply running is left alone.
+   */
+  private async diagnoseRun(
+    intentId: string,
+    result: ExecResult,
+    diag: ExecDiagnosisContext,
+  ): Promise<DiagnosedRun | null> {
+    const output = result.output.toString("utf8");
+    if (!result.reaped && !result.running && stderrHint(output) === null) return null;
+    const facts = await collectFacts(
+      {
+        op: "exec",
+        paths: [...diag.readPaths, ...diag.writePaths, ...(diag.cwd === undefined ? [] : [diag.cwd])],
+        texts: [diag.argv.join(" ")],
+        stderr: output,
+        ranSandboxed: true,
+        sandbox: (p) => this.executor.grants(result.handle, p),
+        hung: result.reaped,
+        automationTarget: diag.appleEvents ? appleEventTarget(diag.argv) : null,
+      },
+      this.hostProbes,
+      this.ownerHome,
+    );
+    const diagnosis = diagnose(facts);
+    if (result.running && diagnosis.cause !== "prompt_waiting") return null;
+    if (!result.running && !result.reaped && !isHostGate(diagnosis.cause)) return null;
+    const diagnosed: DiagnosedRun = { diagnosis, facts };
+    this.runDiagnoses.set(result.handle, diagnosed);
+    if (isHostGate(diagnosis.cause) && !this.blockedRuns.has(result.handle)) {
+      this.blockedRuns.add(result.handle);
+      this.audit.record("host_permission_blocked", {
+        intentId,
+        handle: result.handle,
+        path: facts.path,
+        ...auditDiagnosis(diagnosed),
       });
     }
-    return { ...runPayload(result), handle: result.handle };
+    return diagnosed;
   }
 
   /**
@@ -884,6 +1120,6 @@ export class DeviceAgent {
   }
 
   getOutput(handle: string, since = 0): JSONValue {
-    return runPayload(this.executor.output(handle, since));
+    return runPayload(this.executor.output(handle, since), this.runDiagnoses.get(handle) ?? null);
   }
 }

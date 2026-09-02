@@ -163,9 +163,16 @@ describe("a tool call end to end, in process", () => {
       },
       AGENT,
     );
-    expect(payload.status).toBe("completed");
+    // And the block is named for what it is: the Mac itself can read the file,
+    // so this was the profile — not macOS — and the agent is told to declare
+    // the path rather than sent to System Settings.
+    expect(payload.status).toBe("blocked");
     expect(payload.exit_code).not.toBe(0);
     expect(payload.output).not.toContain("s3cret");
+    expect(payload.diagnosis.cause).toBe("outside_approved_bound");
+    expect(payload.diagnosis.confidence).toBe("confirmed");
+    expect(payload.probes.app_process_open).toBe("ok");
+    expect(payload.probes.sandbox_allows_read).toBe(false);
 
     // The same command against the declared path succeeds, proving the block
     // above was the capability bound and not a broken command.
