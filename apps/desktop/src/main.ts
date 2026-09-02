@@ -31,6 +31,7 @@ import {
   PaymentApprovalRequest,
   plowFolderPath,
   PolicyDelegate,
+  probeFullDiskAccess,
   importLogins,
   importPreview,
   markAgainstVault,
@@ -46,7 +47,7 @@ import {
 import { createDomoMcpServer, DomoMcpServer } from "@domo/mcp-server";
 import { RelayClient } from "@domo/relay-client";
 import { approvalViewModel, auditActivities, CredentialTitles } from "./viewModel.js";
-import { probeFullDiskAccess } from "./fullDiskAccess.js";
+
 import { appBundleName, appBundlePath, decodeTileImage } from "./permissionFlow.js";
 import { FdaGrantFlow } from "./fdaGrantFlow.js";
 import { launchAtLoginState, LoginItemApi, setLaunchAtLogin } from "./loginItem.js";
@@ -648,7 +649,7 @@ ipcMain.handle("onboarding:open", async () => openOnboardingWindow());
  * `fullDiskSettings` is the one non-web entry: System Settings' Full Disk
  * Access pane. macOS has no API an app can call to request that permission —
  * sending the person to the switch IS the whole grant flow (see
- * fullDiskAccess.ts), so the deep link belongs in this table like any other
+ * device-core's hostGate/fullDiskAccess.ts), so the deep link belongs in this table like any other
  * page the app may open.
  */
 const EXTERNAL_URLS: Readonly<Record<string, string>> = Object.freeze({

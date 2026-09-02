@@ -112,6 +112,59 @@ export const SandboxProfile = {
   },
 };
 
+/**
+ * What the profile `SandboxProfile.generate` would build from these arguments
+ * allows at one path — the same decision, asked after the fact.
+ *
+ * This is how a diagnosis (hostGate/diagnose.ts) tells "our seatbelt said no"
+ * from "macOS said no": the app can open the path itself, and this says the
+ * profile the run had would not have. Kept beside the generator so the two
+ * cannot drift; it reads the same lists, in the same order, with the same
+ * `isReapable` housekeeping rule. Paths in and out are canonical — the
+ * generator canonicalizes its inputs, and a caller here passes the path it
+ * already resolved.
+ *
+ * Reads are deliberately the generator's own over-approximation: broad home,
+ * the boilerplate roots, and the literal directory entries the profile lists
+ * one by one. Anything not named is denied, which is the profile's
+ * `(deny default)`.
+ */
+export function sandboxGrants(
+  args: {
+    readPaths: string[];
+    writePaths: string[];
+    network: boolean;
+    appleEvents: boolean;
+    scratch: string;
+    home?: string;
+  },
+  target: string,
+): { read: boolean; write: boolean } {
+  const under = (p: string, root: string) =>
+    p === root || p.startsWith(root.endsWith("/") ? root : root + "/");
+  const home = canonicalize(args.home ?? os.homedir());
+  const housekeeping = ["Library/Caches", ".cache", ".config", ".local/state", ".npm"].map(
+    (p) => home + "/" + p,
+  );
+  const writable = [args.scratch, ...args.writePaths]
+    .concat(isReapable(args) ? [] : housekeeping)
+    .map((p) => canonicalize(p));
+  const write = writable.some((root) => under(target, root));
+  const readRoots = [
+    ...READ_BOILERPLATE,
+    home,
+    ...writable,
+    ...args.readPaths.map((p) => canonicalize(p)),
+    "/dev/fd",
+  ];
+  const literals = new Set([
+    "/", "/private", "/private/var", "/private/tmp", "/tmp", "/var", "/etc", "/Users",
+    "/dev/null", "/dev/urandom", "/dev/random", "/dev/zero", "/dev/tty",
+  ]);
+  const read = write || literals.has(target) || readRoots.some((root) => under(target, root));
+  return { read, write };
+}
+
 export class ExecutorError extends Error {}
 
 /**

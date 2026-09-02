@@ -5,11 +5,14 @@
  * honest check is to try to open something TCC protects and see whether the
  * system allows it. Granting is likewise out of the app's hands: the person
  * flips a switch in System Settings, so the Settings pane's "grant" button is
- * a deep link to that pane (the `fullDiskSettings` entry in main's
- * EXTERNAL_URLS table).
+ * a deep link to that pane (the `fullDiskSettings` entry in the desktop
+ * main's EXTERNAL_URLS table).
  *
- * Pure Node on purpose (no Electron import), like viewModel.ts: the probe
- * logic is unit-testable against fixture paths.
+ * Lives in device-core rather than the desktop app because the diagnosis
+ * (`hostGate/diagnose.ts`) needs the same answer the Settings pane shows —
+ * two probes with two opinions would be the drift this module exists to
+ * prevent. Pure Node on purpose (no Electron import): the probe logic is
+ * unit-testable against fixture paths.
  */
 import fs from "node:fs/promises";
 import os from "node:os";
@@ -30,8 +33,15 @@ export function fullDiskProbePaths(home: string = os.homedir()): string[] {
   ];
 }
 
+/** One probe path's outcome. `ENOENT` proves nothing; a refusal is TCC. */
+export interface FullDiskProbeResult {
+  path: string;
+  outcome: "ok" | "ENOENT" | "EPERM" | "EACCES" | string;
+}
+
 /**
- * Whether this process can read TCC-protected files right now.
+ * Whether this process can read TCC-protected files right now, with the
+ * errno each probe returned — the errno is what a diagnosis reads.
  *
  * "Right now" is the honest scope: macOS can keep enforcing the old answer on
  * a running process after the switch flips (System Settings offers
@@ -41,17 +51,25 @@ export function fullDiskProbePaths(home: string = os.homedir()): string[] {
  * granted — the safe answer on the hosts where it could be wrong (non-Mac test
  * machines, where nothing is TCC-protected at all).
  */
-export async function probeFullDiskAccess(
+export async function probeFullDiskAccessDetail(
   paths: string[] = fullDiskProbePaths(),
-): Promise<boolean> {
+): Promise<{ granted: boolean; results: FullDiskProbeResult[] }> {
+  const results: FullDiskProbeResult[] = [];
   for (const p of paths) {
     try {
       const handle = await fs.open(p, "r");
       await handle.close();
-      return true;
-    } catch {
-      // ENOENT proves nothing; EPERM/EACCES is TCC saying no. Try the next.
+      results.push({ path: p, outcome: "ok" });
+      return { granted: true, results };
+    } catch (error: unknown) {
+      const code = (error as { code?: unknown })?.code;
+      results.push({ path: p, outcome: typeof code === "string" ? code : "error" });
     }
   }
-  return false;
+  return { granted: false, results };
+}
+
+/** The yes/no the Settings pane and the grant flow poll. */
+export async function probeFullDiskAccess(paths: string[] = fullDiskProbePaths()): Promise<boolean> {
+  return (await probeFullDiskAccessDetail(paths)).granted;
 }

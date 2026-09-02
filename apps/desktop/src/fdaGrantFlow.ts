@@ -40,7 +40,7 @@ export interface FdaGrantFlowDeps {
   preloadPath: string;
   /** The compiled tracker, or a path that may not exist (flow degrades). */
   helperPath: string;
-  /** A fresh Full Disk Access probe (fullDiskAccess.ts). */
+  /** A fresh Full Disk Access probe (device-core hostGate/fullDiskAccess.ts). */
   probe: () => Promise<boolean>;
   /** Opens the System Settings pane (main's EXTERNAL_URLS deep link). */
   openSettings: () => Promise<void>;
