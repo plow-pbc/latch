@@ -46,6 +46,9 @@ function writeVault(dir: string): string {
       { id: "C1", title: "Visa", category: "CREDIT_CARD", username: "", urls: [],
         descriptors: [{ label: "number", hidden: true, custom: false, alias: false }, { label: "cvv", hidden: true, custom: false, alias: true }],
         values: { number: "4111111111111111", cvv: "123" } },
+      { id: "I1", title: "Home", category: "IDENTITY", username: "", urls: [],
+        descriptors: [{ label: "date of birth", hidden: false, custom: false, alias: false }],
+        values: { "date of birth": "1984-11-09" } },
     ]),
   );
   return vaultPath;
@@ -198,6 +201,26 @@ describe("browser tools (fake runtime)", () => {
     expect(fs.readFileSync(fillLog, "utf8").trim().split("\n")).toEqual([
       "#c1\t4\t0", "#c2\t8\t0", "#c3\t3\t0", "#c4\t9\t0", "#c5\t2\t0", "#c6\t0\t0",
     ]);
+  });
+
+  it("types a date of birth in the page's shape when 'format' crosses the seam", async () => {
+    // 'format' has to survive the same argument copy in tools.ts that
+    // 'selectors' does above, and the actual reshaping happens on the device —
+    // the fixture's fill log shows the page-shaped date, not the stored ISO one.
+    const { server, fillLog } = makeServer();
+    const session = await open(server, ["pizza.example"]);
+    await act(server, session, "goto", { url: "https://pizza.example/" });
+    await callTool(server, "plow_browser_request", { session, credential_items: ["I1"] }, AGENT);
+
+    const filled = await act(server, session, "fill_secret", {
+      selector: "#dob",
+      item: "I1",
+      field: "date of birth",
+      format: "MM/DD/YYYY",
+    });
+    expect(filled.isError, JSON.stringify(filled.payload)).toBe(false);
+    expect(filled.payload.ok).toBe(true);
+    expect(fs.readFileSync(fillLog, "utf8").trim().split("\n")).toEqual(["#dob\t11/09/1984\t0"]);
   });
 
   it("defers a slow fill_secret as running without filling twice", async () => {

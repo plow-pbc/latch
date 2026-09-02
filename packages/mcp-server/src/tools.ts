@@ -729,7 +729,7 @@ export const TOOLS: ToolSpec[] = [
             "fill_secret: for a code the page takes as single-character boxes — every box's " +
             "CSS selector in the order the code is read, instead of 'selector'",
         },
-        value: { type: "string", description: "fill: literal text to type (non-secret)" },
+        value: { type: "string", description: "fill: literal text to type (non-secret); into a dropdown, the option whose value or label matches is chosen" },
         expression: { type: "string", description: "eval: JS expression (top frame)" },
         index: { type: "integer", description: "use_page: page index from 'pages'" },
         item: { type: "string", description: "fill_secret: vault item id, from plow_vault list" },
@@ -758,7 +758,7 @@ export const TOOLS: ToolSpec[] = [
       const action = a.get("action").str;
       if (action === null) throw new ToolError("missing 'action'");
       const params: { [k: string]: JSONValue } = { action };
-      for (const key of ["url", "selector", "selectors", "value", "expression", "index", "item", "field", "direction", "seconds", "frame", "timeout_ms"]) {
+      for (const key of ["url", "selector", "selectors", "value", "expression", "index", "item", "field", "format", "direction", "seconds", "frame", "timeout_ms"]) {
         const v = a.get(key).value;
         if (v !== null && v !== undefined) params[key] = v;
       }
