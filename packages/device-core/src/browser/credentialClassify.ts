@@ -36,7 +36,12 @@ const CARD_FIELDS: Record<string, string> = {
 };
 
 // An identity item, by the label each part is released under. The order is the
-// order they are reported in; the keys are the vault's own.
+// order they are reported in; the keys are the vault's own. birthDate is not
+// Bitwarden's — it is this app's own, kept ISO so a fill can reshape it.
+
+/** This app's one extension of the pinned identity shape: ISO YYYY-MM-DD. */
+export const DATE_OF_BIRTH = "date of birth";
+
 const IDENTITY_FIELDS: Record<string, string> = {
   "title": "title",
   "first name": "firstName",
@@ -56,6 +61,7 @@ const IDENTITY_FIELDS: Record<string, string> = {
   "state": "state",
   "postal code": "postalCode",
   "country": "country",
+  [DATE_OF_BIRTH]: "birthDate",
 };
 
 // What the client conceals on an identity, and all it conceals. A licence

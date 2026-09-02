@@ -321,17 +321,26 @@ describe("the other three types", () => {
     expect(hay).not.toContain("9876");
   });
 
-  it("keeps an identity's SSN back", () => {
+  it("keeps an identity's SSN back and its date of birth readable", () => {
     const cipher = encryptCipher(
-      { type: "identity", name: "Me", firstName: "Daniel", lastName: "Delattre", ssn: "000-00-0000" },
+      { type: "identity", name: "Me", firstName: "Daniel", lastName: "Delattre", ssn: "000-00-0000", birthDate: "1984-11-09" },
       null,
       account,
     );
     const item = decryptItem({ ...cipher, id: "i" }, account);
     expect(item.fields.firstName).toBe("Daniel");
+    expect(item.fields.birthDate).toBe("1984-11-09");
     expect(item.fields.ssn).toBeNull();
     expect(decryptSummary({ ...cipher, id: "i" }, account).subtitle).toBe("Daniel Delattre");
     expect(decryptField(cipher, account, "ssn")).toBe("000-00-0000");
+  });
+
+  it("refuses a date of birth that is not YYYY-MM-DD", () => {
+    expect(() =>
+      encryptCipher({ type: "identity", name: "Me", birthDate: "11/09/1984" }, null, account),
+    ).toThrow(/YYYY-MM-DD/);
+    // Empty clears it; that is not a bad date.
+    expect(() => encryptCipher({ type: "identity", name: "Me", birthDate: "" }, null, account)).not.toThrow();
   });
 
   it("keeps a secure note's body in its notes", () => {

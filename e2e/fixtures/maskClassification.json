@@ -238,7 +238,7 @@
     },
     {
       "name": "identity",
-      "why": "every part of an identity is listed and releasable; the client conceals the social security and passport numbers and nothing else, so a licence number, a name, an address and a contact detail all stay readable; a key the pinned client does not define — here middleInitial — is neither listed nor releasable, because what is concealed is Bitwarden's answer to give and for that key there is none to read",
+      "why": "every part of an identity is listed and releasable; the client conceals the social security and passport numbers and nothing else, so a licence number, a name, an address and a contact detail all stay readable; a key the pinned client does not define — here middleInitial — is neither listed nor releasable, because what is concealed is Bitwarden's answer to give and for that key there is none to read; a date of birth is this app's own extension of the pinned shape, readable like a name",
       "bitwarden": {
         "id": "I1",
         "name": "Home",
@@ -262,6 +262,7 @@
           "state": "IL",
           "postalCode": "11111",
           "country": "US",
+          "birthDate": "1984-11-09",
           "middleInitial": "Q"
         }
       },
@@ -370,6 +371,12 @@
         },
         {
           "label": "country",
+          "hidden": false,
+          "custom": false,
+          "alias": false
+        },
+        {
+          "label": "date of birth",
           "hidden": false,
           "custom": false,
           "alias": false

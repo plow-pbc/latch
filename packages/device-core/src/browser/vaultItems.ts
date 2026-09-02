@@ -12,6 +12,7 @@
  */
 import crypto from "node:crypto";
 import { decString, encString } from "./vaultCrypto.js";
+import { formatDate } from "./dateFormat.js";
 
 /** The four types this vault models. (Its enum reserves 5-8; no client here
  * can create one, so nothing below knows about them.) */
@@ -28,6 +29,7 @@ const IDENTITY_KEYS = [
   "title", "firstName", "middleName", "lastName", "company",
   "address1", "address2", "address3", "city", "state", "postalCode", "country",
   "email", "phone", "ssn", "username", "passportNumber", "licenseNumber",
+  "birthDate",
 ] as const;
 
 /** Values never handed back with the item. They are asked for one at a time. */
@@ -335,7 +337,9 @@ export function encryptCipher(
   const out: Record<string, string | null> = { ...stored };
   for (const field of KEYS_FOR[type] ?? []) {
     const given = input[field];
-    if (typeof given === "string") out[field] = enc(given, key);
+    if (typeof given !== "string") continue;
+    if (field === "birthDate" && given !== "") formatDate(given, "YYYY");   // throws on a bad date
+    out[field] = enc(given, key);
   }
 
   cipher.login = null;
