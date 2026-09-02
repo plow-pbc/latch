@@ -31,7 +31,8 @@ function parseIso(iso: string): { y: number; m: number; d: number } {
   const bad = new Error("a date of birth is stored as YYYY-MM-DD");
   if (match === null) throw bad;
   const [y, m, d] = [Number(match[1]), Number(match[2]), Number(match[3])];
-  const probe = new Date(Date.UTC(y, m - 1, d));
+  const probe = new Date(0);
+  probe.setUTCFullYear(y, m - 1, d);
   if (probe.getUTCFullYear() !== y || probe.getUTCMonth() !== m - 1 || probe.getUTCDate() !== d) throw bad;
   return { y, m, d };
 }
