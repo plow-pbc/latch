@@ -87,17 +87,6 @@ describe("Plow sign-out forgets the credential and leaves the mode alone", () =>
     expect(stored(home).approvalMode).toBe("adversarial");
   });
 
-  it("keeps the home's Welcome entrance history on sign-out", () => {
-    const home = homeWith({
-      relayCredential: PLOW_CREDENTIAL,
-      welcomeEntrancePlayed: true,
-    });
-
-    signOutOfPlow(home);
-
-    expect(stored(home).welcomeEntrancePlayed).toBe(true);
-  });
-
   it("does not disturb the other approval modes", () => {
     for (const mode of ["approve", "ask", "deny"] as const) {
       const home = homeWith({ approvalMode: mode, relayCredential: PLOW_CREDENTIAL });

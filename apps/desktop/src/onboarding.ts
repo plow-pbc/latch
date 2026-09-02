@@ -132,8 +132,6 @@ export interface OnboardingState {
   activationStale: boolean;
   /** The data screen's pending choice. It is persisted only on Continue. */
   telemetryEnabled: boolean;
-  /** Whether this home has already published its full Welcome entrance. */
-  welcomeEntrancePlayed: boolean;
 }
 
 export interface OnboardingDeps {
@@ -171,12 +169,10 @@ export class Onboarding {
   private pendingMintId = 0;
   private mints = 0;
   private telemetryEnabled: boolean;
-  private welcomeEntrancePlayed: boolean;
 
   constructor(private readonly deps: OnboardingDeps) {
     const settings = this.settings();
     this.telemetryEnabled = settings.telemetryEnabled;
-    this.welcomeEntrancePlayed = settings.welcomeEntrancePlayed;
     this.step = this.initialStep(settings);
   }
 
@@ -189,7 +185,6 @@ export class Onboarding {
       activation: this.activation,
       activationStale: this.activationStale,
       telemetryEnabled: this.telemetryEnabled,
-      welcomeEntrancePlayed: this.welcomeEntrancePlayed,
     };
   }
 
@@ -197,10 +192,6 @@ export class Onboarding {
   async advance(): Promise<OnboardingState> {
     if (this.busy) return this.state();
     if (this.step === "welcome") {
-      const settings = this.settings();
-      settings.welcomeEntrancePlayed = true;
-      this.save(settings);
-      this.welcomeEntrancePlayed = true;
       this.step = "privacy";
       return this.publish();
     }
@@ -522,7 +513,6 @@ export class Onboarding {
     this.busy = false;
     const settings = this.settings();
     this.telemetryEnabled = settings.telemetryEnabled;
-    this.welcomeEntrancePlayed = settings.welcomeEntrancePlayed;
     this.step = this.initialStep(settings);
     return this.publish();
   }

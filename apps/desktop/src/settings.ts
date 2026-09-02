@@ -186,9 +186,6 @@ export interface Settings {
   /** The first-run setup has reached its final screen. Kept separately from
    * the credential because the data choice happens after sign-in. */
   setupComplete: boolean;
-  /** The full Welcome entrance has been shown for this home. Sign-out keeps
-   * this bit; deleting the home removes it with the rest of the settings. */
-  welcomeEntrancePlayed: boolean;
   /** The first-run launch-at-login default has been applied (main.ts's
    * `applyFirstRunLaunchAtLogin`). NOT a mirror of the OS's login-item bit —
    * loginItem.ts explains why none exists — only the record that the one-time
@@ -216,7 +213,6 @@ export function loadSettings(home: string): Settings {
     keepAwakeWhileRunning: false,
     telemetryEnabled: true,
     setupComplete: false,
-    welcomeEntrancePlayed: false,
     launchAtLoginDefaulted: false,
   };
   let parsed: unknown;
@@ -235,11 +231,13 @@ export function loadSettings(home: string): Settings {
     "inferenceProvider",
     "provisionedChatUid",
     "provisionedChatLabel",
+    "welcomeEntrancePlayed",
   ].some((key) => key in settings);
   delete settings.anthropicApiKey;
   delete settings.inferenceProvider;
   delete settings.provisionedChatUid;
   delete settings.provisionedChatLabel;
+  delete settings.welcomeEntrancePlayed;
 
   const loaded = { ...defaults, ...settings };
   // The encrypted field wins where it exists. A decrypt that fails is treated

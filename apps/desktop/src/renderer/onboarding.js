@@ -521,11 +521,11 @@ function footerForStep() {
   };
 }
 
-function playWelcomeEntrance(variant) {
+function playWelcomeEntrance() {
   const mark = screen.querySelector(".plw-mark");
   void startAfterDocumentPaint(() => {
     if (!mark.isConnected) return;
-    if (variant === "full" && typeof mark.getTotalLength === "function") {
+    if (typeof mark.getTotalLength === "function") {
       try {
         const length = Math.ceil(mark.getTotalLength());
         if (length > 0) screen.style.setProperty("--plw-len", length);
@@ -534,8 +534,8 @@ function playWelcomeEntrance(variant) {
         // conservative fallback length and the filled resting mark still shows.
       }
     }
-    screen.classList.add(`entering-${variant}`);
-    document.body.classList.add(`welcome-${variant}`);
+    screen.classList.add("entering-full");
+    document.body.classList.add("welcome-full");
   });
 }
 
@@ -560,7 +560,7 @@ function render() {
     screen.className = `wizard-screen is-${state.step}`;
     screen.replaceChildren(screenForStep());
     body.scrollTop = 0;
-    document.body.classList.remove("welcome-full", "welcome-short");
+    document.body.classList.remove("welcome-full");
   }
   document.body.classList.toggle("on-welcome", state.step === "welcome");
 
@@ -583,8 +583,7 @@ function render() {
   }
 
   if (state.step === "welcome" && !continuingWelcome) {
-    const variant = state.welcomeEntrancePlayed ? "short" : "full";
-    playWelcomeEntrance(variant);
+    playWelcomeEntrance();
   }
   if (state.step === "data") void refreshFullDiskAccess();
 
