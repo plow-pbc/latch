@@ -119,8 +119,10 @@ export function cardBrand(number) {
  * A suggestion, never a lock: the box is ours to rewrite only while it still
  * holds what we put there. The owner typing their own brand — or clearing the
  * box, which is them saying "no brand" — takes it back for good, and the form
- * never touches it again. `ctx.derivedBrand` opens as "" so an untouched empty
- * box is ours and a cleared one is not; the brand input is read at event time
+ * never touches it again. What the box opens as is the caller's to say
+ * (`vformBody`): "" on a new item, whose empty box is ours until they type in
+ * it, and null on a saved one, which no box value equals — the owner's brand
+ * is theirs however they left it. The brand input is read at event time
  * because it is built after the number.
  */
 export function wireCardBrand(numberInput, ctx) {
