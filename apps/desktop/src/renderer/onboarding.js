@@ -658,6 +658,7 @@ function render() {
       if (focus === telemetryFocus) restoreTelemetryFocus = false;
     });
   }
+  root.hidden = false;
 }
 
 async function apply(next) {

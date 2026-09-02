@@ -5,6 +5,7 @@
 //   just onboarding-screenshots         → /tmp/onboarding-*.png
 //   OUT_DIR=/path just onboarding-screenshots
 import { app, ipcMain } from "electron";
+import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { onboardingFixtures } from "../src/renderer/onboarding-fixtures.js";
@@ -23,7 +24,22 @@ let current = currentFixture.state;
 let currentFullDiskAccess = false;
 let currentConnectors = null;
 let newCodeRequests = 0;
-ipcMain.handle("onboarding:get", async () => current);
+let releaseInitialGet;
+let markInitialGetStarted;
+const initialGetStarted = new Promise((resolve) => {
+  markInitialGetStarted = resolve;
+});
+let holdInitialGet = true;
+ipcMain.handle("onboarding:get", async () => {
+  if (holdInitialGet) {
+    markInitialGetStarted();
+    await new Promise((resolve) => {
+      releaseInitialGet = resolve;
+    });
+    holdInitialGet = false;
+  }
+  return current;
+});
 ipcMain.handle("onboarding:newCode", async () => {
   newCodeRequests += 1;
   current = {
@@ -81,6 +97,25 @@ app.whenReady().then(async () => {
     titleBarStyle: "hiddenInset",
     backgroundColor: "#111110",
   });
+  const initialLoad = win.loadFile(path.join(dist, "renderer/onboarding.html"));
+  await initialGetStarted;
+  await new Promise((resolve) => setTimeout(resolve, 1500));
+  const preRender = (await win.webContents.capturePage()).resize({ width: 660, height: 840 });
+  fs.mkdirSync(outDir, { recursive: true });
+  const preRenderOut = path.join(outDir, "onboarding-pre-render.png");
+  fs.writeFileSync(preRenderOut, preRender.toPNG());
+  const { width } = preRender.getSize();
+  const bitmap = preRender.toBitmap({ scaleFactor: 1 });
+  const colors = [22, 400, 800].map((y) =>
+    bitmap.subarray((y * width + 330) * 4, (y * width + 331) * 4).toString("hex"));
+  const missing = new Set(colors).size === 1
+    ? []
+    : [`shell painted before onboarding state arrived (${colors.join(", ")})`];
+  console.log("SHOT:" + JSON.stringify({ screen: "pre-render", out: preRenderOut, missing }));
+  if (missing.length) throw new Error(missing[0]);
+  releaseInitialGet();
+  await initialLoad;
+
   const failures = await shootScreens({
     win,
     outDir,
