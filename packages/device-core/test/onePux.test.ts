@@ -130,12 +130,21 @@ describe("parseOnePux", () => {
     expect(() => parseOnePux(corrupt(good))).toThrow(/1PUX/);
   });
 
-  it("refuses an export.data larger than it will inflate, before inflating any of it", () => {
+  it("refuses an export.data the declared size does not bound, before inflating any of it", () => {
     // Past the 64 MiB cap — the shape a hostile or corrupted zip bomb takes.
     // The declared size is what is refused, so a lying header cannot spend
     // the memory the cap exists to protect either.
     const huge = zipOf({ "export.data": new Uint8Array(65 * 1024 * 1024) }, { deflate: true });
     expect(() => parseOnePux(huge)).toThrow(/too large/);
+
+    // The same hole from the other side: adm-zip bounds the inflate only
+    // while the declared size is positive, so a deflated entry claiming ZERO
+    // would inflate unbounded. Patched into the archive the way a hostile
+    // export would carry it — the data is real, the size it declares is not.
+    const zip = new AdmZip();
+    zip.addFile("export.data", Buffer.from(exportData([{ name: "P", items: [login("X")] }])));
+    zip.getEntry("export.data")!.header.size = 0;
+    expect(() => parseOnePux(new Uint8Array(zip.toBuffer()))).toThrow(/1PUX/);
   });
 
   it("names the vaults a parsed export spans, skipped-only ones included", () => {

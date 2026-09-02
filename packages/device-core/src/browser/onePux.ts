@@ -7,10 +7,11 @@
  * what lets the Import sheet offer a pick before anything is saved.
  *
  * export.data is read with adm-zip: stored and deflated entries, the CRC
- * checked, and the inflate bounded by the size the archive declares — a size
- * refused outright above the cap below, so neither a lying header nor a zip
- * bomb can run away with memory. The standing rule of passwordImport.ts holds
- * here: no error, warning or skip reason ever contains a field's value.
+ * checked, and the inflate bounded by the declared size — which adm-zip
+ * enforces only while that size is POSITIVE, so a declared zero is refused
+ * here and anything above the cap below outright. Neither a lying header nor a
+ * zip bomb can run away with memory. The standing rule of passwordImport.ts
+ * holds here: no error, warning or skip reason ever contains a field's value.
  */
 import AdmZip from "adm-zip";
 import { finishImportedLogin, normalizeImportUrls, type ImportedLogin, type ParsedImport, type SkippedRow } from "./passwordImport.js";
@@ -52,6 +53,7 @@ export function parseOnePux(bytes: Uint8Array): ParsedImport {
   }
   const entry = zip.getEntry("export.data");
   if (!entry) throw new Error(NOT_1PUX);
+  if (entry.header.size <= 0) throw new Error(NOT_1PUX); // a zero declares no bound at all
   if (entry.header.size > MAX_INFLATED_BYTES) throw new Error("that export is too large to read");
   let data: Buffer;
   try {
