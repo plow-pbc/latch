@@ -20,9 +20,9 @@ import type { LocalVault } from "./localVault.js";
 import { checkedUrls, type VaultItemSummary } from "./vaultItems.js";
 import { totpParams } from "./vaultTotp.js";
 
-/** A vault a row came from (1PUX only). The ID is what a pick keys on — two
- * 1Password vaults can share a display NAME across accounts — and the name is
- * what the owner reads. Display data either way, never a key into this vault. */
+/** A vault a row came from (1PUX only), display data both halves. Two vaults
+ * can share a display NAME across 1Password accounts, so a pick keys on the id
+ * and shows the name. */
 export interface ImportVault {
   id: string;
   name: string;
@@ -485,11 +485,8 @@ export interface ImportPreview {
  * with the password and the key reduced to whether one is there. */
 export function importPreview(parsed: ParsedImport): ImportPreview {
   const vaults = new Map<string, ImportVault & { logins: number }>();
-  const note = (v: ImportVault | undefined, counts: boolean) => {
-    if (!v) return;
-    const held = vaults.get(v.id) ?? { id: v.id, name: v.name, logins: 0 };
-    if (counts) held.logins++;
-    vaults.set(v.id, held);
+  const note = (v: ImportVault | undefined, isLogin: boolean) => {
+    if (v) vaults.set(v.id, { ...v, logins: (vaults.get(v.id)?.logins ?? 0) + (isLogin ? 1 : 0) });
   };
   for (const l of parsed.logins) note(l.vault, true);
   for (const s of parsed.skipped) note(s.vault, false);

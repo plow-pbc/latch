@@ -73,8 +73,6 @@ export function parseOnePux(bytes: Uint8Array): ParsedImport {
   const skipped: SkippedRow[] = [];
   for (const account of list(root.accounts)) {
     for (const vault of list(account.vaults)) {
-      // Two vaults can share a display name across accounts, so the uuid is
-      // what the pick keys on; the name is only what the owner reads.
       const attrs = rec(vault.attrs);
       const name = str(attrs.name).trim() || "Vault";
       const from: ImportVault = { id: str(attrs.uuid).trim() || name, name };
