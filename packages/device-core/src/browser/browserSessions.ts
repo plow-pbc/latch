@@ -28,8 +28,7 @@ import path from "node:path";
 import { JSONValue, jv, originMatches, normalizeOrigin } from "@domo/protocol";
 import { BrowserHost, BrowserHostConfig, ViewerFrame } from "./browserHost.js";
 import { CredentialBroker, CredentialError, CredentialRelease } from "./credentialBroker.js";
-import { DATE_OF_BIRTH } from "./credentialClassify.js";
-import { formatDate } from "./dateFormat.js";
+import { DATE_LABELS, formatDate } from "./dateFormat.js";
 import { isFinancialDestination, PaymentApprovalClient } from "./financialGate.js";
 
 type AuditFn = (event: string, fields: { [k: string]: JSONValue }) => void;
@@ -1003,15 +1002,18 @@ export class BrowserSessions {
     }
     // A shape is checked before the vault is asked: the pattern is the agent's
     // and needs no value to be judged. A non-date field takes no shape at all.
+    // hasOwn, not a bare index: `field` is agent-supplied, and DATE_LABELS is
+    // a plain object — "constructor" would otherwise resolve off the prototype.
+    const date = Object.hasOwn(DATE_LABELS, field) ? DATE_LABELS[field] : undefined;
     if (format !== "") {
-      if (field !== DATE_OF_BIRTH) {
+      if (date === undefined) {
         return {
           status: "error",
-          error: `format applies only to ${DATE_OF_BIRTH}; ${field} is typed as stored`,
+          error: `format applies only to a date field (${Object.keys(DATE_LABELS).join(", ")}); ${field} is typed as stored`,
         };
       }
       try {
-        formatDate("2000-01-01", format);
+        formatDate(date.sample, format);
       } catch (error: unknown) {
         return { status: "error", error: error instanceof Error ? error.message : String(error) };
       }
@@ -1175,14 +1177,17 @@ export class BrowserSessions {
 
     const mask = release.hidden;
     let secret = release.value;
-    // The pattern was checked above and cannot throw again — but the VALUE can:
-    // a CUSTOM field can carry the "date of birth" label (customLabel only
-    // prefixes `custom:` when a fixed slot already owns the name) with
-    // whatever a person typed into it, never passed through the write-path
-    // ISO validation an identity's birthDate gets.
-    if (format !== "") {
+    // A date label with a default shape (a card's expiry) is always
+    // reshaped; one whose shape is empty (a date of birth) is typed as
+    // stored unless a format was given — an empty pattern is a no-op, not a
+    // format. Only a CUSTOM field can carry a date label without holding a
+    // date (customLabel only prefixes `custom:` when a fixed slot already
+    // owns the name), so the reshape can still fail on the VALUE even though
+    // the pattern was already checked above.
+    const pattern = date !== undefined ? format || date.shape : "";
+    if (pattern !== "") {
       try {
-        secret = formatDate(secret, format);
+        secret = formatDate(secret, pattern);
       } catch {
         secret = "";
         this.audit("credential_fill_failed", {
@@ -1193,12 +1198,18 @@ export class BrowserSessions {
           selector: where,
           reason: "the stored value is not a date",
         });
+        // "Fill it without format" is only real advice when omitting format
+        // would have skipped the reshape — true for an empty default shape
+        // (date of birth), false for one with its own default (a card's
+        // expiry always reshapes to MM/YY, format or not).
         return {
           status: "error",
-          error:
-            `${field} was not filled: the value stored under that name is not a date, so it ` +
-            `cannot be given a format. Fill it without 'format', or store a date of birth on an ` +
-            `identity item.`,
+          error: date?.shape === ""
+            ? `${field} was not filled: the value stored under that name is not a date. Correct it ` +
+              `in the vault, or fill it without 'format' if it is a custom field.`
+            : `${field} was not filled: the value stored under that name is not a date. Correct it ` +
+              `in the vault, or rename the field if it is a custom one carrying the '${field}' label ` +
+              `by coincidence.`,
         };
       }
     }

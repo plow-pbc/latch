@@ -12,7 +12,7 @@
  */
 import crypto from "node:crypto";
 import { decString, encString } from "./vaultCrypto.js";
-import { parseIso } from "./dateFormat.js";
+import { expiryPart, parseIso } from "./dateFormat.js";
 
 /** The four types this vault models. (Its enum reserves 5-8; no client here
  * can create one, so nothing below knows about them.) */
@@ -338,8 +338,11 @@ export function encryptCipher(
   for (const field of KEYS_FOR[type] ?? []) {
     const given = input[field];
     if (typeof given !== "string") continue;
-    if (field === "birthDate" && given !== "") parseIso(given);   // throws on a bad date
-    out[field] = enc(given, key);
+    if (field === "birthDate" && given !== "" && parseIso(given).d === null) {
+      throw new Error("a date of birth is stored as YYYY-MM-DD");
+    }
+    const normalized = (field === "expMonth" || field === "expYear") && given !== "" ? expiryPart(field, given) : given;
+    out[field] = enc(normalized, key);
   }
 
   cipher.login = null;

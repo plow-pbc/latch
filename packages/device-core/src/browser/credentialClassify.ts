@@ -14,6 +14,7 @@
  * carry one.
  */
 import { RawItem } from "./vaultItems.js";
+import { CARD_EXPIRY, DATE_OF_BIRTH, expiryIso } from "./dateFormat.js";
 
 const FIELD_PASSWORD = "password";
 const FIELD_TOTP = "totp";
@@ -38,10 +39,8 @@ const CARD_FIELDS: Record<string, string> = {
 // An identity item, by the label each part is released under. The order is the
 // order they are reported in; the keys are the vault's own. birthDate is not
 // Bitwarden's — it is this app's own, kept ISO so a fill can reshape it.
-
-/** This app's one extension of the pinned identity shape: ISO YYYY-MM-DD. */
-export const DATE_OF_BIRTH = "date of birth";
-
+// DATE_OF_BIRTH itself lives in dateFormat.ts, alongside CARD_EXPIRY and
+// DATE_LABELS — the one place a date label's shape is known.
 const IDENTITY_FIELDS: Record<string, string> = {
   "title": "title",
   "first name": "firstName",
@@ -196,6 +195,7 @@ export function fieldDescriptors(item: RawItem): FieldDescriptor[] {
   ] as const) {
     if (card[key]) add(label, isCard && HIDDEN_CARD_LABELS.has(label), false);
   }
+  if (expiryIso(card.expMonth, card.expYear) !== null) add(CARD_EXPIRY, false, false, false);
 
   const identity = item.identity;
   if (identity) {
@@ -274,6 +274,7 @@ export function readSlot(item: RawItem, label: string): string | null {
   if (USERNAME_FIELDS.has(label) && text(login.username) !== null) return text(login.username);
   const cardKey = CARD_FIELDS[label];
   if (cardKey !== undefined) return text((item.card ?? {})[cardKey]);
+  if (label === CARD_EXPIRY) return expiryIso((item.card ?? {}).expMonth, (item.card ?? {}).expYear);
   const identity = item.identity ?? {};
   const identityKey = IDENTITY_FIELDS[label];
   if (identityKey !== undefined) return text(identity[identityKey]);

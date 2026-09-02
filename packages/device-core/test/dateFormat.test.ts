@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatDate } from "../src/browser/dateFormat.js";
+import { expiryIso, expiryPart, formatDate } from "../src/browser/dateFormat.js";
 
 describe("formatDate", () => {
   it.each([
@@ -47,5 +47,47 @@ describe("formatDate", () => {
   it("handles years 0–99 without spurious rejection", () => {
     expect(formatDate("0050-01-01", "YYYY-MM-DD")).toBe("0050-01-01");
     expect(formatDate("0001-12-25", "MMMM Do, YYYY")).toBe("December 25th, 0001");
+  });
+});
+
+describe("a month-only date", () => {
+  it.each([
+    ["MM/YY", "04/31"],
+    ["MM/YYYY", "04/2031"],
+    ["MMMM YYYY", "April 2031"],
+    ["M", "4"],
+    ["YYYY-MM", "2031-04"],
+  ])("renders %s as %s", (pattern, expected) => {
+    expect(formatDate("2031-04", pattern)).toBe(expected);
+  });
+  it.each(["DD", "MM/DD/YYYY", "Do"])("refuses %s, which needs a day", (pattern) => {
+    expect(() => formatDate("2031-04", pattern)).toThrow(/no day/);
+  });
+  it("still refuses a shape that is neither", () => {
+    expect(() => formatDate("2031-4", "MM")).toThrow(/YYYY-MM-DD/);
+    expect(() => formatDate("2031-13", "MM")).toThrow(/YYYY-MM-DD/);
+  });
+});
+
+describe("card expiry parts", () => {
+  it.each([
+    ["expMonth", "4", "04"], ["expMonth", "12", "12"], ["expMonth", "04", "04"],
+    ["expYear", "31", "2031"], ["expYear", "2031", "2031"],
+    ["expMonth", " 4 ", "04"],
+  ] as const)("%s %s stores as %s", (part, given, stored) => {
+    expect(expiryPart(part, given)).toBe(stored);
+  });
+  it.each([
+    ["expMonth", "0"], ["expMonth", "13"], ["expMonth", "Apr"], ["expYear", "1"], ["expYear", "203"], ["expYear", "20311"],
+    ["expMonth", "2031"],
+  ] as const)("refuses %s %s", (part, given) => {
+    expect(() => expiryPart(part, given)).toThrow(/card expiry/);
+  });
+  it("composes the ISO month, or nothing", () => {
+    expect(expiryIso("4", "31")).toBe("2031-04");
+    expect(expiryIso("04", "2031")).toBe("2031-04");
+    expect(expiryIso("", "2031")).toBeNull();
+    expect(expiryIso("04", null)).toBeNull();
+    expect(expiryIso("13", "2031")).toBeNull();
   });
 });
