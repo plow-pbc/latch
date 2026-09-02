@@ -33,7 +33,7 @@ window.domo = {
     fullDiskAccess = true;
   },
   onboardingFinish: currentState,
-  cloudRefresh: async () => selected.cloud,
+  cloudAgents: async () => selected.cloud,
   cloudOpenMessages: async () => true,
   onOnboardingChanged: (callback) => {
     changed = callback;

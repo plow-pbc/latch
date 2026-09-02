@@ -244,8 +244,11 @@ function activationMessage(activation) {
 
 function note(current) {
   if (!current.busy && !current.message) return null;
+  const kind = current.message
+    ? current.noteKind === "neutral" ? " neutral" : " error"
+    : "";
   return el("p", {
-    class: `state-note${current.message ? " error" : ""}`,
+    class: `state-note${kind}`,
     text: current.message || "Talking to Plow…",
     attrs: { role: "status" },
   });
@@ -359,7 +362,7 @@ function verifyScreen() {
       const actions = [activate];
       if (!verified && !state.activationStale) {
         actions.push(el("p", { class: "alternate" }, [
-          button("Get a new code", "link-button", async () =>
+          button("Still waiting? Send it again", "link-button", async () =>
             apply(await window.domo.onboardingNewCode()),
           ),
         ]));
@@ -633,7 +636,7 @@ async function apply(next) {
   if (state?.step !== "done") doneAgent = null;
   render();
   if (state?.step === "done" && previousStep !== "done") {
-    const loaded = await loadDoneAgent(() => window.domo.cloudRefresh());
+    const loaded = await loadDoneAgent(() => window.domo.cloudAgents());
     if (state?.step !== "done") return;
     doneAgent = loaded;
     render();
@@ -654,6 +657,7 @@ window.addEventListener("unhandledrejection", (event) => {
     ...state,
     busy: false,
     message: "Something went wrong talking to the app. Try again.",
+    noteKind: "error",
   };
   render();
 });

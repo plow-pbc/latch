@@ -13,6 +13,8 @@ import { clickText, failLoudly, shootScreens, shotWindow } from "./screenshot-ha
 const dir = path.dirname(fileURLToPath(import.meta.url));
 const dist = path.join(dir, "../dist");
 const outDir = process.env.OUT_DIR ?? "/tmp";
+const REARM_NOTE =
+  "That code still works — send it exactly as shown and this screen will move on by itself.";
 
 const SCREENS = onboardingFixtures(Date.now());
 let currentFixture = SCREENS[0];
@@ -22,6 +24,14 @@ let newCodeRequests = 0;
 ipcMain.handle("onboarding:get", async () => current);
 ipcMain.handle("onboarding:newCode", async () => {
   newCodeRequests += 1;
+  current = {
+    ...current,
+    message: REARM_NOTE,
+    noteKind: "neutral",
+    activation: current.activation
+      ? { ...current.activation, pollUntil: Date.now() + 5 * 60_000 }
+      : null,
+  };
   return current;
 });
 ipcMain.handle("capabilities:get", async () => ({ fullDiskAccess: currentFullDiskAccess }));
@@ -31,14 +41,30 @@ ipcMain.handle("onboarding:setTelemetry", async (_event, enabled) => {
   return current;
 });
 ipcMain.handle("onboarding:finish", async () => {});
-ipcMain.handle("cloud:refresh", async () => currentFixture.cloud);
+ipcMain.handle("cloud:agents", async () => currentFixture.cloud);
 ipcMain.handle("cloud:openMessages", async () => true);
 
 const verifyFixture = SCREENS.find((fixture) => fixture.name === "verify");
-verifyFixture.after = async (win) => {
-  const before = newCodeRequests;
-  await clickText(win, "Get a new code");
-  if (newCodeRequests !== before + 1) throw new Error("Get a new code did not request a re-mint");
+verifyFixture.expect = [...verifyFixture.expect, REARM_NOTE];
+verifyFixture.prepare = async (win) => {
+  const requestsBefore = newCodeRequests;
+  const displayCodeBefore = await win.webContents.executeJavaScript(
+    `document.querySelector(".message-code")?.textContent.trim() ?? ""`,
+  );
+  await clickText(win, "Still waiting? Send it again");
+  const displayCodeAfter = await win.webContents.executeJavaScript(
+    `document.querySelector(".message-code")?.textContent.trim() ?? ""`,
+  );
+  const neutralNote = await win.webContents.executeJavaScript(
+    `document.querySelector(".state-note.neutral:not(.error)")?.textContent.trim() ?? ""`,
+  );
+  if (newCodeRequests !== requestsBefore + 1) {
+    throw new Error("Send it again did not request a re-arm");
+  }
+  if (!displayCodeBefore || displayCodeAfter !== displayCodeBefore) {
+    throw new Error(`Send it again changed the display code: ${displayCodeBefore} → ${displayCodeAfter}`);
+  }
+  if (neutralNote !== REARM_NOTE) throw new Error("The re-arm note was not rendered neutrally");
 };
 
 failLoudly();

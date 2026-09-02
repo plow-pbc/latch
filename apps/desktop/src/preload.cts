@@ -136,6 +136,7 @@ contextBridge.exposeInMainWorld("domo", {
   // no roster row to name and none is needed.
   cloudRemove: (agentId: string) => ipcRenderer.invoke("cloud:remove", agentId),
   cloudRefresh: () => ipcRenderer.invoke("cloud:refresh"),
+  cloudAgents: () => ipcRenderer.invoke("cloud:agents"),
   cloudCreate: (input: { name: string; provider: string; lineUid: string | null }) =>
     ipcRenderer.invoke("cloud:create", input),
   cloudCancelLineFlow: () => ipcRenderer.invoke("cloud:cancelLineFlow"),

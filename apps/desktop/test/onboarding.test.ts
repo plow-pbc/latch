@@ -416,11 +416,10 @@ describe("activation — the path a brand-new user takes", () => {
   it("never strands the user on a screen with no way to re-check", async () => {
     // Reported from a live run: the user read the code off the screen and typed
     // it into Messages themselves, so they never tapped "Open Messages" and
-    // never left the "Connect this Mac" screen. That screen has no "Get a New
-    // Code" button — it is the one you are on before anything has gone wrong.
-    // Giving up there set the message "or get a new code" beside no such
-    // control, and their activation (which completed server-side just after the
-    // loop stopped) could never be re-checked. Dead end.
+    // never left the initial activation screen. Giving up there used to leave
+    // its recovery control on a different view, and their activation (which
+    // completed server-side just after the loop stopped) could never be
+    // re-checked. Dead end.
     const onboarding = build();
     await onboarding.advance();
     expect(onboarding.state().step).toBe("activate"); // never tapped Open Messages
@@ -474,6 +473,7 @@ describe("activation — the path a brand-new user takes", () => {
     expect(state.activation?.displayCode).toBe("CODE1");
     expect(state.activationStale).toBe(false);
     expect(state.message).toContain("still works");
+    expect(state.noteKind).toBe("neutral");
 
     // And the re-armed watch is real: a text now signs in.
     plow.redeems = [{ status: "verified", token: SESSION_TOKEN }];

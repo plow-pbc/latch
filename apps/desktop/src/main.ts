@@ -666,6 +666,12 @@ ipcMain.handle("cloud:refresh", async () => {
   await cloudAgents?.refresh();
   return agentsTabState();
 });
+// Setup needs only the cloud-agent projection. Keep connect-client state — in
+// particular its roster and one-time credential — off this narrower bridge.
+ipcMain.handle("cloud:agents", async () => {
+  await cloudAgents?.refresh();
+  return cloudAgents?.state() ?? null;
+});
 ipcMain.handle("connect:create", async (_e, name: string) => {
   await connectClient?.createCredential(name);
   // The credential it just minted is a roster row nobody has read yet.

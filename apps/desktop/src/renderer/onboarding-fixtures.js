@@ -11,6 +11,7 @@ export function onboardingFixtures(now) {
   };
   const base = {
     message: "",
+    noteKind: "error",
     busy: false,
     activation: null,
     activationStale: false,
@@ -75,9 +76,9 @@ export function onboardingFixtures(now) {
         "Listening for 4:",
         "Open Messages to activate",
         "Continue",
-        "Get a new code",
+        "Still waiting? Send it again",
       ],
-      reject: ["Use a phone code instead"],
+      reject: ["Get a new code", "Use a phone code instead"],
       expectFocus: "Open Messages to activate",
     },
     {
@@ -93,7 +94,7 @@ export function onboardingFixtures(now) {
         "Open Messages to activate",
         "Continue",
       ],
-      reject: ["Get a new code", "Use a phone code instead"],
+      reject: ["Still waiting? Send it again", "Get a new code", "Use a phone code instead"],
       expectFocus: "Continue",
     },
     {
@@ -123,10 +124,10 @@ export function onboardingFixtures(now) {
         "Waiting for your text",
         "Listening for 4:",
         "Open Messages to activate",
-        "Get a new code",
+        "Still waiting? Send it again",
         "Continue",
       ],
-      reject: ["Use a phone code instead"],
+      reject: ["Get a new code", "Use a phone code instead"],
       expectFocus: "Open Messages to activate",
     },
     {
@@ -141,7 +142,7 @@ export function onboardingFixtures(now) {
       },
       cloud: noAgents,
       expect: ["Still not signed in", "it has to start with", "Plow Activate:", "Try again"],
-      reject: ["Get a new code", "Use a phone code instead"],
+      reject: ["Still waiting? Send it again", "Get a new code", "Use a phone code instead"],
       expectFocus: "Open Messages to activate",
     },
     {

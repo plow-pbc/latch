@@ -123,6 +123,8 @@ export interface OnboardingState {
   /** One honest line: what happened, or what we are waiting for. Never a bare
    * spinner — every failure below produces text here. */
   message: string;
+  /** Presentation for `message`; never inferred from human-readable copy. */
+  noteKind: "neutral" | "error";
   busy: boolean;
   activation: OnboardingActivation | null;
   /** We have stopped watching this activation. The screen stops counting down
@@ -148,6 +150,7 @@ export interface OnboardingDeps {
 export class Onboarding {
   private step: OnboardingStep;
   private message = "";
+  private noteKind: OnboardingState["noteKind"] = "error";
   private busy = false;
   private activation: OnboardingActivation | null = null;
   private activationStale = false;
@@ -177,6 +180,7 @@ export class Onboarding {
     return {
       step: this.step,
       message: this.message,
+      noteKind: this.noteKind,
       busy: this.busy,
       activation: this.activation,
       activationStale: this.activationStale,
@@ -268,12 +272,13 @@ export class Onboarding {
     if (this.pendingMint) return this.pendingMint;
 
     if (this.activationSecret && this.activation) {
-      // Same code, fresh clock — and one honest line about why "Try Again"
-      // is showing the code they already have.
+      // Same code, fresh clock — and one honest line about why sending again
+      // uses the code they already have.
       this.activation = { ...this.activation, pollUntil: this.now() + ACTIVATION_POLL_WINDOW_MS };
       this.activationStale = false;
       this.message =
         "That code still works — send it exactly as shown and this screen will move on by itself.";
+      this.noteKind = "neutral";
       return this.publish();
     }
 
@@ -367,6 +372,7 @@ export class Onboarding {
         }
         // A blip must not end the wait. Say what we saw and keep polling.
         this.message = messageOf(error);
+        this.noteKind = "error";
         this.publish();
         continue;
       }
@@ -459,19 +465,20 @@ export class Onboarding {
    * Mark this activation as no longer being watched, and put the user on the
    * screen that can do something about it.
    *
-   * The step move is the whole point. "Connect this Mac" has no "Get a New
-   * Code" button — it is the screen you are on *before* anything has gone
-   * wrong — and a user who reads the code off the screen and types it into
-   * Messages themselves never taps "Open Messages", so they never leave it. Set
-   * `activationStale` without moving them and the message says "or get a new
-   * code" next to no such control: a dead end, and precisely the one this
-   * screen exists to prevent. Every path that stops polling comes through here
-   * so that cannot drift apart again.
+   * The step move is the whole point. A user who reads the code off the screen
+   * and types it into Messages themselves never taps "Open Messages", so they
+   * never leave the initial activation view. Set `activationStale` without
+   * moving them and the recovery message would have no matching "Try again"
+   * control: a dead end. Every path that stops polling comes through here so
+   * that cannot drift apart again.
    */
   private stall(message?: string): void {
     if (this.step === "activate" || this.step === "waiting") this.step = "waiting";
     this.activationStale = true;
-    if (message !== undefined) this.message = message;
+    if (message !== undefined) {
+      this.message = message;
+      this.noteKind = "error";
+    }
   }
 
   /**
@@ -493,6 +500,7 @@ export class Onboarding {
     this.activationSecret = null;
     this.activationStale = false;
     this.message = "";
+    this.noteKind = "error";
     this.busy = false;
     const settings = this.settings();
     this.telemetryEnabled = settings.telemetryEnabled;
@@ -503,6 +511,7 @@ export class Onboarding {
   /** Put a fixed main-process notice on the setup screen. */
   showMessage(message: string): OnboardingState {
     this.message = message;
+    this.noteKind = "error";
     return this.publish();
   }
 
@@ -578,6 +587,7 @@ export class Onboarding {
     this.activationSecret = null;
     this.activationStale = false;
     this.message = "";
+    this.noteKind = "error";
     this.step = "verified";
     this.telemetryEnabled = settings.telemetryEnabled;
 
@@ -612,11 +622,13 @@ export class Onboarding {
   private async run(body: () => Promise<void>): Promise<OnboardingState> {
     this.busy = true;
     this.message = "";
+    this.noteKind = "error";
     this.publish();
     try {
       await body();
     } catch (error) {
       this.message = messageOf(error);
+      this.noteKind = "error";
     } finally {
       this.busy = false;
     }

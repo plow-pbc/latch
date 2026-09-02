@@ -706,6 +706,10 @@ body.on-welcome .wizard-footer .nav-next {
   color: var(--clay-soft);
 }
 
+.state-note.neutral {
+  color: var(--muted-2);
+}
+
 .data-screen .step-inner {
   max-width: 520px;
 }
