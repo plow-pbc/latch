@@ -113,7 +113,7 @@
     },
     {
       "name": "card with a colliding custom field",
-      "why": "number and code hidden, and code's aliases with it; expiry, cardholder name and brand not; both a plain custom field and a LINKED one sharing a built-in's name keep their own descriptor AND their own token (custom:cardholder name, custom:number), so either can actually be asked for — a linked field collides exactly as any other custom field does",
+      "why": "number and code hidden, and code's aliases with it; expiry, cardholder name and brand not; both a plain custom field and a LINKED one sharing a built-in's name keep their own descriptor AND their own token (custom:cardholder name, custom:number), so either can actually be asked for — a linked field collides exactly as any other custom field does; expiry is this app's composed month from expMonth and expYear, offered only when both parts are well-formed",
       "bitwarden": {
         "id": "C1",
         "name": "Visa",
@@ -185,6 +185,12 @@
         },
         {
           "label": "brand",
+          "hidden": false,
+          "custom": false,
+          "alias": false
+        },
+        {
+          "label": "expiry",
           "hidden": false,
           "custom": false,
           "alias": false

@@ -270,6 +270,16 @@ describe("the other three types", () => {
     expect(decryptSummary({ ...cipher, id: "c" }, account).subtitle).toBe("amex · 04/2030");
   });
 
+  it("stores a card's expiry parts normalised and refuses a bad one", () => {
+    const cipher = encryptCipher({ type: "card", name: "Visa", number: "4111111111111111", expMonth: "4", expYear: "31" }, null, account);
+    const item = decryptItem({ ...cipher, id: "c" }, account);
+    expect(item.fields.expMonth).toBe("04");
+    expect(item.fields.expYear).toBe("2031");
+    expect(decryptSummary({ ...cipher, id: "c" }, account).subtitle).toBe("04/2031");
+    expect(() => encryptCipher({ type: "card", name: "Visa", expMonth: "13" }, null, account)).toThrow(/card expiry/);
+    expect(() => encryptCipher({ type: "card", name: "Visa", expYear: "" }, null, account)).not.toThrow();
+  });
+
   it("searches a card by its number and a migrated item by its custom fields", () => {
     const cipher = { ...encryptCipher(
       { type: "card", name: "Amex", cardholderName: "Daniel Delattre", brand: "amex", number: "371449635398431", code: "1234", notes: "the travel one" },

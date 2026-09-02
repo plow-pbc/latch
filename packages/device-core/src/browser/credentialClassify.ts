@@ -14,6 +14,7 @@
  * carry one.
  */
 import { RawItem } from "./vaultItems.js";
+import { expiryIso } from "./dateFormat.js";
 
 const FIELD_PASSWORD = "password";
 const FIELD_TOTP = "totp";
@@ -62,6 +63,19 @@ const IDENTITY_FIELDS: Record<string, string> = {
   "postal code": "postalCode",
   "country": "country",
   [DATE_OF_BIRTH]: "birthDate",
+};
+
+/** A card's expiry as one date, composed at release from expMonth/expYear
+ * (YYYY-MM). Listed, unlike full name: forms want it as one field far more
+ * often than as two, and a format reshapes it. */
+export const CARD_EXPIRY = "expiry";
+
+/** The labels a fill may reshape with a format: the shape typed when no
+ * format is given, and a sample value the pattern is checked against
+ * before the vault is asked. */
+export const DATE_LABELS: Record<string, { shape: string; sample: string }> = {
+  [DATE_OF_BIRTH]: { shape: "YYYY-MM-DD", sample: "2000-01-01" },
+  [CARD_EXPIRY]: { shape: "MM/YY", sample: "2000-01" },
 };
 
 // What the client conceals on an identity, and all it conceals. A licence
@@ -196,6 +210,7 @@ export function fieldDescriptors(item: RawItem): FieldDescriptor[] {
   ] as const) {
     if (card[key]) add(label, isCard && HIDDEN_CARD_LABELS.has(label), false);
   }
+  if (expiryIso(card.expMonth, card.expYear) !== null) add(CARD_EXPIRY, false, false, false);
 
   const identity = item.identity;
   if (identity) {
@@ -274,6 +289,7 @@ export function readSlot(item: RawItem, label: string): string | null {
   if (USERNAME_FIELDS.has(label) && text(login.username) !== null) return text(login.username);
   const cardKey = CARD_FIELDS[label];
   if (cardKey !== undefined) return text((item.card ?? {})[cardKey]);
+  if (label === CARD_EXPIRY) return expiryIso((item.card ?? {}).expMonth, (item.card ?? {}).expYear);
   const identity = item.identity ?? {};
   const identityKey = IDENTITY_FIELDS[label];
   if (identityKey !== undefined) return text(identity[identityKey]);
