@@ -55,7 +55,8 @@ const VAULT_TYPES = {
         { key: "firstName", label: "First name", half: true },
         { key: "middleName", label: "Middle name", placeholder: "Optional", half: true },
         { key: "lastName", label: "Last name", half: true },
-        { key: "company", label: "Company", placeholder: "Optional" },
+        { key: "birthDate", label: "Date of birth", type: "date", half: true },
+        { key: "company", label: "Company", placeholder: "Optional", half: true },
       ] },
       { head: "Contact", fields: [
         { key: "email", label: "Email", half: true },
@@ -349,7 +350,7 @@ function vfield(spec, ctx) {
     : el("input", {
         class: "inp",
         attrs: {
-          type: spec.secret ? "password" : "text",
+          type: spec.type ?? (spec.secret ? "password" : "text"),
           spellcheck: "false",
           placeholder: spec.placeholder ?? "",
           ...(spec.key === "name" ? { "data-name": "1" } : {}),
