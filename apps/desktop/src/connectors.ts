@@ -14,7 +14,6 @@ import {
 
 export const CONNECTOR_POLL_INTERVAL_MS = 3_000;
 export const CONNECTOR_TIMEOUT_MS = 30_000;
-export const CONNECTOR_FINAL_REFRESH_TIMEOUT_MS = 5_000;
 export const CONNECTOR_TIMEOUT_NOTE =
   "We couldn't see a new account. If you reconnected one that was already listed, it's done.";
 
@@ -117,33 +116,10 @@ export class Connectors {
           provider: "google",
           account: connected,
         });
-        await this.load(credential, action);
         return;
       }
 
       this.assertCurrent(action);
-      const finalRefreshDeadline = AbortSignal.timeout(CONNECTOR_FINAL_REFRESH_TIMEOUT_MS);
-      const finalRefreshSignal = AbortSignal.any([
-        action.controller.signal,
-        finalRefreshDeadline,
-      ]);
-      let after: ConnectorsOverview;
-      try {
-        after = await this.load(credential, action, finalRefreshSignal);
-      } catch (error) {
-        this.assertCurrent(action);
-        if (!finalRefreshDeadline.aborted) throw error;
-        this.notice = { message: CONNECTOR_TIMEOUT_NOTE, noteKind: "neutral" };
-        return;
-      }
-      const connected = connectedAccount(before, after);
-      if (connected) {
-        this.deps.recordAudit("connector_connected", {
-          provider: "google",
-          account: connected,
-        });
-        return;
-      }
       this.notice = { message: CONNECTOR_TIMEOUT_NOTE, noteKind: "neutral" };
     });
   }

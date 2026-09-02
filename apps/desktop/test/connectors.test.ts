@@ -4,7 +4,6 @@ import path from "node:path";
 import { AuditLog } from "@domo/device-core";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
-  CONNECTOR_FINAL_REFRESH_TIMEOUT_MS,
   CONNECTOR_POLL_INTERVAL_MS,
   CONNECTOR_TIMEOUT_NOTE,
   CONNECTOR_TIMEOUT_MS,
@@ -127,7 +126,6 @@ describe("connecting a Google account", () => {
     plow.listAnswers = [
       overview(),
       overview([account("ada@example.com", { isDefault: true })]),
-      overview([account("ada@example.com", { isDefault: true })]),
     ];
     const { connectors, opened, audits, waits } = build(plow);
 
@@ -136,8 +134,7 @@ describe("connecting a Google account", () => {
     expect(plow.connects).toEqual([CREDENTIAL]);
     expect(opened).toEqual([CONNECT_URL]);
     expect(waits).toEqual([CONNECTOR_POLL_INTERVAL_MS]);
-    // Baseline, successful poll, then the explicit final refresh.
-    expect(plow.listCredentials).toEqual([CREDENTIAL, CREDENTIAL, CREDENTIAL]);
+    expect(plow.listCredentials).toEqual([CREDENTIAL, CREDENTIAL]);
     expect(state).toEqual({
       busy: false,
       message: "",
@@ -153,7 +150,7 @@ describe("connecting a Google account", () => {
     }]);
   });
 
-  it("refreshes after thirty seconds and leaves a neutral re-auth note", async () => {
+  it("polls for thirty seconds and leaves a neutral re-auth note", async () => {
     const plow = new FakePlow();
     const { connectors, opened, audits, waits } = build(plow);
 
@@ -163,9 +160,7 @@ describe("connecting a Google account", () => {
     expect(waits).toHaveLength(CONNECTOR_TIMEOUT_MS / CONNECTOR_POLL_INTERVAL_MS);
     expect(waits.reduce((total, milliseconds) => total + milliseconds, 0))
       .toBe(CONNECTOR_TIMEOUT_MS);
-    // Baseline, ten polls, then one last un-aborted refresh in case the
-    // browser flow completed as the polling deadline expired.
-    expect(plow.listCredentials).toHaveLength(2 + waits.length);
+    expect(plow.listCredentials).toHaveLength(1 + waits.length);
     expect(state.busy).toBe(false);
     expect(state.google.connecting).toBe(false);
     expect(state.message).toBe(CONNECTOR_TIMEOUT_NOTE);
@@ -173,36 +168,9 @@ describe("connecting a Google account", () => {
     expect(audits).toEqual([]);
   });
 
-  it("records a new account that appears only on the final refresh", async () => {
-    const plow = new FakePlow();
-    plow.listAnswers = [
-      overview(),
-      ...Array.from(
-        { length: CONNECTOR_TIMEOUT_MS / CONNECTOR_POLL_INTERVAL_MS },
-        () => overview(),
-      ),
-      overview([account("late@example.com", { isDefault: true })]),
-    ];
-    const { connectors, audits, waits } = build(plow);
-
-    const state = await connectors.connect();
-
-    expect(waits).toHaveLength(CONNECTOR_TIMEOUT_MS / CONNECTOR_POLL_INTERVAL_MS);
-    expect(state.message).toBe("");
-    expect(state.google.accounts).toEqual([
-      account("late@example.com", { isDefault: true }),
-    ]);
-    expect(audits).toEqual([{
-      event: "connector_connected",
-      fields: { provider: "google", account: "late@example.com" },
-    }]);
-  });
-
   it("applies the thirty-second deadline to a poll request that never answers", async () => {
     const polling = new AbortController();
-    const finalRefresh = new AbortController();
-    const timeout = vi.spyOn(AbortSignal, "timeout").mockImplementation((milliseconds) =>
-      milliseconds === CONNECTOR_TIMEOUT_MS ? polling.signal : finalRefresh.signal);
+    const timeout = vi.spyOn(AbortSignal, "timeout").mockImplementation(() => polling.signal);
     const plow = new FakePlow();
     plow.pollGate = async (signal, call) => {
       if (call !== 2) return overview();
@@ -223,40 +191,12 @@ describe("connecting a Google account", () => {
     expect(state.noteKind).toBe("neutral");
   });
 
-  it("bounds a final refresh that never answers and releases the card", async () => {
-    const polling = new AbortController();
-    const finalRefresh = new AbortController();
-    const timeout = vi.spyOn(AbortSignal, "timeout").mockImplementation((milliseconds) =>
-      milliseconds === CONNECTOR_TIMEOUT_MS ? polling.signal : finalRefresh.signal);
-    const plow = new FakePlow();
-    plow.pollGate = async (signal, call) => {
-      const finalCall = 2 + CONNECTOR_TIMEOUT_MS / CONNECTOR_POLL_INTERVAL_MS;
-      if (call !== finalCall) return overview();
-      return new Promise((_resolve, reject) => {
-        signal.addEventListener("abort", () => reject(signal.reason));
-      });
-    };
-    const { connectors } = build(plow);
-
-    const pending = connectors.connect();
-    await vi.waitFor(() => {
-      expect(timeout).toHaveBeenCalledWith(CONNECTOR_FINAL_REFRESH_TIMEOUT_MS);
-    });
-    finalRefresh.abort(new DOMException("The operation was aborted.", "TimeoutError"));
-    const state = await pending;
-    expect(state.busy).toBe(false);
-    expect(state.google.connecting).toBe(false);
-    expect(state.message).toBe(CONNECTOR_TIMEOUT_NOTE);
-    expect(state.noteKind).toBe("neutral");
-  });
-
   it("refuses a second action while the first is in flight", async () => {
     const plow = new FakePlow();
     const connectUrl = deferred<string>();
     plow.connectUrl = connectUrl.promise;
     plow.listAnswers = [
       overview(),
-      overview([account("ada@example.com")]),
       overview([account("ada@example.com")]),
     ];
     const { connectors } = build(plow);
@@ -295,7 +235,6 @@ describe("connecting a Google account", () => {
     plow.connectUrl = connectUrl;
     plow.listAnswers = [
       overview(),
-      overview([account("local@example.com")]),
       overview([account("local@example.com")]),
     ];
     const { connectors, opened } = build(plow);
@@ -411,7 +350,6 @@ describe("connect URL privacy", () => {
     const plow = new FakePlow();
     plow.listAnswers = [
       overview(),
-      overview([account("ada@example.com", { isDefault: true })]),
       overview([account("ada@example.com", { isDefault: true })]),
     ];
     const logs: unknown[][] = [];
