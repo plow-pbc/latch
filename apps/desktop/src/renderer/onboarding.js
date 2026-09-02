@@ -6,6 +6,7 @@ import { el, icon } from "./dom.js";
 import { googleConnectorCard } from "./connectorsCard.js";
 import { singleFlight } from "./onboardingAction.js";
 import { loadDoneAgent } from "./onboardingDone.js";
+import { failedOnboardingState, resolveOnboardingState } from "./onboardingFallback.js";
 import { startAfterDocumentPaint } from "./welcomeEntrance.js";
 
 const SVG_NS = "http://www.w3.org/2000/svg";
@@ -658,11 +659,12 @@ function render() {
       if (focus === telemetryFocus) restoreTelemetryFocus = false;
     });
   }
+  root.hidden = false;
 }
 
 async function apply(next) {
   const previousStep = state?.step;
-  if (next) state = next;
+  state = resolveOnboardingState(state, next);
   if (state?.step !== "done") doneAgent = null;
   if (state?.step !== "connect") connectorState = null;
   render();
@@ -691,14 +693,8 @@ document.addEventListener("keydown", (event) => {
 });
 
 window.addEventListener("unhandledrejection", (event) => {
-  if (!state) return;
   event.preventDefault();
-  state = {
-    ...state,
-    busy: false,
-    message: "Something went wrong talking to the app. Try again.",
-    noteKind: "error",
-  };
+  state = failedOnboardingState(state);
   render();
 });
 
@@ -711,4 +707,4 @@ window.addEventListener("focus", () => {
 
 window.domo.onOnboardingChanged(async () => apply(await window.domo.onboardingGet()));
 window.domo.onConnectorsChanged(applyConnectors);
-apply(await window.domo.onboardingGet());
+void window.domo.onboardingGet().then(apply);

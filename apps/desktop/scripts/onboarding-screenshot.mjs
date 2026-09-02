@@ -5,9 +5,11 @@
 //   just onboarding-screenshots         → /tmp/onboarding-*.png
 //   OUT_DIR=/path just onboarding-screenshots
 import { app, ipcMain } from "electron";
+import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { onboardingFixtures } from "../src/renderer/onboarding-fixtures.js";
+import { ONBOARDING_FAILURE_MESSAGE } from "../src/renderer/onboardingFallback.js";
 import { FONT_WAIT_CEILING_MS } from "../src/renderer/welcomeEntrance.js";
 import { clickText, failLoudly, shootScreens, shotWindow } from "./screenshot-harness.mjs";
 
@@ -17,13 +19,44 @@ const outDir = process.env.OUT_DIR ?? "/tmp";
 const REARM_NOTE =
   "That code still works — send it exactly as shown and this screen will move on by itself.";
 
-const SCREENS = onboardingFixtures(Date.now());
+const fixtureScreens = onboardingFixtures(Date.now());
+const welcomeFixture = fixtureScreens[0];
+const SCREENS = [
+  ...fixtureScreens,
+  {
+    ...welcomeFixture,
+    name: "boot-null",
+    state: null,
+  },
+  {
+    ...welcomeFixture,
+    name: "boot-rejected",
+    rejectOnboardingGet: true,
+    expect: [...welcomeFixture.expect, ONBOARDING_FAILURE_MESSAGE],
+  },
+];
 let currentFixture = SCREENS[0];
 let current = currentFixture.state;
 let currentFullDiskAccess = false;
 let currentConnectors = null;
 let newCodeRequests = 0;
-ipcMain.handle("onboarding:get", async () => current);
+let releaseInitialGet;
+let markInitialGetStarted;
+const initialGetStarted = new Promise((resolve) => {
+  markInitialGetStarted = resolve;
+});
+let holdInitialGet = true;
+ipcMain.handle("onboarding:get", async () => {
+  if (holdInitialGet) {
+    markInitialGetStarted();
+    await new Promise((resolve) => {
+      releaseInitialGet = resolve;
+    });
+    holdInitialGet = false;
+  }
+  if (currentFixture.rejectOnboardingGet) throw new Error("onboarding:get fixture failure");
+  return current;
+});
 ipcMain.handle("onboarding:newCode", async () => {
   newCodeRequests += 1;
   current = {
@@ -81,6 +114,25 @@ app.whenReady().then(async () => {
     titleBarStyle: "hiddenInset",
     backgroundColor: "#111110",
   });
+  const initialLoad = win.loadFile(path.join(dist, "renderer/onboarding.html"));
+  await initialGetStarted;
+  await new Promise((resolve) => setTimeout(resolve, 1500));
+  const preRender = (await win.webContents.capturePage()).resize({ width: 660, height: 840 });
+  fs.mkdirSync(outDir, { recursive: true });
+  const preRenderOut = path.join(outDir, "onboarding-pre-render.png");
+  fs.writeFileSync(preRenderOut, preRender.toPNG());
+  const { width } = preRender.getSize();
+  const bitmap = preRender.toBitmap({ scaleFactor: 1 });
+  const colors = [[330, 22], [330, 400], [330, 800], [560, 800]].map(([x, y]) =>
+    bitmap.subarray((y * width + x) * 4, (y * width + x + 1) * 4).toString("hex"));
+  const missing = new Set(colors).size === 1
+    ? []
+    : [`shell painted before onboarding state arrived (${colors.join(", ")})`];
+  console.log("SHOT:" + JSON.stringify({ screen: "pre-render", out: preRenderOut, missing }));
+  if (missing.length) throw new Error(missing[0]);
+  releaseInitialGet();
+  await initialLoad;
+
   const failures = await shootScreens({
     win,
     outDir,
@@ -99,7 +151,7 @@ app.whenReady().then(async () => {
       await win.loadFile(path.join(dist, "renderer/onboarding.html"));
       // The full Welcome resolves its last delayed reveal at about 2.08s. Shoot
       // its resting state after the font and first-paint gate has also settled.
-      const settleMs = fixture.state.step === "welcome"
+      const settleMs = fixture.state?.step === "welcome" || fixture.state === null
         ? FONT_WAIT_CEILING_MS + 2200
         : 400;
       await new Promise((resolve) => setTimeout(resolve, settleMs));

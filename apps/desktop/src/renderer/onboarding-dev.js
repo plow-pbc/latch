@@ -6,6 +6,7 @@ import { onboardingFixtures } from "./onboarding-fixtures.js";
 const fixtures = onboardingFixtures(Date.now());
 const fixturesByName = new Map(fixtures.map((fixture) => [fixture.name, fixture]));
 const params = new URLSearchParams(window.location.search);
+let initialGetDelayMs = Number(params.get("onboardingGetDelayMs")) || 0;
 let selected = fixturesByName.get(params.get("state")) ?? fixtures[0];
 let current = { ...selected.state };
 let fullDiskAccess = selected.fullDiskAccess === true;
@@ -25,10 +26,18 @@ function publish(next) {
 }
 
 const currentState = async () => current;
+const onboardingGet = async () => {
+  if (initialGetDelayMs > 0) {
+    const delayMs = initialGetDelayMs;
+    initialGetDelayMs = 0;
+    await new Promise((resolve) => setTimeout(resolve, delayMs));
+  }
+  return current;
+};
 const currentConnectors = async () => connectors;
 
 window.domo = {
-  onboardingGet: currentState,
+  onboardingGet,
   onboardingBegin: currentState,
   onboardingAdvance: currentState,
   onboardingBack: currentState,
