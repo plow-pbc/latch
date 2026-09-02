@@ -1198,11 +1198,18 @@ export class BrowserSessions {
           selector: where,
           reason: "the stored value is not a date",
         });
+        // "Fill it without format" is only real advice when omitting format
+        // would have skipped the reshape — true for an empty default shape
+        // (date of birth), false for one with its own default (a card's
+        // expiry always reshapes to MM/YY, format or not).
         return {
           status: "error",
-          error:
-            `${field} was not filled: the value stored under that name is not a date. Correct it ` +
-            `in the vault, or fill it without 'format' if it is a custom field.`,
+          error: date?.shape === ""
+            ? `${field} was not filled: the value stored under that name is not a date. Correct it ` +
+              `in the vault, or fill it without 'format' if it is a custom field.`
+            : `${field} was not filled: the value stored under that name is not a date. Correct it ` +
+              `in the vault, or rename the field if it is a custom one carrying the '${field}' label ` +
+              `by coincidence.`,
         };
       }
     }

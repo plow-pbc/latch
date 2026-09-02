@@ -89,6 +89,7 @@ function makeCtx(
           { label: "totp", hidden: true, custom: false, alias: false },
           { label: "shipping address", hidden: false, custom: true, alias: false },
           { label: "date of birth", hidden: false, custom: true, alias: false },
+          { label: "expiry", hidden: false, custom: true, alias: false },
         ],
         values: {
           username: "jon",
@@ -96,6 +97,7 @@ function makeCtx(
           totp: "483920",
           "shipping address": "1 Elm St",
           "date of birth": "unknown",
+          expiry: "N/A",
         },
       },
       {
@@ -721,6 +723,22 @@ describe("fill_secret formats a card's expiry", () => {
     });
     expect(result).toMatchObject({ status: "error", error: expect.stringMatching(/no day/) });
     expect(released()).toEqual([]);
+    expect(typed()).toEqual([]);
+  });
+
+  it("gives advice that fits, when a custom field coincidentally named 'expiry' isn't a date", async () => {
+    // Unlike date of birth, expiry's own default shape (MM/YY) is never
+    // empty, so omitting format never skips the reshape — "fill it without
+    // format" would be advice the caller already followed.
+    const handle = await session();
+    const result = await ctx.sessions.command(handle, {
+      action: "fill_secret", selector: "#exp", item: "L1", field: "expiry",
+    });
+    expect(result).toMatchObject({
+      status: "error",
+      error: expect.stringMatching(/not a date.*rename the field/),
+    });
+    expect(result).toMatchObject({ error: expect.not.stringMatching(/fill it without 'format'/) });
     expect(typed()).toEqual([]);
   });
 });
