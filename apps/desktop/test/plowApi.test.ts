@@ -583,6 +583,19 @@ describe("PlowApi", () => {
     });
   });
 
+  it("rejects a cloud-agent provider with a non-string name", async () => {
+    const { fetchImpl } = recordingFetch([{
+      status: 200,
+      body: [{ id: "provider/valid", name: 7 }],
+    }]);
+
+    await expect(
+      new PlowApi("https://api.plow.co", fetchImpl).listCloudAgentProviders("plow_device"),
+    ).rejects.toMatchObject({
+      message: "Plow did not return a usable cloud-agent provider list.",
+    });
+  });
+
   it("lists Google connector accounts with the stored credential in the bearer header", async () => {
     const credential = "plow_device_connector_list_secret";
     const { calls, fetchImpl } = recordingFetch([{

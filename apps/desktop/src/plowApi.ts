@@ -549,6 +549,7 @@ export class PlowApi {
       ) {
         throw new PlowApiError("http", "Plow did not return a usable cloud-agent provider list.");
       }
+      // Missing or blank names fall back to the id; explicit null and other types are malformed.
       const name = typeof row.name === "string" && row.name.trim().length > 0
         ? row.name
         : row.id;

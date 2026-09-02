@@ -2039,7 +2039,7 @@ app.whenReady().then(async () => {
     cloudCreatePicker.hasName &&
     cloudCreatePicker.hasAgentType &&
     cloudCreatePicker.providers.join("|") ===
-      "exe:hermes:exe:hermes|exe:life:exe:life" &&
+      "Hermes:exe:hermes|Life:exe:life" &&
     cloudCreatePicker.lines.join("|") ===
       "Choose a line…:|Ash · +1 415-555-0199:lin_ash|New line:__new_line__" &&
     cloudCreatePicker.selectedLine === "" &&
