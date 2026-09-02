@@ -41,6 +41,7 @@ interface Ctx {
   dir: string;
   cmdLog: string;
   brokerLog: string;
+  fillLog: string;
 }
 
 let ctx: Ctx;
@@ -71,6 +72,7 @@ function makeCtx(
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "domo-mask-"));
   const cmdLog = path.join(dir, "cmds.log");
   const brokerLog = path.join(dir, "broker-audit.log");
+  const fillLog = path.join(dir, "fills.log");
   const vaultPath = path.join(dir, "vault.json");
   fs.writeFileSync(
     vaultPath,
@@ -86,12 +88,14 @@ function makeCtx(
           { label: "password", hidden: true, custom: false, alias: false },
           { label: "totp", hidden: true, custom: false, alias: false },
           { label: "shipping address", hidden: false, custom: true, alias: false },
+          { label: "date of birth", hidden: false, custom: true, alias: false },
         ],
         values: {
           username: "jon",
           password: "hunter2",
           totp: "483920",
           "shipping address": "1 Elm St",
+          "date of birth": "unknown",
         },
       },
       {
@@ -133,6 +137,7 @@ function makeCtx(
           { label: "license number", hidden: false, custom: false, alias: false },
           { label: "address1", hidden: false, custom: false, alias: false },
           { label: "city", hidden: false, custom: false, alias: false },
+          { label: "date of birth", hidden: false, custom: false, alias: false },
         ],
         values: {
           ssn: "078-05-1120",
@@ -140,6 +145,7 @@ function makeCtx(
           "license number": "D9999",
           address1: "1 Elm St",
           city: "Springfield",
+          "date of birth": "1984-11-09",
         },
       },
     ]),
@@ -149,7 +155,7 @@ function makeCtx(
   const browsers = {
     command: [process.execPath, FAKE_SERVER],
     headed: false,
-    env: { FAKE_CMD_LOG: cmdLog, ...serverEnv },
+    env: { FAKE_CMD_LOG: cmdLog, FAKE_FILL_LOG: fillLog, ...serverEnv },
     audit: () => {},
   };
   const credentials = new CredentialBroker({
@@ -164,7 +170,7 @@ function makeCtx(
     undefined,
     approval === null ? null : fakeApproval(approval, approvalCalls),
   );
-  return { sessions, browsers, events, approvalCalls, dir, cmdLog, brokerLog };
+  return { sessions, browsers, events, approvalCalls, dir, cmdLog, brokerLog, fillLog };
 }
 
 /** What the audit calls this session — read off the open event, not recomputed. */
@@ -610,6 +616,69 @@ describe("fill_secret marking", () => {
   });
 });
 
+describe("fill_secret formats a date of birth", () => {
+  const typed = (): string[] =>
+    fs.existsSync(ctx.fillLog) ? fs.readFileSync(ctx.fillLog, "utf8").trim().split("\n") : [];
+
+  it.each([
+    { format: undefined, want: "1984-11-09" },
+    { format: "MM/DD/YYYY", want: "11/09/1984" },
+    { format: "MMMM", want: "November" },
+    { format: "YYYY", want: "1984" },
+  ])("types it as $format", async ({ format, want }) => {
+    const handle = await session();
+    const result = await ctx.sessions.command(handle, {
+      action: "fill_secret", selector: "#dob", item: "I1", field: "date of birth",
+      ...(format === undefined ? {} : { format }),
+    });
+    expect(result).toEqual({ status: "completed", ok: true, frame: 0 });
+    expect(typed()).toEqual([`#dob\t${want}\t0`]);
+  });
+
+  it("refuses a format for a field that is not a date, before asking the vault", async () => {
+    const handle = await session();
+    const result = await ctx.sessions.command(handle, {
+      action: "fill_secret", selector: "#city", item: "I1", field: "city", format: "MM",
+    });
+    expect(result).toMatchObject({ status: "error", error: expect.stringMatching(/format.*date of birth/) });
+    expect(released()).toEqual([]);
+    expect(typed()).toEqual([]);
+  });
+
+  it("refuses a pattern with a letter that is not a token, before asking the vault", async () => {
+    const handle = await session();
+    const result = await ctx.sessions.command(handle, {
+      action: "fill_secret", selector: "#dob", item: "I1", field: "date of birth", format: "MM/DD/YYYY hh",
+    });
+    expect(result).toMatchObject({ status: "error", error: expect.stringMatching(/'h' is not a date token/) });
+    expect(released()).toEqual([]);
+    expect(typed()).toEqual([]);
+  });
+
+  it("refuses a format after the vault answers with a value that is not a date", async () => {
+    // L1's "date of birth" is a CUSTOM field — the label a fixed slot owns on
+    // an identity, but here just a name a person gave a login field — so its
+    // value never passed the write-path ISO validation an identity's own
+    // birthDate does.
+    const handle = await session();
+    const before = ctx.events.length;
+    const result = await ctx.sessions.command(handle, {
+      action: "fill_secret", selector: "#dob", item: "L1", field: "date of birth", format: "MM",
+    });
+    expect(result).toMatchObject({ status: "error", error: expect.stringMatching(/not a date/) });
+    expect(typed()).toEqual([]);
+    expect(commands().some((c) => c.action === "fill")).toBe(false);
+    expect(ctx.events.slice(before).at(-1)).toEqual({
+      event: "credential_fill_failed",
+      fields: {
+        session: audited(), item: "L1", field: "date of birth", origin: "pizza.example",
+        selector: "#dob",
+        reason: "the stored value is not a date",
+      },
+    });
+  });
+});
+
 describe("fill_secret split across single-character boxes", () => {
   // A segmented one-time-code control: six boxes, one character each. The agent
   // never has the value, so the split happens on the device — one vault
@@ -642,6 +711,22 @@ describe("fill_secret split across single-character boxes", () => {
       fields: { session: audited(), item: "L1", field: "totp", origin: "pizza.example", boxes: 6 },
     });
     expect(JSON.stringify(ctx.events)).not.toContain("483920");
+  });
+
+  it("splits a formatted date of birth across its boxes, one digit each", async () => {
+    const DOB_BOXES = ["#d1", "#d2", "#d3", "#d4", "#d5", "#d6", "#d7", "#d8"];
+    const handle = await session();
+    const result = await ctx.sessions.command(handle, {
+      action: "fill_secret", selectors: DOB_BOXES, item: "I1", field: "date of birth", format: "MMDDYYYY",
+    });
+    expect(result).toEqual({ status: "completed", ok: true, frame: 0 });
+    // A date of birth is not masked, so no box carries the mark, and the cmd
+    // log redacts fill values — read the fixture's own unredacted fill log for
+    // the character each box actually received.
+    expect(fills()).toEqual(DOB_BOXES.map((selector) => ({ selector })));
+    expect(
+      fs.readFileSync(ctx.fillLog, "utf8").trim().split("\n").map((l) => l.split("\t")[1]),
+    ).toEqual(["1", "1", "0", "9", "1", "9", "8", "4"]);
   });
 
   it("refuses a box count the value does not fill, and types nothing", async () => {

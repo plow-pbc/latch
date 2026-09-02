@@ -11,6 +11,7 @@
 import { describe, expect, it } from "vitest";
 import {
   FIELD_JS,
+  HELD_MATCHES_JS,
   KEYS_DROPPED_JS,
   MASK_JS,
   NOTHING_LANDED_JS,
@@ -56,7 +57,9 @@ describe("which nodes take typing", () => {
     { what: "a disabled input", el: input("password", { disabled: true }), kind: "" },
     { what: "a read-only textarea", el: textarea({ readOnly: true }), kind: "" },
     { what: "a disabled textarea", el: textarea({ disabled: true }), kind: "" },
-    { what: "a select", el: element("SELECT", { value: "" }), kind: "" },
+    { what: "a select", el: element("SELECT", { value: "", disabled: false }), kind: "select" },
+    { what: "a disabled select", el: element("SELECT", { value: "", disabled: true }), kind: "" },
+    { what: "a multi-select", el: element("SELECT", { value: "", disabled: false, multiple: true }), kind: "" },
     { what: "an iframe", el: element("IFRAME"), kind: "" },
     { what: "a span", el: element("SPAN"), kind: "" },
     { what: "a contenteditable div", el: element("DIV", { getAttribute: (k: string) => (k === "contenteditable" ? "true" : null) }), kind: "" },
@@ -240,5 +243,22 @@ describe("the mark the page ends up carrying", () => {
     const [plain] = scan();
     expect(plain.secret).toBe(false);
     expect(plain.value).toBe("jon@example.com");
+  });
+});
+
+describe("what a select is holding", () => {
+  // An option's label is what Playwright matched on; it falls back to the text
+  // in the browser, and an explicit label attribute wins over it.
+  const select = (value: string, label: string, text = label) => ({
+    tagName: "SELECT", value,
+    selectedOptions: [{ label, text }],
+  });
+  it.each([
+    { what: "matches by value", el: select("11", "November"), wanted: "11", held: true },
+    { what: "matches by label", el: select("11", "November"), wanted: "November", held: true },
+    { what: "matches by label when the text differs", el: select("11", "November", "Nov"), wanted: "November", held: true },
+    { what: "misses on another month", el: select("11", "November"), wanted: "May", held: false },
+  ])("$what", ({ el, wanted, held }) => {
+    expect(HELD_MATCHES_JS(el as any, wanted)).toBe(held);
   });
 });

@@ -28,6 +28,8 @@ import path from "node:path";
 import { JSONValue, jv, originMatches, normalizeOrigin } from "@domo/protocol";
 import { BrowserHost, BrowserHostConfig, ViewerFrame } from "./browserHost.js";
 import { CredentialBroker, CredentialError, CredentialRelease } from "./credentialBroker.js";
+import { DATE_OF_BIRTH } from "./credentialClassify.js";
+import { formatDate } from "./dateFormat.js";
 import { isFinancialDestination, PaymentApprovalClient } from "./financialGate.js";
 
 type AuditFn = (event: string, fields: { [k: string]: JSONValue }) => void;
@@ -734,6 +736,7 @@ export class BrowserSessions {
             p.get("selectors").value ?? null,
             p.get("item").str ?? "",
             p.get("field").str ?? "",
+            p.get("format").str ?? "",
           );
           const refused = this.reportRefusals(s, action, s.lastUrl, knobs, false);
           return refused.length ? { ...filled, failed_requests: refused } : filled;
@@ -962,6 +965,7 @@ export class BrowserSessions {
     selectorsGiven: JSONValue | null,
     itemId: string,
     field: string,
+    format: string,
   ): Promise<{ [k: string]: JSONValue }> {
     if (!this.credentials) return { status: "error", error: "credential broker not available" };
     let boxes: string[] | null = null;
@@ -996,6 +1000,21 @@ export class BrowserSessions {
     }
     if ((boxes === null && selector === "") || itemId === "" || field === "") {
       return { status: "error", error: "fill_secret requires selector (or selectors), item, field" };
+    }
+    // A shape is checked before the vault is asked: the pattern is the agent's
+    // and needs no value to be judged. A non-date field takes no shape at all.
+    if (format !== "") {
+      if (field !== DATE_OF_BIRTH) {
+        return {
+          status: "error",
+          error: `format applies only to ${DATE_OF_BIRTH}; ${field} is typed as stored`,
+        };
+      }
+      try {
+        formatDate("2000-01-01", format);
+      } catch (error: unknown) {
+        return { status: "error", error: error instanceof Error ? error.message : String(error) };
+      }
     }
     const targets = boxes ?? [selector];
     // One string naming where this fill went, for the audit lines that speak
@@ -1156,6 +1175,33 @@ export class BrowserSessions {
 
     const mask = release.hidden;
     let secret = release.value;
+    // The pattern was checked above and cannot throw again — but the VALUE can:
+    // a CUSTOM field can carry the "date of birth" label (customLabel only
+    // prefixes `custom:` when a fixed slot already owns the name) with
+    // whatever a person typed into it, never passed through the write-path
+    // ISO validation an identity's birthDate gets.
+    if (format !== "") {
+      try {
+        secret = formatDate(secret, format);
+      } catch {
+        secret = "";
+        this.audit("credential_fill_failed", {
+          session: s.auditId,
+          item: itemId,
+          field,
+          origin: frameHost,
+          selector: where,
+          reason: "the stored value is not a date",
+        });
+        return {
+          status: "error",
+          error:
+            `${field} was not filled: the value stored under that name is not a date, so it ` +
+            `cannot be given a format. Fill it without 'format', or store a date of birth on an ` +
+            `identity item.`,
+        };
+      }
+    }
 
     // The split, when there is one, happens here — after the vault answered and
     // before anything is typed. Code points rather than UTF-16 units: a box

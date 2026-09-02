@@ -48,6 +48,8 @@ export interface HandleLike {
   evaluateHandle(pageFunction: PageFunction, arg?: unknown): Promise<JSHandleLike>;
   fill(value: string, opts?: { timeout?: number }): Promise<void>;
   type(text: string, opts?: { delay?: number; timeout?: number }): Promise<void>;
+  /** Choose an option by value or label; Playwright throws when none matches. */
+  selectOption(value: string, opts?: { timeout?: number }): Promise<unknown>;
 }
 export interface FrameLike {
   url(): string;
@@ -419,6 +421,10 @@ export class Session {
   private async typeValue(el: HandleLike, value: string, kind: string): Promise<void> {
     if (!kind) {
       await el.fill(value, { timeout: DEFAULT_ACTION_TIMEOUT_MS });
+      return;
+    }
+    if (kind === "select") {
+      await el.selectOption(value, { timeout: DEFAULT_ACTION_TIMEOUT_MS });
       return;
     }
     value = asReceived(value, kind);

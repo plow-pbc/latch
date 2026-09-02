@@ -78,6 +78,19 @@ describe("the server's fill branch, run directly", () => {
     expect(r.result).toEqual({ ok: true, frame: 0 });
   });
 
+  it("chooses an option in a select instead of typing", async () => {
+    const r = await run({ ...base, value: "November" }, { typeable: "select", options: [["11", "November"]] });
+    expect(r.trace).toEqual(["frame.wait_for_selector", "handle.select", "handle.evaluate:unmark"]);
+    expect(r.typed_len).toBeNull();
+    expect(r.result).toEqual({ ok: true, frame: 0 });
+  });
+
+  it("reports a select that has no such option as a failed fill", async () => {
+    const r = await run({ ...base, value: "Smarch" }, { typeable: "select", options: [["11", "November"]] });
+    expect(r.error).toBe("RuntimeError");
+    expect(r.result).toBeNull();
+  });
+
   it.each([
     { what: "an input drops a break it cannot hold", value: "one\ntwo", typedLen: 6, altered: true },
     { what: "the same break as CR, which must not reach the keys", value: "one\rtwo", typedLen: 6, altered: true },
