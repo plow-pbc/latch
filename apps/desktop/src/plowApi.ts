@@ -110,6 +110,20 @@ export interface RelayDeviceInfo {
   mcpUrl: string;
 }
 
+/** The product name for the one connector Latch can use today. */
+export type ConnectorProvider = "google";
+
+export interface ConnectorAccount {
+  email: string;
+  isDefault: boolean;
+  /** True when the grant exists but Google requires another OAuth pass. */
+  needsReauth: boolean;
+}
+
+export interface ConnectorsOverview {
+  google: { accounts: ConnectorAccount[] };
+}
+
 export interface MintedCredential {
   /** Session id used to revoke a mint that cannot be handed to the user. */
   id: number;
@@ -343,6 +357,18 @@ function valueEchoesSecret(value: unknown, secret: string): boolean {
   return false;
 }
 
+function plausibleEmail(value: unknown): value is string {
+  return typeof value === "string" && /^[^\s@]{1,64}@[^\s@]{1,255}$/.test(value);
+}
+
+/** Product calls it Google; the server's historical route name is Gmail. */
+function connectorRoute(provider: ConnectorProvider): string {
+  if (provider !== "google") {
+    throw new PlowApiError("http", "That account provider is not supported.");
+  }
+  return "/v1/connectors/gmail";
+}
+
 /** `fetch`, injectable so tests never touch the network. */
 export type FetchLike = (url: string, init?: RequestInit) => Promise<Response>;
 
@@ -520,6 +546,84 @@ export class PlowApi {
     return data;
   }
 
+  /** List the Google accounts available to Gmail and Calendar. */
+  async listConnectors(token: string, signal?: AbortSignal): Promise<ConnectorsOverview> {
+    const data = await this.call<unknown>("GET", "/v1/connectors", { token, signal });
+    const root = data && typeof data === "object" && !Array.isArray(data)
+      ? data as Record<string, unknown>
+      : null;
+    const gmail = root?.gmail && typeof root.gmail === "object" && !Array.isArray(root.gmail)
+      ? root.gmail as Record<string, unknown>
+      : null;
+    if (!gmail || !Array.isArray(gmail.accounts)) {
+      throw new PlowApiError("http", "Plow did not return a usable connector list.");
+    }
+
+    const accounts = gmail.accounts.map((raw): ConnectorAccount => {
+      const row = raw && typeof raw === "object" && !Array.isArray(raw)
+        ? raw as Record<string, unknown>
+        : null;
+      if (
+        !row ||
+        !plausibleEmail(row.account) ||
+        valueEchoesSecret(row.account, token) ||
+        typeof row.is_default !== "boolean" ||
+        (row.needs_reauth !== undefined && typeof row.needs_reauth !== "boolean")
+      ) {
+        throw new PlowApiError("http", "Plow did not return a usable connector list.");
+      }
+      return {
+        email: row.account,
+        isDefault: row.is_default,
+        needsReauth: row.needs_reauth === true,
+      };
+    });
+    return { google: { accounts } };
+  }
+
+  /** Mint the short-lived browser URL for one OAuth pass. Main-process only. */
+  async connectorConnectUrl(token: string, provider: ConnectorProvider): Promise<string> {
+    const route = connectorRoute(provider);
+    const data = await this.call<unknown>("POST", `${route}/connect-code`, { token });
+    const code = data && typeof data === "object" && !Array.isArray(data)
+      ? (data as Record<string, unknown>).code
+      : null;
+    if (typeof code !== "string" || !code.trim()) {
+      throw new PlowApiError("http", "Plow did not return a usable connection address.");
+    }
+    const url = new URL(`${this.baseUrl}${route}/connect`);
+    url.searchParams.set("code", code);
+    return url.toString();
+  }
+
+  /** Remove exactly one account; an account-less call is never issued. */
+  async disconnectConnector(
+    token: string,
+    provider: ConnectorProvider,
+    account: string,
+  ): Promise<void> {
+    const email = account.trim();
+    if (!plausibleEmail(email)) {
+      throw new PlowApiError("http", "Choose a valid account to disconnect.");
+    }
+    const query = new URLSearchParams({ account: email });
+    await this.call<unknown>("POST", `${connectorRoute(provider)}/disconnect?${query}`, { token });
+  }
+
+  /** Select exactly one connected account as the provider default. */
+  async setDefaultConnector(
+    token: string,
+    provider: ConnectorProvider,
+    account: string,
+  ): Promise<void> {
+    const email = account.trim();
+    if (!plausibleEmail(email)) {
+      throw new PlowApiError("http", "Choose a valid default account.");
+    }
+    const query = new URLSearchParams({ account: email });
+    await this.call<unknown>("POST", `${connectorRoute(provider)}/set-default?${query}`, { token });
+  }
+
   /**
    * The provider mint: one short-lived token per connected account, for a
    * provider that fans out. The body says `all`; the route is the provider's.
@@ -549,8 +653,6 @@ export class PlowApi {
     // Bounded and shaped, not RFC-precise: the value reaches error strings,
     // audit rows and the agent, so what matters is that a credential-shaped
     // or free-text string cannot ride the account field.
-    const plausibleEmail = (v: unknown): v is string =>
-      typeof v === "string" && /^[^\s@]{1,64}@[^\s@]{1,255}$/.test(v);
     const rows = (v: unknown): Record<string, unknown>[] =>
       Array.isArray(v) ? v.map((row) => (row ?? {}) as Record<string, unknown>) : [];
     const accounts: { account: string; token: string; isDefault: boolean }[] = [];

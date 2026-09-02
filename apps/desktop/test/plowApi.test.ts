@@ -555,6 +555,87 @@ describe("PlowApi", () => {
     });
   });
 
+  it("lists Google connector accounts with the stored credential in the bearer header", async () => {
+    const credential = "plow_device_connector_list_secret";
+    const { calls, fetchImpl } = recordingFetch([{
+      status: 200,
+      body: {
+        gmail: {
+          connected: true,
+          connector: "gmail",
+          account: "ada@example.com",
+          accounts: [
+            { account: "ada@example.com", is_default: true, needs_reauth: true },
+            { account: "grace@example.com", is_default: false },
+          ],
+        },
+        slack: { connected: false, connector: "slack", account: null, accounts: [] },
+        web_base_url: "https://app.plow.co",
+      },
+    }]);
+
+    await expect(
+      new PlowApi("https://api.plow.co", fetchImpl).listConnectors(credential),
+    ).resolves.toEqual({
+      google: {
+        accounts: [
+          { email: "ada@example.com", isDefault: true, needsReauth: true },
+          { email: "grace@example.com", isDefault: false, needsReauth: false },
+        ],
+      },
+    });
+
+    expect(calls[0].url).toBe("https://api.plow.co/v1/connectors");
+    expect(calls[0].init.method).toBe("GET");
+    expect((calls[0].init.headers as Record<string, string>).authorization)
+      .toBe(`Bearer ${credential}`);
+    expect(calls[0].url).not.toContain(credential);
+  });
+
+  it("uses the Google connector routes for connect, per-account removal, and default", async () => {
+    const credential = "plow_device_connector_mutation_secret";
+    const { calls, fetchImpl } = recordingFetch([
+      { status: 200, body: { code: "signed-connect-code" } },
+      { status: 200, body: { status: "disconnected", connector: "gmail" } },
+      {
+        status: 200,
+        body: { status: "default_updated", connector: "gmail", account: "ada+work@example.com" },
+      },
+    ]);
+    const api = new PlowApi("https://api.plow.co", fetchImpl);
+
+    await expect(api.connectorConnectUrl(credential, "google")).resolves.toBe(
+      "https://api.plow.co/v1/connectors/gmail/connect?code=signed-connect-code",
+    );
+    await api.disconnectConnector(credential, "google", "ada+work@example.com");
+    await api.setDefaultConnector(credential, "google", "ada+work@example.com");
+
+    expect(calls.map(({ url, init }) => [init.method, url])).toEqual([
+      ["POST", "https://api.plow.co/v1/connectors/gmail/connect-code"],
+      ["POST", "https://api.plow.co/v1/connectors/gmail/disconnect?account=ada%2Bwork%40example.com"],
+      ["POST", "https://api.plow.co/v1/connectors/gmail/set-default?account=ada%2Bwork%40example.com"],
+    ]);
+    expect(calls.every(({ init }) =>
+      (init.headers as Record<string, string>).authorization === `Bearer ${credential}`
+    )).toBe(true);
+    expect(calls.every(({ url }) => !url.includes(credential))).toBe(true);
+  });
+
+  it("never issues an account-less disconnect or an unsupported provider route", async () => {
+    const { calls, fetchImpl } = recordingFetch([]);
+    const api = new PlowApi("https://api.plow.co", fetchImpl);
+
+    await expect(api.disconnectConnector("plow_device", "google", "   "))
+      .rejects.toMatchObject({ message: "Choose a valid account to disconnect." });
+    await expect(api.setDefaultConnector("plow_device", "google", "   "))
+      .rejects.toMatchObject({ message: "Choose a valid default account." });
+    await expect(api.connectorConnectUrl(
+      "plow_device",
+      "slack" as unknown as "google",
+    )).rejects.toMatchObject({ message: "That account provider is not supported." });
+    expect(calls).toHaveLength(0);
+  });
+
   it("lists API keys and revokes one by id with bearer credentials", async () => {
     const credential = "plow_device_do_not_leak";
     const keys = [
