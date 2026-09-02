@@ -349,6 +349,10 @@ describe("the other three types", () => {
     expect(() =>
       encryptCipher({ type: "identity", name: "Me", birthDate: "11/09/1984" }, null, account),
     ).toThrow(/YYYY-MM-DD/);
+    // A month-year is a valid date — just not the shape a birth date is kept in.
+    expect(() =>
+      encryptCipher({ type: "identity", name: "Me", birthDate: "1984-11" }, null, account),
+    ).toThrow(/YYYY-MM-DD/);
     // Empty clears it; that is not a bad date.
     expect(() => encryptCipher({ type: "identity", name: "Me", birthDate: "" }, null, account)).not.toThrow();
   });

@@ -338,7 +338,9 @@ export function encryptCipher(
   for (const field of KEYS_FOR[type] ?? []) {
     const given = input[field];
     if (typeof given !== "string") continue;
-    if (field === "birthDate" && given !== "") parseIso(given);            // throws on a bad date
+    if (field === "birthDate" && given !== "" && parseIso(given).d === null) {
+      throw new Error("a date of birth is stored as YYYY-MM-DD");
+    }
     const normalized = (field === "expMonth" || field === "expYear") && given !== "" ? expiryPart(field, given) : given;
     out[field] = enc(normalized, key);
   }
