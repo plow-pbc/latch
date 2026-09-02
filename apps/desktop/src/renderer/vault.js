@@ -88,6 +88,51 @@ const VAULT_TYPES = {
   },
 };
 
+/**
+ * A card's brand, read off its own number.
+ *
+ * The issuer identification number IS the brand — the owner retyping it into
+ * the Brand box is transcription, not information, so the form does it. The
+ * ranges are the published IINs; an unrecognised (or half-typed) number gives
+ * "", which is the form saying nothing rather than guessing.
+ */
+export function cardBrand(number) {
+  const d = number.replace(/\D/g, "");
+  if (!d) return "";
+  const n = (len) => Number(d.slice(0, len));
+  if (d[0] === "4") return "Visa";
+  if (/^3[47]/.test(d)) return "Amex";
+  if ((n(2) >= 51 && n(2) <= 55) || (d.length >= 4 && n(4) >= 2221 && n(4) <= 2720)) return "Mastercard";
+  // 622126-622925 is Discover's block inside 62, and it is read before the
+  // UnionPay prefix below or those cards come out labelled UnionPay.
+  if (/^6(011|5)/.test(d) || (d.length >= 3 && n(3) >= 644 && n(3) <= 649)
+      || (d.length >= 6 && n(6) >= 622126 && n(6) <= 622925)) return "Discover";
+  if (/^3[689]/.test(d) || (d.length >= 3 && n(3) >= 300 && n(3) <= 305)) return "Diners Club";
+  if (d.length >= 4 && n(4) >= 3528 && n(4) <= 3589) return "JCB";
+  if (/^62/.test(d)) return "UnionPay";
+  return "";
+}
+
+/**
+ * The Brand box, filled from the number as it is typed.
+ *
+ * A suggestion, never a lock: the box is ours to rewrite only while it still
+ * holds what we put there. The owner typing their own brand — or clearing the
+ * box, which is them saying "no brand" — takes it back for good, and the form
+ * never touches it again. What the box opens as is the caller's to say
+ * (`vformBody`): "" on a new item, whose empty box is ours until they type in
+ * it, and null on a saved one, which no box value equals — the owner's brand
+ * is theirs however they left it. The brand input is read at event time
+ * because it is built after the number.
+ */
+export function wireCardBrand(numberInput, ctx) {
+  numberInput.addEventListener("input", () => {
+    const brand = ctx.inputs.brand;
+    if (!brand || brand.value !== ctx.derivedBrand) return;
+    brand.value = ctx.derivedBrand = cardBrand(numberInput.value);
+  });
+}
+
 function errText(err) {
   // A throw from the main process arrives wrapped: "Error invoking remote
   // method 'vault:saveItem': Error: the sentence we wrote". The owner should
@@ -315,6 +360,8 @@ function vfield(spec, ctx) {
   vbaseline(input);
   ctx.inputs[spec.key] = input;
 
+  if (spec.key === "number") wireCardBrand(input, ctx);
+
   const buttons = [];
   const held = !!(spec.secret && ctx.saved && (ctx.item.secrets || []).includes(spec.key));
   /* Mary drew two states and never let them look alike: a saved secret sat in
@@ -432,7 +479,12 @@ function vurls(ctx) {
 /** Every group of a type's form, built once and shared by the sheet and the row. */
 function vformBody(type, item) {
   const spec = VAULT_TYPES[type];
-  const ctx = { item, saved: !!(item && item.id), inputs: {}, urlInputs: [] };
+  const saved = !!(item && item.id);
+  // A saved card's Brand box is the owner's, whatever it holds — an empty one
+  // is them having cleared it, and the vault kept it cleared. `null` is equal
+  // to no box value, so the fill never claims it back. A new item's box opens
+  // as ours.
+  const ctx = { item, saved, inputs: {}, urlInputs: [], derivedBrand: saved ? null : "" };
   const name = vfield(
     { key: "name", label: "Item name", required: true, placeholder: spec.placeholder },
     { ...ctx, item: item ? { ...item, fields: { ...item.fields, name: item.name } } : null },
