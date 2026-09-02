@@ -26,6 +26,17 @@ function corrupt(zip: Uint8Array): Uint8Array {
   return new Uint8Array(buf);
 }
 
+/** The same single-entry zip with its declared UNCOMPRESSED size lied down to
+ * `size`, leaving the compressed size and CRC alone — the lie a STORED entry
+ * can carry that the pre-read check never sees, since reading it back still
+ * slices and verifies the real bytes. */
+function lieAboutSize(zip: Uint8Array, size: number): Uint8Array {
+  const buf = Buffer.from(zip);
+  const cen = buf.indexOf(Buffer.from([0x50, 0x4b, 0x01, 0x02])); // central directory record
+  buf.writeUInt32LE(size, cen + 24); // CENLEN, four bytes past CENSIZ
+  return new Uint8Array(buf);
+}
+
 const login = (title: string, extra: Record<string, unknown> = {}) => ({
   uuid: title.toLowerCase(),
   categoryUuid: "001",
@@ -160,13 +171,22 @@ describe("parseOnePux", () => {
     zip.getEntry("export.data")!.header.size = 0;
     expect(() => parseOnePux(new Uint8Array(zip.toBuffer()))).toThrow(/1PUX/);
 
-    // A STORED entry is copied at its real length regardless of what the
-    // header declares, so there is nothing to catch before the read here —
-    // the cap has to catch it on the way OUT instead.
-    const stored = new AdmZip();
-    stored.addFile("export.data", Buffer.alloc(64 * 1024 * 1024 + 1, 0x20));
-    stored.getEntry("export.data")!.header.method = 0; // STORED, not deflated
-    expect(() => parseOnePux(new Uint8Array(stored.toBuffer()))).toThrow(/too large/);
+    // A tiny compressed payload with a header lying that it inflates to well
+    // past the cap: refused on the declared size alone, before adm-zip is
+    // ever asked to chase that bomb through zlib.
+    const bomb = new AdmZip();
+    bomb.addFile("export.data", Buffer.from(exportData([{ name: "P", items: [login("X")] }])));
+    bomb.getEntry("export.data")!.header.size = 64 * 1024 * 1024 + 1;
+    expect(() => parseOnePux(new Uint8Array(bomb.toBuffer()))).toThrow(/too large/);
+
+    // A STORED entry is copied at its REAL length regardless of what the
+    // header declares — so a small declared size sails past the check above,
+    // and the cap has to catch it on the way OUT instead. The zip is built
+    // honestly first (so the real bytes, its CRC and compressed size all
+    // agree) and only the declared uncompressed size is lied about after —
+    // patching it before writing would corrupt what STORED actually copies.
+    const stored = zipOf({ "export.data": new Uint8Array(64 * 1024 * 1024 + 1).fill(0x20) }, { deflate: false });
+    expect(() => parseOnePux(lieAboutSize(stored, 100))).toThrow(/too large/);
   });
 
   it("names the vaults a parsed export spans, skipped-only ones included, and tells two same-named vaults apart", () => {

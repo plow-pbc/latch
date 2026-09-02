@@ -7,12 +7,14 @@
  * what lets the Import sheet offer a pick before anything is saved.
  *
  * export.data is read with adm-zip: stored and deflated entries, the CRC
- * checked. The inflate is bounded by the declared size — refused here when it
- * declares none — and whatever comes out is refused over 64 MiB regardless,
- * since a STORED entry is copied at its stored length no matter what the
- * header declares. Neither a lying header nor a zip bomb can run away with
- * memory. The standing rule of passwordImport.ts holds here: no error,
- * warning or skip reason ever contains a field's value.
+ * checked. Two bounds, not one: the inflate itself is bounded by the declared
+ * size — refused up front when it declares none, or already too much, so a
+ * deflated bomb can't spend the memory the declared size would let it reach —
+ * and whatever getData() actually returns is refused over 64 MiB regardless,
+ * since a STORED entry is copied at its real length no matter what the header
+ * declares. Neither a lying header nor a zip bomb can run away with memory.
+ * The standing rule of passwordImport.ts holds here: no error, warning or
+ * skip reason ever contains a field's value.
  */
 import AdmZip from "adm-zip";
 import { finishImportedLogin, normalizeImportUrls, type ImportedLogin, type ImportVault, type ParsedImport, type SkippedRow } from "./passwordImport.js";
@@ -55,15 +57,19 @@ export function parseOnePux(bytes: Uint8Array): ParsedImport {
   const entry = zip.getEntry("export.data");
   if (!entry) throw new Error(NOT_1PUX);
   if (entry.header.size <= 0) throw new Error(NOT_1PUX); // a zero declares no bound at all
+  // Refused before the inflate is even asked for: a deflated entry's inflate
+  // is bounded BY the declared size, so a declared size already past the cap
+  // would still let adm-zip spend up to that much memory chasing a bomb.
+  if (entry.header.size > MAX_INFLATED_BYTES) throw new Error("that export is too large to read");
   let data: Buffer;
   try {
     data = entry.getData();
   } catch {
     throw new Error(NOT_1PUX);
   }
-  // A STORED entry is copied at its real length, not the declared one, so the
-  // declared size cannot be trusted to bound it — the actual read result is
-  // what gets checked, for every method.
+  // The check above trusts the declared size, but a STORED entry is copied at
+  // its real length regardless of what the header declares — so the actual
+  // read result is checked too, for every method.
   if (data.length > MAX_INFLATED_BYTES) throw new Error("that export is too large to read");
   let root: Rec;
   try {
