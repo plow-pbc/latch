@@ -247,13 +247,16 @@ describe("the mark the page ends up carrying", () => {
 });
 
 describe("what a select is holding", () => {
-  const select = (value: string, label: string) => ({
+  // An option's label is what Playwright matched on; it falls back to the text
+  // in the browser, and an explicit label attribute wins over it.
+  const select = (value: string, label: string, text = label) => ({
     tagName: "SELECT", value,
-    selectedOptions: [{ text: label }],
+    selectedOptions: [{ label, text }],
   });
   it.each([
     { what: "matches by value", el: select("11", "November"), wanted: "11", held: true },
     { what: "matches by label", el: select("11", "November"), wanted: "November", held: true },
+    { what: "matches by label when the text differs", el: select("11", "November", "Nov"), wanted: "November", held: true },
     { what: "misses on another month", el: select("11", "November"), wanted: "May", held: false },
   ])("$what", ({ el, wanted, held }) => {
     expect(HELD_MATCHES_JS(el as any, wanted)).toBe(held);

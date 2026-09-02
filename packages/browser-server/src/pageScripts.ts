@@ -197,7 +197,7 @@ export const FIELD_CAP_JS = (el: El): number => {
 export const HELD_MATCHES_JS = (el: El, wanted: string): boolean => {
   if (el.tagName === "SELECT") {
     const chosen = el.selectedOptions && el.selectedOptions[0];
-    return el.value === wanted || (!!chosen && (chosen.text || "").trim() === wanted);
+    return el.value === wanted || (!!chosen && (chosen.label || "").trim() === wanted);
   }
   return (typeof el.value === "string" ? el.value : el.textContent || "") === wanted;
 };
