@@ -8,6 +8,7 @@ import { app, ipcMain } from "electron";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { onboardingFixtures } from "../src/renderer/onboarding-fixtures.js";
+import { FONT_WAIT_CEILING_MS } from "../src/renderer/welcomeEntrance.js";
 import { clickText, failLoudly, shootScreens, shotWindow } from "./screenshot-harness.mjs";
 
 const dir = path.dirname(fileURLToPath(import.meta.url));
@@ -88,8 +89,10 @@ app.whenReady().then(async () => {
       // The full Welcome resolves its last delayed reveal at about 2.08s. Shoot
       // its resting state after the font and first-paint gate has also settled.
       const settleMs = fixture.name === "welcome"
-        ? 2800
-        : fixture.name === "welcome-repeat" ? 450 : 400;
+        ? FONT_WAIT_CEILING_MS + 2200
+        : ["welcome-repeat", "signed-out-revoke-warning"].includes(fixture.name)
+          ? FONT_WAIT_CEILING_MS + 500
+          : 400;
       await new Promise((resolve) => setTimeout(resolve, settleMs));
     },
   });

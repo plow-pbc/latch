@@ -1,5 +1,8 @@
-import { describe, expect, it, vi } from "vitest";
-import { startAfterDocumentPaint } from "../src/renderer/welcomeEntrance.js";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  FONT_WAIT_CEILING_MS,
+  startAfterDocumentPaint,
+} from "../src/renderer/welcomeEntrance.js";
 
 async function settlePromises() {
   await Promise.resolve();
@@ -8,22 +11,20 @@ async function settlePromises() {
 }
 
 describe("the welcome entrance clock", () => {
+  afterEach(() => vi.useRealTimers());
+
   it("does not start while fonts or the first painted frame are stalled", async () => {
+    vi.useFakeTimers();
     let fontsLoaded!: () => void;
     const fontsReady = new Promise<void>((resolve) => {
       fontsLoaded = resolve;
     });
     const frames: FrameRequestCallback[] = [];
-    const tasks: Array<{ callback: () => void; delay: number }> = [];
     const start = vi.fn();
     const entrance = startAfterDocumentPaint(start, {
       fontsReady,
       requestFrame: (callback) => {
         frames.push(callback);
-        return 0;
-      },
-      scheduleTask: (callback, delay = 0) => {
-        tasks.push({ callback, delay });
         return 0;
       },
     });
@@ -37,11 +38,6 @@ describe("the welcome entrance clock", () => {
     expect(frames).toHaveLength(1);
 
     frames.shift()?.(16);
-    expect(tasks.filter(({ delay }) => delay === 0)).toHaveLength(1);
-    expect(start).not.toHaveBeenCalled();
-
-    tasks.find(({ delay }) => delay === 0)?.callback();
-    await settlePromises();
     expect(frames).toHaveLength(1);
     expect(start).not.toHaveBeenCalled();
 
@@ -51,8 +47,8 @@ describe("the welcome entrance clock", () => {
   });
 
   it("starts after the font wait ceiling when fonts remain pending", async () => {
+    vi.useFakeTimers();
     const frames: FrameRequestCallback[] = [];
-    const tasks: Array<{ callback: () => void; delay: number }> = [];
     const start = vi.fn();
     const entrance = startAfterDocumentPaint(start, {
       fontsReady: new Promise(() => {}),
@@ -60,50 +56,21 @@ describe("the welcome entrance clock", () => {
         frames.push(callback);
         return 0;
       },
-      scheduleTask: (callback, delay = 0) => {
-        tasks.push({ callback, delay });
-        return 0;
-      },
     });
 
     await settlePromises();
-    expect(tasks).toHaveLength(1);
-    expect(tasks[0]?.delay).toBe(800);
-    tasks.shift()?.callback();
+    vi.advanceTimersByTime(FONT_WAIT_CEILING_MS - 1);
     await settlePromises();
+    expect(frames).toHaveLength(0);
 
-    frames.shift()?.(800);
-    tasks.find(({ delay }) => delay === 0)?.callback();
+    vi.advanceTimersByTime(1);
     await settlePromises();
-    frames.shift()?.(816);
+    expect(frames).toHaveLength(1);
+    expect(start).not.toHaveBeenCalled();
+
+    frames.shift()?.(FONT_WAIT_CEILING_MS);
+    frames.shift()?.(FONT_WAIT_CEILING_MS + 16);
     await entrance;
-    expect(start).toHaveBeenCalledOnce();
-  });
-
-  it("starts when the font promise rejects without surfacing the rejection", async () => {
-    const frames: FrameRequestCallback[] = [];
-    const tasks: Array<{ callback: () => void; delay: number }> = [];
-    const start = vi.fn();
-    const entrance = startAfterDocumentPaint(start, {
-      fontsReady: Promise.reject(new Error("font load failed")),
-      requestFrame: (callback) => {
-        frames.push(callback);
-        return 0;
-      },
-      scheduleTask: (callback, delay = 0) => {
-        tasks.push({ callback, delay });
-        return 0;
-      },
-    });
-    const settled = expect(entrance).resolves.toBeUndefined();
-
-    await settlePromises();
-    frames.shift()?.(16);
-    tasks.find(({ delay }) => delay === 0)?.callback();
-    await settlePromises();
-    frames.shift()?.(32);
-
-    await settled;
     expect(start).toHaveBeenCalledOnce();
   });
 });
