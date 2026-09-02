@@ -43,9 +43,8 @@ export interface ChatPerson {
  * the name is both safe and useful, where dropping the row would lose a chat
  * the owner has.
  *
- * One rule, because two callers hold the credential: the chat-list client, and
- * the redeem that persists `provisionedChatLabel`. The second had no check at
- * all, so a `line` echoing the session token was written to disk and rendered.
+ * One rule, because both chat-list reads and line-activation responses carry a
+ * credential beside the chat data they return.
  */
 export function chatEchoesCredential(
   chat: {

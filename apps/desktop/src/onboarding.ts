@@ -17,14 +17,8 @@
  * user is meant to read: the activation display code. The activation *secret*
  * and the login session never appear in it at all.
  */
-import {
-  chatEchoesCredential,
-  chatPeople,
-  chatRowTitle,
-  usableChatDisplayName,
-  withoutCredentialEchoes,
-} from "./chatRows.js";
 import { ActivationChat, PlowApi, PlowApiError } from "./plowApi.js";
+import { chatPeople, chatRowTitle, usableChatDisplayName } from "./chatRows.js";
 import { loadSettings, saveSettings, Settings } from "./settings.js";
 
 /**
@@ -102,54 +96,6 @@ export interface OnboardingActivation {
 }
 
 /**
- * The chat the activation provisioned, as the screen says it.
- *
- * The label is its title, its members' names or its numbers — see
- * `activationChatLabel`. `uid` is what everything else joins on.
- */
-export interface OnboardingChat {
-  uid: string;
-  label: string;
-}
-
-/** The single cloud-agent action the last screen may offer. */
-export interface OnboardingDoneAgent {
-  name: string;
-  /** Built and consumed in main; the renderer never sends a URL back. */
-  smsUrl: string;
-}
-
-/**
- * The chat activation provisioned, as the app remembers it.
- *
- * One reading of one persisted record. It was two — this screen's and the
- * cloud-agent picker's — with different ideas about whitespace and a blank
- * label, so the same Mac could show a chat here and a bare uid there.
- *
- * `null` on a Mac that activated before `provision_chat`, which is why nothing
- * may treat its absence as "this account has no chats". The label falls back to
- * the uid because a chat with neither a line nor members is still a real chat,
- * and an empty row is worse than an ugly one.
- */
-export function storedActivationChat(settings: Settings): OnboardingChat | null {
-  const uid = settings.provisionedChatUid.trim();
-  if (!uid) return null;
-  return { uid, label: settings.provisionedChatLabel.trim() || uid };
-}
-
-/**
- * How a human recognises a chat: its title when present, otherwise each
- * member's usable name or real handle, with non-owners first. If the provider
- * has no usable names, use the number it runs on and each member's handle in
- * API owner-first order. The first fallback number is the agent participant's
- * line — never the chat's own `provider_key`, which is the provider's thread id
- * and would put "chat_5" where the user is looking for something to text.
- *
- * Both halves are optional in the data, so this never returns an empty string —
- * a chat with neither is still identified by its uid, which is ugly but true,
- * and beats a blank line on the last screen of setup.
- */
-/**
  * The numbers a message to this chat would go to.
  *
  * Structured, and separate from the label, because they are two different
@@ -176,14 +122,9 @@ export function activationChatRecipients(chat: ActivationChat): ChatRecipients {
   };
 }
 
-
 export function activationChatLabel(chat: ActivationChat): string {
   const displayName = usableChatDisplayName(chat.displayName);
   if (displayName) return displayName;
-  // Presentation is `chatRows`', not this file's: it decides who counts as a
-  // participant, which of them is the owner, and how a number is spelled. This
-  // used to keep a second answer to all three, and the two drifted — the label
-  // dropped the owner while the picker's row named them "You".
   return chatRowTitle(chatPeople(chat), (chat.line ?? "").trim() || null, chat.uid);
 }
 
@@ -197,19 +138,11 @@ export interface OnboardingState {
   /** Epoch ms the entered OTP code stops working. */
   codeExpiresAt: number | null;
   activation: OnboardingActivation | null;
-  /** The chat the account now has, or null on a Mac activated before there was
-   * one. Display data — no secret, and nothing here is authoritative. */
-  chat: OnboardingChat | null;
   /** We have stopped watching this activation. The screen stops counting down
    * and offers a fresh code. */
   activationStale: boolean;
-  accountUid: string;
-  mcpUrl: string;
-  connected: boolean;
   /** The data screen's pending choice. It is persisted only on Continue. */
   telemetryEnabled: boolean;
-  /** At most one messageable cloud agent for the terminal screen. */
-  agent: OnboardingDoneAgent | null;
 }
 
 export interface OnboardingDeps {
@@ -217,19 +150,12 @@ export interface OnboardingDeps {
   home: string;
   /** (Re)start the relay from stored settings. */
   startRelay: () => Promise<void>;
-  isConnected: () => boolean;
   /** Names this Mac in the activation request. */
   deviceName: string;
   onChange?: () => void;
   now?: () => number;
   /** How the poll loop waits. Injectable so tests need no real timers. */
   wait?: (ms: number) => Promise<void>;
-  /** Resolve the first cloud agent whose line can be opened in Messages. */
-  lookupDoneAgent?: () => Promise<OnboardingDoneAgent | null>;
-  /** Diagnostics. Callers must assume anything passed here reaches a log, so
-   * nothing secret is ever passed — not the activation secret, and not the
-   * display code, which is a live credential until it is redeemed. */
-  warn?: (message: string) => void;
 }
 
 export class Onboarding {
@@ -255,7 +181,6 @@ export class Onboarding {
   private pendingMintId = 0;
   private mints = 0;
   private telemetryEnabled: boolean;
-  private doneAgent: OnboardingDoneAgent | null = null;
 
   constructor(private readonly deps: OnboardingDeps) {
     const settings = this.settings();
@@ -264,7 +189,6 @@ export class Onboarding {
   }
 
   state(): OnboardingState {
-    const settings = this.settings();
     return {
       step: this.step,
       phone: this.phone,
@@ -272,13 +196,8 @@ export class Onboarding {
       busy: this.busy,
       codeExpiresAt: this.codeExpiresAt,
       activation: this.activation,
-      chat: storedActivationChat(settings),
       activationStale: this.activationStale,
-      accountUid: settings.accountUid,
-      mcpUrl: settings.mcpUrl,
-      connected: this.deps.isConnected(),
       telemetryEnabled: this.telemetryEnabled,
-      agent: this.doneAgent === null ? null : { ...this.doneAgent },
     };
   }
 
@@ -305,25 +224,11 @@ export class Onboarding {
       return this.publish();
     }
     if (this.step === "data") {
-      const epoch = this.pollGeneration;
       const settings = this.settings();
       settings.telemetryEnabled = this.telemetryEnabled;
       settings.setupComplete = true;
       this.save(settings);
       this.step = "done";
-      this.doneAgent = null;
-      this.busy = true;
-      this.publish();
-      try {
-        const agent = await this.deps.lookupDoneAgent?.() ?? null;
-        if (epoch !== this.pollGeneration) return this.state();
-        this.doneAgent = agent;
-      } catch {
-        if (epoch !== this.pollGeneration) return this.state();
-        // The app is ready even when the optional shortcut cannot be loaded.
-        this.doneAgent = null;
-      }
-      this.busy = false;
       return this.publish();
     }
     return this.publish();
@@ -539,7 +444,7 @@ export class Onboarding {
         // fresh on "Try Again" — not re-arming a code nothing can complete.
         this.activationSecret = null;
         this.stall();
-        await this.run(() => this.finishWithSession(result.token as string, result.chat));
+        await this.run(() => this.finishWithSession(result.token as string));
         return;
       }
       if (generation !== this.pollGeneration) return;
@@ -687,7 +592,6 @@ export class Onboarding {
     this.codeExpiresAt = null;
     this.message = "";
     this.busy = false;
-    this.doneAgent = null;
     const settings = this.settings();
     this.telemetryEnabled = settings.telemetryEnabled;
     this.step = this.initialStep(settings);
@@ -744,10 +648,7 @@ export class Onboarding {
    * The token the redeem handed back is what gets written. Runtime relay
    * startup owns the idempotent registration and retries it with backoff.
    */
-  private async finishWithSession(
-    sessionToken: string,
-    chat: ActivationChat | null = null,
-  ): Promise<void> {
+  private async finishWithSession(sessionToken: string): Promise<void> {
     // A sign-out can land inside the account lookup, and it must stay signed out:
     // persisting past it would leave the account a live credential its owner
     // just retired. `pollGeneration` is bumped by every path that abandons this
@@ -768,24 +669,6 @@ export class Onboarding {
     settings.relayCredential = sessionToken;
     settings.accountUid = info.uid;
     settings.mcpUrl = "";
-    // Kept, not read and dropped: the redeem that carried it answers once, so
-    // this is the only moment the app ever sees the chat it just created. A
-    // sign-in with no chat — the phone-code path, or a Mac activated before
-    // `provision_chat` — leaves whatever was there alone rather than blanking
-    // it, because "this redeem carried no chat" is not "the account has none".
-    // The label is built from the chat's line, uids, numbers and names — all
-    // server-authored, and this is the one place they are written to DISK. A
-    // chat echoing the session token is dropped whole: the sign-in still
-    // completes, and the account's chat list is re-read on the Agents tab
-    // anyway, so nothing is lost but a row nobody could have trusted.
-    if (chat && !chatEchoesCredential(chat, sessionToken)) {
-      settings.provisionedChatUid = chat.uid;
-      settings.provisionedChatLabel = activationChatLabel(withoutCredentialEchoes(chat, sessionToken));
-    } else if (chat) {
-      // No detail, and no field values: the point of the check is that one of
-      // them is the credential.
-      this.deps.warn?.("dropped a provisioned chat whose fields echoed the credential");
-    }
     // Nothing records `sendTo`. Pairing asks for no chat, so it is the managed
     // phone — the number that takes an activation text, not one anyone can be
     // told to text afterwards to get a chat. The cloud-agents screen names the

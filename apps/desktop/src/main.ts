@@ -785,9 +785,6 @@ ipcMain.handle("onboarding:openMessages", async () => {
   await openSmsUrl(url);
   return onboarding?.messagesOpened();
 });
-ipcMain.handle("onboarding:openAgentMessages", async () =>
-  openSmsUrl(onboarding?.state().agent?.smsUrl),
-);
 ipcMain.handle("onboarding:requestCode", async (_e, phone: string) => onboarding?.requestCode(phone));
 ipcMain.handle("onboarding:resendCode", async () => onboarding?.resendCode());
 ipcMain.handle("onboarding:editPhone", async () => onboarding?.editPhone());
@@ -1633,24 +1630,8 @@ app.whenReady().then(async () => {
     api: new PlowApi(apiBaseUrl),
     home,
     startRelay,
-    isConnected: () => connected,
     deviceName: `Plow Latch (${hostName()})`,
-    lookupDoneAgent: async () => {
-      if (!cloudAgents) return null;
-      await cloudAgents.refresh();
-      const cloud = cloudAgents.state();
-      if (cloud.cloudAgentsError) return null;
-      for (const agent of cloud.cloudAgents) {
-        if (!agent.line) continue;
-        const smsUrl = cloudAgents.agentSmsUrl(agent.agentId);
-        if (smsUrl) return { name: agent.name, smsUrl };
-      }
-      return null;
-    },
     onChange: () => onboardingWindow?.webContents.send("onboarding:changed"),
-    // RelayClient's redaction is not in play here, so nothing secret is ever
-    // handed to this — see Onboarding's callers of `warn`.
-    warn: (message) => console.log(`[onboarding] ${message}`),
   });
   // Built first: the roster's removal routing needs the cloud-agent client,
   // because a row with an `agent_id` must be deleted as an agent and never

@@ -117,7 +117,6 @@ contextBridge.exposeInMainWorld("domo", {
   // The renderer is sandboxed and cannot open a URL; main owns the `sms:` one,
   // so the renderer never has to build it or be trusted with it.
   onboardingOpenMessages: () => ipcRenderer.invoke("onboarding:openMessages"),
-  onboardingOpenAgentMessages: () => ipcRenderer.invoke("onboarding:openAgentMessages"),
   onboardingNewCode: () => ipcRenderer.invoke("onboarding:newCode"),
   onboardingUsePhoneCode: () => ipcRenderer.invoke("onboarding:usePhoneCode"),
   onboardingUseActivation: () => ipcRenderer.invoke("onboarding:useActivation"),

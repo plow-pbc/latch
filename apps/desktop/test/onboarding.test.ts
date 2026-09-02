@@ -6,11 +6,10 @@ import {
   ACTIVATION_POLL_INTERVAL_MS,
   ACTIVATION_POLL_WINDOW_MS,
   CODE_TTL_MS,
-  activationChatLabel,
   Onboarding,
   OnboardingDeps,
 } from "../src/onboarding.js";
-import { ActivationChat, PlowApi, PlowApiError, parseActivationChat } from "../src/plowApi.js";
+import { PlowApi, PlowApiError } from "../src/plowApi.js";
 import { loadSettings, saveSettings } from "../src/settings.js";
 import { signOutOfPlow } from "../src/settingsActions.js";
 
@@ -21,58 +20,13 @@ const ACTIVATION_SECRET = "activation_secret_never_shown";
 const MCP_URL = "http://localhost:4242/v1/relay/devices/u_123/mcp";
 const DEVICE_MCP_URL = "http://localhost:4242/v1/relay/devices/device-1/mcp";
 
-/** A chat as `parseActivationChat` hands it over: the line it runs on, and the
- * person on the other end. */
-const CHAT: ActivationChat = {
-  uid: "cht_D7hfWNK",
-  status: "active",
-  displayName: null,
-  line: "+15559876543",
-  createdAt: "2026-08-24T18:02:11Z",
-  participants: [{ providerKey: "+15551230000", displayName: null, isOwner: true }],
-};
-
-function wireChat({
-  displayName,
-  line = "+15550000000",
-  members,
-}: {
-  displayName?: string;
-  line?: string;
-  members: Array<{ displayName: string; providerKey?: string; role: "owner" | "member" }>;
-}): Record<string, unknown> {
-  return {
-    uid: "cht_fixture",
-    object: "chat",
-    status: "active",
-    provider_key: "thread_fixture",
-    ...(displayName === undefined ? {} : { display_name: displayName }),
-    participants: [
-      {
-        type: "agent",
-        line: { uid: "ln_fixture", provider_type: "imessage", provider_key: line },
-      },
-      ...members.map((member, index) => ({
-        type: "member",
-        uid: `cp_${index}`,
-        display_name: member.displayName,
-        role: member.role,
-        provider_type: "imessage",
-        provider_key: member.providerKey ?? `+1555000000${index}`,
-      })),
-    ],
-    created_at: "2026-08-27T22:22:52Z",
-  };
-}
-
 type FakeRedeem =
   | { status: "pending" }
-  | { status: "verified"; token: string | null; chat?: ActivationChat | null };
+  | { status: "verified"; token: string | null };
 
 /** A stand-in Plow: records what was called, answers what the real one does. */
 class FakePlow {
   requested: string[] = [];
-  connected = false;
   verifyFails: "unauthorized" | "network" | null = null;
   requestFails: "provider_unavailable" | "network" | null = null;
 
@@ -119,7 +73,7 @@ class FakePlow {
     const next = this.redeems.length > 1 ? this.redeems.shift()! : this.redeems[0];
     if (next instanceof PlowApiError) throw next;
     if (next.status === "pending") return next;
-    return { status: "verified", token: next.token, chat: next.chat ?? null };
+    return { status: "verified", token: next.token, chat: null };
   }
 
   async requestOtp(phone: string): Promise<void> {
@@ -156,7 +110,6 @@ class FakePlow {
 
 let home: string;
 let plow: FakePlow;
-let warnings: string[];
 let started: number;
 let clock: number;
 /** Every `wait` the poll loop made, so a test can prove the interval. */
@@ -186,9 +139,7 @@ function build(extra: Partial<OnboardingDeps> = {}, startAtPrivacy = true): Onbo
         // Production leaves registration failures on RelayClient's backoff.
         return;
       }
-      plow.connected = true;
     },
-    isConnected: () => plow.connected,
     deviceName: "Plow Latch (test)",
     now: () => clock,
     // No real timers: the poll loop's wait advances the same fake clock the
@@ -207,7 +158,6 @@ function build(extra: Partial<OnboardingDeps> = {}, startAtPrivacy = true): Onbo
     onChange: () => {
       changes += 1;
     },
-    warn: (m) => warnings.push(m),
     ...extra,
   });
   // Most tests exercise the established activation and fallback mechanics.
@@ -240,7 +190,6 @@ beforeEach(() => {
   harnessGen += 1;
   home = fs.mkdtempSync(path.join(os.tmpdir(), "domo-onboarding-"));
   plow = new FakePlow();
-  warnings = [];
   started = 0;
   waits = [];
   changes = 0;
@@ -426,73 +375,6 @@ describe("wizard steps around the existing verification flow", () => {
     expect(build({}, false).state().step).toBe("done");
   });
 
-  it("exposes the first messageable agent when entering Done", async () => {
-    const onboarding = build({
-      lookupDoneAgent: async () => ({
-        name: "Elm",
-        smsUrl: "sms:+15559876543",
-      }),
-    });
-    const settings = loadSettings(home);
-    settings.relayCredential = DEVICE_TOKEN;
-    saveSettings(home, settings);
-    onboarding.reset();
-
-    expect((await onboarding.advance()).agent).toEqual({
-      name: "Elm",
-      smsUrl: "sms:+15559876543",
-    });
-  });
-
-  it("shows no message action when the account has no agent with a line", async () => {
-    const onboarding = build({ lookupDoneAgent: async () => null });
-    const settings = loadSettings(home);
-    settings.relayCredential = DEVICE_TOKEN;
-    saveSettings(home, settings);
-    onboarding.reset();
-
-    expect((await onboarding.advance()).agent).toBeNull();
-  });
-
-  it("keeps a Done-screen agent lookup failure silent", async () => {
-    const onboarding = build({
-      lookupDoneAgent: async () => {
-        throw new Error("offline");
-      },
-    });
-    const settings = loadSettings(home);
-    settings.relayCredential = DEVICE_TOKEN;
-    saveSettings(home, settings);
-    onboarding.reset();
-
-    expect(await onboarding.advance()).toMatchObject({
-      step: "done",
-      agent: null,
-      message: "",
-    });
-  });
-
-  it("discards a Done-screen agent lookup that finishes after sign-out", async () => {
-    let finishLookup!: (agent: { name: string; smsUrl: string }) => void;
-    const lookup = new Promise<{ name: string; smsUrl: string }>((resolve) => {
-      finishLookup = resolve;
-    });
-    const onboarding = build({ lookupDoneAgent: async () => lookup });
-    const settings = loadSettings(home);
-    settings.relayCredential = DEVICE_TOKEN;
-    saveSettings(home, settings);
-    onboarding.reset();
-
-    const advancing = onboarding.advance();
-    expect(onboarding.state()).toMatchObject({ step: "done", busy: true, agent: null });
-
-    signOutOfPlow(home);
-    expect(onboarding.reset()).toMatchObject({ step: "welcome", busy: false, agent: null });
-    finishLookup({ name: "Old account", smsUrl: "sms:+15559876543" });
-    await advancing;
-
-    expect(onboarding.state()).toMatchObject({ step: "welcome", busy: false, agent: null });
-  });
 });
 
 describe("activation — the path a brand-new user takes", () => {
@@ -517,7 +399,6 @@ describe("activation — the path a brand-new user takes", () => {
 
     const verified = onboarding.state();
     expect(verified.step).toBe("verified");
-    expect(verified.connected).toBe(true);
     expect(verified.activation?.displayCode).toBe("CODE1");
     expect(waits.every((ms) => ms === ACTIVATION_POLL_INTERVAL_MS)).toBe(true);
     expect(loadSettings(home).relayCredential).toBe(SESSION_TOKEN);
@@ -529,216 +410,6 @@ describe("activation — the path a brand-new user takes", () => {
     expect(data.step).toBe("data");
     // The spent activation is dropped after the confirmation screen.
     expect(data.activation).toBeNull();
-  });
-
-  it("keeps the chat the redeem carried, and shows the number the server assigned", async () => {
-    plow.redeems = [{ status: "verified", token: SESSION_TOKEN, chat: CHAT }];
-    const onboarding = build();
-
-    const shown = await onboarding.advance();
-    // The screen shows the line THIS activation was assigned. The chat is only
-    // provisioned if the code lands on that line, so a number chosen here would
-    // sign the user in and silently create nothing.
-    expect(shown.activation?.sendTo).toBe("+15550001111");
-    await settle();
-
-    // Read once and kept: the redeem hands the chat back exactly once, so a
-    // later window has no way to ask for it again.
-    const settings = loadSettings(home);
-    expect(settings.provisionedChatUid).toBe("cht_D7hfWNK");
-    expect(settings.provisionedChatLabel).toBe("+1 555-987-6543 · You");
-    expect(onboarding.state().chat).toEqual({
-      uid: "cht_D7hfWNK",
-      label: "+1 555-987-6543 · You",
-    });
-    // A fresh window on the same home still knows about it.
-    expect(build().state().chat?.uid).toBe("cht_D7hfWNK");
-  });
-
-  it("leaves a stored chat alone when a redeem carries none", async () => {
-    // "This redeem carried no chat" is not "the account has no chat": the
-    // phone-code path never carries one, and neither does a redeem from a Plow
-    // that predates chats. Blanking on that answer would erase a chat the
-    // account really has, and nothing can re-read the redeem to get it back.
-    const seeded = loadSettings(home);
-    seeded.provisionedChatUid = "cht_ALREADY";
-    seeded.provisionedChatLabel = "+15559876543 · Ada Lovelace";
-    saveSettings(home, seeded);
-
-    plow.redeems = [{ status: "verified", token: SESSION_TOKEN }];
-    const onboarding = build();
-    await onboarding.advance();
-    await settle();
-
-    expect(onboarding.state().step).toBe("verified");
-    expect(loadSettings(home).provisionedChatUid).toBe("cht_ALREADY");
-    expect(onboarding.state().chat?.uid).toBe("cht_ALREADY");
-  });
-
-  it("stores no number: pairing's sendTo is the managed phone, not a line", async () => {
-    // Pairing asks for no chat, so the server answers with the number that
-    // takes an activation text — not a pool line anyone can be told to text
-    // afterwards to get a chat. Storing it put the managed phone where the
-    // cloud-agents screen says "text this to make a chat", which provisions
-    // nothing. A number for a chat is a pool line, reached by texting it.
-    plow.redeems = [{ status: "verified", token: SESSION_TOKEN, chat: CHAT }];
-    const onboarding = build();
-    const shown = await onboarding.advance();
-    await settle();
-
-    expect(shown.activation?.sendTo).toBe("+15550001111");
-  });
-
-  it.each([
-    ["its line", (token: string) => ({ ...CHAT, line: token.slice(0, 12) })],
-    ["a participant's number", (token: string) => ({
-      ...CHAT,
-      participants: [{ providerKey: token.slice(0, 12), displayName: "Ada", isOwner: false }],
-    })],
-    ["its uid", (token: string) => ({ ...CHAT, uid: `cht_${token.slice(0, 12)}` })],
-  ])("never writes a chat to disk when %s echoes the session token", async (_why, make) => {
-    // The label is built from the line, the uids, the numbers and the names,
-    // and THIS is the one place they are written to disk. The redeem carries
-    // the session token in the same breath, so a server that echoed it here
-    // would have persisted it and rendered it.
-    plow.redeems = [{ status: "verified", token: SESSION_TOKEN, chat: make(SESSION_TOKEN) }];
-    const onboarding = build();
-    await onboarding.advance();
-    await settle();
-
-    // The sign-in still completes — the chat is what is dropped, and the
-    // account's list is re-read on the Agents tab anyway.
-    expect(loadSettings(home).relayCredential).toBe(SESSION_TOKEN);
-    expect(loadSettings(home).provisionedChatUid).toBe("");
-    expect(loadSettings(home).provisionedChatLabel).toBe("");
-    const persisted = JSON.stringify(loadSettings(home));
-    expect(persisted.split(SESSION_TOKEN).length - 1).toBe(1); // the credential, and nothing else
-    expect(JSON.stringify(onboarding.state())).not.toContain(SESSION_TOKEN.slice(0, 12));
-    // Said, without repeating any of the fields that triggered it.
-    expect(warnings.join(" ")).toContain("echoed the credential");
-    expect(warnings.join(" ")).not.toContain(SESSION_TOKEN.slice(0, 12));
-  });
-
-  it("keeps a chat whose NAME echoes, with the name removed", async () => {
-    // A name can be blanked and the row still means something; dropping it
-    // would lose a chat the owner actually has.
-    plow.redeems = [{
-      status: "verified",
-      token: SESSION_TOKEN,
-      chat: { ...CHAT, displayName: SESSION_TOKEN.slice(0, 12) },
-    }];
-    const onboarding = build();
-    await onboarding.advance();
-    await settle();
-
-    expect(loadSettings(home).provisionedChatUid).toBe(CHAT.uid);
-    expect(loadSettings(home).provisionedChatLabel).not.toContain(SESSION_TOKEN.slice(0, 12));
-    expect(loadSettings(home).provisionedChatLabel).toBeTruthy();
-  });
-
-  it("has no chat to show on a Mac whose activation never made one", async () => {
-    plow.redeems = [{ status: "verified", token: SESSION_TOKEN }];
-    const onboarding = build();
-    await onboarding.advance();
-    await settle();
-
-    expect(loadSettings(home).provisionedChatUid).toBe("");
-    expect(onboarding.state().chat).toBeNull();
-  });
-
-  // The label is `chatRows`' title now — the ONE place participants become
-  // people. It leads with the line, names the owner "You", and stands a
-  // formatted number in for anyone without a usable name. A top-level chat
-  // title still wins outright when the provider gives one.
-  it.each([
-    ["prefers a chat's top-level display name", {
-      displayName: "Weekend crew",
-      members: [{ displayName: "Morgan", providerKey: "+15550001001", role: "member" as const }],
-    }, "Weekend crew"],
-    ["keeps an emoji-only top-level display name", {
-      displayName: "🎉",
-      members: [{ displayName: "Riley", providerKey: "+15550002001", role: "member" as const }],
-    }, "🎉"],
-    ["rejects a phone-number-shaped top-level display name and names the people", {
-      displayName: "+1 (555) 000-4001, +1 (555) 000-4002",
-      line: "+15550004000",
-      members: [
-        { displayName: "Riley", providerKey: "+15550004001", role: "owner" as const },
-        { displayName: "Casey", providerKey: "+15550004002", role: "member" as const },
-      ],
-    }, "+1 555-000-4000 · You · Casey"],
-    ["names the owner You and everyone else by name", {
-      line: "+15550005000",
-      members: [
-        { displayName: "Whoever", providerKey: "+15550005001", role: "owner" as const },
-        { displayName: "Riley", providerKey: "+15550005002", role: "member" as const },
-      ],
-    }, "+1 555-000-5000 · You · Riley"],
-    ["stands a number in for a name that just repeats the handle", {
-      line: "+15550003000",
-      members: [{ displayName: "+15550003001", providerKey: "+15550003001", role: "member" as const }],
-    }, "+1 555-000-3000 · +1 555-000-3001"],
-    ["lists the line once when a member is on it", {
-      line: "+15550006000",
-      members: [
-        { displayName: "Riley", providerKey: "+15550006000", role: "member" as const },
-        { displayName: "Casey", providerKey: "+15550006002", role: "member" as const },
-      ],
-    }, "+1 555-000-6000 · Casey"],
-  ])("%s", (_case, fields, expected) => {
-    expect(activationChatLabel(parseActivationChat(wireChat(fields))!)).toBe(expected);
-  });
-
-  it("falls back to numbers when the wire has no usable display names", () => {
-    // The bug this pins: the chat's own `provider_key` is the provider's THREAD
-    // ID ("chat_5"), and the number lives on the agent participant's line.
-    // Reading the wrong one put an opaque id where the user looks for something
-    // to text. Parsed from the real shape rather than a hand-made
-    // `ActivationChat`, because the two halves are only wrong together.
-    const chat = parseActivationChat(wireChat({
-      line: "+15559876543",
-      members: [
-        { displayName: "You", providerKey: "+15551230000", role: "owner" },
-      ],
-    }))!;
-
-    // The owner reads as "You" and the line is formatted; what this pins is
-    // that the LINE is the number shown, never the chat's own `provider_key`.
-    const label = activationChatLabel(chat);
-    expect(label).toBe("+1 555-987-6543 · You");
-    expect(label).not.toContain("thread_fixture");
-    expect(label).not.toContain("thread_fixture");
-  });
-
-  it("falls back to its line, owner handle and remaining handles", () => {
-    expect(activationChatLabel({
-      ...CHAT,
-      participants: [
-        { providerKey: "+15551230000", displayName: null, isOwner: true },
-        { providerKey: "+15557654321", displayName: null, isOwner: false },
-      ],
-    })).toBe("+1 555-987-6543 · You · +1 555-765-4321");
-    // A member whose address IS the line is not said twice.
-    expect(
-      activationChatLabel({
-        ...CHAT,
-        participants: [
-          ...CHAT.participants,
-          { providerKey: "+15559876543", displayName: null, isOwner: false },
-        ],
-      }),
-    ).toBe("+1 555-987-6543 · You");
-    expect(activationChatLabel({ ...CHAT, participants: [] })).toBe("+1 555-987-6543");
-    // A member without a usable display name is identified by its real handle.
-    expect(
-      activationChatLabel({
-        ...CHAT,
-        line: null,
-        participants: [{ providerKey: "+15551230000", displayName: null, isOwner: false }],
-      }),
-    ).toBe("+1 555-123-0000");
-    // Nothing to say but the uid beats an empty line on the last setup screen.
-    expect(activationChatLabel({ ...CHAT, line: null, participants: [] })).toBe("cht_D7hfWNK");
   });
 
   it("polls without waiting to be told to — a hand-typed message still gets in", async () => {
@@ -972,10 +643,6 @@ describe("activation — the path a brand-new user takes", () => {
     await settle();
     expect(JSON.stringify(onboarding.state())).not.toContain(ACTIVATION_SECRET);
     expect(JSON.stringify(onboarding.state())).not.toContain(SESSION_TOKEN);
-    // Nor does anything secret reach the log sink.
-    expect(warnings.join(" ")).not.toContain(ACTIVATION_SECRET);
-    // The display code is a credential too — it is shown, never logged.
-    expect(warnings.join(" ")).not.toContain("CODE1");
   });
 });
 
@@ -1082,10 +749,7 @@ describe("signing out", () => {
 
     const state = onboarding.reset();
     expect(state.step).toBe("welcome");
-    // ...and nothing from the old session is left behind.
     expect(state.activation).toBeNull();
-    expect(state.accountUid).toBe("");
-    expect(state.mcpUrl).toBe("");
     expect(state.busy).toBe(false);
 
     // From there the normal path works: Welcome and Privacy do no network,
@@ -1107,7 +771,6 @@ describe("signing out", () => {
     settings.accountUid = "";
     settings.mcpUrl = "";
     saveSettings(home, settings);
-    plow.connected = false; // signing out restarts the relay, which drops the socket
     return onboarding;
   }
 
@@ -1131,7 +794,6 @@ describe("signing out", () => {
     const onboarding = await signedInThenOut();
     const state = onboarding.reset();
     expect(state.phone).toBe("");
-    expect(state.connected).toBe(false);
     expect(state.activation).toBeNull();
     expect(state.codeExpiresAt).toBeNull();
     expect(JSON.stringify(state)).not.toContain(DEVICE_TOKEN);
@@ -1167,8 +829,6 @@ describe("the phone-code fallback still works", () => {
     state = await onboarding.submitCode("12345678");
     expect(state.step).toBe("verified");
     expect(state.activation).toBeNull();
-    expect(state.accountUid).toBe("u_123");
-    expect(state.mcpUrl).toBe(DEVICE_MCP_URL);
     expect(started).toBe(1);
 
     state = await onboarding.advance();
@@ -1193,7 +853,6 @@ describe("the phone-code fallback still works", () => {
     // deleted, so this cannot regress into a second step without a compile
     // error first.
     expect(loadSettings(home).relayCredential).toBe(OTP_TOKEN);
-    expect(warnings).toEqual([]);
   });
 
   it("keeps the session while device registration retries", async () => {
@@ -1346,40 +1005,19 @@ describe("signing out", () => {
     return onboarding;
   }
 
-  it("forgets the chat too — the next sign-in may be a different account", async () => {
-    plow.redeems = [{ status: "verified", token: SESSION_TOKEN, chat: CHAT }];
-    const onboarding = build();
-    await onboarding.advance();
-    await settle();
-    expect(loadSettings(home).provisionedChatUid).toBe("cht_D7hfWNK");
-
-    signOutOfPlow(home);
-
-    // Leaving it would name a chat this Mac can no longer reach on the setup
-    // screen of whatever account signs in next.
-    expect(loadSettings(home).provisionedChatUid).toBe("");
-    expect(loadSettings(home).provisionedChatLabel).toBe("");
-    expect(onboarding.reset().chat).toBeNull();
-  });
-
-  it("the reported path: signing out leaves a window that is NOT connected", async () => {
+  it("the reported path: signing out returns the window to Welcome", async () => {
     // The instance outlives the sign-out, and the constructor is the only other
     // place that decides this — so it went on reporting the account just left.
     // The screen offered Create Agent over a stale endpoint, which then failed
     // its own credential check.
     const onboarding = await signedIn();
     signOutOfPlow(home);
-    plow.connected = false;
 
     const changesBefore = changes;
     const after = onboarding.reset();
 
     expect(after.step).not.toBe("connected");
     expect(after.step).toBe("welcome");
-    // The account just left is gone from the state the window renders.
-    expect(after.accountUid).toBe("");
-    expect(after.mcpUrl).toBe("");
-    expect(after.connected).toBe(false);
     // An open window is told to re-read.
     expect(changes).toBeGreaterThan(changesBefore);
     // …and it has nothing to draw yet: Welcome and Privacy are local screens,
@@ -1524,7 +1162,6 @@ describe("a sign-out while startRelay is dialling", () => {
       startRelay: async () => {
         started += 1;
         await dialing;
-        plow.connected = true;
       },
     });
     const begun = onboarding.advance();
