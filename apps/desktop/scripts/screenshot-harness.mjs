@@ -92,6 +92,9 @@ export async function shootScreens({ win, outDir, prefix, screens, load, beforeS
     const focused = await win.webContents.executeJavaScript(
       `(document.activeElement?.textContent || document.activeElement?.getAttribute("placeholder") || "").trim()`,
     );
+    const dotCount = await win.webContents.executeJavaScript(
+      `document.querySelectorAll(".foot-dot").length`,
+    );
     const missing = [
       ...(screen.expect ?? []).filter((needle) => !text.includes(needle.toLowerCase())),
       ...(screen.reject ?? [])
@@ -106,6 +109,9 @@ export async function shootScreens({ win, outDir, prefix, screens, load, beforeS
         : []),
       ...(screen.expectFocus && !focused.includes(screen.expectFocus)
         ? [`focus on "${screen.expectFocus}" (focused: "${focused}")`]
+        : []),
+      ...(screen.expectDotCount !== undefined && dotCount !== screen.expectDotCount
+        ? [`${screen.expectDotCount} footer dots (found: ${dotCount})`]
         : []),
     ];
     if (missing.length) failures += 1;

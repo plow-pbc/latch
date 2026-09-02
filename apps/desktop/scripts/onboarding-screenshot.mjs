@@ -20,6 +20,7 @@ const SCREENS = onboardingFixtures(Date.now());
 let currentFixture = SCREENS[0];
 let current = currentFixture.state;
 let currentFullDiskAccess = false;
+let currentConnectors = null;
 let newCodeRequests = 0;
 ipcMain.handle("onboarding:get", async () => current);
 ipcMain.handle("onboarding:newCode", async () => {
@@ -41,6 +42,10 @@ ipcMain.handle("onboarding:setTelemetry", async (_event, enabled) => {
   return current;
 });
 ipcMain.handle("onboarding:finish", async () => {});
+ipcMain.handle("connectors:refresh", async () => currentConnectors);
+ipcMain.handle("connectors:connect", async () => currentConnectors);
+ipcMain.handle("connectors:disconnect", async () => currentConnectors);
+ipcMain.handle("connectors:setDefault", async () => currentConnectors);
 ipcMain.handle("cloud:agents", async () => currentFixture.cloud);
 ipcMain.handle("cloud:openMessages", async () => true);
 
@@ -84,6 +89,11 @@ app.whenReady().then(async () => {
       currentFixture = fixture;
       current = fixture.state;
       currentFullDiskAccess = fixture.fullDiskAccess === true;
+      currentConnectors = fixture.connectors ?? {
+        busy: false,
+        error: null,
+        google: { accounts: [], connecting: false },
+      };
       await win.loadFile(path.join(dist, "renderer/onboarding.html"));
       // The full Welcome resolves its last delayed reveal at about 2.08s. Shoot
       // its resting state rather than a deliberately half-revealed frame.

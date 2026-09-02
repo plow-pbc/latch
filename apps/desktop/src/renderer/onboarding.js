@@ -3,6 +3,7 @@
    persistent shell. The page is sandboxed and receives no Node primitives. */
 
 import { el, icon } from "./dom.js";
+import { googleConnectorCard } from "./connectorsCard.js";
 import { singleFlight } from "./onboardingAction.js";
 import { loadDoneAgent } from "./onboardingDone.js";
 
@@ -19,10 +20,15 @@ let fullDiskProbe = null;
 let fullDiskRequestBusy = false;
 let restoreTelemetryFocus = false;
 let doneAgent = null;
-const mutate = singleFlight(() => state?.busy === true);
+let connectorState = null;
+const mutate = singleFlight(() => state?.busy === true || connectorState?.busy === true);
 
 async function update(action) {
   await mutate(async () => apply(await action()));
+}
+
+async function updateConnectors(action) {
+  await mutate(async () => applyConnectors(await action()));
 }
 
 function svgElement(tag, attrs = {}) {
@@ -46,7 +52,7 @@ const screen = el("section", { class: "wizard-screen", attrs: { "aria-live": "po
 const body = el("div", { class: "wizard-body" }, [screen]);
 const backButton = button("", "nav-back", () => update(() => window.domo.onboardingBack()));
 backButton.append(arrowIcon("back"), document.createTextNode("Back"));
-const dots = [0, 1, 2].map(() => el("i", { class: "foot-dot" }));
+const dots = [0, 1, 2, 3].map(() => el("i", { class: "foot-dot" }));
 const dotRow = el("span", { class: "foot-dots", attrs: { "aria-hidden": "true" } }, dots);
 const primaryLabel = el("span", { text: "Get started" });
 const primaryArrow = arrowIcon("next");
@@ -445,6 +451,44 @@ function dataScreen() {
   ]);
 }
 
+function connectScreen() {
+  const current = connectorState ?? {
+    busy: true,
+    error: null,
+    loading: true,
+    google: { accounts: [], connecting: false },
+  };
+  const actions = {
+    connect: () => updateConnectors(() => window.domo.connectorsConnect("google")),
+    disconnect: (account) => updateConnectors(
+      () => window.domo.connectorsDisconnect("google", account),
+    ),
+    setDefault: (account) => updateConnectors(
+      () => window.domo.connectorsSetDefault("google", account),
+    ),
+  };
+  const parts = [
+    el("div", { class: "head-center" }, [
+      el("h1", { text: "Connect your accounts" }),
+      el("p", {
+        class: "subhead",
+        text: "Connect Plow Latch to your most helpful accounts.",
+      }),
+    ]),
+    el("div", { class: "provider-groups" }, [
+      googleConnectorCard(current, actions),
+    ]),
+  ];
+  if (current.error) {
+    parts.push(el("p", {
+      class: "state-note error connector-error",
+      text: current.error,
+      attrs: { role: "status" },
+    }));
+  }
+  return el("div", { class: "connect-screen step-inner" }, parts);
+}
+
 function doneScreen() {
   const actions = [];
   if (doneAgent) {
@@ -473,6 +517,7 @@ function screenForStep() {
     return verifyScreen();
   }
   if (state.step === "data") return dataScreen();
+  if (state.step === "connect") return connectScreen();
   if (state.step === "done") return doneScreen();
   return el("p", { class: "state-note error", text: "This setup step is unavailable." });
 }
@@ -509,6 +554,16 @@ function footerForStep() {
       action: verified
         ? () => update(() => window.domo.onboardingAdvance())
         : null,
+    };
+  }
+  if (step === "connect") {
+    return {
+      back: true,
+      dot: 3,
+      label: connectorState?.google.accounts.length > 0 ? "Done" : "Skip",
+      arrow: false,
+      disabled: connectorState === null || connectorState.busy === true,
+      action: () => update(() => window.domo.onboardingAdvance()),
     };
   }
   return {
@@ -569,7 +624,7 @@ function render() {
   footer.hidden = !!config.hidden;
   if (!config.hidden) {
     backButton.hidden = !config.back;
-    backButton.disabled = !!state.busy;
+    backButton.disabled = !!state.busy || (state.step === "connect" && connectorState?.busy === true);
     dotRow.hidden = config.dot === null;
     dots.forEach((dot, index) => {
       dot.classList.toggle("active", index === config.dot);
@@ -594,6 +649,9 @@ function render() {
     : null;
   const focus = telemetryFocus ?? screen.querySelector("input[autofocus]")
     ?? (primaryButton.disabled ? screen.querySelector(".verify-activate:not(:disabled)") : null)
+    ?? (state.step === "connect"
+      ? screen.querySelector(".provider-connect:not(:disabled), .add-another:not(:disabled)")
+      : null)
     ?? (!footer.hidden ? primaryButton : null);
   if (focus && !state.busy) {
     requestAnimationFrame(() => {
@@ -607,13 +665,23 @@ async function apply(next) {
   const previousStep = state?.step;
   if (next) state = next;
   if (state?.step !== "done") doneAgent = null;
+  if (state?.step !== "connect") connectorState = null;
   render();
+  if (state?.step === "connect" && previousStep !== "connect") {
+    applyConnectors(await window.domo.connectorsRefresh());
+  }
   if (state?.step === "done" && previousStep !== "done") {
     const loaded = await loadDoneAgent(() => window.domo.cloudAgents());
     if (state?.step !== "done") return;
     doneAgent = loaded;
     render();
   }
+}
+
+function applyConnectors(next) {
+  if (!next) return;
+  connectorState = next;
+  if (state?.step === "connect") render();
 }
 
 document.addEventListener("keydown", (event) => {
@@ -637,7 +705,11 @@ window.addEventListener("unhandledrejection", (event) => {
 
 window.addEventListener("focus", () => {
   if (state?.step === "data") void refreshFullDiskAccess(true);
+  if (state?.step === "connect" && connectorState?.busy !== true) {
+    void updateConnectors(() => window.domo.connectorsRefresh());
+  }
 });
 
 window.domo.onOnboardingChanged(async () => apply(await window.domo.onboardingGet()));
+window.domo.onConnectorsChanged(applyConnectors);
 apply(await window.domo.onboardingGet());
