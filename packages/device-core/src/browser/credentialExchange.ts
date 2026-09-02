@@ -14,9 +14,8 @@
  * only, and no error message, warning or skip reason ever contains a field's
  * VALUE — everything returned is shown on screen.
  */
-import { finishImportedLogin } from "./passwordImport.js";
+import { finishImportedLogin, normalizeImportUrls } from "./passwordImport.js";
 import type { ImportedLogin, ParsedImport, SkippedRow } from "./passwordImport.js";
-import { checkedUrls } from "./vaultItems.js";
 import { base32Encode } from "./vaultTotp.js";
 
 /** An authenticator key as the exchange carries it: raw bytes plus the
@@ -148,21 +147,14 @@ function itemToLogin(item: ExchangeItem, skipped: SkippedRow[]): ImportedLogin |
     return null;
   }
   // One unreadable address must not sink an item that has readable ones.
-  const urls: string[] = [];
-  for (const u of rawUrls) {
-    try {
-      urls.push(...checkedUrls([u]));
-    } catch {
-      /* counted below by comparing lengths */
-    }
-  }
+  const { urls, dropped } = normalizeImportUrls(rawUrls);
   if (urls.length === 0) {
     skipped.push({ title: title || "(untitled)", reason: "its website address could not be read" });
     return null;
   }
 
   const warnings: string[] = [];
-  if (urls.length < rawUrls.length) {
+  if (dropped) {
     warnings.push("one of its website addresses could not be read and was left off");
   }
   // The shared last mile (passwordImport.ts): title fallback, no-password

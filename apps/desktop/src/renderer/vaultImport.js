@@ -129,6 +129,22 @@ export async function vimportSheet(reload, host, exchange = null) {
   const go = el("button", { class: "btn save", attrs: { type: "button" }, text: "Import" });
   const foot = el("div", { class: "sheet-foot", attrs: { hidden: "" } }, [cancel, go]);
 
+  /** A tickable row: the box adds or drops `key` in `selected`, and the whole
+   * row is the target — a 15px box is not "easy to turn off". */
+  const bindPickRow = (node, tick, selected, key, sync) => {
+    tick.addEventListener("change", () => {
+      if (tick.checked) selected.add(key);
+      else selected.delete(key);
+      node.classList.toggle("off", !tick.checked);
+      sync();
+    });
+    node.addEventListener("click", (e) => {
+      if (e.target === tick) return; // the box's own click already toggled
+      tick.checked = !tick.checked;
+      tick.dispatchEvent(new Event("change"));
+    });
+  };
+
   /** Step one: pick the app, read its walkthrough, hand its export over. */
   const pick = () => {
     title.textContent = "Import passwords";
@@ -177,7 +193,7 @@ export async function vimportSheet(reload, host, exchange = null) {
         // leads first; the CSV walk stays for every Mac, and is the only
         // door elsewhere. When the hand-off lands, main stages it and this
         // sheet is replaced by the preview — the last step describes that.
-        const direct = !!sources.apple?.exchange;
+        const direct = !!sources.apple.exchange;
         guide.replaceChildren(...[
           direct
             ? steps("Send them straight across — no file", [
@@ -294,9 +310,9 @@ export async function vimportSheet(reload, host, exchange = null) {
       el("p", { class: "sheet-sub", text:
         "This only supports import of passwords; credit cards and identities are not imported." }),
       el("div", { class: "imp-src-grid" }, [
-        card("apple", "Apple Passwords", sources.apple?.icon ?? null),
-        card("1password", "1Password", sources.onePassword?.icon ?? null),
-        card("chrome", "Chrome", sources.chrome?.icon ?? null),
+        card("apple", "Apple Passwords", sources.apple.icon),
+        card("1password", "1Password", sources.onePassword.icon),
+        card("chrome", "Chrome", sources.chrome.icon),
         card("csv", "CSV file", null, "file"),
       ]),
       guide,
@@ -336,16 +352,7 @@ export async function vimportSheet(reload, host, exchange = null) {
           el("span", { class: "c", text: `${n} login${n === 1 ? "" : "s"} to import` }),
         ]),
       ]);
-      tick.addEventListener("change", () => {
-        if (tick.checked) chosen.add(v); else chosen.delete(v);
-        node.classList.toggle("off", !tick.checked);
-        sync();
-      });
-      node.addEventListener("click", (e) => {
-        if (e.target === tick) return;
-        tick.checked = !tick.checked;
-        tick.dispatchEvent(new Event("change"));
-      });
+      bindPickRow(node, tick, chosen, v, sync);
       return node;
     };
     bodyEl.replaceChildren(
@@ -448,20 +455,7 @@ export async function vimportSheet(reload, host, exchange = null) {
         ]),
         ...badges,
       ]);
-      if (tick) {
-        tick.addEventListener("change", () => {
-          if (tick.checked) chosen.add(at);
-          else chosen.delete(at);
-          node.classList.toggle("off", !tick.checked);
-          sync();
-        });
-        // The whole row is the target — a 15px box is not "easy to turn off".
-        node.addEventListener("click", (e) => {
-          if (e.target === tick) return; // the box's own click already toggled
-          tick.checked = !tick.checked;
-          tick.dispatchEvent(new Event("change"));
-        });
-      }
+      if (tick) bindPickRow(node, tick, chosen, at, sync);
       return node;
     };
 

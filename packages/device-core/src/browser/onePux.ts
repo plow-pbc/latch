@@ -12,8 +12,7 @@
  * reason ever contains a field's value.
  */
 import zlib from "node:zlib";
-import { checkedUrls } from "./vaultItems.js";
-import { finishImportedLogin, type ImportedLogin, type ParsedImport, type SkippedRow } from "./passwordImport.js";
+import { finishImportedLogin, normalizeImportUrls, type ImportedLogin, type ParsedImport, type SkippedRow } from "./passwordImport.js";
 
 const NOT_1PUX = "this doesn't look like a 1PUX export. In 1Password choose File > Export, pick your account, and choose the 1PUX format";
 
@@ -82,18 +81,11 @@ function itemToLogin(item: Rec, vault: string, skipped: SkippedRow[]): ImportedL
   const rawUrls = list(overview.urls).map((u) => str(u.url).trim()).filter(Boolean);
   if (rawUrls.length === 0 && str(overview.url).trim()) rawUrls.push(str(overview.url).trim());
   if (rawUrls.length === 0) return skip("has no website address; add it by hand as a new item if you still use it");
-  // One bad URL should not sink the whole login: keep whichever ones
-  // checkedUrls accepts on their own, and only give up when none survive.
-  const urls = rawUrls.flatMap((u) => {
-    try {
-      return checkedUrls([u]);
-    } catch {
-      return [];
-    }
-  });
+  // One bad URL should not sink the whole login: only give up when none survive.
+  const { urls, dropped } = normalizeImportUrls(rawUrls);
   if (urls.length === 0) return skip("its website address could not be read");
   const warnings: string[] = [];
-  if (urls.length < rawUrls.length) warnings.push("one of its website addresses could not be read and was left off");
+  if (dropped) warnings.push("one of its website addresses could not be read and was left off");
 
   const fields = list(details.loginFields);
   const designated = (want: string) => str(fields.find((f) => f.designation === want)?.value);

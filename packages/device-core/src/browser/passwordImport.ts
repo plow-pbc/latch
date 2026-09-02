@@ -232,6 +232,23 @@ export function finishImportedLogin(
   return { title, urls, username, password, totp, notes, warnings };
 }
 
+/**
+ * The URLs an export names, minus the ones the vault cannot read; `dropped`
+ * says whether any were. One bad address must not sink a login that has good
+ * ones, so each is checked on its own — and the caller does the warning,
+ * because the two importers word it in their own voice.
+ */
+export function normalizeImportUrls(raw: string[]): { urls: string[]; dropped: boolean } {
+  const urls = raw.flatMap((url) => {
+    try {
+      return checkedUrls([url]);
+    } catch {
+      return [];
+    }
+  });
+  return { urls, dropped: urls.length < raw.length };
+}
+
 /** The hostname a URL names, or "" — the display-name fallback for a login
  * whose export carried no title. */
 function hostOf(url: string): string {
