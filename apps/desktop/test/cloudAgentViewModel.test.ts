@@ -34,12 +34,14 @@ describe("cloudProviderPickerViewModel", () => {
       },
     ],
   ] as const)("renders %s", (_case, providers, error, expected) => {
-    const providerList = providers === null ? null : [...providers];
+    const providerList = providers === null
+      ? null
+      : providers.map((id) => ({ id, name: id }));
     expect(cloudProviderPickerViewModel(providerList, error)).toEqual(expected);
   });
 
   it("renders a populated current list without failure copy", () => {
-    expect(cloudProviderPickerViewModel(["provider/live"], null)).toEqual({
+    expect(cloudProviderPickerViewModel([{ id: "provider/live", name: "Live" }], null)).toEqual({
       mode: "ready",
       heading: null,
       message: null,

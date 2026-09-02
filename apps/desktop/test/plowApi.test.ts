@@ -518,12 +518,23 @@ describe("PlowApi", () => {
 
   it("lists cloud-agent providers with the credential only in the bearer header", async () => {
     const credential = "plow_device_provider_list_secret";
-    const providers = [" provider/Zeta ", "exe:life"];
-    const { calls, fetchImpl } = recordingFetch([{ status: 200, body: providers }]);
+    const roster = [
+      {
+        id: " provider/Zeta ",
+        name: "Zeta",
+        image: "public.ecr.aws/plow/zeta:latest",
+        future_field: true,
+      },
+      { id: "exe:life", name: "Life", image: "public.ecr.aws/plow/life:latest" },
+    ];
+    const { calls, fetchImpl } = recordingFetch([{ status: 200, body: roster }]);
 
     await expect(
       new PlowApi("https://api.plow.co", fetchImpl).listCloudAgentProviders(credential),
-    ).resolves.toEqual(providers);
+    ).resolves.toEqual([
+      { id: " provider/Zeta ", name: "Zeta" },
+      { id: "exe:life", name: "Life" },
+    ]);
 
     expect(calls).toHaveLength(1);
     expect(calls[0].url).toBe("https://api.plow.co/v1/agents/cloud/providers");
@@ -545,8 +556,15 @@ describe("PlowApi", () => {
     });
   });
 
-  it("rejects a malformed cloud-agent provider list", async () => {
-    const { fetchImpl } = recordingFetch([{ status: 200, body: ["provider/valid", 7] }]);
+  it.each([
+    ["retired string shape", "provider/valid"],
+    ["non-string name", { id: "provider/valid", name: 7 }],
+    ["blank name", { id: "provider/valid", name: "   " }],
+  ])("rejects a malformed cloud-agent provider: %s", async (_case, provider) => {
+    const { fetchImpl } = recordingFetch([{
+      status: 200,
+      body: [provider],
+    }]);
 
     await expect(
       new PlowApi("https://api.plow.co", fetchImpl).listCloudAgentProviders("plow_device"),

@@ -153,7 +153,10 @@ const ROSTER = {
 };
 const CLOUD_EMPTY = {
   cloudAgents: [],
-  cloudProviders: ["exe:hermes", "exe:life"],
+  cloudProviders: [
+    { id: "exe:hermes", name: "Hermes" },
+    { id: "exe:life", name: "Life" },
+  ],
   cloudProvidersError: null,
   cloudFreeLines: [],
   cloudLineFlow: {
@@ -566,7 +569,7 @@ const SCREENS = [
         };
       })()`);
       if (
-        initial.options.join("|") !== "exe:hermes:exe:hermes|exe:life:exe:life" ||
+        initial.options.join("|") !== "Hermes:exe:hermes|Life:exe:life" ||
         initial.lines.join("|") !==
           "Choose a line…:|Ash · +1 415-555-0199:lin_ash|+1 628-555-0144:lin_trip|New line:__new_line__" ||
         initial.selectedLine !== "" || !initial.disabled ||
@@ -577,7 +580,7 @@ const SCREENS = [
       }
     },
     expect: [
-      "New agent", "Name (optional)", "Agent type", "exe:life", "Line",
+      "New agent", "Name (optional)", "Agent type", "Life", "Line",
       "Choose a line…", "Ash · +1 415-555-0199", "+1 628-555-0144",
       "New line", "Cancel", "Create agent",
     ],

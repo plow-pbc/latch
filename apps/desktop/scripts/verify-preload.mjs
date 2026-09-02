@@ -138,7 +138,10 @@ const rosterProbe = {
 };
 let cloudProbe = {
   cloudAgents: [cloudAgent],
-  cloudProviders: ["exe:hermes", "exe:life"],
+  cloudProviders: [
+    { id: "exe:hermes", name: "Hermes" },
+    { id: "exe:life", name: "Life" },
+  ],
   cloudProvidersError: null,
   cloudFreeLines: [{ uid: "lin_ash", label: "Ash · +1 415-555-0199" }],
   cloudLineFlow: {
@@ -2036,7 +2039,7 @@ app.whenReady().then(async () => {
     cloudCreatePicker.hasName &&
     cloudCreatePicker.hasAgentType &&
     cloudCreatePicker.providers.join("|") ===
-      "exe:hermes:exe:hermes|exe:life:exe:life" &&
+      "Hermes:exe:hermes|Life:exe:life" &&
     cloudCreatePicker.lines.join("|") ===
       "Choose a line…:|Ash · +1 415-555-0199:lin_ash|New line:__new_line__" &&
     cloudCreatePicker.selectedLine === "" &&

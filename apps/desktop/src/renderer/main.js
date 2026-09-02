@@ -1063,8 +1063,10 @@ function syncCloudLineModal(state, redraw) {
   if (!changing && !modal.started && providers) {
     const selected = modal.providerSelect.value;
     modal.providerSelect.replaceChildren(...providers.map((provider) =>
-      el("option", { text: provider, attrs: { value: provider } })));
-    if (providers.includes(selected)) modal.providerSelect.value = selected;
+      el("option", { text: provider.name, attrs: { value: provider.id } })));
+    if (providers.some((provider) => provider.id === selected)) {
+      modal.providerSelect.value = selected;
+    }
   }
 
   if (!changing && !modal.started && providerView.mode === "blocked") {

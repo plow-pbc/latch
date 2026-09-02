@@ -13,6 +13,7 @@ import {
 import { CloudAgentLineError, CloudAgentResource } from "../src/cloudAgents.js";
 import {
   Activation,
+  CloudAgentProvider,
   KeyInfo,
   PlowApi,
   PlowApiError,
@@ -22,6 +23,8 @@ import { loadSettings, saveSettings } from "../src/settings.js";
 import { deferred } from "./deferred.js";
 
 const CREDENTIAL = "plow_session_123456789";
+const CREDENTIAL_PREFIX = CREDENTIAL.slice(0, 10);
+const ENCODED_CREDENTIAL = Buffer.from(CREDENTIAL).toString("base64");
 
 function tempHome(): string {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "cloud-line-state-"));
@@ -115,7 +118,7 @@ function build(options: {
   ) => Promise<CloudAgentResource>;
   listChats?: () => Promise<CloudChatOption[]>;
   listLines?: () => Promise<CloudLineOption[]>;
-  listProviders?: () => Promise<string[]>;
+  listProviders?: () => Promise<CloudAgentProvider[]>;
   createActivation?: () => Promise<Activation>;
   redeemActivation?: () => Promise<ProvisionedActivationRedeem>;
   listKeys?: () => Promise<KeyInfo[]>;
@@ -192,7 +195,9 @@ function build(options: {
     providers: {
       async listCloudAgentProviders() {
         calls.push("listProviders");
-        return options.listProviders ? options.listProviders() : ["provider/default"];
+        return options.listProviders
+          ? options.listProviders()
+          : [{ id: "provider/default", name: "Default" }];
       },
     },
     lines: {
@@ -241,7 +246,10 @@ describe("CloudAgentState line and thread display", () => {
   });
 
   it("keeps live provider ids opaque and in the endpoint's order", async () => {
-    const providers = [" provider/Zeta ", "exe:life"];
+    const providers = [
+      { id: " provider/Zeta ", name: "Zeta" },
+      { id: "exe:life", name: "Life" },
+    ];
     const { state, calls } = build({ listProviders: async () => providers });
 
     await state.refresh();
@@ -251,10 +259,22 @@ describe("CloudAgentState line and thread display", () => {
     expect(calls.filter((call) => call === "listProviders")).toHaveLength(1);
   });
 
-  it("rejects the entire provider list when one id reflects the credential", async () => {
-    const reflected = `provider/${CREDENTIAL.slice(0, 10)}`;
+  it.each([
+    ["id", "plaintext", `provider/${CREDENTIAL_PREFIX}`],
+    ["name", "plaintext", `Agent ${CREDENTIAL_PREFIX}`],
+    ["name", "base64", ENCODED_CREDENTIAL],
+    ["name", "base64 prefix", ENCODED_CREDENTIAL.slice(0, 10)],
+  ])("rejects the provider list when one %s reflects the %s credential", async (
+    field,
+    _encoding,
+    reflected,
+  ) => {
+    const provider = { id: "provider/reflected", name: "Reflected", [field]: reflected };
     const { state } = build({
-      listProviders: async () => ["provider/safe", reflected],
+      listProviders: async () => [
+        { id: "provider/safe", name: "Safe" },
+        provider,
+      ],
     });
 
     await state.refresh();
@@ -263,7 +283,7 @@ describe("CloudAgentState line and thread display", () => {
     expect(state.state().cloudProvidersError).toBe(
       "Plow returned an unsafe cloud-agent provider list.",
     );
-    expect(JSON.stringify(state.state())).not.toContain(CREDENTIAL.slice(0, 10));
+    expect(JSON.stringify(state.state())).not.toContain(reflected);
   });
 
   it("reports an initial provider-list failure without inventing a fallback roster", async () => {
@@ -284,7 +304,7 @@ describe("CloudAgentState line and thread display", () => {
     const { state } = build({
       listProviders: async () => {
         if (fail) throw new PlowApiError("network", "Plow didn't answer in time. Try again.");
-        return ["provider/available"];
+        return [{ id: "provider/available", name: "Available" }];
       },
     });
     await state.refresh();
@@ -580,9 +600,11 @@ describe("CloudAgentState new agent flow", () => {
   });
 
   it("creates directly on a picked free line without activating", async () => {
+    const providerId = " exe:life ";
     const created: Array<{ lineUid: string; name: string; provider: string }> = [];
     const { state, calls } = build({
       listAgents: async () => [],
+      listProviders: async () => [{ id: providerId, name: "Life" }],
       createAgent: async (request) => {
         created.push(request);
         return agent({ agentId: "agent_new", name: request.name });
@@ -590,11 +612,13 @@ describe("CloudAgentState new agent flow", () => {
     });
     await state.refresh();
 
-    await state.create({ name: "Garden", provider: "exe:life", lineUid: "lin_willow" });
+    const selectedProvider = state.state().cloudProviders?.[0].id;
+    expect(selectedProvider).toBe(providerId);
+    await state.create({ name: "Garden", provider: selectedProvider!, lineUid: "lin_willow" });
 
     expect(created).toEqual([{
       name: "Garden",
-      provider: "exe:life",
+      provider: providerId,
       lineUid: "lin_willow",
     }]);
     expect(calls).not.toContain("createActivation");
