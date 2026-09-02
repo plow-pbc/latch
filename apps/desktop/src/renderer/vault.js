@@ -88,6 +88,28 @@ const VAULT_TYPES = {
   },
 };
 
+/**
+ * A card's brand, read off its own number.
+ *
+ * The issuer identification number IS the brand — the owner retyping it into
+ * the Brand box is transcription, not information, so the form does it. The
+ * ranges are the published IINs; an unrecognised (or half-typed) number gives
+ * "", which is the form saying nothing rather than guessing.
+ */
+export function cardBrand(number) {
+  const d = String(number ?? "").replace(/\D/g, "");
+  if (!d) return "";
+  const n = (len) => Number(d.slice(0, len));
+  if (d[0] === "4") return "Visa";
+  if (/^3[47]/.test(d)) return "American Express";
+  if ((n(2) >= 51 && n(2) <= 55) || (d.length >= 4 && n(4) >= 2221 && n(4) <= 2720)) return "Mastercard";
+  if (/^6(011|5)/.test(d) || (d.length >= 3 && n(3) >= 644 && n(3) <= 649)) return "Discover";
+  if (/^3[68]/.test(d) || (d.length >= 3 && n(3) >= 300 && n(3) <= 305)) return "Diners Club";
+  if (/^35/.test(d)) return "JCB";
+  if (/^62/.test(d)) return "UnionPay";
+  return "";
+}
+
 function errText(err) {
   // A throw from the main process arrives wrapped: "Error invoking remote
   // method 'vault:saveItem': Error: the sentence we wrote". The owner should
@@ -314,6 +336,19 @@ function vfield(spec, ctx) {
   if (!spec.secret && stored) input.value = stored;
   vbaseline(input);
   ctx.inputs[spec.key] = input;
+
+  /* The Brand box fills itself from the number as it is typed — see
+     cardBrand(). It is a suggestion, never a lock: the moment the owner types
+     their own brand the form stops touching the box, and a box still holding
+     what WE put there is the only one we overwrite. The brand input is looked
+     up at event time because it is built after this one. */
+  if (spec.key === "number") {
+    input.addEventListener("input", () => {
+      const brand = ctx.inputs.brand;
+      if (!brand || (brand.value && brand.value !== ctx.derivedBrand)) return;
+      brand.value = ctx.derivedBrand = cardBrand(input.value);
+    });
+  }
 
   const buttons = [];
   const held = !!(spec.secret && ctx.saved && (ctx.item.secrets || []).includes(spec.key));
