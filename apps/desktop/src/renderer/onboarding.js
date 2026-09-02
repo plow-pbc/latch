@@ -6,6 +6,7 @@ import { el, icon } from "./dom.js";
 import { googleConnectorCard } from "./connectorsCard.js";
 import { singleFlight } from "./onboardingAction.js";
 import { loadDoneAgent } from "./onboardingDone.js";
+import { startAfterDocumentPaint } from "./welcomeEntrance.js";
 
 const SVG_NS = "http://www.w3.org/2000/svg";
 const PLW_PATH =
@@ -578,21 +579,19 @@ function footerForStep() {
 
 function playWelcomeEntrance(variant) {
   const mark = screen.querySelector(".plw-mark");
-  requestAnimationFrame(() => {
-    requestAnimationFrame(() => {
-      if (!mark.isConnected) return;
-      if (variant === "full" && typeof mark.getTotalLength === "function") {
-        try {
-          const length = Math.ceil(mark.getTotalLength());
-          if (length > 0) screen.style.setProperty("--plw-len", length);
-        } catch {
-          // Layout-free test environments can lack SVG geometry. The CSS has a
-          // conservative fallback length and the filled resting mark still shows.
-        }
+  void startAfterDocumentPaint(() => {
+    if (!mark.isConnected) return;
+    if (variant === "full" && typeof mark.getTotalLength === "function") {
+      try {
+        const length = Math.ceil(mark.getTotalLength());
+        if (length > 0) screen.style.setProperty("--plw-len", length);
+      } catch {
+        // Layout-free test environments can lack SVG geometry. The CSS has a
+        // conservative fallback length and the filled resting mark still shows.
       }
-      screen.classList.add(`entering-${variant}`);
-      document.body.classList.add(`welcome-${variant}`);
-    });
+    }
+    screen.classList.add(`entering-${variant}`);
+    document.body.classList.add(`welcome-${variant}`);
   });
 }
 
