@@ -32,6 +32,7 @@ let filter = "all";
 // updates the display nodes in place, so a relay reconnect cannot reset the
 // pane under someone reading it.
 let settingsMounted = null;
+let settingsRenderGeneration = 0;
 
 /** The Discord mark. Built apart from `icon()`: that helper draws stroked
     line art, and this is a filled silhouette. */
@@ -1824,6 +1825,7 @@ async function refreshUpdateBanner() {
 // ---- Settings ----
 
 async function renderSettings() {
+  const generation = ++settingsRenderGeneration;
   // The Plow account. There is no credential field and no URL field here: the
   // credential is minted by first-run login and never leaves the main process,
   // and the API origin is baked into the build (a token is only valid against
@@ -2098,7 +2100,7 @@ async function renderSettings() {
 
   // What a status change re-reads: display nodes only, every one of them read
   // back from main rather than remembered here.
-  settingsMounted = {
+  const mounted = {
     applyConnectors,
     refresh: async () => {
       await refreshAccount();
@@ -2118,9 +2120,11 @@ async function renderSettings() {
   // arriving during the awaits above found settingsMounted unset and was
   // dropped — and a missed final transition (say, update-downloaded) would
   // otherwise leave this pane stale with no later event to correct it.
-  await settingsMounted.refreshUpdates();
+  if (generation !== settingsRenderGeneration || currentTab !== "settings") return;
+  settingsMounted = mounted;
+  await mounted.refreshUpdates();
 
-  if (currentTab !== "settings") return;
+  if (generation !== settingsRenderGeneration || currentTab !== "settings") return;
   view.replaceChildren(el("div", { class: "panel settings" }, [
     // The old subtitle promised a phone number this screen never shows. The
     // activation flow learns it server-side from the inbound SMS, so say what
