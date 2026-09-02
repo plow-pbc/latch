@@ -4,6 +4,7 @@
  * renderer has no direct access to Node, ipcRenderer, or the filesystem.
  */
 import { contextBridge, ipcRenderer } from "electron";
+import type { CloudAgentsPreloadState } from "./cloudAgentsIpc.js";
 
 contextBridge.exposeInMainWorld("domo", {
   // Main window data.
@@ -136,7 +137,7 @@ contextBridge.exposeInMainWorld("domo", {
   // no roster row to name and none is needed.
   cloudRemove: (agentId: string) => ipcRenderer.invoke("cloud:remove", agentId),
   cloudRefresh: () => ipcRenderer.invoke("cloud:refresh"),
-  cloudAgents: () => ipcRenderer.invoke("cloud:agents"),
+  cloudAgents: (): Promise<CloudAgentsPreloadState | null> => ipcRenderer.invoke("cloud:agents"),
   cloudCreate: (input: { name: string; provider: string; lineUid: string | null }) =>
     ipcRenderer.invoke("cloud:create", input),
   cloudCancelLineFlow: () => ipcRenderer.invoke("cloud:cancelLineFlow"),
