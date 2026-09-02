@@ -33,7 +33,6 @@ import {
   PolicyDelegate,
   importLogins,
   importPreview,
-  importVaults,
   markAgainstVault,
   parseCredentialExchange,
   parseOnePux,
@@ -919,8 +918,8 @@ async function stageImport(parsed: ParsedImport, epoch = staging.epoch) {
   // Marking now would settle every duplicate, update and same-name-twice
   // ambiguity against rows that are about to be left behind — two vaults each
   // holding a login the sheet would then leave alone, importing nothing.
-  if (importVaults(parsed).length <= 1) await markAgainstVault(vault, parsed.logins);
-  return staging.stageSheet(epoch, parsed.logins, importPreview(parsed));
+  if (importPreview(parsed).vaults.length <= 1) await markAgainstVault(vault, parsed.logins);
+  return staging.stageSheet(epoch, parsed);
 }
 
 /**
@@ -986,26 +985,27 @@ ipcMain.handle("vault:importFile", async () => {
   return stageImport(isZip ? parseOnePux(bytes) : parsePasswordExport(bytes.toString("utf8")), epoch);
 });
 
-// The 1Password vaults the owner kept. The unmarked staging is consumed and
+// The 1Password vaults the owner kept, by id. The unmarked staging is consumed and
 // replaced by just their rows — marked against the vault only now, so what
 // counts as a duplicate or an update is decided over the rows that are
 // actually coming. The answer is an ordinary staged preview, ticket and all.
-ipcMain.handle("vault:importPick", async (_e, vaults: string[], ticket?: number) => {
+ipcMain.handle("vault:importPick", async (_e, vaultIds: string[], ticket?: number) => {
   const vault = device?.vaultClient;
   if (!vault) throw new Error("the vault is not running");
-  const keep = (Array.isArray(vaults) ? vaults : []).map((v) => String(v));
-  const { logins, preview } = staging.take(typeof ticket === "number" ? ticket : undefined);
+  const keep = (Array.isArray(vaultIds) ? vaultIds : []).map((v) => String(v));
+  const parsed = staging.take(typeof ticket === "number" ? ticket : undefined);
   // take() emptied the slot and bumped the epoch; capture it HERE, before the
   // await, so a sheet closing while the marking runs still voids this answer
   // rather than having it re-stage the plaintext the close existed to drop.
   const epoch = staging.epoch;
-  const subset = logins.filter((l) => !!l.vault && keep.includes(l.vault));
-  await markAgainstVault(vault, subset);
-  return staging.stageSheet(
-    epoch,
-    subset,
-    importPreview({ source: preview.source, logins: subset, skipped: preview.skipped.filter((sk) => !!sk.vault && keep.includes(sk.vault)) }),
-  );
+  const kept = (row: { vault?: { id: string } }) => !!row.vault && keep.includes(row.vault.id);
+  const subset: ParsedImport = {
+    source: parsed.source,
+    logins: parsed.logins.filter(kept),
+    skipped: parsed.skipped.filter(kept),
+  };
+  await markAgainstVault(vault, subset.logins);
+  return staging.stageSheet(epoch, subset);
 });
 
 // `selected` names the rows the owner ticked, as indices into the preview's
@@ -1120,7 +1120,7 @@ async function handleCredentialExchange(userInfo: Record<string, unknown>): Prom
     // know it. Staging an exchange voids any inspect still parsing AND takes
     // a fresh ticket, so a sheet that was open when this landed can close
     // without cancelling it away (importStaging.ts tells the whole story).
-    staging.stageExchange(parsed.logins, importPreview(parsed));
+    staging.stageExchange(parsed);
     // On screen: whichever window the gate says this Mac gets, then the
     // renderer is told there is an exchange to show (main.js routes it to
     // the Vault tab, whose render opens the sheet on the preview).

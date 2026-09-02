@@ -14,7 +14,7 @@
  * holds here: no error, warning or skip reason ever contains a field's value.
  */
 import AdmZip from "adm-zip";
-import { finishImportedLogin, normalizeImportUrls, type ImportedLogin, type ParsedImport, type SkippedRow } from "./passwordImport.js";
+import { finishImportedLogin, normalizeImportUrls, type ImportedLogin, type ImportVault, type ParsedImport, type SkippedRow } from "./passwordImport.js";
 
 const NOT_1PUX = "this doesn't look like a 1PUX export. In 1Password choose File > Export, pick your account, and choose the 1PUX format";
 
@@ -73,9 +73,13 @@ export function parseOnePux(bytes: Uint8Array): ParsedImport {
   const skipped: SkippedRow[] = [];
   for (const account of list(root.accounts)) {
     for (const vault of list(account.vaults)) {
-      const vaultName = str(rec(vault.attrs).name).trim() || "Vault";
+      // Two vaults can share a display name across accounts, so the uuid is
+      // what the pick keys on; the name is only what the owner reads.
+      const attrs = rec(vault.attrs);
+      const name = str(attrs.name).trim() || "Vault";
+      const from: ImportVault = { id: str(attrs.uuid).trim() || name, name };
       for (const item of list(vault.items)) {
-        const login = itemToLogin(item, vaultName, skipped);
+        const login = itemToLogin(item, from, skipped);
         if (login) logins.push(login);
       }
     }
@@ -83,7 +87,7 @@ export function parseOnePux(bytes: Uint8Array): ParsedImport {
   return { source: "1Password", logins, skipped };
 }
 
-function itemToLogin(item: Rec, vault: string, skipped: SkippedRow[]): ImportedLogin | null {
+function itemToLogin(item: Rec, vault: ImportVault, skipped: SkippedRow[]): ImportedLogin | null {
   const overview = rec(item.overview);
   const details = rec(item.details);
   const rawTitle = str(overview.title).trim();

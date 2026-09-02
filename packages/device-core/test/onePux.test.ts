@@ -1,7 +1,7 @@
 import AdmZip from "adm-zip";
 import { describe, expect, it } from "vitest";
 import { parseOnePux } from "../src/browser/onePux.js";
-import { importPreview, importVaults, parsePasswordExport } from "../src/browser/passwordImport.js";
+import { importPreview, parsePasswordExport } from "../src/browser/passwordImport.js";
 
 const TOTP_KEY = "JBSWY3DPEHPK3PXP";
 
@@ -42,12 +42,16 @@ const login = (title: string, extra: Record<string, unknown> = {}) => ({
   ...extra,
 });
 
-const exportData = (vaults: Array<{ name: string; type?: string; items: unknown[] }>) =>
+/** A vault as the export nests it. The uuid is deliberately NOT the display
+ * name: two vaults can share a name, and only the id tells them apart. */
+type Vault = { name: string; uuid?: string; type?: string; items: unknown[] };
+
+const exportData = (vaults: Vault[]) =>
   JSON.stringify({
-    accounts: [{ attrs: { name: "Sam" }, vaults: vaults.map((v) => ({ attrs: { uuid: v.name, name: v.name, type: v.type ?? "P" }, items: v.items })) }],
+    accounts: [{ attrs: { name: "Sam" }, vaults: vaults.map((v) => ({ attrs: { uuid: v.uuid ?? `v-${v.name}`, name: v.name, type: v.type ?? "P" }, items: v.items })) }],
   });
 
-const onePux = (vaults: Array<{ name: string; type?: string; items: unknown[] }>, deflate = true) =>
+const onePux = (vaults: Vault[], deflate = true) =>
   zipOf(
     { "export.attributes": '{"version":3,"description":"1Password Unencrypted Export"}', "export.data": exportData(vaults), "files/": "" },
     { deflate },
@@ -67,7 +71,16 @@ describe("parseOnePux", () => {
     ]));
     expect(parsed.source).toBe("1Password");
     expect(parsed.skipped).toEqual([]);
-    expect(parsed.logins.map((l) => [l.title, l.vault])).toEqual([["Dropbox", "Personal"], ["Netflix", "Family"]]);
+    expect(parsed.logins.map((l) => [l.title, l.vault])).toEqual([
+      ["Dropbox", { id: "v-Personal", name: "Personal" }],
+      ["Netflix", { id: "v-Family", name: "Family" }],
+    ]);
+    // The one canonical vault list: both vaults, in first-seen order, each
+    // counting the logins that are actually importable from it.
+    expect(importPreview(parsed).vaults).toEqual([
+      { id: "v-Personal", name: "Personal", logins: 1 },
+      { id: "v-Family", name: "Family", logins: 1 },
+    ]);
     const dropbox = parsed.logins[0]!;
     expect(dropbox).toMatchObject({ username: "so@plow.co", password: "drop-secret", notes: "work files", urls: ["https://dropbox.com"], warnings: [] });
     expect(dropbox.totp).toContain(TOTP_KEY);
@@ -95,11 +108,12 @@ describe("parseOnePux", () => {
     expect(parsed.logins.map((l) => l.title)).toEqual(["Mixed", "Live"]);
     expect(parsed.logins[0]!.urls).toEqual(["https://good.example.com"]);
     expect(parsed.logins[0]!.warnings).toContain("one of its website addresses could not be read and was left off");
+    const vault = { id: "v-Personal", name: "Personal" };
     expect(parsed.skipped).toEqual([
-      { title: "Old", reason: "archived in 1Password", vault: "Personal" },
-      { title: "Visa", reason: "a credit card, not a login", vault: "Personal" },
-      { title: "deploy key", reason: "an SSH key, not a login", vault: "Personal" },
-      { title: "Router", reason: "has no website address; add it by hand as a new item if you still use it", vault: "Personal" },
+      { title: "Old", reason: "archived in 1Password", vault },
+      { title: "Visa", reason: "a credit card, not a login", vault },
+      { title: "deploy key", reason: "an SSH key, not a login", vault },
+      { title: "Router", reason: "has no website address; add it by hand as a new item if you still use it", vault },
     ]);
   });
 
@@ -147,20 +161,31 @@ describe("parseOnePux", () => {
     expect(() => parseOnePux(new Uint8Array(zip.toBuffer()))).toThrow(/1PUX/);
   });
 
-  it("names the vaults a parsed export spans, skipped-only ones included", () => {
+  it("names the vaults a parsed export spans, skipped-only ones included, and tells two same-named vaults apart", () => {
     const parsed = parseOnePux(onePux([
       { name: "Personal", items: [login("Dropbox")] },
       { name: "Shared", items: [login("Old", { state: "archived" })] },
+      { name: "Shared", uuid: "other-account", items: [login("Netflix")] },
+      { name: "", uuid: "", items: [login("Nameless")] },
     ]));
-    expect(importVaults(parsed)).toEqual(["Personal", "Shared"]);
+    // A vault whose every row was skipped still gets a pick row (0 logins) —
+    // last, since the logins are seen before the skipped rows — and the second
+    // "Shared", another account's, stays its own by id.
+    expect(importPreview(parsed).vaults).toEqual([
+      { id: "v-Personal", name: "Personal", logins: 1 },
+      { id: "other-account", name: "Shared", logins: 1 },
+      // Nothing to go on: the name falls back to "Vault", and the id to it.
+      { id: "Vault", name: "Vault", logins: 1 },
+      { id: "v-Shared", name: "Shared", logins: 0 },
+    ]);
     // A source that knows no vaults names none, so no pick step is offered.
-    expect(importVaults(parsePasswordExport("Title,URL,Username,Password\nA,https://a.example,u,p\n"))).toEqual([]);
+    expect(importPreview(parsePasswordExport("Title,URL,Username,Password\nA,https://a.example,u,p\n")).vaults).toEqual([]);
   });
 
   it("previews with the vault name and never a secret", () => {
     const parsed = parseOnePux(onePux([{ name: "Personal", items: [login("Dropbox")] }]));
     const text = JSON.stringify(importPreview(parsed));
     expect(text).not.toContain("Dropbox-secret");
-    expect(importPreview(parsed).items[0]).toMatchObject({ title: "Dropbox", vault: "Personal", hasPassword: true, hasTotp: false });
+    expect(importPreview(parsed).items[0]).toMatchObject({ title: "Dropbox", vault: { id: "v-Personal", name: "Personal" }, hasPassword: true, hasTotp: false });
   });
 });

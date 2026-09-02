@@ -35,16 +35,6 @@ function steps(head, items) {
   ]);
 }
 
-/** The distinct vault names a preview carries — from its importable items AND
- * its skipped rows, so a vault whose items were all skipped still gets a pick
- * row (showing "0 logins to import") and keeps its skipped lines in "Not
- * imported" when picked. First-seen order; empty when the source knows no
- * vaults (CSV, a paste, an exchange). The pick keys on the vault NAME, so two
- * vaults sharing a name (across different 1Password accounts) tick together —
- * fine, since every vault reachable here is the owner's own. Main knows the
- * same names by the same rule (importVaults, device-core). */
-export const vaultsOf = (p) => [...new Set([...p.items, ...p.skipped].map((x) => x.vault).filter(Boolean))];
-
 /**
  * @param reload redraw the vault pane (called after a commit lands)
  * @param host vault.js's pane seams: { errText, vbusy, vtakeEditor,
@@ -331,28 +321,26 @@ export async function vimportSheet(reload, host, exchange = null) {
     title.textContent = "Choose vaults";
     back.removeAttribute("hidden");
     foot.removeAttribute("hidden");
-    const vaults = vaultsOf(p);
-    const chosen = new Set(vaults);
+    const vaults = p.vaults;
+    const chosen = new Set(vaults.map((v) => v.id));
     const err = el("p", { class: "imp-err" });
-    // Every login counts here: this staging is unmarked, so no row knows yet
-    // whether the vault already holds it.
-    const countIn = (v) => p.items.filter((i) => i.vault === v).length;
     const sync = () => {
       go.textContent = chosen.size === 0 ? "No vaults selected" : `Continue with ${chosen.size} of ${vaults.length}`;
       go.disabled = chosen.size === 0;
     };
     const row = (v) => {
       const tick = el("input", { attrs: { type: "checkbox", checked: "" } });
-      const n = countIn(v);
       const node = el("div", { class: "imp-row pick" }, [
         tick,
         el("span", { class: "vicon" }, [icon("lock", { class: "vico", strokeWidth: "1.8" })]),
         el("span", { class: "m" }, [
-          el("span", { class: "t", text: v }),
-          el("span", { class: "c", text: `${n} login${n === 1 ? "" : "s"} to import` }),
+          el("span", { class: "t", text: v.name }),
+          // Every login counts: this staging is unmarked, so no row knows yet
+          // whether the vault already holds it.
+          el("span", { class: "c", text: `${v.logins} login${v.logins === 1 ? "" : "s"} to import` }),
         ]),
       ]);
-      bindPickRow(node, tick, chosen, v, sync);
+      bindPickRow(node, tick, chosen, v.id, sync);
       return node;
     };
     bodyEl.replaceChildren(
@@ -386,7 +374,7 @@ export async function vimportSheet(reload, host, exchange = null) {
     // Straight from the file with several vaults on board: the pick comes
     // first. One vault, or a source with none, needs no such step. (pickVaults
     // sets `ticket` itself, so this only sets it on the path that skips it.)
-    if (!picked && vaultsOf(p).length > 1) return pickVaults(p);
+    if (!picked && p.vaults.length > 1) return pickVaults(p);
     ticket = p.ticket ?? null;
     const { items, skipped } = p;
     title.textContent = "Ready to import";
@@ -468,7 +456,7 @@ export async function vimportSheet(reload, host, exchange = null) {
       skipped.length
         ? el("div", { class: "imp-skip" }, [
             el("div", { class: "group-h", text: "Not imported" }),
-            el("ul", {}, skipped.map((s) => el("li", { text: `${s.vault ? s.vault + " · " : ""}${s.title}: ${s.reason}` }))),
+            el("ul", {}, skipped.map((s) => el("li", { text: `${s.vault ? s.vault.name + " · " : ""}${s.title}: ${s.reason}` }))),
           ])
         : null,
       // The hand-off wrote no file anywhere — that is its whole point — so

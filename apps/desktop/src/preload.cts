@@ -41,10 +41,10 @@ contextBridge.exposeInMainWorld("domo", {
   vaultImportSources: () => ipcRenderer.invoke("vault:importSources"),
   vaultImportInspect: (text: string) => ipcRenderer.invoke("vault:importInspect", text),
   vaultImportFile: () => ipcRenderer.invoke("vault:importFile"),
-  // The 1Password vaults the owner kept: main re-stages just their rows and
-  // answers with that subset's preview, ticket and all.
-  vaultImportPick: (vaults: string[], ticket?: number | null) =>
-    ipcRenderer.invoke("vault:importPick", vaults, ticket),
+  // The 1Password vaults the owner kept, by id: main re-stages just their rows
+  // and answers with that subset's preview, ticket and all.
+  vaultImportPick: (vaultIds: string[], ticket?: number | null) =>
+    ipcRenderer.invoke("vault:importPick", vaultIds, ticket),
   // `ticket` names the staging the sheet is answering for (it rode in on the
   // preview); main only lets a sheet commit or drop its own — see
   // importStaging.ts for why a stale sheet must not touch its successor's.

@@ -20,6 +20,14 @@ import type { LocalVault } from "./localVault.js";
 import { checkedUrls, type VaultItemSummary } from "./vaultItems.js";
 import { totpParams } from "./vaultTotp.js";
 
+/** A vault a row came from (1PUX only). The ID is what a pick keys on — two
+ * 1Password vaults can share a display NAME across accounts — and the name is
+ * what the owner reads. Display data either way, never a key into this vault. */
+export interface ImportVault {
+  id: string;
+  name: string;
+}
+
 /** One login as the export described it, normalized and ready to save. */
 export interface ImportedLogin {
   title: string;
@@ -40,17 +48,16 @@ export interface ImportedLogin {
    * password or key CHANGED in the source: the save this row becomes is an
    * edit of that item, touching only the fields named here. */
   update?: { itemId: string; revision: string; fields: ("password" | "totp")[] };
-  /** The 1Password vault the login came from (1PUX only); absent for CSV
-   * and pasted items, which know no vaults. Display data for the sheet's
-   * vault step — never a key. */
-  vault?: string;
+  /** Where it came from; absent for CSV and pasted items, which know no
+   * vaults. */
+  vault?: ImportVault;
 }
 
 /** A row that will not be imported, and the reason it will not. */
 export interface SkippedRow {
   title: string;
   reason: string;
-  vault?: string;
+  vault?: ImportVault;
 }
 
 export interface ParsedImport {
@@ -458,18 +465,34 @@ export interface ImportPreviewItem {
   /** Which secrets changed on an item the vault already holds — importing
    * this row updates that item's named fields. Empty for a new row. */
   changed: ("password" | "totp")[];
-  vault?: string;
+  vault?: ImportVault;
 }
 
 export interface ImportPreview {
   source: string;
   items: ImportPreviewItem[];
   skipped: SkippedRow[];
+  /** The vaults these rows span, each with the number of importable logins in
+   * it — worked out here and nowhere else. Logins AND skipped rows, so a vault
+   * whose every row was set aside is still offered on the Import sheet's pick
+   * step (and keeps its skipped lines when picked). First-seen order; empty
+   * for a source that knows no vaults (CSV, a paste, an exchange). More than
+   * one is what makes the pick a step at all. */
+  vaults: (ImportVault & { logins: number })[];
 }
 
 /** What the renderer is shown before it may commit: facts about each row,
  * with the password and the key reduced to whether one is there. */
 export function importPreview(parsed: ParsedImport): ImportPreview {
+  const vaults = new Map<string, ImportVault & { logins: number }>();
+  const note = (v: ImportVault | undefined, counts: boolean) => {
+    if (!v) return;
+    const held = vaults.get(v.id) ?? { id: v.id, name: v.name, logins: 0 };
+    if (counts) held.logins++;
+    vaults.set(v.id, held);
+  };
+  for (const l of parsed.logins) note(l.vault, true);
+  for (const s of parsed.skipped) note(s.vault, false);
   return {
     source: parsed.source,
     items: parsed.logins.map((l) => ({
@@ -484,17 +507,9 @@ export function importPreview(parsed: ParsedImport): ImportPreview {
       ...(l.vault ? { vault: l.vault } : {}),
     })),
     skipped: parsed.skipped,
+    vaults: [...vaults.values()],
   };
 }
-
-/** The distinct vault names a parsed import carries — over its logins AND its
- * skipped rows, so a vault whose every row was skipped is still offered on the
- * Import sheet's vault step. First-seen order; empty for a source that knows
- * no vaults (CSV, a paste, an exchange). More than one is what makes the pick
- * a step at all — see vault:importPick in the desktop app's main.ts. */
-export const importVaults = (p: { logins: { vault?: string }[]; skipped: { vault?: string }[] }): string[] => [
-  ...new Set([...p.logins, ...p.skipped].flatMap((x) => (x.vault ? [x.vault] : []))),
-];
 
 export interface ImportResult {
   saved: number;

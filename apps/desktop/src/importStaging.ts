@@ -1,7 +1,7 @@
 /**
- * The Import sheet's staging slot — the parsed logins held in MAIN between
- * inspect and commit, so the renderer only ever sees a secret-free preview
- * and commit imports whatever main is holding.
+ * The Import sheet's staging slot — the parsed import held in MAIN between
+ * inspect and commit, so the renderer only ever sees the secret-free preview
+ * derived from it, and commit imports whatever main is holding.
  *
  * One slot, because the sheet is modal; but TWO clocks guard it, because two
  * different things can go stale against it:
@@ -30,7 +30,7 @@
  * Pure state, no I/O — main.ts owns the vault calls and the IPC; this is the
  * part vitest can hold to account (importStaging.test.ts).
  */
-import type { ImportedLogin, ImportPreview } from "@domo/device-core";
+import { importPreview, type ImportPreview, type ParsedImport } from "@domo/device-core";
 
 /** A preview plus the ticket naming the staging it describes. Ticket 0 means
  * the answer arrived too late to stage — shown to no one (the sheet that
@@ -52,15 +52,11 @@ export function passwordsAppCanHandOff(systemVersion: string): boolean {
   return major > 26 || (major === 26 && minor >= 4);
 }
 
-/** What a commit consumes: the logins main is holding and the preview the
- * sheet was shown of them — the pick step re-stages a subset of both. */
-export interface StagedImport {
-  logins: ImportedLogin[];
-  preview: ImportPreview;
-}
-
 export class ImportStaging {
-  private staged: StagedImport | null = null;
+  /** The whole parse, not just its logins: the vault pick re-stages a SUBSET
+   * of it, and needs the source and skipped rows to do so. The preview the
+   * sheet is shown is derived from it here, so there is one of each. */
+  private staged: ParsedImport | null = null;
   private origin: "sheet" | "exchange" = "sheet";
   private ticket = 0;
   private seq = 0;
@@ -75,9 +71,10 @@ export class ImportStaging {
 
   /** An inspect's answer. Stages only if `epoch` still holds; either way the
    * preview comes back stamped (ticket 0 when it did not stage). */
-  stageSheet(epoch: number, logins: ImportedLogin[], preview: ImportPreview): StagedPreview {
+  stageSheet(epoch: number, parsed: ParsedImport): StagedPreview {
+    const preview = importPreview(parsed);
     if (epoch !== this.epochNow) return { ...preview, ticket: 0 };
-    this.staged = { logins, preview };
+    this.staged = parsed;
     this.origin = "sheet";
     this.ticket = ++this.seq;
     // An exchange this replaces is answered for: its preview must not reopen
@@ -89,12 +86,12 @@ export class ImportStaging {
   /** A credential exchange staged by main itself (no sheet asked). The epoch
    * bump voids any sheet inspect still parsing — an owner-approved hand-off
    * must not be overwritten by a slower paste. */
-  stageExchange(logins: ImportedLogin[], preview: ImportPreview): StagedPreview {
+  stageExchange(parsed: ParsedImport): StagedPreview {
     this.epochNow++;
-    this.staged = { logins, preview };
+    this.staged = parsed;
     this.origin = "exchange";
     this.ticket = ++this.seq;
-    this.exchange = { ...preview, ticket: this.ticket };
+    this.exchange = { ...importPreview(parsed), ticket: this.ticket };
     return this.exchange;
   }
 
@@ -111,7 +108,7 @@ export class ImportStaging {
    * newer staging is not the stale sheet's to consume or to drop — and the
    * refusal names what happened rather than importing the wrong rows.
    */
-  take(ticket: number | undefined): StagedImport {
+  take(ticket: number | undefined): ParsedImport {
     if (typeof ticket === "number" && ticket !== this.ticket) {
       throw new Error("a newer import replaced this one; nothing was imported");
     }

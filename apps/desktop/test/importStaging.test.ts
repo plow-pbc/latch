@@ -6,7 +6,7 @@
  * close used to cancel the exchange away before its preview was ever shown.
  */
 import { describe, expect, it } from "vitest";
-import type { ImportedLogin, ImportPreview } from "@domo/device-core";
+import type { ImportedLogin, ParsedImport } from "@domo/device-core";
 import { ImportStaging, passwordsAppCanHandOff } from "../src/importStaging.js";
 
 const login = (title: string): ImportedLogin => ({
@@ -19,7 +19,10 @@ const login = (title: string): ImportedLogin => ({
   warnings: [],
 });
 
-const previewOf = (source: string): ImportPreview => ({ source, items: [], skipped: [] });
+/** What a parse hands the slot — the whole thing, since the vault pick puts a
+ * SUBSET of it straight back and needs the source and skipped rows to do so. */
+const parsedOf = (source: string, ...titles: string[]): ParsedImport =>
+  ({ source, logins: titles.map(login), skipped: [] });
 
 describe("passwordsAppCanHandOff", () => {
   it("knows which macOS grew the Export-to-App menu (26.4)", () => {
@@ -38,21 +41,20 @@ describe("passwordsAppCanHandOff", () => {
 });
 
 describe("a sheet's own staging", () => {
-  it("stages, hands back a ticket, and commit takes exactly what was staged — preview and all", () => {
-    // The preview travels with the logins because the vault pick puts a
-    // SUBSET of both straight back (vault:importPick): it needs the source
-    // and the skipped rows the sheet was shown, not just the logins.
+  it("stages a parse, hands back its ticketed preview, and commit takes the parse back whole", () => {
     const staging = new ImportStaging();
-    const staged = staging.stageSheet(staging.epoch, [login("a")], previewOf("CSV"));
+    const staged = staging.stageSheet(staging.epoch, parsedOf("CSV", "a"));
     expect(staged.ticket).toBeGreaterThan(0);
+    // The preview is derived here — the renderer is never handed the parse.
+    expect(staged.items.map((i) => i.title)).toEqual(["a"]);
+    expect(staged.source).toBe("CSV");
     const taken = staging.take(staged.ticket);
-    expect(taken.logins.map((l) => l.title)).toEqual(["a"]);
-    expect(taken.preview).toEqual(previewOf("CSV"));
+    expect(taken).toEqual(parsedOf("CSV", "a"));
   });
 
   it("cancel with the sheet's ticket drops it; a later commit finds nothing", () => {
     const staging = new ImportStaging();
-    const staged = staging.stageSheet(staging.epoch, [login("a")], previewOf("CSV"));
+    const staged = staging.stageSheet(staging.epoch, parsedOf("CSV", "a"));
     staging.cancel(staged.ticket);
     expect(() => staging.take(undefined)).toThrow(/nothing is staged/);
   });
@@ -61,7 +63,7 @@ describe("a sheet's own staging", () => {
     // The close raced the answer and lost: staging holds the plaintext, the
     // sheet never saw the ticket. Its null cancel is what mops that up.
     const staging = new ImportStaging();
-    staging.stageSheet(staging.epoch, [login("a")], previewOf("CSV"));
+    staging.stageSheet(staging.epoch, parsedOf("CSV", "a"));
     staging.cancel(null);
     expect(() => staging.take(undefined)).toThrow(/nothing is staged/);
   });
@@ -70,7 +72,7 @@ describe("a sheet's own staging", () => {
     const staging = new ImportStaging();
     const epoch = staging.epoch; // captured at request start
     staging.cancel(null); // sheet closed while the parse was in flight
-    const staged = staging.stageSheet(epoch, [login("a")], previewOf("CSV"));
+    const staged = staging.stageSheet(epoch, parsedOf("CSV", "a"));
     expect(staged.ticket).toBe(0);
     expect(() => staging.take(undefined)).toThrow(/nothing is staged/);
   });
@@ -79,8 +81,8 @@ describe("a sheet's own staging", () => {
 describe("a credential exchange staged over an open sheet", () => {
   it("survives the stale sheet's ticketed close — the reported dismissal", () => {
     const staging = new ImportStaging();
-    const sheet = staging.stageSheet(staging.epoch, [login("csv")], previewOf("CSV"));
-    const exchange = staging.stageExchange([login("handoff")], previewOf("Passwords"));
+    const sheet = staging.stageSheet(staging.epoch, parsedOf("CSV", "csv"));
+    const exchange = staging.stageExchange(parsedOf("Passwords", "handoff"));
     // The open sheet is closed to make way (renderer main.js) and quotes the
     // staging IT saw. That must not drop the exchange, whose preview the
     // vault pane is about to ask for.
@@ -91,7 +93,7 @@ describe("a credential exchange staged over an open sheet", () => {
 
   it("survives a sheet that closed before it ever saw a preview", () => {
     const staging = new ImportStaging();
-    staging.stageExchange([login("handoff")], previewOf("Passwords"));
+    staging.stageExchange(parsedOf("Passwords", "handoff"));
     staging.cancel(null); // the pick-step sheet had no ticket to quote
     expect(staging.pendingExchange()).not.toBeNull();
   });
@@ -99,16 +101,16 @@ describe("a credential exchange staged over an open sheet", () => {
   it("voids a sheet inspect still in flight when it stages", () => {
     const staging = new ImportStaging();
     const epoch = staging.epoch; // a paste is parsing…
-    staging.stageExchange([login("handoff")], previewOf("Passwords"));
-    const late = staging.stageSheet(epoch, [login("csv")], previewOf("CSV"));
+    staging.stageExchange(parsedOf("Passwords", "handoff"));
+    const late = staging.stageSheet(epoch, parsedOf("CSV", "csv"));
     expect(late.ticket).toBe(0);
     expect(staging.pendingExchange()).not.toBeNull();
   });
 
   it("refuses the stale sheet's commit instead of importing the wrong rows", () => {
     const staging = new ImportStaging();
-    const sheet = staging.stageSheet(staging.epoch, [login("csv")], previewOf("CSV"));
-    staging.stageExchange([login("handoff")], previewOf("Passwords"));
+    const sheet = staging.stageSheet(staging.epoch, parsedOf("CSV", "csv"));
+    staging.stageExchange(parsedOf("Passwords", "handoff"));
     // The stale commit's row indices name rows of a preview that no longer
     // matches the slot. Refused before anything is cleared: the exchange is
     // still there for its own sheet.
@@ -118,14 +120,14 @@ describe("a credential exchange staged over an open sheet", () => {
 
   it("is answered for by its own sheet: commit takes it, and clears the pending preview", () => {
     const staging = new ImportStaging();
-    const exchange = staging.stageExchange([login("handoff")], previewOf("Passwords"));
+    const exchange = staging.stageExchange(parsedOf("Passwords", "handoff"));
     expect(staging.take(exchange.ticket).logins.map((l) => l.title)).toEqual(["handoff"]);
     expect(staging.pendingExchange()).toBeNull();
   });
 
   it("its sheet's ticketed cancel drops it — Escape means no", () => {
     const staging = new ImportStaging();
-    const exchange = staging.stageExchange([login("handoff")], previewOf("Passwords"));
+    const exchange = staging.stageExchange(parsedOf("Passwords", "handoff"));
     staging.cancel(exchange.ticket);
     expect(staging.pendingExchange()).toBeNull();
     expect(() => staging.take(undefined)).toThrow(/nothing is staged/);
@@ -133,8 +135,8 @@ describe("a credential exchange staged over an open sheet", () => {
 
   it("a second exchange replaces the first, and the first sheet's close keeps the second", () => {
     const staging = new ImportStaging();
-    const first = staging.stageExchange([login("one")], previewOf("Passwords"));
-    const second = staging.stageExchange([login("two")], previewOf("Passwords"));
+    const first = staging.stageExchange(parsedOf("Passwords", "one"));
+    const second = staging.stageExchange(parsedOf("Passwords", "two"));
     staging.cancel(first.ticket);
     expect(staging.pendingExchange()).toEqual(second);
     expect(staging.take(second.ticket).logins.map((l) => l.title)).toEqual(["two"]);
@@ -145,8 +147,8 @@ describe("a credential exchange staged over an open sheet", () => {
     // the exchange's staging is gone, so its pending preview must be too, or
     // the next vault render would reopen a sheet over rows that are not its.
     const staging = new ImportStaging();
-    staging.stageExchange([login("handoff")], previewOf("Passwords"));
-    const sheet = staging.stageSheet(staging.epoch, [login("csv")], previewOf("CSV"));
+    staging.stageExchange(parsedOf("Passwords", "handoff"));
+    const sheet = staging.stageSheet(staging.epoch, parsedOf("CSV", "csv"));
     expect(staging.pendingExchange()).toBeNull();
     expect(staging.take(sheet.ticket).logins.map((l) => l.title)).toEqual(["csv"]);
   });
