@@ -341,6 +341,9 @@ function shape(snap: ReturnType<OutputBuffer["snapshot"]>): Omit<ExecResult, "ha
  */
 export class Executor {
   private buffers = new Map<string, OutputBuffer>();
+  /** What each run's profile was built from, kept so a diagnosis can ask
+   *  after the fact what that profile allowed (`grants`). */
+  private profiles = new Map<string, Parameters<typeof sandboxGrants>[0]>();
 
   constructor(
     public readonly scratchRoot: string,
@@ -396,13 +399,15 @@ export class Executor {
     // even exec the binary its PATH just resolved.
     const reads = [...args.readPaths, ...this.vendorDirs, workingDir];
 
-    const profile = SandboxProfile.generate({
+    const profileArgs = {
       readPaths: reads,
       writePaths: args.writePaths,
       network: args.network,
       appleEvents: args.appleEvents,
       scratch,
-    });
+    };
+    const profile = SandboxProfile.generate(profileArgs);
+    this.profiles.set(handle, profileArgs);
     if (process.env.DOMO_DEBUG_SANDBOX) {
       process.stderr.write(`=== PROFILE ===\n${profile}\n=== ARGV ===\n${args.argv.join(" ")}\n`);
     }
@@ -595,6 +600,18 @@ export class Executor {
 
     await buffer.waitForExit(Math.max(args.waitMs, 0));
     return { handle, ...shape(buffer.snapshot(0)) };
+  }
+
+  /**
+   * What the profile this run had would allow at `path` — the question a
+   * diagnosis asks to tell our own seatbelt's refusal from macOS's. Answered
+   * from the arguments the profile was generated from, so the two agree by
+   * construction.
+   */
+  grants(handle: string, path: string): { read: boolean; write: boolean } {
+    const args = this.profiles.get(handle);
+    if (!args) throw new ExecutorError(`unknown output handle: ${handle}`);
+    return sandboxGrants(args, path);
   }
 
   /** Invoke cb when the run exits — immediately if it already has. */

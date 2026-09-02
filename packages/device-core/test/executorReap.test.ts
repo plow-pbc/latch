@@ -303,10 +303,15 @@ describe.skipIf(!ON_MAC)("the audit record of a reaped run", () => {
 
     const ended = await settle(device.executor, handle);
     expect(ended.reaped).toBe(true);
-    // The agent polling the job learns why it stopped, not just that it did.
+    // The agent polling the job learns why it stopped, not just that it did —
+    // and what this Mac could tell about it: the app's own open of the pipe
+    // parks too, which is the shape a consent dialog has. "Likely", because
+    // the pipe is under no folder macOS asks about (hostGate/diagnose.ts).
     const payload = device.getOutput(handle);
-    expect(jv(payload).get("status").str).toBe("completed");
+    expect(jv(payload).get("status").str).toBe("blocked");
     expect(jv(payload).get("error").str).toMatch(/produced no output/);
+    expect(jv(payload).get("diagnosis").get("cause").str).toBe("prompt_waiting");
+    expect(jv(payload).get("diagnosis").get("confidence").str).toBe("likely");
 
     const ends = device.audit
       .entries()
