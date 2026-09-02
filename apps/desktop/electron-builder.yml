@@ -37,6 +37,10 @@ publish:
 # LICENSE/NOTICE files are deliberately shipped — redistribution requires them.
 files:
   - dist/**/*
+  # Browser-only fixture picker; copied to dist for the fast visual loop but
+  # never installed in the app bundle.
+  - "!dist/renderer/onboarding-dev.html"
+  - "!dist/renderer/onboarding-dev.js"
   # The compiled native helper ships as an extraResource below — inside the
   # asar it could not be spawned at all.
   - "!dist/native/**"

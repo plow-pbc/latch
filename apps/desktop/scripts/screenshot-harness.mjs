@@ -9,10 +9,15 @@ import fs from "node:fs";
 import path from "node:path";
 
 /** A window with the shipping preload and no Node in the page. */
-export function shotWindow(dist, { width = 940, height = 620 } = {}) {
+export function shotWindow(
+  dist,
+  { width = 940, height = 620, titleBarStyle, backgroundColor } = {},
+) {
   return new BrowserWindow({
     width,
     height,
+    ...(titleBarStyle ? { titleBarStyle } : {}),
+    ...(backgroundColor ? { backgroundColor } : {}),
     show: false,
     webPreferences: {
       preload: path.join(dist, "preload.cjs"),

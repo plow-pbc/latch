@@ -39,7 +39,6 @@ export type OnboardingStep =
   | "waiting"
   | "phone"
   | "code"
-  | "connected"
   | "data"
   | "done";
 

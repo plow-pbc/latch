@@ -1287,9 +1287,9 @@ function notifyRenderer(channel: string): void {
 }
 
 /**
- * The first-run setup window: show a code → the user texts it → connected.
- * While this Mac holds no credential it is the ONLY window there is — see
- * `windowGate.ts`. It is also openable from Settings once signed in.
+ * The first-run setup window. While setup is incomplete it is the ONLY window
+ * there is — see `windowGate.ts`. It is also openable from Settings once signed
+ * in.
  */
 function openOnboardingWindow(): void {
   if (onboardingWindow && !onboardingWindow.isDestroyed()) {
@@ -1298,11 +1298,13 @@ function openOnboardingWindow(): void {
     return;
   }
   onboardingWindow = new BrowserWindow({
-    width: 460,
-    height: 560,
+    width: 660,
+    height: 840,
     resizable: false,
     fullscreenable: false,
     title: "Plow Latch — Set Up",
+    titleBarStyle: "hiddenInset",
+    backgroundColor: "#111110",
     webPreferences: {
       preload: path.join(dirname, "preload.cjs"),
       contextIsolation: true,

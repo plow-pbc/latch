@@ -1,16 +1,10 @@
-// Render the REAL first-run setup window offscreen, with the REAL preload, and
-// capture one PNG per screen. Reproducible evidence rather than four images
-// someone has to trust — and it EXITS NON-ZERO if a screen is missing the
-// content it exists to show.
+// Render the real first-run setup window offscreen, with the real preload, and
+// capture one PNG per screen. Copy assertions make a missing screen or stale
+// sentence fail the command rather than producing misleading evidence.
 //
 //   just onboarding-screenshots         → /tmp/onboarding-*.png
 //   OUT_DIR=/path just onboarding-screenshots
-//
-// The main process owns the onboarding state machine and the window renders
-// whatever `onboarding:get` returns, so stubbing that one handler is enough to
-// drive every screen — the same trick approval-screenshot.mjs uses.
 import { app, ipcMain } from "electron";
-import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { failLoudly, shootScreens, shotWindow } from "./screenshot-harness.mjs";
@@ -18,8 +12,6 @@ import { failLoudly, shootScreens, shotWindow } from "./screenshot-harness.mjs";
 const dir = path.dirname(fileURLToPath(import.meta.url));
 const dist = path.join(dir, "../dist");
 const outDir = process.env.OUT_DIR ?? "/tmp";
-
-const MCP_URL = "https://api.plow.co/v1/relay/devices/u_7Qk2p9/mcp";
 
 const DISPLAY_CODE = "Z1SWY";
 const SEND_TO = "+1 555 987 6543";
@@ -39,45 +31,64 @@ const base = {
   activation: null,
   chat: null,
   activationStale: false,
-  accountUid: "u_7Qk2p9",
-  mcpUrl: MCP_URL,
-  connected: true,
+  accountUid: "",
+  mcpUrl: "",
+  connected: false,
+  telemetryEnabled: true,
 };
-
-/** Before the account exists: no uid, no endpoint, no socket. */
-const newUser = { ...base, accountUid: "", mcpUrl: "", connected: false };
 
 /** Each screen, with the text it must contain to count as rendered. */
 const SCREENS = [
   {
-    name: "activate",
-    state: { ...newUser, step: "activate", phone: "", activation: ACTIVATION },
+    name: "welcome",
+    state: { ...base, step: "welcome", phone: "" },
     expect: [
-      "Connect this Mac",
+      "Presents",
+      "Plow Latch",
+      "The privacy and security layer for Plow",
+      "nothing you don't want to share ever leaves your computer",
+      "Get started",
+    ],
+    expectFocus: "Get started",
+  },
+  {
+    name: "privacy",
+    state: { ...base, step: "privacy", phone: "" },
+    expect: [
+      "Privacy",
+      "It all stays on your Mac",
+      "You decide what needs your okay",
+      "A second AI has your back",
+      "Never sold, never trained on",
+      "Back",
+      "Continue",
+    ],
+    expectFocus: "Continue",
+  },
+  {
+    name: "verify",
+    state: { ...base, step: "activate", phone: "", activation: ACTIVATION },
+    expect: [
+      "Verify your phone to connect this Mac",
+      "Send the message below from the phone number you want to use with Plow",
       DISPLAY_CODE,
-      // Copy-exact, because a message that does not START with the prefix gets
-      // a 200, no SMS, and total silence on both channels.
       `Plow Activate: ${DISPLAY_CODE}`,
       SEND_TO,
-      // The line is assigned per activation; the wrong Plow number activates
-      // and silently provisions no chat.
-      "Plow's activation number",
-      // Whoever texts the code gets the account, and the server cannot tell.
-      "This code is a credential",
-      "don't share it or post a screenshot",
-      "Open Messages…",
+      "Keep this private",
+      "Anyone who sends this code from their number can link it to this Plow account",
+      "Waiting for your text",
+      "Listening for 4:",
+      "Open Messages",
       "Use a phone code instead",
     ],
-    // The blue button answers Return: nothing to type here, so it holds focus.
     expectFocus: "Open Messages",
   },
   {
     name: "signed-out-revoke-warning",
     state: {
-      ...newUser,
-      step: "activate",
+      ...base,
+      step: "welcome",
       phone: "",
-      activation: ACTIVATION,
       message:
         "Signed out on this Mac. Plow could not be reached to revoke the session — revoke it in Plow's account settings.",
     },
@@ -86,25 +97,25 @@ const SCREENS = [
       "Plow could not be reached to revoke the session",
       "revoke it in Plow's account settings",
     ],
-    expectFocus: "Open Messages",
+    expectFocus: "Get started",
   },
   {
     name: "waiting",
-    state: { ...newUser, step: "waiting", phone: "", activation: ACTIVATION },
+    state: { ...base, step: "waiting", phone: "", activation: ACTIVATION },
     expect: [
-      "Waiting for your text",
-      "Nothing to type",
+      "Verify your phone to connect this Mac",
       DISPLAY_CODE,
       `Plow Activate: ${DISPLAY_CODE}`,
+      "Waiting for your text",
       "Listening for 4:",
-      "Try Again",
+      "Open Messages",
     ],
-    expectFocus: "Try Again",
+    expectFocus: "Open Messages",
   },
   {
     name: "waiting-gave-up",
     state: {
-      ...newUser,
+      ...base,
       step: "waiting",
       phone: "",
       activation: ACTIVATION,
@@ -112,78 +123,75 @@ const SCREENS = [
       message:
         "We haven't heard from your phone. Send the message exactly as shown — it has to start with “Plow Activate:” — or try again.",
     },
-    // The one failure the user gets no other signal about: a wrong prefix is
-    // answered with silence on both channels.
-    expect: ["Not signed in yet", "it has to start with", "Plow Activate:", "Try Again"],
-    expectFocus: "Try Again",
+    expect: ["Still not signed in", "it has to start with", "Plow Activate:", "Try again"],
+    expectFocus: "Open Messages",
   },
   {
     name: "phone",
-    state: { ...newUser, step: "phone", phone: "" },
-    // The lede has to promise a text, not claim one was sent.
-    expect: ["Sign in to Plow", "We'll text you a code", "Send Code"],
-    // A screen WITH a field focuses the field — its Enter handler submits.
+    state: { ...base, step: "phone", phone: "" },
+    expect: ["Sign in to Plow", "We'll text you a code", "Phone number", "Send code", "Back"],
     expectFocus: "+1 555 123 4567",
   },
   {
     name: "code",
     state: {
-      ...newUser,
+      ...base,
       step: "code",
-      // The API answers the same for an unknown number, an unparseable one and
-      // a failed send, so this screen may never say "we've sent you a code".
       message: "Check your phone for an 8-digit code.",
       codeExpiresAt: Date.now() + 4 * 60_000 + 30_000,
     },
-    expect: ["Check your phone", "If +1 555 123 4567 is on a Plow account", "Expires in 4:", "Resend"],
+    expect: [
+      "Check your phone",
+      "If +1 555 123 4567 is on a Plow account",
+      "Expires in 4:",
+      "Change number",
+      "Resend",
+      "Sign in",
+    ],
     expectFocus: "12345678",
   },
   {
-    // The end of the wizard, and the door into the app: past this button the
-    // main window exists for the first time. Connecting an MCP client is NOT
-    // here — it is per-client and repeatable, so it lives in the main window.
-    name: "connected",
-    state: {
-      ...base,
-      step: "connected",
-      chat: { uid: "cht_D7hfWNK", label: "+1 555 987 6543, +1 555 123 0000" },
-    },
+    name: "data-shell",
+    state: { ...base, step: "data", accountUid: "u_7Qk2p9", connected: true },
     expect: [
-      "This Mac is connected",
-      "u_7Qk2p9",
-      "under Agents",
-      // The chat activation created. A cloud agent has nowhere to live without
-      // it, so setup ends by showing it exists.
-      "Your chat",
-      "+1 555 987 6543, +1 555 123 0000",
+      "Your data & permissions",
+      "Help make Plow better",
+      "Full Disk Access",
+      "Change any of these anytime in Settings",
       "Continue",
     ],
     expectFocus: "Continue",
+  },
+  {
+    name: "done-shell",
+    state: { ...base, step: "done", accountUid: "u_7Qk2p9", connected: true },
+    expect: ["You're all set", "Explore the app"],
   },
 ];
 
 let current = SCREENS[0].state;
 ipcMain.handle("onboarding:get", async () => current);
-// The renderer boots through `begin` (which mints the activation code on a real
-// first run); here it is the same stubbed state, so each screen renders as-is.
-ipcMain.handle("onboarding:begin", async () => current);
 
-// Without this a thrown write (a missing OUT_DIR, say) leaves the app running
-// with no output and no exit code — a hang that reads like a broken screen.
 failLoudly();
 
 app.whenReady().then(async () => {
-  const win = shotWindow(dist, { width: 460, height: 560 });
+  const win = shotWindow(dist, {
+    width: 660,
+    height: 840,
+    titleBarStyle: "hiddenInset",
+    backgroundColor: "#111110",
+  });
   const failures = await shootScreens({
     win,
     outDir,
     prefix: "onboarding",
     screens: SCREENS,
-    // A reload re-runs the renderer's boot, which pulls the stubbed state.
-    load: async (screen) => {
-      current = screen.state;
+    load: async (fixture) => {
+      current = fixture.state;
       await win.loadFile(path.join(dist, "renderer/onboarding.html"));
-      await new Promise((r) => setTimeout(r, 400));
+      // The Welcome mark resolves its draw/fill/sheen sequence at 1.75s. Shoot
+      // its resting state rather than a deliberately half-drawn frame.
+      await new Promise((resolve) => setTimeout(resolve, fixture.name === "welcome" ? 1900 : 400));
     },
   });
   app.exit(failures ? 1 : 0);
