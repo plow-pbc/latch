@@ -7,12 +7,10 @@
  * what lets the Import sheet offer a pick before anything is saved.
  *
  * export.data is read with adm-zip: stored and deflated entries, the CRC
- * checked. Two bounds, not one: the inflate itself is bounded by the declared
- * size — refused up front when it declares none, or already too much, so a
- * deflated bomb can't spend the memory the declared size would let it reach —
- * and whatever getData() actually returns is refused over 64 MiB regardless,
- * since a STORED entry is copied at its real length no matter what the header
- * declares. Neither a lying header nor a zip bomb can run away with memory.
+ * checked. The read is bounded before it happens: a deflated entry inflates
+ * up to its declared size (refused when it declares none), a stored one is
+ * copied at its compressed length, and both must be under 64 MiB — so
+ * neither a lying header nor a zip bomb can run away with memory.
  * The standing rule of passwordImport.ts holds here: no error, warning or
  * skip reason ever contains a field's value.
  */

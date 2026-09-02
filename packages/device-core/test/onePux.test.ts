@@ -28,8 +28,7 @@ function corrupt(zip: Uint8Array): Uint8Array {
 
 /** The same single-entry zip with its declared UNCOMPRESSED size lied down to
  * `size`, leaving the compressed size and CRC alone — the lie a STORED entry
- * can carry that the pre-read check never sees, since reading it back still
- * slices and verifies the real bytes. */
+ * can carry, which only the compressed-size half of the pre-read check sees. */
 function lieAboutSize(zip: Uint8Array, size: number): Uint8Array {
   const buf = Buffer.from(zip);
   const cen = buf.indexOf(Buffer.from([0x50, 0x4b, 0x01, 0x02])); // central directory record
@@ -179,12 +178,12 @@ describe("parseOnePux", () => {
     bomb.getEntry("export.data")!.header.size = 64 * 1024 * 1024 + 1;
     expect(() => parseOnePux(new Uint8Array(bomb.toBuffer()))).toThrow(/too large/);
 
-    // A STORED entry is copied at its REAL length regardless of what the
-    // header declares — so a small declared size sails past the check above,
-    // and the cap has to catch it on the way OUT instead. The zip is built
-    // honestly first (so the real bytes, its CRC and compressed size all
-    // agree) and only the declared uncompressed size is lied about after —
-    // patching it before writing would corrupt what STORED actually copies.
+    // A STORED entry is copied at its compressed length regardless of what it
+    // declares — so a small declared size alone would sail past, and it is
+    // the compressed size that has to be refused. The zip is built honestly
+    // first (real bytes, CRC and compressed size all agree) and only the
+    // declared uncompressed size is lied about after — patching it before
+    // writing would corrupt what STORED actually copies.
     const stored = zipOf({ "export.data": new Uint8Array(64 * 1024 * 1024 + 1).fill(0x20) }, { deflate: false });
     expect(() => parseOnePux(lieAboutSize(stored, 100))).toThrow(/too large/);
   });
