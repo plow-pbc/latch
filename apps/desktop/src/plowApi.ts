@@ -116,8 +116,6 @@ export type ConnectorProvider = "google";
 export interface ConnectorAccount {
   email: string;
   isDefault: boolean;
-  /** True when the grant exists but Google requires another OAuth pass. */
-  needsReauth: boolean;
 }
 
 export interface ConnectorsOverview {
@@ -567,15 +565,13 @@ export class PlowApi {
         !row ||
         !plausibleEmail(row.account) ||
         valueEchoesSecret(row.account, token) ||
-        typeof row.is_default !== "boolean" ||
-        (row.needs_reauth !== undefined && typeof row.needs_reauth !== "boolean")
+        typeof row.is_default !== "boolean"
       ) {
         throw new PlowApiError("http", "Plow did not return a usable connector list.");
       }
       return {
         email: row.account,
         isDefault: row.is_default,
-        needsReauth: row.needs_reauth === true,
       };
     });
     return { google: { accounts } };
@@ -601,13 +597,24 @@ export class PlowApi {
     token: string,
     provider: ConnectorProvider,
     account: string,
-  ): Promise<void> {
+  ): Promise<{ status: string }> {
     const email = account.trim();
     if (!plausibleEmail(email)) {
       throw new PlowApiError("http", "Choose a valid account to disconnect.");
     }
     const query = new URLSearchParams({ account: email });
-    await this.call<unknown>("POST", `${connectorRoute(provider)}/disconnect?${query}`, { token });
+    const data = await this.call<unknown>(
+      "POST",
+      `${connectorRoute(provider)}/disconnect?${query}`,
+      { token },
+    );
+    const status = data && typeof data === "object" && !Array.isArray(data)
+      ? (data as Record<string, unknown>).status
+      : null;
+    if (typeof status !== "string" || !status.trim()) {
+      throw new PlowApiError("http", "Plow did not return a usable disconnect result.");
+    }
+    return { status };
   }
 
   /** Select exactly one connected account as the provider default. */

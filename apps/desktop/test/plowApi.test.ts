@@ -565,7 +565,7 @@ describe("PlowApi", () => {
           connector: "gmail",
           account: "ada@example.com",
           accounts: [
-            { account: "ada@example.com", is_default: true, needs_reauth: true },
+            { account: "ada@example.com", is_default: true },
             { account: "grace@example.com", is_default: false },
           ],
         },
@@ -579,8 +579,8 @@ describe("PlowApi", () => {
     ).resolves.toEqual({
       google: {
         accounts: [
-          { email: "ada@example.com", isDefault: true, needsReauth: true },
-          { email: "grace@example.com", isDefault: false, needsReauth: false },
+          { email: "ada@example.com", isDefault: true },
+          { email: "grace@example.com", isDefault: false },
         ],
       },
     });
@@ -607,7 +607,9 @@ describe("PlowApi", () => {
     await expect(api.connectorConnectUrl(credential, "google")).resolves.toBe(
       "https://api.plow.co/v1/connectors/gmail/connect?code=signed-connect-code",
     );
-    await api.disconnectConnector(credential, "google", "ada+work@example.com");
+    await expect(
+      api.disconnectConnector(credential, "google", "ada+work@example.com"),
+    ).resolves.toEqual({ status: "disconnected" });
     await api.setDefaultConnector(credential, "google", "ada+work@example.com");
 
     expect(calls.map(({ url, init }) => [init.method, url])).toEqual([

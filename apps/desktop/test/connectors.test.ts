@@ -30,7 +30,6 @@ const account = (
 ): ConnectorAccount => ({
   email,
   isDefault: false,
-  needsReauth: false,
   ...overrides,
 });
 
@@ -41,6 +40,7 @@ class FakePlow {
   disconnects: Array<{ credential: string; provider: ConnectorProvider; account: string }> = [];
   defaults: Array<{ credential: string; provider: ConnectorProvider; account: string }> = [];
   connectUrl: string | Promise<string> = CONNECT_URL;
+  disconnectStatus = "disconnected";
   pollGate: ((signal: AbortSignal) => Promise<ConnectorsOverview>) | null = null;
 
   async listConnectors(
@@ -67,8 +67,9 @@ class FakePlow {
     credential: string,
     provider: ConnectorProvider,
     email: string,
-  ): Promise<void> {
+  ): Promise<{ status: string }> {
     this.disconnects.push({ credential, provider, account: email });
+    return { status: this.disconnectStatus };
   }
 
   async setDefaultConnector(
@@ -151,23 +152,6 @@ describe("connecting a Google account", () => {
     }]);
   });
 
-  it("treats a cleared reauthorization flag as a completed connection", async () => {
-    const plow = new FakePlow();
-    plow.listAnswers = [
-      overview([account("ada@example.com", { isDefault: true, needsReauth: true })]),
-      overview([account("ada@example.com", { isDefault: true })]),
-      overview([account("ada@example.com", { isDefault: true })]),
-    ];
-    const { connectors, audits } = build(plow);
-
-    await connectors.connect("google");
-
-    expect(audits).toEqual([{
-      event: "connector_connected",
-      fields: { provider: "google", account: "ada@example.com" },
-    }]);
-  });
-
   it("stops after thirty seconds and leaves the control ready to try again", async () => {
     const plow = new FakePlow();
     const { connectors, opened, audits, waits } = build(plow);
@@ -241,7 +225,7 @@ describe("connecting a Google account", () => {
 });
 
 describe("connector account actions", () => {
-  it("disconnects only the named account, audits it, and refreshes", async () => {
+  it("disconnects only the named account, audits a deletion, and refreshes", async () => {
     const plow = new FakePlow();
     plow.listAnswers = [overview([account("grace@example.com", { isDefault: true })])];
     const { connectors, audits } = build(plow);
@@ -257,6 +241,19 @@ describe("connector account actions", () => {
       event: "connector_disconnected",
       fields: { provider: "google", account: "ada@example.com" },
     }]);
+    expect(state.google.accounts).toEqual([account("grace@example.com", { isDefault: true })]);
+  });
+
+  it("does not audit when the named account was already disconnected", async () => {
+    const plow = new FakePlow();
+    plow.disconnectStatus = "not_connected";
+    plow.listAnswers = [overview([account("grace@example.com", { isDefault: true })])];
+    const { connectors, audits } = build(plow);
+
+    const state = await connectors.disconnect("google", "ada@example.com");
+
+    expect(plow.disconnects).toHaveLength(1);
+    expect(audits).toEqual([]);
     expect(state.google.accounts).toEqual([account("grace@example.com", { isDefault: true })]);
   });
 
@@ -280,19 +277,6 @@ describe("connector account actions", () => {
       fields: { provider: "google", account: "grace@example.com" },
     }]);
     expect(state.google.accounts[1].isDefault).toBe(true);
-  });
-
-  it("surfaces an account that needs reauthorization", async () => {
-    const plow = new FakePlow();
-    plow.listAnswers = [overview([
-      account("ada@example.com", { isDefault: true, needsReauth: true }),
-    ])];
-
-    const state = await build(plow).connectors.refresh();
-
-    expect(state.google.accounts).toEqual([
-      account("ada@example.com", { isDefault: true, needsReauth: true }),
-    ]);
   });
 });
 

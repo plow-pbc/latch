@@ -113,8 +113,10 @@ export class Connectors {
   ): Promise<ConnectorsState> {
     return this.run(null, async (credential) => {
       const email = account.trim();
-      await this.deps.api.disconnectConnector(credential, provider, email);
-      this.deps.recordAudit("connector_disconnected", { provider, account: email });
+      const result = await this.deps.api.disconnectConnector(credential, provider, email);
+      if (result.status === "disconnected") {
+        this.deps.recordAudit("connector_disconnected", { provider, account: email });
+      }
       await this.load(credential);
     });
   }
@@ -198,16 +200,9 @@ function connectedAccount(
   before: ConnectorsOverview,
   after: ConnectorsOverview,
 ): string | null {
-  const previous = new Map(
-    before.google.accounts.map((account) => [account.email, account]),
-  );
-  if (after.google.accounts.length > before.google.accounts.length) {
-    const added = after.google.accounts.find((account) => !previous.has(account.email));
-    if (added) return added.email;
-  }
-  return after.google.accounts.find((account) =>
-    previous.get(account.email)?.needsReauth === true && !account.needsReauth
-  )?.email ?? null;
+  if (after.google.accounts.length <= before.google.accounts.length) return null;
+  const previous = new Set(before.google.accounts.map((account) => account.email));
+  return after.google.accounts.find((account) => !previous.has(account.email))?.email ?? null;
 }
 
 function messageOf(error: unknown): string {
