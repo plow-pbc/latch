@@ -217,7 +217,7 @@ h1 {
   height: 520px;
   border-radius: 50%;
   opacity: 0;
-  transform: translate(-50%, -50%);
+  transform: translate(-50%, -50%) scale(0.86);
   background: radial-gradient(circle, rgba(213, 239, 138, 0.14) 0%, rgba(213, 239, 138, 0.06) 30%, rgba(213, 239, 138, 0.02) 52%, transparent 72%);
   filter: blur(64px);
   pointer-events: none;
@@ -232,6 +232,7 @@ h1 {
   height: 360px;
   margin-bottom: 92px;
   color: var(--volt);
+  transform: scale(0.965);
   --glow-a: 0.22;
   --glow-b: 0.16;
   --glow-c: 0.12;
@@ -250,12 +251,14 @@ h1 {
 
 .welcome-logo .plw-mark {
   fill: currentcolor;
-  fill-opacity: 1;
+  fill-opacity: 0;
   stroke: var(--volt);
-  stroke-width: 0;
+  stroke-width: 1.4;
   stroke-linecap: round;
   stroke-linejoin: round;
-  stroke-opacity: 0;
+  stroke-dasharray: var(--plw-len, 4000);
+  stroke-dashoffset: var(--plw-len, 4000);
+  stroke-opacity: 0.95;
 }
 
 .welcome-logo .plw-sheen {
@@ -266,6 +269,8 @@ h1 {
   position: relative;
   z-index: 1;
   margin: 0 auto 12px;
+  opacity: 0;
+  transform: translateY(14px);
   color: var(--muted);
   font: 500 10.5px var(--mono);
   letter-spacing: 0.22em;
@@ -277,6 +282,8 @@ h1 {
   z-index: 1;
   max-width: none;
   margin: 0 auto 16px;
+  opacity: 0;
+  transform: translateY(14px);
   font-size: 34px;
   letter-spacing: -0.03em;
   line-height: 1.04;
@@ -287,6 +294,8 @@ h1 {
   z-index: 1;
   max-width: 40ch;
   margin: 0 auto;
+  opacity: 0;
+  transform: translateY(14px);
   color: var(--muted-2);
   font-size: 14.5px;
   font-weight: 300;
@@ -1163,32 +1172,34 @@ body.dev-preview {
   .wizard-screen,
   .waiting-spinner,
   .done-badge,
-  .wizard-screen.is-welcome.entering .welcome-logo,
-  .wizard-screen.is-welcome.entering .plw-mark,
-  .wizard-screen.is-welcome.entering .plw-sheen,
-  .wizard-screen.is-welcome.entering .welcome-glow,
-  .wizard-screen.is-welcome.entering .welcome-eyebrow,
-  .wizard-screen.is-welcome.entering h1,
-  .wizard-screen.is-welcome.entering .welcome-lead,
+  .wizard-screen.is-welcome .welcome-logo,
+  .wizard-screen.is-welcome .plw-mark,
+  .wizard-screen.is-welcome .plw-sheen,
+  .wizard-screen.is-welcome .welcome-glow,
+  .wizard-screen.is-welcome .welcome-eyebrow,
+  .wizard-screen.is-welcome h1,
+  .wizard-screen.is-welcome .welcome-lead,
   body.on-welcome .wizard-footer .nav-next {
-    animation: none;
+    animation: none !important;
   }
 
-  .wizard-screen.is-welcome.entering .welcome-logo,
-  .wizard-screen.is-welcome.entering .welcome-eyebrow,
-  .wizard-screen.is-welcome.entering h1,
-  .wizard-screen.is-welcome.entering .welcome-lead,
+  .wizard-screen.is-welcome .welcome-logo,
+  .wizard-screen.is-welcome .welcome-eyebrow,
+  .wizard-screen.is-welcome h1,
+  .wizard-screen.is-welcome .welcome-lead,
   body.on-welcome .wizard-footer .nav-next {
-    opacity: 1;
+    opacity: 1 !important;
+    transform: none !important;
   }
 
-  .wizard-screen.is-welcome.entering .plw-mark {
-    fill-opacity: 1;
-    stroke-width: 0;
-    stroke-opacity: 0;
+  .wizard-screen.is-welcome .plw-mark {
+    fill-opacity: 1 !important;
+    stroke-width: 0 !important;
+    stroke-opacity: 0 !important;
   }
 
-  .wizard-screen.is-welcome.entering .welcome-glow {
-    opacity: 0.7;
+  .wizard-screen.is-welcome .welcome-glow {
+    opacity: 0.7 !important;
+    transform: translate(-50%, -50%) scale(1) !important;
   }
 }

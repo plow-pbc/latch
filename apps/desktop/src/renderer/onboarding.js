@@ -521,16 +521,18 @@ function footerForStep() {
 
 function playWelcomeEntrance() {
   const mark = screen.querySelector(".plw-mark");
-  if (!mark || typeof mark.getTotalLength !== "function") return;
+  if (!mark) return;
   requestAnimationFrame(() => {
     requestAnimationFrame(() => {
       if (!mark.isConnected) return;
-      try {
-        const length = Math.ceil(mark.getTotalLength());
-        if (length > 0) screen.style.setProperty("--plw-len", length);
-      } catch {
-        // Layout-free test environments can lack SVG geometry. The CSS has a
-        // conservative fallback length and the filled resting mark still shows.
+      if (typeof mark.getTotalLength === "function") {
+        try {
+          const length = Math.ceil(mark.getTotalLength());
+          if (length > 0) screen.style.setProperty("--plw-len", length);
+        } catch {
+          // Layout-free test environments can lack SVG geometry. The CSS has a
+          // conservative fallback length and the filled resting mark still shows.
+        }
       }
       screen.classList.add("entering");
     });

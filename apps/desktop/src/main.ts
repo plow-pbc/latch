@@ -1302,6 +1302,7 @@ function openOnboardingWindow(): void {
     return;
   }
   onboardingWindow = new BrowserWindow({
+    show: false,
     width: 660,
     height: 840,
     resizable: false,
@@ -1317,6 +1318,9 @@ function openOnboardingWindow(): void {
     },
   });
   const win = onboardingWindow;
+  win.once("ready-to-show", () => {
+    if (!win.isDestroyed()) win.show();
+  });
   onboardingWindow.on("closed", () => {
     if (onboardingWindow === win) onboardingWindow = null;
     notifyRenderer("status:changed"); // Settings re-reads what changed
