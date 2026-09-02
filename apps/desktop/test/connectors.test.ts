@@ -4,6 +4,7 @@ import path from "node:path";
 import { AuditLog } from "@domo/device-core";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  CONNECTOR_FINAL_REFRESH_TIMEOUT_MS,
   CONNECTOR_POLL_INTERVAL_MS,
   CONNECTOR_TIMEOUT_NOTE,
   CONNECTOR_TIMEOUT_MS,
@@ -173,22 +174,79 @@ describe("connecting a Google account", () => {
     expect(audits).toEqual([]);
   });
 
-  it("applies the thirty-second deadline to a poll request that never answers", async () => {
-    const controller = new AbortController();
-    const timeout = vi.spyOn(AbortSignal, "timeout").mockReturnValue(controller.signal);
+  it("records a new account that appears only on the final refresh", async () => {
     const plow = new FakePlow();
-    plow.pollGate = async (signal) => new Promise((_resolve, reject) => {
-      signal.addEventListener("abort", () => reject(signal.reason));
-    });
+    plow.listAnswers = [
+      overview(),
+      ...Array.from(
+        { length: CONNECTOR_TIMEOUT_MS / CONNECTOR_POLL_INTERVAL_MS },
+        () => overview(),
+      ),
+      overview([account("late@example.com", { isDefault: true })]),
+    ];
+    const { connectors, audits, waits } = build(plow);
+
+    const state = await connectors.connect("google");
+
+    expect(waits).toHaveLength(CONNECTOR_TIMEOUT_MS / CONNECTOR_POLL_INTERVAL_MS);
+    expect(state.error).toBeNull();
+    expect(state.note).toBeNull();
+    expect(state.google.accounts).toEqual([
+      account("late@example.com", { isDefault: true }),
+    ]);
+    expect(audits).toEqual([{
+      event: "connector_connected",
+      fields: { provider: "google", account: "late@example.com" },
+    }]);
+  });
+
+  it("applies the thirty-second deadline to a poll request that never answers", async () => {
+    const polling = new AbortController();
+    const finalRefresh = new AbortController();
+    const timeout = vi.spyOn(AbortSignal, "timeout").mockImplementation((milliseconds) =>
+      milliseconds === CONNECTOR_TIMEOUT_MS ? polling.signal : finalRefresh.signal);
+    const plow = new FakePlow();
+    plow.pollGate = async (signal) => {
+      if (signal !== polling.signal) return overview();
+      return new Promise((_resolve, reject) => {
+        signal.addEventListener("abort", () => reject(signal.reason));
+      });
+    };
     const { connectors } = build(plow);
 
     const pending = connectors.connect("google");
     while (plow.listCredentials.length < 2) await Promise.resolve();
-    controller.abort(new DOMException("The operation was aborted.", "TimeoutError"));
+    polling.abort(new DOMException("The operation was aborted.", "TimeoutError"));
     const state = await pending;
 
     expect(timeout).toHaveBeenCalledWith(CONNECTOR_TIMEOUT_MS);
     expect(state.busy).toBe(false);
+    expect(state.error).toBeNull();
+    expect(state.note).toBe(CONNECTOR_TIMEOUT_NOTE);
+  });
+
+  it("bounds a final refresh that never answers and releases the card", async () => {
+    const polling = new AbortController();
+    const finalRefresh = new AbortController();
+    const timeout = vi.spyOn(AbortSignal, "timeout").mockImplementation((milliseconds) =>
+      milliseconds === CONNECTOR_TIMEOUT_MS ? polling.signal : finalRefresh.signal);
+    const plow = new FakePlow();
+    plow.pollGate = async (signal) => {
+      if (signal !== finalRefresh.signal) return overview();
+      return new Promise((_resolve, reject) => {
+        signal.addEventListener("abort", () => reject(signal.reason));
+      });
+    };
+    const { connectors } = build(plow);
+
+    const pending = connectors.connect("google");
+    await vi.waitFor(() => {
+      expect(timeout).toHaveBeenCalledWith(CONNECTOR_FINAL_REFRESH_TIMEOUT_MS);
+    });
+    finalRefresh.abort(new DOMException("The operation was aborted.", "TimeoutError"));
+    const state = await pending;
+    expect(state.busy).toBe(false);
+    expect(state.google.connecting).toBe(false);
     expect(state.error).toBeNull();
     expect(state.note).toBe(CONNECTOR_TIMEOUT_NOTE);
   });

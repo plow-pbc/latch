@@ -15,6 +15,7 @@ import {
 
 export const CONNECTOR_POLL_INTERVAL_MS = 3_000;
 export const CONNECTOR_TIMEOUT_MS = 30_000;
+export const CONNECTOR_FINAL_REFRESH_TIMEOUT_MS = 5_000;
 export const CONNECTOR_TIMEOUT_NOTE =
   "We couldn't see a new account. If you reconnected one that was already listed, it's done.";
 
@@ -107,7 +108,15 @@ export class Connectors {
         return;
       }
 
-      const after = await this.load(credential);
+      const finalRefreshSignal = AbortSignal.timeout(CONNECTOR_FINAL_REFRESH_TIMEOUT_MS);
+      let after: ConnectorsOverview;
+      try {
+        after = await this.load(credential, finalRefreshSignal);
+      } catch (error) {
+        if (!finalRefreshSignal.aborted) throw error;
+        this.note = CONNECTOR_TIMEOUT_NOTE;
+        return;
+      }
       const connected = connectedAccount(before, after);
       if (connected) {
         this.deps.recordAudit("connector_connected", {
