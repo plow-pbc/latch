@@ -477,7 +477,12 @@ function vurls(ctx) {
 /** Every group of a type's form, built once and shared by the sheet and the row. */
 function vformBody(type, item) {
   const spec = VAULT_TYPES[type];
-  const ctx = { item, saved: !!(item && item.id), inputs: {}, urlInputs: [], derivedBrand: "" };
+  const saved = !!(item && item.id);
+  // A saved card's Brand box is the owner's, whatever it holds — an empty one
+  // is them having cleared it, and the vault kept it cleared. `null` is equal
+  // to no box value, so the fill never claims it back. A new item's box opens
+  // as ours.
+  const ctx = { item, saved, inputs: {}, urlInputs: [], derivedBrand: saved ? null : "" };
   const name = vfield(
     { key: "name", label: "Item name", required: true, placeholder: spec.placeholder },
     { ...ctx, item: item ? { ...item, fields: { ...item.fields, name: item.name } } : null },

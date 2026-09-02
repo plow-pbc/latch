@@ -57,10 +57,11 @@ class Box extends EventTarget {
 }
 
 describe("wireCardBrand", () => {
-  const form = () => {
+  /** A card form: `derivedBrand` opens as "" for a new item, null for a saved one. */
+  const form = (derivedBrand: string | null = "") => {
     const number = new Box();
     const brand = new Box();
-    const ctx = { inputs: { brand }, derivedBrand: "" };
+    const ctx = { inputs: { brand }, derivedBrand };
     wireCardBrand(number as unknown as HTMLInputElement, ctx);
     return { number, brand, ctx };
   };
@@ -93,10 +94,14 @@ describe("wireCardBrand", () => {
     expect(brand.value).toBe("");
   });
 
-  it("leaves a saved card's stored brand alone", () => {
-    const { number, brand } = form();
-    brand.value = "Visa";
-    number.type("378282246310005");
-    expect(brand.value).toBe("Visa");
-  });
+  // A saved card's box is the owner's whichever way they left it: an empty one
+  // is a brand they cleared and the vault kept cleared, not an unfilled box.
+  it.each([["a stored brand", "Visa"], ["one they had cleared", ""]])(
+    "leaves a saved card's box alone — %s",
+    (_case, stored) => {
+      const { number, brand } = form(null);
+      brand.value = stored;
+      number.type("378282246310005");
+      expect(brand.value).toBe(stored);
+    });
 });
