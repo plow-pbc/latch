@@ -7,11 +7,12 @@
  * what lets the Import sheet offer a pick before anything is saved.
  *
  * export.data is read with adm-zip: stored and deflated entries, the CRC
- * checked, and the inflate bounded by the declared size — which adm-zip
- * enforces only while that size is POSITIVE, so a declared zero is refused
- * here and anything above the cap below outright. Neither a lying header nor a
- * zip bomb can run away with memory. The standing rule of passwordImport.ts
- * holds here: no error, warning or skip reason ever contains a field's value.
+ * checked. The inflate is bounded by the declared size — refused here when it
+ * declares none — and whatever comes out is refused over 64 MiB regardless,
+ * since a STORED entry is copied at its stored length no matter what the
+ * header declares. Neither a lying header nor a zip bomb can run away with
+ * memory. The standing rule of passwordImport.ts holds here: no error,
+ * warning or skip reason ever contains a field's value.
  */
 import AdmZip from "adm-zip";
 import { finishImportedLogin, normalizeImportUrls, type ImportedLogin, type ImportVault, type ParsedImport, type SkippedRow } from "./passwordImport.js";
@@ -54,13 +55,16 @@ export function parseOnePux(bytes: Uint8Array): ParsedImport {
   const entry = zip.getEntry("export.data");
   if (!entry) throw new Error(NOT_1PUX);
   if (entry.header.size <= 0) throw new Error(NOT_1PUX); // a zero declares no bound at all
-  if (entry.header.size > MAX_INFLATED_BYTES) throw new Error("that export is too large to read");
   let data: Buffer;
   try {
     data = entry.getData();
   } catch {
     throw new Error(NOT_1PUX);
   }
+  // A STORED entry is copied at its real length, not the declared one, so the
+  // declared size cannot be trusted to bound it — the actual read result is
+  // what gets checked, for every method.
+  if (data.length > MAX_INFLATED_BYTES) throw new Error("that export is too large to read");
   let root: Rec;
   try {
     root = rec(JSON.parse(data.toString("utf8")));

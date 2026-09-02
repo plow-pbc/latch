@@ -159,6 +159,14 @@ describe("parseOnePux", () => {
     zip.addFile("export.data", Buffer.from(exportData([{ name: "P", items: [login("X")] }])));
     zip.getEntry("export.data")!.header.size = 0;
     expect(() => parseOnePux(new Uint8Array(zip.toBuffer()))).toThrow(/1PUX/);
+
+    // A STORED entry is copied at its real length regardless of what the
+    // header declares, so there is nothing to catch before the read here —
+    // the cap has to catch it on the way OUT instead.
+    const stored = new AdmZip();
+    stored.addFile("export.data", Buffer.alloc(64 * 1024 * 1024 + 1, 0x20));
+    stored.getEntry("export.data")!.header.method = 0; // STORED, not deflated
+    expect(() => parseOnePux(new Uint8Array(stored.toBuffer()))).toThrow(/too large/);
   });
 
   it("names the vaults a parsed export spans, skipped-only ones included, and tells two same-named vaults apart", () => {

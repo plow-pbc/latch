@@ -349,15 +349,20 @@ export async function vimportSheet(reload, host, exchange = null) {
     sync();
     go.onclick = async () => {
       go.disabled = true;
+      // Inert too, or a Back click mid-await lets the pick's late preview pop
+      // in over the source step it thinks it left.
+      back.disabled = true;
       try {
         const kept = await window.domo.vaultImportPick([...chosen], ticket);
         if (gone()) return;
+        back.disabled = false;
         preview(kept, true);
       } catch (e) {
         // Main consumed the staging before it could fail (it takes the rows,
         // then marks them against the vault), so there is nothing left here to
         // press Continue against: say so, and start again from the file.
         vtoast("Could not read the vaults: " + errText(e));
+        back.disabled = false;
         if (!gone()) pick();
       }
     };
