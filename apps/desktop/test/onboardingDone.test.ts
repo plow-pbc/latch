@@ -3,32 +3,40 @@ import { describe, expect, it } from "vitest";
 import { loadDoneAgent } from "../src/renderer/onboardingDone.js";
 
 describe("the onboarding Done agent", () => {
-  it("uses the first agent the cloud bridge says can be messaged", async () => {
-    const agent = await loadDoneAgent(async () => ({
-      cloudAgentsError: null,
-      cloudAgents: [
-        { agentId: "agent_unresolved", name: "Ash", canMessage: false },
-        { agentId: "agent_elm", name: "Elm", canMessage: true },
-      ],
-    }));
-
-    expect(agent).toMatchObject({ agentId: "agent_elm", name: "Elm" });
-  });
-
-  it("offers no message action when no agent has a resolved line", async () => {
-    expect(await loadDoneAgent(async () => ({
-      cloudAgentsError: null,
-      cloudAgents: [{ agentId: "agent_ash", name: "Ash", canMessage: false }],
-    }))).toBeNull();
-  });
-
-  it("keeps a cloud lookup failure silent", async () => {
-    expect(await loadDoneAgent(async () => {
-      throw new Error("offline");
-    })).toBeNull();
-    expect(await loadDoneAgent(async () => ({
-      cloudAgentsError: "Something went wrong. Try again.",
-      cloudAgents: [{ agentId: "agent_elm", name: "Elm", canMessage: true }],
-    }))).toBeNull();
+  it.each([
+    {
+      caseName: "messageable agent",
+      load: async () => ({
+        cloudAgentsError: null,
+        cloudAgents: [
+          { agentId: "agent_unresolved", name: "Ash", canMessage: false },
+          { agentId: "agent_elm", name: "Elm", canMessage: true },
+        ],
+      }),
+      expected: { agentId: "agent_elm", name: "Elm", canMessage: true },
+    },
+    {
+      caseName: "none",
+      load: async () => ({
+        cloudAgentsError: null,
+        cloudAgents: [{ agentId: "agent_ash", name: "Ash", canMessage: false }],
+      }),
+      expected: null,
+    },
+    {
+      caseName: "rejected loader",
+      load: async () => { throw new Error("offline"); },
+      expected: null,
+    },
+    {
+      caseName: "cloudAgentsError",
+      load: async () => ({
+        cloudAgentsError: "Something went wrong. Try again.",
+        cloudAgents: [{ agentId: "agent_elm", name: "Elm", canMessage: true }],
+      }),
+      expected: null,
+    },
+  ])("handles $caseName", async ({ load, expected }) => {
+    expect(await loadDoneAgent(load)).toEqual(expected);
   });
 });

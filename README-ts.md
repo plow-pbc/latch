@@ -215,18 +215,24 @@ the stable `device_id` and has no `ready` frame. The two request/response frame
 
 ## First-run login
 
-Download the app, enter your phone number, enter the code, done. Nothing is
-pasted out of a browser and the user never visits the portal.
+Download the app and walk through five stages: Welcome → Privacy → Verify phone
+→ Data & permissions → You're all set. Verification is an SMS activation: the
+app shows the exact message to send from the phone, then notices the verified
+text and links the Mac. Nothing is pasted out of a browser and the user never
+visits the portal.
 
 `src/onboarding.ts` is the whole flow as a state machine — testable without
 Electron, renderable offscreen for screenshots — and `src/plowApi.ts` is the
 only place that talks HTTP to Plow. The window (`renderer/onboarding.html`)
 draws whatever state the main process hands it and owns no copy of its own.
 
-- **Five calls:** `POST /v1/auth/otp/request` → `POST /v1/auth/otp/verify` →
-  `GET /v1/relay/info` → `PUT /v1/relay/devices/{device-id}` → open the socket.
-  Registration reuses device-core's stable identity and the Mac's DNS hostname;
-  Plow allocates the durable display name (`mbp`, `mbp (2)`). Then "create an agent" is
+- **Activation handoff:** Continue from Privacy calls `POST /v1/auth/activate`.
+  Plow returns the display code, the destination number, and a main-process-only
+  activation secret. The user sends the displayed `Plow Activate: …` message;
+  the main process polls `POST /v1/auth/activate/redeem`, then calls
+  `GET /v1/relay/info`, registers the stable device identity and Mac hostname at
+  `PUT /v1/relay/devices/{device-id}`, and opens the socket. Plow allocates the
+  durable display name (`mbp`, `mbp (2)`). Then "create an agent" is
   `POST /v1/relay/agents`, which the stored session may call.
 - **The login session IS the credential this Mac keeps.** Latch is the owner's
   manager app, not an agent: it holds the socket, lists chats and Plow's
@@ -247,13 +253,12 @@ draws whatever state the main process hands it and owns no copy of its own.
   satisfies it. Macs paired before this change keep their narrow credential
   until they sign out and back in; `GET /v1/lines` is the one surface that
   refuses them, and says so.
-- **`/otp/request` answers `200 {"ok": true}` for an unknown number, an
-  unparseable number and a failed SMS send alike**, so it cannot be used to
-  probe whether an account exists. The app therefore cannot tell "sent" from
-  "silently didn't", and the copy never claims a code went out — it says to
-  check your phone, and offers a resend. The one distinguishable failure is
-  `503`. Codes are 8 digits with a 5-minute life; the screen counts down and
-  tells an expired code apart from a wrong one, which the server cannot.
+- **The server owns activation expiry.** The screen gives the first five minutes
+  an active countdown, but the main process keeps polling while the activation
+  remains valid. “Send it again” re-arms that same live code; a fresh code is
+  minted only after the server authoritatively retires the old one. The outbound
+  text establishes the account from its sender, so the app has no phone-number
+  entry or in-app code-verification contract.
 - **The API origin is baked into the build, not a setting.** *Every* build
   points at `https://api.plow.co`, including a run from source, with
   `DOMO_API_BASE_URL` as an override a developer exports. A credential is only valid

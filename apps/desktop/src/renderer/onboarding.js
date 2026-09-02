@@ -2,6 +2,8 @@
    state after each action; this file only redraws that state inside one
    persistent shell. The page is sandboxed and receives no Node primitives. */
 
+import { el, icon } from "./dom.js";
+import { singleFlight } from "./onboardingAction.js";
 import { loadDoneAgent } from "./onboardingDone.js";
 
 const SVG_NS = "http://www.w3.org/2000/svg";
@@ -17,37 +19,16 @@ let fullDiskProbe = null;
 let fullDiskRequestBusy = false;
 let restoreTelemetryFocus = false;
 let doneAgent = null;
+const mutate = singleFlight(() => state?.busy === true);
 
-function el(tag, opts = {}, children = []) {
-  const node = document.createElement(tag);
-  if (opts.class) node.className = opts.class;
-  if (opts.text !== undefined) node.textContent = opts.text;
-  if (opts.attrs) {
-    for (const [name, value] of Object.entries(opts.attrs)) node.setAttribute(name, value);
-  }
-  for (const child of children) if (child) node.appendChild(child);
-  return node;
+async function update(action) {
+  await mutate(async () => apply(await action()));
 }
 
 function svgElement(tag, attrs = {}) {
   const node = document.createElementNS(SVG_NS, tag);
   for (const [name, value] of Object.entries(attrs)) node.setAttribute(name, value);
   return node;
-}
-
-function icon(shapes, className = "") {
-  const svg = svgElement("svg", {
-    viewBox: "0 0 24 24",
-    fill: "none",
-    stroke: "currentColor",
-    "stroke-width": "1.7",
-    "stroke-linecap": "round",
-    "stroke-linejoin": "round",
-    "aria-hidden": "true",
-  });
-  if (className) svg.setAttribute("class", className);
-  for (const [tag, attrs] of shapes) svg.appendChild(svgElement(tag, attrs));
-  return svg;
 }
 
 function button(text, className, onClick) {
@@ -57,14 +38,13 @@ function button(text, className, onClick) {
 }
 
 function arrowIcon(direction) {
-  const path = direction === "back" ? "M15 18l-6-6 6-6" : "M9 18l6-6-6-6";
-  return icon([["path", { d: path }]]);
+  return icon(direction === "back" ? "arrowBack" : "arrowNext", { strokeWidth: "1.7" });
 }
 
 const titlebar = el("div", { class: "wizard-titlebar", attrs: { "aria-hidden": "true" } });
 const screen = el("section", { class: "wizard-screen", attrs: { "aria-live": "polite" } });
 const body = el("div", { class: "wizard-body" }, [screen]);
-const backButton = button("", "nav-back", async () => apply(await window.domo.onboardingBack()));
+const backButton = button("", "nav-back", () => update(() => window.domo.onboardingBack()));
 backButton.append(arrowIcon("back"), document.createTextNode("Back"));
 const dots = [0, 1, 2].map(() => el("i", { class: "foot-dot" }));
 const dotRow = el("span", { class: "foot-dots", attrs: { "aria-hidden": "true" } }, dots);
@@ -150,43 +130,29 @@ const TRUST_ROWS = [
   {
     title: "Data stays on your Mac",
     detail: "Your messages, calendar, and logins stay on your device.",
-    shapes: [
-      ["rect", { x: "2.5", y: "4", width: "19", height: "12", rx: "2" }],
-      ["path", { d: "M8.5 20h7M12 16v4" }],
-    ],
+    glyph: "desktop",
   },
   {
     title: "You stay in control",
     detail: "Choose what runs automatically and what needs your approval.",
-    shapes: [
-      ["path", { d: "M5 7h14M5 12h14M5 17h14" }],
-      ["circle", { cx: "9", cy: "7", r: "2.1" }],
-      ["circle", { cx: "15", cy: "12", r: "2.1" }],
-      ["circle", { cx: "8", cy: "17", r: "2.1" }],
-    ],
+    glyph: "sliders",
   },
   {
     title: "A second AI checks the risky stuff",
     detail: "An independent reviewer catches actions that don't look right.",
-    shapes: [
-      ["path", { d: "M12 3l7 4v6c0 4-3 6.5-7 8-4-1.5-7-4-7-8V7z" }],
-      ["path", { d: "M9.2 12.4l1.9 1.9 3.7-4" }],
-    ],
+    glyph: "shieldCheck",
   },
   {
     title: "Never sold. Never trained on.",
     detail: "Your data isn't sold, stored, or used to train AI models.",
-    shapes: [
-      ["rect", { x: "5", y: "11", width: "14", height: "9", rx: "2" }],
-      ["path", { d: "M8 11V8a4 4 0 0 1 8 0v3" }],
-    ],
+    glyph: "lock",
   },
 ];
 
 function privacyScreen() {
-  const rows = TRUST_ROWS.map(({ title, detail, shapes }) =>
+  const rows = TRUST_ROWS.map(({ title, detail, glyph }) =>
     el("div", { class: "trust-row" }, [
-      el("span", { class: "trust-icon" }, [icon(shapes)]),
+      el("span", { class: "trust-icon" }, [icon(glyph, { strokeWidth: "1.7" })]),
       el("span", { class: "trust-copy" }, [
         el("div", { class: "trust-title", text: title }),
         el("div", { class: "trust-detail", text: detail }),
@@ -208,10 +174,7 @@ function privacyScreen() {
 function copyButton(value) {
   const label = el("span", { text: "Copy" });
   const node = el("button", { class: "copy-button", attrs: { type: "button", "aria-label": "Copy message" } }, [
-    icon([
-      ["rect", { x: "9", y: "9", width: "11", height: "11", rx: "2.5" }],
-      ["path", { d: "M6 15H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v1" }],
-    ]),
+    icon("copy", { strokeWidth: "1.7" }),
     label,
   ]);
   node.addEventListener("click", async () => {
@@ -293,10 +256,7 @@ function verifyScreen() {
           copyButton(activation.smsBody),
         ]),
         el("p", { class: "caution" }, [
-          icon([
-            ["rect", { x: "5", y: "11", width: "14", height: "9", rx: "2" }],
-            ["path", { d: "M8 11V8a4 4 0 0 1 8 0v3" }],
-          ]),
+          icon("lock", { strokeWidth: "1.7" }),
           el("span", {}, [
             el("strong", { text: "Keep this private. " }),
             document.createTextNode("Anyone who sends this code from their number can link it to this Plow account."),
@@ -311,7 +271,7 @@ function verifyScreen() {
   if (activation || verified) {
     const status = el("div", { class: `waiting-status${verified ? " verified" : ""}` }, [
       ...(verified
-        ? [icon([["path", { d: "M20 6L9 17l-5-5" }]], "verified-check")]
+        ? [icon("checkmark", { class: "verified-check", strokeWidth: "1.7" })]
         : state.activationStale
           ? []
           : [el("span", { class: "waiting-spinner" })]),
@@ -334,7 +294,7 @@ function verifyScreen() {
 
     if (state.activationStale && !verified) {
       parts.push(el("div", { class: "inline-actions" }, [
-        button("Try again", "link-button", async () => apply(await window.domo.onboardingNewCode())),
+        button("Try again", "link-button", () => update(() => window.domo.onboardingNewCode())),
       ]));
     }
 
@@ -347,13 +307,11 @@ function verifyScreen() {
           : async () => {
               activate.disabled = true;
               activate.classList.add("sending");
-              apply(await window.domo.onboardingOpenMessages());
+              await update(() => window.domo.onboardingOpenMessages());
             },
       );
       activate.append(
-        icon([
-          ["path", { d: "M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z" }],
-        ]),
+        icon("messages", { strokeWidth: "1.7" }),
         document.createTextNode("Open Messages to activate"),
       );
       activate.disabled = verified;
@@ -362,8 +320,8 @@ function verifyScreen() {
       const actions = [activate];
       if (!verified && !state.activationStale) {
         actions.push(el("p", { class: "alternate" }, [
-          button("Still waiting? Send it again", "link-button", async () =>
-            apply(await window.domo.onboardingNewCode()),
+          button("Still waiting? Send it again", "link-button", () =>
+            update(() => window.domo.onboardingNewCode()),
           ),
         ]));
       }
@@ -372,7 +330,7 @@ function verifyScreen() {
   } else {
     if (!state.busy) {
       parts.push(el("div", { class: "inline-actions" }, [
-        button("Try again", "link-button", async () => apply(await window.domo.onboardingBegin())),
+        button("Try again", "link-button", () => update(() => window.domo.onboardingBegin())),
       ]));
     }
   }
@@ -418,16 +376,16 @@ function dataScreen() {
     },
   });
   telemetry.checked = state.telemetryEnabled === true;
-  telemetry.addEventListener("change", async () => {
+  telemetry.addEventListener("change", () => {
     restoreTelemetryFocus = true;
-    apply(await window.domo.onboardingSetTelemetry(telemetry.checked));
+    void update(() => window.domo.onboardingSetTelemetry(telemetry.checked));
   });
 
   let permissionControl;
   if (fullDiskAccess === true) {
     permissionControl = button("", "req-btn granted", null);
     permissionControl.append(
-      icon([["path", { d: "M20 6L9 17l-5-5" }]]),
+      icon("checkmark", { strokeWidth: "1.7" }),
       document.createTextNode("Granted"),
     );
     permissionControl.disabled = true;
@@ -467,12 +425,7 @@ function dataScreen() {
       el("div", { class: "permission-rows" }, [
         el("div", { class: "permission-row" }, [
           el("span", { class: "permission-icon" }, [
-            icon([
-              ["rect", { x: "3", y: "5", width: "18", height: "14", rx: "2" }],
-              ["path", { d: "M3 13h18" }],
-              ["circle", { cx: "7.5", cy: "16", r: "1" }],
-              ["path", { d: "M11 16h6" }],
-            ]),
+            icon("hardDrive", { strokeWidth: "1.7" }),
           ]),
           el("span", { class: "permission-copy" }, [
             el("span", { class: "permission-name" }, [
@@ -501,11 +454,11 @@ function doneScreen() {
   actions.push(button(
     "Explore the app",
     doneAgent ? "nav-back done-explore" : "nav-next",
-    () => window.domo.onboardingFinish(),
+    () => update(() => window.domo.onboardingFinish()),
   ));
   return el("div", { class: "done-wrap" }, [
     el("div", { class: "done-badge" }, [
-      icon([["path", { d: "M20 6L9 17l-5-5", "stroke-width": "2.4" }]]),
+      icon("checkmark", { strokeWidth: "2.4" }),
     ]),
     el("h1", { text: "You're all set" }),
     el("div", { class: "done-actions" }, actions),
@@ -532,7 +485,7 @@ function footerForStep() {
       dot: null,
       label: "Get started",
       arrow: false,
-      action: async () => apply(await window.domo.onboardingAdvance()),
+      action: () => update(() => window.domo.onboardingAdvance()),
     };
   }
   if (step === "privacy") {
@@ -541,7 +494,7 @@ function footerForStep() {
       dot: 0,
       label: "Continue",
       arrow: true,
-      action: async () => apply(await window.domo.onboardingAdvance()),
+      action: () => update(() => window.domo.onboardingAdvance()),
     };
   }
   if (step === "activate" || step === "waiting" || step === "verified") {
@@ -553,7 +506,7 @@ function footerForStep() {
       arrow: true,
       disabled: !verified,
       action: verified
-        ? async () => apply(await window.domo.onboardingAdvance())
+        ? () => update(() => window.domo.onboardingAdvance())
         : null,
     };
   }
@@ -562,7 +515,7 @@ function footerForStep() {
     dot: 2,
     label: "Continue",
     arrow: true,
-    action: async () => apply(await window.domo.onboardingAdvance()),
+    action: () => update(() => window.domo.onboardingAdvance()),
   };
 }
 
