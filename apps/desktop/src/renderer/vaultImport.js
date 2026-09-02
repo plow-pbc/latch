@@ -323,7 +323,6 @@ export async function vimportSheet(reload, host, exchange = null) {
     foot.removeAttribute("hidden");
     const vaults = p.vaults;
     const chosen = new Set(vaults.map((v) => v.id));
-    const err = el("p", { class: "imp-err" });
     const sync = () => {
       go.textContent = chosen.size === 0 ? "No vaults selected" : `Continue with ${chosen.size} of ${vaults.length}`;
       go.disabled = chosen.size === 0;
@@ -346,21 +345,21 @@ export async function vimportSheet(reload, host, exchange = null) {
     bodyEl.replaceChildren(
       el("p", { class: "sheet-sub", text: `${p.source} exported ${vaults.length} vaults. Untick any you would rather leave out.` }),
       el("div", { class: "imp-list" }, vaults.map(row)),
-      err,
     );
     sync();
     go.onclick = async () => {
-      err.textContent = "";
       go.disabled = true;
       try {
         const kept = await window.domo.vaultImportPick([...chosen], ticket);
         if (gone()) return;
         preview(kept, true);
-        return;
       } catch (e) {
-        err.textContent = "Could not read it: " + errText(e);
+        // Main consumed the staging before it could fail (it takes the rows,
+        // then marks them against the vault), so there is nothing left here to
+        // press Continue against: say so, and start again from the file.
+        vtoast("Could not read the vaults: " + errText(e));
+        if (!gone()) pick();
       }
-      go.disabled = false;
     };
     back.onclick = pick;
   };
