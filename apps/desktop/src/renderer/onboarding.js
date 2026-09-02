@@ -13,6 +13,7 @@ let expiryTimer = null;
 let fullDiskAccess = null;
 let fullDiskProbe = null;
 let fullDiskRequestBusy = false;
+let restoreTelemetryFocus = false;
 
 function el(tag, opts = {}, children = []) {
   const node = document.createElement(tag);
@@ -493,6 +494,7 @@ function dataScreen() {
   });
   telemetry.checked = state.telemetryEnabled === true;
   telemetry.addEventListener("change", async () => {
+    restoreTelemetryFocus = true;
     apply(await window.domo.onboardingSetTelemetry(telemetry.checked));
   });
 
@@ -687,6 +689,7 @@ function render() {
   if (!state) return;
   clearInterval(expiryTimer);
   expiryTimer = null;
+  if (state.step !== "data") restoreTelemetryFocus = false;
 
   screen.className = `wizard-screen is-${state.step}`;
   screen.replaceChildren(screenForStep());
@@ -714,11 +717,17 @@ function render() {
   if (state.step === "welcome") playWelcomeEntrance();
   if (state.step === "data") void refreshFullDiskAccess();
 
-  const focus = screen.querySelector("input[autofocus]")
+  const telemetryFocus = restoreTelemetryFocus
+    ? screen.querySelector('input[aria-label="Share anonymous usage"]')
+    : null;
+  const focus = telemetryFocus ?? screen.querySelector("input[autofocus]")
     ?? (primaryButton.disabled ? screen.querySelector(".verify-activate:not(:disabled)") : null)
     ?? (!footer.hidden ? primaryButton : null);
   if (focus && !state.busy) {
-    requestAnimationFrame(() => focus.focus({ preventScroll: true, focusVisible: false }));
+    requestAnimationFrame(() => {
+      focus.focus({ preventScroll: true, focusVisible: false });
+      if (focus === telemetryFocus) restoreTelemetryFocus = false;
+    });
   }
 }
 

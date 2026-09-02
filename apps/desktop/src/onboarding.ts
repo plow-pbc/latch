@@ -305,6 +305,7 @@ export class Onboarding {
       return this.publish();
     }
     if (this.step === "data") {
+      const epoch = this.pollGeneration;
       const settings = this.settings();
       settings.telemetryEnabled = this.telemetryEnabled;
       settings.setupComplete = true;
@@ -314,13 +315,15 @@ export class Onboarding {
       this.busy = true;
       this.publish();
       try {
-        this.doneAgent = await this.deps.lookupDoneAgent?.() ?? null;
+        const agent = await this.deps.lookupDoneAgent?.() ?? null;
+        if (epoch !== this.pollGeneration) return this.state();
+        this.doneAgent = agent;
       } catch {
+        if (epoch !== this.pollGeneration) return this.state();
         // The app is ready even when the optional shortcut cannot be loaded.
         this.doneAgent = null;
-      } finally {
-        this.busy = false;
       }
+      this.busy = false;
       return this.publish();
     }
     return this.publish();

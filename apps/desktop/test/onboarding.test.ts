@@ -471,6 +471,28 @@ describe("wizard steps around the existing verification flow", () => {
       message: "",
     });
   });
+
+  it("discards a Done-screen agent lookup that finishes after sign-out", async () => {
+    let finishLookup!: (agent: { name: string; smsUrl: string }) => void;
+    const lookup = new Promise<{ name: string; smsUrl: string }>((resolve) => {
+      finishLookup = resolve;
+    });
+    const onboarding = build({ lookupDoneAgent: async () => lookup });
+    const settings = loadSettings(home);
+    settings.relayCredential = DEVICE_TOKEN;
+    saveSettings(home, settings);
+    onboarding.reset();
+
+    const advancing = onboarding.advance();
+    expect(onboarding.state()).toMatchObject({ step: "done", busy: true, agent: null });
+
+    signOutOfPlow(home);
+    expect(onboarding.reset()).toMatchObject({ step: "welcome", busy: false, agent: null });
+    finishLookup({ name: "Old account", smsUrl: "sms:+15559876543" });
+    await advancing;
+
+    expect(onboarding.state()).toMatchObject({ step: "welcome", busy: false, agent: null });
+  });
 });
 
 describe("activation — the path a brand-new user takes", () => {
