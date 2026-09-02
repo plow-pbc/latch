@@ -148,22 +148,19 @@ describe("parseOnePux", () => {
     expect(() => parseOnePux(zipOf({ "readme.txt": "hi" }, { deflate: true }))).toThrow(/1PUX/);
     expect(() => parseOnePux(new Uint8Array(Buffer.from("Title,URL\n")))).toThrow(/1PUX/);
     expect(() => parseOnePux(zipOf({ "export.data": "{\"nope\":1}" }, { deflate: false }))).toThrow(/1PUX/);
-  });
 
-  it("refuses a truncated deflate stream with the friendly message, not a raw zlib error", () => {
-    const zip = onePux([{ name: "Personal", items: [login("Dropbox")] }]);
-    // Chop the tail off the compressed export.data entry so it decodes as a
-    // corrupted deflate stream (Z_DATA_ERROR) rather than a valid one.
-    const truncated = new Uint8Array(zip.slice(0, zip.length - 30));
-    expect(() => parseOnePux(truncated)).toThrow(/1PUX/);
-  });
+    // A truncated compressed export.data — the zip container (and its end
+    // record) stays intact; only this entry's deflate stream is corrupted, so
+    // this exercises inflateRawSync's own failure path rather than the
+    // "no end record" check that a truncated whole zip would hit instead.
+    const compressed = zlib.deflateRawSync(Buffer.from(exportData([{ name: "P", items: [login("X")] }]), "utf8"));
+    const truncated = compressed.subarray(0, Math.floor(compressed.length / 2));
+    expect(() => parseOnePux(zipOf({ "export.data": truncated }, { deflate: false }))).toThrow(/1PUX/);
 
-  it("refuses an export.data entry that would inflate past the size bound", () => {
     // Highly repetitive, so it compresses to a tiny blob but still decodes
-    // past the 256 MiB cap — the shape a hostile or corrupted zip bomb takes.
-    const huge = zlib.deflateRawSync(Buffer.alloc(300 * 1024 * 1024, "a"));
-    const zip = zipOf({ "export.data": huge }, { deflate: false });
-    expect(() => parseOnePux(zip)).toThrow(/1PUX/);
+    // past the 64 MiB cap — the shape a hostile or corrupted zip bomb takes.
+    const huge = zlib.deflateRawSync(Buffer.alloc(100 * 1024 * 1024, "a"));
+    expect(() => parseOnePux(zipOf({ "export.data": huge }, { deflate: false }))).toThrow(/1PUX/);
   });
 
   it("previews with the vault name and never a secret", () => {

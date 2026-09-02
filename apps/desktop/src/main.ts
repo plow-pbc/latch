@@ -919,8 +919,9 @@ async function stageImport(parsed: ParsedImport, epoch = staging.epoch) {
 
 /**
  * The apps the Import sheet can guide the owner out of, with their real icons.
- * Every source is offered, and an installed app lends its icon. The icons are
- * display data (a PNG data URL) — never a path the renderer could use.
+ * Apple's Passwords app ships with macOS; every source is offered, and an
+ * installed app lends its icon. The icons are display data (a PNG data URL)
+ * — never a path the renderer could use.
  */
 ipcMain.handle("vault:importSources", async () => {
   const iconOf = async (appPath: string): Promise<string | null> => {

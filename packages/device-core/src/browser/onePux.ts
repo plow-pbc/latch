@@ -20,7 +20,7 @@ const NOT_1PUX = "this doesn't look like a 1PUX export. In 1Password choose File
 // A legitimate export.data is at most a few MB even with thousands of items;
 // this bounds what a corrupted or hostile entry can inflate to, so a bad
 // stream fails fast instead of exhausting memory (a classic zip bomb).
-const MAX_INFLATED_BYTES = 256 * 1024 * 1024;
+const MAX_INFLATED_BYTES = 64 * 1024 * 1024;
 
 /** What a non-login category is called when it is set aside. */
 const CATEGORY_NAMES: Record<string, string> = {
