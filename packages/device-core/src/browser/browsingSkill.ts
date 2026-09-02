@@ -144,10 +144,12 @@ item's, and \`fill_secret\` types them into the page the same way.
    same frame, and a fill that fails part-way erases what it already typed so no
    partial code is left sitting in the form.
    **A date** — an identity's date of birth, a card's \`expiry\` — is stored once and typed in
-   whatever shape the form wants: pass \`format\` — \`"MM/DD/YYYY"\`, \`"MMMM Do, YYYY"\`, \`"MM/YY"\`,
-   or just \`"MM"\` / \`"YYYY"\` for separate boxes. A day, month or year dropdown is filled the
-   same way: the matching option is chosen. Without \`format\`, a date of birth is typed as
-   YYYY-MM-DD and an expiry as MM/YY.
+   whatever shape the form wants: pass \`format\`. A date of birth takes \`"MM/DD/YYYY"\`,
+   \`"MMMM Do, YYYY"\`, or just \`"MM"\` / \`"DD"\` / \`"YYYY"\` for separate boxes; an expiry has no
+   day, so it takes \`"MM/YY"\`, \`"MM/YYYY"\`, or \`"MM"\` / \`"MMMM"\` / \`"YYYY"\` for separate boxes,
+   and refuses a day token. A day,
+   month or year dropdown is filled the same way: the matching option is chosen. Without
+   \`format\`, a date of birth is typed as YYYY-MM-DD and an expiry as MM/YY.
    **A destination in the bundled v1 bank registry needs a separate owner payment
    approval.** When the page you are filling matches that registry, \`fill_secret\` needs
    more than item rights: the owner

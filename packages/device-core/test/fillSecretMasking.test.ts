@@ -241,6 +241,11 @@ function fills(): { selector: string; mask?: boolean }[] {
     .map((c) => ("mask" in c ? { selector: c.selector!, mask: c.mask } : { selector: c.selector! }));
 }
 
+/** What the browser typed, unredacted: `selector<TAB>value<TAB>frame` per fill. Only
+ * the date tests read it, and a date is not concealed. */
+const typed = (): string[] =>
+  fs.existsSync(ctx.fillLog) ? fs.readFileSync(ctx.fillLog, "utf8").trim().split("\n") : [];
+
 beforeEach(() => {
   ctx = makeCtx();
 });
@@ -624,23 +629,26 @@ describe("fill_secret marking", () => {
   });
 });
 
-describe("fill_secret formats a date of birth", () => {
-  const typed = (): string[] =>
-    fs.existsSync(ctx.fillLog) ? fs.readFileSync(ctx.fillLog, "utf8").trim().split("\n") : [];
-
+describe("fill_secret formats a date field", () => {
+  const dob = { selector: "#dob", item: "I1", field: "date of birth" };
+  const expiry = { selector: "#exp", item: "C1", field: "expiry" };
   it.each([
-    { format: undefined, want: "1984-11-09" },
-    { format: "MM/DD/YYYY", want: "11/09/1984" },
-    { format: "MMMM", want: "November" },
-    { format: "YYYY", want: "1984" },
-  ])("types it as $format", async ({ format, want }) => {
+    { ...dob, format: undefined, want: "1984-11-09" },
+    { ...dob, format: "MM/DD/YYYY", want: "11/09/1984" },
+    { ...dob, format: "MMMM", want: "November" },
+    { ...dob, format: "YYYY", want: "1984" },
+    { ...expiry, format: undefined, want: "04/31" },
+    { ...expiry, format: "MM/YYYY", want: "04/2031" },
+    { ...expiry, format: "MMMM", want: "April" },
+    { ...expiry, format: "YYYY", want: "2031" },
+  ])("types $field as $format", async ({ selector, item, field, format, want }) => {
     const handle = await session();
     const result = await ctx.sessions.command(handle, {
-      action: "fill_secret", selector: "#dob", item: "I1", field: "date of birth",
+      action: "fill_secret", selector, item, field,
       ...(format === undefined ? {} : { format }),
     });
     expect(result).toEqual({ status: "completed", ok: true, frame: 0 });
-    expect(typed()).toEqual([`#dob\t${want}\t0`]);
+    expect(typed()).toEqual([`${selector}\t${want}\t0`]);
   });
 
   it("refuses a format for a field that is not a date, before asking the vault", async () => {
@@ -699,23 +707,7 @@ describe("fill_secret formats a date of birth", () => {
   });
 });
 
-describe("fill_secret formats a card's expiry", () => {
-  const typed = (): string[] =>
-    fs.existsSync(ctx.fillLog) ? fs.readFileSync(ctx.fillLog, "utf8").trim().split("\n") : [];
-  it.each([
-    { format: undefined, want: "04/31" },
-    { format: "MM/YYYY", want: "04/2031" },
-    { format: "MMMM", want: "April" },
-    { format: "YYYY", want: "2031" },
-  ])("types it as $format", async ({ format, want }) => {
-    const handle = await session();
-    const result = await ctx.sessions.command(handle, {
-      action: "fill_secret", selector: "#exp", item: "C1", field: "expiry",
-      ...(format === undefined ? {} : { format }),
-    });
-    expect(result).toEqual({ status: "completed", ok: true, frame: 0 });
-    expect(typed()).toEqual([`#exp\t${want}\t0`]);
-  });
+describe("fill_secret refuses what a month-only date cannot be", () => {
   it("refuses a day token for a month-only date before asking the vault", async () => {
     const handle = await session();
     const result = await ctx.sessions.command(handle, {
