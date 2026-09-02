@@ -103,9 +103,12 @@ export function cardBrand(number) {
   if (d[0] === "4") return "Visa";
   if (/^3[47]/.test(d)) return "American Express";
   if ((n(2) >= 51 && n(2) <= 55) || (d.length >= 4 && n(4) >= 2221 && n(4) <= 2720)) return "Mastercard";
-  if (/^6(011|5)/.test(d) || (d.length >= 3 && n(3) >= 644 && n(3) <= 649)) return "Discover";
-  if (/^3[68]/.test(d) || (d.length >= 3 && n(3) >= 300 && n(3) <= 305)) return "Diners Club";
-  if (/^35/.test(d)) return "JCB";
+  // 622126-622925 is Discover's block inside 62, and it is read before the
+  // UnionPay prefix below or those cards come out labelled UnionPay.
+  if (/^6(011|5)/.test(d) || (d.length >= 3 && n(3) >= 644 && n(3) <= 649)
+      || (d.length >= 6 && n(6) >= 622126 && n(6) <= 622925)) return "Discover";
+  if (/^3[689]/.test(d) || (d.length >= 3 && n(3) >= 300 && n(3) <= 305)) return "Diners Club";
+  if (d.length >= 4 && n(4) >= 3528 && n(4) <= 3589) return "JCB";
   if (/^62/.test(d)) return "UnionPay";
   return "";
 }
