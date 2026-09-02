@@ -559,6 +559,7 @@ describe("PlowApi", () => {
   it.each([
     ["retired string shape", "provider/valid"],
     ["non-string name", { id: "provider/valid", name: 7 }],
+    ["blank name", { id: "provider/valid", name: "   " }],
   ])("rejects a malformed cloud-agent provider: %s", async (_case, provider) => {
     const { fetchImpl } = recordingFetch([{
       status: 200,

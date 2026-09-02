@@ -353,6 +353,11 @@ const LINE_ERRORS: Readonly<Record<string, {
   },
 });
 
+/**
+ * Deliberately covers plaintext and standard Base64, in full and by 10-character prefix, but not
+ * Base64url: this hardens responses from an origin that already holds the secret rather than
+ * providing exhaustive encoding defense.
+ */
 export function echoesCredential(text: string, credential: string): boolean {
   const secret = credential.trim();
   if (!secret) return false;
