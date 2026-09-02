@@ -41,6 +41,7 @@ interface Ctx {
   dir: string;
   cmdLog: string;
   brokerLog: string;
+  fillLog: string;
 }
 
 let ctx: Ctx;
@@ -71,6 +72,7 @@ function makeCtx(
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "domo-mask-"));
   const cmdLog = path.join(dir, "cmds.log");
   const brokerLog = path.join(dir, "broker-audit.log");
+  const fillLog = path.join(dir, "fills.log");
   const vaultPath = path.join(dir, "vault.json");
   fs.writeFileSync(
     vaultPath,
@@ -133,6 +135,7 @@ function makeCtx(
           { label: "license number", hidden: false, custom: false, alias: false },
           { label: "address1", hidden: false, custom: false, alias: false },
           { label: "city", hidden: false, custom: false, alias: false },
+          { label: "date of birth", hidden: false, custom: false, alias: false },
         ],
         values: {
           ssn: "078-05-1120",
@@ -140,6 +143,7 @@ function makeCtx(
           "license number": "D9999",
           address1: "1 Elm St",
           city: "Springfield",
+          "date of birth": "1984-11-09",
         },
       },
     ]),
@@ -149,7 +153,7 @@ function makeCtx(
   const browsers = {
     command: [process.execPath, FAKE_SERVER],
     headed: false,
-    env: { FAKE_CMD_LOG: cmdLog, ...serverEnv },
+    env: { FAKE_CMD_LOG: cmdLog, FAKE_FILL_LOG: fillLog, ...serverEnv },
     audit: () => {},
   };
   const credentials = new CredentialBroker({
@@ -164,7 +168,7 @@ function makeCtx(
     undefined,
     approval === null ? null : fakeApproval(approval, approvalCalls),
   );
-  return { sessions, browsers, events, approvalCalls, dir, cmdLog, brokerLog };
+  return { sessions, browsers, events, approvalCalls, dir, cmdLog, brokerLog, fillLog };
 }
 
 /** What the audit calls this session — read off the open event, not recomputed. */
@@ -607,6 +611,46 @@ describe("fill_secret marking", () => {
       },
     ]);
     for (const e of ctx.events) expect(JSON.stringify(e)).not.toContain("hunter2");
+  });
+});
+
+describe("fill_secret formats a date of birth", () => {
+  const typed = (): string[] =>
+    fs.existsSync(ctx.fillLog) ? fs.readFileSync(ctx.fillLog, "utf8").trim().split("\n") : [];
+
+  it.each([
+    { format: undefined, want: "1984-11-09" },
+    { format: "MM/DD/YYYY", want: "11/09/1984" },
+    { format: "MMMM", want: "November" },
+    { format: "YYYY", want: "1984" },
+  ])("types it as $format", async ({ format, want }) => {
+    const handle = await session();
+    const result = await ctx.sessions.command(handle, {
+      action: "fill_secret", selector: "#dob", item: "I1", field: "date of birth",
+      ...(format === undefined ? {} : { format }),
+    });
+    expect(result).toEqual({ status: "completed", ok: true, frame: 0 });
+    expect(typed()).toEqual([`#dob\t${want}\t0`]);
+  });
+
+  it("refuses a format for a field that is not a date, before asking the vault", async () => {
+    const handle = await session();
+    const result = await ctx.sessions.command(handle, {
+      action: "fill_secret", selector: "#city", item: "I1", field: "city", format: "MM",
+    });
+    expect(result).toMatchObject({ status: "error", error: expect.stringMatching(/format.*date of birth/) });
+    expect(released()).toEqual([]);
+    expect(typed()).toEqual([]);
+  });
+
+  it("refuses a pattern with a letter that is not a token, before asking the vault", async () => {
+    const handle = await session();
+    const result = await ctx.sessions.command(handle, {
+      action: "fill_secret", selector: "#dob", item: "I1", field: "date of birth", format: "MM/DD/YYYY hh",
+    });
+    expect(result).toMatchObject({ status: "error", error: expect.stringMatching(/'h' is not a date token/) });
+    expect(released()).toEqual([]);
+    expect(typed()).toEqual([]);
   });
 });
 
