@@ -178,7 +178,7 @@ export interface Settings {
    * keepAwake.ts owns when a blocker is actually held (AC power only, and an
    * acquire the OS refuses writes this back to false). */
   keepAwakeWhileRunning: boolean;
-  /** Share anonymous usage statistics and error reports (default on; a
+  /** Share usage statistics and error reports (default on; a
    * Settings toggle turns it off). telemetry.ts owns what "usage" means —
    * an allowlist of audit events with paths, argv, goal text and credential
    * material never sent. */

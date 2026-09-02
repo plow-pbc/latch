@@ -371,8 +371,9 @@ async function requestFullDiskAccess() {
 function dataScreen() {
   const telemetry = el("input", {
     attrs: {
+      id: "telemetry-toggle",
       type: "checkbox",
-      "aria-label": "Share anonymous usage",
+      "aria-label": "Share usage data",
     },
   });
   telemetry.checked = state.telemetryEnabled === true;
@@ -589,7 +590,7 @@ function render() {
   if (state.step === "data") void refreshFullDiskAccess();
 
   const telemetryFocus = restoreTelemetryFocus
-    ? screen.querySelector('input[aria-label="Share anonymous usage"]')
+    ? screen.querySelector("#telemetry-toggle")
     : null;
   const focus = telemetryFocus ?? screen.querySelector("input[autofocus]")
     ?? (primaryButton.disabled ? screen.querySelector(".verify-activate:not(:disabled)") : null)
