@@ -26,7 +26,7 @@ function ordinal(day: number): string {
 }
 
 /** The three numbers, or a refusal: the vault stores exactly this shape. */
-function parseIso(iso: string): { y: number; m: number; d: number } {
+export function parseIso(iso: string): { y: number; m: number; d: number } {
   const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(iso);
   const bad = new Error("a date of birth is stored as YYYY-MM-DD");
   if (match === null) throw bad;
@@ -42,7 +42,7 @@ export function formatDate(iso: string, pattern: string): string {
   const pad = (n: number): string => String(n).padStart(2, "0");
   return pattern.replace(TOKEN, (piece) => {
     switch (piece) {
-      case "YYYY": return String(y);
+      case "YYYY": return String(y).padStart(4, "0");
       case "YY": return pad(y % 100);
       case "MMMM": return MONTHS[m - 1];
       case "MMM": return MONTHS[m - 1].slice(0, 3);

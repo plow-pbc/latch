@@ -43,4 +43,9 @@ describe("formatDate", () => {
     expect(() => formatDate("1984-13-09", "YYYY")).toThrow(/YYYY-MM-DD/);
     expect(() => formatDate("1984-02-30", "YYYY")).toThrow(/YYYY-MM-DD/);
   });
+
+  it("handles years 0–99 without spurious rejection", () => {
+    expect(formatDate("0050-01-01", "YYYY-MM-DD")).toBe("0050-01-01");
+    expect(formatDate("0001-12-25", "MMMM Do, YYYY")).toBe("December 25th, 0001");
+  });
 });

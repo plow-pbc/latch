@@ -12,7 +12,7 @@
  */
 import crypto from "node:crypto";
 import { decString, encString } from "./vaultCrypto.js";
-import { formatDate } from "./dateFormat.js";
+import { parseIso } from "./dateFormat.js";
 
 /** The four types this vault models. (Its enum reserves 5-8; no client here
  * can create one, so nothing below knows about them.) */
@@ -338,7 +338,7 @@ export function encryptCipher(
   for (const field of KEYS_FOR[type] ?? []) {
     const given = input[field];
     if (typeof given !== "string") continue;
-    if (field === "birthDate" && given !== "") formatDate(given, "YYYY");   // throws on a bad date
+    if (field === "birthDate" && given !== "") parseIso(given);   // throws on a bad date
     out[field] = enc(given, key);
   }
 
