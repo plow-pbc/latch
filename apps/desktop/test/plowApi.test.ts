@@ -545,23 +545,6 @@ describe("PlowApi", () => {
       .toBe(`Bearer ${credential}`);
   });
 
-  it("falls back to the exact provider id when its display name is blank or missing", async () => {
-    const { fetchImpl } = recordingFetch([{
-      status: 200,
-      body: [
-        { id: " provider/blank ", name: "   ", image: "blank:latest" },
-        { id: "provider/missing", image: "missing:latest" },
-      ],
-    }]);
-
-    await expect(
-      new PlowApi("https://api.plow.co", fetchImpl).listCloudAgentProviders("plow_device"),
-    ).resolves.toEqual([
-      { id: " provider/blank ", name: " provider/blank " },
-      { id: "provider/missing", name: "provider/missing" },
-    ]);
-  });
-
   it("uses cloud-agent copy when the provider roster is unavailable", async () => {
     const { fetchImpl } = recordingFetch([{ status: 503, body: {} }]);
 
@@ -573,20 +556,13 @@ describe("PlowApi", () => {
     });
   });
 
-  it("rejects the retired string cloud-agent provider shape", async () => {
-    const { fetchImpl } = recordingFetch([{ status: 200, body: ["provider/valid"] }]);
-
-    await expect(
-      new PlowApi("https://api.plow.co", fetchImpl).listCloudAgentProviders("plow_device"),
-    ).rejects.toMatchObject({
-      message: "Plow did not return a usable cloud-agent provider list.",
-    });
-  });
-
-  it("rejects a cloud-agent provider with a non-string name", async () => {
+  it.each([
+    ["retired string shape", "provider/valid"],
+    ["non-string name", { id: "provider/valid", name: 7 }],
+  ])("rejects a malformed cloud-agent provider: %s", async (_case, provider) => {
     const { fetchImpl } = recordingFetch([{
       status: 200,
-      body: [{ id: "provider/valid", name: 7 }],
+      body: [provider],
     }]);
 
     await expect(

@@ -545,15 +545,12 @@ export class PlowApi {
         !row ||
         typeof row.id !== "string" ||
         row.id.trim().length === 0 ||
-        (row.name !== undefined && typeof row.name !== "string")
+        typeof row.name !== "string" ||
+        row.name.trim().length === 0
       ) {
         throw new PlowApiError("http", "Plow did not return a usable cloud-agent provider list.");
       }
-      // Missing or blank names fall back to the id; explicit null and other types are malformed.
-      const name = typeof row.name === "string" && row.name.trim().length > 0
-        ? row.name
-        : row.id;
-      return { id: row.id, name };
+      return { id: row.id, name: row.name };
     });
   }
 
