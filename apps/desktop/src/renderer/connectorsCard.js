@@ -11,7 +11,9 @@ function actionButton(text, className, onClick, disabled = false) {
   return node;
 }
 
-/** The Google account card shared by setup and Settings. */
+/** The Google account card shared by setup and Settings.
+    `loading` is renderer-only: callers supply it before the first main-process
+    state arrives so the empty card says "Checking…" instead of "Connect". */
 export function googleConnectorCard(state, actions) {
   const google = state.google;
   const disabled = state.busy === true;

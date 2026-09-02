@@ -9,6 +9,8 @@ import {
 } from "./approvals.js";
 
 import { el, icon } from "./dom.js";
+import { googleConnectorCard } from "./connectorsCard.js";
+import { singleFlight } from "./onboardingAction.js";
 import { renderVault, vaultConfirmLeave } from "./vault.js";
 import {
   cloudErrorCopy,
@@ -1876,6 +1878,49 @@ async function renderSettings() {
   };
   await refreshAccount();
 
+  // The same connector state and card used by setup, mounted into a stable
+  // box so a poll or account action redraws only this section. `loading` is a
+  // renderer-only placeholder; main's state deliberately contains display
+  // data only and does not need to know whether this pane has painted yet.
+  let connectorState = {
+    busy: true,
+    error: null,
+    loading: true,
+    google: { accounts: [], connecting: false },
+  };
+  const connectorBox = el("div", { class: "settings-connectors" });
+  const connectorError = el("p", {
+    class: "connector-error",
+    attrs: { role: "status" },
+  });
+  const connectorMutate = singleFlight(() => connectorState.busy === true);
+  const connectorActions = {
+    connect: () => connectorMutate(async () => {
+      applyConnectors(await window.domo.connectorsConnect("google"));
+    }),
+    disconnect: (account) => connectorMutate(async () => {
+      applyConnectors(await window.domo.connectorsDisconnect("google", account));
+    }),
+    setDefault: (account) => connectorMutate(async () => {
+      applyConnectors(await window.domo.connectorsSetDefault("google", account));
+    }),
+  };
+  const drawConnectors = () => {
+    connectorBox.replaceChildren(googleConnectorCard(connectorState, connectorActions));
+    connectorError.textContent = connectorState.error ?? "";
+    connectorError.hidden = !connectorState.error;
+  };
+  const applyConnectors = (next) => {
+    if (!next) return;
+    connectorState = { ...next, loading: false };
+    drawConnectors();
+  };
+  const refreshConnectors = async () => {
+    applyConnectors(await window.domo.connectorsRefresh());
+  };
+  drawConnectors();
+  await refreshConnectors();
+
   // Software updates: version + status + a check/restart action + the two
   // automation preferences. Everything renders from one updates:get shape.
   // These nodes are stable for the pane's lifetime: controller transitions
@@ -2052,8 +2097,10 @@ async function renderSettings() {
   // What a status change re-reads: display nodes only, every one of them read
   // back from main rather than remembered here.
   settingsMounted = {
+    applyConnectors,
     refresh: async () => {
       await refreshAccount();
+      await refreshConnectors();
       applyCapabilities(await window.domo.capabilitiesGet());
       launch = await window.domo.launchGet();
       applyLaunch();
@@ -2079,6 +2126,7 @@ async function renderSettings() {
       accountBox,
       el("div", { class: "row" }, [relayNote, el("div", { class: "spacer" }), viewAccount, signOut, signIn]),
     ]),
+    group("Connected accounts", null, [connectorBox, connectorError]),
     group("Capabilities", "Extended capabilities that let Plow Latch reach parts of this Mac that macOS blocks by default.", [
       el("div", { class: "support-row" }, [
         el("div", { class: "support-copy" }, [
@@ -2210,6 +2258,9 @@ window.domo.onStatusChanged(() => {
 });
 // Minting or dismissing a credential redraws only the Agents flow.
 window.domo.onConnectChanged(() => { agentsMounted?.refreshConnect(); });
+window.domo.onConnectorsChanged((state) => {
+  if (currentTab === "settings") settingsMounted?.applyConnectors(state);
+});
 window.domo.onUpdatesChanged(() => {
   refreshUpdateBanner();
   // In place, never renderSettings(): a full rebuild resets the pane's scroll

@@ -305,6 +305,21 @@ ipcMain.handle("cloud:remove", async (_e, agentId) => {
   return agentsTabProbeState();
 });
 ipcMain.handle("settings:signOut", async () => {});
+const connectorProbe = {
+  busy: false,
+  error: null,
+  google: {
+    connecting: false,
+    accounts: [
+      { email: "owner@probe.test", isDefault: true },
+      { email: "work@probe.test", isDefault: false },
+    ],
+  },
+};
+ipcMain.handle("connectors:refresh", async () => connectorProbe);
+ipcMain.handle("connectors:connect", async () => connectorProbe);
+ipcMain.handle("connectors:disconnect", async () => connectorProbe);
+ipcMain.handle("connectors:setDefault", async () => connectorProbe);
 // A packaged-looking updater state so the Software Updates section renders
 // its full form (status line, check button, both preference checkboxes).
 ipcMain.handle("updates:get", async () => ({
@@ -493,6 +508,18 @@ app.whenReady().then(async () => {
       noPhonePromise: !document.querySelector("#view").innerText.includes("phone number"),
       offersNoRelayKeyField: !document.body.innerText.includes("Connect key"),
       bodyLeaksKey: /plow_sk|BEGIN|secret/i.test(document.body.innerText),
+      hasConnectedAccounts: [...document.querySelectorAll(".panel.settings .group-title")].some(
+        (title) => title.textContent.trim() === "Connected accounts",
+      ),
+      connectorAccounts: [...document.querySelectorAll(".settings-connectors .alabel")].map(
+        (label) => label.textContent.trim(),
+      ),
+      connectorActions: [...document.querySelectorAll(".settings-connectors button")].map(
+        (button) => button.textContent.trim(),
+      ),
+      connectorDefault: document.querySelector(".settings-connectors .adefault")?.textContent.trim(),
+      connectorRemoveIsLabelled: document.querySelector(".settings-connectors .acct-remove")
+        ?.getAttribute("aria-label") === "Remove Google account",
       // ---- The AI Reviewer section is GONE from this pane.
       //
       // Three checks, not ten. The group, the credential field, and the control
@@ -2089,6 +2116,11 @@ app.whenReady().then(async () => {
     settings.noPhonePromise &&
     settings.offersNoRelayKeyField &&
     !settings.bodyLeaksKey &&
+    settings.hasConnectedAccounts &&
+    settings.connectorAccounts.join("|") === "owner@probe.test|work@probe.test" &&
+    settings.connectorActions.join("|") === "|Set default||Add another Google account" &&
+    settings.connectorDefault === "Default" &&
+    settings.connectorRemoveIsLabelled &&
     settings.noReviewerGroup &&
     settings.noPasswordField &&
     settings.noSuggestionsCheckbox &&

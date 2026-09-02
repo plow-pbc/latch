@@ -1781,7 +1781,9 @@ app.whenReady().then(async () => {
     openExternal: (url) => shell.openExternal(url),
     recordAudit: (event, fields) => device?.audit.record(event, fields),
     onChange: () => {
-      onboardingWindow?.webContents.send("connectors:changed", connectors?.state());
+      const state = connectors?.state();
+      onboardingWindow?.webContents.send("connectors:changed", state);
+      mainWindow?.webContents.send("connectors:changed", state);
     },
   });
   // Built first: the roster's removal routing needs the cloud-agent client,

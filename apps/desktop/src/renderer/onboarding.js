@@ -21,7 +21,7 @@ let fullDiskRequestBusy = false;
 let restoreTelemetryFocus = false;
 let doneAgent = null;
 let connectorState = null;
-const mutate = singleFlight(() => state?.busy === true || connectorState?.busy === true);
+const mutate = singleFlight(() => state?.busy === true);
 
 async function update(action) {
   await mutate(async () => apply(await action()));
@@ -562,7 +562,7 @@ function footerForStep() {
       dot: 3,
       label: connectorState?.google.accounts.length > 0 ? "Done" : "Skip",
       arrow: false,
-      disabled: connectorState === null || connectorState.busy === true,
+      disabled: connectorState === null,
       action: () => update(() => window.domo.onboardingAdvance()),
     };
   }
@@ -624,7 +624,7 @@ function render() {
   footer.hidden = !!config.hidden;
   if (!config.hidden) {
     backButton.hidden = !config.back;
-    backButton.disabled = !!state.busy || (state.step === "connect" && connectorState?.busy === true);
+    backButton.disabled = !!state.busy;
     dotRow.hidden = config.dot === null;
     dots.forEach((dot, index) => {
       dot.classList.toggle("active", index === config.dot);

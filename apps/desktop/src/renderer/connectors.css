@@ -1,0 +1,236 @@
+/* Shared connected-account card. Each host maps its own design tokens onto
+   this component so setup and Settings keep one structure and one behavior. */
+.settings-connectors {
+  --connector-surface: var(--card);
+  --connector-surface-2: var(--hover);
+  --connector-border: var(--border);
+  --connector-border-hover: var(--border-strong);
+  --connector-text: var(--fg);
+  --connector-muted: var(--muted);
+  --connector-accent: var(--blue-fg);
+  --connector-accent-bg: var(--blue-bg);
+  --connector-accent-hover-bg: var(--blue-bg);
+  --connector-accent-border: var(--blue-bd);
+  --connector-remove: var(--red-fg);
+}
+
+.provider-group {
+  display: flex;
+  flex-direction: column;
+  padding: 18px 18px 18px 20px;
+  border: 1px solid var(--connector-border, var(--border-2));
+  border-radius: 16px;
+  background: var(--connector-surface, var(--surface));
+  transition: border-color 180ms, background 180ms;
+}
+
+.provider-group:hover {
+  border-color: var(--connector-border-hover, rgba(240, 240, 232, 0.2));
+}
+
+.provider-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.provider-head .brandmark {
+  flex: none;
+  display: grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  border-radius: 8px;
+  background: var(--connector-surface-2, var(--surface-2));
+  line-height: 1;
+}
+
+.provider-head .bg-google {
+  color: var(--connector-text, #e7e4da);
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.provider-head .pname {
+  flex: 1;
+  min-width: 0;
+  color: var(--connector-muted, var(--muted-2));
+  font-family: var(--mono);
+  font-size: 10.5px;
+  font-weight: 500;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.provider-connect {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 16px;
+  border: 1px solid var(--connector-accent-border, rgba(213, 239, 138, 0.34));
+  border-radius: 10px;
+  background: var(--connector-accent-bg, var(--volt-dim));
+  color: var(--connector-accent, var(--volt));
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 150ms, border-color 150ms, filter 150ms, transform 60ms;
+}
+
+.provider-connect:hover:not(:disabled) {
+  border-color: var(--connector-accent, rgba(213, 239, 138, 0.5));
+  background: var(--connector-accent-hover-bg, rgba(213, 239, 138, 0.2));
+}
+
+.provider-connect:active:not(:disabled) {
+  transform: translateY(0.5px);
+}
+
+.provider-connect:disabled,
+.add-another:disabled,
+.aset-default:disabled,
+.acct-remove:disabled {
+  cursor: default;
+  opacity: 0.65;
+}
+
+.provider-connect svg {
+  width: 14px;
+  height: 14px;
+}
+
+.connected-body {
+  margin-top: 14px;
+  animation: account-in 220ms ease both;
+}
+
+@keyframes account-in {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: none; }
+}
+
+.acct-list {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+
+.acct-row {
+  display: flex;
+  align-items: center;
+  gap: 13px;
+  padding: 12px 12px 12px 14px;
+  border: 1px solid var(--connector-border, var(--border-2));
+  border-radius: 12px;
+  background: var(--connector-surface, var(--surface));
+}
+
+.acct-row .alabel {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--connector-text, var(--text));
+  font-size: 14px;
+  font-weight: 500;
+  letter-spacing: -0.005em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.acct-row .adefault {
+  flex: none;
+  padding: 3px 9px;
+  border: 1px solid var(--connector-border, var(--border-2));
+  border-radius: 999px;
+  color: var(--connector-muted, var(--muted-2));
+  font-family: var(--mono);
+  font-size: 8.5px;
+  font-weight: 500;
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+}
+
+.acct-row .aset-default {
+  flex: none;
+  padding: 3px 4px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--connector-muted, var(--muted-2));
+  font-size: 11.5px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: color 150ms;
+}
+
+.acct-row .aset-default:hover:not(:disabled) {
+  color: var(--connector-text, var(--text));
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.acct-remove {
+  flex: none;
+  display: grid;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  place-items: center;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--connector-muted, var(--muted));
+  cursor: pointer;
+  transition: color 150ms, background 150ms;
+}
+
+.acct-remove:hover:not(:disabled) {
+  background: var(--connector-surface-2, rgba(240, 240, 232, 0.07));
+  color: var(--connector-remove, var(--clay-soft));
+}
+
+.acct-remove svg {
+  width: 14px;
+  height: 14px;
+}
+
+.add-another {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  margin-top: 9px;
+  padding: 10px 14px;
+  border: 1px dashed var(--connector-border, var(--border-2));
+  border-radius: 11px;
+  background: transparent;
+  color: var(--connector-muted, var(--muted-2));
+  font-size: 12.5px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: border-color 150ms, color 150ms, background 150ms;
+}
+
+.add-another:hover:not(:disabled) {
+  border-color: var(--connector-border-hover, rgba(240, 240, 232, 0.28));
+  background: var(--connector-surface, var(--surface));
+  color: var(--connector-text, var(--text));
+}
+
+.add-another svg {
+  width: 13px;
+  height: 13px;
+}
+
+.settings-connectors + .connector-error {
+  margin: 12px 0 0;
+  color: var(--red-fg);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .connected-body {
+    animation: none !important;
+  }
+}
