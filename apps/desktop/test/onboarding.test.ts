@@ -941,7 +941,31 @@ describe("while the credential handoff is in the air", () => {
   });
 });
 
-describe("a sign-out while startRelay is dialling", () => {
+describe("while startRelay is dialling", () => {
+  it("lets Continue advance from verified while the relay dial is pending", async () => {
+    let release = () => {};
+    const dialing = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    plow.redeems = [{ status: "verified", token: SESSION_TOKEN }];
+    const onboarding = build({
+      startRelay: async () => {
+        started += 1;
+        await dialing;
+      },
+    });
+    await onboarding.advance();
+    await settle();
+    expect(onboarding.state()).toMatchObject({ step: "verified", busy: false });
+
+    const advanced = await onboarding.advance();
+    release();
+    await settle();
+
+    expect(advanced.step).toBe("data");
+    expect(onboarding.state().step).toBe("data");
+  });
+
   it("is not overwritten by the post-login state", async () => {
     // The verified step is assigned before `startRelay` begins its network round
     // trip. A sign-out landing inside that await resets this instance to

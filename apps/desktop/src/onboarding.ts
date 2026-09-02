@@ -418,7 +418,11 @@ export class Onboarding {
         // fresh on "Try Again" — not re-arming a code nothing can complete.
         this.activationSecret = null;
         this.stall();
-        await this.run(() => this.finishWithSession(result.token as string));
+        const finished = await this.run(() => this.finishWithSession(result.token as string));
+        // The verified screen is actionable while the relay connects. `run`
+        // clears busy and publishes before this await, and nothing after it
+        // mutates onboarding state.
+        if (finished.step === "verified") await this.deps.startRelay();
         return;
       }
       if (generation !== this.pollGeneration) return;
@@ -539,7 +543,7 @@ export class Onboarding {
    */
 
   /**
-   * Learn the account → keep the session → connect.
+   * Learn the account → keep the session → show the verified state.
    *
    * The session IS this Mac's credential. Latch is the owner's manager app,
    * not an agent: it holds the socket, lists chats, mints agents, buys
@@ -583,11 +587,8 @@ export class Onboarding {
     // retained until Continue so the verified treatment can hold the same
     // screen steady.
     //
-    // BEFORE the dial, not after. `startRelay` is a network round-trip, and a
-    // sign-out landing inside it resets this instance to `welcome`. Assigning
-    // the post-login step before the await, with no continuation mutation after
-    // it, keeps that reset from being overwritten. Everything here is derived
-    // from the save above; none of it needs the socket to be up.
+    // Everything here is derived from the save above; none of it needs the
+    // socket to be up.
     this.cancelPolling();
     this.activationSecret = null;
     this.activationStale = false;
@@ -595,8 +596,6 @@ export class Onboarding {
     this.noteKind = "error";
     this.step = "verified";
     this.telemetryEnabled = settings.telemetryEnabled;
-
-    await this.deps.startRelay();
   }
 
   // MARK: plumbing
