@@ -19,6 +19,40 @@ import { Capability, capabilityDisplay, Intent, JSONValue, jv } from "@domo/prot
  */
 const REAPED_REASON = "no output — a permission prompt may be waiting";
 
+/**
+ * The owner's words for what this Mac refused (device-core's hostGate/).
+ * Short, for a badge; the timeline line carries the fixed owner sentence.
+ */
+function hostGateLabel(ev: ReturnType<typeof jv>): string {
+  const cause = ev.get("cause").str ?? "";
+  const permission = ev.get("permission").str;
+  switch (cause) {
+    case "macos_permission": return `needs a macOS permission${permission ? ` (${permissionWords(permission)})` : ""}`;
+    case "prompt_waiting": return "a permission dialog is waiting on this Mac";
+    case "outside_approved_bound": return "outside the approved paths";
+    case "posix_permissions": return "file permissions";
+    case "sip_protected": return "protected by macOS";
+    case "immutable_file": return "locked file";
+    default: return "blocked by this Mac";
+  }
+}
+
+/** System Settings' own words for a permission, for the badge. */
+function permissionWords(permission: string): string {
+  switch (permission) {
+    case "full_disk_access": return "Full Disk Access";
+    case "files_desktop": return "Desktop folder";
+    case "files_documents": return "Documents folder";
+    case "files_downloads": return "Downloads folder";
+    case "files_icloud_drive": return "iCloud Drive";
+    case "files_volumes": return "external volumes";
+    case "automation": return "Automation";
+    case "accessibility": return "Accessibility";
+    case "screen_recording": return "Screen Recording";
+    default: return permission;
+  }
+}
+
 export interface ApprovalViewModel {
   intentId: string;
   agentDisplay: string;
@@ -397,6 +431,15 @@ function classifyActivity(
     const base = decision === "always_allow" ? "Always allowed" : "Allowed once";
     // Failures/blocks keep their suffix; plain successes show just the base
     // (no "· done"/"· finished").
+    //
+    // A block by this Mac itself outranks the run's exit code and the
+    // reaper's verdict: the owner is the one person who can flip the switch,
+    // and "failed (exit 1)" would hide that from them. Amber, like a killed
+    // run, because nothing here was refused BY anyone.
+    const gate = entry("host_permission_blocked");
+    if (gate) {
+      return { status: `${base} · ${hostGateLabel(jv(gate))}`, tone: "amber", category: "failed" };
+    }
     if (entry("denied_operation")) {
       return { status: `${base} · blocked`, tone: "red", category: "failed" };
     }
@@ -472,6 +515,10 @@ function classifyActivity(
     return { status: "Completed", tone: "green", category: "approved" };
   }
   if (entry("denied_operation")) return { status: "Blocked", tone: "red", category: "failed" };
+  // A handle-only block from a deferred run whose end outlived its intent's
+  // row: the gate is still the story.
+  const gate = entry("host_permission_blocked");
+  if (gate) return { status: `Blocked — ${hostGateLabel(jv(gate))}`, tone: "amber", category: "failed" };
   // A handle-only exec_end from an old log: a deferred run's end recorded
   // without its intent. The exit code is the whole story.
   const ee = entry("exec_end");
@@ -645,6 +692,20 @@ function describeStep(e: JSONValue): AuditStep {
     case "file_read": text = `File read: ${ev.get("path").str ?? ""} (${ev.get("bytes").int ?? 0} bytes)`; state = "ok"; break;
     case "file_write": text = `File written: ${ev.get("path").str ?? ""} (${ev.get("bytes").int ?? 0} bytes)`; state = "ok"; break;
     case "denied_operation": text = `Blocked: ${ev.get("path").str ?? ""} — ${ev.get("error").str ?? ""}`; state = "bad"; break;
+    case "host_permission_blocked": {
+      // The fixed owner sentence, verbatim — it is the one thing on this
+      // line the owner can act on. `likely` says so, because a guess sent to
+      // System Settings should read as a guess.
+      const path = ev.get("path").str;
+      const confidence = ev.get("confidence").str;
+      const action = ev.get("owner_action").str;
+      text =
+        `This Mac refused${path ? ` ${path}` : ""}: ${hostGateLabel(ev)}` +
+        `${confidence === "likely" ? " (probably)" : ""}` +
+        `${action ? ` — ${action}` : ""}`;
+      state = "bad";
+      break;
+    }
     case "tool_invoked": text = `Tool used: ${ev.get("tool").str ?? ""}`; state = "ok"; break;
     case "tool_error": text = `Tool error: ${ev.get("tool").str ?? ""} — ${ev.get("error").str ?? ""}`; state = "bad"; break;
     case "browser_session_opened":

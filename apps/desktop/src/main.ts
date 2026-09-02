@@ -12,7 +12,7 @@
  *     HTML, and the enforceable bound shown is the capability set the sandbox
  *     is derived from — not the goal text.
  */
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, powerMonitor, safeStorage as electronSafeStorage, screen, shell, systemPreferences, Tray } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, Notification, powerMonitor, safeStorage as electronSafeStorage, screen, shell, systemPreferences, Tray } from "electron";
 import electronUpdater from "electron-updater";
 import { ChildProcess, execFile, execFileSync, spawn } from "node:child_process";
 import fs from "node:fs/promises";
@@ -31,6 +31,7 @@ import {
   PaymentApprovalRequest,
   plowFolderPath,
   nodeProbes,
+  PERMISSION_LABELS,
   PolicyDelegate,
   probeFullDiskAccess,
   importLogins,
@@ -1782,6 +1783,12 @@ app.whenReady().then(async () => {
   }
   // Live-refresh the audit view whenever a new event is recorded.
   device.audit.events.on("change", () => notifyRenderer("audit:changed"));
+  // A block by this Mac itself is the owner's to clear, and the owner is
+  // usually not looking at this window when it happens: it goes to the tray
+  // and, once per permission per run, to a notification.
+  device.audit.events.on("recorded", (entry) => {
+    if (entry.event === "host_permission_blocked") noteHostGateBlock(entry.fields);
+  });
   // Usage stats ride the same funnel as the audit log — one source of truth
   // for what happened, with telemetry.ts's allowlist deciding the little that
   // leaves the Mac.
@@ -2103,6 +2110,51 @@ app.on("web-contents-created", (_e, contents) => {
   contents.setWindowOpenHandler(() => ({ action: "deny" }));
 });
 
+/**
+ * The most recent block by this Mac that the owner has not yet looked at
+ * (device-core's hostGate/): what was refused and the fixed sentence that
+ * fixes it. One at a time — the latest is the one worth a click — and
+ * cleared when the owner opens Settings from it, where the Capabilities card
+ * shows every switch.
+ */
+let hostGateAttention: { permission: string | null; ownerAction: string | null; cause: string } | null = null;
+/** Permissions already announced this run: a notification per refusal would
+ *  be a notification per retry. */
+const hostGateNotified = new Set<string>();
+
+function noteHostGateBlock(fields: { [k: string]: unknown }): void {
+  const cause = typeof fields.cause === "string" ? fields.cause : "unknown";
+  const permission = typeof fields.permission === "string" ? fields.permission : null;
+  const ownerAction = typeof fields.owner_action === "string" ? fields.owner_action : null;
+  // A guess does not earn a notification: only a confirmed verdict names a
+  // switch the owner should actually go and flip.
+  if (fields.confidence !== "confirmed") return;
+  hostGateAttention = { permission, ownerAction, cause };
+  refreshTray();
+  const key = permission ?? cause;
+  if (hostGateNotified.has(key) || !Notification.isSupported()) return;
+  hostGateNotified.add(key);
+  const notification = new Notification({
+    title: permission
+      ? `Plow Latch needs ${PERMISSION_LABELS[permission as keyof typeof PERMISSION_LABELS] ?? permission}`
+      : "Plow Latch was blocked by this Mac",
+    body: ownerAction ?? "An agent's approved request was refused by macOS. Open Settings for details.",
+  });
+  notification.on("click", () => showSettingsForHostGate());
+  notification.show();
+}
+
+/** The tray item's and the notification's one destination: Settings, where
+ *  the Capabilities card shows every switch and the grant flow starts. */
+function showSettingsForHostGate(): void {
+  hostGateAttention = null;
+  refreshTray();
+  gate.sync();
+  const send = () => mainWindow?.webContents.send("ui:showSettings");
+  if (mainWindow?.webContents.isLoading()) mainWindow.webContents.once("did-finish-load", send);
+  else send();
+}
+
 function setupTray(): void {
   // A 1x1 transparent placeholder keeps the tray API happy without an asset
   // pipeline; a real template image ships with the packaged app.
@@ -2120,6 +2172,18 @@ function refreshTray(): void {
     // Through the gate, so the tray cannot hand back a main window this Mac is
     // not entitled to.
     { label: "Open Plow Latch", click: () => gate.sync() },
+    // The latest block by this Mac, until the owner looks: the one line in
+    // this menu that says something needs doing.
+    ...(hostGateAttention
+      ? [
+          {
+            label: hostGateAttention.permission
+              ? `Needs ${PERMISSION_LABELS[hostGateAttention.permission as keyof typeof PERMISSION_LABELS] ?? hostGateAttention.permission}…`
+              : "An agent was blocked by this Mac…",
+            click: () => showSettingsForHostGate(),
+          },
+        ]
+      : []),
     // Update items only when an updater exists (packaged runs) — a dead menu
     // item in a from-source run would just be a lie.
     ...(updates

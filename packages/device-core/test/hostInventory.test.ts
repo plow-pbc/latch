@@ -10,9 +10,12 @@ import os from "node:os";
 import path from "node:path";
 import {
   AUTOMATION_TARGETS,
+  CONSENT_FOLDERS,
   DeviceAgent,
   HeadlessPolicy,
   hostInventory,
+  nodeProbes,
+  requestFolderAccess,
   scriptedProbes,
 } from "@domo/device-core";
 
@@ -164,5 +167,41 @@ describe.skipIf(!ON_MAC)("DeviceAgent.hostInventory through the real executor", 
     expect(inv.vault_key.status).toBe("absent");
     // Self-checks are not operations: nothing in the log.
     expect(device.audit.entries()).toEqual([]);
+  });
+});
+
+describe("requestFolderAccess — the deliberate touch, with the owner present", () => {
+  it("names each folder's switch and what macOS decided, one folder at a time", async () => {
+    const home = "/Users/probe";
+    const probes = scriptedProbes({
+      openAsApp: {
+        [`${home}/Desktop`]: "ok",
+        [`${home}/Documents`]: "EPERM",
+        [`${home}/Downloads`]: "hung",
+      },
+    });
+    const results = await requestFolderAccess(home, { probes });
+    expect(results).toEqual([
+      { folder: "Desktop", permission: "files_desktop", label: "Files and Folders > Desktop Folder", status: "granted" },
+      { folder: "Documents", permission: "files_documents", label: "Files and Folders > Documents Folder", status: "denied" },
+      { folder: "Downloads", permission: "files_downloads", label: "Files and Folders > Downloads Folder", status: "unanswered" },
+    ]);
+    // Sequential: one dialog at a time is what a person can answer.
+    expect(probes.calls).toEqual([
+      `openAsApp ${home}/Desktop`,
+      `openAsApp ${home}/Documents`,
+      `openAsApp ${home}/Downloads`,
+    ]);
+  });
+
+  it("reports a folder that is not there as missing, for real", async () => {
+    const home = tempDir();
+    fs.mkdirSync(path.join(home, "Desktop"));
+    const results = await requestFolderAccess(home, { probes: nodeProbes({ ownerHome: home, timeoutMs: 1_000 }) });
+    expect(results.map((r) => r.status)).toEqual(["granted", "missing", "missing"]);
+  });
+
+  it("covers exactly the three folders with their own switch", () => {
+    expect(CONSENT_FOLDERS.map((f) => f.folder)).toEqual(["Desktop", "Documents", "Downloads"]);
   });
 });
