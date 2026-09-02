@@ -57,20 +57,19 @@ export function parseOnePux(bytes: Uint8Array): ParsedImport {
   const entry = zip.getEntry("export.data");
   if (!entry) throw new Error(NOT_1PUX);
   if (entry.header.size <= 0) throw new Error(NOT_1PUX); // a zero declares no bound at all
-  // Refused before the inflate is even asked for: a deflated entry's inflate
-  // is bounded BY the declared size, so a declared size already past the cap
-  // would still let adm-zip spend up to that much memory chasing a bomb.
-  if (entry.header.size > MAX_INFLATED_BYTES) throw new Error("that export is too large to read");
+  // Both sizes are bounded BEFORE the read: a deflated entry inflates up to
+  // its declared size, and a stored one is copied at its compressed length
+  // whatever the header declares — so neither may exceed the cap.
+  const { size, compressedSize } = entry.header;
+  if (size > MAX_INFLATED_BYTES || compressedSize > MAX_INFLATED_BYTES) {
+    throw new Error("that export is too large to read");
+  }
   let data: Buffer;
   try {
     data = entry.getData();
   } catch {
     throw new Error(NOT_1PUX);
   }
-  // The check above trusts the declared size, but a STORED entry is copied at
-  // its real length regardless of what the header declares — so the actual
-  // read result is checked too, for every method.
-  if (data.length > MAX_INFLATED_BYTES) throw new Error("that export is too large to read");
   let root: Rec;
   try {
     root = rec(JSON.parse(data.toString("utf8")));
