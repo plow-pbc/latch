@@ -54,6 +54,7 @@ describe("cardBrand", () => {
   // half-typed number is never left holding the wrong brand.
   it("settles once the number is long enough to decide", () => {
     expect(cardBrand("62212")).toBe("UnionPay");
+    expect(cardBrand("622125")).toBe("UnionPay");
     expect(cardBrand("622126")).toBe("Discover");
     expect(cardBrand("622926")).toBe("UnionPay");
   });
