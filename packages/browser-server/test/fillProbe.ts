@@ -77,6 +77,7 @@ interface HandleOpts {
   assignFails?: boolean;
   maxLength?: number;
   rewrites?: (t: string) => string;
+  options?: [value: string, label: string][];
 }
 
 /** One resolved DOM node. */
@@ -99,7 +100,10 @@ class Handle implements HandleLike {
   async evaluate(fn: PageFunction, arg?: Any): Promise<Any> {
     if (fn === DOC_TOKEN_JS) return this.o.documentToken ?? "doc-1";
     if (fn === FIELD_CAP_JS) return this.o.maxLength ?? -1;
-    if (fn === HELD_MATCHES_JS) return (this.value || "") === (arg ?? "");
+    if (fn === HELD_MATCHES_JS) {
+      const hit = (this.o.options ?? []).find(([v]) => v === this.value);
+      return (this.value || "") === (arg ?? "") || (hit !== undefined && hit[1] === arg);
+    }
     if (fn === TYPEABLE_JS) return this.o.typeable ?? "single-line";
     if (fn === KEYS_DROPPED_JS) {
       const wanted = (arg as string) ?? "";
@@ -167,6 +171,14 @@ class Handle implements HandleLike {
       this.trace[this.trace.length - 1] = "handle.type-failed";
       throw new Error("Element is not attached to the DOM");
     }
+  }
+
+  async selectOption(wanted: string): Promise<unknown> {
+    this.trace.push("handle.select");
+    const hit = (this.o.options ?? []).find(([v, l]) => v === wanted || l === wanted);
+    if (hit === undefined) throw new Error("did not find some options");
+    this.value = hit[0];
+    return [hit[0]];
   }
 }
 

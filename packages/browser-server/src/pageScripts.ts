@@ -143,12 +143,14 @@ export const DOC_TOKEN_JS = (): string => {
 
 /**
  * What KIND of typing this node takes, or "" for none. Only a <textarea> and a
- * text-carrying <input> are typed at; everything else is assigned. The two
- * differ on whether the node holds a line break (textarea) or strips it (input).
+ * text-carrying <input> are typed at; a single <select> has an option chosen;
+ * everything else is assigned. The two typed kinds differ on whether the node
+ * holds a line break (textarea) or strips it (input).
  */
 export const TYPEABLE_JS = (el: El): string => {
   const tag = el.tagName.toLowerCase();
   if (tag === "textarea") return el.disabled || el.readOnly ? "" : "multiline";
+  if (tag === "select") return el.disabled || el.multiple ? "" : "select";
   if (tag !== "input") return "";
   const typed = ["text", "email", "password", "search", "tel", "url", "number"];
   if (!typed.includes(el.type)) return "";
@@ -190,9 +192,15 @@ export const FIELD_CAP_JS = (el: El): number => {
     : -1;
 };
 
-/** Is the field holding exactly what was put into it? Compared IN THE PAGE. */
-export const HELD_MATCHES_JS = (el: El, wanted: string): boolean =>
-  (typeof el.value === "string" ? el.value : el.textContent || "") === wanted;
+/** Is the field holding exactly what was put into it? Compared IN THE PAGE. A
+ * select was asked for an option by value OR label, so either counts. */
+export const HELD_MATCHES_JS = (el: El, wanted: string): boolean => {
+  if (el.tagName === "SELECT") {
+    const chosen = el.selectedOptions && el.selectedOptions[0];
+    return el.value === wanted || (!!chosen && (chosen.text || "").trim() === wanted);
+  }
+  return (typeof el.value === "string" ? el.value : el.textContent || "") === wanted;
+};
 
 export const UNMASK_JS = (el: El): boolean => {
   el.removeAttribute("data-domo-secret");
