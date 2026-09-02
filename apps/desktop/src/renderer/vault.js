@@ -97,11 +97,11 @@ const VAULT_TYPES = {
  * "", which is the form saying nothing rather than guessing.
  */
 export function cardBrand(number) {
-  const d = String(number ?? "").replace(/\D/g, "");
+  const d = number.replace(/\D/g, "");
   if (!d) return "";
   const n = (len) => Number(d.slice(0, len));
   if (d[0] === "4") return "Visa";
-  if (/^3[47]/.test(d)) return "American Express";
+  if (/^3[47]/.test(d)) return "Amex";
   if ((n(2) >= 51 && n(2) <= 55) || (d.length >= 4 && n(4) >= 2221 && n(4) <= 2720)) return "Mastercard";
   // 622126-622925 is Discover's block inside 62, and it is read before the
   // UnionPay prefix below or those cards come out labelled UnionPay.
@@ -111,6 +111,24 @@ export function cardBrand(number) {
   if (d.length >= 4 && n(4) >= 3528 && n(4) <= 3589) return "JCB";
   if (/^62/.test(d)) return "UnionPay";
   return "";
+}
+
+/**
+ * The Brand box, filled from the number as it is typed.
+ *
+ * A suggestion, never a lock: the box is ours to rewrite only while it still
+ * holds what we put there. The owner typing their own brand — or clearing the
+ * box, which is them saying "no brand" — takes it back for good, and the form
+ * never touches it again. `ctx.derivedBrand` opens as "" so an untouched empty
+ * box is ours and a cleared one is not; the brand input is read at event time
+ * because it is built after the number.
+ */
+export function wireCardBrand(numberInput, ctx) {
+  numberInput.addEventListener("input", () => {
+    const brand = ctx.inputs.brand;
+    if (!brand || brand.value !== ctx.derivedBrand) return;
+    brand.value = ctx.derivedBrand = cardBrand(numberInput.value);
+  });
 }
 
 function errText(err) {
@@ -340,18 +358,7 @@ function vfield(spec, ctx) {
   vbaseline(input);
   ctx.inputs[spec.key] = input;
 
-  /* The Brand box fills itself from the number as it is typed — see
-     cardBrand(). It is a suggestion, never a lock: the moment the owner types
-     their own brand the form stops touching the box, and a box still holding
-     what WE put there is the only one we overwrite. The brand input is looked
-     up at event time because it is built after this one. */
-  if (spec.key === "number") {
-    input.addEventListener("input", () => {
-      const brand = ctx.inputs.brand;
-      if (!brand || (brand.value && brand.value !== ctx.derivedBrand)) return;
-      brand.value = ctx.derivedBrand = cardBrand(input.value);
-    });
-  }
+  if (spec.key === "number") wireCardBrand(input, ctx);
 
   const buttons = [];
   const held = !!(spec.secret && ctx.saved && (ctx.item.secrets || []).includes(spec.key));
@@ -470,7 +477,7 @@ function vurls(ctx) {
 /** Every group of a type's form, built once and shared by the sheet and the row. */
 function vformBody(type, item) {
   const spec = VAULT_TYPES[type];
-  const ctx = { item, saved: !!(item && item.id), inputs: {}, urlInputs: [] };
+  const ctx = { item, saved: !!(item && item.id), inputs: {}, urlInputs: [], derivedBrand: "" };
   const name = vfield(
     { key: "name", label: "Item name", required: true, placeholder: spec.placeholder },
     { ...ctx, item: item ? { ...item, fields: { ...item.fields, name: item.name } } : null },
