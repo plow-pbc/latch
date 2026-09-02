@@ -129,7 +129,7 @@ function welcomeScreen() {
 const TRUST_ROWS = [
   {
     title: "Data stays on your Mac",
-    detail: "Your messages, calendar, and logins stay on your device.",
+    detail: "Your messages, calendar, and logins live on your Mac and reach an agent only through actions you approve.",
     glyph: "desktop",
   },
   {
@@ -409,7 +409,7 @@ function dataScreen() {
         el("div", { class: "toggle-row" }, [
           el("span", { class: "toggle-copy" }, [
             el("span", { class: "toggle-detail" }, [
-              el("strong", { text: "Share anonymous usage so we can improve Plow. " }),
+              el("strong", { text: "Share usage data so we can improve Plow. " }),
               document.createTextNode("Never your messages or your data."),
             ]),
           ]),
@@ -434,7 +434,7 @@ function dataScreen() {
             ]),
             el("span", {
               class: "permission-detail",
-              text: "Plow Latch reads your Messages right on your Mac, so you never miss the texts that matter. Apple keeps Messages behind this permission, and nothing ever leaves your device.",
+              text: "Plow Latch reads your Messages right on your Mac, so you never miss the texts that matter. Apple keeps Messages behind this permission. Only what you approve an agent to read is ever sent to it.",
             }),
           ]),
           el("span", { class: "permission-control" }, [permissionControl]),
