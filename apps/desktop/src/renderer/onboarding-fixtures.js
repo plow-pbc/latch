@@ -16,6 +16,7 @@ export function onboardingFixtures(now) {
     activation: null,
     activationStale: false,
     telemetryEnabled: true,
+    welcomeEntrancePlayed: false,
   };
   const noAgents = { cloudAgents: [], cloudAgentsError: null };
   const elm = {
@@ -27,6 +28,21 @@ export function onboardingFixtures(now) {
     {
       name: "welcome",
       state: { ...base, step: "welcome" },
+      cloud: noAgents,
+      expect: [
+        "Presents",
+        "Plow Latch",
+        "The privacy and security layer for agents",
+        "nothing you don't want to share ever leaves your computer",
+        "Get started",
+      ],
+      expectFocus: "Get started",
+      expectTitle: "Plow Latch. Set Up.",
+      expectAriaLabel: "Plow Latch Set Up",
+    },
+    {
+      name: "welcome-repeat",
+      state: { ...base, step: "welcome", welcomeEntrancePlayed: true },
       cloud: noAgents,
       expect: [
         "Presents",
@@ -82,6 +98,28 @@ export function onboardingFixtures(now) {
       expectFocus: "Open Messages to activate",
     },
     {
+      name: "verify-rearm",
+      state: { ...base, step: "activate", activation },
+      cloud: noAgents,
+      expect: [
+        "Verify your phone to connect this Mac",
+        "Send the message below from the phone number you want to use with Plow",
+        displayCode,
+        `Plow Activate: ${displayCode}`,
+        sendTo,
+        "Send to:",
+        "Keep this private",
+        "Anyone who sends this code from their number can link it to this Plow account",
+        "Waiting for your text",
+        "Open Messages to activate",
+        "Continue",
+        "Still waiting? Send it again",
+        "That code still works — send it exactly as shown and this screen will move on by itself.",
+      ],
+      reject: ["Get a new code", "Use a phone code instead"],
+      expectFocus: "Open Messages to activate",
+    },
+    {
       name: "verified",
       state: { ...base, step: "verified", activation },
       cloud: noAgents,
@@ -102,6 +140,7 @@ export function onboardingFixtures(now) {
       state: {
         ...base,
         step: "welcome",
+        welcomeEntrancePlayed: true,
         message:
           "Signed out on this Mac. Plow could not be reached to revoke the session — revoke it in Plow's account settings.",
       },

@@ -132,6 +132,8 @@ export interface OnboardingState {
   activationStale: boolean;
   /** The data screen's pending choice. It is persisted only on Continue. */
   telemetryEnabled: boolean;
+  /** Whether this home has already published its full Welcome entrance. */
+  welcomeEntrancePlayed: boolean;
 }
 
 export interface OnboardingDeps {
@@ -169,10 +171,12 @@ export class Onboarding {
   private pendingMintId = 0;
   private mints = 0;
   private telemetryEnabled: boolean;
+  private welcomeEntrancePlayed: boolean;
 
   constructor(private readonly deps: OnboardingDeps) {
     const settings = this.settings();
     this.telemetryEnabled = settings.telemetryEnabled;
+    this.welcomeEntrancePlayed = settings.welcomeEntrancePlayed;
     this.step = this.initialStep(settings);
   }
 
@@ -185,7 +189,18 @@ export class Onboarding {
       activation: this.activation,
       activationStale: this.activationStale,
       telemetryEnabled: this.telemetryEnabled,
+      welcomeEntrancePlayed: this.welcomeEntrancePlayed,
     };
+  }
+
+  /** Remember the first Welcome only after the renderer says it published it. */
+  welcomePublished(): OnboardingState {
+    if (this.welcomeEntrancePlayed) return this.state();
+    const settings = this.settings();
+    settings.welcomeEntrancePlayed = true;
+    this.save(settings);
+    this.welcomeEntrancePlayed = true;
+    return this.state();
   }
 
   /** Advance the presentational steps and commit the data-screen choice. */
@@ -513,6 +528,7 @@ export class Onboarding {
     this.busy = false;
     const settings = this.settings();
     this.telemetryEnabled = settings.telemetryEnabled;
+    this.welcomeEntrancePlayed = settings.welcomeEntrancePlayed;
     this.step = this.initialStep(settings);
     return this.publish();
   }

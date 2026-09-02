@@ -22,6 +22,10 @@ let current = currentFixture.state;
 let currentFullDiskAccess = false;
 let newCodeRequests = 0;
 ipcMain.handle("onboarding:get", async () => current);
+ipcMain.handle("onboarding:welcomePublished", async () => {
+  current = { ...current, welcomeEntrancePlayed: true };
+  return current;
+});
 ipcMain.handle("onboarding:newCode", async () => {
   newCodeRequests += 1;
   current = {
@@ -44,9 +48,8 @@ ipcMain.handle("onboarding:finish", async () => {});
 ipcMain.handle("cloud:agents", async () => currentFixture.cloud);
 ipcMain.handle("cloud:openMessages", async () => true);
 
-const verifyFixture = SCREENS.find((fixture) => fixture.name === "verify");
-verifyFixture.expect = [...verifyFixture.expect, REARM_NOTE];
-verifyFixture.prepare = async (win) => {
+const verifyRearmFixture = SCREENS.find((fixture) => fixture.name === "verify-rearm");
+verifyRearmFixture.prepare = async (win) => {
   const requestsBefore = newCodeRequests;
   const displayCodeBefore = await win.webContents.executeJavaScript(
     `document.querySelector(".message-code")?.textContent.trim() ?? ""`,
@@ -86,9 +89,12 @@ app.whenReady().then(async () => {
       current = fixture.state;
       currentFullDiskAccess = fixture.fullDiskAccess === true;
       await win.loadFile(path.join(dist, "renderer/onboarding.html"));
-      // The Welcome mark resolves its draw/fill/sheen sequence at 1.75s. Shoot
-      // its resting state rather than a deliberately half-drawn frame.
-      await new Promise((resolve) => setTimeout(resolve, fixture.name === "welcome" ? 1900 : 400));
+      // The full Welcome resolves its last delayed reveal at about 2.08s. Shoot
+      // its resting state rather than a deliberately half-revealed frame.
+      const settleMs = fixture.name === "welcome"
+        ? 2400
+        : fixture.name === "welcome-repeat" ? 450 : 400;
+      await new Promise((resolve) => setTimeout(resolve, settleMs));
     },
   });
   app.exit(failures ? 1 : 0);

@@ -16,7 +16,7 @@ function ruleHas(css: string, selector: string, declaration: RegExp): boolean {
 }
 
 describe("onboarding first paint", () => {
-  it("keeps a newly-created setup window hidden until its renderer is ready", () => {
+  it("keeps setup hidden until its renderer is ready, including repeat open requests", () => {
     const main = source("src/main.ts");
     const start = main.indexOf("function openOnboardingWindow(): void");
     const end = main.indexOf("/**\n * The login gate", start);
@@ -24,7 +24,10 @@ describe("onboarding first paint", () => {
 
     expect(openOnboardingWindow).toMatch(/show:\s*false,/);
     expect(openOnboardingWindow).toMatch(
-      /\.once\("ready-to-show",\s*\(\)\s*=>\s*\{[\s\S]*?\.show\(\);[\s\S]*?\}\);/,
+      /if \(onboardingWindowReady === onboardingWindow\) onboardingWindow\.show\(\);/,
+    );
+    expect(openOnboardingWindow).toMatch(
+      /\.once\("ready-to-show",\s*\(\)\s*=>\s*\{[\s\S]*?onboardingWindowReady = win;[\s\S]*?win\.show\(\);[\s\S]*?\}\);/,
     );
   });
 
@@ -47,6 +50,42 @@ describe("onboarding first paint", () => {
       reducedMotion,
       ".wizard-screen.is-welcome .plw-mark",
       /fill-opacity:\s*1\s*!important;/,
+    )).toBe(true);
+  });
+
+  it("uses a sub-half-second fade with no stroke draw on repeat visits", () => {
+    const css = source("src/renderer/onboarding.css");
+
+    expect(ruleHas(
+      css,
+      ".wizard-screen.is-welcome.entering-short .plw-mark",
+      /animation:\s*none;/,
+    )).toBe(true);
+    expect(ruleHas(
+      css,
+      ".wizard-screen.is-welcome.entering-short .welcome-logo",
+      /animation:\s*welcome-short-fade\s+400ms/,
+    )).toBe(true);
+    expect(ruleHas(
+      css,
+      "body.on-welcome.welcome-short .wizard-footer .nav-next",
+      /animation:\s*welcome-short-fade\s+400ms/,
+    )).toBe(true);
+  });
+
+  it("keeps an in-progress Welcome on same-step renders and has a resting fallback", () => {
+    const renderer = source("src/renderer/onboarding.js");
+    const css = source("src/renderer/onboarding.css");
+
+    expect(renderer).toMatch(
+      /const continuingWelcome = state\.step === "welcome" && screen\.classList\.contains\("is-welcome"\);/,
+    );
+    expect(renderer).toMatch(/if \(state\.step === "welcome" && !continuingWelcome\)/);
+    expect(renderer).toMatch(/screen\.classList\.add\("no-entrance"\)/);
+    expect(ruleHas(
+      css,
+      ".wizard-screen.is-welcome.no-entrance .plw-mark",
+      /fill-opacity:\s*1;/,
     )).toBe(true);
   });
 });

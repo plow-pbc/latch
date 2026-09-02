@@ -209,6 +209,7 @@ let onboarding: Onboarding | null = null;
 let connectClient: ConnectClient | null = null;
 let cloudAgents: CloudAgentState | null = null;
 let onboardingWindow: BrowserWindow | null = null;
+let onboardingWindowReady: BrowserWindow | null = null;
 let updates: UpdateController | null = null;
 let telemetry: Telemetry | null = null;
 
@@ -770,6 +771,7 @@ function agentsTabState(): Record<string, unknown> | null {
 // notification, so a getter that notifies is an unbroken re-render loop that
 // leaves the window rendered but inert. See the note in onboarding.ts.
 ipcMain.handle("onboarding:get", async () => onboarding?.state() ?? null);
+ipcMain.handle("onboarding:welcomePublished", async () => onboarding?.welcomePublished() ?? null);
 ipcMain.handle("onboarding:begin", async () => onboarding?.begin());
 ipcMain.handle("onboarding:advance", async () => onboarding?.advance());
 ipcMain.handle("onboarding:back", async () => onboarding?.back());
@@ -1297,7 +1299,7 @@ function notifyRenderer(channel: string): void {
  */
 function openOnboardingWindow(): void {
   if (onboardingWindow && !onboardingWindow.isDestroyed()) {
-    onboardingWindow.show();
+    if (onboardingWindowReady === onboardingWindow) onboardingWindow.show();
     onboardingWindow.focus();
     return;
   }
@@ -1319,10 +1321,14 @@ function openOnboardingWindow(): void {
   });
   const win = onboardingWindow;
   win.once("ready-to-show", () => {
-    if (!win.isDestroyed()) win.show();
+    if (!win.isDestroyed()) {
+      onboardingWindowReady = win;
+      win.show();
+    }
   });
   onboardingWindow.on("closed", () => {
     if (onboardingWindow === win) onboardingWindow = null;
+    if (onboardingWindowReady === win) onboardingWindowReady = null;
     notifyRenderer("status:changed"); // Settings re-reads what changed
     // Every hand-over from a completed setup to the main window closes this
     // window — Continue, the close box, the tray — so this is the one place

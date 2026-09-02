@@ -519,13 +519,17 @@ function footerForStep() {
   };
 }
 
-function playWelcomeEntrance() {
+function playWelcomeEntrance(variant) {
   const mark = screen.querySelector(".plw-mark");
-  if (!mark) return;
+  if (!mark) {
+    screen.classList.add("no-entrance");
+    document.body.classList.add("welcome-no-entrance");
+    return;
+  }
   requestAnimationFrame(() => {
     requestAnimationFrame(() => {
       if (!mark.isConnected) return;
-      if (typeof mark.getTotalLength === "function") {
+      if (variant === "full" && typeof mark.getTotalLength === "function") {
         try {
           const length = Math.ceil(mark.getTotalLength());
           if (length > 0) screen.style.setProperty("--plw-len", length);
@@ -534,9 +538,18 @@ function playWelcomeEntrance() {
           // conservative fallback length and the filled resting mark still shows.
         }
       }
-      screen.classList.add("entering");
+      screen.classList.add(`entering-${variant}`);
+      document.body.classList.add(`welcome-${variant}`);
     });
   });
+}
+
+function refreshWelcomeNote() {
+  const wrap = screen.querySelector(".welcome-wrap");
+  if (!wrap) return;
+  wrap.querySelector(".state-note")?.remove();
+  const next = note(state);
+  if (next) wrap.append(next);
 }
 
 function render() {
@@ -545,9 +558,15 @@ function render() {
   expiryTimer = null;
   if (state.step !== "data") restoreTelemetryFocus = false;
 
-  screen.className = `wizard-screen is-${state.step}`;
-  screen.replaceChildren(screenForStep());
-  body.scrollTop = 0;
+  const continuingWelcome = state.step === "welcome" && screen.classList.contains("is-welcome");
+  if (continuingWelcome) {
+    refreshWelcomeNote();
+  } else {
+    screen.className = `wizard-screen is-${state.step}`;
+    screen.replaceChildren(screenForStep());
+    body.scrollTop = 0;
+    document.body.classList.remove("welcome-full", "welcome-short", "welcome-no-entrance");
+  }
   document.body.classList.toggle("on-welcome", state.step === "welcome");
 
   const config = footerForStep();
@@ -568,7 +587,11 @@ function render() {
     primaryAction = null;
   }
 
-  if (state.step === "welcome") playWelcomeEntrance();
+  if (state.step === "welcome" && !continuingWelcome) {
+    const variant = state.welcomeEntrancePlayed ? "short" : "full";
+    playWelcomeEntrance(variant);
+    if (variant === "full") void window.domo.onboardingWelcomePublished().catch(() => {});
+  }
   if (state.step === "data") void refreshFullDiskAccess();
 
   const telemetryFocus = restoreTelemetryFocus

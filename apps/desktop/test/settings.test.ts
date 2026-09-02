@@ -130,6 +130,15 @@ describe("settings storage", () => {
     expect(loadSettings(home).setupComplete).toBe(true);
   });
 
+  it("defaults the Welcome entrance to unplayed, and persists it per home", () => {
+    const home = tempHome();
+    expect(loadSettings(home).welcomeEntrancePlayed).toBe(false);
+    const settings = loadSettings(home);
+    settings.welcomeEntrancePlayed = true;
+    saveSettings(home, settings);
+    expect(loadSettings(home).welcomeEntrancePlayed).toBe(true);
+  });
+
   it("leaves a home that already chose a tab exactly where it was", () => {
     const home = tempHome();
     const settings = loadSettings(home);
