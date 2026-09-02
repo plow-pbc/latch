@@ -40,12 +40,17 @@ export interface ImportedLogin {
    * password or key CHANGED in the source: the save this row becomes is an
    * edit of that item, touching only the fields named here. */
   update?: { itemId: string; revision: string; fields: ("password" | "totp")[] };
+  /** The 1Password vault the login came from (1PUX only); absent for CSV
+   * and pasted items, which know no vaults. Display data for the sheet's
+   * vault step — never a key. */
+  vault?: string;
 }
 
 /** A row that will not be imported, and the reason it will not. */
 export interface SkippedRow {
   title: string;
   reason: string;
+  vault?: string;
 }
 
 export interface ParsedImport {
@@ -436,6 +441,7 @@ export interface ImportPreviewItem {
   /** Which secrets changed on an item the vault already holds — importing
    * this row updates that item's named fields. Empty for a new row. */
   changed: ("password" | "totp")[];
+  vault?: string;
 }
 
 export interface ImportPreview {
@@ -458,6 +464,7 @@ export function importPreview(parsed: ParsedImport): ImportPreview {
       warnings: l.warnings,
       duplicate: l.duplicate === true,
       changed: l.update ? [...l.update.fields] : [],
+      ...(l.vault ? { vault: l.vault } : {}),
     })),
     skipped: parsed.skipped,
   };
