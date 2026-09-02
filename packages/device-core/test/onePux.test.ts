@@ -113,15 +113,17 @@ describe("parseOnePux", () => {
     expect(parsed.logins[0]!.totp).toContain(TOTP_KEY);
   });
 
-  it("sets aside archived items, non-logins and site-less logins, each under its vault", () => {
+  it("sets aside archived items, non-logins and site-less logins, each under its vault — but keeps a login when only one of its URLs is unreadable", () => {
     const parsed = parseOnePux(onePux([{ name: "Personal", items: [
       login("Old", { state: "archived" }),
       { uuid: "c", categoryUuid: "002", state: "active", overview: { title: "Visa" }, details: {} },
       { uuid: "k", categoryUuid: "114", state: "active", overview: { title: "deploy key" }, details: {} },
       login("Router", { overview: { title: "Router" } }),
+      login("Mixed", { overview: { title: "Mixed", urls: [{ label: "good", url: "https://good.example.com" }, { label: "junk", url: "not a url" }] } }),
       login("Live"),
     ] }]));
-    expect(parsed.logins.map((l) => l.title)).toEqual(["Live"]);
+    expect(parsed.logins.map((l) => l.title)).toEqual(["Mixed", "Live"]);
+    expect(parsed.logins[0]!.urls).toEqual(["https://good.example.com"]);
     expect(parsed.skipped).toEqual([
       { title: "Old", reason: "archived in 1Password", vault: "Personal" },
       { title: "Visa", reason: "a credit card, not a login", vault: "Personal" },

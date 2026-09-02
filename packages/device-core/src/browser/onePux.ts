@@ -71,7 +71,8 @@ export function parseOnePux(bytes: Uint8Array): ParsedImport {
 function itemToLogin(item: Rec, vault: string, skipped: SkippedRow[]): ImportedLogin | null {
   const overview = rec(item.overview);
   const details = rec(item.details);
-  const title = str(overview.title).trim() || "(untitled)";
+  const rawTitle = str(overview.title).trim();
+  const title = rawTitle || "(untitled)";
   const skip = (reason: string) => { skipped.push({ title, reason, vault }); return null; };
 
   const category = str(item.categoryUuid);
@@ -81,12 +82,16 @@ function itemToLogin(item: Rec, vault: string, skipped: SkippedRow[]): ImportedL
   const rawUrls = list(overview.urls).map((u) => str(u.url).trim()).filter(Boolean);
   if (rawUrls.length === 0 && str(overview.url).trim()) rawUrls.push(str(overview.url).trim());
   if (rawUrls.length === 0) return skip("has no website address; add it by hand as a new item if you still use it");
-  let urls: string[];
-  try {
-    urls = checkedUrls(rawUrls);
-  } catch {
-    return skip("its website address could not be read");
-  }
+  // One bad URL should not sink the whole login: keep whichever ones
+  // checkedUrls accepts on their own, and only give up when none survive.
+  const urls = rawUrls.flatMap((u) => {
+    try {
+      return checkedUrls([u]);
+    } catch {
+      return [];
+    }
+  });
+  if (urls.length === 0) return skip("its website address could not be read");
 
   const fields = list(details.loginFields);
   const designated = (want: string) => str(fields.find((f) => f.designation === want)?.value);
@@ -105,7 +110,7 @@ function itemToLogin(item: Rec, vault: string, skipped: SkippedRow[]): ImportedL
   }
 
   const login = finishImportedLogin(
-    { title: str(overview.title).trim(), urls, username: designated("username").trim(), password: designated("password"), totpRaw, notes: str(details.notesPlain) },
+    { title: rawTitle, urls, username: designated("username").trim(), password: designated("password"), totpRaw, notes: str(details.notesPlain) },
     [],
   );
   return { ...login, vault };
