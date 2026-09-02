@@ -17,6 +17,11 @@ import { finishImportedLogin, type ImportedLogin, type ParsedImport, type Skippe
 
 const NOT_1PUX = "this doesn't look like a 1PUX export. In 1Password choose File > Export, pick your account, and choose the 1PUX format";
 
+// A legitimate export.data is at most a few MB even with thousands of items;
+// this bounds what a corrupted or hostile entry can inflate to, so a bad
+// stream fails fast instead of exhausting memory (a classic zip bomb).
+const MAX_INFLATED_BYTES = 256 * 1024 * 1024;
+
 /** What a non-login category is called when it is set aside. */
 const CATEGORY_NAMES: Record<string, string> = {
   "002": "a credit card",
@@ -139,7 +144,13 @@ function zipEntry(bytes: Uint8Array, name: string): Uint8Array | null {
     const start = local + 30 + buf.readUInt16LE(local + 26) + buf.readUInt16LE(local + 28);
     const data = buf.subarray(start, start + compressed);
     if (method === 0) return data;
-    if (method === 8) return zlib.inflateRawSync(data);
+    if (method === 8) {
+      try {
+        return zlib.inflateRawSync(data, { maxOutputLength: MAX_INFLATED_BYTES });
+      } catch {
+        throw new Error(NOT_1PUX);
+      }
+    }
     throw new Error("that export is compressed in a way this importer cannot read");
   }
   return null;

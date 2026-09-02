@@ -14,14 +14,18 @@ const TOTP_KEY = "JBSWY3DPEHPK3PXP";
 /** A minimal zip writer: local headers, central directory, end record.
  * CRCs are written as zero — the reader does not check them, and 1PUX
  * readers in the wild don't either. */
-function zipOf(entries: Record<string, string>, opts: { deflate: boolean }): Uint8Array {
+function zipOf(entries: Record<string, string | Uint8Array>, opts: { deflate: boolean }): Uint8Array {
   const parts: Buffer[] = [];
   const central: Buffer[] = [];
   let offset = 0;
-  for (const [name, text] of Object.entries(entries)) {
-    const raw = Buffer.from(text, "utf8");
-    const data = opts.deflate ? zlib.deflateRawSync(raw) : raw;
-    const method = opts.deflate ? 8 : 0;
+  for (const [name, value] of Object.entries(entries)) {
+    // A Uint8Array entry is bytes already compressed by the caller (for
+    // building an oversized deflate stream); it is stored under method 8
+    // as-is, ignoring `opts.deflate`.
+    const precompressed = value instanceof Uint8Array;
+    const raw = precompressed ? Buffer.from(value) : Buffer.from(value, "utf8");
+    const data = precompressed ? raw : opts.deflate ? zlib.deflateRawSync(raw) : raw;
+    const method = precompressed || opts.deflate ? 8 : 0;
     const nameBuf = Buffer.from(name, "utf8");
     const local = Buffer.alloc(30);
     local.writeUInt32LE(0x04034b50, 0);
@@ -144,6 +148,22 @@ describe("parseOnePux", () => {
     expect(() => parseOnePux(zipOf({ "readme.txt": "hi" }, { deflate: true }))).toThrow(/1PUX/);
     expect(() => parseOnePux(new Uint8Array(Buffer.from("Title,URL\n")))).toThrow(/1PUX/);
     expect(() => parseOnePux(zipOf({ "export.data": "{\"nope\":1}" }, { deflate: false }))).toThrow(/1PUX/);
+  });
+
+  it("refuses a truncated deflate stream with the friendly message, not a raw zlib error", () => {
+    const zip = onePux([{ name: "Personal", items: [login("Dropbox")] }]);
+    // Chop the tail off the compressed export.data entry so it decodes as a
+    // corrupted deflate stream (Z_DATA_ERROR) rather than a valid one.
+    const truncated = new Uint8Array(zip.slice(0, zip.length - 30));
+    expect(() => parseOnePux(truncated)).toThrow(/1PUX/);
+  });
+
+  it("refuses an export.data entry that would inflate past the size bound", () => {
+    // Highly repetitive, so it compresses to a tiny blob but still decodes
+    // past the 256 MiB cap — the shape a hostile or corrupted zip bomb takes.
+    const huge = zlib.deflateRawSync(Buffer.alloc(300 * 1024 * 1024, "a"));
+    const zip = zipOf({ "export.data": huge }, { deflate: false });
+    expect(() => parseOnePux(zip)).toThrow(/1PUX/);
   });
 
   it("previews with the vault name and never a secret", () => {
