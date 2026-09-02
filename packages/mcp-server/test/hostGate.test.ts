@@ -215,3 +215,23 @@ describe.skipIf(!ON_MAC)("a command this Mac refused", () => {
     expect(payload.diagnosis).toBeUndefined();
   });
 });
+
+describe("plow_device_status", () => {
+  it("answers the standing inventory with no intent and no approval", async () => {
+    const probes = scriptedProbes({ automation: { Messages: "denied", Contacts: "target_not_running" } });
+    const { server, device } = makeServer(probes);
+    const { payload, isError } = await callTool(server, "plow_device_status", {}, AGENT);
+    expect(isError).toBe(false);
+    expect(payload.checked_at).toMatch(/^\d{4}-/);
+    expect(payload.full_disk_access.granted).toBe(false);
+    expect(payload.automation).toEqual([
+      { target: "Messages", status: "denied" },
+      { target: "Contacts", status: "target_not_running" },
+    ]);
+    expect(payload.automation_queryable).toBe(true);
+    expect(["ok", "failed"]).toContain(payload.sandbox.status);
+    expect(payload.vault_key.status).toBe("absent");
+    // A read of what macOS decided, not an operation on the Mac.
+    expect(events(device)).toEqual([]);
+  });
+});

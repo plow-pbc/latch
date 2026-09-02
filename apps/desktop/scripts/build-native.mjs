@@ -1,11 +1,16 @@
 // Compile the native helpers in native/ into dist/native/.
 //
-// Three artifacts today, all Swift, all built universal (arm64 + x86_64,
+// Four artifacts today, all Swift, all built universal (arm64 + x86_64,
 // lipo-fused) so each is byte-identical in both of electron-builder's arch
 // passes and the universal merge copies it through untouched:
 //
 //  - settings-window-frame — the window tracker the Full Disk Access grant
 //    flow follows System Settings with (see src/permissionFlow.ts).
+//  - host-permissions — answers, without prompting, what macOS has decided
+//    about Automation (per target app), Accessibility and Screen Recording;
+//    the one probe the host-gate diagnosis (device-core's hostGate/) cannot
+//    make from Node. Without it those answers are "unknown" and everything
+//    else still works.
 //  - libdomo-credential-import.dylib — the Swift shim behind receiving an
 //    Apple Passwords credential exchange (ASCredentialImportManager is
 //    Swift-only API); loaded in-process via @domo/native-credential-import.
@@ -121,6 +126,21 @@ const compileUniversal = (tmp, output, { sources, target, extraArgs = [] }) => {
   const output = path.join(outDir, "settings-window-frame");
   build("helper settings-window-frame", [source], output, (tmp) => {
     compileUniversal(tmp, output, { sources: [source], target: "macos13.0" });
+    fs.chmodSync(output, 0o755);
+  });
+}
+
+// 1b) The permission-status helper (a plain CLI). Apple events need the
+// AE framework, which CoreServices re-exports.
+{
+  const source = path.join(nativeDir, "host-permissions.swift");
+  const output = path.join(outDir, "host-permissions");
+  build("helper host-permissions", [source], output, (tmp) => {
+    compileUniversal(tmp, output, {
+      sources: [source],
+      target: "macos13.0",
+      extraArgs: ["-framework", "AppKit", "-framework", "CoreServices"],
+    });
     fs.chmodSync(output, 0o755);
   });
 }

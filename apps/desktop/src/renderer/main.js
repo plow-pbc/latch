@@ -2140,11 +2140,58 @@ async function renderSettings() {
     clearInterval(grantTimer);
     grantTimer = null;
   };
+  // The rest of the inventory (device-core's hostGate/inventory.ts): the
+  // Automation consent per app the skills drive, and the app's own
+  // self-checks. Rendered as one list under the Full Disk Access row, each
+  // line a dot and a sentence, rebuilt from the snapshot on every read — the
+  // renderer keeps nothing of its own.
+  const inventoryList = el("div", { class: "inventory" });
+  const inventoryRow = (on, title, detail) =>
+    el("div", { class: "inventory-row" }, [
+      el("span", { class: "status-dot" + (on === true ? " on" : on === null ? " unknown" : "") }),
+      el("span", { class: "inventory-title", text: title }),
+      el("span", { class: "faint", text: detail }),
+    ]);
+  const automationWords = {
+    granted: "allowed",
+    denied: "not allowed — System Settings > Privacy & Security > Automation",
+    not_asked: "macOS will ask on the Mac's screen the first time",
+    target_not_running: "unknown until that app is open",
+    unknown: "cannot be checked in this build",
+  };
+  const applyInventory = (inv) => {
+    inventoryList.replaceChildren();
+    if (!inv) return;
+    for (const a of inv.automation) {
+      const on = a.status === "granted" ? true : a.status === "denied" ? false : null;
+      inventoryList.appendChild(inventoryRow(on, `Control ${a.target}`, automationWords[a.status] ?? a.status));
+    }
+    inventoryList.appendChild(inventoryRow(
+      inv.sandbox.status === "ok",
+      "Command sandbox",
+      inv.sandbox.status === "ok" ? "sandbox-exec runs" : `cannot run commands — ${inv.sandbox.detail ?? "unknown"}`,
+    ));
+    if (inv.child_attribution.status !== "not_applicable") {
+      inventoryList.appendChild(inventoryRow(
+        inv.child_attribution.status === "ok",
+        "Commands inherit Full Disk Access",
+        inv.child_attribution.status === "ok" ? "a command can read what the app can" : (inv.child_attribution.detail ?? "broken"),
+      ));
+    }
+    if (inv.vault_key.status !== "absent") {
+      inventoryList.appendChild(inventoryRow(
+        inv.vault_key.status === "ok" ? true : inv.vault_key.status === "locked" ? false : null,
+        "Browser vault key",
+        inv.vault_key.status === "ok" ? "opens on this Mac" : (inv.vault_key.reason ?? inv.vault_key.status),
+      ));
+    }
+  };
   const applyCapabilities = (caps) => {
     fdaGranted = caps.fullDiskAccess;
     capDot.className = "status-dot" + (caps.fullDiskAccess ? " on" : "");
     capStatus.textContent = caps.fullDiskAccess ? "Granted" : "Not granted";
     if (caps.fullDiskAccess) stopGrantFlow();
+    applyInventory(caps.inventory ?? null);
   };
   const startGrantFlow = () => {
     if (grantTimer !== null || fdaGranted) return;
@@ -2232,6 +2279,7 @@ async function renderSettings() {
         el("div", { class: "spacer" }),
         openFullDisk,
       ]),
+      inventoryList,
     ]),
     group("Availability", "Agents can reach this Mac only while Plow Latch is running and the Mac is awake.", [
       el("div", { class: "support-row" }, [

@@ -39,12 +39,15 @@ import {
   diagnosisPayload,
   guardedPrefix,
   HostFacts,
+  hostInventory,
+  HostInventory,
   HostProbes,
   isHostGate,
   nodeProbes,
   parseNodeError,
   stderrHint,
 } from "./hostGate/index.js";
+import { readCredentialsState } from "./browser/vaultCredentials.js";
 import { DeviceIdentity, loadOrCreateIdentity } from "./identity.js";
 import { PolicyDelegate, PolicyEngine } from "./policyEngine.js";
 import { SkillRegistry } from "./skills.js";
@@ -427,6 +430,38 @@ export class DeviceAgent {
     const item = await this.credentialBroker.describeItem(itemId);
     this.audit.record("credential_metadata", { op: "describe", item: itemId, source: "vault" });
     return { status: "completed", ...item };
+  }
+
+  /**
+   * What this Mac lets the app do right now (hostGate/inventory.ts): the
+   * permissions and self-checks, one fresh snapshot. The Settings pane and
+   * the `plow_device_status` tool both read this, so they cannot disagree.
+   *
+   * The sandbox rows go through the REAL executor with a throwaway profile:
+   * a read-only run, no network, no writes, so it is also reapable — and
+   * `/usr/bin/true` exits at once regardless.
+   */
+  async hostInventory(): Promise<HostInventory> {
+    const vaultDir = this.vaultDir;
+    return hostInventory({
+      probes: this.hostProbes,
+      ownerHome: this.ownerHome,
+      runSandboxed:
+        process.platform === "darwin"
+          ? async (argv) => {
+              const result = await this.executor.run({
+                argv,
+                readPaths: [],
+                writePaths: [],
+                network: false,
+                appleEvents: false,
+                waitMs: 5_000,
+              });
+              return { exitCode: result.exitCode, output: result.output.toString("utf8") };
+            }
+          : null,
+      vaultKey: vaultDir === null ? null : () => readCredentialsState(vaultDir),
+    });
   }
 
   /** Close any live browser session. The vault needs no stopping any more —

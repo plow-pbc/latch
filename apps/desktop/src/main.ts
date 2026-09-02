@@ -30,6 +30,7 @@ import {
   PaymentApprovalClient,
   PaymentApprovalRequest,
   plowFolderPath,
+  nodeProbes,
   PolicyDelegate,
   probeFullDiskAccess,
   importLogins,
@@ -1189,18 +1190,33 @@ ipcMain.handle("status:get", async () => ({
   name: device?.identity.name ?? "",
   connected: connected,
 }));
-// macOS permission ceilings on the app itself — today just Full Disk Access.
-// A fresh probe per read, because the answer changes outside the app (in
-// System Settings) and there is no event to invalidate a cache on.
-ipcMain.handle("capabilities:get", async () => ({
-  fullDiskAccess: await probeFullDiskAccess(),
-}));
+// macOS permission ceilings on the app itself, and its self-checks: the
+// device's standing inventory (device-core's hostGate/inventory.ts), which is
+// what `plow_device_status` tells an agent too — one snapshot, so the pane
+// and the tool cannot disagree. A fresh read per call, because the answers
+// change outside the app (in System Settings) and there is no event to
+// invalidate a cache on. `fullDiskAccess` stays as the flat boolean the
+// grant flow's poll reads.
+ipcMain.handle("capabilities:get", async () => {
+  const inventory = device ? await device.hostInventory() : null;
+  return {
+    fullDiskAccess: inventory ? inventory.full_disk_access.granted : await probeFullDiskAccess(),
+    inventory,
+  };
+});
 
 // MARK: Full Disk Access grant flow (permissionFlow.ts)
 
-const fdaHelperPath = app.isPackaged
-  ? path.join(process.resourcesPath, "native", "settings-window-frame")
-  : path.join(dirname, "native", "settings-window-frame");
+/** The compiled native helpers (scripts/build-native.mjs): packaged under
+ *  Contents/Resources/native, from source under dist/native. */
+const nativeHelperPath = (name: string): string =>
+  app.isPackaged
+    ? path.join(process.resourcesPath, "native", name)
+    : path.join(dirname, "native", name);
+const fdaHelperPath = nativeHelperPath("settings-window-frame");
+/** Answers Automation/Accessibility/Screen Recording status without prompting
+ *  (native/host-permissions.swift). Handed to the device's probes above. */
+const hostPermissionsHelperPath = nativeHelperPath("host-permissions");
 
 /**
  * The REAL icon of a bundle on disk, for every screen that shows one (the
@@ -1717,6 +1733,12 @@ app.whenReady().then(async () => {
       repoRoot: path.resolve(app.getAppPath(), "..", ".."),
     }),
     plowPaymentApproval(new PlowApi(apiBaseUrl)),
+    // How a refused operation is investigated (device-core's hostGate/): the
+    // real probes over the owner's real home, with the compiled helper that
+    // answers Automation consent without prompting. No helper (no Swift
+    // toolchain at build time) leaves Automation "unknown" and nothing else
+    // degrades — the same contract as the Full Disk Access tracker.
+    nodeProbes({ ownerHome: os.homedir(), helperPath: hostPermissionsHelperPath }),
   );
   // Same tick as the store's construction (see onAbandoned): an approval that
   // was pending when the app last quit gets closed out in the audit log too,

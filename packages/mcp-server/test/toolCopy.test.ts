@@ -220,6 +220,16 @@ describe("every tool this Mac can stop says so", () => {
     expect(d.plow_run_command).toMatch(/leave it running/);
   });
 
+  it("plow_device_status is offered before another app's data is touched, and needs no approval", async () => {
+    expect(SERVER_INSTRUCTIONS).toMatch(/plow_device_status/);
+    expect(SERVER_INSTRUCTIONS).toMatch(/before trying rather than after being blocked/i);
+    const d = await descriptions(makeServer());
+    expect(d.plow_device_status).toMatch(/no approval needed/);
+    expect(d.plow_device_status).toMatch(/BEFORE reading another app's data/);
+    expect(d.plow_device_status).toMatch(/'not_asked'/);
+    expect(d.plow_device_status).toMatch(/'target_not_running'/);
+  });
+
   it("plow_get_output and plow_get_result name the blocked answer", async () => {
     const d = await descriptions(makeServer());
     expect(d.plow_get_output).toMatch(/'blocked'/);
@@ -379,6 +389,8 @@ describe("every tool says what kind of tool it is", () => {
       hint: "readOnlyHint" as const,
       what: "cannot change this Mac",
       tools: [
+        // A read of what macOS has decided, and the app's own self-checks.
+        "plow_device_status",
         "plow_get_output",
         "plow_get_result",
         "plow_list_skills",
