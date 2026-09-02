@@ -88,12 +88,14 @@ function makeCtx(
           { label: "password", hidden: true, custom: false, alias: false },
           { label: "totp", hidden: true, custom: false, alias: false },
           { label: "shipping address", hidden: false, custom: true, alias: false },
+          { label: "date of birth", hidden: false, custom: true, alias: false },
         ],
         values: {
           username: "jon",
           password: "hunter2",
           totp: "483920",
           "shipping address": "1 Elm St",
+          "date of birth": "unknown",
         },
       },
       {
@@ -652,6 +654,29 @@ describe("fill_secret formats a date of birth", () => {
     expect(released()).toEqual([]);
     expect(typed()).toEqual([]);
   });
+
+  it("refuses a format after the vault answers with a value that is not a date", async () => {
+    // L1's "date of birth" is a CUSTOM field — the label a fixed slot owns on
+    // an identity, but here just a name a person gave a login field — so its
+    // value never passed the write-path ISO validation an identity's own
+    // birthDate does.
+    const handle = await session();
+    const before = ctx.events.length;
+    const result = await ctx.sessions.command(handle, {
+      action: "fill_secret", selector: "#dob", item: "L1", field: "date of birth", format: "MM",
+    });
+    expect(result).toMatchObject({ status: "error", error: expect.stringMatching(/not a date/) });
+    expect(typed()).toEqual([]);
+    expect(commands().some((c) => c.action === "fill")).toBe(false);
+    expect(ctx.events.slice(before).at(-1)).toEqual({
+      event: "credential_fill_failed",
+      fields: {
+        session: audited(), item: "L1", field: "date of birth", origin: "pizza.example",
+        selector: "#dob",
+        reason: "the stored value is not a date",
+      },
+    });
+  });
 });
 
 describe("fill_secret split across single-character boxes", () => {
@@ -686,6 +711,22 @@ describe("fill_secret split across single-character boxes", () => {
       fields: { session: audited(), item: "L1", field: "totp", origin: "pizza.example", boxes: 6 },
     });
     expect(JSON.stringify(ctx.events)).not.toContain("483920");
+  });
+
+  it("splits a formatted date of birth across its boxes, one digit each", async () => {
+    const DOB_BOXES = ["#d1", "#d2", "#d3", "#d4", "#d5", "#d6", "#d7", "#d8"];
+    const handle = await session();
+    const result = await ctx.sessions.command(handle, {
+      action: "fill_secret", selectors: DOB_BOXES, item: "I1", field: "date of birth", format: "MMDDYYYY",
+    });
+    expect(result).toEqual({ status: "completed", ok: true, frame: 0 });
+    // A date of birth is not masked, so no box carries the mark, and the cmd
+    // log redacts fill values — read the fixture's own unredacted fill log for
+    // the character each box actually received.
+    expect(fills()).toEqual(DOB_BOXES.map((selector) => ({ selector })));
+    expect(
+      fs.readFileSync(ctx.fillLog, "utf8").trim().split("\n").map((l) => l.split("\t")[1]),
+    ).toEqual(["1", "1", "0", "9", "1", "9", "8", "4"]);
   });
 
   it("refuses a box count the value does not fill, and types nothing", async () => {

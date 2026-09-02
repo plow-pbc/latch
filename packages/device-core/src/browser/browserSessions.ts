@@ -1175,10 +1175,33 @@ export class BrowserSessions {
 
     const mask = release.hidden;
     let secret = release.value;
-    // formatDate cannot throw here on the pattern — it was checked above — and
-    // the stored value was validated on write, so a throw here is a real bug
-    // and should surface as one.
-    if (format !== "") secret = formatDate(secret, format);
+    // The pattern was checked above and cannot throw again — but the VALUE can:
+    // a CUSTOM field can carry the "date of birth" label (customLabel only
+    // prefixes `custom:` when a fixed slot already owns the name) with
+    // whatever a person typed into it, never passed through the write-path
+    // ISO validation an identity's birthDate gets.
+    if (format !== "") {
+      try {
+        secret = formatDate(secret, format);
+      } catch {
+        secret = "";
+        this.audit("credential_fill_failed", {
+          session: s.auditId,
+          item: itemId,
+          field,
+          origin: frameHost,
+          selector: where,
+          reason: "the stored value is not a date",
+        });
+        return {
+          status: "error",
+          error:
+            `${field} was not filled: the value stored under that name is not a date, so it ` +
+            `cannot be given a format. Fill it without 'format', or store a date of birth on an ` +
+            `identity item.`,
+        };
+      }
+    }
 
     // The split, when there is one, happens here — after the vault answered and
     // before anything is typed. Code points rather than UTF-16 units: a box
