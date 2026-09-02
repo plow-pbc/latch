@@ -7,7 +7,7 @@
 import zlib from "node:zlib";
 import { describe, expect, it } from "vitest";
 import { parseOnePux } from "../src/browser/onePux.js";
-import { importPreview } from "../src/browser/passwordImport.js";
+import { importPreview, importVaults, parsePasswordExport } from "../src/browser/passwordImport.js";
 
 const TOTP_KEY = "JBSWY3DPEHPK3PXP";
 
@@ -164,6 +164,16 @@ describe("parseOnePux", () => {
     // past the 64 MiB cap — the shape a hostile or corrupted zip bomb takes.
     const huge = zlib.deflateRawSync(Buffer.alloc(100 * 1024 * 1024, "a"));
     expect(() => parseOnePux(zipOf({ "export.data": huge }, { deflate: false }))).toThrow(/1PUX/);
+  });
+
+  it("names the vaults a parsed export spans, skipped-only ones included", () => {
+    const parsed = parseOnePux(onePux([
+      { name: "Personal", items: [login("Dropbox")] },
+      { name: "Shared", items: [login("Old", { state: "archived" })] },
+    ]));
+    expect(importVaults(parsed)).toEqual(["Personal", "Shared"]);
+    // A source that knows no vaults names none, so no pick step is offered.
+    expect(importVaults(parsePasswordExport("Title,URL,Username,Password\nA,https://a.example,u,p\n"))).toEqual([]);
   });
 
   it("previews with the vault name and never a secret", () => {

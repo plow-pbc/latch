@@ -470,6 +470,15 @@ export function importPreview(parsed: ParsedImport): ImportPreview {
   };
 }
 
+/** The distinct vault names a parsed import carries — over its logins AND its
+ * skipped rows, so a vault whose every row was skipped is still offered on the
+ * Import sheet's vault step. First-seen order; empty for a source that knows
+ * no vaults (CSV, a paste, an exchange). More than one is what makes the pick
+ * a step at all — see vault:importPick in the desktop app's main.ts. */
+export const importVaults = (p: { logins: { vault?: string }[]; skipped: { vault?: string }[] }): string[] => [
+  ...new Set([...p.logins, ...p.skipped].flatMap((x) => (x.vault ? [x.vault] : []))),
+];
+
 export interface ImportResult {
   saved: number;
   /** Existing items whose changed password or key was written over. */

@@ -52,8 +52,15 @@ export function passwordsAppCanHandOff(systemVersion: string): boolean {
   return major > 26 || (major === 26 && minor >= 4);
 }
 
+/** What a commit consumes: the logins main is holding and the preview the
+ * sheet was shown of them — the pick step re-stages a subset of both. */
+export interface StagedImport {
+  logins: ImportedLogin[];
+  preview: ImportPreview;
+}
+
 export class ImportStaging {
-  private logins: ImportedLogin[] | null = null;
+  private staged: StagedImport | null = null;
   private origin: "sheet" | "exchange" = "sheet";
   private ticket = 0;
   private seq = 0;
@@ -70,7 +77,7 @@ export class ImportStaging {
    * preview comes back stamped (ticket 0 when it did not stage). */
   stageSheet(epoch: number, logins: ImportedLogin[], preview: ImportPreview): StagedPreview {
     if (epoch !== this.epochNow) return { ...preview, ticket: 0 };
-    this.logins = logins;
+    this.staged = { logins, preview };
     this.origin = "sheet";
     this.ticket = ++this.seq;
     // An exchange this replaces is answered for: its preview must not reopen
@@ -84,7 +91,7 @@ export class ImportStaging {
    * must not be overwritten by a slower paste. */
   stageExchange(logins: ImportedLogin[], preview: ImportPreview): StagedPreview {
     this.epochNow++;
-    this.logins = logins;
+    this.staged = { logins, preview };
     this.origin = "exchange";
     this.ticket = ++this.seq;
     this.exchange = { ...preview, ticket: this.ticket };
@@ -98,19 +105,20 @@ export class ImportStaging {
   }
 
   /**
-   * Take the staged logins for a commit. A commit quoting a ticket that is
+   * Take what is staged — for a commit, or for the vault pick, which puts a
+   * subset of it straight back. A commit quoting a ticket that is
    * not the current staging's is refused BEFORE anything is cleared — the
    * newer staging is not the stale sheet's to consume or to drop — and the
    * refusal names what happened rather than importing the wrong rows.
    */
-  take(ticket: number | undefined): ImportedLogin[] {
+  take(ticket: number | undefined): StagedImport {
     if (typeof ticket === "number" && ticket !== this.ticket) {
       throw new Error("a newer import replaced this one; nothing was imported");
     }
-    const logins = this.logins;
+    const staged = this.staged;
     this.drop();
-    if (!logins) throw new Error("nothing is staged to import; choose a file or paste again");
-    return logins;
+    if (!staged) throw new Error("nothing is staged to import; choose a file or paste again");
+    return staged;
   }
 
   /**
@@ -126,7 +134,7 @@ export class ImportStaging {
   }
 
   private drop(): void {
-    this.logins = null;
+    this.staged = null;
     this.exchange = null;
     this.epochNow++;
   }

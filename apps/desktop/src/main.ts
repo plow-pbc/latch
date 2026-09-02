@@ -33,6 +33,7 @@ import {
   PolicyDelegate,
   importLogins,
   importPreview,
+  importVaults,
   markAgainstVault,
   parseCredentialExchange,
   parseOnePux,
@@ -913,7 +914,12 @@ const staging = new ImportStaging();
 async function stageImport(parsed: ParsedImport, epoch = staging.epoch) {
   const vault = device?.vaultClient;
   if (!vault) throw new Error("the vault is not running");
-  await markAgainstVault(vault, parsed.logins);
+  // An export spanning several 1Password vaults is staged UNMARKED: the owner
+  // picks which vaults first, and vault:importPick marks the subset they kept.
+  // Marking now would settle every duplicate, update and same-name-twice
+  // ambiguity against rows that are about to be left behind — two vaults each
+  // holding a login the sheet would then leave alone, importing nothing.
+  if (importVaults(parsed).length <= 1) await markAgainstVault(vault, parsed.logins);
   return staging.stageSheet(epoch, parsed.logins, importPreview(parsed));
 }
 
@@ -980,6 +986,28 @@ ipcMain.handle("vault:importFile", async () => {
   return stageImport(isZip ? parseOnePux(bytes) : parsePasswordExport(bytes.toString("utf8")), epoch);
 });
 
+// The 1Password vaults the owner kept. The unmarked staging is consumed and
+// replaced by just their rows — marked against the vault only now, so what
+// counts as a duplicate or an update is decided over the rows that are
+// actually coming. The answer is an ordinary staged preview, ticket and all.
+ipcMain.handle("vault:importPick", async (_e, vaults: string[], ticket?: number) => {
+  const vault = device?.vaultClient;
+  if (!vault) throw new Error("the vault is not running");
+  const keep = (Array.isArray(vaults) ? vaults : []).map((v) => String(v));
+  const { logins, preview } = staging.take(typeof ticket === "number" ? ticket : undefined);
+  // take() emptied the slot and bumped the epoch; capture it HERE, before the
+  // await, so a sheet closing while the marking runs still voids this answer
+  // rather than having it re-stage the plaintext the close existed to drop.
+  const epoch = staging.epoch;
+  const subset = logins.filter((l) => !!l.vault && keep.includes(l.vault));
+  await markAgainstVault(vault, subset);
+  return staging.stageSheet(
+    epoch,
+    subset,
+    importPreview({ source: preview.source, logins: subset, skipped: preview.skipped.filter((sk) => !!sk.vault && keep.includes(sk.vault)) }),
+  );
+});
+
 // `selected` names the rows the owner ticked, as indices into the preview's
 // item order (which IS the staged order — the ticket is what guarantees the
 // two are still the same staging). Omitted means all of them — the
@@ -987,7 +1015,7 @@ ipcMain.handle("vault:importFile", async () => {
 ipcMain.handle("vault:importCommit", async (_e, selected?: number[], ticket?: number) => {
   const vault = device?.vaultClient;
   if (!vault) throw new Error("the vault is not running");
-  const logins = staging.take(typeof ticket === "number" ? ticket : undefined);
+  const { logins } = staging.take(typeof ticket === "number" ? ticket : undefined);
   const chosen = Array.isArray(selected)
     ? logins.filter((_, i) => selected.includes(i))
     : logins;

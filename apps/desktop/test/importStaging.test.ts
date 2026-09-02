@@ -38,11 +38,16 @@ describe("passwordsAppCanHandOff", () => {
 });
 
 describe("a sheet's own staging", () => {
-  it("stages, hands back a ticket, and commit takes exactly what was staged", () => {
+  it("stages, hands back a ticket, and commit takes exactly what was staged — preview and all", () => {
+    // The preview travels with the logins because the vault pick puts a
+    // SUBSET of both straight back (vault:importPick): it needs the source
+    // and the skipped rows the sheet was shown, not just the logins.
     const staging = new ImportStaging();
     const staged = staging.stageSheet(staging.epoch, [login("a")], previewOf("CSV"));
     expect(staged.ticket).toBeGreaterThan(0);
-    expect(staging.take(staged.ticket).map((l) => l.title)).toEqual(["a"]);
+    const taken = staging.take(staged.ticket);
+    expect(taken.logins.map((l) => l.title)).toEqual(["a"]);
+    expect(taken.preview).toEqual(previewOf("CSV"));
   });
 
   it("cancel with the sheet's ticket drops it; a later commit finds nothing", () => {
@@ -81,7 +86,7 @@ describe("a credential exchange staged over an open sheet", () => {
     // vault pane is about to ask for.
     staging.cancel(sheet.ticket);
     expect(staging.pendingExchange()).toEqual(exchange);
-    expect(staging.take(exchange.ticket).map((l) => l.title)).toEqual(["handoff"]);
+    expect(staging.take(exchange.ticket).logins.map((l) => l.title)).toEqual(["handoff"]);
   });
 
   it("survives a sheet that closed before it ever saw a preview", () => {
@@ -114,7 +119,7 @@ describe("a credential exchange staged over an open sheet", () => {
   it("is answered for by its own sheet: commit takes it, and clears the pending preview", () => {
     const staging = new ImportStaging();
     const exchange = staging.stageExchange([login("handoff")], previewOf("Passwords"));
-    expect(staging.take(exchange.ticket).map((l) => l.title)).toEqual(["handoff"]);
+    expect(staging.take(exchange.ticket).logins.map((l) => l.title)).toEqual(["handoff"]);
     expect(staging.pendingExchange()).toBeNull();
   });
 
@@ -132,7 +137,7 @@ describe("a credential exchange staged over an open sheet", () => {
     const second = staging.stageExchange([login("two")], previewOf("Passwords"));
     staging.cancel(first.ticket);
     expect(staging.pendingExchange()).toEqual(second);
-    expect(staging.take(second.ticket).map((l) => l.title)).toEqual(["two"]);
+    expect(staging.take(second.ticket).logins.map((l) => l.title)).toEqual(["two"]);
   });
 
   it("a sheet's fresh staging replaces the exchange whole — preview included", () => {
@@ -143,6 +148,6 @@ describe("a credential exchange staged over an open sheet", () => {
     staging.stageExchange([login("handoff")], previewOf("Passwords"));
     const sheet = staging.stageSheet(staging.epoch, [login("csv")], previewOf("CSV"));
     expect(staging.pendingExchange()).toBeNull();
-    expect(staging.take(sheet.ticket).map((l) => l.title)).toEqual(["csv"]);
+    expect(staging.take(sheet.ticket).logins.map((l) => l.title)).toEqual(["csv"]);
   });
 });
