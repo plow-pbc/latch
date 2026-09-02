@@ -170,26 +170,38 @@ describe("the built-in imessage skill", () => {
     ["verifying delivery after send", /is_sent.*and.*is_delivered/i],
     ["byte-identical argv for unattended reads", /byte-identical/i],
   ])("publishes %s", (_what, pattern) => {
-    expect(imessageSkillFor().body).toMatch(pattern);
+    expect(imessageSkillFor("/Users/testowner").body).toMatch(pattern);
   });
 
   it("shows the recipes it publishes, not a paraphrase of them", () => {
-    const body = imessageSkillFor().body;
+    const body = imessageSkillFor("/Users/testowner").body;
     for (const sql of Object.values(IMESSAGE_QUERIES)) {
       expect(body).toContain(sql.split("\n")[0].trim());
     }
     expect(body).toContain(`'${IMESSAGE_HANDLE_PLACEHOLDER}'`);
   });
 
-  it("names the store ~-relative so the owner's account name never leaks in a skill read", () => {
-    const skill = imessageSkillFor();
+  it("names the store by its resolved absolute path, so no optional argument is load-bearing", () => {
+    const skill = imessageSkillFor("/Users/testowner");
     expect(skill.name).toBe("imessage");
-    // plow_read_skill returns this body to any authenticated agent with no
-    // approval, so a resolved /Users/<name>/... would disclose the account name.
-    expect(skill.body).toContain("~/Library/Messages/chat.db");
-    expect(skill.body).not.toMatch(/\/Users\//);
+    // The recipe used to ride `cwd: "~/Library/Messages"` plus a relative
+    // `chat.db`, to keep the owner's account name out of an approval-free
+    // plow_read_skill response. An agent runtime that drops optional arguments
+    // (Hermes' tool_call bridge forwards only its `arguments` object) then left
+    // the command in an empty scratch dir, where sqlite reported a missing file
+    // as `unable to open database file` and read as a permissions failure.
+    expect(skill.body).toContain("/Users/testowner/Library/Messages/chat.db");
     expect(skill.body).not.toContain("<owner>");
     expect(skill.description).toMatch(/imessage/i);
+  });
+
+  it("publishes no read recipe that depends on cwd", () => {
+    // `cwd` is optional in the plow_run_command schema, so any runtime that
+    // forwards only the required arguments silently drops it and the command
+    // runs in an empty per-run scratch dir. A recipe must not need it.
+    const body = imessageSkillFor("/Users/testowner").body;
+    expect(body).not.toMatch(/^\s*cwd:/m);
+    expect(body).not.toContain('"chat.db"');
   });
 
   it("is published only on a Mac that actually has the archive", () => {
