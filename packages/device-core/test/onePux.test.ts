@@ -1,59 +1,29 @@
-/**
- * 1PUX: 1Password's unencrypted export, a zip whose export.data nests items
- * inside their vaults. The parser reads only that entry, keeps logins, and
- * names every row's vault so the sheet can offer a pick. Same standing rule
- * as the CSV paths: nothing returned ever carries a password or a key.
- */
-import zlib from "node:zlib";
+import AdmZip from "adm-zip";
 import { describe, expect, it } from "vitest";
 import { parseOnePux } from "../src/browser/onePux.js";
 import { importPreview, importVaults, parsePasswordExport } from "../src/browser/passwordImport.js";
 
 const TOTP_KEY = "JBSWY3DPEHPK3PXP";
 
-/** A minimal zip writer: local headers, central directory, end record.
- * CRCs are written as zero — the reader does not check them, and 1PUX
- * readers in the wild don't either. */
+/** A zip written with the same library the parser reads, so these fixtures
+ * carry real CRCs. `deflate: false` stores the entries instead — a 1PUX in
+ * the wild can be either. */
 function zipOf(entries: Record<string, string | Uint8Array>, opts: { deflate: boolean }): Uint8Array {
-  const parts: Buffer[] = [];
-  const central: Buffer[] = [];
-  let offset = 0;
+  const zip = new AdmZip();
   for (const [name, value] of Object.entries(entries)) {
-    // A Uint8Array entry is bytes already compressed by the caller (for
-    // building an oversized deflate stream); it is stored under method 8
-    // as-is, ignoring `opts.deflate`.
-    const precompressed = value instanceof Uint8Array;
-    const raw = precompressed ? Buffer.from(value) : Buffer.from(value, "utf8");
-    const data = precompressed ? raw : opts.deflate ? zlib.deflateRawSync(raw) : raw;
-    const method = precompressed || opts.deflate ? 8 : 0;
-    const nameBuf = Buffer.from(name, "utf8");
-    const local = Buffer.alloc(30);
-    local.writeUInt32LE(0x04034b50, 0);
-    local.writeUInt16LE(20, 4);
-    local.writeUInt16LE(method, 8);
-    local.writeUInt32LE(data.length, 18);
-    local.writeUInt32LE(raw.length, 22);
-    local.writeUInt16LE(nameBuf.length, 26);
-    const cd = Buffer.alloc(46);
-    cd.writeUInt32LE(0x02014b50, 0);
-    cd.writeUInt16LE(20, 6);
-    cd.writeUInt16LE(method, 10);
-    cd.writeUInt32LE(data.length, 20);
-    cd.writeUInt32LE(raw.length, 24);
-    cd.writeUInt16LE(nameBuf.length, 28);
-    cd.writeUInt32LE(offset, 42);
-    central.push(cd, nameBuf);
-    parts.push(local, nameBuf, data);
-    offset += local.length + nameBuf.length + data.length;
+    const entry = zip.addFile(name, Buffer.from(value as Uint8Array | string));
+    if (!opts.deflate) entry.header.method = 0;
   }
-  const cdBuf = Buffer.concat(central);
-  const end = Buffer.alloc(22);
-  end.writeUInt32LE(0x06054b50, 0);
-  end.writeUInt16LE(central.length / 2, 8);
-  end.writeUInt16LE(central.length / 2, 10);
-  end.writeUInt32LE(cdBuf.length, 12);
-  end.writeUInt32LE(offset, 16);
-  return new Uint8Array(Buffer.concat([...parts, cdBuf, end]));
+  return new Uint8Array(zip.toBuffer());
+}
+
+/** The same zip with its FIRST entry's payload bytes flipped: the container
+ * and its central directory still parse, so this reaches the reader's own CRC
+ * check rather than failing as a malformed archive. */
+function corrupt(zip: Uint8Array): Uint8Array {
+  const buf = Buffer.from(zip);
+  buf[30 + buf.readUInt16LE(26) + buf.readUInt16LE(28) + 4] ^= 0xff;
+  return new Uint8Array(buf);
 }
 
 const login = (title: string, extra: Record<string, unknown> = {}) => ({
@@ -152,18 +122,20 @@ describe("parseOnePux", () => {
     expect(() => parseOnePux(new Uint8Array(Buffer.from("Title,URL\n")))).toThrow(/1PUX/);
     expect(() => parseOnePux(zipOf({ "export.data": "{\"nope\":1}" }, { deflate: false }))).toThrow(/1PUX/);
 
-    // A truncated compressed export.data — the zip container (and its end
-    // record) stays intact; only this entry's deflate stream is corrupted, so
-    // this exercises inflateRawSync's own failure path rather than the
-    // "no end record" check that a truncated whole zip would hit instead.
-    const compressed = zlib.deflateRawSync(Buffer.from(exportData([{ name: "P", items: [login("X")] }]), "utf8"));
-    const truncated = compressed.subarray(0, Math.floor(compressed.length / 2));
-    expect(() => parseOnePux(zipOf({ "export.data": truncated }, { deflate: false }))).toThrow(/1PUX/);
+    // export.data's payload flipped under an intact container: the CRC the
+    // archive declares no longer matches, which is the reader's own refusal
+    // rather than a malformed-zip one.
+    const good = zipOf({ "export.data": exportData([{ name: "P", items: [login("X")] }]) }, { deflate: true });
+    expect(parseOnePux(good).logins).toHaveLength(1);
+    expect(() => parseOnePux(corrupt(good))).toThrow(/1PUX/);
+  });
 
-    // Highly repetitive, so it compresses to a tiny blob but still decodes
-    // past the 64 MiB cap — the shape a hostile or corrupted zip bomb takes.
-    const huge = zlib.deflateRawSync(Buffer.alloc(100 * 1024 * 1024, "a"));
-    expect(() => parseOnePux(zipOf({ "export.data": huge }, { deflate: false }))).toThrow(/1PUX/);
+  it("refuses an export.data larger than it will inflate, before inflating any of it", () => {
+    // Past the 64 MiB cap — the shape a hostile or corrupted zip bomb takes.
+    // The declared size is what is refused, so a lying header cannot spend
+    // the memory the cap exists to protect either.
+    const huge = zipOf({ "export.data": new Uint8Array(65 * 1024 * 1024) }, { deflate: true });
+    expect(() => parseOnePux(huge)).toThrow(/too large/);
   });
 
   it("names the vaults a parsed export spans, skipped-only ones included", () => {

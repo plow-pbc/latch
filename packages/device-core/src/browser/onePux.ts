@@ -6,12 +6,13 @@
  * way the CSV path sets rows aside. Every row names its vault, which is
  * what lets the Import sheet offer a pick before anything is saved.
  *
- * The zip reader below is the minimum the format needs — stored or deflated
- * entries, no zip64, no encryption — so no dependency ships for it. The
- * standing rule of passwordImport.ts holds here: no error, warning or skip
- * reason ever contains a field's value.
+ * export.data is read with adm-zip: stored and deflated entries, the CRC
+ * checked, and the inflate bounded by the size the archive declares — a size
+ * refused outright above the cap below, so neither a lying header nor a zip
+ * bomb can run away with memory. The standing rule of passwordImport.ts holds
+ * here: no error, warning or skip reason ever contains a field's value.
  */
-import zlib from "node:zlib";
+import AdmZip from "adm-zip";
 import { finishImportedLogin, normalizeImportUrls, type ImportedLogin, type ParsedImport, type SkippedRow } from "./passwordImport.js";
 
 const NOT_1PUX = "this doesn't look like a 1PUX export. In 1Password choose File > Export, pick your account, and choose the 1PUX format";
@@ -43,11 +44,24 @@ const list = (v: unknown): Rec[] => (Array.isArray(v) ? v.map(rec) : []);
 const str = (v: unknown): string => (typeof v === "string" ? v : "");
 
 export function parseOnePux(bytes: Uint8Array): ParsedImport {
-  const data = zipEntry(bytes, "export.data");
-  if (!data) throw new Error(NOT_1PUX);
+  let zip: AdmZip;
+  try {
+    zip = new AdmZip(Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength));
+  } catch {
+    throw new Error(NOT_1PUX);
+  }
+  const entry = zip.getEntry("export.data");
+  if (!entry) throw new Error(NOT_1PUX);
+  if (entry.header.size > MAX_INFLATED_BYTES) throw new Error("that export is too large to read");
+  let data: Buffer;
+  try {
+    data = entry.getData();
+  } catch {
+    throw new Error(NOT_1PUX);
+  }
   let root: Rec;
   try {
-    root = rec(JSON.parse(Buffer.from(data).toString("utf8")));
+    root = rec(JSON.parse(data.toString("utf8")));
   } catch {
     throw new Error(NOT_1PUX);
   }
@@ -108,49 +122,4 @@ function itemToLogin(item: Rec, vault: string, skipped: SkippedRow[]): ImportedL
     warnings,
   );
   return { ...login, vault };
-}
-
-/**
- * The bytes of one named entry, or null when the zip has no such entry.
- * Throws NOT_1PUX for anything that is not a zip this reader understands.
- * Walks the central directory from the end record, then the entry's local
- * header — the sizes in the local header can legally be zero (streamed
- * writers), so the central directory's are the ones used.
- */
-function zipEntry(bytes: Uint8Array, name: string): Uint8Array | null {
-  const buf = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  if (buf.length < 22 || buf.readUInt16LE(0) !== 0x4b50) throw new Error(NOT_1PUX);
-  let end = -1;
-  for (let i = buf.length - 22; i >= Math.max(0, buf.length - 22 - 0xffff); i--) {
-    if (buf.readUInt32LE(i) === 0x06054b50) { end = i; break; }
-  }
-  if (end < 0) throw new Error(NOT_1PUX);
-  const count = buf.readUInt16LE(end + 10);
-  let at = buf.readUInt32LE(end + 16);
-  for (let n = 0; n < count; n++) {
-    if (at + 46 > buf.length || buf.readUInt32LE(at) !== 0x02014b50) throw new Error(NOT_1PUX);
-    const method = buf.readUInt16LE(at + 10);
-    const compressed = buf.readUInt32LE(at + 20);
-    const nameLen = buf.readUInt16LE(at + 28);
-    const extraLen = buf.readUInt16LE(at + 30);
-    const commentLen = buf.readUInt16LE(at + 32);
-    const local = buf.readUInt32LE(at + 42);
-    const entryName = buf.toString("utf8", at + 46, at + 46 + nameLen);
-    at += 46 + nameLen + extraLen + commentLen;
-    if (entryName !== name) continue;
-    if (compressed === 0xffffffff || local === 0xffffffff) throw new Error("that export is too large to read");
-    if (local + 30 > buf.length || buf.readUInt32LE(local) !== 0x04034b50) throw new Error(NOT_1PUX);
-    const start = local + 30 + buf.readUInt16LE(local + 26) + buf.readUInt16LE(local + 28);
-    const data = buf.subarray(start, start + compressed);
-    if (method === 0) return data;
-    if (method === 8) {
-      try {
-        return zlib.inflateRawSync(data, { maxOutputLength: MAX_INFLATED_BYTES });
-      } catch {
-        throw new Error(NOT_1PUX);
-      }
-    }
-    throw new Error("that export is compressed in a way this importer cannot read");
-  }
-  return null;
 }
