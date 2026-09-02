@@ -2,29 +2,32 @@
  * The login gate: which window this Mac is allowed to have open.
  *
  * The rule is a product decision, not a UI detail — **a Mac that is not signed
- * in to the Plow relay is not usable.** Before this existed, login gated
- * nothing: the main window opened regardless and a setup window floated beside
- * it, so the app looked functional while no agent could reach it and nothing in
- * it could be done.
+ * in to the Plow relay or has not finished setup is not usable.** Before this
+ * existed, login gated nothing: the main window opened regardless and a setup
+ * window floated beside it, so the app looked functional while no agent could
+ * reach it and nothing in it could be done.
  *
  * It lives here, outside `main.ts`, for the same reason `viewModel.ts` and
  * `onboarding.ts` do: window orchestration is the one part of this that has
  * real states and transitions, and a rule that can only be exercised by
  * launching Electron is a rule nobody can test. `GateHost` is the whole
- * Electron surface it needs — four verbs and three questions.
+ * Electron surface it needs — four verbs and four questions.
  */
 
 /** Which window belongs on screen. Exactly one, always. */
 export type GateWindow = "main" | "setup";
 
-/** The only thing the decision depends on. */
-export function gateTarget(hasCredential: boolean): GateWindow {
-  return hasCredential ? "main" : "setup";
+/** The only two things the decision depends on. */
+export function gateTarget(hasCredential: boolean, setupComplete: boolean): GateWindow {
+  if (!hasCredential) return "setup";
+  // Existing signed-in installs have no completion flag and intentionally visit setup once.
+  return setupComplete ? "main" : "setup";
 }
 
 export interface GateHost {
   /** Read from settings every time — sign-in and sign-out both change it. */
   hasCredential(): boolean;
+  isSetupComplete(): boolean;
   isMainOpen(): boolean;
   isSetupOpen(): boolean;
   /** Both open verbs must be safe to call on an already-open window (they
@@ -33,7 +36,7 @@ export interface GateHost {
   openSetup(): void;
   closeMain(): void;
   closeSetup(): void;
-  /** Quit the whole app. Only ever called for a gate closed with no credential. */
+  /** Quit the whole app. Only called when required setup is closed. */
   quit(): void;
 }
 
@@ -53,7 +56,7 @@ export class WindowGate {
    * close-means-quit rule would fire.
    */
   sync(): GateWindow {
-    const target = gateTarget(this.host.hasCredential());
+    const target = gateTarget(this.host.hasCredential(), this.host.isSetupComplete());
     if (target === "main") {
       this.host.openMain();
       if (this.host.isSetupOpen()) this.host.closeSetup();
@@ -68,14 +71,13 @@ export class WindowGate {
    * The setup window closed. What that means depends on which side of the gate
    * the Mac is on, and getting it wrong strands the user either way.
    *
-   * **No credential — closing the gate is quitting.** There is no window behind
-   * it and no way to get one without signing in, so staying resident would
-   * leave a tray icon attached to an app that can do nothing.
+   * **Setup still required — closing the gate is quitting.** There is no window
+   * behind it and no way to get one without finishing, so staying resident
+   * would leave a tray icon attached to an app that can do nothing.
    *
-   * **Signed in — hand over to the app**, exactly as the Continue button does.
-   * The window that just closed was the "This Mac is connected" confirmation:
-   * the credential is already saved and the socket is already up, so the user
-   * is past the gate and the main window is what they should be looking at.
+   * **Setup complete — hand over to the app**, exactly as the final button
+   * does. The credential and completion flag are already saved, so the main
+   * window is what should be on screen.
    *
    * The third possibility — do nothing — is what shipped in the first cut, and
    * it leaves a Mac that has just been set up showing no window at all. Quitting
@@ -84,7 +86,7 @@ export class WindowGate {
    * with it and quietly make the Mac the user just connected unreachable.
    */
   setupClosed(): "quit" | GateWindow {
-    if (!this.host.hasCredential()) {
+    if (gateTarget(this.host.hasCredential(), this.host.isSetupComplete()) === "setup") {
       this.host.quit();
       return "quit";
     }

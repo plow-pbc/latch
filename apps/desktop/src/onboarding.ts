@@ -28,13 +28,20 @@ import { ActivationChat, PlowApi, PlowApiError } from "./plowApi.js";
 import { loadSettings, saveSettings, Settings } from "./settings.js";
 
 /**
- * The wizard ends at `connected`, a confirmation with one button into the app.
- *
- * There is no step for minting a client credential. Logging in happens once per
- * Mac; connecting a client happens once per client, is repeatable and is
- * optional — see `connectClient.ts`, which is reached from the main window.
+ * The verification sub-steps retain their existing mechanics. `connected` is
+ * only the handoff between a successful login and the post-login data choice;
+ * it is never a screen the renderer waits on.
  */
-export type OnboardingStep = "activate" | "waiting" | "phone" | "code" | "connected";
+export type OnboardingStep =
+  | "welcome"
+  | "privacy"
+  | "activate"
+  | "waiting"
+  | "phone"
+  | "code"
+  | "connected"
+  | "data"
+  | "done";
 
 /** Codes are 8 digits with a 5-minute life (`api/plow/auth_routes/otp.py`). */
 export const CODE_LENGTH = 8;
@@ -193,6 +200,8 @@ export interface OnboardingState {
   accountUid: string;
   mcpUrl: string;
   connected: boolean;
+  /** The data screen's pending choice. It is persisted only on Continue. */
+  telemetryEnabled: boolean;
 }
 
 export interface OnboardingDeps {
@@ -235,11 +244,12 @@ export class Onboarding {
   private pendingMint: Promise<OnboardingState> | null = null;
   private pendingMintId = 0;
   private mints = 0;
+  private telemetryEnabled: boolean;
 
   constructor(private readonly deps: OnboardingDeps) {
-    // A Mac that already holds a credential is past all of this; it opens on
-    // the connected screen, whose one button hands over to the app.
-    this.step = this.settings().relayCredential.trim() ? "connected" : "activate";
+    const settings = this.settings();
+    this.telemetryEnabled = settings.telemetryEnabled;
+    this.step = this.initialStep(settings);
   }
 
   state(): OnboardingState {
@@ -256,7 +266,53 @@ export class Onboarding {
       accountUid: settings.accountUid,
       mcpUrl: settings.mcpUrl,
       connected: this.deps.isConnected(),
+      telemetryEnabled: this.telemetryEnabled,
     };
+  }
+
+  /** Advance the presentational steps and commit the data-screen choice. */
+  async advance(): Promise<OnboardingState> {
+    if (this.step === "welcome") {
+      this.step = "privacy";
+      return this.publish();
+    }
+    if (this.step === "privacy") {
+      // Returning from verification keeps the live activation and its watcher.
+      // Re-entering therefore shows the same code without another network call.
+      if (this.activation) {
+        this.step = this.activationStale ? "waiting" : "activate";
+        return this.publish();
+      }
+      return this.newActivationCode();
+    }
+    if (this.step === "connected") {
+      this.step = "data";
+      return this.publish();
+    }
+    if (this.step === "data") {
+      const settings = this.settings();
+      settings.telemetryEnabled = this.telemetryEnabled;
+      settings.setupComplete = true;
+      this.save(settings);
+      this.step = "done";
+      return this.publish();
+    }
+    return this.publish();
+  }
+
+  /** Return through the pre-verification screens without cancelling a poll. */
+  back(): OnboardingState {
+    if (this.step === "privacy") this.step = "welcome";
+    else if (this.step === "activate" || this.step === "waiting") this.step = "privacy";
+    return this.publish();
+  }
+
+  /** Change the pending choice; Continue from data is its only disk write. */
+  setTelemetryEnabled(enabled: unknown): OnboardingState {
+    if (this.step === "data" && typeof enabled === "boolean") {
+      this.telemetryEnabled = enabled;
+    }
+    return this.publish();
   }
 
   // MARK: activation — the path a brand-new user takes
@@ -271,7 +327,11 @@ export class Onboarding {
    * `newActivationCode`, which is the only thing here that mints.
    */
   async begin(): Promise<OnboardingState> {
-    if (this.step !== "activate" || this.activation) return this.publish();
+    // Renderer boot is intentionally a read-like no-op on Welcome. The first
+    // activation is minted only by Continue from Privacy (`advance`).
+    if (this.step !== "privacy" && !(this.step === "activate" && !this.activation)) {
+      return this.state();
+    }
     return this.newActivationCode();
   }
 
@@ -371,7 +431,7 @@ export class Onboarding {
     this.codeExpiresAt = null;
     this.message = "";
     this.step = "activate";
-    return this.begin();
+    return this.newActivationCode();
   }
 
   /**
@@ -605,7 +665,9 @@ export class Onboarding {
     this.codeExpiresAt = null;
     this.message = "";
     this.busy = false;
-    this.step = this.settings().relayCredential.trim() ? "connected" : "activate";
+    const settings = this.settings();
+    this.telemetryEnabled = settings.telemetryEnabled;
+    this.step = this.initialStep(settings);
     return this.publish();
   }
 
@@ -724,6 +786,12 @@ export class Onboarding {
     this.codeExpiresAt = null;
     this.message = "";
 
+    // There is no connected confirmation screen in this wizard. The state is
+    // assigned above only as the successful-login handoff, then immediately
+    // advances before any asynchronous relay work can hold it on screen.
+    this.step = "data";
+    this.telemetryEnabled = settings.telemetryEnabled;
+
     await this.deps.startRelay();
   }
 
@@ -735,6 +803,11 @@ export class Onboarding {
 
   private save(settings: Settings): void {
     saveSettings(this.deps.home, settings);
+  }
+
+  private initialStep(settings: Settings): OnboardingStep {
+    if (!settings.relayCredential.trim()) return "welcome";
+    return settings.setupComplete ? "done" : "data";
   }
 
   private now(): number {

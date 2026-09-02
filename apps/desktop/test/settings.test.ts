@@ -121,6 +121,15 @@ describe("settings storage", () => {
     expect(loadSettings(home).telemetryEnabled).toBe(false);
   });
 
+  it("defaults setup completion off, and persists completion", () => {
+    const home = tempHome();
+    expect(loadSettings(home).setupComplete).toBe(false);
+    const settings = loadSettings(home);
+    settings.setupComplete = true;
+    saveSettings(home, settings);
+    expect(loadSettings(home).setupComplete).toBe(true);
+  });
+
   it("leaves a home that already chose a tab exactly where it was", () => {
     const home = tempHome();
     const settings = loadSettings(home);

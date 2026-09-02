@@ -11,6 +11,7 @@ import { GateHost, WindowGate, gateTarget } from "../src/windowGate.js";
 
 class FakeWindows implements GateHost {
   credential = "";
+  setupComplete = false;
   main = false;
   setup = false;
   /** Every open/close in order, so a test can prove nothing thrashed. */
@@ -18,6 +19,9 @@ class FakeWindows implements GateHost {
 
   hasCredential(): boolean {
     return this.credential.trim().length > 0;
+  }
+  isSetupComplete(): boolean {
+    return this.setupComplete;
   }
   isMainOpen(): boolean {
     return this.main;
@@ -54,15 +58,27 @@ function build(): { host: FakeWindows; gate: WindowGate } {
 }
 
 describe("the login gate", () => {
-  it("gives a Mac with no credential the setup window and nothing else", () => {
+  it.each([false, true])(
+    "gives a Mac with no credential the setup window regardless of completion=%s",
+    (setupComplete) => {
+      const { host, gate } = build();
+      host.setupComplete = setupComplete;
+      gate.sync();
+      expect({ main: host.main, setup: host.setup }).toEqual({ main: false, setup: true });
+    },
+  );
+
+  it("keeps a credentialed Mac in setup until setup is complete", () => {
     const { host, gate } = build();
+    host.credential = "plow_DEVICEtok_secret";
     gate.sync();
     expect({ main: host.main, setup: host.setup }).toEqual({ main: false, setup: true });
   });
 
-  it("gives a Mac that holds a credential the main window and nothing else", () => {
+  it("gives a credentialed, completed Mac the main window and nothing else", () => {
     const { host, gate } = build();
     host.credential = "plow_DEVICEtok_secret";
+    host.setupComplete = true;
     gate.sync();
     expect({ main: host.main, setup: host.setup }).toEqual({ main: true, setup: false });
   });
@@ -73,22 +89,26 @@ describe("the login gate", () => {
     expect(host.setup).toBe(true);
 
     // What `finishWithSession` does: the credential lands in settings, then the
-    // wizard's last button syncs the gate.
+    // data choice completes setup before the wizard's last button syncs the gate.
     host.credential = "plow_DEVICEtok_secret";
+    expect(gate.sync()).toBe("setup");
+    host.setupComplete = true;
     gate.sync();
 
     expect({ main: host.main, setup: host.setup }).toEqual({ main: true, setup: false });
     // Never a beat with no window at all — on macOS that is the moment the app
     // looks quit, and it is when the gate's close-means-quit rule would fire.
-    expect(host.log).toEqual(["open setup", "open main", "close setup"]);
+    expect(host.log).toEqual(["open setup", "show setup", "open main", "close setup"]);
   });
 
   it("puts a signed-out Mac back behind the gate", () => {
     const { host, gate } = build();
     host.credential = "plow_DEVICEtok_secret";
+    host.setupComplete = true;
     gate.sync();
 
     host.credential = ""; // what settings:signOut writes
+    host.setupComplete = false;
     gate.sync();
 
     expect({ main: host.main, setup: host.setup }).toEqual({ main: false, setup: true });
@@ -98,10 +118,13 @@ describe("the login gate", () => {
     const { host, gate } = build();
     gate.sync();
     host.credential = "plow_DEVICEtok_secret";
+    host.setupComplete = true;
     gate.sync();
     host.credential = "";
+    host.setupComplete = false;
     gate.sync();
     host.credential = "plow_DEVICEtok_again";
+    host.setupComplete = true;
     gate.sync();
 
     expect({ main: host.main, setup: host.setup }).toEqual({ main: true, setup: false });
@@ -110,6 +133,7 @@ describe("the login gate", () => {
   it("opens nothing new when nothing changed, because activate and the tray call it", () => {
     const { host, gate } = build();
     host.credential = "plow_DEVICEtok_secret";
+    host.setupComplete = true;
     gate.sync();
     gate.sync();
     gate.sync();
@@ -129,6 +153,7 @@ describe("the login gate", () => {
     const { host, gate } = build();
     expect(gate.sync()).toBe("setup");
     host.credential = "plow_DEVICEtok_secret";
+    host.setupComplete = true;
     expect(gate.sync()).toBe("main");
   });
 
@@ -142,14 +167,13 @@ describe("the login gate", () => {
     expect(host.main).toBe(false);
   });
 
-  it("hands over to the app when the confirmation is closed instead of Continue", () => {
-    // The window that just closed said "This Mac is connected". The credential
-    // is saved and the socket is up, so this is the Continue path by another
-    // route — not a quit, which would take the socket down with it, and not
-    // nothing, which leaves a freshly set-up Mac showing no window at all.
+  it("hands over to the app when the completed setup window closes", () => {
+    // Completion is already persisted, so closing is the same handoff as the
+    // final in-body button rather than an escape around required setup.
     const { host, gate } = build();
     gate.sync();
     host.credential = "plow_DEVICEtok_secret"; // login completed on that screen
+    host.setupComplete = true;
     host.setup = false; // the user closed it rather than clicking Continue
 
     expect(gate.setupClosed()).toBe("main");
@@ -163,6 +187,7 @@ describe("the login gate", () => {
     const { host, gate } = build();
     gate.sync();
     host.credential = "plow_DEVICEtok_secret";
+    host.setupComplete = true;
     gate.sync(); // opens main, closes setup
 
     expect(gate.setupClosed()).toBe("main");
@@ -170,8 +195,21 @@ describe("the login gate", () => {
     expect(host.main).toBe(true);
   });
 
-  it("decides on the credential and nothing else", () => {
-    expect(gateTarget(false)).toBe("setup");
-    expect(gateTarget(true)).toBe("main");
+  it("quits when setup is closed after sign-in but before completion", () => {
+    const { host, gate } = build();
+    host.credential = "plow_DEVICEtok_secret";
+    gate.sync();
+    host.setup = false;
+
+    expect(gate.setupClosed()).toBe("quit");
+    expect(host.quit_).toBe(true);
+    expect(host.main).toBe(false);
+  });
+
+  it("decides on credential plus completion", () => {
+    expect(gateTarget(false, false)).toBe("setup");
+    expect(gateTarget(false, true)).toBe("setup");
+    expect(gateTarget(true, false)).toBe("setup");
+    expect(gateTarget(true, true)).toBe("main");
   });
 });

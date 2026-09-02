@@ -567,11 +567,10 @@ function signOut() {
   cloudAgents?.signedOut();
   // The gate, not a bare `openOnboardingWindow`: with no credential this Mac is
   // not usable, so the main window goes away as the setup window arrives.
-  // Opening it boots the renderer, which calls `begin` and mints the code the
-  // activation screen needs. `begin` covers the already-open case; it is
-  // idempotent, so between them exactly one code is minted.
+  // Opening it boots at Welcome. Activation is deliberately deferred until
+  // Continue from Privacy.
   gate.sync();
-  return onboarding?.begin();
+  return onboarding?.state();
 }
 
 /**
@@ -600,9 +599,8 @@ async function signOutThisMac(): Promise<void> {
   // The one place that resets the app's state, shared with the relay's
   // auth-failed path. It also drops connect-a-client's shown-once credential,
   // which a click has exactly as much reason to clear as a revocation does.
-  const beginning = signOut();
+  signOut();
   await startRelay();
-  await beginning;
   if (!(await revoking)) {
     onboarding?.showMessage(
       "Signed out on this Mac. Plow could not be reached to revoke the session — revoke it in Plow's account settings.",
@@ -763,6 +761,11 @@ function agentsTabState(): Record<string, unknown> | null {
 // leaves the window rendered but inert. See the note in onboarding.ts.
 ipcMain.handle("onboarding:get", async () => onboarding?.state() ?? null);
 ipcMain.handle("onboarding:begin", async () => onboarding?.begin());
+ipcMain.handle("onboarding:advance", async () => onboarding?.advance());
+ipcMain.handle("onboarding:back", async () => onboarding?.back());
+ipcMain.handle("onboarding:setTelemetry", async (_e, on: unknown) =>
+  onboarding?.setTelemetryEnabled(on),
+);
 ipcMain.handle("onboarding:newCode", async () => onboarding?.newActivationCode());
 ipcMain.handle("onboarding:usePhoneCode", async () => onboarding?.usePhoneCode());
 ipcMain.handle("onboarding:useActivation", async () => onboarding?.useActivation());
@@ -1210,16 +1213,15 @@ let keepAwake: KeepAwake | null = null;
  * app — and never again after that (`Settings.launchAtLoginDefaulted`), so
  * turning it off in Settings sticks.
  *
- * "Pending" is read entirely off disk: a credential with the marker still
- * false can only mean a completed setup whose default has not landed —
- * `finishWithSession` writes both fields, a home signed in from before the
- * marker existed reads as already defaulted (`loadSettings`), and sign-out
- * keeps the marker. So someone reopening the setup window from Settings never
- * trips this, no in-memory "signed in this session" flag is needed, and the
- * hook is idempotent — which is why it runs at BOTH the hand-over (the setup
- * window's closed handler) and startup: a crash between setup and the
- * hand-over leaves the default pending on disk, and the next launch opens the
- * main window directly, never closing a setup window.
+ * "Pending" is read entirely off disk: a credential plus completed setup with
+ * the marker still false means the one-time default has not landed. A home
+ * signed in from before the marker existed reads as already defaulted
+ * (`loadSettings`), and sign-out keeps the marker. So someone reopening the
+ * setup window from Settings never trips this, no in-memory "signed in this
+ * session" flag is needed, and the hook is idempotent — which is why it runs at
+ * BOTH the hand-over (the setup window's closed handler) and startup: a crash
+ * between setup and the hand-over leaves the default pending on disk, and the
+ * next launch opens the main window directly, never closing a setup window.
  *
  * The attempt is the shot: if the OS declines the write we do not come back on
  * every launch — the Settings toggle is the recourse. A from-source run is the
@@ -1229,7 +1231,11 @@ let keepAwake: KeepAwake | null = null;
  */
 function applyFirstRunLaunchAtLogin(): void {
   const settings = loadSettings(home);
-  if (settings.launchAtLoginDefaulted || !settings.relayCredential.trim()) return;
+  if (
+    settings.launchAtLoginDefaulted ||
+    !settings.relayCredential.trim() ||
+    !settings.setupComplete
+  ) return;
   if (setLaunchAtLogin(app.isPackaged, loginItems, true).supported) {
     settings.launchAtLoginDefaulted = true;
     saveSettings(home, settings);
@@ -1326,6 +1332,7 @@ function openOnboardingWindow(): void {
  */
 const gate = new WindowGate({
   hasCredential: () => loadSettings(home).relayCredential.trim().length > 0,
+  isSetupComplete: () => loadSettings(home).setupComplete,
   isMainOpen: () => !!mainWindow && !mainWindow.isDestroyed(),
   isSetupOpen: () => !!onboardingWindow && !onboardingWindow.isDestroyed(),
   openMain: () => createMainWindow(),

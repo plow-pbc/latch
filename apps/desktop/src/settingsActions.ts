@@ -64,6 +64,7 @@ export function signOutOfPlow(home: string): void {
     s.relayCredentialEnc = undefined;
     s.accountUid = "";
     s.mcpUrl = "";
+    s.setupComplete = false;
     // Account data, not device data: the next sign-in may be a different
     // account, and a stale chat label on its setup screen would name a chat
     // this Mac can no longer reach.

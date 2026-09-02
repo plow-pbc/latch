@@ -54,6 +54,7 @@ function expectSignedOutWithAdversarial(home: string) {
     relayCredential: "",
     accountUid: "",
     mcpUrl: "",
+    setupComplete: false,
     approvalMode: "adversarial",
   });
 }
@@ -65,11 +66,13 @@ describe("Plow sign-out forgets the credential and leaves the mode alone", () =>
       relayCredential: PLOW_CREDENTIAL,
       accountUid: "u_someone",
       mcpUrl: "https://api.plow.co/v1/relay/devices/u_someone/mcp",
+      setupComplete: true,
     });
 
     signOutOfPlow(home);
 
     expectSignedOutWithAdversarial(home);
+    expect(stored(home).setupComplete).toBe(false);
   });
 
   it("signing out with Adversarial selected leaves the mode alone", () => {
