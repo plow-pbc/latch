@@ -170,26 +170,38 @@ describe("the built-in imessage skill", () => {
     ["verifying delivery after send", /is_sent.*and.*is_delivered/i],
     ["byte-identical argv for unattended reads", /byte-identical/i],
   ])("publishes %s", (_what, pattern) => {
-    expect(imessageSkillFor().body).toMatch(pattern);
+    expect(imessageSkillFor("/Users/testowner").body).toMatch(pattern);
   });
 
   it("shows the recipes it publishes, not a paraphrase of them", () => {
-    const body = imessageSkillFor().body;
+    const body = imessageSkillFor("/Users/testowner").body;
     for (const sql of Object.values(IMESSAGE_QUERIES)) {
       expect(body).toContain(sql.split("\n")[0].trim());
     }
     expect(body).toContain(`'${IMESSAGE_HANDLE_PLACEHOLDER}'`);
   });
 
-  it("names the store ~-relative so the owner's account name never leaks in a skill read", () => {
-    const skill = imessageSkillFor();
+  it("names the store by its resolved absolute path, so no optional argument is load-bearing", () => {
+    const skill = imessageSkillFor("/Users/testowner");
     expect(skill.name).toBe("imessage");
-    // plow_read_skill returns this body to any authenticated agent with no
-    // approval, so a resolved /Users/<name>/... would disclose the account name.
-    expect(skill.body).toContain("~/Library/Messages/chat.db");
-    expect(skill.body).not.toMatch(/\/Users\//);
+    // The recipe used to ride `cwd: "~/Library/Messages"` plus a relative
+    // `chat.db`, to keep the owner's account name out of an approval-free
+    // plow_read_skill response. An agent runtime that drops optional arguments
+    // (Hermes' tool_call bridge forwards only its `arguments` object) then left
+    // the command in an empty scratch dir, where sqlite reported a missing file
+    // as `unable to open database file` and read as a permissions failure.
+    expect(skill.body).toContain("/Users/testowner/Library/Messages/chat.db");
     expect(skill.body).not.toContain("<owner>");
     expect(skill.description).toMatch(/imessage/i);
+  });
+
+  it("publishes no read recipe that depends on cwd", () => {
+    // `cwd` is optional in the plow_run_command schema, so any runtime that
+    // forwards only the required arguments silently drops it and the command
+    // runs in an empty per-run scratch dir. A recipe must not need it.
+    const body = imessageSkillFor("/Users/testowner").body;
+    expect(body).not.toMatch(/^\s*cwd:/m);
+    expect(body).not.toContain('"chat.db"');
   });
 
   it("is published only on a Mac that actually has the archive", () => {
@@ -202,9 +214,7 @@ describe("the built-in imessage skill", () => {
     fs.writeFileSync(imessageStorePath(home), "");
     const present = new SkillRegistry();
     registerImessageSkill(present, home);
-    // Registered because the archive exists; the body names it ~-relative so a
-    // skill read never discloses the account name in `home`.
-    expect(present.skill("imessage")?.body).toContain("~/Library/Messages/chat.db");
+    expect(present.skill("imessage")).not.toBeNull();
   });
 });
 
@@ -238,25 +248,33 @@ describe("the built-in contacts skill", () => {
     ["writes never qualifying for always-allow", /a write never does/i],
     ["the always-allow refusal being enforced by the engine", /neither stores nor replays/i],
   ])("publishes %s", (_what, pattern) => {
-    expect(contactsSkillFor().body).toMatch(pattern);
+    expect(contactsSkillFor("/Users/testowner").body).toMatch(pattern);
   });
 
   it("shows the recipes it publishes, not a paraphrase of them", () => {
-    const body = contactsSkillFor().body;
+    const body = contactsSkillFor("/Users/testowner").body;
     for (const sql of Object.values(CONTACTS_QUERIES)) {
       expect(body).toContain(sql.split("\n")[0].trim());
     }
   });
 
-  it("names the store ~-relative so the owner's account name never leaks in a skill read", () => {
-    const skill = contactsSkillFor();
+  it("names the store by its resolved absolute path, so no optional argument is load-bearing", () => {
+    const skill = contactsSkillFor("/Users/testowner");
     expect(skill.name).toBe("contacts");
-    // Same contract as the imessage skill: plow_read_skill returns this body
-    // to any authenticated agent with no approval.
-    expect(skill.body).toContain("~/Library/Application Support/AddressBook/AddressBook-v22.abcddb");
-    expect(skill.body).not.toMatch(/\/Users\//);
+    // Same contract as the imessage skill, and the same reason it changed: a
+    // recipe that rides `cwd` breaks silently under a runtime that forwards
+    // only the required arguments.
+    expect(skill.body).toContain(
+      "/Users/testowner/Library/Application Support/AddressBook/AddressBook-v22.abcddb",
+    );
     expect(skill.body).not.toContain("<owner>");
     expect(skill.description).toMatch(/contacts/i);
+  });
+
+  it("publishes no recipe that depends on cwd", () => {
+    const body = contactsSkillFor("/Users/testowner").body;
+    expect(body).not.toMatch(/^\s*cwd:/m);
+    expect(body).not.toContain('"AddressBook-v22.abcddb"');
   });
 
   // Gated on the AddressBook DIRECTORY, not one specific .abcddb — Sources
@@ -270,7 +288,7 @@ describe("the built-in contacts skill", () => {
     fs.mkdirSync(path.dirname(contactsStorePath(home)), { recursive: true });
     const present = new SkillRegistry();
     registerContactsSkill(present, home);
-    expect(present.skill("contacts")?.body).toContain("~/Library/Application Support/AddressBook");
+    expect(present.skill("contacts")?.body).toContain(contactsStorePath(home));
   });
 });
 
@@ -310,8 +328,11 @@ describe("the skills a DeviceAgent publishes", () => {
 
     fs.mkdirSync(path.dirname(imessageStorePath(ownerHome)), { recursive: true });
     fs.writeFileSync(imessageStorePath(ownerHome), "");
+    // The resolved path proves the owner home reaches the body: a recipe that
+    // named the store relatively would pass this while breaking under any
+    // runtime that drops the optional `cwd`.
     expect(agentFor(ownerHome).skills.skill("imessage")?.body).toContain(
-      "~/Library/Messages/chat.db",
+      imessageStorePath(ownerHome),
     );
   });
 
@@ -321,7 +342,7 @@ describe("the skills a DeviceAgent publishes", () => {
 
     fs.mkdirSync(path.dirname(contactsStorePath(ownerHome)), { recursive: true });
     expect(agentFor(ownerHome).skills.skill("contacts")?.body).toContain(
-      "~/Library/Application Support/AddressBook",
+      contactsStorePath(ownerHome),
     );
   });
 
