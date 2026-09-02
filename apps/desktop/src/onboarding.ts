@@ -28,6 +28,7 @@ export type OnboardingStep =
   | "waiting"
   | "verified"
   | "data"
+  | "connect"
   | "done";
 
 /**
@@ -223,6 +224,12 @@ export class Onboarding {
     if (this.step === "data") {
       const settings = this.settings();
       settings.telemetryEnabled = this.telemetryEnabled;
+      this.save(settings);
+      this.step = "connect";
+      return this.publish();
+    }
+    if (this.step === "connect") {
+      const settings = this.settings();
       settings.setupComplete = true;
       this.save(settings);
       this.step = "done";
@@ -236,6 +243,7 @@ export class Onboarding {
     if (this.busy) return this.state();
     if (this.step === "privacy") this.step = "welcome";
     else if (this.step === "activate" || this.step === "waiting") this.step = "privacy";
+    else if (this.step === "connect") this.step = "data";
     else return this.state();
     return this.publish();
   }

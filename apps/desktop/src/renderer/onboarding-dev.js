@@ -9,7 +9,14 @@ const params = new URLSearchParams(window.location.search);
 let selected = fixturesByName.get(params.get("state")) ?? fixtures[0];
 let current = { ...selected.state };
 let fullDiskAccess = selected.fullDiskAccess === true;
+let connectors = structuredClone(selected.connectors ?? {
+  busy: false,
+  message: "",
+  noteKind: "error",
+  google: { accounts: [], connecting: false },
+});
 let changed = null;
+let connectorsChanged = null;
 
 function publish(next) {
   current = { ...next };
@@ -18,6 +25,7 @@ function publish(next) {
 }
 
 const currentState = async () => current;
+const currentConnectors = async () => connectors;
 
 window.domo = {
   onboardingGet: currentState,
@@ -33,10 +41,40 @@ window.domo = {
     fullDiskAccess = true;
   },
   onboardingFinish: currentState,
+  connectorsRefresh: currentConnectors,
+  connectorsConnect: currentConnectors,
+  connectorsDisconnect: async (account) => {
+    connectors = {
+      ...connectors,
+      google: {
+        ...connectors.google,
+        accounts: connectors.google.accounts.filter((row) => row.email !== account),
+      },
+    };
+    connectorsChanged?.(connectors);
+    return connectors;
+  },
+  connectorsSetDefault: async (account) => {
+    connectors = {
+      ...connectors,
+      google: {
+        ...connectors.google,
+        accounts: connectors.google.accounts.map((row) => ({
+          ...row,
+          isDefault: row.email === account,
+        })),
+      },
+    };
+    connectorsChanged?.(connectors);
+    return connectors;
+  },
   cloudAgents: async () => selected.cloud,
   cloudOpenMessages: async () => true,
   onOnboardingChanged: (callback) => {
     changed = callback;
+  },
+  onConnectorsChanged: (callback) => {
+    connectorsChanged = callback;
   },
 };
 

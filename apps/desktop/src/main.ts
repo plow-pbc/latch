@@ -58,6 +58,7 @@ import { loadSettings, saveSettings, useCredentialCodec, WindowBounds } from "./
 import { resolveTelemetryConfig, Telemetry, telemetryMaySend } from "./telemetry.js";
 import { PlowApi, PlowApiError, relaySocketUrl, resolveApiBaseUrl } from "./plowApi.js";
 import { Onboarding } from "./onboarding.js";
+import { Connectors } from "./connectors.js";
 import { ConnectClient } from "./connectClient.js";
 import { CloudAgentsClient } from "./cloudAgents.js";
 import { CloudAgentState, CloudChatsClient, CloudLinesClient, tabShowsCloudAgents } from "./cloudAgentState.js";
@@ -208,6 +209,7 @@ let mcp: DomoMcpServer | null = null;
 let approvals: ApprovalStore | null = null;
 let relay: RelayClient | null = null;
 let onboarding: Onboarding | null = null;
+let connectors: Connectors | null = null;
 let connectClient: ConnectClient | null = null;
 let cloudAgents: CloudAgentState | null = null;
 let onboardingWindow: BrowserWindow | null = null;
@@ -562,6 +564,7 @@ function signOut() {
   // is part of that same write.
   signOutOfPlow(home);
   onboarding?.reset();
+  connectors?.signedOut();
   // Connect-a-client holds the old account's state too — possibly a shown-once
   // credential still on screen, or a mint in flight.
   connectClient?.signedOut();
@@ -797,6 +800,29 @@ ipcMain.handle("onboarding:openMessages", async () => {
 ipcMain.handle("onboarding:finish", async () => {
   gate.sync();
 });
+
+// OAuth URLs never cross this boundary. The renderer names an action and gets
+// only the Google connector's display state back.
+ipcMain.handle("connectors:refresh", async () => connectors?.refresh() ?? null);
+ipcMain.handle("connectors:connect", async () => connectors?.connect() ?? null);
+ipcMain.handle(
+  "connectors:disconnect",
+  async (_event, account: unknown) => {
+    if (typeof account !== "string" || !account.trim()) {
+      return connectors?.state() ?? null;
+    }
+    return connectors?.disconnect(account) ?? null;
+  },
+);
+ipcMain.handle(
+  "connectors:setDefault",
+  async (_event, account: unknown) => {
+    if (typeof account !== "string" || !account.trim()) {
+      return connectors?.state() ?? null;
+    }
+    return connectors?.setDefault(account) ?? null;
+  },
+);
 ipcMain.handle("settings:setApprovalMode", async (_e, mode: string) => {
   // The validated enum, not the raw argument.
   const applied = setApprovalMode(home, mode);
@@ -1746,6 +1772,17 @@ app.whenReady().then(async () => {
     startRelay,
     deviceName: `Plow Latch (${hostName()})`,
     onChange: () => onboardingWindow?.webContents.send("onboarding:changed"),
+  });
+  connectors = new Connectors({
+    api: new PlowApi(apiBaseUrl),
+    credential: () => loadSettings(home).relayCredential,
+    openExternal: (url) => shell.openExternal(url),
+    recordAudit: (event, fields) => device?.audit.record(event, fields),
+    onChange: () => {
+      const state = connectors?.state();
+      onboardingWindow?.webContents.send("connectors:changed", state);
+      mainWindow?.webContents.send("connectors:changed", state);
+    },
   });
   // Built first: the roster's removal routing needs the cloud-agent client,
   // because a row with an `agent_id` must be deleted as an agent and never

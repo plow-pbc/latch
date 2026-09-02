@@ -982,6 +982,26 @@ body.on-welcome.welcome-short .wizard-footer .nav-next {
   height: 13px;
 }
 
+.connect-screen {
+  max-width: 520px;
+}
+
+.connect-screen h1 {
+  margin-bottom: 0;
+  font-size: 36px;
+}
+
+.provider-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  margin-top: 34px;
+}
+
+.connector-note {
+  margin-top: 18px;
+}
+
 .done-wrap {
   display: flex;
   flex-direction: column;

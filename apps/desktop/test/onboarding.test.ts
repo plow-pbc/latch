@@ -270,7 +270,7 @@ describe("wizard steps around the existing verification flow", () => {
     onboarding.reset();
   });
 
-  it("does not publish Back on Verified, Data or Done", async () => {
+  it("offers Back from Connect but not from Verified, Data or Done", async () => {
     plow.redeems = [{ status: "verified", token: SESSION_TOKEN }];
     let notifications = 0;
     const onboarding = build(
@@ -292,6 +292,13 @@ describe("wizard steps around the existing verification flow", () => {
     notifications = 0;
     expect((await onboarding.back()).step).toBe("data");
     expect(notifications).toBe(0);
+
+    expect((await onboarding.advance()).step).toBe("connect");
+    notifications = 0;
+    expect((await onboarding.back()).step).toBe("data");
+    expect(notifications).toBe(1);
+
+    await onboarding.advance();
     await onboarding.advance();
     notifications = 0;
     expect((await onboarding.back()).step).toBe("done");
@@ -327,7 +334,7 @@ describe("wizard steps around the existing verification flow", () => {
     expect(onboarding.state().activation).toBeNull();
   });
 
-  it("writes the pending telemetry choice and completion only on leaving data", async () => {
+  it("writes telemetry on leaving data and completion only on leaving connect", async () => {
     const settings = loadSettings(home);
     settings.relayCredential = DEVICE_TOKEN;
     saveSettings(home, settings);
@@ -336,6 +343,12 @@ describe("wizard steps around the existing verification flow", () => {
     expect(onboarding.state()).toMatchObject({ step: "data", telemetryEnabled: true });
     expect(onboarding.setTelemetryEnabled(false).telemetryEnabled).toBe(false);
     expect(loadSettings(home)).toMatchObject({ telemetryEnabled: true, setupComplete: false });
+
+    expect((await onboarding.advance()).step).toBe("connect");
+    expect(loadSettings(home)).toMatchObject({ telemetryEnabled: false, setupComplete: false });
+    // The persisted gate deliberately resumes incomplete setup at Data, so a
+    // returning install still makes the telemetry choice before Connect.
+    expect(build({}, false).state().step).toBe("data");
 
     expect((await onboarding.advance()).step).toBe("done");
     expect(loadSettings(home)).toMatchObject({ telemetryEnabled: false, setupComplete: true });
