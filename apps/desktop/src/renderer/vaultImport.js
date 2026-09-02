@@ -35,6 +35,28 @@ function steps(head, items) {
   ]);
 }
 
+/** The distinct vault names a preview carries — from its importable items AND
+ * its skipped rows, so a vault whose items were all skipped still gets a pick
+ * row (showing "0 logins to import") and keeps its skipped lines in "Not
+ * imported" when picked. First-seen order; empty when the source knows no
+ * vaults (CSV, a paste, an exchange). The pick keys on the vault NAME, so two
+ * vaults sharing a name (across different 1Password accounts) tick together —
+ * fine, since every vault reachable here is the owner's own. */
+export const vaultsOf = (p) => [...new Set([...p.items, ...p.skipped].map((x) => x.vault).filter(Boolean))];
+
+/** `p.items`/`p.skipped` filtered to the picked vaults — or everything, when
+ * `vaultPick` is null (no pick step was needed). `items` pairs each kept item
+ * with its ORIGINAL index into `p.items` — main's staged order, which is what
+ * `vault:importCommit`'s chosen indices must line up with. A skipped row with
+ * no vault (a CSV or paste import knows none) is always kept. */
+export function rowsFor(p, vaultPick) {
+  const items = p.items
+    .map((i, at) => ({ i, at }))
+    .filter(({ i }) => !vaultPick || vaultPick.has(i.vault));
+  const skipped = p.skipped.filter((s) => !s.vault || !vaultPick || vaultPick.has(s.vault));
+  return { items, skipped };
+}
+
 /**
  * @param reload redraw the vault pane (called after a commit lands)
  * @param host vault.js's pane seams: { errText, vbusy, vtakeEditor,
@@ -53,13 +75,14 @@ export async function vimportSheet(reload, host, exchange = null) {
   // Which apps are here to import from — asked BEFORE the sheet takes the
   // editor seat or puts anything on screen, so nothing can try to close a
   // half-built sheet while this answer is in flight. If the ask fails, the
-  // sheet still works: Apple's Passwords app ships with macOS. An exchange
-  // sheet never shows the cards, so it skips the ask altogether.
+  // sheet still works: every card is offered regardless of what's installed,
+  // so a failed ask only costs their icons. An exchange sheet never shows the
+  // cards, so it skips the ask altogether.
   let sources = { apple: { icon: null }, onePassword: { icon: null }, chrome: { icon: null } };
   if (!exchange) {
     try {
       sources = await window.domo.vaultImportSources();
-    } catch {}
+    } catch { /* icons only — every card is offered regardless */ }
   }
   // The wait above is the one gap where the world can change under this
   // opening: a credential exchange landing there replaces the pane and opens
@@ -68,6 +91,11 @@ export async function vimportSheet(reload, host, exchange = null) {
   // stands down instead.
   if (!alive()) return;
   let source = null;
+  // The owner's vault ticks from the last time they saw "Choose vaults" —
+  // seeded to every vault the first time, then left alone so a Back from the
+  // preview finds the ticks it left with. Reset only in pick() (below): a new
+  // source, or a new file, starts the pick over.
+  let vaultPickState = null;
 
   // The staging this sheet is showing, named by the ticket that rode in on
   // its preview (null before one arrives). Quoted on commit and on close, so
@@ -120,6 +148,7 @@ export async function vimportSheet(reload, host, exchange = null) {
 
   /** Step one: pick the app, read its walkthrough, hand its export over. */
   const pick = () => {
+    vaultPickState = null;
     title.textContent = "Import passwords";
     back.setAttribute("hidden", "");
     foot.setAttribute("hidden", "");
@@ -294,10 +323,6 @@ export async function vimportSheet(reload, host, exchange = null) {
     renderGuide();
   };
 
-  /** The distinct vault names a preview carries, in first-seen order; empty
-   * when the source knows no vaults (CSV, a paste, an exchange). */
-  const vaultsOf = (p) => [...new Set(p.items.map((i) => i.vault).filter(Boolean))];
-
   /** Between the file and the preview, when the export holds more than one
    * vault: which vaults to bring in. Renderer-only — main staged every login
    * already; this step only decides which rows the preview offers. */
@@ -307,16 +332,20 @@ export async function vimportSheet(reload, host, exchange = null) {
     back.removeAttribute("hidden");
     foot.removeAttribute("hidden");
     const vaults = vaultsOf(p);
-    const chosen = new Set(vaults);
+    // Seed it only the first time through: a Back from the preview must find
+    // the ticks the owner already set, not every vault re-checked.
+    if (!vaultPickState) vaultPickState = new Set(vaults);
+    const chosen = vaultPickState;
     const countIn = (v) => p.items.filter((i) => i.vault === v && !i.duplicate).length;
     const sync = () => {
       go.textContent = chosen.size === 0 ? "No vaults selected" : `Continue with ${chosen.size} of ${vaults.length}`;
       go.disabled = chosen.size === 0;
     };
     const row = (v) => {
-      const tick = el("input", { attrs: { type: "checkbox", checked: "" } });
+      const on = chosen.has(v);
+      const tick = el("input", { attrs: { type: "checkbox", ...(on ? { checked: "" } : {}) } });
       const n = countIn(v);
-      const node = el("div", { class: "imp-row pick" }, [
+      const node = el("div", { class: "imp-row pick" + (on ? "" : " off") }, [
         tick,
         el("span", { class: "vicon" }, [icon("lock", { class: "vico", strokeWidth: "1.8" })]),
         el("span", { class: "m" }, [
@@ -347,13 +376,12 @@ export async function vimportSheet(reload, host, exchange = null) {
 
   /** What was read, before anything is written: counts, rows, and reasons. */
   const preview = (p, vaultPick = null) => {
-    ticket = p.ticket ?? null;
     // Straight from the file with several vaults on board: the pick comes
-    // first. One vault, or a source with none, needs no such step.
+    // first. One vault, or a source with none, needs no such step. (pickVaults
+    // sets `ticket` itself, so this only sets it on the path that skips it.)
     if (!vaultPick && vaultsOf(p).length > 1) return pickVaults(p);
-    const inPick = (v) => !vaultPick || vaultPick.has(v);
-    const items = p.items.map((i, at) => ({ i, at })).filter(({ i }) => inPick(i.vault));
-    const skipped = p.skipped.filter((s) => inPick(s.vault));
+    ticket = p.ticket ?? null;
+    const { items, skipped } = rowsFor(p, vaultPick);
     title.textContent = "Ready to import";
     // No step to go back to when the passwords arrived by hand-off.
     if (!exchange) back.removeAttribute("hidden");
