@@ -425,6 +425,52 @@ describe("wizard steps around the existing verification flow", () => {
     expect(loadSettings(home)).toMatchObject({ telemetryEnabled: false, setupComplete: true });
     expect(build({}, false).state().step).toBe("done");
   });
+
+  it("exposes the first messageable agent when entering Done", async () => {
+    const onboarding = build({
+      lookupDoneAgent: async () => ({
+        name: "Elm",
+        smsUrl: "sms:+15559876543",
+      }),
+    });
+    const settings = loadSettings(home);
+    settings.relayCredential = DEVICE_TOKEN;
+    saveSettings(home, settings);
+    onboarding.reset();
+
+    expect((await onboarding.advance()).agent).toEqual({
+      name: "Elm",
+      smsUrl: "sms:+15559876543",
+    });
+  });
+
+  it("shows no message action when the account has no agent with a line", async () => {
+    const onboarding = build({ lookupDoneAgent: async () => null });
+    const settings = loadSettings(home);
+    settings.relayCredential = DEVICE_TOKEN;
+    saveSettings(home, settings);
+    onboarding.reset();
+
+    expect((await onboarding.advance()).agent).toBeNull();
+  });
+
+  it("keeps a Done-screen agent lookup failure silent", async () => {
+    const onboarding = build({
+      lookupDoneAgent: async () => {
+        throw new Error("offline");
+      },
+    });
+    const settings = loadSettings(home);
+    settings.relayCredential = DEVICE_TOKEN;
+    saveSettings(home, settings);
+    onboarding.reset();
+
+    expect(await onboarding.advance()).toMatchObject({
+      step: "done",
+      agent: null,
+      message: "",
+    });
+  });
 });
 
 describe("activation — the path a brand-new user takes", () => {
@@ -1098,6 +1144,7 @@ describe("the phone-code fallback still works", () => {
 
     state = await onboarding.submitCode("12345678");
     expect(state.step).toBe("verified");
+    expect(state.activation).toBeNull();
     expect(state.accountUid).toBe("u_123");
     expect(state.mcpUrl).toBe(DEVICE_MCP_URL);
     expect(started).toBe(1);

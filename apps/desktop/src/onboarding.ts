@@ -112,6 +112,13 @@ export interface OnboardingChat {
   label: string;
 }
 
+/** The single cloud-agent action the last screen may offer. */
+export interface OnboardingDoneAgent {
+  name: string;
+  /** Built and consumed in main; the renderer never sends a URL back. */
+  smsUrl: string;
+}
+
 /**
  * The chat activation provisioned, as the app remembers it.
  *
@@ -201,6 +208,8 @@ export interface OnboardingState {
   connected: boolean;
   /** The data screen's pending choice. It is persisted only on Continue. */
   telemetryEnabled: boolean;
+  /** At most one messageable cloud agent for the terminal screen. */
+  agent: OnboardingDoneAgent | null;
 }
 
 export interface OnboardingDeps {
@@ -215,6 +224,8 @@ export interface OnboardingDeps {
   now?: () => number;
   /** How the poll loop waits. Injectable so tests need no real timers. */
   wait?: (ms: number) => Promise<void>;
+  /** Resolve the first cloud agent whose line can be opened in Messages. */
+  lookupDoneAgent?: () => Promise<OnboardingDoneAgent | null>;
   /** Diagnostics. Callers must assume anything passed here reaches a log, so
    * nothing secret is ever passed — not the activation secret, and not the
    * display code, which is a live credential until it is redeemed. */
@@ -244,6 +255,7 @@ export class Onboarding {
   private pendingMintId = 0;
   private mints = 0;
   private telemetryEnabled: boolean;
+  private doneAgent: OnboardingDoneAgent | null = null;
 
   constructor(private readonly deps: OnboardingDeps) {
     const settings = this.settings();
@@ -266,6 +278,7 @@ export class Onboarding {
       mcpUrl: settings.mcpUrl,
       connected: this.deps.isConnected(),
       telemetryEnabled: this.telemetryEnabled,
+      agent: this.doneAgent === null ? null : { ...this.doneAgent },
     };
   }
 
@@ -297,6 +310,17 @@ export class Onboarding {
       settings.setupComplete = true;
       this.save(settings);
       this.step = "done";
+      this.doneAgent = null;
+      this.busy = true;
+      this.publish();
+      try {
+        this.doneAgent = await this.deps.lookupDoneAgent?.() ?? null;
+      } catch {
+        // The app is ready even when the optional shortcut cannot be loaded.
+        this.doneAgent = null;
+      } finally {
+        this.busy = false;
+      }
       return this.publish();
     }
     return this.publish();
@@ -660,6 +684,7 @@ export class Onboarding {
     this.codeExpiresAt = null;
     this.message = "";
     this.busy = false;
+    this.doneAgent = null;
     const settings = this.settings();
     this.telemetryEnabled = settings.telemetryEnabled;
     this.step = this.initialStep(settings);

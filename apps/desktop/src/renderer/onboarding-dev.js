@@ -25,7 +25,6 @@ const base = {
   mcpUrl: "",
   connected: false,
   telemetryEnabled: true,
-  fullDiskAccess: false,
   agent: null,
 };
 
@@ -33,7 +32,18 @@ const fixtures = {
   welcome: { ...base, step: "welcome", phone: "" },
   privacy: { ...base, step: "privacy", phone: "" },
   verify: { ...base, step: "activate", phone: "", activation: ACTIVATION },
+  "verify-waiting": { ...base, step: "waiting", phone: "", activation: ACTIVATION },
+  "verify-stale": {
+    ...base,
+    step: "waiting",
+    phone: "",
+    activation: ACTIVATION,
+    activationStale: true,
+    message:
+      "We haven't heard from your phone. Send the message exactly as shown — it has to start with “Plow Activate:” — or try again.",
+  },
   verified: { ...base, step: "verified", phone: "", activation: ACTIVATION, connected: true },
+  "verified-otp": { ...base, step: "verified", phone: "+1 555 123 4567", connected: true },
   phone: { ...base, step: "phone", phone: "" },
   code: {
     ...base,
@@ -52,7 +62,6 @@ const fixtures = {
     step: "data",
     accountUid: "u_7Qk2p9",
     connected: true,
-    fullDiskAccess: true,
   },
   "done-agent": {
     ...base,
@@ -74,6 +83,7 @@ const params = new URLSearchParams(window.location.search);
 let fixtureKey = params.get("state");
 if (!fixtureKeys.includes(fixtureKey)) fixtureKey = "welcome";
 let current = { ...fixtures[fixtureKey] };
+let fullDiskAccess = fixtureKey === "data-fda-on";
 let changed = null;
 
 function publish(next) {
@@ -124,8 +134,12 @@ window.domo = {
     connected: true,
   }),
   onboardingSetTelemetry: async (enabled) => publish({ ...current, telemetryEnabled: enabled }),
+  capabilitiesGet: async () => ({ fullDiskAccess }),
+  fullDiskGrantFlow: async () => {
+    fullDiskAccess = true;
+  },
   onboardingFinish: async () => current,
-  onboardingMessageAgent: async () => current,
+  onboardingOpenAgentMessages: async () => true,
   onOnboardingChanged: (callback) => {
     changed = callback;
   },
@@ -142,6 +156,7 @@ for (const key of fixtureKeys) {
 }
 picker.addEventListener("change", () => {
   fixtureKey = picker.value;
+  fullDiskAccess = fixtureKey === "data-fda-on";
   const url = new URL(window.location.href);
   url.searchParams.set("state", fixtureKey);
   window.history.replaceState(null, "", url);

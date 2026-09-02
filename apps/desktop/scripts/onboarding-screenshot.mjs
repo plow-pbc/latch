@@ -35,6 +35,7 @@ const base = {
   mcpUrl: "",
   connected: false,
   telemetryEnabled: true,
+  agent: null,
 };
 
 /** Each screen, with the text it must contain to count as rendered. */
@@ -113,6 +114,25 @@ const SCREENS = [
     expectFocus: "Continue",
   },
   {
+    name: "verified-otp",
+    state: {
+      ...base,
+      step: "verified",
+      connected: true,
+    },
+    expect: [
+      "Verify your phone to connect this Mac",
+      "Verified. This Mac is linked.",
+      "Continue",
+    ],
+    reject: [
+      "Send the message below",
+      "Send to:",
+      "Open Messages to activate",
+    ],
+    expectFocus: "Continue",
+  },
+  {
     name: "signed-out-revoke-warning",
     state: {
       ...base,
@@ -181,8 +201,9 @@ const SCREENS = [
     expectFocus: "12345678",
   },
   {
-    name: "data-shell",
+    name: "data-fda-off",
     state: { ...base, step: "data", accountUid: "u_7Qk2p9", connected: true },
+    fullDiskAccess: false,
     expect: [
       "Your data & permissions",
       "You can change any of these anytime in Settings",
@@ -192,19 +213,56 @@ const SCREENS = [
       "Full Disk Access",
       "Optional",
       "Apple keeps Messages behind this permission",
+      "Request…",
       "Continue",
     ],
     expectFocus: "Continue",
   },
   {
-    name: "done-shell",
+    name: "data-fda-on",
+    state: { ...base, step: "data", accountUid: "u_7Qk2p9", connected: true },
+    fullDiskAccess: true,
+    expect: [
+      "Your data & permissions",
+      "Share anonymous usage so we can improve Plow",
+      "Full Disk Access",
+      "Optional",
+      "Granted",
+      "Continue",
+    ],
+    reject: ["Request…"],
+    expectFocus: "Continue",
+  },
+  {
+    name: "done-agent",
+    state: {
+      ...base,
+      step: "done",
+      accountUid: "u_7Qk2p9",
+      connected: true,
+      agent: { name: "Elm", smsUrl: "sms:+15559876543" },
+    },
+    expect: ["You're all set", "Text Elm", "Explore the app"],
+  },
+  {
+    name: "done-noagent",
     state: { ...base, step: "done", accountUid: "u_7Qk2p9", connected: true },
     expect: ["You're all set", "Explore the app"],
+    reject: ["Text Elm"],
   },
 ];
 
 let current = SCREENS[0].state;
+let currentFullDiskAccess = false;
 ipcMain.handle("onboarding:get", async () => current);
+ipcMain.handle("capabilities:get", async () => ({ fullDiskAccess: currentFullDiskAccess }));
+ipcMain.handle("fullDisk:grantFlow", async () => {});
+ipcMain.handle("onboarding:setTelemetry", async (_event, enabled) => {
+  current = { ...current, telemetryEnabled: enabled === true };
+  return current;
+});
+ipcMain.handle("onboarding:openAgentMessages", async () => true);
+ipcMain.handle("onboarding:finish", async () => {});
 
 failLoudly();
 
@@ -222,6 +280,7 @@ app.whenReady().then(async () => {
     screens: SCREENS,
     load: async (fixture) => {
       current = fixture.state;
+      currentFullDiskAccess = fixture.fullDiskAccess === true;
       await win.loadFile(path.join(dist, "renderer/onboarding.html"));
       // The Welcome mark resolves its draw/fill/sheen sequence at 1.75s. Shoot
       // its resting state rather than a deliberately half-drawn frame.

@@ -10,6 +10,9 @@ const root = document.getElementById("root");
 let state = null;
 let primaryAction = null;
 let expiryTimer = null;
+let fullDiskAccess = null;
+let fullDiskProbe = null;
+let fullDiskRequestBusy = false;
 
 function el(tag, opts = {}, children = []) {
   const node = document.createElement(tag);
@@ -208,13 +211,14 @@ function copyButton(value) {
     label,
   ]);
   node.addEventListener("click", async () => {
-    await navigator.clipboard.writeText(value);
-    node.classList.add("copied");
-    label.textContent = "Copied";
-    setTimeout(() => {
-      node.classList.remove("copied");
-      label.textContent = "Copy";
-    }, 2000);
+    await navigator.clipboard.writeText(value).then(() => {
+      node.classList.add("copied");
+      label.textContent = "Copied";
+      setTimeout(() => {
+        node.classList.remove("copied");
+        label.textContent = "Copy";
+      }, 2000);
+    }).catch(() => {});
   });
   return node;
 }
@@ -259,14 +263,15 @@ function startActivationCountdown(node, until) {
 function verifyScreen() {
   const activation = state.activation;
   const verified = state.step === "verified";
+  const heading = [el("h1", { text: "Verify your phone to connect this Mac" })];
+  if (activation || !verified) {
+    heading.push(el("p", {
+      class: "subhead",
+      text: "Send the message below from the phone number you want to use with Plow.",
+    }));
+  }
   const parts = [
-    el("div", { class: "head-center" }, [
-      el("h1", { text: "Verify your phone to connect this Mac" }),
-      el("p", {
-        class: "subhead",
-        text: "Send the message below from the phone number you want to use with Plow.",
-      }),
-    ]),
+    el("div", { class: "head-center" }, heading),
   ];
 
   if (activation) {
@@ -315,7 +320,7 @@ function verifyScreen() {
     parts.push(status);
 
     if (activation && !verified) {
-      const countdown = el("p", { class: "countdown" });
+      const countdown = el("p", { class: "countdown", attrs: { "aria-live": "off" } });
       if (!state.activationStale) startActivationCountdown(countdown, activation.pollUntil);
       parts.push(countdown);
     }
@@ -326,39 +331,43 @@ function verifyScreen() {
       ]));
     }
 
-    const activate = button(
-      "",
-      `verify-activate${verified ? " done" : ""}`,
-      verified || !activation
-        ? null
-        : async () => {
-            activate.disabled = true;
-            activate.classList.add("sending");
-            apply(await window.domo.onboardingOpenMessages());
-          },
-    );
-    activate.append(
-      icon([
-        ["path", { d: "M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z" }],
-      ]),
-      document.createTextNode("Open Messages to activate"),
-    );
-    activate.disabled = verified || !activation;
-    activate.setAttribute("aria-disabled", String(activate.disabled));
+    if (activation) {
+      const activate = button(
+        "",
+        `verify-activate${verified ? " done" : ""}`,
+        verified
+          ? null
+          : async () => {
+              activate.disabled = true;
+              activate.classList.add("sending");
+              apply(await window.domo.onboardingOpenMessages());
+            },
+      );
+      activate.append(
+        icon([
+          ["path", { d: "M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z" }],
+        ]),
+        document.createTextNode("Open Messages to activate"),
+      );
+      activate.disabled = verified;
+      activate.setAttribute("aria-disabled", String(activate.disabled));
 
-    const actions = [activate];
-    if (!verified) {
-      actions.push(el("p", { class: "alternate" }, [
-        button("Use a phone code instead", "link-button", async () =>
-          apply(await window.domo.onboardingUsePhoneCode()),
-        ),
+      const actions = [activate];
+      if (!verified) {
+        actions.push(el("p", { class: "alternate" }, [
+          button("Use a phone code instead", "link-button", async () =>
+            apply(await window.domo.onboardingUsePhoneCode()),
+          ),
+        ]));
+      }
+      parts.push(el("div", { class: "verify-actions" }, actions));
+    }
+  } else {
+    if (!state.busy) {
+      parts.push(el("div", { class: "inline-actions" }, [
+        button("Try again", "link-button", async () => apply(await window.domo.onboardingBegin())),
       ]));
     }
-    parts.push(el("div", { class: "verify-actions" }, actions));
-  } else {
-    parts.push(el("div", { class: "inline-actions" }, [
-      button("Try again", "link-button", async () => apply(await window.domo.onboardingBegin())),
-    ]));
   }
 
   parts.push(note(state));
@@ -405,7 +414,7 @@ function codeScreen() {
       autofocus: "",
     },
   });
-  const expiry = el("p", { class: "countdown" });
+  const expiry = el("p", { class: "countdown", attrs: { "aria-live": "off" } });
   const tick = () => {
     if (!state.codeExpiresAt) {
       expiry.textContent = "";
@@ -446,53 +455,134 @@ function codeScreen() {
   ]);
 }
 
-/* These two lightweight states keep the whole persistent shell inspectable.
-   Their actions still come from main; no local transition is introduced. */
-function dataPreviewScreen() {
-  const granted = !!state.fullDiskAccess;
-  return el("div", { class: "data-preview" }, [
+async function refreshFullDiskAccess(force = false) {
+  if (!force && fullDiskAccess !== null) return;
+  if (fullDiskProbe) return fullDiskProbe;
+  fullDiskProbe = window.domo.capabilitiesGet()
+    .then((capabilities) => {
+      fullDiskAccess = capabilities?.fullDiskAccess === true;
+    })
+    .catch(() => {
+      fullDiskAccess = false;
+    })
+    .finally(() => {
+      fullDiskProbe = null;
+      if (state?.step === "data") render();
+    });
+  return fullDiskProbe;
+}
+
+async function requestFullDiskAccess() {
+  fullDiskRequestBusy = true;
+  render();
+  try {
+    await window.domo.fullDiskGrantFlow();
+  } finally {
+    await refreshFullDiskAccess(true);
+    fullDiskRequestBusy = false;
+    if (state?.step === "data") render();
+  }
+}
+
+function dataScreen() {
+  const telemetry = el("input", {
+    attrs: {
+      type: "checkbox",
+      "aria-label": "Share anonymous usage",
+    },
+  });
+  telemetry.checked = state.telemetryEnabled === true;
+  telemetry.addEventListener("change", async () => {
+    apply(await window.domo.onboardingSetTelemetry(telemetry.checked));
+  });
+
+  let permissionControl;
+  if (fullDiskAccess === true) {
+    permissionControl = button("", "req-btn granted", null);
+    permissionControl.append(
+      icon([["path", { d: "M20 6L9 17l-5-5" }]]),
+      document.createTextNode("Granted"),
+    );
+    permissionControl.disabled = true;
+  } else {
+    permissionControl = button(
+      fullDiskRequestBusy || fullDiskAccess === null ? "Checking…" : "Request…",
+      "req-btn",
+      fullDiskRequestBusy || fullDiskAccess === null ? null : requestFullDiskAccess,
+    );
+    permissionControl.disabled = fullDiskRequestBusy || fullDiskAccess === null;
+  }
+
+  return el("div", { class: "data-screen" }, [
     el("div", { class: "step-inner" }, [
       el("div", { class: "head-center" }, [
         el("h1", { text: "Your data & permissions" }),
         el("p", { class: "subhead", text: "You can change any of these anytime in Settings." }),
       ]),
-      el("div", { class: "preview-card" }, [
-        el("div", { class: "preview-title", text: "Help make Plow better?" }),
-        el("div", {
-          class: "preview-detail",
-          text: "Share anonymous usage so we can improve Plow. Never your messages or your data.",
-        }),
-      ]),
-      el("div", { class: "section-label preview-label", text: "Permissions" }),
-      el("div", { class: "preview-card" }, [
-        el("div", { class: "preview-title" }, [
-          document.createTextNode("Full Disk Access "),
-          el("span", { class: "optional-label", text: "Optional" }),
+      el("div", { class: "data-consent" }, [
+        el("div", { class: "section-heading", text: "Help make Plow better?" }),
+        el("div", { class: "toggle-row" }, [
+          el("span", { class: "toggle-copy" }, [
+            el("span", { class: "toggle-detail" }, [
+              el("strong", { text: "Share anonymous usage so we can improve Plow. " }),
+              document.createTextNode("Never your messages or your data."),
+            ]),
+          ]),
+          el("label", { class: "switch" }, [
+            telemetry,
+            el("span", { class: "track", attrs: { "aria-hidden": "true" } }),
+            el("span", { class: "knob", attrs: { "aria-hidden": "true" } }),
+          ]),
         ]),
-        el("div", {
-          class: "preview-detail",
-          text: "Plow Latch reads your Messages right on your Mac, so you never miss the texts that matter. Apple keeps Messages behind this permission, and nothing ever leaves your device.",
-        }),
-        ...(granted ? [el("div", { class: "permission-state", text: "Granted" })] : []),
+      ]),
+      el("div", { class: "data-divider" }),
+      el("div", { class: "section-label permission-label", text: "Permissions" }),
+      el("div", { class: "permission-rows" }, [
+        el("div", { class: "permission-row" }, [
+          el("span", { class: "permission-icon" }, [
+            icon([
+              ["rect", { x: "3", y: "5", width: "18", height: "14", rx: "2" }],
+              ["path", { d: "M3 13h18" }],
+              ["circle", { cx: "7.5", cy: "16", r: "1" }],
+              ["path", { d: "M11 16h6" }],
+            ]),
+          ]),
+          el("span", { class: "permission-copy" }, [
+            el("span", { class: "permission-name" }, [
+              document.createTextNode("Full Disk Access "),
+              el("span", { class: "optional-label", text: "Optional" }),
+            ]),
+            el("span", {
+              class: "permission-detail",
+              text: "Plow Latch reads your Messages right on your Mac, so you never miss the texts that matter. Apple keeps Messages behind this permission, and nothing ever leaves your device.",
+            }),
+          ]),
+          el("span", { class: "permission-control" }, [permissionControl]),
+        ]),
       ]),
     ]),
   ]);
 }
 
-function donePreviewScreen() {
-  const children = [
+function doneScreen() {
+  const actions = [];
+  if (state.agent?.name) {
+    actions.push(button(`Text ${state.agent.name}`, "nav-next", async () => {
+      await window.domo.onboardingOpenAgentMessages();
+    }));
+  }
+  actions.push(button(
+    "Explore the app",
+    state.agent?.name ? "nav-back done-explore" : "nav-next",
+    () => window.domo.onboardingFinish(),
+  ));
+  return el("div", { class: "done-wrap" }, [
     el("div", { class: "done-badge" }, [
       icon([["path", { d: "M20 6L9 17l-5-5", "stroke-width": "2.4" }]]),
     ]),
     el("h1", { text: "You're all set" }),
-  ];
-  if (state.agent?.name) {
-    children.push(button(`Text ${state.agent.name}`, "nav-next", async () => {
-      if (window.domo.onboardingMessageAgent) await window.domo.onboardingMessageAgent();
-    }));
-  }
-  children.push(button("Explore the app", "link-button", () => window.domo.onboardingFinish()));
-  return el("div", { class: "done-preview" }, children);
+    el("div", { class: "done-actions" }, actions),
+  ]);
 }
 
 function screenForStep() {
@@ -503,8 +593,8 @@ function screenForStep() {
   }
   if (state.step === "phone") return phoneScreen();
   if (state.step === "code") return codeScreen();
-  if (state.step === "data") return dataPreviewScreen();
-  if (state.step === "done") return donePreviewScreen();
+  if (state.step === "data") return dataScreen();
+  if (state.step === "done") return doneScreen();
   return el("p", { class: "state-note error", text: "This setup step is unavailable." });
 }
 
@@ -622,6 +712,7 @@ function render() {
   }
 
   if (state.step === "welcome") playWelcomeEntrance();
+  if (state.step === "data") void refreshFullDiskAccess();
 
   const focus = screen.querySelector("input[autofocus]")
     ?? (primaryButton.disabled ? screen.querySelector(".verify-activate:not(:disabled)") : null)
@@ -652,6 +743,10 @@ window.addEventListener("unhandledrejection", (event) => {
     message: "Something went wrong talking to the app. Try again.",
   };
   render();
+});
+
+window.addEventListener("focus", () => {
+  if (state?.step === "data") void refreshFullDiskAccess(true);
 });
 
 window.domo.onOnboardingChanged(async () => apply(await window.domo.onboardingGet()));

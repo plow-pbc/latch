@@ -726,10 +726,14 @@ ipcMain.handle("cloud:openMessages", async (_e, agentId?: unknown) => {
   const url = typeof agentId === "string"
     ? cloudAgents?.agentSmsUrl(agentId)
     : cloudAgents?.createSmsUrl();
-  if (!url) return false;
+  return openSmsUrl(url);
+});
+
+async function openSmsUrl(url: string | null | undefined): Promise<boolean> {
+  if (!url?.startsWith("sms:")) return false;
   await shell.openExternal(url);
   return true;
-});
+}
 
 /**
  * Remove one roster row. Which call that means is the state's decision, not
@@ -778,9 +782,12 @@ ipcMain.handle("onboarding:useActivation", async () => onboarding?.useActivation
  */
 ipcMain.handle("onboarding:openMessages", async () => {
   const url = onboarding?.state().activation?.smsUrl;
-  if (url) await shell.openExternal(url);
+  await openSmsUrl(url);
   return onboarding?.messagesOpened();
 });
+ipcMain.handle("onboarding:openAgentMessages", async () =>
+  openSmsUrl(onboarding?.state().agent?.smsUrl),
+);
 ipcMain.handle("onboarding:requestCode", async (_e, phone: string) => onboarding?.requestCode(phone));
 ipcMain.handle("onboarding:resendCode", async () => onboarding?.resendCode());
 ipcMain.handle("onboarding:editPhone", async () => onboarding?.editPhone());
@@ -1628,6 +1635,18 @@ app.whenReady().then(async () => {
     startRelay,
     isConnected: () => connected,
     deviceName: `Plow Latch (${hostName()})`,
+    lookupDoneAgent: async () => {
+      if (!cloudAgents) return null;
+      await cloudAgents.refresh();
+      const cloud = cloudAgents.state();
+      if (cloud.cloudAgentsError) return null;
+      for (const agent of cloud.cloudAgents) {
+        if (!agent.line) continue;
+        const smsUrl = cloudAgents.agentSmsUrl(agent.agentId);
+        if (smsUrl) return { name: agent.name, smsUrl };
+      }
+      return null;
+    },
     onChange: () => onboardingWindow?.webContents.send("onboarding:changed"),
     // RelayClient's redaction is not in play here, so nothing secret is ever
     // handed to this — see Onboarding's callers of `warn`.

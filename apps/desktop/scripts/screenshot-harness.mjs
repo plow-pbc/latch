@@ -64,7 +64,8 @@ export async function waitFor(win, expr, label, timeoutMs = 10_000) {
  *
  * `expect` is matched against the page's text case-insensitively — several of
  * these panes uppercase their labels in CSS, and this checks what the screen
- * says, not how it is set. `expectValues` is matched against field values,
+ * says, not how it is set. `reject` fails on text a state must not render.
+ * `expectValues` is matched against field values,
  * which is where a revealed secret lands. `expectFocus` is matched against the
  * focused element's label (its text, or an input's placeholder) — the screen's
  * promise that Return does what the highlighted control advertises.
@@ -93,6 +94,9 @@ export async function shootScreens({ win, outDir, prefix, screens, load, beforeS
     );
     const missing = [
       ...(screen.expect ?? []).filter((needle) => !text.includes(needle.toLowerCase())),
+      ...(screen.reject ?? [])
+        .filter((needle) => text.includes(needle.toLowerCase()))
+        .map((needle) => `unexpected text "${needle}"`),
       ...(screen.expectValues ?? []).filter((needle) => !values.includes(needle)),
       ...(screen.expectTitle && title !== screen.expectTitle
         ? [`title "${screen.expectTitle}" (found: "${title}")`]
