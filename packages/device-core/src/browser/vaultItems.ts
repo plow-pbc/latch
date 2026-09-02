@@ -339,8 +339,8 @@ export function encryptCipher(
     const given = input[field];
     if (typeof given !== "string") continue;
     if (field === "birthDate" && given !== "") parseIso(given);            // throws on a bad date
-    const stored = (field === "expMonth" || field === "expYear") && given !== "" ? expiryPart(field, given) : given;
-    out[field] = enc(stored, key);
+    const normalized = (field === "expMonth" || field === "expYear") && given !== "" ? expiryPart(field, given) : given;
+    out[field] = enc(normalized, key);
   }
 
   cipher.login = null;
