@@ -521,11 +521,6 @@ function footerForStep() {
 
 function playWelcomeEntrance(variant) {
   const mark = screen.querySelector(".plw-mark");
-  if (!mark) {
-    screen.classList.add("no-entrance");
-    document.body.classList.add("welcome-no-entrance");
-    return;
-  }
   requestAnimationFrame(() => {
     requestAnimationFrame(() => {
       if (!mark.isConnected) return;
@@ -565,7 +560,7 @@ function render() {
     screen.className = `wizard-screen is-${state.step}`;
     screen.replaceChildren(screenForStep());
     body.scrollTop = 0;
-    document.body.classList.remove("welcome-full", "welcome-short", "welcome-no-entrance");
+    document.body.classList.remove("welcome-full", "welcome-short");
   }
   document.body.classList.toggle("on-welcome", state.step === "welcome");
 
@@ -590,7 +585,6 @@ function render() {
   if (state.step === "welcome" && !continuingWelcome) {
     const variant = state.welcomeEntrancePlayed ? "short" : "full";
     playWelcomeEntrance(variant);
-    if (variant === "full") void window.domo.onboardingWelcomePublished().catch(() => {});
   }
   if (state.step === "data") void refreshFullDiskAccess();
 

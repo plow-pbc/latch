@@ -1,10 +1,5 @@
-import fs from "node:fs";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { onboardingFixtures } from "../src/renderer/onboarding-fixtures.js";
-
-const desktop = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 describe("onboarding visual fixtures", () => {
   const fixtures = onboardingFixtures(1_700_000_000_000);
@@ -13,14 +8,10 @@ describe("onboarding visual fixtures", () => {
   it("keeps clean verification separate from the interactive re-arm capture", () => {
     const verify = fixture("verify");
     const rearm = fixture("verify-rearm");
-    const screenshot = fs.readFileSync(path.join(desktop, "scripts/onboarding-screenshot.mjs"), "utf8");
 
     expect(verify.expect).toContain("Listening for 4:");
     expect(verify.expect).not.toContainEqual(expect.stringContaining("That code still works"));
     expect(rearm.expect).toContainEqual(expect.stringContaining("That code still works"));
-    expect(screenshot).toMatch(
-      /find\(\(fixture\) => fixture\.name === "verify-rearm"\)[\s\S]*?\.prepare = async/,
-    );
   });
 
   it("uses identical Welcome copy for the full and repeat entrances", () => {

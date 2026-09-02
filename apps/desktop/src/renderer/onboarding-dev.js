@@ -21,10 +21,6 @@ const currentState = async () => current;
 
 window.domo = {
   onboardingGet: currentState,
-  onboardingWelcomePublished: async () => {
-    current = { ...current, welcomeEntrancePlayed: true };
-    return current;
-  },
   onboardingBegin: currentState,
   onboardingAdvance: currentState,
   onboardingBack: currentState,

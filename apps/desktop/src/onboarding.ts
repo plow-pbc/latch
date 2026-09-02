@@ -193,20 +193,14 @@ export class Onboarding {
     };
   }
 
-  /** Remember the first Welcome only after the renderer says it published it. */
-  welcomePublished(): OnboardingState {
-    if (this.welcomeEntrancePlayed) return this.state();
-    const settings = this.settings();
-    settings.welcomeEntrancePlayed = true;
-    this.save(settings);
-    this.welcomeEntrancePlayed = true;
-    return this.state();
-  }
-
   /** Advance the presentational steps and commit the data-screen choice. */
   async advance(): Promise<OnboardingState> {
     if (this.busy) return this.state();
     if (this.step === "welcome") {
+      const settings = this.settings();
+      settings.welcomeEntrancePlayed = true;
+      this.save(settings);
+      this.welcomeEntrancePlayed = true;
       this.step = "privacy";
       return this.publish();
     }

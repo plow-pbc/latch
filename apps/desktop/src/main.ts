@@ -771,7 +771,6 @@ function agentsTabState(): Record<string, unknown> | null {
 // notification, so a getter that notifies is an unbroken re-render loop that
 // leaves the window rendered but inert. See the note in onboarding.ts.
 ipcMain.handle("onboarding:get", async () => onboarding?.state() ?? null);
-ipcMain.handle("onboarding:welcomePublished", async () => onboarding?.welcomePublished() ?? null);
 ipcMain.handle("onboarding:begin", async () => onboarding?.begin());
 ipcMain.handle("onboarding:advance", async () => onboarding?.advance());
 ipcMain.handle("onboarding:back", async () => onboarding?.back());

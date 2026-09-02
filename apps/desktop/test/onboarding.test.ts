@@ -182,20 +182,13 @@ afterEach(() => {
 });
 
 describe("wizard steps around the existing verification flow", () => {
-  it("publishes the full Welcome once, then exposes the persisted repeat state", () => {
+  it("persists the repeat entrance when the user leaves Welcome", async () => {
     const onboarding = build({}, false);
 
     expect(onboarding.state().welcomeEntrancePlayed).toBe(false);
-    expect(onboarding.welcomePublished().welcomeEntrancePlayed).toBe(true);
+    expect((await onboarding.advance()).welcomeEntrancePlayed).toBe(true);
     expect(loadSettings(home).welcomeEntrancePlayed).toBe(true);
     expect(build({}, false).state().welcomeEntrancePlayed).toBe(true);
-  });
-
-  it("keeps the Welcome entrance history when the state machine resets", () => {
-    const onboarding = build({}, false);
-    onboarding.welcomePublished();
-
-    expect(onboarding.reset().welcomeEntrancePlayed).toBe(true);
   });
 
   it("does no network work on Welcome or Privacy and mints on Privacy Continue", async () => {

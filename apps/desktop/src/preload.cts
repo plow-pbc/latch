@@ -110,7 +110,6 @@ contextBridge.exposeInMainWorld("domo", {
   // First-run setup window. Every call returns the whole state, so the screen
   // renders from one shape and never has to reconcile two.
   onboardingGet: () => ipcRenderer.invoke("onboarding:get"),
-  onboardingWelcomePublished: () => ipcRenderer.invoke("onboarding:welcomePublished"),
   onboardingBegin: () => ipcRenderer.invoke("onboarding:begin"),
   onboardingAdvance: () => ipcRenderer.invoke("onboarding:advance"),
   onboardingBack: () => ipcRenderer.invoke("onboarding:back"),

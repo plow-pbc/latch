@@ -22,10 +22,6 @@ let current = currentFixture.state;
 let currentFullDiskAccess = false;
 let newCodeRequests = 0;
 ipcMain.handle("onboarding:get", async () => current);
-ipcMain.handle("onboarding:welcomePublished", async () => {
-  current = { ...current, welcomeEntrancePlayed: true };
-  return current;
-});
 ipcMain.handle("onboarding:newCode", async () => {
   newCodeRequests += 1;
   current = {
