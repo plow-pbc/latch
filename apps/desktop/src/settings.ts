@@ -128,8 +128,8 @@ export interface Settings {
    * one of this and `relayCredential` is ever on disk.
    */
   relayCredentialEnc?: string;
-  /** The Plow login session this Mac holds, from first-run activation or the
-   * phone-code fallback. It carries the owner's full account authority — Latch
+  /** The Plow login session this Mac holds, from first-run activation. It
+   * carries the owner's full account authority — Latch
    * is their manager app, not an agent — and is never seen by the user. A
    * SECRET: never sent to the renderer, never written to a log or an error
    * string. */
@@ -174,30 +174,21 @@ export interface Settings {
   autoInstallUpdates: boolean;
   /** When the last update check completed (ISO-8601) — display only. */
   updatesLastCheckedAt?: string;
-  /**
-   * The chat this Mac's activation provisioned, kept for display.
-   *
-   * The uid is the join key — the server stays authoritative on what the chat
-   * *is*, and a cloud-agent screen lists chats rather than trusting this. The
-   * label is display text derived at redeem time, cached because the redeem
-   * that carried the chat answers exactly once: re-reading it is impossible, so
-   * a setup window reopened later would otherwise have nothing to show.
-   *
-   * Neither is a secret. Both are empty on a Mac that activated before
-   * `provision_chat`, which is why nothing may treat them as a signal that the
-   * account has no chat.
-   */
-  provisionedChatUid: string;
-  provisionedChatLabel: string;
   /** Keep this Mac awake while plugged in (default off). The opt-in only —
    * keepAwake.ts owns when a blocker is actually held (AC power only, and an
    * acquire the OS refuses writes this back to false). */
   keepAwakeWhileRunning: boolean;
-  /** Share anonymous usage statistics and error reports (default on; a
+  /** Share usage statistics and error reports (default on; a
    * Settings toggle turns it off). telemetry.ts owns what "usage" means —
    * an allowlist of audit events with paths, argv, goal text and credential
    * material never sent. */
   telemetryEnabled: boolean;
+  /** The first-run setup has reached its final screen. Kept separately from
+   * the credential because the data choice happens after sign-in. */
+  setupComplete: boolean;
+  /** The full Welcome entrance has been shown for this home. Sign-out keeps
+   * this bit; deleting the home removes it with the rest of the settings. */
+  welcomeEntrancePlayed: boolean;
   /** The first-run launch-at-login default has been applied (main.ts's
    * `applyFirstRunLaunchAtLogin`). NOT a mirror of the OS's login-item bit —
    * loginItem.ts explains why none exists — only the record that the one-time
@@ -220,12 +211,12 @@ export function loadSettings(home: string): Settings {
     selectedTab: "agents",
     approvalMode: DEFAULT_APPROVAL_MODE,
     agentPurpose: "",
-    provisionedChatUid: "",
-    provisionedChatLabel: "",
     autoCheckUpdates: true,
     autoInstallUpdates: true,
     keepAwakeWhileRunning: false,
     telemetryEnabled: true,
+    setupComplete: false,
+    welcomeEntrancePlayed: false,
     launchAtLoginDefaulted: false,
   };
   let parsed: unknown;
@@ -236,15 +227,19 @@ export function loadSettings(home: string): Settings {
   }
   const settings =
     parsed && typeof parsed === "object" ? { ...(parsed as Record<string, unknown>) } : {};
-  // Bring-your-own-key is gone, and its two fields go with it. Unknown keys
-  // otherwise ride this spread in and `saveSettings` writes them back, so a Mac
-  // that once pasted an Anthropic key would keep it forever — unread by
-  // anything, readable by anyone who opens the file. A secret nobody reads is
-  // still a secret. Delete these three lines once the fleet has turned over:
-  // they are a one-off, not a migration framework.
-  const retired = "anthropicApiKey" in settings || "inferenceProvider" in settings;
+  // Retired fields must be removed explicitly: unknown keys otherwise ride
+  // this spread into every later save. Delete this scrub once the fleet has
+  // turned over; it is a one-off, not a migration framework.
+  const retired = [
+    "anthropicApiKey",
+    "inferenceProvider",
+    "provisionedChatUid",
+    "provisionedChatLabel",
+  ].some((key) => key in settings);
   delete settings.anthropicApiKey;
   delete settings.inferenceProvider;
+  delete settings.provisionedChatUid;
+  delete settings.provisionedChatLabel;
 
   const loaded = { ...defaults, ...settings };
   // The encrypted field wins where it exists. A decrypt that fails is treated
@@ -261,8 +256,6 @@ export function loadSettings(home: string): Settings {
       unreadableSeal = true;
       loaded.accountUid = "";
       loaded.mcpUrl = "";
-      loaded.provisionedChatUid = "";
-      loaded.provisionedChatLabel = "";
     }
   }
   // The spread above copies whatever the file held, and a hand-edited or

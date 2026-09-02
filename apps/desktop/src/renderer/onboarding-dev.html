@@ -3,18 +3,16 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <!-- Same strict CSP as every other window: no remote content, no inline
-         handlers. This screen handles credentials, so it is not the one to
-         relax it on. -->
     <meta
       http-equiv="Content-Security-Policy"
       content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'"
     />
     <link rel="stylesheet" href="onboarding.css" />
-    <title>Plow Latch. Set Up.</title>
+    <title>Plow Latch. Set Up. — Setup fixture</title>
   </head>
-  <body>
+  <body class="dev-preview">
+    <select class="dev-picker" id="fixturePicker" aria-label="Fixture state"></select>
     <div id="root"></div>
-    <script type="module" src="onboarding.js"></script>
+    <script type="module" src="onboarding-dev.js"></script>
   </body>
 </html>

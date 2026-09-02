@@ -65,25 +65,6 @@ describe("the device socket derives from that one base URL", () => {
 });
 
 describe("PlowApi", () => {
-  it("sends the phone number to /v1/auth/otp/request with no credential", async () => {
-    const { calls, fetchImpl } = recordingFetch([{ status: 200, body: { ok: true } }]);
-    await new PlowApi("https://api.plow.co", fetchImpl).requestOtp("+15551110000");
-
-    expect(calls[0].url).toBe("https://api.plow.co/v1/auth/otp/request");
-    expect(calls[0].init.body).toBe(JSON.stringify({ phone: "+15551110000" }));
-    expect((calls[0].init.headers as Record<string, string>).authorization).toBeUndefined();
-  });
-
-  it("reports the SMS provider being down as its own kind — the one honest OTP failure", async () => {
-    const { fetchImpl } = recordingFetch([{ status: 503, body: { detail: "Provider unavailable" } }]);
-    const error = await new PlowApi("https://api.plow.co", fetchImpl)
-      .requestOtp("+15551110000")
-      .catch((e) => e);
-
-    expect(error).toBeInstanceOf(PlowApiError);
-    expect((error as PlowApiError).kind).toBe("provider_unavailable");
-  });
-
   it("gives up on a request that is accepted and never answered", async () => {
     // Reported from a live run as "nothing in the window is interactive". The
     // request was taken and never answered; `fetch` has no default timeout, so
@@ -131,24 +112,11 @@ describe("PlowApi", () => {
       throw new TypeError("fetch failed");
     };
     const error = await new PlowApi("http://localhost:4242", fetchImpl)
-      .requestOtp("+15551110000")
+      .createActivation("Test Mac")
       .catch((e) => e);
 
     expect((error as PlowApiError).kind).toBe("network");
     expect((error as PlowApiError).message).toBe("Couldn't reach Plow at http://localhost:4242.");
-  });
-
-  it("returns the token from verify and flags a bad code as unauthorized", async () => {
-    const ok = recordingFetch([{ status: 200, body: { token: "plow_abcdefghXYZ" } }]);
-    expect(await new PlowApi("https://api.plow.co", ok.fetchImpl).verifyOtp("+1", "12345678")).toBe(
-      "plow_abcdefghXYZ",
-    );
-
-    const bad = recordingFetch([{ status: 401, body: { detail: "Invalid or expired code" } }]);
-    const error = await new PlowApi("https://api.plow.co", bad.fetchImpl)
-      .verifyOtp("+1", "00000000")
-      .catch((e) => e);
-    expect((error as PlowApiError).kind).toBe("unauthorized");
   });
 
   it("reads the account from /v1/relay/info", async () => {
@@ -385,21 +353,6 @@ describe("PlowApi", () => {
       token: null,
       chat: null,
     });
-  });
-
-  it("says what a 503 has always said — one sentence, no per-call override", async () => {
-    // Activation used to carry its own 503 sentence, because asking for a chat
-    // made that endpoint assign a pool line and an exhausted pool 503'd there.
-    // It asks for no chat now, so that branch cannot run
-    // (`api/plow/auth_routes/router.py` raises it only under `provision_chat`)
-    // and the override went with it. A server that writes its own `detail`
-    // still wins on every call.
-    const { fetchImpl } = recordingFetch([{ status: 503, body: {} }]);
-    const error = (await new PlowApi("https://api.plow.co", fetchImpl)
-      .requestOtp("+15551110000")
-      .catch((e) => e)) as PlowApiError;
-
-    expect(error.message).toBe("Plow can't send text messages right now.");
   });
 
   it("keeps the chat the verified redeem carries — it is answered exactly once", async () => {

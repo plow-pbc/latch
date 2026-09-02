@@ -55,12 +55,13 @@ import { buildMinter, vendorDirs } from "./providerWiring.js";
 import { resolveInstancePaths } from "./paths.js";
 import { ImportStaging, passwordsAppCanHandOff } from "./importStaging.js";
 import { loadSettings, saveSettings, useCredentialCodec, WindowBounds } from "./settings.js";
-import { resolveTelemetryConfig, Telemetry } from "./telemetry.js";
+import { resolveTelemetryConfig, Telemetry, telemetryMaySend } from "./telemetry.js";
 import { PlowApi, PlowApiError, relaySocketUrl, resolveApiBaseUrl } from "./plowApi.js";
 import { Onboarding } from "./onboarding.js";
 import { ConnectClient } from "./connectClient.js";
 import { CloudAgentsClient } from "./cloudAgents.js";
 import { CloudAgentState, CloudChatsClient, CloudLinesClient, tabShowsCloudAgents } from "./cloudAgentState.js";
+import { cloudAgentsIpcResult } from "./cloudAgentsIpc.js";
 import { loggingFetch } from "./wireLog.js";
 import { WindowGate } from "./windowGate.js";
 import { SimulatedScenario, SimulatedUpdater, UpdateController } from "./updates.js";
@@ -210,6 +211,7 @@ let onboarding: Onboarding | null = null;
 let connectClient: ConnectClient | null = null;
 let cloudAgents: CloudAgentState | null = null;
 let onboardingWindow: BrowserWindow | null = null;
+let onboardingWindowReady: BrowserWindow | null = null;
 let updates: UpdateController | null = null;
 let telemetry: Telemetry | null = null;
 
@@ -568,11 +570,10 @@ function signOut() {
   cloudAgents?.signedOut();
   // The gate, not a bare `openOnboardingWindow`: with no credential this Mac is
   // not usable, so the main window goes away as the setup window arrives.
-  // Opening it boots the renderer, which calls `begin` and mints the code the
-  // activation screen needs. `begin` covers the already-open case; it is
-  // idempotent, so between them exactly one code is minted.
+  // Opening it boots at Welcome. Activation is deliberately deferred until
+  // Continue from Privacy.
   gate.sync();
-  return onboarding?.begin();
+  return onboarding?.state();
 }
 
 /**
@@ -601,9 +602,8 @@ async function signOutThisMac(): Promise<void> {
   // The one place that resets the app's state, shared with the relay's
   // auth-failed path. It also drops connect-a-client's shown-once credential,
   // which a click has exactly as much reason to clear as a revocation does.
-  const beginning = signOut();
+  signOut();
   await startRelay();
-  await beginning;
   if (!(await revoking)) {
     onboarding?.showMessage(
       "Signed out on this Mac. Plow could not be reached to revoke the session — revoke it in Plow's account settings.",
@@ -669,6 +669,11 @@ ipcMain.handle("cloud:refresh", async () => {
   await cloudAgents?.refresh();
   return agentsTabState();
 });
+// Setup needs only the cloud-agent projection. Keep connect-client state — in
+// particular its roster and one-time credential — off this narrower bridge.
+ipcMain.handle("cloud:agents", async () => {
+  return cloudAgentsIpcResult(cloudAgents);
+});
 ipcMain.handle("connect:create", async (_e, name: string) => {
   await connectClient?.createCredential(name);
   // The credential it just minted is a roster row nobody has read yet.
@@ -729,10 +734,14 @@ ipcMain.handle("cloud:openMessages", async (_e, agentId?: unknown) => {
   const url = typeof agentId === "string"
     ? cloudAgents?.agentSmsUrl(agentId)
     : cloudAgents?.createSmsUrl();
-  if (!url) return false;
+  return openSmsUrl(url);
+});
+
+async function openSmsUrl(url: string | null | undefined): Promise<boolean> {
+  if (!url?.startsWith("sms:")) return false;
   await shell.openExternal(url);
   return true;
-});
+}
 
 /**
  * Remove one roster row. Which call that means is the state's decision, not
@@ -764,9 +773,12 @@ function agentsTabState(): Record<string, unknown> | null {
 // leaves the window rendered but inert. See the note in onboarding.ts.
 ipcMain.handle("onboarding:get", async () => onboarding?.state() ?? null);
 ipcMain.handle("onboarding:begin", async () => onboarding?.begin());
+ipcMain.handle("onboarding:advance", async () => onboarding?.advance());
+ipcMain.handle("onboarding:back", async () => onboarding?.back());
+ipcMain.handle("onboarding:setTelemetry", async (_e, on: unknown) =>
+  onboarding?.setTelemetryEnabled(on),
+);
 ipcMain.handle("onboarding:newCode", async () => onboarding?.newActivationCode());
-ipcMain.handle("onboarding:usePhoneCode", async () => onboarding?.usePhoneCode());
-ipcMain.handle("onboarding:useActivation", async () => onboarding?.useActivation());
 /**
  * Open Messages with the activation text drafted.
  *
@@ -776,13 +788,9 @@ ipcMain.handle("onboarding:useActivation", async () => onboarding?.useActivation
  */
 ipcMain.handle("onboarding:openMessages", async () => {
   const url = onboarding?.state().activation?.smsUrl;
-  if (url) await shell.openExternal(url);
+  await openSmsUrl(url);
   return onboarding?.messagesOpened();
 });
-ipcMain.handle("onboarding:requestCode", async (_e, phone: string) => onboarding?.requestCode(phone));
-ipcMain.handle("onboarding:resendCode", async () => onboarding?.resendCode());
-ipcMain.handle("onboarding:editPhone", async () => onboarding?.editPhone());
-ipcMain.handle("onboarding:submitCode", async (_e, code: string) => onboarding?.submitCode(code));
 // The last step of the wizard. It does not just close the setup window — it
 // hands the user over to the app, which is the whole point of the gate: the
 // main window has not existed until now.
@@ -1315,16 +1323,15 @@ let keepAwake: KeepAwake | null = null;
  * app — and never again after that (`Settings.launchAtLoginDefaulted`), so
  * turning it off in Settings sticks.
  *
- * "Pending" is read entirely off disk: a credential with the marker still
- * false can only mean a completed setup whose default has not landed —
- * `finishWithSession` writes both fields, a home signed in from before the
- * marker existed reads as already defaulted (`loadSettings`), and sign-out
- * keeps the marker. So someone reopening the setup window from Settings never
- * trips this, no in-memory "signed in this session" flag is needed, and the
- * hook is idempotent — which is why it runs at BOTH the hand-over (the setup
- * window's closed handler) and startup: a crash between setup and the
- * hand-over leaves the default pending on disk, and the next launch opens the
- * main window directly, never closing a setup window.
+ * "Pending" is read entirely off disk: a credential plus completed setup with
+ * the marker still false means the one-time default has not landed. A home
+ * signed in from before the marker existed reads as already defaulted
+ * (`loadSettings`), and sign-out keeps the marker. So someone reopening the
+ * setup window from Settings never trips this, no in-memory "signed in this
+ * session" flag is needed, and the hook is idempotent — which is why it runs at
+ * BOTH the hand-over (the setup window's closed handler) and startup: a crash
+ * between setup and the hand-over leaves the default pending on disk, and the
+ * next launch opens the main window directly, never closing a setup window.
  *
  * The attempt is the shot: if the OS declines the write we do not come back on
  * every launch — the Settings toggle is the recourse. A from-source run is the
@@ -1334,7 +1341,11 @@ let keepAwake: KeepAwake | null = null;
  */
 function applyFirstRunLaunchAtLogin(): void {
   const settings = loadSettings(home);
-  if (settings.launchAtLoginDefaulted || !settings.relayCredential.trim()) return;
+  if (
+    settings.launchAtLoginDefaulted ||
+    !settings.relayCredential.trim() ||
+    !settings.setupComplete
+  ) return;
   if (setLaunchAtLogin(app.isPackaged, loginItems, true).supported) {
     settings.launchAtLoginDefaulted = true;
     saveSettings(home, settings);
@@ -1386,22 +1397,25 @@ function notifyRenderer(channel: string): void {
 }
 
 /**
- * The first-run setup window: show a code → the user texts it → connected.
- * While this Mac holds no credential it is the ONLY window there is — see
- * `windowGate.ts`. It is also openable from Settings once signed in.
+ * The first-run setup window. While setup is incomplete it is the ONLY window
+ * there is — see `windowGate.ts`. It is also openable from Settings once signed
+ * in.
  */
 function openOnboardingWindow(): void {
   if (onboardingWindow && !onboardingWindow.isDestroyed()) {
-    onboardingWindow.show();
+    if (onboardingWindowReady === onboardingWindow) onboardingWindow.show();
     onboardingWindow.focus();
     return;
   }
   onboardingWindow = new BrowserWindow({
-    width: 460,
-    height: 560,
+    show: false,
+    width: 660,
+    height: 840,
     resizable: false,
     fullscreenable: false,
     title: "Plow Latch — Set Up",
+    titleBarStyle: "hiddenInset",
+    backgroundColor: "#111110",
     webPreferences: {
       preload: path.join(dirname, "preload.cjs"),
       contextIsolation: true,
@@ -1410,8 +1424,15 @@ function openOnboardingWindow(): void {
     },
   });
   const win = onboardingWindow;
+  win.once("ready-to-show", () => {
+    if (!win.isDestroyed()) {
+      onboardingWindowReady = win;
+      win.show();
+    }
+  });
   onboardingWindow.on("closed", () => {
     if (onboardingWindow === win) onboardingWindow = null;
+    if (onboardingWindowReady === win) onboardingWindowReady = null;
     notifyRenderer("status:changed"); // Settings re-reads what changed
     // Every hand-over from a completed setup to the main window closes this
     // window — Continue, the close box, the tray — so this is the one place
@@ -1431,6 +1452,7 @@ function openOnboardingWindow(): void {
  */
 const gate = new WindowGate({
   hasCredential: () => loadSettings(home).relayCredential.trim().length > 0,
+  isSetupComplete: () => loadSettings(home).setupComplete,
   isMainOpen: () => !!mainWindow && !mainWindow.isDestroyed(),
   isSetupOpen: () => !!onboardingWindow && !onboardingWindow.isDestroyed(),
   openMain: () => createMainWindow(),
@@ -1590,7 +1612,7 @@ app.whenReady().then(async () => {
         // ordinary events are not worth 30 seconds of anyone's time.
         shutdown: () => posthog.shutdown(2_000),
       },
-      enabled: () => loadSettings(home).telemetryEnabled,
+      enabled: () => telemetryMaySend(loadSettings(home)),
       accountUid: () => loadSettings(home).accountUid,
       // The relay credential is the one secret this process holds in a string;
       // read per event because it changes on sign-in/out.
@@ -1722,12 +1744,8 @@ app.whenReady().then(async () => {
     api: new PlowApi(apiBaseUrl),
     home,
     startRelay,
-    isConnected: () => connected,
     deviceName: `Plow Latch (${hostName()})`,
     onChange: () => onboardingWindow?.webContents.send("onboarding:changed"),
-    // RelayClient's redaction is not in play here, so nothing secret is ever
-    // handed to this — see Onboarding's callers of `warn`.
-    warn: (message) => console.log(`[onboarding] ${message}`),
   });
   // Built first: the roster's removal routing needs the cloud-agent client,
   // because a row with an `agent_id` must be deleted as an agent and never

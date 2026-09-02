@@ -4,6 +4,7 @@
  * renderer has no direct access to Node, ipcRenderer, or the filesystem.
  */
 import { contextBridge, ipcRenderer } from "electron";
+import type { CloudAgentsPreloadState } from "./cloudAgentsIpc.js";
 
 contextBridge.exposeInMainWorld("domo", {
   // Main window data.
@@ -121,16 +122,13 @@ contextBridge.exposeInMainWorld("domo", {
   // renders from one shape and never has to reconcile two.
   onboardingGet: () => ipcRenderer.invoke("onboarding:get"),
   onboardingBegin: () => ipcRenderer.invoke("onboarding:begin"),
+  onboardingAdvance: () => ipcRenderer.invoke("onboarding:advance"),
+  onboardingBack: () => ipcRenderer.invoke("onboarding:back"),
+  onboardingSetTelemetry: (on: boolean) => ipcRenderer.invoke("onboarding:setTelemetry", on),
   // The renderer is sandboxed and cannot open a URL; main owns the `sms:` one,
   // so the renderer never has to build it or be trusted with it.
   onboardingOpenMessages: () => ipcRenderer.invoke("onboarding:openMessages"),
   onboardingNewCode: () => ipcRenderer.invoke("onboarding:newCode"),
-  onboardingUsePhoneCode: () => ipcRenderer.invoke("onboarding:usePhoneCode"),
-  onboardingUseActivation: () => ipcRenderer.invoke("onboarding:useActivation"),
-  onboardingRequestCode: (phone: string) => ipcRenderer.invoke("onboarding:requestCode", phone),
-  onboardingResendCode: () => ipcRenderer.invoke("onboarding:resendCode"),
-  onboardingEditPhone: () => ipcRenderer.invoke("onboarding:editPhone"),
-  onboardingSubmitCode: (code: string) => ipcRenderer.invoke("onboarding:submitCode", code),
   onboardingFinish: () => ipcRenderer.invoke("onboarding:finish"),
   onOnboardingChanged: (cb: () => void) => ipcRenderer.on("onboarding:changed", cb),
 
@@ -149,6 +147,7 @@ contextBridge.exposeInMainWorld("domo", {
   // no roster row to name and none is needed.
   cloudRemove: (agentId: string) => ipcRenderer.invoke("cloud:remove", agentId),
   cloudRefresh: () => ipcRenderer.invoke("cloud:refresh"),
+  cloudAgents: (): Promise<CloudAgentsPreloadState | null> => ipcRenderer.invoke("cloud:agents"),
   cloudCreate: (input: { name: string; provider: string; lineUid: string | null }) =>
     ipcRenderer.invoke("cloud:create", input),
   cloudCancelLineFlow: () => ipcRenderer.invoke("cloud:cancelLineFlow"),

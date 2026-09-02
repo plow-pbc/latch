@@ -478,24 +478,6 @@ textarea.text { min-height: 70px; resize: vertical; }
   .action-slot.suggested::before { animation: none; }
 }
 
-/* ---- First-run login (onboarding.html) ------------------------------------
-   Same tokens as everything else; one column, generous spacing, actions on the
-   bottom row. Sized for the 460x560 window it opens in. */
-.onboard {
-  padding: 22px 20px; display: flex; flex-direction: column;
-  height: 100vh; gap: 2px;
-}
-.onboard h2 { font-size: 17px; font-weight: 600; margin: 0 0 2px; }
-.onboard .lede { margin: 0 0 16px; line-height: 1.45; }
-.onboard .orow { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
-.onboard .orow h2 { margin: 0; }
-.onboard .field { margin-bottom: 14px; }
-/* Push the action row to the bottom so every screen's buttons land in the
-   same place, however much copy sits above them. */
-.onboard .oactions { display: flex; gap: 8px; align-items: center; margin-top: auto; }
-.onboard .onote { margin: 10px 0 0; }
-.onboard .spacer { flex: 1; }
-
 /* A value the user must copy — never editable, never truncated silently. */
 .copyrow { display: flex; gap: 8px; align-items: flex-start; }
 .copybox {
@@ -504,22 +486,6 @@ textarea.text { min-height: 70px; resize: vertical; }
   font-size: 12px; line-height: 1.5; white-space: pre-wrap; word-break: break-all;
   max-height: 300px; overflow: auto; user-select: text;
 }
-
-/* The activation code, the one thing on its screen the user has to read off
-   accurately and type or check against Messages. Large, spaced, selectable. */
-.onboard .bigcode {
-  font-size: 34px; font-weight: 600; letter-spacing: 6px; text-align: center;
-  padding: 14px 10px; margin: 0 0 14px;
-  background: var(--bg); border: 1px solid var(--border);
-  border-radius: var(--radius-sm); user-select: text;
-}
-/* A quiet secondary route — present, but never competing with the primary
-   action next to it. */
-.onboard .linkbtn {
-  background: none; border: none; padding: 0; margin: 8px 0 0;
-  color: var(--faint); font-size: 12px; text-decoration: underline; cursor: pointer;
-}
-.onboard .linkbtn:hover { color: var(--fg); }
 
 /* The adversarial agent's own words in the approval window. Deliberately not
    inside `.fine` — that block is the enforceable bound, this is advice.

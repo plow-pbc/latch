@@ -37,6 +37,14 @@ export interface TelemetryConfig {
   host: string;
 }
 
+/** Telemetry starts only after setup has recorded the owner's choice. */
+export function telemetryMaySend(settings: {
+  setupComplete: boolean;
+  telemetryEnabled: boolean;
+}): boolean {
+  return settings.setupComplete && settings.telemetryEnabled;
+}
+
 /**
  * Which project (if any) this run reports to. A from-source run gets no key —
  * dev churn in the product's stats would drown the signal — unless the

@@ -1,189 +1,96 @@
-// Render the REAL first-run setup window offscreen, with the REAL preload, and
-// capture one PNG per screen. Reproducible evidence rather than four images
-// someone has to trust — and it EXITS NON-ZERO if a screen is missing the
-// content it exists to show.
+// Render the real first-run setup window offscreen, with the real preload, and
+// capture one PNG per screen. Copy assertions make a missing screen or stale
+// sentence fail the command rather than producing misleading evidence.
 //
 //   just onboarding-screenshots         → /tmp/onboarding-*.png
 //   OUT_DIR=/path just onboarding-screenshots
-//
-// The main process owns the onboarding state machine and the window renders
-// whatever `onboarding:get` returns, so stubbing that one handler is enough to
-// drive every screen — the same trick approval-screenshot.mjs uses.
 import { app, ipcMain } from "electron";
-import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { failLoudly, shootScreens, shotWindow } from "./screenshot-harness.mjs";
+import { onboardingFixtures } from "../src/renderer/onboarding-fixtures.js";
+import { clickText, failLoudly, shootScreens, shotWindow } from "./screenshot-harness.mjs";
 
 const dir = path.dirname(fileURLToPath(import.meta.url));
 const dist = path.join(dir, "../dist");
 const outDir = process.env.OUT_DIR ?? "/tmp";
+const REARM_NOTE =
+  "That code still works — send it exactly as shown and this screen will move on by itself.";
 
-const MCP_URL = "https://api.plow.co/v1/relay/devices/u_7Qk2p9/mcp";
-
-const DISPLAY_CODE = "Z1SWY";
-const SEND_TO = "+1 555 987 6543";
-const ACTIVATION = {
-  displayCode: DISPLAY_CODE,
-  sendTo: SEND_TO,
-  smsBody: `Plow Activate: ${DISPLAY_CODE}`,
-  smsUrl: `sms:${SEND_TO}?&body=Plow%20Activate%3A%20${DISPLAY_CODE}`,
-  pollUntil: Date.now() + 4 * 60_000 + 30_000,
-};
-
-const base = {
-  phone: "+1 555 123 4567",
-  message: "",
-  busy: false,
-  codeExpiresAt: null,
-  activation: null,
-  chat: null,
-  activationStale: false,
-  accountUid: "u_7Qk2p9",
-  mcpUrl: MCP_URL,
-  connected: true,
-};
-
-/** Before the account exists: no uid, no endpoint, no socket. */
-const newUser = { ...base, accountUid: "", mcpUrl: "", connected: false };
-
-/** Each screen, with the text it must contain to count as rendered. */
-const SCREENS = [
-  {
-    name: "activate",
-    state: { ...newUser, step: "activate", phone: "", activation: ACTIVATION },
-    expect: [
-      "Connect this Mac",
-      DISPLAY_CODE,
-      // Copy-exact, because a message that does not START with the prefix gets
-      // a 200, no SMS, and total silence on both channels.
-      `Plow Activate: ${DISPLAY_CODE}`,
-      SEND_TO,
-      // The line is assigned per activation; the wrong Plow number activates
-      // and silently provisions no chat.
-      "Plow's activation number",
-      // Whoever texts the code gets the account, and the server cannot tell.
-      "This code is a credential",
-      "don't share it or post a screenshot",
-      "Open Messages…",
-      "Use a phone code instead",
-    ],
-    // The blue button answers Return: nothing to type here, so it holds focus.
-    expectFocus: "Open Messages",
-  },
-  {
-    name: "signed-out-revoke-warning",
-    state: {
-      ...newUser,
-      step: "activate",
-      phone: "",
-      activation: ACTIVATION,
-      message:
-        "Signed out on this Mac. Plow could not be reached to revoke the session — revoke it in Plow's account settings.",
-    },
-    expect: [
-      "Signed out on this Mac",
-      "Plow could not be reached to revoke the session",
-      "revoke it in Plow's account settings",
-    ],
-    expectFocus: "Open Messages",
-  },
-  {
-    name: "waiting",
-    state: { ...newUser, step: "waiting", phone: "", activation: ACTIVATION },
-    expect: [
-      "Waiting for your text",
-      "Nothing to type",
-      DISPLAY_CODE,
-      `Plow Activate: ${DISPLAY_CODE}`,
-      "Listening for 4:",
-      "Try Again",
-    ],
-    expectFocus: "Try Again",
-  },
-  {
-    name: "waiting-gave-up",
-    state: {
-      ...newUser,
-      step: "waiting",
-      phone: "",
-      activation: ACTIVATION,
-      activationStale: true,
-      message:
-        "We haven't heard from your phone. Send the message exactly as shown — it has to start with “Plow Activate:” — or try again.",
-    },
-    // The one failure the user gets no other signal about: a wrong prefix is
-    // answered with silence on both channels.
-    expect: ["Not signed in yet", "it has to start with", "Plow Activate:", "Try Again"],
-    expectFocus: "Try Again",
-  },
-  {
-    name: "phone",
-    state: { ...newUser, step: "phone", phone: "" },
-    // The lede has to promise a text, not claim one was sent.
-    expect: ["Sign in to Plow", "We'll text you a code", "Send Code"],
-    // A screen WITH a field focuses the field — its Enter handler submits.
-    expectFocus: "+1 555 123 4567",
-  },
-  {
-    name: "code",
-    state: {
-      ...newUser,
-      step: "code",
-      // The API answers the same for an unknown number, an unparseable one and
-      // a failed send, so this screen may never say "we've sent you a code".
-      message: "Check your phone for an 8-digit code.",
-      codeExpiresAt: Date.now() + 4 * 60_000 + 30_000,
-    },
-    expect: ["Check your phone", "If +1 555 123 4567 is on a Plow account", "Expires in 4:", "Resend"],
-    expectFocus: "12345678",
-  },
-  {
-    // The end of the wizard, and the door into the app: past this button the
-    // main window exists for the first time. Connecting an MCP client is NOT
-    // here — it is per-client and repeatable, so it lives in the main window.
-    name: "connected",
-    state: {
-      ...base,
-      step: "connected",
-      chat: { uid: "cht_D7hfWNK", label: "+1 555 987 6543, +1 555 123 0000" },
-    },
-    expect: [
-      "This Mac is connected",
-      "u_7Qk2p9",
-      "under Agents",
-      // The chat activation created. A cloud agent has nowhere to live without
-      // it, so setup ends by showing it exists.
-      "Your chat",
-      "+1 555 987 6543, +1 555 123 0000",
-      "Continue",
-    ],
-    expectFocus: "Continue",
-  },
-];
-
-let current = SCREENS[0].state;
+const SCREENS = onboardingFixtures(Date.now());
+let currentFixture = SCREENS[0];
+let current = currentFixture.state;
+let currentFullDiskAccess = false;
+let newCodeRequests = 0;
 ipcMain.handle("onboarding:get", async () => current);
-// The renderer boots through `begin` (which mints the activation code on a real
-// first run); here it is the same stubbed state, so each screen renders as-is.
-ipcMain.handle("onboarding:begin", async () => current);
+ipcMain.handle("onboarding:newCode", async () => {
+  newCodeRequests += 1;
+  current = {
+    ...current,
+    message: REARM_NOTE,
+    noteKind: "neutral",
+    activation: current.activation
+      ? { ...current.activation, pollUntil: Date.now() + 5 * 60_000 }
+      : null,
+  };
+  return current;
+});
+ipcMain.handle("capabilities:get", async () => ({ fullDiskAccess: currentFullDiskAccess }));
+ipcMain.handle("fullDisk:grantFlow", async () => {});
+ipcMain.handle("onboarding:setTelemetry", async (_event, enabled) => {
+  current = { ...current, telemetryEnabled: enabled === true };
+  return current;
+});
+ipcMain.handle("onboarding:finish", async () => {});
+ipcMain.handle("cloud:agents", async () => currentFixture.cloud);
+ipcMain.handle("cloud:openMessages", async () => true);
 
-// Without this a thrown write (a missing OUT_DIR, say) leaves the app running
-// with no output and no exit code — a hang that reads like a broken screen.
+const verifyRearmFixture = SCREENS.find((fixture) => fixture.name === "verify-rearm");
+verifyRearmFixture.prepare = async (win) => {
+  const requestsBefore = newCodeRequests;
+  const displayCodeBefore = await win.webContents.executeJavaScript(
+    `document.querySelector(".message-code")?.textContent.trim() ?? ""`,
+  );
+  await clickText(win, "Still waiting? Send it again");
+  const displayCodeAfter = await win.webContents.executeJavaScript(
+    `document.querySelector(".message-code")?.textContent.trim() ?? ""`,
+  );
+  const neutralNote = await win.webContents.executeJavaScript(
+    `document.querySelector(".state-note.neutral:not(.error)")?.textContent.trim() ?? ""`,
+  );
+  if (newCodeRequests !== requestsBefore + 1) {
+    throw new Error("Send it again did not request a re-arm");
+  }
+  if (!displayCodeBefore || displayCodeAfter !== displayCodeBefore) {
+    throw new Error(`Send it again changed the display code: ${displayCodeBefore} → ${displayCodeAfter}`);
+  }
+  if (neutralNote !== REARM_NOTE) throw new Error("The re-arm note was not rendered neutrally");
+};
+
 failLoudly();
 
 app.whenReady().then(async () => {
-  const win = shotWindow(dist, { width: 460, height: 560 });
+  const win = shotWindow(dist, {
+    width: 660,
+    height: 840,
+    titleBarStyle: "hiddenInset",
+    backgroundColor: "#111110",
+  });
   const failures = await shootScreens({
     win,
     outDir,
     prefix: "onboarding",
     screens: SCREENS,
-    // A reload re-runs the renderer's boot, which pulls the stubbed state.
-    load: async (screen) => {
-      current = screen.state;
+    load: async (fixture) => {
+      currentFixture = fixture;
+      current = fixture.state;
+      currentFullDiskAccess = fixture.fullDiskAccess === true;
       await win.loadFile(path.join(dist, "renderer/onboarding.html"));
-      await new Promise((r) => setTimeout(r, 400));
+      // The full Welcome resolves its last delayed reveal at about 2.08s. Shoot
+      // its resting state rather than a deliberately half-revealed frame.
+      const settleMs = fixture.name === "welcome"
+        ? 2400
+        : fixture.name === "welcome-repeat" ? 450 : 400;
+      await new Promise((resolve) => setTimeout(resolve, settleMs));
     },
   });
   app.exit(failures ? 1 : 0);

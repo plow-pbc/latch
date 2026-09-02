@@ -2,12 +2,8 @@
  * First-run setup: a code on screen, a text from the user's phone, and a
  * connected Mac — with nothing typed and no token copied out of a browser.
  *
- * Activation leads, because it is the only path that works for someone who does
- * not have a Plow account yet: it goes *outbound*, so the account is created
- * from the text the user sends. The phone-code (OTP) path is kept behind a quiet
- * link for the two cases activation cannot cover — a Mac with no Messages
- * account signed in, and signing in as one *specific* account rather than as
- * whoever texts.
+ * Activation goes *outbound*, so the account is created from the text the user
+ * sends. It is the one verification path through setup.
  *
  * This is the whole flow as a plain state machine so it can be tested without
  * Electron and rendered offscreen for screenshots.
@@ -17,28 +13,22 @@
  * user is meant to read: the activation display code. The activation *secret*
  * and the login session never appear in it at all.
  */
-import {
-  chatEchoesCredential,
-  chatPeople,
-  chatRowTitle,
-  usableChatDisplayName,
-  withoutCredentialEchoes,
-} from "./chatRows.js";
 import { ActivationChat, PlowApi, PlowApiError } from "./plowApi.js";
+import { chatPeople, chatRowTitle, usableChatDisplayName } from "./chatRows.js";
 import { loadSettings, saveSettings, Settings } from "./settings.js";
 
 /**
- * The wizard ends at `connected`, a confirmation with one button into the app.
- *
- * There is no step for minting a client credential. Logging in happens once per
- * Mac; connecting a client happens once per client, is repeatable and is
- * optional — see `connectClient.ts`, which is reached from the main window.
+ * The verification sub-steps retain their existing mechanics. A successful
+ * login pauses on a confirmation screen before the post-login data choice.
  */
-export type OnboardingStep = "activate" | "waiting" | "phone" | "code" | "connected";
-
-/** Codes are 8 digits with a 5-minute life (`api/plow/auth_routes/otp.py`). */
-export const CODE_LENGTH = 8;
-export const CODE_TTL_MS = 5 * 60_000;
+export type OnboardingStep =
+  | "welcome"
+  | "privacy"
+  | "activate"
+  | "waiting"
+  | "verified"
+  | "data"
+  | "done";
 
 /**
  * How long the screen counts down before it stalls and offers a fresh code.
@@ -96,47 +86,6 @@ export interface OnboardingActivation {
 }
 
 /**
- * The chat the activation provisioned, as the screen says it.
- *
- * The label is its title, its members' names or its numbers — see
- * `activationChatLabel`. `uid` is what everything else joins on.
- */
-export interface OnboardingChat {
-  uid: string;
-  label: string;
-}
-
-/**
- * The chat activation provisioned, as the app remembers it.
- *
- * One reading of one persisted record. It was two — this screen's and the
- * cloud-agent picker's — with different ideas about whitespace and a blank
- * label, so the same Mac could show a chat here and a bare uid there.
- *
- * `null` on a Mac that activated before `provision_chat`, which is why nothing
- * may treat its absence as "this account has no chats". The label falls back to
- * the uid because a chat with neither a line nor members is still a real chat,
- * and an empty row is worse than an ugly one.
- */
-export function storedActivationChat(settings: Settings): OnboardingChat | null {
-  const uid = settings.provisionedChatUid.trim();
-  if (!uid) return null;
-  return { uid, label: settings.provisionedChatLabel.trim() || uid };
-}
-
-/**
- * How a human recognises a chat: its title when present, otherwise each
- * member's usable name or real handle, with non-owners first. If the provider
- * has no usable names, use the number it runs on and each member's handle in
- * API owner-first order. The first fallback number is the agent participant's
- * line — never the chat's own `provider_key`, which is the provider's thread id
- * and would put "chat_5" where the user is looking for something to text.
- *
- * Both halves are optional in the data, so this never returns an empty string —
- * a chat with neither is still identified by its uid, which is ugly but true,
- * and beats a blank line on the last screen of setup.
- */
-/**
  * The numbers a message to this chat would go to.
  *
  * Structured, and separate from the label, because they are two different
@@ -163,36 +112,28 @@ export function activationChatRecipients(chat: ActivationChat): ChatRecipients {
   };
 }
 
-
 export function activationChatLabel(chat: ActivationChat): string {
   const displayName = usableChatDisplayName(chat.displayName);
   if (displayName) return displayName;
-  // Presentation is `chatRows`', not this file's: it decides who counts as a
-  // participant, which of them is the owner, and how a number is spelled. This
-  // used to keep a second answer to all three, and the two drifted — the label
-  // dropped the owner while the picker's row named them "You".
   return chatRowTitle(chatPeople(chat), (chat.line ?? "").trim() || null, chat.uid);
 }
 
 export interface OnboardingState {
   step: OnboardingStep;
-  phone: string;
   /** One honest line: what happened, or what we are waiting for. Never a bare
    * spinner — every failure below produces text here. */
   message: string;
+  /** Presentation for `message`; never inferred from human-readable copy. */
+  noteKind: "neutral" | "error";
   busy: boolean;
-  /** Epoch ms the entered OTP code stops working. */
-  codeExpiresAt: number | null;
   activation: OnboardingActivation | null;
-  /** The chat the account now has, or null on a Mac activated before there was
-   * one. Display data — no secret, and nothing here is authoritative. */
-  chat: OnboardingChat | null;
   /** We have stopped watching this activation. The screen stops counting down
    * and offers a fresh code. */
   activationStale: boolean;
-  accountUid: string;
-  mcpUrl: string;
-  connected: boolean;
+  /** The data screen's pending choice. It is persisted only on Continue. */
+  telemetryEnabled: boolean;
+  /** Whether this home has already published its full Welcome entrance. */
+  welcomeEntrancePlayed: boolean;
 }
 
 export interface OnboardingDeps {
@@ -200,25 +141,19 @@ export interface OnboardingDeps {
   home: string;
   /** (Re)start the relay from stored settings. */
   startRelay: () => Promise<void>;
-  isConnected: () => boolean;
   /** Names this Mac in the activation request. */
   deviceName: string;
   onChange?: () => void;
   now?: () => number;
   /** How the poll loop waits. Injectable so tests need no real timers. */
   wait?: (ms: number) => Promise<void>;
-  /** Diagnostics. Callers must assume anything passed here reaches a log, so
-   * nothing secret is ever passed — not the activation secret, and not the
-   * display code, which is a live credential until it is redeemed. */
-  warn?: (message: string) => void;
 }
 
 export class Onboarding {
   private step: OnboardingStep;
-  private phone = "";
   private message = "";
+  private noteKind: OnboardingState["noteKind"] = "error";
   private busy = false;
-  private codeExpiresAt: number | null = null;
   private activation: OnboardingActivation | null = null;
   private activationStale = false;
   /** SECRET. Held here for the life of one activation and nowhere else — never
@@ -235,43 +170,95 @@ export class Onboarding {
   private pendingMint: Promise<OnboardingState> | null = null;
   private pendingMintId = 0;
   private mints = 0;
+  private telemetryEnabled: boolean;
+  private welcomeEntrancePlayed: boolean;
 
   constructor(private readonly deps: OnboardingDeps) {
-    // A Mac that already holds a credential is past all of this; it opens on
-    // the connected screen, whose one button hands over to the app.
-    this.step = this.settings().relayCredential.trim() ? "connected" : "activate";
+    const settings = this.settings();
+    this.telemetryEnabled = settings.telemetryEnabled;
+    this.welcomeEntrancePlayed = settings.welcomeEntrancePlayed;
+    this.step = this.initialStep(settings);
   }
 
   state(): OnboardingState {
-    const settings = this.settings();
     return {
       step: this.step,
-      phone: this.phone,
       message: this.message,
+      noteKind: this.noteKind,
       busy: this.busy,
-      codeExpiresAt: this.codeExpiresAt,
       activation: this.activation,
-      chat: storedActivationChat(settings),
       activationStale: this.activationStale,
-      accountUid: settings.accountUid,
-      mcpUrl: settings.mcpUrl,
-      connected: this.deps.isConnected(),
+      telemetryEnabled: this.telemetryEnabled,
+      welcomeEntrancePlayed: this.welcomeEntrancePlayed,
     };
+  }
+
+  /** Advance the presentational steps and commit the data-screen choice. */
+  async advance(): Promise<OnboardingState> {
+    if (this.busy) return this.state();
+    if (this.step === "welcome") {
+      const settings = this.settings();
+      settings.welcomeEntrancePlayed = true;
+      this.save(settings);
+      this.welcomeEntrancePlayed = true;
+      this.step = "privacy";
+      return this.publish();
+    }
+    if (this.step === "privacy") {
+      // Returning from verification keeps the live activation and its watcher.
+      // Re-entering therefore shows the same code without another network call.
+      if (this.activation) {
+        this.step = this.activationStale ? "waiting" : "activate";
+        return this.publish();
+      }
+      return this.newActivationCode();
+    }
+    if (this.step === "verified") {
+      // The display code is spent, but stays visible through the confirmation
+      // treatment so the screen does not jump while redemption finishes.
+      this.activation = null;
+      this.step = "data";
+      return this.publish();
+    }
+    if (this.step === "data") {
+      const settings = this.settings();
+      settings.telemetryEnabled = this.telemetryEnabled;
+      settings.setupComplete = true;
+      this.save(settings);
+      this.step = "done";
+      return this.publish();
+    }
+    return this.publish();
+  }
+
+  /** Return through the steps that have a Back affordance. */
+  async back(): Promise<OnboardingState> {
+    if (this.busy) return this.state();
+    if (this.step === "privacy") this.step = "welcome";
+    else if (this.step === "activate" || this.step === "waiting") this.step = "privacy";
+    else return this.state();
+    return this.publish();
+  }
+
+  /** Change the pending choice; Continue from data is its only disk write. */
+  setTelemetryEnabled(enabled: unknown): OnboardingState {
+    if (this.busy) return this.state();
+    if (this.step === "data" && typeof enabled === "boolean") {
+      this.telemetryEnabled = enabled;
+      return this.publish();
+    }
+    return this.state();
   }
 
   // MARK: activation — the path a brand-new user takes
 
-  /**
-   * Mint the code the user texts, and start polling immediately.
-   *
-   * Idempotent: opening the window twice must not burn a second code and leave
-   * two live activations on the account. The check below covers a second call
-   * once a code is on screen; the window *before* that — where the API has been
-   * asked and has not answered — is covered by the single flight in
-   * `newActivationCode`, which is the only thing here that mints.
-   */
+  /** Retry a mint only when the activation view is already waiting for one. */
   async begin(): Promise<OnboardingState> {
-    if (this.step !== "activate" || this.activation) return this.publish();
+    // Renderer boot is intentionally a read-like no-op on the presentational
+    // steps. The first activation is minted only by Continue from Privacy.
+    if (this.step !== "activate" || this.activation) {
+      return this.state();
+    }
     return this.newActivationCode();
   }
 
@@ -290,21 +277,21 @@ export class Onboarding {
   async newActivationCode(): Promise<OnboardingState> {
     // SINGLE-FLIGHT. A display code IS a credential — whoever texts it gets the
     // account — so a second mint nobody is shown is a live credential loose on
-    // the account, and the screen can only ever show one of them. Two callers
-    // race here for real: `settings:signOut` calls `begin` and, in the same
-    // breath, opens the setup window whose renderer calls `begin` on boot.
-    // `activation` is not set until the API answers, so on a slow
-    // `/v1/auth/activate` both sail past that check. Joining the flight in
-    // progress is the only place this can be closed.
+    // the account, and the screen can only ever show one of them. A double-click
+    // on Privacy Continue and a retry arriving while its mint is in flight can
+    // race before `activation` is set. Joining the flight in progress is the
+    // only place that gap can be closed.
     if (this.pendingMint) return this.pendingMint;
+    if (this.busy) return this.state();
 
     if (this.activationSecret && this.activation) {
-      // Same code, fresh clock — and one honest line about why "Try Again"
-      // is showing the code they already have.
+      // Same code, fresh clock — and one honest line about why sending again
+      // uses the code they already have.
       this.activation = { ...this.activation, pollUntil: this.now() + ACTIVATION_POLL_WINDOW_MS };
       this.activationStale = false;
       this.message =
         "That code still works — send it exactly as shown and this screen will move on by itself.";
+      this.noteKind = "neutral";
       return this.publish();
     }
 
@@ -351,27 +338,9 @@ export class Onboarding {
    * than leave them staring at a screen that still reads like a to-do.
    */
   messagesOpened(): OnboardingState {
+    if (this.busy) return this.state();
     if (this.step === "activate" && this.activation) this.step = "waiting";
     return this.publish();
-  }
-
-  /** The quiet fallback: sign in with a phone code instead. */
-  usePhoneCode(): OnboardingState {
-    this.cancelPolling();
-    this.activation = null;
-    this.activationSecret = null;
-    this.activationStale = false;
-    this.step = "phone";
-    this.message = "";
-    return this.publish();
-  }
-
-  /** ...and back, so the fallback is not a one-way door. */
-  async useActivation(): Promise<OnboardingState> {
-    this.codeExpiresAt = null;
-    this.message = "";
-    this.step = "activate";
-    return this.begin();
   }
 
   /**
@@ -417,6 +386,7 @@ export class Onboarding {
         }
         // A blip must not end the wait. Say what we saw and keep polling.
         this.message = messageOf(error);
+        this.noteKind = "error";
         this.publish();
         continue;
       }
@@ -435,8 +405,8 @@ export class Onboarding {
       // account was left holding a live credential its owner had just retired.
       //
       // `activationSecret` is nulled by every path that abandons an activation
-      // for good — sign-out, the phone-code fallback, a completed login, the
-      // server retiring the code — so it says what "already holding a
+      // for good — sign-out, a completed login, or the server retiring the
+      // code — so it says what "already holding a
       // credential" was only guessing at.
       // Asked, never cached. `activationSecret` is nulled by every path that
       // abandons this activation, and the stored credential is cleared by
@@ -457,7 +427,11 @@ export class Onboarding {
         // fresh on "Try Again" — not re-arming a code nothing can complete.
         this.activationSecret = null;
         this.stall();
-        await this.run(() => this.finishWithSession(result.token as string, result.chat));
+        const finished = await this.run(() => this.finishWithSession(result.token as string));
+        // The verified screen is actionable while the relay connects. `run`
+        // clears busy and publishes before this await, and nothing after it
+        // mutates onboarding state.
+        if (finished.step === "verified") await this.deps.startRelay();
         return;
       }
       if (generation !== this.pollGeneration) return;
@@ -509,79 +483,21 @@ export class Onboarding {
    * Mark this activation as no longer being watched, and put the user on the
    * screen that can do something about it.
    *
-   * The step move is the whole point. "Connect this Mac" has no "Get a New
-   * Code" button — it is the screen you are on *before* anything has gone
-   * wrong — and a user who reads the code off the screen and types it into
-   * Messages themselves never taps "Open Messages", so they never leave it. Set
-   * `activationStale` without moving them and the message says "or get a new
-   * code" next to no such control: a dead end, and precisely the one this
-   * screen exists to prevent. Every path that stops polling comes through here
-   * so that cannot drift apart again.
+   * The step move is the whole point. A user who reads the code off the screen
+   * and types it into Messages themselves never taps "Open Messages", so they
+   * never leave the initial activation view. Set `activationStale` without
+   * moving them and the recovery message would have no matching "Try again"
+   * control: a dead end. Every path that stops polling comes through here so
+   * that cannot drift apart again.
    */
   private stall(message?: string): void {
     if (this.step === "activate" || this.step === "waiting") this.step = "waiting";
     this.activationStale = true;
-    if (message !== undefined) this.message = message;
-  }
-
-  // MARK: the phone-code fallback
-
-  /**
-   * Ask Plow to text a login code.
-   *
-   * The API answers `200 {"ok": true}` for an unknown number, an unparseable
-   * number and a failed send alike, so it cannot be used to probe whether an
-   * account exists. We therefore cannot tell "sent" from "silently didn't", and
-   * the copy says "check your phone", never "we've sent you a code".
-   */
-  async requestCode(phone: string, note = ""): Promise<OnboardingState> {
-    const trimmed = (phone ?? "").trim();
-    if (!trimmed) return this.fail("Enter your phone number.");
-    return this.run(async () => {
-      await this.deps.api.requestOtp(trimmed);
-      this.phone = trimmed;
-      this.step = "code";
-      this.codeExpiresAt = this.now() + CODE_TTL_MS;
-      // The code screen's own copy says what to do; `message` stays free for
-      // things that screen cannot say on its own.
-      this.message = note;
-    });
-  }
-
-  /**
-   * Same call again for the number already entered; a new code, a new clock.
-   *
-   * "Asked for" rather than "sent": the API answers identically whether or not
-   * a message went out, so claiming a send would be a claim we cannot back.
-   */
-  async resendCode(): Promise<OnboardingState> {
-    if (!this.phone) return this.fail("Enter your phone number.");
-    return this.requestCode(this.phone, "Asked Plow for a new code.");
-  }
-
-  /** Back to the phone screen — a mistyped number is otherwise a dead end. */
-  editPhone(): OnboardingState {
-    this.step = "phone";
-    this.codeExpiresAt = null;
-    this.message = "";
-    return this.publish();
-  }
-
-  async submitCode(code: string): Promise<OnboardingState> {
-    const trimmed = (code ?? "").replace(/\s/g, "");
-    if (trimmed.length !== CODE_LENGTH || !/^\d+$/.test(trimmed)) {
-      return this.fail(`Enter the ${CODE_LENGTH}-digit code from your phone.`);
+    if (message !== undefined) {
+      this.message = message;
+      this.noteKind = "error";
     }
-    // The server answers 401 for wrong AND expired alike, so pre-empt the
-    // expired case here — otherwise a user whose code timed out is told to
-    // check their typing.
-    if (this.codeExpiresAt !== null && this.now() > this.codeExpiresAt) {
-      return this.fail("That code has expired. Send a new one.");
-    }
-    return this.run(() => this.completeOtpLogin(trimmed));
   }
-
-  // MARK: after either path
 
   /**
    * Return to the state a fresh launch would be in.
@@ -601,17 +517,20 @@ export class Onboarding {
     this.activation = null;
     this.activationSecret = null;
     this.activationStale = false;
-    this.phone = "";
-    this.codeExpiresAt = null;
     this.message = "";
+    this.noteKind = "error";
     this.busy = false;
-    this.step = this.settings().relayCredential.trim() ? "connected" : "activate";
+    const settings = this.settings();
+    this.telemetryEnabled = settings.telemetryEnabled;
+    this.welcomeEntrancePlayed = settings.welcomeEntrancePlayed;
+    this.step = this.initialStep(settings);
     return this.publish();
   }
 
   /** Put a fixed main-process notice on the setup screen. */
   showMessage(message: string): OnboardingState {
     this.message = message;
+    this.noteKind = "error";
     return this.publish();
   }
 
@@ -633,21 +552,8 @@ export class Onboarding {
    * documented to do. Publishing belongs to the methods that change something.
    */
 
-  private async completeOtpLogin(code: string): Promise<void> {
-    let otpToken: string;
-    try {
-      otpToken = await this.deps.api.verifyOtp(this.phone, code);
-    } catch (error) {
-      if (error instanceof PlowApiError && error.kind === "unauthorized") {
-        throw new PlowApiError("unauthorized", "That code didn't work. Check it, or send a new one.", 401);
-      }
-      throw error;
-    }
-    await this.finishWithSession(otpToken);
-  }
-
   /**
-   * Learn the account → keep the session → connect.
+   * Learn the account → keep the session → show the verified state.
    *
    * The session IS this Mac's credential. Latch is the owner's manager app,
    * not an agent: it holds the socket, lists chats, mints agents, buys
@@ -659,14 +565,11 @@ export class Onboarding {
    * The token the redeem handed back is what gets written. Runtime relay
    * startup owns the idempotent registration and retries it with backoff.
    */
-  private async finishWithSession(
-    sessionToken: string,
-    chat: ActivationChat | null = null,
-  ): Promise<void> {
+  private async finishWithSession(sessionToken: string): Promise<void> {
     // A sign-out can land inside the account lookup, and it must stay signed out:
     // persisting past it would leave the account a live credential its owner
     // just retired. `pollGeneration` is bumped by every path that abandons this
-    // login — reset, the phone fallback, a fresh mint — so it is the epoch to
+    // login — reset or a fresh mint — so it is the epoch to
     // check against after each network step.
     //
     // A sign-out landing inside it takes the session with it. The session is
@@ -683,24 +586,6 @@ export class Onboarding {
     settings.relayCredential = sessionToken;
     settings.accountUid = info.uid;
     settings.mcpUrl = "";
-    // Kept, not read and dropped: the redeem that carried it answers once, so
-    // this is the only moment the app ever sees the chat it just created. A
-    // sign-in with no chat — the phone-code path, or a Mac activated before
-    // `provision_chat` — leaves whatever was there alone rather than blanking
-    // it, because "this redeem carried no chat" is not "the account has none".
-    // The label is built from the chat's line, uids, numbers and names — all
-    // server-authored, and this is the one place they are written to DISK. A
-    // chat echoing the session token is dropped whole: the sign-in still
-    // completes, and the account's chat list is re-read on the Agents tab
-    // anyway, so nothing is lost but a row nobody could have trusted.
-    if (chat && !chatEchoesCredential(chat, sessionToken)) {
-      settings.provisionedChatUid = chat.uid;
-      settings.provisionedChatLabel = activationChatLabel(withoutCredentialEchoes(chat, sessionToken));
-    } else if (chat) {
-      // No detail, and no field values: the point of the check is that one of
-      // them is the credential.
-      this.deps.warn?.("dropped a provisioned chat whose fields echoed the credential");
-    }
     // Nothing records `sendTo`. Pairing asks for no chat, so it is the managed
     // phone — the number that takes an activation text, not one anyone can be
     // told to text afterwards to get a chat. The cloud-agents screen names the
@@ -708,23 +593,19 @@ export class Onboarding {
     // cannot be wrong.
     this.save(settings);
 
-    // The activation is spent: drop the code and the secret rather than leave
-    // either sitting in memory or on a screen behind this one.
+    // The activation secret is spent and dropped. The public display value is
+    // retained until Continue so the verified treatment can hold the same
+    // screen steady.
     //
-    // BEFORE the dial, not after. `startRelay` is a network round-trip, and a
-    // sign-out landing inside it resets this instance to `activate` — which the
-    // continuation then overwrote with `connected`, leaving a window reporting
-    // a session that had just been signed out of. Everything here is derived
-    // from the save above; none of it needs the socket to be up.
+    // Everything here is derived from the save above; none of it needs the
+    // socket to be up.
     this.cancelPolling();
-    this.activation = null;
     this.activationSecret = null;
     this.activationStale = false;
-    this.step = "connected";
-    this.codeExpiresAt = null;
     this.message = "";
-
-    await this.deps.startRelay();
+    this.noteKind = "error";
+    this.step = "verified";
+    this.telemetryEnabled = settings.telemetryEnabled;
   }
 
   // MARK: plumbing
@@ -735,6 +616,11 @@ export class Onboarding {
 
   private save(settings: Settings): void {
     saveSettings(this.deps.home, settings);
+  }
+
+  private initialStep(settings: Settings): OnboardingStep {
+    if (!settings.relayCredential.trim()) return "welcome";
+    return settings.setupComplete ? "done" : "data";
   }
 
   private now(): number {
@@ -750,19 +636,16 @@ export class Onboarding {
   private async run(body: () => Promise<void>): Promise<OnboardingState> {
     this.busy = true;
     this.message = "";
+    this.noteKind = "error";
     this.publish();
     try {
       await body();
     } catch (error) {
       this.message = messageOf(error);
+      this.noteKind = "error";
     } finally {
       this.busy = false;
     }
-    return this.publish();
-  }
-
-  private fail(message: string): OnboardingState {
-    this.message = message;
     return this.publish();
   }
 

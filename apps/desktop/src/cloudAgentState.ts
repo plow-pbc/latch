@@ -1352,9 +1352,9 @@ export class CloudChatsClient implements CloudChatsApi {
         // subtitle and an `sms:` target. A name can be blanked and the row
         // still means something; an identifier cannot, so the row is DROPPED.
         //
-        // `chatEchoesCredential` is the one rule, shared with the redeem that
-        // persists the label — which had no check at all until it was the same
-        // function.
+        // `chatEchoesCredential` is the one identifier rule, shared with the
+        // activation response handled above. Optional names take the narrower
+        // redaction below instead of costing the owner the whole row.
         if (chatEchoesCredential(chat, deviceCredential)) return [];
 
         const safe = withoutCredentialEchoes(chat, deviceCredential);

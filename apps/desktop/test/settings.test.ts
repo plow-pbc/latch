@@ -121,6 +121,24 @@ describe("settings storage", () => {
     expect(loadSettings(home).telemetryEnabled).toBe(false);
   });
 
+  it("defaults setup completion off, and persists completion", () => {
+    const home = tempHome();
+    expect(loadSettings(home).setupComplete).toBe(false);
+    const settings = loadSettings(home);
+    settings.setupComplete = true;
+    saveSettings(home, settings);
+    expect(loadSettings(home).setupComplete).toBe(true);
+  });
+
+  it("defaults the Welcome entrance to unplayed, and persists it per home", () => {
+    const home = tempHome();
+    expect(loadSettings(home).welcomeEntrancePlayed).toBe(false);
+    const settings = loadSettings(home);
+    settings.welcomeEntrancePlayed = true;
+    saveSettings(home, settings);
+    expect(loadSettings(home).welcomeEntrancePlayed).toBe(true);
+  });
+
   it("leaves a home that already chose a tab exactly where it was", () => {
     const home = tempHome();
     const settings = loadSettings(home);
@@ -228,6 +246,8 @@ describe("the retired bring-your-own-key fields are scrubbed on read", () => {
         approvalMode: "adversarial",
         anthropicApiKey: RETIRED_KEY,
         inferenceProvider: "anthropic",
+        provisionedChatUid: "cht_retired",
+        provisionedChatLabel: "Retired chat",
       }),
     );
 
@@ -236,6 +256,8 @@ describe("the retired bring-your-own-key fields are scrubbed on read", () => {
     // Nothing that is loaded carries them…
     expect(loaded).not.toHaveProperty("anthropicApiKey");
     expect(loaded).not.toHaveProperty("inferenceProvider");
+    expect(loaded).not.toHaveProperty("provisionedChatUid");
+    expect(loaded).not.toHaveProperty("provisionedChatLabel");
     expect(JSON.stringify(loaded)).not.toContain(RETIRED_KEY);
     // …the scrub took nothing else with it…
     expect(loaded).toMatchObject({
@@ -248,6 +270,8 @@ describe("the retired bring-your-own-key fields are scrubbed on read", () => {
     expect(raw).not.toContain(RETIRED_KEY);
     expect(raw).not.toContain("anthropicApiKey");
     expect(raw).not.toContain("inferenceProvider");
+    expect(raw).not.toContain("provisionedChatUid");
+    expect(raw).not.toContain("provisionedChatLabel");
 
     // The ordering the same write pins: this legacy home is signed in, so the
     // launch-at-login bit is grandfathered on this load — and it has to already
@@ -367,8 +391,6 @@ describe("the credential at rest", () => {
     settings.relayCredential = "plow_sk_sealed";
     settings.accountUid = "u_first";
     settings.mcpUrl = "https://api.plow.co/v1/relay/devices/u_first/mcp";
-    settings.provisionedChatUid = "cht_first";
-    settings.provisionedChatLabel = "Willow, You";
     saveSettings(home, settings);
 
     const file = path.join(home, "app/settings.json");
@@ -380,8 +402,6 @@ describe("the credential at rest", () => {
       relayCredential: "",
       accountUid: "",
       mcpUrl: "",
-      provisionedChatUid: "",
-      provisionedChatLabel: "",
     });
     expect(fileOf(home).relayCredentialEnc).toBeUndefined();
   });
