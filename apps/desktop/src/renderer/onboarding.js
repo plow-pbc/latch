@@ -68,7 +68,7 @@ const primaryButton = el("button", { class: "nav-next", attrs: { type: "button" 
   primaryArrow,
 ]);
 const footer = el("footer", { class: "wizard-footer" }, [backButton, dotRow, primaryButton]);
-const shell = el("main", { class: "wizard-window", attrs: { "aria-label": "Plow Latch — Set Up" } }, [
+const shell = el("main", { class: "wizard-window", attrs: { "aria-label": "Plow Latch Set Up" } }, [
   titlebar,
   body,
   footer,
@@ -133,7 +133,7 @@ function welcomeScreen() {
     el("h1", { text: "Plow Latch" }),
     el("p", {
       class: "welcome-lead",
-      text: "The privacy and security layer for Plow. Plow Latch lives on your Mac, so nothing you don't want to share ever leaves your computer.",
+      text: "The privacy and security layer for agents. Plow Latch lives on your Mac, so nothing you don't want to share ever leaves your computer.",
     }),
     note(state),
   ]);
@@ -141,16 +141,16 @@ function welcomeScreen() {
 
 const TRUST_ROWS = [
   {
-    title: "It all stays on your Mac",
-    detail: "Your messages, calendar, and logins live here, not on our servers. We couldn't read them if we tried.",
+    title: "Data stays on your Mac",
+    detail: "Your messages, calendar, and logins stay on your device.",
     shapes: [
       ["rect", { x: "2.5", y: "4", width: "19", height: "12", rx: "2" }],
       ["path", { d: "M8.5 20h7M12 16v4" }],
     ],
   },
   {
-    title: "You decide what needs your okay",
-    detail: "Approve every action yourself, or set rules so only the risky stuff asks first. Always your call, always logged.",
+    title: "You stay in control",
+    detail: "Choose what runs automatically and what needs your approval.",
     shapes: [
       ["path", { d: "M5 7h14M5 12h14M5 17h14" }],
       ["circle", { cx: "9", cy: "7", r: "2.1" }],
@@ -159,16 +159,16 @@ const TRUST_ROWS = [
     ],
   },
   {
-    title: "A second AI has your back",
-    detail: "Flip on the adversarial reviewer and an independent agent inspects risky actions before they run — a built-in skeptic that catches what you might miss.",
+    title: "A second AI checks the risky stuff",
+    detail: "An independent reviewer catches actions that don't look right.",
     shapes: [
       ["path", { d: "M12 3l7 4v6c0 4-3 6.5-7 8-4-1.5-7-4-7-8V7z" }],
       ["path", { d: "M9.2 12.4l1.9 1.9 3.7-4" }],
     ],
   },
   {
-    title: "Never sold, never trained on",
-    detail: "We don't sell your data, and we hold zero-retention agreements with the language-model providers — so nothing you share is stored or trained on. Full stop.",
+    title: "Never sold. Never trained on.",
+    detail: "Your data isn't sold, stored, or used to train AI models.",
     shapes: [
       ["rect", { x: "5", y: "11", width: "14", height: "9", rx: "2" }],
       ["path", { d: "M8 11V8a4 4 0 0 1 8 0v3" }],
@@ -191,7 +191,7 @@ function privacyScreen() {
       el("h1", { text: "Privacy" }),
       el("p", {
         class: "subhead",
-        text: "Plow works best with access to your messages, calendar, and accounts — so your agents can actually help. Here's what makes Plow different:",
+        text: "Your agents can get things done without giving up control of your data.",
       }),
     ]),
     el("div", { class: "trust-rows" }, rows),
@@ -258,6 +258,7 @@ function startActivationCountdown(node, until) {
 
 function verifyScreen() {
   const activation = state.activation;
+  const verified = state.step === "verified";
   const parts = [
     el("div", { class: "head-center" }, [
       el("h1", { text: "Verify your phone to connect this Mac" }),
@@ -269,12 +270,10 @@ function verifyScreen() {
   ];
 
   if (activation) {
-    const countdown = el("p", { class: "countdown" });
-    if (!state.activationStale) startActivationCountdown(countdown, activation.pollUntil);
     parts.push(
       el("div", { class: "send-block" }, [
         el("div", { class: "send-head" }, [
-          el("span", { class: "section-label", text: "Send to" }),
+          el("span", { class: "section-label", text: "Send to:" }),
           el("span", { class: "send-to", text: activation.sendTo }),
         ]),
         el("div", { class: "message-field" }, [
@@ -292,24 +291,74 @@ function verifyScreen() {
           ]),
         ]),
       ]),
-      el("div", { class: "waiting-status" }, [
-        ...(state.activationStale ? [] : [el("span", { class: "waiting-spinner" })]),
-        document.createTextNode(state.activationStale ? "Still not signed in" : "Waiting for your text…"),
-      ]),
-      countdown,
     );
-    if (state.activationStale) {
+  } else if (!verified) {
+    parts.push(el("p", { class: "state-note", text: "Getting a code from Plow…" }));
+  }
+
+  if (activation || verified) {
+    const status = el("div", { class: `waiting-status${verified ? " verified" : ""}` }, [
+      ...(verified
+        ? [icon([["path", { d: "M20 6L9 17l-5-5" }]], "verified-check")]
+        : state.activationStale
+          ? []
+          : [el("span", { class: "waiting-spinner" })]),
+      el("span", {
+        class: "status-text",
+        text: verified
+          ? "Verified. This Mac is linked."
+          : state.activationStale
+            ? "Still not signed in"
+            : "Waiting for your text…",
+      }),
+    ]);
+    parts.push(status);
+
+    if (activation && !verified) {
+      const countdown = el("p", { class: "countdown" });
+      if (!state.activationStale) startActivationCountdown(countdown, activation.pollUntil);
+      parts.push(countdown);
+    }
+
+    if (state.activationStale && !verified) {
       parts.push(el("div", { class: "inline-actions" }, [
         button("Try again", "link-button", async () => apply(await window.domo.onboardingNewCode())),
       ]));
     }
-    parts.push(el("p", { class: "alternate" }, [
-      button("Use a phone code instead", "link-button", async () =>
-        apply(await window.domo.onboardingUsePhoneCode()),
-      ),
-    ]));
+
+    const activate = button(
+      "",
+      `verify-activate${verified ? " done" : ""}`,
+      verified || !activation
+        ? null
+        : async () => {
+            activate.disabled = true;
+            activate.classList.add("sending");
+            apply(await window.domo.onboardingOpenMessages());
+          },
+    );
+    activate.append(
+      icon([
+        ["path", { d: "M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z" }],
+      ]),
+      document.createTextNode("Open Messages to activate"),
+    );
+    activate.disabled = verified || !activation;
+    activate.setAttribute("aria-disabled", String(activate.disabled));
+
+    const actions = [activate];
+    if (!verified) {
+      actions.push(el("p", { class: "alternate" }, [
+        button("Use a phone code instead", "link-button", async () =>
+          apply(await window.domo.onboardingUsePhoneCode()),
+        ),
+      ]));
+    }
+    parts.push(el("div", { class: "verify-actions" }, actions));
   } else {
-    parts.push(el("p", { class: "state-note", text: "Getting a code from Plow…" }));
+    parts.push(el("div", { class: "inline-actions" }, [
+      button("Try again", "link-button", async () => apply(await window.domo.onboardingBegin())),
+    ]));
   }
 
   parts.push(note(state));
@@ -403,22 +452,29 @@ function dataPreviewScreen() {
   const granted = !!state.fullDiskAccess;
   return el("div", { class: "data-preview" }, [
     el("div", { class: "step-inner" }, [
-      el("div", { class: "head-center" }, [el("h1", { text: "Your data & permissions" })]),
+      el("div", { class: "head-center" }, [
+        el("h1", { text: "Your data & permissions" }),
+        el("p", { class: "subhead", text: "You can change any of these anytime in Settings." }),
+      ]),
       el("div", { class: "preview-card" }, [
         el("div", { class: "preview-title", text: "Help make Plow better?" }),
         el("div", {
           class: "preview-detail",
-          text: state.telemetryEnabled
-            ? "Yes, help improve Plow — never your messages or your data."
-            : "No thanks. We won't know how you use the app.",
+          text: "Share anonymous usage so we can improve Plow. Never your messages or your data.",
         }),
       ]),
+      el("div", { class: "section-label preview-label", text: "Permissions" }),
       el("div", { class: "preview-card" }, [
-        el("div", { class: "preview-title", text: "Full Disk Access" }),
-        el("div", { class: "preview-detail", text: "so your agent can read and send your iMessages" }),
+        el("div", { class: "preview-title" }, [
+          document.createTextNode("Full Disk Access "),
+          el("span", { class: "optional-label", text: "Optional" }),
+        ]),
+        el("div", {
+          class: "preview-detail",
+          text: "Plow Latch reads your Messages right on your Mac, so you never miss the texts that matter. Apple keeps Messages behind this permission, and nothing ever leaves your device.",
+        }),
         ...(granted ? [el("div", { class: "permission-state", text: "Granted" })] : []),
       ]),
-      el("p", { class: "state-note", text: "Change any of these anytime in Settings." }),
     ]),
   ]);
 }
@@ -442,7 +498,9 @@ function donePreviewScreen() {
 function screenForStep() {
   if (state.step === "welcome") return welcomeScreen();
   if (state.step === "privacy") return privacyScreen();
-  if (state.step === "activate" || state.step === "waiting") return verifyScreen();
+  if (state.step === "activate" || state.step === "waiting" || state.step === "verified") {
+    return verifyScreen();
+  }
   if (state.step === "phone") return phoneScreen();
   if (state.step === "code") return codeScreen();
   if (state.step === "data") return dataPreviewScreen();
@@ -471,15 +529,17 @@ function footerForStep() {
       action: async () => apply(await window.domo.onboardingAdvance()),
     };
   }
-  if (step === "activate" || step === "waiting") {
+  if (step === "activate" || step === "waiting" || step === "verified") {
+    const verified = step === "verified";
     return {
-      back: true,
+      back: !verified,
       dot: 1,
-      label: state.activation ? "Open Messages" : "Try again",
-      arrow: false,
-      action: state.activation
-        ? async () => apply(await window.domo.onboardingOpenMessages())
-        : async () => apply(await window.domo.onboardingBegin()),
+      label: "Continue",
+      arrow: true,
+      disabled: !verified,
+      action: verified
+        ? async () => apply(await window.domo.onboardingAdvance())
+        : null,
     };
   }
   if (step === "phone") {
@@ -555,7 +615,7 @@ function render() {
     });
     primaryLabel.textContent = config.label;
     primaryArrow.toggleAttribute("hidden", !config.arrow);
-    primaryButton.disabled = !!state.busy;
+    primaryButton.disabled = !!config.disabled || (!!state.busy && state.step !== "verified");
     primaryAction = config.action;
   } else {
     primaryAction = null;
@@ -563,7 +623,9 @@ function render() {
 
   if (state.step === "welcome") playWelcomeEntrance();
 
-  const focus = screen.querySelector("input[autofocus]") ?? (!footer.hidden ? primaryButton : null);
+  const focus = screen.querySelector("input[autofocus]")
+    ?? (primaryButton.disabled ? screen.querySelector(".verify-activate:not(:disabled)") : null)
+    ?? (!footer.hidden ? primaryButton : null);
   if (focus && !state.busy) {
     requestAnimationFrame(() => focus.focus({ preventScroll: true, focusVisible: false }));
   }

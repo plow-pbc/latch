@@ -29,8 +29,7 @@ import { loadSettings, saveSettings, Settings } from "./settings.js";
 
 /**
  * The verification sub-steps retain their existing mechanics. A successful
- * login proceeds directly to the post-login data choice; there is no connected
- * confirmation screen for the renderer to wait on.
+ * login pauses on a confirmation screen before the post-login data choice.
  */
 export type OnboardingStep =
   | "welcome"
@@ -39,6 +38,7 @@ export type OnboardingStep =
   | "waiting"
   | "phone"
   | "code"
+  | "verified"
   | "data"
   | "done";
 
@@ -283,6 +283,13 @@ export class Onboarding {
         return this.publish();
       }
       return this.newActivationCode();
+    }
+    if (this.step === "verified") {
+      // The display code is spent, but stays visible through the confirmation
+      // treatment so the screen does not jump while redemption finishes.
+      this.activation = null;
+      this.step = "data";
+      return this.publish();
     }
     if (this.step === "data") {
       const settings = this.settings();
@@ -758,8 +765,9 @@ export class Onboarding {
     // cannot be wrong.
     this.save(settings);
 
-    // The activation is spent: drop the code and the secret rather than leave
-    // either sitting in memory or on a screen behind this one.
+    // The activation secret is spent and dropped. The public display value is
+    // retained until Continue so the verified treatment can hold the same
+    // screen steady; the phone-code path has no activation to retain.
     //
     // BEFORE the dial, not after. `startRelay` is a network round-trip, and a
     // sign-out landing inside it resets this instance to `welcome`. Assigning
@@ -767,12 +775,11 @@ export class Onboarding {
     // it, keeps that reset from being overwritten. Everything here is derived
     // from the save above; none of it needs the socket to be up.
     this.cancelPolling();
-    this.activation = null;
     this.activationSecret = null;
     this.activationStale = false;
     this.codeExpiresAt = null;
     this.message = "";
-    this.step = "data";
+    this.step = "verified";
     this.telemetryEnabled = settings.telemetryEnabled;
 
     await this.deps.startRelay();

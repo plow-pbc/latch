@@ -84,12 +84,22 @@ export async function shootScreens({ win, outDir, prefix, screens, load, beforeS
     const values = await win.webContents.executeJavaScript(
       `[...document.querySelectorAll("input, textarea")].map((f) => f.value).join("\\n")`,
     );
+    const title = await win.webContents.executeJavaScript("document.title");
+    const ariaLabels = await win.webContents.executeJavaScript(
+      `[...document.querySelectorAll("[aria-label]")].map((el) => el.getAttribute("aria-label"))`,
+    );
     const focused = await win.webContents.executeJavaScript(
       `(document.activeElement?.textContent || document.activeElement?.getAttribute("placeholder") || "").trim()`,
     );
     const missing = [
       ...(screen.expect ?? []).filter((needle) => !text.includes(needle.toLowerCase())),
       ...(screen.expectValues ?? []).filter((needle) => !values.includes(needle)),
+      ...(screen.expectTitle && title !== screen.expectTitle
+        ? [`title "${screen.expectTitle}" (found: "${title}")`]
+        : []),
+      ...(screen.expectAriaLabel && !ariaLabels.includes(screen.expectAriaLabel)
+        ? [`aria-label "${screen.expectAriaLabel}"`]
+        : []),
       ...(screen.expectFocus && !focused.includes(screen.expectFocus)
         ? [`focus on "${screen.expectFocus}" (focused: "${focused}")`]
         : []),

@@ -582,8 +582,76 @@ body.on-welcome .wizard-footer .nav-next {
   animation: spin 1s linear infinite;
 }
 
+.verified-check {
+  width: 12px;
+  height: 12px;
+  stroke-width: 2.6;
+}
+
+.waiting-status.verified {
+  color: var(--success-text);
+}
+
 @keyframes spin {
   to { transform: rotate(360deg); }
+}
+
+.verify-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  align-items: center;
+  margin-top: 24px;
+}
+
+.verify-activate {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 9px;
+  padding: 13px 26px;
+  border: 1px solid var(--volt);
+  border-radius: 11px;
+  background: var(--volt);
+  box-shadow: 0 8px 26px -10px var(--volt-glow);
+  color: var(--midnight);
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: filter 150ms, box-shadow 150ms, transform 60ms, opacity 200ms;
+}
+
+.verify-activate:hover {
+  filter: brightness(1.06);
+  box-shadow: 0 6px 22px -8px var(--volt-glow);
+}
+
+.verify-activate:active {
+  transform: translateY(0.5px);
+}
+
+.verify-activate svg {
+  width: 16px;
+  height: 16px;
+}
+
+.verify-activate.sending {
+  opacity: 0.55;
+  pointer-events: none;
+}
+
+.verify-activate.done {
+  border-color: rgba(52, 199, 89, 0.4);
+  background: rgba(52, 199, 89, 0.1);
+  box-shadow: none;
+  color: var(--success-text);
+  cursor: default;
+  opacity: 1;
+  pointer-events: none;
+}
+
+.verify-actions .alternate {
+  margin-top: 12px;
 }
 
 .countdown {
@@ -676,8 +744,16 @@ body.on-welcome .wizard-footer .nav-next {
 }
 
 .data-preview h1 {
-  margin-bottom: 42px;
+  margin-bottom: 0;
   font-size: 36px;
+}
+
+.data-preview .head-center {
+  margin-bottom: 42px;
+}
+
+.preview-label {
+  margin: 28px 2px 12px;
 }
 
 .preview-card {
@@ -694,6 +770,14 @@ body.on-welcome .wizard-footer .nav-next {
 .preview-title {
   font-size: 15px;
   font-weight: 600;
+}
+
+.optional-label {
+  margin-left: 8px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 400;
+  opacity: 0.6;
 }
 
 .preview-detail {
@@ -856,7 +940,17 @@ body.on-welcome .wizard-footer .nav-next {
   transform: translateY(0.5px);
 }
 
-.nav-next:disabled,
+.nav-next:disabled {
+  border-color: var(--border-2);
+  background: var(--surface-2);
+  box-shadow: none;
+  color: var(--muted);
+  cursor: not-allowed;
+  filter: none;
+  opacity: 1;
+  pointer-events: none;
+}
+
 .nav-back:disabled,
 .link-button:disabled {
   opacity: 0.45;

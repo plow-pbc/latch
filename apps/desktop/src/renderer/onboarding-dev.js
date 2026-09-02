@@ -33,6 +33,7 @@ const fixtures = {
   welcome: { ...base, step: "welcome", phone: "" },
   privacy: { ...base, step: "privacy", phone: "" },
   verify: { ...base, step: "activate", phone: "", activation: ACTIVATION },
+  verified: { ...base, step: "verified", phone: "", activation: ACTIVATION, connected: true },
   phone: { ...base, step: "phone", phone: "" },
   code: {
     ...base,
@@ -91,6 +92,7 @@ window.domo = {
   onboardingAdvance: async () => {
     if (current.step === "welcome") return publish({ ...current, step: "privacy" });
     if (current.step === "privacy") return publish(activationState());
+    if (current.step === "verified") return publish({ ...current, step: "data", activation: null });
     if (current.step === "data") return publish({ ...current, step: "done" });
     return current;
   },
@@ -114,7 +116,13 @@ window.domo = {
   }),
   onboardingResendCode: async () => publish({ ...current, codeExpiresAt: Date.now() + 5 * 60_000 }),
   onboardingEditPhone: async () => publish({ ...current, step: "phone" }),
-  onboardingSubmitCode: async () => publish({ ...current, step: "data" }),
+  onboardingSubmitCode: async () => publish({
+    ...current,
+    step: "verified",
+    message: "",
+    codeExpiresAt: null,
+    connected: true,
+  }),
   onboardingSetTelemetry: async (enabled) => publish({ ...current, telemetryEnabled: enabled }),
   onboardingFinish: async () => current,
   onboardingMessageAgent: async () => current,

@@ -354,10 +354,8 @@ describe("wizard steps around the existing verification flow", () => {
     },
   );
 
-  it("does not publish Back on Data or Done", async () => {
-    const settings = loadSettings(home);
-    settings.relayCredential = DEVICE_TOKEN;
-    saveSettings(home, settings);
+  it("does not publish Back on Verified, Data or Done", async () => {
+    plow.redeems = [{ status: "verified", token: SESSION_TOKEN }];
     let notifications = 0;
     const onboarding = build(
       {
@@ -365,9 +363,17 @@ describe("wizard steps around the existing verification flow", () => {
           notifications += 1;
         },
       },
-      false,
     );
 
+    await onboarding.advance();
+    await settle();
+    expect(onboarding.state().step).toBe("verified");
+    notifications = 0;
+    expect((await onboarding.back()).step).toBe("verified");
+    expect(notifications).toBe(0);
+
+    expect((await onboarding.advance()).step).toBe("data");
+    notifications = 0;
     expect((await onboarding.back()).step).toBe("data");
     expect(notifications).toBe(0);
     await onboarding.advance();
@@ -389,16 +395,20 @@ describe("wizard steps around the existing verification flow", () => {
     expect(notifications).toBe(0);
   });
 
-  it("moves a redeemed login directly to data", async () => {
+  it("holds a redeemed login on verified until Continue moves to data", async () => {
     plow.redeems = [{ status: "verified", token: SESSION_TOKEN }];
     const onboarding = build({}, false);
     await onboarding.advance();
     await onboarding.advance();
     await settle();
 
-    expect(onboarding.state().step).toBe("data");
+    expect(onboarding.state().step).toBe("verified");
+    expect(onboarding.state().activation?.displayCode).toBe("CODE1");
     expect(loadSettings(home).relayCredential).toBe(SESSION_TOKEN);
     expect(loadSettings(home).setupComplete).toBe(false);
+
+    expect((await onboarding.advance()).step).toBe("data");
+    expect(onboarding.state().activation).toBeNull();
   });
 
   it("writes the pending telemetry choice and completion only on leaving data", async () => {
@@ -437,17 +447,20 @@ describe("activation — the path a brand-new user takes", () => {
     expect(onboarding.messagesOpened().step).toBe("waiting");
     await settle();
 
-    const state = onboarding.state();
-    expect(state.step).toBe("data");
-    expect(state.connected).toBe(true);
+    const verified = onboarding.state();
+    expect(verified.step).toBe("verified");
+    expect(verified.connected).toBe(true);
+    expect(verified.activation?.displayCode).toBe("CODE1");
     expect(waits.every((ms) => ms === ACTIVATION_POLL_INTERVAL_MS)).toBe(true);
     expect(loadSettings(home).relayCredential).toBe(SESSION_TOKEN);
     expect(plow.registrations).toEqual([
       { token: SESSION_TOKEN, deviceId: "device-1", hostname: "test-mac" },
     ]);
     expect(loadSettings(home).mcpUrl).toBe(DEVICE_MCP_URL);
-    // The spent activation is dropped rather than left on a screen behind this.
-    expect(state.activation).toBeNull();
+    const data = await onboarding.advance();
+    expect(data.step).toBe("data");
+    // The spent activation is dropped after the confirmation screen.
+    expect(data.activation).toBeNull();
   });
 
   it("keeps the chat the redeem carried, and shows the number the server assigned", async () => {
@@ -489,7 +502,7 @@ describe("activation — the path a brand-new user takes", () => {
     await onboarding.advance();
     await settle();
 
-    expect(onboarding.state().step).toBe("data");
+    expect(onboarding.state().step).toBe("verified");
     expect(loadSettings(home).provisionedChatUid).toBe("cht_ALREADY");
     expect(onboarding.state().chat?.uid).toBe("cht_ALREADY");
   });
@@ -667,7 +680,7 @@ describe("activation — the path a brand-new user takes", () => {
     // No messagesOpened() at all.
     await settle();
 
-    expect(onboarding.state().step).toBe("data");
+    expect(onboarding.state().step).toBe("verified");
   });
 
   it("does not burn a second code when the window is reopened", async () => {
@@ -697,7 +710,7 @@ describe("activation — the path a brand-new user takes", () => {
     // Minute fifteen: the text arrives. No click, no new code — the next poll
     // must catch it.
     plow.redeems = [{ status: "verified", token: SESSION_TOKEN }];
-    await settleUntil(() => onboarding.state().step === "data");
+    await settleUntil(() => onboarding.state().step === "verified");
 
     expect(loadSettings(home).relayCredential).toBe(SESSION_TOKEN);
     expect(plow.activations).toHaveLength(1);
@@ -727,7 +740,7 @@ describe("activation — the path a brand-new user takes", () => {
     // click just re-arms the countdown; it must not break the sign-in.
     plow.redeems = [{ status: "verified", token: SESSION_TOKEN }];
     await onboarding.newActivationCode();
-    await settleUntil(() => onboarding.state().step === "data");
+    await settleUntil(() => onboarding.state().step === "verified");
     expect(plow.activations).toHaveLength(1);
   });
 
@@ -767,7 +780,7 @@ describe("activation — the path a brand-new user takes", () => {
 
     // And the re-armed watch is real: a text now signs in.
     plow.redeems = [{ status: "verified", token: SESSION_TOKEN }];
-    await settleUntil(() => onboarding.state().step === "data");
+    await settleUntil(() => onboarding.state().step === "verified");
   });
 
   it("mints a fresh code only once the server has retired the old one", async () => {
@@ -801,7 +814,7 @@ describe("activation — the path a brand-new user takes", () => {
 
     // And the kept code still signs in when its text lands.
     plow.redeems = [{ status: "verified", token: SESSION_TOKEN }];
-    await settleUntil(() => onboarding.state().step === "data");
+    await settleUntil(() => onboarding.state().step === "verified");
   });
 
   it("reads a verified activation exactly once, and never re-reads it", async () => {
@@ -813,7 +826,7 @@ describe("activation — the path a brand-new user takes", () => {
     // One redeem saw the completion and got the token. A second would come back
     // verified with the `token` key omitted entirely — so there is no second.
     expect(plow.redeemCalls).toHaveLength(1);
-    expect(onboarding.state().step).toBe("data");
+    expect(onboarding.state().step).toBe("verified");
   });
 
   it("says so, honestly, when verified comes back with no token to hand over", async () => {
@@ -854,7 +867,7 @@ describe("activation — the path a brand-new user takes", () => {
     await onboarding.advance();
     await settle();
 
-    expect(onboarding.state().step).toBe("data");
+    expect(onboarding.state().step).toBe("verified");
     expect(plow.redeemCalls).toHaveLength(2);
   });
 
@@ -990,7 +1003,7 @@ describe("signing out", () => {
     const onboarding = build();
     await onboarding.advance();
     await settle();
-    expect(onboarding.state().step).toBe("data");
+    expect(onboarding.state().step).toBe("verified");
 
     // What `settings:signOut` does to disk, then the reset it must also do.
     const settings = loadSettings(home);
@@ -1019,7 +1032,7 @@ describe("signing out", () => {
     const onboarding = buildOnPhonePath();
     await onboarding.requestCode("+15551110000");
     await onboarding.submitCode("12345678");
-    expect(onboarding.state().step).toBe("data");
+    expect(onboarding.state().step).toBe("verified");
 
     const settings = loadSettings(home);
     settings.relayCredential = "";
@@ -1069,7 +1082,7 @@ describe("signing out", () => {
 });
 
 describe("the phone-code fallback still works", () => {
-  it("walks phone → code → data and stores what the server told it", async () => {
+  it("walks phone → code → verified → data and stores what the server told it", async () => {
     const onboarding = build();
     expect(onboarding.state().step).toBe("privacy");
     expect(onboarding.usePhoneCode().step).toBe("phone");
@@ -1084,10 +1097,13 @@ describe("the phone-code fallback still works", () => {
     expect(state.message).toBe("");
 
     state = await onboarding.submitCode("12345678");
-    expect(state.step).toBe("data");
+    expect(state.step).toBe("verified");
     expect(state.accountUid).toBe("u_123");
     expect(state.mcpUrl).toBe(DEVICE_MCP_URL);
     expect(started).toBe(1);
+
+    state = await onboarding.advance();
+    expect(state.step).toBe("data");
 
     // The endpoint came from device registration; the app never builds it.
     const settings = loadSettings(home);
@@ -1118,7 +1134,7 @@ describe("the phone-code fallback still works", () => {
     await onboarding.requestCode("+15551110000");
     const state = await onboarding.submitCode("12345678");
 
-    expect(state.step).toBe("data");
+    expect(state.step).toBe("verified");
     expect(loadSettings(home).relayCredential).toBe(OTP_TOKEN);
     expect(loadSettings(home).mcpUrl).toBe("");
     expect(started).toBe(1);
@@ -1253,6 +1269,8 @@ describe("signing out", () => {
     const onboarding = build();
     await onboarding.advance();
     await settle();
+    expect(onboarding.state().step).toBe("verified");
+    await onboarding.advance();
     expect(onboarding.state().step).toBe("data");
     // Any activation minted from here on is a fresh code nobody has texted yet.
     plow.redeems = [{ status: "pending" }];
@@ -1425,7 +1443,7 @@ describe("a sign-out while the credential handoff is in the air", () => {
 
 describe("a sign-out while startRelay is dialling", () => {
   it("is not overwritten by the post-login state", async () => {
-    // The data step is assigned before `startRelay` begins its network round
+    // The verified step is assigned before `startRelay` begins its network round
     // trip. A sign-out landing inside that await resets this instance to
     // Welcome, and the completed relay call must not overwrite the reset.
     let release = () => {};
@@ -1442,6 +1460,7 @@ describe("a sign-out while startRelay is dialling", () => {
     });
     const begun = onboarding.advance();
     await settle();
+    expect(onboarding.state().step).toBe("verified");
 
     signOutOfPlow(home);
     onboarding.reset();
