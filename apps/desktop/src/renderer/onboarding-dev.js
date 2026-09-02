@@ -43,7 +43,7 @@ window.domo = {
   onboardingFinish: currentState,
   connectorsRefresh: currentConnectors,
   connectorsConnect: currentConnectors,
-  connectorsDisconnect: async (_provider, account) => {
+  connectorsDisconnect: async (account) => {
     connectors = {
       ...connectors,
       google: {
@@ -54,7 +54,7 @@ window.domo = {
     connectorsChanged?.(connectors);
     return connectors;
   },
-  connectorsSetDefault: async (_provider, account) => {
+  connectorsSetDefault: async (account) => {
     connectors = {
       ...connectors,
       google: {

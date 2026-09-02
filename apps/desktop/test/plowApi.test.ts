@@ -604,13 +604,13 @@ describe("PlowApi", () => {
     ]);
     const api = new PlowApi("https://api.plow.co", fetchImpl);
 
-    await expect(api.connectorConnectUrl(credential, "google")).resolves.toBe(
+    await expect(api.connectorConnectUrl(credential)).resolves.toBe(
       "https://api.plow.co/v1/connectors/gmail/connect?code=signed-connect-code",
     );
     await expect(
-      api.disconnectConnector(credential, "google", "ada+work@example.com"),
+      api.disconnectConnector(credential, "ada+work@example.com"),
     ).resolves.toEqual({ status: "disconnected" });
-    await api.setDefaultConnector(credential, "google", "ada+work@example.com");
+    await api.setDefaultConnector(credential, "ada+work@example.com");
 
     expect(calls.map(({ url, init }) => [init.method, url])).toEqual([
       ["POST", "https://api.plow.co/v1/connectors/gmail/connect-code"],
@@ -623,18 +623,14 @@ describe("PlowApi", () => {
     expect(calls.every(({ url }) => !url.includes(credential))).toBe(true);
   });
 
-  it("never issues an account-less disconnect or an unsupported provider route", async () => {
+  it("never issues an account-less connector mutation", async () => {
     const { calls, fetchImpl } = recordingFetch([]);
     const api = new PlowApi("https://api.plow.co", fetchImpl);
 
-    await expect(api.disconnectConnector("plow_device", "google", "   "))
+    await expect(api.disconnectConnector("plow_device", "   "))
       .rejects.toMatchObject({ message: "Choose a valid account to disconnect." });
-    await expect(api.setDefaultConnector("plow_device", "google", "   "))
+    await expect(api.setDefaultConnector("plow_device", "   "))
       .rejects.toMatchObject({ message: "Choose a valid default account." });
-    await expect(api.connectorConnectUrl(
-      "plow_device",
-      "slack" as unknown as "google",
-    )).rejects.toMatchObject({ message: "That account provider is not supported." });
     expect(calls).toHaveLength(0);
   });
 

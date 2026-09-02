@@ -13,7 +13,6 @@ import {
 } from "../src/connectors.js";
 import {
   ConnectorAccount,
-  ConnectorProvider,
   ConnectorsOverview,
 } from "../src/plowApi.js";
 import { deferred } from "./deferred.js";
@@ -37,19 +36,19 @@ const account = (
 class FakePlow {
   listAnswers: ConnectorsOverview[] = [overview()];
   listCredentials: string[] = [];
-  connects: Array<{ credential: string; provider: ConnectorProvider }> = [];
-  disconnects: Array<{ credential: string; provider: ConnectorProvider; account: string }> = [];
-  defaults: Array<{ credential: string; provider: ConnectorProvider; account: string }> = [];
+  connects: string[] = [];
+  disconnects: Array<{ credential: string; account: string }> = [];
+  defaults: Array<{ credential: string; account: string }> = [];
   connectUrl: string | Promise<string> = CONNECT_URL;
   disconnectStatus = "disconnected";
-  pollGate: ((signal: AbortSignal) => Promise<ConnectorsOverview>) | null = null;
+  pollGate: ((signal: AbortSignal, call: number) => Promise<ConnectorsOverview>) | null = null;
 
   async listConnectors(
     credential: string,
     signal?: AbortSignal,
   ): Promise<ConnectorsOverview> {
     this.listCredentials.push(credential);
-    if (signal && this.pollGate) return this.pollGate(signal);
+    if (signal && this.pollGate) return this.pollGate(signal, this.listCredentials.length);
     const answer = this.listAnswers.length > 1
       ? this.listAnswers.shift()!
       : this.listAnswers[0];
@@ -58,27 +57,27 @@ class FakePlow {
 
   async connectorConnectUrl(
     credential: string,
-    provider: ConnectorProvider,
+    _signal?: AbortSignal,
   ): Promise<string> {
-    this.connects.push({ credential, provider });
+    this.connects.push(credential);
     return this.connectUrl;
   }
 
   async disconnectConnector(
     credential: string,
-    provider: ConnectorProvider,
     email: string,
+    _signal?: AbortSignal,
   ): Promise<{ status: string }> {
-    this.disconnects.push({ credential, provider, account: email });
+    this.disconnects.push({ credential, account: email });
     return { status: this.disconnectStatus };
   }
 
   async setDefaultConnector(
     credential: string,
-    provider: ConnectorProvider,
     email: string,
+    _signal?: AbortSignal,
   ): Promise<void> {
-    this.defaults.push({ credential, provider, account: email });
+    this.defaults.push({ credential, account: email });
   }
 }
 
@@ -132,9 +131,9 @@ describe("connecting a Google account", () => {
     ];
     const { connectors, opened, audits, waits } = build(plow);
 
-    const state = await connectors.connect("google");
+    const state = await connectors.connect();
 
-    expect(plow.connects).toEqual([{ credential: CREDENTIAL, provider: "google" }]);
+    expect(plow.connects).toEqual([CREDENTIAL]);
     expect(opened).toEqual([CONNECT_URL]);
     expect(waits).toEqual([CONNECTOR_POLL_INTERVAL_MS]);
     // Baseline, successful poll, then the explicit final refresh.
@@ -158,7 +157,7 @@ describe("connecting a Google account", () => {
     const plow = new FakePlow();
     const { connectors, opened, audits, waits } = build(plow);
 
-    const state = await connectors.connect("google");
+    const state = await connectors.connect();
 
     expect(opened).toEqual([CONNECT_URL]);
     expect(waits).toHaveLength(CONNECTOR_TIMEOUT_MS / CONNECTOR_POLL_INTERVAL_MS);
@@ -186,7 +185,7 @@ describe("connecting a Google account", () => {
     ];
     const { connectors, audits, waits } = build(plow);
 
-    const state = await connectors.connect("google");
+    const state = await connectors.connect();
 
     expect(waits).toHaveLength(CONNECTOR_TIMEOUT_MS / CONNECTOR_POLL_INTERVAL_MS);
     expect(state.error).toBeNull();
@@ -206,15 +205,15 @@ describe("connecting a Google account", () => {
     const timeout = vi.spyOn(AbortSignal, "timeout").mockImplementation((milliseconds) =>
       milliseconds === CONNECTOR_TIMEOUT_MS ? polling.signal : finalRefresh.signal);
     const plow = new FakePlow();
-    plow.pollGate = async (signal) => {
-      if (signal !== polling.signal) return overview();
+    plow.pollGate = async (signal, call) => {
+      if (call !== 2) return overview();
       return new Promise((_resolve, reject) => {
         signal.addEventListener("abort", () => reject(signal.reason));
       });
     };
     const { connectors } = build(plow);
 
-    const pending = connectors.connect("google");
+    const pending = connectors.connect();
     while (plow.listCredentials.length < 2) await Promise.resolve();
     polling.abort(new DOMException("The operation was aborted.", "TimeoutError"));
     const state = await pending;
@@ -231,15 +230,16 @@ describe("connecting a Google account", () => {
     const timeout = vi.spyOn(AbortSignal, "timeout").mockImplementation((milliseconds) =>
       milliseconds === CONNECTOR_TIMEOUT_MS ? polling.signal : finalRefresh.signal);
     const plow = new FakePlow();
-    plow.pollGate = async (signal) => {
-      if (signal !== finalRefresh.signal) return overview();
+    plow.pollGate = async (signal, call) => {
+      const finalCall = 2 + CONNECTOR_TIMEOUT_MS / CONNECTOR_POLL_INTERVAL_MS;
+      if (call !== finalCall) return overview();
       return new Promise((_resolve, reject) => {
         signal.addEventListener("abort", () => reject(signal.reason));
       });
     };
     const { connectors } = build(plow);
 
-    const pending = connectors.connect("google");
+    const pending = connectors.connect();
     await vi.waitFor(() => {
       expect(timeout).toHaveBeenCalledWith(CONNECTOR_FINAL_REFRESH_TIMEOUT_MS);
     });
@@ -262,9 +262,9 @@ describe("connecting a Google account", () => {
     ];
     const { connectors } = build(plow);
 
-    const first = connectors.connect("google");
+    const first = connectors.connect();
     while (plow.connects.length === 0) await Promise.resolve();
-    const refused = await connectors.disconnect("google", "ada@example.com");
+    const refused = await connectors.disconnect("ada@example.com");
 
     expect(refused.busy).toBe(true);
     expect(refused.google.connecting).toBe(true);
@@ -279,11 +279,31 @@ describe("connecting a Google account", () => {
     plow.connectUrl = "http://api.plow.co/v1/connectors/gmail/connect?code=unsafe";
     const { connectors, opened } = build(plow);
 
-    const state = await connectors.connect("google");
+    const state = await connectors.connect();
 
     expect(opened).toEqual([]);
     expect(state.error).toBe("Plow couldn't open the connection page.");
     expect(JSON.stringify(state)).not.toContain(String(plow.connectUrl));
+  });
+
+  it.each([
+    "http://localhost:4242/v1/connectors/gmail/connect?code=local",
+    "http://127.0.0.1:4242/v1/connectors/gmail/connect?code=local",
+    "http://[::1]:4242/v1/connectors/gmail/connect?code=local",
+  ])("opens a loopback HTTP connect URL: %s", async (connectUrl) => {
+    const plow = new FakePlow();
+    plow.connectUrl = connectUrl;
+    plow.listAnswers = [
+      overview(),
+      overview([account("local@example.com")]),
+      overview([account("local@example.com")]),
+    ];
+    const { connectors, opened } = build(plow);
+
+    const state = await connectors.connect();
+
+    expect(opened).toEqual([connectUrl]);
+    expect(state.error).toBeNull();
   });
 });
 
@@ -293,11 +313,10 @@ describe("connector account actions", () => {
     plow.listAnswers = [overview([account("grace@example.com", { isDefault: true })])];
     const { connectors, audits } = build(plow);
 
-    const state = await connectors.disconnect("google", "  ada@example.com  ");
+    const state = await connectors.disconnect("  ada@example.com  ");
 
     expect(plow.disconnects).toEqual([{
       credential: CREDENTIAL,
-      provider: "google",
       account: "ada@example.com",
     }]);
     expect(audits).toEqual([{
@@ -313,7 +332,7 @@ describe("connector account actions", () => {
     plow.listAnswers = [overview([account("grace@example.com", { isDefault: true })])];
     const { connectors, audits } = build(plow);
 
-    const state = await connectors.disconnect("google", "ada@example.com");
+    const state = await connectors.disconnect("ada@example.com");
 
     expect(plow.disconnects).toHaveLength(1);
     expect(audits).toEqual([]);
@@ -328,11 +347,10 @@ describe("connector account actions", () => {
     ])];
     const { connectors, audits } = build(plow);
 
-    const state = await connectors.setDefault("google", "grace@example.com");
+    const state = await connectors.setDefault("grace@example.com");
 
     expect(plow.defaults).toEqual([{
       credential: CREDENTIAL,
-      provider: "google",
       account: "grace@example.com",
     }]);
     expect(audits).toEqual([{
@@ -340,6 +358,52 @@ describe("connector account actions", () => {
       fields: { provider: "google", account: "grace@example.com" },
     }]);
     expect(state.google.accounts[1].isDefault).toBe(true);
+  });
+});
+
+describe("connector account lifecycle", () => {
+  it("clears both windows on sign-out and ignores a late old-account poll", async () => {
+    const latePoll = deferred<ConnectorsOverview>();
+    const plow = new FakePlow();
+    const oldAccounts = overview([account("old@example.com", { isDefault: true })]);
+    let pollSignal: AbortSignal | null = null;
+    plow.pollGate = async (signal, call) => {
+      if (call === 1) return oldAccounts;
+      pollSignal = signal;
+      return latePoll.promise;
+    };
+    const onboardingWindowStates: ConnectorsState[] = [];
+    const mainWindowStates: ConnectorsState[] = [];
+    let connectors!: Connectors;
+    let audits!: Harness["audits"];
+    ({ connectors, audits } = build(plow, {
+      onChange: () => {
+        onboardingWindowStates.push(connectors.state());
+        mainWindowStates.push(connectors.state());
+      },
+    }));
+
+    const pending = connectors.connect();
+    while (!pollSignal) await Promise.resolve();
+    const signedOut = connectors.signedOut();
+    latePoll.resolve(overview([
+      account("old@example.com", { isDefault: true }),
+      account("late@example.com"),
+    ]));
+    await pending;
+
+    expect(pollSignal).not.toBeNull();
+    expect(pollSignal!.aborted).toBe(true);
+    expect(signedOut).toEqual({
+      busy: false,
+      error: null,
+      note: null,
+      google: { accounts: [], connecting: false },
+    });
+    expect(connectors.state()).toEqual(signedOut);
+    expect(onboardingWindowStates.at(-1)).toEqual(signedOut);
+    expect(mainWindowStates.at(-1)).toEqual(signedOut);
+    expect(audits).toEqual([]);
   });
 });
 
@@ -374,7 +438,7 @@ describe("connect URL privacy", () => {
     });
 
     try {
-      states.push(await connectors.connect("google"));
+      states.push(await connectors.connect());
       expect(opened).toEqual([CONNECT_URL]);
 
       const durableOutputs = JSON.stringify({

@@ -564,6 +564,7 @@ function signOut() {
   // is part of that same write.
   signOutOfPlow(home);
   onboarding?.reset();
+  connectors?.signedOut();
   // Connect-a-client holds the old account's state too — possibly a shown-once
   // credential still on screen, or a mint in flight.
   connectClient?.signedOut();
@@ -801,28 +802,25 @@ ipcMain.handle("onboarding:finish", async () => {
 });
 
 // OAuth URLs never cross this boundary. The renderer names an action and gets
-// only the connector module's display state back.
+// only the Google connector's display state back.
 ipcMain.handle("connectors:refresh", async () => connectors?.refresh() ?? null);
-ipcMain.handle("connectors:connect", async (_event, provider: unknown) => {
-  if (provider !== "google") return connectors?.state() ?? null;
-  return connectors?.connect(provider) ?? null;
-});
+ipcMain.handle("connectors:connect", async () => connectors?.connect() ?? null);
 ipcMain.handle(
   "connectors:disconnect",
-  async (_event, provider: unknown, account: unknown) => {
-    if (provider !== "google" || typeof account !== "string" || !account.trim()) {
+  async (_event, account: unknown) => {
+    if (typeof account !== "string" || !account.trim()) {
       return connectors?.state() ?? null;
     }
-    return connectors?.disconnect(provider, account) ?? null;
+    return connectors?.disconnect(account) ?? null;
   },
 );
 ipcMain.handle(
   "connectors:setDefault",
-  async (_event, provider: unknown, account: unknown) => {
-    if (provider !== "google" || typeof account !== "string" || !account.trim()) {
+  async (_event, account: unknown) => {
+    if (typeof account !== "string" || !account.trim()) {
       return connectors?.state() ?? null;
     }
-    return connectors?.setDefault(provider, account) ?? null;
+    return connectors?.setDefault(account) ?? null;
   },
 );
 ipcMain.handle("settings:setApprovalMode", async (_e, mode: string) => {

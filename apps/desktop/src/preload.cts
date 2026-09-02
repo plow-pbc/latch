@@ -6,7 +6,6 @@
 import { contextBridge, ipcRenderer } from "electron";
 import type { CloudAgentsPreloadState } from "./cloudAgentsIpc.js";
 
-type ConnectorProvider = "google";
 type ConnectorsState = {
   busy: boolean;
   error: string | null;
@@ -143,19 +142,14 @@ contextBridge.exposeInMainWorld("domo", {
   onboardingFinish: () => ipcRenderer.invoke("onboarding:finish"),
   onOnboardingChanged: (cb: () => void) => ipcRenderer.on("onboarding:changed", cb),
 
-  // Connected accounts. OAuth stays in main: these calls name only the
-  // provider/account and receive the display-only connector state.
+  // Connected accounts. OAuth stays in main: these calls carry only the
+  // selected account, when needed, and receive display-only connector state.
   connectorsRefresh: (): Promise<ConnectorsState> => ipcRenderer.invoke("connectors:refresh"),
-  connectorsConnect: (provider: ConnectorProvider): Promise<ConnectorsState> =>
-    ipcRenderer.invoke("connectors:connect", provider),
-  connectorsDisconnect: (
-    provider: ConnectorProvider,
-    account: string,
-  ): Promise<ConnectorsState> => ipcRenderer.invoke("connectors:disconnect", provider, account),
-  connectorsSetDefault: (
-    provider: ConnectorProvider,
-    account: string,
-  ): Promise<ConnectorsState> => ipcRenderer.invoke("connectors:setDefault", provider, account),
+  connectorsConnect: (): Promise<ConnectorsState> => ipcRenderer.invoke("connectors:connect"),
+  connectorsDisconnect: (account: string): Promise<ConnectorsState> =>
+    ipcRenderer.invoke("connectors:disconnect", account),
+  connectorsSetDefault: (account: string): Promise<ConnectorsState> =>
+    ipcRenderer.invoke("connectors:setDefault", account),
   onConnectorsChanged: (cb: (state: ConnectorsState) => void) =>
     ipcRenderer.on("connectors:changed", (_event, state: ConnectorsState) => cb(state)),
 

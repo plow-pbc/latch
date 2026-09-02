@@ -460,12 +460,12 @@ function connectScreen() {
     google: { accounts: [], connecting: false },
   };
   const actions = {
-    connect: () => updateConnectors(() => window.domo.connectorsConnect("google")),
+    connect: () => updateConnectors(() => window.domo.connectorsConnect()),
     disconnect: (account) => updateConnectors(
-      () => window.domo.connectorsDisconnect("google", account),
+      () => window.domo.connectorsDisconnect(account),
     ),
     setDefault: (account) => updateConnectors(
-      () => window.domo.connectorsSetDefault("google", account),
+      () => window.domo.connectorsSetDefault(account),
     ),
   };
   const parts = [

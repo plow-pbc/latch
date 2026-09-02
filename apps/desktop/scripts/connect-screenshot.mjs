@@ -396,7 +396,7 @@ async function setUp() {
   }));
   ipcMain.handle("connectors:refresh", async () => connectorsFixture);
   ipcMain.handle("connectors:connect", async () => connectorsFixture);
-  ipcMain.handle("connectors:disconnect", async (_e, _provider, account) => {
+  ipcMain.handle("connectors:disconnect", async (_e, account) => {
     connectorsFixture = {
       ...connectorsFixture,
       google: {
@@ -406,7 +406,7 @@ async function setUp() {
     };
     return connectorsFixture;
   });
-  ipcMain.handle("connectors:setDefault", async (_e, _provider, account) => {
+  ipcMain.handle("connectors:setDefault", async (_e, account) => {
     connectorsFixture = {
       ...connectorsFixture,
       google: {

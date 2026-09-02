@@ -110,9 +110,6 @@ export interface RelayDeviceInfo {
   mcpUrl: string;
 }
 
-/** The product name for the one connector Latch can use today. */
-export type ConnectorProvider = "google";
-
 export interface ConnectorAccount {
   email: string;
   isDefault: boolean;
@@ -360,12 +357,7 @@ function plausibleEmail(value: unknown): value is string {
 }
 
 /** Product calls it Google; the server's historical route name is Gmail. */
-function connectorRoute(provider: ConnectorProvider): string {
-  if (provider !== "google") {
-    throw new PlowApiError("http", "That account provider is not supported.");
-  }
-  return "/v1/connectors/gmail";
-}
+const GOOGLE_CONNECTOR_ROUTE = "/v1/connectors/gmail";
 
 /** `fetch`, injectable so tests never touch the network. */
 export type FetchLike = (url: string, init?: RequestInit) => Promise<Response>;
@@ -546,7 +538,11 @@ export class PlowApi {
 
   /** List the Google accounts available to Gmail and Calendar. */
   async listConnectors(token: string, signal?: AbortSignal): Promise<ConnectorsOverview> {
-    const data = await this.call<unknown>("GET", "/v1/connectors", { token, signal });
+    const data = await this.call<unknown>("GET", "/v1/connectors", {
+      token,
+      signal,
+      timeoutMs: REQUEST_TIMEOUT_MS,
+    });
     const root = data && typeof data === "object" && !Array.isArray(data)
       ? data as Record<string, unknown>
       : null;
@@ -578,16 +574,19 @@ export class PlowApi {
   }
 
   /** Mint the short-lived browser URL for one OAuth pass. Main-process only. */
-  async connectorConnectUrl(token: string, provider: ConnectorProvider): Promise<string> {
-    const route = connectorRoute(provider);
-    const data = await this.call<unknown>("POST", `${route}/connect-code`, { token });
+  async connectorConnectUrl(token: string, signal?: AbortSignal): Promise<string> {
+    const data = await this.call<unknown>("POST", `${GOOGLE_CONNECTOR_ROUTE}/connect-code`, {
+      token,
+      signal,
+      timeoutMs: REQUEST_TIMEOUT_MS,
+    });
     const code = data && typeof data === "object" && !Array.isArray(data)
       ? (data as Record<string, unknown>).code
       : null;
     if (typeof code !== "string" || !code.trim()) {
       throw new PlowApiError("http", "Plow did not return a usable connection address.");
     }
-    const url = new URL(`${this.baseUrl}${route}/connect`);
+    const url = new URL(`${this.baseUrl}${GOOGLE_CONNECTOR_ROUTE}/connect`);
     url.searchParams.set("code", code);
     return url.toString();
   }
@@ -595,8 +594,8 @@ export class PlowApi {
   /** Remove exactly one account; an account-less call is never issued. */
   async disconnectConnector(
     token: string,
-    provider: ConnectorProvider,
     account: string,
+    signal?: AbortSignal,
   ): Promise<{ status: string }> {
     const email = account.trim();
     if (!plausibleEmail(email)) {
@@ -605,8 +604,8 @@ export class PlowApi {
     const query = new URLSearchParams({ account: email });
     const data = await this.call<unknown>(
       "POST",
-      `${connectorRoute(provider)}/disconnect?${query}`,
-      { token },
+      `${GOOGLE_CONNECTOR_ROUTE}/disconnect?${query}`,
+      { token, signal, timeoutMs: REQUEST_TIMEOUT_MS },
     );
     const status = data && typeof data === "object" && !Array.isArray(data)
       ? (data as Record<string, unknown>).status
@@ -620,15 +619,19 @@ export class PlowApi {
   /** Select exactly one connected account as the provider default. */
   async setDefaultConnector(
     token: string,
-    provider: ConnectorProvider,
     account: string,
+    signal?: AbortSignal,
   ): Promise<void> {
     const email = account.trim();
     if (!plausibleEmail(email)) {
       throw new PlowApiError("http", "Choose a valid default account.");
     }
     const query = new URLSearchParams({ account: email });
-    await this.call<unknown>("POST", `${connectorRoute(provider)}/set-default?${query}`, { token });
+    await this.call<unknown>("POST", `${GOOGLE_CONNECTOR_ROUTE}/set-default?${query}`, {
+      token,
+      signal,
+      timeoutMs: REQUEST_TIMEOUT_MS,
+    });
   }
 
   /**
@@ -813,7 +816,7 @@ export class PlowApi {
   private async call<T>(
     method: string,
     path: string,
-    opts: { token?: string; body?: unknown; signal?: AbortSignal } = {},
+    opts: { token?: string; body?: unknown; signal?: AbortSignal; timeoutMs?: number } = {},
   ): Promise<T> {
     const response = await this.request(method, path, opts);
 

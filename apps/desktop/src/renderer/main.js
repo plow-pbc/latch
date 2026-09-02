@@ -1897,13 +1897,13 @@ async function renderSettings() {
   const connectorMutate = singleFlight(() => connectorState.busy === true);
   const connectorActions = {
     connect: () => connectorMutate(async () => {
-      applyConnectors(await window.domo.connectorsConnect("google"));
+      applyConnectors(await window.domo.connectorsConnect());
     }),
     disconnect: (account) => connectorMutate(async () => {
-      applyConnectors(await window.domo.connectorsDisconnect("google", account));
+      applyConnectors(await window.domo.connectorsDisconnect(account));
     }),
     setDefault: (account) => connectorMutate(async () => {
-      applyConnectors(await window.domo.connectorsSetDefault("google", account));
+      applyConnectors(await window.domo.connectorsSetDefault(account));
     }),
   };
   const drawConnectors = () => {
