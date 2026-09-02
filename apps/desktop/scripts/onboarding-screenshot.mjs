@@ -9,6 +9,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { onboardingFixtures } from "../src/renderer/onboarding-fixtures.js";
+import { ONBOARDING_FAILURE_MESSAGE } from "../src/renderer/onboardingFallback.js";
 import { FONT_WAIT_CEILING_MS } from "../src/renderer/welcomeEntrance.js";
 import { clickText, failLoudly, shootScreens, shotWindow } from "./screenshot-harness.mjs";
 
@@ -18,7 +19,22 @@ const outDir = process.env.OUT_DIR ?? "/tmp";
 const REARM_NOTE =
   "That code still works — send it exactly as shown and this screen will move on by itself.";
 
-const SCREENS = onboardingFixtures(Date.now());
+const fixtureScreens = onboardingFixtures(Date.now());
+const welcomeFixture = fixtureScreens[0];
+const SCREENS = [
+  ...fixtureScreens,
+  {
+    ...welcomeFixture,
+    name: "boot-null",
+    state: null,
+  },
+  {
+    ...welcomeFixture,
+    name: "boot-rejected",
+    rejectOnboardingGet: true,
+    expect: [...welcomeFixture.expect, ONBOARDING_FAILURE_MESSAGE],
+  },
+];
 let currentFixture = SCREENS[0];
 let current = currentFixture.state;
 let currentFullDiskAccess = false;
@@ -38,6 +54,7 @@ ipcMain.handle("onboarding:get", async () => {
     });
     holdInitialGet = false;
   }
+  if (currentFixture.rejectOnboardingGet) throw new Error("onboarding:get fixture failure");
   return current;
 });
 ipcMain.handle("onboarding:newCode", async () => {
@@ -106,8 +123,8 @@ app.whenReady().then(async () => {
   fs.writeFileSync(preRenderOut, preRender.toPNG());
   const { width } = preRender.getSize();
   const bitmap = preRender.toBitmap({ scaleFactor: 1 });
-  const colors = [22, 400, 800].map((y) =>
-    bitmap.subarray((y * width + 330) * 4, (y * width + 331) * 4).toString("hex"));
+  const colors = [[330, 22], [330, 400], [330, 800], [560, 800]].map(([x, y]) =>
+    bitmap.subarray((y * width + x) * 4, (y * width + x + 1) * 4).toString("hex"));
   const missing = new Set(colors).size === 1
     ? []
     : [`shell painted before onboarding state arrived (${colors.join(", ")})`];
@@ -134,7 +151,7 @@ app.whenReady().then(async () => {
       await win.loadFile(path.join(dist, "renderer/onboarding.html"));
       // The full Welcome resolves its last delayed reveal at about 2.08s. Shoot
       // its resting state after the font and first-paint gate has also settled.
-      const settleMs = fixture.state.step === "welcome"
+      const settleMs = fixture.state?.step === "welcome" || fixture.state === null
         ? FONT_WAIT_CEILING_MS + 2200
         : 400;
       await new Promise((resolve) => setTimeout(resolve, settleMs));
