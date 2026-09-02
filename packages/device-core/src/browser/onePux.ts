@@ -92,6 +92,8 @@ function itemToLogin(item: Rec, vault: string, skipped: SkippedRow[]): ImportedL
     }
   });
   if (urls.length === 0) return skip("its website address could not be read");
+  const warnings: string[] = [];
+  if (urls.length < rawUrls.length) warnings.push("one of its website addresses could not be read and was left off");
 
   const fields = list(details.loginFields);
   const designated = (want: string) => str(fields.find((f) => f.designation === want)?.value);
@@ -111,7 +113,7 @@ function itemToLogin(item: Rec, vault: string, skipped: SkippedRow[]): ImportedL
 
   const login = finishImportedLogin(
     { title: rawTitle, urls, username: designated("username").trim(), password: designated("password"), totpRaw, notes: str(details.notesPlain) },
-    [],
+    warnings,
   );
   return { ...login, vault };
 }

@@ -124,6 +124,7 @@ describe("parseOnePux", () => {
     ] }]));
     expect(parsed.logins.map((l) => l.title)).toEqual(["Mixed", "Live"]);
     expect(parsed.logins[0]!.urls).toEqual(["https://good.example.com"]);
+    expect(parsed.logins[0]!.warnings).toContain("one of its website addresses could not be read and was left off");
     expect(parsed.skipped).toEqual([
       { title: "Old", reason: "archived in 1Password", vault: "Personal" },
       { title: "Visa", reason: "a credit card, not a login", vault: "Personal" },
