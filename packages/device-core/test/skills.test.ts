@@ -250,25 +250,33 @@ describe("the built-in contacts skill", () => {
     ["writes never qualifying for always-allow", /a write never does/i],
     ["the always-allow refusal being enforced by the engine", /neither stores nor replays/i],
   ])("publishes %s", (_what, pattern) => {
-    expect(contactsSkillFor().body).toMatch(pattern);
+    expect(contactsSkillFor("/Users/testowner").body).toMatch(pattern);
   });
 
   it("shows the recipes it publishes, not a paraphrase of them", () => {
-    const body = contactsSkillFor().body;
+    const body = contactsSkillFor("/Users/testowner").body;
     for (const sql of Object.values(CONTACTS_QUERIES)) {
       expect(body).toContain(sql.split("\n")[0].trim());
     }
   });
 
-  it("names the store ~-relative so the owner's account name never leaks in a skill read", () => {
-    const skill = contactsSkillFor();
+  it("names the store by its resolved absolute path, so no optional argument is load-bearing", () => {
+    const skill = contactsSkillFor("/Users/testowner");
     expect(skill.name).toBe("contacts");
-    // Same contract as the imessage skill: plow_read_skill returns this body
-    // to any authenticated agent with no approval.
-    expect(skill.body).toContain("~/Library/Application Support/AddressBook/AddressBook-v22.abcddb");
-    expect(skill.body).not.toMatch(/\/Users\//);
+    // Same contract as the imessage skill, and the same reason it changed: a
+    // recipe that rides `cwd` breaks silently under a runtime that forwards
+    // only the required arguments.
+    expect(skill.body).toContain(
+      "/Users/testowner/Library/Application Support/AddressBook/AddressBook-v22.abcddb",
+    );
     expect(skill.body).not.toContain("<owner>");
     expect(skill.description).toMatch(/contacts/i);
+  });
+
+  it("publishes no recipe that depends on cwd", () => {
+    const body = contactsSkillFor("/Users/testowner").body;
+    expect(body).not.toMatch(/^\s*cwd:/m);
+    expect(body).not.toContain('"AddressBook-v22.abcddb"');
   });
 
   // Gated on the AddressBook DIRECTORY, not one specific .abcddb — Sources
@@ -282,7 +290,7 @@ describe("the built-in contacts skill", () => {
     fs.mkdirSync(path.dirname(contactsStorePath(home)), { recursive: true });
     const present = new SkillRegistry();
     registerContactsSkill(present, home);
-    expect(present.skill("contacts")?.body).toContain("~/Library/Application Support/AddressBook");
+    expect(present.skill("contacts")?.body).toContain(contactsStorePath(home));
   });
 });
 
@@ -322,8 +330,11 @@ describe("the skills a DeviceAgent publishes", () => {
 
     fs.mkdirSync(path.dirname(imessageStorePath(ownerHome)), { recursive: true });
     fs.writeFileSync(imessageStorePath(ownerHome), "");
+    // The resolved path proves the owner home reaches the body: a recipe that
+    // named the store relatively would pass this while breaking under any
+    // runtime that drops the optional `cwd`.
     expect(agentFor(ownerHome).skills.skill("imessage")?.body).toContain(
-      "~/Library/Messages/chat.db",
+      imessageStorePath(ownerHome),
     );
   });
 
@@ -333,7 +344,7 @@ describe("the skills a DeviceAgent publishes", () => {
 
     fs.mkdirSync(path.dirname(contactsStorePath(ownerHome)), { recursive: true });
     expect(agentFor(ownerHome).skills.skill("contacts")?.body).toContain(
-      "~/Library/Application Support/AddressBook",
+      contactsStorePath(ownerHome),
     );
   });
 

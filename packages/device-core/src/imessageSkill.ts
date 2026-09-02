@@ -4,10 +4,10 @@
  *
  * Same reasoning as the WhatsApp recipe next to this file (see
  * `whatsappSkill.ts`'s header): this schema is versioned with macOS Messages,
- * not with the Plow repo. The store path is written `~`-relative rather than as
- * a resolved `/Users/<owner>/…`, because `plow_read_skill` returns this body to
- * any authenticated agent with no approval — a resolved home would leak the
- * owner's account name (see `imessageSkillFor`). iMessage adds one thing
+ * not with the Plow repo. The store path is written as a RESOLVED
+ * `/Users/<owner>/…` rather than `~`-relative: an absolute path is the only one
+ * that cannot be lost when an agent runtime drops the optional `cwd` argument
+ * (see `imessageSkillFor` for the failure that cost). iMessage adds one thing
  * WhatsApp does not need: a send
  * path. Reading is a query; sending is an Apple event through Messages.app,
  * which is exactly what the `apple_events` capability (protocol kind
