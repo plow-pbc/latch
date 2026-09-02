@@ -122,8 +122,14 @@ function makeCtx(
           { label: "number", hidden: true, custom: false, alias: false },
           { label: "code", hidden: true, custom: false, alias: false },
           { label: "cardholder name", hidden: false, custom: false, alias: false },
+          { label: "expiry month", hidden: false, custom: false, alias: false },
+          { label: "expiry year", hidden: false, custom: false, alias: false },
+          { label: "expiry", hidden: false, custom: false, alias: false },
         ],
-        values: { number: "4111111111111111", code: "737", "cardholder name": "Jon Doe" },
+        values: {
+          number: "4111111111111111", code: "737", "cardholder name": "Jon Doe",
+          "expiry month": "04", "expiry year": "2031", expiry: "2031-04",
+        },
       },
       {
         id: "I1",
@@ -640,7 +646,7 @@ describe("fill_secret formats a date of birth", () => {
     const result = await ctx.sessions.command(handle, {
       action: "fill_secret", selector: "#city", item: "I1", field: "city", format: "MM",
     });
-    expect(result).toMatchObject({ status: "error", error: expect.stringMatching(/format.*date of birth/) });
+    expect(result).toMatchObject({ status: "error", error: expect.stringMatching(/format applies only to a date field/) });
     expect(released()).toEqual([]);
     expect(typed()).toEqual([]);
   });
@@ -676,6 +682,34 @@ describe("fill_secret formats a date of birth", () => {
         reason: "the stored value is not a date",
       },
     });
+  });
+});
+
+describe("fill_secret formats a card's expiry", () => {
+  const typed = (): string[] =>
+    fs.existsSync(ctx.fillLog) ? fs.readFileSync(ctx.fillLog, "utf8").trim().split("\n") : [];
+  it.each([
+    { format: undefined, want: "04/31" },
+    { format: "MM/YYYY", want: "04/2031" },
+    { format: "MMMM", want: "April" },
+    { format: "YYYY", want: "2031" },
+  ])("types it as $format", async ({ format, want }) => {
+    const handle = await session();
+    const result = await ctx.sessions.command(handle, {
+      action: "fill_secret", selector: "#exp", item: "C1", field: "expiry",
+      ...(format === undefined ? {} : { format }),
+    });
+    expect(result).toEqual({ status: "completed", ok: true, frame: 0 });
+    expect(typed()).toEqual([`#exp\t${want}\t0`]);
+  });
+  it("refuses a day token for a month-only date before asking the vault", async () => {
+    const handle = await session();
+    const result = await ctx.sessions.command(handle, {
+      action: "fill_secret", selector: "#exp", item: "C1", field: "expiry", format: "MM/DD/YY",
+    });
+    expect(result).toMatchObject({ status: "error", error: expect.stringMatching(/no day/) });
+    expect(released()).toEqual([]);
+    expect(typed()).toEqual([]);
   });
 });
 

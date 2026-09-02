@@ -691,8 +691,9 @@ export const TOOLS: ToolSpec[] = [
       "screen's six one-digit inputs), pass 'selectors' naming every box in order instead of " +
       "'selector': the value is split on the Mac, one character per box, and a fill that " +
       "fails part-way erases what it already typed. " +
-      "A date of birth takes a 'format' — the month alone, the year alone, or the whole date " +
-      "in the page's shape — and a fill into a dropdown chooses the matching option. " +
+      "A date of birth or a card's expiry takes a 'format' — the month alone, the year alone, " +
+      "or the whole date in the page's shape — and a fill into a dropdown chooses the matching " +
+      "option. " +
       "A destination in the bundled v1 bank registry needs more than item " +
       "rights: the owner must ALSO approve the payment separately (a link in their Plow " +
       "thread, or a 👍), and the fill proceeds only once they do — otherwise fill_secret " +
@@ -736,7 +737,7 @@ export const TOOLS: ToolSpec[] = [
         field: { type: "string", description: "fill_secret: field label from plow_vault describe (or 'totp')" },
         format: {
           type: "string",
-          description: `fill_secret, date of birth only: how the page wants it. ${DATE_FORMAT_HELP}`,
+          description: `fill_secret, date fields only (date of birth, expiry): how the page wants it. ${DATE_FORMAT_HELP}`,
         },
         direction: { type: "string", description: "scroll: down|up|bottom|top" },
         seconds: { type: "number", description: "wait: seconds" },

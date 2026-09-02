@@ -28,7 +28,7 @@ import path from "node:path";
 import { JSONValue, jv, originMatches, normalizeOrigin } from "@domo/protocol";
 import { BrowserHost, BrowserHostConfig, ViewerFrame } from "./browserHost.js";
 import { CredentialBroker, CredentialError, CredentialRelease } from "./credentialBroker.js";
-import { DATE_OF_BIRTH } from "./credentialClassify.js";
+import { DATE_LABELS } from "./credentialClassify.js";
 import { formatDate } from "./dateFormat.js";
 import { isFinancialDestination, PaymentApprovalClient } from "./financialGate.js";
 
@@ -1003,15 +1003,16 @@ export class BrowserSessions {
     }
     // A shape is checked before the vault is asked: the pattern is the agent's
     // and needs no value to be judged. A non-date field takes no shape at all.
+    const date = DATE_LABELS[field];
     if (format !== "") {
-      if (field !== DATE_OF_BIRTH) {
+      if (date === undefined) {
         return {
           status: "error",
-          error: `format applies only to ${DATE_OF_BIRTH}; ${field} is typed as stored`,
+          error: `format applies only to a date field (${Object.keys(DATE_LABELS).join(", ")}); ${field} is typed as stored`,
         };
       }
       try {
-        formatDate("2000-01-01", format);
+        formatDate(date.sample, format);
       } catch (error: unknown) {
         return { status: "error", error: error instanceof Error ? error.message : String(error) };
       }
@@ -1175,14 +1176,16 @@ export class BrowserSessions {
 
     const mask = release.hidden;
     let secret = release.value;
-    // The pattern was checked above and cannot throw again — but the VALUE can:
-    // a CUSTOM field can carry the "date of birth" label (customLabel only
-    // prefixes `custom:` when a fixed slot already owns the name) with
-    // whatever a person typed into it, never passed through the write-path
-    // ISO validation an identity's birthDate gets.
-    if (format !== "") {
+    // A date label is always reshaped — its own shape when no format was
+    // given, the checked pattern otherwise — and cannot throw for THAT
+    // reason, since the pattern was checked above. But the VALUE can still
+    // fail: a CUSTOM field can carry a date label (customLabel only prefixes
+    // `custom:` when a fixed slot already owns the name) with whatever a
+    // person typed into it, never passed through the write-path validation a
+    // built-in date field gets.
+    if (date !== undefined) {
       try {
-        secret = formatDate(secret, format);
+        secret = formatDate(secret, format || date.shape);
       } catch {
         secret = "";
         this.audit("credential_fill_failed", {
@@ -1196,9 +1199,8 @@ export class BrowserSessions {
         return {
           status: "error",
           error:
-            `${field} was not filled: the value stored under that name is not a date, so it ` +
-            `cannot be given a format. Fill it without 'format', or store a date of birth on an ` +
-            `identity item.`,
+            `${field} was not filled: the value stored under that name is not a date. A custom ` +
+            `field is carrying a date label; rename it, or fill it under its own name.`,
         };
       }
     }
