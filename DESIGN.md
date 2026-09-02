@@ -212,9 +212,80 @@ set:
 Known caveats, accepted for v1: `sandbox-exec` is deprecated-but-load-bearing
 (Chromium, Bazel, Anthropic's sandbox-runtime all rely on it); `mach-lookup`
 is broad in the v1 profile (tightening tracked); TCC still gates
-protected folders at the host-app level; the upgrade path for hostile
-workloads is a Virtualization.framework VM. A dry-run `(trace)` mode to show
-the approver what a command *would* touch is a v2 item.
+protected folders at the host-app level (§6a says how that is surfaced); the
+upgrade path for hostile workloads is a Virtualization.framework VM. A
+dry-run `(trace)` mode to show the approver what a command *would* touch is
+a v2 item.
+
+## 6a. Host gates: when the Mac itself says no
+
+An approval is not the last gate. macOS has its own — the TCC privacy switches
+(Full Disk Access, the Desktop/Documents/Downloads folders, Automation per
+target app, and the rest), System Integrity Protection, a locked file — and
+they refuse *after* the owner has said yes. Every one of them answers `EPERM`,
+which is also what our own seatbelt profile answers, and one of TCC's failure
+modes is not an error at all: an unconsented open of a guarded folder is
+**parked** until someone at the Mac clicks a dialog. An agent handed the bare
+errno could only guess, and a wrong guess sends the owner to the wrong switch.
+
+So a refusal is **diagnosed, never guessed** (`packages/device-core/src/hostGate/`):
+
+- The error is the trigger. On a failure the kernel answered — an errno, a
+  refusal in a command's output, a run that was killed for going silent, or
+  one still running that has said nothing — the whole probe battery runs and
+  its answers are laid out flat: `stat` and mode bits, file flags, whether
+  the path is under a location TCC guards, whether Full Disk Access is
+  granted, what the profile the run had would have allowed, and the one that
+  discriminates — **opening the path as the app itself**, in a child process
+  (TCC attributes it to the app; the seatbelt profile does not apply to it;
+  and a child parked on a dialog is killed on a timer and reads as "hung"
+  rather than pinning a thread). Automation consent is asked through a
+  native helper that calls the non-prompting API.
+- A pure decision tree names a cause — `macos_permission`, `prompt_waiting`,
+  `outside_approved_bound` (our seatbelt, told apart from macOS by the app's
+  own open succeeding), `posix_permissions`, `sip_protected`,
+  `immutable_file`, `not_found`, `unknown` — with a confidence, the evidence,
+  what was ruled out, and a **fixed sentence** the owner needs. Nothing from
+  a command's output or an agent's argument is interpolated into that
+  sentence. An honest `unknown` with evidence is a verdict too.
+- **The verdict and the facts both reach the agent**, as a third answer
+  beside `denied` and `failed`: `blocked`. The verdict is the app's call,
+  because only the app can probe; the facts are for the `likely` and
+  `unknown` verdicts, where a model reasoning over them may do better than a
+  tree that shipped once, and for the audit trail that shows which branch was
+  wrong when one is. The instructions tell an agent a confirmed verdict's
+  sentence is relayed word for word and ends the attempt — not the owner
+  saying no, and not something to reword the goal around.
+- A run parked on a dialog is **left running**: the owner's click lets it
+  finish, and killing it would make the click pointless. The agent is told
+  within seconds (the app's own probe hangs), not at the reaper's fifteen
+  minutes; the reaper stays the ceiling.
+- Paths the diagnosis adds fold the home to `~`; the agent's own paths are
+  echoed as given.
+
+The **standing inventory** (`hostGate/inventory.ts`) answers the other
+question — what would not happen if asked — one fresh snapshot: Full Disk
+Access, Automation per app the skills drive, and three self-checks
+(`sandbox-exec` spawns; a child inherits the app's Full Disk Access, which
+every sandboxed read of another app's data relies on; the vault key opens).
+`plow_device_status` returns it with no approval, the Settings pane reads the
+same snapshot, and the server instructions send an agent there before it
+touches another application's data.
+
+Full Disk Access and the folder gates have no request API and no query API;
+the first access *is* the request. So the grants are asked for **while the
+owner is at the Mac**: setup's "Data & permissions" step offers Full Disk
+Access through the drag-to-grant flow, and Settings holds the switch after.
+For the owner who declines it, `hostGate/folderAccess.ts` can touch the three
+folders deliberately so the dialogs are answered now rather than parking an
+agent later — the one place this app may raise a consent dialog on purpose;
+it is built and tested but not yet wired into setup. A confirmed block
+afterwards goes to the tray and, once per permission per run, a notification
+carrying the owner sentence; both open Settings.
+
+What this cannot do: grant anything. Every fix is a switch in System Settings
+that only the owner can flip, and Full Disk Access may not apply to the
+running process until the app is relaunched, which the verdict says.
 
 ## 7. Multi-Mac & multi-user (designed now, built later)
 
@@ -318,7 +389,8 @@ repo can prove they broke nothing.
   log `source: rule`) → denial → sandbox-escape attempt → bad-token rejection.
 - **Audit log as test oracle**: NDJSON, one event per line (`access_request`,
   `intent_decision {source: prompt|rule}`, `exec_start/end`, `file_read/write`,
-  `denied`, …) — tests assert on it and humans read it. The adversarial reviewer
+  `denied`, `host_permission_blocked {cause, confidence, permission, probes}`,
+  …) — tests assert on it and humans read it. The adversarial reviewer
   does NOT: it is handed `history: []` on purpose (§4).
 
 `make test` runs everything. `swift test` builds all executables it spawns.
