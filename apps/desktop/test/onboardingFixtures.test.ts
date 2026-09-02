@@ -13,16 +13,4 @@ describe("onboarding visual fixtures", () => {
     expect(verify.expect).not.toContainEqual(expect.stringContaining("That code still works"));
     expect(rearm.expect).toContainEqual(expect.stringContaining("That code still works"));
   });
-
-  it("uses identical Welcome copy for the full and repeat entrances", () => {
-    const first = fixture("welcome");
-    const repeat = fixture("welcome-repeat");
-
-    expect(first.state.welcomeEntrancePlayed).toBe(false);
-    expect(repeat.state.welcomeEntrancePlayed).toBe(true);
-    expect(repeat.expect).toEqual(first.expect);
-    expect(repeat.expectFocus).toBe(first.expectFocus);
-    expect(repeat.expectTitle).toBe(first.expectTitle);
-    expect(repeat.expectAriaLabel).toBe(first.expectAriaLabel);
-  });
 });

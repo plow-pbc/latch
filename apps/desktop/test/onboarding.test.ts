@@ -182,15 +182,6 @@ afterEach(() => {
 });
 
 describe("wizard steps around the existing verification flow", () => {
-  it("persists the repeat entrance when the user leaves Welcome", async () => {
-    const onboarding = build({}, false);
-
-    expect(onboarding.state().welcomeEntrancePlayed).toBe(false);
-    expect((await onboarding.advance()).welcomeEntrancePlayed).toBe(true);
-    expect(loadSettings(home).welcomeEntrancePlayed).toBe(true);
-    expect(build({}, false).state().welcomeEntrancePlayed).toBe(true);
-  });
-
   it("does no network work on Welcome or Privacy and mints on Privacy Continue", async () => {
     const onboarding = build({}, false);
 

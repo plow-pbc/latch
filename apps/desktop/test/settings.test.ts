@@ -130,15 +130,6 @@ describe("settings storage", () => {
     expect(loadSettings(home).setupComplete).toBe(true);
   });
 
-  it("defaults the Welcome entrance to unplayed, and persists it per home", () => {
-    const home = tempHome();
-    expect(loadSettings(home).welcomeEntrancePlayed).toBe(false);
-    const settings = loadSettings(home);
-    settings.welcomeEntrancePlayed = true;
-    saveSettings(home, settings);
-    expect(loadSettings(home).welcomeEntrancePlayed).toBe(true);
-  });
-
   it("leaves a home that already chose a tab exactly where it was", () => {
     const home = tempHome();
     const settings = loadSettings(home);
@@ -226,15 +217,14 @@ describe("the launch-at-login first-run marker", () => {
 });
 
 /**
- * A Mac that once pasted an Anthropic key kept it in settings.json: unknown
- * keys ride the load/save spread straight back to disk, so the secret would
- * outlive the feature by exactly as long as the file does.
+ * Unknown keys ride the load/save spread straight back to disk, so retired
+ * settings would otherwise outlive their features for as long as the file.
  *
  * One home covers the whole contract, because the two halves are one event: the
  * write that removes the secret is the write that persists everything else the
  * load decided. Split across two homes, nothing holds the order between them.
  */
-describe("the retired bring-your-own-key fields are scrubbed on read", () => {
+describe("retired settings fields are scrubbed on read", () => {
   const RETIRED_KEY = "sk-ant-do-not-leak-me";
 
   it("takes them off disk on load, keeps what survives, and persists the grandfathered bit", () => {
@@ -248,6 +238,7 @@ describe("the retired bring-your-own-key fields are scrubbed on read", () => {
         inferenceProvider: "anthropic",
         provisionedChatUid: "cht_retired",
         provisionedChatLabel: "Retired chat",
+        welcomeEntrancePlayed: true,
       }),
     );
 
@@ -258,6 +249,7 @@ describe("the retired bring-your-own-key fields are scrubbed on read", () => {
     expect(loaded).not.toHaveProperty("inferenceProvider");
     expect(loaded).not.toHaveProperty("provisionedChatUid");
     expect(loaded).not.toHaveProperty("provisionedChatLabel");
+    expect(loaded).not.toHaveProperty("welcomeEntrancePlayed");
     expect(JSON.stringify(loaded)).not.toContain(RETIRED_KEY);
     // …the scrub took nothing else with it…
     expect(loaded).toMatchObject({
@@ -272,6 +264,7 @@ describe("the retired bring-your-own-key fields are scrubbed on read", () => {
     expect(raw).not.toContain("inferenceProvider");
     expect(raw).not.toContain("provisionedChatUid");
     expect(raw).not.toContain("provisionedChatLabel");
+    expect(raw).not.toContain("welcomeEntrancePlayed");
 
     // The ordering the same write pins: this legacy home is signed in, so the
     // launch-at-login bit is grandfathered on this load — and it has to already
