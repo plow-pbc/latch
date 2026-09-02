@@ -2072,10 +2072,9 @@ async function renderSettings() {
   await settingsMounted.refreshUpdates();
 
   view.replaceChildren(el("div", { class: "panel settings" }, [
-    // The old subtitle promised a phone number this screen never shows — the
-    // activation flow learns it server-side from the inbound SMS, and the OTP
-    // fallback holds it in memory and drops it on reset. Say what is true of
-    // what is on screen.
+    // The old subtitle promised a phone number this screen never shows. The
+    // activation flow learns it server-side from the inbound SMS, so say what
+    // is true of what is on screen.
     group("Plow Account", "The account agents reach this Mac through.", [
       accountBox,
       el("div", { class: "row" }, [relayNote, el("div", { class: "spacer" }), viewAccount, signOut, signIn]),

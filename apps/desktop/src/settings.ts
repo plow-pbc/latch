@@ -128,8 +128,8 @@ export interface Settings {
    * one of this and `relayCredential` is ever on disk.
    */
   relayCredentialEnc?: string;
-  /** The Plow login session this Mac holds, from first-run activation or the
-   * phone-code fallback. It carries the owner's full account authority — Latch
+  /** The Plow login session this Mac holds, from first-run activation. It
+   * carries the owner's full account authority — Latch
    * is their manager app, not an agent — and is never seen by the user. A
    * SECRET: never sent to the renderer, never written to a log or an error
    * string. */

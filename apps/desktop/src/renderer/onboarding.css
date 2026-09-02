@@ -706,39 +706,6 @@ body.on-welcome .wizard-footer .nav-next {
   color: var(--clay-soft);
 }
 
-.fallback-form {
-  max-width: 420px;
-  margin: 54px auto 0;
-}
-
-.field-label {
-  display: block;
-  margin-bottom: 9px;
-  color: var(--muted);
-  font: 500 10px var(--mono);
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-}
-
-.text-input {
-  width: 100%;
-  padding: 14px 16px;
-  border: 1px solid var(--border-2);
-  border-radius: 11px;
-  background: var(--surface);
-  color: var(--text);
-  font-size: 16px;
-}
-
-.text-input::placeholder {
-  color: var(--muted);
-}
-
-.code-input {
-  font-family: var(--mono);
-  letter-spacing: 0.16em;
-}
-
 .data-screen .step-inner {
   max-width: 520px;
 }

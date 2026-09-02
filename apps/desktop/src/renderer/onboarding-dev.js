@@ -26,12 +26,6 @@ window.domo = {
   onboardingBack: currentState,
   onboardingOpenMessages: currentState,
   onboardingNewCode: currentState,
-  onboardingUsePhoneCode: currentState,
-  onboardingUseActivation: currentState,
-  onboardingRequestCode: currentState,
-  onboardingResendCode: currentState,
-  onboardingEditPhone: currentState,
-  onboardingSubmitCode: currentState,
   onboardingSetTelemetry: async (enabled) =>
     publish({ ...current, telemetryEnabled: enabled === true }),
   capabilitiesGet: async () => ({ fullDiskAccess }),

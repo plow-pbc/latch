@@ -118,12 +118,6 @@ contextBridge.exposeInMainWorld("domo", {
   // so the renderer never has to build it or be trusted with it.
   onboardingOpenMessages: () => ipcRenderer.invoke("onboarding:openMessages"),
   onboardingNewCode: () => ipcRenderer.invoke("onboarding:newCode"),
-  onboardingUsePhoneCode: () => ipcRenderer.invoke("onboarding:usePhoneCode"),
-  onboardingUseActivation: () => ipcRenderer.invoke("onboarding:useActivation"),
-  onboardingRequestCode: (phone: string) => ipcRenderer.invoke("onboarding:requestCode", phone),
-  onboardingResendCode: () => ipcRenderer.invoke("onboarding:resendCode"),
-  onboardingEditPhone: () => ipcRenderer.invoke("onboarding:editPhone"),
-  onboardingSubmitCode: (code: string) => ipcRenderer.invoke("onboarding:submitCode", code),
   onboardingFinish: () => ipcRenderer.invoke("onboarding:finish"),
   onOnboardingChanged: (cb: () => void) => ipcRenderer.on("onboarding:changed", cb),
 

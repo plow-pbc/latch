@@ -357,10 +357,10 @@ function verifyScreen() {
       activate.setAttribute("aria-disabled", String(activate.disabled));
 
       const actions = [activate];
-      if (!verified) {
+      if (!verified && !state.activationStale) {
         actions.push(el("p", { class: "alternate" }, [
-          button("Use a phone code instead", "link-button", async () =>
-            apply(await window.domo.onboardingUsePhoneCode()),
+          button("Get a new code", "link-button", async () =>
+            apply(await window.domo.onboardingNewCode()),
           ),
         ]));
       }
@@ -376,87 +376,6 @@ function verifyScreen() {
 
   parts.push(note(state));
   return el("div", { class: "step-inner" }, parts);
-}
-
-function phoneScreen() {
-  const input = el("input", {
-    class: "text-input",
-    attrs: {
-      id: "phone-input",
-      type: "tel",
-      autocomplete: "tel",
-      placeholder: "+1 555 123 4567",
-      autofocus: "",
-    },
-  });
-  input.value = state.phone || "";
-  return el("div", { class: "step-inner" }, [
-    el("div", { class: "head-center" }, [
-      el("h1", { text: "Sign in to Plow" }),
-      el("p", {
-        class: "subhead",
-        text: "Enter the phone number on your Plow account. We'll text you a code.",
-      }),
-    ]),
-    el("div", { class: "fallback-form" }, [
-      el("label", { class: "field-label", text: "Phone number", attrs: { for: "phone-input" } }),
-      input,
-    ]),
-    note(state),
-  ]);
-}
-
-function codeScreen() {
-  const input = el("input", {
-    class: "text-input code-input",
-    attrs: {
-      id: "code-input",
-      inputmode: "numeric",
-      maxlength: "8",
-      autocomplete: "one-time-code",
-      placeholder: "12345678",
-      autofocus: "",
-    },
-  });
-  const expiry = el("p", { class: "countdown", attrs: { "aria-live": "off" } });
-  const tick = () => {
-    if (!state.codeExpiresAt) {
-      expiry.textContent = "";
-      return;
-    }
-    const left = Math.max(0, state.codeExpiresAt - Date.now());
-    const minutes = Math.floor(left / 60000);
-    const seconds = Math.floor((left % 60000) / 1000);
-    expiry.textContent = left > 0
-      ? `Expires in ${minutes}:${String(seconds).padStart(2, "0")}`
-      : "This code has expired.";
-  };
-  tick();
-  expiryTimer = setInterval(tick, 1000);
-
-  return el("div", { class: "step-inner" }, [
-    el("div", { class: "head-center" }, [
-      el("h1", { text: "Check your phone" }),
-      el("p", {
-        class: "subhead",
-        text: `If ${state.phone} is on a Plow account, an 8-digit code is on its way.`,
-      }),
-    ]),
-    el("div", { class: "fallback-form" }, [
-      el("label", { class: "field-label", text: "Code", attrs: { for: "code-input" } }),
-      input,
-      expiry,
-      el("div", { class: "inline-actions" }, [
-        button("Change number", "link-button", async () =>
-          apply(await window.domo.onboardingEditPhone()),
-        ),
-        button("Resend", "link-button", async () =>
-          apply(await window.domo.onboardingResendCode()),
-        ),
-      ]),
-    ]),
-    note(state),
-  ]);
 }
 
 async function refreshFullDiskAccess(force = false) {
@@ -596,8 +515,6 @@ function screenForStep() {
   if (state.step === "activate" || state.step === "waiting" || state.step === "verified") {
     return verifyScreen();
   }
-  if (state.step === "phone") return phoneScreen();
-  if (state.step === "code") return codeScreen();
   if (state.step === "data") return dataScreen();
   if (state.step === "done") return doneScreen();
   return el("p", { class: "state-note error", text: "This setup step is unavailable." });
@@ -635,30 +552,6 @@ function footerForStep() {
       action: verified
         ? async () => apply(await window.domo.onboardingAdvance())
         : null,
-    };
-  }
-  if (step === "phone") {
-    return {
-      back: true,
-      dot: 1,
-      label: "Send code",
-      arrow: false,
-      action: async () => {
-        const input = document.getElementById("phone-input");
-        apply(await window.domo.onboardingRequestCode(input?.value ?? ""));
-      },
-    };
-  }
-  if (step === "code") {
-    return {
-      back: true,
-      dot: 1,
-      label: "Sign in",
-      arrow: false,
-      action: async () => {
-        const input = document.getElementById("code-input");
-        apply(await window.domo.onboardingSubmitCode(input?.value ?? ""));
-      },
     };
   }
   return {

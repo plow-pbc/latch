@@ -8,7 +8,7 @@ import { app, ipcMain } from "electron";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { onboardingFixtures } from "../src/renderer/onboarding-fixtures.js";
-import { failLoudly, shootScreens, shotWindow } from "./screenshot-harness.mjs";
+import { clickText, failLoudly, shootScreens, shotWindow } from "./screenshot-harness.mjs";
 
 const dir = path.dirname(fileURLToPath(import.meta.url));
 const dist = path.join(dir, "../dist");
@@ -18,7 +18,12 @@ const SCREENS = onboardingFixtures(Date.now());
 let currentFixture = SCREENS[0];
 let current = currentFixture.state;
 let currentFullDiskAccess = false;
+let newCodeRequests = 0;
 ipcMain.handle("onboarding:get", async () => current);
+ipcMain.handle("onboarding:newCode", async () => {
+  newCodeRequests += 1;
+  return current;
+});
 ipcMain.handle("capabilities:get", async () => ({ fullDiskAccess: currentFullDiskAccess }));
 ipcMain.handle("fullDisk:grantFlow", async () => {});
 ipcMain.handle("onboarding:setTelemetry", async (_event, enabled) => {
@@ -28,6 +33,13 @@ ipcMain.handle("onboarding:setTelemetry", async (_event, enabled) => {
 ipcMain.handle("onboarding:finish", async () => {});
 ipcMain.handle("cloud:refresh", async () => currentFixture.cloud);
 ipcMain.handle("cloud:openMessages", async () => true);
+
+const verifyFixture = SCREENS.find((fixture) => fixture.name === "verify");
+verifyFixture.after = async (win) => {
+  const before = newCodeRequests;
+  await clickText(win, "Get a new code");
+  if (newCodeRequests !== before + 1) throw new Error("Get a new code did not request a re-mint");
+};
 
 failLoudly();
 

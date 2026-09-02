@@ -2,12 +2,8 @@
  * First-run setup: a code on screen, a text from the user's phone, and a
  * connected Mac — with nothing typed and no token copied out of a browser.
  *
- * Activation leads, because it is the only path that works for someone who does
- * not have a Plow account yet: it goes *outbound*, so the account is created
- * from the text the user sends. The phone-code (OTP) path is kept behind a quiet
- * link for the two cases activation cannot cover — a Mac with no Messages
- * account signed in, and signing in as one *specific* account rather than as
- * whoever texts.
+ * Activation goes *outbound*, so the account is created from the text the user
+ * sends. It is the one verification path through setup.
  *
  * This is the whole flow as a plain state machine so it can be tested without
  * Electron and rendered offscreen for screenshots.
@@ -30,15 +26,9 @@ export type OnboardingStep =
   | "privacy"
   | "activate"
   | "waiting"
-  | "phone"
-  | "code"
   | "verified"
   | "data"
   | "done";
-
-/** Codes are 8 digits with a 5-minute life (`api/plow/auth_routes/otp.py`). */
-export const CODE_LENGTH = 8;
-export const CODE_TTL_MS = 5 * 60_000;
 
 /**
  * How long the screen counts down before it stalls and offers a fresh code.
@@ -130,13 +120,10 @@ export function activationChatLabel(chat: ActivationChat): string {
 
 export interface OnboardingState {
   step: OnboardingStep;
-  phone: string;
   /** One honest line: what happened, or what we are waiting for. Never a bare
    * spinner — every failure below produces text here. */
   message: string;
   busy: boolean;
-  /** Epoch ms the entered OTP code stops working. */
-  codeExpiresAt: number | null;
   activation: OnboardingActivation | null;
   /** We have stopped watching this activation. The screen stops counting down
    * and offers a fresh code. */
@@ -160,10 +147,8 @@ export interface OnboardingDeps {
 
 export class Onboarding {
   private step: OnboardingStep;
-  private phone = "";
   private message = "";
   private busy = false;
-  private codeExpiresAt: number | null = null;
   private activation: OnboardingActivation | null = null;
   private activationStale = false;
   /** SECRET. Held here for the life of one activation and nowhere else — never
@@ -191,10 +176,8 @@ export class Onboarding {
   state(): OnboardingState {
     return {
       step: this.step,
-      phone: this.phone,
       message: this.message,
       busy: this.busy,
-      codeExpiresAt: this.codeExpiresAt,
       activation: this.activation,
       activationStale: this.activationStale,
       telemetryEnabled: this.telemetryEnabled,
@@ -238,7 +221,6 @@ export class Onboarding {
   async back(): Promise<OnboardingState> {
     if (this.step === "privacy") this.step = "welcome";
     else if (this.step === "activate" || this.step === "waiting") this.step = "privacy";
-    else if (this.step === "phone" || this.step === "code") return this.useActivation();
     else return this.state();
     return this.publish();
   }
@@ -342,25 +324,6 @@ export class Onboarding {
     return this.publish();
   }
 
-  /** The quiet fallback: sign in with a phone code instead. */
-  usePhoneCode(): OnboardingState {
-    this.cancelPolling();
-    this.activation = null;
-    this.activationSecret = null;
-    this.activationStale = false;
-    this.step = "phone";
-    this.message = "";
-    return this.publish();
-  }
-
-  /** ...and back, so the fallback is not a one-way door. */
-  async useActivation(): Promise<OnboardingState> {
-    this.codeExpiresAt = null;
-    this.message = "";
-    this.step = "activate";
-    return this.newActivationCode();
-  }
-
   /**
    * Ask the server whether the text has arrived, until it has.
    *
@@ -422,8 +385,8 @@ export class Onboarding {
       // account was left holding a live credential its owner had just retired.
       //
       // `activationSecret` is nulled by every path that abandons an activation
-      // for good — sign-out, the phone-code fallback, a completed login, the
-      // server retiring the code — so it says what "already holding a
+      // for good — sign-out, a completed login, or the server retiring the
+      // code — so it says what "already holding a
       // credential" was only guessing at.
       // Asked, never cached. `activationSecret` is nulled by every path that
       // abandons this activation, and the stored credential is cleared by
@@ -511,65 +474,6 @@ export class Onboarding {
     if (message !== undefined) this.message = message;
   }
 
-  // MARK: the phone-code fallback
-
-  /**
-   * Ask Plow to text a login code.
-   *
-   * The API answers `200 {"ok": true}` for an unknown number, an unparseable
-   * number and a failed send alike, so it cannot be used to probe whether an
-   * account exists. We therefore cannot tell "sent" from "silently didn't", and
-   * the copy says "check your phone", never "we've sent you a code".
-   */
-  async requestCode(phone: string, note = ""): Promise<OnboardingState> {
-    const trimmed = (phone ?? "").trim();
-    if (!trimmed) return this.fail("Enter your phone number.");
-    return this.run(async () => {
-      await this.deps.api.requestOtp(trimmed);
-      this.phone = trimmed;
-      this.step = "code";
-      this.codeExpiresAt = this.now() + CODE_TTL_MS;
-      // The code screen's own copy says what to do; `message` stays free for
-      // things that screen cannot say on its own.
-      this.message = note;
-    });
-  }
-
-  /**
-   * Same call again for the number already entered; a new code, a new clock.
-   *
-   * "Asked for" rather than "sent": the API answers identically whether or not
-   * a message went out, so claiming a send would be a claim we cannot back.
-   */
-  async resendCode(): Promise<OnboardingState> {
-    if (!this.phone) return this.fail("Enter your phone number.");
-    return this.requestCode(this.phone, "Asked Plow for a new code.");
-  }
-
-  /** Back to the phone screen — a mistyped number is otherwise a dead end. */
-  editPhone(): OnboardingState {
-    this.step = "phone";
-    this.codeExpiresAt = null;
-    this.message = "";
-    return this.publish();
-  }
-
-  async submitCode(code: string): Promise<OnboardingState> {
-    const trimmed = (code ?? "").replace(/\s/g, "");
-    if (trimmed.length !== CODE_LENGTH || !/^\d+$/.test(trimmed)) {
-      return this.fail(`Enter the ${CODE_LENGTH}-digit code from your phone.`);
-    }
-    // The server answers 401 for wrong AND expired alike, so pre-empt the
-    // expired case here — otherwise a user whose code timed out is told to
-    // check their typing.
-    if (this.codeExpiresAt !== null && this.now() > this.codeExpiresAt) {
-      return this.fail("That code has expired. Send a new one.");
-    }
-    return this.run(() => this.completeOtpLogin(trimmed));
-  }
-
-  // MARK: after either path
-
   /**
    * Return to the state a fresh launch would be in.
    *
@@ -588,8 +492,6 @@ export class Onboarding {
     this.activation = null;
     this.activationSecret = null;
     this.activationStale = false;
-    this.phone = "";
-    this.codeExpiresAt = null;
     this.message = "";
     this.busy = false;
     const settings = this.settings();
@@ -622,19 +524,6 @@ export class Onboarding {
    * documented to do. Publishing belongs to the methods that change something.
    */
 
-  private async completeOtpLogin(code: string): Promise<void> {
-    let otpToken: string;
-    try {
-      otpToken = await this.deps.api.verifyOtp(this.phone, code);
-    } catch (error) {
-      if (error instanceof PlowApiError && error.kind === "unauthorized") {
-        throw new PlowApiError("unauthorized", "That code didn't work. Check it, or send a new one.", 401);
-      }
-      throw error;
-    }
-    await this.finishWithSession(otpToken);
-  }
-
   /**
    * Learn the account → keep the session → connect.
    *
@@ -652,7 +541,7 @@ export class Onboarding {
     // A sign-out can land inside the account lookup, and it must stay signed out:
     // persisting past it would leave the account a live credential its owner
     // just retired. `pollGeneration` is bumped by every path that abandons this
-    // login — reset, the phone fallback, a fresh mint — so it is the epoch to
+    // login — reset or a fresh mint — so it is the epoch to
     // check against after each network step.
     //
     // A sign-out landing inside it takes the session with it. The session is
@@ -678,7 +567,7 @@ export class Onboarding {
 
     // The activation secret is spent and dropped. The public display value is
     // retained until Continue so the verified treatment can hold the same
-    // screen steady; the phone-code path has no activation to retain.
+    // screen steady.
     //
     // BEFORE the dial, not after. `startRelay` is a network round-trip, and a
     // sign-out landing inside it resets this instance to `welcome`. Assigning
@@ -688,7 +577,6 @@ export class Onboarding {
     this.cancelPolling();
     this.activationSecret = null;
     this.activationStale = false;
-    this.codeExpiresAt = null;
     this.message = "";
     this.step = "verified";
     this.telemetryEnabled = settings.telemetryEnabled;
@@ -732,11 +620,6 @@ export class Onboarding {
     } finally {
       this.busy = false;
     }
-    return this.publish();
-  }
-
-  private fail(message: string): OnboardingState {
-    this.message = message;
     return this.publish();
   }
 

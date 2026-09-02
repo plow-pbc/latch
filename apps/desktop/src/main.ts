@@ -771,8 +771,6 @@ ipcMain.handle("onboarding:setTelemetry", async (_e, on: unknown) =>
   onboarding?.setTelemetryEnabled(on),
 );
 ipcMain.handle("onboarding:newCode", async () => onboarding?.newActivationCode());
-ipcMain.handle("onboarding:usePhoneCode", async () => onboarding?.usePhoneCode());
-ipcMain.handle("onboarding:useActivation", async () => onboarding?.useActivation());
 /**
  * Open Messages with the activation text drafted.
  *
@@ -785,10 +783,6 @@ ipcMain.handle("onboarding:openMessages", async () => {
   await openSmsUrl(url);
   return onboarding?.messagesOpened();
 });
-ipcMain.handle("onboarding:requestCode", async (_e, phone: string) => onboarding?.requestCode(phone));
-ipcMain.handle("onboarding:resendCode", async () => onboarding?.resendCode());
-ipcMain.handle("onboarding:editPhone", async () => onboarding?.editPhone());
-ipcMain.handle("onboarding:submitCode", async (_e, code: string) => onboarding?.submitCode(code));
 // The last step of the wizard. It does not just close the setup window — it
 // hands the user over to the app, which is the whole point of the gate: the
 // main window has not existed until now.

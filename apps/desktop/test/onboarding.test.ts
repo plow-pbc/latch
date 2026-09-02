@@ -5,7 +5,6 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   ACTIVATION_POLL_INTERVAL_MS,
   ACTIVATION_POLL_WINDOW_MS,
-  CODE_TTL_MS,
   Onboarding,
   OnboardingDeps,
 } from "../src/onboarding.js";
@@ -14,10 +13,8 @@ import { loadSettings, saveSettings } from "../src/settings.js";
 import { signOutOfPlow } from "../src/settingsActions.js";
 
 const DEVICE_TOKEN = "plow_DEVICEtok_secret";
-const OTP_TOKEN = "plow_OTPTOKEN_secret";
 const SESSION_TOKEN = "plow_ACTIVATIONsession_secret";
 const ACTIVATION_SECRET = "activation_secret_never_shown";
-const MCP_URL = "http://localhost:4242/v1/relay/devices/u_123/mcp";
 const DEVICE_MCP_URL = "http://localhost:4242/v1/relay/devices/device-1/mcp";
 
 type FakeRedeem =
@@ -26,10 +23,6 @@ type FakeRedeem =
 
 /** A stand-in Plow: records what was called, answers what the real one does. */
 class FakePlow {
-  requested: string[] = [];
-  verifyFails: "unauthorized" | "network" | null = null;
-  requestFails: "provider_unavailable" | "network" | null = null;
-
   /** Activations minted, newest last — one per `POST /v1/auth/activate`. */
   activations: string[] = [];
   /** Redeem answers, consumed in order; the last one repeats forever. `chat`
@@ -76,19 +69,8 @@ class FakePlow {
     return { status: "verified", token: next.token, chat: null };
   }
 
-  async requestOtp(phone: string): Promise<void> {
-    if (this.requestFails) throw new PlowApiError(this.requestFails, "provider down");
-    this.requested.push(phone);
-  }
-
-  async verifyOtp(): Promise<string> {
-    if (this.verifyFails) throw new PlowApiError(this.verifyFails, "nope", 401);
-    return OTP_TOKEN;
-  }
-
   async relayInfo(token: string) {
-    // The login session, whichever path minted it — never the device credential.
-    expect([OTP_TOKEN, SESSION_TOKEN]).toContain(token);
+    expect(token).toBe(SESSION_TOKEN);
     return { uid: "u_123" };
   }
 
@@ -160,7 +142,7 @@ function build(extra: Partial<OnboardingDeps> = {}, startAtPrivacy = true): Onbo
     },
     ...extra,
   });
-  // Most tests exercise the established activation and fallback mechanics.
+  // Most tests exercise the established activation mechanics.
   // Put those at Privacy, immediately before the one newly deferred mint;
   // transition tests opt out and start at Welcome.
   if (startAtPrivacy && onboarding.state().step === "welcome") void onboarding.advance();
@@ -177,13 +159,6 @@ async function settle(): Promise<void> {
 async function settleUntil(check: () => boolean): Promise<void> {
   for (let i = 0; i < 5000 && !check(); i += 1) await Promise.resolve();
   expect(check()).toBe(true);
-}
-
-/** Start on the phone-code path, which is now behind a link rather than first. */
-function buildOnPhonePath(): Onboarding {
-  const onboarding = build();
-  onboarding.usePhoneCode();
-  return onboarding;
 }
 
 beforeEach(() => {
@@ -285,23 +260,6 @@ describe("wizard steps around the existing verification flow", () => {
     expect(plow.activations).toHaveLength(1);
     onboarding.reset();
   });
-
-  it.each(["phone", "code"] as const)(
-    "backs from the %s fallback to a fresh activation-code view",
-    async (step) => {
-      const onboarding = build();
-      await onboarding.advance();
-      onboarding.usePhoneCode();
-      if (step === "code") await onboarding.requestCode("+15551110000");
-
-      const verify = await onboarding.back();
-
-      expect(verify.step).toBe("activate");
-      expect(verify.activation?.displayCode).toBe("CODE2");
-      expect(plow.activations).toHaveLength(2);
-      onboarding.reset();
-    },
-  );
 
   it("does not publish Back on Verified, Data or Done", async () => {
     plow.redeems = [{ status: "verified", token: SESSION_TOKEN }];
@@ -621,19 +579,6 @@ describe("activation — the path a brand-new user takes", () => {
     expect(state.message).toBe("Couldn't reach Plow at http://localhost:4242.");
   });
 
-  it("stops polling when the user switches to the phone-code fallback", async () => {
-    const onboarding = build();
-    await onboarding.advance();
-    expect(onboarding.usePhoneCode().step).toBe("phone");
-    // Polls in flight when the user left are allowed to land; what must not
-    // happen is the loop carrying on behind the fallback screen forever.
-    const atSwitch = plow.redeemCalls.length;
-    await settle();
-
-    expect(plow.redeemCalls.length).toBe(atSwitch);
-    expect(onboarding.state().activation).toBeNull();
-  });
-
   it("never lets the renderer see the activation secret", async () => {
     plow.redeems = [{ status: "verified", token: SESSION_TOKEN }];
     const onboarding = build();
@@ -759,11 +704,12 @@ describe("signing out", () => {
     expect(begun.activation?.displayCode).toBeTruthy();
   });
 
-  /** Sign in by the phone path, then blank the credential the way sign-out does. */
+  /** Sign in, then blank the credential the way sign-out does. */
   async function signedInThenOut(): Promise<Onboarding> {
-    const onboarding = buildOnPhonePath();
-    await onboarding.requestCode("+15551110000");
-    await onboarding.submitCode("12345678");
+    plow.redeems = [{ status: "verified", token: SESSION_TOKEN }];
+    const onboarding = build();
+    await onboarding.advance();
+    await settle();
     expect(onboarding.state().step).toBe("verified");
 
     const settings = loadSettings(home);
@@ -781,7 +727,7 @@ describe("signing out", () => {
     const state = await onboarding.advance();
     expect(state.step).toBe("activate");
     expect(state.activation?.displayCode).toBeTruthy();
-    expect(plow.activations.length).toBe(1); // the first login used the OTP path
+    expect(plow.activations.length).toBe(2);
 
     // Leaving Privacy starts a detached poll loop, and its injected `wait`
     // advances the clock every test in this file shares. Left running it drifts
@@ -793,11 +739,9 @@ describe("signing out", () => {
   it("keeps nothing from the session that ended", async () => {
     const onboarding = await signedInThenOut();
     const state = onboarding.reset();
-    expect(state.phone).toBe("");
     expect(state.activation).toBeNull();
-    expect(state.codeExpiresAt).toBeNull();
     expect(JSON.stringify(state)).not.toContain(DEVICE_TOKEN);
-    expect(JSON.stringify(state)).not.toContain(OTP_TOKEN);
+    expect(JSON.stringify(state)).not.toContain(SESSION_TOKEN);
   });
 
   it("stays on the data screen if a credential is somehow still there", () => {
@@ -808,136 +752,6 @@ describe("signing out", () => {
     settings.relayCredential = DEVICE_TOKEN;
     saveSettings(home, settings);
     expect(onboarding.reset().step).toBe("data");
-  });
-});
-
-describe("the phone-code fallback still works", () => {
-  it("walks phone → code → verified → data and stores what the server told it", async () => {
-    const onboarding = build();
-    expect(onboarding.state().step).toBe("privacy");
-    expect(onboarding.usePhoneCode().step).toBe("phone");
-
-    let state = await onboarding.requestCode(" +1 555 111 0000 ");
-    expect(plow.requested).toEqual(["+1 555 111 0000"]);
-    expect(state.step).toBe("code");
-    expect(state.codeExpiresAt).toBe(clock + CODE_TTL_MS);
-    // The copy cannot promise a code was sent — the API answers the same for an
-    // unknown number, an unparseable one and a failed send — so the first ask
-    // leaves the message line to the screen's own wording.
-    expect(state.message).toBe("");
-
-    state = await onboarding.submitCode("12345678");
-    expect(state.step).toBe("verified");
-    expect(state.activation).toBeNull();
-    expect(started).toBe(1);
-
-    state = await onboarding.advance();
-    expect(state.step).toBe("data");
-
-    // The endpoint came from device registration; the app never builds it.
-    const settings = loadSettings(home);
-    expect(settings.relayCredential).toBe(OTP_TOKEN);
-    expect(settings.mcpUrl).toBe(DEVICE_MCP_URL);
-  });
-
-  it("keeps the login session AS the credential, minting nothing", async () => {
-    // Latch is the owner's manager app, not an agent: the session it was just
-    // handed is what it holds. `POST /v1/relay/devices` — a narrow credential
-    // plus `revoke_calling_session` — is gone, and the fake throws if anything
-    // reaches for it.
-    const onboarding = buildOnPhonePath();
-    await onboarding.requestCode("+15551110000");
-    await onboarding.submitCode("12345678");
-
-    // `PlowApi` has no `mintDeviceCredential` to reach for: the method is
-    // deleted, so this cannot regress into a second step without a compile
-    // error first.
-    expect(loadSettings(home).relayCredential).toBe(OTP_TOKEN);
-  });
-
-  it("keeps the session while device registration retries", async () => {
-    plow.registrationFails = true;
-    const onboarding = buildOnPhonePath();
-
-    await onboarding.requestCode("+15551110000");
-    const state = await onboarding.submitCode("12345678");
-
-    expect(state.step).toBe("verified");
-    expect(loadSettings(home).relayCredential).toBe(OTP_TOKEN);
-    expect(loadSettings(home).mcpUrl).toBe("");
-    expect(started).toBe(1);
-  });
-
-  it("writes settings owner-only", async () => {
-    // The spec names this hazard by name: settings.json holds the device
-    // credential, and it used to be written with no mode at all. The
-    // first-run transcript checks the mode too, but a permission bit on a
-    // file holding a credential is worth pinning in CI in its own right.
-    const onboarding = buildOnPhonePath();
-    await onboarding.requestCode("+15551110000");
-    await onboarding.submitCode("12345678");
-
-    const mode = fs.statSync(path.join(home, "app/settings.json")).mode & 0o777;
-    expect(mode).toBe(0o600);
-  });
-
-  it("opens on data when this Mac already holds an incomplete credential", async () => {
-    const first = buildOnPhonePath();
-    await first.requestCode("+15551110000");
-    await first.submitCode("12345678");
-
-    expect(build().state().step).toBe("data");
-  });
-});
-
-describe("honest messages instead of a spinner", () => {
-  it("names a wrong code as a wrong code", async () => {
-    plow.verifyFails = "unauthorized";
-    const onboarding = buildOnPhonePath();
-    await onboarding.requestCode("+15551110000");
-    const state = await onboarding.submitCode("00000000");
-
-    expect(state.step).toBe("code");
-    expect(state.message).toBe("That code didn't work. Check it, or send a new one.");
-    expect(state.busy).toBe(false);
-  });
-
-  it("distinguishes an expired code, which the server cannot", async () => {
-    const onboarding = buildOnPhonePath();
-    await onboarding.requestCode("+15551110000");
-    clock += CODE_TTL_MS + 1;
-    const state = await onboarding.submitCode("12345678");
-
-    expect(state.message).toBe("That code has expired. Send a new one.");
-  });
-
-  it("resends with a fresh clock", async () => {
-    const onboarding = buildOnPhonePath();
-    await onboarding.requestCode("+15551110000");
-    clock += 60_000;
-    const state = await onboarding.resendCode();
-
-    expect(plow.requested).toEqual(["+15551110000", "+15551110000"]);
-    expect(state.codeExpiresAt).toBe(clock + CODE_TTL_MS);
-    // "Asked", never "sent" — the API cannot tell us which.
-    expect(state.message).toBe("Asked Plow for a new code.");
-  });
-
-  it("says so when the API is unreachable", async () => {
-    plow.requestFails = "network";
-    const state = await buildOnPhonePath().requestCode("+15551110000");
-
-    expect(state.step).toBe("phone");
-    expect(state.message).toBe("provider down");
-    expect(state.busy).toBe(false);
-  });
-
-  it("rejects a code that is not eight digits without a round trip", async () => {
-    const onboarding = buildOnPhonePath();
-    await onboarding.requestCode("+15551110000");
-    const state = await onboarding.submitCode("1234");
-
-    expect(state.message).toBe("Enter the 8-digit code from your phone.");
   });
 });
 
@@ -973,14 +787,52 @@ describe("reading the state is a read", () => {
 });
 
 describe("what the renderer is allowed to see", () => {
-  it("never carries the device credential in the state", async () => {
-    const onboarding = buildOnPhonePath();
-    await onboarding.requestCode("+15551110000");
-    const connectedState = await onboarding.submitCode("12345678");
+  it("never carries the login session in the state", async () => {
+    plow.redeems = [{ status: "verified", token: SESSION_TOKEN }];
+    const onboarding = build();
+    await onboarding.advance();
+    await settle();
 
-    const serialized = JSON.stringify(connectedState);
-    expect(serialized).not.toContain(DEVICE_TOKEN);
-    expect(serialized).not.toContain(OTP_TOKEN);
+    expect(JSON.stringify(onboarding.state())).not.toContain(SESSION_TOKEN);
+  });
+});
+
+describe("the activation credential handoff", () => {
+  async function signIn(): Promise<Onboarding> {
+    plow.redeems = [{ status: "verified", token: SESSION_TOKEN }];
+    const onboarding = build();
+    await onboarding.advance();
+    await settle();
+    return onboarding;
+  }
+
+  it("keeps the login session as this Mac's credential", async () => {
+    await signIn();
+
+    expect(loadSettings(home).relayCredential).toBe(SESSION_TOKEN);
+  });
+
+  it("keeps the session while device registration retries", async () => {
+    plow.registrationFails = true;
+    const onboarding = await signIn();
+
+    expect(onboarding.state().step).toBe("verified");
+    expect(loadSettings(home).relayCredential).toBe(SESSION_TOKEN);
+    expect(loadSettings(home).mcpUrl).toBe("");
+    expect(started).toBe(1);
+  });
+
+  it("writes settings owner-only", async () => {
+    await signIn();
+
+    const mode = fs.statSync(path.join(home, "app/settings.json")).mode & 0o777;
+    expect(mode).toBe(0o600);
+  });
+
+  it("opens on data when this Mac already holds an incomplete credential", async () => {
+    await signIn();
+
+    expect(build().state().step).toBe("data");
   });
 });
 
@@ -1028,94 +880,6 @@ describe("signing out", () => {
     expect(reopened.step).toBe("activate");
     expect(reopened.activation?.displayCode).toBeTruthy();
     expect(plow.activations).toHaveLength(2); // one per sign-in attempt, not more
-  });
-
-
-  it("does not resurrect the activation that was live when it signed out", async () => {
-    // `newActivationCode` deliberately retries the previous secret — a user who
-    // texted late has already succeeded, and one poll turns a pointless second
-    // code into an instant sign-in. After a SIGN-OUT that same retry would sign
-    // them straight back in to the account they just left.
-    //
-    // A signed-in Mac whose window is showing an activation code is a state the
-    // machine offers: `useActivation()` is on the bridge, and it mints one.
-    const onboarding = await signedIn();
-    const live = await onboarding.useActivation();
-    expect(live.step).toBe("activate");
-    const spent = `${ACTIVATION_SECRET}_1`; // the one useActivation just minted
-    const before = plow.redeemCalls.length;
-
-    signOutOfPlow(home);
-    onboarding.reset();
-    await settle();
-
-    expect(plow.redeemCalls.slice(before)).not.toContain(spent);
-    expect(loadSettings(home).relayCredential).toBe("");
-  });
-
-  it("a verified redeem never mints OVER a credential this Mac already holds", async () => {
-    // The other half of the same conditional, and not about sign-out at all: a
-    // signed-in Mac showing an activation code (`useActivation()` is on the
-    // bridge) whose code is then texted. Minting there would overwrite the live
-    // credential and orphan it on the account — spend-capable, and now unknown
-    // to the only thing that could revoke it.
-    const onboarding = await signedIn();
-    expect((await onboarding.useActivation()).step).toBe("activate");
-    const credential = loadSettings(home).relayCredential;
-
-    plow.redeems = [{ status: "verified", token: SESSION_TOKEN }];
-    await settle();
-
-    // The credential this Mac already holds is not overwritten by a redeem it
-    // did not ask for — and the session that redeem carried is RETIRED rather
-    // than dropped. The redeem answers once, so a token declined here is a live
-    // session on the account that nothing holds a reference to: not sign-out,
-    // not the next launch. Nobody could ever retire it.
-    expect(loadSettings(home).relayCredential).toBe(credential);
-    expect(plow.revoked).toContain(SESSION_TOKEN);
-  });
-
-  it("a redeem in flight across the sign-out cannot mint", async () => {
-    // A verified answer is deliberately acted on even when its poll loop has
-    // been cancelled — the server hands the session token to the first redeem
-    // that sees the completion and never again, so dropping it would strand an
-    // activation the user really completed. The only thing that used to make
-    // it moot was already holding a credential, and SIGN-OUT CLEARS THE
-    // CREDENTIAL. The poll loop is the only redeemer there is, so its redeem
-    // is the only one that can be on the wire.
-    const onboarding = await signedIn();
-    expect((await onboarding.useActivation()).step).toBe("activate");
-
-    // Hold THIS activation's redeem mid-call — and only this one, so the
-    // next setup remains untouched while the old redeem is in flight.
-    const inFlight = `${ACTIVATION_SECRET}_1`;
-    let release = () => {};
-    const onTheWire = new Promise<void>((r) => {
-      release = () => r();
-    });
-    plow.redeemActivation = async (secret: string) => {
-      plow.redeemCalls.push(secret);
-      if (secret !== inFlight) return { status: "pending" };
-      await onTheWire;
-      return { status: "verified", token: SESSION_TOKEN };
-    };
-
-    await settle();
-    expect(plow.redeemCalls).toContain(inFlight);
-
-    // The user signs out while that call is still on the wire.
-    signOutOfPlow(home);
-    onboarding.reset();
-
-    // …and only now does the server answer "verified".
-    release();
-    await settle();
-
-    // Nothing was persisted, and the window did not slide back to the account
-    // the user just left.
-    expect(loadSettings(home).relayCredential).toBe("");
-    expect(loadSettings(home).accountUid).toBe("");
-    expect(onboarding.state().step).not.toBe("connected");
   });
 });
 

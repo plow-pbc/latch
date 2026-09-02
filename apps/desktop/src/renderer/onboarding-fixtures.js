@@ -10,10 +10,8 @@ export function onboardingFixtures(now) {
     pollUntil: now + 4 * 60_000 + 30_000,
   };
   const base = {
-    phone: "+1 555 123 4567",
     message: "",
     busy: false,
-    codeExpiresAt: null,
     activation: null,
     activationStale: false,
     telemetryEnabled: true,
@@ -27,7 +25,7 @@ export function onboardingFixtures(now) {
   return [
     {
       name: "welcome",
-      state: { ...base, step: "welcome", phone: "" },
+      state: { ...base, step: "welcome" },
       cloud: noAgents,
       expect: [
         "Presents",
@@ -42,7 +40,7 @@ export function onboardingFixtures(now) {
     },
     {
       name: "privacy",
-      state: { ...base, step: "privacy", phone: "" },
+      state: { ...base, step: "privacy" },
       cloud: noAgents,
       expect: [
         "Privacy",
@@ -62,7 +60,7 @@ export function onboardingFixtures(now) {
     },
     {
       name: "verify",
-      state: { ...base, step: "activate", phone: "", activation },
+      state: { ...base, step: "activate", activation },
       cloud: noAgents,
       expect: [
         "Verify your phone to connect this Mac",
@@ -77,13 +75,14 @@ export function onboardingFixtures(now) {
         "Listening for 4:",
         "Open Messages to activate",
         "Continue",
-        "Use a phone code instead",
+        "Get a new code",
       ],
+      reject: ["Use a phone code instead"],
       expectFocus: "Open Messages to activate",
     },
     {
       name: "verified",
-      state: { ...base, step: "verified", phone: "", activation },
+      state: { ...base, step: "verified", activation },
       cloud: noAgents,
       expect: [
         "Verify your phone to connect this Mac",
@@ -94,18 +93,7 @@ export function onboardingFixtures(now) {
         "Open Messages to activate",
         "Continue",
       ],
-      expectFocus: "Continue",
-    },
-    {
-      name: "verified-otp",
-      state: { ...base, step: "verified" },
-      cloud: noAgents,
-      expect: [
-        "Verify your phone to connect this Mac",
-        "Verified. This Mac is linked.",
-        "Continue",
-      ],
-      reject: ["Send the message below", "Send to:", "Open Messages to activate"],
+      reject: ["Get a new code", "Use a phone code instead"],
       expectFocus: "Continue",
     },
     {
@@ -113,7 +101,6 @@ export function onboardingFixtures(now) {
       state: {
         ...base,
         step: "welcome",
-        phone: "",
         message:
           "Signed out on this Mac. Plow could not be reached to revoke the session — revoke it in Plow's account settings.",
       },
@@ -127,7 +114,7 @@ export function onboardingFixtures(now) {
     },
     {
       name: "waiting",
-      state: { ...base, step: "waiting", phone: "", activation },
+      state: { ...base, step: "waiting", activation },
       cloud: noAgents,
       expect: [
         "Verify your phone to connect this Mac",
@@ -136,8 +123,10 @@ export function onboardingFixtures(now) {
         "Waiting for your text",
         "Listening for 4:",
         "Open Messages to activate",
+        "Get a new code",
         "Continue",
       ],
+      reject: ["Use a phone code instead"],
       expectFocus: "Open Messages to activate",
     },
     {
@@ -145,7 +134,6 @@ export function onboardingFixtures(now) {
       state: {
         ...base,
         step: "waiting",
-        phone: "",
         activation,
         activationStale: true,
         message:
@@ -153,33 +141,8 @@ export function onboardingFixtures(now) {
       },
       cloud: noAgents,
       expect: ["Still not signed in", "it has to start with", "Plow Activate:", "Try again"],
+      reject: ["Get a new code", "Use a phone code instead"],
       expectFocus: "Open Messages to activate",
-    },
-    {
-      name: "phone",
-      state: { ...base, step: "phone", phone: "" },
-      cloud: noAgents,
-      expect: ["Sign in to Plow", "We'll text you a code", "Phone number", "Send code", "Back"],
-      expectFocus: "+1 555 123 4567",
-    },
-    {
-      name: "code",
-      state: {
-        ...base,
-        step: "code",
-        message: "Check your phone for an 8-digit code.",
-        codeExpiresAt: now + 4 * 60_000 + 30_000,
-      },
-      cloud: noAgents,
-      expect: [
-        "Check your phone",
-        "If +1 555 123 4567 is on a Plow account",
-        "Expires in 4:",
-        "Change number",
-        "Resend",
-        "Sign in",
-      ],
-      expectFocus: "12345678",
     },
     {
       name: "data-fda-off",

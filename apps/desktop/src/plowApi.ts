@@ -1,7 +1,6 @@
 /**
- * The Plow HTTP calls first-run setup makes — the three activation calls the
- * app leads with, the two OTP calls behind the "use a phone code instead"
- * fallback, and the two the account itself needs.
+ * The Plow HTTP calls first-run setup makes — the three activation calls and
+ * the two the account itself needs.
  *
  * **No credential ever appears in a thrown message, a returned message, or a
  * URL.** Tokens travel in an `Authorization` header and nowhere else. Every
@@ -85,8 +84,8 @@ export function relaySocketUrl(base: ApiBaseUrl): string {
 
 export type PlowApiErrorKind =
   | "network" // the API could not be reached at all
-  | "unauthorized" // a wrong or expired code, or a revoked token
-  | "provider_unavailable" // the SMS provider is down — the one honest OTP failure
+  | "unauthorized" // a missing, invalid, or revoked credential
+  | "provider_unavailable" // the SMS provider is down
   | "forbidden"
   | "expired" // 410: an activation code nobody completed in time
   | "http"; // anything else, reported with its status
@@ -446,27 +445,6 @@ export class PlowApi {
       chat: parsed && !valueEchoesSecret(parsed, token) ? parsed : null,
       shape,
     };
-  }
-
-  /**
-   * Ask for a login code.
-   *
-   * This returns `{ok: true}` for an unknown number, an unparseable number and
-   * a failed SMS send alike — deliberately, so it cannot be used to probe
-   * whether an account exists. So a successful return here means "we asked",
-   * never "a code was sent", and the copy on the screen has to say so.
-   */
-  async requestOtp(phone: string): Promise<void> {
-    await this.call("POST", "/v1/auth/otp/request", { body: { phone } });
-  }
-
-  /** Exchange a code for a session token. 401 on a wrong or expired code. */
-  async verifyOtp(phone: string, code: string): Promise<string> {
-    const data = await this.call<{ token: string }>("POST", "/v1/auth/otp/verify", {
-      body: { phone, code },
-    });
-    if (!data?.token) throw new PlowApiError("http", "Plow did not return a login token.");
-    return data.token;
   }
 
   /**
