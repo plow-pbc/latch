@@ -324,6 +324,42 @@ describe("auditActivities (grouping)", () => {
     expect(decided.timeline.map((s) => s.text)).toContain(`Run killed — ${reason}`);
   });
 
+  it("a block by this Mac itself names the permission, outranks the exit code, and carries the owner sentence", () => {
+    // The owner is the one person who can flip the switch; "failed (exit 1)"
+    // would hide the one thing they can act on.
+    const action = "In System Settings > Privacy & Security > Full Disk Access, turn on Plow Latch, then quit and reopen it.";
+    const [run, file, orphan] = [
+      auditActivities([
+        { event: "intent_received", intentId: "i1", request: "run: sqlite3 ~/Library/Messages/chat.db", ts: "2026-08-18T12:00:00Z" },
+        { event: "intent_decision", intentId: "i1", decision: "allow_once", source: "prompt", ts: "2026-08-18T12:00:01Z" },
+        { event: "exec_start", intentId: "i1", argv: ["/usr/bin/sqlite3"], ts: "2026-08-18T12:00:01Z" },
+        { event: "exec_end", intentId: "i1", exit_code: 1, ts: "2026-08-18T12:00:02Z" },
+        { event: "host_permission_blocked", intentId: "i1", handle: "H1", path: "~/Library/Messages/chat.db", cause: "macos_permission", confidence: "confirmed", permission: "full_disk_access", owner_action: action, ts: "2026-08-18T12:00:03Z" },
+      ])[0]!,
+      auditActivities([
+        { event: "intent_received", intentId: "i2", request: "read file: /Users/o/Desktop/a.txt", ts: "2026-08-18T12:00:00Z" },
+        { event: "intent_decision", intentId: "i2", decision: "always_allow", source: "rule", ts: "2026-08-18T12:00:01Z" },
+        { event: "host_permission_blocked", intentId: "i2", path: "/Users/o/Desktop/a.txt", cause: "prompt_waiting", confidence: "likely", permission: "files_desktop", owner_action: "A macOS permission dialog is open on the Mac's screen.", ts: "2026-08-18T12:00:03Z" },
+      ])[0]!,
+      auditActivities([
+        { event: "host_permission_blocked", handle: "H9", path: "~/x", cause: "outside_approved_bound", confidence: "confirmed", owner_action: null, ts: "2026-08-18T12:00:03Z" },
+      ])[0]!,
+    ];
+    expect(run.status).toBe("Allowed once · needs a macOS permission (Full Disk Access)");
+    expect(run.tone).toBe("amber");
+    expect(run.category).toBe("failed");
+    expect(run.exitCode).toBe(1);
+    expect(run.timeline.map((s) => s.text)).toContain(
+      `This Mac refused ~/Library/Messages/chat.db: needs a macOS permission (Full Disk Access) — ${action}`,
+    );
+    expect(file.status).toBe("Always allowed · a permission dialog is waiting on this Mac");
+    expect(file.kind).toBe("file");
+    expect(file.timeline.at(-1)!.text).toMatch(/\(probably\) — A macOS permission dialog/);
+    expect(file.timeline.at(-1)!.state).toBe("bad");
+    expect(orphan.status).toBe("Blocked — outside the approved paths");
+    expect(orphan.category).toBe("failed");
+  });
+
   it("browser runtime start/stop are lifecycle noise, never rows", () => {
     const acts = auditActivities([
       { event: "browser_started", pid: 12, browser_version: "1.0", ts: "2026-08-18T12:00:00Z" },

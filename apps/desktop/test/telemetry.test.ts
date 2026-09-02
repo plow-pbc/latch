@@ -211,6 +211,34 @@ describe("the audit allowlist", () => {
     expect(wire).not.toContain("sensitive detail");
   });
 
+  it("reports a host-gate block by cause, confidence and permission — never its path or evidence", () => {
+    const { telemetry, sink } = makeTelemetry();
+    telemetry.auditEntryRecorded({
+      event: "host_permission_blocked",
+      fields: {
+        intentId: "int_1",
+        path: "/Users/owner/Library/Messages/chat.db",
+        cause: "macos_permission",
+        confidence: "confirmed",
+        permission: "full_disk_access",
+        evidence: ["the kernel answered EPERM for ~/Library/Messages/chat.db"],
+        ruled_out: ["sandbox bound"],
+        owner_action: "In System Settings > Privacy & Security > Full Disk Access, turn on Plow Latch.",
+        probes: { path: "~/Library/Messages/chat.db", errno: "EPERM" },
+      },
+    });
+    expect(sink.captured).toHaveLength(1);
+    expect(sink.captured[0].event).toBe("audit_host_permission_blocked");
+    expect(sink.captured[0].properties).toEqual({
+      app_version: "1.2.3",
+      packaged: true,
+      cause: "macos_permission",
+      confidence: "confirmed",
+      permission: "full_disk_access",
+    });
+    expect(JSON.stringify(sink.captured)).not.toContain("chat.db");
+  });
+
   it("drops events not in the allowlist — absence fails closed", () => {
     const { telemetry, sink } = makeTelemetry();
     telemetry.auditEntryRecorded({

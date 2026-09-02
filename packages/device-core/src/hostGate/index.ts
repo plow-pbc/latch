@@ -5,6 +5,7 @@
  */
 export * from "./diagnose.js";
 export * from "./errors.js";
+export * from "./folderAccess.js";
 export * from "./fullDiskAccess.js";
 export * from "./guardedPaths.js";
 export * from "./inventory.js";
