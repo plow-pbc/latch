@@ -95,6 +95,9 @@ export async function shootScreens({ win, outDir, prefix, screens, load, beforeS
     const dotCount = await win.webContents.executeJavaScript(
       `document.querySelectorAll(".foot-dot").length`,
     );
+    const bodyScrollTop = await win.webContents.executeJavaScript(
+      `document.querySelector(".wizard-body")?.scrollTop ?? 0`,
+    );
     const missing = [
       ...(screen.expect ?? []).filter((needle) => !text.includes(needle.toLowerCase())),
       ...(screen.reject ?? [])
@@ -112,6 +115,9 @@ export async function shootScreens({ win, outDir, prefix, screens, load, beforeS
         : []),
       ...(screen.expectDotCount !== undefined && dotCount !== screen.expectDotCount
         ? [`${screen.expectDotCount} footer dots (found: ${dotCount})`]
+        : []),
+      ...(screen.expectBodyScrollTop !== undefined && bodyScrollTop !== screen.expectBodyScrollTop
+        ? [`wizard body scroll ${screen.expectBodyScrollTop} (found: ${bodyScrollTop})`]
         : []),
     ];
     if (missing.length) failures += 1;

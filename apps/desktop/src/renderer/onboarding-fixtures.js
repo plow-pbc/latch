@@ -306,6 +306,7 @@ export function onboardingFixtures(now) {
       expectFocus: "Add another Google account",
       expectAriaLabel: "Remove Google account",
       expectDotCount: 4,
+      expectBodyScrollTop: 0,
     },
     {
       name: "done-agent",
