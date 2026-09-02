@@ -257,6 +257,7 @@ export function onboardingFixtures(now) {
         "Skip",
       ],
       reject: ["Slack", "Connection timed out", "Done"],
+      expectEnabled: "Skip",
       expectDotCount: 4,
     },
     {
