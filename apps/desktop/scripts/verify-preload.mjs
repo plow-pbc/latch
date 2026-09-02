@@ -308,6 +308,7 @@ ipcMain.handle("settings:signOut", async () => {});
 const connectorProbe = {
   busy: false,
   error: null,
+  note: null,
   google: {
     connecting: false,
     accounts: [

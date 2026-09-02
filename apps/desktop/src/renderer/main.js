@@ -1885,12 +1885,13 @@ async function renderSettings() {
   let connectorState = {
     busy: true,
     error: null,
+    note: null,
     loading: true,
     google: { accounts: [], connecting: false },
   };
   const connectorBox = el("div", { class: "settings-connectors" });
-  const connectorError = el("p", {
-    class: "connector-error",
+  const connectorNote = el("p", {
+    class: "connector-note",
     attrs: { role: "status" },
   });
   const connectorMutate = singleFlight(() => connectorState.busy === true);
@@ -1907,8 +1908,11 @@ async function renderSettings() {
   };
   const drawConnectors = () => {
     connectorBox.replaceChildren(googleConnectorCard(connectorState, connectorActions));
-    connectorError.textContent = connectorState.error ?? "";
-    connectorError.hidden = !connectorState.error;
+    const message = connectorState.error ?? connectorState.note;
+    connectorNote.textContent = message ?? "";
+    connectorNote.hidden = !message;
+    connectorNote.classList.toggle("error", Boolean(connectorState.error));
+    connectorNote.classList.toggle("neutral", !connectorState.error && Boolean(connectorState.note));
   };
   const applyConnectors = (next) => {
     if (!next) return;
@@ -2126,7 +2130,7 @@ async function renderSettings() {
       accountBox,
       el("div", { class: "row" }, [relayNote, el("div", { class: "spacer" }), viewAccount, signOut, signIn]),
     ]),
-    group("Connected accounts", null, [connectorBox, connectorError]),
+    group("Connected accounts", null, [connectorBox, connectorNote]),
     group("Capabilities", "Extended capabilities that let Plow Latch reach parts of this Mac that macOS blocks by default.", [
       el("div", { class: "support-row" }, [
         el("div", { class: "support-copy" }, [

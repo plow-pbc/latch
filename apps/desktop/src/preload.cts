@@ -10,6 +10,7 @@ type ConnectorProvider = "google";
 type ConnectorsState = {
   busy: boolean;
   error: string | null;
+  note: string | null;
   google: {
     accounts: Array<{ email: string; isDefault: boolean }>;
     connecting: boolean;

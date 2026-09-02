@@ -15,11 +15,13 @@ import {
 
 export const CONNECTOR_POLL_INTERVAL_MS = 3_000;
 export const CONNECTOR_TIMEOUT_MS = 30_000;
-export const CONNECTOR_TIMEOUT_MESSAGE = "Connection timed out — try again";
+export const CONNECTOR_TIMEOUT_NOTE =
+  "We couldn't see a new account. If you reconnected one that was already listed, it's done.";
 
 export interface ConnectorsState {
   busy: boolean;
   error: string | null;
+  note: string | null;
   google: {
     accounts: ConnectorAccount[];
     connecting: boolean;
@@ -45,6 +47,7 @@ export interface ConnectorsDeps {
 export class Connectors {
   private busy = false;
   private error: string | null = null;
+  private note: string | null = null;
   private connecting: ConnectorProvider | null = null;
   private accounts: ConnectorAccount[] = [];
 
@@ -54,6 +57,7 @@ export class Connectors {
     return {
       busy: this.busy,
       error: this.error,
+      note: this.note,
       google: {
         accounts: this.accounts.map((account) => ({ ...account })),
         connecting: this.connecting === "google",
@@ -103,7 +107,16 @@ export class Connectors {
         return;
       }
 
-      this.error = CONNECTOR_TIMEOUT_MESSAGE;
+      const after = await this.load(credential);
+      const connected = connectedAccount(before, after);
+      if (connected) {
+        this.deps.recordAudit("connector_connected", {
+          provider,
+          account: connected,
+        });
+        return;
+      }
+      this.note = CONNECTOR_TIMEOUT_NOTE;
     });
   }
 
@@ -145,12 +158,14 @@ export class Connectors {
     const credential = this.deps.credential().trim();
     if (!credential) {
       this.error = "This Mac isn't signed in yet.";
+      this.note = null;
       return this.publish();
     }
 
     this.busy = true;
     this.connecting = connecting;
     this.error = null;
+    this.note = null;
     this.publish();
     try {
       await body(credential);

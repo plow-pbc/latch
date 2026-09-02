@@ -12,6 +12,7 @@ let fullDiskAccess = selected.fullDiskAccess === true;
 let connectors = structuredClone(selected.connectors ?? {
   busy: false,
   error: null,
+  note: null,
   google: { accounts: [], connecting: false },
 });
 let changed = null;

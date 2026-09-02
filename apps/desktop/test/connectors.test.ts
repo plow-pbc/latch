@@ -5,7 +5,7 @@ import { AuditLog } from "@domo/device-core";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   CONNECTOR_POLL_INTERVAL_MS,
-  CONNECTOR_TIMEOUT_MESSAGE,
+  CONNECTOR_TIMEOUT_NOTE,
   CONNECTOR_TIMEOUT_MS,
   Connectors,
   ConnectorsState,
@@ -141,6 +141,7 @@ describe("connecting a Google account", () => {
     expect(state).toEqual({
       busy: false,
       error: null,
+      note: null,
       google: {
         accounts: [account("ada@example.com", { isDefault: true })],
         connecting: false,
@@ -152,7 +153,7 @@ describe("connecting a Google account", () => {
     }]);
   });
 
-  it("stops after thirty seconds and leaves the control ready to try again", async () => {
+  it("refreshes after thirty seconds and leaves a neutral re-auth note", async () => {
     const plow = new FakePlow();
     const { connectors, opened, audits, waits } = build(plow);
 
@@ -162,10 +163,13 @@ describe("connecting a Google account", () => {
     expect(waits).toHaveLength(CONNECTOR_TIMEOUT_MS / CONNECTOR_POLL_INTERVAL_MS);
     expect(waits.reduce((total, milliseconds) => total + milliseconds, 0))
       .toBe(CONNECTOR_TIMEOUT_MS);
-    expect(plow.listCredentials).toHaveLength(1 + waits.length);
+    // Baseline, ten polls, then one last un-aborted refresh in case the
+    // browser flow completed as the polling deadline expired.
+    expect(plow.listCredentials).toHaveLength(2 + waits.length);
     expect(state.busy).toBe(false);
     expect(state.google.connecting).toBe(false);
-    expect(state.error).toBe(CONNECTOR_TIMEOUT_MESSAGE);
+    expect(state.error).toBeNull();
+    expect(state.note).toBe(CONNECTOR_TIMEOUT_NOTE);
     expect(audits).toEqual([]);
   });
 
@@ -185,7 +189,8 @@ describe("connecting a Google account", () => {
 
     expect(timeout).toHaveBeenCalledWith(CONNECTOR_TIMEOUT_MS);
     expect(state.busy).toBe(false);
-    expect(state.error).toBe(CONNECTOR_TIMEOUT_MESSAGE);
+    expect(state.error).toBeNull();
+    expect(state.note).toBe(CONNECTOR_TIMEOUT_NOTE);
   });
 
   it("refuses a second action while the first is in flight", async () => {

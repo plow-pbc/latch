@@ -26,8 +26,11 @@ export function onboardingFixtures(now) {
   const connectorsEmpty = {
     busy: false,
     error: null,
+    note: null,
     google: { accounts: [], connecting: false },
   };
+  const connectorTimeoutNote =
+    "We couldn't see a new account. If you reconnected one that was already listed, it's done.";
 
   return [
     {
@@ -256,7 +259,7 @@ export function onboardingFixtures(now) {
         "Connecting…",
         "Skip",
       ],
-      reject: ["Slack", "Connection timed out", "Done"],
+      reject: ["Slack", connectorTimeoutNote, "Done"],
       expectEnabled: "Skip",
       expectDotCount: 4,
     },
@@ -265,18 +268,21 @@ export function onboardingFixtures(now) {
       state: { ...base, step: "connect" },
       connectors: {
         ...connectorsEmpty,
-        error: "Connection timed out — try again",
+        note: connectorTimeoutNote,
       },
       cloud: noAgents,
       expect: [
         "Connect your accounts",
         "Google",
         "Connect",
-        "Connection timed out — try again",
+        connectorTimeoutNote,
         "Skip",
       ],
-      reject: ["Slack", "Done"],
+      reject: ["Slack"],
+      rejectButton: "Done",
       expectFocus: "Connect",
+      expectEnabled: "Connect",
+      expectNeutralNote: connectorTimeoutNote,
       expectDotCount: 4,
     },
     {
@@ -303,7 +309,7 @@ export function onboardingFixtures(now) {
         "Add another Google account",
         "Done",
       ],
-      reject: ["Slack", "Skip", "Connection timed out"],
+      reject: ["Slack", "Skip", connectorTimeoutNote],
       expectFocus: "Add another Google account",
       expectAriaLabel: "Remove Google account",
       expectDotCount: 4,

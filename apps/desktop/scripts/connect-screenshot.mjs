@@ -39,8 +39,11 @@ const TRIP_CHAT_TITLE = "+1 628-555-0144 · You";
 const CONNECTORS_EMPTY = {
   busy: false,
   error: null,
+  note: null,
   google: { accounts: [], connecting: false },
 };
+const CONNECTOR_TIMEOUT_NOTE =
+  "We couldn't see a new account. If you reconnected one that was already listed, it's done.";
 const CONNECTORS_POPULATED = {
   ...CONNECTORS_EMPTY,
   google: {
@@ -456,7 +459,7 @@ const SCREENS = [
       "Connected accounts", "Google", "mary@gmail.com", "Default",
       "mary@work.com", "Set default", "Add another Google account",
     ],
-    reject: ["Slack", "Connection timed out"],
+    reject: ["Slack", CONNECTOR_TIMEOUT_NOTE],
     expectAriaLabel: "Remove Google account",
   },
   {
@@ -468,17 +471,19 @@ const SCREENS = [
     },
     prepare: showSettings,
     expect: ["Connected accounts", "Google", "Connecting…"],
-    reject: ["Slack", "Connection timed out", "Add another Google account"],
+    reject: ["Slack", CONNECTOR_TIMEOUT_NOTE, "Add another Google account"],
   },
   {
     name: "settings-connect-timeout",
     connectors: {
       ...CONNECTORS_EMPTY,
-      error: "Connection timed out — try again",
+      note: CONNECTOR_TIMEOUT_NOTE,
     },
     prepare: showSettings,
-    expect: ["Connected accounts", "Google", "Connect", "Connection timed out — try again"],
+    expect: ["Connected accounts", "Google", "Connect", CONNECTOR_TIMEOUT_NOTE],
     reject: ["Slack", "Connecting…"],
+    expectEnabled: "Connect",
+    expectNeutralNote: CONNECTOR_TIMEOUT_NOTE,
   },
   {
     name: "agents-final",

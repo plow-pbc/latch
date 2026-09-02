@@ -455,6 +455,7 @@ function connectScreen() {
   const current = connectorState ?? {
     busy: true,
     error: null,
+    note: null,
     loading: true,
     google: { accounts: [], connecting: false },
   };
@@ -479,10 +480,11 @@ function connectScreen() {
       googleConnectorCard(current, actions),
     ]),
   ];
-  if (current.error) {
+  const connectorMessage = current.error ?? current.note;
+  if (connectorMessage) {
     parts.push(el("p", {
-      class: "state-note error connector-error",
-      text: current.error,
+      class: `state-note ${current.error ? "error" : "neutral"} connector-note`,
+      text: connectorMessage,
       attrs: { role: "status" },
     }));
   }
