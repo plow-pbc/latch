@@ -21,6 +21,9 @@
   --zinc-bg: #f4f4f5; --zinc-fg: #52525b; --zinc-bd: #e4e4e7;
   /* Light enough to read against the --blue-fg primary button. */
   --focus: #60a5fa;
+  /* The Capabilities tab's "will not work" dot: the text red lifted and
+     desaturated, so a column of them reads as status rather than alarm. */
+  --dot-off: #d9555b;
   --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
   --sans: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Roboto, sans-serif;
 }
@@ -36,6 +39,7 @@
     --blue-bg: #0c1b33; --blue-fg: #93c5fd; --blue-bd: #1e3a8a;
     --zinc-bg: #1c1c20; --zinc-fg: #a1a1aa; --zinc-bd: #27272a;
     --focus: #93c5fd;
+    --dot-off: #e47278;
   }
 }
 
@@ -392,8 +396,8 @@ textarea.text { min-height: 70px; resize: vertical; }
 .support-title { font-weight: 600; margin-bottom: 2px; }
 
 /* The Capabilities tab (capabilitiesModel.ts). Dots: green granted, red
-   refused (or off and hit), grey not asked or not knowable. */
-.status-dot.off { background: var(--red-fg); }
+   will not work as things stand (refused, or never asked), grey unknown. */
+.status-dot.off { background: var(--dot-off); }
 .cap-banner {
   display: flex; align-items: center; gap: 12px;
   padding: 10px 14px; margin-bottom: 14px;

@@ -2047,12 +2047,13 @@ async function renderCapabilities() {
   };
 
   const capabilityRow = (r) => {
-    // Three dots: green works, red macOS refused, grey everything else — not
-    // asked yet, or not knowable until the app is open. The tooltip keeps the
-    // words; the two greys are not a difference the owner can act on.
+    // Three dots: green works; red will NOT work as things stand, whether
+    // macOS refused it or has simply never been asked — an agent's request
+    // fails either way until the owner acts; grey when this Mac cannot tell
+    // (an app that is not open, no helper). The tooltip keeps the words.
     const dotClass =
       r.status === "granted" ? " on"
-      : r.needsAttention || r.status === "denied" ? " off"
+      : r.needsAttention || r.status === "denied" || r.status === "not_asked" ? " off"
       : "";
     let action;
     // A word, not a button: nothing to press once it is granted.
