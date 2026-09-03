@@ -153,13 +153,17 @@ describe("hostsRelated", () => {
     expect(broker.getField(login.id, "password", "https://co.uk/").value).toBe("pw-oops");
   });
 
-  it("matches equal hosts and dot-suffix relations only", () => {
+  it("matches hosts that share one registrable domain", () => {
     expect(hostsRelated("pizza.example", "pizza.example")).toBe(true);
     expect(hostsRelated("www.pizza.example", "pizza.example")).toBe(true);
     expect(hostsRelated("pizza.example", "www.pizza.example")).toBe(true);
     // NOT a suffix relation: notpizza.example must never match pizza.example.
     expect(hostsRelated("notpizza.example", "pizza.example")).toBe(false);
-    // Sibling subdomains without a stored apex: refused, the stricter side.
-    expect(hostsRelated("a.pizza.example", "b.pizza.example")).toBe(false);
+    // Sibling subdomains are one site: a password manager stores the host it
+    // first saw (secure.opentable.com) while the login form lives on www.
+    expect(hostsRelated("secure.opentable.com", "www.opentable.com")).toBe(true);
+    expect(hostsRelated("a.pizza.example", "b.pizza.example")).toBe(true);
+    // ...unless the shared suffix is a public one: nobody owns github.io.
+    expect(hostsRelated("victim.github.io", "attacker.github.io")).toBe(false);
   });
 });
