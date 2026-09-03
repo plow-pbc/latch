@@ -63,6 +63,8 @@ const ICONS = {
   // The Full Disk Access grant panel's pair (fdapanel.js). arrowUp is drawn
   // FILLED (PermissionFlow's arrowshape.up.fill) via icon()'s fill option.
   arrowUp: [["path", { d: "M12 2.5 L20.5 11.5 H15.5 V21 H8.5 V11.5 H3.5 Z" }]],
+  // The Capabilities banner's warning triangle.
+  warning: [["path", { d: "M12 3.5 L21.5 20 H2.5 Z" }], ["path", { d: "M12 9.5v4.5" }], ["path", { d: "M12 17h.01" }]],
   // The Capabilities tab's nudge: the same arrow with a wider head and a
   // longer tail of the same width, so it reads at 14px.
   nudgeArrow: [["path", { d: "M12 0.5 L23 12 H15.5 V23.5 H8.5 V12 H1 Z" }]],

@@ -340,3 +340,26 @@ describe("groups", () => {
     expect(groupOf(view, "automation")).toMatchObject({ granted: 2, total: AUTOMATION_APPS.length });
   });
 });
+
+describe("dismissing the banner", () => {
+  it("clears the whole tab: no row lines, no badge, no leftover rows — until a newer block", () => {
+    const events = [
+      ...block("i1", "2026-09-02T02:00:00Z", "full_disk_access"),
+      ...block("i2", "2026-09-02T03:00:00Z", "screen_recording"),
+      ...block("i3", "2026-09-02T04:00:00Z", "files_downloads"),
+    ];
+    const seen = capabilitiesView(input({ events, bannerSeenAt: "2026-09-02T05:00:00Z" }));
+    expect(seen.banner).toBeNull();
+    expect(seen.badge).toBe(0);
+    expect(seen.sections[0]!.rows.every((r) => r.count === 0)).toBe(true);
+    expect(seen.sections[0]!.rows.map((r) => r.key)).not.toContain("screen_recording");
+    expect(groupOf(seen.sections[0]!, "folders").expandedByDefault).toBe(false);
+    // A block after the dismissal brings back exactly that one.
+    const again = capabilitiesView(
+      input({ events: [...events, ...block("i4", "2026-09-02T06:00:00Z", "full_disk_access")], bannerSeenAt: "2026-09-02T05:00:00Z" }),
+    );
+    expect(again.banner).toEqual({ count: 1, summary: [{ title: "Full Disk Access", count: 1 }], last: "2026-09-02T06:00:00Z" });
+    expect(again.badge).toBe(1);
+    expect(again.sections[0]!.rows.find((r) => r.key === "full_disk_access")).toMatchObject({ count: 1, needsAttention: true });
+  });
+});

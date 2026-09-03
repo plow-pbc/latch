@@ -404,8 +404,10 @@ textarea.text { min-height: 70px; resize: vertical; }
   border-radius: var(--radius);
   border: 1px solid var(--amber-bd); background: var(--amber-bg); color: var(--amber-fg);
 }
+.cap-banner-icon { width: 18px; height: 18px; flex: none; stroke-width: 2; }
 .cap-banner .bt { font-weight: 600; }
-.cap-banner .bs { opacity: 0.85; }
+.cap-banner .bs { opacity: 0.85; font-size: 12px; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cap-banner > div { min-width: 0; }
 .cap-banner .spacer { flex: 1; }
 .cap-banner .link {
   font: inherit; border: 0; background: transparent; color: inherit; font-weight: 600;

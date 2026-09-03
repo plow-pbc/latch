@@ -1968,6 +1968,22 @@ async function showAuditBlocked() {
   if (await selectTab("audit")) window.domo.uiSetTab("audit");
 }
 
+/** How long ago, in words: "just now", "4 minutes ago", "3 hours ago",
+    "yesterday", "5 days ago". Coarse on purpose — it says whether an agent
+    is stuck right now or gave up last night, nothing finer. */
+function agoText(iso) {
+  const t = new Date(iso).getTime();
+  if (Number.isNaN(t)) return "";
+  const s = Math.max(0, Math.round((Date.now() - t) / 1000));
+  if (s < 90) return "just now";
+  const m = Math.round(s / 60);
+  if (m < 60) return `${m} minutes ago`;
+  const h = Math.round(m / 60);
+  if (h < 24) return h === 1 ? "an hour ago" : `${h} hours ago`;
+  const d = Math.round(h / 24);
+  return d === 1 ? "yesterday" : `${d} days ago`;
+}
+
 function whenText(iso) {
   if (!iso) return "";
   const d = new Date(iso);
@@ -2045,17 +2061,19 @@ async function renderCapabilities() {
     refreshCapabilitiesBadge(v);
     const nodes = [];
     if (v.banner) {
-      const summary = v.banner.summary.map((s) => `${s.title} (${s.count})`).join(", ");
+      const summary = v.banner.summary.map((s) => `${s.count} ${s.title}`).join(", ");
+      const one = v.banner.count === 1;
       const showInAudit = el("button", { class: "link", text: "Show in Audit" });
       showInAudit.addEventListener("click", () => showAuditBlocked());
       const close = el("button", { class: "banner-close", attrs: { "aria-label": "Dismiss" }, text: "×" });
       close.addEventListener("click", async () => draw(await window.domo.capabilitiesBannerSeen()));
       nodes.push(el("div", { class: "cap-banner" }, [
-        el("span", { class: "status-dot warn" }),
+        icon("warning", { class: "ico cap-banner-icon" }),
         el("div", {}, [
-          el("span", { class: "bt", text:
-            `${v.banner.count} request${v.banner.count === 1 ? " was" : "s were"} blocked while you were away` }),
-          el("span", { class: "bs", text: ` — ${summary}. Last one ${whenText(v.banner.last)}.` }),
+          el("div", { class: "bt", text:
+            `${v.banner.count} new request${one ? " was" : "s were"} blocked, ` +
+            `${one ? "" : "the latest "}${agoText(v.banner.last)}.` }),
+          el("div", { class: "bs", text: `${summary}.` }),
         ]),
         el("div", { class: "spacer" }),
         showInAudit,
