@@ -9,7 +9,6 @@ import {
 } from "./approvals.js";
 
 import { el, icon } from "./dom.js";
-import { googleConnectorCard } from "./connectorsCard.js";
 import { singleFlight } from "./onboardingAction.js";
 import { renderVault, vaultConfirmLeave } from "./vault.js";
 import {
@@ -581,6 +580,44 @@ function externalBtn(label, key) {
   const btn = el("button", { class: "btn" }, [el("span", { text: label }), extArrow()]);
   btn.addEventListener("click", () => window.domo.openExternal(key));
   return btn;
+}
+
+/* A small menu under a "…" button: items as {label, run, disabled}. One open
+   at a time; a click anywhere else, Escape, or picking an item closes it.
+   Built like everything else here — nodes and textContent, no markup. */
+let openMenuNode = null;
+let openMenuAnchor = null;
+function closeMenu() {
+  if (!openMenuNode) return;
+  openMenuNode.remove();
+  openMenuNode = null;
+  openMenuAnchor = null;
+  document.removeEventListener("mousedown", onMenuOutside, true);
+  document.removeEventListener("keydown", onMenuKey, true);
+}
+function onMenuOutside(e) { if (openMenuNode && !openMenuNode.contains(e.target)) closeMenu(); }
+function onMenuKey(e) { if (e.key === "Escape") { e.preventDefault(); closeMenu(); } }
+function openMenu(anchor, items) {
+  // The same button again closes what it opened.
+  if (openMenuAnchor === anchor) { closeMenu(); return; }
+  closeMenu();
+  const menu = el("div", { class: "menu", attrs: { role: "menu" } }, items.map((item) => {
+    const b = el("button", { class: "menu-item", text: item.label, attrs: { type: "button", role: "menuitem" } });
+    b.disabled = item.disabled === true;
+    b.addEventListener("click", () => { closeMenu(); item.run(); });
+    return b;
+  }));
+  // Below the anchor, right-aligned to it, in viewport coordinates: the
+  // panel scrolls inside the window, not the window itself.
+  const r = anchor.getBoundingClientRect();
+  menu.style.top = `${r.bottom + 4}px`;
+  menu.style.right = `${document.documentElement.clientWidth - r.right}px`;
+  document.body.appendChild(menu);
+  openMenuNode = menu;
+  openMenuAnchor = anchor;
+  document.addEventListener("mousedown", onMenuOutside, true);
+  document.addEventListener("keydown", onMenuKey, true);
+  menu.querySelector("button:not(:disabled)")?.focus();
 }
 
 /** One titled card: a prominent title, an optional description, then the body.
@@ -1988,7 +2025,7 @@ async function renderCapabilities() {
     }),
   };
   const drawConnectors = () => {
-    connectorBox.replaceChildren(googleConnectorCard(connectorState, connectorActions));
+    connectorBox.replaceChildren(connectorRow(connectorState, connectorActions));
     connectorNote.textContent = connectorState.message;
     connectorNote.hidden = !connectorState.message;
     connectorNote.className = `connector-note ${connectorState.noteKind}`;
@@ -2025,12 +2062,12 @@ async function renderCapabilities() {
         close,
       ]));
     }
-    nodes.push(group("Connected Accounts", null, [connectorBox, connectorNote]));
     for (const section of v.sections) {
       nodes.push(group(section.title, section.description, section.items.map((item) =>
         item.kind === "group" ? capabilityGroup(item) : capabilityRow(item),
       )));
     }
+    nodes.push(group("Connected Accounts", null, [connectorBox, connectorNote]));
     panel.replaceChildren(...nodes);
   };
 
@@ -2096,6 +2133,89 @@ async function renderCapabilities() {
     if (r.count > 0 && r.status !== "granted" && openRows.has(r.key)) children.push(expanded(r));
     return el("div", { class: "cap-row" }, children);
   };
+
+  /* The Google connector in a switch row's clothes, so Connected Accounts
+     reads like This Mac: the brand mark where a row keeps its icon, the
+     bold name and a line under it, and an external-link button on the
+     right — connecting opens Google's consent page in the browser. The
+     setup wizard keeps its own card (connectorsCard.js); the state and the
+     actions are the same. Connected accounts list under the row. */
+  /* Google's four-colour G, as on their own app icon: a white rounded tile
+     with the standard sign-in mark. Built with createElementNS like every
+     glyph in dom.js — nothing here goes through innerHTML. */
+  function googleMark() {
+    const ns = "http://www.w3.org/2000/svg";
+    const svg = document.createElementNS(ns, "svg");
+    svg.setAttribute("viewBox", "0 0 48 48");
+    svg.setAttribute("class", "cap-google-g");
+    svg.setAttribute("aria-hidden", "true");
+    const paths = [
+      ["#EA4335", "M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"],
+      ["#4285F4", "M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"],
+      ["#FBBC05", "M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"],
+      ["#34A853", "M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"],
+    ];
+    for (const [fill, d] of paths) {
+      const path = document.createElementNS(ns, "path");
+      path.setAttribute("fill", fill);
+      path.setAttribute("d", d);
+      svg.appendChild(path);
+    }
+    return el("span", { class: "cap-icon cap-brand" }, [svg]);
+  }
+
+  // A declaration, not a const: the connectors block above draws itself the
+  // moment it is set up, before this line would run.
+  function connectorRow(state, actions) {
+    const google = state.google;
+    const busy = state.busy === true;
+    const connecting = google.connecting === true;
+    const button = el("button", { class: "btn", attrs: { type: "button" } }, [
+      el("span", { text: connecting ? "Connecting…" : state.loading ? "Checking…" : google.accounts.length ? "Add another" : "Connect" }),
+      connecting || state.loading ? null : extArrow(),
+    ]);
+    button.disabled = busy || connecting || state.loading;
+    if (!button.disabled) button.addEventListener("click", actions.connect);
+    // Each account as a row of its own under the Google row, its person
+    // glyph in the icon column and its address lined up with "Google", the
+    // default's green pill beside the address, and a "…" menu on the right
+    // holding the two things that can be done to it.
+    const accounts = google.accounts.map((account) => {
+      const menuButton = el("button", { class: "btn cap-account-menu-btn", attrs: { type: "button", "aria-label": "Account actions", "aria-haspopup": "menu" } }, [
+        el("span", { text: "•••" }),
+      ]);
+      menuButton.disabled = busy;
+      menuButton.addEventListener("click", (e) => {
+        e.stopPropagation();
+        openMenu(menuButton, [
+          { label: "Set as Default", disabled: account.isDefault, run: () => actions.setDefault(account.email) },
+          { label: "Remove Account", run: () => actions.disconnect(account.email) },
+        ]);
+      });
+      return el("div", { class: "cap-row cap-account-row" }, [
+        el("span", { class: "cap-icon cap-person" }, [icon("user", { strokeWidth: "2" })]),
+        el("div", { class: "cap-account-line" }, [
+          // Server data is assigned through textContent by el().
+          el("span", { class: "cap-name cap-account-email", text: account.email }),
+          account.isDefault ? el("span", { class: "badge b-zinc cap-default-pill", text: "Default" }) : null,
+        ]),
+        menuButton,
+      ]);
+    });
+    const head = el("div", { class: "cap-row" }, [
+      el("span", { class: "status-dot" + (google.accounts.length ? " on" : "") }),
+      googleMark(),
+      el("div", {}, [
+        el("div", { class: "cap-name", text: "Google" }),
+        el("div", { class: "cap-sub", text: "Gmail, Calendar, and Drive, through accounts you connect." }),
+      ]),
+      button,
+    ]);
+    return el("div", { class: "cap-group open" }, [
+      head,
+      accounts.length ? el("div", { class: "cap-account-rows" }, accounts) : null,
+    ]);
+  }
 
   /* A disclosure of several switches of one kind: a chevron, the name,
      "N of M granted" on the right, and the rows beneath when open. */
