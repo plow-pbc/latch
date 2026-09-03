@@ -287,11 +287,11 @@ describe("the words on the rows", () => {
   it("each Files row says what it is for, once, with no status in it; Automation rows say nothing", () => {
     const view = capabilitiesView(input());
     const detail = (key: string) => view.sections.flatMap((s) => s.rows).find((r) => r.key === key)!.detail;
-    expect(detail("full_disk_access")).toBe("Needed for Messages, Mail, and Safari data. Covers Desktop, Documents, and Downloads if granted");
-    expect(detail("files_desktop")).toBe("Only needed if Full Disk Access is not granted");
+    expect(detail("full_disk_access")).toBe("Needed for Messages, Mail, and Safari data. Covers Desktop, Documents, and Downloads if granted.");
+    expect(detail("files_desktop")).toBe("Only needed if Full Disk Access is not granted.");
     expect(detail("contacts")).toMatch(/address book.*Messages/);
-    expect(detail("calendars")).toBe("Reading and scheduling events");
-    expect(detail("accessibility")).toBe("Driving the screen and other apps' windows");
+    expect(detail("calendars")).toBe("Reading and scheduling events.");
+    expect(detail("accessibility")).toBe("Driving the screen and other apps' windows.");
     for (const r of groupOf(view.sections[0]!, "automation").rows) expect(r.detail).toBe("");
     // The status lives on the dot and the button, never as the line's opener
     // (the user's own wording may mention a grant mid-sentence).
