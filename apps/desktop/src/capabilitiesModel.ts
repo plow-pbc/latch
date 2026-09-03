@@ -189,11 +189,38 @@ export interface CapabilityRow {
   dismissed: boolean;
 }
 
-export interface CapabilitySection {
-  key: "files" | "apps" | "yourself";
+/**
+ * A disclosure inside a section: several switches of one kind behind one
+ * line, with how many of them are granted. Collapsed unless something in
+ * it needs looking at.
+ */
+export interface CapabilityGroup {
+  kind: "group";
+  key: "folders" | "automation";
   title: string;
+  /** The line under the name, like a row's: what the group holds. */
   description: string;
   rows: CapabilityRow[];
+  granted: number;
+  total: number;
+  /** Open on first draw: a group with blocked requests inside opens itself. */
+  expandedByDefault: boolean;
+}
+
+export type CapabilityItem = CapabilityRow | CapabilityGroup;
+
+export interface CapabilitySection {
+  key: "mac";
+  title: string;
+  description: string;
+  /** In display order: rows and groups. */
+  items: CapabilityItem[];
+  /** Every row, groups flattened — for the badge, the banner, and tests. */
+  rows: CapabilityRow[];
+}
+
+export function isGroup(item: CapabilityItem): item is CapabilityGroup {
+  return (item as CapabilityGroup).kind === "group";
 }
 
 export interface CapabilitiesBanner {
@@ -268,11 +295,12 @@ export function capabilitiesView(input: CapabilitiesInput): CapabilitiesView {
     };
   };
 
-  // Files and data. Full Disk Access first; the folders only while it is off,
-  // since it covers them. Contacts, Calendars and Accessibility each have a
-  // switch and a query API of their own.
-  const files: CapabilityRow[] = [];
-  files.push(
+  // This Mac. Full Disk Access first; the folders — a group — only while it
+  // is off, since it covers them. Contacts, Calendars and Accessibility each
+  // have a switch and a query API of their own; Automation consent per app
+  // is the second group.
+  const items: CapabilityItem[] = [];
+  items.push(
     row(
       "full_disk_access",
       PERMISSION_TITLES.full_disk_access!,
@@ -282,6 +310,7 @@ export function capabilitiesView(input: CapabilitiesInput): CapabilitiesView {
     ),
   );
   if (fda !== true) {
+    const folders: CapabilityRow[] = [];
     for (const folder of FOLDERS) {
       const learned = input.folders?.[folder] ?? null;
       const g = groups.get(folder);
@@ -295,7 +324,7 @@ export function capabilitiesView(input: CapabilitiesInput): CapabilitiesView {
       // on every later touch, so the button says where the switch really is.
       // Believed unasked, the touch is offered — and a touch that turns out
       // refused still falls through to the pane (main's act handler).
-      files.push(
+      folders.push(
         row(
           folder,
           PERMISSION_TITLES[folder]!,
@@ -305,6 +334,9 @@ export function capabilitiesView(input: CapabilitiesInput): CapabilitiesView {
         ),
       );
     }
+    items.push(
+      group("folders", "Folders", "Desktop, Documents, and Downloads", folders, folders.some((r) => r.count > 0)),
+    );
   }
   const queryable = new Map(inv?.permissions.map((p) => [p.permission, p.status]) ?? []);
   for (const permission of QUERYABLE) {
@@ -326,20 +358,30 @@ export function capabilitiesView(input: CapabilitiesInput): CapabilitiesView {
         : askable && (status === "not_asked" || status === "unknown")
           ? "request"
           : "open";
-    files.push(row(permission, PERMISSION_TITLES[permission]!, status, detail, action));
+    items.push(row(permission, PERMISSION_TITLES[permission]!, status, detail, action));
   }
 
-  // Control other apps.
-  // No detail per app: the section's own line says what these are, and
-  // the dot and the button say where each stands.
-  const apps: CapabilityRow[] = input.automation.map(({ app, status }) => {
-    return row(`automation:${app.bundleId}`, app.name, status, "", status === "denied" ? "open" : "request");
-  });
+  // Automation consent per app, as a group. No detail per app: the group's
+  // line says what these are, and the dot and the button say where each
+  // stands. Collapsed by default — eight rows the owner rarely needs.
+  const apps: CapabilityRow[] = input.automation.map(({ app, status }) =>
+    row(`automation:${app.bundleId}`, app.name, status, "", status === "denied" ? "open" : "request"),
+  );
+  items.push(
+    group(
+      "automation",
+      "Automation",
+      "Which apps agents may drive with Apple events — sending a message, saving a contact",
+      apps,
+      false,
+    ),
+  );
+  const macRows = items.flatMap((i) => (isGroup(i) ? i.rows : [i]));
 
   // Switches this app has no button for: anything a block named that is not
-  // a row above. The owner flips these in System Settings themselves; the
-  // section exists only while something asked.
-  const known = new Set([...files, ...apps].map((r) => r.key));
+  // a row above. They join the end of This Mac, one row each, only while
+  // something asked; the owner flips them in System Settings themselves.
+  const known = new Set(macRows.map((r) => r.key));
   const yourself: CapabilityRow[] = [];
   for (const g of groups.values()) {
     if (known.has(g.key)) continue;
@@ -356,35 +398,40 @@ export function capabilitiesView(input: CapabilitiesInput): CapabilitiesView {
     yourself.push(row(g.key, title, "denied", "Plow Latch can't ask for this one; turn it on yourself if you want agents to have it", "open"));
   }
 
+  items.push(...yourself);
   const sections: CapabilitySection[] = [
     {
-      key: "files",
-      title: "Files and data",
+      key: "mac",
+      title: "This Mac",
       description:
-        "What macOS lets Plow Latch reach on your behalf. Grant these ahead of time: otherwise an agent's first " +
-        "request waits on a macOS dialog, which only someone at this Mac can answer.",
-      rows: files,
-    },
-    {
-      key: "apps",
-      title: "Control other apps",
-      description:
-        "Which apps agents may drive with Apple events — sending a message, saving a contact. Grant ahead of time; " +
-        "macOS otherwise asks the first time an agent scripts each app.",
-      rows: apps,
+        "What macOS lets Plow Latch reach on your behalf, and which apps agents may drive. Grant these ahead of " +
+        "time: otherwise an agent's first request waits on a macOS dialog, which only someone at this Mac can answer.",
+      items,
+      rows: [...macRows, ...yourself],
     },
   ];
-  if (yourself.length > 0) {
-    sections.push({
-      key: "yourself",
-      title: "Grant in System Settings yourself",
-      description: "Things agents asked for that this app has no button for.",
-      rows: yourself,
-    });
-  }
 
   const badge = sections.reduce((n, s) => n + s.rows.filter((r) => r.needsAttention).length, 0);
   return { badge, banner: banner(groups, input.bannerSeenAt, sections), sections };
+}
+
+function group(
+  key: CapabilityGroup["key"],
+  title: string,
+  description: string,
+  rows: CapabilityRow[],
+  expandedByDefault: boolean,
+): CapabilityGroup {
+  return {
+    kind: "group",
+    key,
+    title,
+    description,
+    rows,
+    granted: rows.filter((r) => r.status === "granted").length,
+    total: rows.length,
+    expandedByDefault,
+  };
 }
 
 function banner(

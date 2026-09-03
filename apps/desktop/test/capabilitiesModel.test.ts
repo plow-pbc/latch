@@ -12,11 +12,19 @@ import {
   blockedGroups,
   capabilitiesView,
   CapabilitiesInput,
+  CapabilityGroup,
+  CapabilityRow,
+  isGroup,
   LABEL_IN_SETTINGS,
   LABEL_VIA_PROMPT,
   paneFor,
   SETTINGS_PANES,
 } from "../src/capabilitiesModel.js";
+
+/** The section's rows in display order, groups flattened, for the tests
+ *  that care about order; `section.rows` is the same list. */
+const groupOf = (section: { items: unknown[] }, key: string): CapabilityGroup =>
+  section.items.find((i) => isGroup(i as never) && (i as CapabilityGroup).key === key) as CapabilityGroup;
 
 function inventory(overrides: Partial<HostInventory> = {}): HostInventory {
   return {
@@ -110,14 +118,19 @@ describe("blockedGroups", () => {
 describe("capabilitiesView", () => {
   it("shows the folders only while Full Disk Access is off, and the queryable services always", () => {
     const off = capabilitiesView(input());
-    const files = off.sections.find((s) => s.key === "files")!;
+    const files = off.sections.find((s) => s.key === "mac")!;
+    expect(files.title).toBe("This Mac");
     expect(files.rows.map((r) => r.key)).toEqual([
       "full_disk_access", "files_desktop", "files_documents", "files_downloads", "contacts", "calendars", "accessibility",
+      ...AUTOMATION_APPS.map((a) => `automation:${a.bundleId}`),
     ]);
+    // The folders are a group; Automation is the other.
+    expect(files.items.filter((i) => isGroup(i)).map((i) => (i as CapabilityGroup).key)).toEqual(["folders", "automation"]);
     const on = capabilitiesView(input({ inventory: inventory({ full_disk_access: { granted: true, probes: [] } }) }));
-    expect(on.sections.find((s) => s.key === "files")!.rows.map((r) => r.key)).toEqual([
+    expect(on.sections.find((s) => s.key === "mac")!.rows.filter((r) => !r.key.startsWith("automation:")).map((r) => r.key)).toEqual([
       "full_disk_access", "contacts", "calendars", "accessibility",
     ]);
+    expect(on.sections[0]!.items.filter((i) => isGroup(i)).map((i) => (i as CapabilityGroup).key)).toEqual(["automation"]);
     expect(on.sections[0]!.rows[0]).toMatchObject({ status: "granted", action: "none", actionLabel: null });
   });
 
@@ -173,8 +186,9 @@ describe("capabilitiesView", () => {
     expect(capabilitiesView(input({ events, bannerSeenAt: "2026-09-02T07:00:00Z" })).banner).toBeNull();
   });
 
-  it("the yourself section appears only for switches with no row, and names them in System Settings' words", () => {
-    expect(capabilitiesView(input()).sections.map((s) => s.key)).toEqual(["files", "apps"]);
+  it("a switch with no row of its own joins the end of This Mac only once something asked, in System Settings' words", () => {
+    const quiet = capabilitiesView(input()).sections[0]!;
+    expect(quiet.items.at(-1)).toMatchObject({ kind: "group", key: "automation" });
     const view = capabilitiesView(
       input({
         events: [
@@ -183,8 +197,9 @@ describe("capabilitiesView", () => {
         ],
       }),
     );
-    const yourself = view.sections.find((s) => s.key === "yourself")!;
-    expect(yourself.rows.map((r) => [r.key, r.title, r.action])).toEqual([
+    expect(view.sections.map((s) => s.key)).toEqual(["mac"]);
+    const tail = view.sections[0]!.items.slice(-2) as CapabilityRow[];
+    expect(tail.map((r) => [r.key, r.title, r.action])).toEqual([
       ["automation", "Automation for another app", "open"],
       ["screen_recording", "Screen & System Audio Recording", "open"],
     ]);
@@ -202,11 +217,11 @@ describe("capabilitiesView", () => {
     expect(keys).not.toContain("files_downloads");
     expect(keys).not.toContain("files_desktop");
     // Screen Recording is not under the umbrella, so it still asks for the owner.
-    expect(granted.sections.find((s) => s.key === "yourself")!.rows.map((r) => r.key)).toEqual(["screen_recording"]);
+    expect(granted.sections[0]!.rows.at(-1)!.key).toBe("screen_recording");
     expect(granted.badge).toBe(1);
     // Without Full Disk Access the same refusals are rows in Files and data.
     const off = capabilitiesView(input({ events }));
-    expect(off.sections.find((s) => s.key === "files")!.rows.filter((r) => r.count > 0).map((r) => r.key)).toEqual(["files_desktop", "files_downloads"]);
+    expect(off.sections[0]!.rows.filter((r) => r.count > 0).map((r) => r.key)).toEqual(["files_desktop", "files_downloads", "screen_recording"]);
   });
 
   it("a folder is denied once a confirmed block names it, and its button then points at the pane — macOS will not re-ask", () => {
@@ -238,7 +253,7 @@ describe("capabilitiesView", () => {
   });
 
   it("Automation rows: the prompt until macOS has answered, the pane once it refused", () => {
-    const apps = capabilitiesView(input()).sections.find((s) => s.key === "apps")!.rows;
+    const apps = groupOf(capabilitiesView(input()).sections[0]!, "automation").rows;
     expect(apps.map((r) => r.title)).toEqual(AUTOMATION_APPS.map((a) => a.name));
     expect(apps.find((r) => r.title === "Messages")).toMatchObject({ status: "denied", action: "open" });
     expect(apps.find((r) => r.title === "Mail")).toMatchObject({ status: "not_asked", action: "request", actionLabel: LABEL_VIA_PROMPT });
@@ -274,12 +289,12 @@ describe("the words on the rows", () => {
     expect(detail("contacts")).toMatch(/address book.*Messages/);
     expect(detail("calendars")).toBe("Reading and scheduling events");
     expect(detail("accessibility")).toBe("Driving the screen and other apps' windows");
-    for (const r of view.sections.find((s) => s.key === "apps")!.rows) expect(r.detail).toBe("");
+    for (const r of groupOf(view.sections[0]!, "automation").rows) expect(r.detail).toBe("");
     // The status lives on the dot and the button, never as the line's opener
     // (the user's own wording may mention a grant mid-sentence).
     for (const r of view.sections.flatMap((s) => s.rows)) expect(r.detail).not.toMatch(/^(granted|allowed|not (granted|allowed|asked)|unknown)/i);
-    // Granting ahead of time is the sections' point, said there and not per row.
-    for (const s of view.sections) expect(s.description).toMatch(/ahead of time/);
+    // Granting ahead of time is the section's point, said there and not per row.
+    expect(view.sections[0]!.description).toMatch(/ahead of time/);
   });
 });
 
@@ -296,5 +311,29 @@ describe("the two button labels", () => {
         .sections.flatMap((s) => s.rows).map((r) => r.actionLabel).filter((l) => l !== null),
     );
     expect([...labels].sort()).toEqual([LABEL_IN_SETTINGS, LABEL_VIA_PROMPT].sort());
+  });
+});
+
+describe("groups", () => {
+  it("Folders opens itself only when a folder inside has blocked requests; Automation starts closed", () => {
+    const quiet = capabilitiesView(input()).sections[0]!;
+    expect(groupOf(quiet, "folders")).toMatchObject({ title: "Folders", total: 3, granted: 0, expandedByDefault: false });
+    expect(groupOf(quiet, "automation")).toMatchObject({ title: "Automation", total: AUTOMATION_APPS.length, expandedByDefault: false });
+    const hit = capabilitiesView(input({ events: block("i1", "2026-09-02T02:00:00Z", "files_downloads") })).sections[0]!;
+    expect(groupOf(hit, "folders").expandedByDefault).toBe(true);
+    // A hit inside Automation still leaves it closed by default.
+    const auto = capabilitiesView(input({ events: block("i2", "2026-09-02T02:00:00Z", "automation", { target: "Messages" }) })).sections[0]!;
+    expect(groupOf(auto, "automation").expandedByDefault).toBe(false);
+  });
+
+  it("counts how many of a group are granted", () => {
+    const view = capabilitiesView(
+      input({
+        folders: { files_desktop: "granted", files_documents: "granted" },
+        automation: AUTOMATION_APPS.map((app, i) => ({ app, status: i < 2 ? "granted" : "not_asked" })),
+      }),
+    ).sections[0]!;
+    expect(groupOf(view, "folders")).toMatchObject({ granted: 2, total: 3 });
+    expect(groupOf(view, "automation")).toMatchObject({ granted: 2, total: AUTOMATION_APPS.length });
   });
 });
