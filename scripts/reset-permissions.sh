@@ -7,21 +7,27 @@
 # some macOS versions and a reset that quietly leaves a grant behind is the
 # one thing this script must not do.
 #
-# Which bundle id? TCC keys a grant on the RESPONSIBLE app, and that is not
-# the same thing for every way of running this app:
+# Which bundle id? TCC keys a grant on the RESPONSIBLE process, and that is
+# not the same thing for every way of running this app:
 #   - the packaged install is co.plow.domo-desktop (electron-builder.yml appId);
 #   - a from-source `just app` runs node_modules/electron's Electron.app,
 #     bundle id com.github.Electron — every worktree's the same;
-#   - but launched from a terminal, macOS attributes that run to the app the
-#     terminal session belongs to (main.ts resolveFdaDragTarget says why):
-#     Termic, iTerm, Terminal, an IDE. Its grants are that app's.
-# The first two are always reset. The third is found from where THIS script
-# runs — `__CFBundleIdentifier`, which macOS sets on every process launched
-# from an app bundle and which survives into a shell's children (Termic sets
-# TERM_PROGRAM to iTerm.app for compatibility, so that variable is only the
-# fallback) — and reset too, since a from-source run is what the reset is
-# usually for. That takes the app's own Full Disk Access and Automation grants
-# with it; `host=no` skips it.
+#   - launched from Terminal or iTerm, macOS attributes that run to the
+#     TERMINAL (main.ts resolveFdaDragTarget says why), so its grants are the
+#     terminal's — and resetting them takes the terminal's own Full Disk
+#     Access and Automation grants along.
+#   - launched from Termic, it is attributed to Electron.app after all: Termic
+#     disclaims responsibility for the tasks it spawns, so each is its own
+#     TCC client. (Verified with the responsibility SPI: a Termic task's shell
+#     is responsible for itself, not for Termic — though it still inherits
+#     Termic's __CFBundleIdentifier, which is why that variable must not be
+#     trusted for this.)
+# The first two are always reset. The launcher is found by asking the same
+# SPI TCC keys on, through the settings-window-frame helper's --responsible
+# mode, run from this shell: an app bundle back means the shell is that
+# app's and it is reset too; nothing back means the shell is its own client
+# and nothing else needs resetting. `host=no` skips the launcher outright;
+# `host=<bundle id>` names one.
 #
 # Usage: reset-permissions.sh <apphome> [host=auto|no|<bundle id>] [--dry-run]
 set -eu
@@ -49,38 +55,34 @@ AddressBook Calendar Reminders Photos Accessibility ScreenCapture AppleEvents"
 
 bundles="co.plow.domo-desktop com.github.Electron"
 
-# The app this shell was launched from — what a from-source run is
-# attributed to.
+# The app this shell is attributed to, by the SPI TCC keys on. Empty when the
+# shell is its own client (Termic, a plain ssh session) or when there is no
+# compiled helper to ask — in which case nothing is guessed: resetting a
+# terminal's grants on a guess is the one wrong outcome here.
+helper="${RESET_PERMISSIONS_HELPER:-$(dirname "$0")/../apps/desktop/dist/native/settings-window-frame}"
 launcher() {
-  if [ -n "${__CFBundleIdentifier:-}" ]; then echo "$__CFBundleIdentifier"; return; fi
-  # No bundle env (a plain ssh session, say): the helper's --responsible mode
-  # asks the same SPI TCC keys on, and the TERM_PROGRAM table is the last
-  # resort.
-  helper="$(dirname "$0")/../apps/desktop/dist/native/settings-window-frame"
-  if [ -x "$helper" ]; then
-    bundle="$("$helper" --responsible 2>/dev/null || true)"
-    if [ -n "$bundle" ] && [ -f "$bundle/Contents/Info.plist" ]; then
-      /usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" "$bundle/Contents/Info.plist" 2>/dev/null && return
-    fi
+  if [ ! -x "$helper" ]; then
+    echo "?"
+    return 0
   fi
-  case "${TERM_PROGRAM:-}" in
-    Apple_Terminal) echo com.apple.Terminal ;;
-    iTerm.app) echo com.googlecode.iterm2 ;;
-    vscode) echo com.microsoft.VSCode ;;
-    WarpTerminal) echo dev.warp.Warp-Stable ;;
-    *) echo "" ;;
-  esac
+  bundle="$("$helper" --responsible 2>/dev/null || true)"
+  if [ -n "$bundle" ] && [ -f "$bundle/Contents/Info.plist" ]; then
+    /usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" "$bundle/Contents/Info.plist" 2>/dev/null || true
+  fi
 }
 
 case "$host" in
   no) ;;
   auto)
     found="$(launcher)"
-    if [ -n "$found" ]; then
-      echo "This shell was launched from $found; a from-source run is attributed to it, so its grants are reset too (host=no to skip)."
+    if [ "$found" = "?" ]; then
+      echo "No compiled helper at $helper (run \`just build\`), so the app this shell is attributed to is not guessed; only the app's own bundle ids are reset. Pass host=<bundle id> to name one."
+      found=""
+    elif [ -n "$found" ]; then
+      echo "This shell is attributed to $found; a from-source run is too, so its grants are reset as well (host=no to skip)."
       bundles="$bundles $found"
     else
-      echo "Could not tell which app this shell was launched from; only the app's own bundle ids are reset (pass the id as host=<bundle id>)."
+      echo "This shell is its own TCC client (Termic disclaims its tasks; so does ssh): a from-source run is attributed to Electron.app, which is reset. Pass host=<bundle id> to name another app."
     fi
     ;;
   *) bundles="$bundles $host" ;;
