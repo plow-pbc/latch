@@ -265,16 +265,11 @@ export function capabilitiesView(input: CapabilitiesInput): CapabilitiesView {
           : learned === "denied" || (g !== undefined && g.requests[0]?.confidence === "confirmed" && learned !== "not_asked")
             ? "denied"
             : "not_asked";
-      files.push(
-        row(
-          folder,
-          PERMISSION_TITLES[folder]!,
-          status,
-          "Only needed if Full Disk Access is not granted",
-          status === "denied" ? "open" : "ask",
-          status === "denied" ? "Open System Settings…" : "Ask macOS now",
-        ),
-      );
+      // Always the touch, even for a folder this Mac believes refused: what
+      // it believes is history (a block, a past touch), macOS is the one
+      // that knows, and a touch that comes back refused falls through to the
+      // pane (main's act handler) — so asking never costs the owner a step.
+      files.push(row(folder, PERMISSION_TITLES[folder]!, status, "Only needed if Full Disk Access is not granted", "ask", "Ask macOS now"));
     }
   }
   const queryable = new Map(inv?.permissions.map((p) => [p.permission, p.status]) ?? []);

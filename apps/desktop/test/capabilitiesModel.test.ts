@@ -188,12 +188,12 @@ describe("capabilitiesView", () => {
     expect(view.badge).toBe(2);
   });
 
-  it("a folder is denied once a confirmed block names it, and its button changes accordingly", () => {
+  it("a folder is denied once a confirmed block names it, and still offers the touch — macOS is the one that knows", () => {
     const never = capabilitiesView(input()).sections[0]!.rows.find((r) => r.key === "files_downloads")!;
     expect(never).toMatchObject({ status: "not_asked", action: "ask", actionLabel: "Ask macOS now" });
     const refused = capabilitiesView(input({ events: block("i1", "2026-09-02T02:00:00Z", "files_downloads") }))
       .sections[0]!.rows.find((r) => r.key === "files_downloads")!;
-    expect(refused).toMatchObject({ status: "denied", action: "open", needsAttention: true });
+    expect(refused).toMatchObject({ status: "denied", action: "ask", actionLabel: "Ask macOS now", needsAttention: true });
     // What the touch learned wins over history.
     const granted = capabilitiesView(
       input({ events: block("i1", "2026-09-02T02:00:00Z", "files_downloads"), folders: { files_downloads: "granted" } }),
