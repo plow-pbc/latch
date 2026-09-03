@@ -122,12 +122,16 @@ body {
 /* The Capabilities tab's badge: rows needing a decision, not events. Amber,
    because a block by this Mac is nobody refusing — the audit row's tone. */
 .tabcount {
-  /* Centred on the label's cap height, not sat on its baseline: an inline
-     box with padding hangs below the text otherwise. */
-  display: inline-block; vertical-align: middle; position: relative; top: -1px;
+  /* A fixed 16px box, as wide as it is tall at minimum: one digit is a
+     circle, two or more stretch it into a pill. Centred on the label's cap
+     height, not sat on its baseline — an inline box with padding hangs
+     below the text otherwise. */
+  display: inline-flex; align-items: center; justify-content: center;
+  vertical-align: middle; position: relative; top: -1px;
+  height: 16px; min-width: 16px; padding: 0 5px; box-sizing: border-box;
   margin-left: 6px;
-  font-size: 10.5px; font-weight: 700; line-height: 1;
-  padding: 3px 6px; border-radius: 999px;
+  font-size: 10px; font-weight: 700; line-height: 1;
+  border-radius: 999px;
   background: var(--amber-fg); color: var(--card);
   font-variant-numeric: tabular-nums;
 }
