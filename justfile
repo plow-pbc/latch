@@ -345,7 +345,15 @@ reset-permissions-dry-run host="auto":
 # Seed the audit log with sample blocked requests for the Capabilities tab.
 seed-blocked-requests:
     node scripts/seed-blocked-requests.mjs "{{apphome}}/device/audit.ndjson"
+    @node scripts/reset-blocked-banner.mjs "{{apphome}}" >/dev/null
 
 # Remove the rows seed-blocked-requests added; real audit rows are untouched.
 unseed-blocked-requests:
-    node scripts/seed-blocked-requests.mjs "{{apphome}}/device/audit.ndjson" --remove
+    node scripts/seed-blocked-requests.mjs "{{apphome}}/device/audit.ndjson"
+    @node scripts/reset-blocked-banner.mjs "{{apphome}}" >/dev/null --remove
+
+# Every block in the audit log shows again — the banner, the rows' lines,
+# the badge — until the next ×. seed-blocked-requests runs this too.
+# Forget when the Capabilities banner was last dismissed.
+reset-blocked-banner:
+    node scripts/reset-blocked-banner.mjs "{{apphome}}"
