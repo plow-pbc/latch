@@ -2053,10 +2053,10 @@ async function renderCapabilities() {
       action.addEventListener("click", () => act(r.key, action));
     } else action = el("span");
     const children = [
-      el("span", { class: "status-dot" + dotClass }),
+      el("span", { class: "status-dot" + dotClass, attrs: { title: r.statusText } }),
       el("div", {}, [
         el("div", { class: "cap-name", text: r.title }),
-        el("div", { class: "cap-sub", text: `${r.statusText} · ${r.detail}` }),
+        r.detail ? el("div", { class: "cap-sub", text: r.detail }) : null,
       ]),
       asks,
       action,
