@@ -147,7 +147,10 @@ export interface CapabilityRow {
   key: string;
   title: string;
   status: RowStatus;
+  /** Where the row stands, in words — for a tooltip; the dot and the button
+   *  carry it on screen. */
   statusText: string;
+  /** What the switch is for. Empty where the section's line says it all. */
   detail: string;
   action: RowAction;
   actionLabel: string | null;
@@ -247,9 +250,7 @@ export function capabilitiesView(input: CapabilitiesInput): CapabilitiesView {
       "full_disk_access",
       PERMISSION_TITLES.full_disk_access!,
       fda === null ? "unknown" : fda ? "granted" : "denied",
-      fda
-        ? "Covers Messages, Mail, Safari and every folder below"
-        : "Needed for Messages, Mail and Safari data — and covers the Desktop, Documents and Downloads folders too",
+      "Needed for Messages, Mail, and Safari data. Covers Desktop, Documents, and Downloads if granted",
       "grant",
       "Grant…",
     ),
@@ -269,11 +270,7 @@ export function capabilitiesView(input: CapabilitiesInput): CapabilitiesView {
           folder,
           PERMISSION_TITLES[folder]!,
           status,
-          status === "denied"
-            ? "Not allowed — only System Settings can turn it back on"
-            : status === "granted"
-              ? "Allowed"
-              : "macOS asks the first time; ask it now while you're here",
+          "Only needed if Full Disk Access is not granted",
           status === "denied" ? "open" : "ask",
           status === "denied" ? "Open System Settings…" : "Ask macOS now",
         ),
@@ -285,9 +282,9 @@ export function capabilitiesView(input: CapabilitiesInput): CapabilitiesView {
     const status = (queryable.get(permission) ?? "unknown") as RowStatus;
     const detail =
       permission === "contacts"
-        ? "Reading and updating your address book"
+        ? "Reading and updating your address book, and associating contact names with Messages"
         : permission === "calendars"
-          ? "Reading your calendars"
+          ? "Reading and scheduling events"
           : "Driving the screen and other apps' windows";
     // Accessibility's dialog only offers to open System Settings, and its
     // pane accepts a dropped app: the panel flow is the whole grant. The
@@ -308,20 +305,14 @@ export function capabilitiesView(input: CapabilitiesInput): CapabilitiesView {
   }
 
   // Control other apps.
+  // No detail per app: the section's own line says what these are, and
+  // the dot and the button say where each stands.
   const apps: CapabilityRow[] = input.automation.map(({ app, status }) => {
-    const detail =
-      status === "granted"
-        ? "Allowed"
-        : status === "denied"
-          ? "Not allowed — only System Settings can turn it back on"
-          : status === "target_not_running"
-            ? `macOS only answers while ${app.name} is open`
-            : "macOS asks the first time an agent scripts it";
     return row(
       `automation:${app.bundleId}`,
       app.name,
       status,
-      detail,
+      "",
       status === "denied" ? "open" : "request",
       status === "denied" ? "Open System Settings…" : "Grant…",
     );
@@ -349,13 +340,17 @@ export function capabilitiesView(input: CapabilitiesInput): CapabilitiesView {
     {
       key: "files",
       title: "Files and data",
-      description: "What macOS lets Plow Latch read and change on your behalf.",
+      description:
+        "What macOS lets Plow Latch reach on your behalf. Grant these ahead of time: otherwise an agent's first " +
+        "request waits on a macOS dialog, which only someone at this Mac can answer.",
       rows: files,
     },
     {
       key: "apps",
       title: "Control other apps",
-      description: "Automation consent, per app. An agent sends Apple events through these to send a message or save a contact.",
+      description:
+        "Which apps agents may drive with Apple events — sending a message, saving a contact. Grant ahead of time; " +
+        "macOS otherwise asks the first time an agent scripts each app.",
       rows: apps,
     },
   ];
