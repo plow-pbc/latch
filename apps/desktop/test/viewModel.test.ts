@@ -359,6 +359,15 @@ describe("auditActivities (grouping)", () => {
     expect(file.timeline.at(-1)!.state).toBe("bad");
     expect(orphan.status).toBe("Blocked — outside the approved paths");
     expect(orphan.category).toBe("blocked");
+    // The switch a block named is searchable, in System Settings' words —
+    // the Capabilities tab's "Show in Audit" relies on it — and so is the
+    // timeline line, so what the detail pane shows is what the box finds.
+    expect(run.permission).toBe("Full Disk Access");
+    expect(activityMatches(run, "full disk access")).toBe(true);
+    expect(activityMatches(run, "quit and reopen")).toBe(true);
+    expect(activityMatches(file, "Desktop folder")).toBe(true);
+    expect(activityMatches(orphan, "Full Disk Access")).toBe(false);
+    expect(orphan.permission).toBeNull();
   });
 
   it("browser runtime start/stop are lifecycle noise, never rows", () => {

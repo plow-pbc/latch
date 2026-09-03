@@ -163,6 +163,10 @@ export interface AuditActivity {
   goal: string | null;
   intentId: string | null;
   exitCode: number | null;
+  /** The macOS switch a block by this Mac named, in System Settings' words
+   *  ("Full Disk Access") — what the Capabilities tab's "Show in Audit"
+   *  searches for. Null for everything else. */
+  permission: string | null;
   capabilities: string[];
   /** Human label for how the decision was made (auto-approve, adversarial,
    * you/asked, policy deny, always-allow rule), or null for non-decisions. */
@@ -314,6 +318,10 @@ function buildActivity(id: string, events: JSONValue[]): AuditActivity {
       value("agent_spawned", "goal"),
     intentId: jv(events[0]).get("intentId").str,
     exitCode: entry("exec_end") ? jv(entry("exec_end")!).get("exit_code").int : null,
+    permission: (() => {
+      const key = value("host_permission_blocked", "permission");
+      return key === null ? null : permissionWords(key);
+    })(),
     // Every request in this row, not just the first: a session that was
     // widened carries the opening intent AND each `browser_request` that
     // extended it, and showing only the first understates to the owner what
@@ -777,11 +785,23 @@ function describeStep(e: JSONValue): AuditStep {
   return { time: clock(ev.get("ts").str ?? ""), text, state };
 }
 
-/** Whether an activity matches a free-text search (title/command/agent/goal). */
+/**
+ * Whether an activity matches a free-text search: title, command, agent,
+ * goal, the permission a block named, and every timeline line — so what the
+ * detail pane would show is what the box finds.
+ */
 export function activityMatches(a: AuditActivity, query: string): boolean {
   const q = query.trim().toLowerCase();
   if (!q) return true;
-  return [a.title, a.command ?? "", a.agentDisplay ?? "", a.agentId ?? "", a.goal ?? ""]
+  return [
+    a.title,
+    a.command ?? "",
+    a.agentDisplay ?? "",
+    a.agentId ?? "",
+    a.goal ?? "",
+    a.permission ?? "",
+    ...a.timeline.map((s) => s.text),
+  ]
     .join(" ")
     .toLowerCase()
     .includes(q);
