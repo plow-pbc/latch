@@ -169,9 +169,12 @@ async function refreshAudit(opts = {}) {
   const q = auditSearch.trim().toLowerCase();
   const shown = activities.filter((a) => {
     const inCat = filter === "all" || a.category === filter;
+    // The same match viewModel.activityMatches makes: title, command, agent,
+    // goal, the permission a block named, and the timeline lines.
     const inSearch =
       !q ||
-      [a.title, a.command || "", a.agentDisplay || "", a.agentId || "", a.goal || ""]
+      [a.title, a.command || "", a.agentDisplay || "", a.agentId || "", a.goal || "", a.permission || "",
+        ...(a.timeline || []).map((s) => s.text)]
         .join(" ")
         .toLowerCase()
         .includes(q);
@@ -1962,9 +1965,12 @@ async function refreshCapabilitiesBadge(view) {
   }
 }
 
-/** The audit tab, filtered to what this Mac blocked — the banner's link. */
-async function showAuditBlocked() {
+/** The audit tab, filtered to what this Mac blocked: the Blocked chip, and
+    the search box set to `term` — a switch's name from a row's button, or
+    cleared from the banner's, so a stale search never hides the rows. */
+async function showAuditBlocked(term = "") {
   filter = "blocked";
+  auditSearch = term;
   if (await selectTab("audit")) window.domo.uiSetTab("audit");
 }
 
@@ -2283,7 +2289,7 @@ async function renderCapabilities() {
     // The banner's pair, for this one switch: Dismiss clears these requests
     // from the tab (the Audit tab keeps them) until a newer block lands.
     const inAudit = el("button", { class: "btn small", text: "Show in Audit", attrs: { type: "button" } });
-    inAudit.addEventListener("click", () => showAuditBlocked());
+    inAudit.addEventListener("click", () => showAuditBlocked(r.title));
     const notNow = el("button", { class: "btn small", text: "Dismiss", attrs: { type: "button" } });
     notNow.addEventListener("click", async () => draw(await window.domo.capabilitiesDismiss(r.key)));
     return el("div", { class: "cap-expand" }, [
