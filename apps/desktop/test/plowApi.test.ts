@@ -706,6 +706,32 @@ describe("PlowApi", () => {
     expect(calls).toHaveLength(0);
   });
 
+  it("renames a credential through its preferences, with the credential only in the header", async () => {
+    const credential = "plow_device_do_not_leak";
+    const { calls, fetchImpl } = recordingFetch([{ status: 200, body: { assistant_name: "Kitchen" } }]);
+    const api = new PlowApi("https://api.plow.co", fetchImpl);
+
+    await expect(api.renameApiKey(credential, 17, "Kitchen")).resolves.toBeUndefined();
+
+    expect(calls.map(({ url, init }) => [init.method, url, init.body])).toEqual([
+      ["PATCH", "https://api.plow.co/v1/api-keys/17/preferences", JSON.stringify({ assistant_name: "Kitchen" })],
+    ]);
+    expect((calls[0].init.headers as Record<string, string>).authorization).toBe(`Bearer ${credential}`);
+    expect(calls[0].url.includes(credential)).toBe(false);
+  });
+
+  it.each([
+    ["a path-shaped id", "17/../relay/devices/self/revoke" as unknown as number, "Kitchen", "Invalid API key id."],
+    ["a blank name", 17, "   ", "A name is required."],
+    ["a name over 200 characters", 17, "x".repeat(201), "A name can be at most 200 characters."],
+  ])("refuses to rename with %s without making a request", async (_what, id, name, message) => {
+    const { calls, fetchImpl } = recordingFetch([]);
+    const api = new PlowApi("https://api.plow.co", fetchImpl);
+
+    await expect(api.renameApiKey("plow_device_do_not_leak", id, name)).rejects.toMatchObject({ message });
+    expect(calls).toHaveLength(0);
+  });
+
   /**
    * Every encoding of the credential, and the plain sentence that carries
    * none — all four answer with the status fallback, because an authenticated
