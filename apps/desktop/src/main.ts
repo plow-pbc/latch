@@ -993,8 +993,8 @@ ipcMain.handle("vault:importInspect", async (_e, text: string) => stageImport(pa
 // A chosen file: main shows the dialog and reads the file itself, so a file
 // full of passwords never crosses into the renderer at all. A 1PUX export is
 // a zip and is told by its first two bytes; anything else is read as text.
-// The cap is sized for 1PUX, which carries attachments; only export.data is
-// ever parsed out of it.
+// The file is not size-capped: a real 1PUX is mostly attachments, which are
+// never read, and the parser bounds export.data — the one entry it inflates.
 ipcMain.handle("vault:importFile", async () => {
   const epoch = staging.epoch;
   const picked = await dialog.showOpenDialog({
@@ -1004,8 +1004,6 @@ ipcMain.handle("vault:importFile", async () => {
   });
   const file = picked.filePaths[0];
   if (picked.canceled || !file) return null;
-  const stat = await fs.stat(file);
-  if (stat.size > 200 * 1024 * 1024) throw new Error("that file is too large to be a passwords export");
   const bytes = await fs.readFile(file);
   const isZip = bytes[0] === 0x50 && bytes[1] === 0x4b;
   return stageImport(isZip ? parseOnePux(bytes) : parsePasswordExport(bytes.toString("utf8")), epoch);
