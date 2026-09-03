@@ -307,3 +307,33 @@ audit:
 clean:
     rm -rf "{{apphome}}"
     @echo "wiped {{apphome}}"
+
+# ---------------------------------------------------------------------------
+# Permissions — exercising the Capabilities tab
+# ---------------------------------------------------------------------------
+
+# The packaged app's bundle id AND the from-source Electron.app's, plus the
+# app's own memos of what macOS said. A from-source `just app` launched from
+# a terminal is attributed to THAT terminal by macOS, so `just
+# reset-permissions yes` resets the terminal's grants too (it loses its own
+# Full Disk Access with them). Some services need sudo; the script asks only
+# when one refuses. Quit and reopen the app afterwards.
+# Reset every macOS privacy grant (TCC) this app can hold, for a clean slate.
+reset-permissions terminal="no":
+    scripts/reset-permissions.sh "{{apphome}}" {{terminal}}
+
+# Show what reset-permissions would run, without running it.
+reset-permissions-dry-run terminal="no":
+    scripts/reset-permissions.sh "{{apphome}}" {{terminal}} --dry-run
+
+# Fake agents, fake goals, last night's timestamps, appended to THIS
+# checkout's audit log so the Capabilities tab's banner, counts and "See
+# blocked requests…" can be looked at without revoking a grant first. Every
+# seeded row is marked, and unseed removes exactly those.
+# Seed the audit log with sample blocked requests for the Capabilities tab.
+seed-blocked-requests:
+    node scripts/seed-blocked-requests.mjs "{{apphome}}/device/audit.ndjson"
+
+# Remove the rows seed-blocked-requests added; real audit rows are untouched.
+unseed-blocked-requests:
+    node scripts/seed-blocked-requests.mjs "{{apphome}}/device/audit.ndjson" --remove
