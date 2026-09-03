@@ -412,16 +412,15 @@ textarea.text { min-height: 70px; resize: vertical; }
 }
 .cap-banner .banner-close:hover { background: var(--amber-bd); }
 .cap-row {
-  display: grid; grid-template-columns: 8px 1fr auto auto; align-items: center; gap: 12px;
+  display: grid; grid-template-columns: 8px 1fr auto; align-items: center; gap: 12px;
   padding: 10px 0; border-top: 1px solid var(--border);
 }
 .cap-row:first-of-type { border-top: 0; }
 .cap-row .status-dot { flex: none; }
 .cap-row .cap-name { font-weight: 600; }
-.cap-row .cap-sub { color: var(--muted); font-size: 12px; }
-.cap-row .cap-asks { color: var(--muted); font-size: 12px; text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.cap-row .cap-sub { color: var(--muted); font-size: 12px; margin-top: 2px; }
+.cap-row .cap-asks { font-variant-numeric: tabular-nums; }
 .cap-row .cap-asks b { color: var(--fg); font-weight: 600; }
-.cap-row .cap-asks.none { color: var(--faint); }
 /* "See blocked requests…": a link, so it reads as something to click,
    where a bare row did not. */
 .cap-more {
@@ -447,7 +446,9 @@ textarea.text { min-height: 70px; resize: vertical; }
 .cap-actions { display: flex; gap: 8px; margin-top: 10px; align-items: center; }
 .cap-actions .spacer { flex: 1; }
 .btn.quiet { border-color: transparent; color: var(--muted); }
-.btn.ok { color: var(--green-fg); border-color: transparent; cursor: default; }
+/* "Granted" in the button slot: the same box as a button so the column lines
+   up, but it is a word, not a control — no border, no hover. */
+.cap-granted { display: inline-flex; align-items: center; padding: 5px 12px; color: var(--green-fg); font-weight: 600; white-space: nowrap; }
 
 .agent-status {
   margin: 0;

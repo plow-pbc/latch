@@ -2038,40 +2038,43 @@ async function renderCapabilities() {
       : r.status === "denied" ? " off"
       : r.status === "not_asked" ? ""
       : " unknown";
-    const asks = r.count > 0
-      ? el("div", { class: "cap-asks" }, [
-          el("b", { text: `${r.count} request${r.count === 1 ? "" : "s"}` }),
-          el("span", { text: ` · last ${whenText(r.last)}` }),
-          el("br"),
-          el("span", { text: r.agents.join(", ") }),
-        ])
-      : el("div", { class: "cap-asks none", text: r.status === "granted" ? "—" : "no requests" });
     let action;
-    if (r.status === "granted") action = el("span", { class: "btn ok", text: "Granted" });
+    // A word, not a button: nothing to press once it is granted.
+    if (r.status === "granted") action = el("span", { class: "cap-granted", text: "Granted" });
     else if (r.actionLabel) {
-      action = el("button", { class: "btn" + (r.needsAttention && r.action === "grant" ? " primary" : ""), text: r.actionLabel });
+      // Plain, whatever the row's state: the amber dot and the request line
+      // already say which rows need a decision, and a blue button would read
+      // as "the one thing to do here" when every row is the owner's call.
+      action = el("button", { class: "btn", text: r.actionLabel });
       action.addEventListener("click", () => act(r.key, action));
     } else action = el("span");
-    const children = [
-      el("span", { class: "status-dot" + dotClass, attrs: { title: r.statusText } }),
-      el("div", {}, [
-        el("div", { class: "cap-name", text: r.title }),
-        r.detail ? el("div", { class: "cap-sub", text: r.detail }) : null,
-      ]),
-      asks,
-      action,
-    ];
-    // The requests behind the count live behind an explicit link — a row
-    // that merely opened on click never read as something to click.
+    // What the switch stopped, as a third line under the name — the count,
+    // when, who, and the link to the requests themselves (an explicit link:
+    // a row that merely opened on click never read as something to click).
+    // Nothing at all for a row nothing has hit.
+    let asks = null;
     if (r.count > 0) {
       const more = el("button", { class: "cap-more", text: openRows.has(r.key) ? "Hide blocked requests" : "See blocked requests…" });
       more.addEventListener("click", async () => {
         if (openRows.has(r.key)) openRows.delete(r.key); else openRows.add(r.key);
         draw(await window.domo.capabilitiesGet().then((c) => c.view));
       });
-      children[1].appendChild(more);
-      if (openRows.has(r.key)) children.push(expanded(r));
+      asks = el("div", { class: "cap-sub cap-asks" }, [
+        el("b", { text: `${r.count} request${r.count === 1 ? "" : "s"}` }),
+        el("span", { text: ` · last ${whenText(r.last)}${r.agents.length ? ` · ${r.agents.join(", ")}` : ""} · ` }),
+        more,
+      ]);
     }
+    const children = [
+      el("span", { class: "status-dot" + dotClass, attrs: { title: r.statusText } }),
+      el("div", {}, [
+        el("div", { class: "cap-name", text: r.title }),
+        r.detail ? el("div", { class: "cap-sub", text: r.detail }) : null,
+        asks,
+      ]),
+      action,
+    ];
+    if (r.count > 0 && openRows.has(r.key)) children.push(expanded(r));
     return el("div", { class: "cap-row" }, children);
   };
 
