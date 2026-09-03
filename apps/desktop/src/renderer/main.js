@@ -1949,6 +1949,15 @@ async function renderCapabilities() {
   // group (a group with blocked requests inside opens itself), then the
   // owner's clicks own it for the life of this mount.
   const openGroups = new Map();
+  // macOS's own icons per row key, from main; kept across redraws (an act
+  // answers with the view alone) and refreshed on a full read.
+  let icons = {};
+  const iconCell = (key) => {
+    const src = icons[key];
+    return src
+      ? el("img", { class: "cap-icon", attrs: { src, alt: "" } })
+      : el("span", { class: "cap-icon" });
+  };
 
     // The same connector state and card used by setup, mounted into a stable
   // box so a poll or account action redraws only this section. `loading` is a
@@ -2066,13 +2075,14 @@ async function renderCapabilities() {
         draw(await window.domo.capabilitiesGet().then((c) => c.view));
       });
       asks = el("div", { class: "cap-sub cap-asks" }, [
-        el("b", { text: `${r.count} request${r.count === 1 ? "" : "s"}` }),
+        el("span", { class: "cap-count", text: `${r.count} request${r.count === 1 ? "" : "s"}` }),
         el("span", { text: ` · last ${whenText(r.last)}${r.agents.length ? ` · ${r.agents.join(", ")}` : ""} · ` }),
         more,
       ]);
     }
     const children = [
       el("span", { class: "status-dot" + dotClass, attrs: { title: r.statusText } }),
+      iconCell(r.key),
       el("div", {}, [
         el("div", { class: "cap-name", text: r.title }),
         r.detail ? el("div", { class: "cap-sub", text: r.detail }) : null,
@@ -2094,6 +2104,7 @@ async function renderCapabilities() {
     // its button — so a group line is exactly as tall as a switch's.
     const head = el("button", { class: "cap-row cap-group-head", attrs: { type: "button", "aria-expanded": String(open) } }, [
       el("span", { class: "cap-chevron-cell" }, [icon("chevron", { class: "ico cap-chevron" + (open ? " open" : "") })]),
+      iconCell(`group:${g.key}`),
       el("div", {}, [
         el("div", { class: "cap-name", text: g.title }),
         el("div", { class: "cap-sub", text: g.description }),
@@ -2144,11 +2155,16 @@ async function renderCapabilities() {
     ]);
   };
 
-  draw((await window.domo.capabilitiesGet()).view);
+  const load = async () => {
+    const c = await window.domo.capabilitiesGet();
+    icons = c.icons ?? icons;
+    draw(c.view);
+  };
+  await load();
   capabilitiesMounted = {
     applyConnectors,
     refresh: async () => {
-      draw((await window.domo.capabilitiesGet()).view);
+      await load();
       await refreshConnectors();
     },
   };

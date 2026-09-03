@@ -56,7 +56,7 @@ import { approvalViewModel, auditActivities, CredentialTitles } from "./viewMode
 import { appBundleName, appBundlePath, decodeTileImage } from "./permissionFlow.js";
 import { FdaGrantFlow, GrantTarget } from "./fdaGrantFlow.js";
 import { AUTOMATION_APPS, automationApp, osascriptRunner, reconcile, requestAutomation } from "./automation.js";
-import { capabilitiesView, CapabilitiesView, paneFor, PERMISSION_TITLES } from "./capabilitiesModel.js";
+import { capabilitiesView, CapabilitiesView, isGroup, paneFor, PERMISSION_TITLES } from "./capabilitiesModel.js";
 import { launchAtLoginState, LoginItemApi, setLaunchAtLogin } from "./loginItem.js";
 import { KeepAwake } from "./keepAwake.js";
 import { devIconScript } from "./devIcon.js";
@@ -1205,14 +1205,78 @@ ipcMain.handle("status:get", async () => ({
 // grant flow's poll reads.
 ipcMain.handle("capabilities:get", async () => {
   const inventory = device ? await device.hostInventory() : null;
+  const view = await capabilitiesNow(inventory);
   return {
     fullDiskAccess: inventory ? inventory.full_disk_access.granted : await probeFullDiskAccess(),
     inventory,
-    view: await capabilitiesNow(inventory),
+    view,
+    icons: await capabilityIcons(view),
   };
 });
 
 // MARK: The Capabilities tab (capabilitiesModel.ts)
+
+/**
+ * The icon beside a row or group — macOS's own, never drawn here: the app's
+ * icon for an app (by bundle id, through LaunchServices), the folder's real
+ * Finder icon for a folder, and for a switch that is neither (Full Disk
+ * Access, Accessibility, Screen Recording, Automation) the SF Symbol System
+ * Settings uses, on its privacy-blue tile. Resolved once per key for the
+ * life of the process; null where the helper is missing or has no answer,
+ * and the row draws without one.
+ */
+const capabilityIconCache = new Map<string, Promise<string | null>>();
+function capabilityIcon(key: string): Promise<string | null> {
+  let pending = capabilityIconCache.get(key);
+  if (!pending) {
+    pending = renderCapabilityIcon(key).catch(() => null);
+    capabilityIconCache.set(key, pending);
+  }
+  return pending;
+}
+async function renderCapabilityIcon(key: string): Promise<string | null> {
+  const home = os.homedir();
+  const app = key.startsWith("automation:") ? key.slice("automation:".length) : null;
+  // Tile tints, System Settings' own: grey for the generic switches, blue for
+  // Accessibility, teal for the folder group, red for recording.
+  const GREY = "8E8E93", BLUE = "1E6FF2", TEAL = "1C9AAF", RED = "D9272D";
+  const args: string[] | null = app
+    ? ["--app-icon", app]
+    : key === "full_disk_access" ? ["--symbol", "externaldrive.fill", GREY]
+    : key === "files_desktop" ? ["--icon", path.join(home, "Desktop")]
+    : key === "files_documents" ? ["--icon", path.join(home, "Documents")]
+    : key === "files_downloads" ? ["--icon", path.join(home, "Downloads")]
+    : key === "contacts" ? ["--app-icon", "com.apple.AddressBook"]
+    : key === "calendars" ? ["--app-icon", "com.apple.iCal"]
+    : key === "reminders" ? ["--app-icon", "com.apple.reminders"]
+    : key === "photos" ? ["--app-icon", "com.apple.Photos"]
+    : key === "accessibility" ? ["--symbol", "accessibility", BLUE]
+    : key === "screen_recording" ? ["--symbol", "record.circle", RED]
+    : key === "files_icloud_drive" ? ["--symbol", "icloud.fill", GREY]
+    : key === "files_volumes" ? ["--symbol", "externaldrive.fill", GREY]
+    : key === "automation" || key === "group:automation" ? ["--symbol", "gearshape.2.fill", GREY]
+    : key === "group:folders" ? ["--symbol", "folder.fill", TEAL]
+    : null;
+  if (!args) return null;
+  const { stdout } = await promisify(execFile)(fdaHelperPath, args);
+  const data = stdout.trim();
+  return data ? `data:image/png;base64,${data}` : null;
+}
+
+/** Every icon the tab shows, keyed like its rows and groups. */
+async function capabilityIcons(view: CapabilitiesView): Promise<Record<string, string>> {
+  const keys = view.sections.flatMap((s) =>
+    s.items.flatMap((i) => (isGroup(i) ? [`group:${i.key}`, ...i.rows.map((r) => r.key)] : [i.key])),
+  );
+  const icons: Record<string, string> = {};
+  await Promise.all(
+    keys.map(async (k) => {
+      const icon = await capabilityIcon(k);
+      if (icon) icons[k] = icon;
+    }),
+  );
+  return icons;
+}
 
 /**
  * Automation consent for every app the tab offers, read passively through

@@ -21,6 +21,8 @@
   --zinc-bg: #f4f4f5; --zinc-fg: #52525b; --zinc-bd: #e4e4e7;
   /* Light enough to read against the --blue-fg primary button. */
   --focus: #60a5fa;
+  /* The Capabilities tab's "needs a decision" dot. */
+  --warn-dot: #e5484d;
   --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
   --sans: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Roboto, sans-serif;
 }
@@ -36,6 +38,7 @@
     --blue-bg: #0c1b33; --blue-fg: #93c5fd; --blue-bd: #1e3a8a;
     --zinc-bg: #1c1c20; --zinc-fg: #a1a1aa; --zinc-bd: #27272a;
     --focus: #93c5fd;
+    --warn-dot: #f26b6f;
   }
 }
 
@@ -395,7 +398,9 @@ textarea.text { min-height: 70px; resize: vertical; }
    refused, amber a hit switch that is still off, hollow when macOS could not
    be asked. */
 .status-dot.off { background: var(--red-fg); }
-.status-dot.warn { background: var(--amber-fg); }
+/* A switch that is off AND was hit: a clear red, brighter than the text
+   red but short of a warning light, so it reads at a glance in the list. */
+.status-dot.warn { background: var(--warn-dot); }
 .status-dot.unknown { background: transparent; border: 1px solid var(--faint); box-sizing: border-box; }
 .cap-banner {
   display: flex; align-items: center; gap: 12px;
@@ -412,15 +417,20 @@ textarea.text { min-height: 70px; resize: vertical; }
 }
 .cap-banner .banner-close:hover { background: var(--amber-bd); }
 .cap-row {
-  display: grid; grid-template-columns: 8px 1fr auto; align-items: center; gap: 12px;
+  display: grid; grid-template-columns: 8px 20px 1fr auto; align-items: center; gap: 12px;
   padding: 10px 0; border-top: 1px solid var(--border);
 }
+/* macOS's own icon for the switch (an app's, a folder's, or the symbol
+   System Settings uses on its tile). An empty cell keeps the columns when
+   there is none. */
+.cap-icon { width: 20px; height: 20px; display: block; }
 .cap-row:first-of-type { border-top: 0; }
 .cap-row .status-dot { flex: none; }
 .cap-row .cap-name { font-weight: 600; }
 .cap-row .cap-sub { color: var(--muted); font-size: 12px; margin-top: 2px; }
 .cap-row .cap-asks { font-variant-numeric: tabular-nums; }
-.cap-row .cap-asks b { color: var(--fg); font-weight: 600; }
+/* The count in the text red, same weight as the rest of the line. */
+.cap-row .cap-count { color: var(--red-fg); }
 /* A group of switches behind one line (Folders, Automation). The head is a
    full-width button in the row grid's clothes; the rows beneath indent past
    the chevron so they read as the group's. */
@@ -436,7 +446,9 @@ textarea.text { min-height: 70px; resize: vertical; }
 .cap-group-head:hover .cap-name { text-decoration: underline; }
 /* The chevron sits in the dot's 8px column, centred on it. */
 .cap-chevron-cell { width: 8px; display: flex; justify-content: center; align-items: center; }
-.cap-chevron { width: 14px; height: 14px; flex: none; color: var(--muted); transform: rotate(-90deg); transition: transform 0.12s; }
+/* 16px box, and a stroke of 3 in the glyph's 24-unit viewBox is 2px on
+   screen at that size. */
+.cap-chevron { width: 16px; height: 16px; stroke-width: 3; flex: none; color: var(--muted); transform: rotate(-90deg); transition: transform 0.12s; }
 .cap-chevron.open { transform: rotate(0deg); }
 /* The count wears a button's box so the line is a button's height. */
 .cap-group-count { display: inline-flex; align-items: center; padding: 5px 0; color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }
@@ -451,7 +463,7 @@ textarea.text { min-height: 70px; resize: vertical; }
 }
 .cap-more:hover { text-decoration: underline; }
 .cap-expand {
-  grid-column: 2 / -1; margin: 2px 0 6px; padding: 10px 12px;
+  grid-column: 3 / -1; margin: 2px 0 6px; padding: 10px 12px;
   background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius-sm);
 }
 .cap-expand .lbl { font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); margin: 0 0 6px; }
