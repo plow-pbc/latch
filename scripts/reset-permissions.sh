@@ -12,22 +12,16 @@
 #   - the packaged install is co.plow.domo-desktop (electron-builder.yml appId);
 #   - a from-source `just app` runs node_modules/electron's Electron.app,
 #     bundle id com.github.Electron — every worktree's the same;
-#   - launched from Terminal or iTerm, macOS attributes that run to the
-#     TERMINAL (main.ts resolveFdaDragTarget says why), so its grants are the
-#     terminal's — and resetting them takes the terminal's own Full Disk
-#     Access and Automation grants along.
-#   - launched from Termic, it is attributed to Electron.app after all: Termic
-#     disclaims responsibility for the tasks it spawns, so each is its own
-#     TCC client. (Verified with the responsibility SPI: a Termic task's shell
-#     is responsible for itself, not for Termic — though it still inherits
-#     Termic's __CFBundleIdentifier, which is why that variable must not be
-#     trusted for this.)
-# The first two are always reset. The launcher is found by asking the same
-# SPI TCC keys on, through the settings-window-frame helper's --responsible
-# mode, run from this shell: an app bundle back means the shell is that
-# app's and it is reset too; nothing back means the shell is its own client
-# and nothing else needs resetting. `host=no` skips the launcher outright;
-# `host=<bundle id>` names one.
+#   - launched from a terminal — Termic, iTerm, Terminal — macOS attributes
+#     that run to the TERMINAL (main.ts resolveFdaDragTarget says why), so its
+#     grants are the terminal's, and resetting them takes the terminal's own
+#     Full Disk Access and Automation grants along.
+# The first two are always reset. The launcher is found the way the drag
+# panel finds it — the settings-window-frame helper's --responsible mode,
+# run from this shell, which walks the process ancestry to the topmost app
+# bundle — and reset too. `host=no` skips it; `host=<bundle id>` names one.
+# The launcher is never guessed from the environment: __CFBundleIdentifier
+# is inherited by every descendant and says nothing about attribution.
 #
 # Usage: reset-permissions.sh <apphome> [host=auto|no|<bundle id>] [--dry-run]
 set -eu
@@ -55,10 +49,10 @@ AddressBook Calendar Reminders Photos Accessibility ScreenCapture AppleEvents"
 
 bundles="co.plow.domo-desktop com.github.Electron"
 
-# The app this shell is attributed to, by the SPI TCC keys on. Empty when the
-# shell is its own client (Termic, a plain ssh session) or when there is no
-# compiled helper to ask — in which case nothing is guessed: resetting a
-# terminal's grants on a guess is the one wrong outcome here.
+# The app this shell is attributed to. Empty when there is none (a plain ssh
+# session); "?" when there is no compiled helper to ask — and then nothing is
+# guessed, because resetting a terminal's grants on a guess is the one wrong
+# outcome here.
 helper="${RESET_PERMISSIONS_HELPER:-$(dirname "$0")/../apps/desktop/dist/native/settings-window-frame}"
 launcher() {
   if [ ! -x "$helper" ]; then
@@ -82,7 +76,7 @@ case "$host" in
       echo "This shell is attributed to $found; a from-source run is too, so its grants are reset as well (host=no to skip)."
       bundles="$bundles $found"
     else
-      echo "This shell is its own TCC client (Termic disclaims its tasks; so does ssh): a from-source run is attributed to Electron.app, which is reset. Pass host=<bundle id> to name another app."
+      echo "This shell is not attributed to any app (a plain ssh session, say): a from-source run is Electron.app's own, which is reset. Pass host=<bundle id> to name an app."
     fi
     ;;
   *) bundles="$bundles $host" ;;
