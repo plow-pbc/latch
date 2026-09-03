@@ -308,7 +308,7 @@ export function capabilitiesView(input: CapabilitiesInput): CapabilitiesView {
       "full_disk_access",
       PERMISSION_TITLES.full_disk_access!,
       fda === null ? "unknown" : fda ? "granted" : "denied",
-      "Needed for Messages, Mail, and Safari data. Covers Desktop, Documents, and Downloads if granted",
+      "Needed for Messages, Mail, and Safari data. Covers Desktop, Documents, and Downloads if granted.",
       "grant",
     ),
   );
@@ -332,13 +332,13 @@ export function capabilitiesView(input: CapabilitiesInput): CapabilitiesView {
           folder,
           PERMISSION_TITLES[folder]!,
           status,
-          "Only needed if Full Disk Access is not granted",
+          "Only needed if Full Disk Access is not granted.",
           status === "denied" ? "open" : "ask",
         ),
       );
     }
     items.push(
-      group("folders", "Folders", "Desktop, Documents, and Downloads", folders, folders.some((r) => r.count > 0)),
+      group("folders", "Folders", "Desktop, Documents, and Downloads.", folders, folders.some((r) => r.count > 0)),
     );
   }
   const queryable = new Map(inv?.permissions.map((p) => [p.permission, p.status]) ?? []);
@@ -346,10 +346,10 @@ export function capabilitiesView(input: CapabilitiesInput): CapabilitiesView {
     const status = (queryable.get(permission) ?? "unknown") as RowStatus;
     const detail =
       permission === "contacts"
-        ? "Reading and updating your address book, and associating contact names with Messages"
+        ? "Reading and updating your address book, and associating contact names with Messages."
         : permission === "calendars"
-          ? "Reading and scheduling events"
-          : "Driving the screen and other apps' windows";
+          ? "Reading and scheduling events."
+          : "Driving the screen and other apps' windows.";
     // Accessibility's dialog only offers to open System Settings, and its
     // pane accepts a dropped app: the panel flow is the whole grant. The
     // other two have a real in-app dialog while they are not yet asked; once
@@ -374,7 +374,7 @@ export function capabilitiesView(input: CapabilitiesInput): CapabilitiesView {
     group(
       "automation",
       "Automation",
-      "Which apps agents may drive with Apple events — sending a message, saving a contact",
+      "Which apps agents may drive with Apple events — sending a message, saving a contact.",
       apps,
       false,
     ),
@@ -394,11 +394,11 @@ export function capabilitiesView(input: CapabilitiesInput): CapabilitiesView {
     if (fda === true && COVERED_BY_FULL_DISK_ACCESS.has(g.key as HostPermission)) continue;
     if (g.key === "automation" && fda !== null) {
       // An Automation block for an app the tab does not list.
-      yourself.push(row(g.key, "Automation for another app", "denied", "An app the list above does not offer", "open"));
+      yourself.push(row(g.key, "Automation for another app", "denied", "An app the list above does not offer.", "open"));
       continue;
     }
     const title = PERMISSION_TITLES[g.key] ?? g.key;
-    yourself.push(row(g.key, title, "denied", "Plow Latch can't ask for this one; turn it on yourself if you want agents to have it", "open"));
+    yourself.push(row(g.key, title, "denied", "Plow Latch can't ask for this one; turn it on yourself if you want agents to have it.", "open"));
   }
 
   items.push(...yourself);
