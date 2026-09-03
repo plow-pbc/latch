@@ -20,6 +20,14 @@ import type { LocalVault } from "./localVault.js";
 import { checkedUrls, type VaultItemSummary } from "./vaultItems.js";
 import { totpParams } from "./vaultTotp.js";
 
+/** A vault a row came from (1PUX only), display data both halves. Two vaults
+ * can share a display NAME across 1Password accounts, so a pick keys on the id
+ * and shows the name. */
+export interface ImportVault {
+  id: string;
+  name: string;
+}
+
 /** One login as the export described it, normalized and ready to save. */
 export interface ImportedLogin {
   title: string;
@@ -40,12 +48,16 @@ export interface ImportedLogin {
    * password or key CHANGED in the source: the save this row becomes is an
    * edit of that item, touching only the fields named here. */
   update?: { itemId: string; revision: string; fields: ("password" | "totp")[] };
+  /** Where it came from; absent for CSV and pasted items, which know no
+   * vaults. */
+  vault?: ImportVault;
 }
 
 /** A row that will not be imported, and the reason it will not. */
 export interface SkippedRow {
   title: string;
   reason: string;
+  vault?: ImportVault;
 }
 
 export interface ParsedImport {
@@ -225,6 +237,23 @@ export function finishImportedLogin(
   if (!password) warnings.push("the export holds no password for it");
   const totp = checkTotp(fields.totpRaw, warnings);
   return { title, urls, username, password, totp, notes, warnings };
+}
+
+/**
+ * The URLs an export names, minus the ones the vault cannot read; `dropped`
+ * says whether any were. One bad address must not sink a login that has good
+ * ones, so each is checked on its own — and the caller does the warning,
+ * because the two importers word it in their own voice.
+ */
+export function normalizeImportUrls(raw: string[]): { urls: string[]; dropped: boolean } {
+  const urls = raw.flatMap((url) => {
+    try {
+      return checkedUrls([url]);
+    } catch {
+      return [];
+    }
+  });
+  return { urls, dropped: urls.length < raw.length };
 }
 
 /** The hostname a URL names, or "" — the display-name fallback for a login
@@ -436,17 +465,31 @@ export interface ImportPreviewItem {
   /** Which secrets changed on an item the vault already holds — importing
    * this row updates that item's named fields. Empty for a new row. */
   changed: ("password" | "totp")[];
+  vault?: ImportVault;
 }
 
 export interface ImportPreview {
   source: string;
   items: ImportPreviewItem[];
   skipped: SkippedRow[];
+  /** The vaults these rows span, each with the number of importable logins in
+   * it — worked out here and nowhere else. Logins AND skipped rows, so a vault
+   * whose every row was set aside is still offered on the Import sheet's pick
+   * step (and keeps its skipped lines when picked). First-seen order; empty
+   * for a source that knows no vaults (CSV, a paste, an exchange). More than
+   * one is what makes the pick a step at all. */
+  vaults: (ImportVault & { logins: number })[];
 }
 
 /** What the renderer is shown before it may commit: facts about each row,
  * with the password and the key reduced to whether one is there. */
 export function importPreview(parsed: ParsedImport): ImportPreview {
+  const vaults = new Map<string, ImportVault & { logins: number }>();
+  const note = (v: ImportVault | undefined, isLogin: boolean) => {
+    if (v) vaults.set(v.id, { ...v, logins: (vaults.get(v.id)?.logins ?? 0) + (isLogin ? 1 : 0) });
+  };
+  for (const l of parsed.logins) note(l.vault, true);
+  for (const s of parsed.skipped) note(s.vault, false);
   return {
     source: parsed.source,
     items: parsed.logins.map((l) => ({
@@ -458,8 +501,10 @@ export function importPreview(parsed: ParsedImport): ImportPreview {
       warnings: l.warnings,
       duplicate: l.duplicate === true,
       changed: l.update ? [...l.update.fields] : [],
+      ...(l.vault ? { vault: l.vault } : {}),
     })),
     skipped: parsed.skipped,
+    vaults: [...vaults.values()],
   };
 }
 

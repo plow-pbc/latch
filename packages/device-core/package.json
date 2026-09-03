@@ -14,6 +14,7 @@
   "dependencies": {
     "@domo/browser-server": "*",
     "@domo/protocol": "*",
+    "adm-zip": "0.6.0",
     "tldts": "7.4.11"
   },
   "optionalDependencies": {

@@ -1,21 +1,21 @@
 import { el, icon } from "./dom.js";
 
-/* The Import sheet: passwords in from Apple Passwords, 1Password or Chrome —
-   and, on macOS 26+, the credential exchange Apple Passwords hands over
-   app-to-app ("Export to another app…"). That third door has no steps here at
-   all: main staged it before this sheet existed, and the sheet opens straight
-   on its preview (the `exchange` parameter below).
+/* The Import sheet: passwords in from Apple Passwords, 1Password, Chrome, or
+   any CSV — and, on macOS 26+, the credential exchange Apple Passwords hands
+   over app-to-app ("Export to another app…"). That last door has no steps
+   here at all: main staged it before this sheet existed, and the sheet opens
+   straight on its preview (the `exchange` parameter below).
 
-   Step one is WHERE FROM: cards wearing the apps' own icons (fetched by main
-   from the installed apps, as display-only data URLs). 1Password and Chrome
-   only appear when actually installed — with nothing else there is no choice
-   to make, and the sheet opens straight onto the Apple guidance. The chosen
-   app's walkthrough and inputs render underneath the cards.
+   Step one is WHERE FROM: four cards, always shown — a file can come from
+   any machine — wearing the installed apps' own icons where main found them
+   (display-only data URLs). The chosen source's walkthrough and inputs
+   render underneath the cards.
 
-   Two doors, matching what those apps can produce. A CSV file, which main
-   reads itself behind its own open dialog, so a file of plain-text passwords
-   never crosses into this sandboxed window at all. And, for 1Password, a
-   paste box for its per-item "Copy item JSON".
+   Two doors. A file, which main reads itself behind its own open dialog, so
+   a file of plain-text passwords never crosses into this sandboxed window:
+   1Password's 1PUX export (its vaults, to pick from on the next step) or a
+   CSV (everything in it). And, for 1Password, a paste box for its per-item
+   "Copy item JSON".
 
    Either way the parsed passwords are STAGED IN MAIN. What comes back here is
    a preview stripped of every secret: titles, usernames, sites, and whether a
@@ -53,15 +53,14 @@ export async function vimportSheet(reload, host, exchange = null) {
   // Which apps are here to import from — asked BEFORE the sheet takes the
   // editor seat or puts anything on screen, so nothing can try to close a
   // half-built sheet while this answer is in flight. If the ask fails, the
-  // sheet still works: Apple's Passwords app ships with macOS. An exchange
-  // sheet never shows the cards, so it skips the ask altogether.
-  let sources = { apple: { icon: null }, onePassword: null, chrome: null };
+  // sheet still works: every card is offered regardless of what's installed,
+  // so a failed ask only costs their icons. An exchange sheet never shows the
+  // cards, so it skips the ask altogether.
+  let sources = { apple: { icon: null }, onePassword: { icon: null }, chrome: { icon: null } };
   if (!exchange) {
     try {
       sources = await window.domo.vaultImportSources();
-    } catch {
-      /* apple-only fallback above */
-    }
+    } catch { /* icons only — every card is offered regardless */ }
   }
   // The wait above is the one gap where the world can change under this
   // opening: a credential exchange landing there replaces the pane and opens
@@ -69,9 +68,7 @@ export async function vimportSheet(reload, host, exchange = null) {
   // sheet — whose close would rightly cancel the one-shot hand-off — so it
   // stands down instead.
   if (!alive()) return;
-  // With only one possible source there is nothing to choose: preselected.
-  const choices = !!(sources.onePassword || sources.chrome);
-  let source = choices ? null : "apple";
+  let source = null;
 
   // The staging this sheet is showing, named by the ticket that rode in on
   // its preview (null before one arrives). Quoted on commit and on close, so
@@ -122,6 +119,22 @@ export async function vimportSheet(reload, host, exchange = null) {
   const go = el("button", { class: "btn save", attrs: { type: "button" }, text: "Import" });
   const foot = el("div", { class: "sheet-foot", attrs: { hidden: "" } }, [cancel, go]);
 
+  /** A tickable row: the box adds or drops `key` in `selected`, and the whole
+   * row is the target — a 15px box is not "easy to turn off". */
+  const bindPickRow = (node, tick, selected, key, sync) => {
+    tick.addEventListener("change", () => {
+      if (tick.checked) selected.add(key);
+      else selected.delete(key);
+      node.classList.toggle("off", !tick.checked);
+      sync();
+    });
+    node.addEventListener("click", (e) => {
+      if (e.target === tick) return; // the box's own click already toggled
+      tick.checked = !tick.checked;
+      tick.dispatchEvent(new Event("change"));
+    });
+  };
+
   /** Step one: pick the app, read its walkthrough, hand its export over. */
   const pick = () => {
     title.textContent = "Import passwords";
@@ -134,7 +147,7 @@ export async function vimportSheet(reload, host, exchange = null) {
     const fileBtn = () => {
       const b = el("button", { class: "btn imp-file", attrs: { type: "button" } }, [
         icon("file", { class: "vico", strokeWidth: "1.8" }),
-        el("span", { text: " Choose exported CSV file…" }),
+        el("span", { text: " Choose exported file…" }),
       ]);
       b.addEventListener("click", async () => {
         err.textContent = "";
@@ -154,8 +167,8 @@ export async function vimportSheet(reload, host, exchange = null) {
     const note = el("div", { class: "imp-note" }, [
       icon("shield", { class: "vico", strokeWidth: "1.8" }),
       el("span", { text:
-        "An exported file holds your passwords in plain text. Once the import is done, " +
-        "delete the file and empty the Trash." }),
+        "An exported file holds your passwords in plain text — a 1PUX file, any attached documents too. " +
+        "Once the import is done, delete the file and empty the Trash." }),
     ]);
 
     /** The chosen app's walkthrough and inputs, under the cards. */
@@ -170,7 +183,7 @@ export async function vimportSheet(reload, host, exchange = null) {
         // leads first; the CSV walk stays for every Mac, and is the only
         // door elsewhere. When the hand-off lands, main stages it and this
         // sheet is replaced by the preview — the last step describes that.
-        const direct = !!sources.apple?.exchange;
+        const direct = !!sources.apple.exchange;
         guide.replaceChildren(...[
           direct
             ? steps("Send them straight across — no file", [
@@ -198,6 +211,18 @@ export async function vimportSheet(reload, host, exchange = null) {
             "Click Google Password Manager, then click Settings in the sidebar of the page that appears.",
             "Under Export passwords, click Download File, and enter your computer password when prompted.",
             "Save the file (it is named Chrome Passwords.csv), then choose it below.",
+          ]),
+          el("div", { class: "imp-actions" }, [fileBtn()]),
+          err,
+          note,
+        );
+        return;
+      }
+      if (source === "csv") {
+        guide.replaceChildren(
+          steps(null, [
+            "Any CSV with Title, URL, Username and Password columns works — 1Password's own CSV export (File > Export, then CSV) included. Notes and an OTPAuth column are read when present.",
+            "Choose the file below. Everything in it is imported; a CSV has no vaults to pick from.",
           ]),
           el("div", { class: "imp-actions" }, [fileBtn()]),
           err,
@@ -237,10 +262,10 @@ export async function vimportSheet(reload, host, exchange = null) {
         readBtn.disabled = false;
       });
       guide.replaceChildren(
-        steps("Everything in a vault", [
-          "In 1Password, choose File > Export > your vault, and enter your 1Password password.",
-          "Pick “CSV (Export only certain fields)” and click Export Data.",
-          "When it says Export Finished, click Show File, then choose that file below.",
+        steps("Everything in your account", [
+          "In 1Password, choose File > Export, pick your account, and enter your account password.",
+          "Choose 1PUX as the format and click Export Data.",
+          "When it says Export Finished, click Show File, then choose that file below. You will pick which vaults to import next.",
         ]),
         el("div", { class: "imp-actions" }, [fileBtn()]),
         steps("A single item", [
@@ -254,10 +279,10 @@ export async function vimportSheet(reload, host, exchange = null) {
     };
 
     const cards = [];
-    const card = (key, label, iconUrl) => {
+    const card = (key, label, iconUrl, glyph = "key") => {
       const face = iconUrl
         ? el("img", { class: "src-ic", attrs: { src: iconUrl, alt: "" } })
-        : el("span", { class: "src-ic glyph" }, [icon("key", { class: "vico", strokeWidth: "1.8" })]);
+        : el("span", { class: "src-ic glyph" }, [icon(glyph, { class: "vico", strokeWidth: "1.8" })]);
       const b = el("button", { class: "imp-src", attrs: { type: "button" } }, [
         face,
         el("span", { class: "sn", text: label }),
@@ -271,42 +296,104 @@ export async function vimportSheet(reload, host, exchange = null) {
       return b;
     };
 
-    // Filtered for the same reason as the preview below: replaceChildren
-    // renders a null child as the word "null".
-    bodyEl.replaceChildren(...[
+    bodyEl.replaceChildren(
       el("p", { class: "sheet-sub", text:
         "This only supports import of passwords; credit cards and identities are not imported." }),
-      // Nothing else installed means there is no choice to offer: the sheet
-      // opens already on the Apple Passwords guidance, cards and all skipped.
-      choices
-        ? el("div", { class: "imp-src-grid" }, [
-            card("apple", "Apple Passwords", sources.apple?.icon ?? null),
-            sources.onePassword ? card("1password", "1Password", sources.onePassword.icon) : null,
-            sources.chrome ? card("chrome", "Chrome", sources.chrome.icon) : null,
-          ])
-        : null,
+      el("div", { class: "imp-src-grid" }, [
+        card("apple", "Apple Passwords", sources.apple.icon),
+        card("1password", "1Password", sources.onePassword.icon),
+        card("chrome", "Chrome", sources.chrome.icon),
+        card("csv", "CSV file", null, "file"),
+      ]),
       guide,
-    ].filter(Boolean));
+    );
     for (const c of cards) c.node.classList.toggle("sel", c.key === source);
     renderGuide();
   };
 
-  /** What was read, before anything is written: counts, rows, and reasons. */
-  const preview = (p) => {
+  /** Between the file and the preview, when the export holds more than one
+   * vault: which vaults to bring in. Continue hands them to MAIN, which
+   * re-stages just those rows and marks THEM against the vault — so what the
+   * preview then calls a duplicate or an update was decided over the rows
+   * that are actually coming, not the ones left behind. */
+  const pickVaults = (p) => {
     ticket = p.ticket ?? null;
+    title.textContent = "Choose vaults";
+    back.removeAttribute("hidden");
+    foot.removeAttribute("hidden");
+    const vaults = p.vaults;
+    const chosen = new Set(vaults.map((v) => v.id));
+    const sync = () => {
+      go.textContent = chosen.size === 0 ? "No vaults selected" : `Continue with ${chosen.size} of ${vaults.length}`;
+      go.disabled = chosen.size === 0;
+    };
+    const row = (v) => {
+      const tick = el("input", { attrs: { type: "checkbox", checked: "" } });
+      const node = el("div", { class: "imp-row pick" }, [
+        tick,
+        el("span", { class: "vicon" }, [icon("lock", { class: "vico", strokeWidth: "1.8" })]),
+        el("span", { class: "m" }, [
+          el("span", { class: "t", text: v.name }),
+          // Every login counts: this staging is unmarked, so no row knows yet
+          // whether the vault already holds it.
+          el("span", { class: "c", text: `${v.logins} login${v.logins === 1 ? "" : "s"} to import` }),
+        ]),
+      ]);
+      bindPickRow(node, tick, chosen, v.id, sync);
+      return node;
+    };
+    bodyEl.replaceChildren(
+      el("p", { class: "sheet-sub", text: `${p.source} exported ${vaults.length} vaults. Untick any you would rather leave out.` }),
+      el("div", { class: "imp-list" }, vaults.map(row)),
+    );
+    sync();
+    go.onclick = async () => {
+      go.disabled = true;
+      // Inert too, or a Back click mid-await lets the pick's late preview pop
+      // in over the source step it thinks it left.
+      back.disabled = true;
+      try {
+        const kept = await window.domo.vaultImportPick([...chosen], ticket);
+        if (gone()) return;
+        back.disabled = false;
+        preview(kept, true);
+      } catch (e) {
+        // Main consumed the staging before it could fail (it takes the rows,
+        // then marks them against the vault), so there is nothing left here to
+        // press Continue against: say so, and start again from the file.
+        vtoast("Could not read the vaults: " + errText(e));
+        back.disabled = false;
+        if (!gone()) pick();
+      }
+    };
+    back.onclick = pick;
+  };
+
+  /** What was read, before anything is written: counts, rows, and reasons.
+   * `p` is always the whole staging main is holding — the vault pick, if there
+   * was one, has already narrowed it there — so the rows render as they come
+   * and their indices ARE the ones commit sends. `picked` says the pick step
+   * just answered, so it is not asked again. */
+  const preview = (p, picked = false) => {
+    // Straight from the file with several vaults on board: the pick comes
+    // first. One vault, or a source with none, needs no such step. (pickVaults
+    // sets `ticket` itself, so this only sets it on the path that skips it.)
+    if (!picked && p.vaults.length > 1) return pickVaults(p);
+    ticket = p.ticket ?? null;
+    const { items, skipped } = p;
     title.textContent = "Ready to import";
     // No step to go back to when the passwords arrived by hand-off.
     if (!exchange) back.removeAttribute("hidden");
     foot.removeAttribute("hidden");
 
-    const coming = p.items.filter((i) => !i.duplicate);
-    const dups = p.items.length - coming.length;
+    const coming = items.filter((i) => !i.duplicate);
+    const dups = items.length - coming.length;
     const updates = coming.filter((i) => i.changed.length).length;
     const summary = [
       `${coming.length} login${coming.length === 1 ? "" : "s"} from ${p.source}`,
       updates ? `${updates} update${updates === 1 ? "s" : ""} an item you already have` : "",
       dups ? `${dups} already in your vault (left alone)` : "",
-      p.skipped.length ? `${p.skipped.length} not imported` : "",
+      skipped.length ? `${skipped.length} not imported` : "",
     ].filter(Boolean).join(" · ");
 
     // Which rows will actually be imported. Everything starts ticked; a
@@ -314,7 +401,7 @@ export async function vimportSheet(reload, host, exchange = null) {
     // is sent. The set holds indices into p.items, which is the order main
     // staged the logins in, so it travels to commit as-is. With a single
     // importable row there is nothing to choose and no checkboxes appear.
-    const chosen = new Set(p.items.map((i, at) => (i.duplicate ? -1 : at)).filter((at) => at >= 0));
+    const chosen = new Set(items.flatMap((i, at) => (i.duplicate ? [] : [at])));
     const total = chosen.size;
     const choosable = total > 1;
     const count = el("span", { class: "sc" });
@@ -360,20 +447,7 @@ export async function vimportSheet(reload, host, exchange = null) {
         ]),
         ...badges,
       ]);
-      if (tick) {
-        tick.addEventListener("change", () => {
-          if (tick.checked) chosen.add(at);
-          else chosen.delete(at);
-          node.classList.toggle("off", !tick.checked);
-          sync();
-        });
-        // The whole row is the target — a 15px box is not "easy to turn off".
-        node.addEventListener("click", (e) => {
-          if (e.target === tick) return; // the box's own click already toggled
-          tick.checked = !tick.checked;
-          tick.dispatchEvent(new Event("change"));
-        });
-      }
+      if (tick) bindPickRow(node, tick, chosen, at, sync);
       return node;
     };
 
@@ -382,11 +456,11 @@ export async function vimportSheet(reload, host, exchange = null) {
     bodyEl.replaceChildren(...[
       el("p", { class: "sheet-sub", text: summary }),
       choosable ? el("div", { class: "imp-selhead" }, [count, allLink]) : null,
-      el("div", { class: "imp-list" }, p.items.map(row)),
-      p.skipped.length
+      el("div", { class: "imp-list" }, items.map(row)),
+      skipped.length
         ? el("div", { class: "imp-skip" }, [
             el("div", { class: "group-h", text: "Not imported" }),
-            el("ul", {}, p.skipped.map((s) => el("li", { text: `${s.title}: ${s.reason}` }))),
+            el("ul", {}, skipped.map((s) => el("li", { text: `${s.vault ? s.vault.name + " · " : ""}${s.title}: ${s.reason}` }))),
           ])
         : null,
       // The hand-off wrote no file anywhere — that is its whole point — so
@@ -399,6 +473,9 @@ export async function vimportSheet(reload, host, exchange = null) {
       ]),
     ].filter(Boolean));
 
+    // Back is the source step even after a vault pick: that step chose what
+    // main is holding now, so re-entering it would mean re-choosing the file.
+    back.onclick = pick;
     sync();
     if (total === 0) go.textContent = "Nothing to import";
     go.onclick = async () => {
@@ -421,7 +498,6 @@ export async function vimportSheet(reload, host, exchange = null) {
       go.disabled = false;
     };
   };
-  back.addEventListener("click", pick);
 
   overlay.appendChild(el("div", { class: "sheet", attrs: { role: "dialog", "aria-modal": "true" } }, [
     el("div", { class: "sheet-top" }, [back, el("div", { class: "sheet-titlewrap" }, [title]), x]),
