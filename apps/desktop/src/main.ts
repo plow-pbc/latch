@@ -30,10 +30,12 @@ import {
   PaymentApprovalClient,
   PaymentApprovalRequest,
   plowFolderPath,
+  CONSENT_FOLDERS,
   nodeProbes,
   PERMISSION_LABELS,
   PolicyDelegate,
   probeFullDiskAccess,
+  requestFolderAccess,
   importLogins,
   importPreview,
   markAgainstVault,
@@ -48,10 +50,13 @@ import {
 } from "@domo/device-core";
 import { createDomoMcpServer, DomoMcpServer } from "@domo/mcp-server";
 import { RelayClient } from "@domo/relay-client";
+import type { AutomationStatus, HostInventory, RequestablePermission } from "@domo/device-core";
 import { approvalViewModel, auditActivities, CredentialTitles } from "./viewModel.js";
 
 import { appBundleName, appBundlePath, decodeTileImage } from "./permissionFlow.js";
-import { FdaGrantFlow } from "./fdaGrantFlow.js";
+import { FdaGrantFlow, GrantTarget } from "./fdaGrantFlow.js";
+import { AUTOMATION_APPS, automationApp, osascriptRunner, reconcile, requestAutomation } from "./automation.js";
+import { capabilitiesView, CapabilitiesView, paneFor, PERMISSION_TITLES } from "./capabilitiesModel.js";
 import { launchAtLoginState, LoginItemApi, setLaunchAtLogin } from "./loginItem.js";
 import { KeepAwake } from "./keepAwake.js";
 import { devIconScript } from "./devIcon.js";
@@ -1203,7 +1208,160 @@ ipcMain.handle("capabilities:get", async () => {
   return {
     fullDiskAccess: inventory ? inventory.full_disk_access.granted : await probeFullDiskAccess(),
     inventory,
+    view: await capabilitiesNow(inventory),
   };
+});
+
+// MARK: The Capabilities tab (capabilitiesModel.ts)
+
+/**
+ * Automation consent for every app the tab offers, read passively through
+ * the helper and reconciled with the memo: a conclusive answer is written
+ * back, so a pair the owner turned off in System Settings shows denied and
+ * STAYS denied after the target app quits (macOS declines to say for a quit
+ * app). Adopted from the apple-events branch.
+ */
+async function automationRows(): Promise<{ app: (typeof AUTOMATION_APPS)[number]; status: AutomationStatus }[]> {
+  const settings = loadSettings(home);
+  const memo = { ...(settings.automation ?? {}) };
+  let changed = false;
+  const rows = await Promise.all(
+    AUTOMATION_APPS.map(async (app) => {
+      const live = device ? await device.hostProbes.automationStatus(app.bundleId) : ("unknown" as const);
+      const r = reconcile(live, memo[app.bundleId]);
+      if (r.changed) {
+        changed = true;
+        if (r.memo === undefined) delete memo[app.bundleId];
+        else memo[app.bundleId] = r.memo as "granted" | "denied" | "not_asked";
+      }
+      return { app, status: r.status };
+    }),
+  );
+  if (changed) saveSettings(home, { ...loadSettings(home), automation: memo });
+  return rows;
+}
+
+/** The whole tab, fresh: inventory, Automation rows, the audit log, and the
+ *  owner's "not now"s. */
+async function capabilitiesNow(inventory?: HostInventory | null): Promise<CapabilitiesView> {
+  const inv = inventory === undefined ? (device ? await device.hostInventory() : null) : inventory;
+  const settings = loadSettings(home);
+  return capabilitiesView({
+    inventory: inv,
+    automation: await automationRows(),
+    events: device?.audit.entries() ?? [],
+    dismissals: settings.capabilityDismissals ?? {},
+    bannerSeenAt: settings.blockedBannerSeenAt ?? null,
+    folders: settings.folderConsent ?? {},
+  });
+}
+
+/**
+ * The switch a row key points the panel at, with the probe that says when
+ * its grant has landed. Rows with no query API of their own (the folders,
+ * Photos, Reminders, the volumes) get a probe that never says yes: the panel
+ * then leaves when System Settings closes or on its timeout, which is the
+ * honest behaviour for a switch this app cannot read.
+ */
+function grantTargetFor(key: string): GrantTarget | null {
+  const pane = paneFor(key);
+  if (!pane) return null;
+  const app = key.startsWith("automation:") ? automationApp(key.slice("automation:".length)) : null;
+  const label = app ? `Automation for ${app.name}` : (PERMISSION_TITLES[key] ?? key);
+  const probes = device?.hostProbes ?? null;
+  const probe = async (): Promise<boolean> => {
+    if (key === "full_disk_access") return probeFullDiskAccess();
+    if (!probes) return false;
+    if (app) return (await probes.automationStatus(app.bundleId)) === "granted";
+    if (key === "accessibility" || key === "contacts" || key === "calendars" || key === "screen_recording") {
+      return (await probes.permissionStatus(key)) === "granted";
+    }
+    return false;
+  };
+  return { key, label, pane: pane.url, acceptsDrop: pane.acceptsDrop, probe };
+}
+
+/**
+ * A row's one action. What it is was decided by the model (the button's
+ * label said so); this is the doing: the panel flow beside the right pane,
+ * macOS's own dialog raised on purpose (a service, or an Automation pair
+ * through the gated osascript probe), or a folder touched so macOS asks.
+ * Every one of these is behind a click on this Mac — the one condition
+ * under which this app raises a consent dialog.
+ */
+ipcMain.handle("capabilities:act", async (_e, rawKey: unknown) => {
+  const key = typeof rawKey === "string" ? rawKey : "";
+  const view = await capabilitiesNow();
+  const row = view.sections.flatMap((s) => s.rows).find((r) => r.key === key);
+  if (!row || !device) return view;
+  switch (row.action) {
+    case "grant":
+    case "open": {
+      const target = grantTargetFor(key);
+      if (target) await fdaGrantFlow.start(target);
+      break;
+    }
+    case "request": {
+      const app = key.startsWith("automation:") ? automationApp(key.slice("automation:".length)) : null;
+      if (app) {
+        const status = await requestAutomation(app.bundleId, osascriptRunner());
+        if (status === "granted" || status === "denied" || status === "not_asked") {
+          const settings = loadSettings(home);
+          saveSettings(home, { ...settings, automation: { ...(settings.automation ?? {}), [app.bundleId]: status } });
+        }
+      } else if (key === "contacts" || key === "calendars" || key === "accessibility") {
+        const status = await device.hostProbes.requestPermission(key as RequestablePermission);
+        // Refused before, or no usage string in this build: macOS answered
+        // without asking, and only the pane can change that now.
+        if (status === "denied") {
+          const target = grantTargetFor(key);
+          if (target) await fdaGrantFlow.start(target);
+        }
+      }
+      break;
+    }
+    case "ask": {
+      const folder = CONSENT_FOLDERS.find((f) => f.permission === key);
+      if (folder) {
+        const [result] = await requestFolderAccess(os.homedir(), { folders: [folder] });
+        if (result && result.status !== "missing") {
+          const settings = loadSettings(home);
+          saveSettings(home, {
+            ...settings,
+            folderConsent: {
+              ...(settings.folderConsent ?? {}),
+              [key]: result.status === "granted" ? "granted" : result.status === "denied" ? "denied" : "not_asked",
+            },
+          });
+        }
+      }
+      break;
+    }
+    default:
+      break;
+  }
+  return capabilitiesNow();
+});
+// "Not now" on a row: off the badge until a block newer than this lands.
+ipcMain.handle("capabilities:dismiss", async (_e, rawKey: unknown) => {
+  const key = typeof rawKey === "string" ? rawKey : "";
+  if (key) {
+    const settings = loadSettings(home);
+    saveSettings(home, {
+      ...settings,
+      capabilityDismissals: { ...(settings.capabilityDismissals ?? {}), [key]: new Date().toISOString() },
+    });
+  }
+  return capabilitiesNow();
+});
+ipcMain.handle("capabilities:bannerSeen", async () => {
+  saveSettings(home, { ...loadSettings(home), blockedBannerSeenAt: new Date().toISOString() });
+  return capabilitiesNow();
+});
+// The floating panel's poll: has the switch it points at landed?
+ipcMain.handle("grant:state", async () => {
+  const target = fdaGrantFlow.current();
+  return { key: target?.key ?? null, label: target?.label ?? null, granted: target ? await target.probe() : false };
 });
 
 // MARK: Full Disk Access grant flow (permissionFlow.ts)
@@ -1290,7 +1448,13 @@ async function resolveFdaDragTarget(): Promise<typeof fdaDragTarget> {
 ipcMain.handle("fullDisk:dragInfo", async () => {
   const target = await resolveFdaDragTarget();
   if (!target) return null;
-  return { name: appBundleName(target.bundle), iconDataUrl: target.iconDataUrl };
+  const pointing = fdaGrantFlow.current();
+  return {
+    name: appBundleName(target.bundle),
+    iconDataUrl: target.iconDataUrl,
+    label: pointing?.label ?? "Full Disk Access",
+    drag: pointing?.acceptsDrop ?? true,
+  };
 });
 // The panel's rasterization of its own drag tile (display data flowing the
 // other way). Held so the drag image under the cursor is exactly the tile the
@@ -1373,8 +1537,14 @@ const fdaGrantFlow = new FdaGrantFlow({
   rendererDir,
   preloadPath: path.join(dirname, "preload.cjs"),
   helperPath: fdaHelperPath,
-  probe: () => probeFullDiskAccess(),
-  openSettings: () => shell.openExternal(EXTERNAL_URLS.fullDiskSettings),
+  fullDisk: {
+    key: "full_disk_access",
+    label: "Full Disk Access",
+    pane: EXTERNAL_URLS.fullDiskSettings,
+    acceptsDrop: true,
+    probe: () => probeFullDiskAccess(),
+  },
+  openSettings: (pane) => shell.openExternal(pane),
 });
 ipcMain.handle("fullDisk:grantFlow", async () => fdaGrantFlow.start());
 // The panel's own close button (PermissionFlow's xmark) — the panel is
@@ -2138,19 +2308,19 @@ function noteHostGateBlock(fields: { [k: string]: unknown }): void {
     title: permission
       ? `Plow Latch needs ${PERMISSION_LABELS[permission as keyof typeof PERMISSION_LABELS] ?? permission}`
       : "Plow Latch was blocked by this Mac",
-    body: ownerAction ?? "An agent's approved request was refused by macOS. Open Settings for details.",
+    body: ownerAction ?? "An agent's approved request was refused by macOS. Open Capabilities for details.",
   });
-  notification.on("click", () => showSettingsForHostGate());
+  notification.on("click", () => showCapabilitiesForHostGate());
   notification.show();
 }
 
-/** The tray item's and the notification's one destination: Settings, where
- *  the Capabilities card shows every switch and the grant flow starts. */
-function showSettingsForHostGate(): void {
+/** The tray item's and the notification's one destination: the Capabilities
+ *  tab, where every switch shows what it stopped and the grant flow starts. */
+function showCapabilitiesForHostGate(): void {
   hostGateAttention = null;
   refreshTray();
   gate.sync();
-  const send = () => mainWindow?.webContents.send("ui:showSettings");
+  const send = () => mainWindow?.webContents.send("ui:showCapabilities");
   if (mainWindow?.webContents.isLoading()) mainWindow.webContents.once("did-finish-load", send);
   else send();
 }
@@ -2180,7 +2350,7 @@ function refreshTray(): void {
             label: hostGateAttention.permission
               ? `Needs ${PERMISSION_LABELS[hostGateAttention.permission as keyof typeof PERMISSION_LABELS] ?? hostGateAttention.permission}…`
               : "An agent was blocked by this Mac…",
-            click: () => showSettingsForHostGate(),
+            click: () => showCapabilitiesForHostGate(),
           },
         ]
       : []),

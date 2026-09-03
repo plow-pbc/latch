@@ -1,9 +1,8 @@
 /**
- * The Full Disk Access grant flow's moving parts — the floating panel and the
- * System Settings tracker. See permissionFlow.ts for the port rationale and
- * the pure geometry/parsing it keeps testable; this module is the thin
- * Electron layer over it, deliberately shaped like PermissionFlow's
- * controller:
+ * The grant flow's moving parts — the floating panel and the System Settings
+ * tracker. See permissionFlow.ts for the port rationale and the pure
+ * geometry/parsing it keeps testable; this module is the thin Electron layer
+ * over it, deliberately shaped like PermissionFlow's controller:
  *
  *   - one panel at a time, non-activating, floating level, all workspaces
  *   - it follows the System Settings window via the compiled helper
@@ -12,6 +11,14 @@
  *   - the flow ends when the grant lands (a fresh probe every 2s), when
  *     System Settings closes, or on a hard timeout — an abandoned flow must
  *     not leave a floating window or a polling child process behind.
+ *
+ * Built for Full Disk Access and now aimed at any Privacy & Security pane
+ * (`GrantTarget`): the pane to open, the switch's name, whether that pane
+ * accepts a dropped app (Full Disk Access and Accessibility do — the panel
+ * shows its drag tile; the rest list only apps that asked, and the panel
+ * points at the switch instead), and the probe that says when the grant has
+ * landed. The file keeps its name because the panel is still the one
+ * PermissionFlow drew; only where it points changed.
  */
 import { spawn, ChildProcess } from "node:child_process";
 import fs from "node:fs";
@@ -33,6 +40,20 @@ const FLOW_TIMEOUT_MS = 3 * 60 * 1000;
 // header, and for a human to read it, before the panel goes away.
 const GRANTED_LINGER_MS = 2500;
 
+/** One switch the panel can float beside. */
+export interface GrantTarget {
+  /** The row key (capabilitiesModel.ts), for the panel's status poll. */
+  key: string;
+  /** The switch's name in System Settings' words: "Full Disk Access". */
+  label: string;
+  /** The pane's deep link. */
+  pane: string;
+  /** Whether the pane accepts a dropped app — the drag tile, or a pointer. */
+  acceptsDrop: boolean;
+  /** Whether the grant has landed; polled every 2s while the panel is up. */
+  probe: () => Promise<boolean>;
+}
+
 export interface FdaGrantFlowDeps {
   /** dist/renderer — where fdapanel.html lives. */
   rendererDir: string;
@@ -40,10 +61,10 @@ export interface FdaGrantFlowDeps {
   preloadPath: string;
   /** The compiled tracker, or a path that may not exist (flow degrades). */
   helperPath: string;
-  /** A fresh Full Disk Access probe (device-core hostGate/fullDiskAccess.ts). */
-  probe: () => Promise<boolean>;
-  /** Opens the System Settings pane (main's EXTERNAL_URLS deep link). */
-  openSettings: () => Promise<void>;
+  /** The default target: Full Disk Access, with the device's own probe. */
+  fullDisk: GrantTarget;
+  /** Opens a System Settings pane by deep link. */
+  openSettings: (pane: string) => Promise<void>;
 }
 
 export class FdaGrantFlow {
@@ -65,24 +86,35 @@ export class FdaGrantFlow {
   // never pin the panel open forever.
   private holdVisible = false;
   private holdTimer: NodeJS.Timeout | null = null;
+  /** The switch the panel is currently pointing at. */
+  private target: GrantTarget | null = null;
 
   constructor(private readonly deps: FdaGrantFlowDeps) {}
 
+  /** What the panel is pointing at right now, for its own rendering. */
+  current(): GrantTarget | null {
+    return this.target;
+  }
+
   /**
-   * Begin (or re-front) the flow. Idempotent on purpose: a second click while
-   * the panel is up re-opens the Settings pane and keeps the one panel —
-   * PermissionFlow keeps a single floating panel for the same reason.
+   * Begin (or re-front) the flow for one switch — Full Disk Access when none
+   * is named. Idempotent on purpose: a second click while the panel is up
+   * re-opens the pane and keeps the one panel — PermissionFlow keeps a single
+   * floating panel for the same reason. A click for a DIFFERENT switch while
+   * one is up ends that flow and starts this one: one panel, one switch.
    */
-  async start(): Promise<void> {
+  async start(target: GrantTarget = this.deps.fullDisk): Promise<void> {
+    if (this.panel && this.target && this.target.key !== target.key) this.stop();
+    this.target = target;
     // The deep link (re-)fronts System Settings; with a tracker running that
     // is also what brings an existing panel back on screen.
-    void this.deps.openSettings();
+    void this.deps.openSettings(target.pane);
     if (this.panel) return;
     // Already granted: nothing to guide. The pane still opens — that's where
     // the grant is viewed or revoked — but a panel asking for what is already
     // given would only confuse. (Re-checked after the await: a second click
     // may have built the panel while the probe ran.)
-    if (await this.deps.probe()) return;
+    if (await target.probe()) return;
     if (this.panel) return;
 
     const workArea = screen.getPrimaryDisplay().workArea;
@@ -113,7 +145,7 @@ export class FdaGrantFlow {
       // actually round.
       transparent: true,
       show: false,
-      title: "Grant Full Disk Access",
+      title: `Grant ${target.label}`,
       webPreferences: {
         preload: this.deps.preloadPath,
         contextIsolation: true,
@@ -228,7 +260,8 @@ export class FdaGrantFlow {
   }
 
   private async checkGranted(): Promise<void> {
-    if (!(await this.deps.probe())) return;
+    const target = this.target;
+    if (!target || !(await target.probe())) return;
     // Let the panel's own poll paint the granted state, then leave.
     if (this.probeTimer) clearInterval(this.probeTimer);
     this.probeTimer = null;

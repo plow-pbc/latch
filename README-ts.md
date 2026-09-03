@@ -122,7 +122,9 @@ probe's answer (DESIGN.md §6a; `packages/device-core/src/hostGate/`). A
 command that is still `running` but carries a `diagnosis` is parked on a
 consent dialog and is left running for the owner's click. `plow_device_status`
 is the standing inventory — what would be refused if asked — with no
-approval, so an agent can say what is missing before trying.
+approval, so an agent can say what is missing before trying. The owner's side
+of the same facts is the app's Capabilities tab: every switch with what it
+stopped, badged by the rows that need a decision (DESIGN.md §6a).
 
 **Paths are resolved before the human sees them.** Every path an agent supplies
 is canonicalised *before* it becomes a capability, so the approval dialog and the

@@ -15,7 +15,7 @@
  */
 import { isoNow } from "@domo/protocol";
 import { fullDiskProbePaths, probeFullDiskAccessDetail, FullDiskProbeResult } from "./fullDiskAccess.js";
-import { AutomationStatus, HostProbes } from "./probes.js";
+import { AutomationStatus, HostProbes, PermissionStatus, QueryablePermission } from "./probes.js";
 
 /**
  * The apps this Mac's built-in skills send Apple events to. Named here, not
@@ -25,6 +25,15 @@ import { AutomationStatus, HostProbes } from "./probes.js";
  * name here, so the inventory can say up front whether it is allowed.
  */
 export const AUTOMATION_TARGETS: readonly string[] = ["Messages", "Contacts"];
+
+/**
+ * The services with a query API of their own that this Mac's tools can need:
+ * Accessibility for anything that drives the screen, Contacts and Calendars
+ * for the stores the skills read. Screen Recording is deliberately absent —
+ * no tool takes a screenshot of the screen, and asking about a permission
+ * nothing uses reads as an intent to use it.
+ */
+export const QUERYABLE_PERMISSIONS: readonly QueryablePermission[] = ["accessibility", "contacts", "calendars"];
 
 /** A child run the inventory's self-checks need: argv in, exit and output out. */
 export type ChildRunner = (argv: string[]) => Promise<{ exitCode: number | null; output: string }>;
@@ -36,6 +45,8 @@ export interface HostInventory {
   automation: { target: string; status: AutomationStatus }[];
   /** Whether Automation can be asked about at all (the helper is present). */
   automation_queryable: boolean;
+  /** The services with their own switch and their own query API. */
+  permissions: { permission: QueryablePermission; status: PermissionStatus }[];
   /** `sandbox-exec` spawns and runs a trivial command under a generated
    *  profile — every plow_run_command depends on this. */
   sandbox: { status: "ok" | "failed"; detail: string | null };
@@ -72,10 +83,16 @@ export interface InventoryDeps {
 export async function hostInventory(deps: InventoryDeps): Promise<HostInventory> {
   const targets = deps.automationTargets ?? AUTOMATION_TARGETS;
   const fdaPaths = deps.fullDiskPaths ?? fullDiskProbePaths(deps.ownerHome);
-  const [fda, automation, sandbox] = await Promise.all([
+  const [fda, automation, permissions, sandbox] = await Promise.all([
     probeFullDiskAccessDetail(fdaPaths),
     Promise.all(
       targets.map(async (target) => ({ target, status: await deps.probes.automationStatus(target) })),
+    ),
+    Promise.all(
+      QUERYABLE_PERMISSIONS.map(async (permission) => ({
+        permission,
+        status: await deps.probes.permissionStatus(permission),
+      })),
     ),
     sandboxCheck(deps.runSandboxed),
   ]);
@@ -91,6 +108,7 @@ export async function hostInventory(deps: InventoryDeps): Promise<HostInventory>
     // The helper answers something other than unknown for a target it can
     // see; "every target unknown" is what its absence looks like.
     automation_queryable: automation.some((a) => a.status !== "unknown"),
+    permissions,
     sandbox,
     child_attribution: attribution,
     vault_key: vaultKeyRow(deps.vaultKey),

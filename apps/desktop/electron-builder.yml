@@ -206,6 +206,12 @@ mac:
   notarize: true
   extendInfo:
     NSAppleEventsUsageDescription: "Plow Latch sends the Messages and automation commands you approve on this Mac."
+    # The consent dialogs the Capabilities tab can raise on purpose
+    # (native/host-permissions.swift --request) name the app and read these;
+    # without them macOS refuses the request instead of asking.
+    NSContactsUsageDescription: "Plow Latch reads and updates your contacts only for requests you approve."
+    NSCalendarsUsageDescription: "Plow Latch reads your calendars only for requests you approve."
+    NSCalendarsFullAccessUsageDescription: "Plow Latch reads your calendars only for requests you approve."
     # How macOS hands the app a credential-exchange import token (Apple
     # Passwords' "Export to another app…"): an NSUserActivity of this type,
     # which AppKit only delivers when the type is declared here. Electron

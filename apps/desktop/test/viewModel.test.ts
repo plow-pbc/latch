@@ -347,7 +347,8 @@ describe("auditActivities (grouping)", () => {
     ];
     expect(run.status).toBe("Allowed once · needs a macOS permission (Full Disk Access)");
     expect(run.tone).toBe("amber");
-    expect(run.category).toBe("failed");
+    // Its own bucket: the Capabilities tab's "Show in Audit" filters to it.
+    expect(run.category).toBe("blocked");
     expect(run.exitCode).toBe(1);
     expect(run.timeline.map((s) => s.text)).toContain(
       `This Mac refused ~/Library/Messages/chat.db: needs a macOS permission (Full Disk Access) — ${action}`,
@@ -357,7 +358,7 @@ describe("auditActivities (grouping)", () => {
     expect(file.timeline.at(-1)!.text).toMatch(/\(probably\) — A macOS permission dialog/);
     expect(file.timeline.at(-1)!.state).toBe("bad");
     expect(orphan.status).toBe("Blocked — outside the approved paths");
-    expect(orphan.category).toBe("failed");
+    expect(orphan.category).toBe("blocked");
   });
 
   it("browser runtime start/stop are lifecycle noise, never rows", () => {

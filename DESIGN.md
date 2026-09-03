@@ -274,14 +274,31 @@ touches another application's data.
 
 Full Disk Access and the folder gates have no request API and no query API;
 the first access *is* the request. So the grants are asked for **while the
-owner is at the Mac**: setup's "Data & permissions" step offers Full Disk
-Access through the drag-to-grant flow, and Settings holds the switch after.
-For the owner who declines it, `hostGate/folderAccess.ts` can touch the three
-folders deliberately so the dialogs are answered now rather than parking an
-agent later — the one place this app may raise a consent dialog on purpose;
-it is built and tested but not yet wired into setup. A confirmed block
-afterwards goes to the tray and, once per permission per run, a notification
-carrying the owner sentence; both open Settings.
+owner is at the Mac**. Setup's "Data & permissions" step offers Full Disk
+Access through the drag-to-grant flow; after that the **Capabilities tab**
+(`apps/desktop/src/capabilitiesModel.ts`) is the one home for every switch:
+Full Disk Access (and, only while it is off, the three folders it covers),
+Contacts, Calendars and Accessibility, Automation consent per app agents are
+asked to drive, and a section for anything a block named that the tab has
+no button for. Beside each row sits what it stopped — the audit log's blocks
+grouped by switch and joined to the agent and goal, behind an explicit "See
+blocked requests…" link — and one button that does the real thing: the
+floating panel beside the right Privacy & Security pane (with the drag tile
+where the pane takes a drop, a pointer where it lists only apps that asked),
+macOS's own dialog raised on purpose (a service through the helper's request
+mode; an Automation pair through the gated `count windows` osascript probe
+adopted from the apple-events branch), or a folder touched so macOS asks
+(`hostGate/folderAccess.ts`). Every one of those is behind a click on this
+Mac: the one condition under which this app raises a consent dialog.
+
+The tab's badge counts rows that need a decision — the switch is off AND
+something hit it, and the owner has not said "not now" since — never
+events, and it clears itself because status comes from the live inventory.
+A banner at the top says what was blocked since the owner last dismissed it
+and links to the Audit tab filtered to `blocked`, which is that category's
+own bucket for exactly this. A confirmed block also goes to the tray and,
+once per permission per run, a notification carrying the owner sentence;
+both land on the tab.
 
 What this cannot do: grant anything. Every fix is a switch in System Settings
 that only the owner can flip, and Full Disk Access may not apply to the

@@ -139,7 +139,7 @@ const compileUniversal = (tmp, output, { sources, target, extraArgs = [] }) => {
     compileUniversal(tmp, output, {
       sources: [source],
       target: "macos13.0",
-      extraArgs: ["-framework", "AppKit", "-framework", "CoreServices"],
+      extraArgs: ["-framework", "AppKit", "-framework", "CoreServices", "-framework", "Contacts", "-framework", "EventKit"],
     });
     fs.chmodSync(output, 0o755);
   });
