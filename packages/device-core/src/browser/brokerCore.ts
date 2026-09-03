@@ -6,12 +6,6 @@
  * the Bitwarden CLI and the subprocess all gone. The master key never leaves
  * this process.
  *
- * One deliberate divergence from the Python broker: the site check compares
- * hosts by label suffix (its root PSL-checked — see hostsRelated) instead of
- * by eTLD+1 equality. A login stored for `chase.com` still releases on
- * `secure.chase.com` and vice versa; what no longer matches is two SIBLING
- * subdomains with no stored apex, which is the stricter side to fail on.
- *
  * Secrets appear only in getField's return value; every other answer is
  * metadata. Every describe and every release attempt appends one line to the
  * credential audit log — never a value.
