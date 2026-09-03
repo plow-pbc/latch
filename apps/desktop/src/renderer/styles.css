@@ -247,6 +247,28 @@ td { padding: 9px 12px; vertical-align: middle; }
    clip happens here, since a table row won't shrink below its content). */
 .cw { display: block; }
 .t-time { color: var(--faint); white-space: nowrap; font-variant-numeric: tabular-nums; }
+/* The Status cell: a colored word with a dot, deliberately not a pill (see
+   statusPill in main.js). Tones match the badge's. */
+.t-dec { white-space: nowrap; }
+.dec {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  color: var(--zinc-fg);
+}
+/* A good outcome is the expected one, so it reads as ordinary text; only
+   trouble is tinted. */
+.dec-green { color: var(--fg); }
+.dec-red { color: var(--red-fg); }
+.dec-amber { color: var(--amber-fg); }
+.dec-blue { color: var(--blue-fg); }
+.dec-zinc { color: var(--muted); }
+/* An empty Decision or Status cell keeps the row's height without a pill. */
+.dec-none { display: inline-block; min-height: 1em; }
+.act-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .t-act { display: flex; align-items: center; gap: 8px; }
 /* Table-only: a long activity title (a multi-line request or a URL with no
    spaces) shows at most 4 lines, then is cut off with an ellipsis. The detail
