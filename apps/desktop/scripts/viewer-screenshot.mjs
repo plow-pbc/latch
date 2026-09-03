@@ -64,6 +64,8 @@ ipcMain.handle("audit:activities", async () => [
   {
     id: "act-1",
     time: "16:20:05",
+    decision: "",
+    decisionTone: "zinc",
     tone: "green",
     status: "Browsing",
     title: "Browse pizza.example",

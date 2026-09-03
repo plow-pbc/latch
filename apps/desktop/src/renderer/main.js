@@ -120,7 +120,7 @@ async function renderAudit() {
   const tbody = el("tbody");
   const table = el("table", {}, [
     el("thead", {}, [el("tr", {}, [
-      el("th", { text: "Time" }), el("th", { text: "Status" }), el("th", { text: "Activity" }),
+      el("th", { text: "Time" }), el("th", { text: "Decision" }), el("th", { text: "Status" }), el("th", { text: "Activity" }),
     ])]),
     tbody,
   ]);
@@ -302,25 +302,49 @@ function hostOf(url) {
 // burst of streamed events never recreates (and thus never interrupts) the row.
 function createAuditRow(id) {
   const timeCw = el("div", { class: "cw" });
+  const decisionCw = el("div", { class: "cw" });
   const badgeCw = el("div", { class: "cw" });
   const iconWrap = el("span", { class: "ic-wrap" });
   const titleSpan = el("span", { class: "t-title" });
   const actCw = el("div", { class: "cw" }, [el("div", { class: "t-act" }, [iconWrap, titleSpan])]);
   const tr = el("tr", {}, [
     el("td", { class: "t-time" }, [timeCw]),
-    el("td", {}, [badgeCw]),
+    el("td", {}, [decisionCw]),
+    el("td", { class: "t-dec" }, [badgeCw]),
     el("td", {}, [actCw]),
   ]);
   // Select on mouse down (feels immediate, before the click completes).
   tr.addEventListener("mousedown", () => { selectedId = id; refreshAudit(); });
-  return { tr, timeCw, badgeCw, iconWrap, titleSpan, time: null, tone: null, status: null, title: null, kind: null };
+  return {
+    tr, timeCw, decisionCw, badgeCw, iconWrap, titleSpan,
+    time: null, decision: null, decisionTone: null, tone: null, status: null, title: null, kind: null,
+  };
+}
+
+// The Decision cell: who let this happen, as a pill — without the dot the
+// other tabs' pills carry, since the fill already says it. Empty for a row
+// that had no authorization step.
+function decisionMark(a) {
+  if (!a.decision) return el("span", { class: "dec-none" });
+  return el("span", { class: `badge b-${a.decisionTone || "zinc"}`, text: a.decision });
+}
+
+// The Status cell: what happened to the work, as a colored word rather than
+// a second pill. Empty when nothing ran.
+function statusPill(a) {
+  if (!a.status) return el("span", { class: "dec dec-none" });
+  return el("span", { class: `dec dec-${a.tone || "zinc"}`, text: a.status });
 }
 
 // Update a row's content in place, touching only what changed.
 function updateAuditRow(r, a) {
   if (r.time !== a.time) { r.timeCw.textContent = a.time; r.time = a.time; }
+  if (r.decisionTone !== a.decisionTone || r.decision !== a.decision) {
+    r.decisionCw.replaceChildren(decisionMark(a));
+    r.decisionTone = a.decisionTone; r.decision = a.decision;
+  }
   if (r.tone !== a.tone || r.status !== a.status) {
-    r.badgeCw.replaceChildren(badge(a.tone, a.status));
+    r.badgeCw.replaceChildren(statusPill(a));
     r.tone = a.tone; r.status = a.status;
   }
   if (r.kind !== a.kind) { r.iconWrap.replaceChildren(icon(a.kind)); r.kind = a.kind; }
@@ -372,8 +396,9 @@ function detailFor(a) {
   addMeta("Intent", a.intentId, true);
   if (a.exitCode !== null && a.exitCode !== undefined) addMeta("Exit", a.exitCode);
 
+  // The header repeats the row's two cells: the decision, then the outcome.
   const children = [
-    el("h3", {}, [badge(a.tone, a.status)]),
+    el("h3", { class: "act-head" }, [decisionMark(a), statusPill(a)]),
     a.command ? el("div", { class: "cmd", text: a.command }) : null,
     meta,
   ];
