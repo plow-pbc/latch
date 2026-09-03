@@ -757,6 +757,12 @@ ipcMain.handle("roster:remove", async (_e, id: number) => {
   return agentsTabState();
 });
 
+/** Rename one roster row. Validation of the id and the name lives in `PlowApi`. */
+ipcMain.handle("roster:rename", async (_e, id: number, name: string) => {
+  await connectClient?.renameRosterRow(id, name);
+  return agentsTabState();
+});
+
 ipcMain.handle("connect:dismiss", async () => {
   connectClient?.dismissCredential();
   return agentsTabState();
