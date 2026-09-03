@@ -246,7 +246,8 @@ export interface CapabilitiesInput {
   events: readonly JSONValue[];
   /** Per row key, when the owner last said "not now". */
   dismissals: Record<string, string>;
-  /** When the owner last dismissed the banner; blocks before it stay quiet. */
+  /** When the owner last dismissed the banner. Blocks before it count for
+   *  nothing on the tab: not the banner, not a row's line, not the badge. */
   bannerSeenAt: string | null;
   /** The three folders, as this Mac last learned them (setup's touch, or
    *  a block); absent means macOS has never been asked. */
@@ -266,7 +267,16 @@ const QUERYABLE: readonly ("contacts" | "calendars" | "accessibility")[] = ["con
 
 /** Build the tab. */
 export function capabilitiesView(input: CapabilitiesInput): CapabilitiesView {
-  const groups = new Map(blockedGroups(input.events).map((g) => [g.key, g]));
+  // Only blocks newer than the banner's last dismissal count anywhere on the
+  // tab — the rows' lines, the arrows, the badge, the banner itself. The ×
+  // is the owner saying "seen"; after it the tab is clean until the next
+  // block, and the Audit tab keeps the history.
+  const groups = new Map(
+    blockedGroups(input.events)
+      .map((g) => sinceSeen(g, input.bannerSeenAt))
+      .filter((g): g is BlockedGroup => g !== null)
+      .map((g) => [g.key, g]),
+  );
   const inv = input.inventory;
   const fda = inv?.full_disk_access.granted ?? null;
 
@@ -415,7 +425,17 @@ export function capabilitiesView(input: CapabilitiesInput): CapabilitiesView {
   ];
 
   const badge = sections.reduce((n, s) => n + s.rows.filter((r) => r.needsAttention).length, 0);
-  return { badge, banner: banner(groups, input.bannerSeenAt, sections), sections };
+  return { badge, banner: banner(groups, sections), sections };
+}
+
+/** A group's blocks newer than the banner's last dismissal, or null when
+ *  none are. Counts, agents and "last" follow the surviving requests. */
+function sinceSeen(g: BlockedGroup, seenAt: string | null): BlockedGroup | null {
+  const requests = seenAt === null ? g.requests : g.requests.filter((r) => r.at > seenAt);
+  if (requests.length === 0) return null;
+  const agents: string[] = [];
+  for (const r of requests) if (r.agent !== null && !agents.includes(r.agent)) agents.push(r.agent);
+  return { key: g.key, count: requests.length, last: requests[0]!.at, agents, requests };
 }
 
 function group(
@@ -437,22 +457,15 @@ function group(
   };
 }
 
-function banner(
-  groups: Map<string, BlockedGroup>,
-  seenAt: string | null,
-  sections: CapabilitySection[],
-): CapabilitiesBanner | null {
+function banner(groups: Map<string, BlockedGroup>, sections: CapabilitySection[]): CapabilitiesBanner | null {
   const titles = new Map(sections.flatMap((s) => s.rows.map((r) => [r.key, r.title] as const)));
   const summary: { title: string; count: number; last: string }[] = [];
   let count = 0;
   let last = "";
   for (const g of groups.values()) {
-    const fresh = g.requests.filter((r) => seenAt === null || r.at > seenAt);
-    if (fresh.length === 0) continue;
-    count += fresh.length;
-    const newest = fresh[0]!.at;
-    if (newest > last) last = newest;
-    summary.push({ title: titles.get(g.key) ?? PERMISSION_TITLES[g.key] ?? g.key, count: fresh.length, last: newest });
+    count += g.count;
+    if (g.last > last) last = g.last;
+    summary.push({ title: titles.get(g.key) ?? PERMISSION_TITLES[g.key] ?? g.key, count: g.count, last: g.last });
   }
   if (count === 0) return null;
   summary.sort((a, b) => (a.last < b.last ? 1 : a.last > b.last ? -1 : 0));
