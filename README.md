@@ -69,10 +69,13 @@ owner-only `0600` `settings.json`.
 
 ## License
 
-Apache-2.0 — see [LICENSE](LICENSE) and [NOTICE](NOTICE). The vendored
-`vendor/browser-server/` directory carries its own MIT license from upstream.
-The browser fetched at package time (`just package`; `just fetch-browser`
-covers dev) is Camoufox (MPL-2.0), which is not part of this repository; its
-license governs redistribution of packaged builds that bundle it. The
-fingerprint pool is sampled at build time with camoufox-js (MPL-2.0), a
-build-only dependency that does not ship.
+Apache-2.0 — see [LICENSE](LICENSE) and [NOTICE](NOTICE). Copyright 2026
+The Plow Collective, Inc. The vendored `vendor/browser-server/` directory
+carries its own MIT license from upstream. The browser fetched at package
+time (`just package`; `just fetch-browser` covers dev) is Camoufox (MPL-2.0),
+which is not part of this repository; its license governs redistribution of
+packaged builds that bundle it. The fingerprint pool is sampled at build time
+with camoufox-js (MPL-2.0), a build-only dependency that does not ship.
+
+"Plow" and the Plow logo are trademarks of The Plow Collective, Inc. The
+license grants no trademark rights.
