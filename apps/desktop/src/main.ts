@@ -1362,6 +1362,13 @@ ipcMain.handle("capabilities:act", async (_e, rawKey: unknown) => {
   switch (row.action) {
     case "grant":
     case "open": {
+      const pane = paneFor(key);
+      // A pane the panel can do nothing beside (Screen Recording) is just
+      // opened; the owner finds the switch themselves.
+      if (pane && pane.panel === false) {
+        await shell.openExternal(pane.url);
+        break;
+      }
       const target = grantTargetFor(key);
       if (target) await fdaGrantFlow.start(target);
       break;
