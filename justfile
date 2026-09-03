@@ -313,13 +313,12 @@ clean:
 # ---------------------------------------------------------------------------
 
 # The packaged app's bundle id AND the from-source Electron.app's, plus the
-# app's own memos of what macOS said. A from-source `just app` from Terminal
-# or iTerm is attributed by macOS to that terminal, so its grants are reset
-# too (found by asking TCC's own SPI, never guessed); from Termic, which
-# disclaims its tasks, Electron.app is the client and nothing more is
-# touched. `just reset-permissions no` skips the launcher, `host=<bundle id>`
-# names one. Some services need sudo; the script asks only when one refuses.
-# Quit and reopen the app afterwards.
+# app's own memos of what macOS said. A from-source `just app` is attributed
+# by macOS to the terminal it was launched from — Termic, iTerm, Terminal —
+# so that app's grants are reset too, found the way the drag panel finds it
+# (the helper's ancestry walk), never guessed. `just reset-permissions no`
+# skips the launcher, `host=<bundle id>` names one. Some services need sudo;
+# the script asks only when one refuses. Quit and reopen the app afterwards.
 # Reset every macOS privacy grant (TCC) this app can hold, for a clean slate.
 reset-permissions host="auto":
     scripts/reset-permissions.sh "{{apphome}}" {{host}}

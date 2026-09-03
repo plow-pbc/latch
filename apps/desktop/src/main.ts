@@ -1407,9 +1407,12 @@ async function bundleIcon(bundle: string): Promise<Electron.NativeImage | null> 
  * Which app the grant must name. TCC keys Full Disk Access on the RESPONSIBLE
  * process, not the executable: a `just app` run out of a terminal is the
  * terminal app's grant — dragging Electron.app into the list would grant
- * nothing this run can use. The helper's --responsible mode asks the same SPI
- * TCC keys on; without the helper (or an answer from it), the executable's
- * own bundle is the remaining guess, and exactly right for the packaged app.
+ * nothing this run can use. The helper's --responsible mode answers the way
+ * TCC attributes: the topmost app bundle in the process ancestry (the SPI TCC
+ * keys on is asked first, but it answers "self" for everything on recent
+ * macOS, so the walk is what decides). Without the helper (or an answer from
+ * it), the executable's own bundle is the remaining guess, and exactly right
+ * for the packaged app.
  *
  * Resolved once — responsibility cannot change while the process lives — and
  * always through dragInfo before any drag can start, so dragStart reads the

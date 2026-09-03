@@ -38,13 +38,67 @@ let missesBeforeFirstWindow = 150
 
 signal(SIGPIPE, SIG_DFL)
 
-/// The process TCC will actually attribute a grant to. Private SPI, but the
-/// very one TCC keys on: a terminal-launched dev run is *responsible to the
+/// The process TCC will actually attribute a grant to. Private SPI, the very
+/// one TCC keys on: a terminal-launched dev run is *responsible to the
 /// terminal app*, so the drag target must be the terminal's bundle — dragging
 /// Electron.app in would grant nothing the run can use. Responsibility is
 /// inherited, so asking about this helper answers for the app that spawned it.
+///
+/// Asked first, trusted only when it names some OTHER process: on recent
+/// macOS it answers the queried pid for every process — Electron's own GPU
+/// helper included, which is certainly Electron's — so a "self" answer is
+/// no answer, and the ancestry walk below decides instead.
 @_silgen_name("responsibility_get_pid_responsible_for_pid")
 func responsibility_get_pid_responsible_for_pid(_ pid: pid_t) -> pid_t
+
+/// The parent of a process, from the kernel's process table; nil at launchd
+/// or for a pid that is gone.
+func parentPid(of pid: pid_t) -> pid_t? {
+    var info = kinfo_proc()
+    var size = MemoryLayout<kinfo_proc>.stride
+    var mib: [Int32] = [CTL_KERN, KERN_PROC, KERN_PROC_PID, pid]
+    guard sysctl(&mib, UInt32(mib.count), &info, &size, nil, 0) == 0, size > 0 else { return nil }
+    let ppid = info.kp_eproc.e_ppid
+    return ppid > 0 ? ppid : nil
+}
+
+/// The `.app` bundle an executable path sits inside — the SHALLOWEST one, so
+/// a helper nested in a framework inside the app never names the framework.
+func bundle(ofExecutable path: String) -> String? {
+    let parts = path.split(separator: "/", omittingEmptySubsequences: false)
+    guard let i = parts.dropLast().firstIndex(where: { $0.hasSuffix(".app") && $0 != ".app" }) else { return nil }
+    return parts[...i].joined(separator: "/")
+}
+
+func executablePath(of pid: pid_t) -> String? {
+    var buffer = [CChar](repeating: 0, count: Int(MAXPATHLEN) * 4)
+    let n = proc_pidpath(pid, &buffer, UInt32(buffer.count))
+    return n > 0 ? String(cString: buffer) : nil
+}
+
+/// The app TCC attributes this helper's caller to.
+///
+/// Responsibility flows down from the app launchd started: a shell inside
+/// Termic, iTerm or Terminal is that app's, and so is everything the shell
+/// runs — `just app`'s Electron.app included. So the answer is the TOPMOST
+/// `.app` ancestor of this process: the terminal for a from-source run, the
+/// app itself for a packaged one launched from the Dock (its parent is
+/// launchd, and it is its own topmost bundle).
+func responsibleAppBundle() -> String? {
+    let rpid = responsibility_get_pid_responsible_for_pid(getpid())
+    if rpid > 0, rpid != getpid(), let path = executablePath(of: rpid), let app = bundle(ofExecutable: path) {
+        return app
+    }
+    var topmost: String? = nil
+    var pid: pid_t? = parentPid(of: getpid())
+    var hops = 0
+    while let p = pid, p > 1, hops < 64 {
+        if let path = executablePath(of: p), let app = bundle(ofExecutable: path) { topmost = app }
+        pid = parentPid(of: p)
+        hops += 1
+    }
+    return topmost
+}
 
 // One-shot mode: print a file's Finder icon as base64 PNG and exit. Electron's
 // app.getFileIcon hands back the generic app icon for bundles; NSWorkspace
@@ -75,12 +129,8 @@ if let flag = CommandLine.arguments.firstIndex(of: "--icon"),
 // (main.ts) uses it to name the right drag target; a failure just means the
 // caller falls back to the executable's own bundle.
 if CommandLine.arguments.contains("--responsible") {
-    let rpid = responsibility_get_pid_responsible_for_pid(getpid())
-    if rpid > 0,
-       let app = NSRunningApplication(processIdentifier: rpid),
-       let bundleURL = app.bundleURL,
-       bundleURL.pathExtension == "app" {
-        print(bundleURL.path)
+    if let app = responsibleAppBundle(), FileManager.default.fileExists(atPath: app + "/Contents/Info.plist") {
+        print(app)
         exit(0)
     }
     exit(1)
