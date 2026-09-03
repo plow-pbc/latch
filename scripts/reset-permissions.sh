@@ -12,20 +12,25 @@
 #   - the packaged install is co.plow.domo-desktop (electron-builder.yml appId);
 #   - a from-source `just app` runs node_modules/electron's Electron.app,
 #     bundle id com.github.Electron — every worktree's the same;
-#   - but launched from a terminal, macOS attributes that run to the TERMINAL
-#     (main.ts resolveFdaDragTarget says why), so its grants are the terminal's.
-# The first two are always reset. The terminal's are reset only when asked
-# (`terminal=yes`), because that takes the terminal's own Full Disk Access and
-# Automation grants with it.
+#   - but launched from a terminal, macOS attributes that run to the app the
+#     terminal session belongs to (main.ts resolveFdaDragTarget says why):
+#     Termic, iTerm, Terminal, an IDE. Its grants are that app's.
+# The first two are always reset. The third is found from where THIS script
+# runs — `__CFBundleIdentifier`, which macOS sets on every process launched
+# from an app bundle and which survives into a shell's children (Termic sets
+# TERM_PROGRAM to iTerm.app for compatibility, so that variable is only the
+# fallback) — and reset too, since a from-source run is what the reset is
+# usually for. That takes the app's own Full Disk Access and Automation grants
+# with it; `host=no` skips it.
 #
-# Usage: reset-permissions.sh <apphome> [terminal=yes|no] [--dry-run]
+# Usage: reset-permissions.sh <apphome> [host=auto|no|<bundle id>] [--dry-run]
 set -eu
 
 apphome="${1:?apphome}"
-# `just reset-permissions yes` and `just reset-permissions terminal=yes` both
-# land here; just passes recipe arguments positionally.
-terminal="${2#terminal=}"
-terminal="${terminal:-no}"
+# `just reset-permissions no` and `just reset-permissions host=no` both land
+# here; just passes recipe arguments positionally.
+host="${2#host=}"
+host="${host:-auto}"
 dry="${3:-}"
 
 run() {
@@ -43,15 +48,43 @@ SystemPolicyDownloadsFolder SystemPolicyRemovableVolumes SystemPolicyNetworkVolu
 AddressBook Calendar Reminders Photos Accessibility ScreenCapture AppleEvents"
 
 bundles="co.plow.domo-desktop com.github.Electron"
-if [ "$terminal" = "yes" ]; then
+
+# The app this shell was launched from — what a from-source run is
+# attributed to.
+launcher() {
+  if [ -n "${__CFBundleIdentifier:-}" ]; then echo "$__CFBundleIdentifier"; return; fi
+  # No bundle env (a plain ssh session, say): the helper's --responsible mode
+  # asks the same SPI TCC keys on, and the TERM_PROGRAM table is the last
+  # resort.
+  helper="$(dirname "$0")/../apps/desktop/dist/native/settings-window-frame"
+  if [ -x "$helper" ]; then
+    bundle="$("$helper" --responsible 2>/dev/null || true)"
+    if [ -n "$bundle" ] && [ -f "$bundle/Contents/Info.plist" ]; then
+      /usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" "$bundle/Contents/Info.plist" 2>/dev/null && return
+    fi
+  fi
   case "${TERM_PROGRAM:-}" in
-    Apple_Terminal) bundles="$bundles com.apple.Terminal" ;;
-    iTerm.app) bundles="$bundles com.googlecode.iterm2" ;;
-    vscode) bundles="$bundles com.microsoft.VSCode" ;;
-    WarpTerminal) bundles="$bundles dev.warp.Warp-Stable" ;;
-    *) echo "terminal=yes, but TERM_PROGRAM='${TERM_PROGRAM:-}' is not one this script knows; add it" ;;
+    Apple_Terminal) echo com.apple.Terminal ;;
+    iTerm.app) echo com.googlecode.iterm2 ;;
+    vscode) echo com.microsoft.VSCode ;;
+    WarpTerminal) echo dev.warp.Warp-Stable ;;
+    *) echo "" ;;
   esac
-fi
+}
+
+case "$host" in
+  no) ;;
+  auto)
+    found="$(launcher)"
+    if [ -n "$found" ]; then
+      echo "This shell was launched from $found; a from-source run is attributed to it, so its grants are reset too (host=no to skip)."
+      bundles="$bundles $found"
+    else
+      echo "Could not tell which app this shell was launched from; only the app's own bundle ids are reset (pass the id as host=<bundle id>)."
+    fi
+    ;;
+  *) bundles="$bundles $host" ;;
+esac
 
 for bundle in $bundles; do
   echo "== $bundle"
@@ -82,6 +115,3 @@ fi
 
 echo
 echo "Done. Quit and reopen the app: macOS keeps enforcing a running process's old answers."
-if [ "$terminal" != "yes" ]; then
-  echo "A from-source run launched from this terminal is attributed to the TERMINAL; \`just reset-permissions yes\` resets that too."
-fi

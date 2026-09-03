@@ -313,18 +313,19 @@ clean:
 # ---------------------------------------------------------------------------
 
 # The packaged app's bundle id AND the from-source Electron.app's, plus the
-# app's own memos of what macOS said. A from-source `just app` launched from
-# a terminal is attributed to THAT terminal by macOS, so `just
-# reset-permissions yes` resets the terminal's grants too (it loses its own
-# Full Disk Access with them). Some services need sudo; the script asks only
-# when one refuses. Quit and reopen the app afterwards.
+# app's own memos of what macOS said. A from-source `just app` is attributed
+# by macOS to the app this shell was launched from (Termic, iTerm, Terminal,
+# an IDE — read off __CFBundleIdentifier), so that app's grants are reset
+# too; `just reset-permissions no` skips it, `host=<bundle id>` names one.
+# Some services need sudo; the script asks only when one refuses. Quit and
+# reopen the app afterwards.
 # Reset every macOS privacy grant (TCC) this app can hold, for a clean slate.
-reset-permissions terminal="no":
-    scripts/reset-permissions.sh "{{apphome}}" {{terminal}}
+reset-permissions host="auto":
+    scripts/reset-permissions.sh "{{apphome}}" {{host}}
 
 # Show what reset-permissions would run, without running it.
-reset-permissions-dry-run terminal="no":
-    scripts/reset-permissions.sh "{{apphome}}" {{terminal}} --dry-run
+reset-permissions-dry-run host="auto":
+    scripts/reset-permissions.sh "{{apphome}}" {{host}} --dry-run
 
 # Fake agents, fake goals, last night's timestamps, appended to THIS
 # checkout's audit log so the Capabilities tab's banner, counts and "See
