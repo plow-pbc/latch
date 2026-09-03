@@ -420,6 +420,44 @@ textarea.text { min-height: 70px; resize: vertical; }
    System Settings uses on its tile). An empty cell keeps the columns when
    there is none. */
 .cap-icon { width: 20px; height: 20px; display: block; }
+/* The Google mark in the icon column: a white tile, like their app icon,
+   with the four-colour G inside. The hairline keeps a white tile visible on
+   a white card. */
+.cap-brand {
+  display: grid; place-items: center; border-radius: 5px; box-sizing: border-box;
+  background: #fff; border: 1px solid var(--border);
+}
+.cap-google-g { width: 14px; height: 14px; display: block; }
+/* Connected accounts under the Google row: one row per account, indented
+   to where "Google" starts — the dot column, the icon column and their two
+   gaps — so the rows and their dividers begin at the head's text edge. A
+   circular person glyph stands where the row's icon goes. */
+.cap-account-rows { margin-left: 52px; }
+.cap-account-row { grid-template-columns: 20px 1fr auto; }
+.cap-account-rows .cap-row:first-of-type { border-top: 1px solid var(--border); }
+.cap-person {
+  display: grid; place-items: center; border-radius: 50%;
+  background: var(--zinc-bg); border: 1px solid var(--zinc-bd); color: var(--muted); box-sizing: border-box;
+}
+.cap-person .ico { width: 12px; height: 12px; }
+.cap-account-line { display: flex; align-items: center; gap: 8px; min-width: 0; }
+/* "Default": a quiet grey pill, no dot — a label, not a status. */
+.cap-default-pill { font-weight: 500; }
+.cap-account-email { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cap-account-menu-btn { padding: 5px 9px; font-size: 9px; letter-spacing: 1px; line-height: 1; }
+
+/* A small popup menu (openMenu in main.js): a card floated over the page. */
+.menu {
+  position: fixed; z-index: 50; min-width: 160px; padding: 4px;
+  background: var(--card); border: 1px solid var(--border); border-radius: var(--radius-sm);
+  box-shadow: var(--shadow);
+}
+.menu-item {
+  display: block; width: 100%; text-align: left; padding: 6px 10px;
+  border: 0; border-radius: 6px; background: transparent; color: var(--fg); font: inherit; cursor: pointer;
+}
+.menu-item:hover:not(:disabled), .menu-item:focus-visible { background: var(--hover); outline: none; }
+.menu-item:disabled { color: var(--faint); cursor: default; }
 .cap-row:first-of-type { border-top: 0; }
 .cap-row .status-dot { flex: none; }
 .cap-row .cap-name { font-weight: 600; }
