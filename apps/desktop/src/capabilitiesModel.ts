@@ -188,8 +188,6 @@ export interface CapabilityRow {
   requests: BlockedRequest[];
   /** Counts toward the badge. */
   needsAttention: boolean;
-  /** Hidden from the badge by the owner, until a newer block arrives. */
-  dismissed: boolean;
 }
 
 /**
@@ -244,7 +242,8 @@ export interface CapabilitiesInput {
   /** The offered apps with their reconciled consent. */
   automation: { app: AutomationApp; status: AutomationStatus }[];
   events: readonly JSONValue[];
-  /** Per row key, when the owner last said "not now". */
+  /** Per row key, when the owner last dismissed that row's requests. Works
+   *  like the banner's dismissal, for one switch. */
   dismissals: Record<string, string>;
   /** When the owner last dismissed the banner. Blocks before it count for
    *  nothing on the tab: not the banner, not a row's line, not the badge. */
@@ -271,9 +270,11 @@ export function capabilitiesView(input: CapabilitiesInput): CapabilitiesView {
   // tab — the rows' lines, the arrows, the badge, the banner itself. The ×
   // is the owner saying "seen"; after it the tab is clean until the next
   // block, and the Audit tab keeps the history.
+  // A row's own Dismiss works the same way for that one switch: its
+  // requests up to that moment are gone from the tab, the banner included.
   const groups = new Map(
     blockedGroups(input.events)
-      .map((g) => sinceSeen(g, input.bannerSeenAt))
+      .map((g) => sinceSeen(g, later(input.bannerSeenAt, input.dismissals[g.key] ?? null)))
       .filter((g): g is BlockedGroup => g !== null)
       .map((g) => [g.key, g]),
   );
@@ -288,8 +289,6 @@ export function capabilitiesView(input: CapabilitiesInput): CapabilitiesView {
     action: RowAction,
   ): CapabilityRow => {
     const g = groups.get(key);
-    const dismissedAt = input.dismissals[key] ?? null;
-    const dismissed = g !== undefined && dismissedAt !== null && dismissedAt >= g.last;
     const off = status !== "granted";
     return {
       key,
@@ -303,8 +302,7 @@ export function capabilitiesView(input: CapabilitiesInput): CapabilitiesView {
       last: g?.last ?? null,
       agents: g?.agents ?? [],
       requests: g?.requests ?? [],
-      needsAttention: off && (g?.count ?? 0) > 0 && !dismissed,
-      dismissed,
+      needsAttention: off && (g?.count ?? 0) > 0,
     };
   };
 
@@ -428,8 +426,15 @@ export function capabilitiesView(input: CapabilitiesInput): CapabilitiesView {
   return { badge, banner: banner(groups, sections), sections };
 }
 
-/** A group's blocks newer than the banner's last dismissal, or null when
- *  none are. Counts, agents and "last" follow the surviving requests. */
+/** The later of two timestamps, either possibly absent. */
+function later(a: string | null, b: string | null): string | null {
+  if (a === null) return b;
+  if (b === null) return a;
+  return a > b ? a : b;
+}
+
+/** A group's blocks newer than a dismissal, or null when none are. Counts,
+ *  agents and "last" follow the surviving requests. */
 function sinceSeen(g: BlockedGroup, seenAt: string | null): BlockedGroup | null {
   const requests = seenAt === null ? g.requests : g.requests.filter((r) => r.at > seenAt);
   if (requests.length === 0) return null;

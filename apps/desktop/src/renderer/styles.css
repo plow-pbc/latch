@@ -409,11 +409,9 @@ textarea.text { min-height: 70px; resize: vertical; }
 .cap-banner .bs { opacity: 0.85; font-size: 12px; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .cap-banner > div { min-width: 0; }
 .cap-banner .spacer { flex: 1; }
-.cap-banner .link {
-  font: inherit; border: 0; background: transparent; color: inherit; font-weight: 600;
-  text-decoration: underline; text-underline-offset: 2px; cursor: pointer; padding: 0; white-space: nowrap;
-}
-.cap-banner .banner-close:hover { background: var(--amber-bd); }
+/* The strip's two actions wear the ordinary button, in the strip's ink. */
+.cap-banner .btn { color: inherit; border-color: var(--amber-bd); background: transparent; }
+.cap-banner .btn:hover { background: var(--amber-bd); }
 .cap-row {
   display: grid; grid-template-columns: 8px 20px 1fr auto; align-items: center; gap: 12px;
   padding: 10px 0; border-top: 1px solid var(--border);

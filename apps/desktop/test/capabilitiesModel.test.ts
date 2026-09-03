@@ -154,19 +154,24 @@ describe("capabilitiesView", () => {
     expect(rows.find((r) => r.key === "accessibility")).toMatchObject({ count: 0, needsAttention: false, action: "grant" });
   });
 
-  it("a dismissal hides a row from the badge until a newer block lands", () => {
-    const events = block("i1", "2026-09-02T06:12:00Z", "full_disk_access");
+  it("a row's own dismissal clears that row's requests — line, badge and banner — until a newer block lands", () => {
+    const events = [
+      ...block("i1", "2026-09-02T06:12:00Z", "full_disk_access"),
+      ...block("i2", "2026-09-02T06:20:00Z", "contacts"),
+    ];
     const dismissed = capabilitiesView(input({ events, dismissals: { full_disk_access: "2026-09-02T07:00:00Z" } }));
-    expect(dismissed.badge).toBe(0);
-    expect(dismissed.sections[0]!.rows[0]).toMatchObject({ dismissed: true, count: 1 });
+    expect(dismissed.sections[0]!.rows[0]).toMatchObject({ key: "full_disk_access", count: 0, needsAttention: false });
+    // The other switch's request is untouched, so the badge and banner keep it.
+    expect(dismissed.badge).toBe(1);
+    expect(dismissed.banner).toEqual({ count: 1, summary: [{ title: "Contacts", count: 1 }], last: "2026-09-02T06:20:00Z" });
     const newer = capabilitiesView(
       input({
-        events: [...events, ...block("i2", "2026-09-02T08:00:00Z", "full_disk_access")],
+        events: [...events, ...block("i3", "2026-09-02T08:00:00Z", "full_disk_access")],
         dismissals: { full_disk_access: "2026-09-02T07:00:00Z" },
       }),
     );
-    expect(newer.badge).toBe(1);
-    expect(newer.sections[0]!.rows[0]!.dismissed).toBe(false);
+    expect(newer.sections[0]!.rows[0]).toMatchObject({ count: 1, needsAttention: true });
+    expect(newer.badge).toBe(2);
   });
 
   it("the banner counts blocks since it was last dismissed, summarised per switch, newest first", () => {
