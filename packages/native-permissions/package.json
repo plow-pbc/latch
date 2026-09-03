@@ -1,0 +1,14 @@
+{
+  "name": "@domo/native-permissions",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Contacts and Calendars consent asked for in the app's own process — the only caller macOS will show those dialogs to. Status and request, nothing else; what to do with the answer lives in @domo/device-core and the desktop app.",
+  "main": "./index.cjs",
+  "scripts": {
+    "install": "node scripts/build.cjs"
+  },
+  "devDependencies": {
+    "node-addon-api": "^8.3.0",
+    "node-gyp": "^11.0.0"
+  }
+}

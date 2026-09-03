@@ -285,10 +285,15 @@ grouped by switch and joined to the agent and goal, behind an explicit "See
 blocked requests…" link — and one button that does the real thing: the
 floating panel beside the right Privacy & Security pane (with the drag tile
 where the pane takes a drop, a pointer where it lists only apps that asked),
-macOS's own dialog raised on purpose (a service through the helper's request
-mode; an Automation pair through the gated `count windows` osascript probe
-adopted from the apple-events branch), or a folder touched so macOS asks
-(`hostGate/folderAccess.ts`). Every one of those is behind a click on this
+macOS's own dialog raised on purpose (Contacts and Calendars through
+`@domo/native-permissions`, in the app's own process — the only caller those
+APIs will show a dialog to, and only when its bundle carries the usage
+strings and, hardened, the entitlements; an Automation pair through the
+gated `count windows` osascript probe adopted from the apple-events branch),
+or a folder touched so macOS asks (`hostGate/folderAccess.ts`). A from-source
+run is launched with TCC responsibility disclaimed (`just app`,
+`native/launch-disclaimed.swift`) so those dialogs are Electron.app's rather
+than the terminal's. Every one of those is behind a click on this
 Mac: the one condition under which this app raises a consent dialog.
 
 The tab's badge counts rows that need a decision — the switch is off AND

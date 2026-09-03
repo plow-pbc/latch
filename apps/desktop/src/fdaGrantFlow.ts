@@ -32,7 +32,12 @@ import {
   Rect,
 } from "./permissionFlow.js";
 
+/** The panel's height until the renderer has measured its own content: one
+ *  header line plus the tile. The renderer reports the height it actually
+ *  needs (a two-line header for a long switch name), and the window follows. */
 const PANEL_HEIGHT = 100;
+const MIN_PANEL_HEIGHT = 80;
+const MAX_PANEL_HEIGHT = 240;
 const FALLBACK_PANEL_WIDTH = 420;
 const PROBE_INTERVAL_MS = 2000;
 const FLOW_TIMEOUT_MS = 3 * 60 * 1000;
@@ -88,6 +93,10 @@ export class FdaGrantFlow {
   private holdTimer: NodeJS.Timeout | null = null;
   /** The switch the panel is currently pointing at. */
   private target: GrantTarget | null = null;
+  /** The height the panel's content needs, as the renderer last measured it. */
+  private height = PANEL_HEIGHT;
+  /** Where System Settings last was, so a height change can re-snap. */
+  private lastSettingsFrame: Rect | null = null;
 
   constructor(private readonly deps: FdaGrantFlowDeps) {}
 
@@ -118,9 +127,11 @@ export class FdaGrantFlow {
     if (this.panel) return;
 
     const workArea = screen.getPrimaryDisplay().workArea;
+    this.height = PANEL_HEIGHT;
+    this.lastSettingsFrame = null;
     const bounds = fallbackPanelFrame(workArea, {
       width: FALLBACK_PANEL_WIDTH,
-      height: PANEL_HEIGHT,
+      height: this.height,
     });
     const panel = new BrowserWindow({
       ...bounds,
@@ -255,8 +266,30 @@ export class FdaGrantFlow {
   private snapTo(settingsFrame: Rect): void {
     const panel = this.panel;
     if (!panel || panel.isDestroyed()) return;
+    this.lastSettingsFrame = settingsFrame;
     const workArea = screen.getDisplayMatching(settingsFrame).workArea;
-    panel.setBounds(panelFrame(settingsFrame, workArea, PANEL_HEIGHT));
+    panel.setBounds(panelFrame(settingsFrame, workArea, this.height));
+  }
+
+  /**
+   * The renderer measured its content: a header that wrapped to two lines
+   * needs a taller window, or the panel's tile is pushed out of the frame
+   * (the window's height was a constant; the header's length is not). The
+   * width is the tracker's business and stays; only the height follows,
+   * keeping the panel's top edge where it was.
+   */
+  setHeight(height: number): void {
+    const wanted = Math.round(Math.max(MIN_PANEL_HEIGHT, Math.min(height, MAX_PANEL_HEIGHT)));
+    if (wanted === this.height) return;
+    this.height = wanted;
+    const panel = this.panel;
+    if (!panel || panel.isDestroyed()) return;
+    if (this.lastSettingsFrame) {
+      this.snapTo(this.lastSettingsFrame);
+    } else {
+      const b = panel.getBounds();
+      panel.setBounds({ ...b, height: wanted });
+    }
   }
 
   private async checkGranted(): Promise<void> {

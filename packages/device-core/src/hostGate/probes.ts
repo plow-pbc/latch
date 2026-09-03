@@ -69,8 +69,30 @@ export interface HostProbes {
    * Raise macOS's own consent dialog for a service and wait for the answer.
    * THE ONE PROMPTING PROBE, and only ever behind a button the owner clicked:
    * a diagnosis never calls it, and nothing an agent can reach does either.
+   *
+   * Contacts and Calendars can only be asked for IN PROCESS: their request
+   * APIs check the usage description in the calling process's own bundle
+   * before they will show a dialog, so a bare helper is refused on the spot,
+   * and touching the store is refused without a dialog too. The app hands
+   * in its addon (`NodeProbeOptions.native`); without one the answer is
+   * `unknown`, and the tab sends the owner to the pane instead.
+   * Accessibility has no such API; its request goes through the helper.
    */
   requestPermission(permission: RequestablePermission): Promise<PermissionStatus>;
+  /** Whether Contacts and Calendars can be asked for in process at all. */
+  canRequestInProcess(): boolean;
+}
+
+/**
+ * What @domo/native-permissions exposes, loaded into the app's own process.
+ * Typed here so device-core never depends on the addon: the app passes it
+ * in, a test passes a script, and everything else sees `unknown`.
+ */
+export interface NativePermissions {
+  contactsStatus(): PermissionStatus | string;
+  calendarsStatus(): PermissionStatus | string;
+  requestContacts(): Promise<PermissionStatus | string>;
+  requestCalendars(): Promise<PermissionStatus | string>;
 }
 
 /** How long a probe child may take before its silence is the answer. Long
@@ -86,6 +108,8 @@ export interface NodeProbeOptions {
   timeoutMs?: number;
   /** Override for tests; the real list is `fullDiskProbePaths(ownerHome)`. */
   fullDiskPaths?: string[];
+  /** The in-process Contacts/Calendars addon, when the app has one. */
+  native?: NativePermissions | null;
 }
 
 function canAccess(mode: number, uid: number, gid: number, want: "r" | "w"): boolean {
@@ -131,49 +155,7 @@ export function nodeProbes(options: NodeProbeOptions = {}): HostProbes {
       };
     },
 
-    async openAsApp(path) {
-      let isDirectory = false;
-      try {
-        isDirectory = (await fs.stat(path)).isDirectory();
-      } catch (error: unknown) {
-        const code = (error as { code?: unknown })?.code;
-        // A stat refused by TCC (a guarded folder's contents) is an answer;
-        // a stat that says the file is not there is too.
-        if (typeof code === "string") return code;
-        return "error";
-      }
-      // Reading a directory's entries is what trips a folder gate; reading one
-      // byte is what trips a file's. `head` exits 0 on an empty file.
-      const [cmd, args] = isDirectory
-        ? ["/bin/ls", ["-A", "--", path]]
-        : ["/usr/bin/head", ["-c", "1", "--", path]];
-      return new Promise<OpenOutcome>((resolve) => {
-        const child = spawn(cmd, args, { stdio: ["ignore", "ignore", "pipe"] });
-        let stderr = "";
-        child.stderr?.on("data", (chunk: Buffer) => {
-          stderr += chunk.toString("utf8");
-        });
-        let settled = false;
-        const settle = (outcome: OpenOutcome) => {
-          if (settled) return;
-          settled = true;
-          clearTimeout(timer);
-          resolve(outcome);
-        };
-        // SIGKILL: a process parked in a guarded open has no handler to run.
-        const timer = setTimeout(() => {
-          child.kill("SIGKILL");
-          settle("hung");
-        }, timeoutMs);
-        timer.unref?.();
-        child.on("error", () => settle("error"));
-        child.on("exit", (code) => {
-          if (settled) return;
-          if (code === 0) return settle("ok");
-          settle(errnoFromHint(stderrHint(stderr)) ?? "error");
-        });
-      });
-    },
+    openAsApp: (path) => openAsApp(path, timeoutMs),
 
     fullDiskAccess: () => probeFullDiskAccess(fdaPaths),
 
@@ -185,17 +167,86 @@ export function nodeProbes(options: NodeProbeOptions = {}): HostProbes {
     },
 
     async permissionStatus(permission) {
+      // The addon answers for the app's own process, which is what the
+      // dialogs it raises are recorded for; the helper covers the rest.
+      const native = options.native ?? null;
+      if (native && permission === "contacts") return permissionWord(safe(() => native.contactsStatus()));
+      if (native && permission === "calendars") return permissionWord(safe(() => native.calendarsStatus()));
       const flag = permission === "screen_recording" ? "--screen-recording" : `--${permission}`;
       return permissionWord(await helperStatus(options.helperPath ?? null, [flag], timeoutMs));
     },
 
     async requestPermission(permission) {
       // A person answering a dialog: minutes, not the probe's seconds.
-      return permissionWord(
-        await helperStatus(options.helperPath ?? null, ["--request", permission], REQUEST_TIMEOUT_MS),
-      );
+      if (permission === "accessibility") {
+        return permissionWord(
+          await helperStatus(options.helperPath ?? null, ["--request", permission], REQUEST_TIMEOUT_MS),
+        );
+      }
+      const native = options.native ?? null;
+      if (!native) return "unknown";
+      const asked = permission === "contacts" ? native.requestContacts() : native.requestCalendars();
+      return permissionWord(await asked.catch(() => null));
     },
+
+    canRequestInProcess: () => (options.native ?? null) !== null,
   };
+}
+
+/** A synchronous addon call that must not take the caller down. */
+function safe(read: () => string): string | null {
+  try {
+    return read();
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Open (or list) a path from a child of this process, killed on a timer.
+ * Reading a directory's entries is what trips a folder gate; reading one
+ * byte is what trips a file's. `head` exits 0 on an empty file.
+ */
+async function openAsApp(path: string, timeoutMs: number): Promise<OpenOutcome> {
+  let isDirectory = false;
+  try {
+    isDirectory = (await fs.stat(path)).isDirectory();
+  } catch (error: unknown) {
+    const code = (error as { code?: unknown })?.code;
+    // A stat refused by TCC (a guarded folder's contents) is an answer;
+    // a stat that says the file is not there is too.
+    if (typeof code === "string") return code;
+    return "error";
+  }
+  const [cmd, args] = isDirectory
+    ? ["/bin/ls", ["-A", "--", path]]
+    : ["/usr/bin/head", ["-c", "1", "--", path]];
+  return new Promise<OpenOutcome>((resolve) => {
+    const child = spawn(cmd, args, { stdio: ["ignore", "ignore", "pipe"] });
+    let stderr = "";
+    child.stderr?.on("data", (chunk: Buffer) => {
+      stderr += chunk.toString("utf8");
+    });
+    let settled = false;
+    const settle = (outcome: OpenOutcome) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(outcome);
+    };
+    // SIGKILL: a process parked in a guarded open has no handler to run.
+    const timer = setTimeout(() => {
+      child.kill("SIGKILL");
+      settle("hung");
+    }, timeoutMs);
+    timer.unref?.();
+    child.on("error", () => settle("error"));
+    child.on("exit", (code) => {
+      if (settled) return;
+      if (code === 0) return settle("ok");
+      settle(errnoFromHint(stderrHint(stderr)) ?? "error");
+    });
+  });
 }
 
 /** How long a consent dialog raised on purpose is given before the request
@@ -233,6 +284,8 @@ export interface ProbeScript {
   permissions?: Partial<Record<QueryablePermission, PermissionStatus>>;
   /** What a request leaves behind; unscripted requests answer `unknown`. */
   requests?: Partial<Record<RequestablePermission, PermissionStatus>>;
+  /** Whether the scripted Mac can ask in process (default: yes). */
+  inProcess?: boolean;
 }
 
 /**
@@ -270,5 +323,6 @@ export function scriptedProbes(script: ProbeScript = {}): HostProbes & { calls: 
       calls.push(`requestPermission ${permission}`);
       return script.requests?.[permission] ?? "unknown";
     },
+    canRequestInProcess: () => script.inProcess ?? true,
   };
 }

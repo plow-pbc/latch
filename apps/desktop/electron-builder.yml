@@ -74,6 +74,8 @@ files:
   - "!node_modules/@domo/native-keychain/src/**"
   - "!node_modules/@domo/native-credential-import/scripts/**"
   - "!node_modules/@domo/native-credential-import/src/**"
+  - "!node_modules/@domo/native-permissions/scripts/**"
+  - "!node_modules/@domo/native-permissions/src/**"
   # Every consumer of zod and @modelcontextprotocol/* in the app is ESM, so the
   # parallel CJS builds are never resolved; zod's src/ is TypeScript source
   # shipped for sourcemap tooling only.
@@ -155,7 +157,7 @@ extraResources:
   # which is the only place macOS looks for it.
   - from: dist/native
     to: native
-    filter: ["**/*", "!*.stamp", "!PlowLatchCredentialProvider.appex/**"]
+    filter: ["**/*", "!*.stamp", "!PlowLatchCredentialProvider.appex/**", "!launch-disclaimed*"]
 
 mac:
   icon: ../../artwork/domo-desktop-icon.png
@@ -202,13 +204,15 @@ mac:
   # (universal2, byte-identical in both slices) are refused by the merger the
   # same way. (No SQLite entry: the WASM cookie-merge module is arch-neutral,
   # so the merge handles it like any file.)
-  x64ArchFiles: "**/{providers,node_modules/@domo/native-keychain,node_modules/@domo/native-credential-import}/**"
+  x64ArchFiles: "**/{providers,node_modules/@domo/native-keychain,node_modules/@domo/native-credential-import,node_modules/@domo/native-permissions}/**"
   notarize: true
   extendInfo:
     NSAppleEventsUsageDescription: "Plow Latch sends the Messages and automation commands you approve on this Mac."
-    # The consent dialogs the Capabilities tab can raise on purpose
-    # (native/host-permissions.swift --request) name the app and read these;
-    # without them macOS refuses the request instead of asking.
+    # The consent dialogs the Capabilities tab raises on purpose
+    # (@domo/native-permissions, in the app's own process) are shown only to
+    # a caller whose bundle carries these; without them macOS refuses the
+    # request instead of asking. A from-source run gets them from
+    # scripts/dev-usage-strings.mjs, which patches the dev Electron bundle.
     NSContactsUsageDescription: "Plow Latch reads and updates your contacts only for requests you approve."
     NSCalendarsUsageDescription: "Plow Latch reads your calendars only for requests you approve."
     NSCalendarsFullAccessUsageDescription: "Plow Latch reads your calendars only for requests you approve."
