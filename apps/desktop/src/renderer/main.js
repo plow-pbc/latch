@@ -2063,9 +2063,11 @@ async function renderCapabilities() {
     if (v.banner) {
       const summary = v.banner.summary.map((s) => `${s.count} ${s.title}`).join(", ");
       const one = v.banner.count === 1;
-      const showInAudit = el("button", { class: "link", text: "Show in Audit" });
+      // Two actions, both buttons: dismissing resets the whole tab (not just
+      // this strip), which is more than an × should carry.
+      const showInAudit = el("button", { class: "btn small", text: "Show in Audit", attrs: { type: "button" } });
       showInAudit.addEventListener("click", () => showAuditBlocked());
-      const close = el("button", { class: "banner-close", attrs: { "aria-label": "Dismiss" }, text: "×" });
+      const close = el("button", { class: "btn small", text: "Dismiss", attrs: { type: "button" } });
       close.addEventListener("click", async () => draw(await window.domo.capabilitiesBannerSeen()));
       nodes.push(el("div", { class: "cap-banner" }, [
         icon("warning", { class: "ico cap-banner-icon" }),
@@ -2278,11 +2280,12 @@ async function renderCapabilities() {
       ]),
     ]));
     const sentence = r.requests.find((q) => q.ownerAction)?.ownerAction ?? null;
-    const notNow = el("button", { class: "btn quiet", text: r.dismissed ? "Hidden from the badge" : "Not now" });
-    notNow.disabled = r.dismissed;
-    notNow.addEventListener("click", async () => draw(await window.domo.capabilitiesDismiss(r.key)));
-    const inAudit = el("button", { class: "btn", text: "Show these in Audit" });
+    // The banner's pair, for this one switch: Dismiss clears these requests
+    // from the tab (the Audit tab keeps them) until a newer block lands.
+    const inAudit = el("button", { class: "btn small", text: "Show in Audit", attrs: { type: "button" } });
     inAudit.addEventListener("click", () => showAuditBlocked());
+    const notNow = el("button", { class: "btn small", text: "Dismiss", attrs: { type: "button" } });
+    notNow.addEventListener("click", async () => draw(await window.domo.capabilitiesDismiss(r.key)));
     return el("div", { class: "cap-expand" }, [
       el("p", { class: "lbl", text: "Blocked requests" }),
       ...reqs,
@@ -2294,8 +2297,8 @@ async function renderCapabilities() {
           ? [el("span", { class: "badge b-amber" }, [el("span", { class: "dot" }), el("span", { text: "Quit and reopen after granting" })])]
           : []),
         el("div", { class: "spacer" }),
-        notNow,
         inAudit,
+        notNow,
       ]),
     ]);
   };
