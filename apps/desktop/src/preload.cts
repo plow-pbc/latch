@@ -75,11 +75,20 @@ contextBridge.exposeInMainWorld("domo", {
   // Availability booleans and the active model — never a credential.
   inferenceGet: () => ipcRenderer.invoke("settings:getInference"),
   statusGet: () => ipcRenderer.invoke("status:get"),
-  // macOS permission ceilings and the app's self-checks — the device's
-  // standing inventory, plus the flat Full Disk Access boolean the grant flow
-  // polls. Read-only: the grants themselves happen in System Settings, via
-  // openExternal("fullDiskSettings").
+  // The Capabilities tab (capabilitiesModel.ts): every switch with its
+  // status and what it stopped, the banner, and the badge — one whole-state
+  // shape per read, like every other pane. `act` does the row's one thing
+  // (the panel flow, a request, a folder touch) and answers with the fresh
+  // state; `dismiss` and `bannerSeen` record the owner's "not now".
   capabilitiesGet: () => ipcRenderer.invoke("capabilities:get"),
+  capabilitiesAct: (key: string) => ipcRenderer.invoke("capabilities:act", key),
+  capabilitiesDismiss: (key: string) => ipcRenderer.invoke("capabilities:dismiss", key),
+  capabilitiesBannerSeen: () => ipcRenderer.invoke("capabilities:bannerSeen"),
+  // A block by this Mac lands the tray item and the notification here.
+  onShowCapabilities: (cb: () => void) => ipcRenderer.on("ui:showCapabilities", cb),
+  // The floating panel's own poll: which switch it points at, and whether
+  // that grant has landed.
+  grantState: () => ipcRenderer.invoke("grant:state"),
   // The Full Disk Access grant flow (permissionFlow.ts, ported from
   // PermissionFlow). dragInfo/dragStart serve the floating panel's drag tile:
   // dragInfo is display data only — name and icon; the drag payload never
@@ -94,8 +103,10 @@ contextBridge.exposeInMainWorld("domo", {
   // The drag session ended (dropped or cancelled): the tile, hidden while its
   // image rode with the cursor, comes back.
   onFullDiskDragEnd: (cb: () => void) => ipcRenderer.on("fullDisk:dragEnd", cb),
-  // Start the grant flow: main opens the pane and floats the drag panel next
-  // to System Settings (fdaGrantFlow.ts owns the whole lifecycle).
+  // Start the Full Disk Access grant flow: main opens the pane and floats the
+  // drag panel next to System Settings (fdaGrantFlow.ts owns the whole
+  // lifecycle). Setup's "Data & permissions" step uses this; the
+  // Capabilities tab goes through `capabilitiesAct`.
   fullDiskGrantFlow: () => ipcRenderer.invoke("fullDisk:grantFlow"),
   // The floating panel's close button; main owns the panel's lifecycle.
   fullDiskDismiss: () => ipcRenderer.send("fullDisk:dismiss"),

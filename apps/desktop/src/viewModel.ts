@@ -152,7 +152,10 @@ export interface AuditActivity {
   title: string;
   /** "command" | "file" | "access" | "agent" | "info" — drives the row icon. */
   kind: string;
-  /** Coarse filter bucket: "approved" | "denied" | "blocked" | "other". */
+  /** Coarse filter bucket: "approved" | "denied" | "blocked" | "failed" |
+   * "other". `blocked` is this Mac itself refusing (a macOS permission, a
+   * waiting dialog, the sandbox bound) — its own bucket, because it is the
+   * one the Capabilities tab links into. */
   category: string;
   command: string | null;
   agentId: string | null;
@@ -374,6 +377,7 @@ function activityTitle(
  * plus the coarse filter bucket — one tree, so the badge and the chip cannot
  * drift apart. The buckets:
  *   - denied:   refused at the approval gate (a person, device, or deadline)
+ *   - blocked:  approved, then refused by this Mac itself (hostGate/)
  *   - failed:   ran but didn't cleanly succeed — sandbox-blocked, errored,
  *               crashed, or a non-zero exit
  *   - approved: permitted and completed cleanly
@@ -438,7 +442,7 @@ function classifyActivity(
     // run, because nothing here was refused BY anyone.
     const gate = entry("host_permission_blocked");
     if (gate) {
-      return { status: `${base} · ${hostGateLabel(jv(gate))}`, tone: "amber", category: "failed" };
+      return { status: `${base} · ${hostGateLabel(jv(gate))}`, tone: "amber", category: "blocked" };
     }
     if (entry("denied_operation")) {
       return { status: `${base} · blocked`, tone: "red", category: "failed" };
@@ -518,7 +522,7 @@ function classifyActivity(
   // A handle-only block from a deferred run whose end outlived its intent's
   // row: the gate is still the story.
   const gate = entry("host_permission_blocked");
-  if (gate) return { status: `Blocked — ${hostGateLabel(jv(gate))}`, tone: "amber", category: "failed" };
+  if (gate) return { status: `Blocked — ${hostGateLabel(jv(gate))}`, tone: "amber", category: "blocked" };
   // A handle-only exec_end from an old log: a deferred run's end recorded
   // without its intent. The exit code is the whole story.
   const ee = entry("exec_end");

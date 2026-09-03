@@ -24,13 +24,33 @@
 //                           is why the fourth answer exists.
 //   --accessibility         {"status":"granted"|"denied"}
 //   --screen-recording      {"status":"granted"|"denied"}
+//   --contacts              {"status":"granted"|"denied"|"not_asked"}
+//   --calendars             {"status":"granted"|"denied"|"not_asked"}
+//   --request <contacts|calendars|accessibility>
+//                           THE ONE PROMPTING MODE. Raises macOS's own consent
+//                           dialog for that service and waits for the answer;
+//                           prints the status it left behind. Only ever run
+//                           from a button the owner clicked — never from a
+//                           diagnosis or an agent's call. Accessibility has
+//                           no in-app answer: its dialog only offers to open
+//                           System Settings, so the printed status is what
+//                           the owner had done by the time it returned.
 // Anything else: usage on stderr, exit 2.
+//
+// The consent dialogs name the RESPONSIBLE app and read its usage strings
+// (NSContactsUsageDescription, NSCalendarsFullAccessUsageDescription), which
+// the packaged app carries (electron-builder.yml extendInfo). A from-source
+// run under Electron.app lacks them, and macOS then answers the request with
+// a denial rather than a dialog — expected there, and exactly why the status
+// modes above exist separately from the request.
 //
 // Compiled by scripts/build-native.mjs into dist/native/, shipped as an
 // extraResource. No run loop, no NSApplication.
 
 import AppKit
+import Contacts
 import CoreServices
+import EventKit
 import Foundation
 
 func emit(_ status: String) -> Never {
@@ -40,9 +60,30 @@ func emit(_ status: String) -> Never {
 
 func usage() -> Never {
     FileHandle.standardError.write(
-        "usage: host-permissions --automation <bundle-id|app name> | --accessibility | --screen-recording\n"
+        ("usage: host-permissions --automation <bundle-id|app name> | --accessibility | --screen-recording"
+            + " | --contacts | --calendars | --request <contacts|calendars|accessibility>\n")
             .data(using: .utf8)!)
     exit(2)
+}
+
+func contactsWord(_ status: CNAuthorizationStatus) -> String {
+    switch status {
+    case .authorized: return "granted"
+    case .notDetermined: return "not_asked"
+    default: return "denied"
+    }
+}
+
+func calendarsWord(_ status: EKAuthorizationStatus) -> String {
+    switch status {
+    case .authorized: return "granted"
+    case .notDetermined: return "not_asked"
+    default:
+        // macOS 14 adds .fullAccess/.writeOnly; full access is what reading
+        // events needs, and write-only reads as not enough.
+        if #available(macOS 14.0, *), status == .fullAccess { return "granted" }
+        return "denied"
+    }
 }
 
 /// The running application the target names. Bundle ids contain a dot; a
@@ -110,6 +151,46 @@ if args.first == "--screen-recording" {
     // CGPreflightScreenCaptureAccess asks; CGRequestScreenCaptureAccess would
     // prompt. 10.15+, and the helper targets 13.
     emit(CGPreflightScreenCaptureAccess() ? "granted" : "denied")
+}
+
+if args.first == "--contacts" {
+    emit(contactsWord(CNContactStore.authorizationStatus(for: .contacts)))
+}
+
+if args.first == "--calendars" {
+    emit(calendarsWord(EKEventStore.authorizationStatus(for: .event)))
+}
+
+if let flag = args.first, flag == "--request" {
+    guard args.count >= 2 else { usage() }
+    let service = args[args.startIndex + 1]
+    // The request APIs answer on a background queue; a CLI has no run loop
+    // to wait on, so a semaphore holds main until the dialog is answered.
+    // Generous: a person reading a dialog takes seconds, not milliseconds.
+    let done = DispatchSemaphore(value: 0)
+    switch service {
+    case "contacts":
+        CNContactStore().requestAccess(for: .contacts) { _, _ in done.signal() }
+        _ = done.wait(timeout: .now() + 180)
+        emit(contactsWord(CNContactStore.authorizationStatus(for: .contacts)))
+    case "calendars":
+        let store = EKEventStore()
+        if #available(macOS 14.0, *) {
+            store.requestFullAccessToEvents { _, _ in done.signal() }
+        } else {
+            store.requestAccess(to: .event) { _, _ in done.signal() }
+        }
+        _ = done.wait(timeout: .now() + 180)
+        emit(calendarsWord(EKEventStore.authorizationStatus(for: .event)))
+    case "accessibility":
+        // The prompt only offers to open System Settings; there is no in-app
+        // Allow. So this raises it and reports the status at once — the
+        // caller's panel flow follows the owner into the pane from there.
+        let options = [kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String: true] as CFDictionary
+        emit(AXIsProcessTrustedWithOptions(options) ? "granted" : "denied")
+    default:
+        usage()
+    }
 }
 
 usage()

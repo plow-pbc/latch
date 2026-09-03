@@ -34,6 +34,15 @@ export type OpenOutcome = "ok" | "hung" | Errno;
  */
 export type AutomationStatus = "granted" | "denied" | "not_asked" | "target_not_running" | "unknown";
 
+/** The services the helper can read (and, on a click, request) directly:
+ *  each has a query API of its own, unlike Full Disk Access and the folders. */
+export type QueryablePermission = "accessibility" | "screen_recording" | "contacts" | "calendars";
+/** What such a service reports. `not_asked` means macOS will raise its
+ *  dialog at the first use — or at `requestPermission`. */
+export type PermissionStatus = "granted" | "denied" | "not_asked" | "unknown";
+/** The services with a consent dialog the helper can raise on purpose. */
+export type RequestablePermission = "accessibility" | "contacts" | "calendars";
+
 /** The POSIX view of a path — what `stat` says, with the mode bits already
  *  resolved against this process's uid and groups. */
 export interface PathInfo {
@@ -54,6 +63,14 @@ export interface HostProbes {
   fullDiskAccess(): Promise<boolean>;
   /** Automation consent for one target, by bundle id or app name. */
   automationStatus(target: string): Promise<AutomationStatus>;
+  /** A queryable service's consent, without prompting. */
+  permissionStatus(permission: QueryablePermission): Promise<PermissionStatus>;
+  /**
+   * Raise macOS's own consent dialog for a service and wait for the answer.
+   * THE ONE PROMPTING PROBE, and only ever behind a button the owner clicked:
+   * a diagnosis never calls it, and nothing an agent can reach does either.
+   */
+  requestPermission(permission: RequestablePermission): Promise<PermissionStatus>;
 }
 
 /** How long a probe child may take before its silence is the answer. Long
@@ -161,25 +178,49 @@ export function nodeProbes(options: NodeProbeOptions = {}): HostProbes {
     fullDiskAccess: () => probeFullDiskAccess(fdaPaths),
 
     async automationStatus(target) {
-      const helper = options.helperPath ?? null;
-      if (helper === null) return "unknown";
-      return new Promise<AutomationStatus>((resolve) => {
-        execFile(helper, ["--automation", target], { timeout: timeoutMs }, (error, stdout) => {
-          if (error) return resolve("unknown");
-          try {
-            const status = (JSON.parse(stdout.trim()) as { status?: unknown }).status;
-            resolve(
-              status === "granted" || status === "denied" || status === "not_asked" || status === "target_not_running"
-                ? status
-                : "unknown",
-            );
-          } catch {
-            resolve("unknown");
-          }
-        });
-      });
+      const status = await helperStatus(options.helperPath ?? null, ["--automation", target], timeoutMs);
+      return status === "granted" || status === "denied" || status === "not_asked" || status === "target_not_running"
+        ? status
+        : "unknown";
+    },
+
+    async permissionStatus(permission) {
+      const flag = permission === "screen_recording" ? "--screen-recording" : `--${permission}`;
+      return permissionWord(await helperStatus(options.helperPath ?? null, [flag], timeoutMs));
+    },
+
+    async requestPermission(permission) {
+      // A person answering a dialog: minutes, not the probe's seconds.
+      return permissionWord(
+        await helperStatus(options.helperPath ?? null, ["--request", permission], REQUEST_TIMEOUT_MS),
+      );
     },
   };
+}
+
+/** How long a consent dialog raised on purpose is given before the request
+ *  is abandoned. The helper's own wait is a little longer. */
+export const REQUEST_TIMEOUT_MS = 3 * 60_000;
+
+/** One helper invocation's `status` word, or null when there is no helper or
+ *  no parseable answer. */
+function helperStatus(helper: string | null, args: string[], timeoutMs: number): Promise<string | null> {
+  if (helper === null) return Promise.resolve(null);
+  return new Promise((resolve) => {
+    execFile(helper, args, { timeout: timeoutMs }, (error, stdout) => {
+      if (error) return resolve(null);
+      try {
+        const status = (JSON.parse(stdout.trim()) as { status?: unknown }).status;
+        resolve(typeof status === "string" ? status : null);
+      } catch {
+        resolve(null);
+      }
+    });
+  });
+}
+
+function permissionWord(status: string | null): PermissionStatus {
+  return status === "granted" || status === "denied" || status === "not_asked" ? status : "unknown";
 }
 
 /** What a scripted probe set answers, keyed by path (or target). Anything
@@ -189,6 +230,9 @@ export interface ProbeScript {
   openAsApp?: Record<string, OpenOutcome>;
   fullDiskAccess?: boolean;
   automation?: Record<string, AutomationStatus>;
+  permissions?: Partial<Record<QueryablePermission, PermissionStatus>>;
+  /** What a request leaves behind; unscripted requests answer `unknown`. */
+  requests?: Partial<Record<RequestablePermission, PermissionStatus>>;
 }
 
 /**
@@ -217,6 +261,14 @@ export function scriptedProbes(script: ProbeScript = {}): HostProbes & { calls: 
     async automationStatus(target) {
       calls.push(`automationStatus ${target}`);
       return script.automation?.[target] ?? "unknown";
+    },
+    async permissionStatus(permission) {
+      calls.push(`permissionStatus ${permission}`);
+      return script.permissions?.[permission] ?? "unknown";
+    },
+    async requestPermission(permission) {
+      calls.push(`requestPermission ${permission}`);
+      return script.requests?.[permission] ?? "unknown";
     },
   };
 }

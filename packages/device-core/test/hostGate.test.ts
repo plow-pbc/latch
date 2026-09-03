@@ -619,8 +619,31 @@ describe("nodeProbes — the real answers, against fixtures", () => {
     // some filesystems. The cleanup above is that check.
   });
 
-  it("answers unknown for Automation without the helper", async () => {
-    expect(await nodeProbes().automationStatus("Messages")).toBe("unknown");
+  it("answers unknown for Automation and the queryable services without the helper", async () => {
+    const probes = nodeProbes();
+    expect(await probes.automationStatus("Messages")).toBe("unknown");
+    expect(await probes.permissionStatus("contacts")).toBe("unknown");
+    expect(await probes.requestPermission("contacts")).toBe("unknown");
+  });
+
+  it("reads the helper's answer, and the request mode's, off its one JSON line", async () => {
+    // A stand-in helper: a shell script that answers by flag, so the parsing
+    // and flag spelling are checked without the Swift toolchain.
+    const dir = tempDir();
+    const helper = path.join(dir, "helper.sh");
+    fs.writeFileSync(
+      helper,
+      '#!/bin/sh\ncase "$1 $2" in\n"--contacts ") echo \'{"status":"not_asked"}\';;\n"--calendars ") echo \'{"status":"granted"}\';;\n"--screen-recording ") echo \'{"status":"denied"}\';;\n"--request contacts") echo \'{"status":"granted"}\';;\n"--automation Messages") echo \'{"status":"target_not_running"}\';;\n*) echo nonsense;;\nesac\n',
+    );
+    fs.chmodSync(helper, 0o755);
+    const probes = nodeProbes({ helperPath: helper });
+    expect(await probes.permissionStatus("contacts")).toBe("not_asked");
+    expect(await probes.permissionStatus("calendars")).toBe("granted");
+    expect(await probes.permissionStatus("screen_recording")).toBe("denied");
+    expect(await probes.requestPermission("contacts")).toBe("granted");
+    expect(await probes.automationStatus("Messages")).toBe("target_not_running");
+    // An unparseable answer is unknown, never a guess.
+    expect(await probes.permissionStatus("accessibility")).toBe("unknown");
   });
 
   it.skipIf(process.platform !== "darwin" || process.getuid?.() === 0)(

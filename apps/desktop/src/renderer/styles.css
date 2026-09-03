@@ -119,6 +119,16 @@ body {
   cursor: pointer;
 }
 .seg button.active { background: var(--card); color: var(--fg); box-shadow: var(--shadow); }
+/* The Capabilities tab's badge: rows needing a decision, not events. Amber,
+   because a block by this Mac is nobody refusing — the audit row's tone. */
+.tabcount {
+  margin-left: 6px;
+  font-size: 10.5px; font-weight: 700; line-height: 1;
+  padding: 3px 6px; border-radius: 999px;
+  background: var(--amber-fg); color: var(--card);
+  font-variant-numeric: tabular-nums;
+}
+.tabcount[hidden] { display: none; }
 
 .toolbar {
   display: flex;
@@ -374,22 +384,63 @@ textarea.text { min-height: 70px; resize: vertical; }
 .support-copy { min-width: 0; }
 .support-title { font-weight: 600; margin-bottom: 2px; }
 
-/* Capabilities: the row is a support-row; this adds the inline status beside
-   the title, reusing the titlebar's connection dot. */
-.cap-title { display: flex; align-items: center; gap: 7px; margin-bottom: 2px; }
-/* The inventory under the Full Disk Access row: one line per permission or
-   self-check. An unknown answer (the question could not be asked) is a
-   hollow dot, distinct from a plain no. */
-.inventory { margin-top: 12px; display: flex; flex-direction: column; gap: 6px; }
-.inventory-row { display: flex; align-items: center; gap: 8px; font-size: 12px; }
-.inventory-row .status-dot { flex: none; }
-.inventory-title { color: var(--fg); }
+/* The Capabilities tab (capabilitiesModel.ts). Dots: green granted, red
+   refused, amber a hit switch that is still off, hollow when macOS could not
+   be asked. */
+.status-dot.off { background: var(--red-fg); }
+.status-dot.warn { background: var(--amber-fg); }
 .status-dot.unknown { background: transparent; border: 1px solid var(--faint); box-sizing: border-box; }
-.cap-title .support-title { margin-bottom: 0; }
-.cap-title .status-dot { flex: none; }
-/* The from-source note sits right under the Launch at Login checkbox line;
-   `.item p` zeroes margins, so it asks for its blank line. */
-.item p.cap-note { margin-top: 8px; }
+.cap-banner {
+  display: flex; align-items: center; gap: 12px;
+  padding: 10px 14px; margin-bottom: 14px;
+  border-radius: var(--radius);
+  border: 1px solid var(--amber-bd); background: var(--amber-bg); color: var(--amber-fg);
+}
+.cap-banner .bt { font-weight: 600; }
+.cap-banner .bs { opacity: 0.85; }
+.cap-banner .spacer { flex: 1; }
+.cap-banner .link {
+  font: inherit; border: 0; background: transparent; color: inherit; font-weight: 600;
+  text-decoration: underline; text-underline-offset: 2px; cursor: pointer; padding: 0; white-space: nowrap;
+}
+.cap-banner .banner-close:hover { background: var(--amber-bd); }
+.cap-row {
+  display: grid; grid-template-columns: 8px 1fr auto auto; align-items: center; gap: 12px;
+  padding: 10px 0; border-top: 1px solid var(--border);
+}
+.cap-row:first-of-type { border-top: 0; }
+.cap-row .status-dot { flex: none; }
+.cap-row .cap-name { font-weight: 600; }
+.cap-row .cap-sub { color: var(--muted); font-size: 12px; }
+.cap-row .cap-asks { color: var(--muted); font-size: 12px; text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.cap-row .cap-asks b { color: var(--fg); font-weight: 600; }
+.cap-row .cap-asks.none { color: var(--faint); }
+/* "See blocked requests…": a link, so it reads as something to click,
+   where a bare row did not. */
+.cap-more {
+  font: inherit; font-size: 12px; border: 0; background: transparent; padding: 0;
+  color: var(--blue-fg); cursor: pointer; text-align: left;
+}
+.cap-more:hover { text-decoration: underline; }
+.cap-expand {
+  grid-column: 2 / -1; margin: 2px 0 6px; padding: 10px 12px;
+  background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius-sm);
+}
+.cap-expand .lbl { font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); margin: 0 0 6px; }
+.cap-req { display: grid; grid-template-columns: 74px 1fr; gap: 2px 12px; padding: 6px 0; border-top: 1px solid var(--border); font-size: 12.5px; }
+.cap-req:first-of-type { border-top: 0; }
+.cap-req .t { color: var(--faint); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.cap-req .who { font-weight: 600; }
+.cap-req .goal { color: var(--muted); }
+.cap-sentence {
+  margin: 10px 0 0; padding: 10px 12px;
+  border-left: 3px solid var(--amber-bd); background: var(--card);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0; color: var(--fg);
+}
+.cap-actions { display: flex; gap: 8px; margin-top: 10px; align-items: center; }
+.cap-actions .spacer { flex: 1; }
+.btn.quiet { border-color: transparent; color: var(--muted); }
+.btn.ok { color: var(--green-fg); border-color: transparent; cursor: default; }
 
 .agent-status {
   margin: 0;

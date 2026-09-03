@@ -47,7 +47,10 @@ describe("hostInventory", () => {
     const dir = tempDir();
     const chat = path.join(dir, "chat.db");
     fs.writeFileSync(chat, "x");
-    const probes = scriptedProbes({ automation: { Messages: "granted", Contacts: "not_asked" } });
+    const probes = scriptedProbes({
+      automation: { Messages: "granted", Contacts: "not_asked" },
+      permissions: { accessibility: "denied", contacts: "granted", calendars: "not_asked" },
+    });
     const { run, ran } = runner({ "/usr/bin/true": { exitCode: 0 }, "/usr/bin/head": { exitCode: 0 } });
     const inv = await hostInventory({
       probes,
@@ -67,6 +70,11 @@ describe("hostInventory", () => {
       { target: "Contacts", status: "not_asked" },
     ]);
     expect(inv.automation_queryable).toBe(true);
+    expect(inv.permissions).toEqual([
+      { permission: "accessibility", status: "denied" },
+      { permission: "contacts", status: "granted" },
+      { permission: "calendars", status: "not_asked" },
+    ]);
     expect(inv.sandbox).toEqual({ status: "ok", detail: null });
     // Attribution is checked against the file the app's own probe opened.
     expect(inv.child_attribution).toEqual({ status: "ok", detail: null });
@@ -95,6 +103,7 @@ describe("hostInventory", () => {
     // not be asked rather than that the answer is no.
     expect(inv.automation.every((a) => a.status === "unknown")).toBe(true);
     expect(inv.automation_queryable).toBe(false);
+    expect(inv.permissions.every((p) => p.status === "unknown")).toBe(true);
     expect(inv.vault_key).toEqual({ status: "absent", reason: "this Mac has no vault" });
   });
 

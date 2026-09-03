@@ -50,6 +50,8 @@ html, body { height: 100%; background: transparent; overflow: hidden; }
   cursor: grab; -webkit-user-select: none; user-select: none;
 }
 .fda-drag-tile:active { cursor: grabbing; }
+/* A pane that takes no drop: the tile only says which app to look for. */
+.fda-drag-tile.static { cursor: default; }
 .fda-drag-tile.granted { opacity: 0.55; }
 /* While the native drag rides, its image IS this tile (fdapanel.js sends the
    raster to main), so the tile leaves the panel with it — visibility keeps
