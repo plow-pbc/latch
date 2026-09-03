@@ -218,11 +218,10 @@ Four operations:
 The broker's own rules, applied on top of the session gates:
 
 - **A login belongs to its site.** With a page URL present, a login releases
-  only when the page's host and a stored URL's host match by **label
-  suffix** (`www.chase.com` ↔ `chase.com`, either direction), and the shorter
-  host must be a registrable domain by the pinned Public Suffix List — a
-  login stored for `co.uk` or `github.io` must not release on every site
-  under it. This is the repo's ONE PSL use: session-grant origin patterns
+  only when the page's host and a stored URL's host share one **registrable
+  domain** by the pinned Public Suffix List (`secure.chase.com` ↔
+  `www.chase.com` ↔ `chase.com`) — a login stored for `co.uk` or `github.io`
+  has none, so it must not release on every site under it. This is the repo's ONE PSL use: session-grant origin patterns
   are owner-approved literals and stay PSL-free (DESIGN.md §11a); this
   comparison is the code inferring relatedness on its own, which is what the
   old broker used its PSL for too. A login storing *no* site is refused

@@ -6,12 +6,6 @@
  * the Bitwarden CLI and the subprocess all gone. The master key never leaves
  * this process.
  *
- * One deliberate divergence from the Python broker: the site check compares
- * hosts by label suffix (its root PSL-checked — see hostsRelated) instead of
- * by eTLD+1 equality. A login stored for `chase.com` still releases on
- * `secure.chase.com` and vice versa; what no longer matches is two SIBLING
- * subdomains with no stored apex, which is the stricter side to fail on.
- *
  * Secrets appear only in getField's return value; every other answer is
  * metadata. Every describe and every release attempt appends one line to the
  * credential audit log — never a value.
@@ -234,24 +228,23 @@ export function hostKey(url: string): string | null {
 }
 
 /**
- * Two hosts belong to the same site when one is the other, or sits under it —
- * and "it" is a real site. The suffix branch alone would relate
- * `attacker.co.uk` to a login stored for `co.uk`, because plain label-suffix
- * logic cannot tell a public suffix from somebody's domain; only the Public
- * Suffix List knows, so the SHORTER host (the claimed site root) must be a
- * registrable domain by the pinned PSL (`tldts`, private section included —
- * `github.io` is as public as `co.uk`). Exact matches stay PSL-free, which
- * keeps localhost and bare-IP fills working. This is deliberately the ONE
- * PSL use in the repo: session-grant origin patterns are owner-approved
- * literals and stay dumb (DESIGN.md §11a); this comparison is the code
- * inferring relatedness on its own, which is exactly what the old broker
- * used its PSL for.
+ * Two hosts belong to the same site when they are equal or share a registrable
+ * domain — the rule every password manager fills by, so an imported login that
+ * names `secure.opentable.com` still fills the form on `www.opentable.com`.
+ * Plain label-suffix logic cannot tell a public suffix from somebody's domain
+ * (`attacker.github.io` shares a suffix with `victim.github.io`); only the
+ * Public Suffix List knows, so the shared root must be a registrable domain by
+ * the pinned PSL (`tldts`, private section included — `github.io` is as public
+ * as `co.uk`). Exact matches stay PSL-free, which keeps localhost and bare-IP
+ * fills working. This is deliberately the ONE PSL use in the repo:
+ * session-grant origin patterns are owner-approved literals and stay dumb
+ * (DESIGN.md §11a); this comparison is the code inferring relatedness on its
+ * own, which is exactly what the old broker used its PSL for.
  */
 export function hostsRelated(a: string, b: string): boolean {
   if (a === b) return true;
-  if (!a.endsWith(`.${b}`) && !b.endsWith(`.${a}`)) return false;
-  const root = a.length < b.length ? a : b;
-  return getDomain(root, { allowPrivateDomains: true }) !== null;
+  const root = getDomain(a, { allowPrivateDomains: true });
+  return root !== null && root === getDomain(b, { allowPrivateDomains: true });
 }
 
 function itemUrls(item: RawItem): string[] {
