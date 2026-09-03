@@ -8,9 +8,12 @@ import { JSONValue } from "@domo/protocol";
 import type { HostInventory } from "@domo/device-core";
 import { AUTOMATION_APPS, automationApp } from "../src/automation.js";
 import {
+  actionLabel,
   blockedGroups,
   capabilitiesView,
   CapabilitiesInput,
+  LABEL_IN_SETTINGS,
+  LABEL_VIA_PROMPT,
   paneFor,
   SETTINGS_PANES,
 } from "../src/capabilitiesModel.js";
@@ -132,7 +135,7 @@ describe("capabilitiesView", () => {
     // Calendars is granted, so its hit is history, not attention.
     expect(view.badge).toBe(2);
     const rows = view.sections.flatMap((s) => s.rows);
-    expect(rows.find((r) => r.key === "full_disk_access")).toMatchObject({ count: 2, needsAttention: true, action: "grant", actionLabel: "Grant…" });
+    expect(rows.find((r) => r.key === "full_disk_access")).toMatchObject({ count: 2, needsAttention: true, action: "grant", actionLabel: LABEL_IN_SETTINGS });
     expect(rows.find((r) => r.key === "automation:com.apple.MobileSMS")).toMatchObject({ count: 1, needsAttention: true, status: "denied", action: "open" });
     expect(rows.find((r) => r.key === "calendars")).toMatchObject({ count: 1, needsAttention: false, status: "granted" });
     expect(rows.find((r) => r.key === "accessibility")).toMatchObject({ count: 0, needsAttention: false, action: "grant" });
@@ -188,12 +191,30 @@ describe("capabilitiesView", () => {
     expect(view.badge).toBe(2);
   });
 
-  it("a folder is denied once a confirmed block names it, and still offers the touch — macOS is the one that knows", () => {
+  it("a folder refused before Full Disk Access was granted is covered now, and shows nowhere", () => {
+    const events = [
+      ...block("i1", "2026-09-02T02:00:00Z", "files_downloads"),
+      ...block("i2", "2026-09-02T03:00:00Z", "files_desktop"),
+      ...block("i3", "2026-09-02T04:00:00Z", "screen_recording"),
+    ];
+    const granted = capabilitiesView(input({ events, inventory: inventory({ full_disk_access: { granted: true, probes: [] } }) }));
+    const keys = granted.sections.flatMap((s) => s.rows.map((r) => r.key));
+    expect(keys).not.toContain("files_downloads");
+    expect(keys).not.toContain("files_desktop");
+    // Screen Recording is not under the umbrella, so it still asks for the owner.
+    expect(granted.sections.find((s) => s.key === "yourself")!.rows.map((r) => r.key)).toEqual(["screen_recording"]);
+    expect(granted.badge).toBe(1);
+    // Without Full Disk Access the same refusals are rows in Files and data.
+    const off = capabilitiesView(input({ events }));
+    expect(off.sections.find((s) => s.key === "files")!.rows.filter((r) => r.count > 0).map((r) => r.key)).toEqual(["files_desktop", "files_downloads"]);
+  });
+
+  it("a folder is denied once a confirmed block names it, and its button then points at the pane — macOS will not re-ask", () => {
     const never = capabilitiesView(input()).sections[0]!.rows.find((r) => r.key === "files_downloads")!;
-    expect(never).toMatchObject({ status: "not_asked", action: "ask", actionLabel: "Ask macOS now" });
+    expect(never).toMatchObject({ status: "not_asked", action: "ask", actionLabel: LABEL_VIA_PROMPT });
     const refused = capabilitiesView(input({ events: block("i1", "2026-09-02T02:00:00Z", "files_downloads") }))
       .sections[0]!.rows.find((r) => r.key === "files_downloads")!;
-    expect(refused).toMatchObject({ status: "denied", action: "ask", actionLabel: "Ask macOS now", needsAttention: true });
+    expect(refused).toMatchObject({ status: "denied", action: "open", actionLabel: LABEL_IN_SETTINGS, needsAttention: true });
     // What the touch learned wins over history.
     const granted = capabilitiesView(
       input({ events: block("i1", "2026-09-02T02:00:00Z", "files_downloads"), folders: { files_downloads: "granted" } }),
@@ -203,18 +224,24 @@ describe("capabilitiesView", () => {
 
   it("the queryable services ask macOS while unasked and open the pane once refused", () => {
     const rows = capabilitiesView(input()).sections[0]!.rows;
-    expect(rows.find((r) => r.key === "contacts")).toMatchObject({ status: "not_asked", action: "request", actionLabel: "Ask macOS now" });
+    expect(rows.find((r) => r.key === "contacts")).toMatchObject({ status: "not_asked", action: "request", actionLabel: LABEL_VIA_PROMPT });
     const refused = capabilitiesView(
       input({ inventory: inventory({ permissions: [{ permission: "contacts", status: "denied" }] }) }),
     ).sections[0]!.rows.find((r) => r.key === "contacts")!;
     expect(refused).toMatchObject({ status: "denied", action: "open" });
   });
 
-  it("Automation rows: Grant… until macOS has answered, the pane once it refused", () => {
+  it("without the in-process addon, Contacts and Calendars point at the pane rather than promise a prompt", () => {
+    const rows = capabilitiesView(input({ canRequestInProcess: false })).sections[0]!.rows;
+    expect(rows.find((r) => r.key === "contacts")).toMatchObject({ action: "open", actionLabel: LABEL_IN_SETTINGS });
+    expect(rows.find((r) => r.key === "accessibility")).toMatchObject({ action: "grant" });
+  });
+
+  it("Automation rows: the prompt until macOS has answered, the pane once it refused", () => {
     const apps = capabilitiesView(input()).sections.find((s) => s.key === "apps")!.rows;
     expect(apps.map((r) => r.title)).toEqual(AUTOMATION_APPS.map((a) => a.name));
     expect(apps.find((r) => r.title === "Messages")).toMatchObject({ status: "denied", action: "open" });
-    expect(apps.find((r) => r.title === "Mail")).toMatchObject({ status: "not_asked", action: "request", actionLabel: "Grant…" });
+    expect(apps.find((r) => r.title === "Mail")).toMatchObject({ status: "not_asked", action: "request", actionLabel: LABEL_VIA_PROMPT });
   });
 
   it("without an inventory (no device yet) every row is unknown and nothing badges", () => {
@@ -253,5 +280,21 @@ describe("the words on the rows", () => {
     for (const r of view.sections.flatMap((s) => s.rows)) expect(r.detail).not.toMatch(/^(granted|allowed|not (granted|allowed|asked)|unknown)/i);
     // Granting ahead of time is the sections' point, said there and not per row.
     for (const s of view.sections) expect(s.description).toMatch(/ahead of time/);
+  });
+});
+
+describe("the two button labels", () => {
+  it("say what the owner will see next: a prompt here, or the pane with the panel", () => {
+    expect(actionLabel("request")).toBe(LABEL_VIA_PROMPT);
+    expect(actionLabel("ask")).toBe(LABEL_VIA_PROMPT);
+    expect(actionLabel("grant")).toBe(LABEL_IN_SETTINGS);
+    expect(actionLabel("open")).toBe(LABEL_IN_SETTINGS);
+    expect(actionLabel("none")).toBeNull();
+    // Every off row wears one of the two, never a third.
+    const labels = new Set(
+      capabilitiesView(input({ events: block("i1", "2026-09-02T02:00:00Z", "screen_recording") }))
+        .sections.flatMap((s) => s.rows).map((r) => r.actionLabel).filter((l) => l !== null),
+    );
+    expect([...labels].sort()).toEqual([LABEL_IN_SETTINGS, LABEL_VIA_PROMPT].sort());
   });
 });

@@ -16,6 +16,7 @@
  */
 import { JSONValue, jv } from "@domo/protocol";
 import type { AutomationStatus, HostInventory, HostPermission, PermissionStatus } from "@domo/device-core";
+import { COVERED_BY_FULL_DISK_ACCESS } from "@domo/device-core";
 import { automationApp, AutomationApp } from "./automation.js";
 
 /** One blocked request, as the row lists it. */
@@ -140,8 +141,32 @@ export type RowStatus = "granted" | "denied" | "not_asked" | "unknown" | "target
  * `open`: the panel flow pointing at the switch. `request`: raise macOS's own
  * dialog now (a queryable service, or an Automation pair). `ask`: touch a
  * folder so macOS asks. `none`: nothing to do.
+ *
+ * Two labels for the four, keyed to what the owner will see next: a macOS
+ * prompt right here (`request`, `ask`), or the System Settings pane with the
+ * panel beside it (`grant`, `open`). The verb is the same because from the
+ * owner's seat the act is the same — even undoing a remembered refusal is
+ * "go to the pane and flip it".
  */
 export type RowAction = "grant" | "open" | "request" | "ask" | "none";
+
+// "Allow": the owner's verb, and Apple's — the dialog coming has an Allow
+// button, the pane is a switch they allow — on the surface they will do it.
+// Never "Grant" or "Request" as if the button did the granting: the app can
+// grant itself nothing, which is the whole point of this tab.
+export const LABEL_VIA_PROMPT = "Allow via prompt…";
+export const LABEL_IN_SETTINGS = "Allow in System Settings…";
+
+/** The button's words for an action. */
+export function actionLabel(action: RowAction): string | null {
+  switch (action) {
+    case "request":
+    case "ask": return LABEL_VIA_PROMPT;
+    case "grant":
+    case "open": return LABEL_IN_SETTINGS;
+    default: return null;
+  }
+}
 
 export interface CapabilityRow {
   key: string;
@@ -196,6 +221,9 @@ export interface CapabilitiesInput {
   /** The three folders, as this Mac last learned them (setup's touch, or
    *  a block); absent means macOS has never been asked. */
   folders?: Partial<Record<"files_desktop" | "files_documents" | "files_downloads", PermissionStatus>>;
+  /** Whether Contacts and Calendars can be asked for in process (the addon
+   *  is loaded). Without it their button is honest and points at the pane. */
+  canRequestInProcess?: boolean;
 }
 
 const FOLDERS: readonly ("files_desktop" | "files_documents" | "files_downloads")[] = [
@@ -218,7 +246,6 @@ export function capabilitiesView(input: CapabilitiesInput): CapabilitiesView {
     status: RowStatus,
     detail: string,
     action: RowAction,
-    actionLabel: string | null,
   ): CapabilityRow => {
     const g = groups.get(key);
     const dismissedAt = input.dismissals[key] ?? null;
@@ -231,7 +258,7 @@ export function capabilitiesView(input: CapabilitiesInput): CapabilitiesView {
       statusText: statusWords(status),
       detail,
       action: off ? action : "none",
-      actionLabel: off ? actionLabel : null,
+      actionLabel: off ? actionLabel(action) : null,
       count: g?.count ?? 0,
       last: g?.last ?? null,
       agents: g?.agents ?? [],
@@ -252,7 +279,6 @@ export function capabilitiesView(input: CapabilitiesInput): CapabilitiesView {
       fda === null ? "unknown" : fda ? "granted" : "denied",
       "Needed for Messages, Mail, and Safari data. Covers Desktop, Documents, and Downloads if granted",
       "grant",
-      "Grant…",
     ),
   );
   if (fda !== true) {
@@ -265,11 +291,19 @@ export function capabilitiesView(input: CapabilitiesInput): CapabilitiesView {
           : learned === "denied" || (g !== undefined && g.requests[0]?.confidence === "confirmed" && learned !== "not_asked")
             ? "denied"
             : "not_asked";
-      // Always the touch, even for a folder this Mac believes refused: what
-      // it believes is history (a block, a past touch), macOS is the one
-      // that knows, and a touch that comes back refused falls through to the
-      // pane (main's act handler) — so asking never costs the owner a step.
-      files.push(row(folder, PERMISSION_TITLES[folder]!, status, "Only needed if Full Disk Access is not granted", "ask", "Ask macOS now"));
+      // A folder macOS is known to have refused is answered without a dialog
+      // on every later touch, so the button says where the switch really is.
+      // Believed unasked, the touch is offered — and a touch that turns out
+      // refused still falls through to the pane (main's act handler).
+      files.push(
+        row(
+          folder,
+          PERMISSION_TITLES[folder]!,
+          status,
+          "Only needed if Full Disk Access is not granted",
+          status === "denied" ? "open" : "ask",
+        ),
+      );
     }
   }
   const queryable = new Map(inv?.permissions.map((p) => [p.permission, p.status]) ?? []);
@@ -285,32 +319,21 @@ export function capabilitiesView(input: CapabilitiesInput): CapabilitiesView {
     // pane accepts a dropped app: the panel flow is the whole grant. The
     // other two have a real in-app dialog while they are not yet asked; once
     // refused, only the pane can undo it.
+    const askable = input.canRequestInProcess ?? true;
     const action: RowAction =
-      permission === "accessibility" ? "grant" : status === "not_asked" || status === "unknown" ? "request" : "open";
-    files.push(
-      row(
-        permission,
-        PERMISSION_TITLES[permission]!,
-        status,
-        detail,
-        action,
-        action === "grant" ? "Grant…" : action === "request" ? "Ask macOS now" : "Open System Settings…",
-      ),
-    );
+      permission === "accessibility"
+        ? "grant"
+        : askable && (status === "not_asked" || status === "unknown")
+          ? "request"
+          : "open";
+    files.push(row(permission, PERMISSION_TITLES[permission]!, status, detail, action));
   }
 
   // Control other apps.
   // No detail per app: the section's own line says what these are, and
   // the dot and the button say where each stands.
   const apps: CapabilityRow[] = input.automation.map(({ app, status }) => {
-    return row(
-      `automation:${app.bundleId}`,
-      app.name,
-      status,
-      "",
-      status === "denied" ? "open" : "request",
-      status === "denied" ? "Open System Settings…" : "Grant…",
-    );
+    return row(`automation:${app.bundleId}`, app.name, status, "", status === "denied" ? "open" : "request");
   });
 
   // Switches this app has no button for: anything a block named that is not
@@ -320,15 +343,17 @@ export function capabilitiesView(input: CapabilitiesInput): CapabilitiesView {
   const yourself: CapabilityRow[] = [];
   for (const g of groups.values()) {
     if (known.has(g.key)) continue;
+    // A folder (or any other switch Full Disk Access covers) that was refused
+    // before Full Disk Access was granted is in good shape now: the umbrella
+    // answers for it, so there is nothing for the owner to flip.
+    if (fda === true && COVERED_BY_FULL_DISK_ACCESS.has(g.key as HostPermission)) continue;
     if (g.key === "automation" && fda !== null) {
       // An Automation block for an app the tab does not list.
-      yourself.push(row(g.key, "Automation for another app", "denied", "An app the list above does not offer", "open", "Open System Settings…"));
+      yourself.push(row(g.key, "Automation for another app", "denied", "An app the list above does not offer", "open"));
       continue;
     }
     const title = PERMISSION_TITLES[g.key] ?? g.key;
-    yourself.push(
-      row(g.key, title, "denied", "Plow Latch can't ask for this one; turn it on yourself if you want agents to have it", "open", "Open System Settings…"),
-    );
+    yourself.push(row(g.key, title, "denied", "Plow Latch can't ask for this one; turn it on yourself if you want agents to have it", "open"));
   }
 
   const sections: CapabilitySection[] = [
