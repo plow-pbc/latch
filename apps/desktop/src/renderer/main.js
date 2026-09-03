@@ -1727,10 +1727,10 @@ function sessionSection(title, rows, section, s, redraw) {
 }
 
 function rosterNotice(s) {
-  if (!s.rosterError && !s.removeError) return null;
+  if (!s.rosterError && !s.actionError) return null;
   return el("div", { class: "roster-notices" }, [
     s.rosterError ? cloudErrorBanner(s.rosterError, "Sessions could not be refreshed") : null,
-    s.removeError ? cloudErrorBanner(s.removeError, "That session was not removed") : null,
+    s.actionError ? cloudErrorBanner(s.actionError, "That change did not finish") : null,
   ]);
 }
 

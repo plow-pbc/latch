@@ -176,7 +176,7 @@ const agentsTabProbeState = () => ({
   credential: null,
   roster: rosterProbe,
   rosterError: null,
-  removeError: null,
+  actionError: null,
   ...cloudProbe,
 });
 ipcMain.handle("connect:get", async () => agentsTabProbeState());

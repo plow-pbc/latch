@@ -61,6 +61,15 @@ class FakePlow {
     return { status: "revoked", id };
   }
 
+  /** Every rename that was actually issued, in order. */
+  renamed: Array<{ id: number; name: string }> = [];
+  renameFails: PlowApiError | null = null;
+
+  async renameApiKey(_token: string, id: number, name: string): Promise<void> {
+    if (this.renameFails) throw this.renameFails;
+    this.renamed.push({ id, name });
+  }
+
   /** Make mints hang, so a test can act while one is in flight. */
   hold(): void {
     this.gate = new Promise((resolve) => {
@@ -421,24 +430,24 @@ describe("reading the state is a read", () => {
   });
 });
 
-describe("removing a roster row", () => {
-  /** One active credential, as `GET /v1/api-keys` returns it. */
-  function key(overrides: Partial<KeyInfo> = {}): KeyInfo {
-    return {
-      id: 1,
-      key_prefix: keyPrefixOf("plow_sk_someone_elses_credential"),
-      name: "Kitchen agent",
-      scopes: ["relay:call"],
-      tokens_used: 0,
-      is_active: true,
-      last_seen_at: "2026-08-25T10:00:00Z",
-      created_at: "2026-08-20T10:00:00Z",
-      agent_id: null,
-      chat_uids: [],
-      ...overrides,
-    };
-  }
+/** One active credential, as `GET /v1/api-keys` returns it. */
+function key(overrides: Partial<KeyInfo> = {}): KeyInfo {
+  return {
+    id: 1,
+    key_prefix: keyPrefixOf("plow_sk_someone_elses_credential"),
+    name: "Kitchen agent",
+    scopes: ["relay:call"],
+    tokens_used: 0,
+    is_active: true,
+    last_seen_at: "2026-08-25T10:00:00Z",
+    created_at: "2026-08-20T10:00:00Z",
+    agent_id: null,
+    chat_uids: [],
+    ...overrides,
+  };
+}
 
+describe("removing a roster row", () => {
   /**
    * Every route a row can take, and the two it must never take instead.
    *
@@ -538,7 +547,57 @@ describe("removing a roster row", () => {
 
     const state = await client.removeRosterRow(9);
 
-    expect(state.removeError).toBe("Plow returned 500.");
+    expect(state.actionError).toBe("Plow returned 500.");
     expect(state.roster.cloud.map((row) => row.id)).toEqual([9]);
+  });
+});
+
+describe("renaming a roster row", () => {
+  it.each([
+    ["a cloud agent", () => key({ id: 7, agent_id: "agent_7" })],
+    ["an MCP client", () => key({ id: 8, agent_id: null })],
+    ["this Mac", () => key({ id: 4, key_prefix: keyPrefixOf(DEVICE_TOKEN) })],
+  ])("renames %s through its credential and re-reads the roster", async (_what, row) => {
+    signIn();
+    const only = row();
+    plow.keys = [only];
+    const client = build();
+    await client.refreshRoster();
+    plow.keys = [{ ...only, name: "Renamed" }];
+
+    const state = await client.renameRosterRow(only.id, "  Renamed  ");
+
+    expect(plow.renamed).toEqual([{ id: only.id, name: "Renamed" }]);
+    expect(plow.revoked).toEqual([]);
+    expect(agentDeletes).toEqual([]);
+    expect(signOuts).toBe(0);
+    const rows = [...state.roster.cloud, ...state.roster.mcp, ...state.roster.other];
+    expect(rows.map((r) => r.name)).toEqual(["Renamed"]);
+    expect(state.actionError).toBeNull();
+  });
+
+  it("keeps the old name and says why when Plow refuses", async () => {
+    signIn();
+    plow.keys = [key({ id: 9, name: "Kitchen agent" })];
+    plow.renameFails = new PlowApiError("http", "Plow returned 500.", 500);
+    const client = build();
+    await client.refreshRoster();
+
+    const state = await client.renameRosterRow(9, "Pantry");
+
+    expect(state.actionError).toBe("Plow returned 500.");
+    expect(state.roster.mcp.map((row) => row.name)).toEqual(["Kitchen agent"]);
+  });
+
+  it("refuses a row that is no longer on screen without calling Plow", async () => {
+    signIn();
+    plow.keys = [];
+    const client = build();
+    await client.refreshRoster();
+
+    const state = await client.renameRosterRow(42, "Ghost");
+
+    expect(plow.renamed).toEqual([]);
+    expect(state.actionError).toBe("That row is no longer on this screen.");
   });
 });

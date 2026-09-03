@@ -19,7 +19,7 @@
  * by launching a window is one nobody tests.
  */
 import { PlowApi, PlowApiError } from "./plowApi.js";
-import { EMPTY_ROSTER, RosterSections, sectionRoster } from "./rosterSections.js";
+import { EMPTY_ROSTER, RosterSections, RosterSectionRow, sectionRoster } from "./rosterSections.js";
 import { loadSettings, Settings } from "./settings.js";
 
 export interface ClientCredential {
@@ -60,13 +60,12 @@ export interface ConnectClientState {
    * credential, like every message here. */
   rosterError: string | null;
   /**
-   * Why the last removal did not happen.
+   * Why the last row action — a removal or a rename — did not happen.
    *
    * Separate from `rosterError` because they are different sentences about
-   * different things: one says the list could not be read, the other says a row
-   * the user asked to remove is still there.
+   * different things: the list is fine, the thing you just asked for is not.
    */
-  removeError: string | null;
+  actionError: string | null;
 }
 
 export interface ConnectClientDeps {
@@ -117,7 +116,7 @@ export class ConnectClient {
    * more use than an empty one, and `rosterError` says it is stale. */
   private roster: RosterSections = EMPTY_ROSTER;
   private rosterError: string | null = null;
-  private removeError: string | null = null;
+  private actionError: string | null = null;
   /**
    * Which roster read is the newest. Bumped per read, not per account.
    *
@@ -143,7 +142,7 @@ export class ConnectClient {
       credential: this.credential,
       roster: this.roster,
       rosterError: this.rosterError,
-      removeError: this.removeError,
+      actionError: this.actionError,
     };
   }
 
@@ -202,13 +201,11 @@ export class ConnectClient {
    * and going around either leaves that state behind.
    */
   async removeRosterRow(id: number): Promise<ConnectClientState> {
-    this.removeError = null;
-    const row = [...this.roster.cloud, ...this.roster.mcp, ...this.roster.other].find(
-      (candidate) => candidate.id === id,
-    );
-    if (!row) return this.failRemove("That row is no longer on this screen.");
+    this.actionError = null;
+    const row = this.rosterRow(id);
+    if (!row) return this.failAction("That row is no longer on this screen.");
     const credential = this.settings().relayCredential.trim();
-    if (!credential) return this.failRemove("This Mac isn't signed in yet.");
+    if (!credential) return this.failAction("This Mac isn't signed in yet.");
 
     const generation = this.generation;
     try {
@@ -218,15 +215,47 @@ export class ConnectClient {
       else if (row.agentId !== null) await this.deps.removeCloudAgent(row.agentId);
       else await this.deps.api.revokeApiKey(credential, id);
     } catch (error) {
-      if (generation === this.generation) this.failRemove(messageOf(error));
+      if (generation === this.generation) this.failAction(messageOf(error));
       return this.state();
     }
     if (generation !== this.generation) return this.state();
     return this.refreshRoster();
   }
 
-  private failRemove(message: string): ConnectClientState {
-    this.removeError = message;
+  /**
+   * Rename one roster row.
+   *
+   * One route for every section, unlike removal: a cloud agent, an MCP client
+   * and this Mac's own session are each one credential on Plow, and the name
+   * the screen shows is that credential's name. Plow's cloud-agent resource
+   * carries no name of its own, so renaming the credential IS renaming the
+   * agent — the same call the Plow dashboard makes.
+   */
+  async renameRosterRow(id: number, name: string): Promise<ConnectClientState> {
+    this.actionError = null;
+    if (!this.rosterRow(id)) return this.failAction("That row is no longer on this screen.");
+    const credential = this.settings().relayCredential.trim();
+    if (!credential) return this.failAction("This Mac isn't signed in yet.");
+
+    const generation = this.generation;
+    try {
+      await this.deps.api.renameApiKey(credential, id, name.trim());
+    } catch (error) {
+      if (generation === this.generation) this.failAction(messageOf(error));
+      return this.state();
+    }
+    if (generation !== this.generation) return this.state();
+    return this.refreshRoster();
+  }
+
+  private rosterRow(id: number): RosterSectionRow | undefined {
+    return [...this.roster.cloud, ...this.roster.mcp, ...this.roster.other].find(
+      (candidate) => candidate.id === id,
+    );
+  }
+
+  private failAction(message: string): ConnectClientState {
+    this.actionError = message;
     return this.publish();
   }
 
@@ -308,7 +337,7 @@ export class ConnectClient {
     this.generation += 1;
     this.roster = EMPTY_ROSTER;
     this.rosterError = null;
-    this.removeError = null;
+    this.actionError = null;
     // Nothing in flight belongs to the next account either.
     this.rosterReads += 1;
     this.credential = null;
