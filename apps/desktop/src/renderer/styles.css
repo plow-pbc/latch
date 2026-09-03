@@ -122,6 +122,9 @@ body {
 /* The Capabilities tab's badge: rows needing a decision, not events. Amber,
    because a block by this Mac is nobody refusing — the audit row's tone. */
 .tabcount {
+  /* Centred on the label's cap height, not sat on its baseline: an inline
+     box with padding hangs below the text otherwise. */
+  display: inline-block; vertical-align: middle; position: relative; top: -1px;
   margin-left: 6px;
   font-size: 10.5px; font-weight: 700; line-height: 1;
   padding: 3px 6px; border-radius: 999px;
