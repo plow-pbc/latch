@@ -1334,6 +1334,12 @@ ipcMain.handle("capabilities:act", async (_e, rawKey: unknown) => {
             },
           });
         }
+        // macOS refused without asking — a Don't Allow it remembers — and
+        // only the pane can undo that: float the panel beside it.
+        if (result?.status === "denied") {
+          const target = grantTargetFor(key);
+          if (target) await fdaGrantFlow.start(target);
+        }
       }
       break;
     }
