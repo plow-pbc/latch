@@ -188,6 +188,24 @@ describe("parseOnePux", () => {
     expect(() => parseOnePux(lieAboutSize(stored, 100))).toThrow(/too large/);
   });
 
+  it("reads an export whose attachments alone are far past the export.data cap", () => {
+    // Real exports are dominated by files/ — one observed 1PUX carried 14 MB
+    // of items and 276 MB of attachments. Only export.data is bounded; the
+    // archive as a whole is not, so a stored attachment larger than the cap
+    // must not stop the items beside it from being read.
+    const big = zipOf(
+      {
+        "export.attributes": '{"version":3,"description":"1Password Unencrypted Export"}',
+        "export.data": exportData([{ name: "Personal", items: [login("Acme")] }]),
+        "files/scan.pdf": new Uint8Array(65 * 1024 * 1024),
+      },
+      { deflate: false },
+    );
+    expect(big.byteLength).toBeGreaterThan(64 * 1024 * 1024);
+    const parsed = parseOnePux(big);
+    expect(parsed.logins.map((l) => l.title)).toEqual(["Acme"]);
+  });
+
   it("names the vaults a parsed export spans, skipped-only ones included, and tells two same-named vaults apart", () => {
     const parsed = parseOnePux(onePux([
       { name: "Personal", items: [login("Dropbox")] },
