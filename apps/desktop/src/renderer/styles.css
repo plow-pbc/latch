@@ -489,6 +489,23 @@ textarea.text { min-height: 70px; resize: vertical; }
 .cap-group-rows { padding-left: 20px; padding-bottom: 4px; }
 .cap-group-rows .cap-row:first-of-type { border-top: 1px solid var(--border); }
 @media (prefers-reduced-motion: reduce) { .cap-chevron { transition: none; } }
+/* The nudge: a red arrow just left of a hit row's button, pointing at it
+   and rocking toward it — the grant panel's own filled arrow, turned right. */
+.cap-action { display: inline-flex; align-items: center; gap: 12px; }
+.cap-nudge {
+  width: 14px; height: 14px; flex: none; color: var(--red-fg);
+  transform: rotate(90deg);
+  animation: cap-nudge 0.9s ease-in-out infinite alternate;
+}
+@keyframes cap-nudge {
+  from { transform: rotate(90deg) translateY(2px); }
+  to { transform: rotate(90deg) translateY(-3px); }
+}
+@media (prefers-reduced-motion: reduce) { .cap-nudge { animation: none; } }
+/* The pointed-at button keeps its own look and gains a second, red edge:
+   1px, standing 2px clear of the button's border. */
+.btn.attention { outline: 1px solid var(--red-fg); outline-offset: 4px; }
+.btn.attention:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 /* "See blocked requests…": a link, so it reads as something to click,
    where a bare row did not. */
 .cap-more {

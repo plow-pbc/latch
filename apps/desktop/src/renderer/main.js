@@ -2120,6 +2120,13 @@ async function renderCapabilities() {
         more,
       ]);
     }
+    // A row showing blocked requests points at its button: the grant panel's
+    // filled arrow, turned to the right, nudging toward it (CSS animates it;
+    // reduced-motion holds it still). Only while there is something to do.
+    const pointed = asks && r.actionLabel
+      ? el("span", { class: "cap-action" }, [icon("nudgeArrow", { class: "cap-nudge", fill: true }), action])
+      : action;
+    if (asks && r.actionLabel) action.classList.add("attention");
     const children = [
       el("span", { class: "status-dot" + dotClass, attrs: { title: r.statusText } }),
       iconCell(r.key),
@@ -2128,7 +2135,7 @@ async function renderCapabilities() {
         r.detail ? el("div", { class: "cap-sub", text: r.detail }) : null,
         asks,
       ]),
-      action,
+      pointed,
     ];
     if (r.count > 0 && r.status !== "granted" && openRows.has(r.key)) children.push(expanded(r));
     return el("div", { class: "cap-row" }, children);
