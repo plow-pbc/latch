@@ -1945,6 +1945,10 @@ async function renderCapabilities() {
   const panel = el("div", { class: "panel settings" });
   view.replaceChildren(panel);
   const openRows = new Set();
+  // Which groups are open. Seeded from the model on first sight of each
+  // group (a group with blocked requests inside opens itself), then the
+  // owner's clicks own it for the life of this mount.
+  const openGroups = new Map();
 
     // The same connector state and card used by setup, mounted into a stable
   // box so a poll or account action redraws only this section. `loading` is a
@@ -2012,10 +2016,12 @@ async function renderCapabilities() {
         close,
       ]));
     }
+    nodes.push(group("Connected Accounts", null, [connectorBox, connectorNote]));
     for (const section of v.sections) {
-      nodes.push(group(section.title, section.description, section.rows.map((r) => capabilityRow(r))));
+      nodes.push(group(section.title, section.description, section.items.map((item) =>
+        item.kind === "group" ? capabilityGroup(item) : capabilityRow(item),
+      )));
     }
-    nodes.push(group("Connected accounts", null, [connectorBox, connectorNote]));
     panel.replaceChildren(...nodes);
   };
 
@@ -2076,6 +2082,32 @@ async function renderCapabilities() {
     ];
     if (r.count > 0 && openRows.has(r.key)) children.push(expanded(r));
     return el("div", { class: "cap-row" }, children);
+  };
+
+  /* A disclosure of several switches of one kind: a chevron, the name,
+     "N of M granted" on the right, and the rows beneath when open. */
+  const capabilityGroup = (g) => {
+    if (!openGroups.has(g.key)) openGroups.set(g.key, g.expandedByDefault);
+    const open = openGroups.get(g.key);
+    // The row grid's own shape — the chevron where a row keeps its dot, the
+    // name and line where a row keeps its own, the count where a row keeps
+    // its button — so a group line is exactly as tall as a switch's.
+    const head = el("button", { class: "cap-row cap-group-head", attrs: { type: "button", "aria-expanded": String(open) } }, [
+      el("span", { class: "cap-chevron-cell" }, [icon("chevron", { class: "ico cap-chevron" + (open ? " open" : "") })]),
+      el("div", {}, [
+        el("div", { class: "cap-name", text: g.title }),
+        el("div", { class: "cap-sub", text: g.description }),
+      ]),
+      el("span", { class: "cap-group-count", text: `${g.granted} of ${g.total} granted` }),
+    ]);
+    head.addEventListener("click", async () => {
+      openGroups.set(g.key, !open);
+      draw(await window.domo.capabilitiesGet().then((c) => c.view));
+    });
+    return el("div", { class: "cap-group" + (open ? " open" : "") }, [
+      head,
+      open ? el("div", { class: "cap-group-rows" }, g.rows.map((r) => capabilityRow(r))) : null,
+    ]);
   };
 
   const expanded = (r) => {
