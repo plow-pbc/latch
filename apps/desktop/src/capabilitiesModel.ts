@@ -110,9 +110,12 @@ export const PERMISSION_TITLES: Record<string, string> = {
  * panel flow opens the pane and floats beside it; whether the pane also
  * ACCEPTS A DROPPED APP (Full Disk Access and Accessibility do; the rest
  * list only apps that have asked) decides whether the panel shows the drag
- * tile or just points at the switch.
+ * tile or just points at the switch. `panel: false` opens the pane with no
+ * panel at all — Screen Recording's list takes no drop and the app cannot
+ * even ask to be listed there, so a panel pointing at nothing would only
+ * mislead.
  */
-export const SETTINGS_PANES: Record<string, { url: string; acceptsDrop: boolean }> = {
+export const SETTINGS_PANES: Record<string, { url: string; acceptsDrop: boolean; panel?: false }> = {
   full_disk_access: { url: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles", acceptsDrop: true },
   accessibility: { url: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility", acceptsDrop: true },
   automation: { url: "x-apple.systempreferences:com.apple.preference.security?Privacy_Automation", acceptsDrop: false },
@@ -120,7 +123,7 @@ export const SETTINGS_PANES: Record<string, { url: string; acceptsDrop: boolean 
   calendars: { url: "x-apple.systempreferences:com.apple.preference.security?Privacy_Calendars", acceptsDrop: false },
   reminders: { url: "x-apple.systempreferences:com.apple.preference.security?Privacy_Reminders", acceptsDrop: false },
   photos: { url: "x-apple.systempreferences:com.apple.preference.security?Privacy_Photos", acceptsDrop: false },
-  screen_recording: { url: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture", acceptsDrop: false },
+  screen_recording: { url: "x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture", acceptsDrop: false, panel: false },
   files_desktop: { url: "x-apple.systempreferences:com.apple.preference.security?Privacy_FilesAndFolders", acceptsDrop: false },
   files_documents: { url: "x-apple.systempreferences:com.apple.preference.security?Privacy_FilesAndFolders", acceptsDrop: false },
   files_downloads: { url: "x-apple.systempreferences:com.apple.preference.security?Privacy_FilesAndFolders", acceptsDrop: false },
@@ -129,7 +132,7 @@ export const SETTINGS_PANES: Record<string, { url: string; acceptsDrop: boolean 
 };
 
 /** The pane a row key opens: an Automation row opens the Automation pane. */
-export function paneFor(key: string): { url: string; acceptsDrop: boolean } | null {
+export function paneFor(key: string): { url: string; acceptsDrop: boolean; panel?: false } | null {
   return SETTINGS_PANES[key.startsWith("automation:") ? "automation" : key] ?? null;
 }
 

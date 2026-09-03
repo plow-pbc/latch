@@ -2047,12 +2047,13 @@ async function renderCapabilities() {
   };
 
   const capabilityRow = (r) => {
+    // Three dots: green works, red macOS refused, grey everything else — not
+    // asked yet, or not knowable until the app is open. The tooltip keeps the
+    // words; the two greys are not a difference the owner can act on.
     const dotClass =
       r.status === "granted" ? " on"
-      : r.needsAttention ? " warn"
-      : r.status === "denied" ? " off"
-      : r.status === "not_asked" ? ""
-      : " unknown";
+      : r.needsAttention || r.status === "denied" ? " off"
+      : "";
     let action;
     // A word, not a button: nothing to press once it is granted.
     if (r.status === "granted") action = el("span", { class: "cap-granted", text: "Granted" });
@@ -2066,9 +2067,10 @@ async function renderCapabilities() {
     // What the switch stopped, as a third line under the name — the count,
     // when, who, and the link to the requests themselves (an explicit link:
     // a row that merely opened on click never read as something to click).
-    // Nothing at all for a row nothing has hit.
+    // Nothing at all for a row nothing has hit — or for one that is granted
+    // now: what it stopped before the grant is history, and the Audit tab's.
     let asks = null;
-    if (r.count > 0) {
+    if (r.count > 0 && r.status !== "granted") {
       const more = el("button", { class: "cap-more", text: openRows.has(r.key) ? "Hide blocked requests" : "See blocked requests…" });
       more.addEventListener("click", async () => {
         if (openRows.has(r.key)) openRows.delete(r.key); else openRows.add(r.key);
@@ -2090,7 +2092,7 @@ async function renderCapabilities() {
       ]),
       action,
     ];
-    if (r.count > 0 && openRows.has(r.key)) children.push(expanded(r));
+    if (r.count > 0 && r.status !== "granted" && openRows.has(r.key)) children.push(expanded(r));
     return el("div", { class: "cap-row" }, children);
   };
 
@@ -2138,11 +2140,8 @@ async function renderCapabilities() {
     return el("div", { class: "cap-expand" }, [
       el("p", { class: "lbl", text: "Blocked requests" }),
       ...reqs,
-      ...(sentence && r.status !== "granted"
+      ...(sentence
         ? [el("div", { class: "cap-sentence" }, [el("p", { class: "lbl", text: "What the agent was told" }), el("span", { text: sentence })])]
-        : []),
-      ...(r.status === "granted"
-        ? [el("p", { class: "faint", text: "Granted now — ask your agent to try again." })]
         : []),
       el("div", { class: "cap-actions" }, [
         ...(r.key === "full_disk_access" && r.status !== "granted"

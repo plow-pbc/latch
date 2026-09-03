@@ -277,6 +277,9 @@ describe("panes", () => {
     ]);
     expect(paneFor("automation:com.apple.mail")).toEqual(SETTINGS_PANES.automation);
     expect(paneFor("nothing")).toBeNull();
+    // Screen Recording's pane gets no panel at all.
+    expect(paneFor("screen_recording")?.panel).toBe(false);
+    expect(Object.entries(SETTINGS_PANES).filter(([, p]) => p.panel === false).map(([k]) => k)).toEqual(["screen_recording"]);
   });
 });
 

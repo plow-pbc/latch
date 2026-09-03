@@ -21,8 +21,6 @@
   --zinc-bg: #f4f4f5; --zinc-fg: #52525b; --zinc-bd: #e4e4e7;
   /* Light enough to read against the --blue-fg primary button. */
   --focus: #60a5fa;
-  /* The Capabilities tab's "needs a decision" dot. */
-  --warn-dot: #e5484d;
   --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
   --sans: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Roboto, sans-serif;
 }
@@ -38,7 +36,6 @@
     --blue-bg: #0c1b33; --blue-fg: #93c5fd; --blue-bd: #1e3a8a;
     --zinc-bg: #1c1c20; --zinc-fg: #a1a1aa; --zinc-bd: #27272a;
     --focus: #93c5fd;
-    --warn-dot: #f26b6f;
   }
 }
 
@@ -395,13 +392,8 @@ textarea.text { min-height: 70px; resize: vertical; }
 .support-title { font-weight: 600; margin-bottom: 2px; }
 
 /* The Capabilities tab (capabilitiesModel.ts). Dots: green granted, red
-   refused, amber a hit switch that is still off, hollow when macOS could not
-   be asked. */
+   refused (or off and hit), grey not asked or not knowable. */
 .status-dot.off { background: var(--red-fg); }
-/* A switch that is off AND was hit: a clear red, brighter than the text
-   red but short of a warning light, so it reads at a glance in the list. */
-.status-dot.warn { background: var(--warn-dot); }
-.status-dot.unknown { background: transparent; border: 1px solid var(--faint); box-sizing: border-box; }
 .cap-banner {
   display: flex; align-items: center; gap: 12px;
   padding: 10px 14px; margin-bottom: 14px;
