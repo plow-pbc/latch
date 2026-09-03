@@ -620,10 +620,40 @@ describe("nodeProbes — the real answers, against fixtures", () => {
   });
 
   it("answers unknown for Automation and the queryable services without the helper", async () => {
-    const probes = nodeProbes();
+    // A fixture home, never the real one: a request touches the store.
+    const probes = nodeProbes({ ownerHome: tempDir() });
     expect(await probes.automationStatus("Messages")).toBe("unknown");
     expect(await probes.permissionStatus("contacts")).toBe("unknown");
+    expect(await probes.requestPermission("accessibility")).toBe("unknown");
     expect(await probes.requestPermission("contacts")).toBe("unknown");
+  });
+
+  it("asks for Contacts and Calendars in process, through the addon the app hands in", async () => {
+    const calls: string[] = [];
+    const native = {
+      contactsStatus: () => "not_asked",
+      calendarsStatus: () => {
+        throw new Error("framework unavailable");
+      },
+      requestContacts: async () => {
+        calls.push("requestContacts");
+        return "granted";
+      },
+      requestCalendars: async () => {
+        calls.push("requestCalendars");
+        return "nonsense";
+      },
+    };
+    const probes = nodeProbes({ ownerHome: tempDir(), native });
+    expect(probes.canRequestInProcess()).toBe(true);
+    expect(await probes.permissionStatus("contacts")).toBe("not_asked");
+    // A throwing addon is an unknown, never a crash.
+    expect(await probes.permissionStatus("calendars")).toBe("unknown");
+    expect(await probes.requestPermission("contacts")).toBe("granted");
+    expect(await probes.requestPermission("calendars")).toBe("unknown");
+    expect(calls).toEqual(["requestContacts", "requestCalendars"]);
+    // Without the addon there is no way to ask, and the probes say so.
+    expect(nodeProbes({ ownerHome: tempDir() }).canRequestInProcess()).toBe(false);
   });
 
   it("reads the helper's answer, and the request mode's, off its one JSON line", async () => {
@@ -633,14 +663,14 @@ describe("nodeProbes — the real answers, against fixtures", () => {
     const helper = path.join(dir, "helper.sh");
     fs.writeFileSync(
       helper,
-      '#!/bin/sh\ncase "$1 $2" in\n"--contacts ") echo \'{"status":"not_asked"}\';;\n"--calendars ") echo \'{"status":"granted"}\';;\n"--screen-recording ") echo \'{"status":"denied"}\';;\n"--request contacts") echo \'{"status":"granted"}\';;\n"--automation Messages") echo \'{"status":"target_not_running"}\';;\n*) echo nonsense;;\nesac\n',
+      '#!/bin/sh\ncase "$1 $2" in\n"--contacts ") echo \'{"status":"not_asked"}\';;\n"--calendars ") echo \'{"status":"granted"}\';;\n"--screen-recording ") echo \'{"status":"denied"}\';;\n"--request accessibility") echo \'{"status":"granted"}\';;\n"--automation Messages") echo \'{"status":"target_not_running"}\';;\n*) echo nonsense;;\nesac\n',
     );
     fs.chmodSync(helper, 0o755);
-    const probes = nodeProbes({ helperPath: helper });
+    const probes = nodeProbes({ helperPath: helper, ownerHome: dir });
+    expect(await probes.requestPermission("accessibility")).toBe("granted");
     expect(await probes.permissionStatus("contacts")).toBe("not_asked");
     expect(await probes.permissionStatus("calendars")).toBe("granted");
     expect(await probes.permissionStatus("screen_recording")).toBe("denied");
-    expect(await probes.requestPermission("contacts")).toBe("granted");
     expect(await probes.automationStatus("Messages")).toBe("target_not_running");
     // An unparseable answer is unknown, never a guess.
     expect(await probes.permissionStatus("accessibility")).toBe("unknown");

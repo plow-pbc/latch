@@ -114,6 +114,9 @@ contextBridge.exposeInMainWorld("domo", {
   // must not hide on a frontmost flicker — hiding the drag source aborts the
   // drag. Main releases the hold itself when the drag session ends.
   fullDiskPanelHold: (on: boolean) => ipcRenderer.send("fullDisk:panelHold", on),
+  // The height the panel's content needs, so the window grows for a header
+  // that wrapped instead of pushing the tile out of the frame.
+  fullDiskPanelHeight: (height: number) => ipcRenderer.send("fullDisk:panelHeight", height),
   // Launch at Login: one whole-state shape per read. macOS owns the bit
   // (System Settings can flip it behind the app's back), so every read
   // re-asks the OS, and set answers with what the OS then holds.

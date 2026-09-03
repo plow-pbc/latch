@@ -163,17 +163,40 @@ function sendGrabAlignedTileImage(e) {
   }
 }
 // The tile's width follows the panel's (main resizes it to track System
-// Settings), so a fresh raster follows every settle.
+// Settings), so a fresh raster follows every settle — and so does the
+// height the content needs: a header that wraps at one width may not at
+// another.
 let tileImageTimer = null;
 window.addEventListener("resize", () => {
   clearTimeout(tileImageTimer);
-  tileImageTimer = setTimeout(() => void sendTileImage(), 150);
+  tileImageTimer = setTimeout(() => {
+    reportHeight();
+    void sendTileImage();
+  }, 150);
 });
+
+/* The height this content needs, measured rather than assumed: the window
+   was a constant that fit a one-line header, and a long switch name
+   ("Automation for Mail") wraps to two, pushing the tile below the frame.
+   Main resizes the window to what is reported; the panel's own layout then
+   fills it exactly. */
+function reportHeight() {
+  const panelNode = root.firstElementChild;
+  const header = panelNode?.querySelector(".fda-header");
+  if (!panelNode || !header) return;
+  const cs = getComputedStyle(panelNode);
+  const needed =
+    parseFloat(cs.paddingTop) + header.offsetHeight + parseFloat(cs.rowGap || cs.gap || "6") +
+    TILE_HEIGHT + parseFloat(cs.paddingBottom) + 2; // +2: the panel's own border
+  if (Math.abs(needed - window.innerHeight) >= 1) window.domo.fullDiskPanelHeight(needed);
+}
+const TILE_HEIGHT = 46;
 
 root.replaceChildren(el("div", { class: "fda-panel" }, [
   el("div", { class: "fda-header" }, [arrow, headerText, el("div", { class: "spacer" }), closeBtn]),
   card,
 ]));
+reportHeight();
 // First raster once the icon is decoded, so the clone doesn't paint a blank
 // square where the app icon goes.
 const iconImg = card.querySelector("img");

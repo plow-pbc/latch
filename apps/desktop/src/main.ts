@@ -50,7 +50,7 @@ import {
 } from "@domo/device-core";
 import { createDomoMcpServer, DomoMcpServer } from "@domo/mcp-server";
 import { RelayClient } from "@domo/relay-client";
-import type { AutomationStatus, HostInventory, RequestablePermission } from "@domo/device-core";
+import type { AutomationStatus, HostInventory, NativePermissions, RequestablePermission } from "@domo/device-core";
 import { approvalViewModel, auditActivities, CredentialTitles } from "./viewModel.js";
 
 import { appBundleName, appBundlePath, decodeTileImage } from "./permissionFlow.js";
@@ -1253,6 +1253,7 @@ async function capabilitiesNow(inventory?: HostInventory | null): Promise<Capabi
     dismissals: settings.capabilityDismissals ?? {},
     bannerSeenAt: settings.blockedBannerSeenAt ?? null,
     folders: settings.folderConsent ?? {},
+    canRequestInProcess: device?.hostProbes.canRequestInProcess() ?? false,
   });
 }
 
@@ -1372,6 +1373,21 @@ ipcMain.handle("grant:state", async () => {
 
 // MARK: Full Disk Access grant flow (permissionFlow.ts)
 
+/**
+ * The in-process Contacts/Calendars addon (@domo/native-permissions), or null
+ * where it was never built. Loaded into THIS process on purpose: the request
+ * APIs behind it only show a dialog to a caller whose own bundle carries the
+ * usage strings, which is the app (electron-builder.yml extendInfo) — or the
+ * dev Electron bundle once scripts/dev-usage-strings.mjs has patched it.
+ */
+function nativePermissions(): NativePermissions | null {
+  try {
+    return createRequire(import.meta.url)("@domo/native-permissions") as NativePermissions | null;
+  } catch {
+    return null;
+  }
+}
+
 /** The compiled native helpers (scripts/build-native.mjs): packaged under
  *  Contents/Resources/native, from source under dist/native. */
 const nativeHelperPath = (name: string): string =>
@@ -1431,11 +1447,16 @@ async function resolveFdaDragTarget(): Promise<typeof fdaDragTarget> {
   if (fdaDragTarget) return fdaDragTarget;
   const run = promisify(execFile);
   let bundle: string | null = null;
-  try {
-    const { stdout } = await run(fdaHelperPath, ["--responsible"]);
-    if (stdout.trim().endsWith(".app")) bundle = stdout.trim();
-  } catch {
-    // No compiled helper on this host, or no responsible app to name.
+  // A run the dev launcher spawned (native/launch-disclaimed.swift) is its
+  // own TCC client, whatever its ancestry says: the executable's own bundle
+  // is the answer, and the helper is not asked.
+  if (process.env.DOMO_SELF_RESPONSIBLE !== "1") {
+    try {
+      const { stdout } = await run(fdaHelperPath, ["--responsible"]);
+      if (stdout.trim().endsWith(".app")) bundle = stdout.trim();
+    } catch {
+      // No compiled helper on this host, or no responsible app to name.
+    }
   }
   bundle ??= appBundlePath(process.execPath);
   if (!bundle) return null;
@@ -1538,6 +1559,10 @@ ipcMain.on("fullDisk:dragStart", (e) => {
 });
 // The panel renderer's mid-gesture guard (see fdaGrantFlow.holdVisible).
 ipcMain.on("fullDisk:panelHold", (_e, on: boolean) => fdaGrantFlow.setHold(on === true));
+// The panel measured the height its content needs (fdapanel.js).
+ipcMain.on("fullDisk:panelHeight", (_e, height: unknown) => {
+  if (typeof height === "number" && Number.isFinite(height)) fdaGrantFlow.setHeight(height);
+});
 // The grant flow itself: opens the pane and floats the drag panel next to it,
 // following the System Settings window (fdaGrantFlow.ts owns the lifecycle —
 // this handler only starts it). The helper binary is optional by design: no
@@ -1918,7 +1943,7 @@ app.whenReady().then(async () => {
     // answers Automation consent without prompting. No helper (no Swift
     // toolchain at build time) leaves Automation "unknown" and nothing else
     // degrades — the same contract as the Full Disk Access tracker.
-    nodeProbes({ ownerHome: os.homedir(), helperPath: hostPermissionsHelperPath }),
+    nodeProbes({ ownerHome: os.homedir(), helperPath: hostPermissionsHelperPath, native: nativePermissions() }),
   );
   // Same tick as the store's construction (see onAbandoned): an approval that
   // was pending when the app last quit gets closed out in the audit log too,

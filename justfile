@@ -58,6 +58,7 @@ build:
     npx tsc -b
     node apps/desktop/scripts/copy-renderer.mjs
     node apps/desktop/scripts/build-native.mjs
+    node apps/desktop/scripts/dev-usage-strings.mjs
 
 # Run the full test suite. Depends on `install` so a clean checkout — CI, the
 # review bot, a new machine — is one command; it is a ~1s no-op once installed.
@@ -248,8 +249,18 @@ serve-updates port="8043":
 # the app name/tray tooltip with the branch, so from-source runs never collide
 # with each other — or with the packaged install, which runs unbranded from
 # the plain "Plow-Latch" home.
+# Through the dev launcher when it is built: a run spawned with TCC
+# responsibility disclaimed is its own client, so its permission dialogs,
+# usage strings and grants are Electron.app's rather than this terminal's
+# (native/launch-disclaimed.swift says why that matters). Without the Swift
+# toolchain it falls back to a plain launch, attributed to the terminal.
 app: build
-    DOMO_HOME="{{apphome}}" DOMO_BRANCH="{{branch}}" npx electron "{{root}}/apps/desktop"
+    @if [ -x "{{root}}/apps/desktop/dist/native/launch-disclaimed" ]; then \
+      DOMO_HOME="{{apphome}}" DOMO_BRANCH="{{branch}}" "{{root}}/apps/desktop/dist/native/launch-disclaimed" \
+        "$(node -p 'require("electron")')" "{{root}}/apps/desktop"; \
+    else \
+      DOMO_HOME="{{apphome}}" DOMO_BRANCH="{{branch}}" npx electron "{{root}}/apps/desktop"; \
+    fi
 
 # Headless check that the sandboxed preload bridge and the renderer still work.
 verify-preload: build

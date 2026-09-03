@@ -6,6 +6,9 @@
 //
 //  - settings-window-frame — the window tracker the Full Disk Access grant
 //    flow follows System Settings with (see src/permissionFlow.ts).
+//  - launch-disclaimed — the dev launcher `just app` runs Electron through,
+//    so a from-source run is its own TCC client rather than the terminal's
+//    (the file says why). Dev only; the packaged app never carries it.
 //  - host-permissions — answers, without prompting, what macOS has decided
 //    about Automation (per target app), Accessibility and Screen Recording;
 //    the one probe the host-gate diagnosis (device-core's hostGate/) cannot
@@ -141,6 +144,17 @@ const compileUniversal = (tmp, output, { sources, target, extraArgs = [] }) => {
       target: "macos13.0",
       extraArgs: ["-framework", "AppKit", "-framework", "CoreServices", "-framework", "Contacts", "-framework", "EventKit"],
     });
+    fs.chmodSync(output, 0o755);
+  });
+}
+
+// 1c) The dev launcher (a plain CLI). Stays in dist/native like the rest,
+// but electron-builder's extraResources filter below leaves it out.
+{
+  const source = path.join(nativeDir, "launch-disclaimed.swift");
+  const output = path.join(outDir, "launch-disclaimed");
+  build("helper launch-disclaimed", [source], output, (tmp) => {
+    compileUniversal(tmp, output, { sources: [source], target: "macos13.0" });
     fs.chmodSync(output, 0o755);
   });
 }

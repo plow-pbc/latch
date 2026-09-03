@@ -16,6 +16,10 @@
 #     that run to the TERMINAL (main.ts resolveFdaDragTarget says why), so its
 #     grants are the terminal's, and resetting them takes the terminal's own
 #     Full Disk Access and Automation grants along.
+# `just app` now spawns Electron with responsibility disclaimed
+# (native/launch-disclaimed.swift), so a from-source run is Electron.app's
+# own and the terminal's grants no longer matter for it; they are still
+# reset when found, for the plain `npx electron` fallback.
 # The first two are always reset. The launcher is found the way the drag
 # panel finds it — the settings-window-frame helper's --responsible mode,
 # run from this shell, which walks the process ancestry to the topmost app

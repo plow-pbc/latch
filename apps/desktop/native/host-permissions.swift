@@ -37,12 +37,14 @@
 //                           the owner had done by the time it returned.
 // Anything else: usage on stderr, exit 2.
 //
-// The consent dialogs name the RESPONSIBLE app and read its usage strings
-// (NSContactsUsageDescription, NSCalendarsFullAccessUsageDescription), which
-// the packaged app carries (electron-builder.yml extendInfo). A from-source
-// run under Electron.app lacks them, and macOS then answers the request with
-// a denial rather than a dialog — expected there, and exactly why the status
-// modes above exist separately from the request.
+// Only `--request accessibility` is used by the app. The Contacts and
+// Calendars request APIs check the usage description in the CALLING
+// process's own bundle before they will ask — and this helper has no bundle,
+// so they refuse on the spot with no dialog, whatever the responsible app
+// carries. The app asks for those two the way an agent will use them: by
+// touching the store (device-core's probes.requestPermission), which goes
+// through the same TCC service and raises the same dialog. The modes stay
+// for a caller that IS a bundle.
 //
 // Compiled by scripts/build-native.mjs into dist/native/, shipped as an
 // extraResource. No run loop, no NSApplication.
