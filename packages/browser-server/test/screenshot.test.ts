@@ -16,6 +16,7 @@ function page(shot: Buffer): PageLike {
     frames: () => [],
     context: () => ({ on: () => {}, pages: () => [self] }),
     evaluate: async () => undefined,
+    locator: () => ({ evaluate: async () => undefined }),
     goto: async () => undefined,
     goBack: async () => undefined,
     screenshot: async () => shot,

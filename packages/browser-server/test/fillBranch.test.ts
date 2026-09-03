@@ -130,6 +130,11 @@ describe("the server's fill branch, run directly", () => {
     expect(long.key_timeout_max! - long.key_timeout_min!).toBeGreaterThanOrEqual(long.type_calls - 1);
   });
 
+  it("bounds the document check before a fill", async () => {
+    const checked = await run(base, {});
+    expect(checked.document_check_timeout_ms).toBe(constants.document_check_timeout_ms);
+  });
+
   it("refuses when the frame behind the index is no longer the approved one", async () => {
     const moved = await run({ ...base, mask: true, ...approved }, { documentToken: "doc-2" });
     expect(moved.result).toEqual({ ok: false, mask: "moved", frame: 0 });

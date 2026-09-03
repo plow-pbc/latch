@@ -13,6 +13,7 @@
  */
 import {
   DEFAULT_ACTION_TIMEOUT_MS,
+  DOCUMENT_CHECK_TIMEOUT_MS,
   Session,
   TYPED_CHARS,
   TYPING_MAX_MS,
@@ -60,6 +61,7 @@ export interface ProbeResult {
   type_calls: number;
   key_timeout_max: number | null;
   key_timeout_min: number | null;
+  document_check_timeout_ms: number | null;
   node_len: number;
   asked_len: number;
 }
@@ -245,6 +247,7 @@ class Frame implements FrameLike {
 class Page implements PageLike {
   frameList: Frame[];
   documentToken = "doc-1";
+  documentCheckTimeoutMs: number | null = null;
   urlValue = "https://pizza.example/login";
   private ctx: ContextLike;
   constructor(frame: Frame, extraFrames: Frame[] = []) {
@@ -271,6 +274,20 @@ class Page implements PageLike {
   }
   async evaluate(): Promise<Any> {
     return this.documentToken;
+  }
+  locator(selector: string) {
+    if (selector !== ":root") throw new Error(`unexpected locator: ${selector}`);
+    return {
+      evaluate: async (
+        fn: PageFunction,
+        _arg?: Any,
+        opts?: { timeout?: number },
+      ): Promise<Any> => {
+        if (fn !== DOC_TOKEN_JS) throw new Error("unexpected locator evaluation");
+        this.documentCheckTimeoutMs = opts?.timeout ?? null;
+        return this.documentToken;
+      },
+    };
   }
   async goto(): Promise<unknown> {
     return undefined;
@@ -310,6 +327,7 @@ export async function run(cmd: Record<string, Any>, o: RunOpts = {}): Promise<Pr
     type_calls: 0,
     key_timeout_max: null,
     key_timeout_min: null,
+    document_check_timeout_ms: null,
     node_len: 0,
     asked_len: 0,
   };
@@ -334,6 +352,7 @@ export async function run(cmd: Record<string, Any>, o: RunOpts = {}): Promise<Pr
   out.type_calls = frame.handle.typeCalls;
   out.key_timeout_max = frame.handle.keyTimeoutMax;
   out.key_timeout_min = frame.handle.keyTimeoutMin;
+  out.document_check_timeout_ms = page.documentCheckTimeoutMs;
   out.node_len = (frame.handle.value || "").length;
   return out;
 }
@@ -341,6 +360,7 @@ export async function run(cmd: Record<string, Any>, o: RunOpts = {}): Promise<Pr
 export const constants = {
   typed_chars: TYPED_CHARS,
   action_timeout_ms: DEFAULT_ACTION_TIMEOUT_MS,
+  document_check_timeout_ms: DOCUMENT_CHECK_TIMEOUT_MS,
   typing_max_ms: TYPING_MAX_MS,
 };
 

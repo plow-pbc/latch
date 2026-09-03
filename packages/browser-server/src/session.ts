@@ -51,6 +51,13 @@ export interface HandleLike {
   /** Choose an option by value or label; Playwright throws when none matches. */
   selectOption(value: string, opts?: { timeout?: number }): Promise<unknown>;
 }
+export interface LocatorLike {
+  evaluate(
+    pageFunction: PageFunction,
+    arg?: unknown,
+    opts?: { timeout?: number },
+  ): Promise<unknown>;
+}
 export interface FrameLike {
   url(): string;
   evaluate(pageFunction: PageFunction, arg?: unknown): Promise<unknown>;
@@ -82,6 +89,7 @@ export interface PageLike {
   frames(): FrameLike[];
   context(): ContextLike;
   evaluate(pageFunction: PageFunction, arg?: unknown): Promise<unknown>;
+  locator(selector: string): LocatorLike;
   goto(url: string, opts?: { timeout?: number; waitUntil?: string }): Promise<unknown>;
   goBack(opts?: { timeout?: number; waitUntil?: string }): Promise<unknown>;
   screenshot(opts?: {
@@ -104,10 +112,14 @@ export const MAX_REMEMBERED_REQUESTS = 200;
 const FAILED_REQUEST_HEADERS = ["retry-after", "server"] as const;
 /** How long one element action waits by default. */
 export const DEFAULT_ACTION_TIMEOUT_MS = 3000;
+/** How long the pre-action document check may wait for a usable root. */
+export const DOCUMENT_CHECK_TIMEOUT_MS = 1000;
+/** Navigation plus the settle below must fit inside the device action cap. */
+export const NAVIGATION_TIMEOUT_MS = 12000;
 /** How often a click re-scans the frames for its selector while waiting. */
 const SCAN_INTERVAL_MS = 50;
 /** What every action that moves the page gives it to settle afterwards. */
-const SETTLE_MS = 1000;
+export const SETTLE_MS = 1000;
 /** Per-character `el.type` delay — what makes a fill keystrokes, not an assign. */
 const KEY_DELAY_MS = 45;
 /** What a key may cost beyond its delay (dispatch + actionability check). */
@@ -202,7 +214,11 @@ export class Session {
   private async forgetNavigated(): Promise<void> {
     let token: string;
     try {
-      token = (await this.page.evaluate(DOC_TOKEN_JS)) as string;
+      token = (await this.page.locator(":root").evaluate(
+        DOC_TOKEN_JS,
+        undefined,
+        { timeout: DOCUMENT_CHECK_TIMEOUT_MS },
+      )) as string;
     } catch {
       // Mid-navigation, or a page that will not evaluate. Keeping the record is
       // the safe answer: a stale mask is dropped when it fails to resolve.
@@ -572,7 +588,9 @@ export class Session {
 
   async handle(cmd: Obj): Promise<Obj> {
     const action = typeof cmd.action === "string" ? cmd.action : "";
-    await this.forgetNavigated();
+    if (action !== "goto" && action !== "back" && action !== "use_page") {
+      await this.forgetNavigated();
+    }
 
     if (action === "screenshot" || action === "forms") {
       // Nothing the agent looks at goes out over a field that should be covered
@@ -582,9 +600,12 @@ export class Session {
     }
 
     if (action === "goto") {
-      await this.page.goto(String(cmd.url), { timeout: 12000, waitUntil: "domcontentloaded" });
+      await this.page.goto(String(cmd.url), {
+        timeout: NAVIGATION_TIMEOUT_MS,
+        waitUntil: "domcontentloaded",
+      });
       await this.page.waitForTimeout(SETTLE_MS);
-      return { title: await this.page.title() };
+      return {};
     }
 
     if (action === "pages") {
@@ -604,14 +625,17 @@ export class Session {
       }
       this.page = pages[i];
       await this.page.bringToFront();
-      return { ok: true, title: await this.page.title() };
+      return { ok: true };
     }
 
     if (action === "back") {
       const was = this.page.url();
-      await this.page.goBack({ timeout: 12000, waitUntil: "domcontentloaded" });
+      await this.page.goBack({
+        timeout: NAVIGATION_TIMEOUT_MS,
+        waitUntil: "domcontentloaded",
+      });
       await this.page.waitForTimeout(SETTLE_MS);
-      return { title: await this.page.title(), moved: this.page.url() !== was };
+      return { moved: this.page.url() !== was };
     }
 
     if (action === "view") {

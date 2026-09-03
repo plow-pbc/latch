@@ -79,6 +79,12 @@ export class BrowserHost {
   private stderrTail: string[] = [];
   private failedRequests: JSONValue[] = [];
   private shuttingDown = false;
+  /** Agent actions own admission and teardown. The owner's viewer never
+   * claims this slot and never acquires destructive timeout authority. */
+  private actionInFlight = false;
+  /** A child killed after an action timeout, pending its exit event. It stays
+   * here so no later command can queue onto the process while it is dying. */
+  private terminatingChild: ChildProcess | null = null;
   /** Browser version reported by the ready line (empty until started). */
   browserVersion = "";
 
@@ -94,7 +100,7 @@ export class BrowserHost {
   }
 
   get running(): boolean {
-    return this.child !== null;
+    return this.child !== null && this.child !== this.terminatingChild;
   }
 
   /** Whether the next (or current) browser shows a window. */
@@ -118,16 +124,40 @@ export class BrowserHost {
     return taken;
   }
 
-  /** Send one action to the server, lazily starting it. */
+  /** Send one agent action to the server, lazily starting it. */
   async sendAction(action: { [k: string]: JSONValue }): Promise<{ [k: string]: JSONValue }> {
     if (this.shuttingDown) throw new BrowserCrashedError("browser host is shut down");
     await this.ensureStarted();
+    if (this.actionInFlight) throw new Error("browser is busy with another action");
+    this.actionInFlight = true;
+    try {
+      return await this.dispatchAction(this.child!, action);
+    } finally {
+      this.actionInFlight = false;
+    }
+  }
+
+  private dispatchAction(
+    child: ChildProcess,
+    action: { [k: string]: JSONValue },
+    timeoutAuthority: "agent" | "viewer" = "agent",
+  ): Promise<{ [k: string]: JSONValue }> {
+    if (this.shuttingDown || this.child !== child || this.terminatingChild === child) {
+      return Promise.reject(new BrowserCrashedError(
+        "browser cannot start action: host is shutting down, or browser is terminating or inactive",
+      ));
+    }
     const id = this.nextId++;
-    const child = this.child!;
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
+        if (timeoutAuthority === "agent") {
+          this.terminateAfterActionTimeout(child, id);
+          return;
+        }
+        const pending = this.pending.get(id);
+        if (!pending) return;
         this.pending.delete(id);
-        reject(new BrowserCrashedError("browser action timed out"));
+        pending.reject(new Error("browser view timed out"));
       }, this.cfg.actionTimeoutMs ?? 60_000);
       timer.unref?.();
       this.pending.set(id, { resolve, reject, timer });
@@ -145,19 +175,21 @@ export class BrowserHost {
   }
 
   /**
-   * One screenshot frame for the owner's viewer window. Strictly best-effort:
-   * returns null when the browser isn't running (and never starts it — a
-   * viewer poll must not be able to launch Camoufox), and null on any failure
-   * (frame mid-navigation, action timeout, crash). `BrowserSessions.viewFrame()`
-   * picks WHICH host to ask — the session the owner is watching — but the frame
-   * it returns deliberately bypasses session SCOPE and the audit: it is for the
-   * device owner's own eyes, so an out-of-scope page is exactly what they
-   * should see, and a ~1/s poll must not flood the log.
+   * One screenshot frame for the owner's viewer window. It never starts a
+   * browser, claims the agent-action slot, or tears a browser down. Contention
+   * and its own bounded timeout both return null. When idle it dispatches
+   * read-only work directly; an agent arriving behind a stuck view still arms
+   * the destructive deadline that protects the serial server.
+   * `BrowserSessions.viewFrame()` picks WHICH host to ask — the session the
+   * owner is watching — but the frame it returns deliberately bypasses session
+   * SCOPE and the audit: it is for the device owner's own eyes, so an
+   * out-of-scope page is exactly what they should see, and a ~1/s poll must not
+   * flood the log.
    */
   async viewFrame(): Promise<ViewerFrame | null> {
-    if (!this.child || this.shuttingDown) return null;
+    if (!this.running || this.shuttingDown || this.actionInFlight) return null;
     try {
-      const result = await this.sendAction({ action: "view" });
+      const result = await this.dispatchAction(this.child!, { action: "view" }, "viewer");
       const dataB64 = typeof result.data_b64 === "string" ? result.data_b64 : null;
       if (dataB64 === null) return null;
       return {
@@ -188,6 +220,11 @@ export class BrowserHost {
   }
 
   private ensureStarted(): Promise<void> {
+    if (this.terminatingChild) {
+      return Promise.reject(
+        new BrowserCrashedError("browser is terminating after an action timeout"),
+      );
+    }
     if (this.child) return Promise.resolve();
     if (this.starting) return this.starting;
 
@@ -296,7 +333,9 @@ export class BrowserHost {
 
       child.on("exit", (code, signal) => {
         const wasReady = ready;
-        this.child = null;
+        const timedOut = this.terminatingChild === child;
+        if (this.child === child) this.child = null;
+        if (timedOut) this.terminatingChild = null;
         const reason = `browser server exited (code=${code}, signal=${signal})`;
         for (const [, p] of this.pending) {
           clearTimeout(p.timer);
@@ -313,7 +352,9 @@ export class BrowserHost {
           // in the ring; it is lost only if the kernel dispatched exit ahead of
           // a pending read, which nothing here can arrange and no test could
           // pin.
-          this.cfg.audit?.("browser_crashed", { code: code ?? -1 });
+          const fields: { [k: string]: JSONValue } = { code: code ?? -1 };
+          if (timedOut) fields.reason = "action_timeout";
+          this.cfg.audit?.("browser_crashed", fields);
           this.onCrash?.();
         }
         if (!ready) {
@@ -326,7 +367,8 @@ export class BrowserHost {
       });
 
       child.on("error", (err) => {
-        this.child = null;
+        if (this.child === child) this.child = null;
+        if (this.terminatingChild === child) this.terminatingChild = null;
         if (!ready) {
           ready = true;
           clearTimeout(startTimer);
@@ -336,8 +378,23 @@ export class BrowserHost {
     });
   }
 
-  private killGroup(signal: NodeJS.Signals): void {
-    const pid = this.child?.pid;
+  /** Fail every request owned by a server that missed an action deadline, then
+   * kill its process group. The exit event records the crash and closes the
+   * owning browser session; until then ensureStarted refuses new work. */
+  private terminateAfterActionTimeout(child: ChildProcess, timedOutId: number): void {
+    if (this.child !== child || this.terminatingChild === child) return;
+    const pending = this.pending.get(timedOutId);
+    if (!pending) return;
+
+    this.terminatingChild = child;
+    this.pending.delete(timedOutId);
+    clearTimeout(pending.timer);
+    pending.reject(new BrowserCrashedError("browser action timed out"));
+    this.killGroup("SIGKILL", child);
+  }
+
+  private killGroup(signal: NodeJS.Signals, child: ChildProcess | null = this.child): void {
+    const pid = child?.pid;
     if (!pid) return;
     try {
       process.kill(-pid, signal);

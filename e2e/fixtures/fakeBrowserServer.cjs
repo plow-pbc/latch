@@ -8,6 +8,7 @@
  * Knobs (env):
  *   SLOW_START=ms      delay the ready line
  *   NO_READY=1         never emit the ready line (start-timeout tests)
+ *   FAKE_ACTION_DELAY_MS=ms  delay each action while preserving serial handling
  *   CRASH_AFTER=n      after n commands, say one last thing (a 599 refusal),
  *                      then exit(9) a beat later so the parent reads the line
  *                      before the death — collapsing that beat re-opens a race
@@ -51,6 +52,7 @@
 "use strict";
 const fs = require("node:fs");
 const readline = require("node:readline");
+const { spawn } = require("node:child_process");
 
 /** Refusals waiting for the next reply, most recent first, exactly as
  * server.py's reply_with_failures hands them over. `failedNext` is one that
@@ -106,7 +108,7 @@ function handle(cmd) {
   if (a === "goto") {
     current().url = cmd.url;
     current().title = "page at " + cmd.url;
-    return { title: current().title };
+    return {};
   }
   if (a === "pages") {
     return {
@@ -117,9 +119,9 @@ function handle(cmd) {
   if (a === "use_page") {
     if (cmd.index < 0 || cmd.index >= state.pages.length) throw new Error("no page " + cmd.index);
     state.active = cmd.index;
-    return { ok: true, title: current().title };
+    return { ok: true };
   }
-  if (a === "back") return { title: current().title, moved: false };
+  if (a === "back") return { moved: false };
   if (a === "view") {
     return {
       data_b64: Buffer.from("fake-view-jpeg").toString("base64"),
@@ -262,6 +264,20 @@ function handle(cmd) {
 }
 
 function main() {
+  // A child that inherits this server's process group. Timeout supervision
+  // tests use it to distinguish killing only the stdio server from tearing
+  // down the Firefox-like process tree it owns.
+  let grandchild = null;
+  if (process.env.FAKE_CHILD_PID_LOG) {
+    grandchild = spawn(process.execPath, ["-e", "setInterval(() => {}, 1000)"], {
+      stdio: "ignore",
+    });
+    fs.writeFileSync(process.env.FAKE_CHILD_PID_LOG, String(grandchild.pid));
+  }
+  // Graceful fixture shutdown should not leak the test child. SIGKILL cannot
+  // run this hook; in that case the process-group signal must reap both.
+  process.on("exit", () => grandchild?.kill("SIGKILL"));
+
   // One line per launch, so a test can see the window mode the host chose —
   // --headed is a spawn flag, invisible on the protocol channel.
   if (process.env.FAKE_ARGV_LOG) {
@@ -277,7 +293,7 @@ function main() {
   else start();
 
   const rl = readline.createInterface({ input: process.stdin });
-  rl.on("line", (line) => {
+  const processLine = async (line) => {
     line = line.trim();
     if (!line) return;
     let cmd;
@@ -323,7 +339,12 @@ function main() {
     }
     // HANG_ACTION=<name>: never answer that action, to exercise the host's
     // per-action timeout backstop.
-    if (process.env.HANG_ACTION && cmd.action === process.env.HANG_ACTION) return;
+    if (process.env.HANG_ACTION && cmd.action === process.env.HANG_ACTION) {
+      await new Promise(() => {});
+      return;
+    }
+    const actionDelay = Number(process.env.FAKE_ACTION_DELAY_MS || 0);
+    if (actionDelay > 0) await new Promise((resolve) => setTimeout(resolve, actionDelay));
     let reply;
     try {
       reply = { id: cmd.id, result: envelope(handle(cmd)) };
@@ -331,6 +352,10 @@ function main() {
       reply = { id: cmd.id, error: String(e.message || e).slice(0, 500) };
     }
     respond(withFailures(reply));
+  };
+  let commandQueue = Promise.resolve();
+  rl.on("line", (line) => {
+    commandQueue = commandQueue.then(() => processLine(line));
   });
   rl.on("close", () => process.exit(0));
 }

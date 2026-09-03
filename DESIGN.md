@@ -386,6 +386,14 @@ SEES — screenshots and form reads — and cannot cover `eval`, which reads
 model: accidental exposure is what masking is for, and an agent that goes
 looking for a filled value with `eval` is outside it.
 
+**No bundled content blocker.** **Stated limit:** browser sessions exclude
+Camoufox's bundled uBlock Origin. A content blocker can cancel a top-level
+navigation without a page or response the agent can inspect, and without an
+attributable event for the audit log; that turns an ordinary redirect chain
+into an invisible browser failure. That is accepted: approved-origin
+enforcement is this codebase's job, while silently imposing an add-on's
+unreviewed navigation policy is not.
+
 **What the page's own requests did.** A browser action reports whether it
 worked; it used to say nothing about whether the *page* worked. A click whose
 XHR came back 401/403/429 answered `{ok: true}` on a page that had not moved,
@@ -505,10 +513,15 @@ still comes from that session's `BrowserHost.viewFrame()`, which is
 deliberately outside session SCOPE: scope bounds what the **agent** observes,
 and the owner watching an out-of-scope page is exactly the oversight the view
 exists for (the caption flags "Out of approved scope"), and a ~1/s poll must
-not flood the audit log. `viewFrame` is strictly best-effort — it never
-starts the browser, never throws, and a ~1/s poll writes nothing to the audit
-log. The thumbnail appears only while a session is active and disappears when
-it closes.
+not flood the audit log. `viewFrame` never starts the browser and never throws;
+an ordinary poll writes nothing to the audit log. The thumbnail appears only
+while a session is active and disappears when it closes. Only agent actions
+claim the host's action slot and destructive deadline. A viewer poll returns
+`null` immediately when that slot is occupied; when idle it dispatches without
+claiming the slot, and its own timeout only abandons that frame. If a view
+wedges the TypeScript server's `SerialQueue`, the next agent action dispatches
+behind it and owns the deadline that kills the browser, records the crash and
+closes the session.
 
 **Skills.** Devices publish skills (name/description/markdown body,
 `SkillRegistry`); agents discover them via `plow_list_skills` and read them

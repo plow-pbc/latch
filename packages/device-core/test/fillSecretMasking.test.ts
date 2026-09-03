@@ -5,8 +5,8 @@
  *
  * Two layers, because the mark spans the seam: what the device asks the browser
  * to do (the `mask` flag on the fill action, decided from Chunk 1's `hidden`),
- * and what the page ends up carrying (the `MASK_JS` source string `server.py`
- * evaluates, run here against a stub document — no Python, no browser).
+ * and what the page ends up carrying (the `MASK_JS` function the browser
+ * server evaluates, run here against a stub document — no browser).
  *
  * No secret value is asserted on anywhere below.
  */
@@ -23,7 +23,14 @@ import {
   PaymentApprovalClient,
   PaymentApprovalRequest,
 } from "@domo/device-core";
-import { DEFAULT_ACTION_TIMEOUT_MS, TYPING_MAX_MS } from "@domo/browser-server";
+import {
+  DEFAULT_ACTION_TIMEOUT_MS,
+  DOCUMENT_CHECK_TIMEOUT_MS,
+  NAVIGATION_TIMEOUT_MS,
+  SETTLE_MS,
+  TYPING_MAX_MS,
+} from "@domo/browser-server";
+import { BROWSER_ACTION_TIMEOUT_MS } from "../src/deviceAgent.js";
 
 const FAKE_SERVER = fileURLToPath(
   new URL("../../../e2e/fixtures/fakeBrowserServer.cjs", import.meta.url),
@@ -1017,20 +1024,10 @@ describe("fill_secret banking-credential gate", () => {
 // either. The fill BRANCH itself is proven in @domo/browser-server's tests.
 describe("the cap the fill's budgets are measured against", () => {
   it("keeps the server's timed budgets under the cap the device arms", () => {
-    const cap = hostCapMs();
-    expect(cap).toBeGreaterThan(0);
-    expect(DEFAULT_ACTION_TIMEOUT_MS * 3 + TYPING_MAX_MS).toBeLessThan(cap);
+    expect(BROWSER_ACTION_TIMEOUT_MS).toBeGreaterThan(0);
+    expect(
+      DOCUMENT_CHECK_TIMEOUT_MS + DEFAULT_ACTION_TIMEOUT_MS * 3 + TYPING_MAX_MS,
+    ).toBeLessThan(BROWSER_ACTION_TIMEOUT_MS);
+    expect(NAVIGATION_TIMEOUT_MS + SETTLE_MS).toBeLessThan(BROWSER_ACTION_TIMEOUT_MS);
   });
 });
-
-/** The action cap the device arms, read from the one place it is declared. */
-function hostCapMs(): number {
-  const agent = fs.readFileSync(
-    fileURLToPath(new URL("../src/deviceAgent.ts", import.meta.url)),
-    "utf8",
-  );
-  const m = /actionTimeoutMs:\s*([\d_]+)/.exec(agent);
-  if (!m) throw new Error("actionTimeoutMs not found in deviceAgent.ts");
-  return Number(m[1].replace(/_/g, ""));
-}
-

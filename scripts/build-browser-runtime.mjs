@@ -53,10 +53,11 @@ const wantBrowser = args.includes("--browser") || args.includes("--browser-both"
 const wantBoth = args.includes("--browser-both");
 
 // Bump when the pruning/merging logic below changes, so cached trees (which
-// are keyed on the download pins) rebuild with the new slimming applied. v3
-// drops the bundled UBO addon — a warm v2 tree still carries the previously
-// downloaded, unverified xpi, so it must rebuild clean.
-const PRUNE_VERSION = "3";
+// are keyed on the download pins) rebuild with the new slimming applied. Two
+// incompatible v3 trees exist: main's driver-pruned tree still bundled UBO,
+// while the branch's v3 removed UBO without the driver pruning. v4 identifies
+// the tree that applies both changes so neither v3 cache can be reused.
+const PRUNE_VERSION = "4";
 
 function log(msg) {
   process.stdout.write(`[browser-runtime] ${msg}\n`);
@@ -241,7 +242,7 @@ function fetchBrowser(arch) {
  * vendor/camoufox-browser/universal — what `just package` bundles. lipo saves
  * nothing on the binaries themselves (a fat file is the two thin slices
  * concatenated); the win is everything else: the arch-independent payload
- * (omni.ja, addons, …) ships once instead of twice.
+ * (omni.ja, localization, …) ships once instead of twice.
  *
  * Merge rules, enforced loudly so a future browser bump can't silently ship a
  * broken merge: every Mach-O must have a twin in the other arch (lipo-fused);
@@ -377,7 +378,7 @@ function mergeCamoufoxUniversal() {
   // No addons are fused: none is bundled (see fetchBrowser). Deliberately NOT
   // copying arm64/addons — a copy would both fail on a clean tree (no such dir)
   // and, worse, re-import a leftover UBO from a cache built before it was
-  // dropped. The PRUNE_VERSION bump below rebuilds any such cache clean.
+  // dropped. The PRUNE_VERSION bump above rebuilds any such cache clean.
 
   fs.writeFileSync(marker, markerValue);
   log(`camoufox universal install ready at ${outRoot}`);

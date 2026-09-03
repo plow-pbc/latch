@@ -9,7 +9,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { JSONValue } from "@domo/protocol";
-import { BrowserCrashedError, BrowserHost } from "@domo/device-core";
+import { AuditLog, BrowserCrashedError, BrowserHost } from "@domo/device-core";
 
 const FAKE = fileURLToPath(new URL("../../../e2e/fixtures/fakeBrowserServer.cjs", import.meta.url));
 
@@ -24,27 +24,50 @@ function makeHost(
 ): {
   host: BrowserHost;
   events: string[];
+  records: { event: string; fields: { [k: string]: JSONValue } }[];
+  auditFile: string;
 } {
   const events: string[] = [];
+  const records: { event: string; fields: { [k: string]: JSONValue } }[] = [];
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "domo-bh-"));
+  const audit = new AuditLog(path.join(dir, "audit.ndjson"));
   const host = new BrowserHost({
     command: ["node", FAKE],
     env,
-    audit: (event: string, _fields: { [k: string]: JSONValue }) => events.push(event),
+    audit: (event: string, fields: { [k: string]: JSONValue }) => {
+      events.push(event);
+      records.push({ event, fields });
+      audit.record(event, fields);
+    },
     ...extra,
   });
   hosts.push(host);
-  return { host, events };
+  return { host, events, records, auditFile: audit.file };
+}
+
+function processExists(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function waitForProcessExit(pid: number): Promise<void> {
+  const deadline = Date.now() + 3000;
+  while (processExists(pid) && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  expect(processExists(pid)).toBe(false);
 }
 
 describe("BrowserHost", () => {
-  it("starts lazily, reports ready, and correlates responses by id", async () => {
+  it("starts lazily, reports ready, and returns action responses", async () => {
     const { host, events } = makeHost();
     expect(host.running).toBe(false);
-    const [a, b] = await Promise.all([
-      host.sendAction({ action: "goto", url: "https://one.example/" }),
-      host.sendAction({ action: "text" }),
-    ]);
+    const a = await host.sendAction({ action: "goto", url: "https://one.example/" });
+    const b = await host.sendAction({ action: "text" });
     expect(a.url).toBe("https://one.example/");
     expect(typeof b.text).toBe("string");
     expect(host.running).toBe(true);
@@ -128,15 +151,76 @@ describe("BrowserHost", () => {
     await expect(host.sendAction({ action: "url" })).rejects.toThrow(/giving up/);
   });
 
-  it("bounds a hung action by actionTimeoutMs instead of blocking forever", async () => {
-    const { host } = makeHost({ HANG_ACTION: "eval" }, { actionTimeoutMs: 300 });
+  it("rejects overlaps, then kills and audits a wedged front action", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "domo-bh-tree-"));
+    const pidLog = path.join(dir, "child.pid");
+    const { host, records, auditFile } = makeHost(
+      { HANG_ACTION: "eval", FAKE_ACTION_DELAY_MS: "200", FAKE_CHILD_PID_LOG: pidLog },
+      { actionTimeoutMs: 300 },
+    );
+    await host.ensureReady();
+    const slow = host.sendAction({ action: "goto", url: "https://one.example/" });
+    let slowSettled = false;
+    void slow.then(() => { slowSettled = true; });
+    await Promise.resolve();
+    const overlapping = host.sendAction({ action: "title" });
+    const viewer = host.viewFrame();
+    await expect(overlapping).rejects.toThrow(/busy with another action/);
+    expect(await viewer).toBeNull();
+    expect(slowSettled).toBe(false);
+    await expect(slow).resolves.toEqual(expect.objectContaining({
+      url: "https://one.example/",
+    }));
+    expect(host.running).toBe(true);
+    const firstPid = Number(records.find((r) => r.event === "browser_started")!.fields.pid);
+    const childPid = Number(fs.readFileSync(pidLog, "utf8"));
+    expect(processExists(firstPid)).toBe(true);
+    expect(processExists(childPid)).toBe(true);
+    let crashed!: () => void;
+    const crash = new Promise<void>((resolve) => { crashed = resolve; });
+    host.onCrash = crashed;
     const started = Date.now();
     await expect(host.sendAction({ action: "eval", expression: "while(true){}" })).rejects.toThrow(
       /timed out/,
     );
     expect(Date.now() - started).toBeLessThan(3000);
-    // A non-hung action on the same live browser still answers.
+    await crash;
+    expect(host.running).toBe(false);
+    expect(records.find((r) => r.event === "browser_crashed")?.fields.reason)
+      .toBe("action_timeout");
+    const audit = fs.readFileSync(auditFile, "utf8").trim().split("\n")
+      .map((line) => JSON.parse(line) as { event: string; reason?: string });
+    expect(audit.find((entry) => entry.event === "browser_crashed")?.reason)
+      .toBe("action_timeout");
+    await waitForProcessExit(firstPid);
+    await waitForProcessExit(childPid);
+
+    // The next action gets a fresh browser, not a reply queued behind the
+    // action the old server never answered.
     expect((await host.sendAction({ action: "url" })).url).toBe("about:blank");
+    const startedPids = records
+      .filter((r) => r.event === "browser_started")
+      .map((r) => r.fields.pid);
+    expect(startedPids).toHaveLength(2);
+    expect(startedPids[1]).not.toBe(firstPid);
+  });
+
+  it("lets an agent act during an in-flight viewer poll", async () => {
+    const { host } = makeHost(
+      { FAKE_ACTION_DELAY_MS: "100" },
+      { actionTimeoutMs: 300 },
+    );
+    await host.ensureReady();
+    const viewer = host.viewFrame();
+    let viewerSettled = false;
+    void viewer.then(() => { viewerSettled = true; });
+    await Promise.resolve();
+
+    const agent = host.sendAction({ action: "title" });
+    expect(viewerSettled).toBe(false);
+    await expect(viewer).resolves.not.toBeNull();
+    await expect(agent).resolves.toEqual(expect.objectContaining({ title: "blank" }));
+    expect(host.running).toBe(true);
   });
 
   it("ensureReady starts the browser up front (warm before the first action)", async () => {
@@ -167,12 +251,33 @@ describe("BrowserHost", () => {
     expect(frame!.url).toBe("about:blank");
   });
 
-  it("viewFrame is best-effort: a hung view action yields null, not a throw", async () => {
-    const { host } = makeHost({ HANG_ACTION: "view" }, { actionTimeoutMs: 300 });
+  it("a view timeout is harmless until an agent finds the server wedged", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "domo-bh-view-tree-"));
+    const pidLog = path.join(dir, "child.pid");
+    const { host, records } = makeHost(
+      { HANG_ACTION: "view", FAKE_CHILD_PID_LOG: pidLog },
+      { actionTimeoutMs: 300 },
+    );
     await host.ensureReady();
+    const firstPid = Number(records.find((r) => r.event === "browser_started")!.fields.pid);
+    const childPid = Number(fs.readFileSync(pidLog, "utf8"));
+
     expect(await host.viewFrame()).toBeNull();
-    // The browser itself is still fine.
-    expect((await host.sendAction({ action: "url" })).url).toBe("about:blank");
+    expect(host.running).toBe(true);
+    expect(records.some((r) => r.event === "browser_crashed")).toBe(false);
+    expect(processExists(firstPid)).toBe(true);
+    expect(processExists(childPid)).toBe(true);
+
+    let crashed!: () => void;
+    const crash = new Promise<void>((resolve) => { crashed = resolve; });
+    host.onCrash = crashed;
+    await expect(host.sendAction({ action: "url" })).rejects.toThrow(/timed out/);
+    await crash;
+    expect(records.find((r) => r.event === "browser_crashed")?.fields.reason)
+      .toBe("action_timeout");
+    expect(host.running).toBe(false);
+    await waitForProcessExit(firstPid);
+    await waitForProcessExit(childPid);
   });
 
   it("shutdown quits the server and audits browser_stopped", async () => {

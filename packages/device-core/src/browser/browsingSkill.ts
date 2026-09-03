@@ -79,8 +79,8 @@ url, title, links, forms, tables, pages.
 
 - **You are the intelligence.** Screenshot gives you eyes; click/fill/eval give you hands.
   Write selectors from what you SEE, not from memory.
-- **\`back\` does not work in this browser** — it honestly reports \`moved: false\`. Navigate
-  with \`goto\` instead; cookies and the session survive.
+- **\`back\` reports whether the URL changed** as \`moved: true\` or \`moved: false\`.
+  When it returns false, use \`goto\` instead; cookies and the session survive.
 - **An action that "worked" but changed nothing: read \`failed_requests\`.** A result carries it
   when the page's own requests came back refused — most recent first, each \`{status, method,
   host}\` plus \`retry_after\` and \`server\` when the response carried them. A 401 or 403 means

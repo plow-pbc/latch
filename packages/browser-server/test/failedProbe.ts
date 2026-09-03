@@ -55,6 +55,9 @@ class StubPage implements PageLike {
   async evaluate(): Promise<unknown> {
     return "doc-1";
   }
+  locator() {
+    return { evaluate: async () => "doc-1" };
+  }
   async goto(): Promise<unknown> {
     return undefined;
   }

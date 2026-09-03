@@ -54,6 +54,7 @@ done
 
 # --- deps + build ----------------------------------------------------------
 just install
+just fetch-browser
 just build
 
 echo ""
