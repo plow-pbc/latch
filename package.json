@@ -1,5 +1,6 @@
 {
   "name": "domo-ts",
+  "license": "Apache-2.0",
   "private": true,
   "type": "module",
   "workspaces": [
