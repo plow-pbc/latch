@@ -14,6 +14,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ConnectClient } from "../src/connectClient.js";
 import { KeyInfo, PlowApi, PlowApiError } from "../src/plowApi.js";
 import { Deferred, deferred } from "./deferred.js";
+import { keyInfo, keyPrefixOf } from "./keyInfo.js";
 import { loadSettings, saveSettings } from "../src/settings.js";
 
 const DEVICE_TOKEN = "plow_DEVICEtok_secret";
@@ -24,7 +25,6 @@ const DEVICE_TOKEN = "plow_DEVICEtok_secret";
  * made the old `startsWith` match look right here while it never matched in
  * production.
  */
-const keyPrefixOf = (token: string) => token.slice(5, 13);
 const CLIENT_TOKEN = "plow_CLIENTtok_shown_once";
 const MCP_URL = "http://localhost:18804/v1/relay/devices/u_123/mcp";
 
@@ -437,22 +437,8 @@ describe("reading the state is a read", () => {
 });
 
 /** One active credential, as `GET /v1/api-keys` returns it. */
-function key(overrides: Partial<KeyInfo> = {}): KeyInfo {
-  return {
-    id: 1,
-    key_prefix: keyPrefixOf("plow_sk_someone_elses_credential"),
-    name: "Kitchen agent",
-    scopes: ["relay:call"],
-    tokens_used: 0,
-    is_active: true,
-    last_seen_at: "2026-08-25T10:00:00Z",
-    created_at: "2026-08-20T10:00:00Z",
-    assistant_uid: null,
-    assistant_provider: null,
-    chat_uids: [],
-    ...overrides,
-  };
-}
+const key = (overrides: Partial<KeyInfo> = {}): KeyInfo =>
+  keyInfo({ key_prefix: keyPrefixOf("plow_sk_someone_elses_credential"), ...overrides });
 
 describe("removing a roster row", () => {
   /**

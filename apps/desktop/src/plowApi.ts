@@ -166,11 +166,13 @@ export const SELF_HOSTED_PROVIDER = "self_hosted";
  * running and unreachable. A `self_hosted` assistant has no machine, so
  * revoking the credential is the whole removal.
  *
- * A null provider answers false: this picks a DESTRUCTIVE route, and a
- * provider this build cannot name must not fall into the half that deletes.
+ * Only a named provider answers true, because this picks a DESTRUCTIVE route.
+ * Everything else revokes: `self_hosted`, null, and the `undefined` an API
+ * predating the assistant contract sends — which the type cannot express and
+ * which read as "present" against a null test.
  */
 export function isCloudAssistant(provider: string | null): boolean {
-  return provider !== null && provider !== SELF_HOSTED_PROVIDER;
+  return typeof provider === "string" && provider !== "" && provider !== SELF_HOSTED_PROVIDER;
 }
 
 /** Parse Plow's UTC timestamp, whose wire form may omit the trailing offset. */
@@ -777,9 +779,19 @@ export class PlowApi {
   }
 
   /** List this account's credential metadata. The stored credential remains in
-   * the bearer header and is never returned. */
+   * the bearer header and is never returned.
+   *
+   * The assistant pair is defaulted here, once, for every reader: an API
+   * predating the assistant contract sends neither field, and `undefined`
+   * passes a null test — which would file every credential as a cloud agent
+   * and send Remove to a delete that silently does nothing. */
   async listApiKeys(token: string): Promise<KeyInfo[]> {
-    return this.call<KeyInfo[]>("GET", "/v1/api-keys", { token });
+    const keys = await this.call<KeyInfo[]>("GET", "/v1/api-keys", { token });
+    return keys.map((key) => ({
+      ...key,
+      assistant_uid: key.assistant_uid ?? null,
+      assistant_provider: key.assistant_provider ?? null,
+    }));
   }
 
   /** Soft-revoke one credential by its server id. */

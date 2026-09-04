@@ -19,6 +19,7 @@ import {
   PlowApiError,
   ProvisionedActivationRedeem,
 } from "../src/plowApi.js";
+import { keyInfo } from "./keyInfo.js";
 import { loadSettings, saveSettings } from "../src/settings.js";
 import { deferred } from "./deferred.js";
 
@@ -64,22 +65,15 @@ function chat(overrides: Partial<CloudChatOption> = {}): CloudChatOption {
   };
 }
 
-function activationSession(overrides: Partial<KeyInfo> = {}): KeyInfo {
-  return {
+const activationSession = (overrides: Partial<KeyInfo> = {}): KeyInfo =>
+  keyInfo({
     id: 42,
-    key_prefix: null,
     name: null,
     scopes: ["*:*"],
-    tokens_used: 0,
-    is_active: true,
     last_seen_at: null,
     created_at: "2026-08-30T21:59:02.464862",
-    assistant_uid: null,
-    assistant_provider: null,
-    chat_uids: [],
     ...overrides,
-  };
-}
+  });
 
 function thisMacSession(): KeyInfo {
   return activationSession({

@@ -6,6 +6,7 @@
 import { describe, expect, it } from "vitest";
 import { sectionRoster } from "../src/rosterSections.js";
 import type { KeyInfo } from "../src/plowApi.js";
+import { keyInfo, keyPrefixOf } from "./keyInfo.js";
 
 /** A device credential of the shape plow issues. */
 const DEVICE_CREDENTIAL = "plow_sk_abc123_and_the_rest_of_it";
@@ -18,24 +19,8 @@ const DEVICE_CREDENTIAL = "plow_sk_abc123_and_the_rest_of_it";
  * one had the scheme on the front, which made `startsWith` matching look
  * correct in tests while it could never match in production.
  */
-const keyPrefixOf = (token: string) => token.slice(5, 13);
-
-function key(overrides: Partial<KeyInfo> = {}): KeyInfo {
-  return {
-    id: 1,
-    key_prefix: keyPrefixOf("plow_sk_other_credential_entirely"),
-    name: "Kitchen agent",
-    scopes: ["relay:call"],
-    tokens_used: 0,
-    is_active: true,
-    last_seen_at: "2026-08-25T10:00:00Z",
-    created_at: "2026-08-20T10:00:00Z",
-    assistant_uid: null,
-    assistant_provider: null,
-    chat_uids: [],
-    ...overrides,
-  };
-}
+const key = (overrides: Partial<KeyInfo> = {}): KeyInfo =>
+  keyInfo({ key_prefix: keyPrefixOf("plow_sk_other_credential_entirely"), ...overrides });
 
 /** Every placed row, whichever section it landed in. */
 const allRows = (sections: ReturnType<typeof sectionRoster>) => [
@@ -63,6 +48,8 @@ describe("which section a credential belongs in", () => {
     // A provider this build cannot name must not fall into the half that
     // deletes: the safe unknown is a revoke.
     ["an unrecognised provider", null],
+    // What an API predating the assistant contract sends: no field at all.
+    ["an assistant field the API never sent", undefined],
   ])("keeps %s out of Cloud agents", (_case, provider) => {
     const sections = sectionRoster([
       key({ id: 1, assistant_uid: "assistant_mac", assistant_provider: provider, scopes: ["relay:call"] }),
