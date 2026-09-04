@@ -1,0 +1,88 @@
+{
+  "name": "denied",
+  "note": "Refused at the approval gate. The reply says the user declined; it does not talk about macOS permissions.",
+  "prompt": "Read the file ~/notes.txt on my Mac and tell me what it says.",
+  "answers": {
+    "plow_read_file": {
+      "reason": "the owner of this Mac denied the request",
+      "status": "denied"
+    },
+    "plow_run_command": {
+      "reason": "the owner of this Mac denied the request",
+      "status": "denied"
+    },
+    "plow_device_status": {
+      "automation": [
+        {
+          "status": "unknown",
+          "target": "Messages"
+        },
+        {
+          "status": "unknown",
+          "target": "Contacts"
+        }
+      ],
+      "automation_queryable": false,
+      "checked_at": "2026-09-04T23:17:00Z",
+      "child_attribution": {
+        "detail": null,
+        "status": "not_applicable"
+      },
+      "full_disk_access": {
+        "granted": false,
+        "probes": [
+          {
+            "outcome": "ENOENT",
+            "path": "~/Library/Application Support/com.apple.TCC/TCC.db"
+          },
+          {
+            "outcome": "ENOENT",
+            "path": "~/Library/Messages/chat.db"
+          },
+          {
+            "outcome": "ENOENT",
+            "path": "~/Library/Safari/Bookmarks.plist"
+          }
+        ]
+      },
+      "permissions": [
+        {
+          "permission": "accessibility",
+          "status": "unknown"
+        },
+        {
+          "permission": "contacts",
+          "status": "unknown"
+        },
+        {
+          "permission": "calendars",
+          "status": "unknown"
+        }
+      ],
+      "sandbox": {
+        "detail": null,
+        "status": "ok"
+      },
+      "vault_key": {
+        "reason": "this Mac has no vault",
+        "status": "absent"
+      }
+    }
+  },
+  "isError": {
+    "plow_read_file": true,
+    "plow_run_command": true,
+    "plow_device_status": false
+  },
+  "expect": {
+    "calls": {
+      "min": 1,
+      "max": 3
+    },
+    "excludes": [
+      "System Settings",
+      "Full Disk Access",
+      "Privacy & Security"
+    ]
+  }
+}

@@ -445,6 +445,34 @@ describe("collectFacts — the battery over scripted probes", () => {
     expect(f.path).toBe("~/Documents/My Report/draft.txt");
   });
 
+  it("a locked file a shell reported is diagnosed on the file, not on the shell", async () => {
+    // `/bin/sh: ~/Plow/x: Operation not permitted`. The shell is under a SIP
+    // root and no profile lets a run write it, which once made it the path
+    // of interest — and the verdict "sealed by SIP" — for a write the locked
+    // flag refused. The file the failure named carries the flag; that is
+    // the story.
+    const locked = `${HOME}/Plow/locked.txt`;
+    const probes = scriptedProbes({
+      inspect: { [locked]: { isDirectory: false, readable: true, writable: true, flags: ["uchg"] } },
+    });
+    const f = await collectFacts(
+      {
+        op: "exec",
+        paths: [locked],
+        texts: [`/bin/sh -c "printf new > ${locked}"`],
+        stderr: `/bin/sh: ${locked}: Operation not permitted`,
+        ranSandboxed: true,
+        sandbox: (p) => ({ read: true, write: p === locked }),
+      },
+      probes,
+      HOME,
+    );
+    expect(f.path).toBe("~/Plow/locked.txt");
+    expect(f.immutable_flag).toBe(true);
+    expect(f.sip_protected).toBe(false);
+    expect(diagnose(f).cause).toBe("immutable_file");
+  });
+
   it("names the app an AppleScript addresses", () => {
     expect(appleEventTarget(["osascript", "-e", 'tell application "Messages" to send "x" to buddy "y"'])).toBe("Messages");
     expect(appleEventTarget(["osascript", "-e", 'tell app "Contacts"', "-e", 'tell application "Mail"'])).toBe("Contacts");
