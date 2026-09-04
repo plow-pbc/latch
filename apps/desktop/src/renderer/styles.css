@@ -172,6 +172,13 @@ body {
   user-select: none;
 }
 .chip.active { background: var(--sel); color: var(--blue-fg); border-color: var(--blue-bd); }
+/* The Audit tab's filter buttons: a chip that opens a menu. */
+.filter-btn {
+  display: inline-flex; align-items: center; gap: 5px;
+  font: inherit; background: transparent; appearance: none; white-space: nowrap;
+}
+.filter-caret { font-size: 10px; opacity: 0.7; }
+.filter-clear { margin-left: 4px; }
 .spacer { flex: 1; }
 .count { color: var(--faint); }
 .status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--faint); display: inline-block; }
@@ -480,6 +487,9 @@ textarea.text { min-height: 70px; resize: vertical; }
 }
 .menu-item:hover:not(:disabled), .menu-item:focus-visible { background: var(--hover); outline: none; }
 .menu-item:disabled { color: var(--faint); cursor: default; }
+/* A pick-one menu: every item leaves room for the check; the current one shows it. */
+.menu-item.checkable { position: relative; padding-left: 26px; }
+.menu-item.checked::before { content: "✓"; position: absolute; left: 9px; }
 .cap-row:first-of-type { border-top: 0; }
 .cap-row .status-dot { flex: none; }
 .cap-row .cap-name { font-weight: 600; }

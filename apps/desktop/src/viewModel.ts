@@ -162,9 +162,23 @@ export interface AuditStep {
  * Swift AuditActivity so the app shows one row per operation (not per raw
  * event), with a combined status and a per-event timeline in the detail pane.
  */
+/** The Audit tab's two filters, one per column. Each folds the column's
+ *  words into a few buckets an owner would actually pick:
+ *   - decision: allowed (Allowed, Always allowed, Granted), denied (Denied,
+ *     Rejected), unanswered (Pending, Not answered, Timed out — the owner
+ *     said neither yes nor no).
+ *   - status: completed (Completed, Revoked, Spawned, a clean Closed),
+ *     running (Running, Browsing), blocked (a refusal by this Mac itself),
+ *     failed (Failed, Killed, Error, Crashed, the failed browser states). */
+export type DecisionKind = "allowed" | "denied" | "unanswered" | "none";
+export type StatusKind = "completed" | "running" | "blocked" | "failed" | "none";
+
 export interface AuditActivity {
   id: string;
+  /** When the row starts, formatted for the table. */
   time: string;
+  /** The same moment as the log wrote it (ISO 8601), for the date filter. */
+  ts: string;
   /** Who let this happen: "Allowed", "Always allowed", "Denied", "Timed out",
    *  "Rejected", "Pending", "Not answered", "Granted" — or "" for a row with no
    *  authorization step (a spawned agent, a browser session, an info line).
@@ -179,11 +193,14 @@ export interface AuditActivity {
   title: string;
   /** "command" | "file" | "access" | "agent" | "info" — drives the row icon. */
   kind: string;
-  /** Coarse filter bucket: "approved" | "denied" | "blocked" | "failed" |
-   * "other". `blocked` is this Mac itself refusing (a macOS permission, a
-   * waiting dialog, the sandbox bound) — its own bucket, because it is the
-   * one the Capabilities tab links into. */
-  category: string;
+  /** The Decision filter's bucket for this row. `none` for a row with no
+   *  decision, which only "any" shows. */
+  decisionKind: DecisionKind;
+  /** The Status filter's bucket. `blocked` is this Mac itself refusing (a
+   *  macOS permission, a waiting dialog, the sandbox bound) — its own bucket,
+   *  because it is the one the Capabilities tab links into. `none` for a row
+   *  with no outcome, which only "any" shows. */
+  statusKind: StatusKind;
   command: string | null;
   agentId: string | null;
   agentDisplay: string | null;
@@ -320,17 +337,19 @@ function buildActivity(id: string, events: JSONValue[]): AuditActivity {
   };
 
   const title = activityTitle(events, has, value);
-  const { decision, decisionTone, status, tone, category } = classifyActivity(events, has, entry);
+  const { decision, decisionTone, decisionKind, status, tone, statusKind } = classifyActivity(events, has, entry);
   return {
     id,
     time: dayTime(jv(events[0]).get("ts").str ?? ""),
+    ts: jv(events[0]).get("ts").str ?? "",
     decision,
     decisionTone,
     tone,
     status,
     title,
     kind: activityKind(events, has, value),
-    category,
+    decisionKind,
+    statusKind,
     command: activityCommand(entry, value),
     agentId:
       value("intent_received", "agent") ??
@@ -410,8 +429,8 @@ function activityTitle(
 }
 
 /**
- * Two readings of one operation, plus the coarse filter bucket — one tree,
- * so the cells and the chip cannot drift apart.
+ * Two readings of one operation — one tree, so the cells and the filters
+ * cannot drift apart.
  *
  * `decision` is the authorization: who let this happen (or refused it).
  * `status` is the outcome: what happened to the work afterwards. They are
@@ -420,31 +439,27 @@ function activityTitle(
  * because the usual row is "Allowed / Completed", so a Status cell that says
  * anything else is the one that catches the eye. Either is "" when it does
  * not apply: a denied request has no outcome, a spawned agent no decision.
- *
- * The buckets:
- *   - denied:   refused at the approval gate (a person, device, or deadline)
- *   - blocked:  approved, then refused by this Mac itself (hostGate/)
- *   - failed:   ran but didn't cleanly succeed — sandbox-blocked, errored,
- *               crashed, or a non-zero exit
- *   - approved: permitted and completed cleanly (or still running)
- *   - other:    pending / spawned / live / uncategorized
+ * Each carries its filter bucket (`DecisionKind`, `StatusKind`) beside it.
  */
 interface Classification {
   decision: string;
   decisionTone: BadgeTone;
+  decisionKind: DecisionKind;
   status: string;
   tone: BadgeTone;
-  category: string;
+  statusKind: StatusKind;
 }
 
-const NO_DECISION = { decision: "", decisionTone: "zinc" as BadgeTone };
-const NO_STATUS = { status: "", tone: "zinc" as BadgeTone };
+const NO_DECISION = { decision: "", decisionTone: "zinc" as BadgeTone, decisionKind: "none" as DecisionKind };
+const NO_STATUS = { status: "", tone: "zinc" as BadgeTone, statusKind: "none" as StatusKind };
 
-function decided(decision: string, decisionTone: BadgeTone, category: string): Classification {
-  return { decision, decisionTone, ...NO_STATUS, category };
+/** A row that is a decision and nothing more: nothing ran. */
+function decided(decision: string, decisionTone: BadgeTone, decisionKind: DecisionKind): Classification {
+  return { decision, decisionTone, decisionKind, ...NO_STATUS };
 }
-function outcome(status: string, tone: BadgeTone, category: string): Classification {
-  return { ...NO_DECISION, status, tone, category };
+/** A row that is an outcome with no decision of its own. */
+function outcome(status: string, tone: BadgeTone, statusKind: StatusKind): Classification {
+  return { ...NO_DECISION, status, tone, statusKind };
 }
 
 function classifyActivity(
@@ -456,26 +471,27 @@ function classifyActivity(
   const cleanup = entry("activation_session_cleanup");
   if (cleanup) {
     const result = jv(cleanup).get("outcome").str;
-    if (result === "revoked") return outcome("Revoked", "green", "approved");
+    if (result === "revoked") return outcome("Revoked", "green", "completed");
     if (result === "failed") return outcome("Failed", "red", "failed");
-    return outcome("Skipped", "zinc", "other");
+    // Nothing was done, so no bucket claims it.
+    return outcome("Skipped", "zinc", "none");
   }
   if (has("access_request") || has("access_decision")) {
     const d = entry("access_decision");
     if (d) {
       const ok = jv(d).get("approved").bool ?? false;
-      return ok ? decided("Granted", "green", "approved") : decided("Denied", "red", "denied");
+      return ok ? decided("Granted", "green", "allowed") : decided("Denied", "red", "denied");
     }
-    return decided("Pending", "zinc", "other");
+    return decided("Pending", "zinc", "unanswered");
   }
   if (
     has("connector_connected") ||
     has("connector_disconnected") ||
     has("connector_default_changed")
   ) {
-    return outcome("Completed", "green", "approved");
+    return outcome("Completed", "green", "completed");
   }
-  if (has("agent_spawned")) return outcome("Spawned", "blue", "other");
+  if (has("agent_spawned")) return outcome("Spawned", "blue", "completed");
   // The decision outranks any browser events riding in the intent's group: a
   // browser_open/browser_request row says how it was decided, and the live
   // browsing state belongs to the session's own activity.
@@ -484,23 +500,26 @@ function classifyActivity(
     const decision = jv(dec).get("decision").str ?? "";
     if (decision === "deny") {
       // The deadline denying is a timeout, not a refusal (approvalStore.ts) —
-      // the audit must not dress it up as one.
-      if (jv(dec).get("source").str === "expired") return decided("Timed out", "amber", "denied");
+      // the audit must not dress it up as one, in the cell or the filter.
+      if (jv(dec).get("source").str === "expired") return decided("Timed out", "amber", "unanswered");
       return decided("Denied", "red", "denied");
     }
     const allowed = {
       decision: decision === "always_allow" ? "Always allowed" : "Allowed",
       decisionTone: "green" as BadgeTone,
+      decisionKind: "allowed" as DecisionKind,
     };
-    const ran = (status: string, tone: BadgeTone, category: string): Classification =>
-      ({ ...allowed, status, tone, category });
+    const ran = (status: string, tone: BadgeTone, statusKind: StatusKind): Classification =>
+      ({ ...allowed, status, tone, statusKind });
     // A block by this Mac itself outranks the run's exit code and the
     // reaper's verdict: the owner is the one person who can flip the switch,
     // and "Failed · exit 1" would hide that from them. Amber, like a killed
     // run, because nothing here was refused BY anyone.
     const gate = entry("host_permission_blocked");
     if (gate) return ran(`Blocked · ${hostGateShort(jv(gate))}`, "amber", "blocked");
-    if (entry("denied_operation")) return ran("Blocked · outside approved paths", "red", "failed");
+    // The sandbox refusing is this Mac refusing too: the word is Blocked, so
+    // the Blocked filter holds it. Red, not amber: the bound was the owner's.
+    if (entry("denied_operation")) return ran("Blocked · outside approved paths", "red", "blocked");
     if (has("exec_error") || has("tool_error")) return ran("Error", "red", "failed");
     const ee = entry("exec_end");
     if (ee) {
@@ -513,9 +532,9 @@ function classifyActivity(
       if (code !== 0) return ran(`Failed · exit ${code}`, "amber", "failed");
     } else if (has("exec_start")) {
       // Started and not yet ended: still approved, still in flight.
-      return ran("Running", "blue", "approved");
+      return ran("Running", "blue", "running");
     }
-    return ran("Completed", "green", "approved");
+    return ran("Completed", "green", "completed");
   }
   if (events.some((e) => (jv(e).get("event").str ?? "").startsWith("browser_"))) {
     const closed = entry("browser_session_closed");
@@ -537,10 +556,10 @@ function classifyActivity(
       return closed ? outcome("Closed · mask failed", "amber", "failed") : outcome("Mask failed", "amber", "failed");
     }
     if (has("credential_denied") || has("browser_scope_violation")) {
-      // "failed", not "other": the cage refused the agent something, which is
-      // the first thing an owner scanning for trouble filters for. The amber
-      // badge already said so; the bucket disagreed, and the bucket is what
-      // the filter reads.
+      // "failed", not "completed": the cage refused the agent something, which
+      // is the first thing an owner scanning for trouble filters for. The
+      // amber word already said so; the bucket disagreed once, and the bucket
+      // is what the filter reads.
       return closed ? outcome("Closed · scope blocks", "amber", "failed") : outcome("Scope blocked", "amber", "failed");
     }
     // The page's own server refused what the agent asked it to do — ranked
@@ -551,8 +570,8 @@ function classifyActivity(
         ? outcome("Closed · requests refused", "amber", "failed")
         : outcome("Requests refused", "amber", "failed");
     }
-    if (closed) return outcome("Closed", "zinc", "other");
-    return outcome("Browsing", "green", "other");
+    if (closed) return outcome("Closed", "zinc", "completed");
+    return outcome("Browsing", "green", "running");
   }
   // A vault metadata read carries no intent and no session, so it stands
   // alone — and it is recorded only after the broker answered, so by the time
@@ -560,9 +579,9 @@ function classifyActivity(
   // this event is handled with its browser session above.)
   const vaultRead = entry("credential_metadata");
   if (vaultRead && jv(vaultRead).get("session").str === null) {
-    return outcome("Completed", "green", "approved");
+    return outcome("Completed", "green", "completed");
   }
-  if (entry("denied_operation")) return outcome("Blocked · outside approved paths", "red", "failed");
+  if (entry("denied_operation")) return outcome("Blocked · outside approved paths", "red", "blocked");
   // A handle-only block from a deferred run whose end outlived its intent's
   // row: the gate is still the story.
   const gate = entry("host_permission_blocked");
@@ -573,13 +592,13 @@ function classifyActivity(
   if (ee) {
     if (jv(ee).get("reaped").bool === true) return outcome("Killed · no output", "amber", "failed");
     const code = jv(ee).get("exit_code").int ?? -1;
-    return code === 0 ? outcome("Completed", "green", "approved") : outcome(`Failed · exit ${code}`, "amber", "failed");
+    return code === 0 ? outcome("Completed", "green", "completed") : outcome(`Failed · exit ${code}`, "amber", "failed");
   }
-  if (has("approval_abandoned")) return decided("Not answered", "zinc", "other");
+  if (has("approval_abandoned")) return decided("Not answered", "zinc", "unanswered");
   // Only an undecided intent is genuinely pending; anything else unrecognized
   // is a record, not an operation in flight.
-  if (has("intent_received")) return decided("Pending", "zinc", "other");
-  return outcome("Info", "zinc", "other");
+  if (has("intent_received")) return decided("Pending", "zinc", "unanswered");
+  return outcome("Info", "zinc", "none");
 }
 
 function activityKind(
