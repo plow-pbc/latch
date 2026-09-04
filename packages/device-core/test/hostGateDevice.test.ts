@@ -211,12 +211,12 @@ describe("a file operation this Mac refused", () => {
     expect(lastBlocked(d).get("cause").str).toBe("prompt_waiting");
   });
 
-  it.skipIf(!ON_MAC)("a write that lands after the owner answers the dialog is audited, late", async () => {
-    // The write really parks (a FIFO with no reader, under a guarded
-    // folder); the call is answered blocked. Then the "owner clicks Allow":
-    // a reader opens the FIFO, the parked write completes — and the log
-    // says so, because a file changed by nothing is the one thing an audit
-    // must never show.
+  it.skipIf(!ON_MAC)("a write answered blocked never lands, however the dialog is answered later", async () => {
+    // What parks is a read-only touch of the path, not the write: a FIFO with
+    // no writer parks the touch's open under a guarded folder. The call is
+    // answered blocked. Then the "owner clicks Allow" — a writer opens the
+    // FIFO, which releases the touch — and nothing is written: a write let
+    // through minutes later would land over whatever the file holds by then.
     const home = tempDir();
     const downloads = path.join(home, "Downloads");
     fs.mkdirSync(downloads);
@@ -231,18 +231,31 @@ describe("a file operation this Mac refused", () => {
       ),
     );
     expect(response.get("status").str).toBe("blocked");
+    expect(response.get("diagnosis").get("cause").str).toBe("prompt_waiting");
+    // Release the touch, and read what the pipe carries: the touch's own
+    // open completes and closes, and the read ends with nothing written.
+    const fd = fs.openSync(fifo, "w");
+    fs.closeSync(fd);
+    await new Promise((r) => setTimeout(r, 300));
     expect(events(d)).not.toContain("file_write");
-    // The owner answers: the reader drains the pipe and the write lands.
-    const drained = new Promise<string>((resolve) => {
-      fs.readFile(fifo, "utf8", (_, data) => resolve(data ?? ""));
-    });
-    expect(await drained).toBe("late");
-    const deadline = Date.now() + 2_000;
-    while (!events(d).includes("file_write") && Date.now() < deadline) await new Promise((r) => setTimeout(r, 20));
-    const late = jv([...d.audit.entries()].reverse().find((e) => jv(e as JSONValue).get("event").str === "file_write") ?? null);
-    expect(late.get("late").bool).toBe(true);
-    expect(late.get("bytes").int).toBe(4);
-    expect(late.get("path").str).toBe(fifo);
+  });
+
+  it("a touch that returns in time is followed by the operation, which meets the same answer", async () => {
+    // A guarded path this Mac can open at once: the write goes ahead.
+    const home = tempDir();
+    fs.mkdirSync(path.join(home, "Desktop"));
+    const file = path.join(home, "Desktop", "new.txt");
+    const d = device(home, scriptedProbes());
+    d.fileOpHangMs = 500;
+    const response = jv(
+      await d.handleIntent(
+        intentFor(d, "write", [{ kind: "fs.write", paths: [file] }]),
+        { content_base64: Buffer.from("hello").toString("base64") },
+      ),
+    );
+    expect(response.get("status").str).toBe("completed");
+    expect(fs.readFileSync(file, "utf8")).toBe("hello");
+    expect(events(d)).toContain("file_write");
   });
 
   it("an unguarded path is never raced against the hang window", async () => {
@@ -461,6 +474,37 @@ describe.skipIf(!ON_MAC)("a command this Mac refused", () => {
     expect(events(d)).toContain("exec_end");
   });
 
+  it("a run that ends well while its first probes are still running is completed, not blocked", async () => {
+    // The silent-run diagnosis is asked inside the call; the command may
+    // finish while the probes are out. The verdict they come back with is
+    // then about a run that no longer exists, and must not be stored over
+    // the exit handler's clearing — or the poll says exit 0, blocked.
+    const home = tempDir();
+    fs.mkdirSync(path.join(home, "Desktop"));
+    const file = path.join(home, "Desktop", "notes.txt");
+    fs.writeFileSync(file, "x");
+    const inner = scriptedProbes({ openAsApp: { [file]: "hung" }, fullDiskAccess: false });
+    const slow: HostProbes = {
+      ...inner,
+      openAsApp: async (p) => { await new Promise((r) => setTimeout(r, 400)); return inner.openAsApp(p); },
+    };
+    const d = device(home, slow);
+    const response = jv(
+      await d.handleIntent(
+        intentFor(d, "run", [{ kind: "process.exec", argv: ["/bin/sh", "-c", `sleep 0.2; cat ${JSON.stringify(file)}`], cwd: home }]),
+        { wait_ms: 50 },
+      ),
+    );
+    // The call answers with where the run is now: over, cleanly.
+    expect(response.get("status").str).toBe("completed");
+    expect(response.get("exit_code").int).toBe(0);
+    expect(response.get("diagnosis").isNull).toBe(true);
+    const polled = jv(await d.getOutput(response.get("handle").str!));
+    expect(polled.get("status").str).toBe("completed");
+    expect(polled.get("diagnosis").isNull).toBe(true);
+    expect(events(d)).not.toContain("host_permission_blocked");
+  });
+
   it("a poll that lands between the exit and its diagnosis waits for the verdict", async () => {
     // The exit-time diagnosis is asynchronous. A poll answered in the gap
     // would read "completed, exit 1" with no diagnosis, and an agent takes
@@ -478,14 +522,15 @@ describe.skipIf(!ON_MAC)("a command this Mac refused", () => {
     const d = device(home, slow);
     const response = jv(
       await d.handleIntent(
-        intentFor(d, "run", [{ kind: "process.exec", argv: ["/bin/sh", "-c", `sleep 0.2; echo "sh: ${target}: Operation not permitted" >&2; exit 1`], cwd: home }]),
+        intentFor(d, "run", [{ kind: "process.exec", argv: ["/bin/sh", "-c", `sleep 0.7; echo "sh: ${target}: Operation not permitted" >&2; exit 1`], cwd: home }]),
         { wait_ms: 50 },
       ),
     );
+    // The call's own silent-run probes take ~300ms; the run outlives them.
     expect(response.get("status").str).toBe("running");
     const handle = response.get("handle").str!;
     // Wait for the exit itself, then poll at once — inside the diagnosis.
-    await new Promise((r) => setTimeout(r, 400));
+    await new Promise((r) => setTimeout(r, 800));
     const polled = jv(await d.getOutput(handle));
     expect(polled.get("status").str).toBe("blocked");
     expect(polled.get("diagnosis").get("cause").str).toBe("macos_permission");

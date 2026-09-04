@@ -153,6 +153,28 @@ class FileOpHang extends Error {
   }
 }
 
+/**
+ * Open `p` read-only and close it — or, when `p` is not there, its nearest
+ * existing ancestor, which is the folder a creating write would touch. On a
+ * TCC-guarded location this is what raises (or waits on) the consent
+ * dialog, and it changes nothing. Any error is swallowed: the operation
+ * that follows produces the real one.
+ */
+async function touchForConsent(p: string): Promise<void> {
+  let target = p;
+  while (!fs.existsSync(target)) {
+    const parent = path.dirname(target);
+    if (parent === target) return;
+    target = parent;
+  }
+  try {
+    const fd = await fs.promises.open(target, "r");
+    await fd.close();
+  } catch {
+    /* the operation will meet the same answer and say so */
+  }
+}
+
 /** A run's diagnosis, kept by handle so a later poll carries it too. */
 interface DiagnosedRun {
   diagnosis: Diagnosis;
@@ -563,11 +585,7 @@ export class DeviceAgent {
     const p = cap.paths?.[0];
     if (p === undefined) return { status: "error", error: "missing path" };
     try {
-      const data = await this.guardedFileOp(
-        p,
-        () => FileOps.read(p, cap.paths ?? []),
-        (late) => this.audit.record("file_read", { intentId: intent.intentId, path: p, bytes: late.length, late: true }),
-      );
+      const data = await this.guardedFileOp(p, () => FileOps.read(p, cap.paths ?? []));
       this.audit.record("file_read", {
         intentId: intent.intentId,
         path: p,
@@ -584,42 +602,34 @@ export class DeviceAgent {
   }
 
   /**
-   * Run a file operation, and on a TCC-guarded path refuse to wait forever
-   * for it: past `FILE_OP_HANG_MS` the operation is reported as parked on a
-   * consent dialog (`FileOpHang`) and left to finish or fail on its own.
+   * Run a file operation on a TCC-guarded path without ever letting the
+   * operation itself park on a consent dialog.
    *
-   * Left to finish, not abandoned: the owner clicking Allow lets the parked
-   * operation through, and a write that lands that way has still happened
-   * to their file. The call it belonged to was answered `blocked` long ago,
-   * so `late` is how the outcome is kept — an audit line, so the log never
-   * shows a file changed by nothing. A late failure (Don't Allow) changes
-   * nothing and the block already on record is its story.
+   * What parks is a read-only touch of the path (or, for a file not there
+   * yet, of its nearest existing ancestor): an open that changes nothing.
+   * Past `FILE_OP_HANG_MS` the touch is reported as parked (`FileOpHang`)
+   * and the operation is NOT attempted — a write let through by an Allow
+   * clicked minutes later would land on a file the owner or another call
+   * may have changed since, over a result that was already `blocked`. The
+   * abandoned touch settles on its own and does nothing when it does. Only
+   * a touch that returns in time is followed by the operation, which then
+   * meets the consent, or the refusal, that the touch met. The touch's own
+   * error is ignored: the operation produces the real one.
    */
-  private async guardedFileOp<T>(p: string, op: () => Promise<T>, late?: (result: T) => void): Promise<T> {
+  private async guardedFileOp<T>(p: string, op: () => Promise<T>): Promise<T> {
     if (guardedPrefix(p, this.ownerHome) === null) return op();
-    const work = op();
+    const touch = touchForConsent(p);
     let timer: ReturnType<typeof setTimeout> | undefined;
     const hang = new Promise<never>((_, reject) => {
       timer = setTimeout(() => reject(new FileOpHang()), this.fileOpHangMs);
       timer.unref?.();
     });
     try {
-      return await Promise.race([work, hang]);
-    } catch (error: unknown) {
-      if (error instanceof FileOpHang) {
-        work.then(
-          (result) => {
-            // Possibly long after the call, mid-shutdown even; a failed
-            // append must not become an uncaught exception in the loop.
-            try { if (late) late(result); } catch (e) { console.error(`[audit] late ${p} lost:`, e); }
-          },
-          () => { /* refused after all; the block on record says so */ },
-        );
-      }
-      throw error;
+      await Promise.race([touch, hang]);
     } finally {
       clearTimeout(timer);
     }
+    return op();
   }
 
   /**
@@ -688,11 +698,7 @@ export class DeviceAgent {
     if (contentBase64 === null) return { status: "error", error: "missing content" };
     const data = Buffer.from(contentBase64, "base64");
     try {
-      await this.guardedFileOp(
-        p,
-        () => FileOps.write(p, data, cap.paths ?? []),
-        () => this.audit.record("file_write", { intentId: intent.intentId, path: p, bytes: data.length, late: true }),
-      );
+      await this.guardedFileOp(p, () => FileOps.write(p, data, cap.paths ?? []));
       this.audit.record("file_write", {
         intentId: intent.intentId,
         path: p,
@@ -866,7 +872,17 @@ export class DeviceAgent {
       // A run still going with nothing said yet may be parked on a consent
       // dialog. Asked now, inside the call, so the agent hears it in seconds
       // rather than at the reaper's fifteen minutes.
-      if (diag && result.outputLength === 0) diagnosed = await this.diagnoseRun(intentId, result, diag);
+      if (diag && result.outputLength === 0) {
+        diagnosed = await this.diagnoseRun(intentId, result, diag);
+        // The probes took time; answer with where the run is now, not where
+        // it was before they ran — and if it ended meanwhile, with the
+        // verdict its end produced, waited for like a poll would.
+        result = this.executor.output(result.handle, 0);
+        if (!result.running) {
+          await this.pendingDiagnoses.get(result.handle);
+          diagnosed = this.runDiagnoses.get(result.handle) ?? null;
+        }
+      }
     }
     return { ...runPayload(result, diagnosed), handle: result.handle };
   }
@@ -905,6 +921,14 @@ export class DeviceAgent {
     );
     const diagnosis = diagnose(facts);
     if (result.running && diagnosis.cause !== "prompt_waiting") return null;
+    // The probes took time; the run may have ended meanwhile. A clean exit
+    // says the dialog was answered (or never mattered), and a verdict
+    // stored now would outlive the exit handler's clearing of it and call
+    // a finished command blocked.
+    if (result.running) {
+      const now = this.executor.output(result.handle, 0);
+      if (!now.running && !now.reaped && now.exitCode === 0) return null;
+    }
     if (!result.running && !result.reaped && !isHostGate(diagnosis.cause)) return null;
     const diagnosed: DiagnosedRun = { diagnosis, facts };
     this.runDiagnoses.set(result.handle, diagnosed);

@@ -298,7 +298,10 @@ describe.skipIf(!ON_MAC)("the audit record of a reaped run", () => {
     });
 
     const response = await device.handleIntent(intent, { wait_ms: 50 });
-    expect(jv(response).get("status").str).toBe("running");
+    // The call's own silent-run probes park on the pipe too, and the reaper
+    // (300ms here) may well kill the run before they return — in which case
+    // the call answers with the run as it is by then, already blocked.
+    expect(["running", "blocked"]).toContain(jv(response).get("status").str);
     const handle = jv(response).get("handle").str!;
 
     const ended = await settle(device.executor, handle);

@@ -286,8 +286,11 @@ export function capabilitiesView(input: CapabilitiesInput): CapabilitiesView {
   // block, and the Audit tab keeps the history.
   // A row's own Dismiss works the same way for that one switch: its
   // requests up to that moment are gone from the tab, the banner included.
+  // Every block, for what a switch IS (a folder refused since it was
+  // learned granted); the dismissed view below, for what the tab shows.
+  const history = new Map(blockedGroups(input.events).map((g) => [g.key, g]));
   const groups = new Map(
-    blockedGroups(input.events)
+    [...history.values()]
       .map((g) => sinceSeen(g, later(input.bannerSeenAt, input.dismissals[g.key] ?? null)))
       .filter((g): g is BlockedGroup => g !== null)
       .map((g) => [g.key, g]),
@@ -340,13 +343,14 @@ export function capabilitiesView(input: CapabilitiesInput): CapabilitiesView {
     for (const folder of FOLDERS) {
       const learned = input.folders?.[folder] ?? null;
       const learnedAt = input.foldersAt?.[folder] ?? null;
-      const g = groups.get(folder);
       // A confirmed refusal that postdates what this Mac learned is the
       // newer fact: a remembered "granted" does not keep a row green over
       // a switch the owner has since turned off. A memo with no time (from
       // before times were kept) is outranked by any confirmed block, except
-      // a "not asked" memo, which a block cannot contradict.
-      const latest = g?.requests[0];
+      // a "not asked" memo, which a block cannot contradict. Read from the
+      // whole history: dismissing the notice must not make the switch look
+      // granted again.
+      const latest = history.get(folder)?.requests[0];
       const refusedSince =
         latest !== undefined &&
         latest.confidence === "confirmed" &&
