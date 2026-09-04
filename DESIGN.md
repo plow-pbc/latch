@@ -808,10 +808,9 @@ resident when its window closes.
 First-run setup tells the user this on its own screen, "Keep this Mac
 reachable", between Data and Connect, and turns both on for them when they
 reach it (`Onboarding.advance()` → the injected `applyAvailabilityDefault`).
-`Settings.launchAtLoginDefaulted` records that the one-time default ran — set
-only on a build that can register a login item, so a from-source run never
-spends a packaged install's first run — and survives sign-out, so a user who
-turned a switch off stays off. Agent-side, the per-turn prefix says the Mac has
+`Settings.launchAtLoginDefaulted` records that the one-time default ran, and
+survives sign-out, so a user who turned a switch off stays off (a from-source
+run has its own home, so it never spends a packaged install's first run). Agent-side, the per-turn prefix says the Mac has
 to be awake (plow-pbc/hermes-plow-chat#75); this screen is where the owner
 can act on it.
 

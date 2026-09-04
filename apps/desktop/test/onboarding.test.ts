@@ -353,32 +353,36 @@ describe("wizard steps around the existing verification flow", () => {
     expect(build({}, false).state().step).toBe("done");
   });
 
-  it("lands the availability default once, on reaching the screen, and only on a build that can", async () => {
+  it("lands the availability default once, on reaching the screen, and keeps what it wrote", async () => {
     const settings = loadSettings(home);
     settings.relayCredential = DEVICE_TOKEN;
     saveSettings(home, settings);
     expect(loadSettings(home).launchAtLoginDefaulted).toBe(false);
 
-    // A from-source build applies what it can but never burns the marker.
+    // The production dep persists Keep Awake's opt-in itself. The write must
+    // survive the step's own settings write — the first cut clobbered it.
     let applied = 0;
-    let onboarding = build({ applyAvailabilityDefault: () => { applied += 1; return false; } }, false);
+    const applyAvailabilityDefault = () => {
+      applied += 1;
+      const live = loadSettings(home);
+      live.keepAwakeWhileRunning = true;
+      saveSettings(home, live);
+    };
+    let onboarding = build({ applyAvailabilityDefault }, false);
+    onboarding.setTelemetryEnabled(false);
     expect((await onboarding.advance()).step).toBe("availability");
     expect(applied).toBe(1);
-    expect(loadSettings(home).launchAtLoginDefaulted).toBe(false);
+    expect(loadSettings(home)).toMatchObject({
+      keepAwakeWhileRunning: true,
+      telemetryEnabled: false,
+      launchAtLoginDefaulted: true,
+    });
 
-    // The packaged build burns it, and a second pass (Back, Continue) is silent.
-    applied = 0;
-    onboarding = build({ applyAvailabilityDefault: () => { applied += 1; return true; } }, false);
-    expect((await onboarding.advance()).step).toBe("availability");
-    expect(applied).toBe(1);
-    expect(loadSettings(home).launchAtLoginDefaulted).toBe(true);
+    // A second pass (Back, Continue) is silent, and so is a re-setup over the
+    // same home — sign-out keeps the marker, so a choice the user made stays.
     await onboarding.back();
     expect((await onboarding.advance()).step).toBe("availability");
-    expect(applied).toBe(1);
-
-    // Sign-out keeps the marker (a re-setup is not a first run), so a fresh
-    // machine over the same home never re-defaults a choice the user made.
-    onboarding = build({ applyAvailabilityDefault: () => { applied += 1; return true; } }, false);
+    onboarding = build({ applyAvailabilityDefault }, false);
     await onboarding.advance();
     expect(applied).toBe(1);
   });

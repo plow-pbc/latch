@@ -1777,7 +1777,7 @@ app.whenReady().then(async () => {
     // setup window can reach the screen (both are made in whenReady).
     applyAvailabilityDefault: () => {
       keepAwake?.setEnabled(true);
-      return setLaunchAtLogin(app.isPackaged, loginItems, true).supported;
+      setLaunchAtLogin(app.isPackaged, loginItems, true);
     },
   });
   connectors = new Connectors({

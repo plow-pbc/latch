@@ -145,13 +145,13 @@ export interface OnboardingDeps {
   deviceName: string;
   /**
    * Turn the availability defaults on — Keep Awake, and Launch at Login where
-   * the build can — and say whether Launch at Login is supported. Called once
-   * per home, on reaching the Availability screen, so the switches it shows
-   * are on because they ARE on. The marker (`Settings.launchAtLoginDefaulted`)
-   * is set only on `true`: a from-source run never burns a packaged install's
-   * first run.
+   * the build can. Called once per home, on reaching the Availability screen,
+   * so the switches it shows are on because they ARE on; the marker
+   * (`Settings.launchAtLoginDefaulted`) records that it ran. It writes
+   * settings itself (Keep Awake persists its opt-in), so it runs between two
+   * loads here, never inside one.
    */
-  applyAvailabilityDefault?: () => boolean;
+  applyAvailabilityDefault?: () => void;
   onChange?: () => void;
   now?: () => number;
   /** How the poll loop waits. Injectable so tests need no real timers. */
@@ -225,10 +225,13 @@ export class Onboarding {
     if (this.step === "data") {
       const settings = this.settings();
       settings.telemetryEnabled = this.telemetryEnabled;
-      if (!settings.launchAtLoginDefaulted && this.deps.applyAvailabilityDefault?.()) {
-        settings.launchAtLoginDefaulted = true;
-      }
       this.save(settings);
+      if (!settings.launchAtLoginDefaulted) {
+        this.deps.applyAvailabilityDefault?.();
+        const defaulted = this.settings();
+        defaulted.launchAtLoginDefaulted = true;
+        this.save(defaulted);
+      }
       this.step = "availability";
       return this.publish();
     }
