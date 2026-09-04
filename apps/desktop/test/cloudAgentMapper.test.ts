@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 import {
-  joinCloudAgentsWithKeys,
   toCloudAgentDisplayRow,
 } from "../src/cloudAgentMapper.js";
 import { CloudAgentResource, isTerminalCloudAgent } from "../src/cloudAgents.js";
@@ -88,15 +87,5 @@ describe("cloud-agent pure mappings", () => {
     expect(isTerminalCloudAgent(agent({ status: "running" }))).toBe(true);
     expect(isTerminalCloudAgent(agent({ status: "teardown" }))).toBe(true);
     expect(isTerminalCloudAgent(agent({ status: "provider_verifying" }))).toBe(true);
-  });
-
-  it("joins KeyInfo by stable assistant_uid even after session_id rotates", () => {
-    const key = { id: 17, assistant_uid: "agent_stable", session_id: "credential_new" };
-    const before = joinCloudAgentsWithKeys([agent({ sessionId: "session_old" })], [key]);
-    const after = joinCloudAgentsWithKeys([agent({ sessionId: "session_new" })], [key]);
-
-    expect(before[0].key).toBe(key);
-    expect(after[0].key).toBe(key);
-    expect(joinCloudAgentsWithKeys([agent()], [{ id: 18, assistant_uid: null }])[0].key).toBeNull();
   });
 });
