@@ -268,11 +268,32 @@ describe("capabilitiesView", () => {
     const refused = capabilitiesView(input({ events: block("i1", "2026-09-02T02:00:00Z", "files_downloads") }))
       .sections[0]!.rows.find((r) => r.key === "files_downloads")!;
     expect(refused).toMatchObject({ status: "denied", action: "open", actionLabel: LABEL_IN_SETTINGS, needsAttention: true });
-    // What the touch learned wins over history.
+    // What the touch learned wins over the history before it…
     const granted = capabilitiesView(
-      input({ events: block("i1", "2026-09-02T02:00:00Z", "files_downloads"), folders: { files_downloads: "granted" } }),
+      input({
+        events: block("i1", "2026-09-02T02:00:00Z", "files_downloads"),
+        folders: { files_downloads: "granted" },
+        foldersAt: { files_downloads: "2026-09-02T03:00:00Z" },
+      }),
     ).sections[0]!.rows.find((r) => r.key === "files_downloads")!;
     expect(granted).toMatchObject({ status: "granted", needsAttention: false });
+    // …and not over a confirmed refusal after it: the owner may have turned
+    // the switch back off, and a green row with no button would hide that.
+    const revoked = capabilitiesView(
+      input({
+        events: block("i2", "2026-09-02T04:00:00Z", "files_downloads"),
+        folders: { files_downloads: "granted" },
+        foldersAt: { files_downloads: "2026-09-02T03:00:00Z" },
+      }),
+    );
+    expect(revoked.sections[0]!.rows.find((r) => r.key === "files_downloads")).toMatchObject({ status: "denied", action: "open", needsAttention: true });
+    expect(revoked.badge).toBe(1);
+    // A memo with no time (from before times were kept) is outranked by any
+    // confirmed block.
+    const undated = capabilitiesView(
+      input({ events: block("i1", "2026-09-02T02:00:00Z", "files_downloads"), folders: { files_downloads: "granted" } }),
+    ).sections[0]!.rows.find((r) => r.key === "files_downloads")!;
+    expect(undated.status).toBe("denied");
   });
 
   it("the queryable services ask macOS while unasked and open the pane once refused", () => {

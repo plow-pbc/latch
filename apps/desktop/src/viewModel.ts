@@ -56,6 +56,23 @@ function hostGateShort(ev: ReturnType<typeof jv>): string {
 }
 
 /**
+ * What a `denied_operation` was, by its `cause`: the sandbox bound is this
+ * Mac refusing (Blocked, and the Blocked filter holds it); a file that is
+ * missing, over the size limit, or not a file merely failed, and
+ * must not send the owner looking for a path they never approved. A line
+ * from before causes were recorded is the bound, which was all it could be.
+ */
+function deniedOperation(ev: ReturnType<typeof jv>): [string, BadgeTone, StatusKind] {
+  switch (ev.get("cause").str ?? "outside_approved_bound") {
+    case "outside_approved_bound": return ["Blocked · outside approved paths", "red", "blocked"];
+    case "not_found": return ["Failed · not found", "amber", "failed"];
+    // This app's own rules (the size limit, "not a file"): the timeline line
+    // carries the sentence.
+    default: return ["Failed", "amber", "failed"];
+  }
+}
+
+/**
  * A "parked on a dialog" verdict is provisional: the owner clicking Allow
  * lets the run finish, and a clean exit after it says they did. The block
  * stays in the log — it happened — but the row's outcome is the recovery.
@@ -189,6 +206,10 @@ export interface AuditActivity {
   time: string;
   /** The same moment as the log wrote it (ISO 8601), for the date filter. */
   ts: string;
+  /** When this Mac refused it, if it did — the moment the Capabilities tab
+   *  counts by, so "Show in Audit" keys its cutoff on the block rather than
+   *  on a request that may have started before the dismissal. */
+  blockedAt: string | null;
   /** Who let this happen: "Allowed", "Always allowed", "Denied", "Timed out",
    *  "Rejected", "Pending", "Not answered", "Granted" — or "" for a row with no
    *  authorization step (a spawned agent, a browser session, an info line).
@@ -352,6 +373,7 @@ function buildActivity(id: string, events: JSONValue[]): AuditActivity {
     id,
     time: dayTime(jv(events[0]).get("ts").str ?? ""),
     ts: jv(events[0]).get("ts").str ?? "",
+    blockedAt: value("host_permission_blocked", "ts"),
     decision,
     decisionTone,
     tone,
@@ -529,7 +551,8 @@ function classifyActivity(
     if (gate && !recovered(gate, entry("exec_end"))) return ran(`Blocked · ${hostGateShort(jv(gate))}`, "amber", "blocked");
     // The sandbox refusing is this Mac refusing too: the word is Blocked, so
     // the Blocked filter holds it. Red, not amber: the bound was the owner's.
-    if (entry("denied_operation")) return ran("Blocked · outside approved paths", "red", "blocked");
+    const denied = entry("denied_operation");
+    if (denied) return ran(...deniedOperation(jv(denied)));
     if (has("exec_error") || has("tool_error")) return ran("Error", "red", "failed");
     const ee = entry("exec_end");
     if (ee) {
@@ -591,7 +614,8 @@ function classifyActivity(
   if (vaultRead && jv(vaultRead).get("session").str === null) {
     return outcome("Completed", "green", "completed");
   }
-  if (entry("denied_operation")) return outcome("Blocked · outside approved paths", "red", "blocked");
+  const denied = entry("denied_operation");
+  if (denied) return outcome(...deniedOperation(jv(denied)));
   // A handle-only block from a deferred run whose end outlived its intent's
   // row: the gate is still the story.
   const gate = entry("host_permission_blocked");
@@ -764,7 +788,12 @@ function describeStep(e: JSONValue): AuditStep {
     case "exec_error": text = `Run error: ${ev.get("error").str ?? ""}`; state = "bad"; break;
     case "file_read": text = `File read: ${ev.get("path").str ?? ""} (${ev.get("bytes").int ?? 0} bytes)`; state = "ok"; break;
     case "file_write": text = `File written: ${ev.get("path").str ?? ""} (${ev.get("bytes").int ?? 0} bytes)`; state = "ok"; break;
-    case "denied_operation": text = `Blocked: ${ev.get("path").str ?? ""} — ${ev.get("error").str ?? ""}`; state = "bad"; break;
+    case "denied_operation": {
+      const bound = (ev.get("cause").str ?? "outside_approved_bound") === "outside_approved_bound";
+      text = `${bound ? "Blocked" : "Failed"}: ${ev.get("path").str ?? ""} — ${ev.get("error").str ?? ""}`;
+      state = "bad";
+      break;
+    }
     case "host_permission_blocked": {
       // The fixed owner sentence, verbatim — it is the one thing on this
       // line the owner can act on. `likely` says so, because a guess sent to

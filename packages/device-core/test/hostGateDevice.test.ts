@@ -176,6 +176,8 @@ describe("a file operation this Mac refused", () => {
     expect(response.get("diagnosis").isNull).toBe(true);
     expect(probes.calls).toEqual([]);
     expect(events(d)).toEqual(["intent_received", "intent_decision", "denied_operation"]);
+    // Named as the app's own rule, so the audit view does not call it the bound.
+    expect(jv(d.audit.entries()[2] as JSONValue).get("cause").str).toBe("app_rule");
   });
 
   it.skipIf(!ON_MAC)("a read parked on a consent dialog is reported as prompt_waiting within the hang window", async () => {
