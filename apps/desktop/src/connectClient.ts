@@ -60,7 +60,9 @@ export interface ConnectClientState {
    * credential, like every message here. */
   rosterError: string | null;
   /**
-   * Why the last row action — a removal or a rename — did not happen.
+   * Why Plow could not confirm the last row action — a removal or a rename.
+   * Not "did not happen": a response lost after Plow committed still lands
+   * here, and the re-read roster beside it shows what Plow holds.
    *
    * Separate from `rosterError` because they are different sentences about
    * different things: the list is fine, the thing you just asked for is not.
@@ -200,27 +202,12 @@ export class ConnectClient {
    * state than a key row — the agent's poll and settings, this Mac's session —
    * and going around either leaves that state behind.
    */
-  async removeRosterRow(id: number): Promise<ConnectClientState> {
-    this.actionError = null;
-    const row = this.rosterRow(id);
-    if (!row) return this.failAction("That row is no longer on this screen.");
-    const credential = this.settings().relayCredential.trim();
-    if (!credential) return this.failAction("This Mac isn't signed in yet.");
-
-    const generation = this.generation;
-    try {
-      // Each route belongs to whoever owns that lifecycle. Only an ordinary
-      // credential is this file's to revoke directly.
-      if (row.isThisMac) await this.deps.signOutThisMac();
-      else if (row.agentId !== null) await this.deps.removeCloudAgent(row.agentId);
-      else await this.deps.api.revokeApiKey(credential, id);
-    } catch (error) {
-      if (generation === this.generation) this.failAction(messageOf(error));
-    }
-    if (generation !== this.generation) return this.state();
-    // Re-read after a failure too: a response lost after Plow committed leaves
-    // the server changed, and the rows on screen must say what Plow holds.
-    return this.refreshRoster();
+  removeRosterRow(id: number): Promise<ConnectClientState> {
+    return this.rosterAction(id, (row, credential) => {
+      if (row.isThisMac) return this.deps.signOutThisMac();
+      if (row.agentId !== null) return this.deps.removeCloudAgent(row.agentId);
+      return this.deps.api.revokeApiKey(credential, id);
+    });
   }
 
   /**
@@ -232,28 +219,37 @@ export class ConnectClient {
    * carries no name of its own, so renaming the credential IS renaming the
    * agent — the same call the Plow dashboard makes.
    */
-  async renameRosterRow(id: number, name: string): Promise<ConnectClientState> {
+  renameRosterRow(id: number, name: string): Promise<ConnectClientState> {
+    return this.rosterAction(id, (_row, credential) => this.deps.api.renameApiKey(credential, id, name));
+  }
+
+  /**
+   * One lifecycle for every row action: find the row, act with this Mac's
+   * credential, then re-read the roster — after a failure too, because a
+   * response lost after Plow committed leaves the server changed, and the
+   * rows on screen must say what Plow holds. `actionError` says why the
+   * action did not confirm; the re-read never clears it.
+   */
+  private async rosterAction(
+    id: number,
+    act: (row: RosterSectionRow, credential: string) => Promise<unknown>,
+  ): Promise<ConnectClientState> {
     this.actionError = null;
-    if (!this.rosterRow(id)) return this.failAction("That row is no longer on this screen.");
+    const row = [...this.roster.cloud, ...this.roster.mcp, ...this.roster.other].find(
+      (candidate) => candidate.id === id,
+    );
+    if (!row) return this.failAction("That row is no longer on this screen.");
     const credential = this.settings().relayCredential.trim();
     if (!credential) return this.failAction("This Mac isn't signed in yet.");
 
     const generation = this.generation;
     try {
-      await this.deps.api.renameApiKey(credential, id, name);
+      await act(row, credential);
     } catch (error) {
       if (generation === this.generation) this.failAction(messageOf(error));
     }
     if (generation !== this.generation) return this.state();
-    // Re-read after a failure too: a response lost after Plow committed leaves
-    // the server changed, and the rows on screen must say what Plow holds.
     return this.refreshRoster();
-  }
-
-  private rosterRow(id: number): RosterSectionRow | undefined {
-    return [...this.roster.cloud, ...this.roster.mcp, ...this.roster.other].find(
-      (candidate) => candidate.id === id,
-    );
   }
 
   private failAction(message: string): ConnectClientState {

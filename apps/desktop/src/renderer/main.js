@@ -1790,7 +1790,7 @@ function rosterNotice(s) {
   if (!s.rosterError && !s.actionError) return null;
   return el("div", { class: "roster-notices" }, [
     s.rosterError ? cloudErrorBanner(s.rosterError, "Sessions could not be refreshed") : null,
-    s.actionError ? cloudErrorBanner(s.actionError, "That change did not finish") : null,
+    s.actionError ? cloudErrorBanner(s.actionError, "Plow could not confirm that change") : null,
   ]);
 }
 
