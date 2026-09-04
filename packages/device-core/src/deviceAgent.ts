@@ -239,6 +239,10 @@ export class DeviceAgent {
   /** Diagnoses by run handle, so a `plow_get_output` poll carries the one
    *  the run's end produced. */
   private readonly runDiagnoses = new Map<string, DiagnosedRun>();
+  /** A diagnosis the run's exit started and has not finished: a poll that
+   *  lands in between waits for it, or the agent would take "completed,
+   *  exit 1" as the whole story and stop asking. */
+  private readonly pendingDiagnoses = new Map<string, Promise<void>>();
   /** Runs already recorded as blocked: one that was found parked while
    *  running and then reaped is one story, not two audit rows. */
   private readonly blockedRuns = new Set<string>();
@@ -559,7 +563,11 @@ export class DeviceAgent {
     const p = cap.paths?.[0];
     if (p === undefined) return { status: "error", error: "missing path" };
     try {
-      const data = await this.guardedFileOp(p, () => FileOps.read(p, cap.paths ?? []));
+      const data = await this.guardedFileOp(
+        p,
+        () => FileOps.read(p, cap.paths ?? []),
+        (late) => this.audit.record("file_read", { intentId: intent.intentId, path: p, bytes: late.length, late: true }),
+      );
       this.audit.record("file_read", {
         intentId: intent.intentId,
         path: p,
@@ -578,11 +586,16 @@ export class DeviceAgent {
   /**
    * Run a file operation, and on a TCC-guarded path refuse to wait forever
    * for it: past `FILE_OP_HANG_MS` the operation is reported as parked on a
-   * consent dialog (`FileOpHang`) and left to finish or fail on its own —
-   * its eventual answer is dropped, because the call it belonged to has
-   * already been answered.
+   * consent dialog (`FileOpHang`) and left to finish or fail on its own.
+   *
+   * Left to finish, not abandoned: the owner clicking Allow lets the parked
+   * operation through, and a write that lands that way has still happened
+   * to their file. The call it belonged to was answered `blocked` long ago,
+   * so `late` is how the outcome is kept — an audit line, so the log never
+   * shows a file changed by nothing. A late failure (Don't Allow) changes
+   * nothing and the block already on record is its story.
    */
-  private async guardedFileOp<T>(p: string, op: () => Promise<T>): Promise<T> {
+  private async guardedFileOp<T>(p: string, op: () => Promise<T>, late?: (result: T) => void): Promise<T> {
     if (guardedPrefix(p, this.ownerHome) === null) return op();
     const work = op();
     let timer: ReturnType<typeof setTimeout> | undefined;
@@ -592,10 +605,20 @@ export class DeviceAgent {
     });
     try {
       return await Promise.race([work, hang]);
+    } catch (error: unknown) {
+      if (error instanceof FileOpHang) {
+        work.then(
+          (result) => {
+            // Possibly long after the call, mid-shutdown even; a failed
+            // append must not become an uncaught exception in the loop.
+            try { if (late) late(result); } catch (e) { console.error(`[audit] late ${p} lost:`, e); }
+          },
+          () => { /* refused after all; the block on record says so */ },
+        );
+      }
+      throw error;
     } finally {
       clearTimeout(timer);
-      // The loser may still reject later; nobody is listening by then.
-      work.catch(() => {});
     }
   }
 
@@ -656,7 +679,11 @@ export class DeviceAgent {
     if (contentBase64 === null) return { status: "error", error: "missing content" };
     const data = Buffer.from(contentBase64, "base64");
     try {
-      await this.guardedFileOp(p, () => FileOps.write(p, data, cap.paths ?? []));
+      await this.guardedFileOp(
+        p,
+        () => FileOps.write(p, data, cap.paths ?? []),
+        () => this.audit.record("file_write", { intentId: intent.intentId, path: p, bytes: data.length, late: true }),
+      );
       this.audit.record("file_write", {
         intentId: intent.intentId,
         path: p,
@@ -809,12 +836,22 @@ export class DeviceAgent {
           console.error(`[audit] exec_end lost for handle ${result.handle}:`, error);
         }
         // The end of a run that was answered `running` is where a killed or
-        // failed run gets its diagnosis; the next poll carries it. Nothing
-        // awaits this — the exit event is not a call — so it may not throw.
+        // failed run gets its diagnosis; the next poll carries it, and a poll
+        // that arrives first waits (`pendingDiagnoses`). Nothing here awaits
+        // it — the exit event is not a call — so it may not throw.
         if (diag && (reaped || exitCode !== 0)) {
-          this.diagnoseRun(intentId, this.executor.output(result.handle, 0), diag).catch((error) => {
-            console.error(`[hostGate] diagnosis lost for handle ${result.handle}:`, error);
-          });
+          const pending = this.diagnoseRun(intentId, this.executor.output(result.handle, 0), diag)
+            .then(() => {})
+            .catch((error) => {
+              console.error(`[hostGate] diagnosis lost for handle ${result.handle}:`, error);
+            })
+            .finally(() => this.pendingDiagnoses.delete(result.handle));
+          this.pendingDiagnoses.set(result.handle, pending);
+        } else if (!reaped && exitCode === 0) {
+          // A clean exit after a "parked on a dialog" verdict means the owner
+          // answered it: the verdict was provisional and is now wrong, and a
+          // poll must not call a finished command blocked.
+          this.runDiagnoses.delete(result.handle);
         }
       });
       // A run still going with nothing said yet may be parked on a consent
@@ -1154,7 +1191,8 @@ export class DeviceAgent {
     return this.browserSessions.command(session, params);
   }
 
-  getOutput(handle: string, since = 0): JSONValue {
+  async getOutput(handle: string, since = 0): Promise<JSONValue> {
+    await this.pendingDiagnoses.get(handle);
     return runPayload(this.executor.output(handle, since), this.runDiagnoses.get(handle) ?? null);
   }
 }

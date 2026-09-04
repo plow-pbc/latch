@@ -55,6 +55,16 @@ function hostGateShort(ev: ReturnType<typeof jv>): string {
   }
 }
 
+/**
+ * A "parked on a dialog" verdict is provisional: the owner clicking Allow
+ * lets the run finish, and a clean exit after it says they did. The block
+ * stays in the log — it happened — but the row's outcome is the recovery.
+ */
+function recovered(gate: JSONValue, exit: JSONValue | null): boolean {
+  if (exit === null || jv(gate).get("cause").str !== "prompt_waiting") return false;
+  return jv(exit).get("reaped").bool !== true && jv(exit).get("exit_code").int === 0;
+}
+
 /** System Settings' own words for a permission, for the badge. */
 function permissionWords(permission: string): string {
   switch (permission) {
@@ -516,7 +526,7 @@ function classifyActivity(
     // and "Failed · exit 1" would hide that from them. Amber, like a killed
     // run, because nothing here was refused BY anyone.
     const gate = entry("host_permission_blocked");
-    if (gate) return ran(`Blocked · ${hostGateShort(jv(gate))}`, "amber", "blocked");
+    if (gate && !recovered(gate, entry("exec_end"))) return ran(`Blocked · ${hostGateShort(jv(gate))}`, "amber", "blocked");
     // The sandbox refusing is this Mac refusing too: the word is Blocked, so
     // the Blocked filter holds it. Red, not amber: the bound was the owner's.
     if (entry("denied_operation")) return ran("Blocked · outside approved paths", "red", "blocked");
@@ -585,7 +595,7 @@ function classifyActivity(
   // A handle-only block from a deferred run whose end outlived its intent's
   // row: the gate is still the story.
   const gate = entry("host_permission_blocked");
-  if (gate) return outcome(`Blocked · ${hostGateShort(jv(gate))}`, "amber", "blocked");
+  if (gate && !recovered(gate, entry("exec_end"))) return outcome(`Blocked · ${hostGateShort(jv(gate))}`, "amber", "blocked");
   // A handle-only exec_end from an old log: a deferred run's end recorded
   // without its intent. The exit code is the whole story.
   const ee = entry("exec_end");

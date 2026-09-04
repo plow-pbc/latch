@@ -369,6 +369,25 @@ describe("auditActivities (grouping)", () => {
     expect(decided.timeline.map((s) => s.text)).toContain(`Run killed — ${reason}`);
   });
 
+  it("a run parked on a dialog that then exited cleanly reads as Completed, not Blocked", () => {
+    // The owner answered the dialog; the verdict was provisional. The block
+    // stays in the timeline, but the outcome is the recovery.
+    const run = (cause: string) => auditActivities([
+      { event: "intent_received", intentId: "i1", request: "run: cat ~/Desktop/a.txt", ts: "2026-08-18T12:00:00Z" },
+      { event: "intent_decision", intentId: "i1", decision: "allow_once", source: "prompt", ts: "2026-08-18T12:00:01Z" },
+      { event: "exec_start", intentId: "i1", argv: ["/bin/cat"], ts: "2026-08-18T12:00:01Z" },
+      { event: "host_permission_blocked", intentId: "i1", handle: "H1", path: "~/Desktop/a.txt", cause, confidence: "confirmed", permission: "files_desktop", owner_action: "A dialog is open.", ts: "2026-08-18T12:00:02Z" },
+      { event: "exec_end", intentId: "i1", exit_code: 0, ts: "2026-08-18T12:00:30Z" },
+    ])[0]!;
+    const recovered = run("prompt_waiting");
+    expect(recovered.status).toBe("Completed");
+    expect(recovered.statusKind).toBe("completed");
+    expect(recovered.timeline.some((s) => s.text.startsWith("This Mac refused"))).toBe(true);
+    // A confirmed refusal followed by exit 0 is not a recovery: only the
+    // parked verdict is provisional.
+    expect(run("macos_permission").status).toBe("Blocked · Desktop folder");
+  });
+
   it("a block by this Mac itself names the permission, outranks the exit code, and carries the owner sentence", () => {
     // The owner is the one person who can flip the switch; "failed (exit 1)"
     // would hide the one thing they can act on.

@@ -213,6 +213,17 @@ describe("capabilitiesView", () => {
     expect(capabilitiesView(input({ events, bannerSeenAt: "2026-09-02T07:00:00Z" })).banner).toBeNull();
   });
 
+  it("a block from the same second as the dismissal is dismissed", () => {
+    // The audit log writes whole seconds; the dismissal keeps milliseconds.
+    // As strings "…:00Z" sorts after "…:00.800Z" and the block survived.
+    const events = block("i1", "2026-09-02T06:12:00Z", "full_disk_access");
+    const seen = capabilitiesView(input({ events, bannerSeenAt: "2026-09-02T06:12:00.800Z" }));
+    expect(seen.banner).toBeNull();
+    expect(seen.badge).toBe(0);
+    const row = capabilitiesView(input({ events, dismissals: { full_disk_access: "2026-09-02T06:12:00.800Z" } }));
+    expect(row.sections[0]!.rows[0]).toMatchObject({ key: "full_disk_access", count: 0 });
+  });
+
   it("a switch with no row of its own joins the end of This Mac only once something asked, in System Settings' words", () => {
     const quiet = capabilitiesView(input()).sections[0]!;
     expect(quiet.items.at(-1)).toMatchObject({ kind: "group", key: "automation" });
