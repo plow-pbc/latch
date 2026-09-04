@@ -727,9 +727,12 @@ export class PlowApi {
     return { accounts, degraded };
   }
 
-  /** Mint an agent credential through the relay's own API (`relay:call` only,
-   * whatever we ask for — the server decides). */
-  async createAgent(token: string, name: string): Promise<MintedCredential> {
+  /** Mint an agent credential through the relay's own API. Named with a line,
+   * the server mints the assistant role on it — `relay:call`, `chats:use`,
+   * `llm:chat`, `payments:request`. Without one it mints `relay:call` alone,
+   * which is all an MCP-only client needs. */
+  async createAgent(token: string, name: string, lineUid: string | null = null): Promise<MintedCredential> {
+    const line = (lineUid ?? "").trim();
     const data = await this.call<{
       id?: unknown;
       token: string;
@@ -739,7 +742,7 @@ export class PlowApi {
     }>(
       "POST",
       "/v1/relay/agents",
-      { token, body: { name } },
+      { token, body: line ? { name, line_uid: line } : { name } },
     );
     if (typeof data.id !== "number" || typeof data.mcp_config !== "string" || !data.mcp_config.trim()) {
       throw new PlowApiError("http", "Plow did not return an MCP configuration.");

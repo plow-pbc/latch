@@ -493,7 +493,13 @@ describe("PlowApi", () => {
     expect(calls[0].url).not.toContain("act_secret_xyz");
   });
 
-  it("mints an agent through the relay's own endpoint", async () => {
+  // The line is what the server mints the assistant role on. Sending it only
+  // when one is named keeps a line-less mint — Claude Code and every other
+  // MCP-only client — the `relay:call` credential it is today.
+  it.each([
+    { lineUid: null, body: { name: "Claude Code" } },
+    { lineUid: "line-7", body: { name: "Claude Code", line_uid: "line-7" } },
+  ])("mints an agent and sends the line only when one is named ($lineUid)", async ({ lineUid, body }) => {
     const { calls, fetchImpl } = recordingFetch([
       {
         status: 200,
@@ -509,9 +515,11 @@ describe("PlowApi", () => {
     const minted = await new PlowApi("https://api.plow.co", fetchImpl).createAgent(
       "plow_device",
       "Claude Code",
+      lineUid,
     );
 
     expect(calls[0].url).toBe("https://api.plow.co/v1/relay/agents");
+    expect(JSON.parse(String(calls[0].init.body))).toEqual(body);
     expect(minted.id).toBe(41);
     expect(minted.token).toBe("plow_agenttok");
   });
