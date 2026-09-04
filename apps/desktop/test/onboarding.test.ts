@@ -261,7 +261,7 @@ describe("wizard steps around the existing verification flow", () => {
     onboarding.reset();
   });
 
-  it("offers Back from Connect but not from Verified, Data or Done", async () => {
+  it("offers Back from Availability and Connect but not from Verified, Data or Done", async () => {
     plow.redeems = [{ status: "verified", token: SESSION_TOKEN }];
     let notifications = 0;
     const onboarding = build(
@@ -284,9 +284,15 @@ describe("wizard steps around the existing verification flow", () => {
     expect((await onboarding.back()).step).toBe("data");
     expect(notifications).toBe(0);
 
-    expect((await onboarding.advance()).step).toBe("connect");
+    expect((await onboarding.advance()).step).toBe("availability");
     notifications = 0;
     expect((await onboarding.back()).step).toBe("data");
+    expect(notifications).toBe(1);
+
+    await onboarding.advance();
+    expect((await onboarding.advance()).step).toBe("connect");
+    notifications = 0;
+    expect((await onboarding.back()).step).toBe("availability");
     expect(notifications).toBe(1);
 
     await onboarding.advance();
@@ -335,15 +341,50 @@ describe("wizard steps around the existing verification flow", () => {
     expect(onboarding.setTelemetryEnabled(false).telemetryEnabled).toBe(false);
     expect(loadSettings(home)).toMatchObject({ telemetryEnabled: true, setupComplete: false });
 
-    expect((await onboarding.advance()).step).toBe("connect");
+    expect((await onboarding.advance()).step).toBe("availability");
     expect(loadSettings(home)).toMatchObject({ telemetryEnabled: false, setupComplete: false });
     // The persisted gate deliberately resumes incomplete setup at Data, so a
     // returning install still makes the telemetry choice before Connect.
     expect(build({}, false).state().step).toBe("data");
 
+    expect((await onboarding.advance()).step).toBe("connect");
     expect((await onboarding.advance()).step).toBe("done");
     expect(loadSettings(home)).toMatchObject({ telemetryEnabled: false, setupComplete: true });
     expect(build({}, false).state().step).toBe("done");
+  });
+
+  it("lands the availability default once, on reaching the screen, and keeps what it wrote", async () => {
+    const settings = loadSettings(home);
+    settings.relayCredential = DEVICE_TOKEN;
+    saveSettings(home, settings);
+    expect(loadSettings(home).launchAtLoginDefaulted).toBe(false);
+
+    // The production dep persists Keep Awake's opt-in itself. The write must
+    // survive the step's own settings write — the first cut clobbered it.
+    let applied = 0;
+    const applyAvailabilityDefault = () => {
+      applied += 1;
+      const live = loadSettings(home);
+      live.keepAwakeWhileRunning = true;
+      saveSettings(home, live);
+    };
+    let onboarding = build({ applyAvailabilityDefault }, false);
+    onboarding.setTelemetryEnabled(false);
+    expect((await onboarding.advance()).step).toBe("availability");
+    expect(applied).toBe(1);
+    expect(loadSettings(home)).toMatchObject({
+      keepAwakeWhileRunning: true,
+      telemetryEnabled: false,
+      launchAtLoginDefaulted: true,
+    });
+
+    // A second pass (Back, Continue) is silent, and so is a re-setup over the
+    // same home — sign-out keeps the marker, so a choice the user made stays.
+    await onboarding.back();
+    expect((await onboarding.advance()).step).toBe("availability");
+    onboarding = build({ applyAvailabilityDefault }, false);
+    await onboarding.advance();
+    expect(applied).toBe(1);
   });
 
 });
