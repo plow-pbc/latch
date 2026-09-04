@@ -74,7 +74,8 @@ function activationSession(overrides: Partial<KeyInfo> = {}): KeyInfo {
     is_active: true,
     last_seen_at: null,
     created_at: "2026-08-30T21:59:02.464862",
-    agent_id: null,
+    assistant_uid: null,
+    assistant_provider: null,
     chat_uids: [],
     ...overrides,
   };
@@ -738,7 +739,7 @@ describe("CloudAgentState new agent flow", () => {
 
   it.each([
     ["no matching sessions", [], { outcome: "no_match" }],
-    ["an agent-owned key", [activationSession({ agent_id: "agent_42" })], { outcome: "no_match" }],
+    ["an assistant-owned key", [activationSession({ assistant_uid: "agent_42" })], { outcome: "no_match" }],
     ["a named key", [activationSession({ name: "Deliberate Admin key" })], { outcome: "no_match" }],
     ["a non-wildcard key", [activationSession({ scopes: ["relay:*"] })], { outcome: "no_match" }],
     ["an already-used key", [activationSession({ last_seen_at: "2026-08-30T21:59:03.000000" })], { outcome: "no_match" }],

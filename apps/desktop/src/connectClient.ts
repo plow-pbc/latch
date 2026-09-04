@@ -187,8 +187,8 @@ export class ConnectClient {
   /**
    * Remove one roster row, by whichever call its section demands.
    *
-   * **A row with an `agent_id` goes to the cloud-agent endpoint and NEVER to
-   * the key revoke.** Revoking a cloud agent's key flips `is_active` and
+   * **A row naming a cloud assistant goes to the assistant endpoint and NEVER
+   * to the key revoke.** Revoking a cloud agent's key flips `is_active` and
    * nothing else: the VM keeps running, the chat's webhook keeps firing, and
    * the row vanishes from this list because we filter inactive rows — a live
    * agent that 401s on everything and that nobody can reach to remove.
