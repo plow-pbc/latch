@@ -43,10 +43,11 @@ const STATUS_FILTERS = [
 let dateFilter = "any";
 let dateSince = null;
 const DATE_FILTERS = [
-  ["any", "Any time"], ["today", "Today"], ["24h", "Last 24 hours"], ["7d", "Last 7 days"], ["30d", "Last 30 days"],
+  ["any", "Any time"], ["1h", "Last hour"], ["today", "Today"], ["24h", "Last 24 hours"], ["7d", "Last 7 days"], ["30d", "Last 30 days"],
 ];
 function dateCutoff(now = Date.now()) {
   switch (dateFilter) {
+    case "1h": return now - 3_600_000;
     case "today": { const d = new Date(now); d.setHours(0, 0, 0, 0); return d.getTime(); }
     case "24h": return now - 24 * 3_600_000;
     case "7d": return now - 7 * 86_400_000;
