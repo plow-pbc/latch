@@ -163,12 +163,16 @@ describe("every tool with a strong built-in alternative says whose Mac this is",
     expect(d.plow_write_file).toMatch(/not for your own working files/);
   });
 
-  it("plow_run_command leads with when to choose it, not with the sandbox", async () => {
+  it("plow_run_command leads with when to choose it, names Latch, not the sandbox", async () => {
     const d = await descriptions(makeServer());
     // The sandbox is still stated — it is true and the agent needs it — but it
     // no longer opens the description, where it read as "this one is worse".
     expect(d.plow_run_command).toMatch(/seatbelt sandbox/);
     expect(d.plow_run_command.indexOf("own Mac")).toBeLessThan(d.plow_run_command.indexOf("sandbox"));
+    // "Use Latch to …" is how owners phrase it; the run-command copy names it.
+    // The tooling list (incl. `say`) is pinned via MACOS_TOOLING by the seam
+    // test below, so it is not re-asserted here.
+    expect(d.plow_run_command).toMatch(/\bLatch\b/);
   });
 
   // What this case owns is the vault fill and the WHICH-browser line. Browsing
@@ -183,11 +187,6 @@ describe("every tool with a strong built-in alternative says whose Mac this is",
     expect(d.plow_browser_open).not.toMatch(/one session at a time/i);
   });
 
-  it("plow_run_command names Latch and speech among the Mac's tooling", async () => {
-    const d = await descriptions(makeServer());
-    expect(d.plow_run_command).toMatch(/\bLatch\b/);
-    expect(d.plow_run_command).toMatch(/\bsay\b/);
-  });
 });
 
 describe("the goal field says a human reads it", () => {
