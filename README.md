@@ -48,7 +48,8 @@ Not here:
 - **Prompt framing of these tools** — `plow-pbc/hermes-plow-chat`, the
   `plow_chat` plugin: the section that tells a runtime dropping MCP
   `instructions` what the Mac tools are for. `SERVER_INSTRUCTIONS` here stays
-  canonical; a sibling cites it rather than restating it.
+  canonical; the plugin's section restates it for that one runtime, so a
+  change to the wording here is a change to keep in step there.
 - **Chat truth and the bounds on it** — `plow-pbc/plow`: the assistant name and
   its length bound, the daily payment cap, the roster. This Mac renders and
   edits them; plow stores and validates them.
