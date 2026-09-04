@@ -168,10 +168,12 @@ export const SELF_HOSTED_PROVIDER = "self_hosted";
  *
  * Only a named provider answers true, because this picks a DESTRUCTIVE route.
  * Everything else revokes: `self_hosted`, null, and the `undefined` an API
- * predating the assistant contract sends — which the type cannot express and
- * which read as "present" against a null test.
+ * predating the assistant contract sends. `listApiKeys` already defaults that
+ * pair to null, so the `undefined` arm is defence in depth — and the parameter
+ * says so, rather than leaving the body hardened against a shape the signature
+ * claims cannot arrive.
  */
-export function isCloudAssistant(provider: string | null): boolean {
+export function isCloudAssistant(provider: string | null | undefined): boolean {
   return typeof provider === "string" && provider !== "" && provider !== SELF_HOSTED_PROVIDER;
 }
 
