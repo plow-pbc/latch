@@ -1,0 +1,459 @@
+{
+  "protocol": "2026-07-28",
+  "instructions": "These tools are Latch. They operate the user's own Mac — their real files, their real applications, their real shell, their speakers, and a real browser running there. Your own file, shell and web tools act on your workspace: a different machine, on a different network address, that the user cannot see.\n\nDefault to this Mac for anything about the user or their world: \"my computer\", \"my files\", \"my email\", \"say this\", \"open that\", \"find X\" mean this Mac unless they say otherwise. Reach for these tools too whenever the question is about the live web. Public pages included: their browser runs on their own network rather than a datacenter address many sites refuse, it renders JavaScript, and it starts on a copy of their own profile, so it is already signed in wherever they are — your own fetch does none of that, and trips bot walls and consent interstitials besides. \"What's on the homepage of Reddit?\" is a plow_browser_open question.\n\nTheir Mac is a macOS workstation, with tooling your workspace does not have. Reach for it through plow_run_command when it fits the job: mdfind for Spotlight search across their files, sips for images, pbcopy and pbpaste for the clipboard, say to speak text aloud through the Mac's speakers, and whatever else they have installed.\n\nBefore reading another application's data on their Mac (Messages, Mail, Safari, Contacts, the Desktop, Documents or Downloads folders) or sending Apple events, call plow_device_status: it says which macOS permissions the app holds right now, so you can tell the user what is missing before trying rather than after being blocked.\n\nCall plow_list_skills early. This Mac publishes skills — how-to guides for what it can do, specific to this user's setup in ways you cannot otherwise know — and the skill for a task beats rediscovering it.\n\nUse your own tools for your own work: code you are writing, scratch files, and anything you do not need their machine for.\n\nThe user approves the operations these tools perform on their machine — reading and writing files, running commands, and browsing. A call may return a pending handle instead of a result; the handle's own 'reason' and 'note' say what it is waiting for. Tell the user, then poll plow_get_result. Do not re-issue the original call; that starts a second request.\n\nA call can also come back with status 'blocked': the user approved it, and then their Mac itself refused — a macOS privacy permission the app has not been granted, a permission dialog waiting on the Mac's screen with nobody there to click it, or a path outside the bound that was approved. That is not the user saying no, and it is not the operation breaking. Read the 'diagnosis'. When its 'confidence' is 'confirmed', tell the user its 'owner_action' sentence word for word and stop: do not retry, and do not reword the goal to get a different answer. When it is 'likely' or 'unknown', say what this Mac found — 'evidence', 'ruled_out', and the 'probes' facts — and let the user decide. A command that comes back 'running' with a 'diagnosis' is parked on a permission dialog: leave it running, tell the user, and poll plow_get_output; the user answering the dialog lets it finish.",
+  "tools": [
+    {
+      "name": "plow_read_file",
+      "title": "Read a file on the user's Mac",
+      "description": "Read a file on the user's own Mac — their real filesystem, not your workspace. They may be asked to approve, so this can return a pending handle. Paths inside ~/Plow (the shared Plow folder — see the plow-folder skill) approve automatically unless this Mac is set to deny everything. A result with status 'blocked' means the user approved it and their Mac itself then refused — a macOS privacy permission the app lacks, or a permission dialog waiting on the Mac's screen; not the user saying no. Read its 'diagnosis': when 'confidence' is 'confirmed', tell the user the 'owner_action' sentence word for word and stop; otherwise share the 'evidence' and let them decide.",
+      "inputSchema": {
+        "type": "object",
+        "required": [
+          "path"
+        ],
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "Absolute path (~ allowed)"
+          },
+          "goal": {
+            "type": "string",
+            "description": "Why you need this, in one line. The user reads exactly this when deciding whether to approve."
+          }
+        },
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "idempotentHint": true,
+        "openWorldHint": false
+      }
+    },
+    {
+      "name": "plow_write_file",
+      "title": "Write a file on the user's Mac",
+      "description": "Write a file on the user's own Mac — use this when the file is for them to open or keep, not for your own working files. They may be asked to approve, so this can return a pending handle. Paths inside ~/Plow (the shared Plow folder — see the plow-folder skill) approve automatically unless this Mac is set to deny everything; prefer it for files you produce for the user. A result with status 'blocked' means the user approved it and their Mac itself then refused — a macOS privacy permission the app lacks, or a permission dialog waiting on the Mac's screen; not the user saying no. Read its 'diagnosis': when 'confidence' is 'confirmed', tell the user the 'owner_action' sentence word for word and stop; otherwise share the 'evidence' and let them decide.",
+      "inputSchema": {
+        "type": "object",
+        "required": [
+          "path",
+          "content"
+        ],
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "content": {
+            "type": "string"
+          },
+          "goal": {
+            "type": "string",
+            "description": "Why you need this, in one line. The user reads exactly this when deciding whether to approve."
+          }
+        },
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": false
+      }
+    },
+    {
+      "name": "plow_run_command",
+      "title": "Run a command on the user's Mac",
+      "description": "Run a command on the user's own Mac through Latch — their installed tools, their data, their network, their speakers. This Mac is where the user's world lives; default here for anything about them or their machine, and use your own shell only for your own work. Their Mac is a macOS workstation, so reach for tooling your workspace does not have when it fits the job: mdfind for Spotlight search across their files, sips for images, pbcopy and pbpaste for the clipboard, say to speak text aloud through the Mac's speakers, and whatever else they have installed. It runs inside a seatbelt sandbox. Declare every path you need: read_paths and write_paths are what the owner approves and what the audit record shows, and write access is granted from them. They are NOT the full extent of what the command can read — the sandbox profile permits reads more broadly than the paths declared here. If the command is still running when the wait elapses you get a job handle for plow_get_output. A command that declares neither write_paths nor network can be killed if it has produced no output at all after 15 minutes — so if long silent work is expected, have it print progress — and in exchange its only writable place is `$TMPDIR`, a directory of its own that is deleted when it is killed. Declare a write path (or network, or apple_events) and it is never killed that way, because it could be mid-work and a truncated file — or a message already sent — is worse than the wait. A vendored provider command counts as having declared network even though you did not — so it is never killed that way either, and the `$TMPDIR` exchange is off — unless it asks for help (`--help`/`-h` last, no `--` before it), which reaches nothing and is exempt. A run ends when the command itself exits, and its stdout and stderr close with it — so a job left running in the background will normally be killed by its next write unless it redirects both (`>log 2>&1`), its output is not captured, and no handle tracks it. If the whole call outruns this Mac's budget you get a pending handle instead: poll it with plow_get_result, and the ready payload is the plow_run_command result — including its job handle. A result with status 'blocked' means the user approved it and their Mac itself then refused — a macOS privacy permission the app lacks, or a permission dialog waiting on the Mac's screen; not the user saying no. Read its 'diagnosis': when 'confidence' is 'confirmed', tell the user the 'owner_action' sentence word for word and stop; otherwise share the 'evidence' and let them decide. A result that is still 'running' but carries a 'diagnosis' is parked on a macOS permission dialog on the Mac's screen: leave it running, tell the user, and poll plow_get_output — their click lets it finish.",
+      "inputSchema": {
+        "type": "object",
+        "required": [
+          "argv"
+        ],
+        "properties": {
+          "argv": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Command and arguments, e.g. [\"ls\", \"-la\", \"/tmp\"]"
+          },
+          "cwd": {
+            "type": "string",
+            "description": "Working directory (readable by the sandbox)"
+          },
+          "read_paths": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Directories/files the command needs to read. Shown to the approver and recorded; not a complete bound on reads."
+          },
+          "write_paths": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Directories/files the command may write"
+          },
+          "network": {
+            "type": "boolean",
+            "description": "Whether the command needs network access (default false). Ignored for a vendored provider command: those reach their service by definition, so network is granted whether you omit this or set it false, and the approver sees it either way. The exception is asking for help — `--help` or `-h` as the LAST argument, with no `--` before it — which reaches nothing."
+          },
+          "apple_events": {
+            "type": "boolean",
+            "description": "Whether the command sends Apple events to control this Mac's apps — required for osascript that tells an application to do something (default false). Shown to the approver like any capability; without it the sandbox denies the event and the script fails."
+          },
+          "wait_ms": {
+            "type": "integer",
+            "description": "How long to wait for completion before returning a job handle (default 10000). Capped at this Mac's call budget, beyond which the call defers instead."
+          },
+          "goal": {
+            "type": "string",
+            "description": "Why you need this, in one line. The user reads exactly this when deciding whether to approve."
+          }
+        },
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": true
+      }
+    },
+    {
+      "name": "plow_get_output",
+      "title": "Get output from a running command",
+      "description": "Fetch incremental output of a command still running from plow_run_command. Pass 'since' = the output_length you last saw. Takes the job handle plow_run_command returned, not a handle from plow_get_result. A read-only command that produces nothing and never exits is eventually killed by this Mac: the reply then carries an 'error' saying so, which is for the user to hear. One approved to write or to use the network is not — it could be mid-work — so polling will not resolve on its own; tell the user, who is the only one who can end it. A reply with status 'blocked', or one still 'running' with a 'diagnosis', is a run this Mac itself stopped or is holding — a macOS permission, or a dialog waiting on its screen: relay the diagnosis's 'owner_action' to the user.",
+      "inputSchema": {
+        "type": "object",
+        "required": [
+          "handle"
+        ],
+        "properties": {
+          "handle": {
+            "type": "string"
+          },
+          "since": {
+            "type": "integer"
+          }
+        },
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "idempotentHint": true,
+        "openWorldHint": false
+      }
+    },
+    {
+      "name": "plow_list_skills",
+      "title": "List this Mac's skills",
+      "description": "Call this early. This Mac publishes skills — how-to guides for tasks it can do, written for whoever is driving it, and specific to this user's setup in ways you cannot otherwise know. Lists their names and descriptions; read one with plow_read_skill before starting work it covers.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "idempotentHint": true,
+        "openWorldHint": false
+      }
+    },
+    {
+      "name": "plow_read_skill",
+      "title": "Read one of this Mac's skills",
+      "description": "Read a skill this Mac publishes (listed by plow_list_skills): a how-to guide for a task. Read the relevant skill before starting work it covers (e.g. 'camoufox-browsing' for the plow_browser tools).",
+      "inputSchema": {
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Skill name from plow_list_skills"
+          }
+        },
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "idempotentHint": true,
+        "openWorldHint": false
+      }
+    },
+    {
+      "name": "plow_browser_open",
+      "title": "Open a browser on the user's Mac",
+      "description": "Open a browser on the user's own Mac, as the user — use this for reading the live web, not your own fetch: their browser runs on their own network rather than a datacenter address many sites refuse, it renders JavaScript, and it starts on a copy of their own profile, so it is already signed in wherever they are. What you sign into is merged back into their profile when the session closes — including when several browsers are open at once. It can also fill passwords from their vault without returning them to you ('eval' is the exception: it reads page values directly, and must not be pointed at a field you filled). The session id you get back says WHICH browser: pass it on every call and you keep the same window. The Mac runs a few at once — every one of them the user's — and says so plainly when it is full. It is a supervised anti-detection browser, scoped to the listed site origins. The owner approves the origin list — include every domain you expect (apex AND wildcard: 'dominos.com', '*.dominos.com'). Vault item names are listed by 'plow_vault'. The browser window is hidden by default; pass headed:true only when the owner asked to watch it run. Returns a session handle for the 'plow_browser' tool. Read the camoufox-browsing skill first.",
+      "inputSchema": {
+        "type": "object",
+        "required": [
+          "origins"
+        ],
+        "properties": {
+          "origins": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Host patterns: 'example.com' or '*.example.com'"
+          },
+          "headed": {
+            "type": "boolean",
+            "description": "Show the browser window so the owner can watch (default false). Pass true only when the owner asked to watch it run — you see the same screenshots either way, they do not."
+          },
+          "goal": {
+            "type": "string",
+            "description": "Why you need this, in one line. The user reads exactly this when deciding whether to approve."
+          }
+        },
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true
+      }
+    },
+    {
+      "name": "plow_browser_request",
+      "title": "Ask to widen the browser session",
+      "description": "Ask the owner to widen an open browser session: additional site origins (e.g. a payment popup went to paypal.com) and/or permission to fill specific vault items into pages (find item ids with plow_vault's 'list' action). A secret is never returned to you by these tools; it is typed into the page on this Mac, where it is page content like anything else — readable through 'eval', which you must not point at a field you filled.",
+      "inputSchema": {
+        "type": "object",
+        "required": [
+          "session"
+        ],
+        "properties": {
+          "session": {
+            "type": "string"
+          },
+          "origins": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "credential_items": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "vault item ids to make fillable"
+          },
+          "goal": {
+            "type": "string",
+            "description": "Why you need this, in one line. The user reads exactly this when deciding whether to approve."
+          }
+        },
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": false,
+        "openWorldHint": true
+      }
+    },
+    {
+      "name": "plow_browser",
+      "title": "Drive the user's browser",
+      "description": "Act within an approved browser session. Actions: goto, click, fill, fill_secret, scroll, wait, back, eval, use_page, screenshot, text, url, title, links, forms, tables, pages. 'screenshot' returns an image of the page — take one after every navigation to see where you are. When a 'click' fails, give it a longer 'timeout_ms' — never synthesize the click with 'eval', which sites detect. A click something is covering is refused and the error names what is over it: dismiss that first, then click. Ask plow_vault what is in the vault; 'fill_secret' types any approved vault field into a form field on this Mac without returning the value to you — use it for every vault-backed field, including ones that are not secret. When the page takes a code as separate single-character boxes (a 2FA screen's six one-digit inputs), pass 'selectors' naming every box in order instead of 'selector': the value is split on the Mac, one character per box, and a fill that fails part-way erases what it already typed. A date of birth or a card's expiry takes a 'format' — the month alone, the year alone, or the whole date in the page's shape — and a fill into a dropdown chooses the matching option. A destination in the bundled v1 bank registry needs more than item rights: the owner must ALSO approve the payment separately (a link in their Plow thread, or a 👍), and the fill proceeds only once they do — otherwise fill_secret returns an error and types nothing. Ask the owner to approve it, then retry. Fields the vault itself conceals (passwords, card numbers and codes, hidden custom fields) also render masked and come back from 'forms' without their characters; everything else fills as ordinary text you can read back. A generated 'totp' code is the one field masked although the vault's own app shows it — fill it and submit, you never need to read it. Masking covers what you see, screenshots and 'forms'; it does not cover 'eval', which reads a field's value straight out of the page, so never inspect a field you filled that way. Actions on pages outside the approved origins are refused — use plow_browser_request to widen scope. Every result includes the current url and page_count (watch it for popups; switch with use_page), and 'failed_requests' when the page's own requests came back refused — a 401, 403 or 429 there is why an action that reported success changed nothing, so read it before retrying.",
+      "inputSchema": {
+        "type": "object",
+        "required": [
+          "session",
+          "action"
+        ],
+        "properties": {
+          "session": {
+            "type": "string",
+            "description": "Your browser, from plow_browser_open. Pass the same one to keep the same window; it is a secret — do not share or log it."
+          },
+          "action": {
+            "type": "string",
+            "enum": [
+              "goto",
+              "click",
+              "fill",
+              "fill_secret",
+              "scroll",
+              "wait",
+              "back",
+              "eval",
+              "use_page",
+              "screenshot",
+              "text",
+              "url",
+              "title",
+              "links",
+              "forms",
+              "tables",
+              "pages"
+            ]
+          },
+          "url": {
+            "type": "string",
+            "description": "goto: target URL (within approved origins)"
+          },
+          "selector": {
+            "type": "string",
+            "description": "click / fill / fill_secret: CSS selector"
+          },
+          "selectors": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "fill_secret: for a code the page takes as single-character boxes — every box's CSS selector in the order the code is read, instead of 'selector'"
+          },
+          "value": {
+            "type": "string",
+            "description": "fill: literal text to type (non-secret); into a dropdown, the option whose value or label matches is chosen"
+          },
+          "expression": {
+            "type": "string",
+            "description": "eval: JS expression (top frame)"
+          },
+          "index": {
+            "type": "integer",
+            "description": "use_page: page index from 'pages'"
+          },
+          "item": {
+            "type": "string",
+            "description": "fill_secret: vault item id, from plow_vault list"
+          },
+          "field": {
+            "type": "string",
+            "description": "fill_secret: field label from plow_vault describe (or 'totp')"
+          },
+          "format": {
+            "type": "string",
+            "description": "fill_secret, date fields only (date of birth, expiry): how the page wants it. format tokens: YYYY, YY, MMMM (November), MMM (Nov), MM (11), M (11 or 5), DD (09), D (9), Do (9th); anything else is typed as written, e.g. 'MM/DD/YYYY' or 'MMMM Do, YYYY'. Omit it for the field's own shape: a date of birth as stored (YYYY-MM-DD), an expiry as MM/YY. A card's expiry has no day, so DD, D and Do are refused on it."
+          },
+          "direction": {
+            "type": "string",
+            "description": "scroll: down|up|bottom|top"
+          },
+          "seconds": {
+            "type": "number",
+            "description": "wait: seconds"
+          },
+          "frame": {
+            "type": "integer",
+            "description": "click/fill: target a specific frame index"
+          },
+          "timeout_ms": {
+            "type": "integer",
+            "description": "click: how long to wait for the element (default 3000, capped at 11000)"
+          },
+          "max_chars": {
+            "type": "integer",
+            "description": "text: truncate to this many chars"
+          }
+        },
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": true,
+        "idempotentHint": false,
+        "openWorldHint": true
+      }
+    },
+    {
+      "name": "plow_vault",
+      "title": "Look inside the user's password vault",
+      "description": "Check here before concluding you cannot sign in somewhere. This machine keeps its own password vault. 'list' says what is in it — logins, cards, identities, notes, custom fields — with titles, usernames and sites but never a value. 'describe' names the fields one item holds, an identity's address and ID numbers included. No browser session is needed to ask. To USE any vault field, secret or not, open a browser session and call the plow_browser tool's fill_secret — that is the only way to put one into a page: the value is typed in on the Mac and is never returned by these tools, nor by a screenshot or 'forms' if the vault conceals it. It is in the page you are driving and 'eval' can read it, so treat it as you would anything else on that page: do not go looking for it, copy it out, or repeat it.",
+      "inputSchema": {
+        "type": "object",
+        "required": [
+          "action"
+        ],
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "list",
+              "describe"
+            ]
+          },
+          "item": {
+            "type": "string",
+            "description": "Item id, for 'describe'."
+          }
+        },
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "idempotentHint": true,
+        "openWorldHint": false
+      }
+    },
+    {
+      "name": "plow_browser_close",
+      "title": "Close the browser session",
+      "description": "Close a browser session when the task is done.",
+      "inputSchema": {
+        "type": "object",
+        "required": [
+          "session"
+        ],
+        "properties": {
+          "session": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": false,
+        "destructiveHint": false,
+        "idempotentHint": true,
+        "openWorldHint": false
+      }
+    },
+    {
+      "name": "plow_device_status",
+      "title": "What this Mac lets the app do right now",
+      "description": "Which macOS permissions this app holds on the user's Mac, and whether its own machinery works — checked fresh each call, no approval needed. Call it BEFORE reading another app's data (Messages, Mail, Safari, Contacts, the Desktop/Documents/Downloads folders) or sending Apple events: if 'full_disk_access' is not granted, or an 'automation' target is 'denied', say so to the user up front instead of trying and being blocked. 'not_asked' means macOS will raise a dialog on the Mac's screen at the first attempt, which only someone at the Mac can answer; 'target_not_running' means macOS declines to say until that app is open. The other rows are self-checks — the sandbox spawns, a child of the app inherits its grants, the vault key opens — and a failed one is for the user to hear, not for you to work around.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "idempotentHint": true,
+        "openWorldHint": false
+      }
+    },
+    {
+      "name": "plow_get_result",
+      "title": "Poll a pending result",
+      "description": "Retrieve the result of any call that returned a pending handle — whichever tool created it. Answers pending / ready / denied / blocked / failed / expired / unknown. A ready result is exactly what the original call would have returned had it been fast enough; a blocked one is this Mac's own refusal, with the 'diagnosis' the original call would have carried.",
+      "inputSchema": {
+        "type": "object",
+        "required": [
+          "handle"
+        ],
+        "properties": {
+          "handle": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "annotations": {
+        "readOnlyHint": true,
+        "idempotentHint": false,
+        "openWorldHint": false
+      }
+    }
+  ]
+}

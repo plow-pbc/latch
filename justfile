@@ -353,6 +353,18 @@ seed-blocked-requests:
 unseed-blocked-requests:
     node scripts/seed-blocked-requests.mjs "{{apphome}}/device/audit.ndjson" --remove
 
+# How a real MCP client and model read this Mac's answers (eval/agent/README.md).
+# Not part of `just test`: it spends model tokens and is not deterministic.
+# Needs the Claude CLI signed in, or ANTHROPIC_API_KEY. `case` is one name
+# or several comma-separated; empty is every case.
+agent-eval case='' runs='3' model='sonnet':
+    node eval/agent/run.mjs --case '{{case}}' --runs {{runs}} --model {{model}}
+
+# Re-freeze the eval's vectors from the real server (after a change to the
+# answers or the copy). In process; nothing is launched.
+agent-eval-capture: build
+    node eval/agent/capture.mjs
+
 # Every block in the audit log shows again — the banner, the rows' lines,
 # the badge — until the next ×.
 # Forget when the Capabilities banner was last dismissed.

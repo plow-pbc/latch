@@ -1,0 +1,220 @@
+{
+  "name": "prompt-waiting",
+  "note": "Still running, with a diagnosis: a macOS dialog is waiting on the Mac's screen. The reply says so and does not keep polling.",
+  "prompt": "Run a shell command on my Mac to print ~/Desktop/notes.txt, and tell me the action items in it.",
+  "answers": {
+    "plow_run_command": {
+      "diagnosis": {
+        "cause": "prompt_waiting",
+        "confidence": "confirmed",
+        "evidence": [
+          "opening ~/Desktop/notes.txt from Plow Latch itself did not return",
+          "~/Desktop/notes.txt is under a folder macOS asks the owner about (Files and Folders > Desktop Folder)"
+        ],
+        "owner_action": "A macOS permission dialog is open on the Mac's screen and only the owner, at the Mac, can answer it. Until they click Allow this stays blocked; if they click Don't Allow it will fail the same way next time until they change it in System Settings > Privacy & Security.",
+        "permission": "files_desktop",
+        "requires_relaunch": false,
+        "retry": "after_owner_answers_prompt",
+        "ruled_out": []
+      },
+      "handle": "EVAL-HANDLE",
+      "output": "",
+      "output_length": 0,
+      "probes": {
+        "app_process_open": "hung",
+        "automation_status": null,
+        "automation_target": null,
+        "errno": null,
+        "full_disk_access_granted": false,
+        "hung": false,
+        "immutable_flag": false,
+        "is_directory": false,
+        "op": "exec",
+        "path": "~/Desktop/notes.txt",
+        "path_exists": true,
+        "paths_examined": [
+          "/bin/sh",
+          "~/Desktop/notes.txt",
+          "~"
+        ],
+        "posix_readable": true,
+        "posix_writable": true,
+        "ran_sandboxed": true,
+        "sandbox_allows_read": true,
+        "sandbox_allows_write": false,
+        "sip_protected": false,
+        "stderr_hint": null,
+        "syscall": null,
+        "tcc_guarded_prefix": "files_desktop"
+      },
+      "status": "running"
+    },
+    "plow_get_output": {
+      "diagnosis": {
+        "cause": "prompt_waiting",
+        "confidence": "confirmed",
+        "evidence": [
+          "opening ~/Desktop/notes.txt from Plow Latch itself did not return",
+          "~/Desktop/notes.txt is under a folder macOS asks the owner about (Files and Folders > Desktop Folder)"
+        ],
+        "owner_action": "A macOS permission dialog is open on the Mac's screen and only the owner, at the Mac, can answer it. Until they click Allow this stays blocked; if they click Don't Allow it will fail the same way next time until they change it in System Settings > Privacy & Security.",
+        "permission": "files_desktop",
+        "requires_relaunch": false,
+        "retry": "after_owner_answers_prompt",
+        "ruled_out": []
+      },
+      "handle": "EVAL-HANDLE",
+      "output": "",
+      "output_length": 0,
+      "probes": {
+        "app_process_open": "hung",
+        "automation_status": null,
+        "automation_target": null,
+        "errno": null,
+        "full_disk_access_granted": false,
+        "hung": false,
+        "immutable_flag": false,
+        "is_directory": false,
+        "op": "exec",
+        "path": "~/Desktop/notes.txt",
+        "path_exists": true,
+        "paths_examined": [
+          "/bin/sh",
+          "~/Desktop/notes.txt",
+          "~"
+        ],
+        "posix_readable": true,
+        "posix_writable": true,
+        "ran_sandboxed": true,
+        "sandbox_allows_read": true,
+        "sandbox_allows_write": false,
+        "sip_protected": false,
+        "stderr_hint": null,
+        "syscall": null,
+        "tcc_guarded_prefix": "files_desktop"
+      },
+      "status": "running"
+    },
+    "plow_get_result": {
+      "diagnosis": {
+        "cause": "prompt_waiting",
+        "confidence": "confirmed",
+        "evidence": [
+          "opening ~/Desktop/notes.txt from Plow Latch itself did not return",
+          "~/Desktop/notes.txt is under a folder macOS asks the owner about (Files and Folders > Desktop Folder)"
+        ],
+        "owner_action": "A macOS permission dialog is open on the Mac's screen and only the owner, at the Mac, can answer it. Until they click Allow this stays blocked; if they click Don't Allow it will fail the same way next time until they change it in System Settings > Privacy & Security.",
+        "permission": "files_desktop",
+        "requires_relaunch": false,
+        "retry": "after_owner_answers_prompt",
+        "ruled_out": []
+      },
+      "handle": "EVAL-HANDLE",
+      "output": "",
+      "output_length": 0,
+      "probes": {
+        "app_process_open": "hung",
+        "automation_status": null,
+        "automation_target": null,
+        "errno": null,
+        "full_disk_access_granted": false,
+        "hung": false,
+        "immutable_flag": false,
+        "is_directory": false,
+        "op": "exec",
+        "path": "~/Desktop/notes.txt",
+        "path_exists": true,
+        "paths_examined": [
+          "/bin/sh",
+          "~/Desktop/notes.txt",
+          "~"
+        ],
+        "posix_readable": true,
+        "posix_writable": true,
+        "ran_sandboxed": true,
+        "sandbox_allows_read": true,
+        "sandbox_allows_write": false,
+        "sip_protected": false,
+        "stderr_hint": null,
+        "syscall": null,
+        "tcc_guarded_prefix": "files_desktop"
+      },
+      "status": "running"
+    },
+    "plow_device_status": {
+      "automation": [
+        {
+          "status": "unknown",
+          "target": "Messages"
+        },
+        {
+          "status": "unknown",
+          "target": "Contacts"
+        }
+      ],
+      "automation_queryable": false,
+      "checked_at": "2026-09-04T23:17:01Z",
+      "child_attribution": {
+        "detail": null,
+        "status": "not_applicable"
+      },
+      "full_disk_access": {
+        "granted": false,
+        "probes": [
+          {
+            "outcome": "ENOENT",
+            "path": "~/Library/Application Support/com.apple.TCC/TCC.db"
+          },
+          {
+            "outcome": "ENOENT",
+            "path": "~/Library/Messages/chat.db"
+          },
+          {
+            "outcome": "ENOENT",
+            "path": "~/Library/Safari/Bookmarks.plist"
+          }
+        ]
+      },
+      "permissions": [
+        {
+          "permission": "accessibility",
+          "status": "unknown"
+        },
+        {
+          "permission": "contacts",
+          "status": "unknown"
+        },
+        {
+          "permission": "calendars",
+          "status": "unknown"
+        }
+      ],
+      "sandbox": {
+        "detail": null,
+        "status": "ok"
+      },
+      "vault_key": {
+        "reason": "this Mac has no vault",
+        "status": "absent"
+      }
+    }
+  },
+  "isError": {
+    "plow_run_command": false,
+    "plow_get_output": false,
+    "plow_get_result": false,
+    "plow_device_status": false
+  },
+  "expect": {
+    "calls": {
+      "min": 1,
+      "max": 4
+    },
+    "names": [
+      "dialog"
+    ],
+    "includes": [
+      "A macOS permission dialog is open on the Mac's screen and only the owner, at the Mac, can answer it. Until they click Allow this stays blocked; if they click Don't Allow it will fail the same way next time until they change it in System Settings > Privacy & Security."
+    ]
+  }
+}

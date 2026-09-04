@@ -1,0 +1,137 @@
+{
+  "name": "blocked-tcc-run",
+  "note": "A run refused by macOS (Full Disk Access, confirmed). One call, the owner sentence verbatim, no retry with another command.",
+  "prompt": "Look in the Messages database on my Mac and tell me whether Sam replied about Saturday.",
+  "answers": {
+    "plow_run_command": {
+      "diagnosis": {
+        "cause": "macos_permission",
+        "confidence": "confirmed",
+        "evidence": [
+          "the kernel answered EPERM for ~/Library/Messages/chat.db",
+          "Plow Latch itself is refused ~/Library/Messages/chat.db (EPERM) outside any sandbox",
+          "~/Library/Messages/chat.db is under a location macOS guards (Full Disk Access)",
+          "Full Disk Access is not granted"
+        ],
+        "owner_action": "In System Settings > Privacy & Security > Full Disk Access, turn on Plow Latch, then quit and reopen it.",
+        "permission": "full_disk_access",
+        "requires_relaunch": true,
+        "retry": "after_owner_grants",
+        "ruled_out": [
+          "file missing",
+          "locked file",
+          "System Integrity Protection",
+          "sandbox bound"
+        ]
+      },
+      "exit_code": 1,
+      "handle": "EVAL-HANDLE",
+      "output": "/bin/sh: ~/Library/Messages/chat.db: Operation not permitted\n",
+      "output_length": 133,
+      "probes": {
+        "app_process_open": "EPERM",
+        "automation_status": null,
+        "automation_target": null,
+        "errno": "EPERM",
+        "full_disk_access_granted": false,
+        "hung": false,
+        "immutable_flag": false,
+        "is_directory": false,
+        "op": "exec",
+        "path": "~/Library/Messages/chat.db",
+        "path_exists": true,
+        "paths_examined": [
+          "~/Library/Messages/chat.db",
+          "/bin/sh",
+          "~"
+        ],
+        "posix_readable": true,
+        "posix_writable": true,
+        "ran_sandboxed": true,
+        "sandbox_allows_read": true,
+        "sandbox_allows_write": true,
+        "sip_protected": false,
+        "stderr_hint": "operation_not_permitted",
+        "syscall": null,
+        "tcc_guarded_prefix": "full_disk_access"
+      },
+      "status": "blocked"
+    },
+    "plow_device_status": {
+      "automation": [
+        {
+          "status": "unknown",
+          "target": "Messages"
+        },
+        {
+          "status": "unknown",
+          "target": "Contacts"
+        }
+      ],
+      "automation_queryable": false,
+      "checked_at": "2026-09-04T23:17:00Z",
+      "child_attribution": {
+        "detail": null,
+        "status": "not_applicable"
+      },
+      "full_disk_access": {
+        "granted": false,
+        "probes": [
+          {
+            "outcome": "ENOENT",
+            "path": "~/Library/Application Support/com.apple.TCC/TCC.db"
+          },
+          {
+            "outcome": "EACCES",
+            "path": "~/Library/Messages/chat.db"
+          },
+          {
+            "outcome": "ENOENT",
+            "path": "~/Library/Safari/Bookmarks.plist"
+          }
+        ]
+      },
+      "permissions": [
+        {
+          "permission": "accessibility",
+          "status": "unknown"
+        },
+        {
+          "permission": "contacts",
+          "status": "unknown"
+        },
+        {
+          "permission": "calendars",
+          "status": "unknown"
+        }
+      ],
+      "sandbox": {
+        "detail": null,
+        "status": "ok"
+      },
+      "vault_key": {
+        "reason": "this Mac has no vault",
+        "status": "absent"
+      }
+    }
+  },
+  "isError": {
+    "plow_run_command": true,
+    "plow_device_status": false
+  },
+  "expect": {
+    "calls": {
+      "min": 1,
+      "max": 2
+    },
+    "names": [
+      "System Settings > Privacy & Security > Full Disk Access"
+    ],
+    "includes": [
+      "In System Settings > Privacy & Security > Full Disk Access, turn on Plow Latch, then quit and reopen it."
+    ],
+    "excludes": [
+      "declined"
+    ]
+  }
+}

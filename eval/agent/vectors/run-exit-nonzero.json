@@ -1,0 +1,105 @@
+{
+  "name": "run-exit-nonzero",
+  "note": "A non-zero exit is the command's own business: completed, with the exit code, no diagnosis. The reply reports no matches, not a permission problem or a broken connection.",
+  "prompt": "Run grep on my Mac to search ~/Plow for the word 'invoice' and tell me what it finds.",
+  "answers": {
+    "plow_run_command": {
+      "exit_code": 0,
+      "handle": "EVAL-HANDLE",
+      "output": "",
+      "output_length": 0,
+      "status": "completed"
+    },
+    "plow_device_status": {
+      "automation": [
+        {
+          "status": "unknown",
+          "target": "Messages"
+        },
+        {
+          "status": "unknown",
+          "target": "Contacts"
+        }
+      ],
+      "automation_queryable": false,
+      "checked_at": "2026-09-04T23:17:00Z",
+      "child_attribution": {
+        "detail": null,
+        "status": "not_applicable"
+      },
+      "full_disk_access": {
+        "granted": false,
+        "probes": [
+          {
+            "outcome": "ENOENT",
+            "path": "~/Library/Application Support/com.apple.TCC/TCC.db"
+          },
+          {
+            "outcome": "ENOENT",
+            "path": "~/Library/Messages/chat.db"
+          },
+          {
+            "outcome": "ENOENT",
+            "path": "~/Library/Safari/Bookmarks.plist"
+          }
+        ]
+      },
+      "permissions": [
+        {
+          "permission": "accessibility",
+          "status": "unknown"
+        },
+        {
+          "permission": "contacts",
+          "status": "unknown"
+        },
+        {
+          "permission": "calendars",
+          "status": "unknown"
+        }
+      ],
+      "sandbox": {
+        "detail": null,
+        "status": "ok"
+      },
+      "vault_key": {
+        "reason": "this Mac has no vault",
+        "status": "absent"
+      }
+    }
+  },
+  "isError": {
+    "plow_run_command": false,
+    "plow_device_status": false
+  },
+  "variants": {
+    "plow_run_command": [
+      {
+        "when": {
+          "argv_includes": "grep"
+        },
+        "answer": {
+          "exit_code": 1,
+          "handle": "EVAL-HANDLE",
+          "output": "",
+          "output_length": 0,
+          "status": "completed"
+        },
+        "isError": false
+      }
+    ]
+  },
+  "expect": {
+    "calls": {
+      "min": 1,
+      "max": 4
+    },
+    "excludes": [
+      "System Settings",
+      "Full Disk Access",
+      "Privacy & Security",
+      "permission dialog",
+      "connection"
+    ]
+  }
+}

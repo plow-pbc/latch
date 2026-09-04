@@ -30,3 +30,4 @@ Library/
 packages/native-keychain/build/
 packages/native-credential-import/build/
 packages/native-permissions/build/
+eval/agent/out/

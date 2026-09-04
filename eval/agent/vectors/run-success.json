@@ -1,0 +1,90 @@
+{
+  "name": "run-success",
+  "note": "A command that ran and exited 0.",
+  "prompt": "Run a shell command on my Mac to print its hardware model name, and tell me what it is.",
+  "answers": {
+    "plow_run_command": {
+      "exit_code": 0,
+      "handle": "EVAL-HANDLE",
+      "output": "MacBook Pro (14-inch, 2024)\n",
+      "output_length": 28,
+      "status": "completed"
+    },
+    "plow_device_status": {
+      "automation": [
+        {
+          "status": "unknown",
+          "target": "Messages"
+        },
+        {
+          "status": "unknown",
+          "target": "Contacts"
+        }
+      ],
+      "automation_queryable": false,
+      "checked_at": "2026-09-04T23:17:00Z",
+      "child_attribution": {
+        "detail": null,
+        "status": "not_applicable"
+      },
+      "full_disk_access": {
+        "granted": false,
+        "probes": [
+          {
+            "outcome": "ENOENT",
+            "path": "~/Library/Application Support/com.apple.TCC/TCC.db"
+          },
+          {
+            "outcome": "ENOENT",
+            "path": "~/Library/Messages/chat.db"
+          },
+          {
+            "outcome": "ENOENT",
+            "path": "~/Library/Safari/Bookmarks.plist"
+          }
+        ]
+      },
+      "permissions": [
+        {
+          "permission": "accessibility",
+          "status": "unknown"
+        },
+        {
+          "permission": "contacts",
+          "status": "unknown"
+        },
+        {
+          "permission": "calendars",
+          "status": "unknown"
+        }
+      ],
+      "sandbox": {
+        "detail": null,
+        "status": "ok"
+      },
+      "vault_key": {
+        "reason": "this Mac has no vault",
+        "status": "absent"
+      }
+    }
+  },
+  "isError": {
+    "plow_run_command": false,
+    "plow_device_status": false
+  },
+  "expect": {
+    "calls": {
+      "min": 1,
+      "max": 3
+    },
+    "includes": [
+      "MacBook Pro"
+    ],
+    "excludes": [
+      "System Settings",
+      "Full Disk Access",
+      "Privacy & Security",
+      "blocked"
+    ]
+  }
+}

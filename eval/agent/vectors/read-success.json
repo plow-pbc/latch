@@ -1,0 +1,95 @@
+{
+  "name": "read-success",
+  "note": "A read that worked. The reply uses the content and says nothing about permissions.",
+  "prompt": "Read the file ~/notes.txt on my Mac and tell me what it says.",
+  "answers": {
+    "plow_read_file": {
+      "content": "Dentist Tuesday 3pm. Pick up the dry cleaning.\n",
+      "path": "~/notes.txt"
+    },
+    "plow_run_command": {
+      "exit_code": 0,
+      "handle": "EVAL-HANDLE",
+      "output": "Dentist Tuesday 3pm. Pick up the dry cleaning.\n",
+      "output_length": 47,
+      "status": "completed"
+    },
+    "plow_device_status": {
+      "automation": [
+        {
+          "status": "unknown",
+          "target": "Messages"
+        },
+        {
+          "status": "unknown",
+          "target": "Contacts"
+        }
+      ],
+      "automation_queryable": false,
+      "checked_at": "2026-09-04T23:17:00Z",
+      "child_attribution": {
+        "detail": null,
+        "status": "not_applicable"
+      },
+      "full_disk_access": {
+        "granted": false,
+        "probes": [
+          {
+            "outcome": "ENOENT",
+            "path": "~/Library/Application Support/com.apple.TCC/TCC.db"
+          },
+          {
+            "outcome": "ENOENT",
+            "path": "~/Library/Messages/chat.db"
+          },
+          {
+            "outcome": "ENOENT",
+            "path": "~/Library/Safari/Bookmarks.plist"
+          }
+        ]
+      },
+      "permissions": [
+        {
+          "permission": "accessibility",
+          "status": "unknown"
+        },
+        {
+          "permission": "contacts",
+          "status": "unknown"
+        },
+        {
+          "permission": "calendars",
+          "status": "unknown"
+        }
+      ],
+      "sandbox": {
+        "detail": null,
+        "status": "ok"
+      },
+      "vault_key": {
+        "reason": "this Mac has no vault",
+        "status": "absent"
+      }
+    }
+  },
+  "isError": {
+    "plow_read_file": false,
+    "plow_run_command": false,
+    "plow_device_status": false
+  },
+  "expect": {
+    "calls": {
+      "min": 1,
+      "max": 3
+    },
+    "includes": [
+      "Dentist"
+    ],
+    "excludes": [
+      "System Settings",
+      "Full Disk Access",
+      "Privacy & Security",
+      "blocked"
+    ]
+  }
+}

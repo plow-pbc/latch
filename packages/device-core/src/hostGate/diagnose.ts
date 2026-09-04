@@ -227,16 +227,26 @@ export async function collectFacts(
   );
 
   // The path of interest, by how much each fact says: one the app itself
-  // could not open; else, for a sandboxed run, one the profile would not have
-  // allowed — the failure's own path before the command line's, and never a
-  // merely declared one, since a read-only cwd is not what went wrong; else
-  // one the failure named; else one under a gate; else the first. A command
-  // that touched three paths and was refused on one is diagnosed on that one.
+  // could not open; else, on EPERM, one carrying the locked flag, which is
+  // exactly what that errno means for it; else, for a sandboxed run, one the
+  // profile would not have allowed — the failure's own path before the
+  // command line's, and never a merely declared one, since a read-only cwd
+  // is not what went wrong; else one the failure named; else one under a
+  // gate; else the first. A command that touched three paths and was refused
+  // on one is diagnosed on that one.
+  //
+  // The command line is consulted for a profile refusal only when the
+  // failure named no path of its own: `/bin/sh: ~/x: Operation not
+  // permitted` names ~/x, and the shell reporting it — read-only under any
+  // profile, and under a SIP root besides — is not what went wrong.
   const profileDenied = (e: Examined) => e.grants !== null && (!e.grants.write || !e.grants.read);
+  const locked = (e: Examined) => e.info?.flags.some((f) => f === "uchg" || f === "schg") === true;
+  const named = examined.some((e) => e.source === "error");
   const chosen =
     examined.find((e) => e.open !== "ok" && e.open !== "ENOENT") ??
+    (errno === "EPERM" ? examined.find(locked) : undefined) ??
     (ctx.ranSandboxed ? examined.find((e) => e.source === "error" && profileDenied(e)) : undefined) ??
-    (ctx.ranSandboxed ? examined.find((e) => e.source === "argv" && profileDenied(e)) : undefined) ??
+    (ctx.ranSandboxed && !named ? examined.find((e) => e.source === "argv" && profileDenied(e)) : undefined) ??
     examined.find((e) => e.source === "error") ??
     examined.find((e) => e.gate !== null) ??
     examined[0] ??
