@@ -222,7 +222,7 @@ export function onboardingFixtures(now) {
         "A restart won't take this Mac off the roster",
         "Keep this Mac awake while plugged in",
         "closing the lid still sleeps it",
-        "closing its window doesn't quit it",
+        "Once setup is done, Plow Latch lives in your menu bar and closing its window doesn't quit it",
         "Settings → Availability",
         "Back",
         "Continue",

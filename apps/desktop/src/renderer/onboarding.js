@@ -393,6 +393,24 @@ async function refreshAvailability() {
   else render();
 }
 
+/** One switch row: bold lead, plain detail, the switch on the right. */
+function toggleRow(box, strong, detail, extra = []) {
+  return el("div", { class: "toggle-row" }, [
+    el("span", { class: "toggle-copy" }, [
+      el("span", { class: "toggle-detail" }, [
+        el("strong", { text: strong }),
+        document.createTextNode(detail),
+      ]),
+      ...extra,
+    ]),
+    el("label", { class: "switch" }, [
+      box,
+      el("span", { class: "track", attrs: { "aria-hidden": "true" } }),
+      el("span", { class: "knob", attrs: { "aria-hidden": "true" } }),
+    ]),
+  ]);
+}
+
 function availabilityScreen() {
   const launchBox = el("input", {
     attrs: { id: "launch-toggle", type: "checkbox", "aria-label": "Open Plow Latch when you log in" },
@@ -424,22 +442,6 @@ function availabilityScreen() {
   syncAvailability = sync;
   sync();
 
-  const toggleRow = (box, strong, detail, extra = []) =>
-    el("div", { class: "toggle-row" }, [
-      el("span", { class: "toggle-copy" }, [
-        el("span", { class: "toggle-detail" }, [
-          el("strong", { text: strong }),
-          document.createTextNode(detail),
-        ]),
-        ...extra,
-      ]),
-      el("label", { class: "switch" }, [
-        box,
-        el("span", { class: "track", attrs: { "aria-hidden": "true" } }),
-        el("span", { class: "knob", attrs: { "aria-hidden": "true" } }),
-      ]),
-    ]);
-
   return el("div", { class: "data-screen availability-screen" }, [
     el("div", { class: "step-inner" }, [
       el("div", { class: "head-center" }, [
@@ -464,7 +466,7 @@ function availabilityScreen() {
       ]),
       el("p", {
         class: "subhead availability-note",
-        text: "Plow Latch lives in your menu bar, so closing its window doesn't quit it. Change either of these anytime in Settings → Availability.",
+        text: "Once setup is done, Plow Latch lives in your menu bar and closing its window doesn't quit it. Change either of these anytime in Settings → Availability.",
       }),
     ]),
   ]);
@@ -509,19 +511,11 @@ function dataScreen() {
       ]),
       el("div", { class: "data-consent" }, [
         el("div", { class: "section-heading", text: "Help make Plow better?" }),
-        el("div", { class: "toggle-row" }, [
-          el("span", { class: "toggle-copy" }, [
-            el("span", { class: "toggle-detail" }, [
-              el("strong", { text: "Share usage data so we can improve Plow. " }),
-              document.createTextNode("Never your messages or your data."),
-            ]),
-          ]),
-          el("label", { class: "switch" }, [
-            telemetry,
-            el("span", { class: "track", attrs: { "aria-hidden": "true" } }),
-            el("span", { class: "knob", attrs: { "aria-hidden": "true" } }),
-          ]),
-        ]),
+        toggleRow(
+          telemetry,
+          "Share usage data so we can improve Plow. ",
+          "Never your messages or your data.",
+        ),
       ]),
       el("div", { class: "data-divider" }),
       el("div", { class: "section-label permission-label", text: "Permissions" }),
