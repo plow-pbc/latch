@@ -30,6 +30,43 @@ touch — the bundle id, the update-feed prefix, the `@domo/*` package scope,
 > not reach is owned by [README-ts.md](README-ts.md#integration-coverage) §
 > Integration coverage; the rest of that leg is verified by hand.
 
+## Where changes go
+
+This repo is one of several that assemble a Plow agent. The map of which repo
+owns what is in
+[`plow-hermes-agent` README § The repos](https://github.com/plow-pbc/plow-hermes-agent#the-repos);
+read it before a change that touches a neighbour. The test is **who else would
+have to change if this fact changed** — if the answer is a sibling, the change
+belongs there; this repo only follows, by bumping its pin if it holds one.
+
+Not here:
+
+- **The relay** — `plow-pbc/plow`, `api/plow/relay/`. It authenticates the
+  calling agent and forwards MCP to this Mac. This repo owns the client that
+  dials it (`packages/relay-client`, `wire.ts`) and the server it forwards to,
+  not the relay.
+- **Prompt framing of these tools** — `plow-pbc/hermes-plow-chat`, the
+  `plow_chat` plugin: the section that tells a runtime dropping MCP
+  `instructions` what the Mac tools are for. `SERVER_INSTRUCTIONS` here stays
+  canonical; the plugin's section restates it for that one runtime, so a
+  change to the wording here is a change to keep in step there.
+- **Chat truth and the bounds on it** — `plow-pbc/plow`: the assistant name and
+  its length bound, the daily payment cap, the roster. This Mac renders and
+  edits them; plow stores and validates them.
+
+Examples:
+
+- Adherence — #301 changed the canonical `SERVER_INSTRUCTIONS` in
+  `packages/mcp-server/src/handler.ts` and re-guarded every compressed
+  restatement in `packages/mcp-server/test/toolCopy.test.ts`, so one asserter
+  owns the sentence and a test fails when a copy drifts:
+  https://github.com/plow-pbc/latch/pull/301
+- Drift — #300 correctly writes the assistant name to plow
+  (`PATCH /v1/api-keys/{id}/preferences`) and persists nothing Mac-side, but
+  restates plow's 200-character bound in `apps/desktop/src/plowApi.ts`; that
+  number is plow's, and this side should read it off the error:
+  https://github.com/plow-pbc/latch/pull/300
+
 ## Quickstart with `just`
 
 The `justfile` wraps every workflow behind named recipes. Run `just` with no
