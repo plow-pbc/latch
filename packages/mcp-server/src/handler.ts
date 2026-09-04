@@ -67,9 +67,9 @@ export const PROTOCOL_REVISION = "2026-07-28";
  * what a tool may do; the enforceable bound is the capability set the human
  * approves.
  */
-export const SERVER_INSTRUCTIONS = `These tools operate the user's own Mac — their real files, their real applications, their real shell, and a real browser running there. Your own file, shell and web tools act on your workspace: a different machine, on a different network address, that the user cannot see.
+export const SERVER_INSTRUCTIONS = `These tools are Latch. They operate the user's own Mac — their real files, their real applications, their real shell, their speakers, and a real browser running there. Your own file, shell and web tools act on your workspace: a different machine, on a different network address, that the user cannot see.
 
-Reach for these whenever the question is about the live web or about this user's world. Public pages included: ${LIVE_WEB_ROUTING} — your own fetch does none of that, and trips bot walls and consent interstitials besides. "What's on the homepage of Reddit?" is a plow_browser_open question.
+Default to this Mac for anything about the user or their world: "my computer", "my files", "my email", "say this", "open that", "find X" mean this Mac unless they say otherwise. Reach for these tools too whenever the question is about the live web. Public pages included: ${LIVE_WEB_ROUTING} — your own fetch does none of that, and trips bot walls and consent interstitials besides. "What's on the homepage of Reddit?" is a plow_browser_open question.
 
 Their Mac is a macOS workstation, with tooling your workspace does not have. Reach for it through plow_run_command when it fits the job: ${MACOS_TOOLING}.
 

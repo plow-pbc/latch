@@ -123,6 +123,14 @@ describe("the server tells the agent what it is for", () => {
   it("the instructions route the agent to plow_list_skills", () => {
     expect(SERVER_INSTRUCTIONS).toMatch(/plow_list_skills/);
   });
+
+  // "Use Latch to …" is how owners phrase it; an agent that has never seen the
+  // word answers that nothing called Latch exists (observed 2026-09-03).
+  it("the instructions name Latch and state the owner-world default", () => {
+    expect(SERVER_INSTRUCTIONS).toMatch(/\bLatch\b/);
+    expect(SERVER_INSTRUCTIONS).toMatch(/my computer/i);
+    expect(SERVER_INSTRUCTIONS).toMatch(/default/i);
+  });
 });
 
 describe("the skill contribution footer", () => {
@@ -173,6 +181,12 @@ describe("every tool with a strong built-in alternative says whose Mac this is",
     // rather than promising it is the only one.
     expect(d.plow_browser_open).toMatch(/session id you get back says WHICH browser/i);
     expect(d.plow_browser_open).not.toMatch(/one session at a time/i);
+  });
+
+  it("plow_run_command names Latch and speech among the Mac's tooling", async () => {
+    const d = await descriptions(makeServer());
+    expect(d.plow_run_command).toMatch(/\bLatch\b/);
+    expect(d.plow_run_command).toMatch(/\bsay\b/);
   });
 });
 
