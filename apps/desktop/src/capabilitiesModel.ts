@@ -442,13 +442,19 @@ export function capabilitiesView(input: CapabilitiesInput): CapabilitiesView {
 function later(a: string | null, b: string | null): string | null {
   if (a === null) return b;
   if (b === null) return a;
-  return a > b ? a : b;
+  return Date.parse(a) > Date.parse(b) ? a : b;
 }
 
-/** A group's blocks newer than a dismissal, or null when none are. Counts,
- *  agents and "last" follow the surviving requests. */
+/**
+ * A group's blocks newer than a dismissal, or null when none are. Counts,
+ * agents and "last" follow the surviving requests. Compared as instants:
+ * the audit log writes whole seconds and a dismissal keeps its
+ * milliseconds, and as strings "…:00Z" sorts after "…:00.800Z", which let a
+ * block from the same second outlive the click that dismissed it.
+ */
 function sinceSeen(g: BlockedGroup, seenAt: string | null): BlockedGroup | null {
-  const requests = seenAt === null ? g.requests : g.requests.filter((r) => r.at > seenAt);
+  const cutoff = seenAt === null ? null : Date.parse(seenAt);
+  const requests = cutoff === null ? g.requests : g.requests.filter((r) => Date.parse(r.at) > cutoff);
   if (requests.length === 0) return null;
   const agents: string[] = [];
   for (const r of requests) if (r.agent !== null && !agents.includes(r.agent)) agents.push(r.agent);

@@ -209,6 +209,40 @@ describe("a file operation this Mac refused", () => {
     expect(lastBlocked(d).get("cause").str).toBe("prompt_waiting");
   });
 
+  it.skipIf(!ON_MAC)("a write that lands after the owner answers the dialog is audited, late", async () => {
+    // The write really parks (a FIFO with no reader, under a guarded
+    // folder); the call is answered blocked. Then the "owner clicks Allow":
+    // a reader opens the FIFO, the parked write completes — and the log
+    // says so, because a file changed by nothing is the one thing an audit
+    // must never show.
+    const home = tempDir();
+    const downloads = path.join(home, "Downloads");
+    fs.mkdirSync(downloads);
+    const fifo = path.join(downloads, "parked.pipe");
+    execFileSync("/usr/bin/mkfifo", [fifo]);
+    const d = device(home, scriptedProbes({ openAsApp: { [fifo]: "hung" } }));
+    d.fileOpHangMs = 200;
+    const response = jv(
+      await d.handleIntent(
+        intentFor(d, "write", [{ kind: "fs.write", paths: [fifo] }]),
+        { content_base64: Buffer.from("late").toString("base64") },
+      ),
+    );
+    expect(response.get("status").str).toBe("blocked");
+    expect(events(d)).not.toContain("file_write");
+    // The owner answers: the reader drains the pipe and the write lands.
+    const drained = new Promise<string>((resolve) => {
+      fs.readFile(fifo, "utf8", (_, data) => resolve(data ?? ""));
+    });
+    expect(await drained).toBe("late");
+    const deadline = Date.now() + 2_000;
+    while (!events(d).includes("file_write") && Date.now() < deadline) await new Promise((r) => setTimeout(r, 20));
+    const late = jv([...d.audit.entries()].reverse().find((e) => jv(e as JSONValue).get("event").str === "file_write") ?? null);
+    expect(late.get("late").bool).toBe(true);
+    expect(late.get("bytes").int).toBe(4);
+    expect(late.get("path").str).toBe(fifo);
+  });
+
   it("an unguarded path is never raced against the hang window", async () => {
     const home = tempDir();
     const d = device(home);
@@ -251,7 +285,7 @@ describe.skipIf(!ON_MAC)("a command this Mac refused", () => {
     expect(events(d)).toEqual(["intent_received", "intent_decision", "exec_start", "exec_end", "host_permission_blocked"]);
     expect(lastBlocked(d).get("handle").str).toBe(response.get("handle").str);
     // The same story from a later poll.
-    const polled = jv(d.getOutput(response.get("handle").str!));
+    const polled = jv(await d.getOutput(response.get("handle").str!));
     expect(polled.get("status").str).toBe("blocked");
     expect(polled.get("diagnosis").get("cause").str).toBe("macos_permission");
   });
@@ -372,10 +406,10 @@ describe.skipIf(!ON_MAC)("a command this Mac refused", () => {
 
     // The reaper kills it; the poll then carries the killed verdict.
     const deadline = Date.now() + 5_000;
-    let polled = jv(d.getOutput(handle));
+    let polled = jv(await d.getOutput(handle));
     while (polled.get("status").str === "running" && Date.now() < deadline) {
       await new Promise((r) => setTimeout(r, 50));
-      polled = jv(d.getOutput(handle));
+      polled = jv(await d.getOutput(handle));
     }
     expect(polled.get("status").str).toBe("blocked");
     expect(polled.get("error").str).toMatch(/killed by this Mac/);
@@ -384,6 +418,75 @@ describe.skipIf(!ON_MAC)("a command this Mac refused", () => {
     // One story in the log, not two: the run was blocked once.
     expect(events(d).filter((e) => e === "host_permission_blocked")).toHaveLength(1);
     expect(events(d)).toContain("exec_end");
+  });
+
+  it.skipIf(!ON_MAC)("a parked run the owner lets through is completed, not blocked", async () => {
+    // The verdict while parked was provisional. The owner clicks Allow (a
+    // writer opens the FIFO), cat exits 0, and the poll must say so: a
+    // finished command wearing "blocked" would send the owner to a switch
+    // they just flipped.
+    const home = tempDir();
+    const downloads = path.join(home, "Downloads");
+    fs.mkdirSync(downloads);
+    const fifo = path.join(downloads, "blocked.pipe");
+    execFileSync("/usr/bin/mkfifo", [fifo]);
+    const d = device(home, scriptedProbes({ openAsApp: { [fifo]: "hung" } }));
+    const response = jv(
+      await d.handleIntent(
+        intentFor(d, "run", [{ kind: "process.exec", argv: ["/bin/cat", fifo], cwd: home }]),
+        { wait_ms: 50 },
+      ),
+    );
+    expect(response.get("status").str).toBe("running");
+    expect(response.get("diagnosis").get("cause").str).toBe("prompt_waiting");
+    const handle = response.get("handle").str!;
+    // The owner answers.
+    const fd = fs.openSync(fifo, "w");
+    fs.writeSync(fd, "through\n");
+    fs.closeSync(fd);
+    const deadline = Date.now() + 5_000;
+    let polled = jv(await d.getOutput(handle));
+    while (polled.get("status").str === "running" && Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 50));
+      polled = jv(await d.getOutput(handle));
+    }
+    expect(polled.get("status").str).toBe("completed");
+    expect(polled.get("exit_code").int).toBe(0);
+    expect(polled.get("output").str).toBe("through\n");
+    expect(polled.get("diagnosis").isNull).toBe(true);
+    // The block stays in the log — it happened — beside the clean exit.
+    expect(events(d).filter((e) => e === "host_permission_blocked")).toHaveLength(1);
+    expect(events(d)).toContain("exec_end");
+  });
+
+  it("a poll that lands between the exit and its diagnosis waits for the verdict", async () => {
+    // The exit-time diagnosis is asynchronous. A poll answered in the gap
+    // would read "completed, exit 1" with no diagnosis, and an agent takes
+    // that as the whole story. The probes here are slow on purpose, so the
+    // gap is wide enough to land in.
+    const home = tempDir();
+    const target = path.join(home, "Library", "Messages", "chat.db");
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.writeFileSync(target, "x");
+    const inner = scriptedProbes({ openAsApp: { [target]: "EPERM" }, fullDiskAccess: false });
+    const slow: HostProbes = {
+      ...inner,
+      openAsApp: async (p) => { await new Promise((r) => setTimeout(r, 300)); return inner.openAsApp(p); },
+    };
+    const d = device(home, slow);
+    const response = jv(
+      await d.handleIntent(
+        intentFor(d, "run", [{ kind: "process.exec", argv: ["/bin/sh", "-c", `sleep 0.2; echo "sh: ${target}: Operation not permitted" >&2; exit 1`], cwd: home }]),
+        { wait_ms: 50 },
+      ),
+    );
+    expect(response.get("status").str).toBe("running");
+    const handle = response.get("handle").str!;
+    // Wait for the exit itself, then poll at once — inside the diagnosis.
+    await new Promise((r) => setTimeout(r, 400));
+    const polled = jv(await d.getOutput(handle));
+    expect(polled.get("status").str).toBe("blocked");
+    expect(polled.get("diagnosis").get("cause").str).toBe("macos_permission");
   });
 
   it("a silent run that is simply running is left alone", async () => {
@@ -399,6 +502,6 @@ describe.skipIf(!ON_MAC)("a command this Mac refused", () => {
     expect(response.get("status").str).toBe("running");
     expect(response.get("diagnosis").isNull).toBe(true);
     await new Promise((r) => setTimeout(r, 500));
-    expect(jv(d.getOutput(response.get("handle").str!)).get("status").str).toBe("completed");
+    expect(jv(await d.getOutput(response.get("handle").str!)).get("status").str).toBe("completed");
   });
 });
