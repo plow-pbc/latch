@@ -127,6 +127,7 @@ user nothing, but it is **not `[blocking]`** and is never traded against UX.
 | Ask for an integration test that would need a server stood up. Mocking here is function- and fixture-level only. | A capability, rule key or sandbox profile that goal text can influence. |
 | Add a defensive branch for a state the pinned dependency cannot produce (PR #103's partial-response record — deleted once the API was checked). | A change to canonical JSON, signing bytes, rule keys or SBPL that moves `fixtures/` bytes without declaring a protocol break. |
 | Clone a test to vary one input. Collapse into `it.each`; assert on `audit.ndjson` events rather than internal state. | A path shown to the human that was not canonicalized before it became a capability. |
+| — | Flag a change that a **sibling repo owns** per [`plow-hermes-agent` README § The repos](https://github.com/plow-pbc/plow-hermes-agent#the-repos): the relay itself — routing, agent authentication, the MCP endpoint — which is `plow-pbc/plow`'s (`api/plow/relay/`), not this repo's client for it; and the prompt framing that restates what these tools are for, which is the `plow_chat` plugin's (`plow-pbc/hermes-plow-chat`) — `SERVER_INSTRUCTIONS` here is the one asserter it cites. The test is who else would have to change if the fact changed. |
 
 **Update cadence:** edit this file when the operating point moves — the relay
 lands, real external users arrive, or an accepted deferral above is resolved.
