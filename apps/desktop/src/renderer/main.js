@@ -761,21 +761,17 @@ function syncStaticModal(s, redraw) {
     }
   }
   // The lines arrive with the cloud state, which can land after this modal is
-  // already up — so the options are refilled whenever the set of them changes,
-  // in place, keeping whatever was picked.
+  // already up — so the options are refilled on every refresh, in place,
+  // keeping whatever was picked.
   if (kind === "form") {
     staticModal.lineSelect.disabled = !!s.busy;
     const lines = s.cloudFreeLines ?? [];
-    const uids = lines.map((line) => line.uid).join(" ");
-    if (staticModal.lineUids !== uids) {
-      staticModal.lineUids = uids;
-      const picked = staticModal.lineSelect.value;
-      staticModal.lineSelect.replaceChildren(
-        el("option", { text: "No line — MCP access only", attrs: { value: "" } }),
-        ...lines.map((line) => el("option", { text: line.label, attrs: { value: line.uid } })),
-      );
-      staticModal.lineSelect.value = picked;
-    }
+    const picked = staticModal.lineSelect.value;
+    staticModal.lineSelect.replaceChildren(
+      el("option", { text: "No line — MCP access only", attrs: { value: "" } }),
+      ...lines.map((line) => el("option", { text: line.label, attrs: { value: line.uid } })),
+    );
+    staticModal.lineSelect.value = picked;
   }
   // In-place, every refresh: the field is never rebuilt, so nothing typed is
   // ever taken away by one.

@@ -365,7 +365,7 @@ async function setUp() {
   });
   ipcMain.handle("cloud:openMessages", async () => true);
   ipcMain.handle("connect:create", async (_e, name, lineUid) =>
-    connect.createCredential(name, lineUid ?? null));
+    connect.createCredential(name, lineUid));
   ipcMain.handle("connect:dismiss", async () => connect.dismissCredential());
   ipcMain.handle("roster:remove", async (_e, id) => {
     rosterFixture = {
