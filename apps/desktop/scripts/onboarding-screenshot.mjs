@@ -76,6 +76,18 @@ ipcMain.handle("onboarding:setTelemetry", async (_event, enabled) => {
   return current;
 });
 ipcMain.handle("onboarding:finish", async () => {});
+let currentLaunch = { supported: true, openAtLogin: true };
+let currentAwake = { enabled: true };
+ipcMain.handle("launch:get", async () => currentLaunch);
+ipcMain.handle("launch:set", async (_event, on) => {
+  if (currentLaunch.supported) currentLaunch = { ...currentLaunch, openAtLogin: on === true };
+  return currentLaunch;
+});
+ipcMain.handle("power:getKeepAwake", async () => currentAwake);
+ipcMain.handle("power:setKeepAwake", async (_event, on) => {
+  currentAwake = { enabled: on === true };
+  return currentAwake;
+});
 ipcMain.handle("connectors:refresh", async () => currentConnectors);
 ipcMain.handle("connectors:connect", async () => currentConnectors);
 ipcMain.handle("connectors:disconnect", async () => currentConnectors);
@@ -142,6 +154,8 @@ app.whenReady().then(async () => {
       currentFixture = fixture;
       current = fixture.state;
       currentFullDiskAccess = fixture.fullDiskAccess === true;
+      currentLaunch = fixture.launch ?? { supported: true, openAtLogin: true };
+      currentAwake = fixture.awake ?? { enabled: true };
       currentConnectors = fixture.connectors ?? {
         busy: false,
         message: "",

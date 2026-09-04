@@ -18,6 +18,12 @@ let state = null;
 let primaryAction = null;
 let expiryTimer = null;
 let fullDiskAccess = null;
+/** The Availability screen's two switches, read fresh from the OS/disk on
+ * entering the step and on window focus — never remembered across steps. */
+let availability = null;
+/** Set by availabilityScreen(); moves the live switches to `availability`
+ * without a re-render, so a click keeps its focus. */
+let syncAvailability = null;
 let fullDiskProbe = null;
 let fullDiskRequestBusy = false;
 let restoreTelemetryFocus = false;
@@ -54,7 +60,7 @@ const screen = el("section", { class: "wizard-screen", attrs: { "aria-live": "po
 const body = el("div", { class: "wizard-body" }, [screen]);
 const backButton = button("", "nav-back", () => update(() => window.domo.onboardingBack()));
 backButton.append(arrowIcon("back"), document.createTextNode("Back"));
-const dots = [0, 1, 2, 3].map(() => el("i", { class: "foot-dot" }));
+const dots = [0, 1, 2, 3, 4].map(() => el("i", { class: "foot-dot" }));
 const dotRow = el("span", { class: "foot-dots", attrs: { "aria-hidden": "true" } }, dots);
 const primaryLabel = el("span", { text: "Get started" });
 const primaryArrow = arrowIcon("next");
@@ -376,6 +382,94 @@ async function requestFullDiskAccess() {
   }
 }
 
+async function refreshAvailability() {
+  const [launch, awake] = await Promise.all([
+    window.domo.launchGet(),
+    window.domo.keepAwakeGet(),
+  ]);
+  availability = { launch, awake };
+  if (state?.step !== "availability") return;
+  if (syncAvailability) syncAvailability();
+  else render();
+}
+
+function availabilityScreen() {
+  const launchBox = el("input", {
+    attrs: { id: "launch-toggle", type: "checkbox", "aria-label": "Open Plow Latch when you log in" },
+  });
+  const awakeBox = el("input", {
+    attrs: { id: "awake-toggle", type: "checkbox", "aria-label": "Keep this Mac awake while plugged in" },
+  });
+  const launchNote = el("p", {
+    class: "toggle-note",
+    text: "Only the installed app can add itself as a login item, so this from-source run can't.",
+  });
+  const sync = () => {
+    const ready = availability !== null;
+    launchBox.disabled = !ready || !availability.launch.supported;
+    launchBox.checked = ready && availability.launch.openAtLogin;
+    launchNote.hidden = !ready || availability.launch.supported;
+    awakeBox.disabled = !ready;
+    awakeBox.checked = ready && availability.awake.enabled;
+  };
+  // The switch shows what the OS/disk then holds, not what was clicked.
+  launchBox.addEventListener("change", async () => {
+    availability = { ...availability, launch: await window.domo.launchSet(launchBox.checked) };
+    sync();
+  });
+  awakeBox.addEventListener("change", async () => {
+    availability = { ...availability, awake: await window.domo.keepAwakeSet(awakeBox.checked) };
+    sync();
+  });
+  syncAvailability = sync;
+  sync();
+
+  const toggleRow = (box, strong, detail, extra = []) =>
+    el("div", { class: "toggle-row" }, [
+      el("span", { class: "toggle-copy" }, [
+        el("span", { class: "toggle-detail" }, [
+          el("strong", { text: strong }),
+          document.createTextNode(detail),
+        ]),
+        ...extra,
+      ]),
+      el("label", { class: "switch" }, [
+        box,
+        el("span", { class: "track", attrs: { "aria-hidden": "true" } }),
+        el("span", { class: "knob", attrs: { "aria-hidden": "true" } }),
+      ]),
+    ]);
+
+  return el("div", { class: "data-screen availability-screen" }, [
+    el("div", { class: "step-inner" }, [
+      el("div", { class: "head-center" }, [
+        el("h1", { text: "Keep this Mac reachable" }),
+        el("p", {
+          class: "subhead",
+          text: "Your agents work through this Mac. When it's off, asleep, or Plow Latch isn't running, they can't reach your email, calendar, messages, or browser — they'll wait until it's back.",
+        }),
+      ]),
+      el("div", { class: "data-consent" }, [
+        toggleRow(
+          launchBox,
+          "Open Plow Latch when you log in. ",
+          "A restart won't take this Mac off the roster.",
+          [launchNote],
+        ),
+        toggleRow(
+          awakeBox,
+          "Keep this Mac awake while plugged in. ",
+          "Prevents idle and display sleep on power. On battery it sleeps normally, and closing the lid still sleeps it.",
+        ),
+      ]),
+      el("p", {
+        class: "subhead availability-note",
+        text: "Plow Latch lives in your menu bar, so closing its window doesn't quit it. Change either of these anytime in Settings → Availability.",
+      }),
+    ]),
+  ]);
+}
+
 function dataScreen() {
   const telemetry = el("input", {
     attrs: {
@@ -520,6 +614,7 @@ function screenForStep() {
     return verifyScreen();
   }
   if (state.step === "data") return dataScreen();
+  if (state.step === "availability") return availabilityScreen();
   if (state.step === "connect") return connectScreen();
   if (state.step === "done") return doneScreen();
   return el("p", { class: "state-note error", text: "This setup step is unavailable." });
@@ -559,10 +654,19 @@ function footerForStep() {
         : null,
     };
   }
-  if (step === "connect") {
+  if (step === "availability") {
     return {
       back: true,
       dot: 3,
+      label: "Continue",
+      arrow: true,
+      action: () => update(() => window.domo.onboardingAdvance()),
+    };
+  }
+  if (step === "connect") {
+    return {
+      back: true,
+      dot: 4,
       label: connectorState?.google.accounts.length > 0 ? "Done" : "Skip",
       arrow: false,
       disabled: connectorState === null,
@@ -609,6 +713,7 @@ function render() {
   clearInterval(expiryTimer);
   expiryTimer = null;
   if (state.step !== "data") restoreTelemetryFocus = false;
+  if (state.step !== "availability") syncAvailability = null;
 
   const continuingWelcome = state.step === "welcome" && screen.classList.contains("is-welcome");
   if (continuingWelcome) {
@@ -667,9 +772,13 @@ async function apply(next) {
   state = resolveOnboardingState(state, next);
   if (state?.step !== "done") doneAgent = null;
   if (state?.step !== "connect") connectorState = null;
+  if (state?.step !== "availability") availability = null;
   render();
   if (state?.step === "connect" && previousStep !== "connect") {
     applyConnectors(await window.domo.connectorsRefresh());
+  }
+  if (state?.step === "availability" && previousStep !== "availability") {
+    void refreshAvailability();
   }
   if (state?.step === "done" && previousStep !== "done") {
     const loaded = await loadDoneAgent(() => window.domo.cloudAgents());
@@ -700,6 +809,7 @@ window.addEventListener("unhandledrejection", (event) => {
 
 window.addEventListener("focus", () => {
   if (state?.step === "data") void refreshFullDiskAccess(true);
+  if (state?.step === "availability") void refreshAvailability();
   if (state?.step === "connect" && connectorState?.busy !== true) {
     void updateConnectors(() => window.domo.connectorsRefresh());
   }

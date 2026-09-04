@@ -13,4 +13,15 @@ describe("onboarding visual fixtures", () => {
     expect(verify.expect).not.toContainEqual(expect.stringContaining("That code still works"));
     expect(rearm.expect).toContainEqual(expect.stringContaining("That code still works"));
   });
+
+  it("shows the from-source login-item note only on the from-source availability capture", () => {
+    const note = "Only the installed app can add itself as a login item";
+    expect(fixture("availability").reject).toContainEqual(expect.stringContaining(note));
+    expect(fixture("availability-from-source").expect).toContainEqual(expect.stringContaining(note));
+    for (const name of ["availability", "availability-from-source"]) {
+      expect(fixture(name).expect).toContain("Keep this Mac reachable");
+      expect(fixture(name).expectDotCount).toBe(5);
+    }
+    expect(fixture("connect-empty").expectDotCount).toBe(5);
+  });
 });

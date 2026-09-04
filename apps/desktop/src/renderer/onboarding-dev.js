@@ -10,6 +10,8 @@ let initialGetDelayMs = Number(params.get("onboardingGetDelayMs")) || 0;
 let selected = fixturesByName.get(params.get("state")) ?? fixtures[0];
 let current = { ...selected.state };
 let fullDiskAccess = selected.fullDiskAccess === true;
+let launch = selected.launch ?? { supported: true, openAtLogin: true };
+let awake = selected.awake ?? { enabled: true };
 let connectors = structuredClone(selected.connectors ?? {
   busy: false,
   message: "",
@@ -50,6 +52,16 @@ window.domo = {
     fullDiskAccess = true;
   },
   onboardingFinish: currentState,
+  launchGet: async () => launch,
+  launchSet: async (on) => {
+    if (launch.supported) launch = { ...launch, openAtLogin: on === true };
+    return launch;
+  },
+  keepAwakeGet: async () => awake,
+  keepAwakeSet: async (on) => {
+    awake = { enabled: on === true };
+    return awake;
+  },
   connectorsRefresh: currentConnectors,
   connectorsConnect: currentConnectors,
   connectorsDisconnect: async (account) => {

@@ -771,6 +771,22 @@ body.on-welcome.welcome-full .wizard-footer .nav-next {
   font-weight: 500;
 }
 
+.toggle-note {
+  margin: 6px 0 0;
+  color: var(--muted-2);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+
+.availability-note {
+  margin-top: 22px;
+  text-align: center;
+}
+
+.toggle-row + .toggle-row {
+  margin-top: 14px;
+}
+
 .switch {
   position: relative;
   flex: none;
