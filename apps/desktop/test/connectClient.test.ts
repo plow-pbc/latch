@@ -30,7 +30,7 @@ const MCP_URL = "http://localhost:18804/v1/relay/devices/u_123/mcp";
 
 /** A stand-in Plow that records who asked for what. */
 class FakePlow {
-  minted: Array<{ token: string; name: string }> = [];
+  minted: Array<{ token: string; name: string; lineUid: string | null }> = [];
   /** Every credential handed back, in order. Distinct, like the real ones. */
   issued: string[] = [];
   fails: PlowApiError | null = null;
@@ -83,14 +83,14 @@ class FakePlow {
     this.open = null;
   }
 
-  async createAgent(token: string, name: string) {
+  async createAgent(token: string, name: string, lineUid: string | null = null) {
     if (this.gate) await this.gate;
     if (this.fails) throw this.fails;
     // Each mint is a distinct long-lived credential on the account, exactly as
     // the real endpoint is — so a test can see a second one that nobody asked
     // for rather than two copies of the same string.
     const issued = `${CLIENT_TOKEN}_${this.minted.length + 1}`;
-    this.minted.push({ token, name });
+    this.minted.push({ token, name, lineUid });
     this.issued.push(issued);
     return {
       id: 700 + this.minted.length,
@@ -197,7 +197,7 @@ describe("the static-credential fallback", () => {
     const state = await connect.createCredential("Claude Code");
 
     // The device credential mints agents; the login session is long gone.
-    expect(plow.minted).toEqual([{ token: DEVICE_TOKEN, name: "Claude Code" }]);
+    expect(plow.minted).toEqual([{ token: DEVICE_TOKEN, name: "Claude Code", lineUid: null }]);
     expect(state.credential?.name).toBe("Claude Code");
 
     const config = JSON.parse(state.credential!.config);
@@ -207,6 +207,12 @@ describe("the static-credential fallback", () => {
     // A URL ends up in shell history, logs and stored registrations.
     expect(config.mcpServers["plow-mbp"].url).not.toContain(CLIENT_TOKEN);
     expect(config.mcpServers["plow-mbp"].command).toBeUndefined();
+  });
+
+  it("hands the chosen line to the mint, so the credential is the assistant role", async () => {
+    signIn();
+    await build().createCredential("Life", "line-7");
+    expect(plow.minted[0]).toMatchObject({ name: "Life", lineUid: "line-7" });
   });
 
   it("shows it once — after 'I've saved it' the app cannot produce it again", async () => {

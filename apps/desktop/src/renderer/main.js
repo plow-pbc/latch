@@ -725,8 +725,9 @@ function syncStaticModal(s, redraw) {
       );
       done.focus();
     } else {
+      staticModal.lineSelect = el("select", { class: "text", attrs: { "aria-label": "Line" } });
       const create = async () => {
-        await window.domo.connectCreate(staticModal.nameInput.value);
+        await window.domo.connectCreate(staticModal.nameInput.value, staticModal.lineSelect.value || null);
         redraw();
       };
       staticModal.nameInput.addEventListener("keydown", (e) => {
@@ -748,11 +749,29 @@ function syncStaticModal(s, redraw) {
           text: "For a client that can't do OAuth. It is long-lived, shown once, and can be revoked from your Plow account.",
         }),
         el("div", { class: "field" }, [el("label", { text: "Name this connection" }), staticModal.nameInput]),
+        el("div", { class: "field" }, [el("label", { text: "Line" }), staticModal.lineSelect]),
+        el("p", {
+          class: "faint conn-note",
+          text: "Pick the line this agent answers on to give it its model and its Mac. Leave blank for a tool that only needs MCP.",
+        }),
         note,
         el("div", { class: "row conn-actions" }, [cancel, el("div", { class: "spacer" }), createBtn]),
       );
       staticModal.nameInput.focus();
     }
+  }
+  // The lines arrive with the cloud state, which can land after this modal is
+  // already up — so the options are refilled on every refresh, in place,
+  // keeping whatever was picked.
+  if (kind === "form") {
+    staticModal.lineSelect.disabled = !!s.busy;
+    const lines = s.cloudFreeLines ?? [];
+    const picked = staticModal.lineSelect.value;
+    staticModal.lineSelect.replaceChildren(
+      el("option", { text: "No line — MCP access only", attrs: { value: "" } }),
+      ...lines.map((line) => el("option", { text: line.label, attrs: { value: line.uid } })),
+    );
+    staticModal.lineSelect.value = picked;
   }
   // In-place, every refresh: the field is never rebuilt, so nothing typed is
   // ever taken away by one.

@@ -161,7 +161,8 @@ contextBridge.exposeInMainWorld("domo", {
   // whole state so the screen renders from one shape. The minted credential
   // lives in that state for exactly as long as it is on screen.
   connectGet: () => ipcRenderer.invoke("connect:get"),
-  connectCreate: (name: string) => ipcRenderer.invoke("connect:create", name),
+  connectCreate: (name: string, lineUid: string | null) =>
+    ipcRenderer.invoke("connect:create", name, lineUid),
   connectDismiss: () => ipcRenderer.invoke("connect:dismiss"),
   // Remove one roster row — a cloud agent, an MCP client or another session.
   // The renderer says WHICH row; main decides which call that row needs, because

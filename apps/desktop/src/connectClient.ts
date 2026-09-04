@@ -261,9 +261,10 @@ export class ConnectClient {
    * Mint a static credential for one client.
    *
    * Authorised with this Mac's stored credential — the login session itself,
-   * which may create agents.
+   * which may create agents. Naming a line is what makes the mint an assistant
+   * rather than an MCP-only client; no line is still the whole flow for one.
    */
-  async createCredential(name: string): Promise<ConnectClientState> {
+  async createCredential(name: string, lineUid: string | null = null): Promise<ConnectClientState> {
     // SINGLE-FLIGHT. Every mint is a long-lived credential on the account, and
     // the screen can only ever show one of them — so a second Enter before the
     // busy re-render lands would leave a credential live on the account that
@@ -285,7 +286,7 @@ export class ConnectClient {
     this.publish();
     const flight = (async () => {
       try {
-        const minted = await this.deps.api.createAgent(settings.relayCredential, trimmed);
+        const minted = await this.deps.api.createAgent(settings.relayCredential, trimmed, lineUid);
         // A sign-out while this was in the air: the credential belongs to an
         // account this Mac is no longer on, so revoke it rather than showing it
         // or leaving an unreachable credential behind.

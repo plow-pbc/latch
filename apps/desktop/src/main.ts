@@ -679,8 +679,8 @@ ipcMain.handle("cloud:refresh", async () => {
 ipcMain.handle("cloud:agents", async () => {
   return cloudAgentsIpcResult(cloudAgents);
 });
-ipcMain.handle("connect:create", async (_e, name: string) => {
-  await connectClient?.createCredential(name);
+ipcMain.handle("connect:create", async (_e, name: string, lineUid: string | null) => {
+  await connectClient?.createCredential(name, lineUid);
   // The credential it just minted is a roster row nobody has read yet.
   await connectClient?.refreshRoster();
   return agentsTabState();

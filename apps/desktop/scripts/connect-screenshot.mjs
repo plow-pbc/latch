@@ -364,7 +364,8 @@ async function setUp() {
     return state();
   });
   ipcMain.handle("cloud:openMessages", async () => true);
-  ipcMain.handle("connect:create", async (_e, name) => connect.createCredential(name));
+  ipcMain.handle("connect:create", async (_e, name, lineUid) =>
+    connect.createCredential(name, lineUid));
   ipcMain.handle("connect:dismiss", async () => connect.dismissCredential());
   ipcMain.handle("roster:remove", async (_e, id) => {
     rosterFixture = {
@@ -1184,7 +1185,15 @@ const SCREENS = [
       await waitFor(win, `document.querySelector(".connect-modal .connect")`, "the MCP setup modal");
       await clickText(win, "Can't use OAuth");
     },
-    expect: ["Static credential", "Name this connection", "Create Credential", "Cancel"],
+    expect: [
+      "Static credential",
+      "Name this connection",
+      // The picker is what makes a self-hosted agent's credential the assistant
+      // role rather than MCP-only, so the screen has to offer the choice.
+      "Pick the line this agent answers on",
+      "Create Credential",
+      "Cancel",
+    ],
   },
   {
     name: "static-shown",
