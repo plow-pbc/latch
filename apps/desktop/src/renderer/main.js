@@ -1289,7 +1289,8 @@ function syncCloudModal(state, redraw) {
     return;
   }
   const { panel } = cloudModal;
-  const name = agent.name || "Cloud agent";
+  const credentialRow = (state.roster?.cloud ?? []).find((row) => row.agentId === agent.agentId);
+  const name = rosterName(credentialRow, agent.name || "Cloud agent");
 
   const showDetail = () => {
     cloudModal.confirmingDelete = false;
@@ -1522,20 +1523,69 @@ function openRosterConfirm(row, trigger, redraw) {
   });
 }
 
-function rosterActions(
-  row,
-  section,
-  redraw,
-) {
+function openRosterRename(row, trigger, redraw) {
+  const current = rosterName(row, "");
+  const input = el("input", {
+    class: "text",
+    attrs: { placeholder: "Name", maxlength: "200", "aria-label": "New name" },
+  });
+  input.value = current;
+  const cancel = el("button", { class: "btn", text: "Cancel" });
+  const save = el("button", { class: "btn primary", text: "Save" });
+  const note = el("p", { class: "faint modal-note", text: "" });
+  let shell = null;
+  const dismiss = () => closeRosterConfirm(shell);
+  const submit = async () => {
+    const name = input.value.trim();
+    if (!name) {
+      note.textContent = "A name is required.";
+      input.focus();
+      return;
+    }
+    cancel.disabled = true;
+    save.disabled = true;
+    input.disabled = true;
+    note.textContent = "Saving…";
+    try {
+      await window.domo.rosterRename(row.id, name);
+    } finally {
+      dismiss();
+      await redraw();
+    }
+  };
+  cancel.addEventListener("click", dismiss);
+  save.addEventListener("click", submit);
+  input.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter") return;
+    event.preventDefault();
+    void submit();
+  });
+  shell = openModal(trigger, {
+    className: "roster-confirm",
+    focus: input,
+    onDismiss: dismiss,
+    children: [
+      el("div", { class: "group-title", text: `Rename ${current || "this session"}` }),
+      input,
+      note,
+      el("div", { class: "row conn-actions" }, [cancel, el("div", { class: "spacer" }), save]),
+    ],
+  });
+  input.select();
+}
+
+function rosterActions(row, section, redraw) {
   const name = rosterName(row, section === "mcp" ? "Unnamed MCP client" : "Unnamed session");
-  const actions = [];
   const more = el("button", {
     class: "btn more",
     text: "⋯",
     attrs: { "aria-label": `More actions for ${name}` },
   });
-  const action = el("button", { text: "Revoke" });
-  const menu = el("div", { class: "more-menu", attrs: { role: "menu" } }, [action]);
+  const rename = el("button", { text: "Rename" });
+  // A cloud agent is deleted from its detail panel, where the VM teardown is
+  // explained; its row menu renames and nothing else.
+  const revoke = section === "cloud" ? null : el("button", { class: "danger", text: "Revoke" });
+  const menu = el("div", { class: "more-menu", attrs: { role: "menu" } }, [rename, revoke]);
   menu.hidden = true;
   more.addEventListener("click", (event) => {
     event.stopPropagation();
@@ -1544,12 +1594,15 @@ function rosterActions(
     }
     menu.hidden = !menu.hidden;
   });
-  action.addEventListener("click", () => {
+  rename.addEventListener("click", () => {
+    menu.hidden = true;
+    openRosterRename(row, more, redraw);
+  });
+  revoke?.addEventListener("click", () => {
     menu.hidden = true;
     openRosterConfirm(row, more, redraw);
   });
-  actions.push(more, menu);
-  return el("div", { class: "entity-actions" }, actions);
+  return [more, menu];
 }
 
 function cloudContext(agent, state) {
@@ -1616,10 +1669,11 @@ function cloudEntityRow(row, agent, state, redraw) {
     await window.domo.cloudRetryFailed(agent.agentId);
     await redraw();
   });
+  const actions = [message, retry, ...(row ? rosterActions(row, "cloud", redraw) : [])].filter(Boolean);
   return el("div", { class: "entity-row cloud-agent-row", attrs: { "data-cloud-agent-id": agent?.agentId ?? row?.agentId ?? "" } }, [
     entityMark(name),
     main,
-    message || retry ? el("div", { class: "entity-actions" }, [message, retry]) : null,
+    actions.length ? el("div", { class: "entity-actions" }, actions) : null,
   ]);
 }
 
@@ -1649,7 +1703,7 @@ function sessionEntityRow(row, section, redraw) {
         }),
       )),
     ]),
-    rosterActions(row, section, redraw),
+    el("div", { class: "entity-actions" }, rosterActions(row, section, redraw)),
   ]);
 }
 
