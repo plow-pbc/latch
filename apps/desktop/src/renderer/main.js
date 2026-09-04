@@ -58,7 +58,9 @@ function dateCutoff(now = Date.now()) {
 function sinceLabel(iso) {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "Since…";
-  return `Since ${d.toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}`;
+  // To the second, like the Time column: the cutoff is exact and the rows
+  // either side of it are often seconds apart.
+  return `Since ${d.toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", second: "2-digit" })}`;
 }
 // The mounted Settings pane, while that tab is up. Holds a `refresh` that
 // updates the display nodes in place, so a relay reconnect cannot reset the
