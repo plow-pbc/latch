@@ -163,7 +163,9 @@ describe("capabilitiesView", () => {
     expect(dismissed.sections[0]!.rows[0]).toMatchObject({ key: "full_disk_access", count: 0, needsAttention: false });
     // The other switch's request is untouched, so the badge and banner keep it.
     expect(dismissed.badge).toBe(1);
-    expect(dismissed.banner).toEqual({ count: 1, summary: [{ title: "Contacts", count: 1 }], last: "2026-09-02T06:20:00Z" });
+    expect(dismissed.banner).toEqual({ count: 1, summary: [{ title: "Contacts", count: 1 }], last: "2026-09-02T06:20:00Z", since: null });
+    // The row's own cutoff, for its "Show in Audit": the row's dismissal.
+    expect(dismissed.sections[0]!.rows[0]!.since).toBe("2026-09-02T07:00:00Z");
     const newer = capabilitiesView(
       input({
         events: [...events, ...block("i3", "2026-09-02T08:00:00Z", "full_disk_access")],
@@ -185,9 +187,13 @@ describe("capabilitiesView", () => {
       count: 3,
       summary: [{ title: "Full Disk Access", count: 2 }, { title: "Messages", count: 1 }],
       last: "2026-09-02T06:12:00Z",
+      since: null,
     });
     const seen = capabilitiesView(input({ events, bannerSeenAt: "2026-09-02T05:00:00Z" }));
-    expect(seen.banner).toEqual({ count: 1, summary: [{ title: "Full Disk Access", count: 1 }], last: "2026-09-02T06:12:00Z" });
+    // `since` is the dismissal the count starts from, so "Show in Audit"
+    // can show exactly the requests the banner counted.
+    expect(seen.banner).toEqual({ count: 1, summary: [{ title: "Full Disk Access", count: 1 }], last: "2026-09-02T06:12:00Z", since: "2026-09-02T05:00:00Z" });
+    expect(seen.sections[0]!.rows[0]!.since).toBe("2026-09-02T05:00:00Z");
     expect(capabilitiesView(input({ events, bannerSeenAt: "2026-09-02T07:00:00Z" })).banner).toBeNull();
   });
 
@@ -363,7 +369,7 @@ describe("dismissing the banner", () => {
     const again = capabilitiesView(
       input({ events: [...events, ...block("i4", "2026-09-02T06:00:00Z", "full_disk_access")], bannerSeenAt: "2026-09-02T05:00:00Z" }),
     );
-    expect(again.banner).toEqual({ count: 1, summary: [{ title: "Full Disk Access", count: 1 }], last: "2026-09-02T06:00:00Z" });
+    expect(again.banner).toEqual({ count: 1, summary: [{ title: "Full Disk Access", count: 1 }], last: "2026-09-02T06:00:00Z", since: "2026-09-02T05:00:00Z" });
     expect(again.badge).toBe(1);
     expect(again.sections[0]!.rows.find((r) => r.key === "full_disk_access")).toMatchObject({ count: 1, needsAttention: true });
   });

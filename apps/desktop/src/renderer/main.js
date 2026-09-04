@@ -26,7 +26,40 @@ const NEW_LINE_VALUE = "__new_line__";
 // but boot must still RENDER that pane, and "already on this tab" now returns
 // early — so the starting value cannot be a tab boot might legitimately select.
 let currentTab = null;
-let filter = "all";
+// The Audit tab's two filters, one per column (viewModel.ts DecisionKind /
+// StatusKind). "any" is no filter.
+let decisionFilter = "any";
+let statusFilter = "any";
+const DECISION_FILTERS = [
+  ["any", "Any"], ["allowed", "Allowed"], ["denied", "Denied"], ["unanswered", "Unanswered"],
+];
+const STATUS_FILTERS = [
+  ["any", "Any"], ["completed", "Completed"], ["running", "Running"], ["blocked", "Blocked"], ["failed", "Failed"],
+];
+// The Date filter: rows at or after a cutoff. The presets are relative to
+// now; "since" is a fixed moment set by the Capabilities tab's "Show in
+// Audit" (the dismissal its count starts from) and listed in the menu only
+// while it is set.
+let dateFilter = "any";
+let dateSince = null;
+const DATE_FILTERS = [
+  ["any", "Any time"], ["today", "Today"], ["24h", "Last 24 hours"], ["7d", "Last 7 days"], ["30d", "Last 30 days"],
+];
+function dateCutoff(now = Date.now()) {
+  switch (dateFilter) {
+    case "today": { const d = new Date(now); d.setHours(0, 0, 0, 0); return d.getTime(); }
+    case "24h": return now - 24 * 3_600_000;
+    case "7d": return now - 7 * 86_400_000;
+    case "30d": return now - 30 * 86_400_000;
+    case "since": return dateSince ? new Date(dateSince).getTime() : null;
+    default: return null;
+  }
+}
+function sinceLabel(iso) {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "Since…";
+  return `Since ${d.toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}`;
+}
 // The mounted Settings pane, while that tab is up. Holds a `refresh` that
 // updates the display nodes in place, so a relay reconnect cannot reset the
 // pane under someone reading it.
@@ -83,6 +116,8 @@ async function renderAudit() {
   searchInput.value = auditSearch;
   searchInput.addEventListener("input", () => { auditSearch = searchInput.value; refreshAudit(); });
 
+  // Two popup buttons, one per column; each reads "Decision" until a value
+  // is picked, then "Decision: Allowed". Rebuilt on every refresh.
   const chipsBox = el("div", { class: "chips" });
   const count = el("span", { class: "count" });
   const clearBtn = el("button", { class: "btn small", text: "Clear Log" });
@@ -126,7 +161,7 @@ async function renderAudit() {
   ]);
 
   auditMounted = {
-    listBox, detailScroll, count, chipsBox, clearBtn, table, tbody, rows: new Map(),
+    listBox, detailScroll, count, chipsBox, clearBtn, searchInput, table, tbody, rows: new Map(),
     liveBox, liveImg, liveDot, liveCapText, liveHasFrame: false,
   };
   await refreshAudit();
@@ -163,12 +198,16 @@ function wireSplitter(splitter, detailBox) {
 // newest row when it was pinned to the top, so streaming activity stays in view.
 async function refreshAudit(opts = {}) {
   if (!auditMounted) return;
-  const { listBox, detailScroll, count, chipsBox, clearBtn, table, tbody, rows } = auditMounted;
+  const { listBox, detailScroll, count, chipsBox, clearBtn, searchInput, table, tbody, rows } = auditMounted;
   const activities = await window.domo.auditActivities();
   clearBtn.disabled = activities.length === 0;
   const q = auditSearch.trim().toLowerCase();
+  const cutoff = dateCutoff();
   const shown = activities.filter((a) => {
-    const inCat = filter === "all" || a.category === filter;
+    const inCat =
+      (decisionFilter === "any" || a.decisionKind === decisionFilter) &&
+      (statusFilter === "any" || a.statusKind === statusFilter) &&
+      (cutoff === null || new Date(a.ts).getTime() >= cutoff);
     // The same match viewModel.activityMatches makes: title, command, agent,
     // goal, the permission a block named, and the timeline lines.
     const inSearch =
@@ -192,18 +231,52 @@ async function refreshAudit(opts = {}) {
   auditTopId = newTopId;
   const selected = shown.find((a) => a.id === selectedId) || null;
 
-  chipsBox.replaceChildren(...["all", "approved", "denied", "blocked", "failed", "other"].map((f) => {
-    const chip = el("span", { class: "chip" + (filter === f ? " active" : ""), text: f[0].toUpperCase() + f.slice(1) });
-    chip.addEventListener("click", () => { filter = f; refreshAudit(); });
-    return chip;
-  }));
+  const filterButton = (name, options, current, set) => {
+    const label = options.find(([key]) => key === current)?.[1] ?? "Any";
+    const active = current !== "any";
+    const btn = el("button", {
+      class: "chip filter-btn" + (active ? " active" : ""),
+      attrs: { type: "button", "aria-haspopup": "menu" },
+    }, [
+      el("span", { text: active ? `${name}: ${label}` : name }),
+      el("span", { class: "filter-caret", text: "▾" }),
+    ]);
+    btn.addEventListener("click", () => {
+      openMenu(btn, options.map(([key, text]) => ({
+        label: text,
+        checked: key === current,
+        run: () => { set(key); refreshAudit(); },
+      })), { align: "left" });
+    });
+    return btn;
+  };
+  // "Clear" shows only while something narrows the list, and resets all of
+  // it: both filters and the search box.
+  const filtering = !!q || decisionFilter !== "any" || statusFilter !== "any" || dateFilter !== "any";
+  const clearFilters = el("button", { class: "cap-more filter-clear", text: "Clear", attrs: { type: "button" } });
+  clearFilters.addEventListener("click", () => {
+    decisionFilter = "any";
+    statusFilter = "any";
+    dateFilter = "any";
+    dateSince = null;
+    auditSearch = "";
+    searchInput.value = "";
+    refreshAudit();
+  });
+  const dateOptions = dateSince ? [...DATE_FILTERS, ["since", sinceLabel(dateSince)]] : DATE_FILTERS;
+  chipsBox.replaceChildren(
+    filterButton("Decision", DECISION_FILTERS, decisionFilter, (k) => { decisionFilter = k; }),
+    filterButton("Status", STATUS_FILTERS, statusFilter, (k) => { statusFilter = k; }),
+    filterButton("Date", dateOptions, dateFilter, (k) => { dateFilter = k; }),
+    ...(filtering ? [clearFilters] : []),
+  );
   count.textContent = `${shown.length} ${shown.length === 1 ? "activity" : "activities"}`;
 
   // Empty state — no rows to reconcile; drop any cached row nodes.
   if (!shown.length) {
     rows.clear();
     tbody.replaceChildren();
-    listBox.replaceChildren(el("div", { class: "empty", text: q || filter !== "all" ? "No matching activity." : "No activity yet." }));
+    listBox.replaceChildren(el("div", { class: "empty", text: filtering ? "No matching activity." : "No activity yet." }));
     detailScroll.replaceChildren(detailFor(selected));
     return;
   }
@@ -625,21 +698,31 @@ function closeMenu() {
 }
 function onMenuOutside(e) { if (openMenuNode && !openMenuNode.contains(e.target)) closeMenu(); }
 function onMenuKey(e) { if (e.key === "Escape") { e.preventDefault(); closeMenu(); } }
-function openMenu(anchor, items) {
+function openMenu(anchor, items, { align = "right" } = {}) {
   // The same button again closes what it opened.
   if (openMenuAnchor === anchor) { closeMenu(); return; }
   closeMenu();
+  // A list where any item says whether it is checked is a pick-one list:
+  // every item leaves room for the mark, and the current one shows it.
+  const checkable = items.some((item) => item.checked !== undefined);
   const menu = el("div", { class: "menu", attrs: { role: "menu" } }, items.map((item) => {
-    const b = el("button", { class: "menu-item", text: item.label, attrs: { type: "button", role: "menuitem" } });
+    const b = el("button", {
+      class: "menu-item" + (checkable ? " checkable" : "") + (item.checked ? " checked" : ""),
+      text: item.label,
+      attrs: { type: "button", role: checkable ? "menuitemradio" : "menuitem", ...(checkable ? { "aria-checked": String(item.checked === true) } : {}) },
+    });
     b.disabled = item.disabled === true;
     b.addEventListener("click", () => { closeMenu(); item.run(); });
     return b;
   }));
-  // Below the anchor, right-aligned to it, in viewport coordinates: the
-  // panel scrolls inside the window, not the window itself.
+  // Below the anchor, in viewport coordinates (the panel scrolls inside the
+  // window, not the window itself). A "•••" at a row's right edge hangs
+  // right-aligned; a filter button at the toolbar's left hangs from its left
+  // edge, where the eye already is.
   const r = anchor.getBoundingClientRect();
   menu.style.top = `${r.bottom + 4}px`;
-  menu.style.right = `${document.documentElement.clientWidth - r.right}px`;
+  if (align === "left") menu.style.left = `${r.left}px`;
+  else menu.style.right = `${document.documentElement.clientWidth - r.right}px`;
   document.body.appendChild(menu);
   openMenuNode = menu;
   openMenuAnchor = anchor;
@@ -1993,8 +2076,14 @@ async function refreshCapabilitiesBadge(view) {
 /** The audit tab, filtered to what this Mac blocked: the Blocked chip, and
     the search box set to `term` — a switch's name from a row's button, or
     cleared from the banner's, so a stale search never hides the rows. */
-async function showAuditBlocked(term = "") {
-  filter = "blocked";
+// The Capabilities tab's "Show in Audit": the blocked rows, narrowed to one
+// switch by `term` when a row asked, and to the moment the count started
+// from by `since` — so the list is exactly the requests it counted.
+async function showAuditBlocked(term = "", since = null) {
+  decisionFilter = "any";
+  statusFilter = "blocked";
+  dateSince = since;
+  dateFilter = since ? "since" : "any";
   auditSearch = term;
   if (await selectTab("audit")) window.domo.uiSetTab("audit");
 }
@@ -2097,7 +2186,7 @@ async function renderCapabilities() {
       // Two actions, both buttons: dismissing resets the whole tab (not just
       // this strip), which is more than an × should carry.
       const showInAudit = el("button", { class: "btn small", text: "Show in Audit", attrs: { type: "button" } });
-      showInAudit.addEventListener("click", () => showAuditBlocked());
+      showInAudit.addEventListener("click", () => showAuditBlocked("", v.banner.since));
       const close = el("button", { class: "btn small", text: "Dismiss", attrs: { type: "button" } });
       close.addEventListener("click", async () => draw(await window.domo.capabilitiesBannerSeen()));
       nodes.push(el("div", { class: "cap-banner" }, [
@@ -2314,7 +2403,7 @@ async function renderCapabilities() {
     // The banner's pair, for this one switch: Dismiss clears these requests
     // from the tab (the Audit tab keeps them) until a newer block lands.
     const inAudit = el("button", { class: "btn small", text: "Show in Audit", attrs: { type: "button" } });
-    inAudit.addEventListener("click", () => showAuditBlocked(r.title));
+    inAudit.addEventListener("click", () => showAuditBlocked(r.title, r.since));
     const notNow = el("button", { class: "btn small", text: "Dismiss", attrs: { type: "button" } });
     notNow.addEventListener("click", async () => draw(await window.domo.capabilitiesDismiss(r.key)));
     return el("div", { class: "cap-expand" }, [

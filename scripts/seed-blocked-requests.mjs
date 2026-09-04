@@ -1,22 +1,30 @@
 // Seed the audit log with sample blocked requests, so the Capabilities tab
-// (and the Audit tab's Blocked chip) can be looked at without revoking
+// (and the Audit tab's Blocked filter) can be looked at without revoking
 // anything first. The rows have the same shape DeviceAgent writes — an
 // intent_received / intent_decision pair, the run's exec_start/exec_end
 // where there was a run, and the host_permission_blocked line with its
-// diagnosis — spread over "last night", so the banner, the counts, the
-// "last …" times and the per-switch grouping all have something to show.
+// diagnosis — spread over the last eight hours, so the banner, the counts,
+// the "last …" times and the per-switch grouping all have something to show.
+//
+// The banner only counts blocks after its last dismissal, and a tester who
+// dismissed it a minute ago wants the seeded rows to count as new. So when
+// a settings.json is given and it records a dismissal inside the window,
+// the rows are packed into the time since it instead (same order, same
+// spacing) — and "Show in Audit" then narrows the Audit tab to exactly them.
 //
 // Fake by construction: the agents are named after nobody, the goals are
 // made up, and every line carries `seeded: true` so it can be told from a
 // real block (and removed: `just unseed-blocked-requests`).
 //
-// Usage: node scripts/seed-blocked-requests.mjs <audit.ndjson> [--remove]
+// Usage: node scripts/seed-blocked-requests.mjs <audit.ndjson> [settings.json] [--remove]
 import fs from "node:fs";
 import path from "node:path";
 
-const file = process.argv[2];
+const args = process.argv.slice(2).filter((a) => a !== "--remove");
+const file = args[0];
+const settingsFile = args[1] ?? null;
 if (!file) {
-  console.error("usage: seed-blocked-requests.mjs <audit.ndjson> [--remove]");
+  console.error("usage: seed-blocked-requests.mjs <audit.ndjson> [settings.json] [--remove]");
   process.exit(2);
 }
 const remove = process.argv.includes("--remove");
@@ -33,7 +41,25 @@ if (remove) {
 }
 
 const now = Date.now();
-const hoursAgo = (h) => new Date(now - h * 3_600_000).toISOString().replace(/\.\d{3}Z$/, "Z");
+const WINDOW_H = 8;
+// The window the rows are spread over: the last eight hours, or the time
+// since the banner's dismissal when that is more recent (never less than a
+// minute, so the rows keep an order).
+let windowMs = WINDOW_H * 3_600_000;
+if (settingsFile && fs.existsSync(settingsFile)) {
+  try {
+    const seenAt = JSON.parse(fs.readFileSync(settingsFile, "utf8")).blockedBannerSeenAt;
+    const sinceSeen = seenAt ? now - new Date(seenAt).getTime() : NaN;
+    if (Number.isFinite(sinceSeen) && sinceSeen < windowMs) {
+      windowMs = Math.max(sinceSeen, 60_000);
+      console.log(`the banner was dismissed ${Math.round(sinceSeen / 60_000)} minutes ago; the rows land after that`);
+    }
+  } catch {
+    /* an unreadable settings.json means no dismissal to honour */
+  }
+}
+// "h hours ago" on an eight-hour scale, mapped onto the window.
+const hoursAgo = (h) => new Date(now - (h / WINDOW_H) * windowMs).toISOString().replace(/\.\d{3}Z$/, "Z");
 let n = 0;
 const id = () => `seed-${Date.now().toString(36)}-${(n += 1)}`;
 

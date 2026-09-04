@@ -73,6 +73,7 @@ describe("auditActivities (grouping)", () => {
     expect(acts).toHaveLength(1);
     const a = acts[0]!;
     expect(a.title).toBe("run: df -h");
+    expect(a.ts).toBe("2026-08-09T12:00:20Z"); // the date filter's key
     // Two cells: the decision, and what happened to the work.
     expect(a.decision).toBe("Allowed");
     expect(a.decisionTone).toBe("green");
@@ -138,7 +139,8 @@ describe("auditActivities (grouping)", () => {
       title,
       status: "Completed",
       tone: "green",
-      category: "approved",
+      decisionKind: "none",
+      statusKind: "completed",
       kind: "access",
       timeline: [{ text: step, state: "ok" }],
     });
@@ -154,7 +156,8 @@ describe("auditActivities (grouping)", () => {
     // a clean run is a decision AND an outcome.
     expect(acts.map((a) => a.decision)).toEqual(["Rejected", "Allowed"]);
     expect(acts.map((a) => a.status)).toEqual(["", "Completed"]);
-    expect(acts[0]!.category).toBe("denied");
+    expect(acts[0]!.decisionKind).toBe("denied");
+    expect(acts[0]!.statusKind).toBe("none");
   });
 
   it("a failed run keeps its decision and says how it failed", () => {
@@ -166,7 +169,8 @@ describe("auditActivities (grouping)", () => {
     expect(failed[0]!.decision).toBe("Always allowed");
     expect(failed[0]!.status).toBe("Failed · exit 1");
     expect(failed[0]!.tone).toBe("amber");
-    expect(failed[0]!.category).toBe("failed");
+    expect(failed[0]!.decisionKind).toBe("allowed");
+    expect(failed[0]!.statusKind).toBe("failed");
   });
 
   it("a run that has started and not ended is Running, still approved", () => {
@@ -174,7 +178,8 @@ describe("auditActivities (grouping)", () => {
     expect(acts[0]!.decision).toBe("Allowed");
     expect(acts[0]!.status).toBe("Running");
     expect(acts[0]!.tone).toBe("blue");
-    expect(acts[0]!.category).toBe("approved");
+    expect(acts[0]!.decisionKind).toBe("allowed");
+    expect(acts[0]!.statusKind).toBe("running");
   });
 
   it("a denied request has a decision and no outcome", () => {
@@ -185,15 +190,17 @@ describe("auditActivities (grouping)", () => {
     expect(acts[0]!.decision).toBe("Denied");
     expect(acts[0]!.decisionTone).toBe("red");
     expect(acts[0]!.status).toBe("");
-    expect(acts[0]!.category).toBe("denied");
+    expect(acts[0]!.decisionKind).toBe("denied");
+    expect(acts[0]!.statusKind).toBe("none");
   });
 
-  it("a clean success categorizes as approved, not failed", () => {
+  it("a clean success is allowed and completed, and no other bucket", () => {
     const acts = auditActivities(commandRun);
-    expect(acts[0]!.category).toBe("approved");
+    expect(acts[0]!.decisionKind).toBe("allowed");
+    expect(acts[0]!.statusKind).toBe("completed");
   });
 
-  it("sandbox-block keeps its status label but categorizes as failed", () => {
+  it("a sandbox block is Blocked in both the word and the Status filter", () => {
     const blocked = auditActivities([
       { event: "intent_received", intentId: "i1", request: "run: rm -rf /x", ts: "2026-08-09T12:00:00Z" },
       { event: "intent_decision", intentId: "i1", decision: "allow_once", source: "prompt", ts: "2026-08-09T12:00:01Z" },
@@ -202,7 +209,8 @@ describe("auditActivities (grouping)", () => {
     expect(blocked[0]!.decision).toBe("Allowed");
     expect(blocked[0]!.status).toBe("Blocked · outside approved paths");
     expect(blocked[0]!.tone).toBe("red");
-    expect(blocked[0]!.category).toBe("failed");
+    expect(blocked[0]!.decisionKind).toBe("allowed");
+    expect(blocked[0]!.statusKind).toBe("blocked");
   });
 
   it("search matches across title, command, agent, and goal", () => {
@@ -224,7 +232,7 @@ describe("auditActivities (grouping)", () => {
     expect(listRead.title).toBe("Credential list read");
     expect(listRead.status).toBe("Completed");
     expect(listRead.tone).toBe("green");
-    expect(listRead.category).toBe("approved");
+    expect(listRead.statusKind).toBe("completed");
     expect(describeRead.title).toBe("Credential fields read — L1");
     expect(describeRead.status).toBe("Completed");
     expect(listRead.timeline.map((s) => s.text)).toEqual(["Credential list read (names only)"]);
@@ -239,23 +247,23 @@ describe("auditActivities (grouping)", () => {
   it.each([
     [
       { outcome: "revoked", keyId: 42 },
-      { status: "Revoked", tone: "green", category: "approved", step: "Activation session revoked — key 42", state: "ok" },
+      { status: "Revoked", tone: "green", statusKind: "completed", step: "Activation session revoked — key 42", state: "ok" },
     ],
     [
       { outcome: "failed", keyId: 42, error: "Plow returned 500." },
-      { status: "Failed", tone: "red", category: "failed", step: "Activation session cleanup failed — key 42 — Plow returned 500.", state: "bad" },
+      { status: "Failed", tone: "red", statusKind: "failed", step: "Activation session cleanup failed — key 42 — Plow returned 500.", state: "bad" },
     ],
     [
       { outcome: "no_match" },
-      { status: "Skipped", tone: "zinc", category: "other", step: "Activation session cleanup skipped — no matching session", state: "neutral" },
+      { status: "Skipped", tone: "zinc", statusKind: "none", step: "Activation session cleanup skipped — no matching session", state: "neutral" },
     ],
     [
       { outcome: "ambiguous", candidateCount: 2 },
-      { status: "Skipped", tone: "zinc", category: "other", step: "Activation session cleanup skipped — 2 matches", state: "neutral" },
+      { status: "Skipped", tone: "zinc", statusKind: "none", step: "Activation session cleanup skipped — 2 matches", state: "neutral" },
     ],
     [
       { outcome: "no_credential" },
-      { status: "Skipped", tone: "zinc", category: "other", step: "Activation session cleanup skipped — this Mac is not signed in", state: "neutral" },
+      { status: "Skipped", tone: "zinc", statusKind: "none", step: "Activation session cleanup skipped — this Mac is not signed in", state: "neutral" },
     ],
   ])("renders activation-session cleanup outcome %#", (fields, expected) => {
     const [activity] = auditActivities([{
@@ -268,7 +276,7 @@ describe("auditActivities (grouping)", () => {
       title: "Activation session cleanup",
       status: expected.status,
       tone: expected.tone,
-      category: expected.category,
+      statusKind: expected.statusKind,
       timeline: [{ text: expected.step, state: expected.state }],
     });
   });
@@ -282,7 +290,9 @@ describe("auditActivities (grouping)", () => {
     expect(acts[0]!.decisionTone).toBe("amber");
     expect(acts[0]!.status).toBe("");
     expect(acts[0]!.decidedBy).toBe("No one (timed out)");
-    expect(acts[0]!.category).toBe("denied"); // still failed closed
+    // Still failed closed — but it is not a refusal, so it files under
+    // Unanswered, with the abandoned and the pending.
+    expect(acts[0]!.decisionKind).toBe("unanswered");
   });
 
   it("an approval abandoned by an app quit reads as unanswered, not pending", () => {
@@ -325,11 +335,11 @@ describe("auditActivities (grouping)", () => {
     expect(finished.decision).toBe("");
     expect(finished.status).toBe("Completed");
     expect(finished.tone).toBe("green");
-    expect(finished.category).toBe("approved");
+    expect(finished.statusKind).toBe("completed");
     expect(finished.title).toBe("Command finished");
     expect(failed.status).toBe("Failed · exit 3");
     expect(failed.tone).toBe("amber");
-    expect(failed.category).toBe("failed");
+    expect(failed.statusKind).toBe("failed");
   });
 
   it("a run this Mac killed reads as killed, not as a command that failed", () => {
@@ -353,7 +363,7 @@ describe("auditActivities (grouping)", () => {
     expect(decided.status).toBe("Killed · no output");
     for (const act of [orphan, decided]) {
       expect(act.tone).toBe("amber");
-      expect(act.category).toBe("failed");
+      expect(act.statusKind).toBe("failed");
     }
     // The line the owner opens to find out why must not contradict the badge.
     expect(decided.timeline.map((s) => s.text)).toContain(`Run killed — ${reason}`);
@@ -385,7 +395,8 @@ describe("auditActivities (grouping)", () => {
     expect(run.status).toBe("Blocked · Full Disk Access");
     expect(run.tone).toBe("amber");
     // Its own bucket: the Capabilities tab's "Show in Audit" filters to it.
-    expect(run.category).toBe("blocked");
+    expect(run.decisionKind).toBe("allowed");
+    expect(run.statusKind).toBe("blocked");
     expect(run.exitCode).toBe(1);
     expect(run.timeline.map((s) => s.text)).toContain(
       `This Mac refused ~/Library/Messages/chat.db: needs a macOS permission (Full Disk Access) — ${action}`,
@@ -397,7 +408,8 @@ describe("auditActivities (grouping)", () => {
     expect(file.timeline.at(-1)!.state).toBe("bad");
     expect(orphan.decision).toBe("");
     expect(orphan.status).toBe("Blocked · outside approved paths");
-    expect(orphan.category).toBe("blocked");
+    expect(orphan.decisionKind).toBe("none");
+    expect(orphan.statusKind).toBe("blocked");
     // The switch a block named is searchable, in System Settings' words —
     // the Capabilities tab's "Show in Audit" relies on it — and so is the
     // timeline line, so what the detail pane shows is what the box finds.

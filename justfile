@@ -338,22 +338,23 @@ reset-permissions host="auto":
 reset-permissions-dry-run host="auto":
     scripts/reset-permissions.sh "{{apphome}}" {{host}} --dry-run
 
-# Fake agents, fake goals, last night's timestamps, appended to THIS
-# checkout's audit log so the Capabilities tab's banner, counts and "See
-# blocked requests…" can be looked at without revoking a grant first. Every
-# seeded row is marked, and unseed removes exactly those.
+# Fake agents, fake goals, spread over the last eight hours, appended to
+# THIS checkout's audit log so the Capabilities tab's banner, counts and
+# "See blocked requests…" can be looked at without revoking a grant first.
+# The banner's dismissal is left alone: if it was dismissed less than eight
+# hours ago the rows land after that moment instead, so they count as new
+# and "Show in Audit" narrows to them (Date: Since …). Every seeded row is
+# marked, and unseed removes exactly those.
 # Seed the audit log with sample blocked requests for the Capabilities tab.
 seed-blocked-requests:
-    node scripts/seed-blocked-requests.mjs "{{apphome}}/device/audit.ndjson"
-    @node scripts/reset-blocked-banner.mjs "{{apphome}}" >/dev/null
+    node scripts/seed-blocked-requests.mjs "{{apphome}}/device/audit.ndjson" "{{apphome}}/app/settings.json"
 
 # Remove the rows seed-blocked-requests added; real audit rows are untouched.
 unseed-blocked-requests:
-    node scripts/seed-blocked-requests.mjs "{{apphome}}/device/audit.ndjson"
-    @node scripts/reset-blocked-banner.mjs "{{apphome}}" >/dev/null --remove
+    node scripts/seed-blocked-requests.mjs "{{apphome}}/device/audit.ndjson" --remove
 
 # Every block in the audit log shows again — the banner, the rows' lines,
-# the badge — until the next ×. seed-blocked-requests runs this too.
+# the badge — until the next ×.
 # Forget when the Capabilities banner was last dismissed.
 reset-blocked-banner:
     node scripts/reset-blocked-banner.mjs "{{apphome}}"

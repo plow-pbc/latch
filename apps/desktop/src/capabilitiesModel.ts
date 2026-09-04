@@ -184,6 +184,9 @@ export interface CapabilityRow {
   actionLabel: string | null;
   count: number;
   last: string | null;
+  /** The moment this row's count starts from: the later of the banner's
+   *  dismissal and the row's own, or null for all time. */
+  since: string | null;
   agents: string[];
   requests: BlockedRequest[];
   /** Counts toward the badge. */
@@ -229,6 +232,9 @@ export interface CapabilitiesBanner {
   /** Per switch, most recent first: title and count. */
   summary: { title: string; count: number }[];
   last: string;
+  /** The moment the count starts from — the banner's last dismissal, or
+   *  null for all time. "Show in Audit" filters the Audit tab from here. */
+  since: string | null;
 }
 
 export interface CapabilitiesView {
@@ -300,6 +306,7 @@ export function capabilitiesView(input: CapabilitiesInput): CapabilitiesView {
       actionLabel: off ? actionLabel(action) : null,
       count: g?.count ?? 0,
       last: g?.last ?? null,
+      since: later(input.bannerSeenAt, input.dismissals[key] ?? null),
       agents: g?.agents ?? [],
       requests: g?.requests ?? [],
       needsAttention: off && (g?.count ?? 0) > 0,
@@ -423,7 +430,7 @@ export function capabilitiesView(input: CapabilitiesInput): CapabilitiesView {
   ];
 
   const badge = sections.reduce((n, s) => n + s.rows.filter((r) => r.needsAttention).length, 0);
-  return { badge, banner: banner(groups, sections), sections };
+  return { badge, banner: banner(groups, sections, input.bannerSeenAt), sections };
 }
 
 /** The later of two timestamps, either possibly absent. */
@@ -462,7 +469,7 @@ function group(
   };
 }
 
-function banner(groups: Map<string, BlockedGroup>, sections: CapabilitySection[]): CapabilitiesBanner | null {
+function banner(groups: Map<string, BlockedGroup>, sections: CapabilitySection[], since: string | null): CapabilitiesBanner | null {
   const titles = new Map(sections.flatMap((s) => s.rows.map((r) => [r.key, r.title] as const)));
   const summary: { title: string; count: number; last: string }[] = [];
   let count = 0;
@@ -474,7 +481,7 @@ function banner(groups: Map<string, BlockedGroup>, sections: CapabilitySection[]
   }
   if (count === 0) return null;
   summary.sort((a, b) => (a.last < b.last ? 1 : a.last > b.last ? -1 : 0));
-  return { count, summary: summary.map(({ title, count }) => ({ title, count })), last };
+  return { count, summary: summary.map(({ title, count }) => ({ title, count })), last, since };
 }
 
 function statusWords(status: RowStatus): string {
