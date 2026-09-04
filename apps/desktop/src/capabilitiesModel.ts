@@ -228,6 +228,10 @@ export function isGroup(item: CapabilityItem): item is CapabilityGroup {
 }
 
 export interface CapabilitiesBanner {
+  /** The switches still off that were hit — the badge's number, and the
+   *  first thing the banner says. */
+  switches: number;
+  /** The requests those switches blocked. */
   count: number;
   /** Per switch, most recent first: title and count. */
   summary: { title: string; count: number }[];
@@ -381,7 +385,8 @@ export function capabilitiesView(input: CapabilitiesInput): CapabilitiesView {
 
   // Automation consent per app, as a group. No detail per app: the group's
   // line says what these are, and the dot and the button say where each
-  // stands. Collapsed by default — eight rows the owner rarely needs.
+  // stands. Collapsed unless an app inside was hit — eight rows the owner
+  // rarely needs, until one of them is the reason they came.
   const apps: CapabilityRow[] = input.automation.map(({ app, status }) =>
     row(`automation:${app.bundleId}`, app.name, status, "", status === "denied" ? "open" : "request"),
   );
@@ -391,7 +396,7 @@ export function capabilitiesView(input: CapabilitiesInput): CapabilitiesView {
       "Automation",
       "Which apps agents may drive with Apple events — sending a message, saving a contact.",
       apps,
-      false,
+      apps.some((r) => r.count > 0),
     ),
   );
   const macRows = items.flatMap((i) => (isGroup(i) ? i.rows : [i]));
@@ -430,7 +435,7 @@ export function capabilitiesView(input: CapabilitiesInput): CapabilitiesView {
   ];
 
   const badge = sections.reduce((n, s) => n + s.rows.filter((r) => r.needsAttention).length, 0);
-  return { badge, banner: banner(groups, sections, input.bannerSeenAt), sections };
+  return { badge, banner: banner(sections, input.bannerSeenAt), sections };
 }
 
 /** The later of two timestamps, either possibly absent. */
@@ -469,19 +474,24 @@ function group(
   };
 }
 
-function banner(groups: Map<string, BlockedGroup>, sections: CapabilitySection[], since: string | null): CapabilitiesBanner | null {
-  const titles = new Map(sections.flatMap((s) => s.rows.map((r) => [r.key, r.title] as const)));
-  const summary: { title: string; count: number; last: string }[] = [];
-  let count = 0;
-  let last = "";
-  for (const g of groups.values()) {
-    count += g.count;
-    if (g.last > last) last = g.last;
-    summary.push({ title: titles.get(g.key) ?? PERMISSION_TITLES[g.key] ?? g.key, count: g.count, last: g.last });
-  }
-  if (count === 0) return null;
-  summary.sort((a, b) => (a.last < b.last ? 1 : a.last > b.last ? -1 : 0));
-  return { count, summary: summary.map(({ title, count }) => ({ title, count })), last, since };
+/**
+ * The strip at the top: the rows the badge counts, and what they blocked.
+ * Only those rows — a switch granted since its refusals is history, and a
+ * banner that still listed it would send the owner to a row that says
+ * "Granted". So the banner and the badge always agree: the badge is its
+ * first number, and both go quiet together.
+ */
+function banner(sections: CapabilitySection[], since: string | null): CapabilitiesBanner | null {
+  const hit = sections.flatMap((s) => s.rows.filter((r) => r.needsAttention && r.last !== null));
+  if (hit.length === 0) return null;
+  hit.sort((a, b) => (a.last! < b.last! ? 1 : a.last! > b.last! ? -1 : 0));
+  return {
+    switches: hit.length,
+    count: hit.reduce((n, r) => n + r.count, 0),
+    summary: hit.map((r) => ({ title: r.title, count: r.count })),
+    last: hit[0]!.last!,
+    since,
+  };
 }
 
 function statusWords(status: RowStatus): string {
