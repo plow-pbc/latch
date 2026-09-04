@@ -539,16 +539,23 @@ describe("removing a roster row", () => {
     expect(client.state().roster.mcp.map((row) => row.id)).toEqual([5]);
   });
 
-  it("keeps the row when the removal fails", async () => {
+  /** Same contract as a failed rename: the banner says why, the rows say what
+   * Plow holds — and after a response lost post-commit, Plow no longer holds
+   * the row. */
+  it.each([
+    ["Plow refuses", [9]],
+    ["the response is lost after Plow committed", [] as number[]],
+  ])("says why when %s, and shows the rows Plow holds", async (_when, held) => {
     signIn();
     plow.keys = [key({ id: 9, agent_id: "agent_9" })];
     const client = build({ deleteFails: true });
     await client.refreshRoster();
+    plow.keys = held.map((id) => key({ id, agent_id: "agent_9" }));
 
     const state = await client.removeRosterRow(9);
 
     expect(state.actionError).toBe("Plow returned 500.");
-    expect(state.roster.cloud.map((row) => row.id)).toEqual([9]);
+    expect(state.roster.cloud.map((row) => row.id)).toEqual(held);
   });
 });
 
