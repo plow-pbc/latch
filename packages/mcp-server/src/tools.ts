@@ -174,15 +174,20 @@ const GOAL = {
  *
  * Every name here was RUN under the generated seatbelt profile before being
  * printed: `mdfind`, `sips`, `pbcopy` and `pbpaste` all exit 0 under
- * `(deny default)` + `(allow mach-lookup)`. `osascript` driving another
- * application, `screencapture` and `shortcuts` are deliberately absent — the
- * profile grants no `appleevent-send` and the app ships no automation
- * entitlement, so naming them would point an agent at a denial. Adding a name
- * means running it first; see the coupling note in device-core's executor.ts.
+ * `(deny default)` + `(allow mach-lookup)`. `say hello world` ran through
+ * `plow_run_command` under the generated profile on a real owner's Mac on
+ * 2026-09-03 (relay 200, agent reported it spoke; exit code not captured).
+ * `osascript` driving another application, `screencapture`, `shortcuts` and
+ * `afplay` are deliberately absent — the profile grants no `appleevent-send`
+ * and the app ships no automation entitlement, so naming them would point an
+ * agent at a denial, and `afplay` specifically has not been run under the
+ * profile at all. Adding a name means running it first; see the coupling note
+ * in device-core's executor.ts.
  */
 export const MACOS_TOOLING =
   "mdfind for Spotlight search across their files, sips for images, " +
-  "pbcopy and pbpaste for the clipboard, and whatever else they have installed";
+  "pbcopy and pbpaste for the clipboard, say to speak text aloud through the Mac's speakers, " +
+  "and whatever else they have installed";
 
 /**
  * Appended to every skill body `plow_read_skill` returns — one seam, not
@@ -295,8 +300,9 @@ export const TOOLS: ToolSpec[] = [
     name: "plow_run_command",
     title: "Run a command on the user's Mac",
     description:
-      "Run a command on the user's own Mac — their installed tools, their data, their network. " +
-      "Use this when the command must affect their machine; use your own shell for your own work. " +
+      "Run a command on the user's own Mac through Latch — their installed tools, their data, " +
+      "their network, their speakers. This Mac is where the user's world lives; default here for " +
+      "anything about them or their machine, and use your own shell only for your own work. " +
       "Their Mac is a macOS workstation, so reach for tooling your workspace does not have when " +
       `it fits the job: ${MACOS_TOOLING}. ` +
       "It runs inside a seatbelt sandbox. Declare every path you need: " +

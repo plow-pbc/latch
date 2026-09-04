@@ -123,6 +123,14 @@ describe("the server tells the agent what it is for", () => {
   it("the instructions route the agent to plow_list_skills", () => {
     expect(SERVER_INSTRUCTIONS).toMatch(/plow_list_skills/);
   });
+
+  // "Use Latch to …" is how owners phrase it; an agent that has never seen the
+  // word answers that nothing called Latch exists (observed 2026-09-03).
+  it("the instructions name Latch and state the owner-world default", () => {
+    expect(SERVER_INSTRUCTIONS).toMatch(/\bLatch\b/);
+    expect(SERVER_INSTRUCTIONS).toMatch(/my computer/i);
+    expect(SERVER_INSTRUCTIONS).toMatch(/default/i);
+  });
 });
 
 describe("the skill contribution footer", () => {
@@ -155,12 +163,16 @@ describe("every tool with a strong built-in alternative says whose Mac this is",
     expect(d.plow_write_file).toMatch(/not for your own working files/);
   });
 
-  it("plow_run_command leads with when to choose it, not with the sandbox", async () => {
+  it("plow_run_command leads with when to choose it, names Latch, not the sandbox", async () => {
     const d = await descriptions(makeServer());
     // The sandbox is still stated — it is true and the agent needs it — but it
     // no longer opens the description, where it read as "this one is worse".
     expect(d.plow_run_command).toMatch(/seatbelt sandbox/);
     expect(d.plow_run_command.indexOf("own Mac")).toBeLessThan(d.plow_run_command.indexOf("sandbox"));
+    // "Use Latch to …" is how owners phrase it; the run-command copy names it.
+    // The tooling list (incl. `say`) is pinned via MACOS_TOOLING by the seam
+    // test below, so it is not re-asserted here.
+    expect(d.plow_run_command).toMatch(/\bLatch\b/);
   });
 
   // What this case owns is the vault fill and the WHICH-browser line. Browsing
@@ -174,6 +186,7 @@ describe("every tool with a strong built-in alternative says whose Mac this is",
     expect(d.plow_browser_open).toMatch(/session id you get back says WHICH browser/i);
     expect(d.plow_browser_open).not.toMatch(/one session at a time/i);
   });
+
 });
 
 describe("the goal field says a human reads it", () => {
