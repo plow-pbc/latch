@@ -1523,7 +1523,7 @@ function openRosterConfirm(row, trigger, redraw) {
   });
 }
 
-function openRosterRename(row, trigger, redraw) {
+function openRosterRename(row, trigger, redraw, fallback) {
   const current = rosterName(row, "");
   const input = el("input", {
     class: "text",
@@ -1565,7 +1565,10 @@ function openRosterRename(row, trigger, redraw) {
     focus: input,
     onDismiss: dismiss,
     children: [
-      el("div", { class: "group-title", text: `Rename ${current || "this session"}` }),
+      el("div", { class: "group-title", text: `Rename ${current || fallback}` }),
+      row.isThisMac
+        ? el("p", { class: "conn-note", text: "Renames this Mac's Plow session, not the Mac." })
+        : null,
       input,
       note,
       el("div", { class: "row conn-actions" }, [cancel, el("div", { class: "spacer" }), save]),
@@ -1575,15 +1578,18 @@ function openRosterRename(row, trigger, redraw) {
 }
 
 function rosterActions(row, section, redraw) {
-  const name = rosterName(row, section === "mcp" ? "Unnamed MCP client" : "Unnamed session");
+  const fallback =
+    section === "cloud" ? "Cloud agent" : section === "mcp" ? "Unnamed MCP client" : "Unnamed session";
+  const name = rosterName(row, fallback);
   const more = el("button", {
     class: "btn more",
     text: "⋯",
     attrs: { "aria-label": `More actions for ${name}` },
   });
   const rename = el("button", { text: "Rename" });
-  // A cloud agent is deleted from its detail panel, where the VM teardown is
-  // explained; its row menu renames and nothing else.
+  // This row menu never revokes a cloud credential: a live agent is deleted
+  // from its detail panel (VM teardown), and a credential without a live
+  // agent has nothing here to delete it with.
   const revoke = section === "cloud" ? null : el("button", { class: "danger", text: "Revoke" });
   const menu = el("div", { class: "more-menu", attrs: { role: "menu" } }, [rename, revoke]);
   menu.hidden = true;
@@ -1596,7 +1602,7 @@ function rosterActions(row, section, redraw) {
   });
   rename.addEventListener("click", () => {
     menu.hidden = true;
-    openRosterRename(row, more, redraw);
+    openRosterRename(row, more, redraw, fallback);
   });
   revoke?.addEventListener("click", () => {
     menu.hidden = true;

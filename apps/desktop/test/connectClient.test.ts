@@ -565,7 +565,7 @@ describe("renaming a roster row", () => {
     await client.refreshRoster();
     plow.keys = [{ ...only, name: "Renamed" }];
 
-    const state = await client.renameRosterRow(only.id, "  Renamed  ");
+    const state = await client.renameRosterRow(only.id, "Renamed");
 
     expect(plow.renamed).toEqual([{ id: only.id, name: "Renamed" }]);
     expect(plow.revoked).toEqual([]);

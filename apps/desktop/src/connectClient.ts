@@ -239,7 +239,7 @@ export class ConnectClient {
 
     const generation = this.generation;
     try {
-      await this.deps.api.renameApiKey(credential, id, name.trim());
+      await this.deps.api.renameApiKey(credential, id, name);
     } catch (error) {
       if (generation === this.generation) this.failAction(messageOf(error));
       return this.state();

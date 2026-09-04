@@ -711,7 +711,7 @@ describe("PlowApi", () => {
     const { calls, fetchImpl } = recordingFetch([{ status: 200, body: { assistant_name: "Kitchen" } }]);
     const api = new PlowApi("https://api.plow.co", fetchImpl);
 
-    await expect(api.renameApiKey(credential, 17, "Kitchen")).resolves.toBeUndefined();
+    await expect(api.renameApiKey(credential, 17, "  Kitchen  ")).resolves.toBeUndefined();
 
     expect(calls.map(({ url, init }) => [init.method, url, init.body])).toEqual([
       ["PATCH", "https://api.plow.co/v1/api-keys/17/preferences", JSON.stringify({ assistant_name: "Kitchen" })],
