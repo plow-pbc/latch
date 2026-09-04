@@ -19,7 +19,7 @@
  * by launching a window is one nobody tests.
  */
 import { PlowApi, PlowApiError } from "./plowApi.js";
-import { EMPTY_ROSTER, RosterSections, sectionRoster } from "./rosterSections.js";
+import { EMPTY_ROSTER, RosterSections, RosterSectionRow, sectionRoster } from "./rosterSections.js";
 import { loadSettings, Settings } from "./settings.js";
 
 export interface ClientCredential {
@@ -60,13 +60,14 @@ export interface ConnectClientState {
    * credential, like every message here. */
   rosterError: string | null;
   /**
-   * Why the last removal did not happen.
+   * Why Plow could not confirm the last row action — a removal or a rename.
+   * Not "did not happen": a response lost after Plow committed still lands
+   * here, and the re-read roster beside it shows what Plow holds.
    *
    * Separate from `rosterError` because they are different sentences about
-   * different things: one says the list could not be read, the other says a row
-   * the user asked to remove is still there.
+   * different things: the list is fine, the thing you just asked for is not.
    */
-  removeError: string | null;
+  actionError: string | null;
 }
 
 export interface ConnectClientDeps {
@@ -117,7 +118,7 @@ export class ConnectClient {
    * more use than an empty one, and `rosterError` says it is stale. */
   private roster: RosterSections = EMPTY_ROSTER;
   private rosterError: string | null = null;
-  private removeError: string | null = null;
+  private actionError: string | null = null;
   /**
    * Which roster read is the newest. Bumped per read, not per account.
    *
@@ -143,7 +144,7 @@ export class ConnectClient {
       credential: this.credential,
       roster: this.roster,
       rosterError: this.rosterError,
-      removeError: this.removeError,
+      actionError: this.actionError,
     };
   }
 
@@ -201,32 +202,58 @@ export class ConnectClient {
    * state than a key row — the agent's poll and settings, this Mac's session —
    * and going around either leaves that state behind.
    */
-  async removeRosterRow(id: number): Promise<ConnectClientState> {
-    this.removeError = null;
+  removeRosterRow(id: number): Promise<ConnectClientState> {
+    return this.rosterAction(id, (row, credential) => {
+      if (row.isThisMac) return this.deps.signOutThisMac();
+      if (row.agentId !== null) return this.deps.removeCloudAgent(row.agentId);
+      return this.deps.api.revokeApiKey(credential, id);
+    });
+  }
+
+  /**
+   * Rename one roster row.
+   *
+   * One route for every section, unlike removal: a cloud agent, an MCP client
+   * and this Mac's own session are each one credential on Plow, and the name
+   * the screen shows is that credential's name. Plow's cloud-agent resource
+   * carries no name of its own, so renaming the credential IS renaming the
+   * agent — the same call the Plow dashboard makes.
+   */
+  renameRosterRow(id: number, name: string): Promise<ConnectClientState> {
+    return this.rosterAction(id, (_row, credential) => this.deps.api.renameApiKey(credential, id, name));
+  }
+
+  /**
+   * One lifecycle for every row action: find the row, act with this Mac's
+   * credential, then re-read the roster — after a failure too, because a
+   * response lost after Plow committed leaves the server changed, and the
+   * rows on screen must say what Plow holds. `actionError` says why the
+   * action did not confirm; the re-read never clears it.
+   */
+  private async rosterAction(
+    id: number,
+    act: (row: RosterSectionRow, credential: string) => Promise<unknown>,
+  ): Promise<ConnectClientState> {
+    this.actionError = null;
     const row = [...this.roster.cloud, ...this.roster.mcp, ...this.roster.other].find(
       (candidate) => candidate.id === id,
     );
-    if (!row) return this.failRemove("That row is no longer on this screen.");
+    if (!row) return this.failAction("That row is no longer on this screen.");
     const credential = this.settings().relayCredential.trim();
-    if (!credential) return this.failRemove("This Mac isn't signed in yet.");
+    if (!credential) return this.failAction("This Mac isn't signed in yet.");
 
     const generation = this.generation;
     try {
-      // Each route belongs to whoever owns that lifecycle. Only an ordinary
-      // credential is this file's to revoke directly.
-      if (row.isThisMac) await this.deps.signOutThisMac();
-      else if (row.agentId !== null) await this.deps.removeCloudAgent(row.agentId);
-      else await this.deps.api.revokeApiKey(credential, id);
+      await act(row, credential);
     } catch (error) {
-      if (generation === this.generation) this.failRemove(messageOf(error));
-      return this.state();
+      if (generation === this.generation) this.failAction(messageOf(error));
     }
     if (generation !== this.generation) return this.state();
     return this.refreshRoster();
   }
 
-  private failRemove(message: string): ConnectClientState {
-    this.removeError = message;
+  private failAction(message: string): ConnectClientState {
+    this.actionError = message;
     return this.publish();
   }
 
@@ -308,7 +335,7 @@ export class ConnectClient {
     this.generation += 1;
     this.roster = EMPTY_ROSTER;
     this.rosterError = null;
-    this.removeError = null;
+    this.actionError = null;
     // Nothing in flight belongs to the next account either.
     this.rosterReads += 1;
     this.credential = null;

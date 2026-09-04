@@ -612,10 +612,12 @@ textarea.text { min-height: 70px; resize: vertical; }
 }
 .more-menu button {
   -webkit-app-region: no-drag; width: 100%; text-align: left; border: 0;
-  border-radius: 6px; background: none; color: var(--red-fg);
+  border-radius: 6px; background: none; color: var(--fg);
   padding: 7px 9px; font: inherit; cursor: pointer;
 }
-.more-menu button:hover { background: var(--red-bg); }
+.more-menu button:hover { background: var(--hover); }
+.more-menu button.danger { color: var(--red-fg); }
+.more-menu button.danger:hover { background: var(--red-bg); }
 .status-setting {
   display: inline-flex; align-items: center; gap: 6px;
   color: var(--amber-fg); font-size: 11px; font-weight: 600;

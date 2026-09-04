@@ -369,6 +369,16 @@ const GOOGLE_CONNECTOR_ROUTE = "/v1/connectors/gmail";
 /** `fetch`, injectable so tests never touch the network. */
 export type FetchLike = (url: string, init?: RequestInit) => Promise<Response>;
 
+/**
+ * IPC callers are runtime values no matter what TypeScript says. Refuse
+ * path-shaped strings, fractions and out-of-range numbers before the id is
+ * interpolated into an authenticated request URL.
+ */
+function apiKeyId(id: number): number {
+  if (!Number.isSafeInteger(id) || id < 0) throw new PlowApiError("http", "Invalid API key id.");
+  return id;
+}
+
 export class PlowApi {
   readonly baseUrl: ApiBaseUrl;
 
@@ -751,13 +761,24 @@ export class PlowApi {
 
   /** Soft-revoke one credential by its server id. */
   async revokeApiKey(token: string, id: number): Promise<RevokedKey> {
-    // IPC callers are runtime values no matter what TypeScript says. Refuse
-    // path-shaped strings, fractions and out-of-range numbers before the id is
-    // interpolated into an authenticated request URL.
-    if (!Number.isSafeInteger(id) || id < 0) {
-      throw new PlowApiError("http", "Invalid API key id.");
-    }
-    return this.call<RevokedKey>("DELETE", `/v1/api-keys/${id}`, { token });
+    return this.call<RevokedKey>("DELETE", `/v1/api-keys/${apiKeyId(id)}`, { token });
+  }
+
+  /**
+   * Rename one credential. The name is the row's display name on the Agents
+   * tab, and — for a cloud agent — the assistant's name in Plow, which is why
+   * the wire field is `assistant_name`. Plow answers with the session's
+   * preferences; nothing here reads them, because the roster re-read that
+   * follows is the only truth the screen shows.
+   */
+  async renameApiKey(token: string, id: number, name: string): Promise<void> {
+    const trimmed = name.trim();
+    if (!trimmed) throw new PlowApiError("http", "A name is required.");
+    if (trimmed.length > 200) throw new PlowApiError("http", "A name can be at most 200 characters.");
+    await this.call<unknown>("PATCH", `/v1/api-keys/${apiKeyId(id)}/preferences`, {
+      token,
+      body: { assistant_name: trimmed },
+    });
   }
 
   /**

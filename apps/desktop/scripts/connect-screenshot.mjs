@@ -375,6 +375,16 @@ async function setUp() {
     };
     return state();
   });
+  ipcMain.handle("roster:rename", async (_e, id, name) => {
+    const renamed = (rows) => rows.map((row) => (row.id === id ? { ...row, name } : row));
+    rosterFixture = {
+      ...rosterFixture,
+      cloud: renamed(rosterFixture.cloud),
+      mcp: renamed(rosterFixture.mcp),
+      other: renamed(rosterFixture.other),
+    };
+    return state();
+  });
   ipcMain.handle("cloud:remove", async (_e, agentId) => {
     cloudRemovals.push(agentId);
     cloudFixture = {
