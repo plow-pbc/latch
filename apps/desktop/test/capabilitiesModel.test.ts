@@ -288,6 +288,18 @@ describe("capabilitiesView", () => {
     );
     expect(revoked.sections[0]!.rows.find((r) => r.key === "files_downloads")).toMatchObject({ status: "denied", action: "open", needsAttention: true });
     expect(revoked.badge).toBe(1);
+    // Dismissing the notice clears the count, not the fact: the switch is
+    // still off, and the row keeps saying so, button and all.
+    const dismissed = capabilitiesView(
+      input({
+        events: block("i2", "2026-09-02T04:00:00Z", "files_downloads"),
+        folders: { files_downloads: "granted" },
+        foldersAt: { files_downloads: "2026-09-02T03:00:00Z" },
+        dismissals: { files_downloads: "2026-09-02T05:00:00Z" },
+      }),
+    );
+    expect(dismissed.sections[0]!.rows.find((r) => r.key === "files_downloads")).toMatchObject({ status: "denied", action: "open", count: 0, needsAttention: false });
+    expect(dismissed.badge).toBe(0);
     // A memo with no time (from before times were kept) is outranked by any
     // confirmed block.
     const undated = capabilitiesView(
