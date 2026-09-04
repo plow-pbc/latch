@@ -65,6 +65,7 @@ ipcMain.handle("audit:activities", async () => [
     id: "act-1",
     time: "16:20:05",
     ts: "2026-08-18T16:20:05Z",
+    blockedAt: null,
     decision: "",
     decisionTone: "zinc",
     tone: "green",

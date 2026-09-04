@@ -1317,6 +1317,7 @@ async function capabilitiesNow(inventory?: HostInventory | null): Promise<Capabi
     dismissals: settings.capabilityDismissals ?? {},
     bannerSeenAt: settings.blockedBannerSeenAt ?? null,
     folders: settings.folderConsent ?? {},
+    foldersAt: settings.folderConsentAt ?? {},
     canRequestInProcess: device?.hostProbes.canRequestInProcess() ?? false,
   });
 }
@@ -1404,6 +1405,7 @@ ipcMain.handle("capabilities:act", async (_e, rawKey: unknown) => {
               ...(settings.folderConsent ?? {}),
               [key]: result.status === "granted" ? "granted" : result.status === "denied" ? "denied" : "not_asked",
             },
+            folderConsentAt: { ...(settings.folderConsentAt ?? {}), [key]: new Date().toISOString() },
           });
         }
         // macOS refused without asking — a Don't Allow it remembers — and

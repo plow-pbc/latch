@@ -261,6 +261,10 @@ export interface CapabilitiesInput {
   /** The three folders, as this Mac last learned them (setup's touch, or
    *  a block); absent means macOS has never been asked. */
   folders?: Partial<Record<"files_desktop" | "files_documents" | "files_downloads", PermissionStatus>>;
+  /** When each `folders` entry was learned. A confirmed block newer than a
+   *  "granted" memo outranks it — the switch may have been turned off since —
+   *  and a memo with no time is outranked by any confirmed block. */
+  foldersAt?: Partial<Record<"files_desktop" | "files_documents" | "files_downloads", string>>;
   /** Whether Contacts and Calendars can be asked for in process (the addon
    *  is loaded). Without it their button is honest and points at the pane. */
   canRequestInProcess?: boolean;
@@ -335,11 +339,22 @@ export function capabilitiesView(input: CapabilitiesInput): CapabilitiesView {
     const folders: CapabilityRow[] = [];
     for (const folder of FOLDERS) {
       const learned = input.folders?.[folder] ?? null;
+      const learnedAt = input.foldersAt?.[folder] ?? null;
       const g = groups.get(folder);
+      // A confirmed refusal that postdates what this Mac learned is the
+      // newer fact: a remembered "granted" does not keep a row green over
+      // a switch the owner has since turned off. A memo with no time (from
+      // before times were kept) is outranked by any confirmed block, except
+      // a "not asked" memo, which a block cannot contradict.
+      const latest = g?.requests[0];
+      const refusedSince =
+        latest !== undefined &&
+        latest.confidence === "confirmed" &&
+        (learnedAt === null ? learned !== "not_asked" : Date.parse(latest.at) > Date.parse(learnedAt));
       const status: RowStatus =
-        learned === "granted"
+        learned === "granted" && !refusedSince
           ? "granted"
-          : learned === "denied" || (g !== undefined && g.requests[0]?.confidence === "confirmed" && learned !== "not_asked")
+          : learned === "denied" || refusedSince
             ? "denied"
             : "not_asked";
       // A folder macOS is known to have refused is answered without a dialog

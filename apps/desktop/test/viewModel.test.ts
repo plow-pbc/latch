@@ -74,6 +74,7 @@ describe("auditActivities (grouping)", () => {
     const a = acts[0]!;
     expect(a.title).toBe("run: df -h");
     expect(a.ts).toBe("2026-08-09T12:00:20Z"); // the date filter's key
+    expect(a.blockedAt).toBeNull();
     // Two cells: the decision, and what happened to the work.
     expect(a.decision).toBe("Allowed");
     expect(a.decisionTone).toBe("green");
@@ -198,6 +199,21 @@ describe("auditActivities (grouping)", () => {
     const acts = auditActivities(commandRun);
     expect(acts[0]!.decisionKind).toBe("allowed");
     expect(acts[0]!.statusKind).toBe("completed");
+  });
+
+  it("a denied_operation reads by its cause: the bound is Blocked, the app's own rules and a missing file merely Failed", () => {
+    const denied = (cause?: string) => auditActivities([
+      { event: "intent_received", intentId: "i1", request: "read file: /x", ts: "2026-08-09T12:00:00Z" },
+      { event: "intent_decision", intentId: "i1", decision: "allow_once", source: "prompt", ts: "2026-08-09T12:00:01Z" },
+      { event: "denied_operation", intentId: "i1", path: "/x", error: "nope", ...(cause ? { cause } : {}), ts: "2026-08-09T12:00:02Z" },
+    ])[0]!;
+    expect(denied("outside_approved_bound")).toMatchObject({ status: "Blocked · outside approved paths", statusKind: "blocked" });
+    // A line from before causes were recorded is the bound, which was all it could be.
+    expect(denied()).toMatchObject({ status: "Blocked · outside approved paths", statusKind: "blocked" });
+    expect(denied("not_found")).toMatchObject({ status: "Failed · not found", tone: "amber", statusKind: "failed" });
+    expect(denied("app_rule")).toMatchObject({ status: "Failed", statusKind: "failed" });
+    expect(denied("app_rule").timeline.at(-1)!.text).toMatch(/^Failed: \/x/);
+    expect(denied().timeline.at(-1)!.text).toMatch(/^Blocked: \/x/);
   });
 
   it("a sandbox block is Blocked in both the word and the Status filter", () => {
@@ -433,6 +449,9 @@ describe("auditActivities (grouping)", () => {
     // the Capabilities tab's "Show in Audit" relies on it — and so is the
     // timeline line, so what the detail pane shows is what the box finds.
     expect(run.permission).toBe("Full Disk Access");
+    // The block's own time, for the Capabilities tab's "Show in Audit" cutoff:
+    // the request began before a dismissal could, the refusal after.
+    expect(run.blockedAt).toBe("2026-08-18T12:00:03Z");
     expect(activityMatches(run, "full disk access")).toBe(true);
     expect(activityMatches(run, "quit and reopen")).toBe(true);
     expect(activityMatches(file, "Desktop folder")).toBe(true);

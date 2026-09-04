@@ -188,6 +188,11 @@ export interface Settings {
    * query API for these, so what it said last is all there is.
    */
   folderConsent?: Record<string, "granted" | "denied" | "not_asked">;
+  /** When each `folderConsent` entry was learned (ISO 8601), so a block
+   *  confirmed AFTER a "granted" memo can outrank it: the owner may have
+   *  turned the switch back off since. Absent for memos older than this
+   *  field, which a confirmed block then outranks outright. */
+  folderConsentAt?: Record<string, string>;
   /**
    * Capabilities rows the owner said "not now" to, keyed by row, with when.
    * A row stays off the tab's badge until a block NEWER than this lands.

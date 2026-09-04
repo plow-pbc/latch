@@ -210,7 +210,9 @@ async function refreshAudit(opts = {}) {
     const inCat =
       (decisionFilter === "any" || a.decisionKind === decisionFilter) &&
       (statusFilter === "any" || a.statusKind === statusFilter) &&
-      (cutoff === null || new Date(a.ts).getTime() >= cutoff);
+      // The Capabilities tab counts by the block's own time, so its cutoff
+      // keys on that; the presets key on when the row began.
+      (cutoff === null || new Date(dateFilter === "since" ? (a.blockedAt || a.ts) : a.ts).getTime() >= cutoff);
     // The same match viewModel.activityMatches makes: title, command, agent,
     // goal, the permission a block named, and the timeline lines.
     const inSearch =

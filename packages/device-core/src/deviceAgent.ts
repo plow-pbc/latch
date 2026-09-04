@@ -641,7 +641,16 @@ export class DeviceAgent {
     const hung = error instanceof FileOpHang;
     const outOfBounds = error instanceof FileOpsError && error.outOfBounds;
     if (!hung && (outOfBounds || parseNodeError(message).errno === null)) {
-      this.audit.record("denied_operation", { intentId, path: p, error: message });
+      // `cause` is what tells the audit view the bound from this app's own
+      // rules (the size limit, "not a file"): the one refusal is the
+      // policy's, the others are nobody's, and the row must not send the
+      // owner looking for a path they never approved.
+      this.audit.record("denied_operation", {
+        intentId,
+        path: p,
+        error: message,
+        cause: outOfBounds ? "outside_approved_bound" : "app_rule",
+      });
       return { status: "error", error: message };
     }
     const facts = await collectFacts(
