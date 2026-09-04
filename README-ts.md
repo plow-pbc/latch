@@ -218,8 +218,9 @@ the stable `device_id` and has no `ready` frame. The two request/response frame
 
 ## First-run login
 
-Download the app and walk through six stages: Welcome → Privacy → Verify phone
-→ Data & permissions → Connect your accounts → You're all set. Verification is an
+Download the app and walk through seven stages: Welcome → Privacy → Verify phone
+→ Data & permissions → Keep this Mac reachable → Connect your accounts → You're
+all set. Verification is an
 SMS activation: the app shows the exact message to send from the phone, then
 notices the verified text and links the Mac. Nothing is pasted out of a browser
 and the user never visits the portal.
