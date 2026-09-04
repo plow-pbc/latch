@@ -186,13 +186,14 @@ export interface Settings {
   /** The first-run setup has reached its final screen. Kept separately from
    * the credential because the data choice happens after sign-in. */
   setupComplete: boolean;
-  /** The first-run launch-at-login default has been applied (main.ts's
-   * `applyFirstRunLaunchAtLogin`). NOT a mirror of the OS's login-item bit —
-   * loginItem.ts explains why none exists — only the record that the one-time
-   * default ran, so it can never run twice and a user who turns the toggle off
-   * stays off. Deliberately survives sign-out: a re-setup is not a first run.
-   * A signed-in home from before this field existed is grandfathered on load —
-   * see `loadSettings` — for the same reason. */
+  /** The first-run availability default has been applied (onboarding.ts's
+   * `applyAvailabilityDefault` dep, on reaching the Availability screen). NOT
+   * a mirror of the OS's login-item bit — loginItem.ts explains why none
+   * exists — only the record that the one-time default ran, so it can never
+   * run twice and a user who turns a switch off stays off. Deliberately
+   * survives sign-out: a re-setup is not a first run. A signed-in home from
+   * before this field existed is grandfathered on load — see `loadSettings` —
+   * for the same reason. */
   launchAtLoginDefaulted: boolean;
 }
 

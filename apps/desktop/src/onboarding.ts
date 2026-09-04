@@ -28,6 +28,7 @@ export type OnboardingStep =
   | "waiting"
   | "verified"
   | "data"
+  | "availability"
   | "connect"
   | "done";
 
@@ -142,6 +143,15 @@ export interface OnboardingDeps {
   startRelay: () => Promise<void>;
   /** Names this Mac in the activation request. */
   deviceName: string;
+  /**
+   * Turn the availability defaults on — Keep Awake, and Launch at Login where
+   * the build can — and say whether Launch at Login is supported. Called once
+   * per home, on reaching the Availability screen, so the switches it shows
+   * are on because they ARE on. The marker (`Settings.launchAtLoginDefaulted`)
+   * is set only on `true`: a from-source run never burns a packaged install's
+   * first run.
+   */
+  applyAvailabilityDefault?: () => boolean;
   onChange?: () => void;
   now?: () => number;
   /** How the poll loop waits. Injectable so tests need no real timers. */
@@ -215,7 +225,14 @@ export class Onboarding {
     if (this.step === "data") {
       const settings = this.settings();
       settings.telemetryEnabled = this.telemetryEnabled;
+      if (!settings.launchAtLoginDefaulted && this.deps.applyAvailabilityDefault?.()) {
+        settings.launchAtLoginDefaulted = true;
+      }
       this.save(settings);
+      this.step = "availability";
+      return this.publish();
+    }
+    if (this.step === "availability") {
       this.step = "connect";
       return this.publish();
     }
@@ -234,7 +251,8 @@ export class Onboarding {
     if (this.busy) return this.state();
     if (this.step === "privacy") this.step = "welcome";
     else if (this.step === "activate" || this.step === "waiting") this.step = "privacy";
-    else if (this.step === "connect") this.step = "data";
+    else if (this.step === "availability") this.step = "data";
+    else if (this.step === "connect") this.step = "availability";
     else return this.state();
     return this.publish();
   }

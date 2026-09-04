@@ -261,7 +261,7 @@ describe("wizard steps around the existing verification flow", () => {
     onboarding.reset();
   });
 
-  it("offers Back from Connect but not from Verified, Data or Done", async () => {
+  it("offers Back from Availability and Connect but not from Verified, Data or Done", async () => {
     plow.redeems = [{ status: "verified", token: SESSION_TOKEN }];
     let notifications = 0;
     const onboarding = build(
@@ -284,9 +284,15 @@ describe("wizard steps around the existing verification flow", () => {
     expect((await onboarding.back()).step).toBe("data");
     expect(notifications).toBe(0);
 
-    expect((await onboarding.advance()).step).toBe("connect");
+    expect((await onboarding.advance()).step).toBe("availability");
     notifications = 0;
     expect((await onboarding.back()).step).toBe("data");
+    expect(notifications).toBe(1);
+
+    await onboarding.advance();
+    expect((await onboarding.advance()).step).toBe("connect");
+    notifications = 0;
+    expect((await onboarding.back()).step).toBe("availability");
     expect(notifications).toBe(1);
 
     await onboarding.advance();
@@ -335,15 +341,46 @@ describe("wizard steps around the existing verification flow", () => {
     expect(onboarding.setTelemetryEnabled(false).telemetryEnabled).toBe(false);
     expect(loadSettings(home)).toMatchObject({ telemetryEnabled: true, setupComplete: false });
 
-    expect((await onboarding.advance()).step).toBe("connect");
+    expect((await onboarding.advance()).step).toBe("availability");
     expect(loadSettings(home)).toMatchObject({ telemetryEnabled: false, setupComplete: false });
     // The persisted gate deliberately resumes incomplete setup at Data, so a
     // returning install still makes the telemetry choice before Connect.
     expect(build({}, false).state().step).toBe("data");
 
+    expect((await onboarding.advance()).step).toBe("connect");
     expect((await onboarding.advance()).step).toBe("done");
     expect(loadSettings(home)).toMatchObject({ telemetryEnabled: false, setupComplete: true });
     expect(build({}, false).state().step).toBe("done");
+  });
+
+  it("lands the availability default once, on reaching the screen, and only on a build that can", async () => {
+    const settings = loadSettings(home);
+    settings.relayCredential = DEVICE_TOKEN;
+    saveSettings(home, settings);
+    expect(loadSettings(home).launchAtLoginDefaulted).toBe(false);
+
+    // A from-source build applies what it can but never burns the marker.
+    let applied = 0;
+    let onboarding = build({ applyAvailabilityDefault: () => { applied += 1; return false; } }, false);
+    expect((await onboarding.advance()).step).toBe("availability");
+    expect(applied).toBe(1);
+    expect(loadSettings(home).launchAtLoginDefaulted).toBe(false);
+
+    // The packaged build burns it, and a second pass (Back, Continue) is silent.
+    applied = 0;
+    onboarding = build({ applyAvailabilityDefault: () => { applied += 1; return true; } }, false);
+    expect((await onboarding.advance()).step).toBe("availability");
+    expect(applied).toBe(1);
+    expect(loadSettings(home).launchAtLoginDefaulted).toBe(true);
+    await onboarding.back();
+    expect((await onboarding.advance()).step).toBe("availability");
+    expect(applied).toBe(1);
+
+    // Sign-out keeps the marker (a re-setup is not a first run), so a fresh
+    // machine over the same home never re-defaults a choice the user made.
+    onboarding = build({ applyAvailabilityDefault: () => { applied += 1; return true; } }, false);
+    await onboarding.advance();
+    expect(applied).toBe(1);
   });
 
 });
