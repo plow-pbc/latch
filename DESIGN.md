@@ -259,7 +259,14 @@ So a refusal is **diagnosed, never guessed** (`packages/device-core/src/hostGate
 - A run parked on a dialog is **left running**: the owner's click lets it
   finish, and killing it would make the click pointless. The agent is told
   within seconds (the app's own probe hangs), not at the reaper's fifteen
-  minutes; the reaper stays the ceiling.
+  minutes; the reaper stays the ceiling. A clean exit afterwards clears the
+  verdict: the click happened, and the run is completed, not blocked.
+- A file operation is the other way round: what parks is a read-only
+  **touch** of the path, and the read or write is attempted only once the
+  touch returns. Answered `blocked`, the operation never happens — a write
+  let through by an Allow clicked minutes later would land over whatever
+  the file held by then, under a result already given. The agent retries
+  after the owner answers.
 - Paths the diagnosis adds fold the home to `~`; the agent's own paths are
   echoed as given.
 
