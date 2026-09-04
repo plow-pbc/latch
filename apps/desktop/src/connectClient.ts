@@ -216,9 +216,10 @@ export class ConnectClient {
       else await this.deps.api.revokeApiKey(credential, id);
     } catch (error) {
       if (generation === this.generation) this.failAction(messageOf(error));
-      return this.state();
     }
     if (generation !== this.generation) return this.state();
+    // Re-read after a failure too: a response lost after Plow committed leaves
+    // the server changed, and the rows on screen must say what Plow holds.
     return this.refreshRoster();
   }
 
@@ -242,9 +243,10 @@ export class ConnectClient {
       await this.deps.api.renameApiKey(credential, id, name);
     } catch (error) {
       if (generation === this.generation) this.failAction(messageOf(error));
-      return this.state();
     }
     if (generation !== this.generation) return this.state();
+    // Re-read after a failure too: a response lost after Plow committed leaves
+    // the server changed, and the rows on screen must say what Plow holds.
     return this.refreshRoster();
   }
 

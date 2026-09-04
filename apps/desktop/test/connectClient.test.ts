@@ -576,17 +576,27 @@ describe("renaming a roster row", () => {
     expect(state.actionError).toBeNull();
   });
 
-  it("keeps the old name and says why when Plow refuses", async () => {
+  /**
+   * A failure says why, and the roster says what Plow holds — which differ
+   * when the response was lost after Plow committed: the name changed, and a
+   * screen still showing the old one under "did not finish" would be wrong
+   * about both.
+   */
+  it.each([
+    ["Plow refuses", "Kitchen agent"],
+    ["the response is lost after Plow committed", "Pantry"],
+  ])("says why when %s, and shows the name Plow holds", async (_when, held) => {
     signIn();
     plow.keys = [key({ id: 9, name: "Kitchen agent" })];
     plow.renameFails = new PlowApiError("http", "Plow returned 500.", 500);
     const client = build();
     await client.refreshRoster();
+    plow.keys = [key({ id: 9, name: held })];
 
     const state = await client.renameRosterRow(9, "Pantry");
 
     expect(state.actionError).toBe("Plow returned 500.");
-    expect(state.roster.mcp.map((row) => row.name)).toEqual(["Kitchen agent"]);
+    expect(state.roster.mcp.map((row) => row.name)).toEqual([held]);
   });
 
   it("refuses a row that is no longer on screen without calling Plow", async () => {
