@@ -152,6 +152,21 @@ describe("capabilitiesView", () => {
     expect(rows.find((r) => r.key === "automation:com.apple.MobileSMS")).toMatchObject({ count: 1, needsAttention: true, status: "denied", action: "open" });
     expect(rows.find((r) => r.key === "calendars")).toMatchObject({ count: 1, needsAttention: false, status: "granted" });
     expect(rows.find((r) => r.key === "accessibility")).toMatchObject({ count: 0, needsAttention: false, action: "grant" });
+    // The banner leads with the badge's number and counts only what those
+    // switches blocked: Calendars' hit is not in it either.
+    expect(view.banner).toEqual({
+      switches: 2,
+      count: 3,
+      summary: [{ title: "Full Disk Access", count: 2 }, { title: "Messages", count: 1 }],
+      last: "2026-09-02T06:12:00Z",
+      since: null,
+    });
+  });
+
+  it("the banner goes quiet with the badge: refusals of a switch granted since are history", () => {
+    const events = block("i1", "2026-09-02T06:12:00Z", "calendars");
+    expect(capabilitiesView(input({ events })).badge).toBe(0);
+    expect(capabilitiesView(input({ events })).banner).toBeNull();
   });
 
   it("a row's own dismissal clears that row's requests — line, badge and banner — until a newer block lands", () => {
@@ -163,7 +178,7 @@ describe("capabilitiesView", () => {
     expect(dismissed.sections[0]!.rows[0]).toMatchObject({ key: "full_disk_access", count: 0, needsAttention: false });
     // The other switch's request is untouched, so the badge and banner keep it.
     expect(dismissed.badge).toBe(1);
-    expect(dismissed.banner).toEqual({ count: 1, summary: [{ title: "Contacts", count: 1 }], last: "2026-09-02T06:20:00Z", since: null });
+    expect(dismissed.banner).toEqual({ switches: 1, count: 1, summary: [{ title: "Contacts", count: 1 }], last: "2026-09-02T06:20:00Z", since: null });
     // The row's own cutoff, for its "Show in Audit": the row's dismissal.
     expect(dismissed.sections[0]!.rows[0]!.since).toBe("2026-09-02T07:00:00Z");
     const newer = capabilitiesView(
@@ -184,6 +199,7 @@ describe("capabilitiesView", () => {
     ];
     const fresh = capabilitiesView(input({ events }));
     expect(fresh.banner).toEqual({
+      switches: 2,
       count: 3,
       summary: [{ title: "Full Disk Access", count: 2 }, { title: "Messages", count: 1 }],
       last: "2026-09-02T06:12:00Z",
@@ -192,7 +208,7 @@ describe("capabilitiesView", () => {
     const seen = capabilitiesView(input({ events, bannerSeenAt: "2026-09-02T05:00:00Z" }));
     // `since` is the dismissal the count starts from, so "Show in Audit"
     // can show exactly the requests the banner counted.
-    expect(seen.banner).toEqual({ count: 1, summary: [{ title: "Full Disk Access", count: 1 }], last: "2026-09-02T06:12:00Z", since: "2026-09-02T05:00:00Z" });
+    expect(seen.banner).toEqual({ switches: 1, count: 1, summary: [{ title: "Full Disk Access", count: 1 }], last: "2026-09-02T06:12:00Z", since: "2026-09-02T05:00:00Z" });
     expect(seen.sections[0]!.rows[0]!.since).toBe("2026-09-02T05:00:00Z");
     expect(capabilitiesView(input({ events, bannerSeenAt: "2026-09-02T07:00:00Z" })).banner).toBeNull();
   });
@@ -329,15 +345,16 @@ describe("the two button labels", () => {
 });
 
 describe("groups", () => {
-  it("Folders opens itself only when a folder inside has blocked requests; Automation starts closed", () => {
+  it("Folders and Automation open themselves only when a switch inside has blocked requests", () => {
     const quiet = capabilitiesView(input()).sections[0]!;
     expect(groupOf(quiet, "folders")).toMatchObject({ title: "Folders", total: 3, granted: 0, expandedByDefault: false });
     expect(groupOf(quiet, "automation")).toMatchObject({ title: "Automation", total: AUTOMATION_APPS.length, expandedByDefault: false });
     const hit = capabilitiesView(input({ events: block("i1", "2026-09-02T02:00:00Z", "files_downloads") })).sections[0]!;
     expect(groupOf(hit, "folders").expandedByDefault).toBe(true);
-    // A hit inside Automation still leaves it closed by default.
+    // A hit inside Automation opens it the same way, and Folders stays shut.
     const auto = capabilitiesView(input({ events: block("i2", "2026-09-02T02:00:00Z", "automation", { target: "Messages" }) })).sections[0]!;
-    expect(groupOf(auto, "automation").expandedByDefault).toBe(false);
+    expect(groupOf(auto, "automation").expandedByDefault).toBe(true);
+    expect(groupOf(auto, "folders").expandedByDefault).toBe(false);
   });
 
   it("counts how many of a group are granted", () => {
@@ -369,7 +386,7 @@ describe("dismissing the banner", () => {
     const again = capabilitiesView(
       input({ events: [...events, ...block("i4", "2026-09-02T06:00:00Z", "full_disk_access")], bannerSeenAt: "2026-09-02T05:00:00Z" }),
     );
-    expect(again.banner).toEqual({ count: 1, summary: [{ title: "Full Disk Access", count: 1 }], last: "2026-09-02T06:00:00Z", since: "2026-09-02T05:00:00Z" });
+    expect(again.banner).toEqual({ switches: 1, count: 1, summary: [{ title: "Full Disk Access", count: 1 }], last: "2026-09-02T06:00:00Z", since: "2026-09-02T05:00:00Z" });
     expect(again.badge).toBe(1);
     expect(again.sections[0]!.rows.find((r) => r.key === "full_disk_access")).toMatchObject({ count: 1, needsAttention: true });
   });

@@ -2185,6 +2185,7 @@ async function renderCapabilities() {
     if (v.banner) {
       const summary = v.banner.summary.map((s) => `${s.count} ${s.title}`).join(", ");
       const one = v.banner.count === 1;
+      const oneSwitch = v.banner.switches === 1;
       // Two actions, both buttons: dismissing resets the whole tab (not just
       // this strip), which is more than an × should carry.
       const showInAudit = el("button", { class: "btn small", text: "Show in Audit", attrs: { type: "button" } });
@@ -2194,8 +2195,10 @@ async function renderCapabilities() {
       nodes.push(el("div", { class: "cap-banner" }, [
         icon("warning", { class: "ico cap-banner-icon" }),
         el("div", {}, [
+          // Leads with the badge's number, then what those switches did.
           el("div", { class: "bt", text:
-            `${v.banner.count} new request${one ? " was" : "s were"} blocked, ` +
+            `${v.banner.switches} capabilit${oneSwitch ? "y needs" : "ies need"} to be allowed. ` +
+            `${oneSwitch ? "It" : "They"} blocked ${v.banner.count} request${one ? "" : "s"}, ` +
             `${one ? "" : "the latest "}${agoText(v.banner.last)}.` }),
           el("div", { class: "bs", text: `${summary}.` }),
         ]),
