@@ -149,8 +149,28 @@ export interface KeyInfo {
   is_active: boolean;
   last_seen_at: string | null;
   created_at: string | null;
-  agent_id: string | null;
+  assistant_uid: string | null;
+  /** `self_hosted`, a cloud provider such as `exe:hermes`, or null. */
+  assistant_provider: string | null;
   chat_uids: string[];
+}
+
+/** The provider of an assistant that runs on this Mac rather than in the cloud. */
+export const SELF_HOSTED_PROVIDER = "self_hosted";
+
+/**
+ * Is this assistant a VM Plow runs, rather than an activated Mac?
+ *
+ * The distinction is what removal costs. Only `DELETE /v1/assistants/{uid}`
+ * takes a cloud assistant down — revoking its credential leaves the machine
+ * running and unreachable. A `self_hosted` assistant has no machine, so
+ * revoking the credential is the whole removal.
+ *
+ * A null provider answers false: this picks a DESTRUCTIVE route, and a
+ * provider this build cannot name must not fall into the half that deletes.
+ */
+export function isCloudAssistant(provider: string | null): boolean {
+  return provider !== null && provider !== SELF_HOSTED_PROVIDER;
 }
 
 /** Parse Plow's UTC timestamp, whose wire form may omit the trailing offset. */
@@ -532,7 +552,7 @@ export class PlowApi {
   /** List the providers accepted by the cloud-agent create endpoint.
    * Provider ids are opaque server-owned values: preserve their bytes and order. */
   async listCloudAgentProviders(token: string): Promise<CloudAgentProvider[]> {
-    const data = await this.call<unknown>("GET", "/v1/agents/cloud/providers", { token })
+    const data = await this.call<unknown>("GET", "/v1/assistants/providers", { token })
       .catch((error) => {
         if (error instanceof PlowApiError && error.status === 503) {
           throw new PlowApiError(
