@@ -74,12 +74,13 @@ function deniedOperation(ev: ReturnType<typeof jv>): [string, BadgeTone, StatusK
 
 /**
  * A "parked on a dialog" verdict is provisional: the owner clicking Allow
- * lets the run finish, and a clean exit after it says they did. The block
- * stays in the log — it happened — but the row's outcome is the recovery.
+ * lets the run go on, and any exit of its own after it — clean or not —
+ * says they did; only a reaped run was still parked. The block stays in
+ * the log — it happened — but the row's outcome is the run's own end.
  */
 function recovered(gate: JSONValue, exit: JSONValue | null): boolean {
   if (exit === null || jv(gate).get("cause").str !== "prompt_waiting") return false;
-  return jv(exit).get("reaped").bool !== true && jv(exit).get("exit_code").int === 0;
+  return jv(exit).get("reaped").bool !== true;
 }
 
 /** System Settings' own words for a permission, for the badge. */

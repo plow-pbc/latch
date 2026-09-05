@@ -853,6 +853,14 @@ export class DeviceAgent {
         // failed run gets its diagnosis; the next poll carries it, and a poll
         // that arrives first waits (`pendingDiagnoses`). Nothing here awaits
         // it — the exit event is not a call — so it may not throw.
+        // Whatever was said about the run while it ran — "parked on a
+        // dialog" — was provisional, and the exit is the fact: the owner
+        // answered (or the dialog never mattered) and the run went on to
+        // its own end. Cleared first, whatever that end was; a poll must
+        // not call a finished command blocked on a dialog that is gone. A
+        // bad end is then diagnosed on its own terms, and only a gate is
+        // stored back.
+        this.runDiagnoses.delete(result.handle);
         if (diag && (reaped || exitCode !== 0)) {
           const pending = this.diagnoseRun(intentId, this.executor.output(result.handle, 0), diag)
             .then(() => {})
@@ -861,11 +869,6 @@ export class DeviceAgent {
             })
             .finally(() => this.pendingDiagnoses.delete(result.handle));
           this.pendingDiagnoses.set(result.handle, pending);
-        } else if (!reaped && exitCode === 0) {
-          // A clean exit after a "parked on a dialog" verdict means the owner
-          // answered it: the verdict was provisional and is now wrong, and a
-          // poll must not call a finished command blocked.
-          this.runDiagnoses.delete(result.handle);
         }
       });
       // A run still going with nothing said yet may be parked on a consent
