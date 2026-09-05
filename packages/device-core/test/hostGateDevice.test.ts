@@ -854,9 +854,13 @@ describe.skipIf(!ON_MAC)("a command this Mac refused", () => {
     fs.writeFileSync(x, "hello");
     const d = device(home, scriptedProbes());
     const executor = (d as unknown as { executor: Executor }).executor;
+    // W is alive for exactly as long as the test wants: it reads a FIFO
+    // nobody writes until the test opens the other end. No clock.
+    const gate = path.join(w, "gate.pipe");
+    execFileSync("/usr/bin/mkfifo", [gate]);
     const running = jv(
       await d.handleIntent(
-        intentFor(d, "run", [{ kind: "process.exec", argv: ["/bin/sleep", "0.8"], cwd: home }, { kind: "fs.write", paths: [w] }]),
+        intentFor(d, "run", [{ kind: "process.exec", argv: ["/bin/cat", gate], cwd: home }, { kind: "fs.write", paths: [w] }]),
         { wait_ms: 50 },
       ),
     );
@@ -866,7 +870,10 @@ describe.skipIf(!ON_MAC)("a command this Mac refused", () => {
     expect(refused.get("error").str).toMatch(/can still change this path/);
     expect(refused.get("retry").str).toBe("after_writer_stops");
     expect(jv(d.audit.entries().at(-1) as JSONValue).get("cause").str).toBe("busy");
-    // Over: the read goes through.
+    // Over — the FIFO's other end opens and closes, cat sees EOF — the read
+    // goes through.
+    const fd = fs.openSync(gate, "w");
+    fs.closeSync(fd);
     const gone = Date.now() + 5_000;
     while (executor.mutableRoots().includes(w) && Date.now() < gone) await new Promise((res) => setTimeout(res, 50));
     const read = jv(await d.handleIntent(intentFor(d, "read", [{ kind: "fs.read", paths: [x] }])));

@@ -136,11 +136,16 @@ describe.skipIf(AS_ROOT)("a file this Mac refused", () => {
   it("a path a running command can still write is refused with its retry hint on the wire", async () => {
     // The device's structured hint rides the error the agent sees, direct
     // and deferred alike — the whole point of a hint is that it is read.
+    // The writer is alive for exactly as long as the test wants: it reads
+    // a FIFO nobody writes until cleanup opens the other end. No clock.
     const { server, home } = makeServer(scriptedProbes());
     const w = path.join(home, "Plow", "w");
     fs.mkdirSync(w, { recursive: true });
     fs.writeFileSync(path.join(w, "x"), "x");
-    const running = await callTool(server, "plow_run_command", { argv: ["/bin/sleep", "1"], cwd: home, write_paths: [w], wait_ms: 50 }, AGENT);
+    const gate = path.join(w, "gate.pipe");
+    execFileSync("/usr/bin/mkfifo", [gate]);
+    cleanups.push(() => { const fd = fs.openSync(gate, "w"); fs.closeSync(fd); });
+    const running = await callTool(server, "plow_run_command", { argv: ["/bin/cat", gate], cwd: home, write_paths: [w], wait_ms: 50 }, AGENT);
     expect(running.payload.status).toBe("running");
     const { payload, isError } = await callTool(server, "plow_read_file", { path: path.join(w, "x") }, AGENT);
     expect(isError).toBe(true);
