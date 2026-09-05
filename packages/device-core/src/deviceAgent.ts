@@ -153,26 +153,16 @@ class FileOpHang extends Error {
   }
 }
 
-/**
- * Open `p` read-only and close it — or, when `p` is not there, its nearest
- * existing ancestor, which is the folder a creating write would touch. On a
- * TCC-guarded location this is what raises (or waits on) the consent
- * dialog, and it changes nothing. Any error is swallowed: the operation
- * that follows produces the real one.
- */
-async function touchForConsent(p: string): Promise<void> {
+/** `p` when it exists, else its nearest existing ancestor: the folder a
+ *  creating write would touch, and where its consent dialog belongs. */
+function existingAncestor(p: string): string {
   let target = p;
   while (!fs.existsSync(target)) {
     const parent = path.dirname(target);
-    if (parent === target) return;
+    if (parent === target) return target;
     target = parent;
   }
-  try {
-    const fd = await fs.promises.open(target, "r");
-    await fd.close();
-  } catch {
-    /* the operation will meet the same answer and say so */
-  }
+  return target;
 }
 
 /** A run's diagnosis, kept by handle so a later poll carries it too. */
@@ -606,28 +596,37 @@ export class DeviceAgent {
    * operation itself park on a consent dialog.
    *
    * What parks is a read-only touch of the path (or, for a file not there
-   * yet, of its nearest existing ancestor): an open that changes nothing.
-   * Past `FILE_OP_HANG_MS` the touch is reported as parked (`FileOpHang`)
-   * and the operation is NOT attempted — a write let through by an Allow
-   * clicked minutes later would land on a file the owner or another call
-   * may have changed since, over a result that was already `blocked`. The
-   * abandoned touch settles on its own and does nothing when it does. Only
-   * a touch that returns in time is followed by the operation, which then
-   * meets the consent, or the refusal, that the touch met. The touch's own
-   * error is ignored: the operation produces the real one.
+   * yet, of its nearest existing ancestor) — and the touch is the probe
+   * battery's own `openAsApp`: a CHILD process, killed on its timer. Not an
+   * open on this process's file-I/O pool, which has four threads; four
+   * parked opens would stall every read and write in the app, the audit
+   * log's among them, until somebody at the Mac clicked. TCC attributes
+   * the child to the app, so the dialog it raises is the app's, and the
+   * consent it meets is the operation's.
+   *
+   * Past `FILE_OP_HANG_MS` (or on the probe's own "hung") the touch is
+   * reported as parked (`FileOpHang`) and the operation is NOT attempted —
+   * a write let through by an Allow clicked minutes later would land on a
+   * file the owner or another call may have changed since, over a result
+   * that was already `blocked`. Only a touch that returns in time is
+   * followed by the operation, which then meets the consent, or the
+   * refusal, that the touch met. The touch's own errno is ignored: the
+   * operation produces the real one.
    */
   private async guardedFileOp<T>(p: string, op: () => Promise<T>): Promise<T> {
     if (guardedPrefix(p, this.ownerHome) === null) return op();
-    const touch = touchForConsent(p);
+    const touch = this.hostProbes.openAsApp(existingAncestor(p));
     let timer: ReturnType<typeof setTimeout> | undefined;
     const hang = new Promise<never>((_, reject) => {
       timer = setTimeout(() => reject(new FileOpHang()), this.fileOpHangMs);
       timer.unref?.();
     });
     try {
-      await Promise.race([touch, hang]);
+      if ((await Promise.race([touch, hang])) === "hung") throw new FileOpHang();
     } finally {
       clearTimeout(timer);
+      // A probe the timer beat is the child's to finish or be killed.
+      touch.catch(() => {});
     }
     return op();
   }
@@ -921,14 +920,13 @@ export class DeviceAgent {
     );
     const diagnosis = diagnose(facts);
     if (result.running && diagnosis.cause !== "prompt_waiting") return null;
-    // The probes took time; the run may have ended meanwhile. A clean exit
-    // says the dialog was answered (or never mattered), and a verdict
-    // stored now would outlive the exit handler's clearing of it and call
-    // a finished command blocked.
-    if (result.running) {
-      const now = this.executor.output(result.handle, 0);
-      if (!now.running && !now.reaped && now.exitCode === 0) return null;
-    }
+    // The probes took time; the run may have ended meanwhile, and then this
+    // provisional verdict is about a run that no longer exists. A clean
+    // exit says the dialog was answered (or never mattered); a bad one has
+    // the exit's own diagnosis, pending or stored, which knows more than a
+    // "parked" guess and must not be overwritten by it. Either way the
+    // ended run's verdict is the exit path's, not this one's.
+    if (result.running && !this.executor.output(result.handle, 0).running) return null;
     if (!result.running && !result.reaped && !isHostGate(diagnosis.cause)) return null;
     const diagnosed: DiagnosedRun = { diagnosis, facts };
     this.runDiagnoses.set(result.handle, diagnosed);
