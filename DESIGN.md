@@ -257,7 +257,10 @@ So a refusal is **diagnosed, never guessed** (`packages/device-core/src/hostGate
   lets it write (the run's own, or any run still going) is classified by
   name and never opened — a withheld probe under a guarded location leaves
   a `likely` verdict, and the exit-time diagnosis, or the reaper's, settles
-  it. What a run leaves running after it exits keeps its roots off limits
+  it. Those roots are read live, at the moment of deciding and again just
+  before the open, under an executor hold that lets no new run register
+  while a probe is out: a run asked to start then waits for the probe,
+  never the other way round. What a run leaves running after it exits keeps its roots off limits
   only while the executor still sees it; that residue is accepted; a command's
   output naming `~/Desktop/secret` gets none of that, because the open would
   raise the owner's consent dialog for something they never approved and

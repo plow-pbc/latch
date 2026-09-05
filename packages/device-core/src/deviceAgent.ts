@@ -667,7 +667,15 @@ export class DeviceAgent {
       return { status: "error", error: message };
     }
     const facts = await collectFacts(
-      { op, paths: [p], error: hung ? null : detail, ranSandboxed: false, hung, mutable: this.executor.mutableRoots() },
+      {
+        op,
+        paths: [p],
+        error: hung ? null : detail,
+        ranSandboxed: false,
+        hung,
+        mutable: () => this.executor.mutableRoots(),
+        hold: (fn) => this.executor.holdProbes(fn),
+      },
       this.hostProbes,
       this.ownerHome,
     );
@@ -939,8 +947,10 @@ export class DeviceAgent {
         cwd: diag.cwd ?? null,
         argv: diag.argv,
         // What this run — or anything it left behind — could rewrite, and
-        // what any other run still going could: never opened by name.
-        mutable: [...this.executor.writableRoots(result.handle), ...this.executor.mutableRoots()],
+        // what any other run still going could: never opened by name. Read
+        // live, under the executor's hold, so no run appears in between.
+        mutable: () => [...this.executor.writableRoots(result.handle), ...this.executor.mutableRoots()],
+        hold: (fn) => this.executor.holdProbes(fn),
         stderr: output,
         ranSandboxed: true,
         sandbox: (p) => this.executor.grants(result.handle, p),

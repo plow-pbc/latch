@@ -583,7 +583,7 @@ describe("collectFacts — the battery over scripted probes", () => {
         stderr: `cat: ${w}/a/x: Operation not permitted`,
         ranSandboxed: true,
         sandbox: () => ({ read: true, write: true }),
-        mutable: [w],
+        mutable: () => [w],
       },
       probes,
       HOME,
@@ -597,7 +597,7 @@ describe("collectFacts — the battery over scripted probes", () => {
     expect(probes.calls).toContain(`openAsApp ${target}`);
     // Under a guarded location, the withheld probe leaves a likely verdict.
     const guarded = await collectFacts(
-      { op: "exec", paths: [`${HOME}/Documents/out`], argv: ["/bin/sh", "-c", `echo x > ${HOME}/Documents/out`], stderr: `sh: ${HOME}/Documents/out: Operation not permitted`, ranSandboxed: true, sandbox: () => ({ read: true, write: true }), mutable: [`${HOME}/Documents/out`] },
+      { op: "exec", paths: [`${HOME}/Documents/out`], argv: ["/bin/sh", "-c", `echo x > ${HOME}/Documents/out`], stderr: `sh: ${HOME}/Documents/out: Operation not permitted`, ranSandboxed: true, sandbox: () => ({ read: true, write: true }), mutable: () => [`${HOME}/Documents/out`] },
       scriptedProbes({ fullDiskAccess: false }),
       HOME,
     );

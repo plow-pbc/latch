@@ -354,6 +354,29 @@ export class Executor {
   /** What each run's profile was built from, kept so a diagnosis can ask
    *  after the fact what that profile allowed (`grants`). */
   private profiles = new Map<string, Parameters<typeof sandboxGrants>[0]>();
+  /** Diagnoses' probes in flight (hostGate/diagnose.ts `hold`). A run
+   *  registers — its writable roots become known — only while none is: a
+   *  probe decides by the roots it can see at that moment, and a run that
+   *  appeared in between would be one it never saw, free to rewrite the
+   *  path the probe is about to open. Registration waits, never the probe:
+   *  a run is delayed by a probe's timeout at most. */
+  private probesInFlight = 0;
+  private probesIdle: Promise<void> = Promise.resolve();
+  private releaseProbes: () => void = () => {};
+
+  /** Run `fn` — a diagnosis's probes — with run registration held off. */
+  async holdProbes<T>(fn: () => Promise<T>): Promise<T> {
+    if (this.probesInFlight === 0) {
+      this.probesIdle = new Promise((resolve) => { this.releaseProbes = resolve; });
+    }
+    this.probesInFlight += 1;
+    try {
+      return await fn();
+    } finally {
+      this.probesInFlight -= 1;
+      if (this.probesInFlight === 0) this.releaseProbes();
+    }
+  }
 
   constructor(
     public readonly scratchRoot: string,
@@ -396,6 +419,8 @@ export class Executor {
     env?: Readonly<Record<string, string>>;
   }): Promise<ExecResult> {
     if (args.argv.length === 0) throw new ExecutorError("launch failed: empty argv");
+    // No new writer while a diagnosis is deciding what it may open.
+    while (this.probesInFlight > 0) await this.probesIdle;
     const handle = crypto.randomUUID().toUpperCase();
     const scratch = path.join(this.scratchRoot, handle);
     fs.mkdirSync(scratch, { recursive: true });

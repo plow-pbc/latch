@@ -161,11 +161,15 @@ export interface FailureContext {
    *  and the path it was about — the fields, never a sentence to parse. */
   error?: { code: string | null; syscall: string | null; path: string | null } | null;
   /** Roots a run that may still be alive could rewrite (its profile's
-   *  writable roots). A candidate under one is classified by name and never
-   *  opened: between deciding a path is approved and opening it, such a run
-   *  can replace it with a link elsewhere, and this process — outside any
-   *  seatbelt — would follow. */
-  mutable?: readonly string[];
+   *  writable roots), read LIVE, at the moment of deciding: a candidate under
+   *  one is classified by name and never opened, since between deciding a
+   *  path is approved and opening it, such a run can replace it with a link
+   *  elsewhere, and this process — outside any seatbelt — would follow. */
+  mutable?: () => readonly string[];
+  /** Runs the probes with no new run able to register meanwhile (the
+   *  executor's hold): the roots `mutable` reports are then the roots there
+   *  are, for as long as a probe is out. */
+  hold?: <T>(fn: () => Promise<T>) => Promise<T>;
   /** The command's captured output, for a run. */
   stderr?: string | null;
   ranSandboxed: boolean;
@@ -239,8 +243,10 @@ export async function collectFacts(
     ...(cwd !== null && cwd !== home ? [cwd] : []),
   ];
   const contained = (p: string) => declared.some((d) => isLexicallyWithin(p, d));
-  const mutable = (ctx.mutable ?? []).map((r) => path.resolve(expandHome(r, ownerHome)));
-  const rewritable = (p: string) => mutable.some((r) => isLexicallyWithin(p, r));
+  // Asked every time, not once: the roots are whatever runs are alive NOW.
+  const rewritable = (p: string) =>
+    (ctx.mutable?.() ?? []).some((r) => isLexicallyWithin(p, path.resolve(expandHome(r, ownerHome))));
+  const hold = ctx.hold ?? (<T>(fn: () => Promise<T>) => fn());
   const sourced: [string, Source][] = [
     ...(parsed.path ? [[parsed.path, "error"] as [string, Source]] : []),
     ...candidatePaths(ctx.stderr ? [ctx.stderr] : []).map((p): [string, Source] => [p, "error"]),
@@ -249,6 +255,24 @@ export async function collectFacts(
     ...ctx.paths.map((p): [string, Source] => [p, "declared"]),
     ...(ctx.cwd ? [[ctx.cwd, "declared"] as [string, Source]] : []),
   ];
+  type Examined = {
+    path: string;
+    source: Source;
+    /** Whether the disk was asked at all: only for an approved path. */
+    probed: boolean;
+    /** Approved, but not asked: a live run could rewrite it. */
+    withheld: boolean;
+    info: Awaited<ReturnType<HostProbes["inspect"]>> | undefined;
+    open: OpenOutcome | null;
+    gate: HostPermission | null;
+    sip: boolean;
+    grants: { read: boolean; write: boolean } | null;
+  };
+  // Everything from here to the probes' return runs under the executor's
+  // hold: no run can register in between, so a root checked by name before
+  // resolving, and again before opening, is checked against every writer
+  // that can exist while the probe is out.
+  const { candidates, bySource, examined } = await hold(async () => {
   const bySource = new Map<string, { source: Source; probe: boolean; withheld: boolean }>();
   for (const [raw, source] of sourced) {
     // Resolved by name first. A path inside the approval is then resolved
@@ -268,25 +292,16 @@ export async function collectFacts(
   }
   const candidates = [...bySource.keys()].slice(0, MAX_CANDIDATE_PATHS);
 
-  type Examined = {
-    path: string;
-    source: Source;
-    /** Whether the disk was asked at all: only for an approved path. */
-    probed: boolean;
-    /** Approved, but not asked: a live run could rewrite it. */
-    withheld: boolean;
-    info: Awaited<ReturnType<HostProbes["inspect"]>> | undefined;
-    open: OpenOutcome | null;
-    gate: HostPermission | null;
-    sip: boolean;
-    grants: { read: boolean; write: boolean } | null;
-  };
   // Every candidate at once: each open-as-app probe runs to its own timeout
   // when a dialog is holding it, and eight of those in sequence would outrun
   // the call budget this runs inside of.
   const examined: Examined[] = await Promise.all(
     candidates.map(async (path) => {
-      const { source, probe, withheld } = bySource.get(path)!;
+      const decided = bySource.get(path)!;
+      // The last look before the disk is touched.
+      const probe = decided.probe && !rewritable(path);
+      const withheld = decided.withheld || (decided.probe && !probe);
+      const { source } = decided;
       const info = probe ? await probes.inspect(path) : undefined;
       // A path that is not there cannot be opened, but CREATING it is what a
       // refused write was trying to do, and that is the parent's business: a
@@ -306,6 +321,8 @@ export async function collectFacts(
       };
     }),
   );
+  return { candidates, bySource, examined };
+  });
 
   // The path of interest, by how much each fact says: one the app itself
   // could not open; else, on EPERM, one carrying the locked flag, which is
