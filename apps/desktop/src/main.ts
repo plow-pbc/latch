@@ -2408,7 +2408,8 @@ function noteHostGateBlock(fields: { [k: string]: unknown }): void {
   // switch the owner should actually go and flip.
   if (fields.confidence !== "confirmed") return;
   const handle = typeof fields.handle === "string" ? fields.handle : null;
-  hostGateAttention = { permission, ownerAction, cause, handle };
+  const attention = { permission, ownerAction, cause, handle };
+  hostGateAttention = attention;
   refreshTray();
   const key = permission ?? cause;
   if (hostGateNotified.has(key) || !Notification.isSupported()) return;
@@ -2421,9 +2422,11 @@ function noteHostGateBlock(fields: { [k: string]: unknown }): void {
   });
   // The click navigates from THIS block, not from whatever the attention
   // holds by then: a newer block may have replaced it, and a clearing may
-  // have taken it down. The tray item, which always shows the current
-  // attention, keeps reading the global.
-  notification.on("click", () => showCapabilitiesForHostGate({ permission, handle }));
+  // have taken it down. The object itself is the identity — a file op's
+  // block has no handle, and two of those must not pass for one. The tray
+  // item, which always shows the current attention, keeps reading the
+  // global.
+  notification.on("click", () => showCapabilitiesForHostGate(attention));
   notification.show();
 }
 
@@ -2444,12 +2447,12 @@ function clearHostGateAttention(fields: { [k: string]: unknown }): void {
  * lists switches), so it lands on the Audit tab's Blocked view, where the
  * row carries the sentence that fixes it.
  */
-function showCapabilitiesForHostGate(block?: { permission: string | null; handle: string | null }): void {
+function showCapabilitiesForHostGate(block?: NonNullable<typeof hostGateAttention>): void {
   const permission = block ? block.permission : (hostGateAttention?.permission ?? null);
   // Opening the tray item clears the attention it shows; opening an older
-  // notification clears it only if it is still about that block, never a
+  // notification clears it only if it is still that very block, never a
   // newer one the owner has not seen.
-  if (!block || hostGateAttention?.handle === block.handle) hostGateAttention = null;
+  if (!block || hostGateAttention === block) hostGateAttention = null;
   refreshTray();
   gate.sync();
   const send = () => mainWindow?.webContents.send(permission ? "ui:showCapabilities" : "ui:showAuditBlocked");

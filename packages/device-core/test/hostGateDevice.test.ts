@@ -756,6 +756,56 @@ describe.skipIf(!ON_MAC)("a command this Mac refused", () => {
     expect(probes.calls.filter((c) => c.includes("Desktop") || c.includes("/Plow/w"))).toEqual([]);
   });
 
+  it("a run approved to write a path being diagnosed cannot start until the probe is back", async () => {
+    // Run A, approved to read ~/Documents/r/x, fails with a refusal there;
+    // its diagnosis probes x — slowly. Run B, approved to write that folder, is
+    // asked to start while that probe is out. Registered then, B could
+    // make x a link to the Desktop before the probe's open reached it, and
+    // the roots the probe checked would not have said so. So B starts only
+    // once the probe is back.
+    const home = tempDir();
+    const r = path.join(home, "Documents", "r");
+    fs.mkdirSync(r, { recursive: true });
+    const x = path.join(r, "x");
+    fs.writeFileSync(x, "x");
+    let probeBackAt = 0;
+    const inner = scriptedProbes({ openAsApp: { [x]: "EPERM" }, fullDiskAccess: false });
+    const slow: HostProbes = {
+      ...inner,
+      openAsApp: async (p) => {
+        await new Promise((res) => setTimeout(res, 600));
+        probeBackAt = Date.now();
+        return inner.openAsApp(p);
+      },
+    };
+    const d = device(home, slow);
+    const a = d.handleIntent(
+      intentFor(d, "run", [
+        { kind: "process.exec", argv: ["/bin/sh", "-c", `echo "cat: ${x}: Operation not permitted" >&2; exit 1`], cwd: home },
+        { kind: "fs.read", paths: [x] },
+      ]),
+      { wait_ms: 5_000 },
+    );
+    // Let A exit and its diagnosis reach the probe, then ask for B.
+    await new Promise((res) => setTimeout(res, 250));
+    const askedAt = Date.now();
+    const b = jv(
+      await d.handleIntent(
+        intentFor(d, "run", [{ kind: "process.exec", argv: ["/bin/echo", "b"], cwd: home }, { kind: "fs.write", paths: [r] }]),
+        { wait_ms: 2_000 },
+      ),
+    );
+    const startedAt = Date.now();
+    expect(b.get("status").str).toBe("completed");
+    // B was held until the probe returned, not started while it was out.
+    expect(probeBackAt).toBeGreaterThan(askedAt);
+    expect(startedAt).toBeGreaterThanOrEqual(probeBackAt);
+    const ra = jv(await a);
+    expect(ra.get("status").str).toBe("blocked");
+    expect(ra.get("diagnosis").get("cause").str).toBe("macos_permission");
+    expect(inner.calls).toContain(`openAsApp ${x}`);
+  });
+
   it("a silent run that is simply running is left alone", async () => {
     const home = tempDir();
     const probes = scriptedProbes();
