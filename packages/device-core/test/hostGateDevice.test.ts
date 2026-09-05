@@ -832,13 +832,76 @@ describe.skipIf(!ON_MAC)("a command this Mac refused", () => {
     expect(order).toEqual(["probe in", "b asked", "probe out", "b ran"]);
   });
 
+  it("a file operation on a path a live command can write is refused before the disk is touched, and a writer cannot start during one", async () => {
+    // Run W, approved to write ~/Plow/w, is alive (it sleeps). A read of
+    // ~/Plow/w/x, approved on its own, is refused up front: the read would
+    // resolve the name and then open it, and W could point it elsewhere in
+    // between. Once W is over the same read goes through. And while a read
+    // is in flight — its touch out — a writer asked to start waits for it.
+    const home = tempDir();
+    const w = path.join(home, "Plow", "w");
+    fs.mkdirSync(w, { recursive: true });
+    const x = path.join(w, "x");
+    fs.writeFileSync(x, "hello");
+    const d = device(home, scriptedProbes());
+    const executor = (d as unknown as { executor: Executor }).executor;
+    const running = jv(
+      await d.handleIntent(
+        intentFor(d, "run", [{ kind: "process.exec", argv: ["/bin/sleep", "0.8"], cwd: home }, { kind: "fs.write", paths: [w] }]),
+        { wait_ms: 50 },
+      ),
+    );
+    expect(running.get("status").str).toBe("running");
+    const refused = jv(await d.handleIntent(intentFor(d, "read", [{ kind: "fs.read", paths: [x] }])));
+    expect(refused.get("status").str).toBe("error");
+    expect(refused.get("error").str).toMatch(/still running can change this path/);
+    expect(refused.get("retry").str).toBe("after_command_finishes");
+    expect(jv(d.audit.entries().at(-1) as JSONValue).get("cause").str).toBe("busy");
+    // Over: the read goes through.
+    const gone = Date.now() + 5_000;
+    while (executor.mutableRoots().includes(w) && Date.now() < gone) await new Promise((res) => setTimeout(res, 50));
+    const read = jv(await d.handleIntent(intentFor(d, "read", [{ kind: "fs.read", paths: [x] }])));
+    expect(read.get("status").str).toBe("completed");
+
+    // A guarded read in flight holds a writer off. The touch is gated.
+    fs.mkdirSync(path.join(home, "Documents"));
+    const doc = path.join(home, "Documents", "note.txt");
+    fs.writeFileSync(doc, "note");
+    const order: string[] = [];
+    let touchIn: () => void = () => {};
+    const entered = new Promise<void>((res) => { touchIn = res; });
+    let letOut: () => void = () => {};
+    const release = new Promise<void>((res) => { letOut = res; });
+    const gated: HostProbes = {
+      ...scriptedProbes(),
+      openAsApp: async (p) => {
+        if (p === doc) { order.push("touch in"); touchIn(); await release; order.push("touch out"); }
+        return "ok";
+      },
+    };
+    (d as unknown as { hostProbes: HostProbes }).hostProbes = gated;
+    const reading = d.handleIntent(intentFor(d, "read", [{ kind: "fs.read", paths: [doc] }]))
+      .then((r) => { order.push("read done"); return r; });
+    await entered;
+    order.push("writer asked");
+    const writer = d.handleIntent(
+      intentFor(d, "run", [{ kind: "process.exec", argv: ["/bin/echo", "w"], cwd: home }, { kind: "fs.write", paths: [path.join(home, "Documents")] }]),
+      { wait_ms: 2_000 },
+    ).then((r) => { order.push("writer ran"); return r; });
+    await new Promise((res) => setTimeout(res, 50));
+    expect(order).toEqual(["touch in", "writer asked"]);
+    letOut();
+    expect(jv(await reading).get("status").str).toBe("completed");
+    expect(jv(await writer).get("status").str).toBe("completed");
+    expect(order).toEqual(["touch in", "writer asked", "touch out", "read done", "writer ran"]);
+  });
+
   it("a job a finished command left behind keeps its roots off limits to a later diagnosis", async () => {
     // Run W, approved to write ~/Documents/w, backgrounds a loop that keeps
     // flipping w/a between a folder and a link to ~/Desktop, and exits at
     // once. Its command is over; its process group is not. A file read of
-    // w/a/x, approved on its own, then fails and is diagnosed — and the
-    // survivor's root is still one the battery will not resolve or open by
-    // name, so nothing on the Desktop is touched or named.
+    // w/a/x, approved on its own, is refused while the job lives, and
+    // nothing under w — nor on the Desktop it may point at — is opened.
     const home = tempDir();
     fs.mkdirSync(path.join(home, "Desktop"));
     const w = path.join(home, "Documents", "w");
@@ -859,23 +922,14 @@ describe.skipIf(!ON_MAC)("a command this Mac refused", () => {
     );
     expect(started.get("status").str).toBe("completed");
     expect(started.get("exit_code").int).toBe(0);
-    // The command is over; the root stays mutable while the job lives.
+    // The command is over; the root stays mutable while the job lives —
+    // and a read under it is refused before the disk is touched: neither
+    // the touch nor the read itself opens a name the job can redirect.
     expect(executor.mutableRoots()).toContain(w);
-    // Read w/a/x until the read fails the way that is diagnosed (missing:
-    // the loop never recreates x); a read that resolves through the link
-    // is refused as out of bounds before any battery runs, which is fine too.
-    let diagnosed: ReturnType<typeof jv> | null = null;
-    const deadline = Date.now() + 3_000;
-    while (diagnosed === null && Date.now() < deadline) {
-      const r = jv(await d.handleIntent(intentFor(d, "read", [{ kind: "fs.read", paths: [path.join(w, "a", "x")] }])));
-      if (!r.get("diagnosis").isNull) diagnosed = r;
-    }
-    expect(diagnosed).not.toBeNull();
+    const refused = jv(await d.handleIntent(intentFor(d, "read", [{ kind: "fs.read", paths: [path.join(w, "a", "x")] }])));
+    expect(refused.get("status").str).toBe("error");
+    expect(refused.get("retry").str).toBe("after_command_finishes");
     expect(probes.calls.filter((c) => c.includes("Desktop") || c.includes("/Documents/w"))).toEqual([]);
-    expect(diagnosed!.get("probes").get("probe_withheld").bool).toBe(true);
-    const examined = (diagnosed!.get("probes").get("paths_examined").arr ?? []).map(String);
-    expect(examined).not.toContain("~/Desktop/x");
-    expect(examined).toContain("~/Documents/w/a/x");
     // Once the job is gone, so is the hold on its root.
     const gone = Date.now() + 8_000;
     while (executor.mutableRoots().includes(w) && Date.now() < gone) await new Promise((res) => setTimeout(res, 100));

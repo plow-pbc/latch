@@ -66,6 +66,7 @@ function deniedOperation(ev: ReturnType<typeof jv>): [string, BadgeTone, StatusK
   switch (ev.get("cause").str ?? "outside_approved_bound") {
     case "outside_approved_bound": return ["Blocked · outside approved paths", "red", "blocked"];
     case "not_found": return ["Failed · not found", "amber", "failed"];
+    case "busy": return ["Failed · path in use by a command", "amber", "failed"];
     // This app's own rules (the size limit, "not a file"): the timeline line
     // carries the sentence.
     default: return ["Failed", "amber", "failed"];
