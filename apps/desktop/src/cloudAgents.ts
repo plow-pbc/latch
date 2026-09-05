@@ -1,4 +1,4 @@
-import { PlowApi, PlowApiError, REQUEST_TIMEOUT_MS } from "./plowApi.js";
+import { isCloudAssistant, PlowApi, PlowApiError, REQUEST_TIMEOUT_MS } from "./plowApi.js";
 
 export const CLOUD_AGENT_POLL_INTERVAL_MS = 2_000;
 const CLOUD_AGENT_POLL_RETRY_WINDOW_MS = 5 * 60_000;
@@ -85,8 +85,7 @@ export class CloudAgentsClient {
     deviceCredential: string,
     request: CreateCloudAgentRequest,
   ): Promise<CloudAgentResource> {
-    const path = "/v1/agents/cloud";
-    const response = await this.api.request("POST", path, {
+    const response = await this.api.request("POST", "/v1/assistants", {
       token: deviceCredential,
       body: {
         line_uid: request.lineUid,
@@ -105,14 +104,10 @@ export class CloudAgentsClient {
     agentId: string,
     lineUid: string,
   ): Promise<CloudAgentResource> {
-    const path = `/v1/agents/cloud/${encodeURIComponent(agentId)}/line`;
     const response = await this.api.request(
       "PUT",
-      path,
-      {
-        token: deviceCredential,
-        body: { line_uid: lineUid },
-      },
+      `/v1/assistants/${encodeURIComponent(agentId)}/line`,
+      { token: deviceCredential, body: { line_uid: lineUid } },
     );
     if (!response.ok) {
       await throwCloudCallError(response);
@@ -120,28 +115,33 @@ export class CloudAgentsClient {
     return this.resourceFor(response, deviceCredential);
   }
 
+  /**
+   * The account's cloud agents, from the slot per pool line the API answers with.
+   *
+   * Two halves are dropped for the same reason — neither is an agent this
+   * screen can act on. A slot with no assistant is a free line, and a
+   * `self_hosted` one is an activated Mac (`isCloudAssistant`).
+   */
   async list(deviceCredential: string): Promise<CloudAgentResource[]> {
-    const response = await this.api.request("GET", "/v1/agents/cloud", {
+    const response = await this.api.request("GET", "/v1/assistants", {
       token: deviceCredential,
     });
     if (!response.ok) throw errorFor(response.status);
 
     const decoded = await decodeJson(response);
-    const data = Array.isArray(decoded)
-      ? decoded
-      : isRecord(decoded) && Array.isArray(decoded.data)
-        ? decoded.data
-        : null;
-    if (!data) {
-      throw invalidResponse(response.status);
-    }
-    return data.map((entry) => parseResource(entry, deviceCredential, response.status));
+    if (!Array.isArray(decoded)) throw invalidResponse(response.status);
+    return decoded.flatMap((slot) => {
+      if (!isRecord(slot) || slot.assistant === undefined) throw invalidResponse(response.status);
+      if (slot.assistant === null) return [];
+      const agent = parseResource(slot.assistant, deviceCredential, response.status);
+      return isCloudAssistant(agent.provider) ? [agent] : [];
+    });
   }
 
   async delete(deviceCredential: string, agentId: string): Promise<void> {
     const response = await this.api.request(
       "DELETE",
-      `/v1/agents/cloud/${encodeURIComponent(agentId)}`,
+      `/v1/assistants/${encodeURIComponent(agentId)}`,
       { token: deviceCredential },
     );
     // Delete is retry-safe from the app's perspective: a record already gone
@@ -170,7 +170,7 @@ export class CloudAgentsClient {
       try {
         const response = await this.api.request(
           "GET",
-          `/v1/agents/cloud/${encodeURIComponent(current.agentId)}`,
+          `/v1/assistants/${encodeURIComponent(current.agentId)}`,
           {
             token: deviceCredential,
             signal,
@@ -229,7 +229,7 @@ function parseResource(
 ): CloudAgentResource {
   if (
     !isRecord(decoded) ||
-    typeof decoded.agent_id !== "string" ||
+    typeof decoded.uid !== "string" ||
     (decoded.status !== undefined && decoded.status !== null && typeof decoded.status !== "string") ||
     (decoded.created_at !== undefined && typeof decoded.created_at !== "string")
   ) {
@@ -242,7 +242,7 @@ function parseResource(
   const optionalString = (value: unknown): string | null =>
     typeof value === "string" ? value : null;
   const resource: CloudAgentResource = {
-    agentId: decoded.agent_id,
+    agentId: decoded.uid,
     chatUids,
     url: optionalString(decoded.url),
     provider: optionalString(decoded.provider),
@@ -265,21 +265,14 @@ function parseResource(
 }
 
 /**
- * The chat grant, from either shape the API has served: `chat_uids` is the
- * multi-chat grant, and a lone `chat_uid` is the single-chat form that
- * preceded it. The grant is informational for line-scoped agents, so an
- * omitted or empty grant is an empty list. `null` means a present grant was
- * malformed.
+ * The assistant's lifecycle-anchor chats. Empty is a real answer — a
+ * self-hosted assistant anchors none — and `null` means the field was missing
+ * or malformed.
  */
 function readChatUids(decoded: Record<string, unknown>): string[] | null {
   const many = decoded.chat_uids;
-  if (Array.isArray(many)) {
-    if (!many.every((uid) => typeof uid === "string")) return null;
-    return many as string[];
-  }
-  if (many !== undefined) return null;
-  if (typeof decoded.chat_uid === "string") return [decoded.chat_uid];
-  return [];
+  if (!Array.isArray(many) || !many.every((uid) => typeof uid === "string")) return null;
+  return many as string[];
 }
 
 function errorFor(status: number): PlowApiError {

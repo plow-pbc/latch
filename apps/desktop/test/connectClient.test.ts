@@ -14,6 +14,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { ConnectClient } from "../src/connectClient.js";
 import { KeyInfo, PlowApi, PlowApiError } from "../src/plowApi.js";
 import { Deferred, deferred } from "./deferred.js";
+import { keyInfo, keyPrefixOf } from "./keyInfo.js";
 import { loadSettings, saveSettings } from "../src/settings.js";
 
 const DEVICE_TOKEN = "plow_DEVICEtok_secret";
@@ -24,7 +25,6 @@ const DEVICE_TOKEN = "plow_DEVICEtok_secret";
  * made the old `startsWith` match look right here while it never matched in
  * production.
  */
-const keyPrefixOf = (token: string) => token.slice(5, 13);
 const CLIENT_TOKEN = "plow_CLIENTtok_shown_once";
 const MCP_URL = "http://localhost:18804/v1/relay/devices/u_123/mcp";
 
@@ -437,21 +437,8 @@ describe("reading the state is a read", () => {
 });
 
 /** One active credential, as `GET /v1/api-keys` returns it. */
-function key(overrides: Partial<KeyInfo> = {}): KeyInfo {
-  return {
-    id: 1,
-    key_prefix: keyPrefixOf("plow_sk_someone_elses_credential"),
-    name: "Kitchen agent",
-    scopes: ["relay:call"],
-    tokens_used: 0,
-    is_active: true,
-    last_seen_at: "2026-08-25T10:00:00Z",
-    created_at: "2026-08-20T10:00:00Z",
-    agent_id: null,
-    chat_uids: [],
-    ...overrides,
-  };
-}
+const key = (overrides: Partial<KeyInfo> = {}): KeyInfo =>
+  keyInfo({ key_prefix: keyPrefixOf("plow_sk_someone_elses_credential"), ...overrides });
 
 describe("removing a roster row", () => {
   /**
@@ -466,7 +453,7 @@ describe("removing a roster row", () => {
   it.each([
     [
       "a cloud agent",
-      () => key({ id: 7, agent_id: "agent_7" }),
+      () => key({ id: 7, assistant_uid: "agent_7", assistant_provider: "exe:hermes" }),
       { revoked: [] as number[], deleted: ["agent_7"], signOuts: 0 },
     ],
     [
@@ -476,7 +463,7 @@ describe("removing a roster row", () => {
     ],
     [
       "an ordinary credential",
-      () => key({ id: 8, agent_id: null }),
+      () => key({ id: 8, assistant_uid: null }),
       { revoked: [8], deleted: [] as string[], signOuts: 0 },
     ],
   ])("removes %s down its own route and no other", async (_what, row, expected) => {
@@ -503,7 +490,7 @@ describe("removing a roster row", () => {
    */
   it.each([
     ["failure", (d: Deferred<KeyInfo[]>) => d.reject(new PlowApiError("http", "Plow returned 500.", 500))],
-    ["success", (d: Deferred<KeyInfo[]>) => d.resolve([key({ id: 8, agent_id: null })])],
+    ["success", (d: Deferred<KeyInfo[]>) => d.resolve([key({ id: 8, assistant_uid: null })])],
   ])("a late %s never displaces the newer roster read", async (_ending, finish) => {
     signIn();
     const stale = deferred<KeyInfo[]>();
@@ -553,10 +540,10 @@ describe("removing a roster row", () => {
     ["the response is lost after Plow committed", [] as number[]],
   ])("says why when %s, and shows the rows Plow holds", async (_when, held) => {
     signIn();
-    plow.keys = [key({ id: 9, agent_id: "agent_9" })];
+    plow.keys = [key({ id: 9, assistant_uid: "agent_9", assistant_provider: "exe:hermes" })];
     const client = build({ deleteFails: true });
     await client.refreshRoster();
-    plow.keys = held.map((id) => key({ id, agent_id: "agent_9" }));
+    plow.keys = held.map((id) => key({ id, assistant_uid: "agent_9", assistant_provider: "exe:hermes" }));
 
     const state = await client.removeRosterRow(9);
 
@@ -567,8 +554,8 @@ describe("removing a roster row", () => {
 
 describe("renaming a roster row", () => {
   it.each([
-    ["a cloud agent", () => key({ id: 7, agent_id: "agent_7" })],
-    ["an MCP client", () => key({ id: 8, agent_id: null })],
+    ["a cloud agent", () => key({ id: 7, assistant_uid: "agent_7", assistant_provider: "exe:hermes" })],
+    ["an MCP client", () => key({ id: 8, assistant_uid: null })],
     ["this Mac", () => key({ id: 4, key_prefix: keyPrefixOf(DEVICE_TOKEN) })],
   ])("renames %s through its credential and re-reads the roster", async (_what, row) => {
     signIn();

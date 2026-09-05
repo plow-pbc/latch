@@ -19,6 +19,7 @@ import {
   PlowApiError,
   ProvisionedActivationRedeem,
 } from "../src/plowApi.js";
+import { keyInfo } from "./keyInfo.js";
 import { loadSettings, saveSettings } from "../src/settings.js";
 import { deferred } from "./deferred.js";
 
@@ -64,21 +65,15 @@ function chat(overrides: Partial<CloudChatOption> = {}): CloudChatOption {
   };
 }
 
-function activationSession(overrides: Partial<KeyInfo> = {}): KeyInfo {
-  return {
+const activationSession = (overrides: Partial<KeyInfo> = {}): KeyInfo =>
+  keyInfo({
     id: 42,
-    key_prefix: null,
     name: null,
     scopes: ["*:*"],
-    tokens_used: 0,
-    is_active: true,
     last_seen_at: null,
     created_at: "2026-08-30T21:59:02.464862",
-    agent_id: null,
-    chat_uids: [],
     ...overrides,
-  };
-}
+  });
 
 function thisMacSession(): KeyInfo {
   return activationSession({
@@ -738,7 +733,7 @@ describe("CloudAgentState new agent flow", () => {
 
   it.each([
     ["no matching sessions", [], { outcome: "no_match" }],
-    ["an agent-owned key", [activationSession({ agent_id: "agent_42" })], { outcome: "no_match" }],
+    ["an assistant-owned key", [activationSession({ assistant_uid: "agent_42" })], { outcome: "no_match" }],
     ["a named key", [activationSession({ name: "Deliberate Admin key" })], { outcome: "no_match" }],
     ["a non-wildcard key", [activationSession({ scopes: ["relay:*"] })], { outcome: "no_match" }],
     ["an already-used key", [activationSession({ last_seen_at: "2026-08-30T21:59:03.000000" })], { outcome: "no_match" }],

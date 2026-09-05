@@ -545,7 +545,7 @@ describe("PlowApi", () => {
     ]);
 
     expect(calls).toHaveLength(1);
-    expect(calls[0].url).toBe("https://api.plow.co/v1/agents/cloud/providers");
+    expect(calls[0].url).toBe("https://api.plow.co/v1/assistants/providers");
     expect(calls[0].url).not.toContain(credential);
     expect(calls[0].init.method).toBe("GET");
     expect(calls[0].init.body).toBeUndefined();
@@ -672,17 +672,26 @@ describe("PlowApi", () => {
         is_active: true,
         last_seen_at: "2026-08-17T12:00:00+00:00",
         created_at: "2026-08-16T12:00:00+00:00",
-        agent_id: "agent_123",
+        assistant_uid: "agent_123",
+        assistant_provider: "exe:hermes",
         chat_uids: ["cht_123"],
       },
     ];
+    // An API predating the assistant contract sends neither field —
+    // `JSON.stringify` drops the undefined pair, so this is that row exactly.
+    const legacy = { ...keys[0], id: 18, assistant_uid: undefined, assistant_provider: undefined };
     const { calls, fetchImpl } = recordingFetch([
-      { status: 200, body: keys },
+      { status: 200, body: [...keys, legacy] },
       { status: 200, body: { status: "revoked", id: 17 } },
     ]);
     const api = new PlowApi("https://api.plow.co", fetchImpl);
 
-    await expect(api.listApiKeys(credential)).resolves.toEqual(keys);
+    // Absent reads as null. Left undefined it would pass every null test and
+    // file the row as a cloud agent whose Remove deletes nothing.
+    await expect(api.listApiKeys(credential)).resolves.toEqual([
+      ...keys,
+      { ...legacy, assistant_uid: null, assistant_provider: null },
+    ]);
     await expect(api.revokeApiKey(credential, 17)).resolves.toEqual({
       status: "revoked",
       id: 17,

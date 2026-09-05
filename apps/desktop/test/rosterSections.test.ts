@@ -1,11 +1,12 @@
 /**
  * The classification decides which removal call a row gets, and prod returns a
- * null `agent_id` while no agents are live — so the branch that matters is the
- * one everyday testing never enters.
+ * null `assistant_uid` while no assistants are live — so the branch that
+ * matters is the one everyday testing never enters.
  */
 import { describe, expect, it } from "vitest";
-import { sectionRoster, removalRouteFor } from "../src/rosterSections.js";
+import { sectionRoster } from "../src/rosterSections.js";
 import type { KeyInfo } from "../src/plowApi.js";
+import { keyInfo, keyPrefixOf } from "./keyInfo.js";
 
 /** A device credential of the shape plow issues. */
 const DEVICE_CREDENTIAL = "plow_sk_abc123_and_the_rest_of_it";
@@ -18,23 +19,8 @@ const DEVICE_CREDENTIAL = "plow_sk_abc123_and_the_rest_of_it";
  * one had the scheme on the front, which made `startsWith` matching look
  * correct in tests while it could never match in production.
  */
-const keyPrefixOf = (token: string) => token.slice(5, 13);
-
-function key(overrides: Partial<KeyInfo> = {}): KeyInfo {
-  return {
-    id: 1,
-    key_prefix: keyPrefixOf("plow_sk_other_credential_entirely"),
-    name: "Kitchen agent",
-    scopes: ["relay:call"],
-    tokens_used: 0,
-    is_active: true,
-    last_seen_at: "2026-08-25T10:00:00Z",
-    created_at: "2026-08-20T10:00:00Z",
-    agent_id: null,
-    chat_uids: [],
-    ...overrides,
-  };
-}
+const key = (overrides: Partial<KeyInfo> = {}): KeyInfo =>
+  keyInfo({ key_prefix: keyPrefixOf("plow_sk_other_credential_entirely"), ...overrides });
 
 /** Every placed row, whichever section it landed in. */
 const allRows = (sections: ReturnType<typeof sectionRoster>) => [
@@ -44,15 +30,34 @@ const allRows = (sections: ReturnType<typeof sectionRoster>) => [
 ];
 
 describe("which section a credential belongs in", () => {
-  it("puts a credential with an agent_id in Cloud agents, whatever its scopes", () => {
+  it("puts a cloud assistant's credential in Cloud agents, whatever its scopes", () => {
     const sections = sectionRoster([
-      key({ id: 1, agent_id: "agent_1" }),
-      key({ id: 2, agent_id: "agent_2", scopes: ["relay:*"] }),
+      key({ id: 1, assistant_uid: "agent_1", assistant_provider: "exe:hermes" }),
+      key({ id: 2, assistant_uid: "agent_2", assistant_provider: "exe:life", scopes: ["relay:*"] }),
     ]);
 
     expect(sections.cloud.map((row) => row.id)).toEqual([1, 2]);
     expect(sections.mcp).toEqual([]);
     expect(sections.other).toEqual([]);
+  });
+
+  it.each([
+    // Every activated Mac has one of these, and it is revoked like any other
+    // credential — there is no VM behind it to delete.
+    ["a self-hosted assistant", "self_hosted"],
+    // A provider this build cannot name must not fall into the half that
+    // deletes: the safe unknown is a revoke.
+    ["an unrecognised provider", null],
+    // What an API predating the assistant contract sends: no field at all.
+    ["an assistant field the API never sent", undefined],
+  ])("keeps %s out of Cloud agents", (_case, provider) => {
+    const sections = sectionRoster([
+      key({ id: 1, assistant_uid: "assistant_mac", assistant_provider: provider, scopes: ["relay:call"] }),
+    ]);
+
+    expect(sections.cloud).toEqual([]);
+    expect(sections.mcp.map((row) => row.id)).toEqual([1]);
+    expect(sections.mcp[0].agentId).toBeNull();
   });
 
   it("separates MCP clients from other sessions by scope", () => {
@@ -75,7 +80,7 @@ describe("which section a credential belongs in", () => {
     const sections = sectionRoster([
       key({ id: 1 }),
       key({ id: 2, is_active: false }),
-      key({ id: 3, is_active: false, agent_id: "agent_3" }),
+      key({ id: 3, is_active: false, assistant_uid: "agent_3", assistant_provider: "exe:hermes" }),
     ]);
 
     expect(sections.revokedHidden).toBe(2);
@@ -84,7 +89,7 @@ describe("which section a credential belongs in", () => {
 
   it("places every row it is given, whatever kind it turns out to be", () => {
     const keys = [
-      key({ id: 1, agent_id: "agent_1" }),
+      key({ id: 1, assistant_uid: "agent_1", assistant_provider: "exe:hermes" }),
       key({ id: 2, scopes: ["relay:call"] }),
       key({ id: 3, scopes: ["relay:*"] }),
       key({ id: 4, scopes: ["vault:read"] }),
@@ -106,15 +111,15 @@ describe("which section a credential belongs in", () => {
 });
 
 describe("how a row is removed", () => {
-  it("never routes a credential with an agent_id to the key revoke", () => {
+  it("never routes a cloud assistant's credential to the key revoke", () => {
     // The negative, because the key revoke flips `is_active` and nothing else:
     // the VM keeps running, the chat's webhook keeps firing, and the row
     // vanishes from the list because inactive rows are filtered out. A live
     // agent that 401s on everything and nobody can reach to remove.
     const sections = sectionRoster([
-      key({ id: 1, agent_id: "agent_1" }),
-      key({ id: 2, agent_id: "agent_2", scopes: ["*:*"] }),
-      key({ id: 3, agent_id: "agent_3", scopes: ["relay:*"], name: null }),
+      key({ id: 1, assistant_uid: "agent_1", assistant_provider: "exe:hermes" }),
+      key({ id: 2, assistant_uid: "agent_2", assistant_provider: "exe:hermes", scopes: ["*:*"] }),
+      key({ id: 3, assistant_uid: "agent_3", assistant_provider: "exe:life", scopes: ["relay:*"], name: null }),
     ]);
 
     // The section IS the route: `connectClient.removeRosterRow` reads

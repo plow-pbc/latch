@@ -149,8 +149,32 @@ export interface KeyInfo {
   is_active: boolean;
   last_seen_at: string | null;
   created_at: string | null;
-  agent_id: string | null;
+  assistant_uid: string | null;
+  /** `self_hosted`, a cloud provider such as `exe:hermes`, or null. */
+  assistant_provider: string | null;
   chat_uids: string[];
+}
+
+/** The provider of an assistant that runs on this Mac rather than in the cloud. */
+export const SELF_HOSTED_PROVIDER = "self_hosted";
+
+/**
+ * Is this assistant a VM Plow runs, rather than an activated Mac?
+ *
+ * The distinction is what removal costs. Only `DELETE /v1/assistants/{uid}`
+ * takes a cloud assistant down — revoking its credential leaves the machine
+ * running and unreachable. A `self_hosted` assistant has no machine, so
+ * revoking the credential is the whole removal.
+ *
+ * Only a named provider answers true, because this picks a DESTRUCTIVE route.
+ * Everything else revokes: `self_hosted`, null, and the `undefined` an API
+ * predating the assistant contract sends. `listApiKeys` already defaults that
+ * pair to null, so the `undefined` arm is defence in depth — and the parameter
+ * says so, rather than leaving the body hardened against a shape the signature
+ * claims cannot arrive.
+ */
+export function isCloudAssistant(provider: string | null | undefined): boolean {
+  return typeof provider === "string" && provider !== "" && provider !== SELF_HOSTED_PROVIDER;
 }
 
 /** Parse Plow's UTC timestamp, whose wire form may omit the trailing offset. */
@@ -532,7 +556,7 @@ export class PlowApi {
   /** List the providers accepted by the cloud-agent create endpoint.
    * Provider ids are opaque server-owned values: preserve their bytes and order. */
   async listCloudAgentProviders(token: string): Promise<CloudAgentProvider[]> {
-    const data = await this.call<unknown>("GET", "/v1/agents/cloud/providers", { token })
+    const data = await this.call<unknown>("GET", "/v1/assistants/providers", { token })
       .catch((error) => {
         if (error instanceof PlowApiError && error.status === 503) {
           throw new PlowApiError(
@@ -757,9 +781,19 @@ export class PlowApi {
   }
 
   /** List this account's credential metadata. The stored credential remains in
-   * the bearer header and is never returned. */
+   * the bearer header and is never returned.
+   *
+   * The assistant pair is defaulted here, once, for every reader: an API
+   * predating the assistant contract sends neither field, and `undefined`
+   * passes a null test — which would file every credential as a cloud agent
+   * and send Remove to a delete that silently does nothing. */
   async listApiKeys(token: string): Promise<KeyInfo[]> {
-    return this.call<KeyInfo[]>("GET", "/v1/api-keys", { token });
+    const keys = await this.call<KeyInfo[]>("GET", "/v1/api-keys", { token });
+    return keys.map((key) => ({
+      ...key,
+      assistant_uid: key.assistant_uid ?? null,
+      assistant_provider: key.assistant_provider ?? null,
+    }));
   }
 
   /** Soft-revoke one credential by its server id. */

@@ -78,24 +78,3 @@ function scrubSessionId(value: string, sessionId: string | null): string {
   if (!sessionId) return value;
   return value.split(sessionId).join("[credential]");
 }
-
-/** The only KeyInfo field needed to associate a credential with its agent. */
-export interface CloudAgentKeyInfo {
-  agent_id: string | null;
-}
-
-export interface CloudAgentKeyJoin<Key extends CloudAgentKeyInfo> {
-  agent: CloudAgentResource;
-  key: Key | null;
-}
-
-/** Join on the stable agent id. Session ids deliberately do not participate. */
-export function joinCloudAgentsWithKeys<Key extends CloudAgentKeyInfo>(
-  agents: readonly CloudAgentResource[],
-  keys: readonly Key[],
-): CloudAgentKeyJoin<Key>[] {
-  const byAgentId = new Map(
-    keys.filter((key) => key.agent_id !== null).map((key) => [key.agent_id, key] as const),
-  );
-  return agents.map((agent) => ({ agent, key: byAgentId.get(agent.agentId) ?? null }));
-}

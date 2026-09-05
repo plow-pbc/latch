@@ -691,7 +691,7 @@ ipcMain.handle("connect:create", async (_e, name: string, lineUid: string | null
  * A live agent whose credential has gone inactive has no roster row, and the
  * screen used to disable Remove for it — a running agent nobody could take
  * down. Its removal never needed the credential: `DELETE
- * /v1/agents/cloud/{agent_id}` is keyed on the agent.
+ * /v1/assistants/{uid}` is keyed on the assistant.
  *
  * The roster is re-read afterwards because the credential row, if there was
  * one, is gone with it.
@@ -1792,8 +1792,8 @@ app.whenReady().then(async () => {
     },
   });
   // Built first: the roster's removal routing needs the cloud-agent client,
-  // because a row with an `agent_id` must be deleted as an agent and never
-  // revoked as a key.
+  // because a row naming a cloud assistant must be deleted as an assistant and
+  // never revoked as a key.
   const cloudApi = new PlowApi(apiBaseUrl, loggingFetch(home));
   const cloudAgentsClient = new CloudAgentsClient(cloudApi);
 

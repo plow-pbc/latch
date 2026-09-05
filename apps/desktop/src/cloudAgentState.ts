@@ -226,7 +226,7 @@ export interface CloudAgentStateDeps {
 }
 
 export class CloudAgentState {
-  /** Keyed on `agent_id`, which is stable for the agent's whole life. */
+  /** Keyed on the assistant uid, which is stable for the agent's whole life. */
   private rows = new Map<string, CloudAgentDisplayRow>();
   /** Home-chat identity stays private while chat results resolve each line. */
   private homeChatUids = new Map<string, string>();
@@ -646,7 +646,7 @@ export class CloudAgentState {
     }
 
     const candidates = keys.filter((key) => {
-      if (!key.is_active || key.agent_id !== null) return false;
+      if (!key.is_active || key.assistant_uid !== null) return false;
       if (key.name?.trim() || !key.scopes.includes("*:*")) return false;
       // resolve_bearer_token commits the caller's last_seen_at touch before the
       // list route body, so this Mac is not a never-used candidate.
