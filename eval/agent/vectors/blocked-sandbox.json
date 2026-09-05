@@ -1,16 +1,15 @@
 {
   "name": "blocked-sandbox",
-  "note": "Outside the approved bound, confidence likely, and the sentence says to ask again declaring the path. Re-asked with write_paths, the run succeeds (the owner approved it). The reply reports the write done, and never calls it a macOS permission problem.",
+  "note": "Outside the approved bound (confirmed: the path was never approved, so it was never touched), and the sentence says to ask again declaring the path. Re-asked with write_paths, the run succeeds (the owner approved it). The reply reports the write done, and never calls it a macOS permission problem.",
   "prompt": "Run a shell command on my Mac that writes the text 'hi' into the file ~/out.txt.",
   "answers": {
     "plow_run_command": {
       "diagnosis": {
         "cause": "outside_approved_bound",
-        "confidence": "likely",
+        "confidence": "confirmed",
         "evidence": [
-          "~/out.txt does not exist; the refusal is on creating it",
           "the kernel answered EPERM for ~/out.txt",
-          "the run's sandbox profile does not allow the path"
+          "~/out.txt is not among the paths approved for this run, and the sandbox profile allows it nothing"
         ],
         "owner_action": "The path was outside what was approved for this run. Ask again declaring it in write_paths (or read_paths); the owner will see the path in the approval.",
         "permission": null,
@@ -26,7 +25,7 @@
       "output": "/bin/sh: ~/out.txt: Operation not permitted\n",
       "output_length": 116,
       "probes": {
-        "app_process_open": "ENOENT",
+        "app_process_open": null,
         "automation_status": null,
         "automation_target": null,
         "errno": "EPERM",
@@ -36,7 +35,8 @@
         "is_directory": null,
         "op": "exec",
         "path": "~/out.txt",
-        "path_exists": false,
+        "path_approved": false,
+        "path_exists": null,
         "paths_examined": [
           "~/out.txt",
           "/bin/sh",

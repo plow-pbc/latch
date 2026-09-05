@@ -31,6 +31,7 @@
         "is_directory": false,
         "op": "exec",
         "path": "~/Desktop/notes.txt",
+        "path_approved": true,
         "path_exists": true,
         "paths_examined": [
           "/bin/sh",
@@ -77,6 +78,7 @@
         "is_directory": false,
         "op": "exec",
         "path": "~/Desktop/notes.txt",
+        "path_approved": true,
         "path_exists": true,
         "paths_examined": [
           "/bin/sh",
@@ -123,6 +125,7 @@
         "is_directory": false,
         "op": "exec",
         "path": "~/Desktop/notes.txt",
+        "path_approved": true,
         "path_exists": true,
         "paths_examined": [
           "/bin/sh",
@@ -153,7 +156,7 @@
         }
       ],
       "automation_queryable": false,
-      "checked_at": "2026-09-04T23:17:01Z",
+      "checked_at": "2026-09-04T23:17:00Z",
       "child_attribution": {
         "detail": null,
         "status": "not_applicable"

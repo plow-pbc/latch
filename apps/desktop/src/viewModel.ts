@@ -74,13 +74,23 @@ function deniedOperation(ev: ReturnType<typeof jv>): [string, BadgeTone, StatusK
 
 /**
  * A "parked on a dialog" verdict is provisional: the owner clicking Allow
- * lets the run go on, and any exit of its own after it — clean or not —
- * says they did; only a reaped run was still parked. The block stays in
- * the log — it happened — but the row's outcome is the run's own end.
+ * lets the run go on, and the device records that (`host_permission_cleared`)
+ * when the run reaches an end of its own; only a reaped run was still
+ * parked. The block stays in the log — it happened — but the row's outcome
+ * is the run's own end. A refusal recorded AFTER the clearing (the owner
+ * clicked Don't Allow) is the newest verdict and is not recovered from.
+ * Logs from before clearings were recorded fall back to the exit itself:
+ * any un-reaped exit after a parked verdict.
  */
-function recovered(gate: JSONValue, exit: JSONValue | null): boolean {
-  if (exit === null || jv(gate).get("cause").str !== "prompt_waiting") return false;
-  return jv(exit).get("reaped").bool !== true;
+function recovered(gate: JSONValue, exit: JSONValue | null, cleared: JSONValue | null): boolean {
+  if (exit === null) return false;
+  const g = jv(gate);
+  if (cleared !== null) {
+    const after = (jv(cleared).get("ts").str ?? "") >= (g.get("ts").str ?? "");
+    if (g.get("cause").str === "prompt_waiting" && after) return true;
+  }
+  if (g.get("cause").str !== "prompt_waiting") return false;
+  return cleared === null && jv(exit).get("reaped").bool !== true;
 }
 
 /** System Settings' own words for a permission, for the badge. */
@@ -363,18 +373,24 @@ export function auditActivities(events: JSONValue[]): AuditActivity[] {
 function buildActivity(id: string, events: JSONValue[]): AuditActivity {
   const has = (event: string) => events.some((e) => jv(e).get("event").str === event);
   const entry = (event: string) => events.find((e) => jv(e).get("event").str === event) ?? null;
+  // A verdict can be corrected under the same handle (a parked run the
+  // owner refused); the newest is the one that stands.
+  const latest = (event: string) => {
+    for (let i = events.length - 1; i >= 0; i -= 1) if (jv(events[i]!).get("event").str === event) return events[i]!;
+    return null;
+  };
   const value = (event: string, key: string) => {
     const e = entry(event);
     return e ? (jv(e).get(key).str ?? null) : null;
   };
 
   const title = activityTitle(events, has, value);
-  const { decision, decisionTone, decisionKind, status, tone, statusKind } = classifyActivity(events, has, entry);
+  const { decision, decisionTone, decisionKind, status, tone, statusKind } = classifyActivity(events, has, entry, latest);
   return {
     id,
     time: dayTime(jv(events[0]).get("ts").str ?? ""),
     ts: jv(events[0]).get("ts").str ?? "",
-    blockedAt: value("host_permission_blocked", "ts"),
+    blockedAt: latest("host_permission_blocked") ? jv(latest("host_permission_blocked")!).get("ts").str : null,
     decision,
     decisionTone,
     tone,
@@ -400,7 +416,8 @@ function buildActivity(id: string, events: JSONValue[]): AuditActivity {
     intentId: jv(events[0]).get("intentId").str,
     exitCode: entry("exec_end") ? jv(entry("exec_end")!).get("exit_code").int : null,
     permission: (() => {
-      const key = value("host_permission_blocked", "permission");
+      const gate = latest("host_permission_blocked");
+      const key = gate ? jv(gate).get("permission").str : null;
       return key === null ? null : permissionWords(key);
     })(),
     // Every request in this row, not just the first: a session that was
@@ -499,6 +516,7 @@ function classifyActivity(
   events: JSONValue[],
   has: (e: string) => boolean,
   entry: (e: string) => JSONValue | null,
+  latest: (e: string) => JSONValue | null = entry,
 ): Classification {
   if (entry("intent_rejected")) return decided("Rejected", "red", "denied");
   const cleanup = entry("activation_session_cleanup");
@@ -548,8 +566,10 @@ function classifyActivity(
     // reaper's verdict: the owner is the one person who can flip the switch,
     // and "Failed · exit 1" would hide that from them. Amber, like a killed
     // run, because nothing here was refused BY anyone.
-    const gate = entry("host_permission_blocked");
-    if (gate && !recovered(gate, entry("exec_end"))) return ran(`Blocked · ${hostGateShort(jv(gate))}`, "amber", "blocked");
+    const gate = latest("host_permission_blocked");
+    if (gate && !recovered(gate, entry("exec_end"), latest("host_permission_cleared"))) {
+      return ran(`Blocked · ${hostGateShort(jv(gate))}`, "amber", "blocked");
+    }
     // The sandbox refusing is this Mac refusing too: the word is Blocked, so
     // the Blocked filter holds it. Red, not amber: the bound was the owner's.
     const denied = entry("denied_operation");
@@ -619,8 +639,10 @@ function classifyActivity(
   if (denied) return outcome(...deniedOperation(jv(denied)));
   // A handle-only block from a deferred run whose end outlived its intent's
   // row: the gate is still the story.
-  const gate = entry("host_permission_blocked");
-  if (gate && !recovered(gate, entry("exec_end"))) return outcome(`Blocked · ${hostGateShort(jv(gate))}`, "amber", "blocked");
+  const gate = latest("host_permission_blocked");
+  if (gate && !recovered(gate, entry("exec_end"), latest("host_permission_cleared"))) {
+    return outcome(`Blocked · ${hostGateShort(jv(gate))}`, "amber", "blocked");
+  }
   // A handle-only exec_end from an old log: a deferred run's end recorded
   // without its intent. The exit code is the whole story.
   const ee = entry("exec_end");
@@ -807,6 +829,12 @@ function describeStep(e: JSONValue): AuditStep {
         `${confidence === "likely" ? " (probably)" : ""}` +
         `${action ? ` — ${action}` : ""}`;
       state = "bad";
+      break;
+    }
+    case "host_permission_cleared": {
+      const path = ev.get("path").str;
+      text = `The dialog was answered${path ? ` for ${path}` : ""}; the run went on.`;
+      state = "ok";
       break;
     }
     case "tool_invoked": text = `Tool used: ${ev.get("tool").str ?? ""}`; state = "ok"; break;

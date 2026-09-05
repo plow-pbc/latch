@@ -39,6 +39,7 @@
         "is_directory": false,
         "op": "exec",
         "path": "~/Library/Messages/chat.db",
+        "path_approved": true,
         "path_exists": true,
         "paths_examined": [
           "~/Library/Messages/chat.db",

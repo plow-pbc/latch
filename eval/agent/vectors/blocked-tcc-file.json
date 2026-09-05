@@ -36,6 +36,7 @@
         "is_directory": false,
         "op": "write",
         "path": "~/Documents/plumber.txt",
+        "path_approved": true,
         "path_exists": true,
         "paths_examined": [
           "~/Documents/plumber.txt"
@@ -88,6 +89,7 @@
         "is_directory": false,
         "op": "exec",
         "path": "~/Documents/plumber.txt",
+        "path_approved": true,
         "path_exists": true,
         "paths_examined": [
           "~/Documents/plumber.txt",

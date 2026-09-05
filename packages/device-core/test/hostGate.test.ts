@@ -60,6 +60,7 @@ function facts(overrides: Partial<HostFacts> = {}): HostFacts {
     ran_sandboxed: false,
     sandbox_allows_read: null,
     sandbox_allows_write: null,
+    path_approved: true,
     app_process_open: "ok",
     hung: false,
     tcc_guarded_prefix: null,
@@ -526,14 +527,18 @@ describe("collectFacts — the battery over scripted probes", () => {
     expect(d.evidence.join(" ")).toMatch(/refusal is on creating it/);
   });
 
-  it("judges a missing write target the sandbox denied by the profile, not as missing", async () => {
+  it("judges a write target outside the approval as the bound, without touching it", async () => {
+    // The path is the command's own word (argv and its output); nothing the
+    // owner approved contains it. It is classified by name — the profile
+    // allows it nothing — and never stat'd or opened: those are this
+    // process's hands, outside any seatbelt, on a path nobody approved.
     const target = "/opt/elsewhere/new.txt";
     const probes = scriptedProbes({ inspect: { [target]: null } });
     const f = await collectFacts(
       {
         op: "exec",
         paths: [],
-        texts: ["sh -c 'echo hi > /opt/elsewhere/new.txt'"],
+        argv: ["sh", "-c", "echo hi > /opt/elsewhere/new.txt"],
         stderr: "sh: /opt/elsewhere/new.txt: Operation not permitted",
         ranSandboxed: true,
         sandbox: () => ({ read: false, write: false }),
@@ -542,8 +547,52 @@ describe("collectFacts — the battery over scripted probes", () => {
       HOME,
     );
     expect(f.path).toBe(target);
-    expect(f.app_process_open).toBe("ENOENT");
+    expect(f.path_approved).toBe(false);
+    expect(f.app_process_open).toBeNull();
+    expect(f.path_exists).toBeNull();
+    expect(probes.calls.filter((c) => c.startsWith("inspect") || c.startsWith("openAsApp"))).toEqual([]);
+    const d = diagnose(f);
+    expect(d.cause).toBe("outside_approved_bound");
+    expect(d.confidence).toBe("confirmed");
+  });
+
+  it("a command's output cannot make this Mac open a path the owner never approved", async () => {
+    // Forged: the run was approved to read ~/Plow, and prints a refusal for a
+    // file under ~/Desktop it never touched. No inspect, no open — a
+    // folder gate there would raise the owner's consent dialog for
+    // something they never approved, and answer whether the file exists.
+    const secret = `${HOME}/Desktop/secret.txt`;
+    const probes = scriptedProbes({ openAsApp: { [secret]: "hung" } });
+    const f = await collectFacts(
+      {
+        op: "exec",
+        paths: [`${HOME}/Plow`],
+        argv: ["/bin/sh", "-c", `echo "cat: ${secret}: Operation not permitted" >&2; exit 1`],
+        stderr: `cat: ${secret}: Operation not permitted`,
+        ranSandboxed: true,
+        sandbox: (p) => ({ read: p.startsWith(`${HOME}/Plow`), write: false }),
+      },
+      probes,
+      HOME,
+    );
+    expect(probes.calls.filter((c) => c.includes("Desktop"))).toEqual([]);
+    expect(f.path).toBe("~/Desktop/secret.txt");
+    expect(f.path_approved).toBe(false);
+    expect(f.paths_examined).toContain("~/Desktop/secret.txt");
     expect(diagnose(f).cause).toBe("outside_approved_bound");
+  });
+
+  it("an argv word that is a path is one candidate, spaces and all", async () => {
+    const spaced = `${HOME}/Plow/My Report.txt`;
+    const probes = scriptedProbes({ openAsApp: { [spaced]: "EPERM" } });
+    const f = await collectFacts(
+      { op: "exec", paths: [`${HOME}/Plow`], argv: ["/bin/cat", spaced], ranSandboxed: true, sandbox: () => ({ read: true, write: true }) },
+      probes,
+      HOME,
+    );
+    expect(f.paths_examined).toContain("~/Plow/My Report.txt");
+    expect(f.paths_examined).not.toContain("~/Plow/My");
+    expect(f.path).toBe("~/Plow/My Report.txt");
   });
 
   it("a missing path with no errno at all is simply missing", async () => {

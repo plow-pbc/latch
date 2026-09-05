@@ -51,10 +51,31 @@ export function blockedGroups(events: readonly JSONValue[]): BlockedGroup[] {
     const id = ev.get("intentId").str;
     if (ev.get("event").str === "intent_received" && id !== null) intents.set(id, e);
   }
-  const groups = new Map<string, BlockedGroup>();
+  // One verdict per run: a block corrected under the same handle (a parked
+  // run the owner then refused) counts once, as the newest; a block the
+  // device later cleared (the owner let the parked run through) counts not
+  // at all — a folder this Mac cannot query would otherwise stay red on the
+  // strength of a guess the owner has answered. A refusal recorded after a
+  // clearing is a new verdict and counts.
+  const runKey = (ev: ReturnType<typeof jv>) => ev.get("handle").str ?? ev.get("intentId").str;
+  const clearedAt = new Map<string, string>();
+  const newest = new Map<string, JSONValue>();
   for (const e of events) {
     const ev = jv(e);
-    if (ev.get("event").str !== "host_permission_blocked") continue;
+    const event = ev.get("event").str;
+    const run = runKey(ev);
+    if (event === "host_permission_cleared" && run !== null) clearedAt.set(run, ev.get("ts").str ?? "");
+    if (event === "host_permission_blocked") {
+      if (run === null) { newest.set(`${newest.size}:anon`, e); continue; }
+      const prior = newest.get(run);
+      if (prior === undefined || (jv(prior).get("ts").str ?? "") <= (ev.get("ts").str ?? "")) newest.set(run, e);
+    }
+  }
+  const groups = new Map<string, BlockedGroup>();
+  for (const [run, e] of newest) {
+    const ev = jv(e);
+    const cleared = clearedAt.get(run);
+    if (cleared !== undefined && cleared >= (ev.get("ts").str ?? "")) continue;
     const key = blockKey(ev);
     if (key === null) continue;
     const intentId = ev.get("intentId").str;

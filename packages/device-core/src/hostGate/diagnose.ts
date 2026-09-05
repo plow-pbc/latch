@@ -28,6 +28,7 @@
 import path from "node:path";
 import { canonicalizeAsync, JSONValue } from "@domo/protocol";
 import {
+  argvCandidates,
   candidatePaths,
   Errno,
   errnoFromHint,
@@ -100,7 +101,13 @@ export interface HostFacts {
   ran_sandboxed: boolean;
   sandbox_allows_read: boolean | null;
   sandbox_allows_write: boolean | null;
-  /** What the app itself got opening the path, outside any profile. */
+  /** Whether the path of interest lies inside what the owner approved for
+   *  this operation. Only such a path is probed on disk; one outside is
+   *  classified by name and can carry one verdict only, the bound. Null
+   *  when no path was settled on. */
+  path_approved: boolean | null;
+  /** What the app itself got opening the path, outside any profile. Null
+   *  when the path was not probed (not approved, or none). */
   app_process_open: OpenOutcome | null;
   /** The operation (or a probe of it) never returned. */
   hung: boolean;
@@ -138,8 +145,15 @@ export interface FailureContext {
    *  canonical where the caller had them. A file op names one; a command
    *  names what it declared and its working directory. */
   paths: readonly string[];
-  /** Free text to mine for further paths — a command's argv and its output.
-   *  Split on whitespace, so a path with a space in it must go in `paths`. */
+  /** A command's argv, element by element: a word that is a path is kept
+   *  whole, spaces and all. Candidates, not approval: a path in argv is
+   *  probed only when a declared path contains it. */
+  argv?: readonly string[];
+  /** A command's working directory: a candidate, and an approval root when
+   *  it is a specific folder — the owner's whole home is not one. */
+  cwd?: string | null;
+  /** Free text to mine for further paths. Split on whitespace, so a path
+   *  with a space in it must go in `paths` or `argv`. */
   texts?: readonly string[];
   /** The Node error text, for an in-process file op. */
   errorMessage?: string | null;
@@ -174,31 +188,65 @@ export async function collectFacts(
   // named, and what the command line and its output named — in that order
   // of trust. Deduplicated AFTER `~` expansion: a path the caller named in
   // full and stderr repeated as `~/…` is one path, and must be probed once.
-  // Canonical, like the sandbox profile and the gate table: a `/var/…` from
-  // stderr is `/private/var/…` to the kernel, and a symlink's target is what
-  // was refused.
   // Where each candidate came from decides how much it is trusted: a path
   // the failure itself named outranks one the command line mentioned, which
   // outranks one the caller merely declared (a cwd, a read root).
+  //
+  // WHAT MAY BE TOUCHED. The declared paths are what the owner approved,
+  // and they bound everything this battery does on disk: only a candidate
+  // under one of them is canonicalized (a realpath walks the disk),
+  // inspected, or opened as the app. A command's output is the command's
+  // to write, and a line in it naming ~/Desktop/secret must not have this
+  // process — outside any seatbelt — stat that file, open it (a folder
+  // gate would raise the owner's consent dialog for something they never
+  // approved), and hand back whether it exists. An undeclared candidate is
+  // classified from its name alone: what the profile would allow at it,
+  // whether it is under a gate or a SIP root. That is enough for the one
+  // verdict it can carry — outside the approved bound.
   type Source = "error" | "argv" | "declared";
+  // The Node error's path is this process's own argument echoed back — an
+  // in-process file op names what it was asked to touch — so it is as
+  // approved as the caller's paths. A working directory is, when it is a
+  // folder of its own; the owner's home as cwd (the default) approves
+  // nothing under it, or every path on the Mac would be fair game. A
+  // command's argv and output are not approval at all: a path in a shell
+  // string is exactly what a run would write to have this Mac touch it.
+  const home = await canonicalizeAsync(ownerHome);
+  const cwd = ctx.cwd ? await canonicalizeAsync(expandHome(ctx.cwd, ownerHome)) : null;
+  const declared = [
+    ...(await Promise.all([...ctx.paths, ...(parsed.path ? [parsed.path] : [])].map((p) => canonicalizeAsync(expandHome(p, ownerHome))))),
+    ...(cwd !== null && cwd !== home ? [cwd] : []),
+  ];
+  const contained = (p: string) => declared.some((d) => p === d || p.startsWith(d.endsWith("/") ? d : d + "/"));
   const sourced: [string, Source][] = [
     ...(parsed.path ? [[parsed.path, "error"] as [string, Source]] : []),
     ...candidatePaths(ctx.stderr ? [ctx.stderr] : []).map((p): [string, Source] => [p, "error"]),
+    ...argvCandidates(ctx.argv ?? []).map((p): [string, Source] => [p, "argv"]),
     ...candidatePaths(ctx.texts ?? []).map((p): [string, Source] => [p, "argv"]),
     ...ctx.paths.map((p): [string, Source] => [p, "declared"]),
+    ...(ctx.cwd ? [[ctx.cwd, "declared"] as [string, Source]] : []),
   ];
-  const bySource = new Map<string, Source>();
+  const bySource = new Map<string, { source: Source; probe: boolean }>();
   for (const [raw, source] of sourced) {
-    const p = await canonicalizeAsync(expandHome(raw, ownerHome));
-    if (!bySource.has(p)) bySource.set(p, source);
+    // Resolved by name first; the disk is consulted only for a path the
+    // owner approved — and a symlink that walks out of the approval is
+    // then an undeclared path after all.
+    const named = path.resolve(expandHome(raw, ownerHome));
+    const canonical = contained(named) ? await canonicalizeAsync(named) : named;
+    const probe = contained(named) && contained(canonical);
+    const known = bySource.get(canonical);
+    if (known === undefined) bySource.set(canonical, { source, probe });
+    else if (probe && !known.probe) known.probe = true;
   }
   const candidates = [...bySource.keys()].slice(0, MAX_CANDIDATE_PATHS);
 
   type Examined = {
     path: string;
     source: Source;
-    info: Awaited<ReturnType<HostProbes["inspect"]>>;
-    open: OpenOutcome;
+    /** Whether the disk was asked at all: only for an approved path. */
+    probed: boolean;
+    info: Awaited<ReturnType<HostProbes["inspect"]>> | undefined;
+    open: OpenOutcome | null;
     gate: HostPermission | null;
     sip: boolean;
     grants: { read: boolean; write: boolean } | null;
@@ -208,15 +256,17 @@ export async function collectFacts(
   // the call budget this runs inside of.
   const examined: Examined[] = await Promise.all(
     candidates.map(async (path) => {
-      const info = await probes.inspect(path);
+      const { source, probe } = bySource.get(path)!;
+      const info = probe ? await probes.inspect(path) : undefined;
       // A path that is not there cannot be opened, but CREATING it is what a
       // refused write was trying to do, and that is the parent's business: a
       // consent dialog on the folder or a profile with no write grant there
       // is the answer, and the probe that finds it is the parent's.
-      const open = info !== null ? await probes.openAsApp(path) : await parentOpen(probes, path);
+      const open = !probe ? null : info !== null ? await probes.openAsApp(path) : await parentOpen(probes, path);
       return {
         path,
-        source: bySource.get(path)!,
+        source,
+        probed: probe,
         info,
         open,
         gate: guardedPrefix(path, ownerHome),
@@ -243,7 +293,7 @@ export async function collectFacts(
   const locked = (e: Examined) => e.info?.flags.some((f) => f === "uchg" || f === "schg") === true;
   const named = examined.some((e) => e.source === "error");
   const chosen =
-    examined.find((e) => e.open !== "ok" && e.open !== "ENOENT") ??
+    examined.find((e) => e.probed && e.open !== "ok" && e.open !== "ENOENT") ??
     (errno === "EPERM" ? examined.find(locked) : undefined) ??
     (ctx.ranSandboxed ? examined.find((e) => e.source === "error" && profileDenied(e)) : undefined) ??
     (ctx.ranSandboxed && !named ? examined.find((e) => e.source === "argv" && profileDenied(e)) : undefined) ??
@@ -262,7 +312,8 @@ export async function collectFacts(
     op: ctx.op,
     path: chosen ? tildeRelative(chosen.path, ownerHome) : null,
     paths_examined: examined.map((e) => tildeRelative(e.path, ownerHome)),
-    path_exists: chosen ? chosen.info !== null : null,
+    path_approved: chosen ? chosen.probed : null,
+    path_exists: chosen?.probed ? chosen.info !== null : null,
     is_directory: chosen?.info?.isDirectory ?? null,
     posix_readable: chosen?.info?.readable ?? null,
     posix_writable: chosen?.info?.writable ?? null,
@@ -422,6 +473,14 @@ export function diagnose(f: HostFacts): Diagnosis {
       return verdict("sip_protected", "confirmed", null);
     }
     ruledOut.push("locked file", "System Integrity Protection");
+
+    // A path outside what the owner approved was never probed, and needs
+    // no probe: whatever else macOS might say about it, the run was not
+    // allowed there, and declaring it is the agent's next move.
+    if (f.ran_sandboxed && f.path_approved === false && (f.sandbox_allows_write === false || f.sandbox_allows_read === false)) {
+      evidence.push(`${where} is not among the paths approved for this run, and the sandbox profile allows it nothing`);
+      return verdict("outside_approved_bound", "confirmed", null);
+    }
 
     if (f.ran_sandboxed && f.app_process_open === "ok") {
       evidence.push(`${APP_DISPLAY_NAME} itself can open ${where}, so macOS is not refusing it`);

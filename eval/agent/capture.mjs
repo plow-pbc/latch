@@ -67,7 +67,9 @@ async function until(fn, done, ms = 10_000) {
 function fold(value, homes) {
   const text = JSON.stringify(value, null, 2)
     .replace(new RegExp(homes.map((h) => h.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|"), "g"), "~")
-    .replace(/"handle": "[^"]+"/g, '"handle": "EVAL-HANDLE"');
+    .replace(/"handle": "[^"]+"/g, '"handle": "EVAL-HANDLE"')
+    // The inventory's clock, or every capture would rewrite every vector.
+    .replace(/"checked_at": "[^"]+"/g, '"checked_at": "2026-09-04T23:17:00Z"');
   return JSON.parse(text);
 }
 
@@ -216,7 +218,7 @@ const pane = (sentence) => { const m = /System Settings > [^,.]+/.exec(sentence 
   const elsewhere = tempHome();
   const out = path.join(elsewhere, "out.txt");
   vector("blocked-sandbox", {
-    note: "Outside the approved bound, confidence likely, and the sentence says to ask again declaring the path. Re-asked with write_paths, the run succeeds (the owner approved it). The reply reports the write done, and never calls it a macOS permission problem.",
+    note: "Outside the approved bound (confirmed: the path was never approved, so it was never touched), and the sentence says to ask again declaring the path. Re-asked with write_paths, the run succeeds (the owner approved it). The reply reports the write done, and never calls it a macOS permission problem.",
     prompt: "Run a shell command on my Mac that writes the text 'hi' into the file ~/out.txt.",
     captured: [["plow_run_command", await run(server, home, `echo hi > ${JSON.stringify(out)}`), [home, elsewhere]], await status(server, home)],
     variants: [["plow_run_command", { has: "write_paths" }, await run(server, home, `echo hi > ${JSON.stringify(out)}`, { write_paths: [out] }), [home, elsewhere]]],
