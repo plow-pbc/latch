@@ -212,7 +212,7 @@ describe("auditActivities (grouping)", () => {
     expect(denied()).toMatchObject({ status: "Blocked · outside approved paths", statusKind: "blocked" });
     expect(denied("not_found")).toMatchObject({ status: "Failed · not found", tone: "amber", statusKind: "failed" });
     expect(denied("app_rule")).toMatchObject({ status: "Failed", statusKind: "failed" });
-    expect(denied("busy")).toMatchObject({ status: "Failed · path in use by a command", statusKind: "failed" });
+    expect(denied("busy")).toMatchObject({ status: "Failed · path in use by a command or background job", statusKind: "failed" });
     expect(denied("app_rule").timeline.at(-1)!.text).toMatch(/^Failed: \/x/);
     expect(denied().timeline.at(-1)!.text).toMatch(/^Blocked: \/x/);
   });

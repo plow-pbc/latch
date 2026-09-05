@@ -133,7 +133,7 @@ describe.skipIf(AS_ROOT)("a file this Mac refused", () => {
     expect(payload.probes.path_exists).toBe(false);
   });
 
-  it("a path a running command can still write is refused with its retry hint on the wire", async () => {
+  it.skipIf(!ON_MAC)("a path a running command can still write is refused with its retry hint on the wire", async () => {
     // The device's structured hint rides the error the agent sees, direct
     // and deferred alike — the whole point of a hint is that it is read.
     // The writer is alive for exactly as long as the test wants: it reads
@@ -144,7 +144,12 @@ describe.skipIf(AS_ROOT)("a file this Mac refused", () => {
     fs.writeFileSync(path.join(w, "x"), "x");
     const gate = path.join(w, "gate.pipe");
     execFileSync("/usr/bin/mkfifo", [gate]);
-    cleanups.push(() => { const fd = fs.openSync(gate, "w"); fs.closeSync(fd); });
+    // Non-blocking: with no reader on the other end (the sandboxed child
+    // never ran, or is already gone) the open fails with ENXIO rather than
+    // parking the suite forever.
+    cleanups.push(() => {
+      try { fs.closeSync(fs.openSync(gate, fs.constants.O_WRONLY | fs.constants.O_NONBLOCK)); } catch { /* no reader: nothing to release */ }
+    });
     const running = await callTool(server, "plow_run_command", { argv: ["/bin/cat", gate], cwd: home, write_paths: [w], wait_ms: 50 }, AGENT);
     expect(running.payload.status).toBe("running");
     const { payload, isError } = await callTool(server, "plow_read_file", { path: path.join(w, "x") }, AGENT);
