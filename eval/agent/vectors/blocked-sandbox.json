@@ -44,6 +44,7 @@
         ],
         "posix_readable": null,
         "posix_writable": null,
+        "probe_withheld": false,
         "ran_sandboxed": true,
         "sandbox_allows_read": false,
         "sandbox_allows_write": false,

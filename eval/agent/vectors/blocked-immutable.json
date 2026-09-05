@@ -38,6 +38,7 @@
         ],
         "posix_readable": true,
         "posix_writable": true,
+        "probe_withheld": false,
         "ran_sandboxed": false,
         "sandbox_allows_read": null,
         "sandbox_allows_write": null,
@@ -49,54 +50,11 @@
       "status": "blocked"
     },
     "plow_run_command": {
-      "diagnosis": {
-        "cause": "immutable_file",
-        "confidence": "confirmed",
-        "evidence": [
-          "the kernel answered EPERM for ~/Plow/locked.txt",
-          "~/Plow/locked.txt carries the locked (uchg/schg) flag"
-        ],
-        "owner_action": "The file is locked (the macOS \"Locked\" flag). The owner can unlock it in Finder (Get Info > Locked) or with chflags nouchg.",
-        "permission": null,
-        "requires_relaunch": false,
-        "retry": "with_different_path",
-        "ruled_out": [
-          "file missing"
-        ]
-      },
       "exit_code": 1,
       "handle": "EVAL-HANDLE",
       "output": "/bin/sh: ~/Plow/locked.txt: Operation not permitted\n",
       "output_length": 124,
-      "probes": {
-        "app_process_open": "ok",
-        "automation_status": null,
-        "automation_target": null,
-        "errno": "EPERM",
-        "full_disk_access_granted": false,
-        "hung": false,
-        "immutable_flag": true,
-        "is_directory": false,
-        "op": "exec",
-        "path": "~/Plow/locked.txt",
-        "path_approved": true,
-        "path_exists": true,
-        "paths_examined": [
-          "~/Plow/locked.txt",
-          "/bin/sh",
-          "~"
-        ],
-        "posix_readable": true,
-        "posix_writable": true,
-        "ran_sandboxed": true,
-        "sandbox_allows_read": true,
-        "sandbox_allows_write": true,
-        "sip_protected": false,
-        "stderr_hint": "operation_not_permitted",
-        "syscall": null,
-        "tcc_guarded_prefix": null
-      },
-      "status": "blocked"
+      "status": "completed"
     },
     "plow_device_status": {
       "automation": [
@@ -158,7 +116,7 @@
   },
   "isError": {
     "plow_write_file": true,
-    "plow_run_command": true,
+    "plow_run_command": false,
     "plow_device_status": false
   },
   "expect": {

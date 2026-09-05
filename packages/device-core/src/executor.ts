@@ -144,10 +144,7 @@ export function sandboxGrants(
 ): { read: boolean; write: boolean } {
   const under = isLexicallyWithin;
   const home = canonicalize(args.home ?? os.homedir());
-  const housekeeping = ["Library/Caches", ".cache", ".config", ".local/state", ".npm"].map(
-    (p) => home + "/" + p,
-  );
-  const writable = [args.scratch, ...args.writePaths].concat(isReapable(args) ? [] : housekeeping);
+  const writable = writableRoots(args);
   const write = writable.some((root) => under(target, root));
   const readRoots = [...READ_BOILERPLATE, home, ...writable, ...args.readPaths, "/dev/fd"];
   const literals = new Set([
@@ -156,6 +153,26 @@ export function sandboxGrants(
   ]);
   const read = write || literals.has(target) || readRoots.some((root) => under(target, root));
   return { read, write };
+}
+
+/**
+ * The roots a profile lets a run write — and so everything a run, or a job
+ * it left behind, could replace with a symlink while nobody is looking.
+ * The diagnosis (hostGate/diagnose.ts) never opens a path under one by
+ * name while the run that owns it may still be alive.
+ */
+export function writableRoots(args: {
+  writePaths: string[];
+  network: boolean;
+  appleEvents: boolean;
+  scratch: string;
+  home?: string;
+}): string[] {
+  const home = canonicalize(args.home ?? os.homedir());
+  const housekeeping = ["Library/Caches", ".cache", ".config", ".local/state", ".npm"].map(
+    (p) => home + "/" + p,
+  );
+  return [args.scratch, ...args.writePaths].concat(isReapable(args) ? [] : housekeeping);
 }
 
 export class ExecutorError extends Error {}
@@ -609,6 +626,22 @@ export class Executor {
     const args = this.profiles.get(handle);
     if (!args) throw new ExecutorError(`unknown output handle: ${handle}`);
     return sandboxGrants(args, path);
+  }
+
+  /** What one run's profile lets it write (see `writableRoots`). */
+  writableRoots(handle: string): string[] {
+    const args = this.profiles.get(handle);
+    return args ? writableRoots(args) : [];
+  }
+
+  /** What every run still going could write right now: the roots a
+   *  diagnosis of anything — a file op included — must not open by name. */
+  mutableRoots(): string[] {
+    const roots: string[] = [];
+    for (const [handle, buffer] of this.buffers) {
+      if (buffer.exitCode === null) roots.push(...this.writableRoots(handle));
+    }
+    return roots;
   }
 
   /** Invoke cb when the run exits — immediately if it already has. */

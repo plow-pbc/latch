@@ -25,13 +25,32 @@ import { canonicalizeAsync, isWithinRootsAsync } from "@domo/protocol";
  */
 export const MAX_FILE_BYTES = 8 * 1024 * 1024;
 
+/** What the kernel said, when it was the kernel: Node's errno code, the
+ *  syscall, and the path it was about. Null for this module's own rules. */
+export interface FsErrorDetail {
+  code: string | null;
+  syscall: string | null;
+  path: string | null;
+}
+
 export class FileOpsError extends Error {
-  constructor(
-    message: string,
-    public readonly outOfBounds = false,
-  ) {
+  readonly detail: FsErrorDetail;
+  constructor(message: string, public readonly outOfBounds = false, detail?: FsErrorDetail) {
     super(message);
     this.name = "FileOpsError";
+    this.detail = detail ?? { code: null, syscall: null, path: null };
+  }
+
+  /** A filesystem failure, with the kernel's fields kept beside the sentence
+   *  rather than folded into it for someone to parse back out. */
+  static from(what: string, error: unknown): FileOpsError {
+    const e = error as { code?: unknown; syscall?: unknown; path?: unknown; message?: unknown };
+    const message = error instanceof Error ? error.message : String(error);
+    return new FileOpsError(`${what}: ${message}`, false, {
+      code: typeof e?.code === "string" ? e.code : null,
+      syscall: typeof e?.syscall === "string" ? e.syscall : null,
+      path: typeof e?.path === "string" ? e.path : null,
+    });
   }
 }
 
@@ -63,7 +82,7 @@ export const FileOps = {
       size = info.size;
     } catch (error: unknown) {
       if (error instanceof FileOpsError) throw error;
-      throw new FileOpsError(`read failed: ${error instanceof Error ? error.message : error}`);
+      throw FileOpsError.from("read failed", error);
     }
     if (size > MAX_FILE_BYTES) {
       throw new FileOpsError(
@@ -73,7 +92,7 @@ export const FileOps = {
     try {
       return await fs.readFile(canonical);
     } catch (error: unknown) {
-      throw new FileOpsError(`read failed: ${error instanceof Error ? error.message : error}`);
+      throw FileOpsError.from("read failed", error);
     }
   },
 
@@ -88,7 +107,7 @@ export const FileOps = {
       await fs.mkdir(path.dirname(canonical), { recursive: true });
       await fs.writeFile(canonical, data);
     } catch (error: unknown) {
-      throw new FileOpsError(`write failed: ${error instanceof Error ? error.message : error}`);
+      throw FileOpsError.from("write failed", error);
     }
   },
 };

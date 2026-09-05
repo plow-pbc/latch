@@ -23,7 +23,6 @@ import {
   HostFacts,
   isHostGate,
   nodeProbes,
-  parseNodeError,
   sandboxGrants,
   scriptedProbes,
   sipProtected,
@@ -61,6 +60,7 @@ function facts(overrides: Partial<HostFacts> = {}): HostFacts {
     sandbox_allows_read: null,
     sandbox_allows_write: null,
     path_approved: true,
+    probe_withheld: false,
     app_process_open: "ok",
     hung: false,
     tcc_guarded_prefix: null,
@@ -127,21 +127,6 @@ describe("guardedPrefix — which switch governs a path", () => {
 });
 
 describe("reading an error", () => {
-  it("pulls errno, syscall and path out of Node's message, prefix or not", () => {
-    expect(parseNodeError("EPERM: operation not permitted, open '/Users/x/Desktop/a'")).toEqual({
-      errno: "EPERM",
-      syscall: "open",
-      path: "/Users/x/Desktop/a",
-    });
-    expect(parseNodeError("read failed: EACCES: permission denied, open '/etc/shadow'")).toEqual({
-      errno: "EACCES",
-      syscall: "open",
-      path: "/etc/shadow",
-    });
-    expect(parseNodeError("write failed: ENOENT: no such file or directory, mkdir '/x/y'").errno).toBe("ENOENT");
-    expect(parseNodeError("something else entirely")).toEqual({ errno: null, syscall: null, path: null });
-  });
-
   it("recognises the few stderr shapes worth following up", () => {
     expect(stderrHint("ls: /Users/x/Desktop: Operation not permitted")).toBe("operation_not_permitted");
     expect(stderrHint("cat: /etc/shadow: Permission denied")).toBe("permission_denied");
@@ -483,7 +468,7 @@ describe("collectFacts — the battery over scripted probes", () => {
   it("reads the path out of a Node error when the caller named none", async () => {
     const probes = scriptedProbes({ inspect: { "/x/y": null }, openAsApp: { "/x/y": "ENOENT" } });
     const f = await collectFacts(
-      { op: "read", paths: [], errorMessage: "read failed: ENOENT: no such file or directory, open '/x/y'", ranSandboxed: false },
+      { op: "read", paths: [], error: { code: "ENOENT", syscall: "open", path: "/x/y" }, ranSandboxed: false },
       probes,
       HOME,
     );
@@ -514,7 +499,7 @@ describe("collectFacts — the battery over scripted probes", () => {
       fullDiskAccess: false,
     });
     const f = await collectFacts(
-      { op: "write", paths: [target], errorMessage: `write failed: EPERM: operation not permitted, open '${target}'`, ranSandboxed: false },
+      { op: "write", paths: [target], error: { code: "EPERM", syscall: "open", path: target }, ranSandboxed: false },
       probes,
       HOME,
     );
@@ -580,6 +565,46 @@ describe("collectFacts — the battery over scripted probes", () => {
     expect(f.path_approved).toBe(false);
     expect(f.paths_examined).toContain("~/Desktop/secret.txt");
     expect(diagnose(f).cause).toBe("outside_approved_bound");
+  });
+
+  it("an approved path a live run could rewrite is classified, never opened", async () => {
+    // Approved to write ~/Plow/w; the run is still going. Between deciding
+    // ~/Plow/w/a/x is approved and opening it, the run can make `a` a link
+    // to ~/Desktop — so nothing under a root it can write is opened by
+    // name while it lives. The location still speaks: guarded, so likely.
+    const w = `${HOME}/Plow/w`;
+    const target = `${HOME}/Documents/report.txt`;
+    const probes = scriptedProbes({ openAsApp: { [`${w}/a/x`]: "EPERM", [target]: "ok" }, fullDiskAccess: false });
+    const f = await collectFacts(
+      {
+        op: "exec",
+        paths: [w, target],
+        argv: ["/bin/cat", `${w}/a/x`],
+        stderr: `cat: ${w}/a/x: Operation not permitted`,
+        ranSandboxed: true,
+        sandbox: () => ({ read: true, write: true }),
+        mutable: [w],
+      },
+      probes,
+      HOME,
+    );
+    expect(probes.calls.filter((c) => c.includes("/Plow/w"))).toEqual([]);
+    expect(f.path).toBe("~/Plow/w/a/x");
+    expect(f.path_approved).toBe(true);
+    expect(f.probe_withheld).toBe(true);
+    expect(f.app_process_open).toBeNull();
+    // A declared path outside every rewritable root is still probed.
+    expect(probes.calls).toContain(`openAsApp ${target}`);
+    // Under a guarded location, the withheld probe leaves a likely verdict.
+    const guarded = await collectFacts(
+      { op: "exec", paths: [`${HOME}/Documents/out`], argv: ["/bin/sh", "-c", `echo x > ${HOME}/Documents/out`], stderr: `sh: ${HOME}/Documents/out: Operation not permitted`, ranSandboxed: true, sandbox: () => ({ read: true, write: true }), mutable: [`${HOME}/Documents/out`] },
+      scriptedProbes({ fullDiskAccess: false }),
+      HOME,
+    );
+    const d = diagnose(guarded);
+    expect(d.cause).toBe("macos_permission");
+    expect(d.confidence).toBe("likely");
+    expect(d.permission).toBe("files_documents");
   });
 
   it("an argv word that is a path is one candidate, spaces and all", async () => {

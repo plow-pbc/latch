@@ -45,7 +45,6 @@ import {
   HostProbes,
   isHostGate,
   nodeProbes,
-  parseNodeError,
   stderrHint,
 } from "./hostGate/index.js";
 import { readCredentialsState } from "./browser/vaultCredentials.js";
@@ -653,7 +652,8 @@ export class DeviceAgent {
     const message = error instanceof Error ? error.message : String(error);
     const hung = error instanceof FileOpHang;
     const outOfBounds = error instanceof FileOpsError && error.outOfBounds;
-    if (!hung && (outOfBounds || parseNodeError(message).errno === null)) {
+    const detail = error instanceof FileOpsError ? error.detail : null;
+    if (!hung && (outOfBounds || detail?.code === null || detail === null)) {
       // `cause` is what tells the audit view the bound from this app's own
       // rules (the size limit, "not a file"): the one refusal is the
       // policy's, the others are nobody's, and the row must not send the
@@ -667,7 +667,7 @@ export class DeviceAgent {
       return { status: "error", error: message };
     }
     const facts = await collectFacts(
-      { op, paths: [p], errorMessage: hung ? null : message, ranSandboxed: false, hung },
+      { op, paths: [p], error: hung ? null : detail, ranSandboxed: false, hung, mutable: this.executor.mutableRoots() },
       this.hostProbes,
       this.ownerHome,
     );
@@ -938,6 +938,9 @@ export class DeviceAgent {
         paths: [...diag.readPaths, ...diag.writePaths],
         cwd: diag.cwd ?? null,
         argv: diag.argv,
+        // What this run — or anything it left behind — could rewrite, and
+        // what any other run still going could: never opened by name.
+        mutable: [...this.executor.writableRoots(result.handle), ...this.executor.mutableRoots()],
         stderr: output,
         ranSandboxed: true,
         sandbox: (p) => this.executor.grants(result.handle, p),

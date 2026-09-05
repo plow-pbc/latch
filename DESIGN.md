@@ -250,7 +250,15 @@ So a refusal is **diagnosed, never guessed** (`packages/device-core/src/hostGate
   paths themselves are a snapshot from approval time and are never
   resolved again: a command that has since replaced one with a symlink
   must not have the battery follow it, so only candidates are resolved,
-  and one that resolves out of the snapshot is outside it; a command's
+  and one that resolves out of the snapshot is outside it. And approval is
+  not enough while something can still rewrite the path: between deciding
+  a path is approved and opening it, a run that is alive can replace it
+  with a link elsewhere, so a candidate under a root a live run's profile
+  lets it write (the run's own, or any run still going) is classified by
+  name and never opened — a withheld probe under a guarded location leaves
+  a `likely` verdict, and the exit-time diagnosis, or the reaper's, settles
+  it. What a run leaves running after it exits keeps its roots off limits
+  only while the executor still sees it; that residue is accepted; a command's
   output naming `~/Desktop/secret` gets none of that, because the open would
   raise the owner's consent dialog for something they never approved and
   hand back whether the file exists. An unapproved candidate is classified

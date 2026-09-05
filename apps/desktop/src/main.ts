@@ -2419,7 +2419,11 @@ function noteHostGateBlock(fields: { [k: string]: unknown }): void {
       : "Plow Latch was blocked by this Mac",
     body: ownerAction ?? "An agent's approved request was refused by macOS. Open Capabilities for details.",
   });
-  notification.on("click", () => showCapabilitiesForHostGate());
+  // The click navigates from THIS block, not from whatever the attention
+  // holds by then: a newer block may have replaced it, and a clearing may
+  // have taken it down. The tray item, which always shows the current
+  // attention, keeps reading the global.
+  notification.on("click", () => showCapabilitiesForHostGate({ permission, handle }));
   notification.show();
 }
 
@@ -2440,9 +2444,12 @@ function clearHostGateAttention(fields: { [k: string]: unknown }): void {
  * lists switches), so it lands on the Audit tab's Blocked view, where the
  * row carries the sentence that fixes it.
  */
-function showCapabilitiesForHostGate(): void {
-  const permission = hostGateAttention?.permission ?? null;
-  hostGateAttention = null;
+function showCapabilitiesForHostGate(block?: { permission: string | null; handle: string | null }): void {
+  const permission = block ? block.permission : (hostGateAttention?.permission ?? null);
+  // Opening the tray item clears the attention it shows; opening an older
+  // notification clears it only if it is still about that block, never a
+  // newer one the owner has not seen.
+  if (!block || hostGateAttention?.handle === block.handle) hostGateAttention = null;
   refreshTray();
   gate.sync();
   const send = () => mainWindow?.webContents.send(permission ? "ui:showCapabilities" : "ui:showAuditBlocked");

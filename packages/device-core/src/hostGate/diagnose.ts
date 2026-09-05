@@ -33,7 +33,6 @@ import {
   Errno,
   errnoFromHint,
   MAX_CANDIDATE_PATHS,
-  parseNodeError,
   StderrHint,
   stderrHint,
 } from "./errors.js";
@@ -106,8 +105,11 @@ export interface HostFacts {
    *  classified by name and can carry one verdict only, the bound. Null
    *  when no path was settled on. */
   path_approved: boolean | null;
+  /** The path is approved, but a run that may still be alive could rewrite
+   *  it, so it was classified by name and not opened. */
+  probe_withheld: boolean;
   /** What the app itself got opening the path, outside any profile. Null
-   *  when the path was not probed (not approved, or none). */
+   *  when the path was not probed (not approved, withheld, or none). */
   app_process_open: OpenOutcome | null;
   /** The operation (or a probe of it) never returned. */
   hung: boolean;
@@ -155,8 +157,15 @@ export interface FailureContext {
   /** Free text to mine for further paths. Split on whitespace, so a path
    *  with a space in it must go in `paths` or `argv`. */
   texts?: readonly string[];
-  /** The Node error text, for an in-process file op. */
-  errorMessage?: string | null;
+  /** What the kernel said to an in-process file op: errno code, syscall,
+   *  and the path it was about — the fields, never a sentence to parse. */
+  error?: { code: string | null; syscall: string | null; path: string | null } | null;
+  /** Roots a run that may still be alive could rewrite (its profile's
+   *  writable roots). A candidate under one is classified by name and never
+   *  opened: between deciding a path is approved and opening it, such a run
+   *  can replace it with a link elsewhere, and this process — outside any
+   *  seatbelt — would follow. */
+  mutable?: readonly string[];
   /** The command's captured output, for a run. */
   stderr?: string | null;
   ranSandboxed: boolean;
@@ -180,7 +189,11 @@ export async function collectFacts(
   probes: HostProbes,
   ownerHome: string,
 ): Promise<HostFacts> {
-  const parsed = parseNodeError(ctx.errorMessage ?? "");
+  const parsed = {
+    errno: (ctx.error?.code ?? null) as Errno | null,
+    syscall: ctx.error?.syscall ?? null,
+    path: ctx.error?.path ?? null,
+  };
   const hint = stderrHint(ctx.stderr ?? "");
   const errno = parsed.errno ?? errnoFromHint(hint);
 
@@ -226,6 +239,8 @@ export async function collectFacts(
     ...(cwd !== null && cwd !== home ? [cwd] : []),
   ];
   const contained = (p: string) => declared.some((d) => isLexicallyWithin(p, d));
+  const mutable = (ctx.mutable ?? []).map((r) => path.resolve(expandHome(r, ownerHome)));
+  const rewritable = (p: string) => mutable.some((r) => isLexicallyWithin(p, r));
   const sourced: [string, Source][] = [
     ...(parsed.path ? [[parsed.path, "error"] as [string, Source]] : []),
     ...candidatePaths(ctx.stderr ? [ctx.stderr] : []).map((p): [string, Source] => [p, "error"]),
@@ -234,17 +249,22 @@ export async function collectFacts(
     ...ctx.paths.map((p): [string, Source] => [p, "declared"]),
     ...(ctx.cwd ? [[ctx.cwd, "declared"] as [string, Source]] : []),
   ];
-  const bySource = new Map<string, { source: Source; probe: boolean }>();
+  const bySource = new Map<string, { source: Source; probe: boolean; withheld: boolean }>();
   for (const [raw, source] of sourced) {
-    // Resolved by name first; the disk is consulted only for a path the
-    // owner approved — and a symlink that walks out of the approval is
-    // then an undeclared path after all.
+    // Resolved by name first. A path inside the approval is then resolved
+    // on disk — realpath reads links and metadata, opens nothing, raises
+    // nothing — and a link that walks out of the approval is an undeclared
+    // path after all. Inside the approval after resolving, it is opened
+    // only if no live run could rewrite it meanwhile: nothing decided here
+    // is still true by the time a probe opens a path under such a root.
     const named = path.resolve(expandHome(raw, ownerHome));
     const canonical = contained(named) ? await canonicalizeAsync(named) : named;
-    const probe = contained(named) && contained(canonical);
+    const approved = contained(named) && contained(canonical);
+    const probe = approved && !rewritable(named) && !rewritable(canonical);
+    const withheld = approved && !probe;
     const known = bySource.get(canonical);
-    if (known === undefined) bySource.set(canonical, { source, probe });
-    else if (probe && !known.probe) known.probe = true;
+    if (known === undefined) bySource.set(canonical, { source, probe, withheld });
+    else if (probe && !known.probe) { known.probe = true; known.withheld = false; }
   }
   const candidates = [...bySource.keys()].slice(0, MAX_CANDIDATE_PATHS);
 
@@ -253,6 +273,8 @@ export async function collectFacts(
     source: Source;
     /** Whether the disk was asked at all: only for an approved path. */
     probed: boolean;
+    /** Approved, but not asked: a live run could rewrite it. */
+    withheld: boolean;
     info: Awaited<ReturnType<HostProbes["inspect"]>> | undefined;
     open: OpenOutcome | null;
     gate: HostPermission | null;
@@ -264,7 +286,7 @@ export async function collectFacts(
   // the call budget this runs inside of.
   const examined: Examined[] = await Promise.all(
     candidates.map(async (path) => {
-      const { source, probe } = bySource.get(path)!;
+      const { source, probe, withheld } = bySource.get(path)!;
       const info = probe ? await probes.inspect(path) : undefined;
       // A path that is not there cannot be opened, but CREATING it is what a
       // refused write was trying to do, and that is the parent's business: a
@@ -275,6 +297,7 @@ export async function collectFacts(
         path,
         source,
         probed: probe,
+        withheld,
         info,
         open,
         gate: guardedPrefix(path, ownerHome),
@@ -320,7 +343,8 @@ export async function collectFacts(
     op: ctx.op,
     path: chosen ? tildeRelative(chosen.path, ownerHome) : null,
     paths_examined: examined.map((e) => tildeRelative(e.path, ownerHome)),
-    path_approved: chosen ? chosen.probed : null,
+    path_approved: chosen ? chosen.probed || chosen.withheld : null,
+    probe_withheld: chosen?.withheld ?? false,
     path_exists: chosen?.probed ? chosen.info !== null : null,
     is_directory: chosen?.info?.isDirectory ?? null,
     posix_readable: chosen?.info?.readable ?? null,
@@ -520,6 +544,17 @@ export function diagnose(f: HostFacts): Diagnosis {
       }
       evidence.push("the path is not under any location macOS is known to guard");
       return verdict("unknown", "unknown", null);
+    }
+
+    // The app's attempt was withheld — the run could have rewritten the
+    // path under it — so the location has to speak for itself.
+    if (f.probe_withheld && f.tcc_guarded_prefix !== null) {
+      evidence.push(`${where} was not opened by ${APP_DISPLAY_NAME} itself: a running command could rewrite it`);
+      evidence.push(`${where} is under a location macOS guards (${PERMISSION_LABELS[f.tcc_guarded_prefix]})`);
+      if (COVERED_BY_FULL_DISK_ACCESS.has(f.tcc_guarded_prefix) && f.full_disk_access_granted === true) {
+        return verdict("unknown", "unknown", f.tcc_guarded_prefix);
+      }
+      return verdict("macos_permission", "likely", f.tcc_guarded_prefix);
     }
 
     // No usable answer from the app's own attempt: fall back to the prefix.
