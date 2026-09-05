@@ -60,7 +60,7 @@
         "confidence": "likely",
         "evidence": [
           "the kernel answered EPERM for ~/Documents/plumber.txt",
-          "~/Documents/plumber.txt was not opened by Plow Latch itself: a running command could rewrite it",
+          "~/Documents/plumber.txt was not opened by Plow Latch itself: a run or one of its background jobs could rewrite it",
           "~/Documents/plumber.txt is under a location macOS guards (Files and Folders > Documents Folder)"
         ],
         "owner_action": "In System Settings > Privacy & Security > Files and Folders > Documents Folder, allow Plow Latch. Granting Plow Latch Full Disk Access instead covers this and every other folder at once.",
