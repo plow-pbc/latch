@@ -220,12 +220,20 @@ describe("every tool this Mac can stop says so", () => {
     expect(d.plow_run_command).toMatch(/leave it running/);
   });
 
-  it("plow_device_status is offered before another app's data is touched, and needs no approval", async () => {
+  it("plow_device_status is for the user's question or after a block — never a way to avoid trying", async () => {
+    // The first cut said "call it BEFORE reading another app's data", and
+    // an agent obeyed: it checked, told the user Full Disk Access was off,
+    // and never tried — so nothing was refused, nothing was recorded, and
+    // the app's own surfaces (tray, notification, the Capabilities row
+    // with the button) never fired. An attempt is what lights them.
     expect(SERVER_INSTRUCTIONS).toMatch(/plow_device_status/);
-    expect(SERVER_INSTRUCTIONS).toMatch(/before trying rather than after being blocked/i);
+    expect(SERVER_INSTRUCTIONS).toMatch(/TRY it rather than checking first/);
+    expect(SERVER_INSTRUCTIONS).toMatch(/not a way to avoid trying/);
     const d = await descriptions(makeServer());
     expect(d.plow_device_status).toMatch(/no approval needed/);
-    expect(d.plow_device_status).toMatch(/BEFORE reading another app's data/);
+    expect(d.plow_device_status).toMatch(/Do NOT call it to decide whether to try/);
+    expect(d.plow_device_status).toMatch(/after a 'blocked' result/);
+    expect(d.plow_device_status).not.toMatch(/BEFORE reading/);
     expect(d.plow_device_status).toMatch(/'not_asked'/);
     expect(d.plow_device_status).toMatch(/'target_not_running'/);
   });

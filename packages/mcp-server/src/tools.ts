@@ -949,14 +949,17 @@ export const TOOLS: ToolSpec[] = [
     title: "What this Mac lets the app do right now",
     description:
       "Which macOS permissions this app holds on the user's Mac, and whether its own machinery " +
-      "works — checked fresh each call, no approval needed. Call it BEFORE reading another app's " +
-      "data (Messages, Mail, Safari, Contacts, the Desktop/Documents/Downloads folders) or sending " +
-      "Apple events: if 'full_disk_access' is not granted, or an 'automation' target is 'denied', " +
-      "say so to the user up front instead of trying and being blocked. 'not_asked' means macOS " +
-      "will raise a dialog on the Mac's screen at the first attempt, which only someone at the Mac " +
-      "can answer; 'target_not_running' means macOS declines to say until that app is open. The " +
-      "other rows are self-checks — the sandbox spawns, a child of the app inherits its grants, the " +
-      "vault key opens — and a failed one is for the user to hear, not for you to work around.",
+      "works — checked fresh each call, no approval needed. For when the user asks what you can " +
+      "reach on their Mac, or after a 'blocked' result, to see the whole picture in one call. Do " +
+      "NOT call it to decide whether to try: an attempt that this Mac refuses comes back 'blocked' " +
+      "with the exact sentence for the user, and shows the user in the app which switch to flip " +
+      "— and for a folder or an Apple events target, the attempt raises macOS's own consent " +
+      "dialog on the Mac's screen, which is the easiest grant there is. A status check does none " +
+      "of that, and a user told 'not granted' from a check has nowhere to click. 'not_asked' means " +
+      "macOS will raise a dialog at the first attempt; 'target_not_running' means macOS declines " +
+      "to say until that app is open. The other rows are self-checks — the sandbox spawns, a child " +
+      "of the app inherits its grants, the vault key opens — and a failed one is for the user to " +
+      "hear, not for you to work around.",
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
     // A read of what macOS has decided — no intent, no approval, nothing slow.
     annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
