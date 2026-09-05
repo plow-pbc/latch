@@ -260,9 +260,13 @@ So a refusal is **diagnosed, never guessed** (`packages/device-core/src/hostGate
   it. Those roots are read live, at the moment of deciding and again just
   before the open, under an executor hold that lets no new run register
   while a probe is out: a run asked to start then waits for the probe,
-  never the other way round. What a run leaves running after it exits keeps its roots off limits
-  only while the executor still sees it; that residue is accepted; a command's
-  output naming `~/Desktop/secret` gets none of that, because the open would
+  never the other way round. A command's exit is not the end of its run's
+  hands on the disk — a job it backgrounded lives on in its process group —
+  so a run's roots stay off limits while any process of that group exists
+  (a signal 0 to the group says), not merely while the command runs; and
+  the consent touch before a file operation climbs above every such root
+  too, to the guarded folder that contains them. A command's output naming
+  `~/Desktop/secret` gets none of that, because the open would
   raise the owner's consent dialog for something they never approved and
   hand back whether the file exists. An unapproved candidate is classified
   by name alone (the profile's grant, the gate table, SIP), which carries

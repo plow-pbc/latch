@@ -354,6 +354,10 @@ export class Executor {
   /** What each run's profile was built from, kept so a diagnosis can ask
    *  after the fact what that profile allowed (`grants`). */
   private profiles = new Map<string, Parameters<typeof sandboxGrants>[0]>();
+  /** Each run's process group (it is spawned as a session leader, so the
+   *  group is its pid): what `mutableRoots` asks about after the command
+   *  itself has exited, since a job it backgrounded lives on in it. */
+  private groups = new Map<string, number>();
   /** Diagnoses' probes in flight (hostGate/diagnose.ts `hold`). A run
    *  registers — its writable roots become known — only while none is: a
    *  probe decides by the roots it can see at that moment, and a run that
@@ -494,6 +498,7 @@ export class Executor {
       // the sweep that would is its own change, not a side effect of this one.
       detached: true,
     });
+    if (child.pid !== undefined) this.groups.set(handle, child.pid);
     // A run ends when its COMMAND ends. `close` says something else — every
     // stdio pipe closed too — and a job the command backgrounded inherits
     // those pipes and can hold them open forever. Settling on `exit` is what
@@ -659,14 +664,34 @@ export class Executor {
     return args ? writableRoots(args) : [];
   }
 
-  /** What every run still going could write right now: the roots a
-   *  diagnosis of anything — a file op included — must not open by name. */
+  /**
+   * What every run that is still going — or anything a run left behind —
+   * could write right now: the roots a diagnosis of anything, a file op
+   * included, must not open by name. A command's exit is not the end of
+   * its run's hands on the disk: a job it backgrounded keeps its process
+   * group alive, and the group is asked (a signal 0 to it) rather than the
+   * command's exit code.
+   */
   mutableRoots(): string[] {
     const roots: string[] = [];
     for (const [handle, buffer] of this.buffers) {
-      if (buffer.exitCode === null) roots.push(...this.writableRoots(handle));
+      if (buffer.exitCode === null || this.groupAlive(handle)) roots.push(...this.writableRoots(handle));
     }
     return roots;
+  }
+
+  /** Whether any process of the run's group still exists. */
+  private groupAlive(handle: string): boolean {
+    const pid = this.groups.get(handle);
+    if (pid === undefined) return false;
+    try {
+      process.kill(-pid, 0);
+      return true;
+    } catch (error: unknown) {
+      // ESRCH: no such group — every member is gone. Anything else (EPERM,
+      // a member no longer ours) means something is still there.
+      return (error as { code?: unknown })?.code !== "ESRCH";
+    }
   }
 
   /** Invoke cb when the run exits — immediately if it already has. */

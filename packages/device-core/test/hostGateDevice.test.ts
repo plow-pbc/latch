@@ -834,6 +834,56 @@ describe.skipIf(!ON_MAC)("a command this Mac refused", () => {
     expect(order).toEqual(["probe in", "b asked", "probe out", "b ran"]);
   });
 
+  it("a job a finished command left behind keeps its roots off limits to a later diagnosis", async () => {
+    // Run W, approved to write ~/Documents/w, backgrounds a loop that keeps
+    // flipping w/a between a folder and a link to ~/Desktop, and exits at
+    // once. Its command is over; its process group is not. A file read of
+    // w/a/x, approved on its own, then fails and is diagnosed — and the
+    // survivor's root is still one the battery will not resolve or open by
+    // name, so nothing on the Desktop is touched or named.
+    const home = tempDir();
+    fs.mkdirSync(path.join(home, "Desktop"));
+    const w = path.join(home, "Documents", "w");
+    fs.mkdirSync(path.join(w, "a"), { recursive: true });
+    const probes = scriptedProbes({ openAsApp: { [path.join(home, "Desktop")]: "hung" }, fullDiskAccess: false });
+    const d = device(home, probes);
+    const executor = (d as unknown as { executor: Executor }).executor;
+    const a = JSON.stringify(path.join(w, "a"));
+    const loop = `i=0; while [ $i -lt 30 ]; do rm -rf ${a}; ln -s ${JSON.stringify(path.join(home, "Desktop"))} ${a}; rm -f ${a}; mkdir -p ${a}; sleep 0.1; i=$((i+1)); done`;
+    const started = jv(
+      await d.handleIntent(
+        intentFor(d, "run", [
+          { kind: "process.exec", argv: ["/bin/sh", "-c", `nohup sh -c ${JSON.stringify(loop)} >/dev/null 2>&1 & exit 0`], cwd: home },
+          { kind: "fs.write", paths: [w] },
+        ]),
+        { wait_ms: 5_000 },
+      ),
+    );
+    expect(started.get("status").str).toBe("completed");
+    expect(started.get("exit_code").int).toBe(0);
+    // The command is over; the root stays mutable while the job lives.
+    expect(executor.mutableRoots()).toContain(w);
+    // Read w/a/x until the read fails the way that is diagnosed (missing:
+    // the loop never recreates x); a read that resolves through the link
+    // is refused as out of bounds before any battery runs, which is fine too.
+    let diagnosed: ReturnType<typeof jv> | null = null;
+    const deadline = Date.now() + 3_000;
+    while (diagnosed === null && Date.now() < deadline) {
+      const r = jv(await d.handleIntent(intentFor(d, "read", [{ kind: "fs.read", paths: [path.join(w, "a", "x")] }])));
+      if (!r.get("diagnosis").isNull) diagnosed = r;
+    }
+    expect(diagnosed).not.toBeNull();
+    expect(probes.calls.filter((c) => c.includes("Desktop") || c.includes("/Documents/w"))).toEqual([]);
+    expect(diagnosed!.get("probes").get("probe_withheld").bool).toBe(true);
+    const examined = (diagnosed!.get("probes").get("paths_examined").arr ?? []).map(String);
+    expect(examined).not.toContain("~/Desktop/x");
+    expect(examined).toContain("~/Documents/w/a/x");
+    // Once the job is gone, so is the hold on its root.
+    const gone = Date.now() + 8_000;
+    while (executor.mutableRoots().includes(w) && Date.now() < gone) await new Promise((res) => setTimeout(res, 100));
+    expect(executor.mutableRoots()).not.toContain(w);
+  });
+
   it("a silent run that is simply running is left alone", async () => {
     const home = tempDir();
     const probes = scriptedProbes();
