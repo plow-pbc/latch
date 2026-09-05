@@ -23,6 +23,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { clickText, failLoudly, shootScreens, shotWindow, waitFor } from "./screenshot-harness.mjs";
+import { capabilitiesView } from "../dist/capabilitiesModel.js";
 
 const dir = path.dirname(fileURLToPath(import.meta.url));
 const dist = path.join(dir, "../dist");
@@ -433,7 +434,31 @@ async function setUp() {
     };
     return connectorsFixture;
   });
-  ipcMain.handle("capabilities:get", async () => ({ fullDiskAccess: false }));
+  // The Capabilities tab, which Connected Accounts now shares: the REAL view
+  // model over a stub inventory (Full Disk Access off, nothing blocked).
+  const inventory = {
+    checked_at: "2026-09-02T08:00:00Z",
+    full_disk_access: { granted: false, probes: [] },
+    automation: [],
+    automation_queryable: true,
+    permissions: [
+      { permission: "accessibility", status: "denied" },
+      { permission: "contacts", status: "not_asked" },
+      { permission: "calendars", status: "granted" },
+    ],
+    sandbox: { status: "ok", detail: null },
+    child_attribution: { status: "not_applicable", detail: null },
+    vault_key: { status: "ok", reason: null },
+  };
+  const capabilities = () => ({
+    fullDiskAccess: false,
+    inventory,
+    view: capabilitiesView({ inventory, automation: [], events: [], dismissals: {}, bannerSeenAt: null }),
+  });
+  ipcMain.handle("capabilities:get", async () => capabilities());
+  ipcMain.handle("capabilities:act", async () => capabilities().view);
+  ipcMain.handle("capabilities:dismiss", async () => capabilities().view);
+  ipcMain.handle("capabilities:bannerSeen", async () => capabilities().view);
   ipcMain.handle("launch:get", async () => ({ supported: false, openAtLogin: false }));
   ipcMain.handle("power:getKeepAwake", async () => ({ enabled: false }));
   ipcMain.handle("telemetry:get", async () => ({ enabled: true }));
@@ -457,47 +482,54 @@ async function setUp() {
   return connect;
 }
 
-async function showSettings(win) {
-  await win.webContents.executeJavaScript(`window.__domoSelectTab("settings")`);
-  await waitFor(win, `document.querySelector(".panel.settings .settings-connectors")`,
-    "the Connected accounts Settings section");
-}
+/** The Capabilities tab, where Connected Accounts lives now, with the
+ *  connector state drawn (it arrives a beat after the switches). */
+const showCapabilities = (settled) => async (win) => {
+  await win.webContents.executeJavaScript(`window.__domoSelectTab("capabilities")`);
+  await waitFor(win, `[...document.querySelectorAll(".cap-name")].some((n) => n.textContent === "Google")`,
+    "the Connected Accounts section of the Capabilities tab");
+  await waitFor(win, settled, "the connector state to draw");
+};
 
 /** Each shot: how to get the screen into that state, and what must be on it. */
 const SCREENS = [
   {
-    name: "settings-connected-accounts",
+    name: "capabilities-connected-accounts",
     connectors: CONNECTORS_POPULATED,
-    prepare: showSettings,
+    prepare: showCapabilities(`document.querySelectorAll(".cap-account-email").length === 2`),
+    // Each account is a row under Google, the default's pill beside it, and
+    // a "•••" menu (Set as Default / Remove Account) rather than inline
+    // buttons; "Add another" carries the browser-hop arrow.
     expect: [
-      "Connected accounts", "Google", "mary@gmail.com", "Default",
-      "mary@work.com", "Set default", "Add another Google account",
+      "Connected Accounts", "Google", "mary@gmail.com", "Default",
+      "mary@work.com", "Add another",
     ],
-    reject: ["Slack", CONNECTOR_TIMEOUT_NOTE],
-    expectAriaLabel: "Remove Google account",
+    reject: ["Slack", CONNECTOR_TIMEOUT_NOTE, "Set default"],
+    expectAriaLabel: "Account actions",
   },
   {
-    name: "settings-connect-connecting",
+    name: "capabilities-connect-connecting",
     connectors: {
       ...CONNECTORS_EMPTY,
       busy: true,
       google: { accounts: [], connecting: true },
     },
-    prepare: showSettings,
-    expect: ["Connected accounts", "Google", "Connecting…"],
-    reject: ["Slack", CONNECTOR_TIMEOUT_NOTE, "Add another Google account"],
+    prepare: showCapabilities(`document.body.innerText.includes("Connecting…")`),
+    expect: ["Connected Accounts", "Google", "Connecting…"],
+    reject: ["Slack", CONNECTOR_TIMEOUT_NOTE, "Add another"],
   },
   {
-    name: "settings-connect-timeout",
+    name: "capabilities-connect-timeout",
     connectors: {
       ...CONNECTORS_EMPTY,
       message: CONNECTOR_TIMEOUT_NOTE,
       noteKind: "neutral",
     },
-    prepare: showSettings,
-    expect: ["Connected accounts", "Google", "Connect", CONNECTOR_TIMEOUT_NOTE],
+    prepare: showCapabilities(`!!document.querySelector(".connector-note.neutral")`),
+    expect: ["Connected Accounts", "Google", "Connect", CONNECTOR_TIMEOUT_NOTE],
     reject: ["Slack", "Connecting…"],
-    expectEnabled: "Connect",
+    // The label plus its ↗ glyph: the button's text, as the harness reads it.
+    expectEnabled: "Connect↗",
     expectNeutralNote: CONNECTOR_TIMEOUT_NOTE,
   },
   {
