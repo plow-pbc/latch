@@ -26,7 +26,7 @@
  * and for the audit trail that shows which branch was wrong when one is.
  */
 import path from "node:path";
-import { canonicalizeAsync, JSONValue } from "@domo/protocol";
+import { canonicalizeAsync, isLexicallyWithin, JSONValue } from "@domo/protocol";
 import {
   argvCandidates,
   candidatePaths,
@@ -211,13 +211,21 @@ export async function collectFacts(
   // nothing under it, or every path on the Mac would be fair game. A
   // command's argv and output are not approval at all: a path in a shell
   // string is exactly what a run would write to have this Mac touch it.
-  const home = await canonicalizeAsync(ownerHome);
-  const cwd = ctx.cwd ? await canonicalizeAsync(expandHome(ctx.cwd, ownerHome)) : null;
+  //
+  // The approval is a SNAPSHOT, taken before the run and never resolved
+  // again: the caller's paths were canonicalized when the owner approved
+  // them, and a command that has since replaced one with a symlink must not
+  // have this battery follow it — resolving the root now would turn
+  // "~/Plow/out is approved" into "wherever ~/Plow/out points now is". Only
+  // candidates are resolved, and a candidate that resolves out of the
+  // snapshot is outside it.
+  const home = path.resolve(ownerHome);
+  const cwd = ctx.cwd ? path.resolve(expandHome(ctx.cwd, ownerHome)) : null;
   const declared = [
-    ...(await Promise.all([...ctx.paths, ...(parsed.path ? [parsed.path] : [])].map((p) => canonicalizeAsync(expandHome(p, ownerHome))))),
+    ...[...ctx.paths, ...(parsed.path ? [parsed.path] : [])].map((p) => path.resolve(expandHome(p, ownerHome))),
     ...(cwd !== null && cwd !== home ? [cwd] : []),
   ];
-  const contained = (p: string) => declared.some((d) => p === d || p.startsWith(d.endsWith("/") ? d : d + "/"));
+  const contained = (p: string) => declared.some((d) => isLexicallyWithin(p, d));
   const sourced: [string, Source][] = [
     ...(parsed.path ? [[parsed.path, "error"] as [string, Source]] : []),
     ...candidatePaths(ctx.stderr ? [ctx.stderr] : []).map((p): [string, Source] => [p, "error"]),

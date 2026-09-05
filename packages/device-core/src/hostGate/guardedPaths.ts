@@ -16,6 +16,7 @@
  * the `~/Library` stores, which is why the Settings pane and onboarding push
  * for that one grant rather than three.
  */
+import { isLexicallyWithin } from "@domo/protocol";
 
 /** A macOS permission this app can be missing. Stable names: they reach the
  *  agent in a tool result and the owner in the audit log. */
@@ -119,9 +120,7 @@ const ABSOLUTE: readonly [string, HostPermission][] = [
 const SIP_PREFIXES = ["/System", "/usr", "/bin", "/sbin", "/private/var/db/ConfigurationProfiles"];
 const SIP_EXEMPT = ["/usr/local", "/System/Volumes/Data"];
 
-function under(path: string, prefix: string): boolean {
-  return path === prefix || path.startsWith(prefix.endsWith("/") ? prefix : prefix + "/");
-}
+const under = isLexicallyWithin;
 
 /**
  * The TCC gate that governs `path`, or null when none does. Both arguments

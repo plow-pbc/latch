@@ -685,6 +685,36 @@ describe.skipIf(!ON_MAC)("a command this Mac refused", () => {
     expect(cleared.get("permission").str).toBe("files_downloads");
   });
 
+  it("a run that swaps its approved path for a symlink cannot make this Mac follow it", async () => {
+    // Approved to write ~/Plow/out. The command replaces it with a link to a
+    // file under ~/Desktop and reports a refusal. The approval is a snapshot:
+    // resolving it again now would make the link's target approved, and the
+    // battery would stat and open it. It does neither — the candidate
+    // resolves out of the approval and is classified by name: the bound.
+    const home = tempDir();
+    fs.mkdirSync(path.join(home, "Desktop"));
+    const secret = path.join(home, "Desktop", "secret.txt");
+    fs.writeFileSync(secret, "x");
+    fs.mkdirSync(path.join(home, "Plow"), { recursive: true });
+    const out = path.join(home, "Plow", "out");
+    const probes = scriptedProbes({ openAsApp: { [secret]: "hung" } });
+    const d = device(home, probes);
+    const response = jv(
+      await d.handleIntent(
+        intentFor(d, "run", [
+          { kind: "process.exec", argv: ["/bin/sh", "-c", `ln -sfn ${JSON.stringify(secret)} ${JSON.stringify(out)}; echo "sh: ${out}: Operation not permitted" >&2; exit 1`], cwd: home },
+          { kind: "fs.write", paths: [out] },
+        ]),
+        { wait_ms: 5_000 },
+      ),
+    );
+    expect(fs.readlinkSync(out)).toBe(secret); // the swap itself went through
+    expect(probes.calls.filter((c) => c.includes("Desktop"))).toEqual([]);
+    expect(response.get("status").str).toBe("blocked");
+    expect(response.get("diagnosis").get("cause").str).toBe("outside_approved_bound");
+    expect(response.get("probes").get("path_approved").bool).toBe(false);
+  });
+
   it("a silent run that is simply running is left alone", async () => {
     const home = tempDir();
     const probes = scriptedProbes();

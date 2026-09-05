@@ -51,31 +51,26 @@ export function blockedGroups(events: readonly JSONValue[]): BlockedGroup[] {
     const id = ev.get("intentId").str;
     if (ev.get("event").str === "intent_received" && id !== null) intents.set(id, e);
   }
-  // One verdict per run: a block corrected under the same handle (a parked
-  // run the owner then refused) counts once, as the newest; a block the
-  // device later cleared (the owner let the parked run through) counts not
-  // at all — a folder this Mac cannot query would otherwise stay red on the
-  // strength of a guess the owner has answered. A refusal recorded after a
-  // clearing is a new verdict and counts.
+  // One verdict per run, folded from the log in the order it was written
+  // (the order is the fact; the timestamps are whole seconds, and a
+  // clearing and the refusal that follows it usually share one): a block
+  // corrected under the same handle replaces the earlier one, and a
+  // clearing (the owner let the parked run through) removes the current
+  // verdict — a folder this Mac cannot query would otherwise stay red on
+  // the strength of a guess the owner has answered. A refusal recorded
+  // after a clearing is a new verdict and stands.
   const runKey = (ev: ReturnType<typeof jv>) => ev.get("handle").str ?? ev.get("intentId").str;
-  const clearedAt = new Map<string, string>();
-  const newest = new Map<string, JSONValue>();
+  const verdicts = new Map<string, JSONValue>();
   for (const e of events) {
     const ev = jv(e);
     const event = ev.get("event").str;
     const run = runKey(ev);
-    if (event === "host_permission_cleared" && run !== null) clearedAt.set(run, ev.get("ts").str ?? "");
-    if (event === "host_permission_blocked") {
-      if (run === null) { newest.set(`${newest.size}:anon`, e); continue; }
-      const prior = newest.get(run);
-      if (prior === undefined || (jv(prior).get("ts").str ?? "") <= (ev.get("ts").str ?? "")) newest.set(run, e);
-    }
+    if (event === "host_permission_cleared" && run !== null) verdicts.delete(run);
+    if (event === "host_permission_blocked") verdicts.set(run ?? `${verdicts.size}:anon`, e);
   }
   const groups = new Map<string, BlockedGroup>();
-  for (const [run, e] of newest) {
+  for (const e of verdicts.values()) {
     const ev = jv(e);
-    const cleared = clearedAt.get(run);
-    if (cleared !== undefined && cleared >= (ev.get("ts").str ?? "")) continue;
     const key = blockKey(ev);
     if (key === null) continue;
     const intentId = ev.get("intentId").str;

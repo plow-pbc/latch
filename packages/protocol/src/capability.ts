@@ -176,11 +176,21 @@ export async function canonicalizeAsync(path: string): Promise<string> {
   return "/" + remainder.reverse().join("/");
 }
 
+/**
+ * True when `path` is `root` or lexically inside it — a string test, no
+ * disk. Both arguments must already be in the same form (canonical, or both
+ * as named); the caller decides which, since resolving a root again after
+ * something else has had a turn on the disk is how a swapped symlink walks
+ * an approval somewhere it never pointed. The one root predicate shared by
+ * the sandbox profile, the gate table, and the diagnosis.
+ */
+export function isLexicallyWithin(path: string, root: string): boolean {
+  return path === root || path.startsWith(root.endsWith("/") ? root : root + "/");
+}
+
 /** True when `path` is `root` or inside it, after canonicalization. */
 export function isWithin(path: string, root: string): boolean {
-  const p = canonicalize(path);
-  const r = canonicalize(root);
-  return p === r || p.startsWith(r.endsWith("/") ? r : r + "/");
+  return isLexicallyWithin(canonicalize(path), canonicalize(root));
 }
 
 export function isWithinRoots(path: string, roots: string[]): boolean {

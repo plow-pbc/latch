@@ -246,7 +246,11 @@ So a refusal is **diagnosed, never guessed** (`packages/device-core/src/hostGate
   command's argv (kept element by element, so a spaced path is one path),
   its output, and its working directory. Only a candidate inside a declared
   path — or the cwd, when that is a specific folder and not the owner's
-  home — is canonicalized, `stat`'d or opened as the app; a command's
+  home — is canonicalized, `stat`'d or opened as the app. The declared
+  paths themselves are a snapshot from approval time and are never
+  resolved again: a command that has since replaced one with a symlink
+  must not have the battery follow it, so only candidates are resolved,
+  and one that resolves out of the snapshot is outside it; a command's
   output naming `~/Desktop/secret` gets none of that, because the open would
   raise the owner's consent dialog for something they never approved and
   hand back whether the file exists. An unapproved candidate is classified
@@ -255,9 +259,13 @@ So a refusal is **diagnosed, never guessed** (`packages/device-core/src/hostGate
 - A parked run's verdict is provisional and the exit corrects the record: a
   run let through the dialog gets a `host_permission_cleared` line, and one
   the owner refused gets a second `host_permission_blocked` under the same
-  handle. The Audit tab and the Capabilities tab both take the newest per
-  handle and drop a cleared one, so the agent's answer and the owner's
-  views never disagree about how a run ended.
+  handle. The Audit tab and the Capabilities tab both fold the log in the
+  order it was written — a clearing removes the verdict, a later block
+  replaces it — so the agent's answer and the owner's views never disagree
+  about how a run ended, and a "Needs …" tray item comes down with the
+  clearing. A block that names no switch (a locked file, a SIP root, POSIX
+  permissions) has no row on the Capabilities tab, so its tray item and
+  notification land on the Audit tab's Blocked view instead.
 - A pure decision tree names a cause — `macos_permission`, `prompt_waiting`,
   `outside_approved_bound` (our seatbelt, told apart from macOS by the app's
   own open succeeding), `posix_permissions`, `sip_protected`,

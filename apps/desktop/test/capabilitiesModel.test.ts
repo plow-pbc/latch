@@ -231,6 +231,16 @@ describe("capabilitiesView", () => {
     expect(refused.badge).toBe(1);
     expect(refused.sections[0]!.rows.find((r) => r.key === "files_downloads")).toMatchObject({ count: 1, status: "denied" });
     expect(refused.banner?.count).toBe(1);
+    // The clearing and the refusal usually share a second (the log writes
+    // whole seconds); the order in the log is what decides, so the refusal
+    // still stands.
+    const sameSecond = capabilitiesView(input({ events: [
+      ...parked,
+      { event: "host_permission_cleared", intentId: "i1", handle: "H1", permission: "files_downloads", ts: "2026-09-02T02:05:00Z" },
+      { event: "host_permission_blocked", intentId: "i1", handle: "H1", permission: "files_downloads", cause: "macos_permission", confidence: "confirmed", owner_action: "Allow it.", ts: "2026-09-02T02:05:00Z" },
+    ] }));
+    expect(sameSecond.badge).toBe(1);
+    expect(sameSecond.sections[0]!.rows.find((r) => r.key === "files_downloads")?.count).toBe(1);
   });
 
   it("a block from the same second as the dismissal is dismissed", () => {
