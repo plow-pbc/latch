@@ -281,7 +281,9 @@ describe.skipIf(!ON_MAC)("a command this Mac refused", () => {
     const d = device(home, probes);
     const response = jv(
       await d.handleIntent(
-        intentFor(d, "run", [{ kind: "process.exec", argv: refusing(target), cwd: home }]),
+        // The database is what the owner approved reading; only then is
+        // the refusal in the output followed up on the disk.
+        intentFor(d, "run", [{ kind: "process.exec", argv: refusing(target), cwd: home }, { kind: "fs.read", paths: [target] }]),
         { wait_ms: 5_000 },
       ),
     );
@@ -404,7 +406,7 @@ describe.skipIf(!ON_MAC)("a command this Mac refused", () => {
 
     const response = jv(
       await d.handleIntent(
-        intentFor(d, "run", [{ kind: "process.exec", argv: ["/bin/cat", fifo], cwd: home }]),
+        intentFor(d, "run", [{ kind: "process.exec", argv: ["/bin/cat", fifo], cwd: home }, { kind: "fs.read", paths: [fifo] }]),
         { wait_ms: 50 },
       ),
     );
@@ -445,7 +447,7 @@ describe.skipIf(!ON_MAC)("a command this Mac refused", () => {
     const d = device(home, scriptedProbes({ openAsApp: { [fifo]: "hung" } }));
     const response = jv(
       await d.handleIntent(
-        intentFor(d, "run", [{ kind: "process.exec", argv: ["/bin/cat", fifo], cwd: home }]),
+        intentFor(d, "run", [{ kind: "process.exec", argv: ["/bin/cat", fifo], cwd: home }, { kind: "fs.read", paths: [fifo] }]),
         { wait_ms: 50 },
       ),
     );
@@ -466,9 +468,11 @@ describe.skipIf(!ON_MAC)("a command this Mac refused", () => {
     expect(polled.get("exit_code").int).toBe(0);
     expect(polled.get("output").str).toBe("through\n");
     expect(polled.get("diagnosis").isNull).toBe(true);
-    // The block stays in the log — it happened — beside the clean exit.
+    // The block stays in the log — it happened — beside the clean exit, and
+    // the clearing is recorded for the owner's views to stop counting it.
     expect(events(d).filter((e) => e === "host_permission_blocked")).toHaveLength(1);
     expect(events(d)).toContain("exec_end");
+    expect(events(d)).toContain("host_permission_cleared");
   });
 
   it("a run that ends well while its first probes are still running is completed, not blocked", async () => {
@@ -488,7 +492,7 @@ describe.skipIf(!ON_MAC)("a command this Mac refused", () => {
     const d = device(home, slow);
     const response = jv(
       await d.handleIntent(
-        intentFor(d, "run", [{ kind: "process.exec", argv: ["/bin/sh", "-c", `sleep 0.2; cat ${JSON.stringify(file)}`], cwd: home }]),
+        intentFor(d, "run", [{ kind: "process.exec", argv: ["/bin/sh", "-c", `sleep 0.2; cat ${JSON.stringify(file)}`], cwd: home }, { kind: "fs.read", paths: [file] }]),
         { wait_ms: 50 },
       ),
     );
@@ -531,7 +535,7 @@ describe.skipIf(!ON_MAC)("a command this Mac refused", () => {
     const d = device(home, firstSlow);
     const response = jv(
       await d.handleIntent(
-        intentFor(d, "run", [{ kind: "process.exec", argv: ["/bin/sh", "-c", `sleep 0.2; echo "sh: ${target}: Operation not permitted" >&2; exit 1`], cwd: home }]),
+        intentFor(d, "run", [{ kind: "process.exec", argv: ["/bin/sh", "-c", `sleep 0.2; echo "sh: ${target}: Operation not permitted" >&2; exit 1`], cwd: home }, { kind: "fs.read", paths: [target] }]),
         { wait_ms: 50 },
       ),
     );
@@ -556,7 +560,7 @@ describe.skipIf(!ON_MAC)("a command this Mac refused", () => {
     const d = device(home, scriptedProbes({ openAsApp: { [fifo]: "hung" } }));
     const response = jv(
       await d.handleIntent(
-        intentFor(d, "run", [{ kind: "process.exec", argv: ["/bin/sh", "-c", `cat ${JSON.stringify(fifo)}; exit 1`], cwd: home }]),
+        intentFor(d, "run", [{ kind: "process.exec", argv: ["/bin/sh", "-c", `cat ${JSON.stringify(fifo)}; exit 1`], cwd: home }, { kind: "fs.read", paths: [fifo] }]),
         { wait_ms: 50 },
       ),
     );
@@ -595,7 +599,7 @@ describe.skipIf(!ON_MAC)("a command this Mac refused", () => {
     const d = device(home, slow);
     const response = jv(
       await d.handleIntent(
-        intentFor(d, "run", [{ kind: "process.exec", argv: ["/bin/sh", "-c", `sleep 0.7; echo "sh: ${target}: Operation not permitted" >&2; exit 1`], cwd: home }]),
+        intentFor(d, "run", [{ kind: "process.exec", argv: ["/bin/sh", "-c", `sleep 0.7; echo "sh: ${target}: Operation not permitted" >&2; exit 1`], cwd: home }, { kind: "fs.read", paths: [target] }]),
         { wait_ms: 50 },
       ),
     );
@@ -607,6 +611,78 @@ describe.skipIf(!ON_MAC)("a command this Mac refused", () => {
     const polled = jv(await d.getOutput(handle));
     expect(polled.get("status").str).toBe("blocked");
     expect(polled.get("diagnosis").get("cause").str).toBe("macos_permission");
+  });
+
+  it("a run's output naming a guarded path it never touched raises no probe there", async () => {
+    // Approved to read ~/Plow; prints a refusal for ~/Desktop/secret and
+    // exits 1. Neither probe is asked about the Desktop path — the app's
+    // own open there would raise the owner's dialog for something they
+    // never approved — and the verdict is the bound.
+    const home = tempDir();
+    fs.mkdirSync(path.join(home, "Desktop"));
+    const secret = path.join(home, "Desktop", "secret.txt");
+    const probes = scriptedProbes({ openAsApp: { [secret]: "hung" } });
+    const d = device(home, probes);
+    const response = jv(
+      await d.handleIntent(
+        intentFor(d, "run", [
+          { kind: "process.exec", argv: ["/bin/sh", "-c", `echo "cat: ${secret}: Operation not permitted" >&2; exit 1`], cwd: home },
+          { kind: "fs.read", paths: [path.join(home, "Plow")] },
+        ]),
+        { wait_ms: 5_000 },
+      ),
+    );
+    expect(probes.calls.filter((c) => c.includes("Desktop"))).toEqual([]);
+    expect(response.get("status").str).toBe("blocked");
+    expect(response.get("diagnosis").get("cause").str).toBe("outside_approved_bound");
+    expect(response.get("probes").get("path_approved").bool).toBe(false);
+  });
+
+  it.skipIf(!ON_MAC)("a parked run the owner refuses is corrected under its handle, and both records say so", async () => {
+    // Parked (the probe says "hung"), then the owner clicks Don't Allow: the
+    // run fails with a refusal. The verdict on record — a dialog — is now
+    // wrong, so the clearing is recorded and the refusal is recorded as a
+    // second block under the same handle: the poll, the audit row and the
+    // Capabilities tab all take the newest.
+    const home = tempDir();
+    const downloads = path.join(home, "Downloads");
+    fs.mkdirSync(downloads);
+    const fifo = path.join(downloads, "blocked.pipe");
+    execFileSync("/usr/bin/mkfifo", [fifo]);
+    const inner = scriptedProbes({ openAsApp: { [fifo]: "EPERM" }, fullDiskAccess: false });
+    let opens = 0;
+    const probes: HostProbes = { ...inner, openAsApp: async (p) => (p === fifo && ++opens === 1 ? "hung" : inner.openAsApp(p)) };
+    const d = device(home, probes);
+    const response = jv(
+      await d.handleIntent(
+        intentFor(d, "run", [
+          { kind: "process.exec", argv: ["/bin/sh", "-c", `cat ${JSON.stringify(fifo)} >/dev/null; echo "cat: ${fifo}: Operation not permitted" >&2; exit 1`], cwd: home },
+          { kind: "fs.read", paths: [fifo] },
+        ]),
+        { wait_ms: 50 },
+      ),
+    );
+    expect(response.get("status").str).toBe("running");
+    expect(response.get("diagnosis").get("cause").str).toBe("prompt_waiting");
+    const handle = response.get("handle").str!;
+    // "Don't Allow": the reader is released with nothing, cat fails, the shell reports a refusal.
+    const fd = fs.openSync(fifo, "w");
+    fs.closeSync(fd);
+    const deadline = Date.now() + 5_000;
+    let polled = jv(await d.getOutput(handle));
+    while (polled.get("status").str === "running" && Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 50));
+      polled = jv(await d.getOutput(handle));
+    }
+    expect(polled.get("status").str).toBe("blocked");
+    expect(polled.get("diagnosis").get("cause").str).toBe("macos_permission");
+    const rows = d.audit.entries().map((e) => jv(e as JSONValue));
+    const blocks = rows.filter((r) => r.get("event").str === "host_permission_blocked");
+    expect(blocks.map((b) => b.get("cause").str)).toEqual(["prompt_waiting", "macos_permission"]);
+    expect(blocks.every((b) => b.get("handle").str === handle)).toBe(true);
+    const cleared = rows.find((r) => r.get("event").str === "host_permission_cleared")!;
+    expect(cleared.get("handle").str).toBe(handle);
+    expect(cleared.get("permission").str).toBe("files_downloads");
   });
 
   it("a silent run that is simply running is left alone", async () => {

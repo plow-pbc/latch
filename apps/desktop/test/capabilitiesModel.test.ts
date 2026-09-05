@@ -4,7 +4,7 @@
  * is pinned here — above all what earns the badge and what clears it.
  */
 import { describe, expect, it } from "vitest";
-import { JSONValue } from "@domo/protocol";
+import { JSONValue, jv } from "@domo/protocol";
 import type { HostInventory } from "@domo/device-core";
 import { AUTOMATION_APPS, automationApp } from "../src/automation.js";
 import {
@@ -211,6 +211,26 @@ describe("capabilitiesView", () => {
     expect(seen.banner).toEqual({ switches: 1, count: 1, summary: [{ title: "Full Disk Access", count: 1 }], last: "2026-09-02T06:12:00Z", since: "2026-09-02T05:00:00Z" });
     expect(seen.sections[0]!.rows[0]!.since).toBe("2026-09-02T05:00:00Z");
     expect(capabilitiesView(input({ events, bannerSeenAt: "2026-09-02T07:00:00Z" })).banner).toBeNull();
+  });
+
+  it("a parked block the owner let through is cleared, and a correction counts once as the newest", () => {
+    const parked = block("i1", "2026-09-02T02:00:00Z", "files_downloads").map((e) =>
+      jv(e).get("event").str === "host_permission_blocked" ? { ...(e as object), handle: "H1", cause: "prompt_waiting" } : e,
+    ) as JSONValue[];
+    // Allow: the run went on; the device recorded the clearing.
+    const allowed = capabilitiesView(input({ events: [...parked, { event: "host_permission_cleared", intentId: "i1", handle: "H1", permission: "files_downloads", ts: "2026-09-02T02:05:00Z" }] }));
+    expect(allowed.badge).toBe(0);
+    expect(allowed.banner).toBeNull();
+    expect(allowed.sections[0]!.rows.find((r) => r.key === "files_downloads")).toMatchObject({ count: 0, status: "not_asked" });
+    // Don't Allow: cleared, then a refusal under the same handle — one request, the newest.
+    const refused = capabilitiesView(input({ events: [
+      ...parked,
+      { event: "host_permission_cleared", intentId: "i1", handle: "H1", permission: "files_downloads", ts: "2026-09-02T02:05:00Z" },
+      { event: "host_permission_blocked", intentId: "i1", handle: "H1", permission: "files_downloads", cause: "macos_permission", confidence: "confirmed", owner_action: "Allow it.", ts: "2026-09-02T02:05:01Z" },
+    ] }));
+    expect(refused.badge).toBe(1);
+    expect(refused.sections[0]!.rows.find((r) => r.key === "files_downloads")).toMatchObject({ count: 1, status: "denied" });
+    expect(refused.banner?.count).toBe(1);
   });
 
   it("a block from the same second as the dismissal is dismissed", () => {

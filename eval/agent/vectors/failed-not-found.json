@@ -28,6 +28,7 @@
         "is_directory": null,
         "op": "read",
         "path": "~/Plow/absent.txt",
+        "path_approved": true,
         "path_exists": false,
         "paths_examined": [
           "~/Plow/absent.txt"

@@ -125,6 +125,24 @@ export function candidatePaths(texts: readonly string[], limit = MAX_CANDIDATE_P
 }
 
 /**
+ * Paths a command line names, element by element: an argv word that IS a
+ * path is taken whole, spaces and all — `["cat", "/Users/x/My Report.txt"]`
+ * is one path, not two — and any other word is mined the way free text is
+ * (`--db=/x`). Joining argv into a line first would split the spaced one.
+ */
+export function argvCandidates(argv: readonly string[], limit = MAX_CANDIDATE_PATHS): string[] {
+  const out: string[] = [];
+  for (const word of argv) {
+    const whole = word === "~" || word.startsWith("~/") || (word.startsWith("/") && word !== "/");
+    for (const p of whole ? [word] : candidatePaths([word], limit)) {
+      if (!out.includes(p)) out.push(p);
+      if (out.length >= limit) return out;
+    }
+  }
+  return out;
+}
+
+/**
  * The application an AppleScript in `argv` addresses — `tell application
  * "Messages"` — so a refused send can be checked against that target's
  * Automation consent. The first target only: a script that drives two apps

@@ -34,6 +34,7 @@ import { FileOps, FileOpsError } from "./fileOps.js";
 import {
   appleEventTarget,
   collectFacts,
+  BlockedCause,
   diagnose,
   Diagnosis,
   diagnosisPayload,
@@ -255,9 +256,12 @@ export class DeviceAgent {
    *  lands in between waits for it, or the agent would take "completed,
    *  exit 1" as the whole story and stop asking. */
   private readonly pendingDiagnoses = new Map<string, Promise<void>>();
-  /** Runs already recorded as blocked: one that was found parked while
-   *  running and then reaped is one story, not two audit rows. */
-  private readonly blockedRuns = new Set<string>();
+  /** Runs recorded as blocked, with the cause on record: one that was found
+   *  parked while running and then reaped is one story, not two audit rows —
+   *  but a DIFFERENT cause at the end (the owner clicked Don't Allow, and a
+   *  refusal replaced the parked guess) is a correction, recorded under the
+   *  same handle so the owner's views take the newest. */
+  private readonly blockedRuns = new Map<string, BlockedCause>();
   /** `FILE_OP_HANG_MS`, overridable by a test that cannot wait it out. */
   fileOpHangMs = FILE_OP_HANG_MS;
 
@@ -860,7 +864,28 @@ export class DeviceAgent {
         // not call a finished command blocked on a dialog that is gone. A
         // bad end is then diagnosed on its own terms, and only a gate is
         // stored back.
+        //
+        // The clearing is recorded too, when the parked verdict was: a
+        // run that went on to an end of its own was let through the
+        // dialog, and the Capabilities tab must stop counting a block the
+        // owner has answered — a folder it cannot query would otherwise
+        // stay red on the strength of a guess. A reaped run was still
+        // parked, and its verdict stands.
+        const provisional = this.runDiagnoses.get(result.handle);
         this.runDiagnoses.delete(result.handle);
+        if (!reaped && this.blockedRuns.get(result.handle) === "prompt_waiting") {
+          this.blockedRuns.delete(result.handle);
+          try {
+            this.audit.record("host_permission_cleared", {
+              intentId,
+              handle: result.handle,
+              path: provisional?.facts.path ?? null,
+              permission: provisional?.diagnosis.permission ?? null,
+            });
+          } catch (error) {
+            console.error(`[audit] host_permission_cleared lost for handle ${result.handle}:`, error);
+          }
+        }
         if (diag && (reaped || exitCode !== 0)) {
           const pending = this.diagnoseRun(intentId, this.executor.output(result.handle, 0), diag)
             .then(() => {})
@@ -910,8 +935,9 @@ export class DeviceAgent {
     const facts = await collectFacts(
       {
         op: "exec",
-        paths: [...diag.readPaths, ...diag.writePaths, ...(diag.cwd === undefined ? [] : [diag.cwd])],
-        texts: [diag.argv.join(" ")],
+        paths: [...diag.readPaths, ...diag.writePaths],
+        cwd: diag.cwd ?? null,
+        argv: diag.argv,
         stderr: output,
         ranSandboxed: true,
         sandbox: (p) => this.executor.grants(result.handle, p),
@@ -933,8 +959,8 @@ export class DeviceAgent {
     if (!result.running && !result.reaped && !isHostGate(diagnosis.cause)) return null;
     const diagnosed: DiagnosedRun = { diagnosis, facts };
     this.runDiagnoses.set(result.handle, diagnosed);
-    if (isHostGate(diagnosis.cause) && !this.blockedRuns.has(result.handle)) {
-      this.blockedRuns.add(result.handle);
+    if (isHostGate(diagnosis.cause) && this.blockedRuns.get(result.handle) !== diagnosis.cause) {
+      this.blockedRuns.set(result.handle, diagnosis.cause);
       this.audit.record("host_permission_blocked", {
         intentId,
         handle: result.handle,

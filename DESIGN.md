@@ -241,6 +241,23 @@ So a refusal is **diagnosed, never guessed** (`packages/device-core/src/hostGate
   and a child parked on a dialog is killed on a timer and reads as "hung"
   rather than pinning a thread). Automation consent is asked through a
   native helper that calls the non-prompting API.
+- **The battery touches only what the owner approved.** A candidate path
+  comes from the caller's declared paths, the failing call's own error, a
+  command's argv (kept element by element, so a spaced path is one path),
+  its output, and its working directory. Only a candidate inside a declared
+  path — or the cwd, when that is a specific folder and not the owner's
+  home — is canonicalized, `stat`'d or opened as the app; a command's
+  output naming `~/Desktop/secret` gets none of that, because the open would
+  raise the owner's consent dialog for something they never approved and
+  hand back whether the file exists. An unapproved candidate is classified
+  by name alone (the profile's grant, the gate table, SIP), which carries
+  the one verdict it can: outside the approved bound, confirmed.
+- A parked run's verdict is provisional and the exit corrects the record: a
+  run let through the dialog gets a `host_permission_cleared` line, and one
+  the owner refused gets a second `host_permission_blocked` under the same
+  handle. The Audit tab and the Capabilities tab both take the newest per
+  handle and drop a cleared one, so the agent's answer and the owner's
+  views never disagree about how a run ended.
 - A pure decision tree names a cause — `macos_permission`, `prompt_waiting`,
   `outside_approved_bound` (our seatbelt, told apart from macOS by the app's
   own open succeeding), `posix_permissions`, `sip_protected`,

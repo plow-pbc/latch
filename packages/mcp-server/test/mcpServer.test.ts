@@ -172,7 +172,10 @@ describe("a tool call end to end, in process", () => {
     expect(payload.output).not.toContain("s3cret");
     expect(payload.diagnosis.cause).toBe("outside_approved_bound");
     expect(payload.diagnosis.confidence).toBe("confirmed");
-    expect(payload.probes.app_process_open).toBe("ok");
+    // Outside the approval, so never touched by this process: classified
+    // by name, and the profile's own answer is the whole verdict.
+    expect(payload.probes.path_approved).toBe(false);
+    expect(payload.probes.app_process_open).toBeNull();
     expect(payload.probes.sandbox_allows_read).toBe(false);
 
     // The same command against the declared path succeeds, proving the block

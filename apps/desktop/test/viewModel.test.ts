@@ -409,6 +409,20 @@ describe("auditActivities (grouping)", () => {
       { event: "exec_end", intentId: "i1", exit_code: 1, ts: "2026-08-18T12:00:30Z" },
     ])[0]!;
     expect(failed.status).toBe("Failed · exit 1");
+    // The device's own record of the clearing, and a correction after it:
+    // the newest verdict under the handle is the one the row wears.
+    const corrected = auditActivities([
+      { event: "intent_received", intentId: "i1", request: "run: x", ts: "2026-08-18T12:00:00Z" },
+      { event: "intent_decision", intentId: "i1", decision: "allow_once", source: "prompt", ts: "2026-08-18T12:00:01Z" },
+      { event: "exec_start", intentId: "i1", argv: ["/bin/sh"], ts: "2026-08-18T12:00:01Z" },
+      { event: "host_permission_blocked", intentId: "i1", handle: "H1", path: "~/Desktop/a.txt", cause: "prompt_waiting", confidence: "confirmed", permission: "files_desktop", owner_action: "A dialog is open.", ts: "2026-08-18T12:00:02Z" },
+      { event: "exec_end", intentId: "i1", exit_code: 1, ts: "2026-08-18T12:00:30Z" },
+      { event: "host_permission_cleared", intentId: "i1", handle: "H1", path: "~/Desktop/a.txt", permission: "files_desktop", ts: "2026-08-18T12:00:30Z" },
+      { event: "host_permission_blocked", intentId: "i1", handle: "H1", path: "~/Desktop/a.txt", cause: "macos_permission", confidence: "confirmed", permission: "files_desktop", owner_action: "Allow the Desktop folder.", ts: "2026-08-18T12:00:31Z" },
+    ])[0]!;
+    expect(corrected.status).toBe("Blocked · Desktop folder");
+    expect(corrected.blockedAt).toBe("2026-08-18T12:00:31Z");
+    expect(corrected.timeline.some((s) => s.text.startsWith("The dialog was answered"))).toBe(true);
     // Reaped while parked: still blocked on the dialog.
     const reaped = auditActivities([
       { event: "intent_received", intentId: "i1", request: "run: x", ts: "2026-08-18T12:00:00Z" },
