@@ -948,6 +948,50 @@ describe.skipIf(!ON_MAC)("a command this Mac refused", () => {
     expect(executor.mutableRoots()).not.toContain(w);
   });
 
+  it("a scripted Contacts read refused with -54 is the Contacts permission, and a plain failure says it is no gate", async () => {
+    // What a packaged build saw for real: Automation for Contacts granted,
+    // the first script answered, the second — walking every person's
+    // phones — exited 1 with "File permission error. (-54)". That is
+    // Contacts data access refusing the app, and the Capabilities tab has
+    // the row (and the prompt) for it.
+    const home = tempDir();
+    const probes = scriptedProbes({ automation: { Contacts: "granted" }, permissions: { contacts: "denied" } });
+    const d = device(home, probes);
+    const script = 'tell application "Contacts"\nrepeat with p in people\nphones of p\nend repeat\nend tell';
+    const response = jv(
+      await d.handleIntent(
+        intentFor(d, "run", [
+          { kind: "process.exec", argv: ["/bin/sh", "-c", "echo '143:474: execution error: File permission error. (-54)' >&2; exit 1", "sh", script], cwd: home },
+          { kind: "apple_events", allowed: true },
+        ]),
+        { wait_ms: 5_000 },
+      ),
+    );
+    expect(response.get("status").str).toBe("blocked");
+    expect(response.get("diagnosis").get("cause").str).toBe("macos_permission");
+    expect(response.get("diagnosis").get("permission").str).toBe("contacts");
+    expect(response.get("diagnosis").get("confidence").str).toBe("confirmed");
+    expect(response.get("probes").get("service_status").str).toBe("denied");
+    expect(probes.calls).toContain("permissionStatus contacts");
+    expect(lastBlocked(d).get("permission").str).toBe("contacts");
+
+    // The same shape with an error of the script's own: completed, exit 1,
+    // and said to be no gate — nothing for an agent to read a permission into.
+    const plain = jv(
+      await d.handleIntent(
+        intentFor(d, "run", [
+          { kind: "process.exec", argv: ["/bin/sh", "-c", "echo '12:20: execution error: Can’t get phones of person 1. (-1728)' >&2; exit 1", "sh", script], cwd: home },
+          { kind: "apple_events", allowed: true },
+        ]),
+        { wait_ms: 5_000 },
+      ),
+    );
+    expect(plain.get("status").str).toBe("completed");
+    expect(plain.get("exit_code").int).toBe(1);
+    expect(plain.get("diagnosis").isNull).toBe(true);
+    expect(plain.get("host_gate").str).toBe("none");
+  });
+
   it("a silent run that is simply running is left alone", async () => {
     const home = tempDir();
     const probes = scriptedProbes();

@@ -24,6 +24,7 @@ export type StderrHint =
   | "no_such_file"
   | "sqlite_unable_to_open"
   | "apple_event_not_permitted"
+  | "scripted_data_not_permitted"
   | "read_only_filesystem";
 
 export function stderrHint(output: string): StderrHint | null {
@@ -33,6 +34,11 @@ export function stderrHint(output: string): StderrHint | null {
   if (/-1743\b|errAEEventNotPermitted|not authori[sz]ed to send apple events/i.test(output)) {
     return "apple_event_not_permitted";
   }
+  // AppleScript's permErr (-54): an app the script drives — Contacts,
+  // Calendar — refused it the DATA, which is that service's own privacy
+  // permission for the calling app, not Automation consent (the event
+  // itself was delivered).
+  if (/\(-54\)|file permission error/i.test(output)) return "scripted_data_not_permitted";
   if (/read-only file system/i.test(output)) return "read_only_filesystem";
   if (/operation not permitted/i.test(output)) return "operation_not_permitted";
   if (/permission denied/i.test(output)) return "permission_denied";

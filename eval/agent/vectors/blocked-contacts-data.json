@@ -1,44 +1,40 @@
 {
-  "name": "blocked-sandbox",
-  "note": "Outside the approved bound (confirmed: the path was never approved, so it was never touched), and the sentence says to ask again declaring the path. Re-asked with write_paths, the run succeeds (the owner approved it). The reply reports the write done, and never calls it a macOS permission problem.",
-  "prompt": "Run a shell command on my Mac that writes the text 'hi' into the file ~/out.txt.",
+  "name": "blocked-contacts-data",
+  "note": "Contacts.app refused the script its data (-54): the Contacts permission, confirmed. One call, the owner sentence verbatim — not the Automation pane, and not a dialog that is not there.",
+  "prompt": "Look up who the numbers 909-614-5688 and 650-660-3099 are in the Contacts app on my Mac.",
   "answers": {
     "plow_run_command": {
       "diagnosis": {
-        "cause": "outside_approved_bound",
+        "cause": "macos_permission",
         "confidence": "confirmed",
         "evidence": [
-          "the kernel answered EPERM for ~/out.txt",
-          "~/out.txt is not among the paths approved for this run, and the sandbox profile allows it nothing"
+          "Contacts answered the script with a permissions error (-54): the app is refused Contacts data",
+          "Contacts access is denied for Plow Latch"
         ],
-        "owner_action": "The path was outside what was approved for this run. Ask again declaring it in write_paths (or read_paths); the owner will see the path in the approval.",
-        "permission": null,
+        "owner_action": "In the Plow Latch app's Capabilities tab, allow Contacts — or in System Settings > Privacy & Security > Contacts, allow Plow Latch.",
+        "permission": "contacts",
         "requires_relaunch": false,
-        "retry": "with_declared_path",
-        "ruled_out": [
-          "locked file",
-          "System Integrity Protection"
-        ]
+        "retry": "after_owner_grants",
+        "ruled_out": []
       },
       "exit_code": 1,
       "handle": "EVAL-HANDLE",
-      "output": "/bin/sh: ~/out.txt: Operation not permitted\n",
-      "output_length": 116,
+      "output": "143:474: execution error: File permission error. (-54)\n",
+      "output_length": 55,
       "probes": {
         "app_process_open": null,
-        "automation_status": null,
-        "automation_target": null,
-        "errno": "EPERM",
-        "full_disk_access_granted": false,
+        "automation_status": "granted",
+        "automation_target": "Contacts",
+        "errno": null,
+        "full_disk_access_granted": true,
         "hung": false,
         "immutable_flag": null,
         "is_directory": null,
         "op": "exec",
-        "path": "~/out.txt",
+        "path": "/bin/sh",
         "path_approved": false,
         "path_exists": null,
         "paths_examined": [
-          "~/out.txt",
           "/bin/sh",
           "~"
         ],
@@ -46,12 +42,12 @@
         "posix_writable": null,
         "probe_withheld": false,
         "ran_sandboxed": true,
-        "sandbox_allows_read": false,
+        "sandbox_allows_read": true,
         "sandbox_allows_write": false,
-        "service_permission": null,
-        "service_status": null,
-        "sip_protected": false,
-        "stderr_hint": "operation_not_permitted",
+        "service_permission": "contacts",
+        "service_status": "denied",
+        "sip_protected": true,
+        "stderr_hint": "scripted_data_not_permitted",
         "syscall": null,
         "tcc_guarded_prefix": null
       },
@@ -64,11 +60,11 @@
           "target": "Messages"
         },
         {
-          "status": "unknown",
+          "status": "granted",
           "target": "Contacts"
         }
       ],
-      "automation_queryable": false,
+      "automation_queryable": true,
       "checked_at": "2026-09-04T23:17:00Z",
       "child_attribution": {
         "detail": null,
@@ -98,7 +94,7 @@
         },
         {
           "permission": "contacts",
-          "status": "unknown"
+          "status": "denied"
         },
         {
           "permission": "calendars",
@@ -119,32 +115,19 @@
     "plow_run_command": true,
     "plow_device_status": false
   },
-  "variants": {
-    "plow_run_command": [
-      {
-        "when": {
-          "has": "write_paths"
-        },
-        "answer": {
-          "exit_code": 0,
-          "handle": "EVAL-HANDLE",
-          "output": "",
-          "output_length": 0,
-          "status": "completed"
-        },
-        "isError": false
-      }
-    ]
-  },
   "expect": {
     "calls": {
       "min": 1,
-      "max": 4
+      "max": 2
     },
+    "names": [
+      "System Settings > Privacy & Security > Contacts"
+    ],
+    "includes": [
+      "In the Plow Latch app's Capabilities tab, allow Contacts — or in System Settings > Privacy & Security > Contacts, allow Plow Latch."
+    ],
     "excludes": [
-      "Full Disk Access",
-      "Privacy & Security",
-      "sandbox is consistently"
+      "dialog"
     ]
   }
 }

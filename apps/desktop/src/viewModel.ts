@@ -103,6 +103,10 @@ function permissionWords(permission: string): string {
     case "files_downloads": return "Downloads folder";
     case "files_icloud_drive": return "iCloud Drive";
     case "files_volumes": return "external volumes";
+    case "contacts": return "Contacts";
+    case "calendars": return "Calendars";
+    case "reminders": return "Reminders";
+    case "photos": return "Photos";
     case "automation": return "Automation";
     case "accessibility": return "Accessibility";
     case "screen_recording": return "Screen Recording";

@@ -239,6 +239,38 @@ const pane = (sentence) => { const m = /System Settings > [^,.]+/.exec(sentence 
     expect: { calls: { min: 1, max: 2 }, names: pane(r.answer.diagnosis?.owner_action), includes: r.answer.diagnosis?.owner_action ? [r.answer.diagnosis.owner_action] : [], excludes: ["Full Disk Access"] },
   });
 }
+// 8b. A scripted Contacts read refused its data: Automation is granted (the
+//     event was delivered), Contacts access is not — AppleScript's -54.
+{
+  const { server, home } = scenario({ probes: scriptedProbes({ automation: { Contacts: "granted" }, permissions: { contacts: "denied" } }) });
+  const script = 'tell application "Contacts"\nrepeat with p in people\nphones of p\nend repeat\nend tell';
+  const r = await call(server, "plow_run_command", { argv: ["/bin/sh", "-c", "echo '143:474: execution error: File permission error. (-54)' >&2; exit 1", "sh", script], cwd: home, apple_events: true, wait_ms: 5000 });
+  vector("blocked-contacts-data", {
+    note: "Contacts.app refused the script its data (-54): the Contacts permission, confirmed. One call, the owner sentence verbatim — not the Automation pane, and not a dialog that is not there.",
+    prompt: "Look up who the numbers 909-614-5688 and 650-660-3099 are in the Contacts app on my Mac.",
+    captured: [["plow_run_command", r, [home]], await status(server, home)],
+    // A reply may well say Automation is fine — it is — so only a dialog
+    // that is not there is forbidden.
+    expect: { calls: { min: 1, max: 2 }, names: ["System Settings > Privacy & Security > Contacts"], includes: r.answer.diagnosis?.owner_action ? [r.answer.diagnosis.owner_action] : [], excludes: ["dialog"] },
+  });
+}
+// 8c. A script error of the script's own, on the same app: no gate, and the
+//     reply must not invent a permission.
+{
+  const { server, home } = scenario({ probes: scriptedProbes({ automation: { Contacts: "granted" }, permissions: { contacts: "granted" } }) });
+  const script = 'tell application "Contacts"\nrepeat with p in people\nphones of p\nend repeat\nend tell';
+  const r = await call(server, "plow_run_command", { argv: ["/bin/sh", "-c", "echo '12:20: execution error: Can’t get phones of person 1. (-1728)' >&2; exit 1", "sh", script], cwd: home, apple_events: true, wait_ms: 5000 });
+  // A model that meets the error may probe with something trivial, or
+  // rewrite the script; any command that is not an osascript answers as a
+  // clean run, and any osascript meets the same script error.
+  vector("run-script-error", {
+    note: "A script error of its own (-1728) on an app whose data access is granted: completed, exit 1, host_gate none. The reply fixes or reports the script; it does not send the user to System Settings.",
+    prompt: "Look up who the numbers 909-614-5688 and 650-660-3099 are in the Contacts app on my Mac.",
+    captured: [["plow_run_command", await run(server, home, "true"), [home]], await status(server, home)],
+    variants: [["plow_run_command", { argv_includes: "osascript" }, r, [home]]],
+    expect: { calls: { min: 1, max: 6 }, excludes: [...NO_SETTINGS, "permission"] },
+  });
+}
 // 9. A locked file, with this Mac's own probes: immutable_file, confirmed.
 {
   const { server, home } = scenario();

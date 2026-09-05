@@ -39,6 +39,8 @@
         "ran_sandboxed": false,
         "sandbox_allows_read": null,
         "sandbox_allows_write": null,
+        "service_permission": null,
+        "service_status": null,
         "sip_protected": false,
         "stderr_hint": null,
         "syscall": "stat",
@@ -48,6 +50,7 @@
     "plow_run_command": {
       "exit_code": 1,
       "handle": "EVAL-HANDLE",
+      "host_gate": "none",
       "output": "cat: ~/Plow/absent.txt: No such file or directory\n",
       "output_length": 122,
       "status": "completed"
