@@ -216,6 +216,11 @@ function runPayload(result: ExecResult, diagnosed: DiagnosedRun | null): { [k: s
   if (diagnosed) {
     Object.assign(payload, diagnosisPayload(diagnosed.diagnosis, diagnosed.facts));
     if (!result.running && isHostGate(diagnosed.diagnosis.cause)) payload.status = "blocked";
+  } else if (!result.running && result.exitCode !== 0) {
+    // Said in so many words: a failed command with no verdict failed on its
+    // own terms. Left unsaid, an agent reads "permission" in a program's
+    // own error text and sends the owner to System Settings for nothing.
+    payload.host_gate = "none";
   }
   return payload;
 }

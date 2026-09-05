@@ -43,6 +43,8 @@
         "ran_sandboxed": true,
         "sandbox_allows_read": true,
         "sandbox_allows_write": false,
+        "service_permission": null,
+        "service_status": null,
         "sip_protected": true,
         "stderr_hint": "apple_event_not_permitted",
         "syscall": null,

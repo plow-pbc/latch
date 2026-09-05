@@ -44,7 +44,7 @@ import {
   sipProtected,
   tildeRelative,
 } from "./guardedPaths.js";
-import { AutomationStatus, HostProbes, OpenOutcome } from "./probes.js";
+import { AutomationStatus, HostProbes, OpenOutcome, PermissionStatus, QueryablePermission } from "./probes.js";
 
 /** How the app names itself in the sentence the owner reads. */
 export const APP_DISPLAY_NAME = "Plow Latch";
@@ -118,6 +118,22 @@ export interface HostFacts {
   sip_protected: boolean;
   automation_target: string | null;
   automation_status: AutomationStatus | null;
+  /** The privacy permission for the DATA an automation target holds —
+   *  Contacts for Contacts.app, Calendars for Calendar.app — and what it
+   *  reports for the app. Null when the target holds no such data, or
+   *  there is no target. */
+  service_permission: QueryablePermission | null;
+  service_status: PermissionStatus | null;
+}
+
+/** The data permission a scripted app's replies are gated by. Sending the
+ *  event is Automation consent; what comes back is this. */
+export function serviceBehind(target: string | null): QueryablePermission | null {
+  switch ((target ?? "").toLowerCase()) {
+    case "contacts": return "contacts";
+    case "calendar": return "calendars";
+    default: return null;
+  }
 }
 
 export interface Diagnosis {
@@ -356,9 +372,11 @@ export async function collectFacts(
     examined[0] ??
     null;
 
-  const [fda, automation] = await Promise.all([
+  const service = serviceBehind(ctx.automationTarget ?? null);
+  const [fda, automation, serviceStatus] = await Promise.all([
     probes.fullDiskAccess(),
     ctx.automationTarget ? probes.automationStatus(ctx.automationTarget) : Promise.resolve(null),
+    service ? probes.permissionStatus(service) : Promise.resolve(null),
   ]);
 
   const grants = chosen?.grants ?? null;
@@ -386,6 +404,8 @@ export async function collectFacts(
     sip_protected: chosen?.sip ?? false,
     automation_target: ctx.automationTarget ?? null,
     automation_status: automation,
+    service_permission: service,
+    service_status: serviceStatus,
   };
 }
 
@@ -454,6 +474,28 @@ export function diagnose(f: HostFacts): Diagnosis {
     if (f.hung && f.automation_status === "not_asked") {
       evidence.push(`the run never returned and macOS has never asked the owner about ${target}`);
       return verdict("prompt_waiting", "confirmed", "automation");
+    }
+    // The event was delivered and the app refused the DATA: that is the
+    // service's own privacy permission for this app — Contacts for
+    // Contacts.app — which macOS does not prompt for on a scripted read.
+    // The Capabilities tab's row for it is what asks.
+    if (f.stderr_hint === "scripted_data_not_permitted" && f.service_permission !== null) {
+      const service = f.service_permission;
+      evidence.push(`${target} answered the script with a permissions error (-54): the app is refused ${PERMISSION_LABELS[service]} data`);
+      if (f.service_status === "granted") {
+        evidence.push(`yet ${PERMISSION_LABELS[service]} access is granted — the refusal was something else`);
+        return verdict("unknown", "unknown", service);
+      }
+      if (f.service_status === "denied") {
+        evidence.push(`${PERMISSION_LABELS[service]} access is denied for ${APP_DISPLAY_NAME}`);
+        return verdict("macos_permission", "confirmed", service);
+      }
+      evidence.push(
+        f.service_status === "not_asked"
+          ? `macOS has never asked the owner for ${PERMISSION_LABELS[service]} access, and a scripted read does not ask`
+          : `${PERMISSION_LABELS[service]} access could not be checked`,
+      );
+      return verdict("macos_permission", "likely", service);
     }
   }
 
@@ -631,6 +673,11 @@ export function ownerAction(
         return `In System Settings > Privacy & Security > Full Disk Access, turn on ${app}, then quit and reopen it.`;
       }
       const label = PERMISSION_LABELS[permission];
+      if (permission === "contacts" || permission === "calendars") {
+        // Asked for in the app itself (the Capabilities tab raises the
+        // dialog); the pane is where a refusal is undone.
+        return `In the ${app} app's Capabilities tab, allow ${label} — or in System Settings > Privacy & Security > ${label}, allow ${app}.`;
+      }
       const umbrella = COVERED_BY_FULL_DISK_ACCESS.has(permission)
         ? ` Granting ${app} Full Disk Access instead covers this and every other folder at once.`
         : "";

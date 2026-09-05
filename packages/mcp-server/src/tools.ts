@@ -373,7 +373,9 @@ export const TOOLS: ToolSpec[] = [
       BLOCKED_COPY +
       " A result that is still 'running' but carries a 'diagnosis' is parked on a macOS permission " +
       "dialog on the Mac's screen: leave it running, tell the user, and poll plow_get_output — their " +
-      "click lets it finish.",
+      "click lets it finish. A 'completed' result with a non-zero exit and 'host_gate': 'none' failed " +
+      "on its own terms: this Mac refused nothing and no macOS permission is missing, whatever the " +
+      "program's own error text says — do not send the user to System Settings for it.",
     inputSchema: {
       type: "object",
       required: ["argv"],

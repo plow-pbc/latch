@@ -25,6 +25,8 @@ import {
   nodeProbes,
   sandboxGrants,
   scriptedProbes,
+  errnoFromHint,
+  serviceBehind,
   sipProtected,
   stderrHint,
   tildeRelative,
@@ -68,6 +70,8 @@ function facts(overrides: Partial<HostFacts> = {}): HostFacts {
     sip_protected: false,
     automation_target: null,
     automation_status: null,
+    service_permission: null,
+    service_status: null,
     ...overrides,
   };
 }
@@ -127,6 +131,43 @@ describe("guardedPrefix — which switch governs a path", () => {
 });
 
 describe("reading an error", () => {
+  it("reads AppleScript's -54 as a scripted app refusing its data", () => {
+    expect(stderrHint("143:474: execution error: File permission error. (-54)")).toBe("scripted_data_not_permitted");
+    expect(errnoFromHint("scripted_data_not_permitted")).toBeNull();
+    expect(serviceBehind("Contacts")).toBe("contacts");
+    expect(serviceBehind("Calendar")).toBe("calendars");
+    expect(serviceBehind("Messages")).toBeNull();
+  });
+
+  it("a scripted app refusing its data is that service's own permission, by what macOS reports", () => {
+    // The event reached Contacts.app (Automation consent is granted); what
+    // came back is a -54, which is the Contacts data permission refusing
+    // the calling app. Denied: confirmed. Never asked: likely, since a
+    // scripted read raises no dialog — the Capabilities tab's row does.
+    // Granted: something else, and no switch to send the owner to.
+    const base = {
+      automation_target: "Contacts",
+      automation_status: "granted" as const,
+      stderr_hint: "scripted_data_not_permitted" as const,
+      service_permission: "contacts" as const,
+    };
+    const denied = diagnose(facts({ ...base, service_status: "denied" }));
+    expect(denied.cause).toBe("macos_permission");
+    expect(denied.confidence).toBe("confirmed");
+    expect(denied.permission).toBe("contacts");
+    expect(denied.owner_action).toMatch(/Capabilities tab, allow Contacts/);
+    expect(denied.owner_action).toMatch(/System Settings > Privacy & Security > Contacts/);
+    const unasked = diagnose(facts({ ...base, service_status: "not_asked" }));
+    expect(unasked.cause).toBe("macos_permission");
+    expect(unasked.confidence).toBe("likely");
+    expect(unasked.evidence.join(" ")).toMatch(/never asked/);
+    const granted = diagnose(facts({ ...base, service_status: "granted" }));
+    expect(granted.cause).toBe("unknown");
+    // Not a data-holding target: the hint means nothing, and the tree moves on.
+    const messages = diagnose(facts({ ...base, automation_target: "Messages", service_permission: null, service_status: null }));
+    expect(messages.cause).not.toBe("macos_permission");
+  });
+
   it("recognises the few stderr shapes worth following up", () => {
     expect(stderrHint("ls: /Users/x/Desktop: Operation not permitted")).toBe("operation_not_permitted");
     expect(stderrHint("cat: /etc/shadow: Permission denied")).toBe("permission_denied");

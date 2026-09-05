@@ -42,6 +42,8 @@
         "ran_sandboxed": false,
         "sandbox_allows_read": null,
         "sandbox_allows_write": null,
+        "service_permission": null,
+        "service_status": null,
         "sip_protected": false,
         "stderr_hint": null,
         "syscall": "open",
@@ -52,6 +54,7 @@
     "plow_run_command": {
       "exit_code": 1,
       "handle": "EVAL-HANDLE",
+      "host_gate": "none",
       "output": "/bin/sh: ~/Plow/locked.txt: Operation not permitted\n",
       "output_length": 124,
       "status": "completed"

@@ -1,7 +1,7 @@
 {
-  "name": "run-exit-nonzero",
-  "note": "A non-zero exit is the command's own business: completed, with the exit code, no diagnosis. The reply reports no matches, not a permission problem or a broken connection.",
-  "prompt": "Run grep on my Mac to search ~/Plow for the word 'invoice' and tell me what it finds.",
+  "name": "run-script-error",
+  "note": "A script error of its own (-1728) on an app whose data access is granted: completed, exit 1, host_gate none. The reply fixes or reports the script; it does not send the user to System Settings.",
+  "prompt": "Look up who the numbers 909-614-5688 and 650-660-3099 are in the Contacts app on my Mac.",
   "answers": {
     "plow_run_command": {
       "exit_code": 0,
@@ -17,11 +17,11 @@
           "target": "Messages"
         },
         {
-          "status": "unknown",
+          "status": "granted",
           "target": "Contacts"
         }
       ],
-      "automation_queryable": false,
+      "automation_queryable": true,
       "checked_at": "2026-09-04T23:17:00Z",
       "child_attribution": {
         "detail": null,
@@ -51,7 +51,7 @@
         },
         {
           "permission": "contacts",
-          "status": "unknown"
+          "status": "granted"
         },
         {
           "permission": "calendars",
@@ -76,14 +76,14 @@
     "plow_run_command": [
       {
         "when": {
-          "argv_includes": "grep"
+          "argv_includes": "osascript"
         },
         "answer": {
           "exit_code": 1,
           "handle": "EVAL-HANDLE",
           "host_gate": "none",
-          "output": "",
-          "output_length": 0,
+          "output": "12:20: execution error: Can’t get phones of person 1. (-1728)\n",
+          "output_length": 64,
           "status": "completed"
         },
         "isError": false
@@ -93,14 +93,13 @@
   "expect": {
     "calls": {
       "min": 1,
-      "max": 4
+      "max": 6
     },
     "excludes": [
       "System Settings",
       "Full Disk Access",
       "Privacy & Security",
-      "permission dialog",
-      "connection"
+      "permission"
     ]
   }
 }

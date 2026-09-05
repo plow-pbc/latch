@@ -286,6 +286,14 @@ So a refusal is **diagnosed, never guessed** (`packages/device-core/src/hostGate
   clearing. A block that names no switch (a locked file, a SIP root, POSIX
   permissions) has no row on the Capabilities tab, so its tray item and
   notification land on the Audit tab's Blocked view instead.
+- A scripted app can refuse its DATA after the event itself was delivered:
+  AppleScript's `-54` from Contacts.app or Calendar.app is that service's
+  own privacy permission for the calling app, which a scripted read never
+  prompts for. The battery asks the service's status (the same query the
+  Capabilities tab's row uses) and the verdict names the service, not
+  Automation. And a failed command with no verdict says so — `host_gate:
+  "none"` — because an agent left to read a program's own error text will
+  find a permission in it and send the owner to System Settings for nothing.
 - A pure decision tree names a cause — `macos_permission`, `prompt_waiting`,
   `outside_approved_bound` (our seatbelt, told apart from macOS by the app's
   own open succeeding), `posix_permissions`, `sip_protected`,

@@ -482,6 +482,12 @@ describe("auditActivities (grouping)", () => {
     // the Capabilities tab's "Show in Audit" relies on it — and so is the
     // timeline line, so what the detail pane shows is what the box finds.
     expect(run.permission).toBe("Full Disk Access");
+    // Every switch a block can name reads in System Settings' words.
+    const contacts = auditActivities([
+      { event: "host_permission_blocked", handle: "H4", path: null, cause: "macos_permission", confidence: "confirmed", permission: "contacts", owner_action: "Allow Contacts.", ts: "2026-08-18T12:00:02Z" },
+    ])[0]!;
+    expect(contacts.status).toBe("Blocked · Contacts");
+    expect(contacts.permission).toBe("Contacts");
     // The block's own time, for the Capabilities tab's "Show in Audit" cutoff:
     // the request began before a dismissal could, the refusal after.
     expect(run.blockedAt).toBe("2026-08-18T12:00:03Z");

@@ -49,6 +49,8 @@
         "ran_sandboxed": true,
         "sandbox_allows_read": true,
         "sandbox_allows_write": true,
+        "service_permission": null,
+        "service_status": null,
         "sip_protected": false,
         "stderr_hint": "operation_not_permitted",
         "syscall": null,
