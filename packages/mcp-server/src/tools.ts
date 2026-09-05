@@ -155,7 +155,7 @@ async function decideAndRun(
       // A failure the device diagnosed (a missing file, a refusal it could
       // not place) keeps its facts beside the sentence.
       const details: { [k: string]: JSONValue } = {};
-      for (const key of ["diagnosis", "probes"]) {
+      for (const key of ["diagnosis", "probes", "retry"]) {
         const v = r.get(key).value;
         if (v !== null && v !== undefined) details[key] = v;
       }

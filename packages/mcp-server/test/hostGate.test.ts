@@ -133,6 +133,21 @@ describe.skipIf(AS_ROOT)("a file this Mac refused", () => {
     expect(payload.probes.path_exists).toBe(false);
   });
 
+  it("a path a running command can still write is refused with its retry hint on the wire", async () => {
+    // The device's structured hint rides the error the agent sees, direct
+    // and deferred alike — the whole point of a hint is that it is read.
+    const { server, home } = makeServer(scriptedProbes());
+    const w = path.join(home, "Plow", "w");
+    fs.mkdirSync(w, { recursive: true });
+    fs.writeFileSync(path.join(w, "x"), "x");
+    const running = await callTool(server, "plow_run_command", { argv: ["/bin/sleep", "1"], cwd: home, write_paths: [w], wait_ms: 50 }, AGENT);
+    expect(running.payload.status).toBe("running");
+    const { payload, isError } = await callTool(server, "plow_read_file", { path: path.join(w, "x") }, AGENT);
+    expect(isError).toBe(true);
+    expect(payload.error).toMatch(/can still change this path/);
+    expect(payload.retry).toBe("after_writer_stops");
+  });
+
   it("a blocked deferred call lands as blocked on its handle", async () => {
     // A human who takes longer than the budget, then approves: the call
     // defers, the read then runs and is refused, and the handle carries it.

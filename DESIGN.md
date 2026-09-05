@@ -258,9 +258,10 @@ So a refusal is **diagnosed, never guessed** (`packages/device-core/src/hostGate
   name and never opened — a withheld probe under a guarded location leaves
   a `likely` verdict, and the exit-time diagnosis, or the reaper's, settles
   it. Those roots are read live, at the moment of deciding and again just
-  before the open, under an executor hold that lets no new run register
-  while a probe is out: a run asked to start then waits for the probe,
-  never the other way round. A command's exit is not the end of its run's
+  before the open, under an executor hold that names what it is about and
+  lets no run that could write it register while it is out: such a run
+  waits for the probe, never the other way round, and every other run — a
+  read-only one, one writing elsewhere — starts at once. A command's exit is not the end of its run's
   hands on the disk — a job it backgrounded lives on in its process group —
   so a run's roots stay off limits while any process of that group exists
   (a signal 0 to the group says), not merely while the command runs; and

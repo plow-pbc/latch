@@ -358,28 +358,43 @@ export class Executor {
    *  group is its pid): what `mutableRoots` asks about after the command
    *  itself has exited, since a job it backgrounded lives on in it. */
   private groups = new Map<string, number>();
-  /** Diagnoses' probes in flight (hostGate/diagnose.ts `hold`). A run
-   *  registers — its writable roots become known — only while none is: a
-   *  probe decides by the roots it can see at that moment, and a run that
-   *  appeared in between would be one it never saw, free to rewrite the
-   *  path the probe is about to open. Registration waits, never the probe:
-   *  a run is delayed by a probe's timeout at most. */
-  private probesInFlight = 0;
-  private probesIdle: Promise<void> = Promise.resolve();
-  private releaseProbes: () => void = () => {};
+  /**
+   * Holds: the paths a diagnosis's probes, or a file operation, are about
+   * (hostGate/diagnose.ts `hold`, DeviceAgent.guardedFileOp). A run whose
+   * profile could write one of them registers — its writable roots become
+   * known — only once the hold is gone: a probe decides by the roots it can
+   * see at that moment, and a run that appeared in between would be one it
+   * never saw, free to rewrite the path it is about to open. Any other
+   * run — read-only, or writing somewhere unrelated — registers at once;
+   * a stalled read must not stop every command on the Mac. Registration
+   * waits, never the hold: a run is delayed by a probe's timeout at most.
+   */
+  private holds = new Map<number, readonly string[]>();
+  private nextHold = 0;
+  private holdWaiters: (() => void)[] = [];
 
-  /** Run `fn` — a diagnosis's probes — with run registration held off. */
-  async holdProbes<T>(fn: () => Promise<T>): Promise<T> {
-    if (this.probesInFlight === 0) {
-      this.probesIdle = new Promise((resolve) => { this.releaseProbes = resolve; });
-    }
-    this.probesInFlight += 1;
+  /** Run `fn` with registration of any run that could write `paths` held off. */
+  async holdProbes<T>(paths: readonly string[], fn: () => Promise<T>): Promise<T> {
+    const id = ++this.nextHold;
+    this.holds.set(id, [...paths]);
     try {
       return await fn();
     } finally {
-      this.probesInFlight -= 1;
-      if (this.probesInFlight === 0) this.releaseProbes();
+      this.holds.delete(id);
+      const waiters = this.holdWaiters;
+      this.holdWaiters = [];
+      for (const wake of waiters) wake();
     }
+  }
+
+  /** Whether a run with these writable roots could touch what a hold is about. */
+  private conflicts(writable: readonly string[]): boolean {
+    for (const paths of this.holds.values()) {
+      for (const p of paths) {
+        for (const w of writable) if (isLexicallyWithin(p, w) || isLexicallyWithin(w, p)) return true;
+      }
+    }
+    return false;
   }
 
   constructor(
@@ -423,8 +438,6 @@ export class Executor {
     env?: Readonly<Record<string, string>>;
   }): Promise<ExecResult> {
     if (args.argv.length === 0) throw new ExecutorError("launch failed: empty argv");
-    // No new writer while a diagnosis is deciding what it may open.
-    while (this.probesInFlight > 0) await this.probesIdle;
     const handle = crypto.randomUUID().toUpperCase();
     const scratch = path.join(this.scratchRoot, handle);
     fs.mkdirSync(scratch, { recursive: true });
@@ -449,6 +462,8 @@ export class Executor {
       appleEvents: args.appleEvents,
       scratch: canonicalize(scratch),
     };
+    // No new writer over what a hold is about, while it is out.
+    while (this.conflicts(writableRoots(profileArgs))) await new Promise<void>((wake) => this.holdWaiters.push(wake));
     const profile = SandboxProfile.generate(profileArgs);
     this.profiles.set(handle, profileArgs);
     if (process.env.DOMO_DEBUG_SANDBOX) {
