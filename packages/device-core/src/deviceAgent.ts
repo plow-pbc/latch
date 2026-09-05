@@ -153,11 +153,11 @@ class FileOpHang extends Error {
   }
 }
 
-/** A path an approved command that is still running (or a job it left
- *  behind) can write: not read or written from here until it is over. */
+/** A path an approved command that is still running, or a job it left
+ *  running, can write: not read or written from here until that stops. */
 class FileOpBusy extends Error {
   constructor() {
-    super("an approved command that is still running can change this path; try again once it has finished");
+    super("an approved command, or a job it left running, can still change this path; try again once it has stopped");
     this.name = "FileOpBusy";
   }
 }
@@ -633,7 +633,7 @@ export class DeviceAgent {
     // resolves the name and then opens it, and between the two such a run
     // could point the name somewhere the owner never approved. It is
     // refused up front, and the agent asks again once that run is over.
-    return this.executor.holdProbes(async () => {
+    return this.executor.holdProbes([p], async () => {
       const mutable = this.executor.mutableRoots();
       if (mutable.some((root) => isLexicallyWithin(p, root))) throw new FileOpBusy();
       if (guardedPrefix(p, this.ownerHome) !== null) {
@@ -684,7 +684,7 @@ export class DeviceAgent {
     const detail = error instanceof FileOpsError ? error.detail : null;
     if (error instanceof FileOpBusy) {
       this.audit.record("denied_operation", { intentId, path: p, error: message, cause: "busy" });
-      return { status: "error", error: message, retry: "after_command_finishes" };
+      return { status: "error", error: message, retry: "after_writer_stops" };
     }
     if (!hung && (outOfBounds || detail?.code === null || detail === null)) {
       // `cause` is what tells the audit view the bound from this app's own
@@ -707,7 +707,7 @@ export class DeviceAgent {
         ranSandboxed: false,
         hung,
         mutable: () => this.executor.mutableRoots(),
-        hold: (fn) => this.executor.holdProbes(fn),
+        hold: (fn) => this.executor.holdProbes([p], fn),
       },
       this.hostProbes,
       this.ownerHome,
@@ -983,7 +983,13 @@ export class DeviceAgent {
         // what any other run still going could: never opened by name. Read
         // live, under the executor's hold, so no run appears in between.
         mutable: () => [...this.executor.writableRoots(result.handle), ...this.executor.mutableRoots()],
-        hold: (fn) => this.executor.holdProbes(fn),
+        // What the probes may touch (diagnose.ts): the declared paths, and
+        // the working directory when it is a folder of its own — never the
+        // home, which would hold every run on the Mac.
+        hold: (fn) => this.executor.holdProbes(
+          [...diag.readPaths, ...diag.writePaths, ...(diag.cwd !== undefined && path.resolve(diag.cwd) !== path.resolve(this.ownerHome) ? [diag.cwd] : [])],
+          fn,
+        ),
         stderr: output,
         ranSandboxed: true,
         sandbox: (p) => this.executor.grants(result.handle, p),

@@ -812,6 +812,15 @@ describe.skipIf(!ON_MAC)("a command this Mac refused", () => {
       { wait_ms: 5_000 },
     );
     await entered;
+    // A command that writes nothing the probe is about starts at once: a
+    // stalled probe must not stop every command on the Mac.
+    const unrelated = jv(
+      await d.handleIntent(
+        intentFor(d, "run", [{ kind: "process.exec", argv: ["/bin/echo", "c"], cwd: home }]),
+        { wait_ms: 2_000 },
+      ),
+    );
+    expect(unrelated.get("status").str).toBe("completed");
     order.push("b asked");
     // B is a one-liner that exits at once; answered within its wait, its
     // answer says it ran. That answer is the marker (the intent's
@@ -854,8 +863,8 @@ describe.skipIf(!ON_MAC)("a command this Mac refused", () => {
     expect(running.get("status").str).toBe("running");
     const refused = jv(await d.handleIntent(intentFor(d, "read", [{ kind: "fs.read", paths: [x] }])));
     expect(refused.get("status").str).toBe("error");
-    expect(refused.get("error").str).toMatch(/still running can change this path/);
-    expect(refused.get("retry").str).toBe("after_command_finishes");
+    expect(refused.get("error").str).toMatch(/can still change this path/);
+    expect(refused.get("retry").str).toBe("after_writer_stops");
     expect(jv(d.audit.entries().at(-1) as JSONValue).get("cause").str).toBe("busy");
     // Over: the read goes through.
     const gone = Date.now() + 5_000;
@@ -928,7 +937,10 @@ describe.skipIf(!ON_MAC)("a command this Mac refused", () => {
     expect(executor.mutableRoots()).toContain(w);
     const refused = jv(await d.handleIntent(intentFor(d, "read", [{ kind: "fs.read", paths: [path.join(w, "a", "x")] }])));
     expect(refused.get("status").str).toBe("error");
-    expect(refused.get("retry").str).toBe("after_command_finishes");
+    // The command is over; the hint must not send the agent straight back
+    // in while the job it left running still holds the root.
+    expect(refused.get("retry").str).toBe("after_writer_stops");
+    expect(refused.get("error").str).toMatch(/a job it left running/);
     expect(probes.calls.filter((c) => c.includes("Desktop") || c.includes("/Documents/w"))).toEqual([]);
     // Once the job is gone, so is the hold on its root.
     const gone = Date.now() + 8_000;
