@@ -9,7 +9,7 @@
         "confidence": "likely",
         "evidence": [
           "the kernel answered EPERM for ~/Library/Messages/chat.db",
-          "~/Library/Messages/chat.db was not opened by Plow Latch itself: a running command could rewrite it",
+          "~/Library/Messages/chat.db was not opened by Plow Latch itself: a run or one of its background jobs could rewrite it",
           "~/Library/Messages/chat.db is under a location macOS guards (Full Disk Access)"
         ],
         "owner_action": "In System Settings > Privacy & Security > Full Disk Access, turn on Plow Latch, then quit and reopen it.",

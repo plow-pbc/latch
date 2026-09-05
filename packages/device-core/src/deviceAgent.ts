@@ -623,24 +623,31 @@ export class DeviceAgent {
     // child opens it. So the touch climbs above every such root: the gate
     // is the same — the folder macOS asks about contains them all — and
     // nothing a run can write is opened.
-    const mutable = this.executor.mutableRoots();
-    let target = existingAncestor(p);
-    while (mutable.some((root) => isLexicallyWithin(target, root)) && path.dirname(target) !== target) {
-      target = path.dirname(target);
-    }
-    const touch = this.hostProbes.openAsApp(target);
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const hang = new Promise<never>((_, reject) => {
-      timer = setTimeout(() => reject(new FileOpHang()), this.fileOpHangMs);
-      timer.unref?.();
+    // Choosing the target and waiting out the touch happen under the
+    // executor's hold: a writer approved in between would be one the
+    // choice never saw, free to redirect the name before the child opens
+    // it. The probe's own timeout is shorter than the hang window, so the
+    // child is settled — or killed — before the hold is released.
+    await this.executor.holdProbes(async () => {
+      const mutable = this.executor.mutableRoots();
+      let target = existingAncestor(p);
+      while (mutable.some((root) => isLexicallyWithin(target, root)) && path.dirname(target) !== target) {
+        target = path.dirname(target);
+      }
+      const touch = this.hostProbes.openAsApp(target);
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const hang = new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new FileOpHang()), this.fileOpHangMs);
+        timer.unref?.();
+      });
+      try {
+        if ((await Promise.race([touch, hang])) === "hung") throw new FileOpHang();
+      } finally {
+        clearTimeout(timer);
+        // A probe the timer beat is the child's to finish or be killed.
+        touch.catch(() => {});
+      }
     });
-    try {
-      if ((await Promise.race([touch, hang])) === "hung") throw new FileOpHang();
-    } finally {
-      clearTimeout(timer);
-      // A probe the timer beat is the child's to finish or be killed.
-      touch.catch(() => {});
-    }
     return op();
   }
 

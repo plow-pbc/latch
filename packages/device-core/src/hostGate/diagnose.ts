@@ -572,7 +572,7 @@ export function diagnose(f: HostFacts): Diagnosis {
     // The app's attempt was withheld — the run could have rewritten the
     // path under it — so the location has to speak for itself.
     if (f.probe_withheld && f.tcc_guarded_prefix !== null) {
-      evidence.push(`${where} was not opened by ${APP_DISPLAY_NAME} itself: a running command could rewrite it`);
+      evidence.push(`${where} was not opened by ${APP_DISPLAY_NAME} itself: a run or one of its background jobs could rewrite it`);
       evidence.push(`${where} is under a location macOS guards (${PERMISSION_LABELS[f.tcc_guarded_prefix]})`);
       if (COVERED_BY_FULL_DISK_ACCESS.has(f.tcc_guarded_prefix) && f.full_disk_access_granted === true) {
         return verdict("unknown", "unknown", f.tcc_guarded_prefix);
