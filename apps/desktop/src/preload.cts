@@ -86,6 +86,7 @@ contextBridge.exposeInMainWorld("domo", {
   capabilitiesBannerSeen: () => ipcRenderer.invoke("capabilities:bannerSeen"),
   // A block by this Mac lands the tray item and the notification here.
   onShowCapabilities: (cb: () => void) => ipcRenderer.on("ui:showCapabilities", cb),
+  onShowAuditBlocked: (cb: () => void) => ipcRenderer.on("ui:showAuditBlocked", cb),
   // The floating panel's own poll: which switch it points at, and whether
   // that grant has landed.
   grantState: () => ipcRenderer.invoke("grant:state"),

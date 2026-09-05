@@ -9,7 +9,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { canonicalize } from "@domo/protocol";
+import { canonicalize, isLexicallyWithin } from "@domo/protocol";
 
 const READ_BOILERPLATE = [
   "/usr",
@@ -121,8 +121,10 @@ export const SandboxProfile = {
  * profile the run had would not have. Kept beside the generator so the two
  * cannot drift; it reads the same lists, in the same order, with the same
  * `isReapable` housekeeping rule. Paths in and out are canonical — the
- * generator canonicalizes its inputs, and a caller here passes the path it
- * already resolved.
+ * roots exactly as the generator saw them when the profile was made, never
+ * resolved again here (a run that has since replaced an approved path with
+ * a symlink would otherwise widen its own approval to the link's target),
+ * and a caller passes the path it already resolved.
  *
  * Reads are deliberately the generator's own over-approximation: broad home,
  * the boilerplate roots, and the literal directory entries the profile lists
@@ -140,23 +142,14 @@ export function sandboxGrants(
   },
   target: string,
 ): { read: boolean; write: boolean } {
-  const under = (p: string, root: string) =>
-    p === root || p.startsWith(root.endsWith("/") ? root : root + "/");
+  const under = isLexicallyWithin;
   const home = canonicalize(args.home ?? os.homedir());
   const housekeeping = ["Library/Caches", ".cache", ".config", ".local/state", ".npm"].map(
     (p) => home + "/" + p,
   );
-  const writable = [args.scratch, ...args.writePaths]
-    .concat(isReapable(args) ? [] : housekeeping)
-    .map((p) => canonicalize(p));
+  const writable = [args.scratch, ...args.writePaths].concat(isReapable(args) ? [] : housekeeping);
   const write = writable.some((root) => under(target, root));
-  const readRoots = [
-    ...READ_BOILERPLATE,
-    home,
-    ...writable,
-    ...args.readPaths.map((p) => canonicalize(p)),
-    "/dev/fd",
-  ];
+  const readRoots = [...READ_BOILERPLATE, home, ...writable, ...args.readPaths, "/dev/fd"];
   const literals = new Set([
     "/", "/private", "/private/var", "/private/tmp", "/tmp", "/var", "/etc", "/Users",
     "/dev/null", "/dev/urandom", "/dev/random", "/dev/zero", "/dev/tty",
@@ -399,12 +392,16 @@ export class Executor {
     // even exec the binary its PATH just resolved.
     const reads = [...args.readPaths, ...this.vendorDirs, workingDir];
 
+    // Frozen as the generator saw them: canonical now, and never resolved
+    // again. A later `grants()` asks what THIS profile allowed, and a run
+    // that has since swapped an approved path for a symlink must not have
+    // the answer follow the link (sandboxGrants).
     const profileArgs = {
-      readPaths: reads,
-      writePaths: args.writePaths,
+      readPaths: reads.map((p) => canonicalize(p)),
+      writePaths: args.writePaths.map((p) => canonicalize(p)),
       network: args.network,
       appleEvents: args.appleEvents,
-      scratch,
+      scratch: canonicalize(scratch),
     };
     const profile = SandboxProfile.generate(profileArgs);
     this.profiles.set(handle, profileArgs);

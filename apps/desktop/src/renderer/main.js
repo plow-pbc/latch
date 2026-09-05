@@ -2799,10 +2799,13 @@ window.domo.onConfirmLeave(async () => {
 window.domo.onShowSettings(async () => {
   if (await selectTab("settings")) window.domo.updatesCheck();
 });
-// The tray item and the notification for a block by this Mac land here.
+// The tray item and the notification for a block by this Mac land here —
+// on the switch's row when the block named one, else on the Audit tab's
+// Blocked view, where the row carries the sentence that fixes it.
 window.domo.onShowCapabilities(async () => {
   if (await selectTab("capabilities")) window.domo.uiSetTab("capabilities");
 });
+window.domo.onShowAuditBlocked(() => showAuditBlocked());
 // Another app handed main a credential exchange (Apple Passwords' export):
 // land on the Vault tab, whose render finds the staged preview and opens the
 // Import sheet on it. Already there means re-render — selectTab dedupes and

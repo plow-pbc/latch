@@ -2065,6 +2065,7 @@ app.whenReady().then(async () => {
   // and, once per permission per run, to a notification.
   device.audit.events.on("recorded", (entry) => {
     if (entry.event === "host_permission_blocked") noteHostGateBlock(entry.fields);
+    if (entry.event === "host_permission_cleared") clearHostGateAttention(entry.fields);
   });
   // Usage stats ride the same funnel as the audit log — one source of truth
   // for what happened, with telemetry.ts's allowlist deciding the little that
@@ -2394,7 +2395,7 @@ app.on("web-contents-created", (_e, contents) => {
  * cleared when the owner opens Settings from it, where the Capabilities card
  * shows every switch.
  */
-let hostGateAttention: { permission: string | null; ownerAction: string | null; cause: string } | null = null;
+let hostGateAttention: { permission: string | null; ownerAction: string | null; cause: string; handle: string | null } | null = null;
 /** Permissions already announced this run: a notification per refusal would
  *  be a notification per retry. */
 const hostGateNotified = new Set<string>();
@@ -2406,7 +2407,8 @@ function noteHostGateBlock(fields: { [k: string]: unknown }): void {
   // A guess does not earn a notification: only a confirmed verdict names a
   // switch the owner should actually go and flip.
   if (fields.confidence !== "confirmed") return;
-  hostGateAttention = { permission, ownerAction, cause };
+  const handle = typeof fields.handle === "string" ? fields.handle : null;
+  hostGateAttention = { permission, ownerAction, cause, handle };
   refreshTray();
   const key = permission ?? cause;
   if (hostGateNotified.has(key) || !Notification.isSupported()) return;
@@ -2421,13 +2423,29 @@ function noteHostGateBlock(fields: { [k: string]: unknown }): void {
   notification.show();
 }
 
-/** The tray item's and the notification's one destination: the Capabilities
- *  tab, where every switch shows what it stopped and the grant flow starts. */
+/** The owner answered the dialog the attention was about (the run went on):
+ *  a "Needs …" item pointing at a block that is no longer one comes down. */
+function clearHostGateAttention(fields: { [k: string]: unknown }): void {
+  const handle = typeof fields.handle === "string" ? fields.handle : null;
+  if (hostGateAttention === null || handle === null || hostGateAttention.handle !== handle) return;
+  hostGateAttention = null;
+  refreshTray();
+}
+
+/**
+ * The tray item's and the notification's one destination. A block that
+ * names a switch lands on the Capabilities tab, where that switch shows
+ * what it stopped and the grant flow starts. One that names none — a
+ * locked file, a SIP root, POSIX permissions — has no row there (the tab
+ * lists switches), so it lands on the Audit tab's Blocked view, where the
+ * row carries the sentence that fixes it.
+ */
 function showCapabilitiesForHostGate(): void {
+  const permission = hostGateAttention?.permission ?? null;
   hostGateAttention = null;
   refreshTray();
   gate.sync();
-  const send = () => mainWindow?.webContents.send("ui:showCapabilities");
+  const send = () => mainWindow?.webContents.send(permission ? "ui:showCapabilities" : "ui:showAuditBlocked");
   if (mainWindow?.webContents.isLoading()) mainWindow.webContents.once("did-finish-load", send);
   else send();
 }
