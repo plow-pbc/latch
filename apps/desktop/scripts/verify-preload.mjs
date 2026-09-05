@@ -539,18 +539,11 @@ app.whenReady().then(async () => {
       noPhonePromise: !document.querySelector("#view").innerText.includes("phone number"),
       offersNoRelayKeyField: !document.body.innerText.includes("Connect key"),
       bodyLeaksKey: /plow_sk|BEGIN|secret/i.test(document.body.innerText),
-      hasConnectedAccounts: [...document.querySelectorAll(".panel.settings .group-title")].some(
-        (title) => title.textContent.trim() === "Connected accounts",
+      // Connected accounts left this pane for the Capabilities tab (probed
+      // below), where a Google account is a switch like any other.
+      noConnectedAccountsHere: ![...document.querySelectorAll(".panel.settings .group-title")].some(
+        (title) => /connected accounts/i.test(title.textContent),
       ),
-      connectorAccounts: [...document.querySelectorAll(".settings-connectors .alabel")].map(
-        (label) => label.textContent.trim(),
-      ),
-      connectorActions: [...document.querySelectorAll(".settings-connectors button")].map(
-        (button) => button.textContent.trim(),
-      ),
-      connectorDefault: document.querySelector(".settings-connectors .adefault")?.textContent.trim(),
-      connectorRemoveIsLabelled: document.querySelector(".settings-connectors .acct-remove")
-        ?.getAttribute("aria-label") === "Remove Google account",
       // ---- The AI Reviewer section is GONE from this pane.
       //
       // Three checks, not ten. The group, the credential field, and the control
@@ -580,12 +573,14 @@ app.whenReady().then(async () => {
       // must finish over there (System Settings), the external-link ↗ on the
       // buttons whose click just happens in the browser (Discord, Livestream)
       // — and never both on one button.
+      // Both remaining Support buttons (Discord, Livestream) just open a
+      // browser, so both carry the arrow; the one hand-off into System
+      // Settings moved to the Capabilities tab with its "…" (checked there).
       supportMarks: (() => {
         const btns = [...document.querySelectorAll(".support-row .btn")];
         const arrowed = btns.filter((b) => b.querySelector(".ext-arrow"));
         const handoffs = btns.filter((b) => b.textContent.trim().endsWith("…"));
-        return btns.length === 3 && arrowed.length === 2 && handoffs.length === 1 &&
-          !handoffs[0].querySelector(".ext-arrow");
+        return btns.length === 2 && arrowed.length === 2 && handoffs.length === 0;
       })(),
       // Launch at Login, in Availability: on this packaged-looking probe the
       // toggle is live and unchecked, and the from-source note is hidden
@@ -1974,6 +1969,8 @@ app.whenReady().then(async () => {
   // URL). Nothing has been blocked, so no badge and no banner.
   await win.webContents.executeJavaScript(`window.__domoSelectTab && window.__domoSelectTab("capabilities")`);
   await waitFor(win, `document.querySelector(".cap-row")`, "the Capabilities tab");
+  // The accounts arrive on the connector refresh, a beat after the switches.
+  await waitFor(win, `document.querySelectorAll(".cap-account-email").length === 2`, "the connected accounts to list");
   const capabilities = await win.webContents.executeJavaScript(`(${() => {
     const rows = [...document.querySelectorAll(".cap-row")];
     const fda = rows.find((r) => r.querySelector(".cap-name")?.textContent === "Full Disk Access");
@@ -1987,6 +1984,23 @@ app.whenReady().then(async () => {
       noBadge: document.getElementById("capCount")?.hidden === true,
       noBanner: !document.querySelector(".cap-banner"),
       fdaNoInlineDragTile: !document.querySelector(".fda-drag-tile"),
+      // The hand-off into System Settings wears the macOS "…", never the
+      // external-link arrow.
+      fdaButtonIsHandoff: !fda?.querySelector("button.btn .ext-arrow"),
+      // Connected Accounts, in the tab's own row style: the Google row with
+      // its "Add another" (a browser hop, so arrowed), then one row per
+      // account with the address, the default's pill, and a labelled menu.
+      hasConnectedAccounts: document.querySelector("#view").innerText.includes("Connected Accounts"),
+      connectorAccounts: [...document.querySelectorAll(".cap-account-email")].map((e) => e.textContent.trim()),
+      connectorDefault: document.querySelector(".cap-account-row .cap-default-pill")?.textContent.trim(),
+      connectorDefaultOnFirst: !!document.querySelector(".cap-account-row:first-child .cap-default-pill") &&
+        !document.querySelector(".cap-account-row:nth-child(2) .cap-default-pill"),
+      connectorMenusLabelled: [...document.querySelectorAll(".cap-account-row")].every(
+        (r) => r.querySelector("button")?.getAttribute("aria-label") === "Account actions",
+      ),
+      connectorAddIsArrowed: [...document.querySelectorAll(".cap-row button.btn")].some(
+        (b) => b.textContent.trim().startsWith("Add another") && b.querySelector(".ext-arrow"),
+      ),
     };
   }})()`);
 
@@ -2159,11 +2173,14 @@ app.whenReady().then(async () => {
     settings.noPhonePromise &&
     settings.offersNoRelayKeyField &&
     !settings.bodyLeaksKey &&
-    settings.hasConnectedAccounts &&
-    settings.connectorAccounts.join("|") === "owner@probe.test|work@probe.test" &&
-    settings.connectorActions.join("|") === "|Set default||Add another Google account" &&
-    settings.connectorDefault === "Default" &&
-    settings.connectorRemoveIsLabelled &&
+    settings.noConnectedAccountsHere &&
+    capabilities.hasConnectedAccounts &&
+    capabilities.connectorAccounts.join("|") === "owner@probe.test|work@probe.test" &&
+    capabilities.connectorDefault === "Default" &&
+    capabilities.connectorDefaultOnFirst &&
+    capabilities.connectorMenusLabelled &&
+    capabilities.connectorAddIsArrowed &&
+    capabilities.fdaButtonIsHandoff &&
     settings.noReviewerGroup &&
     settings.noPasswordField &&
     settings.noSuggestionsCheckbox &&
