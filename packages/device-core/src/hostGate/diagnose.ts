@@ -281,10 +281,16 @@ export async function collectFacts(
     // path after all. Inside the approval after resolving, it is opened
     // only if no live run could rewrite it meanwhile: nothing decided here
     // is still true by the time a probe opens a path under such a root.
+    // A named path under a root a live run can rewrite is not resolved at
+    // all: the run could redirect it while realpath walks, and the target
+    // would come back in `paths_examined` — a guess at an unapproved path
+    // confirmed by the very battery that refused to open it. Such a path
+    // stays as named, withheld.
     const named = path.resolve(expandHome(raw, ownerHome));
-    const canonical = contained(named) ? await canonicalizeAsync(named) : named;
+    const stable = contained(named) && !rewritable(named);
+    const canonical = stable ? await canonicalizeAsync(named) : named;
     const approved = contained(named) && contained(canonical);
-    const probe = approved && !rewritable(named) && !rewritable(canonical);
+    const probe = approved && stable && !rewritable(canonical);
     const withheld = approved && !probe;
     const known = bySource.get(canonical);
     if (known === undefined) bySource.set(canonical, { source, probe, withheld });
