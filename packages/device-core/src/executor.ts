@@ -9,7 +9,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { canonicalize } from "@domo/protocol";
+import { canonicalize, isLexicallyWithin } from "@domo/protocol";
 
 const READ_BOILERPLATE = [
   "/usr",
@@ -111,6 +111,69 @@ export const SandboxProfile = {
     return lines.join("\n");
   },
 };
+
+/**
+ * What the profile `SandboxProfile.generate` would build from these arguments
+ * allows at one path — the same decision, asked after the fact.
+ *
+ * This is how a diagnosis (hostGate/diagnose.ts) tells "our seatbelt said no"
+ * from "macOS said no": the app can open the path itself, and this says the
+ * profile the run had would not have. Kept beside the generator so the two
+ * cannot drift; it reads the same lists, in the same order, with the same
+ * `isReapable` housekeeping rule. Paths in and out are canonical — the
+ * roots exactly as the generator saw them when the profile was made, never
+ * resolved again here (a run that has since replaced an approved path with
+ * a symlink would otherwise widen its own approval to the link's target),
+ * and a caller passes the path it already resolved.
+ *
+ * Reads are deliberately the generator's own over-approximation: broad home,
+ * the boilerplate roots, and the literal directory entries the profile lists
+ * one by one. Anything not named is denied, which is the profile's
+ * `(deny default)`.
+ */
+export function sandboxGrants(
+  args: {
+    readPaths: string[];
+    writePaths: string[];
+    network: boolean;
+    appleEvents: boolean;
+    scratch: string;
+    home?: string;
+  },
+  target: string,
+): { read: boolean; write: boolean } {
+  const under = isLexicallyWithin;
+  const home = canonicalize(args.home ?? os.homedir());
+  const writable = writableRoots(args);
+  const write = writable.some((root) => under(target, root));
+  const readRoots = [...READ_BOILERPLATE, home, ...writable, ...args.readPaths, "/dev/fd"];
+  const literals = new Set([
+    "/", "/private", "/private/var", "/private/tmp", "/tmp", "/var", "/etc", "/Users",
+    "/dev/null", "/dev/urandom", "/dev/random", "/dev/zero", "/dev/tty",
+  ]);
+  const read = write || literals.has(target) || readRoots.some((root) => under(target, root));
+  return { read, write };
+}
+
+/**
+ * The roots a profile lets a run write — and so everything a run, or a job
+ * it left behind, could replace with a symlink while nobody is looking.
+ * The diagnosis (hostGate/diagnose.ts) never opens a path under one by
+ * name while the run that owns it may still be alive.
+ */
+export function writableRoots(args: {
+  writePaths: string[];
+  network: boolean;
+  appleEvents: boolean;
+  scratch: string;
+  home?: string;
+}): string[] {
+  const home = canonicalize(args.home ?? os.homedir());
+  const housekeeping = ["Library/Caches", ".cache", ".config", ".local/state", ".npm"].map(
+    (p) => home + "/" + p,
+  );
+  return [args.scratch, ...args.writePaths].concat(isReapable(args) ? [] : housekeeping);
+}
 
 export class ExecutorError extends Error {}
 
@@ -288,6 +351,51 @@ function shape(snap: ReturnType<OutputBuffer["snapshot"]>): Omit<ExecResult, "ha
  */
 export class Executor {
   private buffers = new Map<string, OutputBuffer>();
+  /** What each run's profile was built from, kept so a diagnosis can ask
+   *  after the fact what that profile allowed (`grants`). */
+  private profiles = new Map<string, Parameters<typeof sandboxGrants>[0]>();
+  /** Each run's process group (it is spawned as a session leader, so the
+   *  group is its pid): what `mutableRoots` asks about after the command
+   *  itself has exited, since a job it backgrounded lives on in it. */
+  private groups = new Map<string, number>();
+  /**
+   * Holds: the paths a diagnosis's probes, or a file operation, are about
+   * (hostGate/diagnose.ts `hold`, DeviceAgent.guardedFileOp). A run whose
+   * profile could write one of them registers — its writable roots become
+   * known — only once the hold is gone: a probe decides by the roots it can
+   * see at that moment, and a run that appeared in between would be one it
+   * never saw, free to rewrite the path it is about to open. Any other
+   * run — read-only, or writing somewhere unrelated — registers at once;
+   * a stalled read must not stop every command on the Mac. Registration
+   * waits, never the hold: a run is delayed by a probe's timeout at most.
+   */
+  private holds = new Map<number, readonly string[]>();
+  private nextHold = 0;
+  private holdWaiters: (() => void)[] = [];
+
+  /** Run `fn` with registration of any run that could write `paths` held off. */
+  async holdProbes<T>(paths: readonly string[], fn: () => Promise<T>): Promise<T> {
+    const id = ++this.nextHold;
+    this.holds.set(id, [...paths]);
+    try {
+      return await fn();
+    } finally {
+      this.holds.delete(id);
+      const waiters = this.holdWaiters;
+      this.holdWaiters = [];
+      for (const wake of waiters) wake();
+    }
+  }
+
+  /** Whether a run with these writable roots could touch what a hold is about. */
+  private conflicts(writable: readonly string[]): boolean {
+    for (const paths of this.holds.values()) {
+      for (const p of paths) {
+        for (const w of writable) if (isLexicallyWithin(p, w) || isLexicallyWithin(w, p)) return true;
+      }
+    }
+    return false;
+  }
 
   constructor(
     public readonly scratchRoot: string,
@@ -343,13 +451,21 @@ export class Executor {
     // even exec the binary its PATH just resolved.
     const reads = [...args.readPaths, ...this.vendorDirs, workingDir];
 
-    const profile = SandboxProfile.generate({
-      readPaths: reads,
-      writePaths: args.writePaths,
+    // Frozen as the generator saw them: canonical now, and never resolved
+    // again. A later `grants()` asks what THIS profile allowed, and a run
+    // that has since swapped an approved path for a symlink must not have
+    // the answer follow the link (sandboxGrants).
+    const profileArgs = {
+      readPaths: reads.map((p) => canonicalize(p)),
+      writePaths: args.writePaths.map((p) => canonicalize(p)),
       network: args.network,
       appleEvents: args.appleEvents,
-      scratch,
-    });
+      scratch: canonicalize(scratch),
+    };
+    // No new writer over what a hold is about, while it is out.
+    while (this.conflicts(writableRoots(profileArgs))) await new Promise<void>((wake) => this.holdWaiters.push(wake));
+    const profile = SandboxProfile.generate(profileArgs);
+    this.profiles.set(handle, profileArgs);
     if (process.env.DOMO_DEBUG_SANDBOX) {
       process.stderr.write(`=== PROFILE ===\n${profile}\n=== ARGV ===\n${args.argv.join(" ")}\n`);
     }
@@ -397,6 +513,7 @@ export class Executor {
       // the sweep that would is its own change, not a side effect of this one.
       detached: true,
     });
+    if (child.pid !== undefined) this.groups.set(handle, child.pid);
     // A run ends when its COMMAND ends. `close` says something else — every
     // stdio pipe closed too — and a job the command backgrounded inherits
     // those pipes and can hold them open forever. Settling on `exit` is what
@@ -542,6 +659,54 @@ export class Executor {
 
     await buffer.waitForExit(Math.max(args.waitMs, 0));
     return { handle, ...shape(buffer.snapshot(0)) };
+  }
+
+  /**
+   * What the profile this run had would allow at `path` — the question a
+   * diagnosis asks to tell our own seatbelt's refusal from macOS's. Answered
+   * from the arguments the profile was generated from, so the two agree by
+   * construction.
+   */
+  grants(handle: string, path: string): { read: boolean; write: boolean } {
+    const args = this.profiles.get(handle);
+    if (!args) throw new ExecutorError(`unknown output handle: ${handle}`);
+    return sandboxGrants(args, path);
+  }
+
+  /** What one run's profile lets it write (see `writableRoots`). */
+  writableRoots(handle: string): string[] {
+    const args = this.profiles.get(handle);
+    return args ? writableRoots(args) : [];
+  }
+
+  /**
+   * What every run that is still going — or anything a run left behind —
+   * could write right now: the roots a diagnosis of anything, a file op
+   * included, must not open by name. A command's exit is not the end of
+   * its run's hands on the disk: a job it backgrounded keeps its process
+   * group alive, and the group is asked (a signal 0 to it) rather than the
+   * command's exit code.
+   */
+  mutableRoots(): string[] {
+    const roots: string[] = [];
+    for (const [handle, buffer] of this.buffers) {
+      if (buffer.exitCode === null || this.groupAlive(handle)) roots.push(...this.writableRoots(handle));
+    }
+    return roots;
+  }
+
+  /** Whether any process of the run's group still exists. */
+  private groupAlive(handle: string): boolean {
+    const pid = this.groups.get(handle);
+    if (pid === undefined) return false;
+    try {
+      process.kill(-pid, 0);
+      return true;
+    } catch (error: unknown) {
+      // ESRCH: no such group — every member is gone. Anything else (EPERM,
+      // a member no longer ours) means something is still there.
+      return (error as { code?: unknown })?.code !== "ESRCH";
+    }
   }
 
   /** Invoke cb when the run exits — immediately if it already has. */

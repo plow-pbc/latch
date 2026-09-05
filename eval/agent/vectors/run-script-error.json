@@ -1,0 +1,105 @@
+{
+  "name": "run-script-error",
+  "note": "A script error of its own (-1728) on an app whose data access is granted: completed, exit 1, host_gate none. The reply fixes or reports the script; it does not send the user to System Settings.",
+  "prompt": "Look up who the numbers 909-614-5688 and 650-660-3099 are in the Contacts app on my Mac.",
+  "answers": {
+    "plow_run_command": {
+      "exit_code": 0,
+      "handle": "EVAL-HANDLE",
+      "output": "",
+      "output_length": 0,
+      "status": "completed"
+    },
+    "plow_device_status": {
+      "automation": [
+        {
+          "status": "unknown",
+          "target": "Messages"
+        },
+        {
+          "status": "granted",
+          "target": "Contacts"
+        }
+      ],
+      "automation_queryable": true,
+      "checked_at": "2026-09-04T23:17:00Z",
+      "child_attribution": {
+        "detail": null,
+        "status": "not_applicable"
+      },
+      "full_disk_access": {
+        "granted": false,
+        "probes": [
+          {
+            "outcome": "ENOENT",
+            "path": "~/Library/Application Support/com.apple.TCC/TCC.db"
+          },
+          {
+            "outcome": "ENOENT",
+            "path": "~/Library/Messages/chat.db"
+          },
+          {
+            "outcome": "ENOENT",
+            "path": "~/Library/Safari/Bookmarks.plist"
+          }
+        ]
+      },
+      "permissions": [
+        {
+          "permission": "accessibility",
+          "status": "unknown"
+        },
+        {
+          "permission": "contacts",
+          "status": "granted"
+        },
+        {
+          "permission": "calendars",
+          "status": "unknown"
+        }
+      ],
+      "sandbox": {
+        "detail": null,
+        "status": "ok"
+      },
+      "vault_key": {
+        "reason": "this Mac has no vault",
+        "status": "absent"
+      }
+    }
+  },
+  "isError": {
+    "plow_run_command": false,
+    "plow_device_status": false
+  },
+  "variants": {
+    "plow_run_command": [
+      {
+        "when": {
+          "argv_includes": "osascript"
+        },
+        "answer": {
+          "exit_code": 1,
+          "handle": "EVAL-HANDLE",
+          "host_gate": "none",
+          "output": "12:20: execution error: Can’t get phones of person 1. (-1728)\n",
+          "output_length": 64,
+          "status": "completed"
+        },
+        "isError": false
+      }
+    ]
+  },
+  "expect": {
+    "calls": {
+      "min": 1,
+      "max": 6
+    },
+    "excludes": [
+      "System Settings",
+      "Full Disk Access",
+      "Privacy & Security",
+      "permission"
+    ]
+  }
+}

@@ -35,7 +35,7 @@ import {
   impliesNetwork,
   vendoredProvider,
 } from "@domo/device-core";
-import { DeferredResults, DeniedError, Progress } from "./deferred.js";
+import { BlockedError, DeferredResults, DeniedError, DeviceError, Progress } from "./deferred.js";
 import { JobOwners } from "./jobs.js";
 import path from "node:path";
 
@@ -117,7 +117,8 @@ const unique = (paths: string[]): string[] => [...new Set(paths)];
 /**
  * Build an intent from an already-constructed capability set and run it through
  * policy → approval → sandbox, mapping the device's answer onto §4.3's
- * vocabulary: a refusal is `denied`, anything else that went wrong is `failed`.
+ * vocabulary: a refusal is `denied`, a refusal by this Mac itself is
+ * `blocked`, anything else that went wrong is `failed`.
  */
 async function decideAndRun(
   ctx: ToolContext,
@@ -146,8 +147,20 @@ async function decideAndRun(
       throw new DeniedError(r.get("reason").str ?? "the owner of this Mac denied the request");
     case "rejected":
       throw new ToolError(`rejected: ${r.get("reason").str ?? "unknown"}`);
-    case "error":
-      throw new Error(r.get("error").str ?? "device error");
+    case "blocked":
+      // The whole payload rides: the verdict and probes, and for a command
+      // its output, exit code and job handle.
+      throw new BlockedError(r.obj ? { ...(r.obj as { [k: string]: JSONValue }) } : {});
+    case "error": {
+      // A failure the device diagnosed (a missing file, a refusal it could
+      // not place) keeps its facts beside the sentence.
+      const details: { [k: string]: JSONValue } = {};
+      for (const key of ["diagnosis", "probes", "retry"]) {
+        const v = r.get(key).value;
+        if (v !== null && v !== undefined) details[key] = v;
+      }
+      throw new DeviceError(r.get("error").str ?? "device error", details);
+    }
     default:
       return response;
   }
@@ -211,6 +224,37 @@ export const SKILL_FOOTER =
   "owner-identifying paths — reproduce with the schema shape, not the data. Contributions " +
   "made with this Mac's own tools act as the owner and are approval-gated like any command.";
 
+/**
+ * What every tool that can be stopped by this Mac itself says about it, in
+ * one sentence — the server instructions carry the full account, and a client
+ * may drop those. The words matter: "not the user saying no" is the
+ * distinction agents got wrong when a permission refusal wore the same shape
+ * as a denial, and "word for word" is what keeps the fixed owner sentence
+ * from being paraphrased into the wrong System Settings pane.
+ */
+export const BLOCKED_COPY =
+  "A result with status 'blocked' means the user approved it and their Mac itself then refused — a " +
+  "macOS privacy permission the app lacks, or a permission dialog waiting on the Mac's screen; not " +
+  "the user saying no. Read its 'diagnosis': when 'confidence' is 'confirmed', tell the user the " +
+  "'owner_action' sentence word for word and stop; otherwise share the 'evidence' and let them decide.";
+
+/**
+ * Appended to every skill body, before the contribution footer: a skill
+ * teaches queries against the owner's app data, which is exactly where a
+ * missing macOS grant bites, and the agent reading a recipe is the one that
+ * will meet the refusal. No tool names here (the skill body's own examples
+ * name them), and nothing owner-specific.
+ */
+export const HOST_GATE_NOTE =
+  "\n\n## When this Mac itself says no\n\n" +
+  "A call may come back with status 'blocked', with a 'diagnosis' beside it. That is neither " +
+  "\"no messages\" nor the owner refusing: their Mac would not let the app do what they approved — " +
+  "usually a macOS privacy permission (Full Disk Access, a folder, Automation) the app has not been " +
+  "granted, or a permission dialog open on the Mac's screen with nobody there to click it. When the " +
+  "diagnosis is 'confirmed', tell the owner its 'owner_action' word for word and stop; do not " +
+  "retry, and do not reword the goal. When it is 'likely' or 'unknown', pass on the 'evidence' and " +
+  "'ruled_out' lists and let them decide.";
+
 export const TOOLS: ToolSpec[] = [
   {
     name: "plow_read_file",
@@ -219,7 +263,8 @@ export const TOOLS: ToolSpec[] = [
       "Read a file on the user's own Mac — their real filesystem, not your workspace. " +
       "They may be asked to approve, so this can return a pending handle. Paths inside " +
       "~/Plow (the shared Plow folder — see the plow-folder skill) approve automatically " +
-      "unless this Mac is set to deny everything.",
+      "unless this Mac is set to deny everything. " +
+      BLOCKED_COPY,
     inputSchema: {
       type: "object",
       required: ["path"],
@@ -261,7 +306,8 @@ export const TOOLS: ToolSpec[] = [
       "not for your own working files. They may be asked to approve, so this can return a " +
       "pending handle. Paths inside ~/Plow (the shared Plow folder — see the plow-folder " +
       "skill) approve automatically unless this Mac is set to deny everything; prefer it " +
-      "for files you produce for the user.",
+      "for files you produce for the user. " +
+      BLOCKED_COPY,
     inputSchema: {
       type: "object",
       required: ["path", "content"],
@@ -323,7 +369,13 @@ export const TOOLS: ToolSpec[] = [
       "left running in the background will normally be killed by its next write unless it redirects " +
       "both (`>log 2>&1`), its output is not captured, and no handle tracks it. "  +
       "If the whole call outruns this Mac's budget you get a pending handle instead: poll it with " +
-      "plow_get_result, and the ready payload is the plow_run_command result — including its job handle.",
+      "plow_get_result, and the ready payload is the plow_run_command result — including its job handle. " +
+      BLOCKED_COPY +
+      " A result that is still 'running' but carries a 'diagnosis' is parked on a macOS permission " +
+      "dialog on the Mac's screen: leave it running, tell the user, and poll plow_get_output — their " +
+      "click lets it finish. A 'completed' result with a non-zero exit and 'host_gate': 'none' failed " +
+      "on its own terms: this Mac refused nothing and no macOS permission is missing, whatever the " +
+      "program's own error text says — do not send the user to System Settings for it.",
     inputSchema: {
       type: "object",
       required: ["argv"],
@@ -467,18 +519,29 @@ export const TOOLS: ToolSpec[] = [
       // directly; the call defers, and `plow_get_result` later returns a ready
       // payload that CONTAINS the job handle. Two hops, not one.
       const waitMs = Math.min(a.get("wait_ms").int ?? 10_000, ctx.commandWaitCapMs);
-      const result = await decideAndRun(
-        ctx,
-        progress,
-        `run: ${argv.join(" ")}`,
-        a.get("goal").str ?? undefined,
-        capabilities,
-        { wait_ms: waitMs },
-      );
       // The job is this agent's. Claimed here rather than in the executor,
       // which has one registry for the whole process and no idea who called.
-      const handle = jv(result).get("handle").str;
-      if (handle !== null) ctx.jobs.claim(ctx.agent.agentId, handle);
+      // Claimed on a BLOCKED run too: it ran, it has output and a handle,
+      // and a later plow_get_output of it must answer this agent.
+      const claim = (result: JSONValue) => {
+        const handle = jv(result).get("handle").str;
+        if (handle !== null) ctx.jobs.claim(ctx.agent.agentId, handle);
+      };
+      let result: JSONValue;
+      try {
+        result = await decideAndRun(
+          ctx,
+          progress,
+          `run: ${argv.join(" ")}`,
+          a.get("goal").str ?? undefined,
+          capabilities,
+          { wait_ms: waitMs },
+        );
+      } catch (error: unknown) {
+        if (error instanceof BlockedError) claim(error.payload);
+        throw error;
+      }
+      claim(result);
       return result;
     },
   },
@@ -492,7 +555,10 @@ export const TOOLS: ToolSpec[] = [
       "A read-only command that produces nothing and never exits is eventually killed by this Mac: " +
       "the reply then carries an 'error' saying so, which is for the user to hear. One approved to " +
       "write or to use the network is not — it could be mid-work — so polling will not resolve on " +
-      "its own; tell the user, who is the only one who can end it.",
+      "its own; tell the user, who is the only one who can end it. " +
+      "A reply with status 'blocked', or one still 'running' with a 'diagnosis', is a run this Mac " +
+      "itself stopped or is holding — a macOS permission, or a dialog waiting on its screen: relay the " +
+      "diagnosis's 'owner_action' to the user.",
     inputSchema: {
       type: "object",
       required: ["handle"],
@@ -548,7 +614,7 @@ export const TOOLS: ToolSpec[] = [
       return {
         name: skill.name,
         description: skill.description,
-        body: skill.body + SKILL_FOOTER,
+        body: skill.body + HOST_GATE_NOTE + SKILL_FOOTER,
       };
     },
   },
@@ -879,12 +945,37 @@ export const TOOLS: ToolSpec[] = [
     },
   },
   {
+    name: "plow_device_status",
+    title: "What this Mac lets the app do right now",
+    description:
+      "Which macOS permissions this app holds on the user's Mac, and whether its own machinery " +
+      "works — checked fresh each call, no approval needed. For when the user asks what you can " +
+      "reach on their Mac, or after a 'blocked' result, to see the whole picture in one call. Do " +
+      "NOT call it to decide whether to try: an attempt that this Mac refuses comes back 'blocked' " +
+      "with the exact sentence for the user, and shows the user in the app which switch to flip " +
+      "— and for a folder or an Apple events target, the attempt raises macOS's own consent " +
+      "dialog on the Mac's screen, which is the easiest grant there is. A status check does none " +
+      "of that, and a user told 'not granted' from a check has nowhere to click. 'not_asked' means " +
+      "macOS will raise a dialog at the first attempt; 'target_not_running' means macOS declines " +
+      "to say until that app is open. The other rows are self-checks — the sandbox spawns, a child " +
+      "of the app inherits its grants, the vault key opens — and a failed one is for the user to " +
+      "hear, not for you to work around.",
+    inputSchema: { type: "object", properties: {}, additionalProperties: false },
+    // A read of what macOS has decided — no intent, no approval, nothing slow.
+    annotations: { readOnlyHint: true, idempotentHint: true, openWorldHint: false },
+    deferrable: false,
+    async run(_args, ctx) {
+      return ctx.device.hostInventory() as unknown as Promise<JSONValue>;
+    },
+  },
+  {
     name: "plow_get_result",
     title: "Poll a pending result",
     description:
       "Retrieve the result of any call that returned a pending handle — whichever tool created it. " +
-      "Answers pending / ready / denied / failed / expired / unknown. " +
-      "A ready result is exactly what the original call would have returned had it been fast enough.",
+      "Answers pending / ready / denied / blocked / failed / expired / unknown. " +
+      "A ready result is exactly what the original call would have returned had it been fast enough; " +
+      "a blocked one is this Mac's own refusal, with the 'diagnosis' the original call would have carried.",
     inputSchema: {
       type: "object",
       required: ["handle"],

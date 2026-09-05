@@ -174,6 +174,33 @@ export interface Settings {
   autoInstallUpdates: boolean;
   /** When the last update check completed (ISO-8601) — display only. */
   updatesLastCheckedAt?: string;
+  /**
+   * What macOS last said about Automation consent, per target bundle id
+   * (automation.ts). A memo of macOS's answer for the Capabilities tab, not
+   * the permission itself — macOS holds that, can only report it while the
+   * target app is running, and System Settings can change it behind the
+   * app's back; a conclusive read overwrites this.
+   */
+  automation?: Record<string, "granted" | "denied" | "not_asked">;
+  /**
+   * The three folders as this Mac last learned them (a setup touch, a
+   * Capabilities-tab touch, or a block), keyed by permission. macOS has no
+   * query API for these, so what it said last is all there is.
+   */
+  folderConsent?: Record<string, "granted" | "denied" | "not_asked">;
+  /** When each `folderConsent` entry was learned (ISO 8601), so a block
+   *  confirmed AFTER a "granted" memo can outrank it: the owner may have
+   *  turned the switch back off since. Absent for memos older than this
+   *  field, which a confirmed block then outranks outright. */
+  folderConsentAt?: Record<string, string>;
+  /**
+   * Capabilities rows the owner said "not now" to, keyed by row, with when.
+   * A row stays off the tab's badge until a block NEWER than this lands.
+   */
+  capabilityDismissals?: Record<string, string>;
+  /** When the owner last dismissed the Capabilities banner (ISO-8601);
+   *  blocks before it stay out of the next banner. */
+  blockedBannerSeenAt?: string;
   /** Keep this Mac awake while plugged in (default off). The opt-in only —
    * keepAwake.ts owns when a blocker is actually held (AC power only, and an
    * acquire the OS refuses writes this back to false). */

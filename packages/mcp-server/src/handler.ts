@@ -21,7 +21,7 @@ import {
 } from "@modelcontextprotocol/server";
 import { JSONValue } from "@domo/protocol";
 import { DeviceAgent, LIVE_WEB_ROUTING } from "@domo/device-core";
-import { CALL_BUDGET_MS, DeferredResults, DeniedError, Progress } from "./deferred.js";
+import { BlockedError, CALL_BUDGET_MS, DeferredResults, DeniedError, DeviceError, Progress } from "./deferred.js";
 import { JobOwners } from "./jobs.js";
 import {
   AgentIdentity,
@@ -73,11 +73,15 @@ Default to this Mac for anything about the user or their world: "my computer", "
 
 Their Mac is a macOS workstation, with tooling your workspace does not have. Reach for it through plow_run_command when it fits the job: ${MACOS_TOOLING}.
 
+When something on their Mac needs a macOS permission the app lacks, TRY it rather than checking first: a refused attempt comes back 'blocked' with the exact sentence to tell the user, and shows them in the app which switch to flip — and for a folder or an Apple events target it raises macOS's own consent dialog, which is the easiest grant there is. plow_device_status is for when the user asks what you can reach on their Mac, or after a 'blocked' result to see the whole picture; it is not a way to avoid trying.
+
 Call plow_list_skills early. This Mac publishes skills — how-to guides for what it can do, specific to this user's setup in ways you cannot otherwise know — and the skill for a task beats rediscovering it.
 
 Use your own tools for your own work: code you are writing, scratch files, and anything you do not need their machine for.
 
-The user approves the operations these tools perform on their machine — reading and writing files, running commands, and browsing. A call may return a pending handle instead of a result; the handle's own 'reason' and 'note' say what it is waiting for. Tell the user, then poll plow_get_result. Do not re-issue the original call; that starts a second request.`;
+The user approves the operations these tools perform on their machine — reading and writing files, running commands, and browsing. A call may return a pending handle instead of a result; the handle's own 'reason' and 'note' say what it is waiting for. Tell the user, then poll plow_get_result. Do not re-issue the original call; that starts a second request.
+
+A call can also come back with status 'blocked': the user approved it, and then their Mac itself refused — a macOS privacy permission the app has not been granted, a permission dialog waiting on the Mac's screen with nobody there to click it, or a path outside the bound that was approved. That is not the user saying no, and it is not the operation breaking. Read the 'diagnosis'. When its 'confidence' is 'confirmed', tell the user its 'owner_action' sentence word for word and stop: do not retry, and do not reword the goal to get a different answer. When it is 'likely' or 'unknown', say what this Mac found — 'evidence', 'ruled_out', and the 'probes' facts — and let the user decide. A command that comes back 'running' with a 'diagnosis' is parked on a permission dialog: leave it running, tell the user, and poll plow_get_output; the user answering the dialog lets it finish.`;
 
 /**
  * Who this server says it is. Exported so the copy guards in toolCopy.test.ts
@@ -285,16 +289,19 @@ export function createDomoMcpServer(
               return { content: toolBlocks(result) };
             } catch (error: unknown) {
               const message = error instanceof Error ? error.message : String(error);
-              return {
-                content: [
-                  toolContent(
-                    error instanceof DeniedError
-                      ? { status: "denied", reason: message }
-                      : { error: message },
-                  ),
-                ],
-                isError: true,
-              };
+              // Three failures, three shapes (§4.3): refused by the owner or
+              // policy, stopped by this Mac itself, or broken. `blocked` is an
+              // error too — the operation did not happen — and carries the
+              // device's whole answer, since that is what the agent relays.
+              const failure: JSONValue =
+                error instanceof DeniedError
+                  ? { status: "denied", reason: message }
+                  : error instanceof BlockedError
+                    ? { ...error.payload, status: "blocked" }
+                    : error instanceof DeviceError
+                      ? { error: message, ...error.details }
+                      : { error: message };
+              return { content: [toolContent(failure)], isError: true };
             }
           },
         );

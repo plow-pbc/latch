@@ -1,0 +1,132 @@
+{
+  "name": "failed-not-found",
+  "note": "Not a gate. The reply says the file is missing; it does not send the user to System Settings.",
+  "prompt": "Read ~/Plow/absent.txt on my Mac and summarise it.",
+  "answers": {
+    "plow_read_file": {
+      "diagnosis": {
+        "cause": "not_found",
+        "confidence": "confirmed",
+        "evidence": [
+          "~/Plow/absent.txt does not exist"
+        ],
+        "owner_action": null,
+        "permission": null,
+        "requires_relaunch": false,
+        "retry": "with_different_path",
+        "ruled_out": []
+      },
+      "error": "read failed: ENOENT: no such file or directory, stat '~/Plow/absent.txt'",
+      "probes": {
+        "app_process_open": "ENOENT",
+        "automation_status": null,
+        "automation_target": null,
+        "errno": "ENOENT",
+        "full_disk_access_granted": false,
+        "hung": false,
+        "immutable_flag": null,
+        "is_directory": null,
+        "op": "read",
+        "path": "~/Plow/absent.txt",
+        "path_approved": true,
+        "path_exists": false,
+        "paths_examined": [
+          "~/Plow/absent.txt"
+        ],
+        "posix_readable": null,
+        "posix_writable": null,
+        "probe_withheld": false,
+        "ran_sandboxed": false,
+        "sandbox_allows_read": null,
+        "sandbox_allows_write": null,
+        "service_permission": null,
+        "service_status": null,
+        "sip_protected": false,
+        "stderr_hint": null,
+        "syscall": "stat",
+        "tcc_guarded_prefix": null
+      }
+    },
+    "plow_run_command": {
+      "exit_code": 1,
+      "handle": "EVAL-HANDLE",
+      "host_gate": "none",
+      "output": "cat: ~/Plow/absent.txt: No such file or directory\n",
+      "output_length": 122,
+      "status": "completed"
+    },
+    "plow_device_status": {
+      "automation": [
+        {
+          "status": "unknown",
+          "target": "Messages"
+        },
+        {
+          "status": "unknown",
+          "target": "Contacts"
+        }
+      ],
+      "automation_queryable": false,
+      "checked_at": "2026-09-04T23:17:00Z",
+      "child_attribution": {
+        "detail": null,
+        "status": "not_applicable"
+      },
+      "full_disk_access": {
+        "granted": false,
+        "probes": [
+          {
+            "outcome": "ENOENT",
+            "path": "~/Library/Application Support/com.apple.TCC/TCC.db"
+          },
+          {
+            "outcome": "ENOENT",
+            "path": "~/Library/Messages/chat.db"
+          },
+          {
+            "outcome": "ENOENT",
+            "path": "~/Library/Safari/Bookmarks.plist"
+          }
+        ]
+      },
+      "permissions": [
+        {
+          "permission": "accessibility",
+          "status": "unknown"
+        },
+        {
+          "permission": "contacts",
+          "status": "unknown"
+        },
+        {
+          "permission": "calendars",
+          "status": "unknown"
+        }
+      ],
+      "sandbox": {
+        "detail": null,
+        "status": "ok"
+      },
+      "vault_key": {
+        "reason": "this Mac has no vault",
+        "status": "absent"
+      }
+    }
+  },
+  "isError": {
+    "plow_read_file": true,
+    "plow_run_command": false,
+    "plow_device_status": false
+  },
+  "expect": {
+    "calls": {
+      "min": 1,
+      "max": 4
+    },
+    "excludes": [
+      "System Settings",
+      "Full Disk Access",
+      "Privacy & Security"
+    ]
+  }
+}

@@ -9,7 +9,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { fullDiskProbePaths, probeFullDiskAccess } from "../src/fullDiskAccess.js";
+import { fullDiskProbePaths, probeFullDiskAccess } from "../src/hostGate/fullDiskAccess.js";
 
 let dir: string;
 beforeEach(() => {

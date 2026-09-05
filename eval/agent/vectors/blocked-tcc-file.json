@@ -1,0 +1,194 @@
+{
+  "name": "blocked-tcc-file",
+  "note": "Approved, then refused by macOS (confirmed). The reply carries the owner sentence word for word, in one call, and does not try another route.",
+  "prompt": "Create a file at ~/Documents/plumber.txt on my Mac containing the text 'Call the plumber'.",
+  "answers": {
+    "plow_write_file": {
+      "diagnosis": {
+        "cause": "macos_permission",
+        "confidence": "confirmed",
+        "evidence": [
+          "the kernel answered EPERM for ~/Documents/plumber.txt",
+          "Plow Latch itself is refused ~/Documents/plumber.txt (EPERM) outside any sandbox",
+          "~/Documents/plumber.txt is under a location macOS guards (Files and Folders > Documents Folder)",
+          "Full Disk Access is not granted"
+        ],
+        "owner_action": "In System Settings > Privacy & Security > Files and Folders > Documents Folder, allow Plow Latch. Granting Plow Latch Full Disk Access instead covers this and every other folder at once.",
+        "permission": "files_documents",
+        "requires_relaunch": false,
+        "retry": "after_owner_grants",
+        "ruled_out": [
+          "file missing",
+          "locked file",
+          "System Integrity Protection",
+          "sandbox bound"
+        ]
+      },
+      "error": "write failed: EPERM: operation not permitted, open '~/Documents/plumber.txt'",
+      "probes": {
+        "app_process_open": "EPERM",
+        "automation_status": null,
+        "automation_target": null,
+        "errno": "EPERM",
+        "full_disk_access_granted": false,
+        "hung": false,
+        "immutable_flag": false,
+        "is_directory": false,
+        "op": "write",
+        "path": "~/Documents/plumber.txt",
+        "path_approved": true,
+        "path_exists": true,
+        "paths_examined": [
+          "~/Documents/plumber.txt"
+        ],
+        "posix_readable": true,
+        "posix_writable": true,
+        "probe_withheld": false,
+        "ran_sandboxed": false,
+        "sandbox_allows_read": null,
+        "sandbox_allows_write": null,
+        "service_permission": null,
+        "service_status": null,
+        "sip_protected": false,
+        "stderr_hint": null,
+        "syscall": "open",
+        "tcc_guarded_prefix": "files_documents"
+      },
+      "status": "blocked"
+    },
+    "plow_run_command": {
+      "diagnosis": {
+        "cause": "macos_permission",
+        "confidence": "likely",
+        "evidence": [
+          "the kernel answered EPERM for ~/Documents/plumber.txt",
+          "~/Documents/plumber.txt was not opened by Plow Latch itself: a run or one of its background jobs could rewrite it",
+          "~/Documents/plumber.txt is under a location macOS guards (Files and Folders > Documents Folder)"
+        ],
+        "owner_action": "In System Settings > Privacy & Security > Files and Folders > Documents Folder, allow Plow Latch. Granting Plow Latch Full Disk Access instead covers this and every other folder at once.",
+        "permission": "files_documents",
+        "requires_relaunch": false,
+        "retry": "after_owner_grants",
+        "ruled_out": [
+          "locked file",
+          "System Integrity Protection"
+        ]
+      },
+      "exit_code": 1,
+      "handle": "EVAL-HANDLE",
+      "output": "/bin/sh: ~/Documents/plumber.txt: Operation not permitted\n",
+      "output_length": 130,
+      "probes": {
+        "app_process_open": null,
+        "automation_status": null,
+        "automation_target": null,
+        "errno": "EPERM",
+        "full_disk_access_granted": false,
+        "hung": false,
+        "immutable_flag": null,
+        "is_directory": null,
+        "op": "exec",
+        "path": "~/Documents/plumber.txt",
+        "path_approved": true,
+        "path_exists": null,
+        "paths_examined": [
+          "~/Documents/plumber.txt",
+          "/bin/sh",
+          "~"
+        ],
+        "posix_readable": null,
+        "posix_writable": null,
+        "probe_withheld": true,
+        "ran_sandboxed": true,
+        "sandbox_allows_read": true,
+        "sandbox_allows_write": true,
+        "service_permission": null,
+        "service_status": null,
+        "sip_protected": false,
+        "stderr_hint": "operation_not_permitted",
+        "syscall": null,
+        "tcc_guarded_prefix": "files_documents"
+      },
+      "status": "blocked"
+    },
+    "plow_device_status": {
+      "automation": [
+        {
+          "status": "unknown",
+          "target": "Messages"
+        },
+        {
+          "status": "unknown",
+          "target": "Contacts"
+        }
+      ],
+      "automation_queryable": false,
+      "checked_at": "2026-09-04T23:17:00Z",
+      "child_attribution": {
+        "detail": null,
+        "status": "not_applicable"
+      },
+      "full_disk_access": {
+        "granted": false,
+        "probes": [
+          {
+            "outcome": "ENOENT",
+            "path": "~/Library/Application Support/com.apple.TCC/TCC.db"
+          },
+          {
+            "outcome": "ENOENT",
+            "path": "~/Library/Messages/chat.db"
+          },
+          {
+            "outcome": "ENOENT",
+            "path": "~/Library/Safari/Bookmarks.plist"
+          }
+        ]
+      },
+      "permissions": [
+        {
+          "permission": "accessibility",
+          "status": "unknown"
+        },
+        {
+          "permission": "contacts",
+          "status": "unknown"
+        },
+        {
+          "permission": "calendars",
+          "status": "unknown"
+        }
+      ],
+      "sandbox": {
+        "detail": null,
+        "status": "ok"
+      },
+      "vault_key": {
+        "reason": "this Mac has no vault",
+        "status": "absent"
+      }
+    }
+  },
+  "isError": {
+    "plow_write_file": true,
+    "plow_run_command": true,
+    "plow_device_status": false
+  },
+  "expect": {
+    "calls": {
+      "min": 1,
+      "max": 2
+    },
+    "attempted": true,
+    "names": [
+      "System Settings > Privacy & Security > Files and Folders > Documents Folder"
+    ],
+    "includes": [
+      "In System Settings > Privacy & Security > Files and Folders > Documents Folder, allow Plow Latch. Granting Plow Latch Full Disk Access instead covers this and every other folder at once."
+    ],
+    "excludes": [
+      "declined",
+      "you said no"
+    ]
+  }
+}

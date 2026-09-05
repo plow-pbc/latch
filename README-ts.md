@@ -108,10 +108,25 @@ POST-only, so there is no session lifecycle and no GET/SSE requirement:
 
 The tool surface is one Mac's, not a fleet's: `plow_read_file`,
 `plow_write_file`, `plow_run_command`, `plow_get_output`, `plow_get_result`,
-`plow_list_skills`, `plow_read_skill`, `plow_vault`, and the four browser tools
-(`plow_browser_open`, `plow_browser_request`, `plow_browser`,
-`plow_browser_close`). No tool takes a `device` argument, and every name is
-prefixed so it cannot be confused with an agent's own built-ins.
+`plow_list_skills`, `plow_read_skill`, `plow_vault`, `plow_device_status`, and
+the four browser tools (`plow_browser_open`, `plow_browser_request`,
+`plow_browser`, `plow_browser_close`). No tool takes a `device` argument, and
+every name is prefixed so it cannot be confused with an agent's own built-ins.
+
+**A refusal by the Mac itself is a third answer, `blocked`** — beside `denied`
+(the owner or policy said no) and `failed` (it broke). It is for an operation
+the owner approved and macOS, our own seatbelt, SIP or a locked file then
+refused, and it carries the device's diagnosis: a cause, a confidence, the
+evidence, what was ruled out, the fixed sentence the owner needs, and every
+probe's answer (DESIGN.md §6a; `packages/device-core/src/hostGate/`). A
+command that is still `running` but carries a `diagnosis` is parked on a
+consent dialog and is left running for the owner's click. `plow_device_status`
+is the standing inventory — what would be refused if asked — with no
+approval, for the user's "what can you reach?" and for the whole picture
+after a block; the copy tells an agent to try rather than check, since only
+a refused attempt lights the owner's surfaces. The owner's side
+of the same facts is the app's Capabilities tab: every switch with what it
+stopped, badged by the rows that need a decision (DESIGN.md §6a).
 
 **Paths are resolved before the human sees them.** Every path an agent supplies
 is canonicalised *before* it becomes a capability, so the approval dialog and the
@@ -151,7 +166,7 @@ record, and in the adversarial reviewer's prompt — and for nothing else.
 a *job* handle for `plow_get_output` when a command outlives its wait. Any tool that
 outlives the **call budget** — a human who has not answered yet, or slow work —
 returns a *deferred* handle for `plow_get_result`, which answers `pending` / `ready` /
-`denied` / `failed` / `expired` / `unknown`. A deferred handle belongs to the
+`denied` / `blocked` / `failed` / `expired` / `unknown`. A deferred handle belongs to the
 agent that created it; another agent presenting it gets `unknown`, which is
 indistinguishable from a handle that never existed.
 

@@ -212,9 +212,165 @@ set:
 Known caveats, accepted for v1: `sandbox-exec` is deprecated-but-load-bearing
 (Chromium, Bazel, Anthropic's sandbox-runtime all rely on it); `mach-lookup`
 is broad in the v1 profile (tightening tracked); TCC still gates
-protected folders at the host-app level; the upgrade path for hostile
-workloads is a Virtualization.framework VM. A dry-run `(trace)` mode to show
-the approver what a command *would* touch is a v2 item.
+protected folders at the host-app level (§6a says how that is surfaced); the
+upgrade path for hostile workloads is a Virtualization.framework VM. A
+dry-run `(trace)` mode to show the approver what a command *would* touch is
+a v2 item.
+
+## 6a. Host gates: when the Mac itself says no
+
+An approval is not the last gate. macOS has its own — the TCC privacy switches
+(Full Disk Access, the Desktop/Documents/Downloads folders, Automation per
+target app, and the rest), System Integrity Protection, a locked file — and
+they refuse *after* the owner has said yes. Every one of them answers `EPERM`,
+which is also what our own seatbelt profile answers, and one of TCC's failure
+modes is not an error at all: an unconsented open of a guarded folder is
+**parked** until someone at the Mac clicks a dialog. An agent handed the bare
+errno could only guess, and a wrong guess sends the owner to the wrong switch.
+
+So a refusal is **diagnosed, never guessed** (`packages/device-core/src/hostGate/`):
+
+- The error is the trigger. On a failure the kernel answered — an errno, a
+  refusal in a command's output, a run that was killed for going silent, or
+  one still running that has said nothing — the whole probe battery runs and
+  its answers are laid out flat: `stat` and mode bits, file flags, whether
+  the path is under a location TCC guards, whether Full Disk Access is
+  granted, what the profile the run had would have allowed, and the one that
+  discriminates — **opening the path as the app itself**, in a child process
+  (TCC attributes it to the app; the seatbelt profile does not apply to it;
+  and a child parked on a dialog is killed on a timer and reads as "hung"
+  rather than pinning a thread). Automation consent is asked through a
+  native helper that calls the non-prompting API.
+- **The battery touches only what the owner approved.** A candidate path
+  comes from the caller's declared paths, the failing call's own error, a
+  command's argv (kept element by element, so a spaced path is one path),
+  its output, and its working directory. Only a candidate inside a declared
+  path — or the cwd, when that is a specific folder and not the owner's
+  home — is canonicalized, `stat`'d or opened as the app. The declared
+  paths themselves are a snapshot from approval time and are never
+  resolved again: a command that has since replaced one with a symlink
+  must not have the battery follow it, so only candidates are resolved,
+  and one that resolves out of the snapshot is outside it. And approval is
+  not enough while something can still rewrite the path: between deciding
+  a path is approved and opening it, a run that is alive can replace it
+  with a link elsewhere, so a candidate under a root a live run's profile
+  lets it write (the run's own, or any run still going) is classified by
+  name and never opened — a withheld probe under a guarded location leaves
+  a `likely` verdict, and the exit-time diagnosis, or the reaper's, settles
+  it. Those roots are read live, at the moment of deciding and again just
+  before the open, under an executor hold that names what it is about and
+  lets no run that could write it register while it is out: such a run
+  waits for the probe, never the other way round, and every other run — a
+  read-only one, one writing elsewhere — starts at once. A command's exit is not the end of its run's
+  hands on the disk — a job it backgrounded lives on in its process group —
+  so a run's roots stay off limits while any process of that group exists
+  (a signal 0 to the group says), not merely while the command runs; and
+  the consent touch before a file operation climbs above every such root
+  too, to the guarded folder that contains them. A file operation itself
+  runs under the same hold, touch and all, and one on a path such a run
+  can write is refused before the disk is touched (the agent retries once
+  the command is over): the operation resolves the name and then opens it,
+  and a writer alive in between could point it somewhere never approved. A command's output naming
+  `~/Desktop/secret` gets none of that, because the open would
+  raise the owner's consent dialog for something they never approved and
+  hand back whether the file exists. An unapproved candidate is classified
+  by name alone (the profile's grant, the gate table, SIP), which carries
+  the one verdict it can: outside the approved bound, confirmed.
+- A parked run's verdict is provisional and the exit corrects the record: a
+  run let through the dialog gets a `host_permission_cleared` line, and one
+  the owner refused gets a second `host_permission_blocked` under the same
+  handle. The Audit tab and the Capabilities tab both fold the log in the
+  order it was written — a clearing removes the verdict, a later block
+  replaces it — so the agent's answer and the owner's views never disagree
+  about how a run ended, and a "Needs …" tray item comes down with the
+  clearing. A block that names no switch (a locked file, a SIP root, POSIX
+  permissions) has no row on the Capabilities tab, so its tray item and
+  notification land on the Audit tab's Blocked view instead.
+- A scripted app can refuse its DATA after the event itself was delivered:
+  AppleScript's `-54` from Contacts.app or Calendar.app is that service's
+  own privacy permission for the calling app, which a scripted read never
+  prompts for. The battery asks the service's status (the same query the
+  Capabilities tab's row uses) and the verdict names the service, not
+  Automation. And a failed command with no verdict says so — `host_gate:
+  "none"` — because an agent left to read a program's own error text will
+  find a permission in it and send the owner to System Settings for nothing.
+- A pure decision tree names a cause — `macos_permission`, `prompt_waiting`,
+  `outside_approved_bound` (our seatbelt, told apart from macOS by the app's
+  own open succeeding), `posix_permissions`, `sip_protected`,
+  `immutable_file`, `not_found`, `unknown` — with a confidence, the evidence,
+  what was ruled out, and a **fixed sentence** the owner needs. Nothing from
+  a command's output or an agent's argument is interpolated into that
+  sentence. An honest `unknown` with evidence is a verdict too.
+- **The verdict and the facts both reach the agent**, as a third answer
+  beside `denied` and `failed`: `blocked`. The verdict is the app's call,
+  because only the app can probe; the facts are for the `likely` and
+  `unknown` verdicts, where a model reasoning over them may do better than a
+  tree that shipped once, and for the audit trail that shows which branch was
+  wrong when one is. The instructions tell an agent a confirmed verdict's
+  sentence is relayed word for word and ends the attempt — not the owner
+  saying no, and not something to reword the goal around.
+- A run parked on a dialog is **left running**: the owner's click lets it
+  finish, and killing it would make the click pointless. The agent is told
+  within seconds (the app's own probe hangs), not at the reaper's fifteen
+  minutes; the reaper stays the ceiling. Any exit of the run's own afterwards
+  clears the verdict: the click happened, and the outcome is the run's —
+  completed, or failed on its own terms — not blocked. Only a reaped run
+  was still parked.
+- A file operation is the other way round: what parks is a read-only
+  **touch** of the path — the probe battery's own child process, killed on
+  its timer, never an open on this process's four-thread file-I/O pool —
+  and the read or write is attempted only once the touch returns. Answered `blocked`, the operation never happens — a write
+  let through by an Allow clicked minutes later would land over whatever
+  the file held by then, under a result already given. The agent retries
+  after the owner answers.
+- Paths the diagnosis adds fold the home to `~`; the agent's own paths are
+  echoed as given.
+
+The **standing inventory** (`hostGate/inventory.ts`) answers the other
+question — what would not happen if asked — one fresh snapshot: Full Disk
+Access, Automation per app the skills drive, and three self-checks
+(`sandbox-exec` spawns; a child inherits the app's Full Disk Access, which
+every sandboxed read of another app's data relies on; the vault key opens).
+`plow_device_status` returns it with no approval, the Settings pane reads the
+same snapshot, and the server instructions send an agent there before it
+touches another application's data.
+
+Full Disk Access and the folder gates have no request API and no query API;
+the first access *is* the request. So the grants are asked for **while the
+owner is at the Mac**. Setup's "Data & permissions" step offers Full Disk
+Access through the drag-to-grant flow; after that the **Capabilities tab**
+(`apps/desktop/src/capabilitiesModel.ts`) is the one home for every switch:
+Full Disk Access (and, only while it is off, the three folders it covers),
+Contacts, Calendars and Accessibility, Automation consent per app agents are
+asked to drive, and a section for anything a block named that the tab has
+no button for. Beside each row sits what it stopped — the audit log's blocks
+grouped by switch and joined to the agent and goal, behind an explicit "See
+blocked requests…" link — and one button that does the real thing: the
+floating panel beside the right Privacy & Security pane (with the drag tile
+where the pane takes a drop, a pointer where it lists only apps that asked),
+macOS's own dialog raised on purpose (Contacts and Calendars through
+`@domo/native-permissions`, in the app's own process — the only caller those
+APIs will show a dialog to, and only when its bundle carries the usage
+strings and, hardened, the entitlements; an Automation pair through the
+gated `count windows` osascript probe adopted from the apple-events branch),
+or a folder touched so macOS asks (`hostGate/folderAccess.ts`). A from-source
+run is launched with TCC responsibility disclaimed (`just app`,
+`native/launch-disclaimed.swift`) so those dialogs are Electron.app's rather
+than the terminal's. Every one of those is behind a click on this
+Mac: the one condition under which this app raises a consent dialog.
+
+The tab's badge counts rows that need a decision — the switch is off AND
+something hit it, and the owner has not said "not now" since — never
+events, and it clears itself because status comes from the live inventory.
+A banner at the top says what was blocked since the owner last dismissed it
+and links to the Audit tab filtered to `blocked`, which is that category's
+own bucket for exactly this. A confirmed block also goes to the tray and,
+once per permission per run, a notification carrying the owner sentence;
+both land on the tab.
+
+What this cannot do: grant anything. Every fix is a switch in System Settings
+that only the owner can flip, and Full Disk Access may not apply to the
+running process until the app is relaunched, which the verdict says.
 
 ## 7. Multi-Mac & multi-user (designed now, built later)
 
@@ -318,7 +474,8 @@ repo can prove they broke nothing.
   log `source: rule`) → denial → sandbox-escape attempt → bad-token rejection.
 - **Audit log as test oracle**: NDJSON, one event per line (`access_request`,
   `intent_decision {source: prompt|rule}`, `exec_start/end`, `file_read/write`,
-  `denied`, …) — tests assert on it and humans read it. The adversarial reviewer
+  `denied`, `host_permission_blocked {cause, confidence, permission, probes}`,
+  …) — tests assert on it and humans read it. The adversarial reviewer
   does NOT: it is handed `history: []` on purpose (§4).
 
 `make test` runs everything. `swift test` builds all executables it spawns.

@@ -14,13 +14,21 @@ import { grabAlignedBox } from "./dragImage.js";
 const root = document.getElementById("root");
 const info = await window.domo.fullDiskDragInfo();
 const appName = info?.name ?? "this app";
+// Which switch the panel points at (fdaGrantFlow.ts's GrantTarget): its name,
+// and whether the pane takes a dropped app. Built for Full Disk Access; the
+// same panel now floats beside every Privacy & Security pane, and where the
+// pane cannot take a drop the tile is a pointer, not a handle.
+const label = info?.label ?? "Full Disk Access";
+const canDrag = info?.drag !== false;
 
-// "Drag **<app>** to the list above to allow **Full Disk Access**."
+// "Drag **<app>** to the list above to allow **Full Disk Access**." — or,
+// for a pane that lists only apps that asked, "Turn on **<app>** in the list
+// above to allow **Contacts**."
 const headerText = el("span", { class: "fda-header-text" }, [
-  el("span", { text: "Drag " }),
+  el("span", { text: canDrag ? "Drag " : "Turn on " }),
   el("b", { text: appName }),
-  el("span", { text: " to the list above to allow " }),
-  el("b", { text: "Full Disk Access" }),
+  el("span", { text: canDrag ? " to the list above to allow " : " in the list above to allow " }),
+  el("b", { text: label }),
   el("span", { text: "." }),
 ]);
 const arrow = icon("arrowUp", { class: "fda-arrow", fill: true });
@@ -28,26 +36,28 @@ const closeBtn = el("button", { class: "fda-close", attrs: { "aria-label": "Clos
   [icon("close", { class: "fda-close-glyph", strokeWidth: "2.5" })]);
 closeBtn.addEventListener("click", () => window.domo.fullDiskDismiss());
 
-const card = el("div", { class: "fda-drag-tile", attrs: { draggable: "true" } }, [
+const card = el("div", { class: "fda-drag-tile" + (canDrag ? "" : " static"), attrs: canDrag ? { draggable: "true" } : {} }, [
   info ? el("img", { class: "fda-drag-icon", attrs: { src: info.iconDataUrl, alt: "" } }) : null,
   el("div", { class: "fda-drag-name", text: appName }),
   el("div", { class: "spacer" }),
-  el("div", { class: "fda-drag-hint" }, [
-    icon("hand", { class: "fda-hand", strokeWidth: "1.6" }),
-    el("span", { text: "Drag" }),
-  ]),
+  canDrag
+    ? el("div", { class: "fda-drag-hint" }, [
+        icon("hand", { class: "fda-hand", strokeWidth: "1.6" }),
+        el("span", { text: "Drag" }),
+      ])
+    : null,
 ]);
 // Pointer down takes a visibility hold so a frontmost flicker can't hide the
 // panel mid-gesture (hiding the drag source aborts the drag). A plain click
 // releases it on pointer up; when a drag actually starts, main releases it
 // when the drag session ends — the DOM does see that end (main announces it,
 // to bring the tile back), but the hold is main's to release either way.
-card.addEventListener("pointerdown", (e) => {
+if (canDrag) card.addEventListener("pointerdown", (e) => {
   window.domo.fullDiskPanelHold(true);
   sendGrabAlignedTileImage(e);
 });
-card.addEventListener("pointerup", () => window.domo.fullDiskPanelHold(false));
-card.addEventListener("dragstart", (e) => {
+if (canDrag) card.addEventListener("pointerup", () => window.domo.fullDiskPanelHold(false));
+if (canDrag) card.addEventListener("dragstart", (e) => {
   e.preventDefault(); // main starts the native drag with the real payload
   // The drag image is this very tile (see sendTileImage), so the tile leaves
   // the panel with it — showing both would double it. Back on dragEnd.
@@ -153,17 +163,40 @@ function sendGrabAlignedTileImage(e) {
   }
 }
 // The tile's width follows the panel's (main resizes it to track System
-// Settings), so a fresh raster follows every settle.
+// Settings), so a fresh raster follows every settle — and so does the
+// height the content needs: a header that wraps at one width may not at
+// another.
 let tileImageTimer = null;
 window.addEventListener("resize", () => {
   clearTimeout(tileImageTimer);
-  tileImageTimer = setTimeout(() => void sendTileImage(), 150);
+  tileImageTimer = setTimeout(() => {
+    reportHeight();
+    void sendTileImage();
+  }, 150);
 });
+
+/* The height this content needs, measured rather than assumed: the window
+   was a constant that fit a one-line header, and a long switch name
+   ("Automation for Mail") wraps to two, pushing the tile below the frame.
+   Main resizes the window to what is reported; the panel's own layout then
+   fills it exactly. */
+function reportHeight() {
+  const panelNode = root.firstElementChild;
+  const header = panelNode?.querySelector(".fda-header");
+  if (!panelNode || !header) return;
+  const cs = getComputedStyle(panelNode);
+  const needed =
+    parseFloat(cs.paddingTop) + header.offsetHeight + parseFloat(cs.rowGap || cs.gap || "6") +
+    TILE_HEIGHT + parseFloat(cs.paddingBottom) + 2; // +2: the panel's own border
+  if (Math.abs(needed - window.innerHeight) >= 1) window.domo.fullDiskPanelHeight(needed);
+}
+const TILE_HEIGHT = 46;
 
 root.replaceChildren(el("div", { class: "fda-panel" }, [
   el("div", { class: "fda-header" }, [arrow, headerText, el("div", { class: "spacer" }), closeBtn]),
   card,
 ]));
+reportHeight();
 // First raster once the icon is decoded, so the clone doesn't paint a blank
 // square where the app icon goes.
 const iconImg = card.querySelector("img");
@@ -172,14 +205,14 @@ void (iconImg?.decode() ?? Promise.resolve()).catch(() => {}).then(() => sendTil
 // The grant happens over in System Settings with no event back, so a fresh
 // probe on a short clock repaints the header — main polls too and closes this
 // window shortly after the grant lands.
-const apply = (caps) => {
-  if (!caps.fullDiskAccess) return;
+const apply = (state) => {
+  if (!state?.granted) return;
   arrow.classList.add("granted");
   card.classList.add("granted");
   headerText.replaceChildren(
-    el("b", { text: "Full Disk Access" }),
+    el("b", { text: label }),
     el("span", { text: " granted." }),
   );
 };
-apply(await window.domo.capabilitiesGet());
-setInterval(async () => apply(await window.domo.capabilitiesGet()), 1500);
+apply(await window.domo.grantState());
+setInterval(async () => apply(await window.domo.grantState()), 1500);

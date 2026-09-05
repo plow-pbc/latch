@@ -1,9 +1,8 @@
 /**
- * The Full Disk Access grant flow's moving parts — the floating panel and the
- * System Settings tracker. See permissionFlow.ts for the port rationale and
- * the pure geometry/parsing it keeps testable; this module is the thin
- * Electron layer over it, deliberately shaped like PermissionFlow's
- * controller:
+ * The grant flow's moving parts — the floating panel and the System Settings
+ * tracker. See permissionFlow.ts for the port rationale and the pure
+ * geometry/parsing it keeps testable; this module is the thin Electron layer
+ * over it, deliberately shaped like PermissionFlow's controller:
  *
  *   - one panel at a time, non-activating, floating level, all workspaces
  *   - it follows the System Settings window via the compiled helper
@@ -12,6 +11,14 @@
  *   - the flow ends when the grant lands (a fresh probe every 2s), when
  *     System Settings closes, or on a hard timeout — an abandoned flow must
  *     not leave a floating window or a polling child process behind.
+ *
+ * Built for Full Disk Access and now aimed at any Privacy & Security pane
+ * (`GrantTarget`): the pane to open, the switch's name, whether that pane
+ * accepts a dropped app (Full Disk Access and Accessibility do — the panel
+ * shows its drag tile; the rest list only apps that asked, and the panel
+ * points at the switch instead), and the probe that says when the grant has
+ * landed. The file keeps its name because the panel is still the one
+ * PermissionFlow drew; only where it points changed.
  */
 import { spawn, ChildProcess } from "node:child_process";
 import fs from "node:fs";
@@ -25,13 +32,32 @@ import {
   Rect,
 } from "./permissionFlow.js";
 
+/** The panel's height until the renderer has measured its own content: one
+ *  header line plus the tile. The renderer reports the height it actually
+ *  needs (a two-line header for a long switch name), and the window follows. */
 const PANEL_HEIGHT = 100;
+const MIN_PANEL_HEIGHT = 80;
+const MAX_PANEL_HEIGHT = 240;
 const FALLBACK_PANEL_WIDTH = 420;
 const PROBE_INTERVAL_MS = 2000;
 const FLOW_TIMEOUT_MS = 3 * 60 * 1000;
 // Long enough for the panel's own 1.5s status poll to paint the granted
 // header, and for a human to read it, before the panel goes away.
 const GRANTED_LINGER_MS = 2500;
+
+/** One switch the panel can float beside. */
+export interface GrantTarget {
+  /** The row key (capabilitiesModel.ts), for the panel's status poll. */
+  key: string;
+  /** The switch's name in System Settings' words: "Full Disk Access". */
+  label: string;
+  /** The pane's deep link. */
+  pane: string;
+  /** Whether the pane accepts a dropped app — the drag tile, or a pointer. */
+  acceptsDrop: boolean;
+  /** Whether the grant has landed; polled every 2s while the panel is up. */
+  probe: () => Promise<boolean>;
+}
 
 export interface FdaGrantFlowDeps {
   /** dist/renderer — where fdapanel.html lives. */
@@ -40,10 +66,10 @@ export interface FdaGrantFlowDeps {
   preloadPath: string;
   /** The compiled tracker, or a path that may not exist (flow degrades). */
   helperPath: string;
-  /** A fresh Full Disk Access probe (fullDiskAccess.ts). */
-  probe: () => Promise<boolean>;
-  /** Opens the System Settings pane (main's EXTERNAL_URLS deep link). */
-  openSettings: () => Promise<void>;
+  /** The default target: Full Disk Access, with the device's own probe. */
+  fullDisk: GrantTarget;
+  /** Opens a System Settings pane by deep link. */
+  openSettings: (pane: string) => Promise<void>;
 }
 
 export class FdaGrantFlow {
@@ -65,30 +91,47 @@ export class FdaGrantFlow {
   // never pin the panel open forever.
   private holdVisible = false;
   private holdTimer: NodeJS.Timeout | null = null;
+  /** The switch the panel is currently pointing at. */
+  private target: GrantTarget | null = null;
+  /** The height the panel's content needs, as the renderer last measured it. */
+  private height = PANEL_HEIGHT;
+  /** Where System Settings last was, so a height change can re-snap. */
+  private lastSettingsFrame: Rect | null = null;
 
   constructor(private readonly deps: FdaGrantFlowDeps) {}
 
+  /** What the panel is pointing at right now, for its own rendering. */
+  current(): GrantTarget | null {
+    return this.target;
+  }
+
   /**
-   * Begin (or re-front) the flow. Idempotent on purpose: a second click while
-   * the panel is up re-opens the Settings pane and keeps the one panel —
-   * PermissionFlow keeps a single floating panel for the same reason.
+   * Begin (or re-front) the flow for one switch — Full Disk Access when none
+   * is named. Idempotent on purpose: a second click while the panel is up
+   * re-opens the pane and keeps the one panel — PermissionFlow keeps a single
+   * floating panel for the same reason. A click for a DIFFERENT switch while
+   * one is up ends that flow and starts this one: one panel, one switch.
    */
-  async start(): Promise<void> {
+  async start(target: GrantTarget = this.deps.fullDisk): Promise<void> {
+    if (this.panel && this.target && this.target.key !== target.key) this.stop();
+    this.target = target;
     // The deep link (re-)fronts System Settings; with a tracker running that
     // is also what brings an existing panel back on screen.
-    void this.deps.openSettings();
+    void this.deps.openSettings(target.pane);
     if (this.panel) return;
     // Already granted: nothing to guide. The pane still opens — that's where
     // the grant is viewed or revoked — but a panel asking for what is already
     // given would only confuse. (Re-checked after the await: a second click
     // may have built the panel while the probe ran.)
-    if (await this.deps.probe()) return;
+    if (await target.probe()) return;
     if (this.panel) return;
 
     const workArea = screen.getPrimaryDisplay().workArea;
+    this.height = PANEL_HEIGHT;
+    this.lastSettingsFrame = null;
     const bounds = fallbackPanelFrame(workArea, {
       width: FALLBACK_PANEL_WIDTH,
-      height: PANEL_HEIGHT,
+      height: this.height,
     });
     const panel = new BrowserWindow({
       ...bounds,
@@ -113,7 +156,7 @@ export class FdaGrantFlow {
       // actually round.
       transparent: true,
       show: false,
-      title: "Grant Full Disk Access",
+      title: `Grant ${target.label}`,
       webPreferences: {
         preload: this.deps.preloadPath,
         contextIsolation: true,
@@ -223,12 +266,35 @@ export class FdaGrantFlow {
   private snapTo(settingsFrame: Rect): void {
     const panel = this.panel;
     if (!panel || panel.isDestroyed()) return;
+    this.lastSettingsFrame = settingsFrame;
     const workArea = screen.getDisplayMatching(settingsFrame).workArea;
-    panel.setBounds(panelFrame(settingsFrame, workArea, PANEL_HEIGHT));
+    panel.setBounds(panelFrame(settingsFrame, workArea, this.height));
+  }
+
+  /**
+   * The renderer measured its content: a header that wrapped to two lines
+   * needs a taller window, or the panel's tile is pushed out of the frame
+   * (the window's height was a constant; the header's length is not). The
+   * width is the tracker's business and stays; only the height follows,
+   * keeping the panel's top edge where it was.
+   */
+  setHeight(height: number): void {
+    const wanted = Math.round(Math.max(MIN_PANEL_HEIGHT, Math.min(height, MAX_PANEL_HEIGHT)));
+    if (wanted === this.height) return;
+    this.height = wanted;
+    const panel = this.panel;
+    if (!panel || panel.isDestroyed()) return;
+    if (this.lastSettingsFrame) {
+      this.snapTo(this.lastSettingsFrame);
+    } else {
+      const b = panel.getBounds();
+      panel.setBounds({ ...b, height: wanted });
+    }
   }
 
   private async checkGranted(): Promise<void> {
-    if (!(await this.deps.probe())) return;
+    const target = this.target;
+    if (!target || !(await target.probe())) return;
     // Let the panel's own poll paint the granted state, then leave.
     if (this.probeTimer) clearInterval(this.probeTimer);
     this.probeTimer = null;

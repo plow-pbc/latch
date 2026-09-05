@@ -73,8 +73,12 @@ describe("auditActivities (grouping)", () => {
     expect(acts).toHaveLength(1);
     const a = acts[0]!;
     expect(a.title).toBe("run: df -h");
-    // A clean success shows just the base — no "· finished"/"· done".
-    expect(a.status).toBe("Allowed once");
+    expect(a.ts).toBe("2026-08-09T12:00:20Z"); // the date filter's key
+    expect(a.blockedAt).toBeNull();
+    // Two cells: the decision, and what happened to the work.
+    expect(a.decision).toBe("Allowed");
+    expect(a.decisionTone).toBe("green");
+    expect(a.status).toBe("Completed");
     expect(a.tone).toBe("green");
     expect(a.command).toBe("/bin/sh -c df -h");
     expect(a.exitCode).toBe(0);
@@ -113,7 +117,9 @@ describe("auditActivities (grouping)", () => {
     ]);
     expect(acts).toHaveLength(1);
     expect(acts[0]!.title).toBe("Access — Family Coordinator");
-    expect(acts[0]!.status).toBe("Granted");
+    // An access grant is a decision with no outcome of its own.
+    expect(acts[0]!.decision).toBe("Granted");
+    expect(acts[0]!.status).toBe("");
     expect(acts[0]!.kind).toBe("access");
     expect(acts[0]!.timeline).toHaveLength(2);
   });
@@ -134,7 +140,8 @@ describe("auditActivities (grouping)", () => {
       title,
       status: "Completed",
       tone: "green",
-      category: "approved",
+      decisionKind: "none",
+      statusKind: "completed",
       kind: "access",
       timeline: [{ text: step, state: "ok" }],
     });
@@ -146,34 +153,81 @@ describe("auditActivities (grouping)", () => {
       ...commandRun,
       { event: "intent_rejected", intentId: "i2", reason: "bad signature", ts: "2026-08-09T12:00:40Z" },
     ]);
-    // device_started is dropped; a clean success is just "Allowed once".
-    expect(acts.map((a) => a.status)).toEqual(["Rejected", "Allowed once"]);
-    expect(acts[0]!.category).toBe("denied");
+    // device_started is dropped. A rejection is a decision with no outcome;
+    // a clean run is a decision AND an outcome.
+    expect(acts.map((a) => a.decision)).toEqual(["Rejected", "Allowed"]);
+    expect(acts.map((a) => a.status)).toEqual(["", "Completed"]);
+    expect(acts[0]!.decisionKind).toBe("denied");
+    expect(acts[0]!.statusKind).toBe("none");
   });
 
-  it("keeps failure/blocked suffixes but not success ones", () => {
+  it("a failed run keeps its decision and says how it failed", () => {
     const failed = auditActivities([
       { event: "intent_received", intentId: "i1", request: "run: false", ts: "2026-08-09T12:00:00Z" },
       { event: "intent_decision", intentId: "i1", decision: "always_allow", source: "prompt", ts: "2026-08-09T12:00:01Z" },
       { event: "exec_end", intentId: "i1", exit_code: 1, ts: "2026-08-09T12:00:02Z" },
     ]);
-    expect(failed[0]!.status).toBe("Always allowed · failed (exit 1)");
-    expect(failed[0]!.category).toBe("failed");
+    expect(failed[0]!.decision).toBe("Always allowed");
+    expect(failed[0]!.status).toBe("Failed · exit 1");
+    expect(failed[0]!.tone).toBe("amber");
+    expect(failed[0]!.decisionKind).toBe("allowed");
+    expect(failed[0]!.statusKind).toBe("failed");
   });
 
-  it("a clean success categorizes as approved, not failed", () => {
+  it("a run that has started and not ended is Running, still approved", () => {
+    const acts = auditActivities(commandRun.slice(0, 3)); // no exec_end yet
+    expect(acts[0]!.decision).toBe("Allowed");
+    expect(acts[0]!.status).toBe("Running");
+    expect(acts[0]!.tone).toBe("blue");
+    expect(acts[0]!.decisionKind).toBe("allowed");
+    expect(acts[0]!.statusKind).toBe("running");
+  });
+
+  it("a denied request has a decision and no outcome", () => {
+    const acts = auditActivities([
+      { event: "intent_received", intentId: "i1", request: "run: rm x", ts: "2026-08-09T12:00:00Z" },
+      { event: "intent_decision", intentId: "i1", decision: "deny", source: "prompt", ts: "2026-08-09T12:00:01Z" },
+    ]);
+    expect(acts[0]!.decision).toBe("Denied");
+    expect(acts[0]!.decisionTone).toBe("red");
+    expect(acts[0]!.status).toBe("");
+    expect(acts[0]!.decisionKind).toBe("denied");
+    expect(acts[0]!.statusKind).toBe("none");
+  });
+
+  it("a clean success is allowed and completed, and no other bucket", () => {
     const acts = auditActivities(commandRun);
-    expect(acts[0]!.category).toBe("approved");
+    expect(acts[0]!.decisionKind).toBe("allowed");
+    expect(acts[0]!.statusKind).toBe("completed");
   });
 
-  it("sandbox-block keeps its status label but categorizes as failed", () => {
+  it("a denied_operation reads by its cause: the bound is Blocked, the app's own rules and a missing file merely Failed", () => {
+    const denied = (cause?: string) => auditActivities([
+      { event: "intent_received", intentId: "i1", request: "read file: /x", ts: "2026-08-09T12:00:00Z" },
+      { event: "intent_decision", intentId: "i1", decision: "allow_once", source: "prompt", ts: "2026-08-09T12:00:01Z" },
+      { event: "denied_operation", intentId: "i1", path: "/x", error: "nope", ...(cause ? { cause } : {}), ts: "2026-08-09T12:00:02Z" },
+    ])[0]!;
+    expect(denied("outside_approved_bound")).toMatchObject({ status: "Blocked · outside approved paths", statusKind: "blocked" });
+    // A line from before causes were recorded is the bound, which was all it could be.
+    expect(denied()).toMatchObject({ status: "Blocked · outside approved paths", statusKind: "blocked" });
+    expect(denied("not_found")).toMatchObject({ status: "Failed · not found", tone: "amber", statusKind: "failed" });
+    expect(denied("app_rule")).toMatchObject({ status: "Failed", statusKind: "failed" });
+    expect(denied("busy")).toMatchObject({ status: "Failed · path in use by a command or background job", statusKind: "failed" });
+    expect(denied("app_rule").timeline.at(-1)!.text).toMatch(/^Failed: \/x/);
+    expect(denied().timeline.at(-1)!.text).toMatch(/^Blocked: \/x/);
+  });
+
+  it("a sandbox block is Blocked in both the word and the Status filter", () => {
     const blocked = auditActivities([
       { event: "intent_received", intentId: "i1", request: "run: rm -rf /x", ts: "2026-08-09T12:00:00Z" },
       { event: "intent_decision", intentId: "i1", decision: "allow_once", source: "prompt", ts: "2026-08-09T12:00:01Z" },
       { event: "denied_operation", intentId: "i1", path: "/x", error: "outside scope", ts: "2026-08-09T12:00:02Z" },
     ]);
-    expect(blocked[0]!.status).toBe("Allowed once · blocked");
-    expect(blocked[0]!.category).toBe("failed");
+    expect(blocked[0]!.decision).toBe("Allowed");
+    expect(blocked[0]!.status).toBe("Blocked · outside approved paths");
+    expect(blocked[0]!.tone).toBe("red");
+    expect(blocked[0]!.decisionKind).toBe("allowed");
+    expect(blocked[0]!.statusKind).toBe("blocked");
   });
 
   it("search matches across title, command, agent, and goal", () => {
@@ -195,7 +249,7 @@ describe("auditActivities (grouping)", () => {
     expect(listRead.title).toBe("Credential list read");
     expect(listRead.status).toBe("Completed");
     expect(listRead.tone).toBe("green");
-    expect(listRead.category).toBe("approved");
+    expect(listRead.statusKind).toBe("completed");
     expect(describeRead.title).toBe("Credential fields read — L1");
     expect(describeRead.status).toBe("Completed");
     expect(listRead.timeline.map((s) => s.text)).toEqual(["Credential list read (names only)"]);
@@ -210,23 +264,23 @@ describe("auditActivities (grouping)", () => {
   it.each([
     [
       { outcome: "revoked", keyId: 42 },
-      { status: "Revoked", tone: "green", category: "approved", step: "Activation session revoked — key 42", state: "ok" },
+      { status: "Revoked", tone: "green", statusKind: "completed", step: "Activation session revoked — key 42", state: "ok" },
     ],
     [
       { outcome: "failed", keyId: 42, error: "Plow returned 500." },
-      { status: "Failed", tone: "red", category: "failed", step: "Activation session cleanup failed — key 42 — Plow returned 500.", state: "bad" },
+      { status: "Failed", tone: "red", statusKind: "failed", step: "Activation session cleanup failed — key 42 — Plow returned 500.", state: "bad" },
     ],
     [
       { outcome: "no_match" },
-      { status: "Skipped", tone: "zinc", category: "other", step: "Activation session cleanup skipped — no matching session", state: "neutral" },
+      { status: "Skipped", tone: "zinc", statusKind: "none", step: "Activation session cleanup skipped — no matching session", state: "neutral" },
     ],
     [
       { outcome: "ambiguous", candidateCount: 2 },
-      { status: "Skipped", tone: "zinc", category: "other", step: "Activation session cleanup skipped — 2 matches", state: "neutral" },
+      { status: "Skipped", tone: "zinc", statusKind: "none", step: "Activation session cleanup skipped — 2 matches", state: "neutral" },
     ],
     [
       { outcome: "no_credential" },
-      { status: "Skipped", tone: "zinc", category: "other", step: "Activation session cleanup skipped — this Mac is not signed in", state: "neutral" },
+      { status: "Skipped", tone: "zinc", statusKind: "none", step: "Activation session cleanup skipped — this Mac is not signed in", state: "neutral" },
     ],
   ])("renders activation-session cleanup outcome %#", (fields, expected) => {
     const [activity] = auditActivities([{
@@ -239,7 +293,7 @@ describe("auditActivities (grouping)", () => {
       title: "Activation session cleanup",
       status: expected.status,
       tone: expected.tone,
-      category: expected.category,
+      statusKind: expected.statusKind,
       timeline: [{ text: expected.step, state: expected.state }],
     });
   });
@@ -249,10 +303,13 @@ describe("auditActivities (grouping)", () => {
       { event: "intent_received", intentId: "i1", request: "run: df -h", ts: "2026-08-18T12:00:00Z" },
       { event: "intent_decision", intentId: "i1", decision: "deny", source: "expired", ts: "2026-08-18T12:15:00Z" },
     ]);
-    expect(acts[0]!.status).toBe("Timed out");
-    expect(acts[0]!.tone).toBe("amber");
+    expect(acts[0]!.decision).toBe("Timed out");
+    expect(acts[0]!.decisionTone).toBe("amber");
+    expect(acts[0]!.status).toBe("");
     expect(acts[0]!.decidedBy).toBe("No one (timed out)");
-    expect(acts[0]!.category).toBe("denied"); // still failed closed
+    // Still failed closed — but it is not a refusal, so it files under
+    // Unanswered, with the abandoned and the pending.
+    expect(acts[0]!.decisionKind).toBe("unanswered");
   });
 
   it("an approval abandoned by an app quit reads as unanswered, not pending", () => {
@@ -260,8 +317,9 @@ describe("auditActivities (grouping)", () => {
       { event: "intent_received", intentId: "i1", request: "run: df -h", ts: "2026-08-18T12:00:00Z" },
       { event: "approval_abandoned", intentId: "i1", ts: "2026-08-18T12:05:00Z" },
     ]);
-    expect(acts[0]!.status).toBe("Not answered");
-    expect(acts[0]!.tone).toBe("zinc");
+    expect(acts[0]!.decision).toBe("Not answered");
+    expect(acts[0]!.decisionTone).toBe("zinc");
+    expect(acts[0]!.status).toBe("");
     expect(acts[0]!.timeline.map((s) => s.text)).toContain(
       "Never answered — the app closed while the approval was pending",
     );
@@ -276,9 +334,11 @@ describe("auditActivities (grouping)", () => {
     // The open event belongs to both stories: the intent row says how it was
     // decided, and browser:S exists — Browsing — before any command runs.
     const intent = acts.find((a) => a.id === "intent:i1")!;
-    expect(intent.status).toBe("Allowed once");
+    expect(intent.decision).toBe("Allowed");
+    expect(intent.status).toBe("Completed");
     expect(intent.tone).toBe("green");
     const session = acts.find((a) => a.id === "browser:S")!;
+    expect(session.decision).toBe("");
     expect(session.status).toBe("Browsing");
     expect(session.tone).toBe("green");
   });
@@ -289,13 +349,14 @@ describe("auditActivities (grouping)", () => {
       { event: "exec_end", handle: "H2", exit_code: 3, ts: "2026-08-18T12:00:05Z" },
     ]);
     const [failed, finished] = [acts[0]!, acts[1]!]; // newest first
-    expect(finished.status).toBe("Finished");
+    expect(finished.decision).toBe("");
+    expect(finished.status).toBe("Completed");
     expect(finished.tone).toBe("green");
-    expect(finished.category).toBe("approved");
+    expect(finished.statusKind).toBe("completed");
     expect(finished.title).toBe("Command finished");
-    expect(failed.status).toBe("Failed (exit 3)");
+    expect(failed.status).toBe("Failed · exit 3");
     expect(failed.tone).toBe("amber");
-    expect(failed.category).toBe("failed");
+    expect(failed.statusKind).toBe("failed");
   });
 
   it("a run this Mac killed reads as killed, not as a command that failed", () => {
@@ -314,14 +375,127 @@ describe("auditActivities (grouping)", () => {
       ])[0]!,
     ];
     const reason = "no output — a permission prompt may be waiting";
-    expect(orphan.status).toBe(`Killed — ${reason}`);
-    expect(decided.status).toBe(`Allowed once · killed (${reason})`);
+    expect(orphan.status).toBe("Killed · no output");
+    expect(decided.decision).toBe("Allowed");
+    expect(decided.status).toBe("Killed · no output");
     for (const act of [orphan, decided]) {
       expect(act.tone).toBe("amber");
-      expect(act.category).toBe("failed");
+      expect(act.statusKind).toBe("failed");
     }
     // The line the owner opens to find out why must not contradict the badge.
     expect(decided.timeline.map((s) => s.text)).toContain(`Run killed — ${reason}`);
+  });
+
+  it("a run parked on a dialog that then exited cleanly reads as Completed, not Blocked", () => {
+    // The owner answered the dialog; the verdict was provisional. The block
+    // stays in the timeline, but the outcome is the recovery.
+    const run = (cause: string) => auditActivities([
+      { event: "intent_received", intentId: "i1", request: "run: cat ~/Desktop/a.txt", ts: "2026-08-18T12:00:00Z" },
+      { event: "intent_decision", intentId: "i1", decision: "allow_once", source: "prompt", ts: "2026-08-18T12:00:01Z" },
+      { event: "exec_start", intentId: "i1", argv: ["/bin/cat"], ts: "2026-08-18T12:00:01Z" },
+      { event: "host_permission_blocked", intentId: "i1", handle: "H1", path: "~/Desktop/a.txt", cause, confidence: "confirmed", permission: "files_desktop", owner_action: "A dialog is open.", ts: "2026-08-18T12:00:02Z" },
+      { event: "exec_end", intentId: "i1", exit_code: 0, ts: "2026-08-18T12:00:30Z" },
+    ])[0]!;
+    const recovered = run("prompt_waiting");
+    expect(recovered.status).toBe("Completed");
+    expect(recovered.statusKind).toBe("completed");
+    expect(recovered.timeline.some((s) => s.text.startsWith("This Mac refused"))).toBe(true);
+    // Answered, resumed, and then failed for a reason of its own: the exit
+    // is the outcome, not the dialog that is gone.
+    const failed = auditActivities([
+      { event: "intent_received", intentId: "i1", request: "run: x", ts: "2026-08-18T12:00:00Z" },
+      { event: "intent_decision", intentId: "i1", decision: "allow_once", source: "prompt", ts: "2026-08-18T12:00:01Z" },
+      { event: "exec_start", intentId: "i1", argv: ["/bin/sh"], ts: "2026-08-18T12:00:01Z" },
+      { event: "host_permission_blocked", intentId: "i1", handle: "H1", path: "~/Desktop/a.txt", cause: "prompt_waiting", confidence: "confirmed", permission: "files_desktop", owner_action: "A dialog is open.", ts: "2026-08-18T12:00:02Z" },
+      { event: "exec_end", intentId: "i1", exit_code: 1, ts: "2026-08-18T12:00:30Z" },
+    ])[0]!;
+    expect(failed.status).toBe("Failed · exit 1");
+    // The device's own record of the clearing, and a correction after it:
+    // the newest verdict under the handle is the one the row wears.
+    const corrected = auditActivities([
+      { event: "intent_received", intentId: "i1", request: "run: x", ts: "2026-08-18T12:00:00Z" },
+      { event: "intent_decision", intentId: "i1", decision: "allow_once", source: "prompt", ts: "2026-08-18T12:00:01Z" },
+      { event: "exec_start", intentId: "i1", argv: ["/bin/sh"], ts: "2026-08-18T12:00:01Z" },
+      { event: "host_permission_blocked", intentId: "i1", handle: "H1", path: "~/Desktop/a.txt", cause: "prompt_waiting", confidence: "confirmed", permission: "files_desktop", owner_action: "A dialog is open.", ts: "2026-08-18T12:00:02Z" },
+      { event: "exec_end", intentId: "i1", exit_code: 1, ts: "2026-08-18T12:00:30Z" },
+      { event: "host_permission_cleared", intentId: "i1", handle: "H1", path: "~/Desktop/a.txt", permission: "files_desktop", ts: "2026-08-18T12:00:30Z" },
+      { event: "host_permission_blocked", intentId: "i1", handle: "H1", path: "~/Desktop/a.txt", cause: "macos_permission", confidence: "confirmed", permission: "files_desktop", owner_action: "Allow the Desktop folder.", ts: "2026-08-18T12:00:31Z" },
+    ])[0]!;
+    expect(corrected.status).toBe("Blocked · Desktop folder");
+    expect(corrected.blockedAt).toBe("2026-08-18T12:00:31Z");
+    expect(corrected.timeline.some((s) => s.text.startsWith("The dialog was answered"))).toBe(true);
+    // Reaped while parked: still blocked on the dialog.
+    const reaped = auditActivities([
+      { event: "intent_received", intentId: "i1", request: "run: x", ts: "2026-08-18T12:00:00Z" },
+      { event: "intent_decision", intentId: "i1", decision: "allow_once", source: "prompt", ts: "2026-08-18T12:00:01Z" },
+      { event: "host_permission_blocked", intentId: "i1", handle: "H1", path: "~/Desktop/a.txt", cause: "prompt_waiting", confidence: "confirmed", permission: "files_desktop", owner_action: "A dialog is open.", ts: "2026-08-18T12:00:02Z" },
+      { event: "exec_end", intentId: "i1", exit_code: -1, reaped: true, ts: "2026-08-18T12:15:00Z" },
+    ])[0]!;
+    expect(reaped.status).toBe("Blocked · dialog waiting");
+    // A confirmed refusal followed by exit 0 is not a recovery: only the
+    // parked verdict is provisional.
+    expect(run("macos_permission").status).toBe("Blocked · Desktop folder");
+  });
+
+  it("a block by this Mac itself names the permission, outranks the exit code, and carries the owner sentence", () => {
+    // The owner is the one person who can flip the switch; "failed (exit 1)"
+    // would hide the one thing they can act on.
+    const action = "In System Settings > Privacy & Security > Full Disk Access, turn on Plow Latch, then quit and reopen it.";
+    const [run, file, orphan] = [
+      auditActivities([
+        { event: "intent_received", intentId: "i1", request: "run: sqlite3 ~/Library/Messages/chat.db", ts: "2026-08-18T12:00:00Z" },
+        { event: "intent_decision", intentId: "i1", decision: "allow_once", source: "prompt", ts: "2026-08-18T12:00:01Z" },
+        { event: "exec_start", intentId: "i1", argv: ["/usr/bin/sqlite3"], ts: "2026-08-18T12:00:01Z" },
+        { event: "exec_end", intentId: "i1", exit_code: 1, ts: "2026-08-18T12:00:02Z" },
+        { event: "host_permission_blocked", intentId: "i1", handle: "H1", path: "~/Library/Messages/chat.db", cause: "macos_permission", confidence: "confirmed", permission: "full_disk_access", owner_action: action, ts: "2026-08-18T12:00:03Z" },
+      ])[0]!,
+      auditActivities([
+        { event: "intent_received", intentId: "i2", request: "read file: /Users/o/Desktop/a.txt", ts: "2026-08-18T12:00:00Z" },
+        { event: "intent_decision", intentId: "i2", decision: "always_allow", source: "rule", ts: "2026-08-18T12:00:01Z" },
+        { event: "host_permission_blocked", intentId: "i2", path: "/Users/o/Desktop/a.txt", cause: "prompt_waiting", confidence: "likely", permission: "files_desktop", owner_action: "A macOS permission dialog is open on the Mac's screen.", ts: "2026-08-18T12:00:03Z" },
+      ])[0]!,
+      auditActivities([
+        { event: "host_permission_blocked", handle: "H9", path: "~/x", cause: "outside_approved_bound", confidence: "confirmed", owner_action: null, ts: "2026-08-18T12:00:03Z" },
+      ])[0]!,
+    ];
+    // The pill names the switch; the sentence is the timeline's.
+    expect(run.decision).toBe("Allowed");
+    expect(run.status).toBe("Blocked · Full Disk Access");
+    expect(run.tone).toBe("amber");
+    // Its own bucket: the Capabilities tab's "Show in Audit" filters to it.
+    expect(run.decisionKind).toBe("allowed");
+    expect(run.statusKind).toBe("blocked");
+    expect(run.exitCode).toBe(1);
+    expect(run.timeline.map((s) => s.text)).toContain(
+      `This Mac refused ~/Library/Messages/chat.db: needs a macOS permission (Full Disk Access) — ${action}`,
+    );
+    expect(file.decision).toBe("Always allowed");
+    expect(file.status).toBe("Blocked · dialog waiting");
+    expect(file.kind).toBe("file");
+    expect(file.timeline.at(-1)!.text).toMatch(/\(probably\) — A macOS permission dialog/);
+    expect(file.timeline.at(-1)!.state).toBe("bad");
+    expect(orphan.decision).toBe("");
+    expect(orphan.status).toBe("Blocked · outside approved paths");
+    expect(orphan.decisionKind).toBe("none");
+    expect(orphan.statusKind).toBe("blocked");
+    // The switch a block named is searchable, in System Settings' words —
+    // the Capabilities tab's "Show in Audit" relies on it — and so is the
+    // timeline line, so what the detail pane shows is what the box finds.
+    expect(run.permission).toBe("Full Disk Access");
+    // Every switch a block can name reads in System Settings' words.
+    const contacts = auditActivities([
+      { event: "host_permission_blocked", handle: "H4", path: null, cause: "macos_permission", confidence: "confirmed", permission: "contacts", owner_action: "Allow Contacts.", ts: "2026-08-18T12:00:02Z" },
+    ])[0]!;
+    expect(contacts.status).toBe("Blocked · Contacts");
+    expect(contacts.permission).toBe("Contacts");
+    // The block's own time, for the Capabilities tab's "Show in Audit" cutoff:
+    // the request began before a dismissal could, the refusal after.
+    expect(run.blockedAt).toBe("2026-08-18T12:00:03Z");
+    expect(activityMatches(run, "full disk access")).toBe(true);
+    expect(activityMatches(run, "quit and reopen")).toBe(true);
+    expect(activityMatches(file, "Desktop folder")).toBe(true);
+    expect(activityMatches(orphan, "Full Disk Access")).toBe(false);
+    expect(orphan.permission).toBeNull();
   });
 
   it("browser runtime start/stop are lifecycle noise, never rows", () => {

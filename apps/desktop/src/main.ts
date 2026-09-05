@@ -12,7 +12,7 @@
  *     HTML, and the enforceable bound shown is the capability set the sandbox
  *     is derived from — not the goal text.
  */
-import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, powerMonitor, safeStorage as electronSafeStorage, screen, shell, systemPreferences, Tray } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, Menu, nativeImage, Notification, powerMonitor, safeStorage as electronSafeStorage, screen, shell, systemPreferences, Tray } from "electron";
 import electronUpdater from "electron-updater";
 import { ChildProcess, execFile, execFileSync, spawn } from "node:child_process";
 import fs from "node:fs/promises";
@@ -30,7 +30,12 @@ import {
   PaymentApprovalClient,
   PaymentApprovalRequest,
   plowFolderPath,
+  CONSENT_FOLDERS,
+  nodeProbes,
+  PERMISSION_LABELS,
   PolicyDelegate,
+  probeFullDiskAccess,
+  requestFolderAccess,
   importLogins,
   importPreview,
   markAgainstVault,
@@ -45,10 +50,13 @@ import {
 } from "@domo/device-core";
 import { createDomoMcpServer, DomoMcpServer } from "@domo/mcp-server";
 import { RelayClient } from "@domo/relay-client";
+import type { AutomationStatus, HostInventory, NativePermissions, RequestablePermission } from "@domo/device-core";
 import { approvalViewModel, auditActivities, CredentialTitles } from "./viewModel.js";
-import { probeFullDiskAccess } from "./fullDiskAccess.js";
+
 import { appBundleName, appBundlePath, decodeTileImage } from "./permissionFlow.js";
-import { FdaGrantFlow } from "./fdaGrantFlow.js";
+import { FdaGrantFlow, GrantTarget } from "./fdaGrantFlow.js";
+import { AUTOMATION_APPS, automationApp, osascriptRunner, reconcile, requestAutomation } from "./automation.js";
+import { capabilitiesView, CapabilitiesView, isGroup, paneFor, PERMISSION_TITLES } from "./capabilitiesModel.js";
 import { launchAtLoginState, LoginItemApi, setLaunchAtLogin } from "./loginItem.js";
 import { KeepAwake } from "./keepAwake.js";
 import { devIconScript } from "./devIcon.js";
@@ -648,7 +656,7 @@ ipcMain.handle("onboarding:open", async () => openOnboardingWindow());
  * `fullDiskSettings` is the one non-web entry: System Settings' Full Disk
  * Access pane. macOS has no API an app can call to request that permission —
  * sending the person to the switch IS the whole grant flow (see
- * fullDiskAccess.ts), so the deep link belongs in this table like any other
+ * device-core's hostGate/fullDiskAccess.ts), so the deep link belongs in this table like any other
  * page the app may open.
  */
 const EXTERNAL_URLS: Readonly<Record<string, string>> = Object.freeze({
@@ -1188,18 +1196,281 @@ ipcMain.handle("status:get", async () => ({
   name: device?.identity.name ?? "",
   connected: connected,
 }));
-// macOS permission ceilings on the app itself — today just Full Disk Access.
-// A fresh probe per read, because the answer changes outside the app (in
-// System Settings) and there is no event to invalidate a cache on.
-ipcMain.handle("capabilities:get", async () => ({
-  fullDiskAccess: await probeFullDiskAccess(),
-}));
+// macOS permission ceilings on the app itself, and its self-checks: the
+// device's standing inventory (device-core's hostGate/inventory.ts), which is
+// what `plow_device_status` tells an agent too — one snapshot, so the pane
+// and the tool cannot disagree. A fresh read per call, because the answers
+// change outside the app (in System Settings) and there is no event to
+// invalidate a cache on. `fullDiskAccess` stays as the flat boolean the
+// grant flow's poll reads.
+ipcMain.handle("capabilities:get", async () => {
+  const inventory = device ? await device.hostInventory() : null;
+  const view = await capabilitiesNow(inventory);
+  return {
+    fullDiskAccess: inventory ? inventory.full_disk_access.granted : await probeFullDiskAccess(),
+    inventory,
+    view,
+    icons: await capabilityIcons(view),
+  };
+});
+
+// MARK: The Capabilities tab (capabilitiesModel.ts)
+
+/**
+ * The icon beside a row or group — macOS's own, never drawn here: the app's
+ * icon for an app (by bundle id, through LaunchServices), the folder's real
+ * Finder icon for a folder, and for a switch that is neither (Full Disk
+ * Access, Accessibility, Screen Recording, Automation) the SF Symbol System
+ * Settings uses, on its privacy-blue tile. Resolved once per key for the
+ * life of the process; null where the helper is missing or has no answer,
+ * and the row draws without one.
+ */
+const capabilityIconCache = new Map<string, Promise<string | null>>();
+function capabilityIcon(key: string): Promise<string | null> {
+  let pending = capabilityIconCache.get(key);
+  if (!pending) {
+    pending = renderCapabilityIcon(key).catch(() => null);
+    capabilityIconCache.set(key, pending);
+  }
+  return pending;
+}
+async function renderCapabilityIcon(key: string): Promise<string | null> {
+  const home = os.homedir();
+  const app = key.startsWith("automation:") ? key.slice("automation:".length) : null;
+  // Tile tints, System Settings' own: grey for the generic switches, blue for
+  // Accessibility, teal for the folder group, red for recording.
+  const GREY = "8E8E93", BLUE = "1E6FF2", TEAL = "1C9AAF", RED = "D9272D";
+  const args: string[] | null = app
+    ? ["--app-icon", app]
+    : key === "full_disk_access" ? ["--symbol", "externaldrive.fill", GREY]
+    : key === "files_desktop" ? ["--icon", path.join(home, "Desktop")]
+    : key === "files_documents" ? ["--icon", path.join(home, "Documents")]
+    : key === "files_downloads" ? ["--icon", path.join(home, "Downloads")]
+    : key === "contacts" ? ["--app-icon", "com.apple.AddressBook"]
+    : key === "calendars" ? ["--app-icon", "com.apple.iCal"]
+    : key === "reminders" ? ["--app-icon", "com.apple.reminders"]
+    : key === "photos" ? ["--app-icon", "com.apple.Photos"]
+    : key === "accessibility" ? ["--symbol", "accessibility", BLUE]
+    : key === "screen_recording" ? ["--symbol", "record.circle", RED]
+    : key === "files_icloud_drive" ? ["--symbol", "icloud.fill", GREY]
+    : key === "files_volumes" ? ["--symbol", "externaldrive.fill", GREY]
+    : key === "automation" || key === "group:automation" ? ["--symbol", "gearshape.2.fill", GREY]
+    : key === "group:folders" ? ["--symbol", "folder.fill", TEAL]
+    : null;
+  if (!args) return null;
+  const { stdout } = await promisify(execFile)(fdaHelperPath, args);
+  const data = stdout.trim();
+  return data ? `data:image/png;base64,${data}` : null;
+}
+
+/** Every icon the tab shows, keyed like its rows and groups. */
+async function capabilityIcons(view: CapabilitiesView): Promise<Record<string, string>> {
+  const keys = view.sections.flatMap((s) =>
+    s.items.flatMap((i) => (isGroup(i) ? [`group:${i.key}`, ...i.rows.map((r) => r.key)] : [i.key])),
+  );
+  const icons: Record<string, string> = {};
+  await Promise.all(
+    keys.map(async (k) => {
+      const icon = await capabilityIcon(k);
+      if (icon) icons[k] = icon;
+    }),
+  );
+  return icons;
+}
+
+/**
+ * Automation consent for every app the tab offers, read passively through
+ * the helper and reconciled with the memo: a conclusive answer is written
+ * back, so a pair the owner turned off in System Settings shows denied and
+ * STAYS denied after the target app quits (macOS declines to say for a quit
+ * app). Adopted from the apple-events branch.
+ */
+async function automationRows(): Promise<{ app: (typeof AUTOMATION_APPS)[number]; status: AutomationStatus }[]> {
+  const settings = loadSettings(home);
+  const memo = { ...(settings.automation ?? {}) };
+  let changed = false;
+  const rows = await Promise.all(
+    AUTOMATION_APPS.map(async (app) => {
+      const live = device ? await device.hostProbes.automationStatus(app.bundleId) : ("unknown" as const);
+      const r = reconcile(live, memo[app.bundleId]);
+      if (r.changed) {
+        changed = true;
+        if (r.memo === undefined) delete memo[app.bundleId];
+        else memo[app.bundleId] = r.memo as "granted" | "denied" | "not_asked";
+      }
+      return { app, status: r.status };
+    }),
+  );
+  if (changed) saveSettings(home, { ...loadSettings(home), automation: memo });
+  return rows;
+}
+
+/** The whole tab, fresh: inventory, Automation rows, the audit log, and the
+ *  owner's "not now"s. */
+async function capabilitiesNow(inventory?: HostInventory | null): Promise<CapabilitiesView> {
+  const inv = inventory === undefined ? (device ? await device.hostInventory() : null) : inventory;
+  const settings = loadSettings(home);
+  return capabilitiesView({
+    inventory: inv,
+    automation: await automationRows(),
+    events: device?.audit.entries() ?? [],
+    dismissals: settings.capabilityDismissals ?? {},
+    bannerSeenAt: settings.blockedBannerSeenAt ?? null,
+    folders: settings.folderConsent ?? {},
+    foldersAt: settings.folderConsentAt ?? {},
+    canRequestInProcess: device?.hostProbes.canRequestInProcess() ?? false,
+  });
+}
+
+/**
+ * The switch a row key points the panel at, with the probe that says when
+ * its grant has landed. Rows with no query API of their own (the folders,
+ * Photos, Reminders, the volumes) get a probe that never says yes: the panel
+ * then leaves when System Settings closes or on its timeout, which is the
+ * honest behaviour for a switch this app cannot read.
+ */
+function grantTargetFor(key: string): GrantTarget | null {
+  const pane = paneFor(key);
+  if (!pane) return null;
+  const app = key.startsWith("automation:") ? automationApp(key.slice("automation:".length)) : null;
+  const label = app ? `Automation for ${app.name}` : (PERMISSION_TITLES[key] ?? key);
+  const probes = device?.hostProbes ?? null;
+  const probe = async (): Promise<boolean> => {
+    if (key === "full_disk_access") return probeFullDiskAccess();
+    if (!probes) return false;
+    if (app) return (await probes.automationStatus(app.bundleId)) === "granted";
+    if (key === "accessibility" || key === "contacts" || key === "calendars" || key === "screen_recording") {
+      return (await probes.permissionStatus(key)) === "granted";
+    }
+    return false;
+  };
+  return { key, label, pane: pane.url, acceptsDrop: pane.acceptsDrop, probe };
+}
+
+/**
+ * A row's one action. What it is was decided by the model (the button's
+ * label said so); this is the doing: the panel flow beside the right pane,
+ * macOS's own dialog raised on purpose (a service, or an Automation pair
+ * through the gated osascript probe), or a folder touched so macOS asks.
+ * Every one of these is behind a click on this Mac — the one condition
+ * under which this app raises a consent dialog.
+ */
+ipcMain.handle("capabilities:act", async (_e, rawKey: unknown) => {
+  const key = typeof rawKey === "string" ? rawKey : "";
+  const view = await capabilitiesNow();
+  const row = view.sections.flatMap((s) => s.rows).find((r) => r.key === key);
+  if (!row || !device) return view;
+  switch (row.action) {
+    case "grant":
+    case "open": {
+      const pane = paneFor(key);
+      // A pane the panel can do nothing beside (Screen Recording) is just
+      // opened; the owner finds the switch themselves.
+      if (pane && pane.panel === false) {
+        await shell.openExternal(pane.url);
+        break;
+      }
+      const target = grantTargetFor(key);
+      if (target) await fdaGrantFlow.start(target);
+      break;
+    }
+    case "request": {
+      const app = key.startsWith("automation:") ? automationApp(key.slice("automation:".length)) : null;
+      if (app) {
+        const status = await requestAutomation(app.bundleId, osascriptRunner());
+        if (status === "granted" || status === "denied" || status === "not_asked") {
+          const settings = loadSettings(home);
+          saveSettings(home, { ...settings, automation: { ...(settings.automation ?? {}), [app.bundleId]: status } });
+        }
+      } else if (key === "contacts" || key === "calendars" || key === "accessibility") {
+        const status = await device.hostProbes.requestPermission(key as RequestablePermission);
+        // Refused before, or no usage string in this build: macOS answered
+        // without asking, and only the pane can change that now.
+        if (status === "denied") {
+          const target = grantTargetFor(key);
+          if (target) await fdaGrantFlow.start(target);
+        }
+      }
+      break;
+    }
+    case "ask": {
+      const folder = CONSENT_FOLDERS.find((f) => f.permission === key);
+      if (folder) {
+        const [result] = await requestFolderAccess(os.homedir(), { folders: [folder] });
+        if (result && result.status !== "missing") {
+          const settings = loadSettings(home);
+          saveSettings(home, {
+            ...settings,
+            folderConsent: {
+              ...(settings.folderConsent ?? {}),
+              [key]: result.status === "granted" ? "granted" : result.status === "denied" ? "denied" : "not_asked",
+            },
+            folderConsentAt: { ...(settings.folderConsentAt ?? {}), [key]: new Date().toISOString() },
+          });
+        }
+        // macOS refused without asking — a Don't Allow it remembers — and
+        // only the pane can undo that: float the panel beside it.
+        if (result?.status === "denied") {
+          const target = grantTargetFor(key);
+          if (target) await fdaGrantFlow.start(target);
+        }
+      }
+      break;
+    }
+    default:
+      break;
+  }
+  return capabilitiesNow();
+});
+// "Not now" on a row: off the badge until a block newer than this lands.
+ipcMain.handle("capabilities:dismiss", async (_e, rawKey: unknown) => {
+  const key = typeof rawKey === "string" ? rawKey : "";
+  if (key) {
+    const settings = loadSettings(home);
+    saveSettings(home, {
+      ...settings,
+      capabilityDismissals: { ...(settings.capabilityDismissals ?? {}), [key]: new Date().toISOString() },
+    });
+  }
+  return capabilitiesNow();
+});
+ipcMain.handle("capabilities:bannerSeen", async () => {
+  saveSettings(home, { ...loadSettings(home), blockedBannerSeenAt: new Date().toISOString() });
+  return capabilitiesNow();
+});
+// The floating panel's poll: has the switch it points at landed?
+ipcMain.handle("grant:state", async () => {
+  const target = fdaGrantFlow.current();
+  return { key: target?.key ?? null, label: target?.label ?? null, granted: target ? await target.probe() : false };
+});
 
 // MARK: Full Disk Access grant flow (permissionFlow.ts)
 
-const fdaHelperPath = app.isPackaged
-  ? path.join(process.resourcesPath, "native", "settings-window-frame")
-  : path.join(dirname, "native", "settings-window-frame");
+/**
+ * The in-process Contacts/Calendars addon (@domo/native-permissions), or null
+ * where it was never built. Loaded into THIS process on purpose: the request
+ * APIs behind it only show a dialog to a caller whose own bundle carries the
+ * usage strings, which is the app (electron-builder.yml extendInfo) — or the
+ * dev Electron bundle once scripts/dev-usage-strings.mjs has patched it.
+ */
+function nativePermissions(): NativePermissions | null {
+  try {
+    return createRequire(import.meta.url)("@domo/native-permissions") as NativePermissions | null;
+  } catch {
+    return null;
+  }
+}
+
+/** The compiled native helpers (scripts/build-native.mjs): packaged under
+ *  Contents/Resources/native, from source under dist/native. */
+const nativeHelperPath = (name: string): string =>
+  app.isPackaged
+    ? path.join(process.resourcesPath, "native", name)
+    : path.join(dirname, "native", name);
+const fdaHelperPath = nativeHelperPath("settings-window-frame");
+/** Answers Automation/Accessibility/Screen Recording status without prompting
+ *  (native/host-permissions.swift). Handed to the device's probes above. */
+const hostPermissionsHelperPath = nativeHelperPath("host-permissions");
 
 /**
  * The REAL icon of a bundle on disk, for every screen that shows one (the
@@ -1231,9 +1502,12 @@ async function bundleIcon(bundle: string): Promise<Electron.NativeImage | null> 
  * Which app the grant must name. TCC keys Full Disk Access on the RESPONSIBLE
  * process, not the executable: a `just app` run out of a terminal is the
  * terminal app's grant — dragging Electron.app into the list would grant
- * nothing this run can use. The helper's --responsible mode asks the same SPI
- * TCC keys on; without the helper (or an answer from it), the executable's
- * own bundle is the remaining guess, and exactly right for the packaged app.
+ * nothing this run can use. The helper's --responsible mode answers the way
+ * TCC attributes: the topmost app bundle in the process ancestry (the SPI TCC
+ * keys on is asked first, but it answers "self" for everything on recent
+ * macOS, so the walk is what decides). Without the helper (or an answer from
+ * it), the executable's own bundle is the remaining guess, and exactly right
+ * for the packaged app.
  *
  * Resolved once — responsibility cannot change while the process lives — and
  * always through dragInfo before any drag can start, so dragStart reads the
@@ -1246,11 +1520,16 @@ async function resolveFdaDragTarget(): Promise<typeof fdaDragTarget> {
   if (fdaDragTarget) return fdaDragTarget;
   const run = promisify(execFile);
   let bundle: string | null = null;
-  try {
-    const { stdout } = await run(fdaHelperPath, ["--responsible"]);
-    if (stdout.trim().endsWith(".app")) bundle = stdout.trim();
-  } catch {
-    // No compiled helper on this host, or no responsible app to name.
+  // A run the dev launcher spawned (native/launch-disclaimed.swift) is its
+  // own TCC client, whatever its ancestry says: the executable's own bundle
+  // is the answer, and the helper is not asked.
+  if (process.env.DOMO_SELF_RESPONSIBLE !== "1") {
+    try {
+      const { stdout } = await run(fdaHelperPath, ["--responsible"]);
+      if (stdout.trim().endsWith(".app")) bundle = stdout.trim();
+    } catch {
+      // No compiled helper on this host, or no responsible app to name.
+    }
   }
   bundle ??= appBundlePath(process.execPath);
   if (!bundle) return null;
@@ -1272,7 +1551,13 @@ async function resolveFdaDragTarget(): Promise<typeof fdaDragTarget> {
 ipcMain.handle("fullDisk:dragInfo", async () => {
   const target = await resolveFdaDragTarget();
   if (!target) return null;
-  return { name: appBundleName(target.bundle), iconDataUrl: target.iconDataUrl };
+  const pointing = fdaGrantFlow.current();
+  return {
+    name: appBundleName(target.bundle),
+    iconDataUrl: target.iconDataUrl,
+    label: pointing?.label ?? "Full Disk Access",
+    drag: pointing?.acceptsDrop ?? true,
+  };
 });
 // The panel's rasterization of its own drag tile (display data flowing the
 // other way). Held so the drag image under the cursor is exactly the tile the
@@ -1347,6 +1632,10 @@ ipcMain.on("fullDisk:dragStart", (e) => {
 });
 // The panel renderer's mid-gesture guard (see fdaGrantFlow.holdVisible).
 ipcMain.on("fullDisk:panelHold", (_e, on: boolean) => fdaGrantFlow.setHold(on === true));
+// The panel measured the height its content needs (fdapanel.js).
+ipcMain.on("fullDisk:panelHeight", (_e, height: unknown) => {
+  if (typeof height === "number" && Number.isFinite(height)) fdaGrantFlow.setHeight(height);
+});
 // The grant flow itself: opens the pane and floats the drag panel next to it,
 // following the System Settings window (fdaGrantFlow.ts owns the lifecycle —
 // this handler only starts it). The helper binary is optional by design: no
@@ -1355,8 +1644,14 @@ const fdaGrantFlow = new FdaGrantFlow({
   rendererDir,
   preloadPath: path.join(dirname, "preload.cjs"),
   helperPath: fdaHelperPath,
-  probe: () => probeFullDiskAccess(),
-  openSettings: () => shell.openExternal(EXTERNAL_URLS.fullDiskSettings),
+  fullDisk: {
+    key: "full_disk_access",
+    label: "Full Disk Access",
+    pane: EXTERNAL_URLS.fullDiskSettings,
+    acceptsDrop: true,
+    probe: () => probeFullDiskAccess(),
+  },
+  openSettings: (pane) => shell.openExternal(pane),
 });
 ipcMain.handle("fullDisk:grantFlow", async () => fdaGrantFlow.start());
 // The panel's own close button (PermissionFlow's xmark) — the panel is
@@ -1716,6 +2011,12 @@ app.whenReady().then(async () => {
       repoRoot: path.resolve(app.getAppPath(), "..", ".."),
     }),
     plowPaymentApproval(new PlowApi(apiBaseUrl)),
+    // How a refused operation is investigated (device-core's hostGate/): the
+    // real probes over the owner's real home, with the compiled helper that
+    // answers Automation consent without prompting. No helper (no Swift
+    // toolchain at build time) leaves Automation "unknown" and nothing else
+    // degrades — the same contract as the Full Disk Access tracker.
+    nodeProbes({ ownerHome: os.homedir(), helperPath: hostPermissionsHelperPath, native: nativePermissions() }),
   );
   // Same tick as the store's construction (see onAbandoned): an approval that
   // was pending when the app last quit gets closed out in the audit log too,
@@ -1759,6 +2060,13 @@ app.whenReady().then(async () => {
   }
   // Live-refresh the audit view whenever a new event is recorded.
   device.audit.events.on("change", () => notifyRenderer("audit:changed"));
+  // A block by this Mac itself is the owner's to clear, and the owner is
+  // usually not looking at this window when it happens: it goes to the tray
+  // and, once per permission per run, to a notification.
+  device.audit.events.on("recorded", (entry) => {
+    if (entry.event === "host_permission_blocked") noteHostGateBlock(entry.fields);
+    if (entry.event === "host_permission_cleared") clearHostGateAttention(entry.fields);
+  });
   // Usage stats ride the same funnel as the audit log — one source of truth
   // for what happened, with telemetry.ts's allowlist deciding the little that
   // leaves the Mac.
@@ -2080,6 +2388,78 @@ app.on("web-contents-created", (_e, contents) => {
   contents.setWindowOpenHandler(() => ({ action: "deny" }));
 });
 
+/**
+ * The most recent block by this Mac that the owner has not yet looked at
+ * (device-core's hostGate/): what was refused and the fixed sentence that
+ * fixes it. One at a time — the latest is the one worth a click — and
+ * cleared when the owner opens Settings from it, where the Capabilities card
+ * shows every switch.
+ */
+let hostGateAttention: { permission: string | null; ownerAction: string | null; cause: string; handle: string | null } | null = null;
+/** Permissions already announced this run: a notification per refusal would
+ *  be a notification per retry. */
+const hostGateNotified = new Set<string>();
+
+function noteHostGateBlock(fields: { [k: string]: unknown }): void {
+  const cause = typeof fields.cause === "string" ? fields.cause : "unknown";
+  const permission = typeof fields.permission === "string" ? fields.permission : null;
+  const ownerAction = typeof fields.owner_action === "string" ? fields.owner_action : null;
+  // A guess does not earn a notification: only a confirmed verdict names a
+  // switch the owner should actually go and flip.
+  if (fields.confidence !== "confirmed") return;
+  const handle = typeof fields.handle === "string" ? fields.handle : null;
+  const attention = { permission, ownerAction, cause, handle };
+  hostGateAttention = attention;
+  refreshTray();
+  const key = permission ?? cause;
+  if (hostGateNotified.has(key) || !Notification.isSupported()) return;
+  hostGateNotified.add(key);
+  const notification = new Notification({
+    title: permission
+      ? `Plow Latch needs ${PERMISSION_LABELS[permission as keyof typeof PERMISSION_LABELS] ?? permission}`
+      : "Plow Latch was blocked by this Mac",
+    body: ownerAction ?? "An agent's approved request was refused by macOS. Open Capabilities for details.",
+  });
+  // The click navigates from THIS block, not from whatever the attention
+  // holds by then: a newer block may have replaced it, and a clearing may
+  // have taken it down. The object itself is the identity — a file op's
+  // block has no handle, and two of those must not pass for one. The tray
+  // item, which always shows the current attention, keeps reading the
+  // global.
+  notification.on("click", () => showCapabilitiesForHostGate(attention));
+  notification.show();
+}
+
+/** The owner answered the dialog the attention was about (the run went on):
+ *  a "Needs …" item pointing at a block that is no longer one comes down. */
+function clearHostGateAttention(fields: { [k: string]: unknown }): void {
+  const handle = typeof fields.handle === "string" ? fields.handle : null;
+  if (hostGateAttention === null || handle === null || hostGateAttention.handle !== handle) return;
+  hostGateAttention = null;
+  refreshTray();
+}
+
+/**
+ * The tray item's and the notification's one destination. A block that
+ * names a switch lands on the Capabilities tab, where that switch shows
+ * what it stopped and the grant flow starts. One that names none — a
+ * locked file, a SIP root, POSIX permissions — has no row there (the tab
+ * lists switches), so it lands on the Audit tab's Blocked view, where the
+ * row carries the sentence that fixes it.
+ */
+function showCapabilitiesForHostGate(block?: NonNullable<typeof hostGateAttention>): void {
+  const permission = block ? block.permission : (hostGateAttention?.permission ?? null);
+  // Opening the tray item clears the attention it shows; opening an older
+  // notification clears it only if it is still that very block, never a
+  // newer one the owner has not seen.
+  if (!block || hostGateAttention === block) hostGateAttention = null;
+  refreshTray();
+  gate.sync();
+  const send = () => mainWindow?.webContents.send(permission ? "ui:showCapabilities" : "ui:showAuditBlocked");
+  if (mainWindow?.webContents.isLoading()) mainWindow.webContents.once("did-finish-load", send);
+  else send();
+}
+
 function setupTray(): void {
   // A 1x1 transparent placeholder keeps the tray API happy without an asset
   // pipeline; a real template image ships with the packaged app.
@@ -2097,6 +2477,18 @@ function refreshTray(): void {
     // Through the gate, so the tray cannot hand back a main window this Mac is
     // not entitled to.
     { label: "Open Plow Latch", click: () => gate.sync() },
+    // The latest block by this Mac, until the owner looks: the one line in
+    // this menu that says something needs doing.
+    ...(hostGateAttention
+      ? [
+          {
+            label: hostGateAttention.permission
+              ? `Needs ${PERMISSION_LABELS[hostGateAttention.permission as keyof typeof PERMISSION_LABELS] ?? hostGateAttention.permission}…`
+              : "An agent was blocked by this Mac…",
+            click: () => showCapabilitiesForHostGate(),
+          },
+        ]
+      : []),
     // Update items only when an updater exists (packaged runs) — a dead menu
     // item in a from-source run would just be a lie.
     ...(updates

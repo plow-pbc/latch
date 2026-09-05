@@ -1,0 +1,133 @@
+{
+  "name": "blocked-automation",
+  "note": "Apple events to Messages refused by macOS (confirmed). One call, the owner sentence verbatim.",
+  "prompt": "Use the Messages app on my Mac to send Sam a text saying 'Saturday works'.",
+  "answers": {
+    "plow_run_command": {
+      "diagnosis": {
+        "cause": "macos_permission",
+        "confidence": "confirmed",
+        "evidence": [
+          "Automation consent for Messages is denied for Plow Latch"
+        ],
+        "owner_action": "In System Settings > Privacy & Security > Automation, allow Plow Latch to control Messages.",
+        "permission": "automation",
+        "requires_relaunch": false,
+        "retry": "after_owner_grants",
+        "ruled_out": []
+      },
+      "exit_code": 1,
+      "handle": "EVAL-HANDLE",
+      "output": "execution error: Not authorized to send Apple events to Messages. (-1743)\n",
+      "output_length": 74,
+      "probes": {
+        "app_process_open": null,
+        "automation_status": "denied",
+        "automation_target": "Messages",
+        "errno": null,
+        "full_disk_access_granted": true,
+        "hung": false,
+        "immutable_flag": null,
+        "is_directory": null,
+        "op": "exec",
+        "path": "/bin/sh",
+        "path_approved": false,
+        "path_exists": null,
+        "paths_examined": [
+          "/bin/sh",
+          "~"
+        ],
+        "posix_readable": null,
+        "posix_writable": null,
+        "probe_withheld": false,
+        "ran_sandboxed": true,
+        "sandbox_allows_read": true,
+        "sandbox_allows_write": false,
+        "service_permission": null,
+        "service_status": null,
+        "sip_protected": true,
+        "stderr_hint": "apple_event_not_permitted",
+        "syscall": null,
+        "tcc_guarded_prefix": null
+      },
+      "status": "blocked"
+    },
+    "plow_device_status": {
+      "automation": [
+        {
+          "status": "denied",
+          "target": "Messages"
+        },
+        {
+          "status": "unknown",
+          "target": "Contacts"
+        }
+      ],
+      "automation_queryable": true,
+      "checked_at": "2026-09-04T23:17:00Z",
+      "child_attribution": {
+        "detail": null,
+        "status": "not_applicable"
+      },
+      "full_disk_access": {
+        "granted": false,
+        "probes": [
+          {
+            "outcome": "ENOENT",
+            "path": "~/Library/Application Support/com.apple.TCC/TCC.db"
+          },
+          {
+            "outcome": "ENOENT",
+            "path": "~/Library/Messages/chat.db"
+          },
+          {
+            "outcome": "ENOENT",
+            "path": "~/Library/Safari/Bookmarks.plist"
+          }
+        ]
+      },
+      "permissions": [
+        {
+          "permission": "accessibility",
+          "status": "unknown"
+        },
+        {
+          "permission": "contacts",
+          "status": "unknown"
+        },
+        {
+          "permission": "calendars",
+          "status": "unknown"
+        }
+      ],
+      "sandbox": {
+        "detail": null,
+        "status": "ok"
+      },
+      "vault_key": {
+        "reason": "this Mac has no vault",
+        "status": "absent"
+      }
+    }
+  },
+  "isError": {
+    "plow_run_command": true,
+    "plow_device_status": false
+  },
+  "expect": {
+    "calls": {
+      "min": 1,
+      "max": 2
+    },
+    "attempted": true,
+    "names": [
+      "System Settings > Privacy & Security > Automation"
+    ],
+    "includes": [
+      "In System Settings > Privacy & Security > Automation, allow Plow Latch to control Messages."
+    ],
+    "excludes": [
+      "Full Disk Access"
+    ]
+  }
+}

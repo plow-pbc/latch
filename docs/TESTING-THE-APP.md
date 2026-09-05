@@ -313,6 +313,44 @@ an entitlement/Info.plist regression, and this is the only place that can.
 
 ---
 
+## Host gates: the manual pass
+
+Everything in `packages/device-core/src/hostGate/` that can be reached without macOS's own privacy
+switches is under `npx vitest run`: the decision tree over scripted facts, the error readers, the
+guarded-path table, the real probes against fixtures (a readable file, a missing one, a `chmod 000`
+one, a `chflags uchg` one, and a FIFO that parks an open exactly the way a consent dialog does),
+the device and MCP wiring end to end, the inventory over a scripted child runner, the folder
+touch over scripted probes. What is **not** — and cannot be, because the answers depend on
+what a human granted this process's host — is whether macOS's real answers match the tree. That is
+this pass, on the test machine, once per change to `hostGate/` and once per release candidate.
+
+Run each row against an installed build with a client registered (`scripts/latch-smoke` drives the
+call; the verdict is in `audit.ndjson` as a `host_permission_blocked` line, and the tool result is
+what the smoke prints). Expected values are the `diagnosis` fields.
+
+| Set up | Drive | Expect (`cause` / `confidence` / `permission`) |
+|---|---|---|
+| Full Disk Access **off** for the app | `plow_run_command` `sqlite3 -readonly ~/Library/Messages/chat.db 'select 1'` | `macos_permission` / `confirmed` / `full_disk_access`; `probes.app_process_open` is `EPERM`; the result's `status` is `blocked` and its `exit_code` is the run's own |
+| Full Disk Access **on**, app relaunched | same | `status: completed`, no `diagnosis`; `plow_device_status` shows `full_disk_access.granted: true` and `child_attribution.status: ok` |
+| Full Disk Access off; Desktop folder **never asked** | `plow_read_file ~/Desktop/<any file>` while nobody clicks | within ~5s: `prompt_waiting` / `confirmed` / `files_desktop`; a dialog is on the Mac's screen. Click **Allow**: the next call completes. Click **Don't Allow**: the next call is `macos_permission` / `confirmed` / `files_desktop` |
+| Same, via a command | `plow_run_command` `ls ~/Downloads` with `wait_ms: 3000` | the call returns `running` **with** a `diagnosis` of `prompt_waiting`; `plow_get_output` keeps saying `running` until the dialog is answered; after 15 minutes unanswered it is `blocked` with `error` "killed by this Mac" and the same diagnosis |
+| Automation for Messages **denied** in System Settings, Messages running | `plow_run_command` `osascript -e 'tell application "Messages" to get name'` with `apple_events: true` | `macos_permission` / `confirmed` / `automation`; `plow_device_status` shows `automation: [{target: Messages, status: denied}]` |
+| Automation for Messages **never asked**, Messages running | same | `plow_device_status` says `not_asked`; the run raises the consent dialog; unanswered it reads `prompt_waiting` / `likely` / `automation` |
+| Messages **not running** | `plow_device_status` | `automation: [{target: Messages, status: target_not_running}]` — macOS declines to say |
+| Nothing special | `plow_run_command` `sh -c 'echo hi > /Users/Shared/x'` with no `write_paths` | `outside_approved_bound` / `confirmed`; `probes.app_process_open` is `ok`, `sandbox_allows_write` is `false` — the profile, not macOS |
+| A locked file (`chflags uchg ~/Plow/locked.txt`) | `plow_write_file` to it | `immutable_file` / `confirmed`; `owner_action` names `chflags nouchg` |
+| Owner-facing | any confirmed block above | the tray gains a "Needs …" item; a notification carries the owner sentence; both land on the Capabilities tab when the block names a switch, and on the Audit tab's Blocked view when it does not (a locked file, SIP, POSIX permissions); the item comes down on its own when the owner answers the dialog and the run goes on; the Audit row's Status reads "Blocked · <permission>" in amber beside a green Allowed decision, and the Status filter's `Blocked` shows it |
+| Capabilities tab | after the blocks above, with the app closed meanwhile | the tab is badged with the number of switches still off that were hit; the banner counts the blocks since it was last dismissed and "Show in Audit" lands on the filtered Audit tab; each hit row shows its count and agents, "See blocked requests…" opens the list with the owner sentence; the folder rows disappear once Full Disk Access is granted |
+| Capabilities: prerequisites | before the buttons | A from-source run must come from `just app`, which launches Electron with TCC responsibility disclaimed (native/launch-disclaimed.swift) so the dialogs and grants are Electron.app's own rather than the terminal's; the dev bundle must carry the usage strings (`just build` patches them in, scripts/dev-usage-strings.mjs); a packaged build must carry the addressbook and calendars entitlements (build/entitlements.mac.plist) or the hardened runtime refuses without a dialog |
+| Capabilities: the buttons | each row in turn | Two labels only. "Allow in System Settings…" on Full Disk Access and Accessibility floats the drag panel beside their pane, and on any refused row floats the pointer panel beside the right pane. "Allow via prompt…" on Contacts and Calendars raises the system dialog (packaged build — from source macOS refuses without the usage strings), on a folder raises its dialog, and on an Automation row opens the target app and raises its dialog; a row whose prompt macOS refuses to show flips to the System Settings label |
+| Setup | fresh home, sign in | the "Data & permissions" step's Full Disk Access request opens the grant flow, and its status turns granted after the drag without reopening setup (it reads the same `capabilities:get` snapshot as the tab) |
+
+A row whose real answer disagrees with the tree is a bug in the tree, and the audit line's `probes`
+say which branch: fix the branch, add the case to `hostGate.test.ts` with those facts, and re-run
+this pass.
+
+---
+
 ## What a UI ticket owes
 
 1. **A description of what was actually driven** — what was typed and clicked, and what the app did

@@ -97,7 +97,7 @@ describe("audit grouping for browser sessions", () => {
     // The widening is in the session's own story, not only the intent's.
     expect(browser.timeline.some((t) => t.text.startsWith("Session widened"))).toBe(true);
     // The cage refused it something, so the Failed filter must hold it.
-    expect(browser.category).toBe("failed");
+    expect(browser.statusKind).toBe("failed");
     // The decision stays on the intent row: copying it in would outrank the
     // browser branch and replace the live status with "Allowed once".
     expect(browser.status).toBe("Closed · scope blocks");
@@ -150,7 +150,7 @@ describe("audit grouping for browser sessions", () => {
     ]).find((a) => a.id === "browser:S")!;
     expect(browser.status).toBe(status);
     expect(browser.tone).toBe("amber");
-    expect(browser.category).toBe("failed");
+    expect(browser.statusKind).toBe("failed");
     const cmd = browser.timeline.find((t) => t.text.startsWith("Browser: click"))!;
     expect(cmd.text).toContain("429 POST https://costco.com");
     expect(cmd.text).toContain("(+1 more)");
@@ -172,20 +172,20 @@ describe("audit grouping for browser sessions", () => {
     {
       when: "a crash with a parting refusal", reason: "crashed", scopeViolation: true,
       failed_requests: [{ status: 599, method: "GET", origin: "https://dominos.com" }],
-      status: "Crashed", tone: "red", category: "failed", closeState: "bad",
+      status: "Crashed", tone: "red", statusKind: "failed", closeState: "bad",
       closeText: "Browser session closed (crashed) — refused: 599 GET https://dominos.com",
     },
     {
       when: "a crash with nothing left to say", reason: "crashed", scopeViolation: true, failed_requests: [],
-      status: "Crashed", tone: "red", category: "failed", closeState: "bad",
+      status: "Crashed", tone: "red", statusKind: "failed", closeState: "bad",
       closeText: "Browser session closed (crashed)",
     },
     {
       when: "an ordinary close", reason: "agent", scopeViolation: false, failed_requests: [],
-      status: "Closed", tone: "zinc", category: "other", closeState: "neutral",
+      status: "Closed", tone: "zinc", statusKind: "completed", closeState: "neutral",
       closeText: "Browser session closed (agent)",
     },
-  ])("$when reads as $status", ({ reason, scopeViolation, failed_requests, status, tone, category, closeState, closeText }) => {
+  ])("$when reads as $status", ({ reason, scopeViolation, failed_requests, status, tone, statusKind, closeState, closeText }) => {
     const acts = auditActivities([
       { event: "browser_command", session: "S", action: "goto", url: "https://dominos.com", ts: "2026-08-10T10:00:00Z" },
       ...(scopeViolation
@@ -197,7 +197,7 @@ describe("audit grouping for browser sessions", () => {
     expect(acts[0]!.tone).toBe(tone);
     // The bucket, not only the badge: they disagreed once already, and the
     // bucket is what an owner scanning for trouble actually filters on.
-    expect(acts[0]!.category).toBe(category);
+    expect(acts[0]!.statusKind).toBe(statusKind);
     const closeRow = acts[0]!.timeline.find((t) => t.text.includes("session closed"))!;
     expect(closeRow.state).toBe(closeState);
     // Which makes each row's name a claim the test reads: the parting refusal
@@ -219,7 +219,7 @@ describe("audit grouping for browser sessions", () => {
     const crash = acts.find((a) => a.id === "browser_crashed:1")!;
     expect(crash.status).toBe("Crashed");
     expect(crash.tone).toBe("red");
-    expect(crash.category).toBe("failed");
+    expect(crash.statusKind).toBe("failed");
     // The code is the only thing the host has to say about how it died.
     expect(crash.timeline[0]!.text).toBe("Browser crashed (code 9)");
     expect(crash.timeline[0]!.state).toBe("bad");
@@ -280,7 +280,7 @@ describe.each([
     // Green "Browsing" would tell the owner all is well when it is not.
     expect(browser.status).toBe(status);
     // ...and the Failed filter must show it, or they only find it by luck.
-    expect(browser.category).toBe("failed");
+    expect(browser.statusKind).toBe("failed");
     const line = browser.timeline.find((step) => step.text.includes(says))!;
     expect(line.state).toBe("bad");
     for (const fragment of mentions) expect(line.text).toContain(fragment);

@@ -9,7 +9,6 @@ import {
 } from "./approvals.js";
 
 import { el, icon } from "./dom.js";
-import { googleConnectorCard } from "./connectorsCard.js";
 import { singleFlight } from "./onboardingAction.js";
 import { renderVault, vaultConfirmLeave } from "./vault.js";
 import {
@@ -27,7 +26,43 @@ const NEW_LINE_VALUE = "__new_line__";
 // but boot must still RENDER that pane, and "already on this tab" now returns
 // early — so the starting value cannot be a tab boot might legitimately select.
 let currentTab = null;
-let filter = "all";
+// The Audit tab's two filters, one per column (viewModel.ts DecisionKind /
+// StatusKind). "any" is no filter.
+let decisionFilter = "any";
+let statusFilter = "any";
+const DECISION_FILTERS = [
+  ["any", "Any"], ["allowed", "Allowed"], ["denied", "Denied"], ["unanswered", "Unanswered"],
+];
+const STATUS_FILTERS = [
+  ["any", "Any"], ["completed", "Completed"], ["running", "Running"], ["blocked", "Blocked"], ["failed", "Failed"],
+];
+// The Date filter: rows at or after a cutoff. The presets are relative to
+// now; "since" is a fixed moment set by the Capabilities tab's "Show in
+// Audit" (the dismissal its count starts from) and listed in the menu only
+// while it is set.
+let dateFilter = "any";
+let dateSince = null;
+const DATE_FILTERS = [
+  ["any", "Any time"], ["1h", "Last hour"], ["today", "Today"], ["24h", "Last 24 hours"], ["7d", "Last 7 days"], ["30d", "Last 30 days"],
+];
+function dateCutoff(now = Date.now()) {
+  switch (dateFilter) {
+    case "1h": return now - 3_600_000;
+    case "today": { const d = new Date(now); d.setHours(0, 0, 0, 0); return d.getTime(); }
+    case "24h": return now - 24 * 3_600_000;
+    case "7d": return now - 7 * 86_400_000;
+    case "30d": return now - 30 * 86_400_000;
+    case "since": return dateSince ? new Date(dateSince).getTime() : null;
+    default: return null;
+  }
+}
+function sinceLabel(iso) {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "Since…";
+  // To the second, like the Time column: the cutoff is exact and the rows
+  // either side of it are often seconds apart.
+  return `Since ${d.toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit", second: "2-digit" })}`;
+}
 // The mounted Settings pane, while that tab is up. Holds a `refresh` that
 // updates the display nodes in place, so a relay reconnect cannot reset the
 // pane under someone reading it.
@@ -84,6 +119,8 @@ async function renderAudit() {
   searchInput.value = auditSearch;
   searchInput.addEventListener("input", () => { auditSearch = searchInput.value; refreshAudit(); });
 
+  // Two popup buttons, one per column; each reads "Decision" until a value
+  // is picked, then "Decision: Allowed". Rebuilt on every refresh.
   const chipsBox = el("div", { class: "chips" });
   const count = el("span", { class: "count" });
   const clearBtn = el("button", { class: "btn small", text: "Clear Log" });
@@ -121,13 +158,13 @@ async function renderAudit() {
   const tbody = el("tbody");
   const table = el("table", {}, [
     el("thead", {}, [el("tr", {}, [
-      el("th", { text: "Time" }), el("th", { text: "Status" }), el("th", { text: "Activity" }),
+      el("th", { text: "Time" }), el("th", { text: "Decision" }), el("th", { text: "Status" }), el("th", { text: "Activity" }),
     ])]),
     tbody,
   ]);
 
   auditMounted = {
-    listBox, detailScroll, count, chipsBox, clearBtn, table, tbody, rows: new Map(),
+    listBox, detailScroll, count, chipsBox, clearBtn, searchInput, table, tbody, rows: new Map(),
     liveBox, liveImg, liveDot, liveCapText, liveHasFrame: false,
   };
   await refreshAudit();
@@ -164,15 +201,24 @@ function wireSplitter(splitter, detailBox) {
 // newest row when it was pinned to the top, so streaming activity stays in view.
 async function refreshAudit(opts = {}) {
   if (!auditMounted) return;
-  const { listBox, detailScroll, count, chipsBox, clearBtn, table, tbody, rows } = auditMounted;
+  const { listBox, detailScroll, count, chipsBox, clearBtn, searchInput, table, tbody, rows } = auditMounted;
   const activities = await window.domo.auditActivities();
   clearBtn.disabled = activities.length === 0;
   const q = auditSearch.trim().toLowerCase();
+  const cutoff = dateCutoff();
   const shown = activities.filter((a) => {
-    const inCat = filter === "all" || a.category === filter;
+    const inCat =
+      (decisionFilter === "any" || a.decisionKind === decisionFilter) &&
+      (statusFilter === "any" || a.statusKind === statusFilter) &&
+      // The Capabilities tab counts by the block's own time, so its cutoff
+      // keys on that; the presets key on when the row began.
+      (cutoff === null || new Date(dateFilter === "since" ? (a.blockedAt || a.ts) : a.ts).getTime() >= cutoff);
+    // The same match viewModel.activityMatches makes: title, command, agent,
+    // goal, the permission a block named, and the timeline lines.
     const inSearch =
       !q ||
-      [a.title, a.command || "", a.agentDisplay || "", a.agentId || "", a.goal || ""]
+      [a.title, a.command || "", a.agentDisplay || "", a.agentId || "", a.goal || "", a.permission || "",
+        ...(a.timeline || []).map((s) => s.text)]
         .join(" ")
         .toLowerCase()
         .includes(q);
@@ -190,18 +236,52 @@ async function refreshAudit(opts = {}) {
   auditTopId = newTopId;
   const selected = shown.find((a) => a.id === selectedId) || null;
 
-  chipsBox.replaceChildren(...["all", "approved", "denied", "failed", "other"].map((f) => {
-    const chip = el("span", { class: "chip" + (filter === f ? " active" : ""), text: f[0].toUpperCase() + f.slice(1) });
-    chip.addEventListener("click", () => { filter = f; refreshAudit(); });
-    return chip;
-  }));
+  const filterButton = (name, options, current, set) => {
+    const label = options.find(([key]) => key === current)?.[1] ?? "Any";
+    const active = current !== "any";
+    const btn = el("button", {
+      class: "chip filter-btn" + (active ? " active" : ""),
+      attrs: { type: "button", "aria-haspopup": "menu" },
+    }, [
+      el("span", { text: active ? `${name}: ${label}` : name }),
+      el("span", { class: "filter-caret", text: "▾" }),
+    ]);
+    btn.addEventListener("click", () => {
+      openMenu(btn, options.map(([key, text]) => ({
+        label: text,
+        checked: key === current,
+        run: () => { set(key); refreshAudit(); },
+      })), { align: "left" });
+    });
+    return btn;
+  };
+  // "Clear" shows only while something narrows the list, and resets all of
+  // it: both filters and the search box.
+  const filtering = !!q || decisionFilter !== "any" || statusFilter !== "any" || dateFilter !== "any";
+  const clearFilters = el("button", { class: "cap-more filter-clear", text: "Clear", attrs: { type: "button" } });
+  clearFilters.addEventListener("click", () => {
+    decisionFilter = "any";
+    statusFilter = "any";
+    dateFilter = "any";
+    dateSince = null;
+    auditSearch = "";
+    searchInput.value = "";
+    refreshAudit();
+  });
+  const dateOptions = dateSince ? [...DATE_FILTERS, ["since", sinceLabel(dateSince)]] : DATE_FILTERS;
+  chipsBox.replaceChildren(
+    filterButton("Decision", DECISION_FILTERS, decisionFilter, (k) => { decisionFilter = k; }),
+    filterButton("Status", STATUS_FILTERS, statusFilter, (k) => { statusFilter = k; }),
+    filterButton("Date", dateOptions, dateFilter, (k) => { dateFilter = k; }),
+    ...(filtering ? [clearFilters] : []),
+  );
   count.textContent = `${shown.length} ${shown.length === 1 ? "activity" : "activities"}`;
 
   // Empty state — no rows to reconcile; drop any cached row nodes.
   if (!shown.length) {
     rows.clear();
     tbody.replaceChildren();
-    listBox.replaceChildren(el("div", { class: "empty", text: q || filter !== "all" ? "No matching activity." : "No activity yet." }));
+    listBox.replaceChildren(el("div", { class: "empty", text: filtering ? "No matching activity." : "No activity yet." }));
     detailScroll.replaceChildren(detailFor(selected));
     return;
   }
@@ -300,25 +380,49 @@ function hostOf(url) {
 // burst of streamed events never recreates (and thus never interrupts) the row.
 function createAuditRow(id) {
   const timeCw = el("div", { class: "cw" });
+  const decisionCw = el("div", { class: "cw" });
   const badgeCw = el("div", { class: "cw" });
   const iconWrap = el("span", { class: "ic-wrap" });
   const titleSpan = el("span", { class: "t-title" });
   const actCw = el("div", { class: "cw" }, [el("div", { class: "t-act" }, [iconWrap, titleSpan])]);
   const tr = el("tr", {}, [
     el("td", { class: "t-time" }, [timeCw]),
-    el("td", {}, [badgeCw]),
+    el("td", {}, [decisionCw]),
+    el("td", { class: "t-dec" }, [badgeCw]),
     el("td", {}, [actCw]),
   ]);
   // Select on mouse down (feels immediate, before the click completes).
   tr.addEventListener("mousedown", () => { selectedId = id; refreshAudit(); });
-  return { tr, timeCw, badgeCw, iconWrap, titleSpan, time: null, tone: null, status: null, title: null, kind: null };
+  return {
+    tr, timeCw, decisionCw, badgeCw, iconWrap, titleSpan,
+    time: null, decision: null, decisionTone: null, tone: null, status: null, title: null, kind: null,
+  };
+}
+
+// The Decision cell: who let this happen, as a pill — without the dot the
+// other tabs' pills carry, since the fill already says it. Empty for a row
+// that had no authorization step.
+function decisionMark(a) {
+  if (!a.decision) return el("span", { class: "dec-none" });
+  return el("span", { class: `badge b-${a.decisionTone || "zinc"}`, text: a.decision });
+}
+
+// The Status cell: what happened to the work, as a colored word rather than
+// a second pill. Empty when nothing ran.
+function statusPill(a) {
+  if (!a.status) return el("span", { class: "dec dec-none" });
+  return el("span", { class: `dec dec-${a.tone || "zinc"}`, text: a.status });
 }
 
 // Update a row's content in place, touching only what changed.
 function updateAuditRow(r, a) {
   if (r.time !== a.time) { r.timeCw.textContent = a.time; r.time = a.time; }
+  if (r.decisionTone !== a.decisionTone || r.decision !== a.decision) {
+    r.decisionCw.replaceChildren(decisionMark(a));
+    r.decisionTone = a.decisionTone; r.decision = a.decision;
+  }
   if (r.tone !== a.tone || r.status !== a.status) {
-    r.badgeCw.replaceChildren(badge(a.tone, a.status));
+    r.badgeCw.replaceChildren(statusPill(a));
     r.tone = a.tone; r.status = a.status;
   }
   if (r.kind !== a.kind) { r.iconWrap.replaceChildren(icon(a.kind)); r.kind = a.kind; }
@@ -370,8 +474,9 @@ function detailFor(a) {
   addMeta("Intent", a.intentId, true);
   if (a.exitCode !== null && a.exitCode !== undefined) addMeta("Exit", a.exitCode);
 
+  // The header repeats the row's two cells: the decision, then the outcome.
   const children = [
-    el("h3", {}, [badge(a.tone, a.status)]),
+    el("h3", { class: "act-head" }, [decisionMark(a), statusPill(a)]),
     a.command ? el("div", { class: "cmd", text: a.command }) : null,
     meta,
   ];
@@ -581,6 +686,54 @@ function externalBtn(label, key) {
   const btn = el("button", { class: "btn" }, [el("span", { text: label }), extArrow()]);
   btn.addEventListener("click", () => window.domo.openExternal(key));
   return btn;
+}
+
+/* A small menu under a "…" button: items as {label, run, disabled}. One open
+   at a time; a click anywhere else, Escape, or picking an item closes it.
+   Built like everything else here — nodes and textContent, no markup. */
+let openMenuNode = null;
+let openMenuAnchor = null;
+function closeMenu() {
+  if (!openMenuNode) return;
+  openMenuNode.remove();
+  openMenuNode = null;
+  openMenuAnchor = null;
+  document.removeEventListener("mousedown", onMenuOutside, true);
+  document.removeEventListener("keydown", onMenuKey, true);
+}
+function onMenuOutside(e) { if (openMenuNode && !openMenuNode.contains(e.target)) closeMenu(); }
+function onMenuKey(e) { if (e.key === "Escape") { e.preventDefault(); closeMenu(); } }
+function openMenu(anchor, items, { align = "right" } = {}) {
+  // The same button again closes what it opened.
+  if (openMenuAnchor === anchor) { closeMenu(); return; }
+  closeMenu();
+  // A list where any item says whether it is checked is a pick-one list:
+  // every item leaves room for the mark, and the current one shows it.
+  const checkable = items.some((item) => item.checked !== undefined);
+  const menu = el("div", { class: "menu", attrs: { role: "menu" } }, items.map((item) => {
+    const b = el("button", {
+      class: "menu-item" + (checkable ? " checkable" : "") + (item.checked ? " checked" : ""),
+      text: item.label,
+      attrs: { type: "button", role: checkable ? "menuitemradio" : "menuitem", ...(checkable ? { "aria-checked": String(item.checked === true) } : {}) },
+    });
+    b.disabled = item.disabled === true;
+    b.addEventListener("click", () => { closeMenu(); item.run(); });
+    return b;
+  }));
+  // Below the anchor, in viewport coordinates (the panel scrolls inside the
+  // window, not the window itself). A "•••" at a row's right edge hangs
+  // right-aligned; a filter button at the toolbar's left hangs from its left
+  // edge, where the eye already is.
+  const r = anchor.getBoundingClientRect();
+  menu.style.top = `${r.bottom + 4}px`;
+  if (align === "left") menu.style.left = `${r.left}px`;
+  else menu.style.right = `${document.documentElement.clientWidth - r.right}px`;
+  document.body.appendChild(menu);
+  openMenuNode = menu;
+  openMenuAnchor = anchor;
+  document.addEventListener("mousedown", onMenuOutside, true);
+  document.addEventListener("keydown", onMenuKey, true);
+  menu.querySelector("button:not(:disabled)")?.focus();
 }
 
 /** One titled card: a prominent title, an optional description, then the body.
@@ -1905,6 +2058,394 @@ async function refreshUpdateBanner() {
 
 // ---- Settings ----
 
+// ---- Capabilities: what this Mac lets agents do, and what that stopped ----
+// Everything renders from one shape (capabilitiesModel.ts, over IPC): the
+// sections, each row's status and count and one action, the banner, and the
+// badge. The renderer keeps nothing of its own but which rows are open.
+
+let capabilitiesMounted = null;
+const capCount = document.getElementById("capCount");
+
+/** The tab's badge, read fresh: rows needing a decision, or none. */
+async function refreshCapabilitiesBadge(view) {
+  try {
+    const v = view ?? (await window.domo.capabilitiesGet()).view;
+    const n = v?.badge ?? 0;
+    capCount.textContent = String(n);
+    capCount.hidden = n === 0;
+  } catch {
+    capCount.hidden = true;
+  }
+}
+
+/** The audit tab, filtered to what this Mac blocked: the Blocked chip, and
+    the search box set to `term` — a switch's name from a row's button, or
+    cleared from the banner's, so a stale search never hides the rows. */
+// The Capabilities tab's "Show in Audit": the blocked rows, narrowed to one
+// switch by `term` when a row asked, and to the moment the count started
+// from by `since` — so the list is exactly the requests it counted.
+async function showAuditBlocked(term = "", since = null) {
+  decisionFilter = "any";
+  statusFilter = "blocked";
+  dateSince = since;
+  dateFilter = since ? "since" : "any";
+  auditSearch = term;
+  if (await selectTab("audit")) window.domo.uiSetTab("audit");
+}
+
+/** How long ago, in words: "just now", "4 minutes ago", "3 hours ago",
+    "yesterday", "5 days ago". Coarse on purpose — it says whether an agent
+    is stuck right now or gave up last night, nothing finer. */
+function agoText(iso) {
+  const t = new Date(iso).getTime();
+  if (Number.isNaN(t)) return "";
+  const s = Math.max(0, Math.round((Date.now() - t) / 1000));
+  if (s < 90) return "just now";
+  const m = Math.round(s / 60);
+  if (m < 60) return `${m} minutes ago`;
+  const h = Math.round(m / 60);
+  if (h < 24) return h === 1 ? "an hour ago" : `${h} hours ago`;
+  const d = Math.round(h / 24);
+  return d === 1 ? "yesterday" : `${d} days ago`;
+}
+
+function whenText(iso) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  const sameDay = d.toDateString() === new Date().toDateString();
+  return sameDay
+    ? d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })
+    : d.toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+}
+
+async function renderCapabilities() {
+  const panel = el("div", { class: "panel settings" });
+  view.replaceChildren(panel);
+  const openRows = new Set();
+  // Which groups are open. Seeded from the model on first sight of each
+  // group (a group with blocked requests inside opens itself), then the
+  // owner's clicks own it for the life of this mount.
+  const openGroups = new Map();
+  // macOS's own icons per row key, from main; kept across redraws (an act
+  // answers with the view alone) and refreshed on a full read.
+  let icons = {};
+  const iconCell = (key) => {
+    const src = icons[key];
+    return src
+      ? el("img", { class: "cap-icon", attrs: { src, alt: "" } })
+      : el("span", { class: "cap-icon" });
+  };
+
+    // The same connector state and card used by setup, mounted into a stable
+  // box so a poll or account action redraws only this section. `loading` is a
+  // renderer-only placeholder; main's state deliberately contains display
+  // data only and does not need to know whether this pane has painted yet.
+  let connectorState = {
+    busy: true,
+    message: "",
+    noteKind: "error",
+    loading: true,
+    google: { accounts: [], connecting: false },
+  };
+  const connectorBox = el("div", { class: "settings-connectors" });
+  const connectorNote = el("p", {
+    class: "connector-note",
+    attrs: { role: "status" },
+  });
+  const connectorMutate = singleFlight(() => connectorState.busy === true);
+  const connectorActions = {
+    connect: () => connectorMutate(async () => {
+      applyConnectors(await window.domo.connectorsConnect());
+    }),
+    disconnect: (account) => connectorMutate(async () => {
+      applyConnectors(await window.domo.connectorsDisconnect(account));
+    }),
+    setDefault: (account) => connectorMutate(async () => {
+      applyConnectors(await window.domo.connectorsSetDefault(account));
+    }),
+  };
+  const drawConnectors = () => {
+    connectorBox.replaceChildren(connectorRow(connectorState, connectorActions));
+    connectorNote.textContent = connectorState.message;
+    connectorNote.hidden = !connectorState.message;
+    connectorNote.className = `connector-note ${connectorState.noteKind}`;
+  };
+  const applyConnectors = (next) => {
+    if (!next) return;
+    connectorState = { ...next, loading: false };
+    drawConnectors();
+  };
+  const refreshConnectors = async () => {
+    applyConnectors(await window.domo.connectorsRefresh());
+  };
+  drawConnectors();
+  void refreshConnectors();
+
+  const draw = (v) => {
+    refreshCapabilitiesBadge(v);
+    const nodes = [];
+    if (v.banner) {
+      const summary = v.banner.summary.map((s) => `${s.count} ${s.title}`).join(", ");
+      const one = v.banner.count === 1;
+      const oneSwitch = v.banner.switches === 1;
+      // Two actions, both buttons: dismissing resets the whole tab (not just
+      // this strip), which is more than an × should carry.
+      const showInAudit = el("button", { class: "btn small", text: "Show in Audit", attrs: { type: "button" } });
+      showInAudit.addEventListener("click", () => showAuditBlocked("", v.banner.since));
+      const close = el("button", { class: "btn small", text: "Dismiss", attrs: { type: "button" } });
+      close.addEventListener("click", async () => draw(await window.domo.capabilitiesBannerSeen()));
+      nodes.push(el("div", { class: "cap-banner" }, [
+        icon("warning", { class: "ico cap-banner-icon" }),
+        el("div", {}, [
+          // Leads with the badge's number, then what those switches did.
+          el("div", { class: "bt", text:
+            `${v.banner.switches} capabilit${oneSwitch ? "y needs" : "ies need"} to be allowed. ` +
+            `${oneSwitch ? "It" : "They"} blocked ${v.banner.count} request${one ? "" : "s"}, ` +
+            `${one ? "" : "the latest "}${agoText(v.banner.last)}.` }),
+          el("div", { class: "bs", text: `${summary}.` }),
+        ]),
+        el("div", { class: "spacer" }),
+        showInAudit,
+        close,
+      ]));
+    }
+    for (const section of v.sections) {
+      nodes.push(group(section.title, section.description, section.items.map((item) =>
+        item.kind === "group" ? capabilityGroup(item) : capabilityRow(item),
+      )));
+    }
+    nodes.push(group("Connected Accounts", null, [connectorBox, connectorNote]));
+    panel.replaceChildren(...nodes);
+  };
+
+  const act = async (key, button) => {
+    button.disabled = true;
+    const was = button.textContent;
+    button.textContent = "Asking macOS…";
+    try {
+      draw(await window.domo.capabilitiesAct(key));
+    } catch {
+      button.disabled = false;
+      button.textContent = was;
+    }
+  };
+
+  const capabilityRow = (r) => {
+    // Three dots: green works; red will NOT work as things stand, whether
+    // macOS refused it or has simply never been asked — an agent's request
+    // fails either way until the owner acts; grey when this Mac cannot tell
+    // (an app that is not open, no helper). The tooltip keeps the words.
+    const dotClass =
+      r.status === "granted" ? " on"
+      : r.needsAttention || r.status === "denied" || r.status === "not_asked" ? " off"
+      : "";
+    let action;
+    // A word, not a button: nothing to press once it is granted.
+    if (r.status === "granted") action = el("span", { class: "cap-granted", text: "Granted" });
+    else if (r.actionLabel) {
+      // Plain, whatever the row's state: the amber dot and the request line
+      // already say which rows need a decision, and a blue button would read
+      // as "the one thing to do here" when every row is the owner's call.
+      action = el("button", { class: "btn", text: r.actionLabel });
+      action.addEventListener("click", () => act(r.key, action));
+    } else action = el("span");
+    // What the switch stopped, as a third line under the name — the count,
+    // when, who, and the link to the requests themselves (an explicit link:
+    // a row that merely opened on click never read as something to click).
+    // Nothing at all for a row nothing has hit — or for one that is granted
+    // now: what it stopped before the grant is history, and the Audit tab's.
+    let asks = null;
+    if (r.count > 0 && r.status !== "granted") {
+      const more = el("button", { class: "cap-more", text: openRows.has(r.key) ? "Hide blocked requests" : "See blocked requests…" });
+      more.addEventListener("click", async () => {
+        if (openRows.has(r.key)) openRows.delete(r.key); else openRows.add(r.key);
+        draw(await window.domo.capabilitiesGet().then((c) => c.view));
+      });
+      asks = el("div", { class: "cap-sub cap-asks" }, [
+        el("span", { class: "cap-count", text: `${r.count} request${r.count === 1 ? "" : "s"}` }),
+        el("span", { text: ` · last ${whenText(r.last)}${r.agents.length ? ` · ${r.agents.join(", ")}` : ""} · ` }),
+        more,
+      ]);
+    }
+    // A row showing blocked requests points at its button: the grant panel's
+    // filled arrow, turned to the right, nudging toward it (CSS animates it;
+    // reduced-motion holds it still). Only while there is something to do.
+    const pointed = asks && r.actionLabel
+      ? el("span", { class: "cap-action" }, [icon("nudgeArrow", { class: "cap-nudge", fill: true }), action])
+      : action;
+    if (asks && r.actionLabel) action.classList.add("attention");
+    const children = [
+      el("span", { class: "status-dot" + dotClass, attrs: { title: r.statusText } }),
+      iconCell(r.key),
+      el("div", {}, [
+        el("div", { class: "cap-name", text: r.title }),
+        r.detail ? el("div", { class: "cap-sub", text: r.detail }) : null,
+        asks,
+      ]),
+      pointed,
+    ];
+    if (r.count > 0 && r.status !== "granted" && openRows.has(r.key)) children.push(expanded(r));
+    return el("div", { class: "cap-row" }, children);
+  };
+
+  /* The Google connector in a switch row's clothes, so Connected Accounts
+     reads like This Mac: the brand mark where a row keeps its icon, the
+     bold name and a line under it, and an external-link button on the
+     right — connecting opens Google's consent page in the browser. The
+     setup wizard keeps its own card (connectorsCard.js); the state and the
+     actions are the same. Connected accounts list under the row. */
+  /* Google's four-colour G, as on their own app icon: a white rounded tile
+     with the standard sign-in mark. Built with createElementNS like every
+     glyph in dom.js — nothing here goes through innerHTML. */
+  function googleMark() {
+    const ns = "http://www.w3.org/2000/svg";
+    const svg = document.createElementNS(ns, "svg");
+    svg.setAttribute("viewBox", "0 0 48 48");
+    svg.setAttribute("class", "cap-google-g");
+    svg.setAttribute("aria-hidden", "true");
+    const paths = [
+      ["#EA4335", "M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z"],
+      ["#4285F4", "M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z"],
+      ["#FBBC05", "M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z"],
+      ["#34A853", "M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z"],
+    ];
+    for (const [fill, d] of paths) {
+      const path = document.createElementNS(ns, "path");
+      path.setAttribute("fill", fill);
+      path.setAttribute("d", d);
+      svg.appendChild(path);
+    }
+    return el("span", { class: "cap-icon cap-brand" }, [svg]);
+  }
+
+  // A declaration, not a const: the connectors block above draws itself the
+  // moment it is set up, before this line would run.
+  function connectorRow(state, actions) {
+    const google = state.google;
+    const busy = state.busy === true;
+    const connecting = google.connecting === true;
+    const button = el("button", { class: "btn", attrs: { type: "button" } }, [
+      el("span", { text: connecting ? "Connecting…" : state.loading ? "Checking…" : google.accounts.length ? "Add another" : "Connect" }),
+      connecting || state.loading ? null : extArrow(),
+    ]);
+    button.disabled = busy || connecting || state.loading;
+    if (!button.disabled) button.addEventListener("click", actions.connect);
+    // Each account as a row of its own under the Google row, its person
+    // glyph in the icon column and its address lined up with "Google", the
+    // default's green pill beside the address, and a "…" menu on the right
+    // holding the two things that can be done to it.
+    const accounts = google.accounts.map((account) => {
+      const menuButton = el("button", { class: "btn cap-account-menu-btn", attrs: { type: "button", "aria-label": "Account actions", "aria-haspopup": "menu" } }, [
+        el("span", { text: "•••" }),
+      ]);
+      menuButton.disabled = busy;
+      menuButton.addEventListener("click", (e) => {
+        e.stopPropagation();
+        openMenu(menuButton, [
+          { label: "Set as Default", disabled: account.isDefault, run: () => actions.setDefault(account.email) },
+          { label: "Remove Account", run: () => actions.disconnect(account.email) },
+        ]);
+      });
+      return el("div", { class: "cap-row cap-account-row" }, [
+        el("span", { class: "cap-icon cap-person" }, [icon("user", { strokeWidth: "2" })]),
+        el("div", { class: "cap-account-line" }, [
+          // Server data is assigned through textContent by el().
+          el("span", { class: "cap-name cap-account-email", text: account.email }),
+          account.isDefault ? el("span", { class: "badge b-zinc cap-default-pill", text: "Default" }) : null,
+        ]),
+        menuButton,
+      ]);
+    });
+    const head = el("div", { class: "cap-row" }, [
+      el("span", { class: "status-dot" + (google.accounts.length ? " on" : "") }),
+      googleMark(),
+      el("div", {}, [
+        el("div", { class: "cap-name", text: "Google" }),
+        el("div", { class: "cap-sub", text: "Gmail, Calendar, and Drive, through accounts you connect." }),
+      ]),
+      button,
+    ]);
+    return el("div", { class: "cap-group open" }, [
+      head,
+      accounts.length ? el("div", { class: "cap-account-rows" }, accounts) : null,
+    ]);
+  }
+
+  /* A disclosure of several switches of one kind: a chevron, the name,
+     "N of M granted" on the right, and the rows beneath when open. */
+  const capabilityGroup = (g) => {
+    if (!openGroups.has(g.key)) openGroups.set(g.key, g.expandedByDefault);
+    const open = openGroups.get(g.key);
+    // The row grid's own shape — the chevron where a row keeps its dot, the
+    // name and line where a row keeps its own, the count where a row keeps
+    // its button — so a group line is exactly as tall as a switch's.
+    const head = el("button", { class: "cap-row cap-group-head", attrs: { type: "button", "aria-expanded": String(open) } }, [
+      el("span", { class: "cap-chevron-cell" }, [icon("chevron", { class: "ico cap-chevron" + (open ? " open" : "") })]),
+      iconCell(`group:${g.key}`),
+      el("div", {}, [
+        el("div", { class: "cap-name", text: g.title }),
+        el("div", { class: "cap-sub", text: g.description }),
+      ]),
+      el("span", { class: "cap-group-count", text: `${g.granted} of ${g.total} granted` }),
+    ]);
+    head.addEventListener("click", async () => {
+      openGroups.set(g.key, !open);
+      draw(await window.domo.capabilitiesGet().then((c) => c.view));
+    });
+    return el("div", { class: "cap-group" + (open ? " open" : "") }, [
+      head,
+      open ? el("div", { class: "cap-group-rows" }, g.rows.map((r) => capabilityRow(r))) : null,
+    ]);
+  };
+
+  const expanded = (r) => {
+    const reqs = r.requests.map((q) => el("div", { class: "cap-req" }, [
+      el("span", { class: "t", text: whenText(q.at) }),
+      el("span", {}, [
+        el("span", { class: "who", text: q.agent ?? "an agent" }),
+        el("span", { class: "goal", text: q.goal ? ` — ${q.goal}` : q.request ? ` — ${q.request}` : "" }),
+      ]),
+    ]));
+    const sentence = r.requests.find((q) => q.ownerAction)?.ownerAction ?? null;
+    // The banner's pair, for this one switch: Dismiss clears these requests
+    // from the tab (the Audit tab keeps them) until a newer block lands.
+    const inAudit = el("button", { class: "btn small", text: "Show in Audit", attrs: { type: "button" } });
+    inAudit.addEventListener("click", () => showAuditBlocked(r.title, r.since));
+    const notNow = el("button", { class: "btn small", text: "Dismiss", attrs: { type: "button" } });
+    notNow.addEventListener("click", async () => draw(await window.domo.capabilitiesDismiss(r.key)));
+    return el("div", { class: "cap-expand" }, [
+      el("p", { class: "lbl", text: "Blocked requests" }),
+      ...reqs,
+      ...(sentence
+        ? [el("div", { class: "cap-sentence" }, [el("p", { class: "lbl", text: "What the agent was told" }), el("span", { text: sentence })])]
+        : []),
+      el("div", { class: "cap-actions" }, [
+        ...(r.key === "full_disk_access" && r.status !== "granted"
+          ? [el("span", { class: "badge b-amber" }, [el("span", { class: "dot" }), el("span", { text: "Quit and reopen after granting" })])]
+          : []),
+        el("div", { class: "spacer" }),
+        inAudit,
+        notNow,
+      ]),
+    ]);
+  };
+
+  const load = async () => {
+    const c = await window.domo.capabilitiesGet();
+    icons = c.icons ?? icons;
+    draw(c.view);
+  };
+  await load();
+  capabilitiesMounted = {
+    applyConnectors,
+    refresh: async () => {
+      await load();
+      await refreshConnectors();
+    },
+  };
+}
+
 async function renderSettings() {
   const generation = ++settingsRenderGeneration;
   // The Plow account. There is no credential field and no URL field here: the
@@ -1960,51 +2501,6 @@ async function renderSettings() {
     );
   };
   await refreshAccount();
-
-  // The same connector state and card used by setup, mounted into a stable
-  // box so a poll or account action redraws only this section. `loading` is a
-  // renderer-only placeholder; main's state deliberately contains display
-  // data only and does not need to know whether this pane has painted yet.
-  let connectorState = {
-    busy: true,
-    message: "",
-    noteKind: "error",
-    loading: true,
-    google: { accounts: [], connecting: false },
-  };
-  const connectorBox = el("div", { class: "settings-connectors" });
-  const connectorNote = el("p", {
-    class: "connector-note",
-    attrs: { role: "status" },
-  });
-  const connectorMutate = singleFlight(() => connectorState.busy === true);
-  const connectorActions = {
-    connect: () => connectorMutate(async () => {
-      applyConnectors(await window.domo.connectorsConnect());
-    }),
-    disconnect: (account) => connectorMutate(async () => {
-      applyConnectors(await window.domo.connectorsDisconnect(account));
-    }),
-    setDefault: (account) => connectorMutate(async () => {
-      applyConnectors(await window.domo.connectorsSetDefault(account));
-    }),
-  };
-  const drawConnectors = () => {
-    connectorBox.replaceChildren(googleConnectorCard(connectorState, connectorActions));
-    connectorNote.textContent = connectorState.message;
-    connectorNote.hidden = !connectorState.message;
-    connectorNote.className = `connector-note ${connectorState.noteKind}`;
-  };
-  const applyConnectors = (next) => {
-    if (!next) return;
-    connectorState = { ...next, loading: false };
-    drawConnectors();
-  };
-  const refreshConnectors = async () => {
-    applyConnectors(await window.domo.connectorsRefresh());
-  };
-  drawConnectors();
-  void refreshConnectors();
 
   // Software updates: version + status + a check/restart action + the two
   // automation preferences. Everything renders from one updates:get shape.
@@ -2115,55 +2611,6 @@ async function renderSettings() {
   });
   applyStats();
 
-  // Capabilities: what macOS lets the app itself reach. Full Disk Access has
-  // no prompt an app can raise — the only grant path is in System Settings —
-  // so the button starts main's grant flow (fdaGrantFlow), ported from
-  // PermissionFlow (see permissionFlow.ts): the pane opens, a small floating
-  // panel with the app as a native drag source follows the System Settings
-  // window, and the status re-probes on a short interval so the grant lands
-  // green without waiting for the boot()-installed focus refresh. The drag
-  // source lives ONLY in that panel — a tile here would be a second copy of
-  // the same gesture, in the window System Settings is about to cover.
-  const capDot = el("span", { class: "status-dot" });
-  const capStatus = el("span", { class: "faint", text: "…" });
-
-  // While the flow runs, this card re-probes every 2s so its own dot flips
-  // green in step with the floating panel main is running. Display only —
-  // the flow's lifecycle (panel, tracker, timeout) lives in main's
-  // fdaGrantFlow. Ends on grant, on leaving this tab (the tick sees
-  // currentTab moved on), or after 3 minutes.
-  let fdaGranted = false;
-  let grantTicks = 0;
-  let grantTimer = null;
-  const stopGrantFlow = () => {
-    if (grantTimer === null) return;
-    clearInterval(grantTimer);
-    grantTimer = null;
-  };
-  const applyCapabilities = (caps) => {
-    fdaGranted = caps.fullDiskAccess;
-    capDot.className = "status-dot" + (caps.fullDiskAccess ? " on" : "");
-    capStatus.textContent = caps.fullDiskAccess ? "Granted" : "Not granted";
-    if (caps.fullDiskAccess) stopGrantFlow();
-  };
-  const startGrantFlow = () => {
-    if (grantTimer !== null || fdaGranted) return;
-    grantTicks = 0;
-    grantTimer = setInterval(async () => {
-      if (currentTab !== "settings" || ++grantTicks > 90) return stopGrantFlow();
-      applyCapabilities(await window.domo.capabilitiesGet());
-    }, 2000);
-  };
-  applyCapabilities(await window.domo.capabilitiesGet());
-  // Ellipsis, not ↗ (see extArrow): the click only starts this — the user
-  // still has to grant over there, by dragging the app into the list or
-  // flipping the switch. Main opens the pane and floats the helper panel.
-  const openFullDisk = el("button", { class: "btn", text: "Open System Settings…" });
-  openFullDisk.addEventListener("click", () => {
-    window.domo.fullDiskGrantFlow();
-    startGrantFlow();
-  });
-
   // One Support destination: icon, title + blurb, and a button that asks main
   // to open the URL behind `key` — the renderer never holds the URL itself.
   const supportRow = (iconNode, title, desc, buttonLabel, key) => {
@@ -2182,11 +2629,8 @@ async function renderSettings() {
   // What a status change re-reads: display nodes only, every one of them read
   // back from main rather than remembered here.
   const mounted = {
-    applyConnectors,
     refresh: async () => {
       await refreshAccount();
-      await refreshConnectors();
-      applyCapabilities(await window.domo.capabilitiesGet());
       launch = await window.domo.launchGet();
       applyLaunch();
       awake = await window.domo.keepAwakeGet();
@@ -2213,25 +2657,6 @@ async function renderSettings() {
     group("Plow Account", "The account agents reach this Mac through.", [
       accountBox,
       el("div", { class: "row" }, [relayNote, el("div", { class: "spacer" }), viewAccount, signOut, signIn]),
-    ]),
-    group("Connected accounts", null, [connectorBox, connectorNote]),
-    group("Capabilities", "Extended capabilities that let Plow Latch reach parts of this Mac that macOS blocks by default.", [
-      el("div", { class: "support-row" }, [
-        el("div", { class: "support-copy" }, [
-          el("div", { class: "cap-title" }, [
-            el("span", { class: "support-title", text: "Full Disk Access" }),
-            capDot,
-            capStatus,
-          ]),
-          el("p", { class: "faint", text:
-            "macOS blocks Messages, Mail, Safari data, and Time Machine backups until you grant this. " +
-            "Agents need it to do things like read a sign-in code texted to you in Messages, or search your Mail archive for a receipt. " +
-            "To grant it, click Open System Settings and drag the app from the panel that appears into the Full Disk Access list. " +
-            "macOS may ask to quit and reopen the app." }),
-        ]),
-        el("div", { class: "spacer" }),
-        openFullDisk,
-      ]),
     ]),
     group("Availability", "Agents can reach this Mac only while Plow Latch is running and the Mac is awake.", [
       el("div", { class: "support-row" }, [
@@ -2294,6 +2719,7 @@ function render() {
   else if (currentTab === "audit") renderAudit();
   else if (currentTab === "rules") renderRules();
   else if (currentTab === "vault") renderVault(view, () => currentTab === "vault");
+  else if (currentTab === "capabilities") renderCapabilities();
   else if (currentTab === "settings") renderSettings();
 }
 
@@ -2316,6 +2742,7 @@ async function selectTab(tab) {
   }
   if (tab !== "audit") auditMounted = null; // avoid stale refreshes into detached nodes
   if (tab !== "settings") settingsMounted = null;
+  if (tab !== "capabilities") capabilitiesMounted = null;
   if (tab !== "agents") agentsMounted = null;
   if (tab !== "rules") rulesMounted = null;
   for (const b of seg.querySelectorAll("button")) b.classList.toggle("active", b.dataset.tab === tab);
@@ -2332,7 +2759,13 @@ seg.addEventListener("mousedown", async (e) => {
   if (await selectTab(btn.dataset.tab)) window.domo.uiSetTab(btn.dataset.tab); // persist across launches
 });
 
-window.domo.onAuditChanged(() => { if (currentTab === "audit") refreshAudit({ followTop: true }); });
+window.domo.onAuditChanged(() => {
+  if (currentTab === "audit") refreshAudit({ followTop: true });
+  // A block by this Mac is an audit row, so this is also when the tab's
+  // badge (and an open Capabilities tab) can change.
+  if (currentTab === "capabilities") capabilitiesMounted?.refresh();
+  else refreshCapabilitiesBadge();
+});
 window.domo.onStatusChanged(() => {
   refreshStatus();
   // Signing in or out changes what the account group says, so an open Settings
@@ -2347,7 +2780,7 @@ window.domo.onStatusChanged(() => {
 // Minting or dismissing a credential redraws only the Agents flow.
 window.domo.onConnectChanged(() => { agentsMounted?.refreshConnect(); });
 window.domo.onConnectorsChanged((state) => {
-  if (currentTab === "settings") settingsMounted?.applyConnectors(state);
+  if (currentTab === "capabilities") capabilitiesMounted?.applyConnectors(state);
 });
 window.domo.onUpdatesChanged(() => {
   refreshUpdateBanner();
@@ -2366,6 +2799,13 @@ window.domo.onConfirmLeave(async () => {
 window.domo.onShowSettings(async () => {
   if (await selectTab("settings")) window.domo.updatesCheck();
 });
+// The tray item and the notification for a block by this Mac land here —
+// on the switch's row when the block named one, else on the Audit tab's
+// Blocked view, where the row carries the sentence that fixes it.
+window.domo.onShowCapabilities(async () => {
+  if (await selectTab("capabilities")) window.domo.uiSetTab("capabilities");
+});
+window.domo.onShowAuditBlocked(() => showAuditBlocked());
 // Another app handed main a credential exchange (Apple Passwords' export):
 // land on the Vault tab, whose render finds the staged preview and opens the
 // Import sheet on it. Already there means re-render — selectTab dedupes and
@@ -2375,11 +2815,13 @@ window.domo.onVaultExchange(async () => {
   if (currentTab !== "vault") await selectTab("vault");
   else if (await vaultConfirmLeave()) render();
 });
-// Granting Full Disk Access happens in System Settings, and no event reaches
-// this app when it does — the moment the pane can learn the outcome is when
+// Granting a permission happens in System Settings, and no event reaches
+// this app when it does — the moment a pane can learn the outcome is when
 // the person comes back.
 window.addEventListener("focus", () => {
   if (currentTab === "settings") settingsMounted?.refresh();
+  if (currentTab === "capabilities") capabilitiesMounted?.refresh();
+  else refreshCapabilitiesBadge();
 });
 
 // Restore the last-selected tab (falls back to the HTML default on any miss).
@@ -2387,8 +2829,9 @@ async function boot() {
   refreshStatus();
   refreshUpdateBanner();
   const saved = await window.domo.uiGetTab();
-  const known = ["agents", "audit", "rules", "vault", "settings"];
+  const known = ["agents", "audit", "rules", "vault", "capabilities", "settings"];
   selectTab(known.includes(saved) ? saved : "audit");
+  refreshCapabilitiesBadge();
   // A credential exchange can arrive before this window exists (the system
   // launches the app for it); the push above then had no listener, so ask.
   // Only when landing elsewhere: a boot onto the Vault tab found it already.

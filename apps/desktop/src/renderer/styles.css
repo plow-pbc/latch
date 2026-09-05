@@ -21,6 +21,9 @@
   --zinc-bg: #f4f4f5; --zinc-fg: #52525b; --zinc-bd: #e4e4e7;
   /* Light enough to read against the --blue-fg primary button. */
   --focus: #60a5fa;
+  /* The Capabilities tab's "will not work" dot: the text red lifted and
+     desaturated, so a column of them reads as status rather than alarm. */
+  --dot-off: #d9555b;
   --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
   --sans: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", Roboto, sans-serif;
 }
@@ -36,6 +39,7 @@
     --blue-bg: #0c1b33; --blue-fg: #93c5fd; --blue-bd: #1e3a8a;
     --zinc-bg: #1c1c20; --zinc-fg: #a1a1aa; --zinc-bd: #27272a;
     --focus: #93c5fd;
+    --dot-off: #e47278;
   }
 }
 
@@ -119,6 +123,23 @@ body {
   cursor: pointer;
 }
 .seg button.active { background: var(--card); color: var(--fg); box-shadow: var(--shadow); }
+/* The Capabilities tab's badge: rows needing a decision, not events. Amber,
+   because a block by this Mac is nobody refusing — the audit row's tone. */
+.tabcount {
+  /* A fixed 16px box, as wide as it is tall at minimum: one digit is a
+     circle, two or more stretch it into a pill. Centred on the label's cap
+     height, not sat on its baseline — an inline box with padding hangs
+     below the text otherwise. */
+  display: inline-flex; align-items: center; justify-content: center;
+  vertical-align: middle; position: relative; top: -1px;
+  height: 16px; min-width: 16px; padding: 0 5px; box-sizing: border-box;
+  margin-left: 6px;
+  font-size: 10px; font-weight: 700; line-height: 1;
+  border-radius: 999px;
+  background: var(--amber-fg); color: var(--card);
+  font-variant-numeric: tabular-nums;
+}
+.tabcount[hidden] { display: none; }
 
 .toolbar {
   display: flex;
@@ -151,6 +172,13 @@ body {
   user-select: none;
 }
 .chip.active { background: var(--sel); color: var(--blue-fg); border-color: var(--blue-bd); }
+/* The Audit tab's filter buttons: a chip that opens a menu. */
+.filter-btn {
+  display: inline-flex; align-items: center; gap: 5px;
+  font: inherit; background: transparent; appearance: none; white-space: nowrap;
+}
+.filter-caret { font-size: 10px; opacity: 0.7; }
+.filter-clear { margin-left: 4px; }
 .spacer { flex: 1; }
 .count { color: var(--faint); }
 .status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--faint); display: inline-block; }
@@ -226,6 +254,28 @@ td { padding: 9px 12px; vertical-align: middle; }
    clip happens here, since a table row won't shrink below its content). */
 .cw { display: block; }
 .t-time { color: var(--faint); white-space: nowrap; font-variant-numeric: tabular-nums; }
+/* The Status cell: a colored word with a dot, deliberately not a pill (see
+   statusPill in main.js). Tones match the badge's. */
+.t-dec { white-space: nowrap; }
+.dec {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  color: var(--zinc-fg);
+}
+/* A good outcome is the expected one, so it reads as ordinary text; only
+   trouble is tinted. */
+.dec-green { color: var(--fg); }
+.dec-red { color: var(--red-fg); }
+.dec-amber { color: var(--amber-fg); }
+.dec-blue { color: var(--blue-fg); }
+.dec-zinc { color: var(--muted); }
+/* An empty Decision or Status cell keeps the row's height without a pill. */
+.dec-none { display: inline-block; min-height: 1em; }
+.act-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .t-act { display: flex; align-items: center; gap: 8px; }
 /* Table-only: a long activity title (a multi-line request or a URL with no
    spaces) shows at most 4 lines, then is cut off with an ellipsis. The detail
@@ -374,14 +424,148 @@ textarea.text { min-height: 70px; resize: vertical; }
 .support-copy { min-width: 0; }
 .support-title { font-weight: 600; margin-bottom: 2px; }
 
-/* Capabilities: the row is a support-row; this adds the inline status beside
-   the title, reusing the titlebar's connection dot. */
-.cap-title { display: flex; align-items: center; gap: 7px; margin-bottom: 2px; }
-.cap-title .support-title { margin-bottom: 0; }
-.cap-title .status-dot { flex: none; }
-/* The from-source note sits right under the Launch at Login checkbox line;
-   `.item p` zeroes margins, so it asks for its blank line. */
-.item p.cap-note { margin-top: 8px; }
+/* The Capabilities tab (capabilitiesModel.ts). Dots: green granted, red
+   will not work as things stand (refused, or never asked), grey unknown. */
+.status-dot.off { background: var(--dot-off); }
+.cap-banner {
+  display: flex; align-items: center; gap: 12px;
+  padding: 10px 14px; margin-bottom: 14px;
+  border-radius: var(--radius);
+  border: 1px solid var(--amber-bd); background: var(--amber-bg); color: var(--amber-fg);
+}
+.cap-banner-icon { width: 18px; height: 18px; flex: none; stroke-width: 2; }
+.cap-banner .bt { font-weight: 600; }
+.cap-banner .bs { opacity: 0.85; font-size: 12px; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cap-banner > div { min-width: 0; }
+.cap-banner .spacer { flex: 1; }
+/* The strip's two actions wear the ordinary button, in the strip's ink. */
+.cap-banner .btn { color: inherit; border-color: var(--amber-bd); background: transparent; }
+.cap-banner .btn:hover { background: var(--amber-bd); }
+.cap-row {
+  display: grid; grid-template-columns: 8px 20px 1fr auto; align-items: center; gap: 12px;
+  padding: 10px 0; border-top: 1px solid var(--border);
+}
+/* macOS's own icon for the switch (an app's, a folder's, or the symbol
+   System Settings uses on its tile). An empty cell keeps the columns when
+   there is none. */
+.cap-icon { width: 20px; height: 20px; display: block; }
+/* The Google mark in the icon column: a white tile, like their app icon,
+   with the four-colour G inside. The hairline keeps a white tile visible on
+   a white card. */
+.cap-brand {
+  display: grid; place-items: center; border-radius: 5px; box-sizing: border-box;
+  background: #fff; border: 1px solid var(--border);
+}
+.cap-google-g { width: 14px; height: 14px; display: block; }
+/* Connected accounts under the Google row: one row per account, indented
+   to where "Google" starts — the dot column, the icon column and their two
+   gaps — so the rows and their dividers begin at the head's text edge. A
+   circular person glyph stands where the row's icon goes. */
+.cap-account-rows { margin-left: 52px; }
+.cap-account-row { grid-template-columns: 20px 1fr auto; }
+.cap-account-rows .cap-row:first-of-type { border-top: 1px solid var(--border); }
+.cap-person {
+  display: grid; place-items: center; border-radius: 50%;
+  background: var(--zinc-bg); border: 1px solid var(--zinc-bd); color: var(--muted); box-sizing: border-box;
+}
+.cap-person .ico { width: 12px; height: 12px; }
+.cap-account-line { display: flex; align-items: center; gap: 8px; min-width: 0; }
+/* "Default": a quiet grey pill, no dot — a label, not a status. */
+.cap-default-pill { font-weight: 500; }
+.cap-account-email { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cap-account-menu-btn { padding: 5px 9px; font-size: 9px; letter-spacing: 1px; line-height: 1; }
+
+/* A small popup menu (openMenu in main.js): a card floated over the page. */
+.menu {
+  position: fixed; z-index: 50; min-width: 160px; padding: 4px;
+  background: var(--card); border: 1px solid var(--border); border-radius: var(--radius-sm);
+  box-shadow: var(--shadow);
+}
+.menu-item {
+  display: block; width: 100%; text-align: left; padding: 6px 10px;
+  border: 0; border-radius: 6px; background: transparent; color: var(--fg); font: inherit; cursor: pointer;
+}
+.menu-item:hover:not(:disabled), .menu-item:focus-visible { background: var(--hover); outline: none; }
+.menu-item:disabled { color: var(--faint); cursor: default; }
+/* A pick-one menu: every item leaves room for the check; the current one shows it. */
+.menu-item.checkable { position: relative; padding-left: 26px; }
+.menu-item.checked::before { content: "✓"; position: absolute; left: 9px; }
+.cap-row:first-of-type { border-top: 0; }
+.cap-row .status-dot { flex: none; }
+.cap-row .cap-name { font-weight: 600; }
+.cap-row .cap-sub { color: var(--muted); font-size: 12px; margin-top: 2px; }
+.cap-row .cap-asks { font-variant-numeric: tabular-nums; }
+/* The count in the text red, same weight as the rest of the line. */
+.cap-row .cap-count { color: var(--red-fg); }
+/* A group of switches behind one line (Folders, Automation). The head is a
+   full-width button in the row grid's clothes; the rows beneath indent past
+   the chevron so they read as the group's. */
+.cap-group { border-top: 1px solid var(--border); }
+.cap-group:first-of-type { border-top: 0; }
+/* The head IS a .cap-row (same grid, padding and type), made a button. */
+.cap-group-head {
+  width: 100%; margin: 0; appearance: none; -webkit-appearance: none;
+  /* A button's own border and fill go; the group's container draws the
+     divider above it. */
+  border: 0; background: transparent; color: var(--fg); font: inherit; text-align: left; cursor: pointer;
+}
+.cap-group-head:hover .cap-name { text-decoration: underline; }
+/* The chevron sits in the dot's 8px column, centred on it. */
+.cap-chevron-cell { width: 8px; display: flex; justify-content: center; align-items: center; }
+/* 16px box, and a stroke of 3 in the glyph's 24-unit viewBox is 2px on
+   screen at that size. */
+.cap-chevron { width: 16px; height: 16px; stroke-width: 3; flex: none; color: var(--muted); transform: rotate(-90deg); transition: transform 0.12s; }
+.cap-chevron.open { transform: rotate(0deg); }
+/* The count wears a button's box so the line is a button's height. */
+.cap-group-count { display: inline-flex; align-items: center; padding: 5px 0; color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.cap-group-rows { padding-left: 20px; padding-bottom: 4px; }
+.cap-group-rows .cap-row:first-of-type { border-top: 1px solid var(--border); }
+@media (prefers-reduced-motion: reduce) { .cap-chevron { transition: none; } }
+/* The nudge: a red arrow just left of a hit row's button, pointing at it
+   and rocking toward it — the grant panel's own filled arrow, turned right. */
+.cap-action { display: inline-flex; align-items: center; gap: 12px; }
+.cap-nudge {
+  width: 14px; height: 14px; flex: none; color: var(--red-fg);
+  transform: rotate(90deg);
+  animation: cap-nudge 0.9s ease-in-out infinite alternate;
+}
+@keyframes cap-nudge {
+  from { transform: rotate(90deg) translateY(2px); }
+  to { transform: rotate(90deg) translateY(-3px); }
+}
+@media (prefers-reduced-motion: reduce) { .cap-nudge { animation: none; } }
+/* The pointed-at button keeps its own look and gains a second, red edge:
+   1px, standing 2px clear of the button's border. */
+.btn.attention { outline: 1px solid var(--red-fg); outline-offset: 4px; }
+.btn.attention:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+/* "See blocked requests…": a link, so it reads as something to click,
+   where a bare row did not. */
+.cap-more {
+  font: inherit; font-size: 12px; border: 0; background: transparent; padding: 0;
+  color: var(--blue-fg); cursor: pointer; text-align: left;
+}
+.cap-more:hover { text-decoration: underline; }
+.cap-expand {
+  grid-column: 3 / -1; margin: 2px 0 6px; padding: 10px 12px;
+  background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius-sm);
+}
+.cap-expand .lbl { font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); margin: 0 0 6px; }
+.cap-req { display: grid; grid-template-columns: 74px 1fr; gap: 2px 12px; padding: 6px 0; border-top: 1px solid var(--border); font-size: 12.5px; }
+.cap-req:first-of-type { border-top: 0; }
+.cap-req .t { color: var(--faint); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.cap-req .who { font-weight: 600; }
+.cap-req .goal { color: var(--muted); }
+.cap-sentence {
+  margin: 10px 0 0; padding: 10px 12px;
+  border-left: 3px solid var(--amber-bd); background: var(--card);
+  border-radius: 0 var(--radius-sm) var(--radius-sm) 0; color: var(--fg);
+}
+.cap-actions { display: flex; gap: 8px; margin-top: 10px; align-items: center; }
+.cap-actions .spacer { flex: 1; }
+.btn.quiet { border-color: transparent; color: var(--muted); }
+/* "Granted" in the button slot: the same box as a button so the column lines
+   up, but it is a word, not a control — no border, no hover. */
+.cap-granted { display: inline-flex; align-items: center; padding: 5px 12px; color: var(--green-fg); font-weight: 600; white-space: nowrap; }
 
 .agent-status {
   margin: 0;

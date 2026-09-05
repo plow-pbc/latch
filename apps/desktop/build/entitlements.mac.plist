@@ -9,6 +9,15 @@
   <true/>
   <key>com.apple.security.automation.apple-events</key>
   <true/>
+  <!-- Contacts and Calendars, asked for in process by @domo/native-permissions
+       (the Capabilities tab). Under the hardened runtime TCC refuses these
+       without a dialog unless the app declares them — the same lesson as
+       apple-events above. The usage strings live in electron-builder.yml's
+       extendInfo; both halves are needed. -->
+  <key>com.apple.security.personal-information.addressbook</key>
+  <true/>
+  <key>com.apple.security.personal-information.calendars</key>
+  <true/>
   <!-- The vault's master key lives in the data-protection Keychain under this
        access group (vaultKeyStore.ts). The group — not the bundle id — is what
        the item is keyed to, so the app can be renamed or re-identified without

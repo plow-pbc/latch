@@ -1,0 +1,142 @@
+{
+  "name": "blocked-immutable",
+  "note": "A file with the immutable flag. Not a System Settings matter: the sentence names the Locked flag, and the reply relays it.",
+  "prompt": "Replace the contents of ~/Plow/locked.txt on my Mac with the single word 'new'.",
+  "answers": {
+    "plow_write_file": {
+      "diagnosis": {
+        "cause": "immutable_file",
+        "confidence": "confirmed",
+        "evidence": [
+          "the kernel answered EPERM for ~/Plow/locked.txt",
+          "~/Plow/locked.txt carries the locked (uchg/schg) flag"
+        ],
+        "owner_action": "The file is locked (the macOS \"Locked\" flag). The owner can unlock it in Finder (Get Info > Locked) or with chflags nouchg.",
+        "permission": null,
+        "requires_relaunch": false,
+        "retry": "with_different_path",
+        "ruled_out": [
+          "file missing"
+        ]
+      },
+      "error": "write failed: EPERM: operation not permitted, open '~/Plow/locked.txt'",
+      "probes": {
+        "app_process_open": "ok",
+        "automation_status": null,
+        "automation_target": null,
+        "errno": "EPERM",
+        "full_disk_access_granted": false,
+        "hung": false,
+        "immutable_flag": true,
+        "is_directory": false,
+        "op": "write",
+        "path": "~/Plow/locked.txt",
+        "path_approved": true,
+        "path_exists": true,
+        "paths_examined": [
+          "~/Plow/locked.txt"
+        ],
+        "posix_readable": true,
+        "posix_writable": true,
+        "probe_withheld": false,
+        "ran_sandboxed": false,
+        "sandbox_allows_read": null,
+        "sandbox_allows_write": null,
+        "service_permission": null,
+        "service_status": null,
+        "sip_protected": false,
+        "stderr_hint": null,
+        "syscall": "open",
+        "tcc_guarded_prefix": null
+      },
+      "status": "blocked"
+    },
+    "plow_run_command": {
+      "exit_code": 1,
+      "handle": "EVAL-HANDLE",
+      "host_gate": "none",
+      "output": "/bin/sh: ~/Plow/locked.txt: Operation not permitted\n",
+      "output_length": 124,
+      "status": "completed"
+    },
+    "plow_device_status": {
+      "automation": [
+        {
+          "status": "unknown",
+          "target": "Messages"
+        },
+        {
+          "status": "unknown",
+          "target": "Contacts"
+        }
+      ],
+      "automation_queryable": false,
+      "checked_at": "2026-09-04T23:17:00Z",
+      "child_attribution": {
+        "detail": null,
+        "status": "not_applicable"
+      },
+      "full_disk_access": {
+        "granted": false,
+        "probes": [
+          {
+            "outcome": "ENOENT",
+            "path": "~/Library/Application Support/com.apple.TCC/TCC.db"
+          },
+          {
+            "outcome": "ENOENT",
+            "path": "~/Library/Messages/chat.db"
+          },
+          {
+            "outcome": "ENOENT",
+            "path": "~/Library/Safari/Bookmarks.plist"
+          }
+        ]
+      },
+      "permissions": [
+        {
+          "permission": "accessibility",
+          "status": "unknown"
+        },
+        {
+          "permission": "contacts",
+          "status": "unknown"
+        },
+        {
+          "permission": "calendars",
+          "status": "unknown"
+        }
+      ],
+      "sandbox": {
+        "detail": null,
+        "status": "ok"
+      },
+      "vault_key": {
+        "reason": "this Mac has no vault",
+        "status": "absent"
+      }
+    }
+  },
+  "isError": {
+    "plow_write_file": true,
+    "plow_run_command": false,
+    "plow_device_status": false
+  },
+  "expect": {
+    "calls": {
+      "min": 1,
+      "max": 2
+    },
+    "attempted": true,
+    "names": [
+      "locked"
+    ],
+    "includes": [
+      "The file is locked (the macOS \"Locked\" flag). The owner can unlock it in Finder (Get Info > Locked) or with chflags nouchg."
+    ],
+    "excludes": [
+      "Full Disk Access",
+      "Privacy & Security"
+    ]
+  }
+}

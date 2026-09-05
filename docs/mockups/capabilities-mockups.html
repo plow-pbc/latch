@@ -1,0 +1,435 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Plow Latch Capabilities Tab</title>
+<style>
+  /* The app's own tokens (apps/desktop/src/renderer/styles.css), so what is
+     judged here is the tab, not a palette. */
+  :root{
+    --bg:#f4f4f5; --card:#ffffff; --fg:#18181b; --muted:#71717a; --faint:#a1a1aa;
+    --border:#e4e4e7; --border-strong:#d4d4d8; --hover:#f4f4f5; --sel:#eef2ff;
+    --radius:10px; --radius-sm:7px; --shadow:0 1px 2px rgba(0,0,0,.06),0 8px 24px rgba(0,0,0,.06);
+    --green-bg:#ecfdf5; --green-fg:#047857; --green-bd:#a7f3d0;
+    --red-bg:#fef2f2; --red-fg:#b91c1c; --red-bd:#fecaca;
+    --amber-bg:#fffbeb; --amber-fg:#b45309; --amber-bd:#fde68a;
+    --blue-bg:#eff6ff; --blue-fg:#1d4ed8; --blue-bd:#bfdbfe;
+    --zinc-bg:#f4f4f5; --zinc-fg:#52525b; --zinc-bd:#e4e4e7;
+    --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+    --sans:-apple-system,BlinkMacSystemFont,"Inter","Segoe UI",Roboto,sans-serif;
+    color-scheme: light dark;
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --bg:#09090b; --card:#131316; --fg:#fafafa; --muted:#a1a1aa; --faint:#71717a;
+      --border:#27272a; --border-strong:#3f3f46; --hover:#1c1c20; --sel:#1e213a;
+      --shadow:0 1px 2px rgba(0,0,0,.4),0 12px 32px rgba(0,0,0,.5);
+      --green-bg:#052e2b; --green-fg:#6ee7b7; --green-bd:#134e4a;
+      --red-bg:#2a0f12; --red-fg:#fca5a5; --red-bd:#7f1d1d;
+      --amber-bg:#2a1e05; --amber-fg:#fcd34d; --amber-bd:#78530f;
+      --blue-bg:#0c1b33; --blue-fg:#93c5fd; --blue-bd:#1e3a8a;
+      --zinc-bg:#1c1c20; --zinc-fg:#a1a1aa; --zinc-bd:#27272a;
+    }
+  }
+  :root[data-theme="dark"]{
+    --bg:#09090b; --card:#131316; --fg:#fafafa; --muted:#a1a1aa; --faint:#71717a;
+    --border:#27272a; --border-strong:#3f3f46; --hover:#1c1c20; --sel:#1e213a;
+    --shadow:0 1px 2px rgba(0,0,0,.4),0 12px 32px rgba(0,0,0,.5);
+    --green-bg:#052e2b; --green-fg:#6ee7b7; --green-bd:#134e4a;
+    --red-bg:#2a0f12; --red-fg:#fca5a5; --red-bd:#7f1d1d;
+    --amber-bg:#2a1e05; --amber-fg:#fcd34d; --amber-bd:#78530f;
+    --blue-bg:#0c1b33; --blue-fg:#93c5fd; --blue-bd:#1e3a8a;
+    --zinc-bg:#1c1c20; --zinc-fg:#a1a1aa; --zinc-bd:#27272a;
+  }
+
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--sans);
+    font-size:14px;line-height:1.5;-webkit-font-smoothing:antialiased;padding:40px 20px 80px}
+  h1{font-size:22px;font-weight:650;letter-spacing:-.01em;margin:0 0 4px;text-wrap:balance}
+  .lede{color:var(--muted);max-width:760px;margin:0 auto 36px}
+  .lede p{margin:0 0 8px}
+  .wrap{max-width:1040px;margin:0 auto}
+
+  .variant{max-width:1040px;margin:0 auto 64px}
+  .variant-head{display:flex;align-items:baseline;gap:12px;margin:0 0 6px}
+  .variant-head .n{font-size:12px;font-weight:700;color:var(--card);background:var(--fg);
+    border-radius:999px;width:22px;height:22px;display:inline-grid;place-items:center;flex:none}
+  .variant-head h2{font-size:17px;font-weight:640;margin:0;letter-spacing:-.01em}
+  .variant-desc{color:var(--muted);margin:0 0 16px 34px;max-width:760px}
+
+  /* ---- macOS window chrome, as the audit mockups draw it ---- */
+  .win{background:var(--card);border:1px solid var(--border);border-radius:14px;
+    box-shadow:var(--shadow);overflow:hidden;font-size:13px}
+  .titlebar{height:44px;display:flex;align-items:center;gap:8px;padding:0 14px;
+    border-bottom:1px solid var(--border);background:var(--card)}
+  .lights{display:flex;gap:8px}
+  .lights i{width:12px;height:12px;border-radius:50%;display:block}
+  .lights .r{background:#ff5f57}.lights .y{background:#febc2e}.lights .g{background:#28c840}
+  .wtitle{font-weight:600;margin-left:6px}
+  .status-dot{width:8px;height:8px;border-radius:50%;background:var(--faint);display:inline-block;flex:none}
+  .status-dot.on{background:var(--green-fg)}
+  .status-dot.warn{background:var(--amber-fg)}
+  .status-dot.off{background:var(--red-fg)}
+  .status-dot.unknown{background:transparent;border:1px solid var(--faint)}
+  .faint{color:var(--faint)}
+  .muted{color:var(--muted)}
+  .mono{font-family:var(--mono)}
+  .seg{margin-left:auto;display:inline-flex;background:var(--bg);border:1px solid var(--border);
+    border-radius:8px;padding:2px}
+  .seg button{border:0;background:transparent;color:var(--muted);padding:4px 12px;border-radius:6px;
+    font:inherit;cursor:pointer;position:relative;display:inline-flex;align-items:center;gap:6px}
+  .seg button.active{background:var(--card);color:var(--fg);box-shadow:var(--shadow)}
+  /* The tab badge: a count of things to do, not of events. Amber, because a
+     block by this Mac is nobody refusing — the same tone the audit row wears. */
+  .tabcount{font-size:10.5px;font-weight:700;line-height:1;padding:3px 6px;border-radius:999px;
+    background:var(--amber-fg);color:var(--card);font-variant-numeric:tabular-nums}
+
+  /* ---- the tab ---- */
+  .panel{padding:16px;display:flex;flex-direction:column;gap:14px}
+  .banner{display:flex;align-items:center;gap:12px;padding:10px 14px;border-radius:var(--radius);
+    border:1px solid var(--amber-bd);background:var(--amber-bg);color:var(--amber-fg)}
+  .banner.info{border-color:var(--zinc-bd);background:var(--zinc-bg);color:var(--zinc-fg)}
+  .banner .bt{font-weight:600}
+  .banner .bs{opacity:.85}
+  .banner .spacer{flex:1}
+  .banner .link{font:inherit;border:0;background:transparent;color:inherit;font-weight:600;
+    text-decoration:underline;text-underline-offset:2px;cursor:pointer;padding:0}
+  .banner .x{border:0;background:none;color:inherit;font-size:15px;line-height:1;padding:2px 6px;
+    border-radius:var(--radius-sm);cursor:pointer;opacity:.7}
+
+  .item{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);
+    padding:14px 16px 6px;box-shadow:var(--shadow)}
+  .group-title{font-size:15px;font-weight:600;margin:0 0 4px}
+  .group-desc{margin:0 0 8px;color:var(--faint)}
+  .row{display:grid;grid-template-columns:8px 1fr auto auto;align-items:center;gap:12px;
+    padding:10px 0;border-top:1px solid var(--border)}
+  .row:first-of-type{border-top:0}
+  .row .name{font-weight:600}
+  .row .sub{color:var(--muted);font-size:12px}
+  .row .asks{color:var(--muted);font-size:12px;text-align:right;white-space:nowrap;
+    font-variant-numeric:tabular-nums}
+  .row .asks b{color:var(--fg);font-weight:600}
+  .row .asks.none{color:var(--faint)}
+  .btn{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--border-strong);
+    background:var(--card);color:var(--fg);border-radius:8px;padding:5px 12px;font:inherit;cursor:pointer;
+    white-space:nowrap}
+  .btn.primary{background:var(--blue-fg);color:white;border-color:var(--blue-fg)}
+  .btn.quiet{border-color:transparent;color:var(--muted)}
+  .btn.ok{color:var(--green-fg);border-color:transparent;cursor:default}
+  .ext{color:var(--faint);font-size:12px}
+  .pill{display:inline-flex;align-items:center;gap:5px;padding:2px 8px;border-radius:999px;font-size:11px;
+    font-weight:600;border:1px solid var(--zinc-bd);background:var(--zinc-bg);color:var(--zinc-fg);white-space:nowrap}
+  .pill.amber{background:var(--amber-bg);color:var(--amber-fg);border-color:var(--amber-bd)}
+  .pill.green{background:var(--green-bg);color:var(--green-fg);border-color:var(--green-bd)}
+  .pill.red{background:var(--red-bg);color:var(--red-fg);border-color:var(--red-bd)}
+
+  /* An expanded row: the requests behind the count, then the owner sentence
+     and the row's own actions. Indented under the dot column. */
+  .expand{grid-column:2 / -1;margin:2px 0 8px;padding:10px 12px;background:var(--bg);
+    border:1px solid var(--border);border-radius:var(--radius-sm)}
+  .expand .lbl{font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);margin:0 0 6px}
+  .req{display:grid;grid-template-columns:62px 1fr;gap:2px 12px;padding:6px 0;border-top:1px solid var(--border);
+    font-size:12.5px}
+  .req:first-of-type{border-top:0}
+  .req .t{color:var(--faint);font-variant-numeric:tabular-nums;white-space:nowrap}
+  .req .who{font-weight:600}
+  .req .goal{color:var(--muted)}
+  .sentence{margin:10px 0 0;padding:10px 12px;border-left:3px solid var(--amber-bd);background:var(--card);
+    border-radius:0 var(--radius-sm) var(--radius-sm) 0;color:var(--fg)}
+  .sentence .lbl{margin-bottom:2px}
+  .expand .actions{display:flex;gap:8px;margin-top:10px;align-items:center}
+  .expand .actions .spacer{flex:1}
+
+  /* ---- notes under each variant ---- */
+  .notes{margin:14px 0 0 34px;max-width:760px;color:var(--muted);font-size:13.5px}
+  .notes ul{margin:6px 0 0;padding-left:18px}
+  .notes li{margin:3px 0}
+  .notes b{color:var(--fg);font-weight:600}
+  .k{font-family:var(--mono);font-size:12px;background:var(--zinc-bg);border:1px solid var(--zinc-bd);
+    border-radius:5px;padding:1px 5px;color:var(--fg)}
+
+  @media (prefers-reduced-motion: no-preference){ .btn{transition:background .12s} }
+  .btn:hover{background:var(--hover)}
+  .btn.primary:hover{background:var(--blue-fg);filter:brightness(1.08)}
+  :focus-visible{outline:2px solid var(--blue-fg);outline-offset:2px}
+  @media (max-width:760px){ .row{grid-template-columns:8px 1fr;} .row .asks,.row .btn{grid-column:2} .expand{grid-column:1 / -1} }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Capabilities tab</h1>
+  <div class="lede">
+    <p>A sixth tab whose job is one question: <b>what does this Mac let agents do right now, and what has that stopped?</b> Every row is a permission or a self-check from the standing inventory; the counts beside them come from the audit log's <span class="k">host_permission_blocked</span> rows, grouped by permission. A row exists because a switch exists; it <em>badges</em> only while the switch is off and something has hit it.</p>
+    <p>Three states below: the owner returning to a Mac that blocked things overnight, the same screen with one row opened, and the calm state where nothing needs doing.</p>
+  </div>
+
+  <!-- ============================================================ -->
+  <section class="variant">
+    <div class="variant-head"><span class="n">1</span><h2>Returning owner: three things to do</h2></div>
+    <p class="variant-desc">The tab is badged with the number of rows that need a decision. Two banners at the top summarise what happened while nobody was here; the groups below are the switches themselves, each with its count and its one button.</p>
+
+    <div class="win" role="img" aria-label="Plow Latch main window, Capabilities tab, three items need attention">
+      <div class="titlebar">
+        <div class="lights"><i class="r"></i><i class="y"></i><i class="g"></i></div>
+        <span class="wtitle">Plow Latch</span>
+        <span class="status-dot on"></span><span class="faint">Connected</span>
+        <div class="seg">
+          <button>Agents</button>
+          <button>Audit</button>
+          <button>Rules</button>
+          <button>Browser Vault</button>
+          <button class="active">Capabilities <span class="tabcount">3</span></button>
+          <button>Settings</button>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="banner">
+          <span class="status-dot warn"></span>
+          <div><span class="bt">7 requests were blocked while you were away</span> <span class="bs">— Full Disk Access (5), Downloads folder (1), Automation for Messages (1). Last one 06:12 today.</span></div>
+          <span class="spacer"></span>
+          <button class="link">Show in Audit</button>
+          <button class="x" aria-label="Dismiss">×</button>
+        </div>
+        <div class="banner info">
+          <span class="status-dot unknown"></span>
+          <div><span class="bt">Agents asked for 2 things this Mac can't offer yet</span> <span class="bs">— screen recording (2). Nothing to grant; noted for us.</span></div>
+          <span class="spacer"></span>
+          <button class="x" aria-label="Dismiss">×</button>
+        </div>
+
+        <div class="item">
+          <div class="group-title">Files and data</div>
+          <p class="group-desc">What macOS lets Plow Latch read on your behalf. One switch, Full Disk Access, covers everything in this group.</p>
+
+          <div class="row">
+            <span class="status-dot off"></span>
+            <div><div class="name">Full Disk Access</div><div class="sub">Not granted · needed for Messages, Mail, Safari and every folder below</div></div>
+            <div class="asks"><b>5 requests</b> · last 06:12<br>Family Coordinator, Inbox Triage</div>
+            <button class="btn primary">Grant…</button>
+          </div>
+          <div class="row">
+            <span class="status-dot off"></span>
+            <div><div class="name">Downloads folder</div><div class="sub">Not allowed · you clicked Don't Allow on 30 Aug</div></div>
+            <div class="asks"><b>1 request</b> · last 23:40 yesterday<br>Family Coordinator</div>
+            <button class="btn">Open System Settings <span class="ext">↗</span></button>
+          </div>
+          <div class="row">
+            <span class="status-dot unknown"></span>
+            <div><div class="name">Desktop folder</div><div class="sub">Never asked · macOS will show a dialog the first time</div></div>
+            <div class="asks none">no requests</div>
+            <button class="btn quiet">Ask macOS now</button>
+          </div>
+          <div class="row">
+            <span class="status-dot on"></span>
+            <div><div class="name">Documents folder</div><div class="sub">Allowed</div></div>
+            <div class="asks none">—</div>
+            <span></span>
+          </div>
+        </div>
+
+        <div class="item">
+          <div class="group-title">Control other apps</div>
+          <p class="group-desc">Automation consent, per app. An agent sends Apple events through these to send a message or save a contact.</p>
+          <div class="row">
+            <span class="status-dot off"></span>
+            <div><div class="name">Messages</div><div class="sub">Not allowed</div></div>
+            <div class="asks"><b>1 request</b> · last 04:02<br>Family Coordinator</div>
+            <button class="btn">Open System Settings <span class="ext">↗</span></button>
+          </div>
+          <div class="row">
+            <span class="status-dot unknown"></span>
+            <div><div class="name">Contacts</div><div class="sub">Unknown until Contacts is open — macOS only answers for a running app</div></div>
+            <div class="asks none">no requests</div>
+            <span></span>
+          </div>
+        </div>
+
+        <div class="item">
+          <div class="group-title">Not offered yet</div>
+          <p class="group-desc">Things agents asked for that no tool on this Mac can do. Shown only when something asked.</p>
+          <div class="row">
+            <span class="status-dot unknown"></span>
+            <div><div class="name">Screen Recording</div><div class="sub">No agent tool takes a screenshot of the screen yet</div></div>
+            <div class="asks"><b>2 requests</b> · last 05:51<br>Inbox Triage</div>
+            <span class="pill">Not available</span>
+          </div>
+        </div>
+
+        <div class="item">
+          <div class="group-title">This app's own machinery</div>
+          <p class="group-desc">Self-checks. A failed one is ours to fix, not a switch for you to flip.</p>
+          <div class="row">
+            <span class="status-dot on"></span>
+            <div><div class="name">Command sandbox</div><div class="sub">sandbox-exec runs</div></div>
+            <div class="asks none">—</div><span></span>
+          </div>
+          <div class="row">
+            <span class="status-dot unknown"></span>
+            <div><div class="name">Commands inherit Full Disk Access</div><div class="sub">Checked once Full Disk Access is granted</div></div>
+            <div class="asks none">—</div><span></span>
+          </div>
+          <div class="row">
+            <span class="status-dot on"></span>
+            <div><div class="name">Browser vault key</div><div class="sub">Opens on this Mac</div></div>
+            <div class="asks none">—</div><span></span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="notes">
+      <b>What decides the badge.</b>
+      <ul>
+        <li>A row counts toward the badge when its switch is off <em>and</em> its request count is above zero, or when a self-check failed. Here: Full Disk Access, Downloads, Messages → <b>3</b>. Desktop is off but nothing asked, so it does not count.</li>
+        <li>The badge and the counts clear themselves: the status comes from the live inventory, so flipping the switch in System Settings empties the row's "to do" without anyone marking it done. The requests stay listed as history.</li>
+        <li>Dismissing the amber banner hides it until a <em>new</em> block lands. Dismissing a row ("Not now", inside the row) hides it from the badge until a new request hits it, and could tell agents up front through <span class="k">plow_device_status</span>.</li>
+        <li>"Not offered yet" needs one new audit event from the places that already know an ask was unsupported. It doubles as the counted feature-request list.</li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- ============================================================ -->
+  <section class="variant">
+    <div class="variant-head"><span class="n">2</span><h2>A row opened: the requests behind the count</h2></div>
+    <p class="variant-desc">Clicking a counted row shows who was blocked and why they were asking, then the same fixed sentence the agent relayed. The button on the row is the one real fix; the row's own actions are the escape hatches.</p>
+
+    <div class="win" role="img" aria-label="The Full Disk Access row expanded, listing five blocked requests">
+      <div class="titlebar">
+        <div class="lights"><i class="r"></i><i class="y"></i><i class="g"></i></div>
+        <span class="wtitle">Plow Latch</span>
+        <span class="status-dot on"></span><span class="faint">Connected</span>
+        <div class="seg">
+          <button>Agents</button><button>Audit</button><button>Rules</button><button>Browser Vault</button>
+          <button class="active">Capabilities <span class="tabcount">3</span></button>
+          <button>Settings</button>
+        </div>
+      </div>
+      <div class="panel">
+        <div class="item">
+          <div class="group-title">Files and data</div>
+          <div class="row">
+            <span class="status-dot off"></span>
+            <div><div class="name">Full Disk Access</div><div class="sub">Not granted · needed for Messages, Mail, Safari and every folder below</div></div>
+            <div class="asks"><b>5 requests</b> · last 06:12<br>Family Coordinator, Inbox Triage</div>
+            <button class="btn primary">Grant…</button>
+
+            <div class="expand">
+              <p class="lbl">Blocked requests</p>
+              <div class="req"><span class="t">06:12</span><span><span class="who">Family Coordinator</span> <span class="goal">— read the code Chase just texted so I can finish the login</span></span></div>
+              <div class="req"><span class="t">06:11</span><span><span class="who">Family Coordinator</span> <span class="goal">— read the code Chase just texted so I can finish the login</span></span></div>
+              <div class="req"><span class="t">02:30</span><span><span class="who">Inbox Triage</span> <span class="goal">— find the Delta receipt in Mail for the expense report</span></span></div>
+              <div class="req"><span class="t">02:29</span><span><span class="who">Inbox Triage</span> <span class="goal">— find the Delta receipt in Mail for the expense report</span></span></div>
+              <div class="req"><span class="t">Yesterday</span><span><span class="who">Family Coordinator</span> <span class="goal">— check whether Sam replied about Saturday</span></span></div>
+
+              <div class="sentence">
+                <p class="lbl">What the agent was told</p>
+                In System Settings › Privacy &amp; Security › Full Disk Access, turn on Plow Latch, then quit and reopen it.
+              </div>
+
+              <div class="actions">
+                <span class="pill amber">Requires relaunch after granting</span>
+                <span class="spacer"></span>
+                <button class="btn quiet">Not now</button>
+                <button class="btn">Show these in Audit</button>
+              </div>
+            </div>
+          </div>
+          <div class="row">
+            <span class="status-dot off"></span>
+            <div><div class="name">Downloads folder</div><div class="sub">Not allowed · you clicked Don't Allow on 30 Aug</div></div>
+            <div class="asks"><b>1 request</b> · last 23:40 yesterday<br>Family Coordinator</div>
+            <button class="btn">Open System Settings <span class="ext">↗</span></button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="notes">
+      <ul>
+        <li>Two requests a minute apart are the agent retrying. They are listed, but the count that matters is on the row, and the row is one decision.</li>
+        <li>The goal text is the agent's own words (display only, as everywhere in the app). It answers "why was it in my Messages" better than the path would.</li>
+        <li>After the grant, this row turns green and the expanded list gains one line: <em>Granted at 08:14 — ask your agent to try again.</em> The app cannot replay the request; the sentence says so.</li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- ============================================================ -->
+  <section class="variant">
+    <div class="variant-head"><span class="n">3</span><h2>Calm: nothing to do</h2></div>
+    <p class="variant-desc">Everything an agent has needed is granted. No badge, no banners, and the rows that were never asked about stay quiet. The tab still earns its place as the one page that says what this Mac allows.</p>
+
+    <div class="win" role="img" aria-label="Capabilities tab with everything granted and no badge">
+      <div class="titlebar">
+        <div class="lights"><i class="r"></i><i class="y"></i><i class="g"></i></div>
+        <span class="wtitle">Plow Latch</span>
+        <span class="status-dot on"></span><span class="faint">Connected</span>
+        <div class="seg">
+          <button>Agents</button><button>Audit</button><button>Rules</button><button>Browser Vault</button>
+          <button class="active">Capabilities</button>
+          <button>Settings</button>
+        </div>
+      </div>
+      <div class="panel">
+        <div class="item">
+          <div class="group-title">Files and data</div>
+          <div class="row">
+            <span class="status-dot on"></span>
+            <div><div class="name">Full Disk Access</div><div class="sub">Granted 08:14 today · covers every folder below</div></div>
+            <div class="asks">5 requests before it was granted</div>
+            <span class="btn ok">Granted</span>
+          </div>
+          <div class="row">
+            <span class="status-dot on"></span>
+            <div><div class="name">Desktop, Documents, Downloads</div><div class="sub">Covered by Full Disk Access</div></div>
+            <div class="asks none">—</div><span></span>
+          </div>
+        </div>
+        <div class="item">
+          <div class="group-title">Control other apps</div>
+          <div class="row">
+            <span class="status-dot on"></span>
+            <div><div class="name">Messages</div><div class="sub">Allowed</div></div>
+            <div class="asks">1 request before it was allowed</div>
+            <span></span>
+          </div>
+          <div class="row">
+            <span class="status-dot unknown"></span>
+            <div><div class="name">Contacts</div><div class="sub">Unknown until Contacts is open</div></div>
+            <div class="asks none">no requests</div>
+            <span></span>
+          </div>
+        </div>
+        <div class="item">
+          <div class="group-title">This app's own machinery</div>
+          <div class="row">
+            <span class="status-dot on"></span>
+            <div><div class="name">Command sandbox</div><div class="sub">sandbox-exec runs</div></div>
+            <div class="asks none">—</div><span></span>
+          </div>
+          <div class="row">
+            <span class="status-dot on"></span>
+            <div><div class="name">Commands inherit Full Disk Access</div><div class="sub">A command can read what the app can</div></div>
+            <div class="asks none">—</div><span></span>
+          </div>
+          <div class="row">
+            <span class="status-dot on"></span>
+            <div><div class="name">Browser vault key</div><div class="sub">Opens on this Mac</div></div>
+            <div class="asks none">—</div><span></span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="notes">
+      <ul>
+        <li>Rows collapse when the umbrella covers them: the three folders become one line under a granted Full Disk Access.</li>
+        <li>"5 requests before it was granted" keeps the history honest without keeping the badge. It also tells the owner the grant was worth making.</li>
+        <li>The "Not offered yet" group is absent here because nothing asked. It appears only with a count.</li>
+      </ul>
+    </div>
+  </section>
+</div>
+</body>
+</html>

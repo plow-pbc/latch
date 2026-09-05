@@ -254,3 +254,27 @@ We corrected our own overstatements only. We did not touch profile generation.
 
 The approval dialog's own "enforced" label — see §4.3, where it is handed over alongside the other
 items in this area.
+
+---
+
+## 6. Addendum (2026-09-01): a seatbelt refusal is now told apart from macOS's
+
+Not a change to the boundary — profile generation is untouched — but a change to how a refusal
+under it is *reported*, because the two refusals that share `EPERM` used to be indistinguishable to
+an agent: our profile saying no, and TCC saying no.
+
+`packages/device-core/src/hostGate/` diagnoses a refused operation by probing, and the probe that
+separates the two is the app itself opening the path in a child process, outside any profile. The
+app can open it and the profile (`sandboxGrants`, kept beside `SandboxProfile.generate` so the two
+cannot drift) would not have: `outside_approved_bound`, and the agent is told to declare the path.
+The app is refused too: not our seatbelt, and the rest of the tree decides which macOS gate it was.
+DESIGN.md §6a has the whole account.
+
+Two consequences for this document's claims:
+
+- §2's concrete consequence stands. The diagnosis does not narrow what a command can read; it only
+  says, after a refusal, whose refusal it was.
+- `packages/mcp-server/test/mcpServer.test.ts`'s sandbox case (§5) now also asserts the
+  *diagnosis*: the block it observes is reported as `outside_approved_bound`, confirmed, with the
+  app's own open having succeeded — which is the proof that the block was the profile and not the
+  host.
