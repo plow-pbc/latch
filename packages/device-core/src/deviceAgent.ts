@@ -153,6 +153,15 @@ class FileOpHang extends Error {
   }
 }
 
+/** A path an approved command that is still running (or a job it left
+ *  behind) can write: not read or written from here until it is over. */
+class FileOpBusy extends Error {
+  constructor() {
+    super("an approved command that is still running can change this path; try again once it has finished");
+    this.name = "FileOpBusy";
+  }
+}
+
 /** `p` when it exists, else its nearest existing ancestor: the folder a
  *  creating write would touch, and where its consent dialog belongs. */
 function existingAncestor(p: string): string {
@@ -617,38 +626,41 @@ export class DeviceAgent {
    * operation produces the real one.
    */
   private async guardedFileOp<T>(p: string, op: () => Promise<T>): Promise<T> {
-    if (guardedPrefix(p, this.ownerHome) === null) return op();
-    // The touch opens by name, and a name under a root some run (or a job
-    // it left behind) can still write may point elsewhere by the time the
-    // child opens it. So the touch climbs above every such root: the gate
-    // is the same — the folder macOS asks about contains them all — and
-    // nothing a run can write is opened.
-    // Choosing the target and waiting out the touch happen under the
-    // executor's hold: a writer approved in between would be one the
-    // choice never saw, free to redirect the name before the child opens
-    // it. The probe's own timeout is shorter than the hang window, so the
-    // child is settled — or killed — before the hold is released.
-    await this.executor.holdProbes(async () => {
+    // The whole operation — the touch, then the read or write itself — runs
+    // under the executor's hold, so no writer can be approved and started
+    // while it is in flight. And a path some run alive right now (or a job
+    // it left behind) can write is not operated on at all: the operation
+    // resolves the name and then opens it, and between the two such a run
+    // could point the name somewhere the owner never approved. It is
+    // refused up front, and the agent asks again once that run is over.
+    return this.executor.holdProbes(async () => {
       const mutable = this.executor.mutableRoots();
-      let target = existingAncestor(p);
-      while (mutable.some((root) => isLexicallyWithin(target, root)) && path.dirname(target) !== target) {
-        target = path.dirname(target);
+      if (mutable.some((root) => isLexicallyWithin(p, root))) throw new FileOpBusy();
+      if (guardedPrefix(p, this.ownerHome) !== null) {
+        // The touch climbs above every such root too, to the guarded folder
+        // that contains them, so nothing a run can write is opened by name.
+        // The probe's own timeout is shorter than the hang window, so the
+        // child is settled — or killed — before the hold is released.
+        let target = existingAncestor(p);
+        while (mutable.some((root) => isLexicallyWithin(target, root)) && path.dirname(target) !== target) {
+          target = path.dirname(target);
+        }
+        const touch = this.hostProbes.openAsApp(target);
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        const hang = new Promise<never>((_, reject) => {
+          timer = setTimeout(() => reject(new FileOpHang()), this.fileOpHangMs);
+          timer.unref?.();
+        });
+        try {
+          if ((await Promise.race([touch, hang])) === "hung") throw new FileOpHang();
+        } finally {
+          clearTimeout(timer);
+          // A probe the timer beat is the child's to finish or be killed.
+          touch.catch(() => {});
+        }
       }
-      const touch = this.hostProbes.openAsApp(target);
-      let timer: ReturnType<typeof setTimeout> | undefined;
-      const hang = new Promise<never>((_, reject) => {
-        timer = setTimeout(() => reject(new FileOpHang()), this.fileOpHangMs);
-        timer.unref?.();
-      });
-      try {
-        if ((await Promise.race([touch, hang])) === "hung") throw new FileOpHang();
-      } finally {
-        clearTimeout(timer);
-        // A probe the timer beat is the child's to finish or be killed.
-        touch.catch(() => {});
-      }
+      return op();
     });
-    return op();
   }
 
   /**
@@ -670,6 +682,10 @@ export class DeviceAgent {
     const hung = error instanceof FileOpHang;
     const outOfBounds = error instanceof FileOpsError && error.outOfBounds;
     const detail = error instanceof FileOpsError ? error.detail : null;
+    if (error instanceof FileOpBusy) {
+      this.audit.record("denied_operation", { intentId, path: p, error: message, cause: "busy" });
+      return { status: "error", error: message, retry: "after_command_finishes" };
+    }
     if (!hung && (outOfBounds || detail?.code === null || detail === null)) {
       // `cause` is what tells the audit view the bound from this app's own
       // rules (the size limit, "not a file"): the one refusal is the

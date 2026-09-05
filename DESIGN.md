@@ -265,7 +265,11 @@ So a refusal is **diagnosed, never guessed** (`packages/device-core/src/hostGate
   so a run's roots stay off limits while any process of that group exists
   (a signal 0 to the group says), not merely while the command runs; and
   the consent touch before a file operation climbs above every such root
-  too, to the guarded folder that contains them. A command's output naming
+  too, to the guarded folder that contains them. A file operation itself
+  runs under the same hold, touch and all, and one on a path such a run
+  can write is refused before the disk is touched (the agent retries once
+  the command is over): the operation resolves the name and then opens it,
+  and a writer alive in between could point it somewhere never approved. A command's output naming
   `~/Desktop/secret` gets none of that, because the open would
   raise the owner's consent dialog for something they never approved and
   hand back whether the file exists. An unapproved candidate is classified
