@@ -186,16 +186,12 @@ describe("a file operation this Mac refused", () => {
     fs.mkdirSync(downloads);
     const fifo = path.join(downloads, "blocked.pipe");
     execFileSync("/usr/bin/mkfifo", [fifo]);
-    // The read really parks (no writer on the FIFO); the probe says the app's
-    // own attempt parks too, which is what a dialog looks like.
+    // A FIFO with no writer is what would park a real touch; the scripted
+    // probe answers "hung" outright, which is what a dialog looks like. The
+    // read itself is never attempted, so nothing is left parked to release.
     const probes = scriptedProbes({ openAsApp: { [fifo]: "hung" } });
     const d = device(home, probes);
     d.fileOpHangMs = 200;
-    // Let the parked read go once the test has its answer, so the worker can exit.
-    cleanups.push(() => {
-      const fd = fs.openSync(fifo, "w");
-      fs.closeSync(fd);
-    });
 
     const started = Date.now();
     const response = jv(await d.handleIntent(intentFor(d, "read", [{ kind: "fs.read", paths: [fifo] }])));
@@ -212,11 +208,12 @@ describe("a file operation this Mac refused", () => {
   });
 
   it.skipIf(!ON_MAC)("a write answered blocked never lands, however the dialog is answered later", async () => {
-    // What parks is a read-only touch of the path, not the write: a FIFO with
-    // no writer parks the touch's open under a guarded folder. The call is
-    // answered blocked. Then the "owner clicks Allow" — a writer opens the
-    // FIFO, which releases the touch — and nothing is written: a write let
-    // through minutes later would land over whatever the file holds by then.
+    // What parks is the touch — the probe's child opening the path — not the
+    // write. Here the probe says "hung" (a FIFO with no writer would park a
+    // real child the same way). The call is answered blocked. Then the
+    // "owner clicks Allow" — a writer opens the FIFO — and nothing is
+    // written: a write let through minutes later would land over whatever
+    // the file holds by then.
     const home = tempDir();
     const downloads = path.join(home, "Downloads");
     fs.mkdirSync(downloads);
@@ -232,10 +229,10 @@ describe("a file operation this Mac refused", () => {
     );
     expect(response.get("status").str).toBe("blocked");
     expect(response.get("diagnosis").get("cause").str).toBe("prompt_waiting");
-    // Release the touch, and read what the pipe carries: the touch's own
-    // open completes and closes, and the read ends with nothing written.
-    const fd = fs.openSync(fifo, "w");
-    fs.closeSync(fd);
+    // Nothing is waiting to write into the pipe: a non-blocking open for
+    // writing finds no reader on the other end (ENXIO), and no write is
+    // ever recorded.
+    expect(() => fs.openSync(fifo, fs.constants.O_WRONLY | fs.constants.O_NONBLOCK)).toThrow(/ENXIO/);
     await new Promise((r) => setTimeout(r, 300));
     expect(events(d)).not.toContain("file_write");
   });
@@ -503,6 +500,44 @@ describe.skipIf(!ON_MAC)("a command this Mac refused", () => {
     expect(polled.get("status").str).toBe("completed");
     expect(polled.get("diagnosis").isNull).toBe(true);
     expect(events(d)).not.toContain("host_permission_blocked");
+  });
+
+  it("a provisional 'parked' verdict that returns after the exit's own never overwrites it", async () => {
+    // The in-call silent-run probe is slow; the run fails with a refusal
+    // while it is out; the exit's diagnosis (fast) lands first and says
+    // macos_permission. The slow probe then comes back saying "parked" —
+    // about a run that has ended — and must be discarded, or the agent is
+    // told to answer a dialog instead of flipping the switch.
+    const home = tempDir();
+    const target = path.join(home, "Library", "Messages", "chat.db");
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.writeFileSync(target, "x");
+    const inner = scriptedProbes({ openAsApp: { [target]: "EPERM" }, fullDiskAccess: false });
+    let calls = 0;
+    const firstSlow: HostProbes = {
+      ...inner,
+      openAsApp: async (p) => {
+        calls += 1;
+        // The first battery (the provisional one) is slow; the exit's is quick.
+        await new Promise((r) => setTimeout(r, calls === 1 ? 900 : 10));
+        // What the provisional probe sees is a parked open.
+        return calls === 1 ? "hung" : inner.openAsApp(p);
+      },
+    };
+    const d = device(home, firstSlow);
+    const response = jv(
+      await d.handleIntent(
+        intentFor(d, "run", [{ kind: "process.exec", argv: ["/bin/sh", "-c", `sleep 0.2; echo "sh: ${target}: Operation not permitted" >&2; exit 1`], cwd: home }]),
+        { wait_ms: 50 },
+      ),
+    );
+    expect(response.get("status").str).toBe("blocked");
+    expect(response.get("diagnosis").get("cause").str).toBe("macos_permission");
+    const polled = jv(await d.getOutput(response.get("handle").str!));
+    expect(polled.get("diagnosis").get("cause").str).toBe("macos_permission");
+    const blocks = d.audit.entries().filter((e) => jv(e as JSONValue).get("event").str === "host_permission_blocked");
+    expect(blocks).toHaveLength(1);
+    expect(jv(blocks[0] as JSONValue).get("cause").str).toBe("macos_permission");
   });
 
   it("a poll that lands between the exit and its diagnosis waits for the verdict", async () => {

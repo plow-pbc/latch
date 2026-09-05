@@ -262,8 +262,9 @@ So a refusal is **diagnosed, never guessed** (`packages/device-core/src/hostGate
   minutes; the reaper stays the ceiling. A clean exit afterwards clears the
   verdict: the click happened, and the run is completed, not blocked.
 - A file operation is the other way round: what parks is a read-only
-  **touch** of the path, and the read or write is attempted only once the
-  touch returns. Answered `blocked`, the operation never happens — a write
+  **touch** of the path — the probe battery's own child process, killed on
+  its timer, never an open on this process's four-thread file-I/O pool —
+  and the read or write is attempted only once the touch returns. Answered `blocked`, the operation never happens — a write
   let through by an Allow clicked minutes later would land over whatever
   the file held by then, under a result already given. The agent retries
   after the owner answers.
