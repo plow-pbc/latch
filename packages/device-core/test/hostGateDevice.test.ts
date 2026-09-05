@@ -709,26 +709,31 @@ describe.skipIf(!ON_MAC)("a command this Mac refused", () => {
       ),
     );
     expect(fs.readlinkSync(out)).toBe(secret); // the swap itself went through
+    // Under the run's own writable root, the path is neither resolved nor
+    // opened: the link is not followed, its target is not named, and what
+    // the refusal was is not claimed.
     expect(probes.calls.filter((c) => c.includes("Desktop"))).toEqual([]);
-    expect(response.get("status").str).toBe("blocked");
-    expect(response.get("diagnosis").get("cause").str).toBe("outside_approved_bound");
-    expect(response.get("probes").get("path_approved").bool).toBe(false);
+    expect(response.get("status").str).toBe("completed");
+    expect(response.get("exit_code").int).toBe(1);
+    expect(response.get("diagnosis").isNull).toBe(true);
+    expect(JSON.stringify(response.toJSON?.() ?? response)).not.toContain("Desktop");
   });
 
   it("a run swapping its approved folder's entries while it is diagnosed is never followed", async () => {
-    // Approved to write ~/Plow/w and to read ~/Plow/w/a/x. While the run is
-    // alive it flips `a` between a folder and a link to ~/Desktop, over and
-    // over, and prints refusals for the file under it. The silent-run
-    // diagnosis happens while the loop runs; nothing under ~/Plow/w is
-    // opened by name, so nothing on the Desktop is stat'd or opened.
+    // Approved to write ~/Documents/w and to read ~/Documents/w/a/x. While
+    // the run is alive it flips `a` between a folder and a link to
+    // ~/Desktop, over and over, then prints a refusal for the file under it.
+    // Nothing under ~/Documents/w is resolved or opened by name — the loop
+    // could redirect either — so nothing on the Desktop is stat'd, opened,
+    // or named; the guarded location alone leaves a likely verdict.
     const home = tempDir();
     fs.mkdirSync(path.join(home, "Desktop"));
     const secret = path.join(home, "Desktop", "secret.txt");
     fs.writeFileSync(secret, "x");
-    const w = path.join(home, "Plow", "w");
+    const w = path.join(home, "Documents", "w");
     fs.mkdirSync(path.join(w, "a"), { recursive: true });
     fs.writeFileSync(path.join(w, "a", "x"), "x");
-    const probes = scriptedProbes({ openAsApp: { [secret]: "hung", [path.join(home, "Desktop")]: "hung" } });
+    const probes = scriptedProbes({ openAsApp: { [secret]: "hung", [path.join(home, "Desktop")]: "hung" }, fullDiskAccess: false });
     const d = device(home, probes);
     Object.assign(d, { executor: new Executor(path.join(home, "device/scratch"), 600) });
     const loop =
@@ -753,32 +758,54 @@ describe.skipIf(!ON_MAC)("a command this Mac refused", () => {
       await new Promise((r) => setTimeout(r, 100));
       polled = jv(await d.getOutput(handle));
     }
-    expect(probes.calls.filter((c) => c.includes("Desktop") || c.includes("/Plow/w"))).toEqual([]);
+    expect(probes.calls.filter((c) => c.includes("Desktop") || c.includes("/Documents/w"))).toEqual([]);
+    // Nor does a redirected target surface in the facts: what the run
+    // pointed its entry at is not resolved, let alone reported.
+    expect(polled.get("status").str).toBe("blocked");
+    expect(polled.get("diagnosis").get("cause").str).toBe("macos_permission");
+    expect(polled.get("diagnosis").get("confidence").str).toBe("likely");
+    expect(polled.get("probes").get("probe_withheld").bool).toBe(true);
+    // (~/Desktop itself is the command line's own word — the `ln` target —
+    // and is listed as such; ~/Desktop/x, which x resolves to through the
+    // link, is what must never appear.)
+    const examined = (polled.get("probes").get("paths_examined").arr ?? []).map(String);
+    expect(examined).not.toContain("~/Desktop/x");
+    expect(examined).toContain("~/Documents/w/a/x");
+    expect(polled.get("probes").get("path").str).toBe("~/Documents/w/a/x");
   });
 
   it("a run approved to write a path being diagnosed cannot start until the probe is back", async () => {
     // Run A, approved to read ~/Documents/r/x, fails with a refusal there;
-    // its diagnosis probes x — slowly. Run B, approved to write that folder, is
+    // its diagnosis probes x. Run B, approved to write that folder, is
     // asked to start while that probe is out. Registered then, B could
     // make x a link to the Desktop before the probe's open reached it, and
     // the roots the probe checked would not have said so. So B starts only
-    // once the probe is back.
+    // once the probe is back. Gated, not timed: the probe says when it is
+    // in and waits to be let out, and the order of events is the proof.
     const home = tempDir();
     const r = path.join(home, "Documents", "r");
     fs.mkdirSync(r, { recursive: true });
     const x = path.join(r, "x");
     fs.writeFileSync(x, "x");
-    let probeBackAt = 0;
+    const order: string[] = [];
+    let probeIn: () => void = () => {};
+    const entered = new Promise<void>((res) => { probeIn = res; });
+    let letOut: () => void = () => {};
+    const release = new Promise<void>((res) => { letOut = res; });
     const inner = scriptedProbes({ openAsApp: { [x]: "EPERM" }, fullDiskAccess: false });
-    const slow: HostProbes = {
+    const gated: HostProbes = {
       ...inner,
       openAsApp: async (p) => {
-        await new Promise((res) => setTimeout(res, 600));
-        probeBackAt = Date.now();
+        if (p === x) {
+          order.push("probe in");
+          probeIn();
+          await release;
+          order.push("probe out");
+        }
         return inner.openAsApp(p);
       },
     };
-    const d = device(home, slow);
+    const d = device(home, gated);
     const a = d.handleIntent(
       intentFor(d, "run", [
         { kind: "process.exec", argv: ["/bin/sh", "-c", `echo "cat: ${x}: Operation not permitted" >&2; exit 1`], cwd: home },
@@ -786,24 +813,25 @@ describe.skipIf(!ON_MAC)("a command this Mac refused", () => {
       ]),
       { wait_ms: 5_000 },
     );
-    // Let A exit and its diagnosis reach the probe, then ask for B.
-    await new Promise((res) => setTimeout(res, 250));
-    const askedAt = Date.now();
-    const b = jv(
-      await d.handleIntent(
-        intentFor(d, "run", [{ kind: "process.exec", argv: ["/bin/echo", "b"], cwd: home }, { kind: "fs.write", paths: [r] }]),
-        { wait_ms: 2_000 },
-      ),
-    );
-    const startedAt = Date.now();
-    expect(b.get("status").str).toBe("completed");
-    // B was held until the probe returned, not started while it was out.
-    expect(probeBackAt).toBeGreaterThan(askedAt);
-    expect(startedAt).toBeGreaterThanOrEqual(probeBackAt);
+    await entered;
+    order.push("b asked");
+    // B is a one-liner that exits at once; answered within its wait, its
+    // answer says it ran. That answer is the marker (the intent's
+    // exec_start line is written before the executor's gate is reached).
+    const b = d.handleIntent(
+      intentFor(d, "run", [{ kind: "process.exec", argv: ["/bin/echo", "b"], cwd: home }, { kind: "fs.write", paths: [r] }]),
+      { wait_ms: 2_000 },
+    ).then((res) => { order.push("b ran"); return res; });
+    // Give B every chance to run while the probe is out; it must not.
+    await new Promise((res) => setImmediate(res));
+    await new Promise((res) => setTimeout(res, 50));
+    expect(order).toEqual(["probe in", "b asked"]);
+    letOut();
+    expect(jv(await b).get("status").str).toBe("completed");
     const ra = jv(await a);
     expect(ra.get("status").str).toBe("blocked");
     expect(ra.get("diagnosis").get("cause").str).toBe("macos_permission");
-    expect(inner.calls).toContain(`openAsApp ${x}`);
+    expect(order).toEqual(["probe in", "b asked", "probe out", "b ran"]);
   });
 
   it("a silent run that is simply running is left alone", async () => {
