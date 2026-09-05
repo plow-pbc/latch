@@ -190,5 +190,9 @@ name gains a `(<branch>)` suffix on screen. Only the packaged install uses the
 unsuffixed `Plow-Latch` home, so no from-source run can touch its state. Each
 checkout signs in for its own relay credential — never copy
 `settings.json` between homes (the relay does not support two devices on one
-credential). `just package` refuses to run from a worktree; package from main
-(`just package-unnotarized`, the local-check build, runs from any checkout).
+credential). `just package` runs from any checkout, into that checkout's
+`apps/desktop/release/`; never package in two checkouts at once, since they
+share the electron-builder caches and the signing keychain. A signed build of
+an unmerged branch is better had from CI: dispatch the "Build release
+candidate" workflow on the branch, and it drafts a prerelease that the promote
+workflow refuses to ship.

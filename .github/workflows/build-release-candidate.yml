@@ -12,13 +12,22 @@ run-name: Manual build — ${{ github.ref_name }}@${{ github.sha }}
 # automated coverage and is verified by hand (README-ts.md § Integration
 # coverage), so releases are cut deliberately, not on a timer.
 #
+# Dispatch it from ANY branch: main for a real candidate, a feature branch to
+# get a signed, notarized build of unmerged work onto a test Mac. A build from
+# anywhere but main is drafted as a PRERELEASE with the branch in its title,
+# and promote-app.yml refuses to ship a prerelease, so publishing one by
+# mistake cannot reach installed apps.
+#
 # Setup this workflow assumes (shared with Plow's release pipeline):
-#   - a "release" environment with required reviewers, a deployment policy of
-#     main + v*-build.* tags, and the OP_SERVICE_ACCOUNT_TOKEN secret for the
-#     1Password service account — the environment is what stops a dispatch
-#     against an arbitrary branch from reaching the secret, since a branch
-#     controls its own copy of this file (the ref guard below only fails
-#     honest mistakes early)
+#   - a "release" environment with required reviewers and the
+#     OP_SERVICE_ACCOUNT_TOKEN secret for the 1Password service account. The
+#     environment's deployment branch policy must allow every branch this is
+#     dispatched from (all branches, or a pattern covering them, plus the
+#     v*-build.* tags promote-app.yml runs on) — a dispatch from a branch the
+#     policy excludes is rejected before any step runs. The required reviewers
+#     are what keep a dispatch from an arbitrary branch away from the signing
+#     secret: a branch controls its own copy of this file, so a human looks at
+#     what is being built before the runner gets the secret.
 #   - the "GitHub Actions Release Secrets" 1Password item (same cert + notary
 #     credentials — both apps sign as The Plow Collective, 3559PD337Z)
 #   - AWS_RELEASE_ROLE_ARN's OIDC trust policy extended to THIS repository,
@@ -33,9 +42,6 @@ permissions:
 
 jobs:
   macOS:
-    # Releases are cut from main only. GitHub enforces this via the release
-    # environment's deployment branch policy; this guard just says so sooner.
-    if: ${{ github.ref == 'refs/heads/main' }}
     environment: release
     runs-on: macos-26
     timeout-minutes: 90
@@ -151,10 +157,16 @@ jobs:
           echo "build=$BUILD" >> "$GITHUB_OUTPUT"
           echo "tag=v${VERSION}-build.${BUILD}" >> "$GITHUB_OUTPUT"
 
+      # A build from any branch but main is a prerelease: the title names the
+      # branch, and promote-app.yml refuses prereleases, so publishing it cannot
+      # move the stable keys. The branch name is collaborator-controlled, so it
+      # reaches the shell through env, never ${{ }}-interpolated into the script.
       - name: Create draft GitHub Release
         id: draft_release
         env:
           GH_TOKEN: ${{ github.token }}
+          REF_NAME: ${{ github.ref_name }}
+          IS_MAIN: ${{ github.ref == 'refs/heads/main' }}
         run: |
           TAG="${{ steps.version.outputs.tag }}"
           VERSION="${{ steps.version.outputs.version }}"
@@ -164,18 +176,30 @@ jobs:
           git tag "$TAG"
           git push origin "$TAG"
 
+          TITLE="Plow Latch ${VERSION} (${BUILD})"
+          EXTRA_FLAGS=()
+          if [[ "$IS_MAIN" != "true" ]]; then
+            TITLE="${TITLE} from ${REF_NAME}"
+            EXTRA_FLAGS+=(--prerelease)
+          fi
+
           RELEASE_URL=$(gh release create "$TAG" \
             --draft \
-            --title "Plow Latch ${VERSION} (${BUILD})" \
+            ${EXTRA_FLAGS[@]+"${EXTRA_FLAGS[@]}"} \
+            --title "$TITLE" \
             --notes "**Download:** [Plow-Latch-${VERSION}.dmg](${DMG_URL})
 
-          Built from \`${{ github.ref_name }}\` @ \`${{ github.sha }}\`")
+          Built from \`${REF_NAME}\` @ \`${{ github.sha }}\`")
 
           echo "release_url=$RELEASE_URL" >> "$GITHUB_OUTPUT"
+          echo "prerelease=$([[ "$IS_MAIN" != "true" ]] && echo true || echo false)" >> "$GITHUB_OUTPUT"
           echo "Created draft release: $TAG ($RELEASE_URL)"
 
       - name: Job summary
         if: always()
+        env:
+          REF_NAME: ${{ github.ref_name }}
+          PRERELEASE: ${{ steps.draft_release.outputs.prerelease }}
         run: |
           VERSION="${{ steps.version.outputs.version }}"
           BUILD="${{ steps.version.outputs.build }}"
@@ -187,7 +211,11 @@ jobs:
               echo "### Plow Latch ${VERSION} (${BUILD})"
               echo ""
               echo "- [Download DMG](${DMG_URL})"
-              if [[ -n "$RELEASE_URL" ]]; then
+              if [[ -n "$RELEASE_URL" && "$PRERELEASE" == "true" ]]; then
+                echo "- [GitHub release draft](${RELEASE_URL}) (prerelease)"
+                echo ""
+                echo "This build is from \`${REF_NAME}\`, not \`main\`, so it is drafted as a **prerelease**. Install the DMG by hand to test it. Publishing the draft does NOT ship it: the **App release** workflow refuses prereleases, so nothing reaches installed apps. To ship this work, merge it and dispatch a build from \`main\`."
+              elif [[ -n "$RELEASE_URL" ]]; then
                 echo "- [GitHub release draft](${RELEASE_URL})"
                 echo ""
                 echo "#### How to ship this build to existing installs"

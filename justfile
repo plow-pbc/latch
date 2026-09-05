@@ -8,9 +8,9 @@
 
 root    := justfile_directory()
 # Empty in the main checkout; the normalized branch name in a linked git
-# worktree. Only "is this a worktree at all" still keys on this — the
-# main-only guard under `just package`, worktree-setup.sh, and the screenshot
-# dir. App state is keyed on the branch name below.
+# worktree. Only "is this a worktree at all" still keys on this —
+# worktree-setup.sh and the screenshot dir. App state is keyed on the branch
+# name below.
 worktree := `sh scripts/worktree-name.sh`
 # The normalized branch name of THIS checkout — main or worktree. Every
 # from-source run keeps its state in ~/Library/Application Support under a
@@ -133,16 +133,11 @@ test-browser: build
 # rewrites nested Info.plists and would break any earlier signature). CODESIGN_IDENTITY is
 # passed to electron-builder so the hook can sign; the build step itself leaves
 # the payload unsigned (afterPack is authoritative).
-# The distributable `just package` runs from the main checkout only: the DMG
-# should come from main, and all checkouts share the per-user electron-builder
-# caches and the signing/notary keychain state, so concurrent packages would
-# race. `package-unnotarized` is exempt — it never produces a distributable —
-# but the cache race is checkout-agnostic, so still don't package in two
-# checkouts at once.
-_main-only:
-    @if [ -n "{{worktree}}" ]; then echo "error: just package runs from the main checkout only (this is worktree '{{worktree}}'; for a local check build, use just package-unnotarized)" >&2; exit 1; fi
-
-package profile="domo-notary": _main-only (_package profile "")
+# Runs from any checkout — main or a worktree — and the output lands in THIS
+# checkout's apps/desktop/release/. All checkouts share the per-user
+# electron-builder caches and the signing/notary keychain state, so don't
+# package in two checkouts at once: they would race.
+package profile="domo-notary": (_package profile "")
 
 # Same signed DMG, but WITHOUT the notarization round-trip (which can take a
 # long time). For local manual checks only: the app runs fine on this Mac, but
@@ -190,7 +185,7 @@ _package profile flags: build
 # Version and build are read back from the packaged app so there is exactly
 # one clock: the one `package` stamped. s3_profile "" uses ambient AWS
 # credentials (CI's OIDC role).
-release profile="domo-notary" s3_profile="plow": _main-only
+release profile="domo-notary" s3_profile="plow":
     @just package "{{profile}}"; \
     plist="{{root}}/apps/desktop/release/mac-universal/Plow Latch.app/Contents/Info.plist"; \
     version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$plist")"; \

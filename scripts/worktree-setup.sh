@@ -20,7 +20,9 @@
 # What is deliberately NOT copied: settings.json and the relay credential in
 # it. The relay does not support two devices on one credential, so the first
 # `just app` in a worktree opens sign-in and the worktree gets its own.
-# `just package` stays main-only (shared electron-builder caches + keychain).
+# `just package` runs here too, into this checkout's apps/desktop/release/ —
+# just not concurrently with another checkout (shared electron-builder caches
+# + keychain).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 

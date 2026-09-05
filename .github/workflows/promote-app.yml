@@ -22,7 +22,11 @@ jobs:
   promote:
     # Only app release tags (v<version>-build.<build>) — ignore anything else.
     # A cheap skip filter; the parse step below enforces the full grammar.
-    if: ${{ startsWith(github.event.release.tag_name, 'v') && contains(github.event.release.tag_name, '-build.') }}
+    # Prereleases are skipped too: build-release-candidate.yml drafts every
+    # build from a branch other than main as one, so a test build published by
+    # mistake never moves the stable keys. Untick "pre-release" on the release
+    # to ship one deliberately.
+    if: ${{ startsWith(github.event.release.tag_name, 'v') && contains(github.event.release.tag_name, '-build.') && !github.event.release.prerelease }}
     # OP_SERVICE_ACCOUNT_TOKEN lives in the release environment (not repo
     # secrets), so a workflow outside the environment's gates can't read it.
     # Cost: publishing the draft ALSO needs an environment-reviewer approval

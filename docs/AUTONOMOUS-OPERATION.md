@@ -53,13 +53,15 @@ keychain, no FDA, dispatchable over SSH.
 What actually stops an unattended run is narrower than "no workflow", and each
 piece is worth naming separately:
 
-1. **It builds `main` only** (`if: github.ref == 'refs/heads/main'`, enforced
-   for real by the release environment's deployment branch policy). A feature
-   branch cannot be built this way, so smoking an unmerged change still needs a
-   local signed build — which is where the keychain wall is real.
-2. **The `release` environment has required reviewers**, deliberately: the
-   environment is what keeps a dispatch from an arbitrary branch away from the
-   signing secret. A human approves the deployment before the runner starts.
+1. **It builds any branch.** Dispatch it on a feature branch and it drafts a
+   *prerelease* whose title names the branch; `promote-app.yml` refuses
+   prereleases, so publishing one cannot reach installed apps. The `release`
+   environment's deployment branch policy has to admit the branch (all
+   branches, or a pattern) or GitHub rejects the dispatch before any step runs.
+2. **The `release` environment has required reviewers**, deliberately: with the
+   branch policy open, the reviewers are what keep a dispatch from an arbitrary
+   branch away from the signing secret. A human approves the deployment before
+   the runner starts.
 3. **Publishing the draft is a human gate** by design — it fires
    `promote-app.yml`. Note that publishing is not itself the moment installed
    apps begin updating: `promote-app.yml` also runs `environment: release`, so
@@ -71,19 +73,17 @@ piece is worth naming separately:
    `plow-prod-install-auto` skill has that half. This is the piece worth
    building, and it is small next to the workflow that already exists.
 
-So the hand-off here is not "go build it by hand" for a merged change:
+So the hand-off here is not "go build it by hand", merged or not:
 
-> Dispatch `build-release-candidate.yml` from `main`, approve the `release`
-> environment when GitHub asks, then install the notarized DMG on the target.
+> Dispatch `build-release-candidate.yml` from the branch (`main` for a real
+> candidate), approve the `release` environment when GitHub asks, then install
+> the notarized DMG on the target.
 
-For an **unmerged** branch it is still local:
-
-> Run `just package` from a checkout on a Mac with the signing keychain
-> unlocked, then install the DMG on the target.
-
-`just package-unnotarized` runs from any checkout and needs the same keychain,
-so it does not lift this. It also produces an artifact Gatekeeper refuses on any
-other machine, so it is a local-check build only.
+The local route still exists: `just package` from any checkout on a Mac with
+the signing keychain unlocked, which is where the keychain wall is real.
+`just package-unnotarized` needs the same keychain, so it does not lift this,
+and it produces an artifact Gatekeeper refuses on any other machine, so it is a
+local-check build only.
 
 ## Stop 2 — installing on the target (a real gap)
 
