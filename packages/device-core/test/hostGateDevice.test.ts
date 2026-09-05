@@ -715,6 +715,47 @@ describe.skipIf(!ON_MAC)("a command this Mac refused", () => {
     expect(response.get("probes").get("path_approved").bool).toBe(false);
   });
 
+  it("a run swapping its approved folder's entries while it is diagnosed is never followed", async () => {
+    // Approved to write ~/Plow/w and to read ~/Plow/w/a/x. While the run is
+    // alive it flips `a` between a folder and a link to ~/Desktop, over and
+    // over, and prints refusals for the file under it. The silent-run
+    // diagnosis happens while the loop runs; nothing under ~/Plow/w is
+    // opened by name, so nothing on the Desktop is stat'd or opened.
+    const home = tempDir();
+    fs.mkdirSync(path.join(home, "Desktop"));
+    const secret = path.join(home, "Desktop", "secret.txt");
+    fs.writeFileSync(secret, "x");
+    const w = path.join(home, "Plow", "w");
+    fs.mkdirSync(path.join(w, "a"), { recursive: true });
+    fs.writeFileSync(path.join(w, "a", "x"), "x");
+    const probes = scriptedProbes({ openAsApp: { [secret]: "hung", [path.join(home, "Desktop")]: "hung" } });
+    const d = device(home, probes);
+    Object.assign(d, { executor: new Executor(path.join(home, "device/scratch"), 600) });
+    const loop =
+      `i=0; while [ $i -lt 200 ]; do rm -rf ${JSON.stringify(path.join(w, "a"))}; ln -s ${JSON.stringify(path.join(home, "Desktop"))} ${JSON.stringify(path.join(w, "a"))}; ` +
+      `rm -f ${JSON.stringify(path.join(w, "a"))}; mkdir -p ${JSON.stringify(path.join(w, "a"))}; i=$((i+1)); done; ` +
+      `echo "cat: ${path.join(w, "a", "x")}: Operation not permitted" >&2; sleep 5; exit 1`;
+    const response = jv(
+      await d.handleIntent(
+        intentFor(d, "run", [
+          { kind: "process.exec", argv: ["/bin/sh", "-c", loop], cwd: home },
+          { kind: "fs.write", paths: [w] },
+          { kind: "fs.read", paths: [path.join(w, "a", "x")] },
+        ]),
+        { wait_ms: 300 },
+      ),
+    );
+    const handle = response.get("handle").str!;
+    // Poll through the run's life (the reaper ends it), diagnosing along the way.
+    const deadline = Date.now() + 8_000;
+    let polled = jv(await d.getOutput(handle));
+    while (polled.get("status").str === "running" && Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 100));
+      polled = jv(await d.getOutput(handle));
+    }
+    expect(probes.calls.filter((c) => c.includes("Desktop") || c.includes("/Plow/w"))).toEqual([]);
+  });
+
   it("a silent run that is simply running is left alone", async () => {
     const home = tempDir();
     const probes = scriptedProbes();

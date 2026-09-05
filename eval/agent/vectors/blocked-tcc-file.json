@@ -43,6 +43,7 @@
         ],
         "posix_readable": true,
         "posix_writable": true,
+        "probe_withheld": false,
         "ran_sandboxed": false,
         "sandbox_allows_read": null,
         "sandbox_allows_write": null,
@@ -56,22 +57,19 @@
     "plow_run_command": {
       "diagnosis": {
         "cause": "macos_permission",
-        "confidence": "confirmed",
+        "confidence": "likely",
         "evidence": [
           "the kernel answered EPERM for ~/Documents/plumber.txt",
-          "Plow Latch itself is refused ~/Documents/plumber.txt (EPERM) outside any sandbox",
-          "~/Documents/plumber.txt is under a location macOS guards (Files and Folders > Documents Folder)",
-          "Full Disk Access is not granted"
+          "~/Documents/plumber.txt was not opened by Plow Latch itself: a running command could rewrite it",
+          "~/Documents/plumber.txt is under a location macOS guards (Files and Folders > Documents Folder)"
         ],
         "owner_action": "In System Settings > Privacy & Security > Files and Folders > Documents Folder, allow Plow Latch. Granting Plow Latch Full Disk Access instead covers this and every other folder at once.",
         "permission": "files_documents",
         "requires_relaunch": false,
         "retry": "after_owner_grants",
         "ruled_out": [
-          "file missing",
           "locked file",
-          "System Integrity Protection",
-          "sandbox bound"
+          "System Integrity Protection"
         ]
       },
       "exit_code": 1,
@@ -79,25 +77,26 @@
       "output": "/bin/sh: ~/Documents/plumber.txt: Operation not permitted\n",
       "output_length": 130,
       "probes": {
-        "app_process_open": "EPERM",
+        "app_process_open": null,
         "automation_status": null,
         "automation_target": null,
         "errno": "EPERM",
         "full_disk_access_granted": false,
         "hung": false,
-        "immutable_flag": false,
-        "is_directory": false,
+        "immutable_flag": null,
+        "is_directory": null,
         "op": "exec",
         "path": "~/Documents/plumber.txt",
         "path_approved": true,
-        "path_exists": true,
+        "path_exists": null,
         "paths_examined": [
           "~/Documents/plumber.txt",
           "/bin/sh",
           "~"
         ],
-        "posix_readable": true,
-        "posix_writable": true,
+        "posix_readable": null,
+        "posix_writable": null,
+        "probe_withheld": true,
         "ran_sandboxed": true,
         "sandbox_allows_read": true,
         "sandbox_allows_write": true,

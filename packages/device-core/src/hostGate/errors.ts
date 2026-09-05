@@ -13,26 +13,6 @@
  *  verbatim, so an unexpected code still reaches the evidence. */
 export type Errno = "EPERM" | "EACCES" | "ENOENT" | "EROFS" | "ENOTDIR" | "EISDIR" | string;
 
-export interface ParsedError {
-  errno: Errno | null;
-  syscall: string | null;
-  /** The path the message names, if it names one. */
-  path: string | null;
-}
-
-/**
- * Node's error message shape is `<CODE>: <description>, <syscall> '<path>'`
- * (a rename names two paths; the first is the one that matters here). The
- * code may be preceded by our own prefix (`read failed: `), so it is searched
- * for rather than anchored.
- */
-export function parseNodeError(message: string): ParsedError {
-  const m = /\b(E[A-Z]+): [^,]*, (\w+) '([^']*)'/.exec(message);
-  if (m) return { errno: m[1]!, syscall: m[2]!, path: m[3]! };
-  const code = /\b(E[A-Z]{3,})\b/.exec(message);
-  return { errno: code ? code[1]! : null, syscall: null, path: null };
-}
-
 /**
  * What a command's stderr says about why it failed, reduced to the few shapes
  * this Mac knows how to follow up on. Free text from a program is never a

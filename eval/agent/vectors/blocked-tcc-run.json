@@ -6,22 +6,19 @@
     "plow_run_command": {
       "diagnosis": {
         "cause": "macos_permission",
-        "confidence": "confirmed",
+        "confidence": "likely",
         "evidence": [
           "the kernel answered EPERM for ~/Library/Messages/chat.db",
-          "Plow Latch itself is refused ~/Library/Messages/chat.db (EPERM) outside any sandbox",
-          "~/Library/Messages/chat.db is under a location macOS guards (Full Disk Access)",
-          "Full Disk Access is not granted"
+          "~/Library/Messages/chat.db was not opened by Plow Latch itself: a running command could rewrite it",
+          "~/Library/Messages/chat.db is under a location macOS guards (Full Disk Access)"
         ],
         "owner_action": "In System Settings > Privacy & Security > Full Disk Access, turn on Plow Latch, then quit and reopen it.",
         "permission": "full_disk_access",
         "requires_relaunch": true,
         "retry": "after_owner_grants",
         "ruled_out": [
-          "file missing",
           "locked file",
-          "System Integrity Protection",
-          "sandbox bound"
+          "System Integrity Protection"
         ]
       },
       "exit_code": 1,
@@ -29,25 +26,26 @@
       "output": "/bin/sh: ~/Library/Messages/chat.db: Operation not permitted\n",
       "output_length": 133,
       "probes": {
-        "app_process_open": "EPERM",
+        "app_process_open": null,
         "automation_status": null,
         "automation_target": null,
         "errno": "EPERM",
         "full_disk_access_granted": false,
         "hung": false,
-        "immutable_flag": false,
-        "is_directory": false,
+        "immutable_flag": null,
+        "is_directory": null,
         "op": "exec",
         "path": "~/Library/Messages/chat.db",
         "path_approved": true,
-        "path_exists": true,
+        "path_exists": null,
         "paths_examined": [
           "~/Library/Messages/chat.db",
           "/bin/sh",
           "~"
         ],
-        "posix_readable": true,
-        "posix_writable": true,
+        "posix_readable": null,
+        "posix_writable": null,
+        "probe_withheld": true,
         "ran_sandboxed": true,
         "sandbox_allows_read": true,
         "sandbox_allows_write": true,
