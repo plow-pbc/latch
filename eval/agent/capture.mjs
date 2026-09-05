@@ -186,8 +186,8 @@ const pane = (sentence) => { const m = /System Settings > [^,.]+/.exec(sentence 
       ["plow_run_command", await run(server, home, `printf 'Call the plumber\\n' > ${JSON.stringify(file)}`, { write_paths: [file] }), [home]],
       await status(server, home),
     ],
-    // One attempt; a status check first is fine, a second attempt is not.
-    expect: { calls: { min: 1, max: 2 }, names: pane(OWNER_DOCS), includes: [OWNER_DOCS], excludes: ["declined", "you said no"] },
+    // One attempt — an attempt, not a status check in its place; a second attempt is not.
+    expect: { calls: { min: 1, max: 2 }, attempted: true, names: pane(OWNER_DOCS), includes: [OWNER_DOCS], excludes: ["declined", "you said no"] },
   });
 }
 // 6. A command macOS refused: Messages' database without Full Disk Access.
@@ -208,8 +208,8 @@ const pane = (sentence) => { const m = /System Settings > [^,.]+/.exec(sentence 
     note: "A run refused by macOS (Full Disk Access, confirmed). One call, the owner sentence verbatim, no retry with another command.",
     prompt: "Look in the Messages database on my Mac and tell me whether Sam replied about Saturday.",
     captured: [["plow_run_command", r, [home]], await status(server, home)],
-    // The copy says to check the inventory first; that call, then at most one attempt.
-    expect: { calls: { min: 1, max: 2 }, names: pane(r.answer.diagnosis?.owner_action), includes: r.answer.diagnosis?.owner_action ? [r.answer.diagnosis.owner_action] : [], excludes: ["declined"] },
+    // The attempt itself, at most once; a status check may accompany it but not replace it.
+    expect: { calls: { min: 1, max: 2 }, attempted: true, names: pane(r.answer.diagnosis?.owner_action), includes: r.answer.diagnosis?.owner_action ? [r.answer.diagnosis.owner_action] : [], excludes: ["declined"] },
   });
 }
 // 7. A command the sandbox refused: a write outside the approved bound (likely, not confirmed).
@@ -236,7 +236,7 @@ const pane = (sentence) => { const m = /System Settings > [^,.]+/.exec(sentence 
     note: "Apple events to Messages refused by macOS (confirmed). One call, the owner sentence verbatim.",
     prompt: "Use the Messages app on my Mac to send Sam a text saying 'Saturday works'.",
     captured: [["plow_run_command", r, [home]], await status(server, home)],
-    expect: { calls: { min: 1, max: 2 }, names: pane(r.answer.diagnosis?.owner_action), includes: r.answer.diagnosis?.owner_action ? [r.answer.diagnosis.owner_action] : [], excludes: ["Full Disk Access"] },
+    expect: { calls: { min: 1, max: 2 }, attempted: true, names: pane(r.answer.diagnosis?.owner_action), includes: r.answer.diagnosis?.owner_action ? [r.answer.diagnosis.owner_action] : [], excludes: ["Full Disk Access"] },
   });
 }
 // 8b. A scripted Contacts read refused its data: Automation is granted (the
@@ -251,7 +251,7 @@ const pane = (sentence) => { const m = /System Settings > [^,.]+/.exec(sentence 
     captured: [["plow_run_command", r, [home]], await status(server, home)],
     // A reply may well say Automation is fine — it is — so only a dialog
     // that is not there is forbidden.
-    expect: { calls: { min: 1, max: 2 }, names: ["System Settings > Privacy & Security > Contacts"], includes: r.answer.diagnosis?.owner_action ? [r.answer.diagnosis.owner_action] : [], excludes: ["dialog"] },
+    expect: { calls: { min: 1, max: 2 }, attempted: true, names: ["System Settings > Privacy & Security > Contacts"], includes: r.answer.diagnosis?.owner_action ? [r.answer.diagnosis.owner_action] : [], excludes: ["dialog"] },
   });
 }
 // 8c. A script error of the script's own, on the same app: no gate, and the
@@ -287,7 +287,7 @@ const pane = (sentence) => { const m = /System Settings > [^,.]+/.exec(sentence 
       ["plow_run_command", await run(server, home, `printf 'new' > ${JSON.stringify(file)}`, { write_paths: [file] }), [home]],
       await status(server, home),
     ],
-    expect: { calls: { min: 1, max: 2 }, names: ["locked"], includes: w.answer.diagnosis?.owner_action ? [w.answer.diagnosis.owner_action] : [], excludes: ["Full Disk Access", "Privacy & Security"] },
+    expect: { calls: { min: 1, max: 2 }, attempted: true, names: ["locked"], includes: w.answer.diagnosis?.owner_action ? [w.answer.diagnosis.owner_action] : [], excludes: ["Full Disk Access", "Privacy & Security"] },
   });
 }
 // 10. A missing file: failed, with the facts this Mac gathered, and no owner sentence.

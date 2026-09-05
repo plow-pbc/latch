@@ -95,6 +95,9 @@ async function runOnce(v, n) {
   if (x.calls && called.length < x.calls.min) failures.push(`${called.length} tool call(s), expected at least ${x.calls.min}`);
   if (x.calls && called.length > x.calls.max) failures.push(`${called.length} tool call(s), expected at most ${x.calls.max}: ${called.join(", ")}`);
   for (const t of x.tools ?? []) if (!called.includes(t)) failures.push(`never called ${t}`);
+  // The attempt is what a refusal — and the owner's surfaces — come from;
+  // a status check that stands in for it leaves the user with nowhere to click.
+  if (x.attempted && !called.some((c) => c !== "plow_device_status")) failures.push("never attempted the operation: only checked status");
   const text = norm(finalText);
   // Two bars. `names` is the pass bar: the reply must point at the right
   // thing (the pane, the flag, the dialog). `includes` is the strict one the

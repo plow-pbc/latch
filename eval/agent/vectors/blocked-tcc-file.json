@@ -179,6 +179,7 @@
       "min": 1,
       "max": 2
     },
+    "attempted": true,
     "names": [
       "System Settings > Privacy & Security > Files and Folders > Documents Folder"
     ],

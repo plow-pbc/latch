@@ -127,6 +127,7 @@
       "min": 1,
       "max": 2
     },
+    "attempted": true,
     "names": [
       "locked"
     ],
