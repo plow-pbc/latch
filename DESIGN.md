@@ -259,8 +259,10 @@ So a refusal is **diagnosed, never guessed** (`packages/device-core/src/hostGate
 - A run parked on a dialog is **left running**: the owner's click lets it
   finish, and killing it would make the click pointless. The agent is told
   within seconds (the app's own probe hangs), not at the reaper's fifteen
-  minutes; the reaper stays the ceiling. A clean exit afterwards clears the
-  verdict: the click happened, and the run is completed, not blocked.
+  minutes; the reaper stays the ceiling. Any exit of the run's own afterwards
+  clears the verdict: the click happened, and the outcome is the run's —
+  completed, or failed on its own terms — not blocked. Only a reaped run
+  was still parked.
 - A file operation is the other way round: what parks is a read-only
   **touch** of the path — the probe battery's own child process, killed on
   its timer, never an open on this process's four-thread file-I/O pool —

@@ -399,6 +399,24 @@ describe("auditActivities (grouping)", () => {
     expect(recovered.status).toBe("Completed");
     expect(recovered.statusKind).toBe("completed");
     expect(recovered.timeline.some((s) => s.text.startsWith("This Mac refused"))).toBe(true);
+    // Answered, resumed, and then failed for a reason of its own: the exit
+    // is the outcome, not the dialog that is gone.
+    const failed = auditActivities([
+      { event: "intent_received", intentId: "i1", request: "run: x", ts: "2026-08-18T12:00:00Z" },
+      { event: "intent_decision", intentId: "i1", decision: "allow_once", source: "prompt", ts: "2026-08-18T12:00:01Z" },
+      { event: "exec_start", intentId: "i1", argv: ["/bin/sh"], ts: "2026-08-18T12:00:01Z" },
+      { event: "host_permission_blocked", intentId: "i1", handle: "H1", path: "~/Desktop/a.txt", cause: "prompt_waiting", confidence: "confirmed", permission: "files_desktop", owner_action: "A dialog is open.", ts: "2026-08-18T12:00:02Z" },
+      { event: "exec_end", intentId: "i1", exit_code: 1, ts: "2026-08-18T12:00:30Z" },
+    ])[0]!;
+    expect(failed.status).toBe("Failed · exit 1");
+    // Reaped while parked: still blocked on the dialog.
+    const reaped = auditActivities([
+      { event: "intent_received", intentId: "i1", request: "run: x", ts: "2026-08-18T12:00:00Z" },
+      { event: "intent_decision", intentId: "i1", decision: "allow_once", source: "prompt", ts: "2026-08-18T12:00:01Z" },
+      { event: "host_permission_blocked", intentId: "i1", handle: "H1", path: "~/Desktop/a.txt", cause: "prompt_waiting", confidence: "confirmed", permission: "files_desktop", owner_action: "A dialog is open.", ts: "2026-08-18T12:00:02Z" },
+      { event: "exec_end", intentId: "i1", exit_code: -1, reaped: true, ts: "2026-08-18T12:15:00Z" },
+    ])[0]!;
+    expect(reaped.status).toBe("Blocked · dialog waiting");
     // A confirmed refusal followed by exit 0 is not a recovery: only the
     // parked verdict is provisional.
     expect(run("macos_permission").status).toBe("Blocked · Desktop folder");

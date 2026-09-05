@@ -513,15 +513,19 @@ describe.skipIf(!ON_MAC)("a command this Mac refused", () => {
     fs.mkdirSync(path.dirname(target), { recursive: true });
     fs.writeFileSync(target, "x");
     const inner = scriptedProbes({ openAsApp: { [target]: "EPERM" }, fullDiskAccess: false });
-    let calls = 0;
+    // The provisional battery's probe of the target is slow and comes back
+    // "parked"; every later probe — the rest of that battery, and all of
+    // the exit's — is quick and answers as the Mac would. Decided before
+    // the wait, on the target's own first probe: the batteries probe several
+    // paths at once (the shell first), so a plain invocation count would
+    // pick the wrong one.
+    let targetProbes = 0;
     const firstSlow: HostProbes = {
       ...inner,
       openAsApp: async (p) => {
-        calls += 1;
-        // The first battery (the provisional one) is slow; the exit's is quick.
-        await new Promise((r) => setTimeout(r, calls === 1 ? 900 : 10));
-        // What the provisional probe sees is a parked open.
-        return calls === 1 ? "hung" : inner.openAsApp(p);
+        const provisional = p === target && ++targetProbes === 1;
+        await new Promise((r) => setTimeout(r, provisional ? 900 : 10));
+        return provisional ? "hung" : inner.openAsApp(p);
       },
     };
     const d = device(home, firstSlow);
@@ -538,6 +542,40 @@ describe.skipIf(!ON_MAC)("a command this Mac refused", () => {
     const blocks = d.audit.entries().filter((e) => jv(e as JSONValue).get("event").str === "host_permission_blocked");
     expect(blocks).toHaveLength(1);
     expect(jv(blocks[0] as JSONValue).get("cause").str).toBe("macos_permission");
+  });
+
+  it.skipIf(!ON_MAC)("a parked run that resumes and then fails on its own terms is Failed, not blocked", async () => {
+    // Parked, then the owner answers, then the command exits 1 for a reason
+    // of its own. The "parked" verdict is gone with the dialog; an ordinary
+    // exit gets no diagnosis; the poll says completed, exit 1.
+    const home = tempDir();
+    const downloads = path.join(home, "Downloads");
+    fs.mkdirSync(downloads);
+    const fifo = path.join(downloads, "blocked.pipe");
+    execFileSync("/usr/bin/mkfifo", [fifo]);
+    const d = device(home, scriptedProbes({ openAsApp: { [fifo]: "hung" } }));
+    const response = jv(
+      await d.handleIntent(
+        intentFor(d, "run", [{ kind: "process.exec", argv: ["/bin/sh", "-c", `cat ${JSON.stringify(fifo)}; exit 1`], cwd: home }]),
+        { wait_ms: 50 },
+      ),
+    );
+    expect(response.get("status").str).toBe("running");
+    expect(response.get("diagnosis").get("cause").str).toBe("prompt_waiting");
+    const handle = response.get("handle").str!;
+    // The owner answers: cat is the reader, so this open completes.
+    const fd = fs.openSync(fifo, "w");
+    fs.writeSync(fd, "through\n");
+    fs.closeSync(fd);
+    const deadline = Date.now() + 5_000;
+    let polled = jv(await d.getOutput(handle));
+    while (polled.get("status").str === "running" && Date.now() < deadline) {
+      await new Promise((r) => setTimeout(r, 50));
+      polled = jv(await d.getOutput(handle));
+    }
+    expect(polled.get("status").str).toBe("completed");
+    expect(polled.get("exit_code").int).toBe(1);
+    expect(polled.get("diagnosis").isNull).toBe(true);
   });
 
   it("a poll that lands between the exit and its diagnosis waits for the verdict", async () => {
