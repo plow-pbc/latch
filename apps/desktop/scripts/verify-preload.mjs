@@ -18,6 +18,7 @@ import {
 } from "../dist/settingsActions.js";
 import { loadSettings, saveSettings } from "../dist/settings.js";
 import { launchAtLoginState, setLaunchAtLogin } from "../dist/loginItem.js";
+import { capabilitiesView } from "../dist/capabilitiesModel.js";
 
 const dir = path.dirname(fileURLToPath(import.meta.url));
 const dist = path.join(dir, "../dist");
@@ -54,7 +55,33 @@ ipcMain.handle("settings:getRelay", async () => {
 ipcMain.handle("settings:setApprovalMode", async (_e, m) => setApprovalMode(probeHome, m));
 // A Mac that has NOT granted Full Disk Access — the state the Capabilities
 // section exists to explain.
-ipcMain.handle("capabilities:get", async () => ({ fullDiskAccess: false }));
+// The Capabilities tab renders from the REAL view model over a stub
+// inventory: a Mac whose Full Disk Access is off and has been asked for
+// nothing else. `grant:state` is what the floating grant panel polls.
+const probeInventory = {
+  checked_at: "2026-09-02T08:00:00Z",
+  full_disk_access: { granted: false, probes: [] },
+  automation: [],
+  automation_queryable: true,
+  permissions: [
+    { permission: "accessibility", status: "denied" },
+    { permission: "contacts", status: "not_asked" },
+    { permission: "calendars", status: "granted" },
+  ],
+  sandbox: { status: "ok", detail: null },
+  child_attribution: { status: "not_applicable", detail: null },
+  vault_key: { status: "ok", reason: null },
+};
+const probeCapabilities = () => ({
+  fullDiskAccess: false,
+  inventory: probeInventory,
+  view: capabilitiesView({ inventory: probeInventory, automation: [], events: [], dismissals: {}, bannerSeenAt: null }),
+});
+ipcMain.handle("capabilities:get", async () => probeCapabilities());
+ipcMain.handle("capabilities:act", async () => probeCapabilities().view);
+ipcMain.handle("capabilities:dismiss", async () => probeCapabilities().view);
+ipcMain.handle("capabilities:bannerSeen", async () => probeCapabilities().view);
+ipcMain.handle("grant:state", async () => ({ key: "full_disk_access", label: "Full Disk Access", granted: false }));
 // The drag-to-authorize tile's display data: a fake bundle name and a 1px
 // icon, so the tile renders in the probe without a real .app behind it.
 ipcMain.handle("fullDisk:dragInfo", async () => ({
@@ -545,20 +572,9 @@ app.whenReady().then(async () => {
       ),
       // The word is gone from this pane's copy entirely.
       saysNothingAdversarial: !/adversarial/i.test(document.querySelector("#view").innerText),
-      // The Capabilities section, on a Mac whose probe says denied: it names
-      // the permission, says so honestly, gives the Messages use case, and
-      // routes the grant through System Settings (a key into main's table —
-      // the renderer never holds the URL).
-      hasCapabilitiesGroup: document.body.innerText.includes("Capabilities"),
-      fdaSaysNotGranted:
-        document.body.innerText.includes("Full Disk Access") &&
-        document.body.innerText.includes("Not granted"),
-      fdaNamesMessages: document.body.innerText.includes("texted to you in Messages"),
-      fdaOffersSystemSettings: [...document.querySelectorAll("button")].some(
-        (b) => b.textContent.trim() === "Open System Settings…",
-      ),
-      // The drag source lives only in the floating grant panel (checked
-      // below), never in this pane.
+      // The capabilities card left this pane for a tab of its own (probed
+      // below); the drag source lives only in the floating grant panel.
+      noCapabilitiesCard: !document.querySelector("#view").innerText.includes("Full Disk Access"),
       fdaNoInlineDragTile: !document.querySelector(".fda-drag-tile"),
       // The marks split by meaning: the macOS "…" on the one hand-off the user
       // must finish over there (System Settings), the external-link ↗ on the
@@ -1951,6 +1967,29 @@ app.whenReady().then(async () => {
     };
   }})()`);
 
+  // The Capabilities tab, on a Mac whose inventory says Full Disk Access is
+  // off: the row names the permission, its dot says so honestly, the line
+  // gives the Messages use case, and the one button routes the grant through
+  // System Settings (a key into main's table — the renderer never holds the
+  // URL). Nothing has been blocked, so no badge and no banner.
+  await win.webContents.executeJavaScript(`window.__domoSelectTab && window.__domoSelectTab("capabilities")`);
+  await waitFor(win, `document.querySelector(".cap-row")`, "the Capabilities tab");
+  const capabilities = await win.webContents.executeJavaScript(`(${() => {
+    const rows = [...document.querySelectorAll(".cap-row")];
+    const fda = rows.find((r) => r.querySelector(".cap-name")?.textContent === "Full Disk Access");
+    return {
+      hasFdaRow: !!fda,
+      fdaSaysNotGranted: fda?.querySelector(".status-dot")?.getAttribute("title") === "Not granted",
+      fdaNamesMessages: (fda?.querySelector(".cap-sub")?.textContent ?? "").includes("Messages"),
+      fdaOffersSystemSettings: fda?.querySelector("button.btn")?.textContent.trim() === "Allow in System Settings…",
+      // A granted switch is a word, not a button.
+      calendarsGranted: rows.some((r) => r.querySelector(".cap-name")?.textContent === "Calendars" && r.querySelector(".cap-granted")),
+      noBadge: document.getElementById("capCount")?.hidden === true,
+      noBanner: !document.querySelector(".cap-banner"),
+      fdaNoInlineDragTile: !document.querySelector(".fda-drag-tile"),
+    };
+  }})()`);
+
   // The floating grant panel (fdaGrantFlow.ts) comes up through the same
   // sandboxed preload as every other window. Loaded directly — the probe
   // drives windows, not the flow, so no System Settings is involved.
@@ -2128,11 +2167,16 @@ app.whenReady().then(async () => {
     settings.noReviewerGroup &&
     settings.noPasswordField &&
     settings.noSuggestionsCheckbox &&
-    settings.hasCapabilitiesGroup &&
-    settings.fdaSaysNotGranted &&
-    settings.fdaNamesMessages &&
-    settings.fdaOffersSystemSettings &&
+    settings.noCapabilitiesCard &&
     settings.fdaNoInlineDragTile &&
+    capabilities.hasFdaRow &&
+    capabilities.fdaSaysNotGranted &&
+    capabilities.fdaNamesMessages &&
+    capabilities.fdaOffersSystemSettings &&
+    capabilities.calendarsGranted &&
+    capabilities.noBadge &&
+    capabilities.noBanner &&
+    capabilities.fdaNoInlineDragTile &&
     settings.supportMarks &&
     settings.launchTitle &&
     settings.launchToggleLive &&
@@ -2196,7 +2240,7 @@ app.whenReady().then(async () => {
     errors.length === 0;
   console.log(
     "PROBE:" +
-      JSON.stringify({ main, settings, strandedOnDisk, settingsPane, connect, cloudRoster, cloudCreatePicker, cloudCreateSelection, cloudCreateSelectionOnly, cloudCreateRequest, cloudCreateCancelled, cloudCreateCode, cloudExistingCreate, cloudExistingCreateRequest, cloudCodeConfirmed, cloudCodeConfirmedClosed, cloudNoFreeLines, cloudNoNumbers, cloudDetail, cloudChangePicker, cloudChangeSelection, cloudChangeSelectionOnly, cloudChangeCode, cloudChangeRequest, cloudUnknownLines, cloudCreateErrorDetail, failedCloudDetailButtons, cloudChangeErrorDetail, cloudAgentGoneCancelled, cloudDeleteConfirm, loadingCloudDetail, unavailableCloudDetail, agentsShot, approvalsReviewer, approvalsShot, purposeRoundTrip, approvalsAsk, askWithoutReviewer, approvalsShotAsk, agentsOpen, modalClosed, vaultLocked, vaultUnsaved, vaultShot, agentsOpenShot, staleSettingsPane, optimisticMode, settingsShot, approval, reviewerNote, grantPanel, consoleErrors: errors, ok }),
+      JSON.stringify({ main, settings, capabilities, strandedOnDisk, settingsPane, connect, cloudRoster, cloudCreatePicker, cloudCreateSelection, cloudCreateSelectionOnly, cloudCreateRequest, cloudCreateCancelled, cloudCreateCode, cloudExistingCreate, cloudExistingCreateRequest, cloudCodeConfirmed, cloudCodeConfirmedClosed, cloudNoFreeLines, cloudNoNumbers, cloudDetail, cloudChangePicker, cloudChangeSelection, cloudChangeSelectionOnly, cloudChangeCode, cloudChangeRequest, cloudUnknownLines, cloudCreateErrorDetail, failedCloudDetailButtons, cloudChangeErrorDetail, cloudAgentGoneCancelled, cloudDeleteConfirm, loadingCloudDetail, unavailableCloudDetail, agentsShot, approvalsReviewer, approvalsShot, purposeRoundTrip, approvalsAsk, askWithoutReviewer, approvalsShotAsk, agentsOpen, modalClosed, vaultLocked, vaultUnsaved, vaultShot, agentsOpenShot, staleSettingsPane, optimisticMode, settingsShot, approval, reviewerNote, grantPanel, consoleErrors: errors, ok }),
   );
   app.exit(ok ? 0 : 1);
 }).catch((err) => {

@@ -83,6 +83,10 @@ export const MAX_CANDIDATE_PATHS = 8;
  * paths are not guessed at: the cwd they were relative to is the run's, and
  * a wrong guess would probe the wrong file and confidently blame it.
  */
+/** What a shell word may glue after a path: a closing quote, a comma, the
+ *  sentence's own stop. */
+const TRAILING_PUNCTUATION = new Set(["'", '"', "`", ",", ";", ":", ".", ")", "]", "}", ">"]);
+
 export function candidatePaths(texts: readonly string[], limit = MAX_CANDIDATE_PATHS): string[] {
   const seen = new Set<string>();
   const out: string[] = [];
@@ -101,7 +105,12 @@ export function candidatePaths(texts: readonly string[], limit = MAX_CANDIDATE_P
       const at = raw.search(/(?:^|[=:'"`])(~?\/)/);
       if (at < 0) continue;
       let token = raw.slice(at).replace(/^[=:'"`]+/, "");
-      token = token.replace(/['"`,;:.)\]}>]+$/, "");
+      // Trailing quote and punctuation, trimmed by hand: a `+$` over a
+      // character class backtracks per repetition on a word that is mostly
+      // quotes, and this text is a command's own output.
+      let end = token.length;
+      while (end > 0 && TRAILING_PUNCTUATION.has(token[end - 1]!)) end -= 1;
+      token = token.slice(0, end);
       if (!(token.startsWith("/") || token === "~" || token.startsWith("~/"))) continue;
       // A bare "/" is the filesystem, not a file anyone failed to open.
       if (token === "/") continue;
