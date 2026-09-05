@@ -11,7 +11,7 @@
  * key to pin. That is provenance, not confinement — DESIGN.md §4 *The intent
  * object* owns where an intent's contents go.
  */
-import { capabilityDisplay, Intent, intentIsExpired, JSONValue, jv } from "@domo/protocol";
+import { capabilityDisplay, Intent, intentIsExpired, isLexicallyWithin, JSONValue, jv } from "@domo/protocol";
 import { PROVIDERS, vendoredProvider, type VendoredProvider } from "./providers/registry.js";
 import { MintError, type MintedAccounts, type Minter } from "./providers/mint.js";
 import { gogExitReason, mergeFanout, planPlowGog } from "./providers/plowGog.js";
@@ -618,7 +618,17 @@ export class DeviceAgent {
    */
   private async guardedFileOp<T>(p: string, op: () => Promise<T>): Promise<T> {
     if (guardedPrefix(p, this.ownerHome) === null) return op();
-    const touch = this.hostProbes.openAsApp(existingAncestor(p));
+    // The touch opens by name, and a name under a root some run (or a job
+    // it left behind) can still write may point elsewhere by the time the
+    // child opens it. So the touch climbs above every such root: the gate
+    // is the same — the folder macOS asks about contains them all — and
+    // nothing a run can write is opened.
+    const mutable = this.executor.mutableRoots();
+    let target = existingAncestor(p);
+    while (mutable.some((root) => isLexicallyWithin(target, root)) && path.dirname(target) !== target) {
+      target = path.dirname(target);
+    }
+    const touch = this.hostProbes.openAsApp(target);
     let timer: ReturnType<typeof setTimeout> | undefined;
     const hang = new Promise<never>((_, reject) => {
       timer = setTimeout(() => reject(new FileOpHang()), this.fileOpHangMs);
