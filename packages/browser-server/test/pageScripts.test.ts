@@ -313,15 +313,14 @@ describe("which document this is", () => {
       const stamped = DOC_TOKEN_JS();
       const w = (globalThis as any).window;
       // What an earlier `eval` would reach for: drop the property, or replace
-      // it, so the next look reads as a new document and the ledger is dropped.
-      expect(() => {
-        "use strict";
-        delete w.__domoDocumentToken;
-      }).toThrow();
-      expect(() => Object.defineProperty(w, "__domoDocumentToken", { value: "forged" })).toThrow();
-      // A plain assignment is what an eval'd expression actually reaches for,
-      // and it runs sloppy: no throw, and the write goes nowhere.
+      // it, so the next look reads as a new document and the ledger with it.
+      // Through `new Function`, because an eval'd expression runs SLOPPY — and
+      // sloppy is where these fail quietly rather than throwing, which is the
+      // path worth proving.
+      expect(new Function("w", "return delete w.__domoDocumentToken")(w)).toBe(false);
       new Function("w", "w.__domoDocumentToken = 'forged'")(w);
+      // This one throws either way.
+      expect(() => Object.defineProperty(w, "__domoDocumentToken", { value: "forged" })).toThrow();
       expect(DOC_TOKEN_JS()).toBe(stamped);
     });
   });
