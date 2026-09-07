@@ -871,6 +871,19 @@ export class BrowserSessions {
       };
     }
 
+    if (result.ok === false && result.mask === "concealed") {
+      const selector = jv(result).get("selector").str ?? "";
+      this.audit("browser_eval_refused", { session: s.auditId, selector });
+      return {
+        status: "error",
+        error:
+          `eval was refused: ${selector} is holding a value out of the vault, and eval reads ` +
+          `a field's value straight out of the page. Submit the form, or fill ${selector} ` +
+          `with an empty value, and eval will work again.`,
+        ...(refused.length ? { failed_requests: refused } : {}),
+      };
+    }
+
     const out: { [k: string]: JSONValue } = { status: "completed", ...result };
     if (refused.length) out.failed_requests = refused;
     // If the action itself landed us out of scope, say so in the result — the

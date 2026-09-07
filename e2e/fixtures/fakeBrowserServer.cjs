@@ -27,6 +27,9 @@
  *                            different document than the one approved
  *   FAKE_REMASK_FAILS=1      refuse every screenshot/forms, the way the real
  *                            server refuses when a mark will not go back on
+ *   FAKE_CONCEALED_EVAL=s    refuse every eval naming selector s, the way the
+ *                            real server refuses while a concealed field it
+ *                            filled is still holding its value
  *   FAKE_ARGV_LOG=path append this server's argv per launch (window-mode proof)
  *   FAKE_CMD_LOG=path  append the JSON of every command received, one per line
  *                      (proof of what the device asked the browser to do). The
@@ -134,6 +137,9 @@ function handle(cmd) {
     };
   }
   if (a === "text") return { text: "fake page text of " + current().url };
+  if (a === "eval" && process.env.FAKE_CONCEALED_EVAL) {
+    return { ok: false, mask: "concealed", selector: process.env.FAKE_CONCEALED_EVAL };
+  }
   if (a === "eval") return { result: "eval:" + cmd.expression };
   if (a === "click") {
     // The shape a real click failure has: the browser names what was over it.

@@ -560,8 +560,8 @@ export const TOOLS: ToolSpec[] = [
       `not your own fetch: ${LIVE_WEB_ROUTING}. ` +
       "What you sign into is merged back into their profile when the session closes — including " +
       "when several browsers are open at once. It can also fill passwords from their vault " +
-      "without returning them to you ('eval' is the exception: it reads page values directly, " +
-      "and must not be pointed at a field you filled). " +
+      "without returning them to you ('eval' is refused while a field it filled still holds " +
+      "the value). " +
       "The session id you get back says WHICH browser: pass it on every call and you keep the " +
       "same window. The Mac runs a few at once — every one of them the user's — and says so " +
       "plainly when it is full. " +
@@ -628,7 +628,8 @@ export const TOOLS: ToolSpec[] = [
       "popup went to paypal.com) and/or permission to fill specific vault items into pages " +
       "(find item ids with plow_vault's 'list' action). A secret is never returned to you by " +
       "these tools; it is typed into the page on this Mac, where it is page content like " +
-      "anything else — readable through 'eval', which you must not point at a field you filled.",
+      "anything else, except that 'eval' is refused while a field the vault filled still holds " +
+      "the value.",
     inputSchema: {
       type: "object",
       required: ["session"],
@@ -710,8 +711,8 @@ export const TOOLS: ToolSpec[] = [
       "characters; everything else fills as ordinary text you can read back. A generated " +
       "'totp' code is the one field masked although the vault's own app shows it — fill it " +
       "and submit, you never need to read it. Masking covers what you see, screenshots and " +
-      "'forms'; it does not cover 'eval', which reads a field's value straight out of the " +
-      "page, so never inspect a field you filled that way. Actions on pages outside the approved origins are " +
+      "'forms'; 'eval' reads a field's value straight out of the page, so it is refused while " +
+      "a concealed field still holds the value. Actions on pages outside the approved origins are " +
       "refused — use plow_browser_request to widen scope. Every result includes the current url and " +
       "page_count (watch it for popups; switch with use_page), and 'failed_requests' when the " +
       "page's own requests came back refused — a 401, 403 or 429 there is why an action that " +
@@ -834,8 +835,8 @@ export const TOOLS: ToolSpec[] = [
       "open a browser session and call the plow_browser tool's fill_secret — that is the only " +
       "way to put one into a page: the value is typed in on the Mac and is never returned by " +
       "these tools, nor by a screenshot or 'forms' if the vault conceals it. It is in the page " +
-      "you are driving and 'eval' can read it, so treat it as you would anything else on that " +
-      "page: do not go looking for it, copy it out, or repeat it.",
+      "you are driving, and 'eval' is refused while it still holds the value; treat it as you " +
+      "would anything else on that page: do not go looking for it, copy it out, or repeat it.",
     inputSchema: {
       type: "object",
       required: ["action"],

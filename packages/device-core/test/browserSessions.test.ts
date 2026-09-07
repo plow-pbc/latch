@@ -571,6 +571,31 @@ describe("credentials", () => {
     expect(ok.get("frame").int).toBe(1);
     expect(fs.readFileSync(ctx.fillLog, "utf8")).toContain("#card-number\t4111111111111111\t1");
   });
+
+  it("refuses eval while a concealed field holds a value, and names the way out", async () => {
+    await ctx.sessions.closeAll("teardown");
+    ctx = makeCtx({ FAKE_CONCEALED_EVAL: "#pass" });
+    const s = await openSession(["pizza.example"]);
+    const before = ctx.events.length;
+    const result = jv(
+      await ctx.sessions.command(s, {
+        action: "eval",
+        expression: "document.querySelector('#pass').value",
+      }),
+    );
+    expect(result.get("status").str).toBe("error");
+    const error = result.get("error").str ?? "";
+    expect(error).toContain("#pass");
+    expect(error).toContain("eval");
+    expect(result.get("result").value ?? null).toBeNull();
+    expect(ctx.events.slice(before).at(-1)).toEqual({
+      event: "browser_eval_refused",
+      fields: {
+        session: ctx.events.find((e) => e.event === "browser_session_opened")!.fields.session,
+        selector: "#pass",
+      },
+    });
+  });
 });
 
 describe("audit hygiene", () => {
