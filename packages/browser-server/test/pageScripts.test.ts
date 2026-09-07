@@ -313,7 +313,7 @@ describe("which document this is", () => {
       const stamped = DOC_TOKEN_JS();
       const w = (globalThis as any).window;
       // What an earlier `eval` would reach for: drop the property, or replace
-      // it, so the next look reads as a new document and the ledger with it.
+      // it, so the next look reads as a new document and drops the ledger with it.
       // Through `new Function`, because an eval'd expression runs SLOPPY — and
       // sloppy is where these fail quietly rather than throwing, which is the
       // path worth proving.
