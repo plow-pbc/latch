@@ -504,7 +504,7 @@ export async function ledger(script: LedgerStep[]): Promise<{
 export function pagePair(): { first: Page; popup: Page; close: (page: Page) => void } {
   const trace: string[] = [];
   const first = new Page(new Frame(trace, { nodes: { "#pass": new Handle(trace) } }));
-  const popup = new Page(new Frame(trace, { nodes: {} }));
+  const popup = new Page(new Frame(trace, { nodes: { "#pass": new Handle(trace) } }));
   popup.documentToken = "doc-popup";
   let open: PageLike[] = [first, popup];
   const shared: ContextLike = { on() {}, pages: () => open };

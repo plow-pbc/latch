@@ -27,6 +27,7 @@
  *                            different document than the one approved
  *   FAKE_REMASK_FAILS=1      refuse every screenshot/forms, the way the real
  *                            server refuses when a mark will not go back on
+ *   FAKE_CONCEALED_EVAL_PAGE=n  the page index that refusal names (default: none)
  *   FAKE_CONCEALED_EVAL=s    refuse every eval naming selector s, the way the
  *                            real server refuses while a concealed field it
  *                            filled is still holding its value
@@ -138,7 +139,13 @@ function handle(cmd) {
   }
   if (a === "text") return { text: "fake page text of " + current().url };
   if (a === "eval" && process.env.FAKE_CONCEALED_EVAL) {
-    return { ok: false, mask: "concealed", selector: process.env.FAKE_CONCEALED_EVAL };
+    const page = process.env.FAKE_CONCEALED_EVAL_PAGE;
+    return {
+      ok: false,
+      mask: "concealed",
+      selector: process.env.FAKE_CONCEALED_EVAL,
+      ...(page === undefined ? {} : { page: Number(page) }),
+    };
   }
   if (a === "eval") return { result: "eval:" + cmd.expression };
   if (a === "click") {

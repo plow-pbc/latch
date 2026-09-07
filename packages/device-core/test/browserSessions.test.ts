@@ -580,9 +580,14 @@ describe("credentials", () => {
     expect(fs.readFileSync(ctx.fillLog, "utf8")).toContain("#card-number\t4111111111111111\t1");
   });
 
-  it("refuses eval while a concealed field holds a value, and names the way out", async () => {
+  // The gate covers every page of the session, so the refusal has to say WHICH
+  // — the field is only clearable from the page that owns it.
+  it.each([
+    { what: "on the page the agent is already on", env: {}, page: null },
+    { what: "on another page of the session", env: { FAKE_CONCEALED_EVAL_PAGE: "1" }, page: 1 },
+  ])("refuses eval while a concealed field holds a value $what", async ({ env, page }) => {
     await ctx.sessions.closeAll("teardown");
-    ctx = makeCtx({ FAKE_CONCEALED_EVAL: "#pass" });
+    ctx = makeCtx({ FAKE_CONCEALED_EVAL: "#pass", ...env });
     const s = await openSession(["pizza.example"]);
     const before = ctx.events.length;
     const result = jv(
@@ -595,12 +600,15 @@ describe("credentials", () => {
     const error = result.get("error").str ?? "";
     expect(error).toContain("#pass");
     expect(error).toContain("eval");
+    // Where to go, not just what is holding it.
+    expect(error).toContain(`use_page ${page ?? 0}`);
     expect(result.get("result").value ?? null).toBeNull();
     expect(ctx.events.slice(before).at(-1)).toEqual({
       event: "browser_eval_refused",
       fields: {
         session: ctx.events.find((e) => e.event === "browser_session_opened")!.fields.session,
         selector: "#pass",
+        ...(page === null ? {} : { page }),
       },
     });
   });

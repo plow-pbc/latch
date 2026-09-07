@@ -325,6 +325,26 @@ describe("the server's fill branch, run directly", () => {
     });
   });
 
+  it("names the page that owns the field, not the one the agent is on", async () => {
+    // The whole point of carrying the index: the field is clearable only from
+    // its own page, so a refusal naming page 0 for a value held on page 1
+    // sends the agent somewhere it can do nothing.
+    const { first } = pagePair();
+    const session = new Session(first);
+    await session.handle({ action: "use_page", index: 1 } as never);
+    await session.handle({ action: "fill", selector: "#pass", value: "hunter2", mask: true } as never);
+    expect(await session.handle({ action: "use_page", index: 0 } as never)).toEqual({
+      ok: true,
+      title: "",
+    });
+    expect(await session.handle({ action: "eval", expression: "1" } as never)).toEqual({
+      ok: false,
+      mask: "concealed",
+      selector: "#pass",
+      page: 1,
+    });
+  });
+
   // The gate reads every page, so every page has to be able to clear itself —
   // a ledger only the active page can drop is one an inactive page holds
   // forever, refusing eval over a document that moved on long ago.
