@@ -382,9 +382,9 @@ site's own, or agent `eval`) can fetch anywhere CORS allows. That is accepted.
 It used to be argued that eval carries nothing `screenshot`/`text` could not
 already carry; that is no longer true. Masking (§11a-ii) covers what the agent
 SEES — screenshots and form reads — and cannot cover `eval`, which reads
-`input.value` directly. The residual is deliberate and bounded by the threat
-model: accidental exposure is what masking is for, and an agent that goes
-looking for a filled value with `eval` is outside it.
+`input.value` directly. So `eval` is not evaluated at all while a field the
+fill path concealed is still on the active page holding a value: the agent's
+way on is to submit the form, or to fill that field with an empty value.
 
 **What the page's own requests did.** A browser action reports whether it
 worked; it used to say nothing about whether the *page* worked. A click whose
@@ -456,10 +456,10 @@ merchant) → a frame-targeted fill → the value is dropped. Secret
 values never traverse MCP, never appear in the results these tools return, and
 never appear in either audit log. **Scope of that guarantee:** it covers what
 `plow_vault` and `fill_secret` hand back, and — through masking (§11a-ii) — what
-a screenshot or `forms` shows. It does not cover `eval`, which reads
-`input.value` directly; that is the documented residual, accepted because the
-threat model is accidental exposure and an agent reaching for `eval` is
-outside it.
+a screenshot or `forms` shows. Masking cannot cover `eval`, which reads
+`input.value` directly, so `eval` is refused outright while a concealed field
+still holds a value. What no mark reaches is the field's own page reading what
+was typed into it.
 Item ids on the approval card are resolved to titles **locally** (agent-supplied
 titles would be spoofable).
 
@@ -687,10 +687,11 @@ present without its characters, and never returns a `type="password"` value at
 all. Full design, including the alternatives rejected and why, in
 `docs/superpowers/specs/2026-08-18-secret-masking-design.md`.
 
-**What it does not cover: `eval`.** It reads `input.value` directly and no mark
-changes that. Accepted residual: the threat model is accidental exposure — a
-well-behaved agent looking at a page in the ordinary course of its work — and
-an agent reaching for `eval` to read a field it just filled is outside it.
+**What the mark cannot cover: `eval`.** It reads `input.value` directly and no
+mark changes that, so `eval` is refused while a field the fill path concealed
+is still on the page holding a value — submit the form, or fill that field with
+an empty value, and it runs again. What no mark reaches is the field's own page
+reading what was typed into it, which was never what the mark was for.
 
 ### 11a-iii. Receiving an Apple Passwords export app-to-app
 
