@@ -27,6 +27,8 @@
  *                            different document than the one approved
  *   FAKE_REMASK_FAILS=1      refuse every screenshot/forms, the way the real
  *                            server refuses when a mark will not go back on
+ *   FAKE_NO_IDENTITY=1       refuse every masked fill the way the real server
+ *                            does for a document that will not name itself
  *   FAKE_CONCEALED_EVAL_PAGE=n  the page index that refusal names (default: none)
  *   FAKE_CONCEALED_EVAL=s    refuse every eval naming selector s, the way the
  *                            real server refuses while a concealed field it
@@ -208,6 +210,9 @@ function handle(cmd) {
   if (a === "fill") {
     // A page that will not let the mark take: nothing is typed, and the caller
     // is told the value would have been legible.
+    if (cmd.mask && process.env.FAKE_NO_IDENTITY === "1") {
+      return { ok: false, mask: "no_identity", frame: cmd.frame ?? 0 };
+    }
     if (cmd.mask && process.env.FAKE_CSP_BLOCKS_MASK === "1") {
       return { ok: false, mask: "unmasked", frame: cmd.frame ?? 0 };
     }

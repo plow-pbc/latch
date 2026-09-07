@@ -533,10 +533,12 @@ export class Session {
         // The ledger keys on this document, so a document that will not name
         // itself has no key to file under — and a concealed fill nothing can
         // record is one nothing can re-mask or refuse `eval` over. Refused
-        // before anything is typed, and refused as the page's own doing, which
-        // is what it is: some property is holding the name we identify
-        // documents by, and holding it in a shape we will not trust.
-        if (doc === "") return { ok: false, mask: "unmasked", frame: i };
+        // before anything is typed, and reported as its own cause: a page that
+        // blocks the masking stylesheet has a CSP, while a page holding the
+        // name we identify documents by — in a shape we will not trust — is
+        // doing something no ordinary page does, and the owner's log has to be
+        // able to tell those apart.
+        if (doc === "") return { ok: false, mask: "no_identity", frame: i };
         // Marked first, and only typed once the mark is known to have taken.
         const wasMarked = (await el.evaluate(WAS_MARKED_JS)) as boolean;
         const before = await el.evaluateHandle(VALUE_SNAPSHOT_JS);

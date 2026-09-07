@@ -65,7 +65,7 @@ describe("the server's fill branch, run directly", () => {
     // nothing can re-mask or refuse eval over. Refused before anything is
     // typed, so the page is as it was found.
     const nameless = await run({ ...base, mask: true }, { documentToken: "" });
-    expect(nameless.result).toEqual({ ok: false, mask: "unmasked", frame: 0 });
+    expect(nameless.result).toEqual({ ok: false, mask: "no_identity", frame: 0 });
     expect(nameless.typed_len).toBeNull();
     expect(nameless.marked).toBe(false);
     expect(nameless.ledgered).toBe(false);
