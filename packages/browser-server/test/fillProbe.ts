@@ -413,7 +413,7 @@ export async function ranked(
   return { error, tried: trace.filter((t) => t === "frame.wait_for_selector").length };
 }
 
-type LedgerStep =
+export type LedgerStep =
   | { cmd: Record<string, Any> }
   | { navigate: string }
   | { route: string }

@@ -4,7 +4,7 @@
  * fillProbe.py. Every scenario the Python probe covered is here, ungated.
  */
 import { describe, expect, it } from "vitest";
-import { constants, ledger, ranked, run, twoFrames } from "./fillProbe.js";
+import { constants, ledger, ranked, run, twoFrames, type LedgerStep } from "./fillProbe.js";
 
 const base = { action: "fill", selector: "#pass", value: "hunter2", frame: 0 };
 const approved = { frame_token: "doc-1" };
@@ -262,39 +262,23 @@ describe("the server's fill branch, run directly", () => {
     expect(gated.steps.at(-1)!.result).toEqual({ ok: false, mask: "concealed", selector: "#pass" });
   });
 
-  it("refuses eval when the selector stopped matching the node it filled", async () => {
-    const restyled = await ledger([
+  // A node that went away with a live value in it is exactly the case the
+  // ledger has to keep: nothing re-resolves the selector, so nothing can
+  // mistake "does not match" for "is not there". `forms` is the interposed
+  // case — its remask used to FORGET what it could not resolve, which handed
+  // the gate straight back: fill, look at the page, then eval.
+  it.each([
+    { what: "on its own", between: [] as LedgerStep[] },
+    { what: "with an observation interposed", between: [{ cmd: { action: "forms" } }] as LedgerStep[] },
+  ])("refuses eval after the selector stopped matching, $what", async ({ between }) => {
+    const kept = await ledger([
       { cmd: { action: "fill", selector: "#pass", value: "hunter2", frame: 1, mask: true } },
       { vanish: "#pass" },
+      ...between,
       { cmd: { action: "eval", expression: "1" } },
     ]);
-    // Nothing re-resolves the selector, so the entry stays and refuses. A node
-    // that vanished with a live value in it is exactly the case the ledger has
-    // to keep: the page is the last thing that gets to say it is gone.
-    expect(restyled.tracked).toEqual(["doc-1:#pass"]);
-    expect(restyled.steps.at(-1)!.result).toEqual({
-      ok: false,
-      mask: "concealed",
-      selector: "#pass",
-    });
-  });
-
-  it("keeps refusing eval when an observation was interposed after the selector stopped matching", async () => {
-    // `forms` re-marks what it can and used to FORGET what it could not resolve,
-    // which handed the gate right back: fill, look at the page, then eval. The
-    // remask skips what will not resolve now; only a new document forgets.
-    const interposed = await ledger([
-      { cmd: { action: "fill", selector: "#pass", value: "hunter2", frame: 1, mask: true } },
-      { vanish: "#pass" },
-      { cmd: { action: "forms" } },
-      { cmd: { action: "eval", expression: "1" } },
-    ]);
-    expect(interposed.tracked).toEqual(["doc-1:#pass"]);
-    expect(interposed.steps.at(-1)!.result).toEqual({
-      ok: false,
-      mask: "concealed",
-      selector: "#pass",
-    });
+    expect(kept.tracked).toEqual(["doc-1:#pass"]);
+    expect(kept.steps.at(-1)!.result).toEqual({ ok: false, mask: "concealed", selector: "#pass" });
   });
 
   it("allows eval once the field is emptied, and once the page has moved on", async () => {

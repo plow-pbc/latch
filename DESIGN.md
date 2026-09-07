@@ -382,9 +382,13 @@ site's own, or agent `eval`) can fetch anywhere CORS allows. That is accepted.
 It used to be argued that eval carries nothing `screenshot`/`text` could not
 already carry; that is no longer true. Masking (§11a-ii) covers what the agent
 SEES — screenshots and form reads — and cannot cover `eval`, which reads
-`input.value` directly. So `eval` is not evaluated at all while a field the
-fill path concealed is still on the active page holding a value: the agent's
-way on is to submit the form, or to fill that field with an empty value.
+`input.value` directly. So `eval` is not evaluated at all while the ledger of
+concealed fields is non-empty for the active page. The agent's way on is to
+empty that field with a plain `fill`, or to load another page — submitting the
+form is one. The ledger is deliberately conservative: it drops a field only on
+a new document or on an overwrite the vault does not conceal, never on a guess
+that the node has gone (§11a-ii), so a field the page has replaced keeps `eval`
+refused until the page navigates.
 
 **What the page's own requests did.** A browser action reports whether it
 worked; it used to say nothing about whether the *page* worked. A click whose
@@ -688,9 +692,14 @@ all. Full design, including the alternatives rejected and why, in
 `docs/superpowers/specs/2026-08-18-secret-masking-design.md`.
 
 **What the mark cannot cover: `eval`.** It reads `input.value` directly and no
-mark changes that, so `eval` is refused while a field the fill path concealed
-is still on the page holding a value — submit the form, or fill that field with
-an empty value, and it runs again. What no mark reaches is the field's own page
+mark changes that, so `eval` is refused while the ledger of concealed fields is
+non-empty — empty the field with a plain `fill`, or load another page, and it
+runs again. Nothing prunes that ledger on a failure to resolve a selector or a
+frame: a selector can be state-dependent and a frame can decline to say which
+document it is showing, so neither absence is evidence the value went with it.
+Forgetting belongs to the two moments that watched it leave — a new document,
+and an overwrite the vault does not conceal. An entry can therefore outlive its
+node, which costs `eval` until the page navigates and is the safe direction. What no mark reaches is the field's own page
 reading what was typed into it, which was never what the mark was for.
 
 ### 11a-iii. Receiving an Apple Passwords export app-to-app
