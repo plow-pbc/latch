@@ -416,6 +416,7 @@ export async function ranked(
 export type LedgerStep =
   | { cmd: Record<string, Any> }
   | { navigate: string }
+  | { unidentified: true }
   | { route: string }
   | { drop_sibling: true }
   | { frame_navigated: string }
@@ -443,7 +444,12 @@ export async function ledger(script: LedgerStep[]): Promise<{
   const session = new Session(page);
   const steps: { step: string; result: Record<string, Any> | null }[] = [];
   for (const step of script) {
-    if ("navigate" in step) {
+    if ("unidentified" in step) {
+      // What DOC_TOKEN_JS answers for a document whose token name is held
+      // against it by a non-configurable accessor: no identity at all.
+      page.documentToken = "";
+      steps.push({ step: "unidentified", result: null });
+    } else if ("navigate" in step) {
       page.urlValue = step.navigate;
       page.documentToken = `doc-${step.navigate}`;
       // A new document: new nodes, none of them marked or holding anything.

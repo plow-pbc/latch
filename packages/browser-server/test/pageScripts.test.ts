@@ -322,14 +322,17 @@ describe("which document this is", () => {
     });
   });
 
-  it("states no identity at all when the name is held against it", () => {
+  // A non-configurable ACCESSOR is the one shape that cannot be replaced by
+  // anything, ever, in either of its forms. Restamping throws, so the script
+  // must not try to carry on: "" says the document has no identity worth
+  // stating, and the server declines to reason from it rather than trusting a
+  // planted answer.
+  it.each([
+    { what: "a getter", planted: { get: () => "planted", configurable: false } },
+    { what: "a setter", planted: { set: () => {}, configurable: false } },
+  ])("states no identity at all when the name is held against it by $what", ({ planted }) => {
     inPage(() => {
-      const w = (globalThis as any).window;
-      // A non-configurable ACCESSOR is the one shape that cannot be replaced by
-      // anything, ever. Restamping throws, so the script must not try to carry
-      // on: "" says the document has no identity worth stating, and the server
-      // declines to reason from it rather than trusting a planted answer.
-      Object.defineProperty(w, "__domoDocumentToken", { get: () => "planted", configurable: false });
+      Object.defineProperty((globalThis as any).window, "__domoDocumentToken", planted);
       expect(DOC_TOKEN_JS()).toBe("");
     });
   });

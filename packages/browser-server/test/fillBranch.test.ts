@@ -302,6 +302,27 @@ describe("the server's fill branch, run directly", () => {
     expect(popup.documentToken).toBe("doc-popup");
   });
 
+  // "" is DOC_TOKEN_JS refusing to name a document it could not stamp. Forgetting
+  // on that is forgetting on the say-so of whoever took the name, so the record
+  // survives and the refusal with it — at page level and at frame level.
+  it.each([
+    { what: "the page will not identify itself", step: { unidentified: true } as LedgerStep },
+    { what: "the frame will not", step: { frame_navigated: "" } as LedgerStep },
+  ])("keeps the ledger, and the refusal, when $what", async ({ step }) => {
+    const unnamed = await ledger([
+      { cmd: { action: "fill", selector: "#pass", value: "hunter2", frame: 1, mask: true } },
+      step,
+      { cmd: { action: "forms" } },
+      { cmd: { action: "eval", expression: "1" } },
+    ]);
+    expect(unnamed.tracked).toEqual(["doc-1:#pass"]);
+    expect(unnamed.steps.at(-1)!.result).toEqual({
+      ok: false,
+      mask: "concealed",
+      selector: "#pass",
+    });
+  });
+
   it("allows eval once the field is emptied, and once the page has moved on", async () => {
     const cleared = await ledger([
       { cmd: { action: "fill", selector: "#pass", value: "hunter2", frame: 1, mask: true } },
