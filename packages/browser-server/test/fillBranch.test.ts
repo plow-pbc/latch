@@ -287,7 +287,7 @@ describe("the server's fill branch, run directly", () => {
     // A popup and its opener are same-origin often enough, and `opener.document`
     // reads the field the popup never filled. A per-page gate would be one
     // `use_page` away from being no gate at all.
-    const [first, popup] = pagePair();
+    const { first, popup } = pagePair();
     const session = new Session(first);
     await session.handle({ action: "fill", selector: "#pass", value: "hunter2", mask: true } as never);
     expect(await session.handle({ action: "use_page", index: 1 } as never)).toEqual({
@@ -321,6 +321,30 @@ describe("the server's fill branch, run directly", () => {
       mask: "concealed",
       selector: "#pass",
     });
+  });
+
+  // The gate reads every page, so every page has to be able to clear itself —
+  // a ledger only the active page can drop is one an inactive page holds
+  // forever, refusing eval over a document that moved on long ago.
+  it.each([
+    { what: "it navigated while another page was active", act: (p: { documentToken: string }) => void (p.documentToken = "doc-later") },
+    { what: "it closed", act: null },
+  ])("clears an inactive page's ledger once $what", async ({ act }) => {
+    const { first, popup, close } = pagePair();
+    const session = new Session(first);
+    await session.handle({ action: "fill", selector: "#pass", value: "hunter2", mask: true } as never);
+    await session.handle({ action: "use_page", index: 1 } as never);
+    expect(await session.handle({ action: "eval", expression: "1" } as never)).toEqual({
+      ok: false,
+      mask: "concealed",
+      selector: "#pass",
+    });
+    if (act === null) close(first);
+    else act(first);
+    expect(await session.handle({ action: "eval", expression: "1" } as never)).toEqual({
+      result: "doc-popup",
+    });
+    expect(popup.documentToken).toBe("doc-popup");
   });
 
   it("allows eval once the field is emptied, and once the page has moved on", async () => {

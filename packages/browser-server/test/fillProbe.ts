@@ -501,17 +501,17 @@ export async function ledger(script: LedgerStep[]): Promise<{
  * and the shape a popup opened by the page itself arrives in. The first holds
  * `#pass`; the second holds nothing.
  */
-export function pagePair(): [Page, Page] {
+export function pagePair(): { first: Page; popup: Page; close: (page: Page) => void } {
   const trace: string[] = [];
   const first = new Page(new Frame(trace, { nodes: { "#pass": new Handle(trace) } }));
-  const second = new Page(new Frame(trace, { nodes: {} }));
-  second.documentToken = "doc-popup";
-  const both: PageLike[] = [first, second];
-  const shared: ContextLike = { on() {}, pages: () => both };
-  for (const page of [first, second]) {
+  const popup = new Page(new Frame(trace, { nodes: {} }));
+  popup.documentToken = "doc-popup";
+  let open: PageLike[] = [first, popup];
+  const shared: ContextLike = { on() {}, pages: () => open };
+  for (const page of [first, popup]) {
     (page as unknown as { ctx: ContextLike }).ctx = shared;
   }
-  return [first, second];
+  return { first, popup, close: (page) => void (open = open.filter((p) => p !== page)) };
 }
 
 export { Frame, Handle, Page, Hidden, Detached };

@@ -198,20 +198,34 @@ export class Session {
    * still in them, and the marks still have to go back on.
    */
   private async forgetNavigated(): Promise<void> {
-    let token: string;
-    try {
-      token = (await this.page.evaluate(DOC_TOKEN_JS)) as string;
-    } catch {
-      // Mid-navigation, or a page that will not evaluate. Keeping the record is
-      // the safe answer: a stale mask is dropped when it fails to resolve.
-      return;
+    // EVERY page of the session, because the `eval` gate reads every page: a
+    // ledger only the active page can clear is one an inactive page holds
+    // forever, refusing eval over a document that moved on long ago.
+    const open = this.pages;
+    for (const page of open) {
+      let token: string;
+      try {
+        token = (await page.evaluate(DOC_TOKEN_JS)) as string;
+      } catch {
+        // Mid-navigation, or a page that will not evaluate. Keeping the record
+        // is the safe answer: a stale mask is dropped when it fails to resolve.
+        continue;
+      }
+      // "" is the page refusing to be identified (DOC_TOKEN_JS). Forgetting on
+      // that is forgetting on the say-so of whoever took the name, so it is the
+      // same answer as a failed evaluate: keep the record.
+      if (token !== "" && this.seenDocument.get(page) !== token) {
+        this.seenDocument.set(page, token);
+        this.masked.delete(page);
+      }
     }
-    // "" is the page refusing to be identified (DOC_TOKEN_JS). Forgetting on
-    // that is forgetting on the say-so of whoever took the name, so it is the
-    // same answer as a failed evaluate: keep the record.
-    if (token !== "" && this.seenDocument.get(this.page) !== token) {
-      this.seenDocument.set(this.page, token);
-      this.masked.delete(this.page);
+    // A page that has closed took its nodes and their values with it — the one
+    // departure that needs no signal from the page itself.
+    for (const page of this.masked.keys()) {
+      if (!open.includes(page)) {
+        this.masked.delete(page);
+        this.seenDocument.delete(page);
+      }
     }
   }
 
@@ -638,7 +652,7 @@ export class Session {
       // opener are same-origin often enough, and `opener.document` reads the
       // field this page never filled — so a per-page gate is one `use_page`
       // away from being no gate at all.
-      const held = [...this.masked.values()].flatMap((held) => [...held]).sort()[0];
+      const held = [...this.masked.values()].flatMap((onPage) => [...onPage]).sort()[0];
       if (held !== undefined) {
         return { ok: false, mask: "concealed", selector: held.slice(held.indexOf(":") + 1) };
       }
