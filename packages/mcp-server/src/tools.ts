@@ -712,7 +712,8 @@ export const TOOLS: ToolSpec[] = [
       "characters; everything else fills as ordinary text you can read back. A generated " +
       "'totp' code is the one field masked although the vault's own app shows it — fill it " +
       "and submit, you never need to read it. Masking covers what you see, screenshots and " +
-      `'forms'; ${EVAL_REFUSED} — it reads one straight out of the page. ` +
+      `'forms'; because 'eval' reads a field's value straight out of the page, ` +
+      `${EVAL_REFUSED}. ` +
       "Actions on pages outside the approved origins are " +
       "refused — use plow_browser_request to widen scope. Every result includes the current url and " +
       "page_count (watch it for popups; switch with use_page), and 'failed_requests' when the " +
