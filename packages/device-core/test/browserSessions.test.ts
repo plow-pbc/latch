@@ -498,10 +498,12 @@ describe("credentials", () => {
     // Still says enough to fix the call.
     expect(r.get("error").str).toContain("#nofill");
     expect(eventNames()).toContain("credential_fill_failed");
-    // A throw mid-fill can leave the value in the page, so the same rollback
-    // the refusals do runs here — and owns up when the field will not empty.
-    expect(r.get("error").str).toContain("except #nofill");
-    expect(ctx.events.map((e) => e.fields.reason)).toContain(
+    // A throw mid-fill can leave the value in the page, and the node it was
+    // writing is the BROWSER's to roll back — only that side knows whether
+    // anything reached it. The device erases the fields it saw land, says what
+    // that covered, and does not report a rollback it did not perform.
+    expect(r.get("error").str).toContain("anything that reached #nofill");
+    expect(ctx.events.map((e) => e.fields.reason)).not.toContain(
       "the page kept a character after the fill was rolled back",
     );
   });
