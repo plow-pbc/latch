@@ -256,8 +256,9 @@ process hands it and owns no copy of its own.
   renderer. Sign-out retires it with `POST /v1/relay/devices/self/revoke`, which
   accepts a session: its guard is `relay:device`, and a session's wildcard
   satisfies it. Macs paired before this change keep their narrow credential
-  until they sign out and back in; `GET /v1/lines` is the one surface that
-  refuses them, and says so.
+  until they sign out and back in; every surface takes it, `GET /v1/lines`
+  included, except on a credential minted before `chats:list` existed, which
+  that route refuses and says so.
 - **The server owns activation expiry.** The screen gives the first five minutes
   an active countdown, but the main process keeps polling while the activation
   remains valid. “Send it again” re-arms that same live code; a fresh code is
