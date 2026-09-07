@@ -518,11 +518,8 @@ export class Session {
       // Only the SEARCH may move on to the next frame. Once a node resolves,
       // whatever happens to it is this fill's answer.
       const expected = cmd.frame_token;
-      if (
-        expected !== undefined &&
-        expected !== null &&
-        (await el.evaluate(DOC_TOKEN_JS)) !== expected
-      ) {
+      const doc = (await el.evaluate(DOC_TOKEN_JS)) as string;
+      if (expected !== undefined && expected !== null && doc !== expected) {
         return { ok: false, mask: "moved", frame: i };
       }
       // The one thing knowable before touching the node: the field says how
@@ -533,6 +530,13 @@ export class Session {
         return { ok: false, mask: "too_long", cap, frame: i };
       }
       if (cmd.mask) {
+        // The ledger keys on this document, so a document that will not name
+        // itself has no key to file under — and a concealed fill nothing can
+        // record is one nothing can re-mask or refuse `eval` over. Refused
+        // before anything is typed, and refused as the page's own doing, which
+        // is what it is: some property is holding the name we identify
+        // documents by, and holding it in a shape we will not trust.
+        if (doc === "") return { ok: false, mask: "unmasked", frame: i };
         // Marked first, and only typed once the mark is known to have taken.
         const wasMarked = (await el.evaluate(WAS_MARKED_JS)) as boolean;
         const before = await el.evaluateHandle(VALUE_SNAPSHOT_JS);
@@ -557,19 +561,19 @@ export class Session {
             } catch {
               /* the page kept it; the mark stays either way */
             }
-            this.rememberMasked((await el.evaluate(DOC_TOKEN_JS)) as string, sel);
+            this.rememberMasked(doc, sel);
           }
           await before.dispose();
           throw exc;
         }
         await before.dispose();
-        this.rememberMasked((await el.evaluate(DOC_TOKEN_JS)) as string, sel);
+        this.rememberMasked(doc, sel);
         return { ok: true, mask: state, frame: i, ...(await this.kept(el, String(cmd.value))) };
       }
       // Not a secret. The mark comes off AFTER the value is in, never before.
       await this.typeValue(el, String(cmd.value), kind);
       await el.evaluate(UNMASK_JS);
-      this.forgetMasked((await el.evaluate(DOC_TOKEN_JS)) as string, sel);
+      this.forgetMasked(doc, sel);
       return { ok: true, frame: i, ...(await this.kept(el, String(cmd.value))) };
     }
     throw last ?? new Error(`selector not found: ${sel}`);

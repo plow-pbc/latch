@@ -60,6 +60,17 @@ describe("the server's fill branch, run directly", () => {
     expect(r.result).toEqual({ ok: true, frame: 0, altered: true });
   });
 
+  it("will not conceal a fill into a document that will not name itself", async () => {
+    // No token, no ledger key — and a concealed fill nothing records is one
+    // nothing can re-mask or refuse eval over. Refused before anything is
+    // typed, so the page is as it was found.
+    const nameless = await run({ ...base, mask: true }, { documentToken: "" });
+    expect(nameless.result).toEqual({ ok: false, mask: "unmasked", frame: 0 });
+    expect(nameless.typed_len).toBeNull();
+    expect(nameless.marked).toBe(false);
+    expect(nameless.ledgered).toBe(false);
+  });
+
   it("resolves the node once and marks it before the value goes in", async () => {
     const r = await run({ ...base, mask: true }, {});
     expect(r.trace).toEqual([

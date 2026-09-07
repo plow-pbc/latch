@@ -155,7 +155,12 @@ export const DOC_TOKEN_JS = (): string => {
     held.configurable ||
     held.writable !== false ||
     typeof held.value !== "string" ||
-    held.value === ""
+    held.value === "" ||
+    // The ledger keys are `token:selector`, split at the first colon. A token
+    // carrying one would make the selector unparseable — and a selector is
+    // what the refusal hands the agent to go and clear. Nothing this mints
+    // contains one.
+    held.value.indexOf(":") !== -1
   ) {
     try {
       // Every attribute spelled out: redefining a property that already exists

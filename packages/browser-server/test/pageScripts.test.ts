@@ -337,6 +337,9 @@ describe("which document this is", () => {
     { what: "a value that is not a string", planted: { value: 7 } },
     { what: "the empty string this keeps for a document it cannot name",
       planted: { value: "" } },
+    // The ledger keys are `token:selector`, split at the first colon.
+    { what: "a value carrying the separator the ledger keys on",
+      planted: { value: "fixed:token" } },
   ])("states no identity at all when the name is held against it by $what", ({ planted }) => {
     inPage(() => {
       Object.defineProperty((globalThis as any).window, "__domoDocumentToken", planted);
