@@ -129,13 +129,21 @@ export const MASK_JS = (el: El): string => {
  * Which document this is. A token is stamped on `window` the first time it is
  * asked for and read back afterwards: a new document gets a fresh `window` and a
  * fresh token, while a same-document navigation keeps both. Non-enumerable.
+ *
+ * Non-configurable and non-writable, because a change to this token reads as a
+ * new document, and a new document is what empties the concealed-field ledger
+ * the `eval` gate is decided from. Left deletable, an expression the agent was
+ * allowed to run earlier could drop the property, have the next token minted
+ * fresh, and be handed the ledger's amnesia — and with it the value. The agent
+ * cannot get in front of the stamping: `handle` asks which document this is
+ * before it does anything else, so the token exists before the first
+ * expression the agent ever runs.
  */
 export const DOC_TOKEN_JS = (): string => {
   const w = window;
   if (!w.__domoDocumentToken) {
     Object.defineProperty(w, "__domoDocumentToken", {
       value: Math.random().toString(36).slice(2) + Date.now().toString(36),
-      configurable: true,
     });
   }
   return w.__domoDocumentToken;

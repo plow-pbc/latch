@@ -699,7 +699,15 @@ frame: a selector can be state-dependent and a frame can decline to say which
 document it is showing, so neither absence is evidence the value went with it.
 Forgetting belongs to the two moments that watched it leave — a new document,
 and an overwrite the vault does not conceal. An entry can therefore outlive its
-node, which costs `eval` until the page navigates and is the safe direction. What no mark reaches is the field's own page
+node, which costs `eval` until the page navigates and is the safe direction.
+
+The "new document" half of that is the one signal still read out of the page, so
+the token carrying it is stamped non-configurable and non-writable: a token an
+expression could delete is a ledger that expression could empty. The agent
+cannot get in front of the stamp — every action asks which document this is
+before doing anything else — so what remains is a *page* that plants the
+property before we first look, which is the hostile-page case the mark never
+covered and does not need to: that page was handed the value as it was typed. What no mark reaches is the field's own page
 reading what was typed into it, which was never what the mark was for.
 
 ### 11a-iii. Receiving an Apple Passwords export app-to-app

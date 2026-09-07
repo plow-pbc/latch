@@ -10,6 +10,7 @@
  */
 import { describe, expect, it } from "vitest";
 import {
+  DOC_TOKEN_JS,
   FIELD_JS,
   HELD_MATCHES_JS,
   KEYS_DROPPED_JS,
@@ -286,3 +287,39 @@ describe("a field that reformats what it was given", () => {
   });
 });
 
+describe("which document this is", () => {
+  // The token decides when the concealed-field ledger is emptied, and the
+  // ledger is what refuses `eval`. So the property has to survive an agent
+  // that has already been allowed to run one expression in this page.
+  const inPage = <T>(body: () => T): T => {
+    (globalThis as any).window = {};
+    try {
+      return body();
+    } finally {
+      delete (globalThis as any).window;
+    }
+  };
+
+  it("answers the same token every time it is asked", () => {
+    inPage(() => {
+      const first = DOC_TOKEN_JS();
+      expect(first).not.toBe("");
+      expect(DOC_TOKEN_JS()).toBe(first);
+    });
+  });
+
+  it("cannot be deleted or overwritten by anything running in the page", () => {
+    inPage(() => {
+      const stamped = DOC_TOKEN_JS();
+      const w = (globalThis as any).window;
+      // What an earlier `eval` would reach for: drop the property, or replace
+      // it, so the next look reads as a new document and the ledger is dropped.
+      expect(() => {
+        "use strict";
+        delete w.__domoDocumentToken;
+      }).toThrow();
+      expect(() => Object.defineProperty(w, "__domoDocumentToken", { value: "forged" })).toThrow();
+      expect(DOC_TOKEN_JS()).toBe(stamped);
+    });
+  });
+});
