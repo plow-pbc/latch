@@ -27,7 +27,6 @@ import {
 // also makes the stub track the real call surface — a renamed/dropped script
 // fails to match instead of silently returning a canned value.
 import {
-  CONCEALED_HOLDING_JS,
   DOC_TOKEN_JS,
   FIELD_CAP_JS,
   HELD_MATCHES_JS,
@@ -220,25 +219,14 @@ class Frame implements FrameLike {
     this.o = o;
     this.handle = new Handle(trace, o);
   }
-  /** Every handle this frame has resolved. A node the selector stopped matching
-   * is still in the document, and the document-level query still finds it. */
-  private seen = new Map<string, Handle>();
   private node(selector: string): Handle | null {
-    const node = this.o.nodes == null ? this.handle : (this.o.nodes[selector] ?? null);
-    if (node !== null) this.seen.set(selector, node);
-    return node;
+    return this.o.nodes == null ? this.handle : (this.o.nodes[selector] ?? null);
   }
   url(): string {
     return "https://pizza.example/login";
   }
   async evaluate(fn: PageFunction): Promise<Any> {
     if (fn === DOC_TOKEN_JS) return this.o.documentToken ?? "doc-1";
-    if (fn === CONCEALED_HOLDING_JS) {
-      for (const [selector, node] of this.seen) {
-        if (node.marked && node.value !== "") return selector;
-      }
-      return "";
-    }
     return [];
   }
   async $(selector: string): Promise<HandleLike | null> {

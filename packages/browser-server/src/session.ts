@@ -14,7 +14,6 @@
  */
 import { JSONValue } from "@domo/protocol";
 import {
-  CONCEALED_HOLDING_JS,
   DOC_TOKEN_JS,
   FIELD_CAP_JS,
   FIELD_JS,
@@ -254,20 +253,6 @@ export class Session {
         continue;
       }
       if ((await el.evaluate(MASK_JS)) === "unmasked") return selector;
-    }
-    return null;
-  }
-
-  /** A concealed field still holding something, named by the page rather than by
-   * the selector the fill used — which a filled field can stop matching. */
-  private async concealedHolding(): Promise<string | null> {
-    for (const frame of this.page.frames()) {
-      try {
-        const holding = (await frame.evaluate(CONCEALED_HOLDING_JS)) as string;
-        if (holding !== "") return holding;
-      } catch {
-        continue;
-      }
     }
     return null;
   }
@@ -636,13 +621,14 @@ export class Session {
     }
 
     if (action === "eval") {
-      // The one thing the mark cannot cover: `eval` reads `el.value` straight
-      // out of the DOM. A mark that will not go back on refuses it as it
-      // refuses a screenshot; so does a field still holding what went into it.
-      const exposed = await this.reapplyMasks();
-      if (exposed !== null) return { ok: false, mask: "unmasked" };
-      const holding = await this.concealedHolding();
-      if (holding !== null) return { ok: false, mask: "concealed", selector: holding };
+      // `eval` reads `el.value` straight out of the DOM, so the mark cannot
+      // cover it. The decision is made HERE, from the ledger this process
+      // keeps: a check that runs as page script is one the page — or an agent
+      // that already ran an expression — can rewrite out from under it.
+      const held = [...(this.masked.get(this.page) ?? [])].sort()[0];
+      if (held !== undefined) {
+        return { ok: false, mask: "concealed", selector: held.slice(held.indexOf(":") + 1) };
+      }
       return { result: (await this.page.evaluate(String(cmd.expression))) as JSONValue };
     }
 

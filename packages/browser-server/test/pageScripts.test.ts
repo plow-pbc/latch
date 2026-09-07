@@ -10,7 +10,6 @@
  */
 import { describe, expect, it } from "vitest";
 import {
-  CONCEALED_HOLDING_JS,
   FIELD_JS,
   HELD_MATCHES_JS,
   KEYS_DROPPED_JS,
@@ -287,27 +286,3 @@ describe("a field that reformats what it was given", () => {
   });
 });
 
-describe("which concealed field is still holding something", () => {
-  // The real traversal, against a stub `document` — the same injection the
-  // forms scan is tested through above.
-  const holding = (...marked: Record<string, unknown>[]): string => {
-    (globalThis as any).document = { querySelectorAll: () => marked };
-    try {
-      return CONCEALED_HOLDING_JS();
-    } finally {
-      delete (globalThis as any).document;
-    }
-  };
-  const node = (extra: Record<string, unknown>) => ({ tagName: "INPUT", value: "", ...extra });
-  it.each([
-    { what: "nothing marked at all", marked: [], named: "" },
-    { what: "a marked field that is empty", marked: [node({})], named: "" },
-    { what: "names it by id", marked: [node({ value: "123456", id: "authToken" })], named: "#authToken" },
-    { what: "names it by name when it has no id", marked: [node({ value: "123456", name: "otp" })], named: '[name="otp"]' },
-    { what: "falls back to the tag", marked: [node({ value: "123456" })], named: "input" },
-    { what: "reads a node holding text rather than a value", marked: [{ tagName: "DIV", textContent: "123456" }], named: "div" },
-    { what: "skips the empty ones to reach the full one", marked: [node({}), node({ value: "123456", id: "second" })], named: "#second" },
-  ])("$what", ({ marked, named }) => {
-    expect(holding(...(marked as Record<string, unknown>[]))).toBe(named);
-  });
-});

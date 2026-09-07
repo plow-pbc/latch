@@ -255,14 +255,6 @@ describe("the server's fill branch, run directly", () => {
       { cmd: { action: "eval", expression: "document.querySelector('#pass').value" } },
     ]);
     expect(gated.steps.at(-1)!.result).toEqual({ ok: false, mask: "concealed", selector: "#pass" });
-    // And refuses it the way a screenshot is refused when the mark will not go
-    // back on — the value is legible to the page either way.
-    const wont = await ledger([
-      { cmd: { action: "fill", selector: "#pass", value: "hunter2", frame: 1, mask: true } },
-      { refuse: "#pass" },
-      { cmd: { action: "eval", expression: "1" } },
-    ]);
-    expect(wont.steps.at(-1)!.result).toEqual({ ok: false, mask: "unmasked" });
   });
 
   it("refuses eval when the selector stopped matching the node it filled", async () => {
@@ -271,9 +263,10 @@ describe("the server's fill branch, run directly", () => {
       { vanish: "#pass" },
       { cmd: { action: "eval", expression: "1" } },
     ]);
-    // The ledger entry goes — the selector resolves to nothing — and the page
-    // itself is what refuses: the mark is still on a node that is still full.
-    expect(restyled.tracked).toEqual([]);
+    // Nothing re-resolves the selector, so the entry stays and refuses. A node
+    // that vanished with a live value in it is exactly the case the ledger has
+    // to keep: the page is the last thing that gets to say it is gone.
+    expect(restyled.tracked).toEqual(["doc-1:#pass"]);
     expect(restyled.steps.at(-1)!.result).toEqual({
       ok: false,
       mask: "concealed",
