@@ -1454,13 +1454,13 @@ export class BrowserSessions {
         selector: current,
         reason: "the browser could not type it into that field",
       });
-      const kept = boxes === null ? [] : await clearBoxes(current);
+      const kept = await clearBoxes(current);
       return {
         status: "error",
         error:
           `could not type ${field} into ${current} — the field may be the wrong one, ` +
-          `hidden, or not ready yet. Screenshot the page and check the selector.` +
-          (boxes === null ? "" : ` ${clearedNote(kept)}`),
+          `hidden, or not ready yet. Screenshot the page and check the selector. ` +
+          clearedNote(kept),
       };
     } finally {
       secret = "";

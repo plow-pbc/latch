@@ -280,6 +280,7 @@ describe("a field that reformats what it was given", () => {
     { what: "a field that reordered the digits", wanted: "123456", held: "654-321", ok: false },
     { what: "a field that kept a separator after a clear", wanted: "", held: "-", ok: false },
     { what: "a field that is genuinely empty", wanted: "", held: "", ok: true },
+    { what: "a passphrase with an emoji the page spaced out", wanted: "a\u{1F600}b", held: "a \u{1F600} b", ok: true },
   ])("$what", ({ wanted, held, ok }) => {
     expect(HELD_MATCHES_JS(field(held) as any, wanted)).toBe(ok);
   });

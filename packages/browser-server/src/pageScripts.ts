@@ -222,15 +222,19 @@ export const HELD_MATCHES_JS = (el: El, wanted: string): boolean => {
   // A clear is exact: a field still holding the separator a rollback left is
   // not empty, and must never be reported as empty.
   if (wanted === "") return false;
+  // Both sides walk by code point: `for...of` hands `held` an astral character
+  // whole, and indexing `wanted` by code unit would compare it against a lone
+  // surrogate that can never match.
+  const want = Array.from(wanted);
   let i = 0;
   for (const ch of held) {
-    if (i < wanted.length && ch === wanted[i]) {
+    if (i < want.length && ch === want[i]) {
       i++;
     } else if (!/[\s\-/.()+]/.test(ch)) {
       return false;
     }
   }
-  return i === wanted.length;
+  return i === want.length;
 };
 
 export const UNMASK_JS = (el: El): boolean => {

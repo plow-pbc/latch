@@ -498,6 +498,12 @@ describe("credentials", () => {
     // Still says enough to fix the call.
     expect(r.get("error").str).toContain("#nofill");
     expect(eventNames()).toContain("credential_fill_failed");
+    // A throw mid-fill can leave the value in the page, so the same rollback
+    // the refusals do runs here — and owns up when the field will not empty.
+    expect(r.get("error").str).toContain("except #nofill");
+    expect(ctx.events.map((e) => e.fields.reason)).toContain(
+      "the page kept a character after the fill was rolled back",
+    );
   });
 
   it("fill_secret types the value on-device and never returns it", async () => {
