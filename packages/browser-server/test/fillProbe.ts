@@ -490,4 +490,22 @@ export async function ledger(script: LedgerStep[]): Promise<{
   };
 }
 
+/**
+ * Two pages sharing one browser context — the shape `use_page` moves between,
+ * and the shape a popup opened by the page itself arrives in. The first holds
+ * `#pass`; the second holds nothing.
+ */
+export function pagePair(): [Page, Page] {
+  const trace: string[] = [];
+  const first = new Page(new Frame(trace, { nodes: { "#pass": new Handle(trace) } }));
+  const second = new Page(new Frame(trace, { nodes: {} }));
+  second.documentToken = "doc-popup";
+  const both: PageLike[] = [first, second];
+  const shared: ContextLike = { on() {}, pages: () => both };
+  for (const page of [first, second]) {
+    (page as unknown as { ctx: ContextLike }).ctx = shared;
+  }
+  return [first, second];
+}
+
 export { Frame, Handle, Page, Hidden, Detached };

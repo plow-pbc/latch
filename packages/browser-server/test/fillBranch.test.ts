@@ -4,7 +4,9 @@
  * fillProbe.py. Every scenario the Python probe covered is here, ungated.
  */
 import { describe, expect, it } from "vitest";
-import { constants, ledger, ranked, run, twoFrames, type LedgerStep } from "./fillProbe.js";
+import { constants, ledger, pagePair, ranked, run, twoFrames, type LedgerStep } from "./fillProbe.js";
+
+import { Session } from "../src/session.js";
 
 const base = { action: "fill", selector: "#pass", value: "hunter2", frame: 0 };
 const approved = { frame_token: "doc-1" };
@@ -279,6 +281,25 @@ describe("the server's fill branch, run directly", () => {
     ]);
     expect(kept.tracked).toEqual(["doc-1:#pass"]);
     expect(kept.steps.at(-1)!.result).toEqual({ ok: false, mask: "concealed", selector: "#pass" });
+  });
+
+  it("refuses eval on another page of the session while the first still holds", async () => {
+    // A popup and its opener are same-origin often enough, and `opener.document`
+    // reads the field the popup never filled. A per-page gate would be one
+    // `use_page` away from being no gate at all.
+    const [first, popup] = pagePair();
+    const session = new Session(first);
+    await session.handle({ action: "fill", selector: "#pass", value: "hunter2", mask: true } as never);
+    expect(await session.handle({ action: "use_page", index: 1 } as never)).toEqual({
+      ok: true,
+      title: "",
+    });
+    expect(await session.handle({ action: "eval", expression: "1" } as never)).toEqual({
+      ok: false,
+      mask: "concealed",
+      selector: "#pass",
+    });
+    expect(popup.documentToken).toBe("doc-popup");
   });
 
   it("allows eval once the field is emptied, and once the page has moved on", async () => {

@@ -630,7 +630,12 @@ export class Session {
       // cover it. The decision is made HERE, from the ledger this process
       // keeps: a check that runs as page script is one the page — or an agent
       // that already ran an expression — can rewrite out from under it.
-      const held = [...(this.masked.get(this.page) ?? [])].sort()[0];
+      //
+      // EVERY page of the session, not just the active one. A popup and its
+      // opener are same-origin often enough, and `opener.document` reads the
+      // field this page never filled — so a per-page gate is one `use_page`
+      // away from being no gate at all.
+      const held = [...this.masked.values()].flatMap((held) => [...held]).sort()[0];
       if (held !== undefined) {
         return { ok: false, mask: "concealed", selector: held.slice(held.indexOf(":") + 1) };
       }

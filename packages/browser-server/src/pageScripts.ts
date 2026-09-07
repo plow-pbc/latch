@@ -130,20 +130,33 @@ export const MASK_JS = (el: El): string => {
  * asked for and read back afterwards: a new document gets a fresh `window` and a
  * fresh token, while a same-document navigation keeps both. Non-enumerable.
  *
- * Non-configurable and non-writable, because a change to this token reads as a
- * new document, and a new document is what empties the concealed-field ledger
- * the `eval` gate is decided from. Left deletable, an expression the agent was
- * allowed to run earlier could drop the property, have the next token minted
- * fresh, and be handed the ledger's amnesia — and with it the value. The agent
- * cannot get in front of the stamping: `handle` asks which document this is
- * before it does anything else, so the token exists before the first
- * expression the agent ever runs.
+ * A change to this token reads as a new document, and a new document is what
+ * empties the concealed-field ledger the `eval` gate is decided from. So a
+ * token is only identity if it CANNOT change: what is already there is trusted
+ * only when it is a non-configurable, non-writable data property, which is the
+ * only kind this ever writes. Anything else — absent, deletable, assignable, or
+ * an accessor free to answer differently each time — is not identity and gets
+ * restamped, whoever left it there.
+ *
+ * That is the whole check, and deliberately not "we got here first": an
+ * expression the agent ran earlier can open a same-origin popup and plant a
+ * mutable token in it before this ever looks, so being first was never
+ * something to rely on. Immutability is checkable at the moment of use;
+ * arrival order is not.
  */
 export const DOC_TOKEN_JS = (): string => {
   const w = window;
-  if (!w.__domoDocumentToken) {
+  const held = Object.getOwnPropertyDescriptor(w, "__domoDocumentToken");
+  if (held === undefined || held.configurable || held.writable !== false) {
+    // Every attribute spelled out: redefining a property that already exists
+    // KEEPS whatever it was given for the ones left unsaid, so a restamp that
+    // only names `value` inherits the planted property's mutability and hands
+    // the forgery straight back.
     Object.defineProperty(w, "__domoDocumentToken", {
       value: Math.random().toString(36).slice(2) + Date.now().toString(36),
+      configurable: false,
+      writable: false,
+      enumerable: false,
     });
   }
   return w.__domoDocumentToken;

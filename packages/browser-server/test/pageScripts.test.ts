@@ -300,11 +300,35 @@ describe("which document this is", () => {
     }
   };
 
-  it("answers the same token every time it is asked", () => {
+  // Identity is what cannot change. Arrival order is not checkable at the
+  // moment of use — an expression the agent ran earlier can open a popup and
+  // plant a token in it before this ever looks — so anything still able to
+  // change is restamped, whoever left it there.
+  it.each([
+    { what: "nothing is there yet", planted: undefined },
+    { what: "a token left assignable", planted: { value: "planted", configurable: true, writable: true } },
+    { what: "a token left deletable", planted: { value: "planted", configurable: true } },
+    { what: "an accessor free to answer differently each time",
+      planted: { get: () => "planted", configurable: true } },
+  ])("mints its own when $what", ({ planted }) => {
     inPage(() => {
-      const first = DOC_TOKEN_JS();
-      expect(first).not.toBe("");
-      expect(DOC_TOKEN_JS()).toBe(first);
+      const w = (globalThis as any).window;
+      if (planted !== undefined) Object.defineProperty(w, "__domoDocumentToken", planted);
+      const token = DOC_TOKEN_JS();
+      expect(token).not.toBe("planted");
+      expect(token).not.toBe("");
+      // And it is stable from then on, which is the whole property.
+      expect(DOC_TOKEN_JS()).toBe(token);
+    });
+  });
+
+  it("keeps a token that was already unchangeable", () => {
+    inPage(() => {
+      const w = (globalThis as any).window;
+      // Nothing can forge a CHANGE out of this, which is all the ledger asks
+      // of it — so restamping would cost a document its identity for nothing.
+      Object.defineProperty(w, "__domoDocumentToken", { value: "fixed" });
+      expect(DOC_TOKEN_JS()).toBe("fixed");
     });
   });
 
