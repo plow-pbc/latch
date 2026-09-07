@@ -1379,10 +1379,10 @@ export class CloudChatsClient implements CloudChatsApi {
  * `GET /v1/lines` — every pool number the service has, used as display
  * metadata for chats and agent lines.
  *
- * Reachable because Latch stores the login session: the route gates on
- * `chats:use`, which a session's `*:*` satisfies and the narrow device
- * credential older Macs still hold does not. That is what the 403 below is
- * about, and why its sentence names signing in again.
+ * Gated on `chats:list` like `GET /v1/chats`, which this Mac's device
+ * credential holds. A device minted before that scope existed holds neither,
+ * and that is what the 403 below is about, and why its sentence names signing
+ * in again.
  */
 /**
  * E.164, which is what plow's lines are: a leading `+`, a non-zero country
