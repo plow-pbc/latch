@@ -1243,8 +1243,8 @@ export class BrowserSessions {
     /** Boxes already holding their character, in the order they were filled. */
     const done: string[] = [];
     /**
-     * Best-effort erase after a split fill that could not finish, so the boxes
-     * already written do not keep most of a live code between them. Each clear
+     * Best-effort erase after a fill that could not finish, so the fields
+     * already written do not keep a live value between them. Each clear
      * rides the SAME mask the characters went in under: the browser's unmasked
      * fill path takes the mark off and forgets the field BEFORE it learns what
      * the node ended up holding, so a controlled input that undoes the empty
@@ -1284,11 +1284,11 @@ export class BrowserSessions {
       }
       return kept;
     };
-    /** The honest tail of a split-fill error: what the rollback achieved. */
+    /** The honest tail of a refused fill: what the rollback achieved. */
     const clearedNote = (kept: string[]): string =>
       kept.length === 0
-        ? "Every box this fill touched was cleared."
-        : `Every box this fill touched was cleared, except ${kept.join(", ")}, which the ` +
+        ? "Every field this fill touched was cleared."
+        : `Every field this fill touched was cleared, except ${kept.join(", ")}, which the ` +
           `page would not empty${mask ? " (what it kept stays masked on screen)" : ""}.`;
 
     let current = targets[0];
@@ -1357,8 +1357,8 @@ export class BrowserSessions {
             selector: current,
             reason: "the field is holding a changed copy of the value",
           });
+          const kept = await clearBoxes(current);
           if (boxes !== null) {
-            const kept = await clearBoxes(current);
             return {
               status: "error",
               error:
@@ -1370,11 +1370,10 @@ export class BrowserSessions {
             status: "error",
             error:
               `${field} did not go in as stored: ${current} took it and is holding a changed ` +
-              `copy — the page rewrites what is typed into it. That copy is still in the field; ` +
-              `clear it yourself if it must not be submitted. The value in the vault is not at ` +
-              `fault, and this field cannot be filled by an agent as one value. If the page ` +
-              `splits this code across single-character boxes, call fill_secret again with ` +
-              `'selectors' naming every box in order.`,
+              `copy — the page rewrites what is typed into it beyond punctuation. The value in ` +
+              `the vault is not at fault, and this field cannot be filled by an agent as one ` +
+              `value. ${clearedNote(kept)} If the page splits this code across single-character ` +
+              `boxes, call fill_secret again with 'selectors' naming every box in order.`,
           };
         }
         if (filled.mask === "moved") {

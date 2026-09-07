@@ -495,7 +495,7 @@ describe("fill_secret marking", () => {
       env: { FAKE_ALTERED: "1" },
       // It DID go in — a changed copy is in the field, and saying "not filled"
       // would leave the caller thinking the page was untouched.
-      says: ["holding a changed copy", "still in the field", "not at fault"],
+      says: ["holding a changed copy", "not at fault", "was cleared"],
       // The other one's remedy: it would send the owner to change a credential
       // that is not the problem.
       omits: ["shortened"],
@@ -512,7 +512,7 @@ describe("fill_secret marking", () => {
     const error = jv(result).get("error").str ?? "";
     for (const text of says) expect(error).toContain(text);
     for (const text of omits) expect(error).not.toContain(text);
-    expect(ctx.events.slice(before).at(-1)).toEqual({
+    expect(ctx.events.slice(before)[0]).toEqual({
       event: "credential_fill_failed",
       fields: {
         session: audited(), item: "C1", field: "number",
@@ -899,6 +899,45 @@ describe("fill_secret split across single-character boxes", () => {
       },
     ]);
     expect(JSON.stringify(ctx.events)).not.toContain("483920");
+  });
+
+  it("clears a single field it could not fill, and says so", async () => {
+    await ctx.sessions.closeAll("teardown");
+    ctx = makeCtx({ FAKE_ALTERED_SELECTOR: "#card-number" });
+    const handle = await session();
+    const before = ctx.events.length;
+    const result = await ctx.sessions.command(handle, {
+      action: "fill_secret", selector: "#card-number", item: "C1", field: "number",
+    });
+    expect(jv(result).get("status").str).toBe("error");
+    expect(jv(result).get("error").str).toContain("holding a changed copy");
+    // The fixture alters the empty write too, so the rollback owns up rather
+    // than claiming the field was cleared.
+    expect(jv(result).get("error").str).toContain("except #card-number");
+    // The refusal no longer tells the caller to clear it themselves.
+    expect(jv(result).get("error").str).not.toContain("clear it yourself");
+    // One value in, one empty write after it — both under the mask.
+    expect(sentFills().map((c) => ({ selector: c.selector, value: c.value, masked: c.mask === true }))).toEqual([
+      { selector: "#card-number", value: "<16 chars>", masked: true },
+      { selector: "#card-number", value: "<0 chars>", masked: true },
+    ]);
+    expect(ctx.events.slice(before)).toEqual([
+      {
+        event: "credential_fill_failed",
+        fields: {
+          session: audited(), item: "C1", field: "number", origin: "payframe.example",
+          selector: "#card-number", reason: "the field is holding a changed copy of the value",
+        },
+      },
+      {
+        event: "credential_fill_failed",
+        fields: {
+          session: audited(), item: "C1", field: "number", origin: "payframe.example",
+          selector: "#card-number", reason: "the page kept a character after the fill was rolled back",
+        },
+      },
+    ]);
+    expect(JSON.stringify(result)).not.toContain("4111");
   });
 });
 
