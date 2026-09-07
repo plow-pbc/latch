@@ -95,9 +95,9 @@ url, title, links, forms, tables, pages.
   given is. A fill without it landed exactly, or with formatting the page inserted
   (whitespace and \`- / . ( ) +\`) and nothing else; with it, a character was lost,
   gained or reordered. You are told that happened, not whether it matters;
-  screenshot the field and decide. One shape of it has a fix: a code the page takes as separate one-character boxes keeps only
-  the first character of a whole-value \`fill_secret\` — pass \`selectors\` instead
-  (see Credentials).
+  screenshot the field and decide. One shape of it has a fix: a code the page
+  takes as separate one-character boxes keeps only the first character of a
+  whole-value \`fill_secret\` — pass \`selectors\` instead (see Credentials).
 - **A popup is not the active page.** Every result includes \`page_count\`; when it grows,
   run \`pages\` and switch with \`use_page\`.
 - \`eval\` runs a JS expression in the top frame — use it to extract structured data after

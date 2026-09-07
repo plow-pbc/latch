@@ -109,9 +109,9 @@ What the fill now tells you about it:
 - A completed fill carries **`altered`** when the field is holding something
   other than what went into it — a character lost, gained or reordered. What a
   page merely *formats* is not that: a card box rendering the digits it was
-  given with spaces in them, a 2FA box hyphenating six of them, both count as
-  filled. A fill without it landed exactly, or with formatting (whitespace and
-  `- / . ( ) +`) inserted into it and nothing else.
+  given with spaces in them, a 2FA box hyphenating six of them, both land
+  without `altered`. A fill lacking it landed exactly, or with formatting
+  (whitespace and `- / . ( ) +`) inserted into it and nothing else.
 - A **credential** fill is the case where that is decided for you: the value
   came out of the vault, so `fillSecret` refuses a field that changed it. It is
   rolled back under its mask first, and the error says what the rollback
