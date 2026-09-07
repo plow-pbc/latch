@@ -319,6 +319,9 @@ describe("which document this is", () => {
         delete w.__domoDocumentToken;
       }).toThrow();
       expect(() => Object.defineProperty(w, "__domoDocumentToken", { value: "forged" })).toThrow();
+      // A plain assignment is what an eval'd expression actually reaches for,
+      // and it runs sloppy: no throw, and the write goes nowhere.
+      new Function("w", "w.__domoDocumentToken = 'forged'")(w);
       expect(DOC_TOKEN_JS()).toBe(stamped);
     });
   });

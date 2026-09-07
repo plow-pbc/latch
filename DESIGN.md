@@ -706,9 +706,11 @@ the token carrying it is stamped non-configurable and non-writable: a token an
 expression could delete is a ledger that expression could empty. The agent
 cannot get in front of the stamp — every action asks which document this is
 before doing anything else — so what remains is a *page* that plants the
-property before we first look, which is the hostile-page case the mark never
-covered and does not need to: that page was handed the value as it was typed. What no mark reaches is the field's own page
-reading what was typed into it, which was never what the mark was for.
+property before we first look.
+
+What no mark reaches is the field's own page reading what was typed into it,
+which was never what the mark was for — and a page that plants the token is
+that same page, already holding the value.
 
 ### 11a-iii. Receiving an Apple Passwords export app-to-app
 
