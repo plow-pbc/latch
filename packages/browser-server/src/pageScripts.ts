@@ -148,16 +148,24 @@ export const DOC_TOKEN_JS = (): string => {
   const w = window;
   const held = Object.getOwnPropertyDescriptor(w, "__domoDocumentToken");
   if (held === undefined || held.configurable || held.writable !== false) {
-    // Every attribute spelled out: redefining a property that already exists
-    // KEEPS whatever it was given for the ones left unsaid, so a restamp that
-    // only names `value` inherits the planted property's mutability and hands
-    // the forgery straight back.
-    Object.defineProperty(w, "__domoDocumentToken", {
-      value: Math.random().toString(36).slice(2) + Date.now().toString(36),
-      configurable: false,
-      writable: false,
-      enumerable: false,
-    });
+    try {
+      // Every attribute spelled out: redefining a property that already exists
+      // KEEPS whatever it was given for the ones left unsaid, so a restamp that
+      // only names `value` inherits the planted property's mutability and hands
+      // the forgery straight back.
+      Object.defineProperty(w, "__domoDocumentToken", {
+        value: Math.random().toString(36).slice(2) + Date.now().toString(36),
+        configurable: false,
+        writable: false,
+        enumerable: false,
+      });
+    } catch {
+      // A non-configurable accessor cannot be replaced by anything, ever — the
+      // one shape that can hold this name against us. So this document has no
+      // identity we are willing to state, and says so: "" is not a token, and
+      // the server treats it as one it must not reason from.
+      return "";
+    }
   }
   return w.__domoDocumentToken;
 };

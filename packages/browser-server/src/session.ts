@@ -206,7 +206,10 @@ export class Session {
       // the safe answer: a stale mask is dropped when it fails to resolve.
       return;
     }
-    if (this.seenDocument.get(this.page) !== token) {
+    // "" is the page refusing to be identified (DOC_TOKEN_JS). Forgetting on
+    // that is forgetting on the say-so of whoever took the name, so it is the
+    // same answer as a failed evaluate: keep the record.
+    if (token !== "" && this.seenDocument.get(this.page) !== token) {
       this.seenDocument.set(this.page, token);
       this.masked.delete(this.page);
     }
@@ -240,7 +243,7 @@ export class Session {
     for (const frame of this.page.frames()) {
       try {
         const token = (await frame.evaluate(DOC_TOKEN_JS)) as string;
-        if (!frames.has(token)) frames.set(token, frame);
+        if (token !== "" && !frames.has(token)) frames.set(token, frame);
       } catch {
         continue;
       }

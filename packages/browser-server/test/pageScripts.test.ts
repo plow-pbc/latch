@@ -322,6 +322,18 @@ describe("which document this is", () => {
     });
   });
 
+  it("states no identity at all when the name is held against it", () => {
+    inPage(() => {
+      const w = (globalThis as any).window;
+      // A non-configurable ACCESSOR is the one shape that cannot be replaced by
+      // anything, ever. Restamping throws, so the script must not try to carry
+      // on: "" says the document has no identity worth stating, and the server
+      // declines to reason from it rather than trusting a planted answer.
+      Object.defineProperty(w, "__domoDocumentToken", { get: () => "planted", configurable: false });
+      expect(DOC_TOKEN_JS()).toBe("");
+    });
+  });
+
   it("keeps a token that was already unchangeable", () => {
     inPage(() => {
       const w = (globalThis as any).window;
