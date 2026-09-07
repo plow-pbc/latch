@@ -107,15 +107,15 @@ if a credential lands short.
 What the fill now tells you about it:
 
 - A completed fill carries **`altered`** when the field is holding something
-  other than what went into it — whatever the field did to it, and whether or
-  not the field said it would. It is a fact and not a verdict: a card box
-  rendering the digits it was given with spaces in them has changed nothing that
-  counts, and only a caller who knows what the value means can say. A fill
-  without it landed exactly.
+  other than what went into it — a character lost, gained or reordered. What a
+  page merely *formats* is not that: a card box rendering the digits it was
+  given with spaces in them, a 2FA box hyphenating six of them, both count as
+  filled. A fill without it landed exactly, or with formatting (whitespace and
+  `- / . ( ) +`) inserted into it and nothing else.
 - A **credential** fill is the case where that is decided for you: the value
-  came out of the vault, so `fillSecret` refuses a field that changed it and
-  says a changed copy is still sitting there. Clearing it is left to whoever can
-  see the page.
+  came out of the vault, so `fillSecret` refuses a field that changed it. It is
+  rolled back under its mask first, and the error says what the rollback
+  achieved, naming any field the page would not empty.
 - A value the field says it cannot hold is refused **before the node is
   touched**, answering `too_long` with the field's own cap, so the page is left
   exactly as it was found. Measured against what this node will actually

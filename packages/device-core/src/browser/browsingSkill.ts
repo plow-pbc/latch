@@ -90,11 +90,12 @@ url, title, links, forms, tables, pages.
   path, and only for your approved origins. One can also settle late and ride the next
   result. Do not instrument the page with \`eval\` to find this out; this is that answer.
 - **\`altered\` on a fill means the field is not holding what you typed.** Pages
-  rewrite what goes into them — a card box adds spaces to the digits, a phone box
-  drops the dashes — and that is usually fine. It is not fine when the value had
-  to arrive intact. You are told the difference happened, not whether it matters;
-  screenshot the field and decide. A fill without it landed exactly. One shape of
-  it has a fix: a code the page takes as separate one-character boxes keeps only
+  rewrite what goes into them, and only some of that counts: a card box that adds
+  spaces to the digits is not \`altered\`, a phone box that drops the dashes it was
+  given is. A fill without it landed exactly, or with formatting the page inserted
+  (whitespace and \`- / . ( ) +\`) and nothing else; with it, a character was lost,
+  gained or reordered. You are told that happened, not whether it matters;
+  screenshot the field and decide. One shape of it has a fix: a code the page takes as separate one-character boxes keeps only
   the first character of a whole-value \`fill_secret\` — pass \`selectors\` instead
   (see Credentials).
 - **A popup is not the active page.** Every result includes \`page_count\`; when it grows,
