@@ -854,25 +854,6 @@ export class BrowserSessions {
       };
     }
 
-    // Not a mask that would not take, and not logged as one: a page that blocks
-    // the stylesheet has a CSP; a page holding the property we identify
-    // documents by is doing something no ordinary page does.
-    if (result.ok === false && result.mask === "no_identity") {
-      this.audit("credential_identity_refused", {
-        session: s.auditId,
-        action: String(action.action),
-        url: stripQuery(url),
-      });
-      return {
-        status: "error",
-        error:
-          `${String(action.action)} was refused: this page will not say which document it is, ` +
-          `so a value the vault conceals cannot be tracked on it and none was typed. Nothing ` +
-          `was entered and nothing was exposed. Load the page again, or fill the field by hand.`,
-        ...(refused.length ? { failed_requests: refused } : {}),
-      };
-    }
-
     if (result.ok === false && result.mask === "unmasked") {
       this.audit("credential_mask_failed", {
         session: s.auditId,
