@@ -1454,13 +1454,17 @@ export class BrowserSessions {
         selector: current,
         reason: "the browser could not type it into that field",
       });
-      const kept = await clearBoxes(current);
+      // Only the boxes this loop SAW land. The one mid-write is the browser's:
+      // it knows whether anything reached the node, and erasing it from here
+      // would wipe whatever the field held before when nothing did.
+      const kept = await clearBoxes();
       return {
         status: "error",
         error:
           `could not type ${field} into ${current} — the field may be the wrong one, ` +
           `hidden, or not ready yet. Screenshot the page and check the selector. ` +
-          clearedNote(kept),
+          `${clearedNote(kept)} So was anything that reached ${current}, which stays ` +
+          `masked if the page would not let it go.`,
       };
     } finally {
       secret = "";

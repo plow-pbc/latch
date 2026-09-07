@@ -157,6 +157,21 @@ describe("the server's fill branch, run directly", () => {
     expect(orphan.value_kept).toBe(true);
   });
 
+  it.each([
+    { what: "empties the node it was writing, under the mark it went in under",
+      opts: {}, kept: 0 },
+    { what: "keeps the mark on what a page will not let it empty",
+      opts: { assignFails: true }, kept: 2 },
+  ])("a fill that throws after something landed $what", async ({ opts, kept }) => {
+    // The device rolls back the boxes IT knows landed; the one mid-write is the
+    // browser's, and only the browser knows something reached it.
+    const r = await run({ ...base, mask: true }, { partialFill: true, value: "old", ...opts });
+    expect(r.error).toBe("RuntimeError");
+    expect(r.node_len).toBe(kept);
+    expect(r.marked).toBe(true);
+    expect(r.ledgered).toBe(true);
+  });
+
   it("does not try the next frame once a node has been changed", async () => {
     const r = await twoFrames();
     expect(r.first_changed).toBe(true);

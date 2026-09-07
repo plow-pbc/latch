@@ -539,10 +539,18 @@ export class Session {
           await this.typeValue(el, String(cmd.value), kind);
         } catch (exc) {
           // Nothing landed: put the node back as it was found. Something did:
-          // it is holding a value nobody can account for, so the mark stays.
+          // empty it under the mark it went in under — the node mid-write is
+          // this browser's to clean up, and only it knows the value got there —
+          // and keep the mark on whatever the page will not let go of. A clear
+          // that fails must not replace the exception about to be reported.
           if (await el.evaluate(NOTHING_LANDED_JS, before)) {
             if (!wasMarked) await el.evaluate(UNMASK_JS);
           } else {
+            try {
+              await el.fill("", { timeout: DEFAULT_ACTION_TIMEOUT_MS });
+            } catch {
+              /* the page kept it; the mark stays either way */
+            }
             this.rememberMasked((await el.evaluate(DOC_TOKEN_JS)) as string, sel);
           }
           await before.dispose();
