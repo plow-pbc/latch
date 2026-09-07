@@ -880,7 +880,7 @@ export class BrowserSessions {
           `eval was refused: ${selector} is holding a value out of the vault, and eval reads ` +
           `a field's value straight out of the page. Fill ${selector} with an empty value to ` +
           `lift the refusal, or load another page — submitting the form is one. A field the ` +
-          `page has since replaced cannot be emptied, so there only loading a page lifts it.`,
+          `page has since replaced cannot be emptied, so only loading a page lifts it then.`,
         ...(refused.length ? { failed_requests: refused } : {}),
       };
     }
