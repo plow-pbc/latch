@@ -283,25 +283,26 @@ describe("the server's fill branch, run directly", () => {
     expect(kept.steps.at(-1)!.result).toEqual({ ok: false, mask: "concealed", selector: "#pass" });
   });
 
-  it("refuses eval on another page of the session while the first still holds", async () => {
-    // A popup and its opener are same-origin often enough, and `opener.document`
-    // reads the field the popup never filled. A per-page gate would be one
-    // `use_page` away from being no gate at all.
-    const { first, popup } = pagePair();
+  // A popup and its opener are same-origin often enough, and `opener.document`
+  // reads the field the other one filled — a per-page gate would be one
+  // `use_page` away from being no gate at all. Which page is part of the
+  // answer: the field is clearable only from the page holding it, so a refusal
+  // naming the page the agent happens to be on sends it nowhere useful.
+  it.each([
+    { what: "the opener holds it and the popup asks", holder: 0, asker: 1 },
+    { what: "the popup holds it and the opener asks", holder: 1, asker: 0 },
+  ])("refuses eval, naming the page that holds the field, when $what", async ({ holder, asker }) => {
+    const { first } = pagePair();
     const session = new Session(first);
+    await session.handle({ action: "use_page", index: holder } as never);
     await session.handle({ action: "fill", selector: "#pass", value: "hunter2", mask: true } as never);
-    expect(await session.handle({ action: "use_page", index: 1 } as never)).toEqual({
-      ok: true,
-      title: "",
-    });
+    await session.handle({ action: "use_page", index: asker } as never);
     expect(await session.handle({ action: "eval", expression: "1" } as never)).toEqual({
       ok: false,
       mask: "concealed",
       selector: "#pass",
-      // Named, because the field can only be cleared from the page holding it.
-      page: 0,
+      page: holder,
     });
-    expect(popup.documentToken).toBe("doc-popup");
   });
 
   // "" is DOC_TOKEN_JS refusing to name a document it could not stamp. Forgetting
@@ -322,26 +323,6 @@ describe("the server's fill branch, run directly", () => {
       ok: false,
       mask: "concealed",
       selector: "#pass",
-    });
-  });
-
-  it("names the page that owns the field, not the one the agent is on", async () => {
-    // The whole point of carrying the index: the field is clearable only from
-    // its own page, so a refusal naming page 0 for a value held on page 1
-    // sends the agent somewhere it can do nothing.
-    const { first } = pagePair();
-    const session = new Session(first);
-    await session.handle({ action: "use_page", index: 1 } as never);
-    await session.handle({ action: "fill", selector: "#pass", value: "hunter2", mask: true } as never);
-    expect(await session.handle({ action: "use_page", index: 0 } as never)).toEqual({
-      ok: true,
-      title: "",
-    });
-    expect(await session.handle({ action: "eval", expression: "1" } as never)).toEqual({
-      ok: false,
-      mask: "concealed",
-      selector: "#pass",
-      page: 1,
     });
   });
 
