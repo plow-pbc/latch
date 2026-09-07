@@ -242,6 +242,22 @@ describe("the server's fill branch, run directly", () => {
     expect(gated.steps.at(-1)!.result).toEqual({ ok: false, mask: "concealed", selector: "#pass" });
   });
 
+  it("refuses eval when the selector stopped matching the node it filled", async () => {
+    const restyled = await ledger([
+      { cmd: { action: "fill", selector: "#pass", value: "hunter2", frame: 1, mask: true } },
+      { vanish: "#pass" },
+      { cmd: { action: "eval", expression: "1" } },
+    ]);
+    // The ledger entry goes — the selector resolves to nothing — and the page
+    // itself is what refuses: the mark is still on a node that is still full.
+    expect(restyled.tracked).toEqual([]);
+    expect(restyled.steps.at(-1)!.result).toEqual({
+      ok: false,
+      mask: "concealed",
+      selector: "#pass",
+    });
+  });
+
   it("allows eval once the field is emptied, and once the page has moved on", async () => {
     const cleared = await ledger([
       { cmd: { action: "fill", selector: "#pass", value: "hunter2", frame: 1, mask: true } },

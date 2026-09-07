@@ -182,10 +182,17 @@ export const NOTHING_LANDED_JS = (el: El, previous: string): boolean => {
 /** Whether a node is already carrying the mark, asked before anything touches it. */
 export const WAS_MARKED_JS = (el: El): boolean => el.hasAttribute("data-domo-secret");
 
-/** Whether a node is holding anything at all. A boolean, not the value: this
- * answer crosses back into the server process, and nothing needs it there. */
-export const HOLDS_VALUE_JS = (el: El): boolean =>
-  (typeof el.value === "string" ? el.value : el.textContent || "") !== "";
+/** A concealed node still holding something, named by id or name so the agent
+ * can find it — never its value; "" when every marked field is empty. The mark
+ * is the identity, not the selector the fill used, which a fill can stop matching. */
+export const CONCEALED_HOLDING_JS = (): string => {
+  for (const el of Array.from(document.querySelectorAll("[data-domo-secret]")) as El[]) {
+    const held = typeof el.value === "string" ? el.value : el.textContent || "";
+    if (held !== "")
+      return el.id ? `#${el.id}` : el.name ? `[name="${el.name}"]` : el.tagName.toLowerCase();
+  }
+  return "";
+};
 
 /** How much this field will hold, and -1 when it does not say. */
 export const FIELD_CAP_JS = (el: El): number => {

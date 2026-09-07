@@ -14,11 +14,11 @@
  */
 import { JSONValue } from "@domo/protocol";
 import {
+  CONCEALED_HOLDING_JS,
   DOC_TOKEN_JS,
   FIELD_CAP_JS,
   FIELD_JS,
   HELD_MATCHES_JS,
-  HOLDS_VALUE_JS,
   KEYS_DROPPED_JS,
   LINKS_JS,
   MASK_JS,
@@ -121,8 +121,6 @@ export const TYPING_MAX_MS = TYPED_CHARS * (KEY_DELAY_MS + KEY_OVERHEAD_MS);
 type Obj = { [k: string]: JSONValue };
 
 const now = (): number => performance.now();
-const sleep = (ms: number): Promise<void> =>
-  new Promise((r) => setTimeout(r, Math.max(0, ms)));
 
 /**
  * Scheme and host, and nothing else. A url is the page's to choose, and every
@@ -226,29 +224,21 @@ export class Session {
     this.masked.get(this.page)?.delete(`${documentToken}:${selector}`);
   }
 
-  /** Every frame of the active page, by the document it is showing. */
-  private async framesByToken(): Promise<Map<string, FrameLike>> {
-    const found = new Map<string, FrameLike>();
+  /** Put the mark back on every concealed field of the active page, dropping the
+   * ones whose node has gone — not on the page is not on the screenshot either.
+   * Returns the selector of one that would not take it, or null. */
+  private async reapplyMasks(): Promise<string | null> {
+    const targets = this.masked.get(this.page);
+    if (!targets || targets.size === 0) return null;
+    const frames = new Map<string, FrameLike>(); // by the document each shows
     for (const frame of this.page.frames()) {
       try {
         const token = (await frame.evaluate(DOC_TOKEN_JS)) as string;
-        if (!found.has(token)) found.set(token, frame);
+        if (!frames.has(token)) frames.set(token, frame);
       } catch {
         continue;
       }
     }
-    return found;
-  }
-
-  /**
-   * Walk the concealed fields of the active page, dropping the ones whose node
-   * has gone — not on the page is not on the screenshot either — and answer
-   * with the selector of the first one `test` accepts, or null.
-   */
-  private async eachMasked(test: (el: HandleLike) => Promise<boolean>): Promise<string | null> {
-    const targets = this.masked.get(this.page);
-    if (!targets || targets.size === 0) return null;
-    const frames = await this.framesByToken();
     for (const key of [...targets].sort()) {
       const idx = key.indexOf(":");
       const frame = frames.get(key.slice(0, idx));
@@ -263,20 +253,23 @@ export class Session {
         targets.delete(key);
         continue;
       }
-      if (await test(el)) return selector;
+      if ((await el.evaluate(MASK_JS)) === "unmasked") return selector;
     }
     return null;
   }
 
-  /** Put the mark back on every concealed field. Returns the selector of one
-   * that would not take it, or null when every one is covered. */
-  private async reapplyMasks(): Promise<string | null> {
-    return this.eachMasked(async (el) => (await el.evaluate(MASK_JS)) === "unmasked");
-  }
-
-  /** The selector of a concealed field still holding its value, or null. */
+  /** A concealed field still holding something, named by the page rather than by
+   * the selector the fill used — which a filled field can stop matching. */
   private async concealedHolding(): Promise<string | null> {
-    return this.eachMasked(async (el) => (await el.evaluate(HOLDS_VALUE_JS)) as boolean);
+    for (const frame of this.page.frames()) {
+      try {
+        const holding = (await frame.evaluate(CONCEALED_HOLDING_JS)) as string;
+        if (holding !== "") return holding;
+      } catch {
+        continue;
+      }
+    }
+    return null;
   }
 
   // ---- failed-request listeners (context-level) --------------------------
@@ -363,9 +356,6 @@ export class Session {
   rememberedRequestCount(): number {
     return this.askedBy.size;
   }
-  /** Testing hook: which context events the session subscribed to. */
-  static subscribedEvents: string[] = [];
-
   /** Every response carries where we are, so the client can enforce scope and
    * notice popups without extra round-trips. */
   private envelope(result: Obj): Obj {
@@ -639,8 +629,10 @@ export class Session {
 
     if (action === "eval") {
       // The one thing the mark cannot cover: `eval` reads `el.value` straight
-      // out of the DOM. While a value the vault released is still sitting in a
-      // field, an expression is not evaluated at all.
+      // out of the DOM. A mark that will not go back on refuses it as it
+      // refuses a screenshot; so does a field still holding what went into it.
+      const exposed = await this.reapplyMasks();
+      if (exposed !== null) return { ok: false, mask: "unmasked" };
       const holding = await this.concealedHolding();
       if (holding !== null) return { ok: false, mask: "concealed", selector: holding };
       return { result: (await this.page.evaluate(String(cmd.expression))) as JSONValue };

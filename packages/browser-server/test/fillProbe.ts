@@ -27,10 +27,10 @@ import {
 // also makes the stub track the real call surface — a renamed/dropped script
 // fails to match instead of silently returning a canned value.
 import {
+  CONCEALED_HOLDING_JS,
   DOC_TOKEN_JS,
   FIELD_CAP_JS,
   HELD_MATCHES_JS,
-  HOLDS_VALUE_JS,
   KEYS_DROPPED_JS,
   MASK_JS,
   NOTHING_LANDED_JS,
@@ -135,7 +135,6 @@ class Handle implements HandleLike {
       return true;
     }
     if (fn === WAS_MARKED_JS) return this.marked;
-    if (fn === HOLDS_VALUE_JS) return HOLDS_VALUE_JS({ value: this.value || "" } as never);
     this.trace.push("handle.evaluate:other");
     return null;
   }
@@ -221,14 +220,25 @@ class Frame implements FrameLike {
     this.o = o;
     this.handle = new Handle(trace, o);
   }
+  /** Every handle this frame has resolved. A node the selector stopped matching
+   * is still in the document, and the document-level query still finds it. */
+  private seen = new Map<string, Handle>();
   private node(selector: string): Handle | null {
-    return this.o.nodes == null ? this.handle : (this.o.nodes[selector] ?? null);
+    const node = this.o.nodes == null ? this.handle : (this.o.nodes[selector] ?? null);
+    if (node !== null) this.seen.set(selector, node);
+    return node;
   }
   url(): string {
     return "https://pizza.example/login";
   }
   async evaluate(fn: PageFunction): Promise<Any> {
     if (fn === DOC_TOKEN_JS) return this.o.documentToken ?? "doc-1";
+    if (fn === CONCEALED_HOLDING_JS) {
+      for (const [selector, node] of this.seen) {
+        if (node.marked && node.value !== "") return selector;
+      }
+      return "";
+    }
     return [];
   }
   async $(selector: string): Promise<HandleLike | null> {
@@ -448,6 +458,11 @@ export async function ledger(script: LedgerStep[]): Promise<{
     if ("navigate" in step) {
       page.urlValue = step.navigate;
       page.documentToken = `doc-${step.navigate}`;
+      // A new document: new nodes, none of them marked or holding anything.
+      for (const node of Object.values(nodes)) {
+        node!.marked = false;
+        node!.value = "";
+      }
       steps.push({ step: "navigate", result: null });
     } else if ("route" in step) {
       page.urlValue = step.route;
