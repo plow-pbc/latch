@@ -123,6 +123,11 @@ const AUDIT_ALLOWLIST: Record<string, readonly string[]> = {
   credential_denied: [],
   credential_fill_failed: [],
   credential_mask_failed: [],
+  // A page holding the property we identify documents by; and the eval gate
+  // firing. Both are bare counts — their fields carry selectors, origins and
+  // urls, so the event name is the whole statistic.
+  credential_identity_refused: [],
+  browser_eval_refused: [],
   credential_payment_approved: [],
 };
 

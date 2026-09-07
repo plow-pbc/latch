@@ -268,6 +268,19 @@ describe.each([
     says: "could not be kept hidden",
     mentions: ["dominos.com/pay", "screenshot"],
   },
+  {
+    what: "a page that would not say which document it is",
+    event: {
+      event: "credential_identity_refused",
+      session: "T",
+      action: "fill_secret",
+      url: "https://dominos.com/pay",
+      ts: "2026-08-10T11:00:02Z",
+    } as JSONValue,
+    status: "Page not identified",
+    says: "would not say which document it is",
+    mentions: ["dominos.com/pay"],
+  },
 ])("$what is visible to the owner", ({ event, status, says, mentions }) => {
   const events: JSONValue[] = [
     { event: "browser_session_opened", intentId: "i2", session: "T", origins: ["dominos.com"], ts: "2026-08-10T11:00:00Z" },
@@ -285,4 +298,18 @@ describe.each([
     expect(line.state).toBe("bad");
     for (const fragment of mentions) expect(line.text).toContain(fragment);
   });
+});
+
+it("shows the eval gate firing without calling the session failed", () => {
+  // The gate refusing a look at a filled credential is the design working, not
+  // a fault — but the owner should still see what their agent went looking for.
+  const browser = auditActivities([
+    { event: "browser_session_opened", intentId: "i3", session: "E", origins: ["dominos.com"], ts: "2026-08-10T11:00:00Z" },
+    { event: "credential_filled", session: "E", item: "L1", field: "password", origin: "dominos.com", ts: "2026-08-10T11:00:01Z" },
+    { event: "browser_eval_refused", session: "E", selector: "#pass", page: 0, ts: "2026-08-10T11:00:02Z" },
+  ] as JSONValue[]).find((a) => a.id === "browser:E")!;
+  expect(browser.category).not.toBe("failed");
+  const line = browser.timeline.find((step) => step.text.includes("eval refused"))!;
+  expect(line.text).toContain("#pass");
+  expect(line.state).not.toBe("bad");
 });
