@@ -182,6 +182,11 @@ export const NOTHING_LANDED_JS = (el: El, previous: string): boolean => {
 /** Whether a node is already carrying the mark, asked before anything touches it. */
 export const WAS_MARKED_JS = (el: El): boolean => el.hasAttribute("data-domo-secret");
 
+/** Whether a node is holding anything at all. A boolean, not the value: this
+ * answer crosses back into the server process, and nothing needs it there. */
+export const HOLDS_VALUE_JS = (el: El): boolean =>
+  (typeof el.value === "string" ? el.value : el.textContent || "") !== "";
+
 /** How much this field will hold, and -1 when it does not say. */
 export const FIELD_CAP_JS = (el: El): number => {
   const tag = el.tagName.toLowerCase();

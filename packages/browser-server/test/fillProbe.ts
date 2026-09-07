@@ -30,6 +30,7 @@ import {
   DOC_TOKEN_JS,
   FIELD_CAP_JS,
   HELD_MATCHES_JS,
+  HOLDS_VALUE_JS,
   KEYS_DROPPED_JS,
   MASK_JS,
   NOTHING_LANDED_JS,
@@ -134,6 +135,7 @@ class Handle implements HandleLike {
       return true;
     }
     if (fn === WAS_MARKED_JS) return this.marked;
+    if (fn === HOLDS_VALUE_JS) return HOLDS_VALUE_JS({ value: this.value || "" } as never);
     this.trace.push("handle.evaluate:other");
     return null;
   }
@@ -470,7 +472,7 @@ export async function ledger(script: LedgerStep[]): Promise<{
       try {
         const result = await session.handle({ ...step.cmd } as Record<string, never>);
         keep = {};
-        for (const k of ["ok", "mask"]) if (k in result) keep[k] = (result as Record<string, Any>)[k];
+        for (const k of ["ok", "mask", "selector"]) if (k in result) keep[k] = (result as Record<string, Any>)[k];
       } catch (exc) {
         keep = { error: (exc as Error).name === "Error" ? "RuntimeError" : (exc as Error).name };
       }

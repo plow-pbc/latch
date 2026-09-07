@@ -233,4 +233,35 @@ describe("the server's fill branch, run directly", () => {
     ]);
     expect(wont.steps.at(-1)!.result).toEqual({ ok: false, mask: "unmasked" });
   });
+
+  it("refuses eval while a concealed field still holds its value", async () => {
+    const gated = await ledger([
+      { cmd: { action: "fill", selector: "#pass", value: "hunter2", frame: 1, mask: true } },
+      { cmd: { action: "eval", expression: "document.querySelector('#pass').value" } },
+    ]);
+    expect(gated.steps.at(-1)!.result).toEqual({ ok: false, mask: "concealed", selector: "#pass" });
+  });
+
+  it("allows eval once the field is emptied, and once the page has moved on", async () => {
+    const cleared = await ledger([
+      { cmd: { action: "fill", selector: "#pass", value: "hunter2", frame: 1, mask: true } },
+      { cmd: { action: "fill", selector: "#pass", value: "", frame: 1 } },
+      { cmd: { action: "eval", expression: "1" } },
+    ]);
+    expect(cleared.steps.at(-1)!.result).toEqual({});
+    const navigated = await ledger([
+      { cmd: { action: "fill", selector: "#pass", value: "hunter2", frame: 1, mask: true } },
+      { navigate: "https://pizza.example/done" },
+      { cmd: { action: "eval", expression: "1" } },
+    ]);
+    expect(navigated.steps.at(-1)!.result).toEqual({});
+  });
+
+  it("does not gate eval on a field the vault does not conceal", async () => {
+    const plain = await ledger([
+      { cmd: { action: "fill", selector: "#addr", value: "1 Elm St", frame: 1 } },
+      { cmd: { action: "eval", expression: "1" } },
+    ]);
+    expect(plain.steps.at(-1)!.result).toEqual({});
+  });
 });

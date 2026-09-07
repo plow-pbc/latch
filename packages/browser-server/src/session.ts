@@ -18,6 +18,7 @@ import {
   FIELD_CAP_JS,
   FIELD_JS,
   HELD_MATCHES_JS,
+  HOLDS_VALUE_JS,
   KEYS_DROPPED_JS,
   LINKS_JS,
   MASK_JS,
@@ -240,40 +241,42 @@ export class Session {
   }
 
   /**
-   * Put the mark back on every masked field of the active page. Returns the
-   * selector of a field that could NOT be masked, or null when every one is
-   * covered. A field whose node has gone is dropped: it is not on the page, so
-   * it is not on the screenshot either.
+   * Walk the concealed fields of the active page, dropping the ones whose node
+   * has gone — not on the page is not on the screenshot either — and answer
+   * with the selector of the first one `test` accepts, or null.
    */
-  private async reapplyMasks(): Promise<string | null> {
+  private async eachMasked(test: (el: HandleLike) => Promise<boolean>): Promise<string | null> {
     const targets = this.masked.get(this.page);
     if (!targets || targets.size === 0) return null;
     const frames = await this.framesByToken();
     for (const key of [...targets].sort()) {
       const idx = key.indexOf(":");
-      const documentToken = key.slice(0, idx);
+      const frame = frames.get(key.slice(0, idx));
       const selector = key.slice(idx + 1);
-      const frame = frames.get(documentToken);
-      if (frame === undefined) {
-        // That document is not on this page any more. Nothing of it is on
-        // screen to hide.
-        targets.delete(key);
-        continue;
-      }
-      let el: HandleLike | null;
+      let el: HandleLike | null = null;
       try {
-        el = await frame.$(selector);
+        el = frame === undefined ? null : await frame.$(selector);
       } catch {
-        targets.delete(key);
-        continue;
+        el = null;
       }
       if (el === null) {
         targets.delete(key);
         continue;
       }
-      if ((await el.evaluate(MASK_JS)) === "unmasked") return selector;
+      if (await test(el)) return selector;
     }
     return null;
+  }
+
+  /** Put the mark back on every concealed field. Returns the selector of one
+   * that would not take it, or null when every one is covered. */
+  private async reapplyMasks(): Promise<string | null> {
+    return this.eachMasked(async (el) => (await el.evaluate(MASK_JS)) === "unmasked");
+  }
+
+  /** The selector of a concealed field still holding its value, or null. */
+  private async concealedHolding(): Promise<string | null> {
+    return this.eachMasked(async (el) => (await el.evaluate(HOLDS_VALUE_JS)) as boolean);
   }
 
   // ---- failed-request listeners (context-level) --------------------------
@@ -635,6 +638,11 @@ export class Session {
     }
 
     if (action === "eval") {
+      // The one thing the mark cannot cover: `eval` reads `el.value` straight
+      // out of the DOM. While a value the vault released is still sitting in a
+      // field, an expression is not evaluated at all.
+      const holding = await this.concealedHolding();
+      if (holding !== null) return { ok: false, mask: "concealed", selector: holding };
       return { result: (await this.page.evaluate(String(cmd.expression))) as JSONValue };
     }
 
