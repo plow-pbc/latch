@@ -230,14 +230,19 @@ describe("the server's fill branch, run directly", () => {
     expect(spa.marked["#pass"]).toBe(true);
   });
 
-  it("forgets a field whose own frame navigated away", async () => {
+  it("never re-marks a same-selector node in another document, and keeps the entry", async () => {
     const gone = await ledger([
       { cmd: { action: "fill", selector: "#pass", value: "hunter2", frame: 1, mask: true } },
       { frame_navigated: "doc-elsewhere" },
       { cmd: { action: "forms" } },
     ]);
-    expect(gone.tracked).toEqual([]);
+    // The mark is keyed on the document as well as the selector, so a sibling
+    // frame holding its own `#pass` is not this field and is left alone.
     expect(gone.sibling_marked).toBe(false);
+    // The entry stays: a frame that will not say which document it is showing
+    // reads exactly like one that navigated, and forgetting on that guess is
+    // what would hand the eval gate back.
+    expect(gone.tracked).toEqual(["doc-1:#pass"]);
   });
 
   it("refuses the observation when a mark will not go back on", async () => {

@@ -223,12 +223,16 @@ export class Session {
     this.masked.get(this.page)?.delete(`${documentToken}:${selector}`);
   }
 
-  /** Put the mark back on every concealed field of the active page. A node that
-   * will not resolve is skipped, not forgotten: the selector that found it can
-   * be state-dependent (`input:placeholder-shown` stops matching the moment it
-   * is filled), so "does not resolve" is not "is not there". Only a new
-   * document forgets. Returns the selector of one that would not take the mark,
-   * or null. */
+  /** Put the mark back on every concealed field of the active page. Nothing is
+   * forgotten here: a node that will not resolve is skipped and kept. The
+   * selector that found it can be state-dependent (`input:placeholder-shown`
+   * stops matching the moment it is filled) and a frame can decline to say which
+   * document it is showing mid-navigation, so neither "does not resolve" nor
+   * "did not answer" is "is not there" — and this ledger is what the eval gate
+   * reads. Forgetting has two owners, both of which watched the value leave: a
+   * new document (`forgetNavigated`) and an overwrite the vault does not
+   * conceal (`forgetMasked`). Returns the selector of a field that would not
+   * take the mark, or null. */
   private async reapplyMasks(): Promise<string | null> {
     const targets = this.masked.get(this.page);
     if (!targets || targets.size === 0) return null;
@@ -244,13 +248,8 @@ export class Session {
     for (const key of [...targets].sort()) {
       const idx = key.indexOf(":");
       const frame = frames.get(key.slice(0, idx));
+      if (frame === undefined) continue;
       const selector = key.slice(idx + 1);
-      // That document is no longer on the page: its nodes went with it, and the
-      // values in them went too. The one case where forgetting is right.
-      if (frame === undefined) {
-        targets.delete(key);
-        continue;
-      }
       let el: HandleLike | null = null;
       try {
         el = await frame.$(selector);
