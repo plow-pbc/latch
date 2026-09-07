@@ -269,11 +269,28 @@ describe.each([
     mentions: ["dominos.com/pay", "screenshot"],
   },
   {
+    // The shape the fill path actually emits: item/field/origin/selector, no url.
     what: "a page that would not say which document it is",
     event: {
       event: "credential_identity_refused",
       session: "T",
-      action: "fill_secret",
+      item: "L1",
+      field: "password",
+      origin: "dominos.com",
+      selector: "#pass",
+      ts: "2026-08-10T11:00:02Z",
+    } as JSONValue,
+    status: "Page not identified",
+    says: "would not say which document it is",
+    mentions: ["L1", "dominos.com"],
+  },
+  {
+    // And the shape the generic action path emits: action/url, no item.
+    what: "an observation refused because the page would not identify itself",
+    event: {
+      event: "credential_identity_refused",
+      session: "T",
+      action: "screenshot",
       url: "https://dominos.com/pay",
       ts: "2026-08-10T11:00:02Z",
     } as JSONValue,
