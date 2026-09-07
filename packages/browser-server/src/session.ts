@@ -202,26 +202,25 @@ export class Session {
     // ledger only the active page can clear is one an inactive page holds
     // forever, refusing eval over a document that moved on long ago.
     const open = this.pages;
-    for (const page of open) {
-      let token: string;
-      try {
-        token = (await page.evaluate(DOC_TOKEN_JS)) as string;
-      } catch {
-        // Mid-navigation, or a page that will not evaluate. Keeping the record
-        // is the safe answer: a stale mask is dropped when it fails to resolve.
-        continue;
-      }
-      // "" is the page refusing to be identified (DOC_TOKEN_JS). Forgetting on
-      // that is forgetting on the say-so of whoever took the name, so it is the
-      // same answer as a failed evaluate: keep the record.
+    // Asked of every page at once: this runs before every action, and one
+    // round-trip per open tab in series is a latency bill that grows with the
+    // tabs the agent left behind.
+    const answers = await Promise.allSettled(open.map((page) => page.evaluate(DOC_TOKEN_JS)));
+    open.forEach((page, i) => {
+      const answer = answers[i];
+      // A page mid-navigation or refusing to evaluate, and "" — the page
+      // declining to be identified (DOC_TOKEN_JS) — get the same answer:
+      // keep the record. Forgetting on either is forgetting on a guess.
+      if (answer.status !== "fulfilled") return;
+      const token = answer.value as string;
       if (token !== "" && this.seenDocument.get(page) !== token) {
         this.seenDocument.set(page, token);
         this.masked.delete(page);
       }
-    }
+    });
     // A page that has closed took its nodes and their values with it — the one
     // departure that needs no signal from the page itself.
-    for (const page of this.masked.keys()) {
+    for (const page of [...this.masked.keys(), ...this.seenDocument.keys()]) {
       if (!open.includes(page)) {
         this.masked.delete(page);
         this.seenDocument.delete(page);
