@@ -32,9 +32,11 @@ jobs:
       # cover the wire contract plus the connection lifecycle against a fake
       # connection; nothing here talks to a real relay
       # (see README-ts.md § Integration coverage, which owns that list).
-
+      # browser-server drives its ported server logic against stub Playwright
+      # objects — its one real-Camoufox test skips itself when no browser is
+      # fetched, which is every run here.
       - if: runner.os == 'macOS'
-        run: npx vitest run packages/device-core packages/mcp-server packages/relay-client apps/desktop
+        run: npx vitest run packages/device-core packages/mcp-server packages/relay-client packages/browser-server apps/desktop
       # What is left under `e2e/`: the worktree-naming contract. The relay+MCP
       # gate and the transcript runner went with the stand-in they needed; the
       # directory did not.
