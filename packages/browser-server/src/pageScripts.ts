@@ -192,14 +192,40 @@ export const FIELD_CAP_JS = (el: El): number => {
     : -1;
 };
 
-/** Is the field holding exactly what was put into it? Compared IN THE PAGE. A
- * select was asked for an option by value OR label, so either counts. */
+/**
+ * Whether the field is holding what was typed into it. Compared IN THE PAGE. A
+ * select was asked for an option by value OR label, so either counts.
+ *
+ * Not string equality: a page is allowed to pretty-print. A 2FA box hyphenates
+ * six digits, a card field groups four, a date field slashes. The field still
+ * received the credential, and refusing those was refusing the login. What it
+ * may not do is lose a character, gain one that is not formatting, or reorder
+ * what it has — any of those and the value the page will submit is not the
+ * value the vault released.
+ *
+ * This is a correctness check, not a concealment one: a page that wants the
+ * value has it the moment it is typed, whatever it leaves in `el.value`.
+ * Concealment is the mark and the `forms` redaction, and neither moves here.
+ */
 export const HELD_MATCHES_JS = (el: El, wanted: string): boolean => {
   if (el.tagName === "SELECT") {
     const chosen = el.selectedOptions && el.selectedOptions[0];
     return el.value === wanted || (!!chosen && (chosen.label || "").trim() === wanted);
   }
-  return (typeof el.value === "string" ? el.value : el.textContent || "") === wanted;
+  const held = typeof el.value === "string" ? el.value : el.textContent || "";
+  if (held === wanted) return true;
+  // A clear is exact: a field still holding the separator a rollback left is
+  // not empty, and must never be reported as empty.
+  if (wanted === "") return false;
+  let i = 0;
+  for (const ch of held) {
+    if (i < wanted.length && ch === wanted[i]) {
+      i++;
+    } else if (!/[\s\-/.()+]/.test(ch)) {
+      return false;
+    }
+  }
+  return i === wanted.length;
 };
 
 export const UNMASK_JS = (el: El): boolean => {

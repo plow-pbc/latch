@@ -262,3 +262,25 @@ describe("what a select is holding", () => {
     expect(HELD_MATCHES_JS(el as any, wanted)).toBe(held);
   });
 });
+
+describe("a field that reformats what it was given", () => {
+  const field = (value: string) => ({ tagName: "INPUT", value });
+  it.each([
+    { what: "a 2FA code the page hyphenates", wanted: "123456", held: "123-456", ok: true },
+    { what: "a card number the page groups", wanted: "4111111111111111", held: "4111 1111 1111 1111", ok: true },
+    { what: "a date the page slashes", wanted: "1226", held: "12/26", ok: true },
+    { what: "a phone the page brackets", wanted: "4155550123", held: "(415) 555-0123", ok: true },
+    { what: "a phone the page prefixed with a country code", wanted: "4155550123", held: "+1 (415) 555-0123", ok: false },
+    { what: "a value the page left alone", wanted: "hunter2", held: "hunter2", ok: true },
+    { what: "a field that dropped a character", wanted: "123456", held: "12345", ok: false },
+    { what: "a field that added a digit", wanted: "123456", held: "1234567", ok: false },
+    { what: "a field that ate a space out of a name", wanted: "Jon Doe", held: "JonDoe", ok: false },
+    { what: "a field that appended punctuation that is not formatting", wanted: "hunter2", held: "hunter2!", ok: false },
+    { what: "a field showing its own mask", wanted: "123456", held: "••••56", ok: false },
+    { what: "a field that reordered the digits", wanted: "123456", held: "654-321", ok: false },
+    { what: "a field that kept a separator after a clear", wanted: "", held: "-", ok: false },
+    { what: "a field that is genuinely empty", wanted: "", held: "", ok: true },
+  ])("$what", ({ wanted, held, ok }) => {
+    expect(HELD_MATCHES_JS(field(held) as any, wanted)).toBe(ok);
+  });
+});

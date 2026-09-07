@@ -45,6 +45,12 @@ describe("the server's fill branch, run directly", () => {
   it.each([
     { what: "groups the digits", value: "4111111111111111",
       rewrites: (t: string) => t.replace(/ /g, "").replace(/(.{4})/g, "$1 ").trim() },
+  ])("accepts, as filled, a field that $what", async ({ value, rewrites }) => {
+    const r = await run({ ...base, value }, { rewrites });
+    expect(r.result).toEqual({ ok: true, frame: 0 });
+  });
+
+  it.each([
     { what: "strips a space out of a name", value: "Jon Doe", rewrites: (t: string) => t.replace(/ /g, "") },
     { what: "truncates what it was given", value: "hunter2", rewrites: (t: string) => t.slice(0, 4) },
   ])("reports, without refusing, a field that $what", async ({ value, rewrites }) => {

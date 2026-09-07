@@ -102,7 +102,14 @@ class Handle implements HandleLike {
     if (fn === FIELD_CAP_JS) return this.o.maxLength ?? -1;
     if (fn === HELD_MATCHES_JS) {
       const hit = (this.o.options ?? []).find(([v]) => v === this.value);
-      return (this.value || "") === (arg ?? "") || (hit !== undefined && hit[1] === arg);
+      return HELD_MATCHES_JS(
+        {
+          tagName: this.o.options === undefined ? "INPUT" : "SELECT",
+          value: this.value || "",
+          selectedOptions: hit === undefined ? [] : [{ label: hit[1] }],
+        } as never,
+        (arg as string) ?? "",
+      );
     }
     if (fn === TYPEABLE_JS) return this.o.typeable ?? "single-line";
     if (fn === KEYS_DROPPED_JS) {
