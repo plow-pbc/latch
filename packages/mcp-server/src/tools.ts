@@ -41,8 +41,8 @@ import path from "node:path";
 
 /** One promise, four descriptions: four wordings of it are four things to drift. */
 const EVAL_REFUSED =
-  "'eval' is refused while a concealed field still holds the value — empty that field, or " +
-  "load another page, to lift it";
+  "'eval' is refused while a concealed field still holds the value — empty that field if it " +
+  "still resolves, or load another page, to lift it";
 
 /** A tool argument was missing or unusable — the agent's problem, not ours. */
 export class ToolError extends Error {}
