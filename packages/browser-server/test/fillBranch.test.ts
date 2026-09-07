@@ -274,6 +274,24 @@ describe("the server's fill branch, run directly", () => {
     });
   });
 
+  it("keeps refusing eval when an observation was interposed after the selector stopped matching", async () => {
+    // `forms` re-marks what it can and used to FORGET what it could not resolve,
+    // which handed the gate right back: fill, look at the page, then eval. The
+    // remask skips what will not resolve now; only a new document forgets.
+    const interposed = await ledger([
+      { cmd: { action: "fill", selector: "#pass", value: "hunter2", frame: 1, mask: true } },
+      { vanish: "#pass" },
+      { cmd: { action: "forms" } },
+      { cmd: { action: "eval", expression: "1" } },
+    ]);
+    expect(interposed.tracked).toEqual(["doc-1:#pass"]);
+    expect(interposed.steps.at(-1)!.result).toEqual({
+      ok: false,
+      mask: "concealed",
+      selector: "#pass",
+    });
+  });
+
   it("allows eval once the field is emptied, and once the page has moved on", async () => {
     const cleared = await ledger([
       { cmd: { action: "fill", selector: "#pass", value: "hunter2", frame: 1, mask: true } },
