@@ -255,6 +255,14 @@ describe("the server's fill branch, run directly", () => {
       { cmd: { action: "eval", expression: "document.querySelector('#pass').value" } },
     ]);
     expect(gated.steps.at(-1)!.result).toEqual({ ok: false, mask: "concealed", selector: "#pass" });
+    // And refuses it the way a screenshot is refused when the mark will not go
+    // back on — the value is legible to the page either way.
+    const wont = await ledger([
+      { cmd: { action: "fill", selector: "#pass", value: "hunter2", frame: 1, mask: true } },
+      { refuse: "#pass" },
+      { cmd: { action: "eval", expression: "1" } },
+    ]);
+    expect(wont.steps.at(-1)!.result).toEqual({ ok: false, mask: "unmasked" });
   });
 
   it("refuses eval when the selector stopped matching the node it filled", async () => {
