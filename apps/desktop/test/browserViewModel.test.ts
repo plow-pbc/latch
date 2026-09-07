@@ -282,7 +282,7 @@ describe.each([
     } as JSONValue,
     status: "Page not identified",
     says: "would not say which document it is",
-    mentions: ["L1", "dominos.com"],
+    mentions: ["L1", "password", "dominos.com"],
   },
   {
     // And the shape the generic action path emits: action/url, no item.

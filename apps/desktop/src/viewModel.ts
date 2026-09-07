@@ -711,7 +711,7 @@ function describeStep(e: JSONValue): AuditStep {
       // generic one carries url. Named the way its siblings name a credential.
       text = `Credential not filled: ${ev.get("origin").str ?? ev.get("url").str ?? "a page"} `
         + `would not say which document it is, so nothing was typed`
-        + (ev.get("item").str ? ` (${ev.get("item").str} · ${ev.get("field").str ?? ""})` : "");
+        + (ev.get("item").str ? ` (${ev.get("item").str} · ${ev.get("field").str})` : "");
       state = "bad";
       break;
     // The gate doing its job is not a fault: it fires whenever the agent
