@@ -169,9 +169,10 @@ item's, and \`fill_secret\` types them into the page the same way.
    working credential for the half-minute it lasts.
    Masking covers what you SEE: screenshots and \`forms\`. It cannot cover \`eval\`, which
    reads a field's value straight out of the page, so \`eval\` is refused while a field the
-   vault filled still holds a value: empty that field with a plain \`fill\` of "", or load
-   another page — submitting the form is one. A field the page has since replaced cannot be
-   emptied, so only loading a page lifts the refusal then.
+   vault filled still holds a value — on ANY page of the session, because a popup can read
+   its opener. The refusal names the page: \`use_page\` there, then empty that field with a
+   plain \`fill\` of "", or load another page — submitting the form is one. A field the page
+   has since replaced cannot be emptied, so only loading a page lifts the refusal then.
 
 ## Order of operations for a purchase
 

@@ -650,10 +650,20 @@ export class Session {
       // EVERY page of the session, not just the active one. A popup and its
       // opener are same-origin often enough, and `opener.document` reads the
       // field this page never filled — so a per-page gate is one `use_page`
-      // away from being no gate at all.
-      const held = [...this.masked.values()].flatMap((onPage) => [...onPage]).sort()[0];
-      if (held !== undefined) {
-        return { ok: false, mask: "concealed", selector: held.slice(held.indexOf(":") + 1) };
+      // away from being no gate at all. Which page is part of the answer: the
+      // field is only clearable from the page that owns it, so a refusal that
+      // names a selector without naming its page is one nobody can act on.
+      const pages = this.pages;
+      for (let i = 0; i < pages.length; i++) {
+        const held = [...(this.masked.get(pages[i]) ?? [])].sort()[0];
+        if (held !== undefined) {
+          return {
+            ok: false,
+            mask: "concealed",
+            selector: held.slice(held.indexOf(":") + 1),
+            page: i,
+          };
+        }
       }
       return { result: (await this.page.evaluate(String(cmd.expression))) as JSONValue };
     }

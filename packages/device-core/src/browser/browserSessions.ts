@@ -873,14 +873,17 @@ export class BrowserSessions {
 
     if (result.ok === false && result.mask === "concealed") {
       const selector = jv(result).get("selector").str ?? "";
-      this.audit("browser_eval_refused", { session: s.auditId, selector });
+      const page = jv(result).get("page").num;
+      this.audit("browser_eval_refused", { session: s.auditId, selector, ...(page === null ? {} : { page }) });
       return {
         status: "error",
         error:
-          `eval was refused: ${selector} is holding a value out of the vault, and eval reads ` +
-          `a field's value straight out of the page. Fill ${selector} with an empty value to ` +
-          `lift the refusal, or load another page — submitting the form is one. A field the ` +
-          `page has since replaced cannot be emptied, so only loading a page lifts it then.`,
+          `eval was refused: ${selector} on page ${page ?? 0} is holding a value out of the ` +
+          `vault, and eval reads a field's value straight out of the page. The refusal covers ` +
+          `every page of this session, because a popup can read its opener — so lift it where ` +
+          `the value is: use_page ${page ?? 0}, then fill ${selector} with an empty value, or ` +
+          `load another page there — submitting the form is one. A field the page has since ` +
+          `replaced cannot be emptied, so only loading a page lifts it then.`,
         ...(refused.length ? { failed_requests: refused } : {}),
       };
     }

@@ -298,6 +298,8 @@ describe("the server's fill branch, run directly", () => {
       ok: false,
       mask: "concealed",
       selector: "#pass",
+      // Named, because the field can only be cleared from the page holding it.
+      page: 0,
     });
     expect(popup.documentToken).toBe("doc-popup");
   });
@@ -338,6 +340,7 @@ describe("the server's fill branch, run directly", () => {
       ok: false,
       mask: "concealed",
       selector: "#pass",
+      page: 0,
     });
     if (act === null) close(first);
     else act(first);

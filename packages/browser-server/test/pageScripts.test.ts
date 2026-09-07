@@ -330,6 +330,13 @@ describe("which document this is", () => {
   it.each([
     { what: "a getter", planted: { get: () => "planted", configurable: false } },
     { what: "a setter", planted: { set: () => {}, configurable: false } },
+    // Immutable, so it cannot be restamped — and still not identity. NaN reads
+    // as a different document on every look, which would empty the ledger
+    // before every action; the rest are simply not what this ever writes.
+    { what: "a value unequal to itself", planted: { value: NaN } },
+    { what: "a value that is not a string", planted: { value: 7 } },
+    { what: "the empty string this keeps for a document it cannot name",
+      planted: { value: "" } },
   ])("states no identity at all when the name is held against it by $what", ({ planted }) => {
     inPage(() => {
       Object.defineProperty((globalThis as any).window, "__domoDocumentToken", planted);

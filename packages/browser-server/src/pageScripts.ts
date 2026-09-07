@@ -132,11 +132,14 @@ export const MASK_JS = (el: El): string => {
  *
  * A change to this token reads as a new document, and a new document is what
  * empties the concealed-field ledger the `eval` gate is decided from. So a
- * token is only identity if it CANNOT change: what is already there is trusted
- * only when it is a non-configurable, non-writable data property, which is the
- * only kind this ever writes. Anything else — absent, deletable, assignable, or
- * an accessor free to answer differently each time — is not identity and gets
- * restamped, whoever left it there.
+ * token is only identity if it CANNOT change AND COMPARES EQUAL TO ITSELF:
+ * what is already there is trusted only when it is a non-configurable,
+ * non-writable, non-empty string — which is the only kind this ever writes.
+ * Anything else is not identity and gets restamped, whoever left it there:
+ * absent, deletable, assignable, an accessor free to answer differently each
+ * time, or a value that is unequal to itself. `NaN` is immutable and still
+ * reads as a different document on every look, which empties the ledger
+ * before every action — so "cannot be changed" was never the whole test.
  *
  * That is the whole check, and deliberately not "we got here first": an
  * expression the agent ran earlier can open a same-origin popup and plant a
@@ -147,7 +150,13 @@ export const MASK_JS = (el: El): string => {
 export const DOC_TOKEN_JS = (): string => {
   const w = window;
   const held = Object.getOwnPropertyDescriptor(w, "__domoDocumentToken");
-  if (held === undefined || held.configurable || held.writable !== false) {
+  if (
+    held === undefined ||
+    held.configurable ||
+    held.writable !== false ||
+    typeof held.value !== "string" ||
+    held.value === ""
+  ) {
     try {
       // Every attribute spelled out: redefining a property that already exists
       // KEEPS whatever it was given for the ones left unsaid, so a restamp that

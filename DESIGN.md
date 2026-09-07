@@ -383,9 +383,12 @@ It used to be argued that eval carries nothing `screenshot`/`text` could not
 already carry; that is no longer true. Masking (§11a-ii) covers what the agent
 SEES — screenshots and form reads — and cannot cover `eval`, which reads
 `input.value` directly. So `eval` is not evaluated at all while the ledger of
-concealed fields is non-empty for the active page. The agent's way on is to
-empty that field with a plain `fill`, or to load another page — submitting the
-form is one. The ledger is deliberately conservative: it drops a field only on
+concealed fields is non-empty for ANY page of the session — a popup and its
+opener are same-origin often enough that `opener.document` reads a field the
+popup never filled. The refusal names the page that owns it, since that is the
+only page it can be cleared from: the agent's way on is to go there and empty
+the field with a plain `fill`, or to load another page — submitting the form is
+one. The ledger is deliberately conservative: it drops a field only on
 a new document or on an overwrite the vault does not conceal, never on a guess
 that the node has gone (§11a-ii), so a field the page has replaced keeps `eval`
 refused until the page navigates.
@@ -693,8 +696,8 @@ all. Full design, including the alternatives rejected and why, in
 
 **What the mark cannot cover: `eval`.** It reads `input.value` directly and no
 mark changes that, so `eval` is refused while the ledger of concealed fields is
-non-empty — empty the field with a plain `fill`, or load another page, and it
-runs again. Nothing prunes that ledger on a failure to resolve a selector or a
+non-empty on any page of the session — empty the field on the page the refusal
+names, or load another page there, and it runs again. Nothing prunes that ledger on a failure to resolve a selector or a
 frame: a selector can be state-dependent and a frame can decline to say which
 document it is showing, so neither absence is evidence the value went with it.
 Forgetting belongs to the two moments that watched it leave — a new document,
