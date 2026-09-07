@@ -220,7 +220,7 @@ export class Session {
     });
     // A page that has closed took its nodes and their values with it — the one
     // departure that needs no signal from the page itself.
-    for (const page of [...this.masked.keys(), ...this.seenDocument.keys()]) {
+    for (const page of new Set([...this.masked.keys(), ...this.seenDocument.keys()])) {
       if (!open.includes(page)) {
         this.masked.delete(page);
         this.seenDocument.delete(page);
