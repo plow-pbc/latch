@@ -1206,9 +1206,7 @@ const SCREENS = [
     expect: [
       "Static credential",
       "Name this connection",
-      // The picker is what makes a self-hosted agent's credential the assistant
-      // role rather than MCP-only, so the screen has to offer the choice.
-      "Pick the line this agent answers on",
+      "Choose a free line for this self-hosted agent.",
       "Create Credential",
       "Cancel",
     ],
