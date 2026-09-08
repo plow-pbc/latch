@@ -610,6 +610,7 @@ function signOut() {
  * accepts them.
  */
 async function signOutThisMac(): Promise<void> {
+  if (agentToken && !(await mayLeaveMain(mainWindow))) return;
   // A second click, before the button re-rendered. The first already signed
   // out; going round again would reset the setup window and mint a fresh code
   // over the one the user may have just texted.
@@ -2125,7 +2126,9 @@ app.whenReady().then(async () => {
     if (loadSettings(home).relayCredential.trim() !== owner) return;
     agentToken = token;
     notifyRenderer("connect:changed");
-  }, requireAgentTokenSaved);
+  }, (owner) => {
+    if (loadSettings(home).relayCredential.trim() === owner) requireAgentTokenSaved();
+  });
 
   connectClient = new ConnectClient({
     api: new PlowApi(apiBaseUrl),
@@ -2326,12 +2329,12 @@ let leaveInFlight: Promise<boolean> | null = null;
 /** Settles the question above when the window it was asked of dies unanswered. */
 let settleLeave: ((ok: boolean) => void) | null = null;
 function mayLeaveMain(win: BrowserWindow | null): Promise<boolean> {
-  if (!win || win.isDestroyed()) return Promise.resolve(true);
+  if (!win || win.isDestroyed()) return Promise.resolve(!agentToken);
   leaveInFlight ??= new Promise<boolean>((resolve) => {
     const done = (ok: boolean) => {
       ipcMain.removeListener("ui:confirmLeaveReply", onReply);
       settleLeave = null;
-      resolve(ok);
+      resolve(ok && !agentToken);
     };
     const onReply = (_e: unknown, ok: boolean) => done(!!ok);
     settleLeave = done;

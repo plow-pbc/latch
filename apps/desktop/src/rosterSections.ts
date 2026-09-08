@@ -167,11 +167,11 @@ export function sectionRoster(
   const thisMacId = candidates.length === 1 ? candidates[0].id : null;
 
   for (const key of keys) {
+    if (key.agent_uid != null) continue;
     if (!key.is_active) {
       sections.revokedHidden += 1;
       continue;
     }
-    if (key.agent_uid != null) continue;
     const placed: RosterSectionRow = {
       id: key.id,
       name: key.name,

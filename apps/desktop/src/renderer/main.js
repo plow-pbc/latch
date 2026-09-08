@@ -881,6 +881,7 @@ function syncStaticModal(s, redraw) {
     } else {
       staticModal.lineSelect = el("select", { class: "text", attrs: { "aria-label": "Line" } });
       const create = async () => {
+        if (createBtn.disabled) return;
         await window.domo.connectCreate(staticModal.nameInput.value, staticModal.lineSelect.value || null);
         redraw();
       };
@@ -888,7 +889,6 @@ function syncStaticModal(s, redraw) {
         if (e.key === "Enter") create();
       });
       const createBtn = el("button", { class: "btn primary", text: "Create Credential" });
-      createBtn.disabled = Boolean(s.agentToken);
       createBtn.addEventListener("click", create);
       const cancel = el("button", { class: "btn", text: "Cancel" });
       cancel.addEventListener("click", () => {
@@ -932,6 +932,7 @@ function syncStaticModal(s, redraw) {
   // ever taken away by one.
   staticModal.nameInput.disabled = !!s.busy;
   for (const b of staticModal.panel.querySelectorAll("button")) b.disabled = !!s.busy;
+  if (kind === "form") staticModal.actions[1].disabled = !!s.busy || !!s.agentToken;
 }
 
 /**
@@ -1077,11 +1078,8 @@ function cloudStatus(status, failureReason) {
   return { tone: "amber", label: "Status unavailable" };
 }
 
-function cloudLine(agent, state) {
-  if (agent?.line?.label) return agent.line.label;
-  return state.cloudChatsLoaded === true && !state.cloudChatsError
-    ? "No line"
-    : "Line unavailable";
+function cloudLine(agent) {
+  return agent?.line?.label || "No line";
 }
 
 function focusCloudAgent(agentId) {
@@ -1487,7 +1485,7 @@ function syncCloudModal(state, redraw) {
       el("div", { class: "cloud-detail-meta" }, [
         el("div", { class: "cloud-detail-field" }, [
           el("span", { class: "faint", text: "Line" }),
-          el("span", { text: cloudLine(agent, state) }),
+          el("span", { text: cloudLine(agent) }),
         ]),
         el("div", { class: "cloud-detail-field" }, [
           el("span", { class: "faint", text: "Status" }),
@@ -1782,10 +1780,10 @@ function rosterActions(row, section, redraw) {
   return [more, menu];
 }
 
-function cloudContext(agent, state) {
+function cloudContext(agent) {
   const created = rosterDate(agent?.createdAt);
   return [
-    cloudLine(agent, state),
+    cloudLine(agent),
     created ? `Created ${created}` : null,
   ].filter(Boolean).join(" · ");
 }
@@ -1817,8 +1815,8 @@ function cloudEntityRow(agent, state, redraw) {
     ]),
     el("div", {
       class: "entity-context",
-      text: cloudContext(agent, state),
-      attrs: { title: cloudContext(agent, state) },
+      text: cloudContext(agent),
+      attrs: { title: cloudContext(agent) },
     }),
   ]);
   main.addEventListener("click", () => openCloudDetail(main, agent, state, redraw));
@@ -2794,8 +2792,13 @@ window.domo.onUpdatesChanged(() => {
 });
 // The menu-bar "Check for Updates…" lands here so its outcome is visible.
 // Closing the window or quitting throws an open Vault form away too, so main
-// asks here first. Anything outside the Vault has nothing to lose.
+// asks here first. A pending agent token must be saved before leaving.
 window.domo.onConfirmLeave(async () => {
+  if ((await window.domo.connectGet())?.agentToken) {
+    await selectTab("agents");
+    window.domo.confirmLeaveReply(false);
+    return;
+  }
   window.domo.confirmLeaveReply(currentTab === "vault" ? await vaultConfirmLeave() : true);
 });
 

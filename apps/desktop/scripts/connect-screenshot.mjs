@@ -356,7 +356,6 @@ async function setUp() {
   ipcMain.handle("roster:remove", async (_e, id) => {
     rosterFixture = {
       ...rosterFixture,
-      cloud: rosterFixture.cloud.filter((row) => row.id !== id),
       mcp: rosterFixture.mcp.filter((row) => row.id !== id),
       other: rosterFixture.other.filter((row) => row.id !== id),
     };
@@ -366,7 +365,6 @@ async function setUp() {
     const renamed = (rows) => rows.map((row) => (row.id === id ? { ...row, name } : row));
     rosterFixture = {
       ...rosterFixture,
-      cloud: renamed(rosterFixture.cloud),
       mcp: renamed(rosterFixture.mcp),
       other: renamed(rosterFixture.other),
     };
@@ -979,7 +977,7 @@ const SCREENS = [
       await waitFor(win, `document.querySelector(".cloud-modal .cloud-detail-threads")`,
         "the loading-thread detail");
     },
-    expect: ["Household helper", "Line unavailable", "Loading threads…", "Delete agent"],
+    expect: ["Household helper", "No line", "Loading threads…", "Delete agent"],
   },
   {
     name: "cloud-chat-failed-detail",
@@ -1002,7 +1000,7 @@ const SCREENS = [
         throw new Error("detail exposed a raw line uid while chats were unavailable");
       }
     },
-    expect: ["Household helper", "Line unavailable", "Threads couldn't be loaded", "Delete agent"],
+    expect: ["Household helper", "No line", "Threads couldn't be loaded", "Delete agent"],
   },
   {
     name: "cloud-delete-confirm",
@@ -1310,5 +1308,14 @@ app.whenReady().then(async () => {
   });
 
   fs.rmSync(home, { recursive: true, force: true });
+  rosterFixture = ROSTER;
+  const id = ROSTER.mcp[0].id;
+  const renamed = await win.webContents.executeJavaScript(`window.domo.rosterRename(${id}, "Renamed client")`);
+  if (renamed.roster.mcp.find((row) => row.id === id)?.name !== "Renamed client") {
+    throw new Error("roster rename did not update the MCP session");
+  }
+  const removed = await win.webContents.executeJavaScript(`window.domo.rosterRemove(${id})`);
+  if (removed.roster.mcp.some((row) => row.id === id)) throw new Error("roster remove retained the MCP session");
+  console.log("ROSTER-EDIT: rename and remove passed");
   app.exit(failures + extra.length === 0 ? 0 : 1);
 });

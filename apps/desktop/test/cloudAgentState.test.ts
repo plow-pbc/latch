@@ -210,7 +210,7 @@ function build(options: {
     warn: options.warn,
     onChange: options.onChange,
   });
-  return { state, calls, audit, home };
+  return { state, calls, audit, home, agents };
 }
 
 describe("CloudAgentState line and thread display", () => {
@@ -423,6 +423,21 @@ describe("CloudAgentState line and thread display", () => {
     expect(state.state().cloudAgentsError).toBeNull();
     expect(state.state().cloudChatsError).toBe("Plow returned 503.");
     expect(state.state().cloudChatsLoaded).toBe(false);
+  });
+
+  it("deletes a create receipt arriving after sign-out instead of stranding its credential", async () => {
+    const created = deferred<CloudAgentResource>();
+    const { state, calls, home, agents } = build({ createAgent: () => created.promise });
+    const remove = vi.spyOn(agents, "delete");
+    const creating = state.create({ name: "Kitchen", provider: "self_hosted", lineUid: "lin_willow" });
+    await vi.waitFor(() => expect(calls).toContain("create:lin_willow:Kitchen"));
+    state.signedOut();
+    saveSettings(home, { ...loadSettings(home), relayCredential: "another-account" });
+    created.resolve(agent({ provider: "self_hosted", status: null }));
+    expect(await creating).toBeNull();
+    expect(remove).toHaveBeenCalledWith(CREDENTIAL, "agent_1");
+    expect(state.state().cloudAgents).toEqual([]);
+    expect(calls).not.toContain("poll:agent_1");
   });
 
   it("drops a roster read that lands after sign-out", async () => {

@@ -72,14 +72,14 @@ export class CloudAgentsClient {
     private readonly api: PlowApi,
     private readonly wait: Wait = defaultWait,
     private readonly onToken: (token: string, owner: string) => void = () => {},
-    private readonly beforeMutation: () => void = () => {},
+    private readonly beforeMutation: (credential: string) => void = () => {},
   ) {}
 
   async create(
     deviceCredential: string,
     request: CreateCloudAgentRequest,
   ): Promise<CloudAgentResource> {
-    this.beforeMutation();
+    this.beforeMutation(deviceCredential);
     const response = await this.api.request("POST", "/v1/agents", {
       token: deviceCredential,
       body: {
@@ -125,7 +125,7 @@ export class CloudAgentsClient {
   }
 
   async delete(deviceCredential: string, agentId: string): Promise<void> {
-    this.beforeMutation();
+    this.beforeMutation(deviceCredential);
     const response = await this.api.request(
       "DELETE",
       `/v1/agents/${encodeURIComponent(agentId)}`,

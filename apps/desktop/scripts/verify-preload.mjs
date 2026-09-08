@@ -176,6 +176,7 @@ let cloudChangeCancelCount = 0;
 let exhaustNextCloudActivation = false;
 const cloudMessageAgentIds = [];
 const cloudCreateRequests = [];
+let staticCreateCount = 0;
 
 // Connect state also carries the cloud-agent display state. It contains no
 // credential, session id or worker URL.
@@ -194,6 +195,7 @@ const agentsTabProbeState = () => ({
   ...cloudProbe,
 });
 ipcMain.handle("connect:get", async () => agentsTabProbeState());
+ipcMain.handle("connect:create", () => { staticCreateCount += 1; return agentsTabProbeState(); });
 ipcMain.handle("agents:dismissToken", () => { cloudProbe.agentToken = null; });
 ipcMain.handle("cloud:refresh", async () => agentsTabProbeState());
 ipcMain.handle("cloud:cancelLineFlow", async () => {
@@ -945,10 +947,40 @@ app.whenReady().then(async () => {
     .find((b) => b.textContent.trim() === "Delete agent").disabled`);
   await clickCloudButton(win, "Close");
   await win.webContents.executeJavaScript(`[...document.querySelectorAll("#view button")]
+    .find((b) => b.textContent.trim() === "Connect MCP client").click()`);
+  await waitFor(win, `document.querySelector(".connect-modal .linkbtn")`, "the static setup link");
+  await win.webContents.executeJavaScript(`document.querySelector(".connect-modal .linkbtn").click()`);
+  await waitFor(win, `document.querySelector('input[placeholder="Claude Code"]')`, "the static form");
+  const staticCreateDisabled = await win.webContents.executeJavaScript(`(async () => {
+    const input = document.querySelector('input[placeholder="Claude Code"]');
+    input.value = "Blocked setup";
+    const disabled = [...document.querySelectorAll("button")]
+      .find((b) => b.textContent.trim() === "Create Credential").disabled;
+    input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    await window.domo.connectGet();
+    return disabled;
+  })()`);
+  if (!staticCreateDisabled || staticCreateCount !== 0) throw new Error("pending token allowed static creation");
+  await win.webContents.executeJavaScript(`[...document.querySelectorAll(".modal-backdrop button")]
+    .find((b) => b.textContent.trim() === "Cancel").click()`);
+  await win.webContents.executeJavaScript(`window.__domoSelectTab("settings")`);
+  let tokenLeaveReply = null;
+  ipcMain.once("ui:confirmLeaveReply", (_e, ok) => { tokenLeaveReply = ok; });
+  win.webContents.send("ui:confirmLeave");
+  await waitForNode(() => tokenLeaveReply !== null, "the pending token leave refusal");
+  if (tokenLeaveReply !== false) throw new Error("pending token allowed the window to close");
+  await waitFor(win, `document.body.textContent.includes("local-probe-token")`, "return to the token handoff");
+  await win.webContents.executeJavaScript(`[...document.querySelectorAll("#view button")]
     .find((b) => b.textContent.trim() === "I saved the token").click()`);
   await waitFor(win, `!document.body.textContent.includes("local-probe-token") &&
     ![...document.querySelectorAll("#view button")].find((b) => b.textContent.trim() === "New agent").disabled`,
     "token dismissal to clear the secret and release creation");
+  tokenLeaveReply = null;
+  ipcMain.once("ui:confirmLeaveReply", (_e, ok) => { tokenLeaveReply = ok; });
+  win.webContents.send("ui:confirmLeave");
+  await waitForNode(() => tokenLeaveReply !== null, "leaving after token dismissal");
+  if (tokenLeaveReply !== true) throw new Error("saved token still blocked leaving");
+  console.log("TOKEN-HANDOFF: static create and leave blocked until dismissal; dismissal releases leave");
   if (!tokenBlocksCreate || !tokenBlocksDelete || cloudProbe.agentToken !== null) {
     throw new Error("local token handoff did not protect creation/deletion until dismissal");
   }
@@ -2184,10 +2216,10 @@ app.whenReady().then(async () => {
     cloudDeleteConfirm.title === "Delete Household helper?" &&
     cloudDeleteConfirm.copy &&
     cloudDeleteConfirm.buttons.join("|") === "Cancel|Delete agent" &&
-    loadingCloudDetail.line.includes("LineLine unavailable") &&
+    loadingCloudDetail.line.includes("LineNo line") &&
     loadingCloudDetail.threadState === "Loading threads…" &&
     !loadingCloudDetail.offersMessage &&
-    unavailableCloudDetail.line.includes("LineLine unavailable") &&
+    unavailableCloudDetail.line.includes("LineNo line") &&
     unavailableCloudDetail.threadState === "Threads couldn't be loaded." &&
     unavailableCloudDetail.hidesRawLineUid &&
     !unavailableCloudDetail.offersMessage &&

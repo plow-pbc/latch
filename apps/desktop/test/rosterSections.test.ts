@@ -57,7 +57,7 @@ describe("which section a credential belongs in", () => {
       key({ id: 3, is_active: false, agent_uid: "agent_3" }),
     ]);
 
-    expect(sections.revokedHidden).toBe(2);
+    expect(sections.revokedHidden).toBe(1);
     expect([...sections.mcp, ...sections.other].map((r) => r.id)).toEqual([1]);
   });
 

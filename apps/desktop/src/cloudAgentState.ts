@@ -724,7 +724,11 @@ export class CloudAgentState {
       else this.setLineFlowError("create", messageOf(error), false);
       return null;
     }
-    if (generation !== this.generation || (flow !== null && flow !== this.lineFlowGeneration)) {
+    if (generation !== this.generation) {
+      await this.deps.agents.delete(credential, receipt.agentId).catch(() => {});
+      return null;
+    }
+    if (flow !== null && flow !== this.lineFlowGeneration) {
       return null;
     }
 
