@@ -55,7 +55,7 @@ describe("CloudAgentsClient resources", () => {
         const result = localSetup
           ? api.createAgent(CREDENTIAL, "Kitchen", "lin_willow")
           : new CloudAgentsClient(api, undefined, onToken).create(CREDENTIAL, {
-            lineUid: "lin_willow", name: "Kitchen", provider: "local",
+            lineUid: "lin_willow", name: "Kitchen", provider: "self_hosted",
           });
         await expect(result).rejects.toThrow("unsafe agent response");
         expect(onToken).not.toHaveBeenCalled();
@@ -65,14 +65,14 @@ describe("CloudAgentsClient resources", () => {
 
   it("keeps a local token until saved before allowing another create or delete", async () => {
     const { calls, fetchImpl } = recordingFetch([
-      { status: 201, body: { agent: wireAgent({ provider: "local", status: null }), token: "new-agent-token" } },
+      { status: 201, body: { agent: wireAgent({ provider: "self_hosted", status: null }), token: "new-agent-token" } },
       { status: 204 },
     ]);
     let pending: string | null = null;
     const client = new CloudAgentsClient(new PlowApi("https://stub.invalid", fetchImpl), undefined,
       (token) => { pending = token; },
       () => { if (pending) throw new Error("Save the token first."); });
-    const request = { lineUid: "lin_willow", name: "Kitchen", provider: "local" };
+    const request = { lineUid: "lin_willow", name: "Kitchen", provider: "self_hosted" };
     expect(await client.create(CREDENTIAL, request)).not.toHaveProperty("token");
     await expect(client.create(CREDENTIAL, request)).rejects.toThrow("Save the token first.");
     await expect(client.delete(CREDENTIAL, "agent_123")).rejects.toThrow("Save the token first.");
@@ -85,7 +85,7 @@ describe("CloudAgentsClient resources", () => {
 
   it("lists local and failed agents without credential joins", async () => {
     const { calls, fetchImpl } = recordingFetch([{ status: 200, body: [
-      wireAgent({ uid: "local", provider: "local", status: null }),
+      wireAgent({ uid: "local", provider: "self_hosted", status: null }),
       wireAgent({ uid: "failed", status: "failed", credential: null }),
     ] }]);
     const rows = await new CloudAgentsClient(new PlowApi("https://stub.invalid", fetchImpl)).list(CREDENTIAL);

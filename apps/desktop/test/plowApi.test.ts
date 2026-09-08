@@ -501,7 +501,7 @@ describe("PlowApi", () => {
     await expect(api.createAgent("owner", "Claude Code")).rejects.toThrow("Choose a line");
     const minted = await api.createAgent("owner", "Claude Code", "line-7");
     expect(calls[0].url).toBe("https://stub.invalid/v1/agents");
-    expect(JSON.parse(String(calls[0].init.body))).toEqual({ provider: "local", name: "Claude Code", line_uid: "line-7" });
+    expect(JSON.parse(String(calls[0].init.body))).toEqual({ provider: "self_hosted", name: "Claude Code", line_uid: "line-7" });
     expect(minted).toMatchObject({ agentUid: "agent-1", token: "plow_agenttok" });
   });
 
@@ -514,7 +514,7 @@ describe("PlowApi", () => {
         image: "public.ecr.aws/plow/zeta:latest",
         future_field: true, settings: {},
       },
-      { id: "local", name: "Self-hosted" },
+      { id: "self_hosted", name: "Self-hosted" },
     ];
     const { calls, fetchImpl } = recordingFetch([{ status: 200, body: roster }]);
 
@@ -522,7 +522,7 @@ describe("PlowApi", () => {
       new PlowApi("https://api.plow.co", fetchImpl).listCloudAgentProviders(credential),
     ).resolves.toEqual([
       { id: " provider/Zeta ", name: "Zeta" },
-      { id: "local", name: "Self-hosted" },
+      { id: "self_hosted", name: "Self-hosted" },
     ]);
 
     expect(calls).toHaveLength(1);

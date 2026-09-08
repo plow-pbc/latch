@@ -254,7 +254,7 @@ ipcMain.handle("cloud:create", async (_e, input) => {
     };
     cloudProbe = {
       ...cloudProbe,
-      agentToken: input.provider === "local" ? "local-probe-token" : null,
+      agentToken: input.provider === "self_hosted" ? "local-probe-token" : null,
       cloudAgents: [created, ...cloudProbe.cloudAgents],
       cloudFreeLines: [],
       cloudLineFlow: {
@@ -921,14 +921,14 @@ app.whenReady().then(async () => {
   const cloudExistingCreateRequest = cloudCreateRequests.at(-1);
 
   cloudProbe = { ...cloudProbeBeforeCreate,
-    cloudProviders: [...cloudProbeBeforeCreate.cloudProviders, { id: "local", name: "Self-hosted" }] };
+    cloudProviders: [...cloudProbeBeforeCreate.cloudProviders, { id: "self_hosted", name: "Self-hosted" }] };
   win.webContents.send("connect:changed");
   await waitFor(win, `document.querySelectorAll(".cloud-agent-row").length === 1`, "the local-create roster");
   await win.webContents.executeJavaScript(`[...document.querySelectorAll("#view button")]
     .find((b) => b.textContent.trim() === "New agent").click()`);
   await waitFor(win, `document.querySelector('.cloud-modal select[aria-label="Line"]')`, "local agent picker");
   await win.webContents.executeJavaScript(`(() => {
-    document.querySelector('.cloud-modal select[aria-label="Agent type"]').value = "local";
+    document.querySelector('.cloud-modal select[aria-label="Agent type"]').value = "self_hosted";
     const line = document.querySelector('.cloud-modal select[aria-label="Line"]');
     line.value = "lin_ash";
     line.dispatchEvent(new Event("change"));

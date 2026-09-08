@@ -754,11 +754,11 @@ export class PlowApi {
     return { accounts, degraded };
   }
 
-  /** Create a local agent; its token is shown once for self-hosted setup. */
+  /** Create a self-hosted agent and return its one-time setup token. */
   async createAgent(token: string, name: string, lineUid: string | null = null): Promise<MintedCredential> {
     if (!lineUid) throw new PlowApiError("http", "Choose a line for this agent.");
     const data = decodeAgentCreateReceipt(await this.call(
-      "POST", "/v1/agents", { token, body: { name, provider: "local", line_uid: lineUid } },
+      "POST", "/v1/agents", { token, body: { name, provider: "self_hosted", line_uid: lineUid } },
     ), token);
     if (!data.token) throw new PlowApiError("http", "Plow did not return an agent token.");
     return { agentUid: data.agent.uid, token: data.token, name: data.agent.name };
