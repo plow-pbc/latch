@@ -21,41 +21,20 @@
  * The fix is the standard one: give every stdio stream a standing 'error'
  * listener that swallows the failure. Node's stdio streams un-destroy
  * themselves after an error, so later writes still go out if the reader comes
- * back and are dropped the same way if it doesn't. This module is pure so the
- * behavior is provable under vitest against a fake writable; `main.ts` hands
- * it the real `process.stdout`/`process.stderr` before its first log line.
+ * back and are dropped the same way if it doesn't. Logging is best-effort by
+ * definition: a line nobody can read is dropped, never fatal. This module is
+ * pure so the behavior is provable under vitest against a fake writable;
+ * `main.ts` hands it the real `process.stdout`/`process.stderr` before its
+ * first log line.
  */
 
 import type { EventEmitter } from "node:events";
 
-export interface StdioGuard {
-  /** How many writes have been dropped so far — a diagnostic, never a reason
-   * to do anything: there is nowhere left to report a console failure TO. */
-  readonly dropped: number;
+/** Attaches a swallowing 'error' listener to each stream. */
+export function guardStdio(streams: readonly EventEmitter[]): void {
+  for (const stream of streams) stream.on("error", swallow);
 }
 
-/**
- * Attaches a swallowing 'error' listener to each stream. Idempotent per
- * stream: a second call on the same stream adds nothing. Never throws: a
- * stream that is missing (some embedders leave one undefined) is skipped.
- */
-export function guardStdio(streams: Iterable<EventEmitter | null | undefined>): StdioGuard {
-  for (const stream of streams) {
-    if (!stream || typeof stream.on !== "function") continue;
-    if (stream.listeners("error").includes(swallow)) continue;
-    stream.on("error", swallow);
-  }
-  return {
-    get dropped() {
-      return dropped;
-    },
-  };
-}
-
-let dropped = 0;
-
-/** One module-level function, so the idempotence check above can find it on a
- * stream and so a stack trace through it says what it is. */
 function swallow(): void {
-  dropped += 1;
+  /* the console is gone; the line is dropped, the app keeps running */
 }
