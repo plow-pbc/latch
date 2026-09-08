@@ -134,26 +134,12 @@ const cloudAgent = {
   createdAt: "2026-08-24T18:00:00.000Z",
 };
 const rosterProbe = {
-  cloud: [{
-    id: 201,
-    name: "Household helper",
-    kind: "Agent",
-    createdAt: cloudAgent.createdAt,
-    lastSeenAt: "2026-08-25T17:55:00.000Z",
-    agentId: cloudAgent.agentId,
-    chatUids: [cloudAgent.threads[0].uid],
-    chatAccess: "listed",
-    permissions: { canReadAndReply: true, canReachMac: true, canSpendInference: true },
-    isActive: true,
-    isThisMac: false,
-  }],
   mcp: [{
     id: 202,
     name: "Claude Code",
     kind: "Agent",
     createdAt: "2026-08-23T18:00:00.000Z",
     lastSeenAt: "2026-08-25T17:50:00.000Z",
-    agentId: null,
     chatUids: ["*"],
     chatAccess: "all",
     permissions: { canReadAndReply: true, canReachMac: true, canSpendInference: true },

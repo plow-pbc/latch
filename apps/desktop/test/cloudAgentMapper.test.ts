@@ -7,7 +7,7 @@ import { CloudAgentResource, isTerminalCloudAgent } from "../src/cloudAgents.js"
 function agent(overrides: Partial<CloudAgentResource> = {}): CloudAgentResource {
   return {
     agentId: "agent_stable",
-    line: null, credential: null, settings: {}, image: null,
+    line: null, credential: null,
     url: "https://provider.internal/secret-handle",
     provider: "exe:hermes",
     name: "Kitchen",

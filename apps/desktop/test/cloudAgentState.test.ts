@@ -39,7 +39,7 @@ function agent(overrides: Partial<CloudAgentResource> = {}): CloudAgentResource 
   return {
     agentId: "agent_1",
     line: { uid: "lin_willow", display_name: "Willow", provider_key: "+15550100" },
-    credential: null, settings: {}, image: null,
+    credential: null,
     url: null,
     provider: "exe:hermes",
     name: "Kitchen",

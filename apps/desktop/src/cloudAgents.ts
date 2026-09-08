@@ -10,30 +10,11 @@ export type CloudAgentStatus =
   | "teardown"
   | (string & {});
 
-export interface AgentSettingsValues {
-  daily_payment_cap_usd: number | null;
-  verbose_output: boolean;
-}
-export interface AgentSettings {
-  daily_payment_cap_usd: { value: number | null };
-  verbose_output: { value: boolean };
-}
-export interface AgentCredential {
-  id: number;
-  name: string | null;
-  scopes: string[];
-  connected: boolean;
-  created_at: string;
-  last_used_at: string | null;
-  last_seen_at: string | null;
-}
 export interface CloudAgentResource {
   agentId: string;
   line: { uid: string; display_name: string | null; provider_key: string } | null;
-  credential: AgentCredential | null;
-  settings: AgentSettings;
+  credential: { connected: boolean } | null;
   url: string | null;
-  image: string | null;
   provider: string;
   name: string;
   status: CloudAgentStatus | null;
@@ -142,14 +123,6 @@ export class CloudAgentsClient {
     return decoded.map((row) => parseResource(row, deviceCredential, response.status));
   }
 
-  async settings(token: string, uid: string, values: AgentSettingsValues): Promise<CloudAgentResource> {
-    const response = await this.api.request("PATCH", `/v1/agents/${encodeURIComponent(uid)}/settings`, { token, body: values });
-    if (!response.ok) await throwCloudCallError(response);
-    const agent = await this.resourceFor(response, token);
-    if (agent.status === "failed") throw new PlowApiError("http", "Settings saved, but the agent restart failed. Check its status before retrying.");
-    return agent;
-  }
-
   async delete(deviceCredential: string, agentId: string): Promise<void> {
     const response = await this.api.request(
       "DELETE",
@@ -248,23 +221,14 @@ function parseResource(
     throw invalidResponse(statusCode);
   }
 
-  if (typeof decoded.name !== "string" || typeof decoded.provider !== "string" || !isRecord(decoded.settings)) {
+  if (typeof decoded.name !== "string" || typeof decoded.provider !== "string") {
     throw invalidResponse(statusCode);
   }
-  const cap = decoded.settings.daily_payment_cap_usd;
-  const verbose = decoded.settings.verbose_output;
-  if (!isRecord(cap) || (cap.value !== null && typeof cap.value !== "number") ||
-      !isRecord(verbose) || typeof verbose.value !== "boolean") throw invalidResponse(statusCode);
   const resource: CloudAgentResource = {
     agentId: decoded.uid,
     line: decoded.line as CloudAgentResource["line"],
-    credential: decoded.credential as AgentCredential | null,
-    settings: {
-      daily_payment_cap_usd: { ...cap, value: cap.value },
-      verbose_output: { ...verbose, value: verbose.value },
-    },
+    credential: decoded.credential as CloudAgentResource["credential"],
     url: typeof decoded.url === "string" ? decoded.url : null,
-    image: typeof decoded.image === "string" ? decoded.image : null,
     provider: decoded.provider,
     name: decoded.name,
     status: typeof decoded.status === "string" ? decoded.status : null,

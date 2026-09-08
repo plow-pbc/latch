@@ -1,4 +1,4 @@
-import { AgentSettings, CloudAgentResource, CloudAgentStatus } from "./cloudAgents.js";
+import { CloudAgentResource, CloudAgentStatus } from "./cloudAgents.js";
 
 const FAILURE_LABELS: Record<string, string> = {
   provider_unreachable: "Provider unreachable",
@@ -31,10 +31,7 @@ export interface CloudAgentDisplayRow {
   /** Read-only threads on the line. */
   threads: CloudAgentThread[];
   status: CloudAgentStatus | null;
-  provider: string;
-  settings: AgentSettings;
   connected: boolean;
-  lastSeenAt: string | null;
   failureReason: string | null;
   createdAt: string;
 }
@@ -72,10 +69,7 @@ export function toCloudAgentDisplayRow(
     threads: (context.threads ?? [])
       .map((thread) => ({ uid: thread.uid, label: thread.label })),
     status: agent.status,
-    provider: agent.provider,
-    settings: agent.settings,
     connected: agent.credential?.connected ?? false,
-    lastSeenAt: agent.credential?.last_seen_at ?? null,
     failureReason,
     createdAt: agent.createdAt,
   };

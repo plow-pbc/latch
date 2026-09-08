@@ -227,7 +227,6 @@ let onboarding: Onboarding | null = null;
 let connectors: Connectors | null = null;
 let connectClient: ConnectClient | null = null;
 let cloudAgents: CloudAgentState | null = null;
-let agentsClient: CloudAgentsClient | null = null;
 let agentToken: string | null = null;
 let onboardingWindow: BrowserWindow | null = null;
 let onboardingWindowReady: BrowserWindow | null = null;
@@ -730,18 +729,6 @@ ipcMain.handle("cloud:create", async (_e, input: unknown) => {
   return agentsTabState();
 });
 ipcMain.handle("agents:dismissToken", () => { agentToken = null; });
-ipcMain.handle("agents:settings", async (_e, uid: string, values: import("./cloudAgents.js").AgentSettingsValues) => {
-  const token = loadSettings(home).relayCredential.trim();
-  try {
-    if (!agentsClient || !token) throw new Error("Sign in to edit agents.");
-    await agentsClient.settings(token, uid, values);
-    return { error: null };
-  } catch (error) {
-    return { error: error instanceof Error ? error.message : "Settings could not be saved." };
-  } finally {
-    await cloudAgents?.refresh();
-  }
-});
 ipcMain.handle("cloud:cancelLineFlow", async () => {
   cloudAgents?.cancelLineFlow();
   return agentsTabState();
@@ -2129,26 +2116,17 @@ app.whenReady().then(async () => {
       mainWindow?.webContents.send("connectors:changed", state);
     },
   });
-  // Built first: the roster's removal routing needs the cloud-agent client,
-  // because a row naming a cloud assistant must be deleted as an assistant and
-  // never revoked as a key.
   const cloudApi = new PlowApi(apiBaseUrl, loggingFetch(home));
   const cloudAgentsClient = new CloudAgentsClient(cloudApi, undefined, (token, owner) => {
     if (loadSettings(home).relayCredential.trim() !== owner) return;
     agentToken = token;
     notifyRenderer("connect:changed");
   });
-  agentsClient = cloudAgentsClient;
 
   connectClient = new ConnectClient({
     api: new PlowApi(apiBaseUrl),
     home,
     isConnected: () => connected,
-    // Through the state that owns the agent's poll, row and settings — not the
-    // raw client, which would leave all three behind.
-    removeCloudAgent: async (agentId: string) => {
-      await cloudAgents?.remove(agentId);
-    },
     signOutThisMac,
     onChange: () => notifyRenderer("connect:changed"),
   });

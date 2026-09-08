@@ -109,20 +109,14 @@ let home: string;
 let plow: FakePlow;
 let connected: boolean;
 let changes: number;
-/** Every cloud-agent removal the roster routed, in order. */
-let agentDeletes: string[];
 /** How many times the roster asked this Mac to sign out. */
 let signOuts: number;
 
-function build(options: { deleteFails?: boolean } = {}): ConnectClient {
+function build(): ConnectClient {
   return new ConnectClient({
     api: plow.api(),
     home,
     isConnected: () => connected,
-    removeCloudAgent: async (agentId: string) => {
-      agentDeletes.push(agentId);
-      if (options.deleteFails) throw new PlowApiError("http", "Plow returned 500.", 500);
-    },
     signOutThisMac: async () => {
       signOuts += 1;
     },
@@ -145,7 +139,6 @@ beforeEach(() => {
   home = fs.mkdtempSync(path.join(os.tmpdir(), "domo-connect-"));
   plow = new FakePlow();
   connected = true;
-  agentDeletes = [];
   signOuts = 0;
   changes = 0;
 });
@@ -416,17 +409,17 @@ describe("removing a roster row", () => {
     [
       "an agent credential omitted from the session roster",
       () => key({ id: 7, agent_uid: "agent_7" }),
-      { revoked: [] as number[], deleted: [] as string[], signOuts: 0 },
+      { revoked: [] as number[], signOuts: 0 },
     ],
     [
       "this Mac",
       () => key({ id: 4, key_prefix: keyPrefixOf(DEVICE_TOKEN) }),
-      { revoked: [] as number[], deleted: [] as string[], signOuts: 1 },
+      { revoked: [] as number[], signOuts: 1 },
     ],
     [
       "an ordinary credential",
       () => key({ id: 8, agent_uid: null }),
-      { revoked: [8], deleted: [] as string[], signOuts: 0 },
+      { revoked: [8], signOuts: 0 },
     ],
   ])("removes %s down its own route and no other", async (_what, row, expected) => {
     signIn();
@@ -438,7 +431,6 @@ describe("removing a roster row", () => {
     await client.removeRosterRow(only.id);
 
     expect(plow.revoked).toEqual(expected.revoked);
-    expect(agentDeletes).toEqual(expected.deleted);
     expect(signOuts).toBe(expected.signOuts);
   });
 
@@ -533,9 +525,8 @@ describe("renaming a roster row", () => {
 
     expect(plow.renamed).toEqual([{ id: only.id, name: "Renamed" }]);
     expect(plow.revoked).toEqual([]);
-    expect(agentDeletes).toEqual([]);
     expect(signOuts).toBe(0);
-    const rows = [...state.roster.cloud, ...state.roster.mcp, ...state.roster.other];
+    const rows = [...state.roster.mcp, ...state.roster.other];
     expect(rows.map((r) => r.name)).toEqual(["Renamed"]);
     expect(state.actionError).toBeNull();
   });

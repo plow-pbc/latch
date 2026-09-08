@@ -46,8 +46,8 @@ function recordingFetch(responses: Array<{ status: number; body?: unknown }>) {
 }
 
 describe("CloudAgentsClient resources", () => {
-  it("rejects a slot wrapper and malformed settings", async () => {
-    for (const body of [[{ line: LINE, assistant: wireAgent() }], [wireAgent({ settings: null })]]) {
+  it("rejects a slot wrapper and malformed agent names", async () => {
+    for (const body of [[{ line: LINE, assistant: wireAgent() }], [wireAgent({ name: 7 })]]) {
       const { fetchImpl } = recordingFetch([{ status: 200, body }]);
       await expect(new CloudAgentsClient(new PlowApi("https://stub.invalid", fetchImpl)).list(CREDENTIAL)).rejects.toThrow("invalid cloud-agent response");
     }

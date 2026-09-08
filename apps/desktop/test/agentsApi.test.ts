@@ -27,7 +27,7 @@ describe("agents API cutover", () => {
   it("lists local and failed cloud agents without a credential join or chat grant", async () => {
     const { api, calls } = stub([[agent, { ...agent, uid: "failed", provider: "exe:life", status: "failed", credential: null }]]);
     const rows = await new CloudAgentsClient(api).list("owner");
-    expect(rows).toMatchObject([{ agentId: "local-1", status: null, settings, line: agent.line }, { agentId: "failed", credential: null }]);
+    expect(rows).toMatchObject([{ agentId: "local-1", status: null, line: agent.line }, { agentId: "failed", credential: null }]);
     expect(calls[0].path).toBe("/v1/agents");
   });
   it("reads free-line ownership from lines", async () => {
@@ -39,23 +39,17 @@ describe("agents API cutover", () => {
     expect(await api.listCloudAgentProviders("owner")).toEqual([{ id: "local", name: "Self-hosted" }]);
     expect(calls[0].path).toBe("/v1/agents/providers");
   });
-  it("creates a local agent, delivers its token once, patches platform settings and deletes by agent uid", async () => {
-    const { api, calls } = stub([{ agent, token: "new-agent-token" }, agent, { uid: agent.uid }]);
+  it("creates a local agent, delivers its token once, and deletes by agent uid", async () => {
+    const { api, calls } = stub([{ agent, token: "new-agent-token" }, { uid: agent.uid }]);
     const tokens: string[] = [];
     const client = new CloudAgentsClient(api, undefined, (token) => tokens.push(token));
     const created = await client.create("owner", { name: "Kitchen", provider: "local", lineUid: "line-1" });
     expect(created).not.toHaveProperty("token");
-    await client.settings("owner", "local/1", { daily_payment_cap_usd: 15, verbose_output: true });
     await client.delete("owner", "local/1");
     expect(calls).toEqual([
       { method: "POST", path: "/v1/agents", body: { name: "Kitchen", provider: "local", line_uid: "line-1" } },
-      { method: "PATCH", path: "/v1/agents/local%2F1/settings", body: { daily_payment_cap_usd: 15, verbose_output: true } },
       { method: "DELETE", path: "/v1/agents/local%2F1", body: null },
     ]);
     expect(tokens).toEqual(["new-agent-token"]);
-  });
-  it("reports a failed restart returned by a successful settings PATCH", async () => {
-    const { api } = stub([{ ...agent, provider: "exe:life", status: "failed", failure_code: "setup_failed" }]);
-    await expect(new CloudAgentsClient(api).settings("owner", "cloud", { daily_payment_cap_usd: null, verbose_output: true })).rejects.toThrow("restart failed");
   });
 });

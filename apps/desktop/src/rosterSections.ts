@@ -1,11 +1,4 @@
-/**
- * The Agents screen's three sections, derived from the account's credentials.
- *
- * Kept out of the renderer deliberately. The classification decides which
- * removal call a row gets, and a row misplaced here is a live cloud agent
- * removed by the wrong endpoint — that is a decision for tested code, not for
- * a template.
- */
+/** Independent MCP clients and sessions; agents have their own resource roster. */
 import { parseApiTimestamp, type KeyInfo } from "./plowApi.js";
 
 export type AgentRosterKind =
@@ -51,7 +44,6 @@ export interface RosterSectionRow {
   kind: AgentRosterKind;
   createdAt: string | null;
   lastSeenAt: string | null;
-  agentId: string | null;
   chatUids: string[];
   /** How many of `chatUids` to name is the screen's business; whether it is
    * "all", "none" or a list is not. */
@@ -69,8 +61,6 @@ export interface RosterSectionRow {
 }
 
 export interface RosterSections {
-  /** Provisioned cloud agents. Removal goes to the cloud-agent endpoint. */
-  cloud: RosterSectionRow[];
   /** MCP clients: relay-capable, not an agent. Removal is a key revoke. */
   mcp: RosterSectionRow[];
   /**
@@ -87,7 +77,6 @@ export interface RosterSections {
 }
 
 export const EMPTY_ROSTER: RosterSections = Object.freeze({
-  cloud: [],
   mcp: [],
   other: [],
   revokedHidden: 0,
@@ -166,7 +155,7 @@ export function sectionRoster(
   options: { deviceCredential?: string } = {},
 ): RosterSections {
   const credential = (options.deviceCredential ?? "").trim();
-  const sections: RosterSections = { cloud: [], mcp: [], other: [], revokedHidden: 0 };
+  const sections: RosterSections = { mcp: [], other: [], revokedHidden: 0 };
 
   // Exactly one row is this Mac, or none is. Two rows matching means the match
   // is not identifying anything, and marking both would warn about revoking a
@@ -193,18 +182,15 @@ export function sectionRoster(
       kind: key.id === thisMacId ? "Session" : rosterKind(key.scopes),
       createdAt: normalizeRosterTimestamp(key.created_at),
       lastSeenAt: normalizeRosterTimestamp(key.last_seen_at),
-      agentId: null,
       chatUids: key.chat_uids,
       chatAccess: chatAccessOf(key.chat_uids),
       permissions: rosterPermissions(key.scopes),
       isThisMac: key.id === thisMacId,
     };
-    if (placed.agentId !== null) sections.cloud.push(placed);
-    else if (placed.kind === "Agent") sections.mcp.push(placed);
+    if (placed.kind === "Agent") sections.mcp.push(placed);
     else sections.other.push(placed);
   }
 
-  sections.cloud.sort(byLastUsed);
   sections.mcp.sort(byLastUsed);
   sections.other.sort(byLastUsed);
   return sections;

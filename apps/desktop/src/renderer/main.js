@@ -1,4 +1,3 @@
-import { agentSettingsForm } from "./agentSettings.js";
 /* Main-window renderer. Sandboxed: no Node, no ipcRenderer — only the narrow
    `window.domo` bridge from preload. All agent-derived text is inserted with
    textContent (never innerHTML), so nothing on the wire can inject markup. */
@@ -1462,7 +1461,6 @@ function syncCloudModal(state, redraw) {
     closeCloudModal();
     return;
   }
-  if (cloudModal.editing) return;
   const { panel } = cloudModal;
   const name = agent.name;
 
@@ -1480,12 +1478,6 @@ function syncCloudModal(state, redraw) {
     remove.addEventListener("click", () => {
       cloudModal.confirmingDelete = true;
       syncCloudModal(state, redraw);
-    });
-    const settings = el("button", { class: "btn", text: "Settings" });
-    settings.addEventListener("click", () => {
-      cloudModal.editing = true;
-      panel.replaceChildren(el("h2", { text: `Settings — ${name}` }),
-        agentSettingsForm(document, agent.settings, (values) => window.domo.agentSettings(agent.agentId, values)), close);
     });
     const threads = agent.threads ?? [];
     panel.replaceChildren(
@@ -1517,7 +1509,6 @@ function syncCloudModal(state, redraw) {
         close,
         el("div", { class: "spacer" }),
         message,
-        settings,
         changeLine,
         remove,
       ]),
@@ -1626,15 +1617,15 @@ function rosterChatGrant(chatUids, chatAccess) {
   return chats.length === 1 ? "1 chat" : `${chats.length} chats`;
 }
 
-function rosterPermissionCopy(row, provisioning = false) {
+function rosterPermissionCopy(row) {
   const permissions = [];
   if (row?.permissions?.canReadAndReply === true) {
     permissions.push(
-      `${provisioning ? "Will read and reply" : "Reads and replies"} in ${rosterChatGrant(row.chatUids, row.chatAccess)}`,
+      `Reads and replies in ${rosterChatGrant(row.chatUids, row.chatAccess)}`,
     );
   }
   if (row?.permissions?.canReachMac === true) {
-    permissions.push(`${provisioning ? "Will reach" : "Can reach"} this Mac`);
+    permissions.push("Can reach this Mac");
   }
   if (row?.permissions?.canSpendInference === true) permissions.push("Can spend inference");
   if (!permissions.length) {
@@ -1760,7 +1751,7 @@ function openRosterRename(row, trigger, redraw, fallback) {
 
 function rosterActions(row, section, redraw) {
   const fallback =
-    section === "cloud" ? "Cloud agent" : section === "mcp" ? "Unnamed MCP client" : "Unnamed session";
+    section === "mcp" ? "Unnamed MCP client" : "Unnamed session";
   const name = rosterName(row, fallback);
   const more = el("button", {
     class: "btn more",
@@ -1768,10 +1759,7 @@ function rosterActions(row, section, redraw) {
     attrs: { "aria-label": `More actions for ${name}` },
   });
   const rename = el("button", { text: "Rename" });
-  // This row menu never revokes a cloud credential: a live agent is deleted
-  // from its detail panel (VM teardown), and a credential without a live
-  // agent has nothing here to delete it with.
-  const revoke = section === "cloud" ? null : el("button", { class: "danger", text: "Revoke" });
+  const revoke = el("button", { class: "danger", text: "Revoke" });
   const menu = el("div", { class: "more-menu", attrs: { role: "menu" } }, [rename, revoke]);
   menu.hidden = true;
   more.addEventListener("click", (event) => {
@@ -1785,7 +1773,7 @@ function rosterActions(row, section, redraw) {
     menu.hidden = true;
     openRosterRename(row, more, redraw, fallback);
   });
-  revoke?.addEventListener("click", () => {
+  revoke.addEventListener("click", () => {
     menu.hidden = true;
     openRosterConfirm(row, more, redraw);
   });
@@ -1815,13 +1803,11 @@ function cloudStatusNode(agent) {
   return badge(status.tone, status.label);
 }
 
-function cloudEntityRow(row, agent, state, redraw) {
-  const name = agent?.name ?? "Agent";
+function cloudEntityRow(agent, state, redraw) {
+  const name = agent.name;
   const main = el("div", {
-    class: `entity-main${agent ? " cloud-agent-open" : ""}`,
-    attrs: agent
-      ? { role: "button", tabindex: "0", "aria-label": `View ${name}` }
-      : {},
+    class: "entity-main cloud-agent-open",
+    attrs: { role: "button", tabindex: "0", "aria-label": `View ${name}` },
   }, [
     el("div", { class: "entity-top" }, [
       el("span", { class: "entity-name", text: name }),
@@ -1833,18 +1819,16 @@ function cloudEntityRow(row, agent, state, redraw) {
       attrs: { title: cloudContext(agent, state) },
     }),
   ]);
-  if (agent) {
-    main.addEventListener("click", () => openCloudDetail(main, agent, state, redraw));
-    main.addEventListener("keydown", (event) => {
-      if (event.key !== "Enter" && event.key !== " ") return;
-      event.preventDefault();
-      openCloudDetail(main, agent, state, redraw);
-    });
-  }
-  const retry = agent?.status === "failed" && agent.canRetry
+  main.addEventListener("click", () => openCloudDetail(main, agent, state, redraw));
+  main.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    event.preventDefault();
+    openCloudDetail(main, agent, state, redraw);
+  });
+  const retry = agent.status === "failed" && agent.canRetry
     ? el("button", { class: "btn small", text: "Retry" })
     : null;
-  const message = agent?.canMessage
+  const message = agent.canMessage
     ? el("button", {
         class: "btn small message-btn",
         text: "Message",
@@ -1858,7 +1842,7 @@ function cloudEntityRow(row, agent, state, redraw) {
     await redraw();
   });
   const actions = [message, retry].filter(Boolean);
-  return el("div", { class: "entity-row cloud-agent-row", attrs: { "data-cloud-agent-id": agent?.agentId ?? row?.agentId ?? "" } }, [
+  return el("div", { class: "entity-row cloud-agent-row", attrs: { "data-cloud-agent-id": agent.agentId } }, [
     entityMark(name),
     main,
     actions.length ? el("div", { class: "entity-actions" }, actions) : null,
@@ -1907,7 +1891,7 @@ function sectionHeader(title, count, unit, action) {
 function cloudSection(s, redraw) {
   const add = el("button", { class: "btn primary", text: "New agent" });
   add.addEventListener("click", () => openCloudCreate(add, s, redraw));
-  const rows = s.cloudAgents.map((agent) => cloudEntityRow(null, agent, s, redraw));
+  const rows = s.cloudAgents.map((agent) => cloudEntityRow(agent, s, redraw));
   const notices = [];
   if (!s.cloudChatsLoaded) {
     notices.push(s.cloudChatsError

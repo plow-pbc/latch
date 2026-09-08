@@ -93,36 +93,20 @@ const NO_NUMBER_AGENT = {
   canMessage: false,
   threads: [],
 };
-const EMPTY_ROSTER = { cloud: [], mcp: [], other: [], revokedHidden: 0 };
+const EMPTY_ROSTER = { mcp: [], other: [], revokedHidden: 0 };
 const ROSTER = {
-  cloud: [
-    {
-      id: 201, name: ACTIVE_AGENT.name, kind: "Agent",
-      createdAt: "2026-08-24T18:00:00.000Z", lastSeenAt: new Date(Date.now() - 4 * 60_000).toISOString(),
-      agentId: ACTIVE_AGENT.agentId, chatUids: [], chatAccess: "none",
-      permissions: { canReadAndReply: true, canReachMac: true, canSpendInference: true },
-      isActive: true, isThisMac: false,
-    },
-    {
-      id: 202, name: PROVISIONING_AGENT.name, kind: "Agent",
-      createdAt: new Date().toISOString(), lastSeenAt: null,
-      agentId: PROVISIONING_AGENT.agentId, chatUids: ["chat_trip"], chatAccess: "listed",
-      permissions: { canReadAndReply: true, canReachMac: false, canSpendInference: false },
-      isActive: true, isThisMac: false,
-    },
-  ],
   mcp: [
     {
       id: 301, name: "Claude Code on MacBook Pro", kind: "Agent",
       createdAt: "2026-08-12T17:00:00.000Z", lastSeenAt: new Date(Date.now() - 6 * 60_000).toISOString(),
-      agentId: null, chatUids: ["*"], chatAccess: "all",
+      chatUids: ["*"], chatAccess: "all",
       permissions: { canReadAndReply: true, canReachMac: true, canSpendInference: true },
       isActive: true, isThisMac: false,
     },
     {
       id: 302, name: "Cursor desktop", kind: "Agent",
       createdAt: new Date().toISOString(), lastSeenAt: null,
-      agentId: null, chatUids: [], chatAccess: "none",
+      chatUids: [], chatAccess: "none",
       permissions: { canReadAndReply: true, canReachMac: true, canSpendInference: true },
       isActive: true, isThisMac: false,
     },
@@ -131,21 +115,21 @@ const ROSTER = {
     {
       id: 401, name: "Plow Latch on this Mac", kind: "Session",
       createdAt: "2026-07-28T17:00:00.000Z", lastSeenAt: new Date(Date.now() - 3 * 60_000).toISOString(),
-      agentId: null, chatUids: [], chatAccess: "none",
+      chatUids: [], chatAccess: "none",
       permissions: { canReadAndReply: false, canReachMac: false, canSpendInference: false },
       isActive: true, isThisMac: true,
     },
     {
       id: 402, name: "Plow website · Safari", kind: "Plow web login",
       createdAt: "2026-08-24T17:00:00.000Z", lastSeenAt: new Date(Date.now() - 12 * 60_000).toISOString(),
-      agentId: null, chatUids: [], chatAccess: "none",
+      chatUids: [], chatAccess: "none",
       permissions: { canReadAndReply: false, canReachMac: true, canSpendInference: false },
       isActive: true, isThisMac: false,
     },
     {
       id: 403, name: "Legacy automation token", kind: "Admin — full access",
       createdAt: "2026-08-20T17:00:00.000Z", lastSeenAt: null,
-      agentId: null, chatUids: ["*"], chatAccess: "all",
+      chatUids: ["*"], chatAccess: "all",
       permissions: { canReadAndReply: true, canReachMac: true, canSpendInference: true },
       isActive: true, isThisMac: false,
     },
@@ -819,7 +803,7 @@ const SCREENS = [
   },
   {
     name: "cloud-detail",
-    roster: { ...ROSTER, cloud: [ROSTER.cloud[0]], mcp: [], other: [] },
+    roster: { ...ROSTER, mcp: [], other: [] },
     cloud: { ...CLOUD_READY, cloudAgents: [ACTIVE_AGENT] },
     prepare: async (win) => {
       await win.webContents.executeJavaScript(

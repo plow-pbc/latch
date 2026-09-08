@@ -75,15 +75,6 @@ export interface ConnectClientDeps {
   home: string;
   isConnected: () => boolean;
   /**
-   * Remove a cloud agent, through the state that owns its lifecycle.
-   *
-   * Not the raw client: `CloudAgentState` holds the poll, the row and the local
-   * settings for that agent, and a delete that goes around it leaves all three
-   * alive — the row comes back on the next render as a disabled zombie the
-   * screen cannot remove again.
-   */
-  removeCloudAgent: (agentId: string) => Promise<void>;
-  /**
    * Sign this Mac out, through the one path that owns that.
    *
    * Revoking this Mac's own key only makes the credential invalid on the
@@ -184,41 +175,15 @@ export class ConnectClient {
     return this.publish();
   }
 
-  /**
-   * Remove one roster row, by whichever call its section demands.
-   *
-   * **A row naming a cloud assistant goes to the assistant endpoint and NEVER
-   * to the key revoke.** Revoking a cloud agent's key flips `is_active` and
-   * nothing else: the VM keeps running, the chat's webhook keeps firing, and
-   * the row vanishes from this list because we filter inactive rows — a live
-   * agent that 401s on everything and that nobody can reach to remove.
-   *
-   * **This Mac's own row signs this Mac out** rather than revoking its key.
-   * A revoke alone leaves the credential on disk, the socket dialled and the
-   * window open, all of them talking to an account that no longer accepts
-   * them.
-   *
-   * Neither route is taken directly here. Both belong to code that owns more
-   * state than a key row — the agent's poll and settings, this Mac's session —
-   * and going around either leaves that state behind.
-   */
+  /** Revoke an independent credential, or sign out through this Mac's lifecycle. */
   removeRosterRow(id: number): Promise<ConnectClientState> {
     return this.rosterAction(id, (row, credential) => {
       if (row.isThisMac) return this.deps.signOutThisMac();
-      if (row.agentId !== null) return this.deps.removeCloudAgent(row.agentId);
       return this.deps.api.revokeApiKey(credential, id);
     });
   }
 
-  /**
-   * Rename one roster row.
-   *
-   * One route for every section, unlike removal: a cloud agent, an MCP client
-   * and this Mac's own session are each one credential on Plow, and the name
-   * the screen shows is that credential's name. Plow's cloud-agent resource
-   * carries no name of its own, so renaming the credential IS renaming the
-   * agent — the same call the Plow dashboard makes.
-   */
+  /** Rename an independent credential and re-read its server state. */
   renameRosterRow(id: number, name: string): Promise<ConnectClientState> {
     return this.rosterAction(id, (_row, credential) => this.deps.api.renameApiKey(credential, id, name));
   }
@@ -235,7 +200,7 @@ export class ConnectClient {
     act: (row: RosterSectionRow, credential: string) => Promise<unknown>,
   ): Promise<ConnectClientState> {
     this.actionError = null;
-    const row = [...this.roster.cloud, ...this.roster.mcp, ...this.roster.other].find(
+    const row = [...this.roster.mcp, ...this.roster.other].find(
       (candidate) => candidate.id === id,
     );
     if (!row) return this.failAction("That row is no longer on this screen.");

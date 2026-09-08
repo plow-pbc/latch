@@ -24,7 +24,6 @@ const key = (overrides: Partial<KeyInfo> = {}): KeyInfo =>
 
 /** Every placed row, whichever section it landed in. */
 const allRows = (sections: ReturnType<typeof sectionRoster>) => [
-  ...sections.cloud,
   ...sections.mcp,
   ...sections.other,
 ];
@@ -59,7 +58,7 @@ describe("which section a credential belongs in", () => {
     ]);
 
     expect(sections.revokedHidden).toBe(2);
-    expect([...sections.cloud, ...sections.mcp, ...sections.other].map((r) => r.id)).toEqual([1]);
+    expect([...sections.mcp, ...sections.other].map((r) => r.id)).toEqual([1]);
   });
 
   it("places every non-agent session, whatever its scopes", () => {
@@ -72,7 +71,7 @@ describe("which section a credential belongs in", () => {
     ];
     const sections = sectionRoster(keys);
 
-    const placed = [...sections.cloud, ...sections.mcp, ...sections.other].map((row) => row.id);
+    const placed = [...sections.mcp, ...sections.other].map((row) => row.id);
     expect(placed.sort()).toEqual([2, 3, 4, 5]);
     expect(new Set(placed).size).toBe(placed.length);
     expect(sections.other.filter((row) => [4, 5].includes(row.id)).map((row) => row.kind)).toEqual([
