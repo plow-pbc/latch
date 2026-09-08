@@ -252,10 +252,12 @@ export class UpdateController {
     // swallowed, never reported: the check's own, and the auto-download's,
     // which electron-updater hands back inside the result and otherwise
     // rejects into the void (an unhandled rejection in the main process).
-    this.opts.updater.checkForUpdates().then(
-      (result) => result?.downloadPromise?.catch(() => {}),
-      () => {},
-    );
+    // Returning the download promise adopts it into this chain, so the one
+    // catch covers both.
+    this.opts.updater
+      .checkForUpdates()
+      .then((result) => result?.downloadPromise)
+      .catch(() => {});
   }
 
   private transition(patch: Partial<UpdateState>): void {
