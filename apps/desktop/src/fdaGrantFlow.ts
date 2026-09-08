@@ -166,7 +166,13 @@ export class FdaGrantFlow {
     });
     this.panel = panel;
     panel.setAlwaysOnTop(true, "floating");
-    panel.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+    // skipTransformProcessType: without it Electron implements
+    // visibleOnFullScreen by turning the WHOLE PROCESS into a UIElement
+    // (accessory) app, which removes the Dock tile, and only turns it back
+    // on a later setVisibleOnAllWorkspaces(false) that this flow never makes
+    // (the panel is destroyed). System Settings has no full-screen mode, so
+    // the panel loses nothing by skipping it.
+    panel.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true, skipTransformProcessType: true });
     panel.on("closed", () => {
       // Closed from outside (or by the person somehow): tear the rest down.
       this.panel = null;
