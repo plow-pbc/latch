@@ -156,6 +156,7 @@ const CLOUD_EMPTY = {
   cloudChatsNeedReactivation: false,
   cloudActionError: null,
   cloudChatsLoaded: true,
+  cloudLinesLoaded: true,
 };
 const CLOUD_READY = {
   ...CLOUD_EMPTY,
@@ -526,7 +527,7 @@ const SCREENS = [
     prepare: async (win) => {
       const stale = await win.webContents.executeJavaScript(`(() => {
         const cloud = [...document.querySelectorAll(".list-section")]
-          .find((section) => section.querySelector("h2")?.textContent.trim() === "Cloud agents");
+          .find((section) => section.querySelector("h2")?.textContent.trim() === "Agents");
         const labels = [...cloud.querySelectorAll("button")].map((button) =>
           button.textContent.trim());
         const rows = [...cloud.querySelectorAll(".cloud-agent-row")];
@@ -550,7 +551,7 @@ const SCREENS = [
       }
     },
     expect: [
-      "Cloud agents", "2 agents", "New agent", "Household helper", "Ready",
+      "Agents", "2 agents", "New agent", "Household helper", "Ready",
       "Willow · +1 415-555-0142", "Created Aug 24", "Trip planner", "Setting up…",
       "+1 628-555-0144", "Created today", "Message",
       "MCP clients", "Claude Code on MacBook Pro", "Cursor desktop",
@@ -657,7 +658,7 @@ const SCREENS = [
       await waitFor(win, `!document.querySelector(".cloud-modal")`,
         "the existing-line create modal to close");
     },
-    expect: ["Cloud agents", "New helper", "Ash · +1 415-555-0199", "Setting up…", "Created today"],
+    expect: ["Agents", "New helper", "Ash · +1 415-555-0199", "Setting up…", "Created today"],
   },
   {
     name: "cloud-code-confirmed",
@@ -782,6 +783,7 @@ const SCREENS = [
       cloudAgents: [ACTIVE_AGENT],
       cloudFreeLines: [],
       cloudChatsError: "Plow returned 503.",
+      cloudLinesLoaded: false,
       cloudChatsLoaded: false,
     },
     prepare: async (win) => {
@@ -1114,7 +1116,7 @@ const SCREENS = [
     expect: [
       "Chats could not be loaded",
       "This Mac cannot list chats yet. Try re-activating it, then try again.",
-      "Cloud agents could not be refreshed",
+      "Agents could not be refreshed",
       "Plow couldn't complete that request. Try again.",
       "Sign out and re-activate",
       "Household helper", "Ready",
@@ -1130,7 +1132,7 @@ const SCREENS = [
       );
       if (hasSetup) throw new Error("removed cloud-agent setup action remains");
     },
-    expect: ["New agent", "No cloud agents.", "No MCP clients.", "No other sessions.", "Connect MCP client"],
+    expect: ["New agent", "No agents.", "No MCP clients.", "No other sessions.", "Connect MCP client"],
   },
   {
     name: "oauth",

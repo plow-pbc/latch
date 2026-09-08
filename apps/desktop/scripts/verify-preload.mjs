@@ -169,6 +169,7 @@ let cloudProbe = {
   cloudChatsNeedReactivation: false,
   cloudActionError: null,
   cloudChatsLoaded: true,
+  cloudLinesLoaded: true,
 };
 let cloudChangeRequest = null;
 let cloudChangeCancelCount = 0;
@@ -793,7 +794,7 @@ app.whenReady().then(async () => {
 
   const cloudRoster = await win.webContents.executeJavaScript(`(${() => {
     const group = [...document.querySelectorAll("#view .panel.agents .list-section")]
-      .find((item) => item.querySelector("h2")?.textContent.trim() === "Cloud agents");
+      .find((item) => item.querySelector("h2")?.textContent.trim() === "Agents");
     const row = group?.querySelector(".cloud-agent-row");
     return {
       noCredentialIdentity: !group?.textContent.includes("session") &&
@@ -1235,6 +1236,7 @@ app.whenReady().then(async () => {
       retryNewLine: false,
     },
     cloudChatsError: "Plow returned 503.",
+    cloudLinesLoaded: false,
     cloudChatsLoaded: false,
   };
   await win.webContents.executeJavaScript(`window.__domoSelectTab("audit")`);
@@ -1263,6 +1265,7 @@ app.whenReady().then(async () => {
     cloudFreeLines: [{ uid: "lin_error", label: "Error line" }],
     cloudChatsError: null,
     cloudChatsLoaded: true,
+    cloudLinesLoaded: true,
   };
   await win.webContents.executeJavaScript(`window.__domoSelectTab("audit")`);
   await win.webContents.executeJavaScript(`window.__domoSelectTab("agents")`);
