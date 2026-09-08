@@ -156,11 +156,25 @@ export function requestKind(request: string): string {
 }
 
 /**
+ * The error the DOMO_SIMULATE_ERROR seam throws. A report carries an error's
+ * name and frames only, and an unknown name collapses to "Error" — so a
+ * drill thrown as a plain Error reached the tracker as one more crash titled
+ * "Error", indistinguishable from a real one. This name is the one custom
+ * name allowed out, and it is fixed by this class, never assembled: a report
+ * bearing it is a drill, and says so.
+ */
+export const SIMULATED_ERROR_NAME = "SimulatedError";
+export class SimulatedError extends Error {
+  override readonly name = SIMULATED_ERROR_NAME;
+}
+
+/**
  * The error names that may leave as-is. `Error.name` is a mutable string —
  * nothing stops code from interpolating data into it — so membership here is
  * the rule, and everything else reports as "Error".
  */
 const SAFE_ERROR_NAMES = new Set([
+  SIMULATED_ERROR_NAME,
   "Error",
   "TypeError",
   "RangeError",
@@ -426,6 +440,10 @@ export class Telemetry {
         ...this.deps.baseProps,
         ...extra,
         scope,
+        // The drill flag, so the tracker can filter or suppress drills as a
+        // class — derived from the name the gate above admitted, never from
+        // anything the throwing code wrote.
+        simulated: name === SIMULATED_ERROR_NAME,
         $exception_level: "error",
         $exception_list: [
           {

@@ -11,6 +11,7 @@ import path from "node:path";
 import { AuditLog } from "@domo/device-core";
 import {
   resolveTelemetryConfig,
+  SimulatedError,
   Telemetry,
   TelemetryProps,
   TelemetrySink,
@@ -311,6 +312,33 @@ describe("error reporting", () => {
     expect(wire).not.toContain("could not read");
     expect(wire).not.toContain("/Users/owner");
     expect(sent.properties).toMatchObject({ scope: "uncaught_exception" });
+  });
+
+  it("reports the DOMO_SIMULATE_ERROR drill under its own name, flagged, not as a crash", () => {
+    // The message never leaves and unknown names collapse to "Error", so a
+    // drill thrown as a plain Error was one more "Error" issue in the tracker
+    // (PostHog 01a05e82-27ca). The name is the one custom name allowed out,
+    // and only the flag says it is a drill — never the message.
+    const { telemetry, sink } = makeTelemetry();
+    telemetry.trackError(
+      "uncaught_exception",
+      new SimulatedError("DOMO_SIMULATE_ERROR: simulated uncaught exception"),
+    );
+    expect(sink.exceptions()).toHaveLength(1);
+    const sent = sink.exceptions()[0];
+    const list = sent.properties.$exception_list as { type: string; value: string }[];
+    expect(list[0].type).toBe("SimulatedError");
+    expect(list[0].value).toBe("SimulatedError");
+    expect(sent.properties).toMatchObject({ simulated: true, scope: "uncaught_exception" });
+    expect(JSON.stringify(sent)).not.toContain("DOMO_SIMULATE_ERROR");
+
+    // A real error stays unflagged, and a hand-set name does not buy the flag.
+    const spoofed = new Error("boom");
+    spoofed.name = "SimulatedErrorX";
+    telemetry.trackError("uncaught_exception", spoofed);
+    const real = sink.exceptions()[1];
+    expect((real.properties.$exception_list as { type: string }[])[0].type).toBe("Error");
+    expect(real.properties).toMatchObject({ simulated: false });
   });
 
   it("ships no source context, and nothing downstream can add it", () => {
