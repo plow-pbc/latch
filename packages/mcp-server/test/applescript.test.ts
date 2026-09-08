@@ -139,6 +139,8 @@ describe.skipIf(!ON_MAC)("plow_run_applescript", () => {
       'tell app "iTerm" to create window with default profile',
       'tell application id "com.apple.Terminal" to activate',
       'tell application "Script Editor" to make new document',
+      // The raw four-char-code spelling of do shell script.
+      '«event sysoexec» "id"',
     ]) {
       const { isError, payload } = await callTool(
         server,

@@ -194,6 +194,25 @@ export function isLexicallyWithin(path: string, root: string): boolean {
   return path === root || path.startsWith(root.endsWith("/") ? root : root + "/");
 }
 
+/**
+ * `isLexicallyWithin` for the question "could a writer of `root` reach
+ * `path`?" — the hold that keeps a diagnostic probe off anything a live run
+ * can rewrite. The default macOS filesystem is case-insensitive and
+ * Unicode-normalization-insensitive, and a component that does not exist
+ * yet keeps the spelling its caller gave it, so `~/Documents/Out` and
+ * `~/documents/out` are one place to APFS and two strings to `===`.
+ * Compared folded, which can only find MORE overlap: a hold that is too
+ * wide withholds a probe, and a probe withheld is a fact, never a leak.
+ * Never used for a grant — a profile root or a rule key stays bytewise.
+ */
+export function overlapsRoot(path: string, root: string): boolean {
+  return isLexicallyWithin(foldPath(path), foldPath(root));
+}
+
+function foldPath(p: string): string {
+  return p.normalize("NFC").toLowerCase();
+}
+
 /** True when `path` is `root` or inside it, after canonicalization. */
 export function isWithin(path: string, root: string): boolean {
   return isLexicallyWithin(canonicalize(path), canonicalize(root));

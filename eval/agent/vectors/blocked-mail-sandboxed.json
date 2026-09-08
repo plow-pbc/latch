@@ -18,7 +18,7 @@
           "Mail answered the event with a privilege violation (-10004): it refuses this command from a sandboxed sender, and every command this Mac runs is sandboxed",
           "Automation consent for Mail is granted, so consent is not the reason"
         ],
-        "owner_action": "Mail refuses this command from any sandboxed process, and every command Plow Latch runs is sandboxed; no permission in System Settings changes that. The agent can run the same script through Plow Latch's AppleScript tool instead, which runs outside the sandbox.",
+        "owner_action": "Mail refuses this command from any sandboxed process, and every command Plow Latch runs is sandboxed; no permission in System Settings changes that. The agent can do this through Plow Latch's AppleScript tool instead, which runs outside the sandbox.",
         "permission": null,
         "requires_relaunch": false,
         "retry": "with_plow_run_applescript",

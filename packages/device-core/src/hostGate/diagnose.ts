@@ -26,7 +26,7 @@
  * and for the audit trail that shows which branch was wrong when one is.
  */
 import path from "node:path";
-import { canonicalizeAsync, isLexicallyWithin, JSONValue } from "@domo/protocol";
+import { canonicalizeAsync, isLexicallyWithin, JSONValue, overlapsRoot } from "@domo/protocol";
 import {
   argvCandidates,
   candidatePaths,
@@ -270,7 +270,7 @@ export async function collectFacts(
   const contained = (p: string) => declared.some((d) => isLexicallyWithin(p, d));
   // Asked every time, not once: the roots are whatever runs are alive NOW.
   const rewritable = (p: string) =>
-    (ctx.mutable?.() ?? []).some((r) => isLexicallyWithin(p, path.resolve(expandHome(r, ownerHome))));
+    (ctx.mutable?.() ?? []).some((r) => overlapsRoot(p, path.resolve(expandHome(r, ownerHome))));
   const hold = ctx.hold ?? (<T>(fn: () => Promise<T>) => fn());
   const sourced: [string, Source][] = [
     ...(parsed.path ? [[parsed.path, "error"] as [string, Source]] : []),
@@ -733,7 +733,7 @@ export function ownerAction(
       return `The file is locked (the macOS "Locked" flag). The owner can unlock it in Finder (Get Info > Locked) or with chflags nouchg.`;
     case "app_refuses_sandboxed_sender": {
       const target = f.automation_target ?? "That application";
-      return `${target} refuses this command from any sandboxed process, and every command ${app} runs is sandboxed; no permission in System Settings changes that. The agent can run the same script through ${app}'s AppleScript tool instead, which runs outside the sandbox.`;
+      return `${target} refuses this command from any sandboxed process, and every command ${app} runs is sandboxed; no permission in System Settings changes that. The agent can do this through ${app}'s AppleScript tool instead, which runs outside the sandbox.`;
     }
     default:
       return null;

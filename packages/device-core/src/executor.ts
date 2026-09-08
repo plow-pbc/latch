@@ -9,7 +9,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { canonicalize, isLexicallyWithin } from "@domo/protocol";
+import { canonicalize, isLexicallyWithin, overlapsRoot } from "@domo/protocol";
 
 const READ_BOILERPLATE = [
   "/usr",
@@ -405,7 +405,7 @@ export class Executor {
   private conflicts(writable: readonly string[]): boolean {
     for (const paths of this.holds.values()) {
       for (const p of paths) {
-        for (const w of writable) if (isLexicallyWithin(p, w) || isLexicallyWithin(w, p)) return true;
+        for (const w of writable) if (overlapsRoot(p, w) || overlapsRoot(w, p)) return true;
       }
     }
     return false;

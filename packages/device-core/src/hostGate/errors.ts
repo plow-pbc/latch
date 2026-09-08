@@ -37,7 +37,11 @@ export function stderrHint(output: string): StderrHint | null {
   // and not as the "unable to open database file" of a WAL index it cannot
   // create. Seen for real on a packaged build reading chat.db without Full
   // Disk Access; unrecognised, the run read as an ordinary failure.
-  if (/authorization denied/i.test(output)) return "authorization_denied";
+  // The whole sqlite shape, not the two words: "authorization denied" is
+  // ordinary English, and a program's own stderr must not pass for macOS.
+  if (/unable to open database "[^"]*": authorization denied|^(?:Error|Runtime error): [^\n]*authorization denied(?: \(23\))?$/im.test(output)) {
+    return "authorization_denied";
+  }
   if (/unable to open database file/i.test(output)) return "sqlite_unable_to_open";
   if (/-1743\b|errAEEventNotPermitted|not authori[sz]ed to send apple events/i.test(output)) {
     return "apple_event_not_permitted";
@@ -46,7 +50,7 @@ export function stderrHint(output: string): StderrHint | null {
   // refused the COMMAND because the sender is sandboxed — Mail's "make new
   // outgoing message" is the known one. Not consent, which was granted;
   // nothing in System Settings changes it.
-  if (/-10004\b|errAEPrivilegeError|privilege violation/i.test(output)) return "apple_event_privilege_violation";
+  if (/\(-10004\)|errAEPrivilegeError|A privilege violation occurred/i.test(output)) return "apple_event_privilege_violation";
   // AppleScript's permErr (-54): an app the script drives — Contacts,
   // Calendar — refused it the DATA, which is that service's own privacy
   // permission for the calling app, not Automation consent (the event

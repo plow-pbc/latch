@@ -233,6 +233,9 @@ set:
   the owner reads the whole script, and the AI reviewer is told to deny a
   shell however it is spelled — which is the same boundary every other
   unsandboxed thing on this Mac has, and why the tool was accepted with it.
+  That boundary needs a reader, so "Approve everything" mode does not cover
+  a script: it takes the ask path, dialog and reviewer hint, like any other
+  intent under ask.
   Like an `apple_events` command it is never a stored rule: the same script
   is decided fresh every time. The script is written to the run's scratch
   dir `0600` rather than passed as an argument, so it never shows in `ps`.

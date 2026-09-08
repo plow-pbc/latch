@@ -9,9 +9,11 @@ import {
   Capability,
   RuleKey,
   capabilityDisplay,
+  isLexicallyWithin,
   normalizeOrigin,
   normalizedCapability,
   originMatches,
+  overlapsRoot,
 } from "@domo/protocol";
 
 describe("normalizeOrigin", () => {
@@ -98,6 +100,16 @@ describe("browser/credential capability normalization", () => {
       { kind: "credential", access: "fill", items: ["b"] },
     ]);
     expect(new Set([base, wider, fill, otherItem]).size).toBe(4);
+  });
+});
+
+describe("overlapsRoot", () => {
+  it("folds case and Unicode normalization, the way the default macOS filesystem does", () => {
+    expect(overlapsRoot("/Users/x/documents/out/a.txt", "/Users/x/Documents/Out")).toBe(true);
+    expect(overlapsRoot("/Users/x/Documents/Caf\u0065\u0301/a", "/Users/x/Documents/Caf\u00e9")).toBe(true);
+    expect(overlapsRoot("/Users/x/Documents/Outside/a", "/Users/x/Documents/Out")).toBe(false);
+    // The bytewise predicate is unchanged: grants stay exact.
+    expect(isLexicallyWithin("/Users/x/documents/out/a.txt", "/Users/x/Documents/Out")).toBe(false);
   });
 });
 

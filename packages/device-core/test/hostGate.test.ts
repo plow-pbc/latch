@@ -196,6 +196,15 @@ describe("reading an error", () => {
     expect(messages.cause).not.toBe("macos_permission");
   });
 
+  it("reads the whole sqlite and AppleScript shapes, not the words on their own", () => {
+    // Ordinary output can say these things; only the tools' own error lines count.
+    expect(stderrHint("authorization denied for user bob, see the policy")).toBeNull();
+    expect(stderrHint("a privilege violation was logged at 09:00")).toBeNull();
+    expect(stderrHint("Runtime error: near line 1: authorization denied (23)")).toBe("authorization_denied");
+    expect(stderrHint("Error: authorization denied")).toBe("authorization_denied");
+    expect(stderrHint("execution error: Mail got an error: A privilege violation occurred. (-10004)")).toBe("apple_event_privilege_violation");
+  });
+
   it("recognises the few stderr shapes worth following up", () => {
     expect(stderrHint("ls: /Users/x/Desktop: Operation not permitted")).toBe("operation_not_permitted");
     expect(stderrHint("cat: /etc/shadow: Permission denied")).toBe("permission_denied");

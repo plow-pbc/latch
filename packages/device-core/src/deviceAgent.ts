@@ -11,7 +11,7 @@
  * key to pin. That is provenance, not confinement — DESIGN.md §4 *The intent
  * object* owns where an intent's contents go.
  */
-import { capabilityDisplay, Intent, intentIsExpired, isLexicallyWithin, JSONValue, jv } from "@domo/protocol";
+import { capabilityDisplay, Intent, intentIsExpired, JSONValue, jv, overlapsRoot } from "@domo/protocol";
 import { PROVIDERS, vendoredProvider, type VendoredProvider } from "./providers/registry.js";
 import { MintError, type MintedAccounts, type Minter } from "./providers/mint.js";
 import { gogExitReason, mergeFanout, planPlowGog } from "./providers/plowGog.js";
@@ -213,7 +213,10 @@ interface ExecDiagnosisContext {
  * (DESIGN.md §6). This catches the honest mistake and the lazy attempt.
  */
 export const SCRIPT_SHELL_ESCAPE =
-  /\b(?:do\s+(?:shell\s+)?script|(?:run|load|store)\s+script)\b|\b(?:application|app)\s+(?:id\s+)?"(?:Terminal|iTerm2?|Script Editor|Automator|com\.apple\.Terminal|com\.googlecode\.iterm2|com\.apple\.ScriptEditor2|com\.apple\.Automator)"/i;
+  // `«event …»` is every command by its raw four-char code — `«event
+  // sysoexec»` IS `do shell script` — and no honest script needs the raw
+  // form for any command this Mac would run.
+  /\b(?:do\s+(?:shell\s+)?script|(?:run|load|store)\s+script)\b|\u00abevent\b|\b(?:application|app)\s+(?:id\s+)?"(?:Terminal|iTerm2?|Script Editor|Automator|com\.apple\.Terminal|com\.googlecode\.iterm2|com\.apple\.ScriptEditor2|com\.apple\.Automator)"/i;
 /** The apps a script may not name as its target, by bundle id: each one
  *  exists to run other things. */
 export const SCRIPT_SHELL_ESCAPE_APPS: ReadonlySet<string> = new Set([
@@ -684,14 +687,14 @@ export class DeviceAgent {
     // refused up front, and the agent asks again once that run is over.
     return this.executor.holdProbes([p], async () => {
       const mutable = this.executor.mutableRoots();
-      if (mutable.some((root) => isLexicallyWithin(p, root))) throw new FileOpBusy();
+      if (mutable.some((root) => overlapsRoot(p, root))) throw new FileOpBusy();
       if (guardedPrefix(p, this.ownerHome) !== null) {
         // The touch climbs above every such root too, to the guarded folder
         // that contains them, so nothing a run can write is opened by name.
         // The probe's own timeout is shorter than the hang window, so the
         // child is settled — or killed — before the hold is released.
         let target = existingAncestor(p);
-        while (mutable.some((root) => isLexicallyWithin(target, root)) && path.dirname(target) !== target) {
+        while (mutable.some((root) => overlapsRoot(target, root)) && path.dirname(target) !== target) {
           target = path.dirname(target);
         }
         const touch = this.hostProbes.openAsApp(target);
@@ -1153,16 +1156,20 @@ export class DeviceAgent {
     if (result.running && !this.executor.output(result.handle, 0).running) return null;
     if (!result.running && !result.reaped && !isHostGate(diagnosis.cause)) return null;
     const diagnosed: DiagnosedRun = { diagnosis, facts, intentId };
-    this.runDiagnoses.set(result.handle, diagnosed);
+    // The audit line is the commit point: written first, so a verdict the
+    // agent is handed is one the owner's views can see. An append that
+    // throws leaves the maps untouched and the run undiagnosed, which the
+    // caller records as a battery failure.
     if (isHostGate(diagnosis.cause) && this.blockedRuns.get(result.handle) !== diagnosis.cause) {
-      this.blockedRuns.set(result.handle, diagnosis.cause);
       this.audit.record("host_permission_blocked", {
         intentId,
         handle: result.handle,
         path: facts.path,
         ...auditDiagnosis(diagnosed),
       });
+      this.blockedRuns.set(result.handle, diagnosis.cause);
     }
+    this.runDiagnoses.set(result.handle, diagnosed);
     return diagnosed;
   }
 
