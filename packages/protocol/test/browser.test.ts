@@ -102,6 +102,12 @@ describe("browser/credential capability normalization", () => {
 });
 
 describe("capabilityDisplay", () => {
+  it("applescript names the app, its bundle id, and the whole script", () => {
+    expect(
+      capabilityDisplay({ kind: "applescript", app: "Mail", bundleId: "com.apple.mail", script: "return 1" }),
+    ).toBe("Script Mail (com.apple.mail): return 1");
+  });
+
   it("browser shows the origin list", () => {
     expect(capabilityDisplay({ kind: "browser", origins: ["*.dominos.com", "dominos.com"] })).toBe(
       "Browse: *.dominos.com, dominos.com",

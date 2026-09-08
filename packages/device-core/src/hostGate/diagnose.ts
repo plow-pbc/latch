@@ -84,9 +84,10 @@ export type Retry =
   | "after_owner_answers_prompt"
   | "with_declared_path"
   | "with_different_path"
-  /** Nothing to grant and no path to change: the command itself is the
-   *  problem; another way to the same end is the only move. */
-  | "with_different_approach"
+  /** Nothing to grant and no path to change: the app refuses the command
+   *  from a sandboxed sender, and the same script through
+   *  plow_run_applescript — which runs outside the sandbox — is the move. */
+  | "with_plow_run_applescript"
   | "unknown";
 
 /** Every probe's answer, flat and JSON-safe, for one failure. */
@@ -487,6 +488,13 @@ export function diagnose(f: HostFacts): Diagnosis {
     // from a sandboxed sender. Confirmed once consent is known granted —
     // consent was not the reason — and no switch anywhere changes it: the
     // owner is told what will not work, not sent to a pane.
+    if (f.stderr_hint === "apple_event_privilege_violation" && !f.ran_sandboxed) {
+      // A script this Mac ran OUTSIDE the sandbox (plow_run_applescript)
+      // was refused all the same: the sender is not the reason, and the
+      // refusal is the app's own — no gate of this Mac's to name.
+      evidence.push(`${target} answered the script with a privilege violation (-10004) although it ran outside the sandbox: the refusal is ${target}'s own`);
+      return verdict("unknown", "unknown", null);
+    }
     if (f.stderr_hint === "apple_event_privilege_violation") {
       evidence.push(`${target} answered the event with a privilege violation (-10004): it refuses this command from a sandboxed sender, and every command this Mac runs is sandboxed`);
       if (f.automation_status === "granted") {
@@ -671,7 +679,7 @@ function retryFor(cause: BlockedCause): Retry {
     case "sip_protected":
     case "immutable_file":
     case "not_found": return "with_different_path";
-    case "app_refuses_sandboxed_sender": return "with_different_approach";
+    case "app_refuses_sandboxed_sender": return "with_plow_run_applescript";
     default: return "unknown";
   }
 }
@@ -725,7 +733,7 @@ export function ownerAction(
       return `The file is locked (the macOS "Locked" flag). The owner can unlock it in Finder (Get Info > Locked) or with chflags nouchg.`;
     case "app_refuses_sandboxed_sender": {
       const target = f.automation_target ?? "That application";
-      return `${target} refuses this command from any sandboxed process, and every command ${app} runs is sandboxed; no permission in System Settings changes that. Reach the same result another way — a command ${target} allows to scripts, or a different application.`;
+      return `${target} refuses this command from any sandboxed process, and every command ${app} runs is sandboxed; no permission in System Settings changes that. The agent can run the same script through ${app}'s AppleScript tool instead, which runs outside the sandbox.`;
     }
     default:
       return null;

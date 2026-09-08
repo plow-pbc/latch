@@ -1,3 +1,4 @@
+export * from "./appleScript.js";
 export * from "./approvalStore.js";
 export * from "./auditLog.js";
 export * from "./browser/browserHost.js";

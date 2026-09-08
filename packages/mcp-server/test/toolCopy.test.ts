@@ -167,7 +167,7 @@ describe("the skill contribution footer", () => {
 describe("every tool with a strong built-in alternative says whose Mac this is", () => {
   // The three where the agent's own tool is obvious, frictionless, and wrong:
   // its sandbox filesystem, its sandbox shell, its own web fetch.
-  for (const tool of ["plow_read_file", "plow_write_file", "plow_run_command", "plow_browser_open"]) {
+  for (const tool of ["plow_read_file", "plow_write_file", "plow_run_command", "plow_run_applescript", "plow_browser_open"]) {
     it(`${tool} names the user's own machine`, async () => {
       expect(await descriptions(makeServer()).then((d) => d[tool])).toMatch(/user's own Mac/);
     });
@@ -206,13 +206,23 @@ describe("every tool with a strong built-in alternative says whose Mac this is",
 });
 
 describe("every tool this Mac can stop says so", () => {
-  for (const tool of ["plow_read_file", "plow_write_file", "plow_run_command"]) {
+  for (const tool of ["plow_read_file", "plow_write_file", "plow_run_command", "plow_run_applescript"]) {
     it(`${tool} carries the blocked sentence`, async () => {
       const d = await descriptions(makeServer());
       expect(d[tool]).toContain(BLOCKED_COPY);
       expect(d[tool]).toMatch(/not the user saying no/);
     });
   }
+
+  it("the script tool says why it exists, what it refuses, and where a sandboxed refusal goes", async () => {
+    const d = await descriptions(makeServer());
+    expect(d.plow_run_applescript).toMatch(/rather than plow_run_command with osascript/);
+    expect(d.plow_run_applescript).toMatch(/do shell script/);
+    expect(d.plow_run_applescript).toMatch(/'host_gate': 'none'/);
+    // And the command tool points back at it for the case only it can serve.
+    expect(d.plow_run_command).toMatch(/'with_plow_run_applescript'/);
+    expect(d.plow_get_output).toMatch(/plow_run_applescript/);
+  });
 
   it("plow_run_command explains a running result that carries a diagnosis", async () => {
     const d = await descriptions(makeServer());
@@ -411,7 +421,9 @@ describe("every tool says what kind of tool it is", () => {
     {
       hint: "openWorldHint" as const,
       what: "reach the open internet",
-      tools: ["plow_browser", "plow_browser_open", "plow_browser_request", "plow_run_command"],
+      // A script reaches out through the app it drives — Mail sends, Safari
+      // browses — so it is as open-world as a command with network.
+      tools: ["plow_browser", "plow_browser_open", "plow_browser_request", "plow_run_applescript", "plow_run_command"],
     },
   ])("the tools that $what are exactly the ones marked $hint", async ({ hint, tools }) => {
     const marked = (await listed(makeServer()))
@@ -529,7 +541,9 @@ describe("what the agent-facing copy must and must not say", () => {
       // osascript is meant to appear: it is exactly what grants appleevent-send
       // when the approver allows it, so naming it here is honest, not a
       // prescription the sandbox then denies.
-      except: ["plow_run_command.apple_events"],
+      // The script tool IS an unsandboxed osascript, and naming what it
+      // replaces (osascript under plow_run_command) is the point of its copy.
+      except: ["plow_run_command.apple_events", "plow_run_applescript.description"],
     },
     {
       what: "names a tool without its plow_ prefix",

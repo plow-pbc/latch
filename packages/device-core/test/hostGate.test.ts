@@ -141,15 +141,22 @@ describe("reading an error", () => {
 
   it("reads -10004 as the app refusing a sandboxed sender, and names it so", () => {
     expect(stderrHint("59:141: execution error: Mail got an error: A privilege violation occurred. (-10004)")).toBe("apple_event_privilege_violation");
-    const base = { automation_target: "Mail", stderr_hint: "apple_event_privilege_violation" as const };
+    const base = { automation_target: "Mail", stderr_hint: "apple_event_privilege_violation" as const, ran_sandboxed: true };
     const granted = diagnose(facts({ ...base, automation_status: "granted" }));
     expect(granted.cause).toBe("app_refuses_sandboxed_sender");
     expect(granted.confidence).toBe("confirmed");
     expect(granted.permission).toBeNull();
-    expect(granted.retry).toBe("with_different_approach");
+    // The way out is the unsandboxed script tool, and the agent is told so.
+    expect(granted.retry).toBe("with_plow_run_applescript");
     expect(granted.owner_action).toMatch(/^Mail refuses this command from any sandboxed process/);
     expect(granted.owner_action).toMatch(/no permission in System Settings changes that/);
+    expect(granted.owner_action).toMatch(/AppleScript tool instead, which runs outside the sandbox/);
     expect(diagnose(facts({ ...base, automation_status: "not_asked" })).confidence).toBe("likely");
+    // The same error from a script that ran OUTSIDE the sandbox is not the
+    // sender's doing: the app refused on its own terms, and no gate is named.
+    const bare = diagnose(facts({ ...base, ran_sandboxed: false, automation_status: "granted" }));
+    expect(bare.cause).toBe("unknown");
+    expect(bare.evidence.join(" ")).toMatch(/ran outside the sandbox/);
   });
 
   it("reads AppleScript's -54 as a scripted app refusing its data", () => {

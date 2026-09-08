@@ -42,6 +42,18 @@ describe("approvalViewModel", () => {
     ]);
   });
 
+  it("an applescript intent shows the target as a chip, hands the card the whole script, and offers no Always Allow", () => {
+    const script = 'tell application "Mail"\n\tmake new outgoing message\nend tell';
+    const vm = approvalViewModel(
+      intentOf({ capabilities: [{ kind: "applescript", app: "Mail", bundleId: "com.apple.mail", script }] }),
+    );
+    expect(vm.capabilities.map((c) => c.display)).toEqual(["Script Mail (com.apple.mail)"]);
+    expect(vm.scriptsApp).toEqual({ app: "Mail", bundleId: "com.apple.mail", script });
+    expect(vm.runsCommand).toBe(false);
+    // The same mutation as an Apple-event send: never a stored rule.
+    expect(vm.sendsAppleEvents).toBe(true);
+  });
+
   it("flags network when a network capability is allowed", () => {
     const vm = approvalViewModel(
       intentOf({ capabilities: [{ kind: "network", allowed: true }] }),
@@ -56,6 +68,46 @@ describe("approvalViewModel", () => {
     // The value is preserved verbatim as data; the renderer inserts it via
     // textContent, so the markup is never interpreted.
     expect(vm.goal).toBe("<img src=x onerror=alert(1)>");
+  });
+});
+
+describe("auditActivities (scripts)", () => {
+  const scriptRun: JSONValue[] = [
+    { event: "intent_received", intentId: "s1", request: "applescript: Mail", goal: "draft", agent: "agentA", capabilities: ["Script Mail (com.apple.mail): return 1"], ts: "2026-08-20T12:00:20Z" },
+    { event: "intent_decision", intentId: "s1", decision: "allow_once", source: "prompt", ts: "2026-08-20T12:00:21Z" },
+    { event: "applescript_start", intentId: "s1", app: "Mail", bundle_id: "com.apple.mail", ts: "2026-08-20T12:00:21Z" },
+    { event: "applescript_end", intentId: "s1", exit_code: 1, ts: "2026-08-20T12:00:23Z" },
+  ];
+
+  it("a failed script reads like a failed command: exit code, amber, failed bucket", () => {
+    const [a] = auditActivities(scriptRun);
+    expect(a!.exitCode).toBe(1);
+    expect(a!.decision).toBe("Allowed");
+    expect(a!.status).toBe("Failed · exit 1");
+    expect(a!.tone).toBe("amber");
+    expect(a!.statusKind).toBe("failed");
+    expect(a!.timeline.map((s) => s.text)).toEqual([
+      expect.stringContaining("Request"),
+      expect.stringContaining("Decision"),
+      "Script started: Mail (com.apple.mail)",
+      "Script finished (exit 1)",
+    ]);
+  });
+
+  it("a script this Mac blocked reads as blocked, and one still going as running", () => {
+    const blocked = auditActivities([
+      ...scriptRun,
+      { event: "host_permission_blocked", intentId: "s1", cause: "macos_permission", confidence: "confirmed", permission: "automation", automation_target: "Mail", ts: "2026-08-20T12:00:23Z" },
+    ])[0]!;
+    expect(blocked.statusKind).toBe("blocked");
+    expect(blocked.status).toMatch(/^Blocked/);
+    const running = auditActivities(scriptRun.slice(0, 3))[0]!;
+    expect(running.status).toBe("Running");
+    const refused = auditActivities([
+      ...scriptRun.slice(0, 2),
+      { event: "applescript_error", intentId: "s1", error: "refused", ts: "2026-08-20T12:00:21Z" },
+    ])[0]!;
+    expect(refused.status).toBe("Error");
   });
 });
 

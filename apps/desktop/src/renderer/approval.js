@@ -82,7 +82,8 @@ async function render() {
   if (v.needsNetwork) warnings.push("uses the network");
   if (v.usesBrowser) warnings.push("browses the web as you");
   if (v.fillsCredentials) warnings.push("types saved credentials into those sites");
-  if (v.sendsAppleEvents) warnings.push("controls an app via Apple events");
+  if (v.scriptsApp) warnings.push("controls " + v.scriptsApp.app + " with AppleScript, outside the sandbox");
+  else if (v.sendsAppleEvents) warnings.push("controls an app via Apple events");
 
   // "Allow Once" is the default (primary, rightmost, focused); "Always Allow"
   // is the more permissive option and sits in the middle.
@@ -125,6 +126,9 @@ async function render() {
       warnings.length
         ? el("div", { class: "warn", text: "⚠ " + warnings.join(" · ") })
         : null,
+      // The script is the action: the whole text, verbatim, as textContent.
+      v.scriptsApp ? el("div", { class: "lbl", text: "The script, exactly as it will run" }) : null,
+      v.scriptsApp ? el("pre", { class: "script", text: v.scriptsApp.script }) : null,
       v.planContext ? el("div", { class: "lbl", text: "Session context" }) : null,
       v.planContext ? el("div", { class: "faint", text: v.planContext }) : null,
     ]),

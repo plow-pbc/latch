@@ -4,8 +4,9 @@
 Mac's MCP server gives, and checks that they do what the copy intends: relay a
 confirmed `blocked` verdict's owner sentence word for word in one call, share
 the evidence and defer when the verdict is only likely, retrieve a pending
-handle, and never send the user to System Settings for a file that is merely
-missing. It is **not** part of `just test`: it spends model tokens and its
+handle, follow a `retry: with_plow_run_applescript` hint to the script tool,
+and never send the user to System Settings for a file that is merely missing
+or a script that failed on its own terms. It is **not** part of `just test`: it spends model tokens and its
 answers are not deterministic, so each case runs several times and must pass
 every time.
 

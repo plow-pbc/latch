@@ -16,7 +16,8 @@ export type CapabilityKind =
   | "apple_events"
   | "tool"
   | "browser"
-  | "credential";
+  | "credential"
+  | "applescript";
 
 export interface Capability {
   kind: CapabilityKind;
@@ -28,6 +29,9 @@ export interface Capability {
   origins?: string[]; // browser: host patterns ("dominos.com", "*.dominos.com")
   access?: "fill"; // credential: type values into pages
   items?: string[]; // credential(fill): vault item ids
+  app?: string; // applescript: the app as the agent named it ("Mail")
+  bundleId?: string; // applescript: that app's bundle id, resolved on this Mac
+  script?: string; // applescript: the whole script, verbatim
   reason?: string; // display-only justification
 }
 
@@ -68,6 +72,8 @@ export function capabilityDisplay(c: Capability): string {
       return `Browse: ${(c.origins ?? []).join(", ")}`;
     case "credential":
       return `Credentials: fill ${(c.items ?? []).join(", ")} into approved sites (typed on this Mac; the agent can see the page it types into)`;
+    case "applescript":
+      return `Script ${c.app ?? "?"} (${c.bundleId ?? "?"}): ${c.script ?? ""}`;
   }
 }
 

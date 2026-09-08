@@ -135,8 +135,12 @@ export interface ApprovalViewModel {
   usesBrowser: boolean;
   fillsCredentials: boolean;
   /** Apple-event intents are non-idempotent mutations: the card offers no
-   * Always Allow for them (the policy engine would refuse the rule anyway). */
+   * Always Allow for them (the policy engine would refuse the rule anyway).
+   * An AppleScript intent is the same mutation by another road, so it too. */
   sendsAppleEvents: boolean;
+  /** applescript capability: the app it controls and the script, verbatim —
+   * runs outside the sandbox, so the card shows the whole script. */
+  scriptsApp: { app: string; bundleId: string; script: string } | null;
   /** browser capability origins, for the card. */
   origins: string[];
   /** credential(fill) items with titles resolved ON-DEVICE (never from the
@@ -174,8 +178,12 @@ export function approvalViewModel(
       // them approve against a promise the browser does not keep.
       return `Credentials: fill ${names.join(", ")} into approved sites (typed on this Mac; the agent can see the page it types into)`;
     }
+    // The chip names the target; the script itself gets its own block on the
+    // card (scriptsApp) rather than being folded into a one-line chip.
+    if (c.kind === "applescript") return `Script ${c.app ?? "?"} (${c.bundleId ?? "?"})`;
     return capabilityDisplay(c);
   };
+  const scriptCap = caps.find((c) => c.kind === "applescript");
   return {
     intentId: intent.intentId,
     agentDisplay: intent.agentDisplay,
@@ -189,7 +197,10 @@ export function approvalViewModel(
     runsCommand: caps.some((c) => c.kind === "process.exec"),
     usesBrowser: caps.some((c) => c.kind === "browser"),
     fillsCredentials: caps.some((c) => c.kind === "credential" && c.access === "fill"),
-    sendsAppleEvents: caps.some((c) => c.kind === "apple_events" && c.allowed === true),
+    sendsAppleEvents: caps.some((c) => (c.kind === "apple_events" && c.allowed === true) || c.kind === "applescript"),
+    scriptsApp: scriptCap
+      ? { app: scriptCap.app ?? "?", bundleId: scriptCap.bundleId ?? "?", script: scriptCap.script ?? "" }
+      : null,
     origins: caps.find((c) => c.kind === "browser")?.origins ?? [],
     credentialItems,
   };
@@ -423,7 +434,7 @@ function buildActivity(id: string, events: JSONValue[]): AuditActivity {
       value("access_request", "goals") ??
       value("agent_spawned", "goal"),
     intentId: jv(events[0]).get("intentId").str,
-    exitCode: entry("exec_end") ? jv(entry("exec_end")!).get("exit_code").int : null,
+    exitCode: runEnd(entry) ? jv(runEnd(entry)!).get("exit_code").int : null,
     permission: (() => {
       const gate = latest("host_permission_blocked");
       const key = gate ? jv(gate).get("permission").str : null;
@@ -484,6 +495,7 @@ function activityTitle(
   if (has("activation_session_cleanup")) return "Activation session cleanup";
   if (has("agent_spawned")) return "Agent spawned";
   if (has("exec_end")) return "Command finished";
+  if (has("applescript_end")) return "Script finished";
   return jv(events[0]).get("event").str ?? "Activity";
 }
 
@@ -576,15 +588,15 @@ function classifyActivity(
     // and "Failed · exit 1" would hide that from them. Amber, like a killed
     // run, because nothing here was refused BY anyone.
     const gate = latest("host_permission_blocked");
-    if (gate && !recovered(gate, entry("exec_end"), latest("host_permission_cleared"))) {
+    if (gate && !recovered(gate, runEnd(entry), latest("host_permission_cleared"))) {
       return ran(`Blocked · ${hostGateShort(jv(gate))}`, "amber", "blocked");
     }
     // The sandbox refusing is this Mac refusing too: the word is Blocked, so
     // the Blocked filter holds it. Red, not amber: the bound was the owner's.
     const denied = entry("denied_operation");
     if (denied) return ran(...deniedOperation(jv(denied)));
-    if (has("exec_error") || has("tool_error")) return ran("Error", "red", "failed");
-    const ee = entry("exec_end");
+    if (has("exec_error") || has("applescript_error") || has("tool_error")) return ran("Error", "red", "failed");
+    const ee = runEnd(entry);
     if (ee) {
       // A run this Mac killed is not a command that failed, and the owner is
       // the one person who can clear what usually wedges it — an unanswered
@@ -593,7 +605,7 @@ function classifyActivity(
       if (jv(ee).get("reaped").bool === true) return ran("Killed · no output", "amber", "failed");
       const code = jv(ee).get("exit_code").int ?? -1;
       if (code !== 0) return ran(`Failed · exit ${code}`, "amber", "failed");
-    } else if (has("exec_start")) {
+    } else if (has("exec_start") || has("applescript_start")) {
       // Started and not yet ended: still approved, still in flight.
       return ran("Running", "blue", "running");
     }
@@ -649,12 +661,12 @@ function classifyActivity(
   // A handle-only block from a deferred run whose end outlived its intent's
   // row: the gate is still the story.
   const gate = latest("host_permission_blocked");
-  if (gate && !recovered(gate, entry("exec_end"), latest("host_permission_cleared"))) {
+  if (gate && !recovered(gate, runEnd(entry), latest("host_permission_cleared"))) {
     return outcome(`Blocked · ${hostGateShort(jv(gate))}`, "amber", "blocked");
   }
   // A handle-only exec_end from an old log: a deferred run's end recorded
   // without its intent. The exit code is the whole story.
-  const ee = entry("exec_end");
+  const ee = runEnd(entry);
   if (ee) {
     if (jv(ee).get("reaped").bool === true) return outcome("Killed · no output", "amber", "failed");
     const code = jv(ee).get("exit_code").int ?? -1;
@@ -698,6 +710,11 @@ function activityKind(
     return "file";
   }
   return "command";
+}
+
+/** The end event of a run, whichever kind: a command's or a script's. */
+function runEnd(entry: (e: string) => JSONValue | null): JSONValue | null {
+  return entry("exec_end") ?? entry("applescript_end");
 }
 
 function activityCommand(
@@ -818,6 +835,12 @@ function describeStep(e: JSONValue): AuditStep {
       state = ev.get("exit_code").int === 0 ? "ok" : "bad";
       break;
     case "exec_error": text = `Run error: ${ev.get("error").str ?? ""}`; state = "bad"; break;
+    case "applescript_start": text = `Script started: ${ev.get("app").str ?? ""} (${ev.get("bundle_id").str ?? ""})`; break;
+    case "applescript_end":
+      text = `Script finished (exit ${ev.get("exit_code").int ?? -1})`;
+      state = ev.get("exit_code").int === 0 ? "ok" : "bad";
+      break;
+    case "applescript_error": text = `Script error: ${ev.get("error").str ?? ""}`; state = "bad"; break;
     case "file_read": text = `File read: ${ev.get("path").str ?? ""} (${ev.get("bytes").int ?? 0} bytes)`; state = "ok"; break;
     case "file_write": text = `File written: ${ev.get("path").str ?? ""} (${ev.get("bytes").int ?? 0} bytes)`; state = "ok"; break;
     case "denied_operation": {

@@ -26,6 +26,7 @@ import {
 } from "@domo/protocol";
 import { ToolAnnotations } from "@modelcontextprotocol/server";
 import {
+  AppNotFoundError,
   DATE_FORMAT_HELP,
   DATE_LABELS,
   DeviceAgent,
@@ -34,6 +35,9 @@ import {
   MAX_FILE_BYTES,
   impliesNetwork,
   vendoredProvider,
+  resolveAppBundleId,
+  SCRIPT_SHELL_ESCAPE,
+  SCRIPT_SHELL_ESCAPE_REFUSAL,
 } from "@domo/device-core";
 import { BlockedError, DeferredResults, DeniedError, DeviceError, Progress } from "./deferred.js";
 import { JobOwners } from "./jobs.js";
@@ -375,7 +379,9 @@ export const TOOLS: ToolSpec[] = [
       "dialog on the Mac's screen: leave it running, tell the user, and poll plow_get_output — their " +
       "click lets it finish. A 'completed' result with a non-zero exit and 'host_gate': 'none' failed " +
       "on its own terms: this Mac refused nothing and no macOS permission is missing, whatever the " +
-      "program's own error text says — do not send the user to System Settings for it.",
+      "program's own error text says — do not send the user to System Settings for it. A 'blocked' " +
+      "result whose 'retry' is 'with_plow_run_applescript' is an app refusing the sandboxed sender: " +
+      "run the same script through plow_run_applescript, which runs outside the sandbox.",
     inputSchema: {
       type: "object",
       required: ["argv"],
@@ -411,9 +417,11 @@ export const TOOLS: ToolSpec[] = [
           type: "boolean",
           description:
             "Whether the command sends Apple events to control this Mac's apps — " +
-            "required for osascript that tells an application to do something " +
+            "required for a CLI that drives one (`shortcuts`, `automator`, osascript) " +
             "(default false). Shown to the approver like any capability; without " +
-            "it the sandbox denies the event and the script fails.",
+            "it the sandbox denies the event and the command fails. For an AppleScript " +
+            "prefer plow_run_applescript: some apps (Mail's compose among them) refuse " +
+            "commands from any sandboxed sender, which that tool is not.",
         },
         wait_ms: {
           type: "integer",
@@ -546,12 +554,98 @@ export const TOOLS: ToolSpec[] = [
     },
   },
   {
+    name: "plow_run_applescript",
+    title: "Script an app on the user's Mac",
+    description:
+      "Run an AppleScript that controls one app on the user's own Mac through Latch — Mail, Finder, " +
+      "Calendar, Notes, Reminders, Messages, System Events — and return what it produces. Use this " +
+      "for AppleScript rather than plow_run_command with osascript: some apps refuse commands " +
+      "from inside the sandbox (-10004), and this tool runs outside it, so the approver reads the " +
+      "whole script. Name the app the script addresses in 'app', by the name it has in " +
+      "`tell application \"…\"`; it is resolved to an installed app on this Mac before anyone is " +
+      "asked, and an app the Mac does not have is an error. Keep the script to that app: shell " +
+      "commands from a script (`do shell script`, Terminal's `do script`) are refused — run them " +
+      "with plow_run_command. The first time an app is scripted macOS may ask this Mac's owner " +
+      "to allow it. Output is the script's result plus anything it logs; a script error comes " +
+      "back as osascript's message with a non-zero exit_code and 'host_gate': 'none' — the script's " +
+      "own problem, not a permission. A long script returns a job handle for plow_get_output, and " +
+      "a call that outruns this Mac's budget defers to plow_get_result. " +
+      BLOCKED_COPY,
+    inputSchema: {
+      type: "object",
+      required: ["app", "script"],
+      properties: {
+        app: {
+          type: "string",
+          description: 'The application the script controls, by name as in `tell application "Mail"`',
+        },
+        script: { type: "string", description: "The complete AppleScript source" },
+        wait_ms: {
+          type: "integer",
+          description:
+            "How long to wait for completion before returning a job handle (default 10000). " +
+            "Capped at this Mac's call budget, beyond which the call defers instead.",
+        },
+        goal: GOAL,
+      },
+      additionalProperties: false,
+    },
+    // A script changes another app's state and is never replayed from a
+    // stored rule (policyEngine.ts): each one is decided fresh.
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
+    deferrable: true,
+    async run(args, ctx, progress) {
+      const a = jv(args);
+      const app = a.get("app").str;
+      if (app === null || app === "") throw new ToolError("missing 'app'");
+      const script = a.get("script").str;
+      if (script === null || script === "") throw new ToolError("missing 'script'");
+      // Refused HERE, before an intent exists: nobody should be asked to
+      // approve a script this Mac was always going to refuse. The device
+      // checks again; it is the chokepoint and cannot rely on this caller.
+      if (SCRIPT_SHELL_ESCAPE.test(script)) throw new ToolError(SCRIPT_SHELL_ESCAPE_REFUSAL);
+      // Resolved on this Mac before it becomes the capability the human
+      // reads, like a path — and without asking macOS, which would put a
+      // "Where is X?" chooser on the owner's screen for a name it can't place.
+      let bundleId: string;
+      try {
+        bundleId = await resolveAppBundleId(app);
+      } catch (error) {
+        if (error instanceof AppNotFoundError) throw new ToolError(error.message);
+        throw error;
+      }
+      const capabilities: Capability[] = [{ kind: "applescript", app, bundleId, script }];
+      const waitMs = Math.min(a.get("wait_ms").int ?? 10_000, ctx.commandWaitCapMs);
+      // The job is this agent's, on a blocked run too (see plow_run_command).
+      const claim = (result: JSONValue) => {
+        const handle = jv(result).get("handle").str;
+        if (handle !== null) ctx.jobs.claim(ctx.agent.agentId, handle);
+      };
+      let result: JSONValue;
+      try {
+        result = await decideAndRun(
+          ctx,
+          progress,
+          `applescript: ${app}`,
+          a.get("goal").str ?? undefined,
+          capabilities,
+          { wait_ms: waitMs },
+        );
+      } catch (error: unknown) {
+        if (error instanceof BlockedError) claim(error.payload);
+        throw error;
+      }
+      claim(result);
+      return result;
+    },
+  },
+  {
     name: "plow_get_output",
     title: "Get output from a running command",
     description:
-      "Fetch incremental output of a command still running from plow_run_command. " +
-      "Pass 'since' = the output_length you last saw. Takes the job handle plow_run_command returned, " +
-      "not a handle from plow_get_result. " +
+      "Fetch incremental output of a command still running from plow_run_command, or a script from " +
+      "plow_run_applescript. Pass 'since' = the output_length you last saw. Takes the job handle that " +
+      "tool returned, not a handle from plow_get_result. " +
       "A read-only command that produces nothing and never exits is eventually killed by this Mac: " +
       "the reply then carries an 'error' saying so, which is for the user to hear. One approved to " +
       "write or to use the network is not — it could be mid-work — so polling will not resolve on " +

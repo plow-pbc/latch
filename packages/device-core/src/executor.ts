@@ -56,6 +56,13 @@ export const SandboxProfile = {
       // copy was rewritten to remove — so tightening here means re-running them
       // under the new profile and editing that constant in the same commit.
       "(allow mach-lookup)",
+      // Launching apps through LaunchServices (`open -a Mail`, `open file.pdf`).
+      // Without it LS refuses with -54 (permErr). The launched app runs
+      // outside this profile. Note this does NOT make AppleScript work:
+      // some apps refuse commands from any seatbelt-sandboxed sender
+      // (-10004, Mail's compose among them), whatever the profile says —
+      // even `(allow default)`. Scripting those needs `runAppleScript`.
+      "(allow lsopen)",
       "(allow file-read-metadata)",
       "(allow file-ioctl)",
       "(allow file-read* " +
@@ -470,14 +477,69 @@ export class Executor {
       process.stderr.write(`=== PROFILE ===\n${profile}\n=== ARGV ===\n${args.argv.join(" ")}\n`);
     }
 
+    return this.launch(handle, scratch, "/usr/bin/sandbox-exec", ["-p", profile, ...args.argv], {
+      cwd: workingDir,
+      env: args.env,
+      waitMs: args.waitMs,
+      reapable: isReapable(args),
+    });
+  }
+
+  /**
+   * Run an AppleScript with /usr/bin/osascript, NOT under sandbox-exec.
+   *
+   * Deliberate, and the only unsandboxed execution in this process: some
+   * apps refuse commands from any seatbelt-sandboxed sender whose own code
+   * signature lacks an apple-events entitlement (-10004, whatever the profile
+   * says — verified with `(allow default)`), and osascript is Apple's binary,
+   * so no profile can admit it. The gates are the approval this intent
+   * carried (the approver read the whole script) and TCC's Automation grant
+   * for the responsible process — the app bundle, or the terminal that ran it
+   * from source. The script is written to this run's scratch dir, 0600,
+   * rather than passed as an argument, so it never shows up in `ps` output or
+   * a too-long-argv failure.
+   *
+   * Never reapable: a script that has sent an event has changed another
+   * app's state, the same reason an `apple_events` command is exempt.
+   */
+  async runAppleScript(args: { script: string; waitMs: number }): Promise<ExecResult> {
+    const handle = crypto.randomUUID().toUpperCase();
+    const scratch = path.join(this.scratchRoot, handle);
+    fs.mkdirSync(scratch, { recursive: true });
+    const file = path.join(scratch, "script.applescript");
+    fs.writeFileSync(file, args.script, { mode: 0o600 });
+    // By its bare name, from the scratch dir: osascript prefixes every error
+    // with the script's path as given, and the agent's output should read
+    // `script.applescript:6:56: execution error: …`, not this Mac's
+    // application-support path.
+    return this.launch(handle, scratch, "/usr/bin/osascript", [path.basename(file)], {
+      cwd: scratch,
+      waitMs: args.waitMs,
+      reapable: false,
+    });
+  }
+
+  /**
+   * Spawn `command`, buffer its merged output under `handle`, wait up to
+   * `waitMs`, and answer with a snapshot. Everything a run needs once its
+   * profile (if any) is decided: the curated environment, the process group,
+   * the settle/abandon/reaper bookkeeping.
+   */
+  private async launch(
+    handle: string,
+    scratch: string,
+    command: string,
+    argv: string[],
+    opts: { cwd: string; env?: Readonly<Record<string, string>>; waitMs: number; reapable: boolean },
+  ): Promise<ExecResult> {
     const realHome = os.homedir();
     const buffer = new OutputBuffer();
     this.buffers.set(handle, buffer);
 
-    const child = spawn("/usr/bin/sandbox-exec", ["-p", profile, ...args.argv], {
-      cwd: workingDir,
+    const child = spawn(command, argv, {
+      cwd: opts.cwd,
       env: {
-        ...args.env,
+        ...opts.env,
         // Real home so tools and their configs resolve; TMPDIR stays in the
         // (writable, disposable) scratch dir; PATH includes the user bin dirs.
         // These come AFTER the caller's env deliberately: a provider supplies
@@ -609,7 +671,7 @@ export class Executor {
     // approved argv and that argv is routinely a shell: `/bin/sh -c 'a && b'`
     // does NOT exec, so one signal kills the shell and leaves the wedged
     // descendant alive.
-    if (isReapable(args)) {
+    if (opts.reapable) {
       reaper = setTimeout(() => {
         if (buffer.exitCode !== null || buffer.produced) return;
         buffer.reaped = true;
@@ -657,7 +719,7 @@ export class Executor {
       stream?.on("error", () => abandon(-1));
     }
 
-    await buffer.waitForExit(Math.max(args.waitMs, 0));
+    await buffer.waitForExit(Math.max(opts.waitMs, 0));
     return { handle, ...shape(buffer.snapshot(0)) };
   }
 

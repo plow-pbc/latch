@@ -132,4 +132,33 @@ describe.skipIf(!ON_MAC)("real sandboxed execution", () => {
     // that is a normal ECONNREFUSED — the sandbox didn't block it).
     expect(allowed.output.toString()).toMatch(/ERR:ECONNREFUSED|OK/);
   });
+
+  it("can ask LaunchServices to open an app", async () => {
+    // System Events is a faceless, launch-on-demand agent, so this opens no
+    // window. Without `(allow lsopen)` LaunchServices refuses with -54.
+    const executor = new Executor(tempDir());
+    const result = await executor.run({
+      argv: ["/usr/bin/open", "-g", "-a", "System Events"],
+      readPaths: [],
+      writePaths: [],
+      network: false,
+      appleEvents: false,
+      waitMs: 10_000,
+    });
+    expect(result.output.toString()).not.toContain("-54");
+    expect(result.exitCode).toBe(0);
+  });
+
+  it("runs an AppleScript bare, from a 0600 file in its own scratch, and keeps a handle for its output", async () => {
+    const executor = new Executor(tempDir());
+    const result = await executor.runAppleScript({ script: "return 20 + 22", waitMs: 10_000 });
+    expect(result.exitCode).toBe(0);
+    expect(result.output.toString().trim()).toBe("42");
+    const file = path.join(executor.scratchRoot, result.handle, "script.applescript");
+    expect(fs.readFileSync(file, "utf8")).toBe("return 20 + 22");
+    expect(fs.statSync(file).mode & 0o777).toBe(0o600);
+    expect(executor.output(result.handle, 0).exitCode).toBe(0);
+    // No profile was generated for it, so it writes nowhere a hold would guard.
+    expect(executor.writableRoots(result.handle)).toEqual([]);
+  });
 });

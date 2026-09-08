@@ -240,9 +240,9 @@ SHA-256 over { agent: agentId, device: deviceId, caps: normalized(capabilities).
 (`packages/protocol/src/capability.ts:58`). Goal text is excluded — wording is free. Everything else
 is not, so an unattended run needs **the same agent credential, the same device, and the same exact
 capability shape** every time. One carve-out: an `apple_events` intent — a Contacts or Messages
-write — shows only `["Deny", "Allow Once"]` and is decided fresh every time; the engine neither
-stores nor replays a rule for it (`policyEngine.ts`'s `ruleEligible`), so there is no unattended
-replay to test on that path. Three traps, all confirmed the hard way:
+write — and an `applescript` intent show only `["Deny", "Allow Once"]` and are decided fresh every
+time; the engine neither stores nor replays a rule for them (`policyEngine.ts`'s `ruleEligible`),
+so there is no unattended replay to test on that path. Three traps, all confirmed the hard way:
 
 - **`agentId` is the agent credential's session id.** A chain that mints a fresh agent credential
   per run gets a different key every run: Always Allow then persists *within* a run and never across
@@ -336,7 +336,11 @@ what the smoke prints). Expected values are the `diagnosis` fields.
 | Same, via a command | `plow_run_command` `ls ~/Downloads` with `wait_ms: 3000` | the call returns `running` **with** a `diagnosis` of `prompt_waiting`; `plow_get_output` keeps saying `running` until the dialog is answered; after 15 minutes unanswered it is `blocked` with `error` "killed by this Mac" and the same diagnosis |
 | Automation for Messages **denied** in System Settings, Messages running | `plow_run_command` `osascript -e 'tell application "Messages" to get name'` with `apple_events: true` | `macos_permission` / `confirmed` / `automation`; `plow_device_status` shows `automation: [{target: Messages, status: denied}]` |
 | Automation for Messages **never asked**, Messages running | same | `plow_device_status` says `not_asked`; the run raises the consent dialog; unanswered it reads `prompt_waiting` / `likely` / `automation` |
-| Mail compose (`make new outgoing message`) with Automation **granted** | `plow_run_command` `osascript` with `apple_events: true` | `app_refuses_sandboxed_sender` / `confirmed` / no permission: Mail refuses the command from any sandboxed sender (bare `osascript` works, an allow-everything seatbelt gets `-10004`); the Audit row says so and nothing lands on the Capabilities tab, since no switch changes it |
+| Mail compose (`make new outgoing message`) with Automation **granted** | `plow_run_command` `osascript` with `apple_events: true` | `app_refuses_sandboxed_sender` / `confirmed` / no permission, `retry: with_plow_run_applescript`: Mail refuses the command from any sandboxed sender (bare `osascript` works, an allow-everything seatbelt gets `-10004`); the Audit row says so and nothing lands on the Capabilities tab, since no switch changes it |
+| Same script | `plow_run_applescript` with `app: "Mail"` | the approval card shows "Script Mail (com.apple.mail)", the whole script in a block, the warning "controls Mail with AppleScript, outside the sandbox", and no Always Allow; approved, the draft opens in Mail and the result is `completed`, exit 0; the Audit row's timeline reads "Script started: Mail (com.apple.mail)" / "Script finished (exit 0)" |
+| Automation for Messages **denied** | `plow_run_applescript` `app: "Messages"`, `tell application "Messages" to get name` | `macos_permission` / `confirmed` / `automation`, `probes.ran_sandboxed: false`; the Capabilities tab's Automation row for Messages gains the block |
+| Any app | `plow_run_applescript` whose script contains `do shell script` (or `do script`) | refused before any approval dialog, by the fixed sentence naming `plow_run_command`; the audit log gains nothing |
+| An app the Mac does not have | `plow_run_applescript` `app: "Ghost"` | an error naming "Ghost", no dialog and no "Where is Ghost?" chooser on the screen |
 | Messages **not running** | `plow_device_status` | `automation: [{target: Messages, status: target_not_running}]` — macOS declines to say |
 | Nothing special | `plow_run_command` `sh -c 'echo hi > /Users/Shared/x'` with no `write_paths` | `outside_approved_bound` / `confirmed`; `probes.app_process_open` is `ok`, `sandbox_allows_write` is `false` — the profile, not macOS |
 | A locked file (`chflags uchg ~/Plow/locked.txt`) | `plow_write_file` to it | `immutable_file` / `confirmed`; `owner_action` names `chflags nouchg` |

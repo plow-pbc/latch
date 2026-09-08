@@ -191,8 +191,22 @@ interface ExecDiagnosisContext {
   cwd: string | undefined;
   readPaths: readonly string[];
   writePaths: readonly string[];
-  appleEvents: boolean;
+  /** The app the run was approved to send Apple events to, when it was. */
+  automationTarget: string | null;
+  /** Under a seatbelt profile (a command), or bare (a script). */
+  sandboxed: boolean;
 }
+
+/**
+ * Shell commands from inside an AppleScript — `do shell script`, and
+ * Terminal's `do script` — would run outside the sandbox, which is the one
+ * thing a script must not be a road to. Refused before anything runs, by a
+ * fixed sentence; `plow_run_command` is where a shell command belongs.
+ */
+export const SCRIPT_SHELL_ESCAPE = /\bdo\s+(?:shell\s+)?script\b/i;
+export const SCRIPT_SHELL_ESCAPE_REFUSAL =
+  "Latch does not run shell commands from an AppleScript (`do shell script`, Terminal's `do script`): " +
+  "run them with plow_run_command, inside the sandbox, and keep the script to the app it controls.";
 
 /**
  * One shape for a run, whether it is answering the call that started it or a
@@ -590,6 +604,8 @@ export class DeviceAgent {
     }
     const exec = intent.capabilities.find((c) => c.kind === "process.exec");
     if (exec) return this.executeCommand(intent, exec, payload);
+    const script = intent.capabilities.find((c) => c.kind === "applescript");
+    if (script) return this.executeAppleScript(intent, script, payload);
     const write = intent.capabilities.find((c) => c.kind === "fs.write");
     if (write) return this.executeWrite(intent, write, payload);
     const read = intent.capabilities.find((c) => c.kind === "fs.read");
@@ -862,11 +878,74 @@ export class DeviceAgent {
         appleEvents,
         waitMs,
       });
-      return this.finishRun(intent.intentId, result, { argv, cwd: exec.cwd, readPaths, writePaths, appleEvents });
+      return this.finishRun(intent.intentId, result, {
+        argv,
+        cwd: exec.cwd,
+        readPaths,
+        writePaths,
+        automationTarget: appleEvents ? appleEventTarget(argv) : null,
+        sandboxed: true,
+      });
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
       return this.execError(intent.intentId, message);
     }
+  }
+
+  /**
+   * Script an app with osascript — outside the sandbox, which is why this is
+   * its own capability kind and never reachable from a process.exec intent
+   * (Executor.runAppleScript). Audited like a command: the script itself is
+   * in the capability the approver saw, so the start event carries only the
+   * target. A failure is diagnosed like a command's, with the app the agent
+   * named as the automation target, so a denied or never-asked Automation
+   * grant lands on the Capabilities tab's row for that app the same way —
+   * and a refusal that is the app's own is said to be no gate.
+   */
+  private async executeAppleScript(
+    intent: Intent,
+    cap: { app?: string; bundleId?: string; script?: string },
+    payload: JSONValue,
+  ): Promise<JSONValue> {
+    const script = cap.script ?? "";
+    if (script === "") return this.scriptError(intent.intentId, "missing script");
+    // The tool refuses this too, so a refusal never reaches an approval
+    // dialog — but the device is the chokepoint, and an intent can arrive
+    // from a replayed or hand-built request that never passed through it.
+    if (SCRIPT_SHELL_ESCAPE.test(script)) return this.scriptError(intent.intentId, SCRIPT_SHELL_ESCAPE_REFUSAL);
+    const waitMs = jv(payload).get("wait_ms").int ?? 10000;
+    this.audit.record("applescript_start", {
+      intentId: intent.intentId,
+      app: cap.app ?? "",
+      bundle_id: cap.bundleId ?? "",
+    });
+    try {
+      const result = await this.executor.runAppleScript({ script, waitMs });
+      return this.finishRun(
+        intent.intentId,
+        result,
+        {
+          // The script rides as an argv word, the way `osascript -e` takes
+          // it: a path the script names is a candidate for the probes.
+          argv: ["/usr/bin/osascript", "-e", script],
+          cwd: undefined,
+          readPaths: [],
+          writePaths: [],
+          automationTarget: cap.app ?? null,
+          sandboxed: false,
+        },
+        "applescript_end",
+      );
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      return this.scriptError(intent.intentId, message);
+    }
+  }
+
+  /** `execError` for a script: the refusal is recorded under its own event. */
+  private scriptError(intentId: string, error: string): JSONValue {
+    this.audit.record("applescript_error", { intentId, error });
+    return { status: "error", error };
   }
 
   /** Record an operation that errored before (or instead of) a run, and
@@ -891,10 +970,11 @@ export class DeviceAgent {
     intentId: string,
     result: ExecResult,
     diag: ExecDiagnosisContext | null = null,
+    endEvent: "exec_end" | "applescript_end" = "exec_end",
   ): Promise<JSONValue> {
     let diagnosed: DiagnosedRun | null = null;
     if (!result.running) {
-      this.audit.record("exec_end", {
+      this.audit.record(endEvent, {
         intentId,
         exit_code: result.exitCode ?? -1,
         ...(result.reaped ? { reaped: true } : {}),
@@ -908,7 +988,7 @@ export class DeviceAgent {
         // Fires from the child's exit event, possibly mid-shutdown; a failed
         // append must not become an uncaught exception in the event loop.
         try {
-          this.audit.record("exec_end", {
+          this.audit.record(endEvent, {
             intentId,
             handle: result.handle,
             exit_code: exitCode,
@@ -920,7 +1000,7 @@ export class DeviceAgent {
         } catch (error) {
           // Nowhere durable left to write it — the durable sink is what
           // failed — but the loss should at least be visible in a terminal.
-          console.error(`[audit] exec_end lost for handle ${result.handle}:`, error);
+          console.error(`[audit] ${endEvent} lost for handle ${result.handle}:`, error);
         }
         // The end of a run that was answered `running` is where a killed or
         // failed run gets its diagnosis; the next poll carries it, and a poll
@@ -1042,10 +1122,11 @@ export class DeviceAgent {
           fn,
         ),
         stderr: output,
-        ranSandboxed: true,
-        sandbox: (p) => this.executor.grants(result.handle, p),
+        ranSandboxed: diag.sandboxed,
+        // A script ran under no profile; there is nothing to ask it.
+        sandbox: diag.sandboxed ? (p) => this.executor.grants(result.handle, p) : null,
         hung: result.reaped,
-        automationTarget: diag.appleEvents ? appleEventTarget(diag.argv) : null,
+        automationTarget: diag.automationTarget,
       },
       this.hostProbes,
       this.ownerHome,

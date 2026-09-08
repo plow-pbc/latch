@@ -236,10 +236,13 @@ const pane = (sentence) => { const m = /System Settings > [^,.]+/.exec(sentence 
   const { server, home } = scenario({ probes: scriptedProbes({ automation: { Messages: "denied" } }) });
   const script = 'tell application "Messages" to send "Saturday works" to buddy "Sam"';
   const r = await call(server, "plow_run_command", { argv: ["/bin/sh", "-c", "echo 'execution error: Not authorized to send Apple events to Messages. (-1743)' >&2; exit 1", "sh", script], cwd: home, apple_events: true, wait_ms: 5000 });
+  // The same refusal through the script tool: the script raises osascript's
+  // own -1743 text itself, so the capture sends nothing.
+  const viaScript = await call(server, "plow_run_applescript", { app: "Messages", script: 'error "Not authorized to send Apple events to Messages." number -1743', wait_ms: 5000 });
   vector("blocked-automation", {
-    note: "Apple events to Messages refused by macOS (confirmed). One call, the owner sentence verbatim.",
+    note: "Apple events to Messages refused by macOS (confirmed), by either road — plow_run_applescript or osascript under plow_run_command. One call, the owner sentence verbatim.",
     prompt: "Use the Messages app on my Mac to send Sam a text saying 'Saturday works'.",
-    captured: [["plow_run_command", r, [home]], await status(server, home)],
+    captured: [["plow_run_applescript", viaScript, [home]], ["plow_run_command", r, [home]], await status(server, home)],
     expect: { calls: { min: 1, max: 2 }, attempted: true, names: pane(r.answer.diagnosis?.owner_action), includes: r.answer.diagnosis?.owner_action ? [r.answer.diagnosis.owner_action] : [], excludes: ["Full Disk Access"] },
   });
 }
@@ -249,10 +252,11 @@ const pane = (sentence) => { const m = /System Settings > [^,.]+/.exec(sentence 
   const { server, home } = scenario({ probes: scriptedProbes({ automation: { Contacts: "granted" }, permissions: { contacts: "denied" } }) });
   const script = 'tell application "Contacts"\nrepeat with p in people\nphones of p\nend repeat\nend tell';
   const r = await call(server, "plow_run_command", { argv: ["/bin/sh", "-c", "echo '143:474: execution error: File permission error. (-54)' >&2; exit 1", "sh", script], cwd: home, apple_events: true, wait_ms: 5000 });
+  const viaScript = await call(server, "plow_run_applescript", { app: "Contacts", script: 'error "File permission error." number -54', wait_ms: 5000 });
   vector("blocked-contacts-data", {
-    note: "Contacts.app refused the script its data (-54): the Contacts permission, confirmed. One call, the owner sentence verbatim — not the Automation pane, and not a dialog that is not there.",
+    note: "Contacts.app refused the script its data (-54): the Contacts permission, confirmed, by either road. One call, the owner sentence verbatim — not the Automation pane, and not a dialog that is not there.",
     prompt: "Look up who the numbers 909-614-5688 and 650-660-3099 are in the Contacts app on my Mac.",
-    captured: [["plow_run_command", r, [home]], await status(server, home)],
+    captured: [["plow_run_applescript", viaScript, [home]], ["plow_run_command", r, [home]], await status(server, home)],
     // A reply may well say Automation is fine — it is — so only a dialog
     // that is not there is forbidden.
     expect: { calls: { min: 1, max: 2 }, attempted: true, names: ["System Settings > Privacy & Security > Contacts"], includes: r.answer.diagnosis?.owner_action ? [r.answer.diagnosis.owner_action] : [], excludes: ["dialog"] },
@@ -267,12 +271,28 @@ const pane = (sentence) => { const m = /System Settings > [^,.]+/.exec(sentence 
   // A model that meets the error may probe with something trivial, or
   // rewrite the script; any command that is not an osascript answers as a
   // clean run, and any osascript meets the same script error.
+  const viaScript = await call(server, "plow_run_applescript", { app: "Contacts", script: 'error "Can’t get phones of person 1." number -1728', wait_ms: 5000 });
   vector("run-script-error", {
-    note: "A script error of its own (-1728) on an app whose data access is granted: completed, exit 1, host_gate none. The reply fixes or reports the script; it does not send the user to System Settings.",
+    note: "A script error of its own (-1728) on an app whose data access is granted: completed, exit 1, host_gate none, by either road. The reply fixes or reports the script; it does not send the user to System Settings.",
     prompt: "Look up who the numbers 909-614-5688 and 650-660-3099 are in the Contacts app on my Mac.",
-    captured: [["plow_run_command", await run(server, home, "true"), [home]], await status(server, home)],
+    captured: [["plow_run_applescript", viaScript, [home]], ["plow_run_command", await run(server, home, "true"), [home]], await status(server, home)],
     variants: [["plow_run_command", { argv_includes: "osascript" }, r, [home]]],
     expect: { calls: { min: 1, max: 6 }, excludes: [...NO_SETTINGS, "permission"] },
+  });
+}
+// 8d. Mail refusing a sandboxed osascript (-10004): blocked with no switch to
+//     flip and 'retry: with_plow_run_applescript'. The script tool then
+//     succeeds (the capture's script addresses no app, so nothing is sent).
+{
+  const { server, home } = scenario({ probes: scriptedProbes({ automation: { Mail: "granted" } }) });
+  const script = 'tell application "Mail"\nset newMsg to make new outgoing message with properties {subject:"Lunch", visible:true}\nend tell';
+  const r = await call(server, "plow_run_command", { argv: ["/bin/sh", "-c", "echo '59:141: execution error: Mail got an error: A privilege violation occurred. (-10004)' >&2; exit 1", "sh", script], cwd: home, apple_events: true, wait_ms: 5000 });
+  const drafted = await call(server, "plow_run_applescript", { app: "Mail", script: 'return "drafted"', wait_ms: 5000 });
+  vector("blocked-mail-sandboxed", {
+    note: "Mail refuses the command from a sandboxed sender (-10004): blocked, no permission, retry with_plow_run_applescript. A reply that started with plow_run_command follows the hint to plow_run_applescript and reports the draft; one that started there just reports it. Nobody is sent to System Settings.",
+    prompt: "Draft an email in the Mail app on my Mac with the subject 'Lunch' and leave it open for me.",
+    captured: [["plow_run_applescript", drafted, [home]], ["plow_run_command", r, [home]], await status(server, home)],
+    expect: { calls: { min: 1, max: 4 }, tools: ["plow_run_applescript"], excludes: [...NO_SETTINGS, "Automation"] },
   });
 }
 // 9. A locked file, with this Mac's own probes: immutable_file, confirmed.

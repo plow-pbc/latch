@@ -151,7 +151,10 @@ from, the audit log stores, and the adversarial reviewer evaluates.
   signed is the **Grant**: the device's Ed25519 signature over canonical JSON
   (sorted keys, ISO-8601 dates), the Mac attesting to its own decision.
 - **Replay protection:** nonce (rejected if seen) + expiry + device-id check.
-- Capability `kind`s: `fs.read`, `fs.write`, `process.exec`, `network`, `tool`.
+- Capability `kind`s: `fs.read`, `fs.write`, `process.exec`, `network`, `tool`,
+  `apple_events`, `browser`, `credential`, `applescript` (an app by name + its
+  bundle id resolved on this Mac + the whole script; runs via osascript
+  outside the sandbox — §6).
 
 ## 5. Approval model
 
@@ -208,6 +211,25 @@ set:
   per-command human approval) is the enforced protection.
 - `network*` allowed only if declared and approved
 - children inherit the profile (`process-exec` allowed)
+- `lsopen` allowed: a command may ask LaunchServices to open an app or a
+  document (`open -a Mail`); the launched app is not sandboxed.
+- **AppleScript runs outside the sandbox, on purpose.** Some apps refuse a
+  command from any seatbelt-sandboxed sender (-10004; Mail's compose is the
+  verified one — the same script works bare and fails under `(allow
+  default)`), and `osascript` is Apple's binary, so no profile admits it.
+  `plow_run_applescript` is the one unsandboxed execution: its capability is
+  the app (resolved to a bundle id on this Mac, from the application
+  folders, never by asking macOS, which would put a "Where is X?" chooser on
+  the screen) and the whole script, which the approval card shows verbatim
+  and the AI reviewer is told to read as the bound. Its gates are that
+  approval, TCC's Automation grant for the responsible process (the app
+  bundle, hence the `automation.apple-events` entitlement and usage string;
+  the terminal for a from-source run), and a fixed refusal of shell commands
+  from inside a script (`do shell script`, Terminal's `do script`) at the
+  tool and again at the device. Like an `apple_events` command it is never a
+  stored rule: the same script is decided fresh every time. The script is
+  written to the run's scratch dir `0600` rather than passed as an argument,
+  so it never shows in `ps`.
 
 Known caveats, accepted for v1: `sandbox-exec` is deprecated-but-load-bearing
 (Chromium, Bazel, Anthropic's sandbox-runtime all rely on it); `mach-lookup`
@@ -292,8 +314,12 @@ So a refusal is **diagnosed, never guessed** (`packages/device-core/src/hostGate
   one, verified by hand — the same script works bare and fails under an
   allow-everything seatbelt — and every command this Mac runs is sandboxed.
   The verdict says so and names no switch, because none changes it; the
-  agent is told to reach the result another way. Lifting it would mean an
-  unsandboxed sender for Apple events, which is a design of its own.
+  agent's `retry` is `with_plow_run_applescript`, the unsandboxed sender for
+  exactly this case (§6). The same -10004 from a script that ran outside the
+  sandbox is the app's own refusal and names no gate at all. A script run's
+  failures otherwise take the same battery as a command's, with the app the
+  agent named as the automation target, so a denied or never-asked
+  Automation grant lands on the Capabilities tab's row for it either way.
 - A scripted app can refuse its DATA after the event itself was delivered:
   AppleScript's `-54` from Contacts.app or Calendar.app is that service's
   own privacy permission for the calling app, which a scripted read never
