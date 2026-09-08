@@ -2253,5 +2253,6 @@ app.whenReady().then(async () => {
   // runner until the job's own timeout hours later. A failed check has to
   // read as a failed check.
   console.error("PROBE-FAILED:", err?.stack ?? err);
+  console.error("Renderer console:", errors);
   app.exit(1);
 });
