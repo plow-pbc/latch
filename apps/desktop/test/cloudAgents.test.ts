@@ -19,12 +19,11 @@ afterEach(() => {
 
 const LINE = { uid: "lin_willow", object: "line", provider_type: "imessage", provider_key: "+15550000001" };
 
-/** `GET /v1/assistants` answers one slot per pool line, assistant or null. */
-const slots = (...assistants: Array<Record<string, unknown> | null>) =>
-  assistants.map((assistant) => ({ line: LINE, assistant }));
-
+/** `GET /v1/assistants` answers a flat array, each assistant naming its own line. */
 const wireAgent = (overrides: Record<string, unknown> = {}) => ({
   uid: "agent_123",
+  line: LINE,
+  credentials: [{ id: 7, name: "agent", scopes: ["chats:use"], connected: true, last_seen_at: null }],
   chat_uids: ["cht_home"],
   url: "https://provider.example/agent_123",
   provider: "exe:hermes",
@@ -70,20 +69,19 @@ describe("CloudAgentsClient resources", () => {
       failureReason: "Provider capacity is exhausted.",
     }],
   ])("resource parsing matrix: %s", async (_case, wire, expected) => {
-    const { fetchImpl } = recordingFetch([{ status: 200, body: slots(wire) }]);
+    const { fetchImpl } = recordingFetch([{ status: 200, body: [wire] }]);
 
     await expect(new CloudAgentsClient(new PlowApi("https://api.plow.co", fetchImpl))
       .list(CREDENTIAL)).resolves.toMatchObject([expected]);
   });
 
-  it("keeps only the cloud assistants: a free line and a self-hosted Mac are not agents", async () => {
+  it("keeps only the cloud assistants: a self-hosted Mac is not an agent", async () => {
     const { fetchImpl } = recordingFetch([{
       status: 200,
-      body: slots(
-        null,
+      body: [
         wireAgent({ uid: "assistant_mac", provider: "self_hosted", url: null, chat_uids: [] }),
         wireAgent({ uid: "agent_cloud" }),
-      ),
+      ],
     }]);
 
     await expect(new CloudAgentsClient(new PlowApi("https://api.plow.co", fetchImpl))
@@ -91,12 +89,12 @@ describe("CloudAgentsClient resources", () => {
   });
 
   it.each([
-    ["a malformed chat grant", slots(wireAgent({ chat_uids: [7] }))],
-    ["an absent chat grant", slots(Object.fromEntries(
+    ["a malformed chat grant", [wireAgent({ chat_uids: [7] })]],
+    ["an absent chat grant", [Object.fromEntries(
       Object.entries(wireAgent()).filter(([field]) => field !== "chat_uids"),
-    ))],
-    ["a slot with no assistant field", [{ line: LINE }]],
-    ["an enveloped list", { data: slots(wireAgent()) }],
+    )]],
+    ["an item that is not an assistant", [{ line: LINE }]],
+    ["an enveloped list", { data: [wireAgent()] }],
   ])("rejects %s", async (_case, body) => {
     const { fetchImpl } = recordingFetch([{ status: 200, body }]);
 

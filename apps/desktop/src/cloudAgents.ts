@@ -116,11 +116,12 @@ export class CloudAgentsClient {
   }
 
   /**
-   * The account's cloud agents, from the slot per pool line the API answers with.
+   * The account's cloud agents, from the flat list the API answers with.
    *
-   * Two halves are dropped for the same reason — neither is an agent this
-   * screen can act on. A slot with no assistant is a free line, and a
-   * `self_hosted` one is an activated Mac (`isCloudAssistant`).
+   * A `self_hosted` entry is an activated Mac, not an agent this screen can
+   * act on, so it is dropped (`isCloudAssistant`). Free lines are not in this
+   * payload — `GET /v1/lines` is where they live, and `cloudAgentState` already
+   * reads it.
    */
   async list(deviceCredential: string): Promise<CloudAgentResource[]> {
     const response = await this.api.request("GET", "/v1/assistants", {
@@ -130,10 +131,8 @@ export class CloudAgentsClient {
 
     const decoded = await decodeJson(response);
     if (!Array.isArray(decoded)) throw invalidResponse(response.status);
-    return decoded.flatMap((slot) => {
-      if (!isRecord(slot) || slot.assistant === undefined) throw invalidResponse(response.status);
-      if (slot.assistant === null) return [];
-      const agent = parseResource(slot.assistant, deviceCredential, response.status);
+    return decoded.flatMap((item) => {
+      const agent = parseResource(item, deviceCredential, response.status);
       return isCloudAssistant(agent.provider) ? [agent] : [];
     });
   }
