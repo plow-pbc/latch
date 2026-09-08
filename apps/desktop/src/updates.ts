@@ -40,10 +40,23 @@ export interface UpdateState {
   upToDate: boolean;
 }
 
+/**
+ * What electron-updater's `checkForUpdates()` resolves with when an update
+ * was found and `autoDownload` is on: the download it kicked off, as a
+ * promise nobody else observes. Its outcome is ALSO delivered through the
+ * `update-downloaded` / `error` events, which is why the promise is a
+ * liability rather than a signal: left alone, a failed download (offline
+ * mid-download, a feed that 404s the asset) is an unhandled rejection in
+ * the main process on top of the `error` event that already reported it.
+ */
+export interface UpdateCheckResultLike {
+  downloadPromise?: Promise<unknown> | null;
+}
+
 /** The slice of electron-updater's AutoUpdater this controller drives. */
 export interface UpdaterLike {
   /** Poll the feed; outcomes arrive via the events below. */
-  checkForUpdates(): Promise<unknown>;
+  checkForUpdates(): Promise<UpdateCheckResultLike | null | undefined>;
   /** Quit and apply the downloaded update now. */
   quitAndInstall(): void;
   on(event: "update-available", listener: (info: { version: string }) => void): void;
@@ -103,7 +116,7 @@ export class SimulatedUpdater implements UpdaterLike {
     this.listeners.set(event, [...(this.listeners.get(event) ?? []), listener]);
   }
 
-  async checkForUpdates(): Promise<unknown> {
+  async checkForUpdates(): Promise<null> {
     const { scenario, version } = this.opts;
     setTimeout(() => {
       if (scenario === "error") this.emit("error", new Error("simulated check failure (DOMO_SIMULATE_UPDATE=error)"));
@@ -234,9 +247,17 @@ export class UpdateController {
 
   private check(): void {
     this.transition({ phase: "checking", error: null });
-    // Outcomes arrive via the events wired in the constructor; the rejection
-    // duplicates the "error" event, so it is only swallowed, never reported.
-    this.opts.updater.checkForUpdates().catch(() => {});
+    // Outcomes arrive via the events wired in the constructor. Both
+    // rejections here duplicate the "error" event, so they are only
+    // swallowed, never reported: the check's own, and the auto-download's,
+    // which electron-updater hands back inside the result and otherwise
+    // rejects into the void (an unhandled rejection in the main process).
+    // Returning the download promise adopts it into this chain, so the one
+    // catch covers both.
+    this.opts.updater
+      .checkForUpdates()
+      .then((result) => result?.downloadPromise)
+      .catch(() => {});
   }
 
   private transition(patch: Partial<UpdateState>): void {

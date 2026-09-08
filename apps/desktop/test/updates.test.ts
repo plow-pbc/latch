@@ -13,9 +13,15 @@ class FakeUpdater implements UpdaterLike {
   installed = 0;
   private listeners = new Map<string, ((payload?: unknown) => void)[]>();
 
-  checkForUpdates(): Promise<unknown> {
+  /** Set to make the next check resolve with an auto-download in flight, the
+   * way electron-updater does when it found an update. */
+  nextDownload: Promise<unknown> | null = null;
+
+  checkForUpdates(): Promise<{ downloadPromise: Promise<unknown> | null } | null> {
     this.checks += 1;
-    return Promise.resolve(null);
+    const downloadPromise = this.nextDownload;
+    this.nextDownload = null;
+    return Promise.resolve(downloadPromise ? { downloadPromise } : null);
   }
   quitAndInstall(): void {
     this.installed += 1;
@@ -178,6 +184,34 @@ describe("state machine", () => {
     controller.checkNow();
     updater.emit("update-not-available");
     expect(changes.map((c) => c.phase)).toEqual(["checking", "idle"]);
+  });
+
+  it("a failed auto-download is observed, not left as an unhandled rejection", async () => {
+    // electron-updater resolves checkForUpdates() with the auto-download's
+    // promise inside the result and ALSO emits "error" when it fails; only
+    // the event is the signal, so the promise must be swallowed, not ignored.
+    const unhandled: unknown[] = [];
+    const onUnhandled = (reason: unknown) => unhandled.push(reason);
+    process.on("unhandledRejection", onUnhandled);
+    try {
+      const { updater, controller } = make();
+      let failDownload!: (e: Error) => void;
+      updater.nextDownload = new Promise((_, reject) => (failDownload = reject));
+      controller.checkNow();
+      updater.emit("update-available", { version: "0.2.0" });
+      // Let checkForUpdates() resolve and the controller attach its handler.
+      await Promise.resolve();
+      await Promise.resolve();
+      const err = new Error("net::ERR_INTERNET_DISCONNECTED");
+      failDownload(err);
+      updater.emit("error", err);
+      // Node reports unhandled rejections after the microtask queue drains.
+      await new Promise((r) => setImmediate(r));
+      expect(unhandled).toEqual([]);
+      expect(controller.state()).toMatchObject({ phase: "error", error: err.message });
+    } finally {
+      process.off("unhandledRejection", onUnhandled);
+    }
   });
 });
 
