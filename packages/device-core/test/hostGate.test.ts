@@ -139,6 +139,19 @@ describe("reading an error", () => {
     expect(candidatePaths([out])).toEqual(["/Users/x/Library/Messages/chat.db"]);
   });
 
+  it("reads -10004 as the app refusing a sandboxed sender, and names it so", () => {
+    expect(stderrHint("59:141: execution error: Mail got an error: A privilege violation occurred. (-10004)")).toBe("apple_event_privilege_violation");
+    const base = { automation_target: "Mail", stderr_hint: "apple_event_privilege_violation" as const };
+    const granted = diagnose(facts({ ...base, automation_status: "granted" }));
+    expect(granted.cause).toBe("app_refuses_sandboxed_sender");
+    expect(granted.confidence).toBe("confirmed");
+    expect(granted.permission).toBeNull();
+    expect(granted.retry).toBe("with_different_approach");
+    expect(granted.owner_action).toMatch(/^Mail refuses this command from any sandboxed process/);
+    expect(granted.owner_action).toMatch(/no permission in System Settings changes that/);
+    expect(diagnose(facts({ ...base, automation_status: "not_asked" })).confidence).toBe("likely");
+  });
+
   it("reads AppleScript's -54 as a scripted app refusing its data", () => {
     expect(stderrHint("143:474: execution error: File permission error. (-54)")).toBe("scripted_data_not_permitted");
     expect(errnoFromHint("scripted_data_not_permitted")).toBeNull();

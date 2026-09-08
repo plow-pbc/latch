@@ -26,6 +26,7 @@ export type StderrHint =
   | "apple_event_not_permitted"
   | "scripted_data_not_permitted"
   | "authorization_denied"
+  | "apple_event_privilege_violation"
   | "read_only_filesystem";
 
 export function stderrHint(output: string): StderrHint | null {
@@ -41,6 +42,11 @@ export function stderrHint(output: string): StderrHint | null {
   if (/-1743\b|errAEEventNotPermitted|not authori[sz]ed to send apple events/i.test(output)) {
     return "apple_event_not_permitted";
   }
+  // errAEPrivilegeError (-10004): the event was delivered and the app
+  // refused the COMMAND because the sender is sandboxed — Mail's "make new
+  // outgoing message" is the known one. Not consent, which was granted;
+  // nothing in System Settings changes it.
+  if (/-10004\b|errAEPrivilegeError|privilege violation/i.test(output)) return "apple_event_privilege_violation";
   // AppleScript's permErr (-54): an app the script drives — Contacts,
   // Calendar — refused it the DATA, which is that service's own privacy
   // permission for the calling app, not Automation consent (the event

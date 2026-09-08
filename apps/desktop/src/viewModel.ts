@@ -33,6 +33,7 @@ function hostGateLabel(ev: ReturnType<typeof jv>): string {
     case "posix_permissions": return "file permissions";
     case "sip_protected": return "protected by macOS";
     case "immutable_file": return "locked file";
+    case "app_refuses_sandboxed_sender": return "refused by the app for a sandboxed sender";
     default: return "blocked by this Mac";
   }
 }
@@ -51,6 +52,7 @@ function hostGateShort(ev: ReturnType<typeof jv>): string {
     case "posix_permissions": return "file permissions";
     case "sip_protected": return "protected by macOS";
     case "immutable_file": return "locked file";
+    case "app_refuses_sandboxed_sender": return "app refuses sandboxed senders";
     default: return "by this Mac";
   }
 }

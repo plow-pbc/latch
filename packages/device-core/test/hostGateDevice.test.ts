@@ -1006,6 +1006,32 @@ describe.skipIf(!ON_MAC)("a command this Mac refused", () => {
     expect(executor.mutableRoots()).not.toContain(w);
   });
 
+  it("Mail's -10004 to a sandboxed sender is blocked with no switch to flip — the packaged build's own case", async () => {
+    // Consent granted, the event delivered, and Mail refusing to compose for
+    // a sandboxed sender: verified by hand with the same script bare (works)
+    // and under an allow-everything seatbelt (-10004). The owner must not be
+    // sent to System Settings for it.
+    const home = tempDir();
+    const probes = scriptedProbes({ automation: { Mail: "granted" } });
+    const d = device(home, probes);
+    const script = 'tell application "Mail"\nset newMsg to make new outgoing message with properties {subject:"just a test", visible:true}\nend tell';
+    const response = jv(
+      await d.handleIntent(
+        intentFor(d, "run", [
+          { kind: "process.exec", argv: ["/bin/sh", "-c", "echo '59:141: execution error: Mail got an error: A privilege violation occurred. (-10004)' >&2; exit 1", "sh", script], cwd: home },
+          { kind: "apple_events", allowed: true },
+        ]),
+        { wait_ms: 5_000 },
+      ),
+    );
+    expect(response.get("status").str).toBe("blocked");
+    expect(response.get("diagnosis").get("cause").str).toBe("app_refuses_sandboxed_sender");
+    expect(response.get("diagnosis").get("confidence").str).toBe("confirmed");
+    expect(response.get("diagnosis").get("permission").isNull).toBe(true);
+    expect(response.get("diagnosis").get("owner_action").str).toMatch(/Mail refuses this command from any sandboxed process/);
+    expect(lastBlocked(d).get("cause").str).toBe("app_refuses_sandboxed_sender");
+  });
+
   it("a scripted Contacts read refused with -54 is the Contacts permission, and a plain failure says it is no gate", async () => {
     // What a packaged build saw for real: Automation for Contacts granted,
     // the first script answered, the second — walking every person's

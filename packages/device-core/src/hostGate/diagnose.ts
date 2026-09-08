@@ -68,6 +68,11 @@ export type BlockedCause =
   | "sip_protected"
   /** The file carries the locked (`uchg`/`schg`) flag. */
   | "immutable_file"
+  /** The target app delivered the Apple event and refused the command
+   *  because the sender is sandboxed (errAEPrivilegeError, -10004) — and
+   *  every command this Mac runs is. Mail's compose is the known one.
+   *  No switch grants it. */
+  | "app_refuses_sandboxed_sender"
   | "not_found"
   | "unknown";
 
@@ -79,6 +84,9 @@ export type Retry =
   | "after_owner_answers_prompt"
   | "with_declared_path"
   | "with_different_path"
+  /** Nothing to grant and no path to change: the command itself is the
+   *  problem; another way to the same end is the only move. */
+  | "with_different_approach"
   | "unknown";
 
 /** Every probe's answer, flat and JSON-safe, for one failure. */
@@ -475,6 +483,18 @@ export function diagnose(f: HostFacts): Diagnosis {
       evidence.push(`the run never returned and macOS has never asked the owner about ${target}`);
       return verdict("prompt_waiting", "confirmed", "automation");
     }
+    // The event was delivered and the app refused the COMMAND for coming
+    // from a sandboxed sender. Confirmed once consent is known granted —
+    // consent was not the reason — and no switch anywhere changes it: the
+    // owner is told what will not work, not sent to a pane.
+    if (f.stderr_hint === "apple_event_privilege_violation") {
+      evidence.push(`${target} answered the event with a privilege violation (-10004): it refuses this command from a sandboxed sender, and every command this Mac runs is sandboxed`);
+      if (f.automation_status === "granted") {
+        evidence.push(`Automation consent for ${target} is granted, so consent is not the reason`);
+        return verdict("app_refuses_sandboxed_sender", "confirmed", null);
+      }
+      return verdict("app_refuses_sandboxed_sender", "likely", null);
+    }
     // The event was delivered and the app refused the DATA: that is the
     // service's own privacy permission for this app — Contacts for
     // Contacts.app — which macOS does not prompt for on a scripted read.
@@ -651,6 +671,7 @@ function retryFor(cause: BlockedCause): Retry {
     case "sip_protected":
     case "immutable_file":
     case "not_found": return "with_different_path";
+    case "app_refuses_sandboxed_sender": return "with_different_approach";
     default: return "unknown";
   }
 }
@@ -702,6 +723,10 @@ export function ownerAction(
       return `System Integrity Protection seals this path on every Mac; nothing can be granted. Use a location under the owner's home instead.`;
     case "immutable_file":
       return `The file is locked (the macOS "Locked" flag). The owner can unlock it in Finder (Get Info > Locked) or with chflags nouchg.`;
+    case "app_refuses_sandboxed_sender": {
+      const target = f.automation_target ?? "That application";
+      return `${target} refuses this command from any sandboxed process, and every command ${app} runs is sandboxed; no permission in System Settings changes that. Reach the same result another way — a command ${target} allows to scripts, or a different application.`;
+    }
     default:
       return null;
   }

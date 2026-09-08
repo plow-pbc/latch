@@ -286,6 +286,14 @@ So a refusal is **diagnosed, never guessed** (`packages/device-core/src/hostGate
   clearing. A block that names no switch (a locked file, a SIP root, POSIX
   permissions) has no row on the Capabilities tab, so its tray item and
   notification land on the Audit tab's Blocked view instead.
+- An app can refuse the COMMAND for coming from a sandboxed sender after
+  the event was delivered and consent was granted: AppleScript's `-10004`,
+  a privilege violation. Mail's `make new outgoing message` is the known
+  one, verified by hand — the same script works bare and fails under an
+  allow-everything seatbelt — and every command this Mac runs is sandboxed.
+  The verdict says so and names no switch, because none changes it; the
+  agent is told to reach the result another way. Lifting it would mean an
+  unsandboxed sender for Apple events, which is a design of its own.
 - A scripted app can refuse its DATA after the event itself was delivered:
   AppleScript's `-54` from Contacts.app or Calendar.app is that service's
   own privacy permission for the calling app, which a scripted read never

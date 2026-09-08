@@ -488,6 +488,11 @@ describe("auditActivities (grouping)", () => {
     ])[0]!;
     expect(contacts.status).toBe("Blocked · Contacts");
     expect(contacts.permission).toBe("Contacts");
+    const mail = auditActivities([
+      { event: "host_permission_blocked", handle: "H5", path: null, cause: "app_refuses_sandboxed_sender", confidence: "confirmed", permission: null, owner_action: "Mail refuses this command from any sandboxed process.", ts: "2026-08-18T12:00:02Z" },
+    ])[0]!;
+    expect(mail.status).toBe("Blocked · app refuses sandboxed senders");
+    expect(mail.timeline[0]!.text).toMatch(/refused by the app for a sandboxed sender — Mail refuses/);
     // The block's own time, for the Capabilities tab's "Show in Audit" cutoff:
     // the request began before a dismissal could, the refusal after.
     expect(run.blockedAt).toBe("2026-08-18T12:00:03Z");
