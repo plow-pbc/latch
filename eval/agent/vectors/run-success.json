@@ -18,7 +18,31 @@
         },
         {
           "status": "unknown",
+          "target": "Mail"
+        },
+        {
+          "status": "unknown",
+          "target": "Calendar"
+        },
+        {
+          "status": "unknown",
           "target": "Contacts"
+        },
+        {
+          "status": "unknown",
+          "target": "Notes"
+        },
+        {
+          "status": "unknown",
+          "target": "Reminders"
+        },
+        {
+          "status": "unknown",
+          "target": "Finder"
+        },
+        {
+          "status": "unknown",
+          "target": "Safari"
         }
       ],
       "automation_queryable": false,

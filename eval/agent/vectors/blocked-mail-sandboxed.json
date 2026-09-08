@@ -67,11 +67,35 @@
           "target": "Messages"
         },
         {
+          "status": "granted",
+          "target": "Mail"
+        },
+        {
+          "status": "unknown",
+          "target": "Calendar"
+        },
+        {
           "status": "unknown",
           "target": "Contacts"
+        },
+        {
+          "status": "unknown",
+          "target": "Notes"
+        },
+        {
+          "status": "unknown",
+          "target": "Reminders"
+        },
+        {
+          "status": "unknown",
+          "target": "Finder"
+        },
+        {
+          "status": "unknown",
+          "target": "Safari"
         }
       ],
-      "automation_queryable": false,
+      "automation_queryable": true,
       "checked_at": "2026-09-04T23:17:00Z",
       "child_attribution": {
         "detail": null,

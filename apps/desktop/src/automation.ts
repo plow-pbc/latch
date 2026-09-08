@@ -23,30 +23,14 @@
  * classification is unit-testable without ever touching macOS.
  */
 import { execFile } from "node:child_process";
-import type { AutomationStatus } from "@domo/device-core";
+import { AUTOMATION_APPS, type AutomationStatus } from "@domo/device-core";
 
-export interface AutomationApp {
-  name: string;
-  bundleId: string;
-}
-
-/** The apps the tab offers, the ones agents are most often asked to drive. */
-export const AUTOMATION_APPS: readonly AutomationApp[] = Object.freeze([
-  { name: "Messages", bundleId: "com.apple.MobileSMS" },
-  { name: "Mail", bundleId: "com.apple.mail" },
-  { name: "Calendar", bundleId: "com.apple.iCal" },
-  { name: "Contacts", bundleId: "com.apple.AddressBook" },
-  { name: "Notes", bundleId: "com.apple.Notes" },
-  { name: "Reminders", bundleId: "com.apple.reminders" },
-  { name: "Finder", bundleId: "com.apple.finder" },
-  { name: "Safari", bundleId: "com.apple.Safari" },
-]);
-
-/** The offered app a name or bundle id refers to, case-insensitively. */
-export function automationApp(nameOrId: string): AutomationApp | null {
-  const wanted = nameOrId.trim().toLowerCase();
-  return AUTOMATION_APPS.find((a) => a.name.toLowerCase() === wanted || a.bundleId.toLowerCase() === wanted) ?? null;
-}
+// The table itself lives with the inventory (hostGate/inventory.ts), so the
+// rows this tab shows and the targets plow_device_status reports are one
+// list; re-exported here for the tab's own callers.
+export { AUTOMATION_APPS };
+export { automationApp } from "@domo/device-core";
+export type { AutomationApp } from "@domo/device-core";
 
 export interface ProbeOutcome {
   exitCode: number;

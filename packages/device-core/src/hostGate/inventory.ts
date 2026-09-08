@@ -17,14 +17,37 @@ import { isoNow } from "@domo/protocol";
 import { fullDiskProbePaths, probeFullDiskAccessDetail, FullDiskProbeResult } from "./fullDiskAccess.js";
 import { AutomationStatus, HostProbes, PermissionStatus, QueryablePermission } from "./probes.js";
 
+export interface AutomationApp {
+  name: string;
+  bundleId: string;
+}
+
 /**
- * The apps this Mac's built-in skills send Apple events to. Named here, not
- * discovered, because the skills are what need them: the iMessage skill
- * sends through Messages.app and the Contacts skill edits through
- * Contacts.app. Adding a skill that drives another app means adding its
- * name here, so the inventory can say up front whether it is allowed.
+ * The apps agents are most often asked to drive — through the built-in
+ * skills (Messages, Contacts) and through `plow_run_applescript`. ONE table:
+ * the standing inventory `plow_device_status` answers, and the Capabilities
+ * tab's Automation rows, are the same list, so what an agent is told after
+ * a block is what the owner sees. Adding an app means adding it here.
  */
-export const AUTOMATION_TARGETS: readonly string[] = ["Messages", "Contacts"];
+export const AUTOMATION_APPS: readonly AutomationApp[] = Object.freeze([
+  { name: "Messages", bundleId: "com.apple.MobileSMS" },
+  { name: "Mail", bundleId: "com.apple.mail" },
+  { name: "Calendar", bundleId: "com.apple.iCal" },
+  { name: "Contacts", bundleId: "com.apple.AddressBook" },
+  { name: "Notes", bundleId: "com.apple.Notes" },
+  { name: "Reminders", bundleId: "com.apple.reminders" },
+  { name: "Finder", bundleId: "com.apple.finder" },
+  { name: "Safari", bundleId: "com.apple.Safari" },
+]);
+
+/** The offered app a name or bundle id refers to, case-insensitively. */
+export function automationApp(nameOrId: string): AutomationApp | null {
+  const wanted = nameOrId.trim().toLowerCase();
+  return AUTOMATION_APPS.find((a) => a.name.toLowerCase() === wanted || a.bundleId.toLowerCase() === wanted) ?? null;
+}
+
+/** The inventory's Automation targets, by the name a script addresses them. */
+export const AUTOMATION_TARGETS: readonly string[] = AUTOMATION_APPS.map((a) => a.name);
 
 /**
  * The services with a query API of their own that this Mac's tools can need:

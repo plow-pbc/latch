@@ -261,6 +261,10 @@ export interface ExecResult {
   exitCode: number | null;
   output: Buffer;
   outputLength: number;
+  /** Just what the command wrote to stderr, whole — the diagnosis reads
+   *  this and never `output`, where a program's own words could pass for
+   *  this Mac's refusal. */
+  stderr: Buffer;
   /** True when this Mac killed the run rather than the command ending. */
   reaped: boolean;
 }
@@ -303,6 +307,7 @@ class OutputBuffer {
 
   snapshot(since: number): {
     output: Buffer;
+    stderr: Buffer;
     total: number;
     running: boolean;
     exitCode: number | null;
@@ -312,6 +317,7 @@ class OutputBuffer {
     const start = Math.min(Math.max(since, 0), all.length);
     return {
       output: all.subarray(start),
+      stderr: Buffer.concat(this.chunks.filter((c) => !c.stdout).map((c) => c.buf)),
       total: all.length,
       running: this.exitCode === null,
       exitCode: this.exitCode,
@@ -348,6 +354,7 @@ function shape(snap: ReturnType<OutputBuffer["snapshot"]>): Omit<ExecResult, "ha
     exitCode: snap.exitCode,
     output: snap.output,
     outputLength: snap.total,
+    stderr: snap.stderr,
     reaped: snap.reaped,
   };
 }

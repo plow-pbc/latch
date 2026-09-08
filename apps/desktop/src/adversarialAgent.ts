@@ -115,8 +115,10 @@ app (read mail, send it, delete events, move files in Finder), and nothing but i
 own text bounds it — the named app is a label, not a fence, and a script may \
 address other apps too. Read the whole script. Allow one whose every statement \
 serves the errand against the named app; deny one that sends, deletes or forwards \
-without the errand calling for it, addresses apps the errand does not mention, or \
-is more capable than the errand needs.
+without the errand calling for it, addresses apps the errand does not mention, runs \
+a shell command or evaluates text as a script however it is spelled or assembled \
+(do shell script, run script, a string built at run time), or is more capable than \
+the errand needs.
 
 The sandbox baseline — broad home-directory reads and a scratch directory — \
 exists so programs can start. It is NEVER a reason to allow an operation.

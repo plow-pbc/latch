@@ -9,7 +9,9 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import {
+  AUTOMATION_APPS,
   AUTOMATION_TARGETS,
+  automationApp,
   CONSENT_FOLDERS,
   DeviceAgent,
   HeadlessPolicy,
@@ -65,10 +67,16 @@ describe("hostInventory", () => {
       { path: path.join(dir, "absent.db"), outcome: "ENOENT" },
       { path: chat, outcome: "ok" },
     ]);
-    expect(inv.automation).toEqual([
-      { target: "Messages", status: "granted" },
-      { target: "Contacts", status: "not_asked" },
-    ]);
+    // Every app on the table, in its order; the two the probes scripted
+    // answer, the rest read as unknown to the scripted seam.
+    expect(inv.automation.map((a) => a.target)).toEqual(AUTOMATION_TARGETS);
+    expect(inv.automation).toEqual(
+      expect.arrayContaining([
+        { target: "Messages", status: "granted" },
+        { target: "Contacts", status: "not_asked" },
+        { target: "Mail", status: "unknown" },
+      ]),
+    );
     expect(inv.automation_queryable).toBe(true);
     expect(inv.permissions).toEqual([
       { permission: "accessibility", status: "denied" },
@@ -83,7 +91,11 @@ describe("hostInventory", () => {
   });
 
   it("asks about the targets the built-in skills drive", () => {
-    expect(AUTOMATION_TARGETS).toEqual(["Messages", "Contacts"]);
+    // One table with the Capabilities tab's Automation rows, so what the
+    // agent is told after a block is what the owner sees.
+    expect(AUTOMATION_TARGETS).toEqual(AUTOMATION_APPS.map((a) => a.name));
+    expect(AUTOMATION_TARGETS).toContain("Mail");
+    expect(automationApp("mail")?.bundleId).toBe("com.apple.mail");
   });
 
   it("without Full Disk Access, attribution is not applicable and nothing is read through a child", async () => {

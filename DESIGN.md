@@ -224,12 +224,18 @@ set:
   and the AI reviewer is told to read as the bound. Its gates are that
   approval, TCC's Automation grant for the responsible process (the app
   bundle, hence the `automation.apple-events` entitlement and usage string;
-  the terminal for a from-source run), and a fixed refusal of shell commands
-  from inside a script (`do shell script`, Terminal's `do script`) at the
-  tool and again at the device. Like an `apple_events` command it is never a
-  stored rule: the same script is decided fresh every time. The script is
-  written to the run's scratch dir `0600` rather than passed as an argument,
-  so it never shows in `ps`.
+  the terminal for a from-source run), and a fixed refusal of a script's
+  roads to a shell (`do shell script`, `run script` and its kin, Terminal's
+  `do script`, scripting Terminal, iTerm, Script Editor or Automator) at the
+  tool and again at the device. That refusal is a tripwire, not the
+  boundary: AppleScript is dynamic, and a source-level check cannot be sound
+  against a string assembled at run time. The boundary is the approval —
+  the owner reads the whole script, and the AI reviewer is told to deny a
+  shell however it is spelled — which is the same boundary every other
+  unsandboxed thing on this Mac has, and why the tool was accepted with it.
+  Like an `apple_events` command it is never a stored rule: the same script
+  is decided fresh every time. The script is written to the run's scratch
+  dir `0600` rather than passed as an argument, so it never shows in `ps`.
 
 Known caveats, accepted for v1: `sandbox-exec` is deprecated-but-load-bearing
 (Chromium, Bazel, Anthropic's sandbox-runtime all rely on it); `mach-lookup`
@@ -305,7 +311,10 @@ So a refusal is **diagnosed, never guessed** (`packages/device-core/src/hostGate
   order it was written — a clearing removes the verdict, a later block
   replaces it — so the agent's answer and the owner's views never disagree
   about how a run ended, and a "Needs …" tray item comes down with the
-  clearing. A block that names no switch (a locked file, a SIP root, POSIX
+  clearing. Output resuming clears it the same way: a run that has written
+  something since is parked no longer, and a poll never reports a dialog
+  beside the output that proves it gone. The battery reads a run's stderr,
+  never its merged output: a program's stdout can carry any phrase at all. A block that names no switch (a locked file, a SIP root, POSIX
   permissions) has no row on the Capabilities tab, so its tray item and
   notification land on the Audit tab's Blocked view instead.
 - An app can refuse the COMMAND for coming from a sandboxed sender after

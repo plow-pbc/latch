@@ -37,6 +37,7 @@ import {
   vendoredProvider,
   resolveAppBundleId,
   SCRIPT_SHELL_ESCAPE,
+  SCRIPT_SHELL_ESCAPE_APPS,
   SCRIPT_SHELL_ESCAPE_REFUSAL,
 } from "@domo/device-core";
 import { BlockedError, DeferredResults, DeniedError, DeviceError, Progress } from "./deferred.js";
@@ -240,7 +241,9 @@ export const BLOCKED_COPY =
   "A result with status 'blocked' means the user approved it and their Mac itself then refused — a " +
   "macOS privacy permission the app lacks, or a permission dialog waiting on the Mac's screen; not " +
   "the user saying no. Read its 'diagnosis': when 'confidence' is 'confirmed', tell the user the " +
-  "'owner_action' sentence word for word and stop; otherwise share the 'evidence' and let them decide.";
+  "'owner_action' sentence word for word and stop; otherwise share the 'evidence' and let them decide. " +
+  "One exception, and the diagnosis names it: when its 'retry' names a tool, that tool is the one " +
+  "move left, and the only one.";
 
 /**
  * Appended to every skill body, before the contribution footer: a skill
@@ -380,8 +383,10 @@ export const TOOLS: ToolSpec[] = [
       "click lets it finish. A 'completed' result with a non-zero exit and 'host_gate': 'none' failed " +
       "on its own terms: this Mac refused nothing and no macOS permission is missing, whatever the " +
       "program's own error text says — do not send the user to System Settings for it. A 'blocked' " +
-      "result whose 'retry' is 'with_plow_run_applescript' is an app refusing the sandboxed sender: " +
-      "run the same script through plow_run_applescript, which runs outside the sandbox.",
+      "result whose diagnosis's 'retry' is 'with_plow_run_applescript' is an app refusing the sandboxed " +
+      "sender: run the script through plow_run_applescript, which runs outside the sandbox — but only " +
+      "the statements that did not land. Everything the script did before the refusal already " +
+      "happened, and a whole-script re-run does it twice.",
     inputSchema: {
       type: "object",
       required: ["argv"],
@@ -564,8 +569,9 @@ export const TOOLS: ToolSpec[] = [
       "whole script. Name the app the script addresses in 'app', by the name it has in " +
       "`tell application \"…\"`; it is resolved to an installed app on this Mac before anyone is " +
       "asked, and an app the Mac does not have is an error. Keep the script to that app: shell " +
-      "commands from a script (`do shell script`, Terminal's `do script`) are refused — run them " +
-      "with plow_run_command. The first time an app is scripted macOS may ask this Mac's owner " +
+      "commands and scripts-within-scripts (`do shell script`, `run script`, Terminal's `do script`, " +
+      "scripting Terminal or Script Editor) are refused — run commands with plow_run_command. " +
+      "The first time an app is scripted macOS may ask this Mac's owner " +
       "to allow it. Output is the script's result plus anything it logs; a script error comes " +
       "back as osascript's message with a non-zero exit_code and 'host_gate': 'none' — the script's " +
       "own problem, not a permission. A long script returns a job handle for plow_get_output, and " +
@@ -614,6 +620,7 @@ export const TOOLS: ToolSpec[] = [
         if (error instanceof AppNotFoundError) throw new ToolError(error.message);
         throw error;
       }
+      if (SCRIPT_SHELL_ESCAPE_APPS.has(bundleId)) throw new ToolError(SCRIPT_SHELL_ESCAPE_REFUSAL);
       const capabilities: Capability[] = [{ kind: "applescript", app, bundleId, script }];
       const waitMs = Math.min(a.get("wait_ms").int ?? 10_000, ctx.commandWaitCapMs);
       // The job is this agent's, on a blocked run too (see plow_run_command).

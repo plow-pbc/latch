@@ -526,6 +526,49 @@ describe.skipIf(!ON_MAC)("a command this Mac refused", () => {
     expect(events(d)).toContain("host_permission_cleared");
   });
 
+  it.skipIf(!ON_MAC)("a parked run that starts producing output is parked no longer, before it even ends", async () => {
+    // The owner answered the dialog; the command is reading on but has not
+    // exited. A poll must not report a dialog beside the output that proves
+    // it gone — and the owner's views must stop counting the block now, not
+    // at whatever hour the command finishes.
+    const home = tempDir();
+    const downloads = path.join(home, "Downloads");
+    fs.mkdirSync(downloads);
+    const fifo = path.join(downloads, "blocked.pipe");
+    execFileSync("/usr/bin/mkfifo", [fifo]);
+    const d = device(home, scriptedProbes({ openAsApp: { [fifo]: "hung" } }));
+    const response = jv(
+      await d.handleIntent(
+        intentFor(d, "run", [{ kind: "process.exec", argv: ["/bin/cat", fifo], cwd: home }, { kind: "fs.read", paths: [fifo] }]),
+        { wait_ms: 50 },
+      ),
+    );
+    expect(response.get("diagnosis").get("cause").str).toBe("prompt_waiting");
+    const handle = response.get("handle").str!;
+    // The owner answers; the writer stays open, so cat stays alive.
+    const fd = fs.openSync(fifo, "w");
+    try {
+      fs.writeSync(fd, "first line\n");
+      const deadline = Date.now() + 5_000;
+      let polled = jv(await d.getOutput(handle));
+      while ((polled.get("output").str ?? "") === "" && Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 50));
+        polled = jv(await d.getOutput(handle));
+      }
+      expect(polled.get("status").str).toBe("running");
+      expect(polled.get("output").str).toBe("first line\n");
+      expect(polled.get("diagnosis").isNull).toBe(true);
+      expect(events(d)).toContain("host_permission_cleared");
+      expect(events(d)).not.toContain("exec_end");
+    } finally {
+      fs.closeSync(fd);
+    }
+    // Once, and only once: the exit finds nothing left to clear.
+    const done = Date.now() + 5_000;
+    while (!events(d).includes("exec_end") && Date.now() < done) await new Promise((r) => setTimeout(r, 50));
+    expect(events(d).filter((e) => e === "host_permission_cleared")).toHaveLength(1);
+  });
+
   it("a run that ends well while its first probes are still running is completed, not blocked", async () => {
     // The silent-run diagnosis is asked inside the call; the command may
     // finish while the probes are out. The verdict they come back with is

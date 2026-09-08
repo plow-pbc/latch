@@ -249,10 +249,15 @@ describe("plow_device_status", () => {
     expect(isError).toBe(false);
     expect(payload.checked_at).toMatch(/^\d{4}-/);
     expect(payload.full_disk_access.granted).toBe(false);
-    expect(payload.automation).toEqual([
-      { target: "Messages", status: "denied" },
-      { target: "Contacts", status: "target_not_running" },
-    ]);
+    // The whole table the Capabilities tab shows, not only the skills' two:
+    // after a Mail refusal the agent must be able to see Mail's row.
+    expect(payload.automation.map((a: { target: string }) => a.target)).toContain("Mail");
+    expect(payload.automation).toEqual(
+      expect.arrayContaining([
+        { target: "Messages", status: "denied" },
+        { target: "Contacts", status: "target_not_running" },
+      ]),
+    );
     expect(payload.automation_queryable).toBe(true);
     expect(["ok", "failed"]).toContain(payload.sandbox.status);
     expect(payload.vault_key.status).toBe("absent");

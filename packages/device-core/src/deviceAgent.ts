@@ -183,6 +183,8 @@ function existingAncestor(p: string): string {
 interface DiagnosedRun {
   diagnosis: Diagnosis;
   facts: HostFacts;
+  /** The run's intent, so a later clearing can be recorded against it. */
+  intentId: string;
 }
 
 /** What a run's argv and capabilities give a diagnosis to work with. */
@@ -198,15 +200,32 @@ interface ExecDiagnosisContext {
 }
 
 /**
- * Shell commands from inside an AppleScript — `do shell script`, and
- * Terminal's `do script` — would run outside the sandbox, which is the one
- * thing a script must not be a road to. Refused before anything runs, by a
- * fixed sentence; `plow_run_command` is where a shell command belongs.
+ * A script's roads to a shell — `do shell script`, Terminal's `do script`,
+ * text evaluated as a script (`run script`, `load script`, `store script`),
+ * or driving an app whose whole purpose is running things — would run
+ * outside the sandbox, which is the one thing a script must not be a road
+ * to. Refused before anything runs, by a fixed sentence.
+ *
+ * A TRIPWIRE, not the boundary. AppleScript is a dynamic language and a
+ * source-level check cannot be sound against it (a string assembled at run
+ * time is still a string); the boundary is the approval card, which shows
+ * the whole script, and the reviewer, who is told to read it as such
+ * (DESIGN.md §6). This catches the honest mistake and the lazy attempt.
  */
-export const SCRIPT_SHELL_ESCAPE = /\bdo\s+(?:shell\s+)?script\b/i;
+export const SCRIPT_SHELL_ESCAPE =
+  /\b(?:do\s+(?:shell\s+)?script|(?:run|load|store)\s+script)\b|\b(?:application|app)\s+(?:id\s+)?"(?:Terminal|iTerm2?|Script Editor|Automator|com\.apple\.Terminal|com\.googlecode\.iterm2|com\.apple\.ScriptEditor2|com\.apple\.Automator)"/i;
+/** The apps a script may not name as its target, by bundle id: each one
+ *  exists to run other things. */
+export const SCRIPT_SHELL_ESCAPE_APPS: ReadonlySet<string> = new Set([
+  "com.apple.Terminal",
+  "com.googlecode.iterm2",
+  "com.apple.ScriptEditor2",
+  "com.apple.Automator",
+]);
 export const SCRIPT_SHELL_ESCAPE_REFUSAL =
-  "Latch does not run shell commands from an AppleScript (`do shell script`, Terminal's `do script`): " +
-  "run them with plow_run_command, inside the sandbox, and keep the script to the app it controls.";
+  "Latch does not run shell commands or other scripts from an AppleScript (`do shell script`, " +
+  "`run script`, Terminal's `do script`, or scripting Terminal, iTerm, Script Editor or Automator): " +
+  "run commands with plow_run_command, inside the sandbox, and keep the script to the app it controls.";
 
 /**
  * One shape for a run, whether it is answering the call that started it or a
@@ -756,7 +775,7 @@ export class DeviceAgent {
       this.hostProbes,
       this.ownerHome,
     );
-    const diagnosed: DiagnosedRun = { diagnosis: diagnose(facts), facts };
+    const diagnosed: DiagnosedRun = { diagnosis: diagnose(facts), facts, intentId };
     const blocked = isHostGate(diagnosed.diagnosis.cause);
     if (blocked) {
       this.audit.record("host_permission_blocked", { intentId, path: p, ...auditDiagnosis(diagnosed) });
@@ -912,7 +931,9 @@ export class DeviceAgent {
     // The tool refuses this too, so a refusal never reaches an approval
     // dialog — but the device is the chokepoint, and an intent can arrive
     // from a replayed or hand-built request that never passed through it.
-    if (SCRIPT_SHELL_ESCAPE.test(script)) return this.scriptError(intent.intentId, SCRIPT_SHELL_ESCAPE_REFUSAL);
+    if (SCRIPT_SHELL_ESCAPE.test(script) || SCRIPT_SHELL_ESCAPE_APPS.has(cap.bundleId ?? "")) {
+      return this.scriptError(intent.intentId, SCRIPT_SHELL_ESCAPE_REFUSAL);
+    }
     const waitMs = jv(payload).get("wait_ms").int ?? 10000;
     this.audit.record("applescript_start", {
       intentId: intent.intentId,
@@ -1020,21 +1041,8 @@ export class DeviceAgent {
         // owner has answered — a folder it cannot query would otherwise
         // stay red on the strength of a guess. A reaped run was still
         // parked, and its verdict stands.
-        const provisional = this.runDiagnoses.get(result.handle);
+        if (!reaped) this.clearParked(result.handle);
         this.runDiagnoses.delete(result.handle);
-        if (!reaped && this.blockedRuns.get(result.handle) === "prompt_waiting") {
-          this.blockedRuns.delete(result.handle);
-          try {
-            this.audit.record("host_permission_cleared", {
-              intentId,
-              handle: result.handle,
-              path: provisional?.facts.path ?? null,
-              permission: provisional?.diagnosis.permission ?? null,
-            });
-          } catch (error) {
-            console.error(`[audit] host_permission_cleared lost for handle ${result.handle}:`, error);
-          }
-        }
         if (diag && (reaped || exitCode !== 0)) {
           const pending = this.diagnoseRunOrRecord(intentId, this.executor.output(result.handle, 0), diag)
             .then(() => {})
@@ -1102,7 +1110,10 @@ export class DeviceAgent {
     result: ExecResult,
     diag: ExecDiagnosisContext,
   ): Promise<DiagnosedRun | null> {
-    const output = result.output.toString("utf8");
+    // What the command said on stderr, and only that: a program's stdout
+    // can carry any phrase at all — a listing, a document — and must not
+    // read as this Mac refusing something.
+    const output = result.stderr.toString("utf8");
     if (!result.reaped && !result.running && stderrHint(output) === null) return null;
     const facts = await collectFacts(
       {
@@ -1141,7 +1152,7 @@ export class DeviceAgent {
     // ended run's verdict is the exit path's, not this one's.
     if (result.running && !this.executor.output(result.handle, 0).running) return null;
     if (!result.running && !result.reaped && !isHostGate(diagnosis.cause)) return null;
-    const diagnosed: DiagnosedRun = { diagnosis, facts };
+    const diagnosed: DiagnosedRun = { diagnosis, facts, intentId };
     this.runDiagnoses.set(result.handle, diagnosed);
     if (isHostGate(diagnosis.cause) && this.blockedRuns.get(result.handle) !== diagnosis.cause) {
       this.blockedRuns.set(result.handle, diagnosis.cause);
@@ -1437,6 +1448,38 @@ export class DeviceAgent {
 
   async getOutput(handle: string, since = 0): Promise<JSONValue> {
     await this.pendingDiagnoses.get(handle);
-    return runPayload(this.executor.output(handle, since), this.runDiagnoses.get(handle) ?? null);
+    const result = this.executor.output(handle, since);
+    // A run said to be parked on a dialog that has since written something
+    // is parked no longer: the owner answered, and the verdict was about a
+    // wait that is over. Cleared here rather than at exit only, so a poll
+    // never reports a dialog beside the output that proves it gone.
+    if (result.running && result.outputLength > 0) this.clearParked(handle);
+    return runPayload(result, this.runDiagnoses.get(handle) ?? null);
+  }
+
+  /**
+   * Forget a `prompt_waiting` verdict for a run that went on — the owner
+   * answered the dialog (or it never mattered) — and record the clearing,
+   * so the Capabilities tab stops counting a block the owner has answered:
+   * a folder it cannot query would otherwise stay red on the strength of a
+   * guess. Any other verdict stands. Idempotent; at most one clearing per
+   * run is recorded, because the dedupe key goes with it.
+   */
+  private clearParked(handle: string): void {
+    if (this.blockedRuns.get(handle) !== "prompt_waiting") return;
+    const provisional = this.runDiagnoses.get(handle);
+    this.blockedRuns.delete(handle);
+    this.runDiagnoses.delete(handle);
+    if (provisional === undefined) return;
+    try {
+      this.audit.record("host_permission_cleared", {
+        intentId: provisional.intentId,
+        handle,
+        path: provisional.facts.path ?? null,
+        permission: provisional.diagnosis.permission ?? null,
+      });
+    } catch (error) {
+      console.error(`[audit] host_permission_cleared lost for handle ${handle}:`, error);
+    }
   }
 }

@@ -15,7 +15,8 @@ function fakeApp(folder: string, name: string, bundleId: string): void {
   );
 }
 
-describe("resolveAppBundleId", () => {
+// plutil reads the plists, and the last case needs the real system apps.
+describe.skipIf(process.platform !== "darwin")("resolveAppBundleId", () => {
   it("reads the bundle id of <folder>/<name>.app, first folder wins", async () => {
     const a = fs.mkdtempSync(path.join(os.tmpdir(), "apps-a-"));
     const b = fs.mkdtempSync(path.join(os.tmpdir(), "apps-b-"));
