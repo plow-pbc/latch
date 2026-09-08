@@ -1063,7 +1063,11 @@ Decisions and their reasons:
   parameter, a path), and no scrubber can enumerate what it doesn't know — so
   the message never leaves. What leaves is the error's name — only if it is
   a built-in one (`Error.name` is writable text, so anything else reports as
-  "Error") — and its stack frames, in a `$exception` payload `trackError`
+  "Error"), with one fixed exception: the `DOMO_SIMULATE_ERROR` drill throws
+  `SimulatedError`, recognised by class rather than by name so a renamed real
+  error cannot pass for a drill, and the payload carries `simulated: true`
+  for it and `false` for everything else — and its stack frames, in a
+  `$exception` payload `trackError`
   **builds itself** — never the SDK's `captureException`, whose node
   entrypoint reads the local files named in stack frames and attaches
   surrounding source lines after any sanitising. A frame must match the full

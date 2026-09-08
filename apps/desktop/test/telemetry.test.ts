@@ -332,13 +332,30 @@ describe("error reporting", () => {
     expect(sent.properties).toMatchObject({ simulated: true, scope: "uncaught_exception" });
     expect(JSON.stringify(sent)).not.toContain("DOMO_SIMULATE_ERROR");
 
-    // A real error stays unflagged, and a hand-set name does not buy the flag.
+    // A real error stays unflagged, and the exact name, hand-set on a plain
+    // Error, does not buy the flag: the flag is what lets an operator
+    // suppress drills, so a crash must not be able to hide behind it.
     const spoofed = new Error("boom");
-    spoofed.name = "SimulatedErrorX";
+    spoofed.name = "SimulatedError";
     telemetry.trackError("uncaught_exception", spoofed);
     const real = sink.exceptions()[1];
     expect((real.properties.$exception_list as { type: string }[])[0].type).toBe("Error");
     expect(real.properties).toMatchObject({ simulated: false });
+  });
+
+  it("a spooled drill is still reported as a drill", async () => {
+    const home = tempHome();
+    const first = makeTelemetry({ home });
+    first.sink.sendNow = async () => {
+      throw new Error("offline");
+    };
+    first.telemetry.trackError("uncaught_exception", new SimulatedError("DOMO_SIMULATE_ERROR: drill"));
+    await new Promise((r) => setTimeout(r, 0));
+    const second = makeTelemetry({ home });
+    second.telemetry.reportSpooledCrash();
+    const sent = second.sink.exceptions()[0];
+    expect((sent.properties.$exception_list as { type: string }[])[0].type).toBe("SimulatedError");
+    expect(sent.properties).toMatchObject({ simulated: true, spooled: true });
   });
 
   it("ships no source context, and nothing downstream can add it", () => {
