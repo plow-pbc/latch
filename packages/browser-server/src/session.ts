@@ -120,8 +120,6 @@ export const TYPING_MAX_MS = TYPED_CHARS * (KEY_DELAY_MS + KEY_OVERHEAD_MS);
 type Obj = { [k: string]: JSONValue };
 
 const now = (): number => performance.now();
-const sleep = (ms: number): Promise<void> =>
-  new Promise((r) => setTimeout(r, Math.max(0, ms)));
 
 /**
  * Scheme and host, and nothing else. A url is the page's to choose, and every
@@ -200,17 +198,33 @@ export class Session {
    * still in them, and the marks still have to go back on.
    */
   private async forgetNavigated(): Promise<void> {
-    let token: string;
-    try {
-      token = (await this.page.evaluate(DOC_TOKEN_JS)) as string;
-    } catch {
-      // Mid-navigation, or a page that will not evaluate. Keeping the record is
-      // the safe answer: a stale mask is dropped when it fails to resolve.
-      return;
-    }
-    if (this.seenDocument.get(this.page) !== token) {
-      this.seenDocument.set(this.page, token);
-      this.masked.delete(this.page);
+    // EVERY page of the session, because the `eval` gate reads every page: a
+    // ledger only the active page can clear is one an inactive page holds
+    // forever, refusing eval over a document that moved on long ago.
+    const open = this.pages;
+    // Asked of every page at once: this runs before every action, and one
+    // round-trip per open tab in series is a latency bill that grows with the
+    // tabs the agent left behind.
+    const answers = await Promise.allSettled(open.map((page) => page.evaluate(DOC_TOKEN_JS)));
+    open.forEach((page, i) => {
+      const answer = answers[i];
+      // A page mid-navigation or refusing to evaluate, and "" — the page
+      // declining to be identified (DOC_TOKEN_JS) — get the same answer:
+      // keep the record. Forgetting on either is forgetting on a guess.
+      if (answer.status !== "fulfilled") return;
+      const token = answer.value as string;
+      if (token !== "" && this.seenDocument.get(page) !== token) {
+        this.seenDocument.set(page, token);
+        this.masked.delete(page);
+      }
+    });
+    // A page that has closed took its nodes and their values with it — the one
+    // departure that needs no signal from the page itself.
+    for (const page of new Set([...this.masked.keys(), ...this.seenDocument.keys()])) {
+      if (!open.includes(page)) {
+        this.masked.delete(page);
+        this.seenDocument.delete(page);
+      }
     }
   }
 
@@ -225,52 +239,40 @@ export class Session {
     this.masked.get(this.page)?.delete(`${documentToken}:${selector}`);
   }
 
-  /** Every frame of the active page, by the document it is showing. */
-  private async framesByToken(): Promise<Map<string, FrameLike>> {
-    const found = new Map<string, FrameLike>();
+  /** Put the mark back on every concealed field of the active page. Nothing is
+   * forgotten here: a node that will not resolve is skipped and kept. The
+   * selector that found it can be state-dependent (`input:placeholder-shown`
+   * stops matching the moment it is filled) and a frame can decline to say which
+   * document it is showing mid-navigation, so neither "does not resolve" nor
+   * "did not answer" is "is not there" — and this ledger is what the eval gate
+   * reads. Forgetting has two owners, both of which watched the value leave: a
+   * new document (`forgetNavigated`) and an overwrite the vault does not
+   * conceal (`forgetMasked`). Returns the selector of a field that would not
+   * take the mark, or null. */
+  private async reapplyMasks(): Promise<string | null> {
+    const targets = this.masked.get(this.page);
+    if (!targets || targets.size === 0) return null;
+    const frames = new Map<string, FrameLike>(); // by the document each shows
     for (const frame of this.page.frames()) {
       try {
         const token = (await frame.evaluate(DOC_TOKEN_JS)) as string;
-        if (!found.has(token)) found.set(token, frame);
+        if (token !== "" && !frames.has(token)) frames.set(token, frame);
       } catch {
         continue;
       }
     }
-    return found;
-  }
-
-  /**
-   * Put the mark back on every masked field of the active page. Returns the
-   * selector of a field that could NOT be masked, or null when every one is
-   * covered. A field whose node has gone is dropped: it is not on the page, so
-   * it is not on the screenshot either.
-   */
-  private async reapplyMasks(): Promise<string | null> {
-    const targets = this.masked.get(this.page);
-    if (!targets || targets.size === 0) return null;
-    const frames = await this.framesByToken();
     for (const key of [...targets].sort()) {
       const idx = key.indexOf(":");
-      const documentToken = key.slice(0, idx);
+      const frame = frames.get(key.slice(0, idx));
+      if (frame === undefined) continue;
       const selector = key.slice(idx + 1);
-      const frame = frames.get(documentToken);
-      if (frame === undefined) {
-        // That document is not on this page any more. Nothing of it is on
-        // screen to hide.
-        targets.delete(key);
-        continue;
-      }
-      let el: HandleLike | null;
+      let el: HandleLike | null = null;
       try {
         el = await frame.$(selector);
       } catch {
-        targets.delete(key);
-        continue;
+        el = null;
       }
-      if (el === null) {
-        targets.delete(key);
-        continue;
-      }
+      if (el === null) continue;
       if ((await el.evaluate(MASK_JS)) === "unmasked") return selector;
     }
     return null;
@@ -360,9 +362,6 @@ export class Session {
   rememberedRequestCount(): number {
     return this.askedBy.size;
   }
-  /** Testing hook: which context events the session subscribed to. */
-  static subscribedEvents: string[] = [];
-
   /** Every response carries where we are, so the client can enforce scope and
    * notice popups without extra round-trips. */
   private envelope(result: Obj): Obj {
@@ -519,11 +518,8 @@ export class Session {
       // Only the SEARCH may move on to the next frame. Once a node resolves,
       // whatever happens to it is this fill's answer.
       const expected = cmd.frame_token;
-      if (
-        expected !== undefined &&
-        expected !== null &&
-        (await el.evaluate(DOC_TOKEN_JS)) !== expected
-      ) {
+      const doc = (await el.evaluate(DOC_TOKEN_JS)) as string;
+      if (expected !== undefined && expected !== null && doc !== expected) {
         return { ok: false, mask: "moved", frame: i };
       }
       // The one thing knowable before touching the node: the field says how
@@ -534,6 +530,15 @@ export class Session {
         return { ok: false, mask: "too_long", cap, frame: i };
       }
       if (cmd.mask) {
+        // The ledger keys on this document, so a document that will not name
+        // itself has no key to file under — and a concealed fill nothing can
+        // record is one nothing can re-mask or refuse `eval` over. Refused
+        // before anything is typed, and reported as its own cause: a page that
+        // blocks the masking stylesheet has a CSP, while a page holding the
+        // name we identify documents by — in a shape we will not trust — is
+        // doing something no ordinary page does, and the owner's log has to be
+        // able to tell those apart.
+        if (doc === "") return { ok: false, mask: "no_identity", frame: i };
         // Marked first, and only typed once the mark is known to have taken.
         const wasMarked = (await el.evaluate(WAS_MARKED_JS)) as boolean;
         const before = await el.evaluateHandle(VALUE_SNAPSHOT_JS);
@@ -546,23 +551,31 @@ export class Session {
           await this.typeValue(el, String(cmd.value), kind);
         } catch (exc) {
           // Nothing landed: put the node back as it was found. Something did:
-          // it is holding a value nobody can account for, so the mark stays.
+          // empty it under the mark it went in under — the node mid-write is
+          // this browser's to clean up, and only it knows the value got there —
+          // and keep the mark on whatever the page will not let go of. A clear
+          // that fails must not replace the exception about to be reported.
           if (await el.evaluate(NOTHING_LANDED_JS, before)) {
             if (!wasMarked) await el.evaluate(UNMASK_JS);
           } else {
-            this.rememberMasked((await el.evaluate(DOC_TOKEN_JS)) as string, sel);
+            try {
+              await el.fill("", { timeout: DEFAULT_ACTION_TIMEOUT_MS });
+            } catch {
+              /* the page kept it; the mark stays either way */
+            }
+            this.rememberMasked(doc, sel);
           }
           await before.dispose();
           throw exc;
         }
         await before.dispose();
-        this.rememberMasked((await el.evaluate(DOC_TOKEN_JS)) as string, sel);
+        this.rememberMasked(doc, sel);
         return { ok: true, mask: state, frame: i, ...(await this.kept(el, String(cmd.value))) };
       }
       // Not a secret. The mark comes off AFTER the value is in, never before.
       await this.typeValue(el, String(cmd.value), kind);
       await el.evaluate(UNMASK_JS);
-      this.forgetMasked((await el.evaluate(DOC_TOKEN_JS)) as string, sel);
+      this.forgetMasked(doc, sel);
       return { ok: true, frame: i, ...(await this.kept(el, String(cmd.value))) };
     }
     throw last ?? new Error(`selector not found: ${sel}`);
@@ -635,6 +648,29 @@ export class Session {
     }
 
     if (action === "eval") {
+      // `eval` reads `el.value` straight out of the DOM, so the mark cannot
+      // cover it. The decision is made HERE, from the ledger this process
+      // keeps: a check that runs as page script is one the page — or an agent
+      // that already ran an expression — can rewrite out from under it.
+      //
+      // EVERY page of the session, not just the active one. A popup and its
+      // opener are same-origin often enough, and `opener.document` reads the
+      // field this page never filled — so a per-page gate is one `use_page`
+      // away from being no gate at all. Which page is part of the answer: the
+      // field is only clearable from the page that owns it, so a refusal that
+      // names a selector without naming its page is one nobody can act on.
+      const pages = this.pages;
+      for (let i = 0; i < pages.length; i++) {
+        const held = [...(this.masked.get(pages[i]) ?? [])].sort()[0];
+        if (held !== undefined) {
+          return {
+            ok: false,
+            mask: "concealed",
+            selector: held.slice(held.indexOf(":") + 1),
+            page: i,
+          };
+        }
+      }
       return { result: (await this.page.evaluate(String(cmd.expression))) as JSONValue };
     }
 

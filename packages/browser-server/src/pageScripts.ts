@@ -129,14 +129,57 @@ export const MASK_JS = (el: El): string => {
  * Which document this is. A token is stamped on `window` the first time it is
  * asked for and read back afterwards: a new document gets a fresh `window` and a
  * fresh token, while a same-document navigation keeps both. Non-enumerable.
+ *
+ * A change to this token reads as a new document, and a new document is what
+ * empties the concealed-field ledger the `eval` gate is decided from. So a
+ * token is only identity if it CANNOT change AND COMPARES EQUAL TO ITSELF:
+ * what is already there is trusted only when it is a non-configurable,
+ * non-writable, non-empty string — which is the only kind this ever writes.
+ * Anything else is not identity and gets restamped, whoever left it there:
+ * absent, deletable, assignable, an accessor free to answer differently each
+ * time, or a value that is unequal to itself. `NaN` is immutable and still
+ * reads as a different document on every look, which empties the ledger
+ * before every action — so "cannot be changed" was never the whole test.
+ *
+ * That is the whole check, and deliberately not "we got here first": an
+ * expression the agent ran earlier can open a same-origin popup and plant a
+ * mutable token in it before this ever looks, so being first was never
+ * something to rely on. Immutability is checkable at the moment of use;
+ * arrival order is not.
  */
 export const DOC_TOKEN_JS = (): string => {
   const w = window;
-  if (!w.__domoDocumentToken) {
-    Object.defineProperty(w, "__domoDocumentToken", {
-      value: Math.random().toString(36).slice(2) + Date.now().toString(36),
-      configurable: true,
-    });
+  const held = Object.getOwnPropertyDescriptor(w, "__domoDocumentToken");
+  if (
+    held === undefined ||
+    held.configurable ||
+    held.writable !== false ||
+    typeof held.value !== "string" ||
+    held.value === "" ||
+    // The ledger keys are `token:selector`, split at the first colon. A token
+    // carrying one would make the selector unparseable — and a selector is
+    // what the refusal hands the agent to go and clear. Nothing this mints
+    // contains one.
+    held.value.indexOf(":") !== -1
+  ) {
+    try {
+      // Every attribute spelled out: redefining a property that already exists
+      // KEEPS whatever it was given for the ones left unsaid, so a restamp that
+      // only names `value` inherits the planted property's mutability and hands
+      // the forgery straight back.
+      Object.defineProperty(w, "__domoDocumentToken", {
+        value: Math.random().toString(36).slice(2) + Date.now().toString(36),
+        configurable: false,
+        writable: false,
+        enumerable: false,
+      });
+    } catch {
+      // A non-configurable accessor cannot be replaced by anything, ever — the
+      // one shape that can hold this name against us. So this document has no
+      // identity we are willing to state, and says so: "" is not a token, and
+      // the server treats it as one it must not reason from.
+      return "";
+    }
   }
   return w.__domoDocumentToken;
 };
@@ -192,14 +235,44 @@ export const FIELD_CAP_JS = (el: El): number => {
     : -1;
 };
 
-/** Is the field holding exactly what was put into it? Compared IN THE PAGE. A
- * select was asked for an option by value OR label, so either counts. */
+/**
+ * Whether the field is holding what was typed into it. Compared IN THE PAGE. A
+ * select was asked for an option by value OR label, so either counts.
+ *
+ * Not string equality: a page is allowed to pretty-print. A 2FA box hyphenates
+ * six digits, a card field groups four, a date field slashes. The field still
+ * received the credential, and refusing those was refusing the login. What it
+ * may not do is lose a character, gain one that is not formatting, or reorder
+ * what it has — any of those and the value the page will submit is not the
+ * value the vault released.
+ *
+ * This is a correctness check, not a concealment one: a page that wants the
+ * value has it the moment it is typed, whatever it leaves in `el.value`.
+ * Concealment is the mark and the `forms` redaction, and neither moves here.
+ */
 export const HELD_MATCHES_JS = (el: El, wanted: string): boolean => {
   if (el.tagName === "SELECT") {
     const chosen = el.selectedOptions && el.selectedOptions[0];
     return el.value === wanted || (!!chosen && (chosen.label || "").trim() === wanted);
   }
-  return (typeof el.value === "string" ? el.value : el.textContent || "") === wanted;
+  const held = typeof el.value === "string" ? el.value : el.textContent || "";
+  if (held === wanted) return true;
+  // A clear is exact: a field still holding the separator a rollback left is
+  // not empty, and must never be reported as empty.
+  if (wanted === "") return false;
+  // Both sides walk by code point: `for...of` hands `held` an astral character
+  // whole, and indexing `wanted` by code unit would compare it against a lone
+  // surrogate that can never match.
+  const want = Array.from(wanted);
+  let i = 0;
+  for (const ch of held) {
+    if (i < want.length && ch === want[i]) {
+      i++;
+    } else if (!/[\s\-/.()+]/.test(ch)) {
+      return false;
+    }
+  }
+  return i === want.length;
 };
 
 export const UNMASK_JS = (el: El): boolean => {

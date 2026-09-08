@@ -4,7 +4,9 @@
  * fillProbe.py. Every scenario the Python probe covered is here, ungated.
  */
 import { describe, expect, it } from "vitest";
-import { constants, ledger, ranked, run, twoFrames } from "./fillProbe.js";
+import { constants, ledger, pagePair, ranked, run, twoFrames, type LedgerStep } from "./fillProbe.js";
+
+import { Session } from "../src/session.js";
 
 const base = { action: "fill", selector: "#pass", value: "hunter2", frame: 0 };
 const approved = { frame_token: "doc-1" };
@@ -45,11 +47,28 @@ describe("the server's fill branch, run directly", () => {
   it.each([
     { what: "groups the digits", value: "4111111111111111",
       rewrites: (t: string) => t.replace(/ /g, "").replace(/(.{4})/g, "$1 ").trim() },
+  ])("accepts, as filled, a field that $what", async ({ value, rewrites }) => {
+    const r = await run({ ...base, value }, { rewrites });
+    expect(r.result).toEqual({ ok: true, frame: 0 });
+  });
+
+  it.each([
     { what: "strips a space out of a name", value: "Jon Doe", rewrites: (t: string) => t.replace(/ /g, "") },
     { what: "truncates what it was given", value: "hunter2", rewrites: (t: string) => t.slice(0, 4) },
   ])("reports, without refusing, a field that $what", async ({ value, rewrites }) => {
     const r = await run({ ...base, value }, { rewrites });
     expect(r.result).toEqual({ ok: true, frame: 0, altered: true });
+  });
+
+  it("will not conceal a fill into a document that will not name itself", async () => {
+    // No token, no ledger key — and a concealed fill nothing records is one
+    // nothing can re-mask or refuse eval over. Refused before anything is
+    // typed, so the page is as it was found.
+    const nameless = await run({ ...base, mask: true }, { documentToken: "" });
+    expect(nameless.result).toEqual({ ok: false, mask: "no_identity", frame: 0 });
+    expect(nameless.typed_len).toBeNull();
+    expect(nameless.marked).toBe(false);
+    expect(nameless.ledgered).toBe(false);
   });
 
   it("resolves the node once and marks it before the value goes in", async () => {
@@ -151,6 +170,21 @@ describe("the server's fill branch, run directly", () => {
     expect(orphan.value_kept).toBe(true);
   });
 
+  it.each([
+    { what: "empties the node it was writing, under the mark it went in under",
+      opts: {}, kept: 0 },
+    { what: "keeps the mark on what a page will not let it empty",
+      opts: { assignFails: true }, kept: 2 },
+  ])("a fill that throws after something landed $what", async ({ opts, kept }) => {
+    // The device rolls back the boxes IT knows landed; the one mid-write is the
+    // browser's, and only the browser knows something reached it.
+    const r = await run({ ...base, mask: true }, { partialFill: true, value: "old", ...opts });
+    expect(r.error).toBe("RuntimeError");
+    expect(r.node_len).toBe(kept);
+    expect(r.marked).toBe(true);
+    expect(r.ledgered).toBe(true);
+  });
+
   it("does not try the next frame once a node has been changed", async () => {
     const r = await twoFrames();
     expect(r.first_changed).toBe(true);
@@ -209,14 +243,19 @@ describe("the server's fill branch, run directly", () => {
     expect(spa.marked["#pass"]).toBe(true);
   });
 
-  it("forgets a field whose own frame navigated away", async () => {
+  it("never re-marks a same-selector node in another document, and keeps the entry", async () => {
     const gone = await ledger([
       { cmd: { action: "fill", selector: "#pass", value: "hunter2", frame: 1, mask: true } },
       { frame_navigated: "doc-elsewhere" },
       { cmd: { action: "forms" } },
     ]);
-    expect(gone.tracked).toEqual([]);
+    // The mark is keyed on the document as well as the selector, so a sibling
+    // frame holding its own `#pass` is not this field and is left alone.
     expect(gone.sibling_marked).toBe(false);
+    // The entry stays: a frame that will not say which document it is showing
+    // reads exactly like one that navigated, and forgetting on that guess is
+    // what would hand the eval gate back.
+    expect(gone.tracked).toEqual(["doc-1:#pass"]);
   });
 
   it("refuses the observation when a mark will not go back on", async () => {
@@ -226,5 +265,123 @@ describe("the server's fill branch, run directly", () => {
       { cmd: { action: "forms" } },
     ]);
     expect(wont.steps.at(-1)!.result).toEqual({ ok: false, mask: "unmasked" });
+  });
+
+  it("refuses eval while a concealed field still holds its value", async () => {
+    const gated = await ledger([
+      { cmd: { action: "fill", selector: "#pass", value: "hunter2", frame: 1, mask: true } },
+      { cmd: { action: "eval", expression: "document.querySelector('#pass').value" } },
+    ]);
+    expect(gated.steps.at(-1)!.result).toEqual({ ok: false, mask: "concealed", selector: "#pass" });
+  });
+
+  // A node that went away with a live value in it is exactly the case the
+  // ledger has to keep: nothing re-resolves the selector, so nothing can
+  // mistake "does not match" for "is not there". `forms` is the interposed
+  // case — its remask used to FORGET what it could not resolve, which handed
+  // the gate straight back: fill, look at the page, then eval.
+  it.each([
+    { what: "on its own", between: [] as LedgerStep[] },
+    { what: "with an observation interposed", between: [{ cmd: { action: "forms" } }] as LedgerStep[] },
+  ])("refuses eval after the selector stopped matching, $what", async ({ between }) => {
+    const kept = await ledger([
+      { cmd: { action: "fill", selector: "#pass", value: "hunter2", frame: 1, mask: true } },
+      { vanish: "#pass" },
+      ...between,
+      { cmd: { action: "eval", expression: "1" } },
+    ]);
+    expect(kept.tracked).toEqual(["doc-1:#pass"]);
+    expect(kept.steps.at(-1)!.result).toEqual({ ok: false, mask: "concealed", selector: "#pass" });
+  });
+
+  // A popup and its opener are same-origin often enough, and `opener.document`
+  // reads the field the other one filled — a per-page gate would be one
+  // `use_page` away from being no gate at all. Which page is part of the
+  // answer: the field is clearable only from the page holding it, so a refusal
+  // naming the page the agent happens to be on sends it nowhere useful.
+  it.each([
+    { what: "the opener holds it and the popup asks", holder: 0, asker: 1 },
+    { what: "the popup holds it and the opener asks", holder: 1, asker: 0 },
+  ])("refuses eval, naming the page that holds the field, when $what", async ({ holder, asker }) => {
+    const { first } = pagePair();
+    const session = new Session(first);
+    await session.handle({ action: "use_page", index: holder } as never);
+    await session.handle({ action: "fill", selector: "#pass", value: "hunter2", mask: true } as never);
+    await session.handle({ action: "use_page", index: asker } as never);
+    expect(await session.handle({ action: "eval", expression: "1" } as never)).toEqual({
+      ok: false,
+      mask: "concealed",
+      selector: "#pass",
+      page: holder,
+    });
+  });
+
+  // "" is DOC_TOKEN_JS refusing to name a document it could not stamp. Forgetting
+  // on that is forgetting on the say-so of whoever took the name, so the record
+  // survives and the refusal with it — at page level and at frame level.
+  it.each([
+    { what: "the page will not identify itself", step: { unidentified: true } as LedgerStep },
+    { what: "the frame will not", step: { frame_navigated: "" } as LedgerStep },
+  ])("keeps the ledger, and the refusal, when $what", async ({ step }) => {
+    const unnamed = await ledger([
+      { cmd: { action: "fill", selector: "#pass", value: "hunter2", frame: 1, mask: true } },
+      step,
+      { cmd: { action: "forms" } },
+      { cmd: { action: "eval", expression: "1" } },
+    ]);
+    expect(unnamed.tracked).toEqual(["doc-1:#pass"]);
+    expect(unnamed.steps.at(-1)!.result).toEqual({
+      ok: false,
+      mask: "concealed",
+      selector: "#pass",
+    });
+  });
+
+  // The gate reads every page, so every page has to be able to clear itself —
+  // a ledger only the active page can drop is one an inactive page holds
+  // forever, refusing eval over a document that moved on long ago.
+  it.each([
+    { what: "it navigated while another page was active", act: (p: { documentToken: string }) => void (p.documentToken = "doc-later") },
+    { what: "it closed", act: null },
+  ])("clears an inactive page's ledger once $what", async ({ act }) => {
+    const { first, popup, close } = pagePair();
+    const session = new Session(first);
+    await session.handle({ action: "fill", selector: "#pass", value: "hunter2", mask: true } as never);
+    await session.handle({ action: "use_page", index: 1 } as never);
+    expect(await session.handle({ action: "eval", expression: "1" } as never)).toEqual({
+      ok: false,
+      mask: "concealed",
+      selector: "#pass",
+      page: 0,
+    });
+    if (act === null) close(first);
+    else act(first);
+    expect(await session.handle({ action: "eval", expression: "1" } as never)).toEqual({
+      result: "doc-popup",
+    });
+    expect(popup.documentToken).toBe("doc-popup");
+  });
+
+  it("allows eval once the field is emptied, and once the page has moved on", async () => {
+    const cleared = await ledger([
+      { cmd: { action: "fill", selector: "#pass", value: "hunter2", frame: 1, mask: true } },
+      { cmd: { action: "fill", selector: "#pass", value: "", frame: 1 } },
+      { cmd: { action: "eval", expression: "1" } },
+    ]);
+    expect(cleared.steps.at(-1)!.result).toEqual({});
+    const navigated = await ledger([
+      { cmd: { action: "fill", selector: "#pass", value: "hunter2", frame: 1, mask: true } },
+      { navigate: "https://pizza.example/done" },
+      { cmd: { action: "eval", expression: "1" } },
+    ]);
+    expect(navigated.steps.at(-1)!.result).toEqual({});
+  });
+
+  it("does not gate eval on a field the vault does not conceal", async () => {
+    const plain = await ledger([
+      { cmd: { action: "fill", selector: "#addr", value: "1 Elm St", frame: 1 } },
+      { cmd: { action: "eval", expression: "1" } },
+    ]);
+    expect(plain.steps.at(-1)!.result).toEqual({});
   });
 });

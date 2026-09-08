@@ -382,9 +382,16 @@ site's own, or agent `eval`) can fetch anywhere CORS allows. That is accepted.
 It used to be argued that eval carries nothing `screenshot`/`text` could not
 already carry; that is no longer true. Masking (§11a-ii) covers what the agent
 SEES — screenshots and form reads — and cannot cover `eval`, which reads
-`input.value` directly. The residual is deliberate and bounded by the threat
-model: accidental exposure is what masking is for, and an agent that goes
-looking for a filled value with `eval` is outside it.
+`input.value` directly. So `eval` is not evaluated at all while the ledger of
+concealed fields is non-empty for ANY page of the session — a popup and its
+opener are same-origin often enough that `opener.document` reads a field the
+popup never filled. The refusal names the page that owns it, since that is the
+only page it can be cleared from: the agent's way on is to go there and empty
+the field with a plain `fill`, or to load another page — submitting the form is
+one. The ledger is deliberately conservative: it drops a field only on
+a new document or on an overwrite the vault does not conceal, never on a guess
+that the node has gone (§11a-ii), so a field the page has replaced keeps `eval`
+refused until the page navigates.
 
 **What the page's own requests did.** A browser action reports whether it
 worked; it used to say nothing about whether the *page* worked. A click whose
@@ -456,10 +463,10 @@ merchant) → a frame-targeted fill → the value is dropped. Secret
 values never traverse MCP, never appear in the results these tools return, and
 never appear in either audit log. **Scope of that guarantee:** it covers what
 `plow_vault` and `fill_secret` hand back, and — through masking (§11a-ii) — what
-a screenshot or `forms` shows. It does not cover `eval`, which reads
-`input.value` directly; that is the documented residual, accepted because the
-threat model is accidental exposure and an agent reaching for `eval` is
-outside it.
+a screenshot or `forms` shows. Masking cannot cover `eval`, which reads
+`input.value` directly, so `eval` is refused outright while a concealed field
+still holds a value. What no mark reaches is the field's own page reading what
+was typed into it.
 Item ids on the approval card are resolved to titles **locally** (agent-supplied
 titles would be spoofable).
 
@@ -687,10 +694,26 @@ present without its characters, and never returns a `type="password"` value at
 all. Full design, including the alternatives rejected and why, in
 `docs/superpowers/specs/2026-08-18-secret-masking-design.md`.
 
-**What it does not cover: `eval`.** It reads `input.value` directly and no mark
-changes that. Accepted residual: the threat model is accidental exposure — a
-well-behaved agent looking at a page in the ordinary course of its work — and
-an agent reaching for `eval` to read a field it just filled is outside it.
+**What the mark cannot cover: `eval`.** It reads `input.value` directly and no
+mark changes that, so `eval` is refused while the ledger of concealed fields is
+non-empty on any page of the session — empty the field on the page the refusal
+names, or load another page there, and it runs again. Nothing prunes that ledger on a failure to resolve a selector or a
+frame: a selector can be state-dependent and a frame can decline to say which
+document it is showing, so neither absence is evidence the value went with it.
+Forgetting belongs to the two moments that watched it leave — a new document,
+and an overwrite the vault does not conceal. An entry can therefore outlive its
+node, which costs `eval` until the page navigates and is the safe direction.
+
+The "new document" half of that is the one signal still read out of the page, so
+the token carrying it is stamped non-configurable and non-writable: a token an
+expression could delete is a ledger that expression could empty. The agent
+cannot get in front of the stamp — every action asks which document this is
+before doing anything else — so what remains is a *page* that plants the
+property before we first look.
+
+What no mark reaches is the field's own page reading what was typed into it,
+which was never what the mark was for — and a page that plants the token is
+that same page, already holding the value.
 
 ### 11a-iii. Receiving an Apple Passwords export app-to-app
 

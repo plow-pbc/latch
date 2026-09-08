@@ -27,6 +27,12 @@
  *                            different document than the one approved
  *   FAKE_REMASK_FAILS=1      refuse every screenshot/forms, the way the real
  *                            server refuses when a mark will not go back on
+ *   FAKE_NO_IDENTITY=1       refuse every masked fill the way the real server
+ *                            does for a document that will not name itself
+ *   FAKE_CONCEALED_EVAL_PAGE=n  the page index that refusal names (default: none)
+ *   FAKE_CONCEALED_EVAL=s    refuse every eval naming selector s, the way the
+ *                            real server refuses while a concealed field it
+ *                            filled is still holding its value
  *   FAKE_ARGV_LOG=path append this server's argv per launch (window-mode proof)
  *   FAKE_CMD_LOG=path  append the JSON of every command received, one per line
  *                      (proof of what the device asked the browser to do). The
@@ -134,6 +140,15 @@ function handle(cmd) {
     };
   }
   if (a === "text") return { text: "fake page text of " + current().url };
+  if (a === "eval" && process.env.FAKE_CONCEALED_EVAL) {
+    const page = process.env.FAKE_CONCEALED_EVAL_PAGE;
+    return {
+      ok: false,
+      mask: "concealed",
+      selector: process.env.FAKE_CONCEALED_EVAL,
+      ...(page === undefined ? {} : { page: Number(page) }),
+    };
+  }
   if (a === "eval") return { result: "eval:" + cmd.expression };
   if (a === "click") {
     // The shape a real click failure has: the browser names what was over it.
@@ -195,6 +210,9 @@ function handle(cmd) {
   if (a === "fill") {
     // A page that will not let the mark take: nothing is typed, and the caller
     // is told the value would have been legible.
+    if (cmd.mask && process.env.FAKE_NO_IDENTITY === "1") {
+      return { ok: false, mask: "no_identity", frame: cmd.frame ?? 0 };
+    }
     if (cmd.mask && process.env.FAKE_CSP_BLOCKS_MASK === "1") {
       return { ok: false, mask: "unmasked", frame: cmd.frame ?? 0 };
     }

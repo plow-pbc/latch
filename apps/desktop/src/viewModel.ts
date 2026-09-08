@@ -443,6 +443,14 @@ function classifyActivity(
         ? { status: "Closed · mask failed", tone: "amber", category: "failed" }
         : { status: "Mask failed", tone: "amber", category: "failed" };
     }
+    // A page that will not say which document it is, so a credential could not
+    // be tracked on it and was not typed. Nothing was exposed — but no ordinary
+    // page does this, and the owner should not have to go looking for it.
+    if (has("credential_identity_refused")) {
+      return closed
+        ? { status: "Closed · page not identified", tone: "amber", category: "failed" }
+        : { status: "Page not identified", tone: "amber", category: "failed" };
+    }
     if (has("credential_denied") || has("browser_scope_violation")) {
       // "failed", not "other": the cage refused the agent something, which is
       // the first thing an owner scanning for trouble filters for. The amber
@@ -697,6 +705,18 @@ function describeStep(e: JSONValue): AuditStep {
     case "credential_denied":
       text = `Credential refused: ${ev.get("item").str ?? ""} · ${ev.get("field").str ?? ""} — ${ev.get("reason").str ?? ""}`;
       state = "bad";
+      break;
+    case "credential_identity_refused":
+      text = `Credential not filled: ${ev.get("origin").str ?? ""} would not say which document `
+        + `it is, so nothing was typed (${ev.get("item").str ?? ""} · ${ev.get("field").str ?? ""})`;
+      state = "bad";
+      break;
+    // The gate doing its job is not a fault: it fires whenever the agent
+    // reaches for `eval` while a filled credential is still in a page. Visible,
+    // because the owner should see what their agent went looking for — and
+    // neutral, because being refused is the design working.
+    case "browser_eval_refused":
+      text = `eval refused: ${ev.get("selector").str ?? "a field"} is still holding a filled credential`;
       break;
     case "credential_mask_failed":
       text = `Page not shown to the agent: a filled credential on ${ev.get("url").str ?? ""} `

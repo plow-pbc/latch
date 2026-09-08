@@ -10,6 +10,7 @@
  */
 import { describe, expect, it } from "vitest";
 import {
+  DOC_TOKEN_JS,
   FIELD_JS,
   HELD_MATCHES_JS,
   KEYS_DROPPED_JS,
@@ -260,5 +261,116 @@ describe("what a select is holding", () => {
     { what: "misses on another month", el: select("11", "November"), wanted: "May", held: false },
   ])("$what", ({ el, wanted, held }) => {
     expect(HELD_MATCHES_JS(el as any, wanted)).toBe(held);
+  });
+});
+
+describe("a field that reformats what it was given", () => {
+  const field = (value: string) => ({ tagName: "INPUT", value });
+  it.each([
+    { what: "a 2FA code the page hyphenates", wanted: "123456", held: "123-456", ok: true },
+    { what: "a card number the page groups", wanted: "4111111111111111", held: "4111 1111 1111 1111", ok: true },
+    { what: "a date the page slashes", wanted: "1226", held: "12/26", ok: true },
+    { what: "a phone the page brackets", wanted: "4155550123", held: "(415) 555-0123", ok: true },
+    { what: "a phone the page prefixed with a country code", wanted: "4155550123", held: "+1 (415) 555-0123", ok: false },
+    { what: "a value the page left alone", wanted: "hunter2", held: "hunter2", ok: true },
+    { what: "a field that dropped a character", wanted: "123456", held: "12345", ok: false },
+    { what: "a field that added a digit", wanted: "123456", held: "1234567", ok: false },
+    { what: "a field that ate a space out of a name", wanted: "Jon Doe", held: "JonDoe", ok: false },
+    { what: "a field that appended punctuation that is not formatting", wanted: "hunter2", held: "hunter2!", ok: false },
+    { what: "a field showing its own mask", wanted: "123456", held: "••••56", ok: false },
+    { what: "a field that reordered the digits", wanted: "123456", held: "654-321", ok: false },
+    { what: "a field that kept a separator after a clear", wanted: "", held: "-", ok: false },
+    { what: "a field that is genuinely empty", wanted: "", held: "", ok: true },
+    { what: "a passphrase with an emoji the page spaced out", wanted: "a\u{1F600}b", held: "a \u{1F600} b", ok: true },
+  ])("$what", ({ wanted, held, ok }) => {
+    expect(HELD_MATCHES_JS(field(held) as any, wanted)).toBe(ok);
+  });
+});
+
+describe("which document this is", () => {
+  // The token decides when the concealed-field ledger is emptied, and the
+  // ledger is what refuses `eval`. So the property has to survive an agent
+  // that has already been allowed to run one expression in this page.
+  const inPage = <T>(body: () => T): T => {
+    (globalThis as any).window = {};
+    try {
+      return body();
+    } finally {
+      delete (globalThis as any).window;
+    }
+  };
+
+  // Identity is what cannot change. Arrival order is not checkable at the
+  // moment of use — an expression the agent ran earlier can open a popup and
+  // plant a token in it before this ever looks — so anything still able to
+  // change is restamped, whoever left it there.
+  it.each([
+    { what: "nothing is there yet", planted: undefined },
+    { what: "a token left assignable", planted: { value: "planted", configurable: true, writable: true } },
+    { what: "a token left deletable", planted: { value: "planted", configurable: true } },
+    { what: "an accessor free to answer differently each time",
+      planted: { get: () => "planted", configurable: true } },
+  ])("mints its own when $what", ({ planted }) => {
+    inPage(() => {
+      const w = (globalThis as any).window;
+      if (planted !== undefined) Object.defineProperty(w, "__domoDocumentToken", planted);
+      const token = DOC_TOKEN_JS();
+      expect(token).not.toBe("planted");
+      expect(token).not.toBe("");
+      // And it is stable from then on, which is the whole property.
+      expect(DOC_TOKEN_JS()).toBe(token);
+    });
+  });
+
+  // A non-configurable ACCESSOR is the one shape that cannot be replaced by
+  // anything, ever, in either of its forms. Restamping throws, so the script
+  // must not try to carry on: "" says the document has no identity worth
+  // stating, and the server declines to reason from it rather than trusting a
+  // planted answer.
+  it.each([
+    { what: "a getter", planted: { get: () => "planted", configurable: false } },
+    { what: "a setter", planted: { set: () => {}, configurable: false } },
+    // Immutable, so it cannot be restamped — and still not identity. NaN reads
+    // as a different document on every look, which would empty the ledger
+    // before every action; the rest are simply not what this ever writes.
+    { what: "a value unequal to itself", planted: { value: NaN } },
+    { what: "a value that is not a string", planted: { value: 7 } },
+    { what: "the empty string this keeps for a document it cannot name",
+      planted: { value: "" } },
+    // The ledger keys are `token:selector`, split at the first colon.
+    { what: "a value carrying the separator the ledger keys on",
+      planted: { value: "fixed:token" } },
+  ])("states no identity at all when the name is held against it by $what", ({ planted }) => {
+    inPage(() => {
+      Object.defineProperty((globalThis as any).window, "__domoDocumentToken", planted);
+      expect(DOC_TOKEN_JS()).toBe("");
+    });
+  });
+
+  it("keeps a token that was already unchangeable", () => {
+    inPage(() => {
+      const w = (globalThis as any).window;
+      // Nothing can forge a CHANGE out of this, which is all the ledger asks
+      // of it — so restamping would cost a document its identity for nothing.
+      Object.defineProperty(w, "__domoDocumentToken", { value: "fixed" });
+      expect(DOC_TOKEN_JS()).toBe("fixed");
+    });
+  });
+
+  it("cannot be deleted or overwritten by anything running in the page", () => {
+    inPage(() => {
+      const stamped = DOC_TOKEN_JS();
+      const w = (globalThis as any).window;
+      // What an earlier `eval` would reach for: drop the property, or replace
+      // it, so the next look reads as a new document and drops the ledger with it.
+      // Through `new Function`, because an eval'd expression runs SLOPPY — and
+      // sloppy is where these fail quietly rather than throwing, which is the
+      // path worth proving.
+      expect(new Function("w", "return delete w.__domoDocumentToken")(w)).toBe(false);
+      new Function("w", "w.__domoDocumentToken = 'forged'")(w);
+      // This one throws either way.
+      expect(() => Object.defineProperty(w, "__domoDocumentToken", { value: "forged" })).toThrow();
+      expect(DOC_TOKEN_JS()).toBe(stamped);
+    });
   });
 });

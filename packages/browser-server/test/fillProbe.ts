@@ -102,7 +102,14 @@ class Handle implements HandleLike {
     if (fn === FIELD_CAP_JS) return this.o.maxLength ?? -1;
     if (fn === HELD_MATCHES_JS) {
       const hit = (this.o.options ?? []).find(([v]) => v === this.value);
-      return (this.value || "") === (arg ?? "") || (hit !== undefined && hit[1] === arg);
+      return HELD_MATCHES_JS(
+        {
+          tagName: this.o.options === undefined ? "INPUT" : "SELECT",
+          value: this.value || "",
+          selectedOptions: hit === undefined ? [] : [{ label: hit[1] }],
+        } as never,
+        (arg as string) ?? "",
+      );
     }
     if (fn === TYPEABLE_JS) return this.o.typeable ?? "single-line";
     if (fn === KEYS_DROPPED_JS) {
@@ -406,9 +413,10 @@ export async function ranked(
   return { error, tried: trace.filter((t) => t === "frame.wait_for_selector").length };
 }
 
-type LedgerStep =
+export type LedgerStep =
   | { cmd: Record<string, Any> }
   | { navigate: string }
+  | { unidentified: true }
   | { route: string }
   | { drop_sibling: true }
   | { frame_navigated: string }
@@ -436,9 +444,19 @@ export async function ledger(script: LedgerStep[]): Promise<{
   const session = new Session(page);
   const steps: { step: string; result: Record<string, Any> | null }[] = [];
   for (const step of script) {
-    if ("navigate" in step) {
+    if ("unidentified" in step) {
+      // What DOC_TOKEN_JS answers for a document whose token name is held
+      // against it by a non-configurable accessor: no identity at all.
+      page.documentToken = "";
+      steps.push({ step: "unidentified", result: null });
+    } else if ("navigate" in step) {
       page.urlValue = step.navigate;
       page.documentToken = `doc-${step.navigate}`;
+      // A new document: new nodes, none of them marked or holding anything.
+      for (const node of Object.values(nodes)) {
+        node!.marked = false;
+        node!.value = "";
+      }
       steps.push({ step: "navigate", result: null });
     } else if ("route" in step) {
       page.urlValue = step.route;
@@ -463,7 +481,7 @@ export async function ledger(script: LedgerStep[]): Promise<{
       try {
         const result = await session.handle({ ...step.cmd } as Record<string, never>);
         keep = {};
-        for (const k of ["ok", "mask"]) if (k in result) keep[k] = (result as Record<string, Any>)[k];
+        for (const k of ["ok", "mask", "selector"]) if (k in result) keep[k] = (result as Record<string, Any>)[k];
       } catch (exc) {
         keep = { error: (exc as Error).name === "Error" ? "RuntimeError" : (exc as Error).name };
       }
@@ -476,6 +494,24 @@ export async function ledger(script: LedgerStep[]): Promise<{
     marked: Object.fromEntries(Object.entries(nodes).map(([sel, n]) => [sel, n?.marked ?? false])),
     sibling_marked: siblingNodes["#pass"]!.marked,
   };
+}
+
+/**
+ * Two pages sharing one browser context — the shape `use_page` moves between,
+ * and the shape a popup opened by the page itself arrives in. The first holds
+ * `#pass`; the second holds nothing.
+ */
+export function pagePair(): { first: Page; popup: Page; close: (page: Page) => void } {
+  const trace: string[] = [];
+  const first = new Page(new Frame(trace, { nodes: { "#pass": new Handle(trace) } }));
+  const popup = new Page(new Frame(trace, { nodes: { "#pass": new Handle(trace) } }));
+  popup.documentToken = "doc-popup";
+  let open: PageLike[] = [first, popup];
+  const shared: ContextLike = { on() {}, pages: () => open };
+  for (const page of [first, popup]) {
+    (page as unknown as { ctx: ContextLike }).ctx = shared;
+  }
+  return { first, popup, close: (page) => void (open = open.filter((p) => p !== page)) };
 }
 
 export { Frame, Handle, Page, Hidden, Detached };

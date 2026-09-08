@@ -498,6 +498,14 @@ describe("credentials", () => {
     // Still says enough to fix the call.
     expect(r.get("error").str).toContain("#nofill");
     expect(eventNames()).toContain("credential_fill_failed");
+    // A throw mid-fill can leave the value in the page, and the node it was
+    // writing is the BROWSER's to roll back — only that side knows whether
+    // anything reached it. The device erases the fields it saw land, says what
+    // that covered, and does not report a rollback it did not perform.
+    expect(r.get("error").str).toContain("anything that reached #nofill");
+    expect(ctx.events.map((e) => e.fields.reason)).not.toContain(
+      "the page kept a character after the fill was rolled back",
+    );
   });
 
   it("fill_secret types the value on-device and never returns it", async () => {
@@ -570,6 +578,39 @@ describe("credentials", () => {
     expect(ok.get("status").str).toBe("completed");
     expect(ok.get("frame").int).toBe(1);
     expect(fs.readFileSync(ctx.fillLog, "utf8")).toContain("#card-number\t4111111111111111\t1");
+  });
+
+  // The gate covers every page of the session, so the refusal has to say WHICH
+  // — the field is only clearable from the page that owns it.
+  it.each([
+    { what: "on the page the agent is already on", env: {}, page: null },
+    { what: "on another page of the session", env: { FAKE_CONCEALED_EVAL_PAGE: "1" }, page: 1 },
+  ])("refuses eval while a concealed field holds a value $what", async ({ env, page }) => {
+    await ctx.sessions.closeAll("teardown");
+    ctx = makeCtx({ FAKE_CONCEALED_EVAL: "#pass", ...env });
+    const s = await openSession(["pizza.example"]);
+    const before = ctx.events.length;
+    const result = jv(
+      await ctx.sessions.command(s, {
+        action: "eval",
+        expression: "document.querySelector('#pass').value",
+      }),
+    );
+    expect(result.get("status").str).toBe("error");
+    const error = result.get("error").str ?? "";
+    expect(error).toContain("#pass");
+    expect(error).toContain("eval");
+    // Where to go, not just what is holding it.
+    expect(error).toContain(`use_page ${page ?? 0}`);
+    expect(result.get("result").value ?? null).toBeNull();
+    expect(ctx.events.slice(before).at(-1)).toEqual({
+      event: "browser_eval_refused",
+      fields: {
+        session: ctx.events.find((e) => e.event === "browser_session_opened")!.fields.session,
+        selector: "#pass",
+        ...(page === null ? {} : { page }),
+      },
+    });
   });
 });
 

@@ -11,8 +11,8 @@
  *   recovery is a plow_browser_request intent that widens the scope;
  * - credential values flow op → here → a frame-targeted fill on an approved
  *   origin, and are dropped immediately. They never appear in the results these
- *   tools return, nor in either audit log. `eval` is the documented exception:
- *   it reads page values directly, so a filled field is readable through it.
+ *   tools return, nor in either audit log. `eval` reads page values directly,
+ *   so it is refused while a concealed field still holds one.
  *
  * This layer is the cage: seatbelt cannot confine a browser (network is
  * all-or-nothing), so scope enforcement lives in trusted TS. What the origin
@@ -871,6 +871,23 @@ export class BrowserSessions {
       };
     }
 
+    if (result.ok === false && result.mask === "concealed") {
+      const selector = jv(result).get("selector").str ?? "";
+      const page = jv(result).get("page").num;
+      this.audit("browser_eval_refused", { session: s.auditId, selector, ...(page === null ? {} : { page }) });
+      return {
+        status: "error",
+        error:
+          `eval was refused: ${selector} on page ${page ?? 0} is holding a value out of the ` +
+          `vault, and eval reads a field's value straight out of the page. The refusal covers ` +
+          `every page of this session, because a popup can read its opener — so lift it where ` +
+          `the value is: use_page ${page ?? 0}, then fill ${selector} with an empty value, or ` +
+          `load another page there — submitting the form is one. A field the page has since ` +
+          `replaced cannot be emptied, so only loading a page lifts it then.`,
+        ...(refused.length ? { failed_requests: refused } : {}),
+      };
+    }
+
     const out: { [k: string]: JSONValue } = { status: "completed", ...result };
     if (refused.length) out.failed_requests = refused;
     // If the action itself landed us out of scope, say so in the result — the
@@ -1243,8 +1260,8 @@ export class BrowserSessions {
     /** Boxes already holding their character, in the order they were filled. */
     const done: string[] = [];
     /**
-     * Best-effort erase after a split fill that could not finish, so the boxes
-     * already written do not keep most of a live code between them. Each clear
+     * Best-effort erase after a fill that could not finish, so the fields
+     * already written do not keep a live value between them. Each clear
      * rides the SAME mask the characters went in under: the browser's unmasked
      * fill path takes the mark off and forgets the field BEFORE it learns what
      * the node ended up holding, so a controlled input that undoes the empty
@@ -1284,11 +1301,11 @@ export class BrowserSessions {
       }
       return kept;
     };
-    /** The honest tail of a split-fill error: what the rollback achieved. */
+    /** The honest tail of a refused fill: what the rollback achieved. */
     const clearedNote = (kept: string[]): string =>
       kept.length === 0
-        ? "Every box this fill touched was cleared."
-        : `Every box this fill touched was cleared, except ${kept.join(", ")}, which the ` +
+        ? "Every field this fill touched was cleared."
+        : `Every field this fill touched was cleared, except ${kept.join(", ")}, which the ` +
           `page would not empty${mask ? " (what it kept stays masked on screen)" : ""}.`;
 
     let current = targets[0];
@@ -1357,8 +1374,8 @@ export class BrowserSessions {
             selector: current,
             reason: "the field is holding a changed copy of the value",
           });
+          const kept = await clearBoxes(current);
           if (boxes !== null) {
-            const kept = await clearBoxes(current);
             return {
               status: "error",
               error:
@@ -1370,11 +1387,10 @@ export class BrowserSessions {
             status: "error",
             error:
               `${field} did not go in as stored: ${current} took it and is holding a changed ` +
-              `copy — the page rewrites what is typed into it. That copy is still in the field; ` +
-              `clear it yourself if it must not be submitted. The value in the vault is not at ` +
-              `fault, and this field cannot be filled by an agent as one value. If the page ` +
-              `splits this code across single-character boxes, call fill_secret again with ` +
-              `'selectors' naming every box in order.`,
+              `copy — the page rewrites what is typed into it beyond punctuation. The value in ` +
+              `the vault is not at fault, and this field cannot be filled by an agent as one ` +
+              `value. ${clearedNote(kept)} If the page splits this code across single-character ` +
+              `boxes, call fill_secret again with 'selectors' naming every box in order.`,
           };
         }
         if (filled.mask === "moved") {
@@ -1394,6 +1410,26 @@ export class BrowserSessions {
               `${field} was not filled: the frame holding ${current} was replaced while the vault ` +
               `was being asked for the value, so it is no longer the one whose origin was approved. ` +
               `Screenshot the page and locate the field again.`,
+          };
+        }
+        // Its own cause, and its own line in the log: a page that blocks the
+        // masking stylesheet has a CSP, while a page holding the property we
+        // identify documents by is doing something no ordinary page does.
+        // Nothing was typed, so nothing needs clearing.
+        if (filled.mask === "no_identity") {
+          this.audit("credential_identity_refused", {
+            session: s.auditId,
+            item: itemId,
+            field,
+            origin: frameHost,
+            selector: current,
+          });
+          return {
+            status: "error",
+            error:
+              `${field} was not filled: the page holding ${current} will not say which document ` +
+              `it is, so a value the vault conceals cannot be tracked on it. Nothing was typed ` +
+              `and nothing was exposed. Load the page again, or fill the field by hand.`,
           };
         }
         if (filled.ok !== true) {
@@ -1442,13 +1478,17 @@ export class BrowserSessions {
         selector: current,
         reason: "the browser could not type it into that field",
       });
-      const kept = boxes === null ? [] : await clearBoxes(current);
+      // Only the boxes this loop SAW land. The one mid-write is the browser's:
+      // it knows whether anything reached the node, and erasing it from here
+      // would wipe whatever the field held before when nothing did.
+      const kept = await clearBoxes();
       return {
         status: "error",
         error:
           `could not type ${field} into ${current} — the field may be the wrong one, ` +
-          `hidden, or not ready yet. Screenshot the page and check the selector.` +
-          (boxes === null ? "" : ` ${clearedNote(kept)}`),
+          `hidden, or not ready yet. Screenshot the page and check the selector. ` +
+          `${clearedNote(kept)} So was anything that reached ${current}, which stays ` +
+          `masked if the page would not let it go.`,
       };
     } finally {
       secret = "";
