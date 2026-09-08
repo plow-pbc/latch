@@ -1,4 +1,4 @@
-import { isCloudAssistant, PlowApi, PlowApiError, REQUEST_TIMEOUT_MS } from "./plowApi.js";
+import { PlowApi, PlowApiError, REQUEST_TIMEOUT_MS } from "./plowApi.js";
 
 export const CLOUD_AGENT_POLL_INTERVAL_MS = 2_000;
 const CLOUD_AGENT_POLL_RETRY_WINDOW_MS = 5 * 60_000;
@@ -10,24 +10,35 @@ export type CloudAgentStatus =
   | "teardown"
   | (string & {});
 
-/**
- * Server truth for one cloud agent. The read endpoint adds `name` and
- * `session_id` to the initial create receipt, so both are nullable while the
- * first provisioning response is on screen.
- */
+export interface AgentSettingsValues {
+  daily_payment_cap_usd: number | null;
+  verbose_output: boolean;
+}
+export interface AgentSettings {
+  daily_payment_cap_usd: { value: number | null };
+  verbose_output: { value: boolean };
+}
+export interface AgentCredential {
+  id: number;
+  name: string | null;
+  scopes: string[];
+  connected: boolean;
+  created_at: string;
+  last_used_at: string | null;
+  last_seen_at: string | null;
+}
 export interface CloudAgentResource {
   agentId: string;
-  /** The first entry is the home chat used to resolve this agent's line. */
-  chatUids: string[];
+  line: { uid: string; display_name: string | null; provider_key: string } | null;
+  credential: AgentCredential | null;
+  settings: AgentSettings;
   url: string | null;
-  provider: string | null;
-  name: string | null;
-  status: CloudAgentStatus;
-  failureCode?: string | null;
-  failureReason: string | null;
-  createdAt: string | null;
-  /** Credential identity only. Never use this as the agent's identity. */
-  sessionId: string | null;
+  image: string | null;
+  provider: string;
+  name: string;
+  status: CloudAgentStatus | null;
+  failureCode: string | null;
+  createdAt: string;
 }
 
 export interface CreateCloudAgentRequest {
@@ -79,13 +90,14 @@ export class CloudAgentsClient {
   constructor(
     private readonly api: PlowApi,
     private readonly wait: Wait = defaultWait,
+    private readonly onToken: (token: string, owner: string) => void = () => {},
   ) {}
 
   async create(
     deviceCredential: string,
     request: CreateCloudAgentRequest,
   ): Promise<CloudAgentResource> {
-    const response = await this.api.request("POST", "/v1/assistants", {
+    const response = await this.api.request("POST", "/v1/agents", {
       token: deviceCredential,
       body: {
         line_uid: request.lineUid,
@@ -96,7 +108,11 @@ export class CloudAgentsClient {
     if (!response.ok) {
       await throwCloudCallError(response);
     }
-    return this.resourceFor(response, deviceCredential);
+    const decoded = await decodeJson(response);
+    if (!isRecord(decoded)) throw invalidResponse(response.status);
+    const agent = parseResource(decoded.agent, deviceCredential, response.status);
+    if (typeof decoded.token === "string") this.onToken(decoded.token, deviceCredential);
+    return agent;
   }
 
   async changeLine(
@@ -106,7 +122,7 @@ export class CloudAgentsClient {
   ): Promise<CloudAgentResource> {
     const response = await this.api.request(
       "PUT",
-      `/v1/assistants/${encodeURIComponent(agentId)}/line`,
+      `/v1/agents/${encodeURIComponent(agentId)}/line`,
       { token: deviceCredential, body: { line_uid: lineUid } },
     );
     if (!response.ok) {
@@ -115,33 +131,29 @@ export class CloudAgentsClient {
     return this.resourceFor(response, deviceCredential);
   }
 
-  /**
-   * The account's cloud agents, from the slot per pool line the API answers with.
-   *
-   * Two halves are dropped for the same reason — neither is an agent this
-   * screen can act on. A slot with no assistant is a free line, and a
-   * `self_hosted` one is an activated Mac (`isCloudAssistant`).
-   */
   async list(deviceCredential: string): Promise<CloudAgentResource[]> {
-    const response = await this.api.request("GET", "/v1/assistants", {
+    const response = await this.api.request("GET", "/v1/agents", {
       token: deviceCredential,
     });
     if (!response.ok) throw errorFor(response.status);
 
     const decoded = await decodeJson(response);
     if (!Array.isArray(decoded)) throw invalidResponse(response.status);
-    return decoded.flatMap((slot) => {
-      if (!isRecord(slot) || slot.assistant === undefined) throw invalidResponse(response.status);
-      if (slot.assistant === null) return [];
-      const agent = parseResource(slot.assistant, deviceCredential, response.status);
-      return isCloudAssistant(agent.provider) ? [agent] : [];
-    });
+    return decoded.map((row) => parseResource(row, deviceCredential, response.status));
+  }
+
+  async settings(token: string, uid: string, values: AgentSettingsValues): Promise<CloudAgentResource> {
+    const response = await this.api.request("PATCH", `/v1/agents/${encodeURIComponent(uid)}/settings`, { token, body: values });
+    if (!response.ok) await throwCloudCallError(response);
+    const agent = await this.resourceFor(response, token);
+    if (agent.status === "failed") throw new PlowApiError("http", "Settings saved, but the agent restart failed. Check its status before retrying.");
+    return agent;
   }
 
   async delete(deviceCredential: string, agentId: string): Promise<void> {
     const response = await this.api.request(
       "DELETE",
-      `/v1/assistants/${encodeURIComponent(agentId)}`,
+      `/v1/agents/${encodeURIComponent(agentId)}`,
       { token: deviceCredential },
     );
     // Delete is retry-safe from the app's perspective: a record already gone
@@ -170,7 +182,7 @@ export class CloudAgentsClient {
       try {
         const response = await this.api.request(
           "GET",
-          `/v1/assistants/${encodeURIComponent(current.agentId)}`,
+          `/v1/agents/${encodeURIComponent(current.agentId)}`,
           {
             token: deviceCredential,
             signal,
@@ -236,43 +248,34 @@ function parseResource(
     throw invalidResponse(statusCode);
   }
 
-  const chatUids = readChatUids(decoded);
-  if (chatUids === null) throw invalidResponse(statusCode);
-
-  const optionalString = (value: unknown): string | null =>
-    typeof value === "string" ? value : null;
+  if (typeof decoded.name !== "string" || typeof decoded.provider !== "string" || !isRecord(decoded.settings)) {
+    throw invalidResponse(statusCode);
+  }
+  const cap = decoded.settings.daily_payment_cap_usd;
+  const verbose = decoded.settings.verbose_output;
+  if (!isRecord(cap) || (cap.value !== null && typeof cap.value !== "number") ||
+      !isRecord(verbose) || typeof verbose.value !== "boolean") throw invalidResponse(statusCode);
   const resource: CloudAgentResource = {
     agentId: decoded.uid,
-    chatUids,
-    url: optionalString(decoded.url),
-    provider: optionalString(decoded.provider),
-    name: optionalString(decoded.name),
-    status: typeof decoded.status === "string" ? decoded.status : "provisioning",
-    failureCode: optionalString(decoded.failure_code),
-    failureReason: optionalString(decoded.failure_reason),
-    createdAt: optionalString(decoded.created_at),
-    sessionId: optionalString(decoded.session_id),
+    line: decoded.line as CloudAgentResource["line"],
+    credential: decoded.credential as AgentCredential | null,
+    settings: {
+      daily_payment_cap_usd: { ...cap, value: cap.value },
+      verbose_output: { ...verbose, value: verbose.value },
+    },
+    url: typeof decoded.url === "string" ? decoded.url : null,
+    image: typeof decoded.image === "string" ? decoded.image : null,
+    provider: decoded.provider,
+    name: decoded.name,
+    status: typeof decoded.status === "string" ? decoded.status : null,
+    failureCode: typeof decoded.failure_code === "string" ? decoded.failure_code : null,
+    createdAt: typeof decoded.created_at === "string" ? decoded.created_at : "",
   };
 
-  if (
-    Object.values(resource)
-      .flatMap((value) => (Array.isArray(value) ? value : [value]))
-      .some((value) => typeof value === "string" && echoesCredential(value, deviceCredential))
-  ) {
+  if (echoesCredential(JSON.stringify(resource), deviceCredential)) {
     throw new PlowApiError("http", "Plow returned an unsafe cloud-agent response.", statusCode);
   }
   return resource;
-}
-
-/**
- * The assistant's lifecycle-anchor chats. Empty is a real answer — a
- * self-hosted assistant anchors none — and `null` means the field was missing
- * or malformed.
- */
-function readChatUids(decoded: Record<string, unknown>): string[] | null {
-  const many = decoded.chat_uids;
-  if (!Array.isArray(many) || !many.every((uid) => typeof uid === "string")) return null;
-  return many as string[];
 }
 
 function errorFor(status: number): PlowApiError {
@@ -316,6 +319,7 @@ const LINE_ERRORS: Readonly<Record<string, {
   code: CloudAgentLineErrorCode;
   message: string;
 }>> = Object.freeze({
+  AGENT_EXISTS: { code: "line_occupied", message: "Another agent already uses that line." },
   NO_HOME_CHAT: {
     code: "no_home_chat",
     message: "Text this line once first, then try again.",

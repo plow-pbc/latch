@@ -261,8 +261,7 @@ export class ConnectClient {
    * Mint a static credential for one client.
    *
    * Authorised with this Mac's stored credential — the login session itself,
-   * which may create agents. Naming a line is what makes the mint an assistant
-   * rather than an MCP-only client; no line is still the whole flow for one.
+   * which may create agents. A static client is a local agent on a selected line.
    */
   async createCredential(name: string, lineUid: string | null = null): Promise<ConnectClientState> {
     // SINGLE-FLIGHT. Every mint is a long-lived credential on the account, and
@@ -291,14 +290,14 @@ export class ConnectClient {
         // account this Mac is no longer on, so revoke it rather than showing it
         // or leaving an unreachable credential behind.
         if (generation !== this.generation) {
-          await this.deps.api.revokeApiKey(settings.relayCredential, minted.id).catch(() => {});
+          await this.deps.api.deleteAgent(settings.relayCredential, minted.agentUid).catch(() => {});
           return this.state();
         }
         let config: string;
         try {
-          config = validatedAgentConfig(minted.mcpConfig, minted.token);
+          config = agentMcpConfig(settings.mcpUrl, minted.token);
         } catch (error) {
-          await this.deps.api.revokeApiKey(settings.relayCredential, minted.id).catch(() => {});
+          await this.deps.api.deleteAgent(settings.relayCredential, minted.agentUid).catch(() => {});
           throw error;
         }
         this.credential = {
@@ -375,54 +374,19 @@ export class ConnectClient {
   }
 }
 
-export function validatedAgentConfig(config: string, token: string): string {
-  let parsed: unknown;
+/** The API no longer supplies MCP config; target this Mac's server-provided address. */
+export function agentMcpConfig(url: string, token: string): string {
   try {
-    parsed = JSON.parse(config);
+    const parsed = new URL(url);
+    if (!["http:", "https:"].includes(parsed.protocol) || /plow_[A-Za-z0-9_-]+/.test(decodeURIComponent(url))) {
+      throw new Error("Invalid MCP address");
+    }
   } catch {
     throw new PlowApiError("http", "Plow returned an invalid MCP configuration.");
   }
-  if (!parsed || typeof parsed !== "object") {
-    throw new PlowApiError("http", "Plow returned an invalid MCP configuration.");
-  }
-  const servers = (parsed as { mcpServers?: unknown }).mcpServers;
-  if (!servers || typeof servers !== "object" || Array.isArray(servers) || !Object.keys(servers).length) {
-    throw new PlowApiError("http", "Plow returned an invalid MCP configuration.");
-  }
-  const projected: Array<[string, { type: "http"; url: string; headers: { Authorization: string } }]> = [];
-  const credentialPattern = /plow_[A-Za-z0-9_-]+/;
-  for (const [name, server] of Object.entries(servers as Record<string, unknown>)) {
-    if (credentialPattern.test(name)) {
-      throw new PlowApiError("http", "Plow returned an invalid MCP configuration.");
-    }
-    if (!server || typeof server !== "object") {
-      throw new PlowApiError("http", "Plow returned an invalid MCP configuration.");
-    }
-    const headers = (server as { headers?: unknown }).headers;
-    const url = (server as { url?: unknown }).url;
-    let decodedUrl: string;
-    let protocol: string;
-    try {
-      decodedUrl = typeof url === "string" ? decodeURIComponent(url) : "";
-      protocol = typeof url === "string" ? new URL(url).protocol : "";
-    } catch {
-      throw new PlowApiError("http", "Plow returned an invalid MCP configuration.");
-    }
-    if (
-      (server as { type?: unknown }).type !== "http" ||
-      typeof url !== "string" ||
-      (protocol !== "http:" && protocol !== "https:") ||
-      credentialPattern.test(url) ||
-      credentialPattern.test(decodedUrl) ||
-      !headers ||
-      typeof headers !== "object" ||
-      (headers as Record<string, unknown>).Authorization !== `Bearer ${token}`
-    ) {
-      throw new PlowApiError("http", "Plow returned an invalid MCP configuration.");
-    }
-    projected.push([name, { type: "http", url, headers: { Authorization: `Bearer ${token}` } }]);
-  }
-  return JSON.stringify({ mcpServers: Object.fromEntries(projected) }, null, 2);
+  return JSON.stringify({ mcpServers: { plow: {
+    type: "http", url, headers: { Authorization: `Bearer ${token}` },
+  } } }, null, 2);
 }
 
 function messageOf(error: unknown): string {

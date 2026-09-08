@@ -1,3 +1,4 @@
+import { agentSettingsForm } from "./agentSettings.js";
 /* Main-window renderer. Sandboxed: no Node, no ipcRenderer — only the narrow
    `window.domo` bridge from preload. All agent-derived text is inserted with
    textContent (never innerHTML), so nothing on the wire can inject markup. */
@@ -900,13 +901,13 @@ function syncStaticModal(s, redraw) {
         el("div", { class: "group-title", text: "Static credential" }),
         el("p", {
           class: "faint conn-note",
-          text: "For a client that can't do OAuth. It is long-lived, shown once, and can be revoked from your Plow account.",
+          text: "For a client that can't do OAuth. The token is shown once. Delete the agent to revoke it.",
         }),
         el("div", { class: "field" }, [el("label", { text: "Name this connection" }), staticModal.nameInput]),
         el("div", { class: "field" }, [el("label", { text: "Line" }), staticModal.lineSelect]),
         el("p", {
           class: "faint conn-note",
-          text: "Pick the line this agent answers on to give it its model and its Mac. Leave blank for a tool that only needs MCP.",
+          text: "Choose a free line for this self-hosted agent. Its credential grants access to this Mac and its chats.",
         }),
         note,
         el("div", { class: "row conn-actions" }, [cancel, el("div", { class: "spacer" }), createBtn]),
@@ -922,7 +923,7 @@ function syncStaticModal(s, redraw) {
     const lines = s.cloudFreeLines ?? [];
     const picked = staticModal.lineSelect.value;
     staticModal.lineSelect.replaceChildren(
-      el("option", { text: "No line — MCP access only", attrs: { value: "" } }),
+      el("option", { text: "Choose a line…", attrs: { value: "" } }),
       ...lines.map((line) => el("option", { text: line.label, attrs: { value: line.uid } })),
     );
     staticModal.lineSelect.value = picked;
@@ -1144,7 +1145,7 @@ function cloudActivationScreen(panel, flow) {
 }
 
 function cloudLinePickerNodes(state, modal, start, cancel, message = null) {
-  if (state.cloudChatsLoaded !== true) {
+  if (state.cloudLinesLoaded !== true) {
     const unavailable = state.cloudChatsError
       ? cloudErrorCopy(state.cloudChatsError)
       : "Your lines couldn't be loaded yet. Try again.";
@@ -1461,9 +1462,9 @@ function syncCloudModal(state, redraw) {
     closeCloudModal();
     return;
   }
+  if (cloudModal.editing) return;
   const { panel } = cloudModal;
-  const credentialRow = (state.roster?.cloud ?? []).find((row) => row.agentId === agent.agentId);
-  const name = rosterName(credentialRow, agent.name || "Cloud agent");
+  const name = agent.name;
 
   const showDetail = () => {
     cloudModal.confirmingDelete = false;
@@ -1479,6 +1480,12 @@ function syncCloudModal(state, redraw) {
     remove.addEventListener("click", () => {
       cloudModal.confirmingDelete = true;
       syncCloudModal(state, redraw);
+    });
+    const settings = el("button", { class: "btn", text: "Settings" });
+    settings.addEventListener("click", () => {
+      cloudModal.editing = true;
+      panel.replaceChildren(el("h2", { text: `Settings — ${name}` }),
+        agentSettingsForm(document, agent.settings, (values) => window.domo.agentSettings(agent.agentId, values)), close);
     });
     const threads = agent.threads ?? [];
     panel.replaceChildren(
@@ -1510,6 +1517,7 @@ function syncCloudModal(state, redraw) {
         close,
         el("div", { class: "spacer" }),
         message,
+        settings,
         changeLine,
         remove,
       ]),
@@ -1560,7 +1568,7 @@ function openCloudDetail(trigger, agent, state, redraw) {
   syncCloudModal(state, redraw);
 }
 
-function cloudErrorBanner(message, title = "Cloud agents could not be refreshed") {
+function cloudErrorBanner(message, title = "Agents could not be refreshed") {
   if (!message) return null;
   return el("div", { class: "cloud-callout cloud-error" }, [
     el("div", { class: "cloud-callout-title", text: title }),
@@ -1793,6 +1801,7 @@ function cloudContext(agent, state) {
 }
 
 function cloudStatusNode(agent) {
+  if (agent?.status === null) return badge(agent.connected ? "green" : "faint", agent.connected ? "Connected" : "Offline");
   const status = cloudStatus(agent?.status, agent?.failureReason);
   if (agent?.status === "provisioning") {
     return el("span", { class: "status-setting" }, [
@@ -1807,7 +1816,7 @@ function cloudStatusNode(agent) {
 }
 
 function cloudEntityRow(row, agent, state, redraw) {
-  const name = rosterName(row, agent?.name || "Cloud agent");
+  const name = agent?.name ?? "Agent";
   const main = el("div", {
     class: `entity-main${agent ? " cloud-agent-open" : ""}`,
     attrs: agent
@@ -1848,7 +1857,7 @@ function cloudEntityRow(row, agent, state, redraw) {
     await window.domo.cloudRetryFailed(agent.agentId);
     await redraw();
   });
-  const actions = [message, retry, ...(row ? rosterActions(row, "cloud", redraw) : [])].filter(Boolean);
+  const actions = [message, retry].filter(Boolean);
   return el("div", { class: "entity-row cloud-agent-row", attrs: { "data-cloud-agent-id": agent?.agentId ?? row?.agentId ?? "" } }, [
     entityMark(name),
     main,
@@ -1898,18 +1907,7 @@ function sectionHeader(title, count, unit, action) {
 function cloudSection(s, redraw) {
   const add = el("button", { class: "btn primary", text: "New agent" });
   add.addEventListener("click", () => openCloudCreate(add, s, redraw));
-  const rosterRows = s.roster?.cloud ?? [];
-  const agents = s.cloudAgents;
-  const rosterByAgentId = new Map(rosterRows.map((row) => [row.agentId, row]));
-  const seen = new Set(agents.map((agent) => agent.agentId));
-  const rows = agents.map((agent) =>
-    cloudEntityRow(rosterByAgentId.get(agent.agentId), agent, s, redraw));
-  const rosterOnly = rosterRows
-    .filter((row) => !seen.has(row.agentId))
-    .sort((a, b) => rosterName(a, "Cloud agent").localeCompare(rosterName(b, "Cloud agent")));
-  for (const row of rosterOnly) {
-    rows.push(cloudEntityRow(row, null, s, redraw));
-  }
+  const rows = s.cloudAgents.map((agent) => cloudEntityRow(null, agent, s, redraw));
   const notices = [];
   if (!s.cloudChatsLoaded) {
     notices.push(s.cloudChatsError
@@ -1926,11 +1924,11 @@ function cloudSection(s, redraw) {
   if (refreshError) notices.push(refreshError);
   if (s.cloudActionError) notices.push(cloudErrorBanner(s.cloudActionError, "That change did not finish"));
   return el("section", { class: "list-section" }, [
-    sectionHeader("Cloud agents", rows.length, "agent", add),
+    sectionHeader("Agents", rows.length, "agent", add),
     ...notices,
     el("div", { class: "entity-list compact-list" }, rows.length
       ? rows
-      : [el("div", { class: "empty entity-empty", text: "No cloud agents." })]),
+      : [el("div", { class: "empty entity-empty", text: "No agents." })]),
   ]);
 }
 
@@ -1977,6 +1975,12 @@ async function renderAgents() {
     const s = await window.domo.connectGet();
     if (!s || !panel.isConnected) return s;
     panel.replaceChildren(...[
+      ...(s.agentToken ? [el("div", { class: "cloud-callout" }, [
+        el("p", { text: "Copy this agent token now. It is only shown once." }),
+        copyRow(s.agentToken, "Copy token"),
+        (() => { const done = el("button", { class: "btn", text: "I saved the token" });
+          done.addEventListener("click", async () => { await window.domo.agentDismissToken(); await refreshConnect(); }); return done; })(),
+      ])] : []),
       rosterNotice(s),
       cloudSection(s, refreshConnect),
       sessionSection("MCP clients", s.roster?.mcp ?? [], "mcp", s, refreshConnect),

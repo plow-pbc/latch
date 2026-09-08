@@ -3,7 +3,7 @@
  *
  * Three fixtures encoded these defaults separately, so a field added to
  * `KeyInfo` had to be added three times — the drift surface the
- * `agent_id` → `assistant_uid`/`assistant_provider` rename walked into.
+ * `agent_id` → `agent_uid`/`agent_provider` rename walked into.
  */
 import type { KeyInfo } from "../src/plowApi.js";
 
@@ -19,8 +19,7 @@ export const keyInfo = (overrides: Partial<KeyInfo> = {}): KeyInfo => ({
   is_active: true,
   last_seen_at: "2026-08-25T10:00:00Z",
   created_at: "2026-08-20T10:00:00Z",
-  assistant_uid: null,
-  assistant_provider: null,
+  agent_uid: null,
   chat_uids: [],
   ...overrides,
 });

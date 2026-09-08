@@ -192,6 +192,8 @@ contextBridge.exposeInMainWorld("domo", {
   // missing — an inactive credential on a still-running agent — where there is
   // no roster row to name and none is needed.
   cloudRemove: (agentId: string) => ipcRenderer.invoke("cloud:remove", agentId),
+  agentSettings: (uid: string, values: import("./cloudAgents.js").AgentSettingsValues) => ipcRenderer.invoke("agents:settings", uid, values),
+  agentDismissToken: () => ipcRenderer.invoke("agents:dismissToken"),
   cloudRefresh: () => ipcRenderer.invoke("cloud:refresh"),
   cloudAgents: (): Promise<CloudAgentsPreloadState | null> => ipcRenderer.invoke("cloud:agents"),
   cloudCreate: (input: { name: string; provider: string; lineUid: string | null }) =>

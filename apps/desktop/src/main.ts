@@ -227,6 +227,8 @@ let onboarding: Onboarding | null = null;
 let connectors: Connectors | null = null;
 let connectClient: ConnectClient | null = null;
 let cloudAgents: CloudAgentState | null = null;
+let agentsClient: CloudAgentsClient | null = null;
+let agentToken: string | null = null;
 let onboardingWindow: BrowserWindow | null = null;
 let onboardingWindowReady: BrowserWindow | null = null;
 let updates: UpdateController | null = null;
@@ -586,6 +588,7 @@ function signOut() {
   // And the cloud group: its rows, its chat list and any provision still being
   // polled all belong to the account that just went away.
   cloudAgents?.signedOut();
+  agentToken = null;
   // The gate, not a bare `openOnboardingWindow`: with no credential this Mac is
   // not usable, so the main window goes away as the setup window arrives.
   // Opening it boots at Welcome. Activation is deliberately deferred until
@@ -694,6 +697,7 @@ ipcMain.handle("cloud:agents", async () => {
 });
 ipcMain.handle("connect:create", async (_e, name: string, lineUid: string | null) => {
   await connectClient?.createCredential(name, lineUid);
+  await cloudAgents?.refresh();
   // The credential it just minted is a roster row nobody has read yet.
   await connectClient?.refreshRoster();
   return agentsTabState();
@@ -704,7 +708,7 @@ ipcMain.handle("connect:create", async (_e, name: string, lineUid: string | null
  * A live agent whose credential has gone inactive has no roster row, and the
  * screen used to disable Remove for it — a running agent nobody could take
  * down. Its removal never needed the credential: `DELETE
- * /v1/assistants/{uid}` is keyed on the assistant.
+ * /v1/agents/{uid}` is keyed on the assistant.
  *
  * The roster is re-read afterwards because the credential row, if there was
  * one, is gone with it.
@@ -724,6 +728,19 @@ ipcMain.handle("cloud:create", async (_e, input: unknown) => {
   });
   await connectClient?.refreshRoster();
   return agentsTabState();
+});
+ipcMain.handle("agents:dismissToken", () => { agentToken = null; });
+ipcMain.handle("agents:settings", async (_e, uid: string, values: import("./cloudAgents.js").AgentSettingsValues) => {
+  const token = loadSettings(home).relayCredential.trim();
+  try {
+    if (!agentsClient || !token) throw new Error("Sign in to edit agents.");
+    await agentsClient.settings(token, uid, values);
+    return { error: null };
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : "Settings could not be saved." };
+  } finally {
+    await cloudAgents?.refresh();
+  }
 });
 ipcMain.handle("cloud:cancelLineFlow", async () => {
   cloudAgents?.cancelLineFlow();
@@ -787,7 +804,7 @@ function agentsTabState(): Record<string, unknown> | null {
   const connect = connectClient?.state() ?? null;
   const cloud = cloudAgents?.state() ?? null;
   if (!connect) return null;
-  return { ...connect, ...(cloud ?? {}) };
+  return { ...connect, ...(cloud ?? {}), agentToken };
 }
 
 // MARK: IPC for the first-run setup window
@@ -2116,7 +2133,12 @@ app.whenReady().then(async () => {
   // because a row naming a cloud assistant must be deleted as an assistant and
   // never revoked as a key.
   const cloudApi = new PlowApi(apiBaseUrl, loggingFetch(home));
-  const cloudAgentsClient = new CloudAgentsClient(cloudApi);
+  const cloudAgentsClient = new CloudAgentsClient(cloudApi, undefined, (token, owner) => {
+    if (loadSettings(home).relayCredential.trim() !== owner) return;
+    agentToken = token;
+    notifyRenderer("connect:changed");
+  });
+  agentsClient = cloudAgentsClient;
 
   connectClient = new ConnectClient({
     api: new PlowApi(apiBaseUrl),

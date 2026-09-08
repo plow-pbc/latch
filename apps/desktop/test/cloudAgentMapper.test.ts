@@ -7,14 +7,13 @@ import { CloudAgentResource, isTerminalCloudAgent } from "../src/cloudAgents.js"
 function agent(overrides: Partial<CloudAgentResource> = {}): CloudAgentResource {
   return {
     agentId: "agent_stable",
-    chatUids: ["cht_123"],
+    line: null, credential: null, settings: {}, image: null,
     url: "https://provider.internal/secret-handle",
     provider: "exe:hermes",
-    name: null,
+    name: "Kitchen",
     status: "provisioning",
-    failureReason: null,
+    failureCode: null,
     createdAt: "2026-08-24T18:02:11Z",
-    sessionId: "session_old",
     ...overrides,
   };
 }
@@ -35,51 +34,29 @@ describe("cloud-agent pure mappings", () => {
       canRetry: true,
       threads: [{ uid: "cht_123", label: "+1 415 555 0100 · Pat, Lee" }],
     });
-    expect(JSON.stringify(row)).not.toContain("session_old");
+    expect(row).not.toHaveProperty("credential");
     expect(JSON.stringify(row)).not.toContain("provider.internal");
   });
 
-  it("scrubs a session id embedded in every renderer-bound display string", () => {
-    const sessionId = "session_sensitive_123";
-    const row = toCloudAgentDisplayRow(
-      agent({
-        agentId: `agent-${sessionId}`,
-        chatUids: [`chat-${sessionId}`],
-        name: `name ${sessionId}`,
-        provider: `provider ${sessionId}`,
-        failureReason: `credential ${sessionId} rejected`,
-        createdAt: `created ${sessionId}`,
-        sessionId,
-      }),
-      {
-        line: { uid: `line-${sessionId}`, label: `line label ${sessionId}` },
-        threads: [{ uid: `chat-${sessionId}`, label: `chat label ${sessionId}` }],
-      },
-    );
-
-    expect(row.failureReason).toBe("credential [credential] rejected");
-    expect(JSON.stringify(row)).not.toContain(sessionId);
-  });
-
-  it("allows only known failure labels or legacy prose into the renderer", () => {
+  it("renders known failure labels and a fixed unknown-failure message into the renderer", () => {
     const row = toCloudAgentDisplayRow({
-      ...agent({ status: "failed", failureReason: "legacy reason" }),
+      ...agent({ status: "failed" }),
       failureCode: "validation_failed",
     } as CloudAgentResource);
 
     expect(row.failureReason).toMatch(/validation failed.*retrying will not help.*human/i);
 
     const future = toCloudAgentDisplayRow({
-      ...agent({ status: "failed", failureReason: "Provider capacity is exhausted." }),
+      ...agent({ status: "failed" }),
       failureCode: "capacity_exhausted",
     } as CloudAgentResource);
-    expect(future.failureReason).toBe("Provider capacity is exhausted.");
+    expect(future.failureReason).toBe("Agent operation failed");
 
     const encodedCredential = toCloudAgentDisplayRow({
-      ...agent({ status: "failed", failureReason: null }),
+      ...agent({ status: "failed" }),
       failureCode: "cGxvd19za19kZXZpY2VfZG9fbm90X2xlYWs=",
     } as CloudAgentResource);
-    expect(encodedCredential.failureReason).toBeNull();
+    expect(encodedCredential.failureReason).toBe("Agent operation failed");
   });
 
   it("keeps provisioning non-terminal and treats every returned status as terminal", () => {

@@ -34,7 +34,6 @@ class FakePlow {
   /** Every credential handed back, in order. Distinct, like the real ones. */
   issued: string[] = [];
   fails: PlowApiError | null = null;
-  mcpConfigOverride: string | null = null;
   /** What `listApiKeys` will answer with. */
   keys: KeyInfo[] = [];
   /** Hold one list open, so a test can land reads out of order. */
@@ -56,7 +55,10 @@ class FakePlow {
     return this.keys;
   }
 
+  async deleteAgent(_token: string, uid: string) { this.revoked.push(Number(uid)); }
+
   async revokeApiKey(_token: string, id: number) {
+    if (this.fails) throw this.fails;
     this.revoked.push(id);
     return { status: "revoked", id };
   }
@@ -94,24 +96,11 @@ class FakePlow {
     this.issued.push(issued);
     return {
       id: 700 + this.minted.length,
+      agentUid: String(700 + this.minted.length),
       token: issued,
       keyPrefix: issued.slice(5, 13),
       name,
-      mcpConfig: this.mcpConfigOverride ?? JSON.stringify({
-        mcpServers: {
-          "plow-mbp": {
-            type: "http",
-            command: "/bin/should-not-survive",
-            url: "http://localhost:18804/v1/relay/devices/device-mbp/mcp",
-            headers: { Authorization: `Bearer ${issued}` },
-          },
-          "plow-mba": {
-            type: "http",
-            url: "http://localhost:18804/v1/relay/devices/device-mba/mcp",
-            headers: { Authorization: `Bearer ${issued}` },
-          },
-        },
-      }),
+
     };
   }
 }
@@ -201,12 +190,11 @@ describe("the static-credential fallback", () => {
     expect(state.credential?.name).toBe("Claude Code");
 
     const config = JSON.parse(state.credential!.config);
-    expect(Object.keys(config.mcpServers)).toEqual(["plow-mbp", "plow-mba"]);
-    expect(config.mcpServers["plow-mbp"].headers.Authorization).toBe(`Bearer ${plow.issued[0]}`);
-    expect(config.mcpServers["plow-mba"].headers.Authorization).toBe(`Bearer ${plow.issued[0]}`);
+    expect(Object.keys(config.mcpServers)).toEqual(["plow"]);
+    expect(config.mcpServers.plow.headers.Authorization).toBe(`Bearer ${plow.issued[0]}`);
     // A URL ends up in shell history, logs and stored registrations.
-    expect(config.mcpServers["plow-mbp"].url).not.toContain(CLIENT_TOKEN);
-    expect(config.mcpServers["plow-mbp"].command).toBeUndefined();
+    expect(config.mcpServers.plow.url).not.toContain(CLIENT_TOKEN);
+    expect(config.mcpServers.plow.command).toBeUndefined();
   });
 
   it("hands the chosen line to the mint, so the credential is the assistant role", async () => {
@@ -229,39 +217,13 @@ describe("the static-credential fallback", () => {
     expect(JSON.stringify(connect.state())).not.toContain(CLIENT_TOKEN);
   });
 
-  const config = (server: object, name = "plow-mbp") => JSON.stringify({ mcpServers: { [name]: server } });
-  const validServer = (url: string, authorization = `Bearer ${CLIENT_TOKEN}_1`) => ({
-    type: "http",
-    url,
-    headers: { Authorization: authorization },
-  });
-
-  it.each([
-    ["unreadable JSON", "not json"],
-    ["another credential", config(validServer("https://api.plow.co/mcp", "Bearer plow_someone_elses_token"))],
-    ["another credential in the server name", config(validServer("https://api.plow.co/mcp"), "plow_other_secret")],
-    ["another credential in a raw URL", config(validServer("https://api.plow.co/plow_other_secret/mcp"))],
-    ["another credential in an encoded URL", config(validServer("https://api.plow.co/%70low_other_secret/mcp"))],
-    ["the token in a raw URL", config(validServer(`https://api.plow.co/${CLIENT_TOKEN}_1/mcp`))],
-    ["the token in an encoded URL", config(validServer("https://api.plow.co/%70low_CLIENTtok_shown_once_1/mcp"))],
-    [
-      "a stdio command",
-      config({
-        type: "stdio",
-        command: "/usr/bin/open",
-        args: ["https://attacker.example"],
-        url: "https://api.plow.co/mcp",
-        headers: { Authorization: `Bearer ${CLIENT_TOKEN}_1` },
-      }),
-    ],
-  ])("rejects %s and revokes the mint", async (_case, value) => {
+  it("rejects an unsafe stored MCP address and deletes the new agent", async () => {
     signIn();
-    plow.mcpConfigOverride = value;
-
+    const settings = loadSettings(home);
+    settings.mcpUrl = "https://api.plow.co/plow_other_secret/mcp";
+    saveSettings(home, settings);
     const state = await build().createCredential("Claude Code");
-
     expect(state.credential).toBeNull();
-    expect(state.message).toBe("Plow returned an invalid MCP configuration.");
     expect(plow.revoked).toEqual([701]);
   });
 
@@ -452,9 +414,9 @@ describe("removing a roster row", () => {
    */
   it.each([
     [
-      "a cloud agent",
-      () => key({ id: 7, assistant_uid: "agent_7", assistant_provider: "exe:hermes" }),
-      { revoked: [] as number[], deleted: ["agent_7"], signOuts: 0 },
+      "an agent credential omitted from the session roster",
+      () => key({ id: 7, agent_uid: "agent_7" }),
+      { revoked: [] as number[], deleted: [] as string[], signOuts: 0 },
     ],
     [
       "this Mac",
@@ -463,7 +425,7 @@ describe("removing a roster row", () => {
     ],
     [
       "an ordinary credential",
-      () => key({ id: 8, assistant_uid: null }),
+      () => key({ id: 8, agent_uid: null }),
       { revoked: [8], deleted: [] as string[], signOuts: 0 },
     ],
   ])("removes %s down its own route and no other", async (_what, row, expected) => {
@@ -490,7 +452,7 @@ describe("removing a roster row", () => {
    */
   it.each([
     ["failure", (d: Deferred<KeyInfo[]>) => d.reject(new PlowApiError("http", "Plow returned 500.", 500))],
-    ["success", (d: Deferred<KeyInfo[]>) => d.resolve([key({ id: 8, assistant_uid: null })])],
+    ["success", (d: Deferred<KeyInfo[]>) => d.resolve([key({ id: 8, agent_uid: null })])],
   ])("a late %s never displaces the newer roster read", async (_ending, finish) => {
     signIn();
     const stale = deferred<KeyInfo[]>();
@@ -540,22 +502,24 @@ describe("removing a roster row", () => {
     ["the response is lost after Plow committed", [] as number[]],
   ])("says why when %s, and shows the rows Plow holds", async (_when, held) => {
     signIn();
-    plow.keys = [key({ id: 9, assistant_uid: "agent_9", assistant_provider: "exe:hermes" })];
-    const client = build({ deleteFails: true });
+    plow.keys = [key({ id: 9, agent_uid: null })];
+    const client = build();
     await client.refreshRoster();
-    plow.keys = held.map((id) => key({ id, assistant_uid: "agent_9", assistant_provider: "exe:hermes" }));
+    plow.keys = held.map((id) => key({ id, agent_uid: null }));
 
+    const revoke = plow.revokeApiKey.bind(plow);
+    plow.revokeApiKey = async () => { throw new PlowApiError("http", "Plow returned 500.", 500); };
     const state = await client.removeRosterRow(9);
+    plow.revokeApiKey = revoke;
 
     expect(state.actionError).toBe("Plow returned 500.");
-    expect(state.roster.cloud.map((row) => row.id)).toEqual(held);
+    expect(state.roster.mcp.map((row) => row.id)).toEqual(held);
   });
 });
 
 describe("renaming a roster row", () => {
   it.each([
-    ["a cloud agent", () => key({ id: 7, assistant_uid: "agent_7", assistant_provider: "exe:hermes" })],
-    ["an MCP client", () => key({ id: 8, assistant_uid: null })],
+    ["an MCP client", () => key({ id: 8, agent_uid: null })],
     ["this Mac", () => key({ id: 4, key_prefix: keyPrefixOf(DEVICE_TOKEN) })],
   ])("renames %s through its credential and re-reads the roster", async (_what, row) => {
     signIn();

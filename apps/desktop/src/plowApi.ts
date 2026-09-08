@@ -129,12 +129,11 @@ export interface CloudAgentProvider {
 export interface MintedCredential {
   /** Session id used to revoke a mint that cannot be handed to the user. */
   id: number;
+  agentUid: string;
   /** Shown to the user once (agents) or stored and never shown (the device). */
   token: string;
   keyPrefix: string;
   name: string;
-  /** Server-authored config containing one MCP server per active Latch. */
-  mcpConfig: string;
 }
 
 /** The account credential metadata returned by `GET /v1/api-keys`.
@@ -149,32 +148,8 @@ export interface KeyInfo {
   is_active: boolean;
   last_seen_at: string | null;
   created_at: string | null;
-  assistant_uid: string | null;
-  /** `self_hosted`, a cloud provider such as `exe:hermes`, or null. */
-  assistant_provider: string | null;
+  agent_uid: string | null;
   chat_uids: string[];
-}
-
-/** The provider of an assistant that runs on this Mac rather than in the cloud. */
-export const SELF_HOSTED_PROVIDER = "self_hosted";
-
-/**
- * Is this assistant a VM Plow runs, rather than an activated Mac?
- *
- * The distinction is what removal costs. Only `DELETE /v1/assistants/{uid}`
- * takes a cloud assistant down — revoking its credential leaves the machine
- * running and unreachable. A `self_hosted` assistant has no machine, so
- * revoking the credential is the whole removal.
- *
- * Only a named provider answers true, because this picks a DESTRUCTIVE route.
- * Everything else revokes: `self_hosted`, null, and the `undefined` an API
- * predating the assistant contract sends. `listApiKeys` already defaults that
- * pair to null, so the `undefined` arm is defence in depth — and the parameter
- * says so, rather than leaving the body hardened against a shape the signature
- * claims cannot arrive.
- */
-export function isCloudAssistant(provider: string | null | undefined): boolean {
-  return typeof provider === "string" && provider !== "" && provider !== SELF_HOSTED_PROVIDER;
 }
 
 /** Parse Plow's UTC timestamp, whose wire form may omit the trailing offset. */
@@ -556,7 +531,7 @@ export class PlowApi {
   /** List the providers accepted by the cloud-agent create endpoint.
    * Provider ids are opaque server-owned values: preserve their bytes and order. */
   async listCloudAgentProviders(token: string): Promise<CloudAgentProvider[]> {
-    const data = await this.call<unknown>("GET", "/v1/assistants/providers", { token })
+    const data = await this.call<unknown>("GET", "/v1/agents/providers", { token })
       .catch((error) => {
         if (error instanceof PlowApiError && error.status === 503) {
           throw new PlowApiError(
@@ -751,49 +726,23 @@ export class PlowApi {
     return { accounts, degraded };
   }
 
-  /** Mint an agent credential through the relay's own API. Named with a line,
-   * the server mints the assistant role on it — `relay:call`, `chats:use`,
-   * `llm:chat`, `payments:request`. Without one it mints `relay:call` alone,
-   * which is all an MCP-only client needs. */
+  /** Create a local agent; its token is shown once for self-hosted setup. */
   async createAgent(token: string, name: string, lineUid: string | null = null): Promise<MintedCredential> {
-    const line = (lineUid ?? "").trim();
-    const data = await this.call<{
-      id?: unknown;
-      token: string;
-      key_prefix?: string;
-      name?: string;
-      mcp_config?: unknown;
-    }>(
-      "POST",
-      "/v1/relay/agents",
-      { token, body: line ? { name, line_uid: line } : { name } },
+    if (!lineUid) throw new PlowApiError("http", "Choose a line for this agent.");
+    const data = await this.call<{ agent: { uid: string; credential: { id: number }; name: string }; token: string }>(
+      "POST", "/v1/agents", { token, body: { name, provider: "local", line_uid: lineUid } },
     );
-    if (typeof data.id !== "number" || typeof data.mcp_config !== "string" || !data.mcp_config.trim()) {
-      throw new PlowApiError("http", "Plow did not return an MCP configuration.");
-    }
-    return {
-      id: data.id,
-      token: data.token,
-      keyPrefix: data.key_prefix ?? "",
-      name: data.name ?? name,
-      mcpConfig: data.mcp_config,
-    };
+    return { id: data.agent.credential.id, agentUid: data.agent.uid, token: data.token,
+      keyPrefix: "", name: data.agent.name };
   }
 
-  /** List this account's credential metadata. The stored credential remains in
-   * the bearer header and is never returned.
-   *
-   * The assistant pair is defaulted here, once, for every reader: an API
-   * predating the assistant contract sends neither field, and `undefined`
-   * passes a null test — which would file every credential as a cloud agent
-   * and send Remove to a delete that silently does nothing. */
+  async deleteAgent(token: string, uid: string): Promise<void> {
+    await this.call("DELETE", `/v1/agents/${encodeURIComponent(uid)}`, { token });
+  }
+
+  /** Credential metadata for the independent sessions section. */
   async listApiKeys(token: string): Promise<KeyInfo[]> {
-    const keys = await this.call<KeyInfo[]>("GET", "/v1/api-keys", { token });
-    return keys.map((key) => ({
-      ...key,
-      assistant_uid: key.assistant_uid ?? null,
-      assistant_provider: key.assistant_provider ?? null,
-    }));
+    return this.call<KeyInfo[]>("GET", "/v1/api-keys", { token });
   }
 
   /** Soft-revoke one credential by its server id. */
@@ -801,13 +750,7 @@ export class PlowApi {
     return this.call<RevokedKey>("DELETE", `/v1/api-keys/${apiKeyId(id)}`, { token });
   }
 
-  /**
-   * Rename one credential. The name is the row's display name on the Agents
-   * tab, and — for a cloud agent — the assistant's name in Plow, which is why
-   * the wire field is `assistant_name`. Plow answers with the session's
-   * preferences; nothing here reads them, because the roster re-read that
-   * follows is the only truth the screen shows.
-   */
+  /** Rename an independent session; agents use their own resource route. */
   async renameApiKey(token: string, id: number, name: string): Promise<void> {
     const trimmed = name.trim();
     if (!trimmed) throw new PlowApiError("http", "A name is required.");

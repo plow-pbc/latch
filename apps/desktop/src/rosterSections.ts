@@ -6,7 +6,7 @@
  * removed by the wrong endpoint — that is a decision for tested code, not for
  * a template.
  */
-import { isCloudAssistant, parseApiTimestamp, type KeyInfo } from "./plowApi.js";
+import { parseApiTimestamp, type KeyInfo } from "./plowApi.js";
 
 export type AgentRosterKind =
   | "Agent"
@@ -160,17 +160,7 @@ function rosterKind(scopes: readonly string[]): AgentRosterKind {
   return "Session";
 }
 
-/**
- * Split the account's credentials into the three sections the screen shows.
- *
- * The assistant decides first and decides alone. A credential that belongs to
- * a cloud assistant is a cloud agent however its scopes read — and prod
- * returns a null `assistant_uid` while no assistants are live, so the branch
- * that matters is the one everyday testing never enters.
- *
- * **Belonging to an assistant is not enough: it has to be a cloud one.** Every
- * activated Mac has a `self_hosted` assistant too — see `isCloudAssistant`.
- */
+/** Agent-owned credentials appear only in the agents resource roster. */
 export function sectionRoster(
   keys: readonly KeyInfo[],
   options: { deviceCredential?: string } = {},
@@ -192,6 +182,7 @@ export function sectionRoster(
       sections.revokedHidden += 1;
       continue;
     }
+    if (key.agent_uid != null) continue;
     const placed: RosterSectionRow = {
       id: key.id,
       name: key.name,
@@ -202,9 +193,7 @@ export function sectionRoster(
       kind: key.id === thisMacId ? "Session" : rosterKind(key.scopes),
       createdAt: normalizeRosterTimestamp(key.created_at),
       lastSeenAt: normalizeRosterTimestamp(key.last_seen_at),
-      // Only a cloud assistant's uid, because this field is what picks the
-      // removal call below: a self-hosted row carries none and revokes.
-      agentId: isCloudAssistant(key.assistant_provider) ? key.assistant_uid : null,
+      agentId: null,
       chatUids: key.chat_uids,
       chatAccess: chatAccessOf(key.chat_uids),
       permissions: rosterPermissions(key.scopes),

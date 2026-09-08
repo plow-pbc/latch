@@ -66,6 +66,7 @@ export function tabShowsCloudAgents(tab: string): boolean {
  * One of Plow's pool numbers, used to name the line on a chat row.
  */
 export interface CloudLineOption {
+  agentUid: string | null;
   /** Stable identity used by agent resources and chat participants. */
   uid: string;
   /** The line's persona name (`Willow`), or null for an unnamed line. */
@@ -171,6 +172,7 @@ export interface CloudAgentsUiState {
    * as an authoritative empty result.
    */
   cloudChatsLoaded: boolean;
+  cloudLinesLoaded: boolean;
 }
 
 /** The slice of `CloudAgentsClient` this state needs. */
@@ -226,14 +228,14 @@ export interface CloudAgentStateDeps {
 }
 
 export class CloudAgentState {
-  /** Keyed on the assistant uid, which is stable for the agent's whole life. */
+  /** Keyed on the agent uid, which is stable for the agent's whole life. */
   private rows = new Map<string, CloudAgentDisplayRow>();
-  /** Home-chat identity stays private while chat results resolve each line. */
-  private homeChatUids = new Map<string, string>();
+  /** Line ownership comes directly from the agent resource. */
+  private agentLines = new Map<string, NonNullable<CloudAgentResource["line"]>>();
   /** Fresh receipts stay visible until the account list catches up. */
   private pending = new Set<string>();
   private polls = new Map<string, AbortController>();
-  /** Create choices retained in main; chats may resolve the line after agents load. */
+  /** Create choices retained in main for retrying failed provisioning. */
   private retainedCreates = new Map<string, CloudCreateInput>();
   private lineFlowGeneration = 0;
   /** SECRET. Never crosses `state()` and is discarded on every terminal path. */
@@ -311,6 +313,7 @@ export class CloudAgentState {
       cloudChatsNeedReactivation: this.chatsNeedReactivation,
       cloudActionError: this.actionError,
       cloudChatsLoaded: this.chatsLoaded,
+      cloudLinesLoaded: this.lines !== null,
     };
   }
 
@@ -364,8 +367,7 @@ export class CloudAgentState {
       const providers = await this.deps.providers.listCloudAgentProviders(credential);
       if (generation !== this.generation || read !== this.viewReads) return;
       if (providers.some((provider) =>
-        echoesCredential(provider.id, credential) ||
-        echoesCredential(provider.name, credential)
+        echoesCredential(JSON.stringify(provider), credential)
       )) {
         throw new PlowApiError(
           "http",
@@ -391,8 +393,8 @@ export class CloudAgentState {
       this.relabelRows();
     } catch {
       if (generation !== this.generation || read !== this.viewReads) return;
-      // Keep the previous success as naming metadata for chats already on
-      // screen. A line-list failure does not hide the chats or the roster.
+      this.lines = null;
+      // Ownership is unknown after a failed refresh; do not offer stale free lines.
       this.relabelRows();
     }
   }
@@ -646,7 +648,7 @@ export class CloudAgentState {
     }
 
     const candidates = keys.filter((key) => {
-      if (!key.is_active || key.assistant_uid !== null) return false;
+      if (!key.is_active || key.agent_uid !== null) return false;
       if (key.name?.trim() || !key.scopes.includes("*:*")) return false;
       // resolve_bearer_token commits the caller's last_seen_at touch before the
       // list route body, so this Mac is not a never-used candidate.
@@ -928,7 +930,7 @@ export class CloudAgentState {
       }
       if (generation !== this.generation) return false;
       this.rows.delete(id);
-      this.homeChatUids.delete(id);
+      this.agentLines.delete(id);
       this.pending.delete(id);
       this.retainedCreates.delete(id);
       this.publish();
@@ -950,7 +952,7 @@ export class CloudAgentState {
     this.tearingDown.clear();
     for (const agentId of [...this.polls.keys()]) this.abortPoll(agentId);
     this.rows.clear();
-    this.homeChatUids.clear();
+    this.agentLines.clear();
     this.pending.clear();
     this.retainedCreates.clear();
     this.chats = [];
@@ -985,7 +987,7 @@ export class CloudAgentState {
         await this.deps.agents.delete(credential, agentId);
         if (generation !== this.generation) return;
         this.rows.delete(agentId);
-        this.homeChatUids.delete(agentId);
+        this.agentLines.delete(agentId);
         this.pending.delete(agentId);
         this.retainedCreates.delete(agentId);
         this.publish();
@@ -1023,8 +1025,8 @@ export class CloudAgentState {
       for (const [agentId, row] of this.rows) {
         if (!listed.has(agentId) && this.pending.has(agentId)) listed.set(agentId, row);
       }
-      for (const agentId of this.homeChatUids.keys()) {
-        if (!listed.has(agentId)) this.homeChatUids.delete(agentId);
+      for (const agentId of this.agentLines.keys()) {
+        if (!listed.has(agentId)) this.agentLines.delete(agentId);
       }
       for (const agentId of this.retainedCreates.keys()) {
         if (!listed.has(agentId) && !this.pending.has(agentId)) this.retainedCreates.delete(agentId);
@@ -1094,9 +1096,9 @@ export class CloudAgentState {
 
   private rowFor(agent: CloudAgentResource, fallbackName = ""): CloudAgentDisplayRow {
     const displayAgent = fallbackName && !agent.name ? { ...agent, name: fallbackName } : agent;
-    const homeChatUid = agent.chatUids[0];
-    if (homeChatUid) this.homeChatUids.set(agent.agentId, homeChatUid);
-    else this.homeChatUids.delete(agent.agentId);
+    const line = agent.line;
+    if (line) this.agentLines.set(agent.agentId, line);
+    else this.agentLines.delete(agent.agentId);
     const lineUid = this.agentLineUid(agent);
     const details = this.lineDetails(lineUid);
     const retained = this.retainedCreates.get(agent.agentId);
@@ -1108,28 +1110,14 @@ export class CloudAgentState {
     });
   }
 
-  /** Resolve an agent's line through its first (home) chat. */
-  private agentLineUid(agent: Pick<CloudAgentResource, "chatUids">): string | null {
-    const homeChatUid = agent.chatUids[0];
-    return this.chats.find((chat) => chat.uid === homeChatUid)?.lineUid ?? null;
+  private agentLineUid(agent: Pick<CloudAgentResource, "line">): string | null {
+    return agent.line?.uid ?? null;
   }
 
   private freeLines(): CloudAgentLine[] {
-    if (!this.chatsLoaded) return [];
-    const occupied = new Set<string>();
-    for (const row of this.rows.values()) {
-      if (row.line) occupied.add(row.line.uid);
-    }
-    const seen = new Set<string>();
-    const free: CloudAgentLine[] = [];
-    for (const chat of this.chats) {
-      const uid = chat.lineUid;
-      if (!uid || occupied.has(uid) || seen.has(uid)) continue;
-      seen.add(uid);
-      const line = this.lineDetails(uid).line;
-      if (line) free.push(line);
-    }
-    return free.sort((a, b) => a.label.localeCompare(b.label));
+    return (this.lines ?? []).filter((line) => line.agentUid === null)
+      .map((line) => this.lineDetails(line.uid).line!)
+      .sort((a, b) => a.label.localeCompare(b.label));
   }
 
   /** Resolve the line's current threads. */
@@ -1147,10 +1135,11 @@ export class CloudAgentState {
     smsUrl: string | null;
   } {
     if (lineUid === null) return { line: null, canMessage: false, smsUrl: null };
+    const agentLine = [...this.agentLines.values()].find((line) => line.uid === lineUid);
     const known = this.lines?.find((line) => line.uid === lineUid);
     const chat = this.chats.find((candidate) => candidate.lineUid === lineUid);
-    const name = (known?.displayName ?? "").trim();
-    const numbers = [known?.number, chat?.recipients?.line]
+    const name = (known?.displayName ?? agentLine?.display_name ?? "").trim();
+    const numbers = [known?.number, agentLine?.provider_key, chat?.recipients?.line]
       .filter((number): number is string => typeof number === "string")
       .map((number) => number.trim())
       .filter(Boolean);
@@ -1181,8 +1170,7 @@ export class CloudAgentState {
    */
   private relabelRows(): void {
     for (const [agentId, row] of this.rows) {
-      const homeChatUid = this.homeChatUids.get(agentId);
-      const lineUid = this.chats.find((chat) => chat.uid === homeChatUid)?.lineUid ?? null;
+      const lineUid = this.agentLines.get(agentId)?.uid ?? null;
       const details = this.lineDetails(lineUid);
       const threads = this.threadsFor(lineUid);
       const retained = this.retainedCreates.get(agentId);
@@ -1256,7 +1244,7 @@ function byNewestFirst(a: CloudAgentDisplayRow, b: CloudAgentDisplayRow): number
  * shipped enum, and an unrecognised status must never be a compile error here
  * — it is the server's word, not ours.
  */
-function isTeardown(status: string): boolean {
+function isTeardown(status: string | null): boolean {
   return status === "teardown";
 }
 
@@ -1418,7 +1406,7 @@ export class CloudLinesClient {
     // malformed row is dropped, not defaulted — the rule the chat list keeps.
     return rows.flatMap((raw) => {
       if (!raw || typeof raw !== "object") return [];
-      const row = raw as { uid?: unknown; provider_key?: unknown; display_name?: unknown };
+      const row = raw as { uid?: unknown; provider_key?: unknown; display_name?: unknown; agent_uid?: unknown };
       const uid = typeof row.uid === "string" ? row.uid.trim() : "";
       const number = typeof row.provider_key === "string" ? row.provider_key.trim() : "";
       const name = typeof row.display_name === "string" ? row.display_name.trim() : "";
@@ -1431,7 +1419,8 @@ export class CloudLinesClient {
       // blanked, because there is nothing safe left to show of it.
       if (echoesCredential(uid, credential) || echoesCredential(number, credential)) return [];
       const safeName = name && !echoesCredential(name, credential) ? name : null;
-      return [{ uid, displayName: safeName, number }];
+      if (row.agent_uid !== null && typeof row.agent_uid !== "string") return [];
+      return [{ uid, displayName: safeName, number, agentUid: row.agent_uid }];
     });
   }
 }
