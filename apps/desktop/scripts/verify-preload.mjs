@@ -966,7 +966,7 @@ app.whenReady().then(async () => {
   await win.webContents.executeJavaScript(`window.__domoSelectTab("settings")`);
   let tokenLeaveReply = null;
   ipcMain.once("ui:confirmLeaveReply", (_e, ok) => { tokenLeaveReply = ok; });
-  win.webContents.send("ui:confirmLeave");
+  win.webContents.send("ui:confirmLeave", Boolean(cloudProbe.agentToken));
   await waitForNode(() => tokenLeaveReply !== null, "the pending token leave refusal");
   if (tokenLeaveReply !== false) throw new Error("pending token allowed the window to close");
   await waitFor(win, `document.body.textContent.includes("local-probe-token")`, "return to the token handoff");
@@ -977,7 +977,7 @@ app.whenReady().then(async () => {
     "token dismissal to clear the secret and release creation");
   tokenLeaveReply = null;
   ipcMain.once("ui:confirmLeaveReply", (_e, ok) => { tokenLeaveReply = ok; });
-  win.webContents.send("ui:confirmLeave");
+  win.webContents.send("ui:confirmLeave", Boolean(cloudProbe.agentToken));
   await waitForNode(() => tokenLeaveReply !== null, "leaving after token dismissal");
   if (tokenLeaveReply !== true) throw new Error("saved token still blocked leaving");
   console.log("TOKEN-HANDOFF: static create and leave blocked until dismissal; dismissal releases leave");
@@ -1800,7 +1800,7 @@ app.whenReady().then(async () => {
     let replies = 0;
     const countReply = () => { replies += 1; };
     ipcMain.on("ui:confirmLeaveReply", countReply);
-    win.webContents.send("ui:confirmLeave");
+    win.webContents.send("ui:confirmLeave", Boolean(cloudProbe.agentToken));
     // ...and a row collapse arriving at the same moment, which reaches the
     // dialog by a different route than the window teardown does.
     await click(".vaultui .vitem .vrow");
@@ -1819,7 +1819,7 @@ app.whenReady().then(async () => {
     // route through it). Drive the renderer's half of that conversation.
     let closeAnswer = null;
     ipcMain.once("ui:confirmLeaveReply", (_e, ok) => { closeAnswer = ok; });
-    win.webContents.send("ui:confirmLeave");
+    win.webContents.send("ui:confirmLeave", Boolean(cloudProbe.agentToken));
     await waitAsking();
     const windowCloseAsks = await asking();
     await click(DISCARD);
@@ -1923,7 +1923,7 @@ app.whenReady().then(async () => {
     let busyCloseAnswer = null;
     const onBusyReply = (_e, ok) => { busyCloseAnswer = ok; };
     ipcMain.on("ui:confirmLeaveReply", onBusyReply);
-    win.webContents.send("ui:confirmLeave");
+    win.webContents.send("ui:confirmLeave", Boolean(cloudProbe.agentToken));
     const noDialogUnderInert = await js(() => !document.querySelector(".vaultui .confirm-overlay"));
 
     releaseSave();

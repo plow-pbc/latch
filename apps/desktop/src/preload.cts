@@ -146,7 +146,8 @@ contextBridge.exposeInMainWorld("domo", {
   onShowSettings: (cb: () => void) => ipcRenderer.on("ui:showSettings", cb),
   // Main asks before it tears the window down; the renderer answers once the
   // owner has had their say about anything unsaved.
-  onConfirmLeave: (cb: () => void) => ipcRenderer.on("ui:confirmLeave", cb),
+  onConfirmLeave: (cb: (hasPendingToken: boolean) => void) =>
+    ipcRenderer.on("ui:confirmLeave", (_event, hasPendingToken: boolean) => cb(hasPendingToken)),
   confirmLeaveReply: (ok: boolean) => ipcRenderer.send("ui:confirmLeaveReply", ok),
 
   // First-run setup window. Every call returns the whole state, so the screen

@@ -2793,8 +2793,8 @@ window.domo.onUpdatesChanged(() => {
 // The menu-bar "Check for Updates…" lands here so its outcome is visible.
 // Closing the window or quitting throws an open Vault form away too, so main
 // asks here first. A pending agent token must be saved before leaving.
-window.domo.onConfirmLeave(async () => {
-  if ((await window.domo.connectGet())?.agentToken) {
+window.domo.onConfirmLeave(async (hasPendingToken) => {
+  if (hasPendingToken) {
     await selectTab("agents");
     window.domo.confirmLeaveReply(false);
     return;

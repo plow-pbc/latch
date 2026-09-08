@@ -2329,12 +2329,12 @@ let leaveInFlight: Promise<boolean> | null = null;
 /** Settles the question above when the window it was asked of dies unanswered. */
 let settleLeave: ((ok: boolean) => void) | null = null;
 function mayLeaveMain(win: BrowserWindow | null): Promise<boolean> {
-  if (!win || win.isDestroyed()) return Promise.resolve(!agentToken);
+  if (!win || win.isDestroyed()) return Promise.resolve(true);
   leaveInFlight ??= new Promise<boolean>((resolve) => {
     const done = (ok: boolean) => {
       ipcMain.removeListener("ui:confirmLeaveReply", onReply);
       settleLeave = null;
-      resolve(ok && !agentToken);
+      resolve(ok);
     };
     const onReply = (_e: unknown, ok: boolean) => done(!!ok);
     settleLeave = done;
@@ -2345,7 +2345,7 @@ function mayLeaveMain(win: BrowserWindow | null): Promise<boolean> {
     // bridge uses ipcRenderer.on, which does not replay, so a question sent
     // mid-load is one nobody will ever answer — and this promise is shared, so
     // that would strand every later close behind it. Same wait as showSettings.
-    const ask = () => win.webContents.send("ui:confirmLeave");
+    const ask = () => win.webContents.send("ui:confirmLeave", Boolean(agentToken));
     if (win.webContents.isLoading()) win.webContents.once("did-finish-load", ask);
     else ask();
   }).finally(() => { leaveInFlight = null; });
