@@ -65,7 +65,7 @@ import { buildMinter, vendorDirs } from "./providerWiring.js";
 import { resolveInstancePaths } from "./paths.js";
 import { ImportStaging, passwordsAppCanHandOff } from "./importStaging.js";
 import { loadSettings, saveSettings, useCredentialCodec, WindowBounds } from "./settings.js";
-import { resolveTelemetryConfig, Telemetry, telemetryMaySend } from "./telemetry.js";
+import { resolveTelemetryConfig, SimulatedError, Telemetry, telemetryMaySend } from "./telemetry.js";
 import { PlowApi, PlowApiError, relaySocketUrl, resolveApiBaseUrl } from "./plowApi.js";
 import { Onboarding } from "./onboarding.js";
 import { Connectors } from "./connectors.js";
@@ -1959,14 +1959,16 @@ app.whenReady().then(async () => {
   // survives), anything else throws an uncaught exception (the app may not —
   // which is exactly what the immediate flush in trackError is for). Fires a
   // few seconds after boot so the report proves the whole live pipeline.
+  // Thrown as SimulatedError, not Error: the report strips the message, so
+  // the name is all that tells the tracker this was a drill and not a crash.
   const simulateError = (process.env.DOMO_SIMULATE_ERROR ?? "").trim();
   if (simulateError) {
     console.log(`[telemetry] SIMULATED error armed (${simulateError}) — fires in 3s, not a real fault`);
     setTimeout(() => {
       if (simulateError === "rejection") {
-        void Promise.reject(new Error("DOMO_SIMULATE_ERROR: simulated unhandled rejection"));
+        void Promise.reject(new SimulatedError("DOMO_SIMULATE_ERROR: simulated unhandled rejection"));
       } else {
-        throw new Error("DOMO_SIMULATE_ERROR: simulated uncaught exception");
+        throw new SimulatedError("DOMO_SIMULATE_ERROR: simulated uncaught exception");
       }
     }, 3_000);
   }

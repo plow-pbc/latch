@@ -156,9 +156,26 @@ export function requestKind(request: string): string {
 }
 
 /**
- * The error names that may leave as-is. `Error.name` is a mutable string —
- * nothing stops code from interpolating data into it — so membership here is
- * the rule, and everything else reports as "Error".
+ * The error the DOMO_SIMULATE_ERROR seam throws. A report carries an error's
+ * name and frames only, and an unknown name collapses to "Error" — so a
+ * drill thrown as a plain Error reached the tracker as one more crash titled
+ * "Error", indistinguishable from a real one. This is the ONE name outside
+ * the built-ins that may leave, and it is recognised by CLASS, never by the
+ * name string: `Error.name` is writable, and a report flagged as a drill is
+ * one an operator may suppress — so a real crash must not be able to earn
+ * the flag by carrying the name. The name is deliberately NOT in
+ * SAFE_ERROR_NAMES for the same reason.
+ */
+export const SIMULATED_ERROR_NAME = "SimulatedError";
+export class SimulatedError extends Error {
+  override readonly name = SIMULATED_ERROR_NAME;
+}
+
+/**
+ * The built-in error names that may leave as-is. `Error.name` is a mutable
+ * string — nothing stops code from interpolating data into it — so
+ * membership here is the rule, and everything else reports as "Error". The
+ * one exception, SimulatedError, is admitted by instanceof in trackError.
  */
 const SAFE_ERROR_NAMES = new Set([
   "Error",
@@ -298,8 +315,15 @@ export class Telemetry {
       const original = error instanceof Error ? error : new Error();
       // `name` is a mutable string like any other — code can (and does) put
       // interpolated data in it — so only the built-in names pass; anything
-      // else reports as plain "Error". Fail closed, not sanitize.
-      const name = SAFE_ERROR_NAMES.has(original.name) ? original.name : "Error";
+      // else reports as plain "Error". Fail closed, not sanitize. The one
+      // custom name, the drill's, is earned by class alone: a plain Error
+      // renamed "SimulatedError" is still a crash and reports as "Error".
+      const name =
+        original instanceof SimulatedError
+          ? SIMULATED_ERROR_NAME
+          : SAFE_ERROR_NAMES.has(original.name)
+            ? original.name
+            : "Error";
       const frames = this.scrubbedFrames(original);
       const fatal = scope === "uncaught_exception";
       if (fatal) this.writeSpool({ name, frames, scope, ts: new Date().toISOString() });
@@ -346,8 +370,10 @@ export class Telemetry {
       const frames = Array.isArray(spooled.frames)
         ? spooled.frames.filter((f): f is string => typeof f === "string").slice(0, 30)
         : [];
+      // The spool was written by trackError, after its gate, so the drill's
+      // name is admitted here explicitly: a spooled drill is still a drill.
       const message = this.exceptionMessage(
-        typeof spooled.name === "string" && SAFE_ERROR_NAMES.has(spooled.name)
+        typeof spooled.name === "string" && (SAFE_ERROR_NAMES.has(spooled.name) || spooled.name === SIMULATED_ERROR_NAME)
           ? spooled.name
           : "Error",
         frames,
@@ -426,6 +452,10 @@ export class Telemetry {
         ...this.deps.baseProps,
         ...extra,
         scope,
+        // The drill flag, so the tracker can filter or suppress drills as a
+        // class — derived from the name the gate above admitted, never from
+        // anything the throwing code wrote.
+        simulated: name === SIMULATED_ERROR_NAME,
         $exception_level: "error",
         $exception_list: [
           {
