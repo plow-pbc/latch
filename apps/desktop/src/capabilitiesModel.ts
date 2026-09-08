@@ -356,9 +356,31 @@ export function capabilitiesView(input: CapabilitiesInput): CapabilitiesView {
   );
   if (fda !== true) {
     const folders: CapabilityRow[] = [];
+    // What the log says the folders answered, newest last: a confirmed
+    // refusal, or a run let through the dialog / a touch that got through
+    // (host_permission_cleared / host_permission_observed). Later than the
+    // memo — or as late, since the log writes whole seconds and its order
+    // is the fact — it is what the row shows.
+    const fromLog = new Map<string, { status: "granted" | "denied"; at: string }>();
+    for (const e of input.events) {
+      const ev = jv(e);
+      const permission = ev.get("permission").str;
+      if (permission === null || !FOLDERS.includes(permission as (typeof FOLDERS)[number])) continue;
+      const event = ev.get("event").str;
+      const at = ev.get("ts").str ?? "";
+      if (event === "host_permission_blocked" && ev.get("confidence").str === "confirmed" && ev.get("cause").str === "macos_permission") {
+        fromLog.set(permission, { status: "denied", at });
+      } else if (event === "host_permission_cleared" || (event === "host_permission_observed" && ev.get("status").str === "granted")) {
+        fromLog.set(permission, { status: "granted", at });
+      }
+    }
     for (const folder of FOLDERS) {
-      const learned = input.folders?.[folder] ?? null;
-      const learnedAt = input.foldersAt?.[folder] ?? null;
+      const memo = input.folders?.[folder] ?? null;
+      const memoAt = input.foldersAt?.[folder] ?? null;
+      const logged = fromLog.get(folder);
+      const logWins = logged !== undefined && (memoAt === null || Date.parse(logged.at) >= Date.parse(memoAt));
+      const learned = logWins ? logged.status : memo;
+      const learnedAt = logWins ? logged.at : memoAt;
       // A confirmed refusal that postdates what this Mac learned is the
       // newer fact: a remembered "granted" does not keep a row green over
       // a switch the owner has since turned off. A memo with no time (from

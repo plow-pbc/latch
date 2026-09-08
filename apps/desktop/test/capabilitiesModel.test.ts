@@ -213,6 +213,23 @@ describe("capabilitiesView", () => {
     expect(capabilitiesView(input({ events, bannerSeenAt: "2026-09-02T07:00:00Z" })).banner).toBeNull();
   });
 
+  it("a folder answers through the log: a cleared run or a touch that got through turns it green, a later confirmed refusal red", () => {
+    // The owner clicked Allow on the dialog an agent's read raised. Nothing
+    // pressed the row's own button, so the memo is empty; the log knows.
+    const row = (events: JSONValue[], extra: Partial<CapabilitiesInput> = {}) =>
+      capabilitiesView(input({ events, ...extra })).sections[0]!.rows.find((r) => r.key === "files_downloads")!;
+    const observed: JSONValue = { event: "host_permission_observed", permission: "files_downloads", status: "granted", path: "/x/Downloads", ts: "2026-09-02T03:00:00Z" };
+    expect(row([observed])).toMatchObject({ status: "granted", action: "none" });
+    const cleared: JSONValue = { event: "host_permission_cleared", intentId: "i1", handle: "H1", permission: "files_downloads", ts: "2026-09-02T03:00:00Z" };
+    expect(row([...block("i1", "2026-09-02T02:59:00Z", "files_downloads"), cleared])).toMatchObject({ status: "granted" });
+    // Turned off again since: the newer confirmed refusal wins, same second included.
+    const refused = block("i2", "2026-09-02T03:00:00Z", "files_downloads");
+    expect(row([observed, ...refused])).toMatchObject({ status: "denied", action: "open" });
+    // A memo newer than the log's last word is the memo's to keep.
+    expect(row([observed], { folders: { files_downloads: "denied" }, foldersAt: { files_downloads: "2026-09-02T04:00:00Z" } })).toMatchObject({ status: "denied" });
+    expect(row([observed], { folders: { files_downloads: "denied" }, foldersAt: { files_downloads: "2026-09-02T02:00:00Z" } })).toMatchObject({ status: "granted" });
+  });
+
   it("a parked block the owner let through is cleared, and a correction counts once as the newest", () => {
     const parked = block("i1", "2026-09-02T02:00:00Z", "files_downloads").map((e) =>
       jv(e).get("event").str === "host_permission_blocked" ? { ...(e as object), handle: "H1", cause: "prompt_waiting" } : e,
@@ -221,7 +238,9 @@ describe("capabilitiesView", () => {
     const allowed = capabilitiesView(input({ events: [...parked, { event: "host_permission_cleared", intentId: "i1", handle: "H1", permission: "files_downloads", ts: "2026-09-02T02:05:00Z" }] }));
     expect(allowed.badge).toBe(0);
     expect(allowed.banner).toBeNull();
-    expect(allowed.sections[0]!.rows.find((r) => r.key === "files_downloads")).toMatchObject({ count: 0, status: "not_asked" });
+    // …and the folder itself reads as granted: the clearing is the one
+    // positive fact there is about a switch macOS never answers a query on.
+    expect(allowed.sections[0]!.rows.find((r) => r.key === "files_downloads")).toMatchObject({ count: 0, status: "granted" });
     // Don't Allow: cleared, then a refusal under the same handle — one request, the newest.
     const refused = capabilitiesView(input({ events: [
       ...parked,

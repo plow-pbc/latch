@@ -844,6 +844,12 @@ function describeStep(e: JSONValue): AuditStep {
       state = "ok";
       break;
     }
+    case "host_permission_observed": {
+      const permission = ev.get("permission").str;
+      text = `${permission ? permissionWords(permission) : "A switch"} is ${ev.get("status").str ?? "known"}: this Mac got through it.`;
+      state = "ok";
+      break;
+    }
     case "tool_invoked": text = `Tool used: ${ev.get("tool").str ?? ""}`; state = "ok"; break;
     case "tool_error": text = `Tool error: ${ev.get("tool").str ?? ""} — ${ev.get("error").str ?? ""}`; state = "bad"; break;
     case "browser_session_opened":

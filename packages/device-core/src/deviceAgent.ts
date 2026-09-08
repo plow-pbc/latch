@@ -35,6 +35,7 @@ import {
   appleEventTarget,
   collectFacts,
   BlockedCause,
+  OpenOutcome,
   diagnose,
   Diagnosis,
   diagnosisPayload,
@@ -162,6 +163,10 @@ class FileOpBusy extends Error {
   }
 }
 
+/** The switches macOS never answers a query about: only a touch that got
+ *  through, or a refusal, says where they stand. */
+const FOLDER_PERMISSIONS: ReadonlySet<string> = new Set(["files_desktop", "files_documents", "files_downloads"]);
+
 /** `p` when it exists, else its nearest existing ancestor: the folder a
  *  creating write would touch, and where its consent dialog belongs. */
 function existingAncestor(p: string): string {
@@ -277,6 +282,10 @@ export class DeviceAgent {
   private readonly blockedRuns = new Map<string, BlockedCause>();
   /** `FILE_OP_HANG_MS`, overridable by a test that cannot wait it out. */
   fileOpHangMs = FILE_OP_HANG_MS;
+  /** The three folders as this Mac last saw them answer — macOS has no
+   *  query for them, so a touch that got through is the one positive fact
+   *  there is. Recorded on change only; a folder is read many times. */
+  private readonly foldersObserved = new Map<string, "granted">();
 
   constructor(
     public readonly home: string,
@@ -656,12 +665,26 @@ export class DeviceAgent {
           timer = setTimeout(() => reject(new FileOpHang()), this.fileOpHangMs);
           timer.unref?.();
         });
+        let outcome: OpenOutcome;
         try {
-          if ((await Promise.race([touch, hang])) === "hung") throw new FileOpHang();
+          outcome = await Promise.race([touch, hang]);
+          if (outcome === "hung") throw new FileOpHang();
         } finally {
           clearTimeout(timer);
           // A probe the timer beat is the child's to finish or be killed.
           touch.catch(() => {});
+        }
+        // A folder macOS asks about, and the touch got through it: the
+        // owner allowed it — now, or once before — and nothing else on this
+        // Mac can say so (there is no query for the three folders). Told
+        // once, so the Capabilities row can turn green without the owner
+        // pressing the row's own button. Only when the touch was still
+        // inside that folder: a target that climbed above it says nothing.
+        const gate = guardedPrefix(p, this.ownerHome);
+        if (outcome === "ok" && gate !== null && FOLDER_PERMISSIONS.has(gate) && guardedPrefix(target, this.ownerHome) === gate
+          && this.foldersObserved.get(gate) !== "granted") {
+          this.foldersObserved.set(gate, "granted");
+          this.audit.record("host_permission_observed", { permission: gate, status: "granted", path: target });
         }
       }
       return op();

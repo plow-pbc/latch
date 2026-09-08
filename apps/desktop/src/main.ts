@@ -2066,6 +2066,12 @@ app.whenReady().then(async () => {
   device.audit.events.on("recorded", (entry) => {
     if (entry.event === "host_permission_blocked") noteHostGateBlock(entry.fields);
     if (entry.event === "host_permission_cleared") clearHostGateAttention(entry.fields);
+    // The three folders have no query: what a run's dialog was answered
+    // with, or a touch that got through, is what the Capabilities row
+    // has to go on — the same memo the row's own button writes.
+    if (entry.event === "host_permission_cleared" || entry.event === "host_permission_observed") {
+      learnFolderConsent(entry.fields);
+    }
   });
   // Usage stats ride the same funnel as the audit log — one source of truth
   // for what happened, with telemetry.ts's allowlist deciding the little that
@@ -2428,6 +2434,22 @@ function noteHostGateBlock(fields: { [k: string]: unknown }): void {
   // global.
   notification.on("click", () => showCapabilitiesForHostGate(attention));
   notification.show();
+}
+
+/** A folder answered: a parked run the owner let through, or a touch that
+ *  got through. Remembered like a grant from the row's own button, with
+ *  the time, so a later confirmed refusal can still outrank it. */
+function learnFolderConsent(fields: { [k: string]: unknown }): void {
+  const permission = typeof fields.permission === "string" ? fields.permission : null;
+  if (permission === null || !/^files_(desktop|documents|downloads)$/.test(permission)) return;
+  if (fields.status !== undefined && fields.status !== "granted") return;
+  const settings = loadSettings(home);
+  if (settings.folderConsent?.[permission] === "granted") return;
+  saveSettings(home, {
+    ...settings,
+    folderConsent: { ...(settings.folderConsent ?? {}), [permission]: "granted" },
+    folderConsentAt: { ...(settings.folderConsentAt ?? {}), [permission]: new Date().toISOString() },
+  });
 }
 
 /** The owner answered the dialog the attention was about (the run went on):

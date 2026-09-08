@@ -255,6 +255,31 @@ describe("a file operation this Mac refused", () => {
     expect(events(d)).toContain("file_write");
   });
 
+  it("a guarded folder the touch gets through is recorded as granted, once", async () => {
+    // macOS has no query for the three folders; a touch that got through
+    // is the one positive fact there is, and the Capabilities row needs it.
+    const home = tempDir();
+    fs.mkdirSync(path.join(home, "Downloads"));
+    const file = path.join(home, "Downloads", "test.txt");
+    fs.writeFileSync(file, "hello");
+    const d = device(home, scriptedProbes());
+    const first = jv(await d.handleIntent(intentFor(d, "read", [{ kind: "fs.read", paths: [file] }])));
+    expect(first.get("status").str).toBe("completed");
+    const observed = d.audit.entries().map((e) => jv(e as JSONValue)).filter((e) => e.get("event").str === "host_permission_observed");
+    expect(observed).toHaveLength(1);
+    expect(observed[0]!.get("permission").str).toBe("files_downloads");
+    expect(observed[0]!.get("status").str).toBe("granted");
+    // A second read is not a second line.
+    await d.handleIntent(intentFor(d, "read", [{ kind: "fs.read", paths: [file] }]));
+    expect(events(d).filter((e) => e === "host_permission_observed")).toHaveLength(1);
+    // An unguarded path says nothing about any folder.
+    const plain = path.join(home, "Plow", "p.txt");
+    fs.mkdirSync(path.dirname(plain), { recursive: true });
+    fs.writeFileSync(plain, "x");
+    await d.handleIntent(intentFor(d, "read", [{ kind: "fs.read", paths: [plain] }]));
+    expect(events(d).filter((e) => e === "host_permission_observed")).toHaveLength(1);
+  });
+
   it("an unguarded path is never raced against the hang window", async () => {
     const home = tempDir();
     const d = device(home);
