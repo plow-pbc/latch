@@ -196,6 +196,7 @@ const agentsTabProbeState = () => ({
 });
 ipcMain.handle("connect:get", async () => agentsTabProbeState());
 ipcMain.handle("connect:create", () => { staticCreateCount += 1; return agentsTabProbeState(); });
+ipcMain.handle("connect:dismiss", () => { cloudProbe.credential = null; });
 ipcMain.handle("agents:dismissToken", () => { cloudProbe.agentToken = null; });
 ipcMain.handle("cloud:refresh", async () => agentsTabProbeState());
 ipcMain.handle("cloud:cancelLineFlow", async () => {
@@ -981,6 +982,21 @@ app.whenReady().then(async () => {
   await waitForNode(() => tokenLeaveReply !== null, "leaving after token dismissal");
   if (tokenLeaveReply !== true) throw new Error("saved token still blocked leaving");
   console.log("TOKEN-HANDOFF: static create and leave blocked until dismissal; dismissal releases leave");
+  await win.webContents.executeJavaScript(`window.__domoSelectTab("settings")`);
+  cloudProbe.credential = { name: "Pending static setup", config: "static-probe-secret" };
+  tokenLeaveReply = null;
+  ipcMain.once("ui:confirmLeaveReply", (_e, ok) => { tokenLeaveReply = ok; });
+  win.webContents.send("ui:confirmLeave", true);
+  await waitForNode(() => tokenLeaveReply !== null, "static setup leave refusal");
+  if (tokenLeaveReply !== false) throw new Error("static setup allowed leaving");
+  await waitFor(win, `document.querySelector(".modal-backdrop")?.textContent.includes("static-probe-secret")`,
+    "restored static credential handoff");
+  await captureAfterPaint(win, "/tmp/static-token-restored.png");
+  await win.webContents.executeJavaScript(`[...document.querySelectorAll(".modal-backdrop button")]
+    .find((b) => b.textContent.trim() === "I've Saved It").click()`);
+  await waitFor(win, `!document.querySelector(".modal-backdrop")`, "static credential dismissal");
+  console.log("STATIC-HANDOFF: leave refused, pending credential restored and explicitly dismissed");
+
   if (!tokenBlocksCreate || !tokenBlocksDelete || cloudProbe.agentToken !== null) {
     throw new Error("local token handoff did not protect creation/deletion until dismissal");
   }

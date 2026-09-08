@@ -134,13 +134,14 @@ export interface MintedCredential {
 }
 
 /**
- * Deliberately covers plaintext and standard Base64, in full and by 10-character prefix, but not
+ * Covers percent-decoded plaintext and standard Base64, in full and by 10-character prefix, but not
  * Base64url: this hardens responses from an origin that already holds the secret rather than
  * providing exhaustive encoding defense.
  */
 export function echoesCredential(text: string, credential: string): boolean {
   const secret = credential.trim();
   if (!secret) return false;
+  text = text.replace(/%([0-9a-f]{2})/gi, (_match, hex: string) => String.fromCharCode(parseInt(hex, 16)));
   const encodings = [secret, Buffer.from(secret).toString("base64")];
   return encodings.some((value) =>
     text.includes(value) || (value.length > 10 && text.includes(value.slice(0, 10)))

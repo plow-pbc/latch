@@ -1973,6 +1973,7 @@ async function renderAgents() {
     ].filter(Boolean));
     syncCloudModal(s, refreshConnect);
     syncMcpModal(s, refreshConnect);
+    if (s.credential && !staticModal) openStaticModal(null, refreshConnect);
     syncStaticModal(s, refreshConnect);
     return s;
   };
@@ -2793,8 +2794,8 @@ window.domo.onUpdatesChanged(() => {
 // The menu-bar "Check for Updates…" lands here so its outcome is visible.
 // Closing the window or quitting throws an open Vault form away too, so main
 // asks here first. A pending agent token must be saved before leaving.
-window.domo.onConfirmLeave(async (hasPendingToken) => {
-  if (hasPendingToken) {
+window.domo.onConfirmLeave(async (hasPendingAgentSetup) => {
+  if (hasPendingAgentSetup) {
     await selectTab("agents");
     window.domo.confirmLeaveReply(false);
     return;

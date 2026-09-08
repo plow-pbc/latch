@@ -610,7 +610,7 @@ function signOut() {
  * accepts them.
  */
 async function signOutThisMac(): Promise<void> {
-  if (agentToken && !(await mayLeaveMain(mainWindow))) return;
+  if (hasPendingAgentSetup() && !(await mayLeaveMain(mainWindow))) return;
   // A second click, before the button re-rendered. The first already signed
   // out; going round again would reset the setup window and mint a fresh code
   // over the one the user may have just texted.
@@ -2328,6 +2328,11 @@ app.whenReady().then(async () => {
 let leaveInFlight: Promise<boolean> | null = null;
 /** Settles the question above when the window it was asked of dies unanswered. */
 let settleLeave: ((ok: boolean) => void) | null = null;
+function hasPendingAgentSetup(): boolean {
+  const connect = connectClient?.state();
+  return Boolean(agentToken || connect?.busy || connect?.credential ||
+    cloudAgents?.state().cloudLineFlow.phase === "creating");
+}
 function mayLeaveMain(win: BrowserWindow | null): Promise<boolean> {
   if (!win || win.isDestroyed()) return Promise.resolve(true);
   leaveInFlight ??= new Promise<boolean>((resolve) => {
@@ -2345,7 +2350,7 @@ function mayLeaveMain(win: BrowserWindow | null): Promise<boolean> {
     // bridge uses ipcRenderer.on, which does not replay, so a question sent
     // mid-load is one nobody will ever answer — and this promise is shared, so
     // that would strand every later close behind it. Same wait as showSettings.
-    const ask = () => win.webContents.send("ui:confirmLeave", Boolean(agentToken));
+    const ask = () => win.webContents.send("ui:confirmLeave", hasPendingAgentSetup());
     if (win.webContents.isLoading()) win.webContents.once("did-finish-load", ask);
     else ask();
   }).finally(() => { leaveInFlight = null; });

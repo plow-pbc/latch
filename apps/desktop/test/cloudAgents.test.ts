@@ -46,7 +46,10 @@ function recordingFetch(responses: Array<{ status: number; body?: unknown }>) {
 }
 
 describe("CloudAgentsClient resources", () => {
-  it.each([CREDENTIAL, Buffer.from(CREDENTIAL).toString("base64"), CREDENTIAL.slice(0, 10)])(
+  it.each([CREDENTIAL, Buffer.from(CREDENTIAL).toString("base64"), CREDENTIAL.slice(0, 10),
+    "%" + CREDENTIAL.charCodeAt(0).toString(16) + CREDENTIAL.slice(1),
+    [...CREDENTIAL].map((c) => "%" + c.charCodeAt(0).toString(16)).join(""),
+  ])(
     "rejects device credential echoes in both create receipts: %s", async (token) => {
       for (const localSetup of [false, true]) {
         const { fetchImpl } = recordingFetch([{ status: 201, body: { agent: wireAgent(), token } }]);
