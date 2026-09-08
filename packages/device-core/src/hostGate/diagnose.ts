@@ -522,12 +522,15 @@ export function diagnose(f: HostFacts): Diagnosis {
       : null;
   const errno = f.errno ?? probedErrno;
 
-  if (f.stderr_hint === "sqlite_unable_to_open" && f.path_exists !== false) {
+  if (f.stderr_hint === "sqlite_unable_to_open" && f.path_exists !== false && f.app_process_open === "ok") {
     // The WAL case the messaging skills document: sqlite needs to create
     // `-shm` beside the database, and a run approved to read is not approved
     // to write there. Reads as "no database"; is neither missing nor refused
-    // by macOS.
-    evidence.push(`sqlite could not open ${where}, which exists`);
+    // by macOS — which is why this needs the app's own open to have
+    // succeeded. A database the app itself is refused (Full Disk Access
+    // off, a mode of 000) says "unable to open" in exactly the same words,
+    // and that refusal is the story, weighed below.
+    evidence.push(`sqlite could not open ${where}, which exists and which ${APP_DISPLAY_NAME} itself can open`);
     if (f.ran_sandboxed && f.sandbox_allows_write === false) {
       evidence.push("a WAL database needs its -shm index created beside it, and the sandbox profile allows no writes there");
       return verdict("outside_approved_bound", "likely", null);

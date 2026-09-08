@@ -876,7 +876,7 @@ export class DeviceAgent {
         exit_code: result.exitCode ?? -1,
         ...(result.reaped ? { reaped: true } : {}),
       });
-      if (diag && result.exitCode !== 0) diagnosed = await this.diagnoseRun(intentId, result, diag);
+      if (diag && result.exitCode !== 0) diagnosed = await this.diagnoseRunOrRecord(intentId, result, diag);
     } else {
       // A deferred run's end is recorded when it actually ends, keyed to the
       // intent — never from the polling path, which may run many times or
@@ -933,11 +933,8 @@ export class DeviceAgent {
           }
         }
         if (diag && (reaped || exitCode !== 0)) {
-          const pending = this.diagnoseRun(intentId, this.executor.output(result.handle, 0), diag)
+          const pending = this.diagnoseRunOrRecord(intentId, this.executor.output(result.handle, 0), diag)
             .then(() => {})
-            .catch((error) => {
-              console.error(`[hostGate] diagnosis lost for handle ${result.handle}:`, error);
-            })
             .finally(() => this.pendingDiagnoses.delete(result.handle));
           this.pendingDiagnoses.set(result.handle, pending);
         }
@@ -946,7 +943,7 @@ export class DeviceAgent {
       // dialog. Asked now, inside the call, so the agent hears it in seconds
       // rather than at the reaper's fifteen minutes.
       if (diag && result.outputLength === 0) {
-        diagnosed = await this.diagnoseRun(intentId, result, diag);
+        diagnosed = await this.diagnoseRunOrRecord(intentId, result, diag);
         // The probes took time; answer with where the run is now, not where
         // it was before they ran — and if it ended meanwhile, with the
         // verdict its end produced, waited for like a poll would.
@@ -971,6 +968,32 @@ export class DeviceAgent {
    * killed run's facts, or a running run that is confirmed parked; a silent
    * run that is simply running is left alone.
    */
+  /**
+   * `diagnoseRun`, with a failure of the battery itself recorded in the
+   * audit log rather than on a stderr a packaged app has nowhere to show.
+   * A run answered "completed, exit 1" with no verdict is indistinguishable
+   * from one whose battery threw, and the log is where that has to be
+   * told apart. Never throws: the run's own answer stands either way.
+   */
+  private async diagnoseRunOrRecord(
+    intentId: string,
+    result: ExecResult,
+    diag: ExecDiagnosisContext,
+  ): Promise<DiagnosedRun | null> {
+    try {
+      return await this.diagnoseRun(intentId, result, diag);
+    } catch (error: unknown) {
+      const message = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+      console.error(`[hostGate] diagnosis lost for handle ${result.handle}:`, error);
+      try {
+        this.audit.record("host_permission_diagnosis_failed", { intentId, handle: result.handle, error: message });
+      } catch {
+        /* the sink is what failed; the console line above is all there is */
+      }
+      return null;
+    }
+  }
+
   private async diagnoseRun(
     intentId: string,
     result: ExecResult,

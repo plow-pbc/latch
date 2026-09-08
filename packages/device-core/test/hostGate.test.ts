@@ -329,6 +329,18 @@ describe("diagnose — the tree, one leaf per case", () => {
     expect(diagnose(facts({ errno: "EACCES", posix_readable: true })).confidence).toBe("likely");
   });
 
+  it("sqlite's 'unable to open' is the WAL bound only when the app itself can open the file", () => {
+    // The words are the same for a database the app is refused — Full
+    // Disk Access off — and that refusal is the story, not the -shm index.
+    const base = { stderr_hint: "sqlite_unable_to_open" as const, ran_sandboxed: true, sandbox_allows_read: true, sandbox_allows_write: false, path: "~/Library/Messages/chat.db", tcc_guarded_prefix: "full_disk_access" as const, full_disk_access_granted: false, errno: null };
+    const refused = diagnose(facts({ ...base, app_process_open: "EPERM" }));
+    expect(refused.cause).toBe("macos_permission");
+    expect(refused.permission).toBe("full_disk_access");
+    expect(refused.confidence).toBe("confirmed");
+    const wal = diagnose(facts({ ...base, app_process_open: "ok" }));
+    expect(wal.cause).toBe("outside_approved_bound");
+  });
+
   it("a locked flag and a SIP root each get their own verdict", () => {
     const locked = diagnose(facts({ errno: "EPERM", immutable_flag: true, app_process_open: "EPERM" }));
     expect(locked.cause).toBe("immutable_file");
