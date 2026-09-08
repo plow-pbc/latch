@@ -2127,6 +2127,8 @@ async function renderCapabilities() {
   // group (a group with blocked requests inside opens itself), then the
   // owner's clicks own it for the life of this mount.
   const openGroups = new Map();
+  /** Per group, the newest block the last draw showed — so a newer one can open it. */
+  const groupNewest = new Map();
   // macOS's own icons per row key, from main; kept across redraws (an act
   // answers with the view alone) and refreshed on a full read.
   let icons = {};
@@ -2376,6 +2378,16 @@ async function renderCapabilities() {
      "N of M granted" on the right, and the rows beneath when open. */
   const capabilityGroup = (g) => {
     if (!openGroups.has(g.key)) openGroups.set(g.key, g.expandedByDefault);
+    // A block that lands inside a closed group while the tab is open would
+    // otherwise be counted and hidden: the group opens itself when a switch
+    // in it is hit by something newer than the last draw saw. The first
+    // draw only takes note — opening on mount is expandedByDefault's job —
+    // and a group the owner closed afterwards stays closed until the next
+    // new block, not forever.
+    const newest = g.rows.reduce((t, r) => (r.count > 0 && r.last !== null && r.last > t ? r.last : t), "");
+    const seen = groupNewest.get(g.key);
+    if (seen !== undefined && newest > seen) openGroups.set(g.key, true);
+    groupNewest.set(g.key, newest);
     const open = openGroups.get(g.key);
     // The row grid's own shape — the chevron where a row keeps its dot, the
     // name and line where a row keeps its own, the count where a row keeps
