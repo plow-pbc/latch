@@ -92,6 +92,11 @@ import {
   setApprovalMode,
   signOutOfPlow,
 } from "./settingsActions.js";
+import { guardStdio } from "./stdioGuard.js";
+
+// Before the first console line: a console on a pipe whose reader has gone
+// away must drop the line, not take the app down (stdioGuard.ts).
+guardStdio([process.stdout, process.stderr]);
 
 // One folder per instance (paths.ts): the home carries everything, including
 // Chromium's userData/sessionData at <home>/electron — never a second

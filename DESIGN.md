@@ -1072,7 +1072,13 @@ Decisions and their reasons:
   of its own); what matches is still scrubbed of the credential and the home
   path, and what doesn't is dropped, never shipped verbatim.
   `uncaughtExceptionMonitor` observes crashes without altering what Electron
-  does with them.
+  does with them. One crash is prevented rather than reported: a console on a
+  pipe whose reader has gone away (the raw binary run from a script, a `tee`)
+  fails with EPIPE, and Node's own `console.*` guard covers only the first
+  such failure — the second log line after that was an uncaught exception,
+  and the main-process error dialog. `stdioGuard.ts` gives the stdio streams
+  a standing error listener before the first log line; the line is dropped,
+  the app runs on.
 - **A fatal crash spools its report to disk first** (synchronously, to
   `app/crash-report.json`), because the process usually exits before an async
   send completes; the spool is deleted only when an ORDERED send resolves
