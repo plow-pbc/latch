@@ -203,7 +203,11 @@ const pane = (sentence) => { const m = /System Settings > [^,.]+/.exec(sentence 
   cleanups.push(() => fs.chmodSync(db, 0o600));
   lock(db);
   const { server } = scenario({ home, probes: tccProbes(db) });
-  const r = await run(server, home, `printf 'x' >> ${JSON.stringify(db)}`, { read_paths: [db], write_paths: [db] });
+  // The output as sqlite prints it for TCC's refusal on macOS, verbatim from
+  // a packaged build reading chat.db without Full Disk Access. A read, so
+  // the path is declared read-only: a run's own writable root is withheld
+  // from the probe, and a refusal there could only ever be "likely".
+  const r = await run(server, home, `echo 'Error: unable to open database "${db}": authorization denied' >&2; exit 1`, { read_paths: [db] });
   vector("blocked-tcc-run", {
     note: "A run refused by macOS (Full Disk Access, confirmed). One call, the owner sentence verbatim, no retry with another command.",
     prompt: "Look in the Messages database on my Mac and tell me whether Sam replied about Saturday.",

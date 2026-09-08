@@ -274,6 +274,32 @@ describe.skipIf(!ON_MAC)("a command this Mac refused", () => {
     `echo "cat: ${target}: Operation not permitted" >&2; exit 1`,
   ];
 
+  it("sqlite's 'authorization denied' on chat.db is Full Disk Access, confirmed — the packaged build's own case", async () => {
+    // The run and its output exactly as a packaged build saw them, with the
+    // probes answering as that Mac did: the app itself is refused chat.db,
+    // and Full Disk Access is off.
+    const home = tempDir();
+    const target = path.join(home, "Library/Messages/chat.db");
+    const probes = scriptedProbes({ openAsApp: { [target]: "EPERM" }, fullDiskAccess: false });
+    const d = device(home, probes);
+    const response = jv(
+      await d.handleIntent(
+        intentFor(d, "run", [
+          { kind: "process.exec", argv: ["/bin/sh", "-c", `echo 'Error: unable to open database "${target}": authorization denied' >&2; exit 1`], cwd: home },
+          { kind: "fs.read", paths: [path.join(home, "Library/Messages")] },
+        ]),
+        { wait_ms: 5_000 },
+      ),
+    );
+    expect(response.get("status").str).toBe("blocked");
+    expect(response.get("host_gate").isNull).toBe(true);
+    expect(response.get("diagnosis").get("cause").str).toBe("macos_permission");
+    expect(response.get("diagnosis").get("permission").str).toBe("full_disk_access");
+    expect(response.get("diagnosis").get("confidence").str).toBe("confirmed");
+    expect(response.get("probes").get("stderr_hint").str).toBe("authorization_denied");
+    expect(lastBlocked(d).get("permission").str).toBe("full_disk_access");
+  });
+
   it("a TCC refusal in stderr, confirmed by scripted probes: blocked, with the run's exit code kept", async () => {
     const home = tempDir();
     const target = path.join(home, "Library/Messages/chat.db");

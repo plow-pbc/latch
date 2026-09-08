@@ -25,11 +25,18 @@ export type StderrHint =
   | "sqlite_unable_to_open"
   | "apple_event_not_permitted"
   | "scripted_data_not_permitted"
+  | "authorization_denied"
   | "read_only_filesystem";
 
 export function stderrHint(output: string): StderrHint | null {
   // Order matters only where two patterns can share a line, and the more
   // specific one goes first.
+  // sqlite on macOS reports TCC's EPERM on open as SQLITE_AUTH — "unable to
+  // open database "…": authorization denied" — not as "permission denied"
+  // and not as the "unable to open database file" of a WAL index it cannot
+  // create. Seen for real on a packaged build reading chat.db without Full
+  // Disk Access; unrecognised, the run read as an ordinary failure.
+  if (/authorization denied/i.test(output)) return "authorization_denied";
   if (/unable to open database file/i.test(output)) return "sqlite_unable_to_open";
   if (/-1743\b|errAEEventNotPermitted|not authori[sz]ed to send apple events/i.test(output)) {
     return "apple_event_not_permitted";
@@ -49,7 +56,8 @@ export function stderrHint(output: string): StderrHint | null {
 /** The errno a stderr hint stands in for, where it stands in for one. */
 export function errnoFromHint(hint: StderrHint | null): Errno | null {
   switch (hint) {
-    case "operation_not_permitted": return "EPERM";
+    case "operation_not_permitted":
+    case "authorization_denied": return "EPERM";
     case "permission_denied": return "EACCES";
     case "no_such_file": return "ENOENT";
     case "read_only_filesystem": return "EROFS";

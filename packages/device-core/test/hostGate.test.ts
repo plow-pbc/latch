@@ -131,6 +131,14 @@ describe("guardedPrefix — which switch governs a path", () => {
 });
 
 describe("reading an error", () => {
+  it("reads sqlite's 'authorization denied' as macOS refusing the open", () => {
+    // Verbatim from a packaged build without Full Disk Access.
+    const out = 'Error: unable to open database "/Users/x/Library/Messages/chat.db": authorization denied\n';
+    expect(stderrHint(out)).toBe("authorization_denied");
+    expect(errnoFromHint("authorization_denied")).toBe("EPERM");
+    expect(candidatePaths([out])).toEqual(["/Users/x/Library/Messages/chat.db"]);
+  });
+
   it("reads AppleScript's -54 as a scripted app refusing its data", () => {
     expect(stderrHint("143:474: execution error: File permission error. (-54)")).toBe("scripted_data_not_permitted");
     expect(errnoFromHint("scripted_data_not_permitted")).toBeNull();
