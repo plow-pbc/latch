@@ -888,6 +888,7 @@ function syncStaticModal(s, redraw) {
         if (e.key === "Enter") create();
       });
       const createBtn = el("button", { class: "btn primary", text: "Create Credential" });
+      createBtn.disabled = Boolean(s.agentToken);
       createBtn.addEventListener("click", create);
       const cancel = el("button", { class: "btn", text: "Cancel" });
       cancel.addEventListener("click", () => {
@@ -1472,6 +1473,7 @@ function syncCloudModal(state, redraw) {
       : el("button", { class: "btn", text: "Change line" });
     const message = agent.canMessage ? el("button", { class: "btn", text: "Message" }) : null;
     const remove = el("button", { class: "btn danger", text: "Delete agent" });
+    remove.disabled = Boolean(state.agentToken);
     close.addEventListener("click", closeCloudModal);
     message?.addEventListener("click", () => window.domo.cloudOpenMessages(agent.agentId));
     changeLine?.addEventListener("click", () => openCloudChangeLine(agent, state, redraw));
@@ -1890,6 +1892,7 @@ function sectionHeader(title, count, unit, action) {
 
 function cloudSection(s, redraw) {
   const add = el("button", { class: "btn primary", text: "New agent" });
+  add.disabled = Boolean(s.agentToken);
   add.addEventListener("click", () => openCloudCreate(add, s, redraw));
   const rows = s.cloudAgents.map((agent) => cloudEntityRow(agent, s, redraw));
   const notices = [];

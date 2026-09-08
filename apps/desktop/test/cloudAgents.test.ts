@@ -46,6 +46,56 @@ function recordingFetch(responses: Array<{ status: number; body?: unknown }>) {
 }
 
 describe("CloudAgentsClient resources", () => {
+  it.each([CREDENTIAL, Buffer.from(CREDENTIAL).toString("base64"), CREDENTIAL.slice(0, 10)])(
+    "rejects device credential echoes in both create receipts: %s", async (token) => {
+      for (const localSetup of [false, true]) {
+        const { fetchImpl } = recordingFetch([{ status: 201, body: { agent: wireAgent(), token } }]);
+        const api = new PlowApi("https://stub.invalid", fetchImpl);
+        const onToken = vi.fn();
+        const result = localSetup
+          ? api.createAgent(CREDENTIAL, "Kitchen", "lin_willow")
+          : new CloudAgentsClient(api, undefined, onToken).create(CREDENTIAL, {
+            lineUid: "lin_willow", name: "Kitchen", provider: "local",
+          });
+        await expect(result).rejects.toThrow("unsafe agent response");
+        expect(onToken).not.toHaveBeenCalled();
+      }
+    },
+  );
+
+  it("keeps a local token until saved before allowing another create or delete", async () => {
+    const { calls, fetchImpl } = recordingFetch([
+      { status: 201, body: { agent: wireAgent({ provider: "local", status: null }), token: "new-agent-token" } },
+      { status: 204 },
+    ]);
+    let pending: string | null = null;
+    const client = new CloudAgentsClient(new PlowApi("https://stub.invalid", fetchImpl), undefined,
+      (token) => { pending = token; },
+      () => { if (pending) throw new Error("Save the token first."); });
+    const request = { lineUid: "lin_willow", name: "Kitchen", provider: "local" };
+    expect(await client.create(CREDENTIAL, request)).not.toHaveProperty("token");
+    await expect(client.create(CREDENTIAL, request)).rejects.toThrow("Save the token first.");
+    await expect(client.delete(CREDENTIAL, "agent_123")).rejects.toThrow("Save the token first.");
+    expect(pending).toBe("new-agent-token");
+    expect(calls).toHaveLength(1);
+    pending = null;
+    await client.delete(CREDENTIAL, "agent_123");
+    expect(calls).toHaveLength(2);
+  });
+
+  it("lists local and failed agents without credential joins", async () => {
+    const { calls, fetchImpl } = recordingFetch([{ status: 200, body: [
+      wireAgent({ uid: "local", provider: "local", status: null }),
+      wireAgent({ uid: "failed", status: "failed", credential: null }),
+    ] }]);
+    const rows = await new CloudAgentsClient(new PlowApi("https://stub.invalid", fetchImpl)).list(CREDENTIAL);
+    expect(rows).toMatchObject([
+      { agentId: "local", status: null, line: { uid: LINE.uid, number: LINE.provider_key, displayName: null } },
+      { agentId: "failed", credential: null },
+    ]);
+    expect(calls[0].url).toBe("https://stub.invalid/v1/agents");
+  });
+
   it("rejects a slot wrapper and malformed agent names", async () => {
     for (const body of [[{ line: LINE, assistant: wireAgent() }], [wireAgent({ name: 7 })]]) {
       const { fetchImpl } = recordingFetch([{ status: 200, body }]);
@@ -207,7 +257,7 @@ describe("CloudAgentsClient deletion", () => {
 describe("CloudAgentsClient polling", () => {
   const receipt = (): CloudAgentResource => ({
     agentId: "agent_123",
-    line: LINE, credential: null, settings: { daily_payment_cap_usd: { value: 200 }, verbose_output: { value: false } }, image: null,
+    line: { uid: LINE.uid, displayName: null, number: LINE.provider_key }, credential: null, settings: { daily_payment_cap_usd: { value: 200 }, verbose_output: { value: false } }, image: null,
     url: null,
     provider: "exe:hermes",
     name: "Kitchen",

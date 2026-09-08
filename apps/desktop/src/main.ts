@@ -228,6 +228,9 @@ let connectors: Connectors | null = null;
 let connectClient: ConnectClient | null = null;
 let cloudAgents: CloudAgentState | null = null;
 let agentToken: string | null = null;
+function requireAgentTokenSaved(): void {
+  if (agentToken) throw new Error("Save the agent token before creating or deleting an agent.");
+}
 let onboardingWindow: BrowserWindow | null = null;
 let onboardingWindowReady: BrowserWindow | null = null;
 let updates: UpdateController | null = null;
@@ -695,6 +698,7 @@ ipcMain.handle("cloud:agents", async () => {
   return cloudAgentsIpcResult(cloudAgents);
 });
 ipcMain.handle("connect:create", async (_e, name: string, lineUid: string | null) => {
+  requireAgentTokenSaved();
   await connectClient?.createCredential(name, lineUid);
   await cloudAgents?.refresh();
   // The credential it just minted is a roster row nobody has read yet.
@@ -2121,7 +2125,7 @@ app.whenReady().then(async () => {
     if (loadSettings(home).relayCredential.trim() !== owner) return;
     agentToken = token;
     notifyRenderer("connect:changed");
-  });
+  }, requireAgentTokenSaved);
 
   connectClient = new ConnectClient({
     api: new PlowApi(apiBaseUrl),

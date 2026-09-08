@@ -95,10 +95,8 @@ class FakePlow {
     this.minted.push({ token, name, lineUid });
     this.issued.push(issued);
     return {
-      id: 700 + this.minted.length,
       agentUid: String(700 + this.minted.length),
       token: issued,
-      keyPrefix: issued.slice(5, 13),
       name,
 
     };

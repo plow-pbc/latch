@@ -194,6 +194,7 @@ const agentsTabProbeState = () => ({
   ...cloudProbe,
 });
 ipcMain.handle("connect:get", async () => agentsTabProbeState());
+ipcMain.handle("agents:dismissToken", () => { cloudProbe.agentToken = null; });
 ipcMain.handle("cloud:refresh", async () => agentsTabProbeState());
 ipcMain.handle("cloud:cancelLineFlow", async () => {
   cloudChangeCancelCount += 1;
@@ -253,6 +254,7 @@ ipcMain.handle("cloud:create", async (_e, input) => {
     };
     cloudProbe = {
       ...cloudProbe,
+      agentToken: input.provider === "local" ? "local-probe-token" : null,
       cloudAgents: [created, ...cloudProbe.cloudAgents],
       cloudFreeLines: [],
       cloudLineFlow: {
@@ -917,6 +919,40 @@ app.whenReady().then(async () => {
     };
   }})()`);
   const cloudExistingCreateRequest = cloudCreateRequests.at(-1);
+
+  cloudProbe = { ...cloudProbeBeforeCreate,
+    cloudProviders: [...cloudProbeBeforeCreate.cloudProviders, { id: "local", name: "Self-hosted" }] };
+  win.webContents.send("connect:changed");
+  await waitFor(win, `document.querySelectorAll(".cloud-agent-row").length === 1`, "the local-create roster");
+  await win.webContents.executeJavaScript(`[...document.querySelectorAll("#view button")]
+    .find((b) => b.textContent.trim() === "New agent").click()`);
+  await waitFor(win, `document.querySelector('.cloud-modal select[aria-label="Line"]')`, "local agent picker");
+  await win.webContents.executeJavaScript(`(() => {
+    document.querySelector('.cloud-modal select[aria-label="Agent type"]').value = "local";
+    const line = document.querySelector('.cloud-modal select[aria-label="Line"]');
+    line.value = "lin_ash";
+    line.dispatchEvent(new Event("change"));
+  })()`);
+  await clickCloudButton(win, "Create agent");
+  await waitFor(win, `!document.querySelector(".cloud-modal") && document.body.textContent.includes("local-probe-token")`,
+    "the local token handoff");
+  const tokenBlocksCreate = await win.webContents.executeJavaScript(`[...document.querySelectorAll("#view button")]
+    .find((b) => b.textContent.trim() === "New agent").disabled`);
+  await captureAfterPaint(win, "/tmp/agent-token-handoff.png");
+  await win.webContents.executeJavaScript(`document.querySelector(".cloud-agent-open").click()`);
+  await waitFor(win, `document.querySelector(".cloud-modal .cloud-detail-threads")`, "local agent detail");
+  const tokenBlocksDelete = await win.webContents.executeJavaScript(`[...document.querySelectorAll(".cloud-modal button")]
+    .find((b) => b.textContent.trim() === "Delete agent").disabled`);
+  await clickCloudButton(win, "Close");
+  await win.webContents.executeJavaScript(`[...document.querySelectorAll("#view button")]
+    .find((b) => b.textContent.trim() === "I saved the token").click()`);
+  await waitFor(win, `!document.body.textContent.includes("local-probe-token") &&
+    ![...document.querySelectorAll("#view button")].find((b) => b.textContent.trim() === "New agent").disabled`,
+    "token dismissal to clear the secret and release creation");
+  if (!tokenBlocksCreate || !tokenBlocksDelete || cloudProbe.agentToken !== null) {
+    throw new Error("local token handoff did not protect creation/deletion until dismissal");
+  }
+
 
   cloudProbe = {
     ...cloudProbeBeforeCreate,

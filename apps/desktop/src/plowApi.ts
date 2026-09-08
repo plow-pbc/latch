@@ -127,13 +127,41 @@ export interface CloudAgentProvider {
 }
 
 export interface MintedCredential {
-  /** Session id used to revoke a mint that cannot be handed to the user. */
-  id: number;
   agentUid: string;
-  /** Shown to the user once (agents) or stored and never shown (the device). */
+  /** Shown once for self-hosted agent setup. */
   token: string;
-  keyPrefix: string;
   name: string;
+}
+
+/**
+ * Deliberately covers plaintext and standard Base64, in full and by 10-character prefix, but not
+ * Base64url: this hardens responses from an origin that already holds the secret rather than
+ * providing exhaustive encoding defense.
+ */
+export function echoesCredential(text: string, credential: string): boolean {
+  const secret = credential.trim();
+  if (!secret) return false;
+  const encodings = [secret, Buffer.from(secret).toString("base64")];
+  return encodings.some((value) =>
+    text.includes(value) || (value.length > 10 && text.includes(value.slice(0, 10)))
+  );
+}
+
+/** Decode either provider's create receipt before exposing its one-time token. */
+export function decodeAgentCreateReceipt(data: unknown, deviceCredential: string): {
+  agent: Record<string, unknown> & { uid: string; name: string };
+  token: string | null;
+} {
+  const receipt = data as { agent?: { uid?: unknown; name?: unknown }; token?: unknown } | null;
+  if (!receipt?.agent || typeof receipt.agent.uid !== "string" ||
+      typeof receipt.agent.name !== "string" ||
+      (receipt.token !== null && typeof receipt.token !== "string")) {
+    throw new PlowApiError("http", "Plow returned an invalid agent response.");
+  }
+  if (echoesCredential(JSON.stringify(receipt), deviceCredential)) {
+    throw new PlowApiError("http", "Plow returned an unsafe agent response.");
+  }
+  return receipt as ReturnType<typeof decodeAgentCreateReceipt>;
 }
 
 /** The account credential metadata returned by `GET /v1/api-keys`.
@@ -729,11 +757,11 @@ export class PlowApi {
   /** Create a local agent; its token is shown once for self-hosted setup. */
   async createAgent(token: string, name: string, lineUid: string | null = null): Promise<MintedCredential> {
     if (!lineUid) throw new PlowApiError("http", "Choose a line for this agent.");
-    const data = await this.call<{ agent: { uid: string; credential: { id: number }; name: string }; token: string }>(
+    const data = decodeAgentCreateReceipt(await this.call(
       "POST", "/v1/agents", { token, body: { name, provider: "local", line_uid: lineUid } },
-    );
-    return { id: data.agent.credential.id, agentUid: data.agent.uid, token: data.token,
-      keyPrefix: "", name: data.agent.name };
+    ), token);
+    if (!data.token) throw new PlowApiError("http", "Plow did not return an agent token.");
+    return { agentUid: data.agent.uid, token: data.token, name: data.agent.name };
   }
 
   async deleteAgent(token: string, uid: string): Promise<void> {

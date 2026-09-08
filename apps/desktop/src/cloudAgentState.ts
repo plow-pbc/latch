@@ -19,7 +19,6 @@ import {
   CloudAgentLineError,
   CloudAgentResource,
   CreateCloudAgentRequest,
-  echoesCredential,
 } from "./cloudAgents.js";
 import {
   ACTIVATION_POLL_INTERVAL_MS,
@@ -38,6 +37,7 @@ import {
   ProvisionedActivationRedeem,
   parseActivationChat,
   parseApiTimestamp,
+  echoesCredential,
 } from "./plowApi.js";
 import {
   ChatPerson,
@@ -775,17 +775,7 @@ export class CloudAgentState {
     const display = moved.name || !previous?.name
       ? moved
       : { ...moved, name: previous.name };
-    const provider = moved.provider ||
-      this.retainedCreates.get(agentId)?.provider;
-    if (provider) {
-      this.retainedCreates.set(agentId, {
-        lineUid,
-        name: moved.name ?? previous?.name ?? "",
-        provider,
-      });
-    } else {
-      this.retainedCreates.delete(agentId);
-    }
+    this.retainedCreates.set(agentId, { lineUid, name: moved.name, provider: moved.provider });
     this.rows.set(agentId, this.rowFor(display));
     this.completeLineFlow(agentId);
     this.publish();
@@ -1010,16 +1000,12 @@ export class CloudAgentState {
       const listed = new Map<string, CloudAgentDisplayRow>();
       for (const agent of agents) {
         const retained = this.retainedCreates.get(agent.agentId);
-        const resourceProvider = agent.provider || null;
-        const provider = resourceProvider ?? retained?.provider;
         const lineUid = this.agentLineUid(agent);
-        if (provider) {
-          this.retainedCreates.set(agent.agentId, {
-            lineUid: lineUid ?? retained?.lineUid ?? null,
-            name: agent.name ?? retained?.name ?? "",
-            provider,
-          });
-        } else this.retainedCreates.delete(agent.agentId);
+        this.retainedCreates.set(agent.agentId, {
+          lineUid: lineUid ?? retained?.lineUid ?? null,
+          name: agent.name,
+          provider: agent.provider,
+        });
         listed.set(agent.agentId, this.rowFor(agent));
       }
       for (const [agentId, row] of this.rows) {
@@ -1138,8 +1124,8 @@ export class CloudAgentState {
     const agentLine = [...this.agentLines.values()].find((line) => line.uid === lineUid);
     const known = this.lines?.find((line) => line.uid === lineUid);
     const chat = this.chats.find((candidate) => candidate.lineUid === lineUid);
-    const name = (known?.displayName ?? agentLine?.display_name ?? "").trim();
-    const numbers = [known?.number, agentLine?.provider_key, chat?.recipients?.line]
+    const name = (known?.displayName ?? agentLine?.displayName ?? "").trim();
+    const numbers = [known?.number, agentLine?.number, chat?.recipients?.line]
       .filter((number): number is string => typeof number === "string")
       .map((number) => number.trim())
       .filter(Boolean);

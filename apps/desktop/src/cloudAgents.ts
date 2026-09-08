@@ -1,4 +1,4 @@
-import { PlowApi, PlowApiError, REQUEST_TIMEOUT_MS } from "./plowApi.js";
+import { PlowApi, PlowApiError, REQUEST_TIMEOUT_MS, decodeAgentCreateReceipt, echoesCredential } from "./plowApi.js";
 
 export const CLOUD_AGENT_POLL_INTERVAL_MS = 2_000;
 const CLOUD_AGENT_POLL_RETRY_WINDOW_MS = 5 * 60_000;
@@ -12,7 +12,7 @@ export type CloudAgentStatus =
 
 export interface CloudAgentResource {
   agentId: string;
-  line: { uid: string; display_name: string | null; provider_key: string } | null;
+  line: { uid: string; displayName: string | null; number: string } | null;
   credential: { connected: boolean } | null;
   url: string | null;
   provider: string;
@@ -72,12 +72,14 @@ export class CloudAgentsClient {
     private readonly api: PlowApi,
     private readonly wait: Wait = defaultWait,
     private readonly onToken: (token: string, owner: string) => void = () => {},
+    private readonly beforeMutation: () => void = () => {},
   ) {}
 
   async create(
     deviceCredential: string,
     request: CreateCloudAgentRequest,
   ): Promise<CloudAgentResource> {
+    this.beforeMutation();
     const response = await this.api.request("POST", "/v1/agents", {
       token: deviceCredential,
       body: {
@@ -89,8 +91,7 @@ export class CloudAgentsClient {
     if (!response.ok) {
       await throwCloudCallError(response);
     }
-    const decoded = await decodeJson(response);
-    if (!isRecord(decoded)) throw invalidResponse(response.status);
+    const decoded = decodeAgentCreateReceipt(await decodeJson(response), deviceCredential);
     const agent = parseResource(decoded.agent, deviceCredential, response.status);
     if (typeof decoded.token === "string") this.onToken(decoded.token, deviceCredential);
     return agent;
@@ -124,6 +125,7 @@ export class CloudAgentsClient {
   }
 
   async delete(deviceCredential: string, agentId: string): Promise<void> {
+    this.beforeMutation();
     const response = await this.api.request(
       "DELETE",
       `/v1/agents/${encodeURIComponent(agentId)}`,
@@ -226,7 +228,11 @@ function parseResource(
   }
   const resource: CloudAgentResource = {
     agentId: decoded.uid,
-    line: decoded.line as CloudAgentResource["line"],
+    line: isRecord(decoded.line) ? {
+      uid: decoded.line.uid as string,
+      displayName: typeof decoded.line.display_name === "string" ? decoded.line.display_name : null,
+      number: decoded.line.provider_key as string,
+    } : null,
     credential: decoded.credential as CloudAgentResource["credential"],
     url: typeof decoded.url === "string" ? decoded.url : null,
     provider: decoded.provider,
@@ -314,19 +320,6 @@ const LINE_ERRORS: Readonly<Record<string, {
   },
 });
 
-/**
- * Deliberately covers plaintext and standard Base64, in full and by 10-character prefix, but not
- * Base64url: this hardens responses from an origin that already holds the secret rather than
- * providing exhaustive encoding defense.
- */
-export function echoesCredential(text: string, credential: string): boolean {
-  const secret = credential.trim();
-  if (!secret) return false;
-  const encodings = [secret, Buffer.from(secret).toString("base64")];
-  return encodings.some((value) =>
-    text.includes(value) || (value.length > 10 && text.includes(value.slice(0, 10)))
-  );
-}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
