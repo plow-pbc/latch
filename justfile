@@ -58,6 +58,7 @@ build:
     npx tsc -b
     node apps/desktop/scripts/copy-renderer.mjs
     node apps/desktop/scripts/build-native.mjs
+    node apps/desktop/scripts/dev-usage-strings.mjs
 
 # Run the full test suite. Depends on `install` so a clean checkout — CI, the
 # review bot, a new machine — is one command; it is a ~1s no-op once installed.
@@ -248,8 +249,18 @@ serve-updates port="8043":
 # the app name/tray tooltip with the branch, so from-source runs never collide
 # with each other — or with the packaged install, which runs unbranded from
 # the plain "Plow-Latch" home.
+# Through the dev launcher when it is built: a run spawned with TCC
+# responsibility disclaimed is its own client, so its permission dialogs,
+# usage strings and grants are Electron.app's rather than this terminal's
+# (native/launch-disclaimed.swift says why that matters). Without the Swift
+# toolchain it falls back to a plain launch, attributed to the terminal.
 app: build
-    DOMO_HOME="{{apphome}}" DOMO_BRANCH="{{branch}}" npx electron "{{root}}/apps/desktop"
+    @if [ -x "{{root}}/apps/desktop/dist/native/launch-disclaimed" ]; then \
+      DOMO_HOME="{{apphome}}" DOMO_BRANCH="{{branch}}" "{{root}}/apps/desktop/dist/native/launch-disclaimed" \
+        "$(node -p 'require("electron")')" "{{root}}/apps/desktop"; \
+    else \
+      DOMO_HOME="{{apphome}}" DOMO_BRANCH="{{branch}}" npx electron "{{root}}/apps/desktop"; \
+    fi
 
 # Headless check that the sandboxed preload bridge and the renderer still work.
 verify-preload: build
@@ -307,3 +318,55 @@ audit:
 clean:
     rm -rf "{{apphome}}"
     @echo "wiped {{apphome}}"
+
+# ---------------------------------------------------------------------------
+# Permissions — exercising the Capabilities tab
+# ---------------------------------------------------------------------------
+
+# The packaged app's bundle id AND the from-source Electron.app's, plus the
+# app's own memos of what macOS said. A from-source `just app` is attributed
+# by macOS to the terminal it was launched from — Termic, iTerm, Terminal —
+# so that app's grants are reset too, found the way the drag panel finds it
+# (the helper's ancestry walk), never guessed. `just reset-permissions no`
+# skips the launcher, `host=<bundle id>` names one. Some services need sudo;
+# the script asks only when one refuses. Quit and reopen the app afterwards.
+# Reset every macOS privacy grant (TCC) this app can hold, for a clean slate.
+reset-permissions host="auto":
+    scripts/reset-permissions.sh "{{apphome}}" {{host}}
+
+# Show what reset-permissions would run, without running it.
+reset-permissions-dry-run host="auto":
+    scripts/reset-permissions.sh "{{apphome}}" {{host}} --dry-run
+
+# Fake agents, fake goals, spread over the last eight hours, appended to
+# THIS checkout's audit log so the Capabilities tab's banner, counts and
+# "See blocked requests…" can be looked at without revoking a grant first.
+# The banner's dismissal is left alone: if it was dismissed less than eight
+# hours ago the rows land after that moment instead, so they count as new
+# and "Show in Audit" narrows to them (Date: Since …). Every seeded row is
+# marked, and unseed removes exactly those.
+# Seed the audit log with sample blocked requests for the Capabilities tab.
+seed-blocked-requests:
+    node scripts/seed-blocked-requests.mjs "{{apphome}}/device/audit.ndjson" "{{apphome}}/app/settings.json"
+
+# Remove the rows seed-blocked-requests added; real audit rows are untouched.
+unseed-blocked-requests:
+    node scripts/seed-blocked-requests.mjs "{{apphome}}/device/audit.ndjson" --remove
+
+# How a real MCP client and model read this Mac's answers (eval/agent/README.md).
+# Not part of `just test`: it spends model tokens and is not deterministic.
+# Needs the Claude CLI signed in, or ANTHROPIC_API_KEY. `case` is one name
+# or several comma-separated; empty is every case.
+agent-eval case='' runs='3' model='sonnet':
+    node eval/agent/run.mjs --case '{{case}}' --runs {{runs}} --model {{model}}
+
+# Re-freeze the eval's vectors from the real server (after a change to the
+# answers or the copy). In process; nothing is launched.
+agent-eval-capture: build
+    node eval/agent/capture.mjs
+
+# Every block in the audit log shows again — the banner, the rows' lines,
+# the badge — until the next ×.
+# Forget when the Capabilities banner was last dismissed.
+reset-blocked-banner:
+    node scripts/reset-blocked-banner.mjs "{{apphome}}"

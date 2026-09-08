@@ -16,7 +16,8 @@ export type CapabilityKind =
   | "apple_events"
   | "tool"
   | "browser"
-  | "credential";
+  | "credential"
+  | "applescript";
 
 export interface Capability {
   kind: CapabilityKind;
@@ -28,6 +29,9 @@ export interface Capability {
   origins?: string[]; // browser: host patterns ("dominos.com", "*.dominos.com")
   access?: "fill"; // credential: type values into pages
   items?: string[]; // credential(fill): vault item ids
+  app?: string; // applescript: the app as the agent named it ("Mail")
+  bundleId?: string; // applescript: that app's bundle id, resolved on this Mac
+  script?: string; // applescript: the whole script, verbatim
   reason?: string; // display-only justification
 }
 
@@ -68,6 +72,8 @@ export function capabilityDisplay(c: Capability): string {
       return `Browse: ${(c.origins ?? []).join(", ")}`;
     case "credential":
       return `Credentials: fill ${(c.items ?? []).join(", ")} into approved sites (typed on this Mac; the agent can see the page it types into)`;
+    case "applescript":
+      return `Script ${c.app ?? "?"} (${c.bundleId ?? "?"}): ${c.script ?? ""}`;
   }
 }
 
@@ -176,11 +182,40 @@ export async function canonicalizeAsync(path: string): Promise<string> {
   return "/" + remainder.reverse().join("/");
 }
 
+/**
+ * True when `path` is `root` or lexically inside it — a string test, no
+ * disk. Both arguments must already be in the same form (canonical, or both
+ * as named); the caller decides which, since resolving a root again after
+ * something else has had a turn on the disk is how a swapped symlink walks
+ * an approval somewhere it never pointed. The one root predicate shared by
+ * the sandbox profile, the gate table, and the diagnosis.
+ */
+export function isLexicallyWithin(path: string, root: string): boolean {
+  return path === root || path.startsWith(root.endsWith("/") ? root : root + "/");
+}
+
+/**
+ * `isLexicallyWithin` for the question "could a writer of `root` reach
+ * `path`?" — the hold that keeps a diagnostic probe off anything a live run
+ * can rewrite. The default macOS filesystem is case-insensitive and
+ * Unicode-normalization-insensitive, and a component that does not exist
+ * yet keeps the spelling its caller gave it, so `~/Documents/Out` and
+ * `~/documents/out` are one place to APFS and two strings to `===`.
+ * Compared folded, which can only find MORE overlap: a hold that is too
+ * wide withholds a probe, and a probe withheld is a fact, never a leak.
+ * Never used for a grant — a profile root or a rule key stays bytewise.
+ */
+export function overlapsRoot(path: string, root: string): boolean {
+  return isLexicallyWithin(foldPath(path), foldPath(root));
+}
+
+function foldPath(p: string): string {
+  return p.normalize("NFC").toLowerCase();
+}
+
 /** True when `path` is `root` or inside it, after canonicalization. */
 export function isWithin(path: string, root: string): boolean {
-  const p = canonicalize(path);
-  const r = canonicalize(root);
-  return p === r || p.startsWith(r.endsWith("/") ? r : r + "/");
+  return isLexicallyWithin(canonicalize(path), canonicalize(root));
 }
 
 export function isWithinRoots(path: string, roots: string[]): boolean {

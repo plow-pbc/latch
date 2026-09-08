@@ -109,6 +109,17 @@ origins, including commits such as purchases, messages and account changes. \
 Weigh that session, while remembering that browsing and commerce are ordinary \
 computer work.
 
+A script intent ("Script Mail (com.apple.mail): …") runs the quoted AppleScript \
+with osascript OUTSIDE the sandbox: it can do whatever the owner can do in that \
+app (read mail, send it, delete events, move files in Finder), and nothing but its \
+own text bounds it — the named app is a label, not a fence, and a script may \
+address other apps too. Read the whole script. Allow one whose every statement \
+serves the errand against the named app; deny one that sends, deletes or forwards \
+without the errand calling for it, addresses apps the errand does not mention, runs \
+a shell command or evaluates text as a script however it is spelled or assembled \
+(do shell script, run script, a string built at run time), or is more capable than \
+the errand needs.
+
 The sandbox baseline — broad home-directory reads and a scratch directory — \
 exists so programs can start. It is NEVER a reason to allow an operation.
 
@@ -252,7 +263,7 @@ function buildPrompt(intent: Intent, humanAvailable: boolean): string {
     `Operation to review:\n` +
     `Agent: ${encoded(intent.agentDisplay)} (${encoded(intent.agentId)})\n` +
     `Request (composed on this Mac from the tool call): ${encoded(intent.request)}\n` +
-    `Requested capability bounds (what the sandbox will enforce if allowed):\n${caps || "  (none)"}\n\n` +
+    `Requested capability bounds (what will be enforced if allowed — the sandbox for commands and files; for a script, its own text):\n${caps || "  (none)"}\n\n` +
     `Decide ${humanAvailable ? "allow, deny, or ask" : "allow or deny"}.`
   );
 }

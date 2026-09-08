@@ -105,6 +105,9 @@ const AUDIT_ALLOWLIST: Record<string, readonly string[]> = {
   intent_decision: ["decision", "source"],
   intent_rejected: ["reason"],
   denied_operation: [],
+  // What this Mac refused and how sure it was — never the path, the
+  // evidence sentences (which name paths) or the probes.
+  host_permission_blocked: ["cause", "confidence", "permission"],
   file_read: [],
   file_write: [],
   exec_start: [],

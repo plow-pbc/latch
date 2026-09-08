@@ -159,6 +159,27 @@ describe("PolicyEngine", () => {
     expect(engine.allRules()).toHaveLength(0);
   });
 
+  it("an applescript intent is never stored as a rule either: the same script is decided fresh", async () => {
+    const engine = new PolicyEngine(path.join(tempDir(), "rules.json"));
+    const always = new HeadlessPolicy({ intent: "always_allow" });
+    const caps: Capability[] = [{ kind: "applescript", app: "Mail", bundleId: "com.apple.mail", script: "return 1" }];
+    const first = await engine.decide(intentWith(caps), always);
+    expect(first.decision).toBe("always_allow");
+    expect(engine.allRules()).toHaveLength(0);
+    const second = await engine.decide(intentWith(caps), new HeadlessPolicy({ intent: "deny" }));
+    expect(second.decision).toBe("deny");
+  });
+
+  it("denyKinds can refuse every script, whatever app it names", async () => {
+    const engine = new PolicyEngine(path.join(tempDir(), "rules.json"));
+    const policy = new HeadlessPolicy({ intent: "allow_once", denyKinds: ["applescript"] });
+    const grant = await engine.decide(
+      intentWith([{ kind: "applescript", app: "Mail", bundleId: "com.apple.mail", script: "return 1" }]),
+      policy,
+    );
+    expect(grant.decision).toBe("deny");
+  });
+
   it("denyKinds forces a deny for matching capabilities", async () => {
     const engine = new PolicyEngine(path.join(tempDir(), "rules.json"));
     const policy = new HeadlessPolicy({

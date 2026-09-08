@@ -6,7 +6,7 @@
   "type": "module",
   "main": "./dist/main.js",
   "scripts": {
-    "build": "tsc -b && node scripts/copy-renderer.mjs && node scripts/build-native.mjs",
+    "build": "tsc -b && node scripts/copy-renderer.mjs && node scripts/build-native.mjs && node scripts/dev-usage-strings.mjs",
     "start": "electron ."
   },
   "dependencies": {
@@ -18,7 +18,8 @@
     "posthog-node": "5.21.2"
   },
   "optionalDependencies": {
-    "@domo/native-credential-import": "*"
+    "@domo/native-credential-import": "*",
+    "@domo/native-permissions": "*"
   },
   "devDependencies": {
     "electron": "33.4.11",

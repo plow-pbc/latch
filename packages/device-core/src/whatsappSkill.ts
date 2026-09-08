@@ -282,6 +282,10 @@ owner used before you start guessing synonyms, and tell them which chats you loo
   the owner's directory, which the sandbox does not allow. This reads as "no database" and
   gets misreported as "no messages"; it is neither.
 
+  This is for that error and only that error. A result with status \`blocked\` is a different
+  thing — this Mac itself refusing — and the note at the end of this skill says what to do
+  with one; copying the store would meet the same refusal.
+
   Copy it somewhere you may write, read the copy, delete the copy:
 
       plow_run_command {

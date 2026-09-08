@@ -298,15 +298,23 @@ describe.skipIf(!ON_MAC)("the audit record of a reaped run", () => {
     });
 
     const response = await device.handleIntent(intent, { wait_ms: 50 });
-    expect(jv(response).get("status").str).toBe("running");
+    // The call's own silent-run probes park on the pipe too, and the reaper
+    // (300ms here) may well kill the run before they return — in which case
+    // the call answers with the run as it is by then, already blocked.
+    expect(["running", "blocked"]).toContain(jv(response).get("status").str);
     const handle = jv(response).get("handle").str!;
 
     const ended = await settle(device.executor, handle);
     expect(ended.reaped).toBe(true);
-    // The agent polling the job learns why it stopped, not just that it did.
-    const payload = device.getOutput(handle);
-    expect(jv(payload).get("status").str).toBe("completed");
+    // The agent polling the job learns why it stopped, not just that it did —
+    // and what this Mac could tell about it: the app's own open of the pipe
+    // parks too, which is the shape a consent dialog has. "Likely", because
+    // the pipe is under no folder macOS asks about (hostGate/diagnose.ts).
+    const payload = await device.getOutput(handle);
+    expect(jv(payload).get("status").str).toBe("blocked");
     expect(jv(payload).get("error").str).toMatch(/produced no output/);
+    expect(jv(payload).get("diagnosis").get("cause").str).toBe("prompt_waiting");
+    expect(jv(payload).get("diagnosis").get("confidence").str).toBe("likely");
 
     const ends = device.audit
       .entries()

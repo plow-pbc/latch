@@ -11,7 +11,7 @@
  * key to pin. That is provenance, not confinement — DESIGN.md §4 *The intent
  * object* owns where an intent's contents go.
  */
-import { capabilityDisplay, Intent, intentIsExpired, JSONValue, jv } from "@domo/protocol";
+import { capabilityDisplay, Intent, intentIsExpired, JSONValue, jv, overlapsRoot } from "@domo/protocol";
 import { PROVIDERS, vendoredProvider, type VendoredProvider } from "./providers/registry.js";
 import { MintError, type MintedAccounts, type Minter } from "./providers/mint.js";
 import { gogExitReason, mergeFanout, planPlowGog } from "./providers/plowGog.js";
@@ -30,7 +30,25 @@ import { VaultStore } from "./browser/vaultStore.js";
 import { ResolvedBrowserRuntime } from "./browser/browserRuntime.js";
 import { BROWSING_SKILL } from "./browser/browsingSkill.js";
 import { ExecResult, Executor, REAPED_MESSAGE } from "./executor.js";
-import { FileOps } from "./fileOps.js";
+import { FileOps, FileOpsError } from "./fileOps.js";
+import {
+  appleEventTarget,
+  collectFacts,
+  BlockedCause,
+  OpenOutcome,
+  diagnose,
+  Diagnosis,
+  diagnosisPayload,
+  guardedPrefix,
+  HostFacts,
+  hostInventory,
+  HostInventory,
+  HostProbes,
+  isHostGate,
+  nodeProbes,
+  stderrHint,
+} from "./hostGate/index.js";
+import { readCredentialsState } from "./browser/vaultCredentials.js";
 import { DeviceIdentity, loadOrCreateIdentity } from "./identity.js";
 import { PolicyDelegate, PolicyEngine } from "./policyEngine.js";
 import { SkillRegistry } from "./skills.js";
@@ -115,6 +133,104 @@ const EXPLAINED_DENIALS: Record<string, string> = {
 };
 
 /**
+ * How long an in-process file operation on a TCC-guarded path may take before
+ * its silence is read as a consent dialog holding it.
+ *
+ * macOS does not refuse an unconsented open of the Desktop, Documents or
+ * Downloads folder — it parks the call until someone at the Mac answers a
+ * dialog, and this app's owner is routinely not at the Mac. An `fs.readFile`
+ * parked that way would leave the agent's call pending until the handle
+ * expired, with nothing anywhere saying why. Five seconds is far longer than a
+ * capped (8MB) read takes and far shorter than any human answering a dialog.
+ * Only guarded paths are raced: everything else fails or finishes on its own.
+ */
+const FILE_OP_HANG_MS = 5_000;
+
+/** Thrown when the race above is lost: the operation is still parked. */
+class FileOpHang extends Error {
+  constructor() {
+    super("the operation is waiting on a macOS permission dialog on this Mac's screen");
+    this.name = "FileOpHang";
+  }
+}
+
+/** A path an approved command that is still running, or a job it left
+ *  running, can write: not read or written from here until that stops. */
+class FileOpBusy extends Error {
+  constructor() {
+    super("an approved command, or a job it left running, can still change this path; try again once it has stopped");
+    this.name = "FileOpBusy";
+  }
+}
+
+/** The switches macOS never answers a query about: only a touch that got
+ *  through, or a refusal, says where they stand. */
+const FOLDER_PERMISSIONS: ReadonlySet<string> = new Set(["files_desktop", "files_documents", "files_downloads"]);
+
+/** `p` when it exists, else its nearest existing ancestor: the folder a
+ *  creating write would touch, and where its consent dialog belongs. */
+function existingAncestor(p: string): string {
+  let target = p;
+  while (!fs.existsSync(target)) {
+    const parent = path.dirname(target);
+    if (parent === target) return target;
+    target = parent;
+  }
+  return target;
+}
+
+/** A run's diagnosis, kept by handle so a later poll carries it too. */
+interface DiagnosedRun {
+  diagnosis: Diagnosis;
+  facts: HostFacts;
+  /** The run's intent, so a later clearing can be recorded against it. */
+  intentId: string;
+}
+
+/** What a run's argv and capabilities give a diagnosis to work with. */
+interface ExecDiagnosisContext {
+  argv: readonly string[];
+  cwd: string | undefined;
+  readPaths: readonly string[];
+  writePaths: readonly string[];
+  /** The app the run was approved to send Apple events to, when it was. */
+  automationTarget: string | null;
+  /** Under a seatbelt profile (a command), or bare (a script). */
+  sandboxed: boolean;
+}
+
+/**
+ * A script's roads to a shell — `do shell script`, Terminal's `do script`,
+ * text evaluated as a script (`run script`, `load script`, `store script`),
+ * or driving an app whose whole purpose is running things — would run
+ * outside the sandbox, which is the one thing a script must not be a road
+ * to. Refused before anything runs, by a fixed sentence.
+ *
+ * A TRIPWIRE, not the boundary. AppleScript is a dynamic language and a
+ * source-level check cannot be sound against it (a string assembled at run
+ * time is still a string); the boundary is the approval card, which shows
+ * the whole script, and the reviewer, who is told to read it as such
+ * (DESIGN.md §6). This catches the honest mistake and the lazy attempt.
+ */
+export const SCRIPT_SHELL_ESCAPE =
+  // `«event …»` is every command by its raw four-char code — `«event
+  // sysoexec»` IS `do shell script` — and no honest script needs the raw
+  // form for any command this Mac would run.
+  /\b(?:do\s+(?:shell\s+)?script|(?:run|load|store)\s+script)\b|\u00abevent\b|\b(?:application|app)\s+(?:id\s+)?"(?:Terminal|iTerm2?|Script Editor|Automator|com\.apple\.Terminal|com\.googlecode\.iterm2|com\.apple\.ScriptEditor2|com\.apple\.Automator)"/i;
+/** The apps a script may not name as its target, by bundle id: each one
+ *  exists to run other things. */
+export const SCRIPT_SHELL_ESCAPE_APPS: ReadonlySet<string> = new Set([
+  "com.apple.Terminal",
+  "com.googlecode.iterm2",
+  "com.apple.ScriptEditor2",
+  "com.apple.Automator",
+]);
+export const SCRIPT_SHELL_ESCAPE_REFUSAL =
+  "Latch does not run shell commands or other scripts from an AppleScript (`do shell script`, " +
+  "`run script`, Terminal's `do script`, or scripting Terminal, iTerm, Script Editor or Automator): " +
+  "run commands with plow_run_command, inside the sandbox, and keep the script to the app it controls.";
+
+/**
  * One shape for a run, whether it is answering the call that started it or a
  * later `plow_get_output` poll. Written once because the two used to be
  * written twice and had already drifted: only the polling path told the agent
@@ -123,8 +239,14 @@ const EXPLAINED_DENIALS: Record<string, string> = {
  * A reaped run ends with no output and a signal exit — indistinguishable,
  * without `error`, from a command that genuinely produced nothing. The agent
  * holding the job is the one who has to tell the user, so it is told here.
+ *
+ * A run this Mac diagnosed carries the verdict and the facts (hostGate/). A
+ * finished run whose cause is a gate is `blocked` rather than `completed`; a
+ * run still going stays `running` with the diagnosis beside it, because a
+ * consent dialog the owner answers lets it finish — killing it would only
+ * make the owner's click pointless.
  */
-function runPayload(result: ExecResult): { [k: string]: JSONValue } {
+function runPayload(result: ExecResult, diagnosed: DiagnosedRun | null): { [k: string]: JSONValue } {
   const payload: { [k: string]: JSONValue } = {
     status: result.running ? "running" : "completed",
     output: result.output.toString("utf8"),
@@ -132,7 +254,30 @@ function runPayload(result: ExecResult): { [k: string]: JSONValue } {
   };
   if (result.exitCode !== null) payload.exit_code = result.exitCode;
   if (result.reaped) payload.error = REAPED_MESSAGE;
+  if (diagnosed) {
+    Object.assign(payload, diagnosisPayload(diagnosed.diagnosis, diagnosed.facts));
+    if (!result.running && isHostGate(diagnosed.diagnosis.cause)) payload.status = "blocked";
+  } else if (!result.running && result.exitCode !== 0) {
+    // Said in so many words: a failed command with no verdict failed on its
+    // own terms. Left unsaid, an agent reads "permission" in a program's
+    // own error text and sends the owner to System Settings for nothing.
+    payload.host_gate = "none";
+  }
   return payload;
+}
+
+/** The diagnosis as the audit log carries it — the verdict, its evidence and
+ *  every probe's answer, so a wrong verdict can be traced to its branch. */
+function auditDiagnosis(d: DiagnosedRun): { [k: string]: JSONValue } {
+  return {
+    cause: d.diagnosis.cause,
+    confidence: d.diagnosis.confidence,
+    permission: d.diagnosis.permission,
+    evidence: d.diagnosis.evidence,
+    ruled_out: d.diagnosis.ruled_out,
+    owner_action: d.diagnosis.owner_action,
+    probes: d.facts as unknown as JSONValue,
+  };
 }
 
 export class DeviceAgent {
@@ -153,6 +298,30 @@ export class DeviceAgent {
   /** How the sessions build a browser each: one config, many hosts. */
   private readonly browserConfig: BrowserHostConfig | null = null;
   private readonly seenNonces = new Set<string>();
+  /** The owner's real home — what the guarded-path table is keyed on. */
+  private readonly ownerHome: string;
+  /** How a failure is investigated (hostGate/probes.ts). Real by default;
+   *  a test scripts the answers. */
+  readonly hostProbes: HostProbes;
+  /** Diagnoses by run handle, so a `plow_get_output` poll carries the one
+   *  the run's end produced. */
+  private readonly runDiagnoses = new Map<string, DiagnosedRun>();
+  /** A diagnosis the run's exit started and has not finished: a poll that
+   *  lands in between waits for it, or the agent would take "completed,
+   *  exit 1" as the whole story and stop asking. */
+  private readonly pendingDiagnoses = new Map<string, Promise<void>>();
+  /** Runs recorded as blocked, with the cause on record: one that was found
+   *  parked while running and then reaped is one story, not two audit rows —
+   *  but a DIFFERENT cause at the end (the owner clicked Don't Allow, and a
+   *  refusal replaced the parked guess) is a correction, recorded under the
+   *  same handle so the owner's views take the newest. */
+  private readonly blockedRuns = new Map<string, BlockedCause>();
+  /** `FILE_OP_HANG_MS`, overridable by a test that cannot wait it out. */
+  fileOpHangMs = FILE_OP_HANG_MS;
+  /** The three folders as this Mac last saw them answer — macOS has no
+   *  query for them, so a touch that got through is the one positive fact
+   *  there is. Recorded on change only; a folder is read many times. */
+  private readonly foldersObserved = new Map<string, "granted">();
 
   constructor(
     public readonly home: string,
@@ -186,8 +355,16 @@ export class DeviceAgent {
      * (the default) fails closed — every financial release is blocked. The app
      * injects the real plow-consume client so production can obtain approvals. */
     approval: PaymentApprovalClient | null = null,
+    /**
+     * How a refused operation is investigated (hostGate/). Null builds the
+     * real probes over `ownerHome`; the app passes its own so the Automation
+     * helper it ships is found, and a test passes scripted answers.
+     */
+    hostProbes: HostProbes | null = null,
   ) {
     this.identity = loadOrCreateIdentity(home, name);
+    this.ownerHome = ownerHome;
+    this.hostProbes = hostProbes ?? nodeProbes({ ownerHome });
     this.audit = new AuditLog(path.join(home, "device/audit.ndjson"));
     this.policy = new PolicyEngine(path.join(home, "device/rules.json"));
     this.executor = new Executor(path.join(home, "device/scratch"), undefined, this.vendorDirs);
@@ -333,6 +510,38 @@ export class DeviceAgent {
     return { status: "completed", ...item };
   }
 
+  /**
+   * What this Mac lets the app do right now (hostGate/inventory.ts): the
+   * permissions and self-checks, one fresh snapshot. The Settings pane and
+   * the `plow_device_status` tool both read this, so they cannot disagree.
+   *
+   * The sandbox rows go through the REAL executor with a throwaway profile:
+   * a read-only run, no network, no writes, so it is also reapable — and
+   * `/usr/bin/true` exits at once regardless.
+   */
+  async hostInventory(): Promise<HostInventory> {
+    const vaultDir = this.vaultDir;
+    return hostInventory({
+      probes: this.hostProbes,
+      ownerHome: this.ownerHome,
+      runSandboxed:
+        process.platform === "darwin"
+          ? async (argv) => {
+              const result = await this.executor.run({
+                argv,
+                readPaths: [],
+                writePaths: [],
+                network: false,
+                appleEvents: false,
+                waitMs: 5_000,
+              });
+              return { exitCode: result.exitCode, output: result.output.toString("utf8") };
+            }
+          : null,
+      vaultKey: vaultDir === null ? null : () => readCredentialsState(vaultDir),
+    });
+  }
+
   /** Close any live browser session. The vault needs no stopping any more —
    * it is a file and a Keychain item, not a process. */
   async shutdown(): Promise<void> {
@@ -417,6 +626,8 @@ export class DeviceAgent {
     }
     const exec = intent.capabilities.find((c) => c.kind === "process.exec");
     if (exec) return this.executeCommand(intent, exec, payload);
+    const script = intent.capabilities.find((c) => c.kind === "applescript");
+    if (script) return this.executeAppleScript(intent, script, payload);
     const write = intent.capabilities.find((c) => c.kind === "fs.write");
     if (write) return this.executeWrite(intent, write, payload);
     const read = intent.capabilities.find((c) => c.kind === "fs.read");
@@ -428,7 +639,7 @@ export class DeviceAgent {
     const p = cap.paths?.[0];
     if (p === undefined) return { status: "error", error: "missing path" };
     try {
-      const data = await FileOps.read(p, cap.paths ?? []);
+      const data = await this.guardedFileOp(p, () => FileOps.read(p, cap.paths ?? []));
       this.audit.record("file_read", {
         intentId: intent.intentId,
         path: p,
@@ -440,10 +651,150 @@ export class DeviceAgent {
         bytes: data.length,
       };
     } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : String(error);
-      this.audit.record("denied_operation", { intentId: intent.intentId, path: p, error: message });
+      return this.fileOpFailed(intent.intentId, "read", p, error);
+    }
+  }
+
+  /**
+   * Run a file operation on a TCC-guarded path without ever letting the
+   * operation itself park on a consent dialog.
+   *
+   * What parks is a read-only touch of the path (or, for a file not there
+   * yet, of its nearest existing ancestor) — and the touch is the probe
+   * battery's own `openAsApp`: a CHILD process, killed on its timer. Not an
+   * open on this process's file-I/O pool, which has four threads; four
+   * parked opens would stall every read and write in the app, the audit
+   * log's among them, until somebody at the Mac clicked. TCC attributes
+   * the child to the app, so the dialog it raises is the app's, and the
+   * consent it meets is the operation's.
+   *
+   * Past `FILE_OP_HANG_MS` (or on the probe's own "hung") the touch is
+   * reported as parked (`FileOpHang`) and the operation is NOT attempted —
+   * a write let through by an Allow clicked minutes later would land on a
+   * file the owner or another call may have changed since, over a result
+   * that was already `blocked`. Only a touch that returns in time is
+   * followed by the operation, which then meets the consent, or the
+   * refusal, that the touch met. The touch's own errno is ignored: the
+   * operation produces the real one.
+   */
+  private async guardedFileOp<T>(p: string, op: () => Promise<T>): Promise<T> {
+    // The whole operation — the touch, then the read or write itself — runs
+    // under the executor's hold, so no writer can be approved and started
+    // while it is in flight. And a path some run alive right now (or a job
+    // it left behind) can write is not operated on at all: the operation
+    // resolves the name and then opens it, and between the two such a run
+    // could point the name somewhere the owner never approved. It is
+    // refused up front, and the agent asks again once that run is over.
+    return this.executor.holdProbes([p], async () => {
+      const mutable = this.executor.mutableRoots();
+      if (mutable.some((root) => overlapsRoot(p, root))) throw new FileOpBusy();
+      if (guardedPrefix(p, this.ownerHome) !== null) {
+        // The touch climbs above every such root too, to the guarded folder
+        // that contains them, so nothing a run can write is opened by name.
+        // The probe's own timeout is shorter than the hang window, so the
+        // child is settled — or killed — before the hold is released.
+        let target = existingAncestor(p);
+        while (mutable.some((root) => overlapsRoot(target, root)) && path.dirname(target) !== target) {
+          target = path.dirname(target);
+        }
+        const touch = this.hostProbes.openAsApp(target);
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        const hang = new Promise<never>((_, reject) => {
+          timer = setTimeout(() => reject(new FileOpHang()), this.fileOpHangMs);
+          timer.unref?.();
+        });
+        let outcome: OpenOutcome;
+        try {
+          outcome = await Promise.race([touch, hang]);
+          if (outcome === "hung") throw new FileOpHang();
+        } finally {
+          clearTimeout(timer);
+          // A probe the timer beat is the child's to finish or be killed.
+          touch.catch(() => {});
+        }
+        // A folder macOS asks about, and the touch got through it: the
+        // owner allowed it — now, or once before — and nothing else on this
+        // Mac can say so (there is no query for the three folders). Told
+        // once, so the Capabilities row can turn green without the owner
+        // pressing the row's own button. Only when the touch was still
+        // inside that folder: a target that climbed above it says nothing.
+        const gate = guardedPrefix(p, this.ownerHome);
+        if (outcome === "ok" && gate !== null && FOLDER_PERMISSIONS.has(gate) && guardedPrefix(target, this.ownerHome) === gate
+          && this.foldersObserved.get(gate) !== "granted") {
+          this.foldersObserved.set(gate, "granted");
+          this.audit.record("host_permission_observed", { permission: gate, status: "granted", path: target });
+        }
+      }
+      return op();
+    });
+  }
+
+  /**
+   * A file operation that did not happen: say why, as well as this Mac can
+   * tell (hostGate/diagnose.ts).
+   *
+   * Only a failure the kernel answered is investigated — one with an errno in
+   * it, or one that never returned. A path outside the approved scope is the
+   * policy speaking, not the host, and a size-limit refusal is this app's own
+   * rule; both already say exactly what they mean.
+   */
+  private async fileOpFailed(
+    intentId: string,
+    op: "read" | "write",
+    p: string,
+    error: unknown,
+  ): Promise<JSONValue> {
+    const message = error instanceof Error ? error.message : String(error);
+    const hung = error instanceof FileOpHang;
+    const outOfBounds = error instanceof FileOpsError && error.outOfBounds;
+    const detail = error instanceof FileOpsError ? error.detail : null;
+    if (error instanceof FileOpBusy) {
+      this.audit.record("denied_operation", { intentId, path: p, error: message, cause: "busy" });
+      return { status: "error", error: message, retry: "after_writer_stops" };
+    }
+    if (!hung && (outOfBounds || detail?.code === null || detail === null)) {
+      // `cause` is what tells the audit view the bound from this app's own
+      // rules (the size limit, "not a file"): the one refusal is the
+      // policy's, the others are nobody's, and the row must not send the
+      // owner looking for a path they never approved.
+      this.audit.record("denied_operation", {
+        intentId,
+        path: p,
+        error: message,
+        cause: outOfBounds ? "outside_approved_bound" : "app_rule",
+      });
       return { status: "error", error: message };
     }
+    const facts = await collectFacts(
+      {
+        op,
+        paths: [p],
+        error: hung ? null : detail,
+        ranSandboxed: false,
+        hung,
+        mutable: () => this.executor.mutableRoots(),
+        hold: (fn) => this.executor.holdProbes([p], fn),
+      },
+      this.hostProbes,
+      this.ownerHome,
+    );
+    const diagnosed: DiagnosedRun = { diagnosis: diagnose(facts), facts, intentId };
+    const blocked = isHostGate(diagnosed.diagnosis.cause);
+    if (blocked) {
+      this.audit.record("host_permission_blocked", { intentId, path: p, ...auditDiagnosis(diagnosed) });
+    } else {
+      this.audit.record("denied_operation", {
+        intentId,
+        path: p,
+        error: message,
+        cause: diagnosed.diagnosis.cause,
+      });
+    }
+    return {
+      status: blocked ? "blocked" : "error",
+      error: message,
+      ...diagnosisPayload(diagnosed.diagnosis, diagnosed.facts),
+    };
   }
 
   private async executeWrite(
@@ -457,7 +808,7 @@ export class DeviceAgent {
     if (contentBase64 === null) return { status: "error", error: "missing content" };
     const data = Buffer.from(contentBase64, "base64");
     try {
-      await FileOps.write(p, data, cap.paths ?? []);
+      await this.guardedFileOp(p, () => FileOps.write(p, data, cap.paths ?? []));
       this.audit.record("file_write", {
         intentId: intent.intentId,
         path: p,
@@ -465,9 +816,7 @@ export class DeviceAgent {
       });
       return { status: "completed", bytes: data.length };
     } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : String(error);
-      this.audit.record("denied_operation", { intentId: intent.intentId, path: p, error: message });
-      return { status: "error", error: message };
+      return this.fileOpFailed(intent.intentId, "write", p, error);
     }
   }
 
@@ -551,11 +900,76 @@ export class DeviceAgent {
         appleEvents,
         waitMs,
       });
-      return this.finishRun(intent.intentId, result);
+      return this.finishRun(intent.intentId, result, {
+        argv,
+        cwd: exec.cwd,
+        readPaths,
+        writePaths,
+        automationTarget: appleEvents ? appleEventTarget(argv) : null,
+        sandboxed: true,
+      });
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
       return this.execError(intent.intentId, message);
     }
+  }
+
+  /**
+   * Script an app with osascript — outside the sandbox, which is why this is
+   * its own capability kind and never reachable from a process.exec intent
+   * (Executor.runAppleScript). Audited like a command: the script itself is
+   * in the capability the approver saw, so the start event carries only the
+   * target. A failure is diagnosed like a command's, with the app the agent
+   * named as the automation target, so a denied or never-asked Automation
+   * grant lands on the Capabilities tab's row for that app the same way —
+   * and a refusal that is the app's own is said to be no gate.
+   */
+  private async executeAppleScript(
+    intent: Intent,
+    cap: { app?: string; bundleId?: string; script?: string },
+    payload: JSONValue,
+  ): Promise<JSONValue> {
+    const script = cap.script ?? "";
+    if (script === "") return this.scriptError(intent.intentId, "missing script");
+    // The tool refuses this too, so a refusal never reaches an approval
+    // dialog — but the device is the chokepoint, and an intent can arrive
+    // from a replayed or hand-built request that never passed through it.
+    if (SCRIPT_SHELL_ESCAPE.test(script) || SCRIPT_SHELL_ESCAPE_APPS.has(cap.bundleId ?? "")) {
+      return this.scriptError(intent.intentId, SCRIPT_SHELL_ESCAPE_REFUSAL);
+    }
+    const waitMs = jv(payload).get("wait_ms").int ?? 10000;
+    this.audit.record("applescript_start", {
+      intentId: intent.intentId,
+      app: cap.app ?? "",
+      bundle_id: cap.bundleId ?? "",
+    });
+    try {
+      const result = await this.executor.runAppleScript({ script, waitMs });
+      return this.finishRun(
+        intent.intentId,
+        result,
+        {
+          // The script rides as an argv word, the way `osascript -e` takes
+          // it: a path the script names is a candidate for the probes.
+          argv: ["/usr/bin/osascript", "-e", script],
+          cwd: undefined,
+          readPaths: [],
+          writePaths: [],
+          automationTarget: cap.app ?? null,
+          sandboxed: false,
+        },
+        "applescript_end",
+      );
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      return this.scriptError(intent.intentId, message);
+    }
+  }
+
+  /** `execError` for a script: the refusal is recorded under its own event. */
+  private scriptError(intentId: string, error: string): JSONValue {
+    this.audit.record("applescript_error", { intentId, error });
+    return { status: "error", error };
   }
 
   /** Record an operation that errored before (or instead of) a run, and
@@ -566,16 +980,30 @@ export class DeviceAgent {
     return { status: "error", error };
   }
 
-  /** Record a run's `exec_end` — now, or on exit for a deferred run — and
+  /**
+   * Record a run's `exec_end` — now, or on exit for a deferred run — and
    * shape its payload. One spelling for the single-spawn path and the
-   * orchestrated plow-gog runs that answer with a child's output. */
-  private finishRun(intentId: string, result: ExecResult): JSONValue {
+   * orchestrated plow-gog runs that answer with a child's output.
+   *
+   * With `diag` (the plain exec path — a provider run's failures are
+   * account-level and travel in its own envelope), a run that ended badly
+   * or is sitting silent is investigated (`diagnoseRun`), now for a run that
+   * has already ended and again at exit for one that has not.
+   */
+  private async finishRun(
+    intentId: string,
+    result: ExecResult,
+    diag: ExecDiagnosisContext | null = null,
+    endEvent: "exec_end" | "applescript_end" = "exec_end",
+  ): Promise<JSONValue> {
+    let diagnosed: DiagnosedRun | null = null;
     if (!result.running) {
-      this.audit.record("exec_end", {
+      this.audit.record(endEvent, {
         intentId,
         exit_code: result.exitCode ?? -1,
         ...(result.reaped ? { reaped: true } : {}),
       });
+      if (diag && result.exitCode !== 0) diagnosed = await this.diagnoseRunOrRecord(intentId, result, diag);
     } else {
       // A deferred run's end is recorded when it actually ends, keyed to the
       // intent — never from the polling path, which may run many times or
@@ -584,7 +1012,7 @@ export class DeviceAgent {
         // Fires from the child's exit event, possibly mid-shutdown; a failed
         // append must not become an uncaught exception in the event loop.
         try {
-          this.audit.record("exec_end", {
+          this.audit.record(endEvent, {
             intentId,
             handle: result.handle,
             exit_code: exitCode,
@@ -596,11 +1024,153 @@ export class DeviceAgent {
         } catch (error) {
           // Nowhere durable left to write it — the durable sink is what
           // failed — but the loss should at least be visible in a terminal.
-          console.error(`[audit] exec_end lost for handle ${result.handle}:`, error);
+          console.error(`[audit] ${endEvent} lost for handle ${result.handle}:`, error);
+        }
+        // The end of a run that was answered `running` is where a killed or
+        // failed run gets its diagnosis; the next poll carries it, and a poll
+        // that arrives first waits (`pendingDiagnoses`). Nothing here awaits
+        // it — the exit event is not a call — so it may not throw.
+        // Whatever was said about the run while it ran — "parked on a
+        // dialog" — was provisional, and the exit is the fact: the owner
+        // answered (or the dialog never mattered) and the run went on to
+        // its own end. Cleared first, whatever that end was; a poll must
+        // not call a finished command blocked on a dialog that is gone. A
+        // bad end is then diagnosed on its own terms, and only a gate is
+        // stored back.
+        //
+        // The clearing is recorded too, when the parked verdict was: a
+        // run that went on to an end of its own was let through the
+        // dialog, and the Capabilities tab must stop counting a block the
+        // owner has answered — a folder it cannot query would otherwise
+        // stay red on the strength of a guess. A reaped run was still
+        // parked, and its verdict stands.
+        if (!reaped) this.clearParked(result.handle);
+        this.runDiagnoses.delete(result.handle);
+        if (diag && (reaped || exitCode !== 0)) {
+          const pending = this.diagnoseRunOrRecord(intentId, this.executor.output(result.handle, 0), diag)
+            .then(() => {})
+            .finally(() => this.pendingDiagnoses.delete(result.handle));
+          this.pendingDiagnoses.set(result.handle, pending);
         }
       });
+      // A run still going with nothing said yet may be parked on a consent
+      // dialog. Asked now, inside the call, so the agent hears it in seconds
+      // rather than at the reaper's fifteen minutes.
+      if (diag && result.outputLength === 0) {
+        diagnosed = await this.diagnoseRunOrRecord(intentId, result, diag);
+        // The probes took time; answer with where the run is now, not where
+        // it was before they ran — and if it ended meanwhile, with the
+        // verdict its end produced, waited for like a poll would.
+        result = this.executor.output(result.handle, 0);
+        if (!result.running) {
+          await this.pendingDiagnoses.get(result.handle);
+          diagnosed = this.runDiagnoses.get(result.handle) ?? null;
+        }
+      }
     }
-    return { ...runPayload(result), handle: result.handle };
+    return { ...runPayload(result, diagnosed), handle: result.handle };
+  }
+
+  /**
+   * Investigate a run that ended badly, was killed, or is sitting silent.
+   *
+   * Investigated only when something says a gate might be the reason: the
+   * output carries a refusal this Mac knows how to follow up, the run was
+   * reaped, or it is still running and has said nothing. An ordinary non-zero
+   * exit (grep found nothing) is the command's own business and gets no
+   * probes. The verdict is kept only when it is worth carrying — a gate, a
+   * killed run's facts, or a running run that is confirmed parked; a silent
+   * run that is simply running is left alone.
+   */
+  /**
+   * `diagnoseRun`, with a failure of the battery itself recorded in the
+   * audit log rather than on a stderr a packaged app has nowhere to show.
+   * A run answered "completed, exit 1" with no verdict is indistinguishable
+   * from one whose battery threw, and the log is where that has to be
+   * told apart. Never throws: the run's own answer stands either way.
+   */
+  private async diagnoseRunOrRecord(
+    intentId: string,
+    result: ExecResult,
+    diag: ExecDiagnosisContext,
+  ): Promise<DiagnosedRun | null> {
+    try {
+      return await this.diagnoseRun(intentId, result, diag);
+    } catch (error: unknown) {
+      const message = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+      console.error(`[hostGate] diagnosis lost for handle ${result.handle}:`, error);
+      try {
+        this.audit.record("host_permission_diagnosis_failed", { intentId, handle: result.handle, error: message });
+      } catch {
+        /* the sink is what failed; the console line above is all there is */
+      }
+      return null;
+    }
+  }
+
+  private async diagnoseRun(
+    intentId: string,
+    result: ExecResult,
+    diag: ExecDiagnosisContext,
+  ): Promise<DiagnosedRun | null> {
+    // What the command said on stderr, and only that: a program's stdout
+    // can carry any phrase at all — a listing, a document — and must not
+    // read as this Mac refusing something.
+    const output = result.stderr.toString("utf8");
+    if (!result.reaped && !result.running && stderrHint(output) === null) return null;
+    const facts = await collectFacts(
+      {
+        op: "exec",
+        paths: [...diag.readPaths, ...diag.writePaths],
+        cwd: diag.cwd ?? null,
+        argv: diag.argv,
+        // What this run — or anything it left behind — could rewrite, and
+        // what any other run still going could: never opened by name. Read
+        // live, under the executor's hold, so no run appears in between.
+        mutable: () => [...this.executor.writableRoots(result.handle), ...this.executor.mutableRoots()],
+        // What the probes may touch (diagnose.ts): the declared paths, and
+        // the working directory when it is a folder of its own — never the
+        // home, which would hold every run on the Mac.
+        hold: (fn) => this.executor.holdProbes(
+          [...diag.readPaths, ...diag.writePaths, ...(diag.cwd !== undefined && path.resolve(diag.cwd) !== path.resolve(this.ownerHome) ? [diag.cwd] : [])],
+          fn,
+        ),
+        stderr: output,
+        ranSandboxed: diag.sandboxed,
+        // A script ran under no profile; there is nothing to ask it.
+        sandbox: diag.sandboxed ? (p) => this.executor.grants(result.handle, p) : null,
+        hung: result.reaped,
+        automationTarget: diag.automationTarget,
+      },
+      this.hostProbes,
+      this.ownerHome,
+    );
+    const diagnosis = diagnose(facts);
+    if (result.running && diagnosis.cause !== "prompt_waiting") return null;
+    // The probes took time; the run may have ended meanwhile, and then this
+    // provisional verdict is about a run that no longer exists. A clean
+    // exit says the dialog was answered (or never mattered); a bad one has
+    // the exit's own diagnosis, pending or stored, which knows more than a
+    // "parked" guess and must not be overwritten by it. Either way the
+    // ended run's verdict is the exit path's, not this one's.
+    if (result.running && !this.executor.output(result.handle, 0).running) return null;
+    if (!result.running && !result.reaped && !isHostGate(diagnosis.cause)) return null;
+    const diagnosed: DiagnosedRun = { diagnosis, facts, intentId };
+    // The audit line is the commit point: written first, so a verdict the
+    // agent is handed is one the owner's views can see. An append that
+    // throws leaves the maps untouched and the run undiagnosed, which the
+    // caller records as a battery failure.
+    if (isHostGate(diagnosis.cause) && this.blockedRuns.get(result.handle) !== diagnosis.cause) {
+      this.audit.record("host_permission_blocked", {
+        intentId,
+        handle: result.handle,
+        path: facts.path,
+        ...auditDiagnosis(diagnosed),
+      });
+      this.blockedRuns.set(result.handle, diagnosis.cause);
+    }
+    this.runDiagnoses.set(result.handle, diagnosed);
+    return diagnosed;
   }
 
   /**
@@ -883,7 +1453,40 @@ export class DeviceAgent {
     return this.browserSessions.command(session, params);
   }
 
-  getOutput(handle: string, since = 0): JSONValue {
-    return runPayload(this.executor.output(handle, since));
+  async getOutput(handle: string, since = 0): Promise<JSONValue> {
+    await this.pendingDiagnoses.get(handle);
+    const result = this.executor.output(handle, since);
+    // A run said to be parked on a dialog that has since written something
+    // is parked no longer: the owner answered, and the verdict was about a
+    // wait that is over. Cleared here rather than at exit only, so a poll
+    // never reports a dialog beside the output that proves it gone.
+    if (result.running && result.outputLength > 0) this.clearParked(handle);
+    return runPayload(result, this.runDiagnoses.get(handle) ?? null);
+  }
+
+  /**
+   * Forget a `prompt_waiting` verdict for a run that went on — the owner
+   * answered the dialog (or it never mattered) — and record the clearing,
+   * so the Capabilities tab stops counting a block the owner has answered:
+   * a folder it cannot query would otherwise stay red on the strength of a
+   * guess. Any other verdict stands. Idempotent; at most one clearing per
+   * run is recorded, because the dedupe key goes with it.
+   */
+  private clearParked(handle: string): void {
+    if (this.blockedRuns.get(handle) !== "prompt_waiting") return;
+    const provisional = this.runDiagnoses.get(handle);
+    this.blockedRuns.delete(handle);
+    this.runDiagnoses.delete(handle);
+    if (provisional === undefined) return;
+    try {
+      this.audit.record("host_permission_cleared", {
+        intentId: provisional.intentId,
+        handle,
+        path: provisional.facts.path ?? null,
+        permission: provisional.diagnosis.permission ?? null,
+      });
+    } catch (error) {
+      console.error(`[audit] host_permission_cleared lost for handle ${handle}:`, error);
+    }
   }
 }

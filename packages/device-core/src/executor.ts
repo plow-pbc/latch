@@ -9,7 +9,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { canonicalize } from "@domo/protocol";
+import { canonicalize, isLexicallyWithin, overlapsRoot } from "@domo/protocol";
 
 const READ_BOILERPLATE = [
   "/usr",
@@ -56,6 +56,13 @@ export const SandboxProfile = {
       // copy was rewritten to remove — so tightening here means re-running them
       // under the new profile and editing that constant in the same commit.
       "(allow mach-lookup)",
+      // Launching apps through LaunchServices (`open -a Mail`, `open file.pdf`).
+      // Without it LS refuses with -54 (permErr). The launched app runs
+      // outside this profile. Note this does NOT make AppleScript work:
+      // some apps refuse commands from any seatbelt-sandboxed sender
+      // (-10004, Mail's compose among them), whatever the profile says —
+      // even `(allow default)`. Scripting those needs `runAppleScript`.
+      "(allow lsopen)",
       "(allow file-read-metadata)",
       "(allow file-ioctl)",
       "(allow file-read* " +
@@ -111,6 +118,69 @@ export const SandboxProfile = {
     return lines.join("\n");
   },
 };
+
+/**
+ * What the profile `SandboxProfile.generate` would build from these arguments
+ * allows at one path — the same decision, asked after the fact.
+ *
+ * This is how a diagnosis (hostGate/diagnose.ts) tells "our seatbelt said no"
+ * from "macOS said no": the app can open the path itself, and this says the
+ * profile the run had would not have. Kept beside the generator so the two
+ * cannot drift; it reads the same lists, in the same order, with the same
+ * `isReapable` housekeeping rule. Paths in and out are canonical — the
+ * roots exactly as the generator saw them when the profile was made, never
+ * resolved again here (a run that has since replaced an approved path with
+ * a symlink would otherwise widen its own approval to the link's target),
+ * and a caller passes the path it already resolved.
+ *
+ * Reads are deliberately the generator's own over-approximation: broad home,
+ * the boilerplate roots, and the literal directory entries the profile lists
+ * one by one. Anything not named is denied, which is the profile's
+ * `(deny default)`.
+ */
+export function sandboxGrants(
+  args: {
+    readPaths: string[];
+    writePaths: string[];
+    network: boolean;
+    appleEvents: boolean;
+    scratch: string;
+    home?: string;
+  },
+  target: string,
+): { read: boolean; write: boolean } {
+  const under = isLexicallyWithin;
+  const home = canonicalize(args.home ?? os.homedir());
+  const writable = writableRoots(args);
+  const write = writable.some((root) => under(target, root));
+  const readRoots = [...READ_BOILERPLATE, home, ...writable, ...args.readPaths, "/dev/fd"];
+  const literals = new Set([
+    "/", "/private", "/private/var", "/private/tmp", "/tmp", "/var", "/etc", "/Users",
+    "/dev/null", "/dev/urandom", "/dev/random", "/dev/zero", "/dev/tty",
+  ]);
+  const read = write || literals.has(target) || readRoots.some((root) => under(target, root));
+  return { read, write };
+}
+
+/**
+ * The roots a profile lets a run write — and so everything a run, or a job
+ * it left behind, could replace with a symlink while nobody is looking.
+ * The diagnosis (hostGate/diagnose.ts) never opens a path under one by
+ * name while the run that owns it may still be alive.
+ */
+export function writableRoots(args: {
+  writePaths: string[];
+  network: boolean;
+  appleEvents: boolean;
+  scratch: string;
+  home?: string;
+}): string[] {
+  const home = canonicalize(args.home ?? os.homedir());
+  const housekeeping = ["Library/Caches", ".cache", ".config", ".local/state", ".npm"].map(
+    (p) => home + "/" + p,
+  );
+  return [args.scratch, ...args.writePaths].concat(isReapable(args) ? [] : housekeeping);
+}
 
 export class ExecutorError extends Error {}
 
@@ -191,6 +261,10 @@ export interface ExecResult {
   exitCode: number | null;
   output: Buffer;
   outputLength: number;
+  /** Just what the command wrote to stderr, whole — the diagnosis reads
+   *  this and never `output`, where a program's own words could pass for
+   *  this Mac's refusal. */
+  stderr: Buffer;
   /** True when this Mac killed the run rather than the command ending. */
   reaped: boolean;
 }
@@ -233,6 +307,7 @@ class OutputBuffer {
 
   snapshot(since: number): {
     output: Buffer;
+    stderr: Buffer;
     total: number;
     running: boolean;
     exitCode: number | null;
@@ -242,6 +317,7 @@ class OutputBuffer {
     const start = Math.min(Math.max(since, 0), all.length);
     return {
       output: all.subarray(start),
+      stderr: Buffer.concat(this.chunks.filter((c) => !c.stdout).map((c) => c.buf)),
       total: all.length,
       running: this.exitCode === null,
       exitCode: this.exitCode,
@@ -278,6 +354,7 @@ function shape(snap: ReturnType<OutputBuffer["snapshot"]>): Omit<ExecResult, "ha
     exitCode: snap.exitCode,
     output: snap.output,
     outputLength: snap.total,
+    stderr: snap.stderr,
     reaped: snap.reaped,
   };
 }
@@ -288,6 +365,51 @@ function shape(snap: ReturnType<OutputBuffer["snapshot"]>): Omit<ExecResult, "ha
  */
 export class Executor {
   private buffers = new Map<string, OutputBuffer>();
+  /** What each run's profile was built from, kept so a diagnosis can ask
+   *  after the fact what that profile allowed (`grants`). */
+  private profiles = new Map<string, Parameters<typeof sandboxGrants>[0]>();
+  /** Each run's process group (it is spawned as a session leader, so the
+   *  group is its pid): what `mutableRoots` asks about after the command
+   *  itself has exited, since a job it backgrounded lives on in it. */
+  private groups = new Map<string, number>();
+  /**
+   * Holds: the paths a diagnosis's probes, or a file operation, are about
+   * (hostGate/diagnose.ts `hold`, DeviceAgent.guardedFileOp). A run whose
+   * profile could write one of them registers — its writable roots become
+   * known — only once the hold is gone: a probe decides by the roots it can
+   * see at that moment, and a run that appeared in between would be one it
+   * never saw, free to rewrite the path it is about to open. Any other
+   * run — read-only, or writing somewhere unrelated — registers at once;
+   * a stalled read must not stop every command on the Mac. Registration
+   * waits, never the hold: a run is delayed by a probe's timeout at most.
+   */
+  private holds = new Map<number, readonly string[]>();
+  private nextHold = 0;
+  private holdWaiters: (() => void)[] = [];
+
+  /** Run `fn` with registration of any run that could write `paths` held off. */
+  async holdProbes<T>(paths: readonly string[], fn: () => Promise<T>): Promise<T> {
+    const id = ++this.nextHold;
+    this.holds.set(id, [...paths]);
+    try {
+      return await fn();
+    } finally {
+      this.holds.delete(id);
+      const waiters = this.holdWaiters;
+      this.holdWaiters = [];
+      for (const wake of waiters) wake();
+    }
+  }
+
+  /** Whether a run with these writable roots could touch what a hold is about. */
+  private conflicts(writable: readonly string[]): boolean {
+    for (const paths of this.holds.values()) {
+      for (const p of paths) {
+        for (const w of writable) if (overlapsRoot(p, w) || overlapsRoot(w, p)) return true;
+      }
+    }
+    return false;
+  }
 
   constructor(
     public readonly scratchRoot: string,
@@ -343,25 +465,88 @@ export class Executor {
     // even exec the binary its PATH just resolved.
     const reads = [...args.readPaths, ...this.vendorDirs, workingDir];
 
-    const profile = SandboxProfile.generate({
-      readPaths: reads,
-      writePaths: args.writePaths,
+    // Frozen as the generator saw them: canonical now, and never resolved
+    // again. A later `grants()` asks what THIS profile allowed, and a run
+    // that has since swapped an approved path for a symlink must not have
+    // the answer follow the link (sandboxGrants).
+    const profileArgs = {
+      readPaths: reads.map((p) => canonicalize(p)),
+      writePaths: args.writePaths.map((p) => canonicalize(p)),
       network: args.network,
       appleEvents: args.appleEvents,
-      scratch,
-    });
+      scratch: canonicalize(scratch),
+    };
+    // No new writer over what a hold is about, while it is out.
+    while (this.conflicts(writableRoots(profileArgs))) await new Promise<void>((wake) => this.holdWaiters.push(wake));
+    const profile = SandboxProfile.generate(profileArgs);
+    this.profiles.set(handle, profileArgs);
     if (process.env.DOMO_DEBUG_SANDBOX) {
       process.stderr.write(`=== PROFILE ===\n${profile}\n=== ARGV ===\n${args.argv.join(" ")}\n`);
     }
 
+    return this.launch(handle, scratch, "/usr/bin/sandbox-exec", ["-p", profile, ...args.argv], {
+      cwd: workingDir,
+      env: args.env,
+      waitMs: args.waitMs,
+      reapable: isReapable(args),
+    });
+  }
+
+  /**
+   * Run an AppleScript with /usr/bin/osascript, NOT under sandbox-exec.
+   *
+   * Deliberate, and the only unsandboxed execution in this process: some
+   * apps refuse commands from any seatbelt-sandboxed sender whose own code
+   * signature lacks an apple-events entitlement (-10004, whatever the profile
+   * says — verified with `(allow default)`), and osascript is Apple's binary,
+   * so no profile can admit it. The gates are the approval this intent
+   * carried (the approver read the whole script) and TCC's Automation grant
+   * for the responsible process — the app bundle, or the terminal that ran it
+   * from source. The script is written to this run's scratch dir, 0600,
+   * rather than passed as an argument, so it never shows up in `ps` output or
+   * a too-long-argv failure.
+   *
+   * Never reapable: a script that has sent an event has changed another
+   * app's state, the same reason an `apple_events` command is exempt.
+   */
+  async runAppleScript(args: { script: string; waitMs: number }): Promise<ExecResult> {
+    const handle = crypto.randomUUID().toUpperCase();
+    const scratch = path.join(this.scratchRoot, handle);
+    fs.mkdirSync(scratch, { recursive: true });
+    const file = path.join(scratch, "script.applescript");
+    fs.writeFileSync(file, args.script, { mode: 0o600 });
+    // By its bare name, from the scratch dir: osascript prefixes every error
+    // with the script's path as given, and the agent's output should read
+    // `script.applescript:6:56: execution error: …`, not this Mac's
+    // application-support path.
+    return this.launch(handle, scratch, "/usr/bin/osascript", [path.basename(file)], {
+      cwd: scratch,
+      waitMs: args.waitMs,
+      reapable: false,
+    });
+  }
+
+  /**
+   * Spawn `command`, buffer its merged output under `handle`, wait up to
+   * `waitMs`, and answer with a snapshot. Everything a run needs once its
+   * profile (if any) is decided: the curated environment, the process group,
+   * the settle/abandon/reaper bookkeeping.
+   */
+  private async launch(
+    handle: string,
+    scratch: string,
+    command: string,
+    argv: string[],
+    opts: { cwd: string; env?: Readonly<Record<string, string>>; waitMs: number; reapable: boolean },
+  ): Promise<ExecResult> {
     const realHome = os.homedir();
     const buffer = new OutputBuffer();
     this.buffers.set(handle, buffer);
 
-    const child = spawn("/usr/bin/sandbox-exec", ["-p", profile, ...args.argv], {
-      cwd: workingDir,
+    const child = spawn(command, argv, {
+      cwd: opts.cwd,
       env: {
-        ...args.env,
+        ...opts.env,
         // Real home so tools and their configs resolve; TMPDIR stays in the
         // (writable, disposable) scratch dir; PATH includes the user bin dirs.
         // These come AFTER the caller's env deliberately: a provider supplies
@@ -397,6 +582,7 @@ export class Executor {
       // the sweep that would is its own change, not a side effect of this one.
       detached: true,
     });
+    if (child.pid !== undefined) this.groups.set(handle, child.pid);
     // A run ends when its COMMAND ends. `close` says something else — every
     // stdio pipe closed too — and a job the command backgrounded inherits
     // those pipes and can hold them open forever. Settling on `exit` is what
@@ -492,7 +678,7 @@ export class Executor {
     // approved argv and that argv is routinely a shell: `/bin/sh -c 'a && b'`
     // does NOT exec, so one signal kills the shell and leaves the wedged
     // descendant alive.
-    if (isReapable(args)) {
+    if (opts.reapable) {
       reaper = setTimeout(() => {
         if (buffer.exitCode !== null || buffer.produced) return;
         buffer.reaped = true;
@@ -540,8 +726,56 @@ export class Executor {
       stream?.on("error", () => abandon(-1));
     }
 
-    await buffer.waitForExit(Math.max(args.waitMs, 0));
+    await buffer.waitForExit(Math.max(opts.waitMs, 0));
     return { handle, ...shape(buffer.snapshot(0)) };
+  }
+
+  /**
+   * What the profile this run had would allow at `path` — the question a
+   * diagnosis asks to tell our own seatbelt's refusal from macOS's. Answered
+   * from the arguments the profile was generated from, so the two agree by
+   * construction.
+   */
+  grants(handle: string, path: string): { read: boolean; write: boolean } {
+    const args = this.profiles.get(handle);
+    if (!args) throw new ExecutorError(`unknown output handle: ${handle}`);
+    return sandboxGrants(args, path);
+  }
+
+  /** What one run's profile lets it write (see `writableRoots`). */
+  writableRoots(handle: string): string[] {
+    const args = this.profiles.get(handle);
+    return args ? writableRoots(args) : [];
+  }
+
+  /**
+   * What every run that is still going — or anything a run left behind —
+   * could write right now: the roots a diagnosis of anything, a file op
+   * included, must not open by name. A command's exit is not the end of
+   * its run's hands on the disk: a job it backgrounded keeps its process
+   * group alive, and the group is asked (a signal 0 to it) rather than the
+   * command's exit code.
+   */
+  mutableRoots(): string[] {
+    const roots: string[] = [];
+    for (const [handle, buffer] of this.buffers) {
+      if (buffer.exitCode === null || this.groupAlive(handle)) roots.push(...this.writableRoots(handle));
+    }
+    return roots;
+  }
+
+  /** Whether any process of the run's group still exists. */
+  private groupAlive(handle: string): boolean {
+    const pid = this.groups.get(handle);
+    if (pid === undefined) return false;
+    try {
+      process.kill(-pid, 0);
+      return true;
+    } catch (error: unknown) {
+      // ESRCH: no such group — every member is gone. Anything else (EPERM,
+      // a member no longer ours) means something is still there.
+      return (error as { code?: unknown })?.code !== "ESRCH";
+    }
   }
 
   /** Invoke cb when the run exits — immediately if it already has. */

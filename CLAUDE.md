@@ -17,7 +17,9 @@ npm workspaces. Libraries in `packages/`, executables/apps in `apps/`:
   This Mac only ever dials out, so there is no listener.
 - `packages/device-core` (`@domo/device-core`) — `DeviceAgent`, `PolicyEngine`,
   `FileOps`, `Executor` (+ generated seatbelt profile), `SkillRegistry`,
-  `AuditLog`, identity/key store; `src/browser/` is the local
+  `AuditLog`, identity/key store; `src/hostGate/` diagnoses a refusal by the
+  Mac itself (TCC, seatbelt, SIP, a locked file, a parked consent dialog) and
+  takes the standing permission inventory (DESIGN.md §6a); `src/browser/` is the local
   browsing subsystem (session grants, origin enforcement, credential gate,
   and the vault: items in a local EncString store, master key in the macOS
   Keychain — DESIGN.md §11a/§11a-i). The Camoufox browser server is
@@ -108,6 +110,15 @@ Integration coverage, which owns that list.
   canonicalised before it becomes a capability — never after.
 - **No SSE on either leg.** `subscriptions/listen` is refused outright; the
   relay buffers one HTTP exchange per frame and cannot carry a stream.
+- **A refusal by the Mac itself is diagnosed, never guessed.** `EPERM` comes
+  from TCC, our own seatbelt, SIP and a locked file alike, and a consent
+  dialog parks an open rather than failing it. On a failure the probe battery
+  runs (`hostGate/`), a pure tree names the cause with a confidence, and the
+  agent gets `blocked` with the verdict AND the facts. The sentence the owner
+  reads is a fixed string per cause; nothing from a command's output or an
+  agent's argument goes into it. Never raise a consent dialog unattended —
+  `hostGate/folderAccess.ts` is the one thing that may, and only with the
+  owner at the Mac.
 
 ## Rules of the road
 

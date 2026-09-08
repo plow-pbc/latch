@@ -20,8 +20,10 @@ import {
   LIVE_WEB_ROUTING,
 } from "@domo/device-core";
 import {
+  BLOCKED_COPY,
   createDomoMcpServer,
   DomoMcpServer,
+  HOST_GATE_NOTE,
   MACOS_TOOLING,
   SERVER_IDENTITY,
   SERVER_INSTRUCTIONS,
@@ -112,6 +114,20 @@ describe("the server tells the agent what it is for", () => {
     expect(SERVER_INSTRUCTIONS).toMatch(/do not re-issue/i);
   });
 
+  // The third answer: this Mac itself said no. The distinction agents got
+  // wrong is stated outright, the fixed owner sentence is to be relayed
+  // verbatim, and a confirmed verdict ends the attempt.
+  it("the instructions say what a blocked result is, and is not, and what to do", () => {
+    expect(SERVER_INSTRUCTIONS).toMatch(/status 'blocked'/);
+    expect(SERVER_INSTRUCTIONS).toMatch(/not the user saying no/i);
+    expect(SERVER_INSTRUCTIONS).toMatch(/permission dialog waiting on the Mac's screen/i);
+    expect(SERVER_INSTRUCTIONS).toMatch(/'owner_action' sentence word for word/);
+    expect(SERVER_INSTRUCTIONS).toMatch(/do not retry/i);
+    expect(SERVER_INSTRUCTIONS).toMatch(/do not reword the goal/i);
+    expect(SERVER_INSTRUCTIONS).toMatch(/'likely' or 'unknown'/);
+    expect(SERVER_INSTRUCTIONS).toMatch(/'running' with a 'diagnosis'/);
+  });
+
   // It is guidance to a model, not a grant. Nothing here may read as "ask
   // nicely and the bound widens" — the capability set is the bound.
   it("the instructions promise no capability", () => {
@@ -151,7 +167,7 @@ describe("the skill contribution footer", () => {
 describe("every tool with a strong built-in alternative says whose Mac this is", () => {
   // The three where the agent's own tool is obvious, frictionless, and wrong:
   // its sandbox filesystem, its sandbox shell, its own web fetch.
-  for (const tool of ["plow_read_file", "plow_write_file", "plow_run_command", "plow_browser_open"]) {
+  for (const tool of ["plow_read_file", "plow_write_file", "plow_run_command", "plow_run_applescript", "plow_browser_open"]) {
     it(`${tool} names the user's own machine`, async () => {
       expect(await descriptions(makeServer()).then((d) => d[tool])).toMatch(/user's own Mac/);
     });
@@ -187,6 +203,72 @@ describe("every tool with a strong built-in alternative says whose Mac this is",
     expect(d.plow_browser_open).not.toMatch(/one session at a time/i);
   });
 
+});
+
+describe("every tool this Mac can stop says so", () => {
+  for (const tool of ["plow_read_file", "plow_write_file", "plow_run_command", "plow_run_applescript"]) {
+    it(`${tool} carries the blocked sentence`, async () => {
+      const d = await descriptions(makeServer());
+      expect(d[tool]).toContain(BLOCKED_COPY);
+      expect(d[tool]).toMatch(/not the user saying no/);
+    });
+  }
+
+  it("the script tool says why it exists, what it refuses, and where a sandboxed refusal goes", async () => {
+    const d = await descriptions(makeServer());
+    expect(d.plow_run_applescript).toMatch(/rather than plow_run_command with osascript/);
+    expect(d.plow_run_applescript).toMatch(/do shell script/);
+    expect(d.plow_run_applescript).toMatch(/'host_gate': 'none'/);
+    // And the command tool points back at it for the case only it can serve.
+    expect(d.plow_run_command).toMatch(/'with_plow_run_applescript'/);
+    expect(d.plow_get_output).toMatch(/plow_run_applescript/);
+  });
+
+  it("plow_run_command explains a running result that carries a diagnosis", async () => {
+    const d = await descriptions(makeServer());
+    expect(d.plow_run_command).toMatch(/still 'running' but carries a 'diagnosis'/);
+    expect(d.plow_run_command).toMatch(/leave it running/);
+  });
+
+  it("plow_device_status is for the user's question or after a block — never a way to avoid trying", async () => {
+    // The first cut said "call it BEFORE reading another app's data", and
+    // an agent obeyed: it checked, told the user Full Disk Access was off,
+    // and never tried — so nothing was refused, nothing was recorded, and
+    // the app's own surfaces (tray, notification, the Capabilities row
+    // with the button) never fired. An attempt is what lights them.
+    expect(SERVER_INSTRUCTIONS).toMatch(/plow_device_status/);
+    expect(SERVER_INSTRUCTIONS).toMatch(/TRY it rather than checking first/);
+    expect(SERVER_INSTRUCTIONS).toMatch(/not a way to avoid trying/);
+    const d = await descriptions(makeServer());
+    expect(d.plow_device_status).toMatch(/no approval needed/);
+    expect(d.plow_device_status).toMatch(/Do NOT call it to decide whether to try/);
+    expect(d.plow_device_status).toMatch(/after a 'blocked' result/);
+    expect(d.plow_device_status).not.toMatch(/BEFORE reading/);
+    expect(d.plow_device_status).toMatch(/'not_asked'/);
+    expect(d.plow_device_status).toMatch(/'target_not_running'/);
+  });
+
+  it("plow_get_output and plow_get_result name the blocked answer", async () => {
+    const d = await descriptions(makeServer());
+    expect(d.plow_get_output).toMatch(/'blocked'/);
+    expect(d.plow_get_result).toMatch(/denied \/ blocked \/ failed/);
+  });
+
+  it("every skill body carries the host-gate note, before the footer, with no tool names", async () => {
+    const server = makeServer();
+    const skills = parse(await rpc(server, "tools/call", { name: "plow_list_skills", arguments: {} }, { agent_id: "a" }));
+    const names = (JSON.parse(skills.result?.content?.[0]?.text ?? "{}") as { skills: { name: string }[] }).skills.map((s) => s.name);
+    expect(names.length).toBeGreaterThan(0);
+    for (const name of names) {
+      const read = parse(await rpc(server, "tools/call", { name: "plow_read_skill", arguments: { name } }, { agent_id: "a" }));
+      const body = (JSON.parse(read.result?.content?.[0]?.text ?? "{}") as { body: string }).body;
+      expect(body).toContain(HOST_GATE_NOTE);
+      expect(body.indexOf(HOST_GATE_NOTE)).toBeLessThan(body.indexOf(SKILL_FOOTER));
+    }
+    expect(HOST_GATE_NOTE).toMatch(/neither "no messages" nor the owner refusing/);
+    expect(bareToolNames(HOST_GATE_NOTE)).toHaveLength(0);
+    expect(HOST_GATE_NOTE).not.toContain("/Users/");
+  });
 });
 
 describe("the goal field says a human reads it", () => {
@@ -325,6 +407,8 @@ describe("every tool says what kind of tool it is", () => {
       hint: "readOnlyHint" as const,
       what: "cannot change this Mac",
       tools: [
+        // A read of what macOS has decided, and the app's own self-checks.
+        "plow_device_status",
         "plow_get_output",
         "plow_get_result",
         "plow_list_skills",
@@ -337,7 +421,9 @@ describe("every tool says what kind of tool it is", () => {
     {
       hint: "openWorldHint" as const,
       what: "reach the open internet",
-      tools: ["plow_browser", "plow_browser_open", "plow_browser_request", "plow_run_command"],
+      // A script reaches out through the app it drives — Mail sends, Safari
+      // browses — so it is as open-world as a command with network.
+      tools: ["plow_browser", "plow_browser_open", "plow_browser_request", "plow_run_applescript", "plow_run_command"],
     },
   ])("the tools that $what are exactly the ones marked $hint", async ({ hint, tools }) => {
     const marked = (await listed(makeServer()))
@@ -455,7 +541,9 @@ describe("what the agent-facing copy must and must not say", () => {
       // osascript is meant to appear: it is exactly what grants appleevent-send
       // when the approver allows it, so naming it here is honest, not a
       // prescription the sandbox then denies.
-      except: ["plow_run_command.apple_events"],
+      // The script tool IS an unsandboxed osascript, and naming what it
+      // replaces (osascript under plow_run_command) is the point of its copy.
+      except: ["plow_run_command.apple_events", "plow_run_applescript.description"],
     },
     {
       what: "names a tool without its plow_ prefix",

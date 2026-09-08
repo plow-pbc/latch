@@ -11,7 +11,7 @@
  * orchestration), while the status re-probes on a short interval so the grant
  * lands green the moment it happens.
  *
- * Pure Node on purpose, like fullDiskAccess.ts: the target resolution, panel
+ * Pure Node on purpose, like device-core's fullDiskAccess.ts: the target resolution, panel
  * geometry and tracker-stream parsing live here, unit-testable without
  * Electron; everything that needs Electron stays in fdaGrantFlow.ts.
  */

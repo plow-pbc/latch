@@ -9,9 +9,11 @@ import {
   Capability,
   RuleKey,
   capabilityDisplay,
+  isLexicallyWithin,
   normalizeOrigin,
   normalizedCapability,
   originMatches,
+  overlapsRoot,
 } from "@domo/protocol";
 
 describe("normalizeOrigin", () => {
@@ -101,7 +103,23 @@ describe("browser/credential capability normalization", () => {
   });
 });
 
+describe("overlapsRoot", () => {
+  it("folds case and Unicode normalization, the way the default macOS filesystem does", () => {
+    expect(overlapsRoot("/Users/x/documents/out/a.txt", "/Users/x/Documents/Out")).toBe(true);
+    expect(overlapsRoot("/Users/x/Documents/Caf\u0065\u0301/a", "/Users/x/Documents/Caf\u00e9")).toBe(true);
+    expect(overlapsRoot("/Users/x/Documents/Outside/a", "/Users/x/Documents/Out")).toBe(false);
+    // The bytewise predicate is unchanged: grants stay exact.
+    expect(isLexicallyWithin("/Users/x/documents/out/a.txt", "/Users/x/Documents/Out")).toBe(false);
+  });
+});
+
 describe("capabilityDisplay", () => {
+  it("applescript names the app, its bundle id, and the whole script", () => {
+    expect(
+      capabilityDisplay({ kind: "applescript", app: "Mail", bundleId: "com.apple.mail", script: "return 1" }),
+    ).toBe("Script Mail (com.apple.mail): return 1");
+  });
+
   it("browser shows the origin list", () => {
     expect(capabilityDisplay({ kind: "browser", origins: ["*.dominos.com", "dominos.com"] })).toBe(
       "Browse: *.dominos.com, dominos.com",

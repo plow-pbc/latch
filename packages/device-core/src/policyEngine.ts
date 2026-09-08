@@ -106,9 +106,15 @@ export class PolicyEngine {
  * never answered by a stored rule and never stored as one: an `always_allow`
  * answer still grants THIS run, it just isn't cached. Checked on both sides
  * so a rule persisted by an older build cannot replay either.
+ *
+ * An AppleScript intent is the same mutation by another road (and runs
+ * outside the sandbox besides), so the exact same script against the exact
+ * same app is decided fresh every time too.
  */
 function ruleEligible(intent: Intent): boolean {
-  return !intent.capabilities.some((c) => c.kind === "apple_events" && c.allowed === true);
+  return !intent.capabilities.some(
+    (c) => (c.kind === "apple_events" && c.allowed === true) || c.kind === "applescript",
+  );
 }
 
 /**
