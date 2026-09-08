@@ -635,8 +635,8 @@ function classifyActivity(
     // page does this, and the owner should not have to go looking for it.
     if (has("credential_identity_refused")) {
       return closed
-        ? { status: "Closed · page not identified", tone: "amber", category: "failed" }
-        : { status: "Page not identified", tone: "amber", category: "failed" };
+        ? outcome("Closed · page not identified", "amber", "failed")
+        : outcome("Page not identified", "amber", "failed");
     }
     if (has("credential_denied") || has("browser_scope_violation")) {
       // "failed", not "completed": the cage refused the agent something, which
