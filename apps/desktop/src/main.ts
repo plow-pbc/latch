@@ -58,6 +58,7 @@ import { FdaGrantFlow, GrantTarget } from "./fdaGrantFlow.js";
 import { AUTOMATION_APPS, automationApp, osascriptRunner, reconcile, requestAutomation } from "./automation.js";
 import { capabilitiesView, CapabilitiesView, isGroup, paneFor, PERMISSION_TITLES } from "./capabilitiesModel.js";
 import { launchAtLoginState, LoginItemApi, setLaunchAtLogin } from "./loginItem.js";
+import { guardStdio } from "./stdio.js";
 import { KeepAwake } from "./keepAwake.js";
 import { devIconScript } from "./devIcon.js";
 import { migrateLegacyHome } from "./migrateHome.js";
@@ -92,6 +93,12 @@ import {
   setApprovalMode,
   signOutOfPlow,
 } from "./settingsActions.js";
+
+// A console the launcher took away (a closed terminal, a finished ssh
+// session) must not end the app: Node surfaces the failed write as an
+// 'error' event on the stream, which is fatal without a listener. First, so
+// no log line below can be the one that trips it. See stdio.ts.
+guardStdio([process.stdout, process.stderr]);
 
 // One folder per instance (paths.ts): the home carries everything, including
 // Chromium's userData/sessionData at <home>/electron — never a second
