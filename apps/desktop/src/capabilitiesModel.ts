@@ -129,12 +129,14 @@ export const PERMISSION_TITLES: Record<string, string> = {
  * tile or just points at the switch. `panel: false` opens the pane with no
  * panel at all — Screen Recording's list takes no drop and the app cannot
  * even ask to be listed there, so a panel pointing at nothing would only
- * mislead.
+ * mislead. Automation's pane takes no drop either: its list is per
+ * controlling app, filled only by apps that have asked, so the pane is
+ * opened bare and the owner flips the switch there.
  */
 export const SETTINGS_PANES: Record<string, { url: string; acceptsDrop: boolean; panel?: false }> = {
   full_disk_access: { url: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles", acceptsDrop: true },
   accessibility: { url: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility", acceptsDrop: true },
-  automation: { url: "x-apple.systempreferences:com.apple.preference.security?Privacy_Automation", acceptsDrop: false },
+  automation: { url: "x-apple.systempreferences:com.apple.preference.security?Privacy_Automation", acceptsDrop: false, panel: false },
   contacts: { url: "x-apple.systempreferences:com.apple.preference.security?Privacy_Contacts", acceptsDrop: false },
   calendars: { url: "x-apple.systempreferences:com.apple.preference.security?Privacy_Calendars", acceptsDrop: false },
   reminders: { url: "x-apple.systempreferences:com.apple.preference.security?Privacy_Reminders", acceptsDrop: false },

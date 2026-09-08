@@ -1369,7 +1369,7 @@ ipcMain.handle("capabilities:act", async (_e, rawKey: unknown) => {
     case "grant":
     case "open": {
       const pane = paneFor(key);
-      // A pane the panel can do nothing beside (Screen Recording) is just
+      // A pane the panel can do nothing beside (Screen Recording, Automation) is just
       // opened; the owner finds the switch themselves.
       if (pane && pane.panel === false) {
         await shell.openExternal(pane.url);
