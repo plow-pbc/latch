@@ -51,7 +51,7 @@ describe("which section a credential belongs in", () => {
   });
 
   it("files a freshly minted static MCP credential under MCP clients", () => {
-    // Exactly what `POST /v1/keys` hands back for the static-credential modal:
+    // Exactly what `POST /v1/api-keys` hands back for the static-credential modal:
     // `relay:call`, an empty chat grant, and no agent owning it. It must land
     // in `mcp`, because that section's Remove is a key revoke — the only call
     // that ends a credential no agent owns.

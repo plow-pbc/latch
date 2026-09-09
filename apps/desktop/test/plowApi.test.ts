@@ -502,7 +502,7 @@ describe("PlowApi", () => {
     await expect(api.createMcpClientKey("owner", "   ")).rejects.toThrow("Give this connection a name.");
     const minted = await api.createMcpClientKey("owner", "  Claude Code  ");
 
-    expect(calls[0].url).toBe("https://stub.invalid/v1/keys");
+    expect(calls[0].url).toBe("https://stub.invalid/v1/api-keys");
     // `chat_uids: []` is sent EXPLICITLY. Omitting it makes plow inherit the
     // caller's grant, and the caller is this Mac's login session — which holds
     // every chat on the account.
@@ -532,11 +532,42 @@ describe("PlowApi", () => {
   });
 
   it("refuses a mint receipt with no usable token or id", async () => {
-    for (const body of [{ token: "plow_t" }, { id: 41 }, { id: 41, token: "" }, { id: "41", token: "plow_t" }]) {
+    const asked = { scopes: ["relay:call"], chat_uids: [] };
+    for (const body of [
+      { ...asked, token: "plow_t" },
+      { ...asked, id: 41 },
+      { ...asked, id: 41, token: "" },
+      { ...asked, id: "41", token: "plow_t" },
+    ]) {
       const { fetchImpl } = recordingFetch([{ status: 200, body }]);
       await expect(
         new PlowApi("https://stub.invalid", fetchImpl).createMcpClientKey("owner", "Claude Code"),
       ).rejects.toThrow("Plow returned an invalid credential response.");
+    }
+  });
+
+  it("refuses a mint the server made WIDER than the one asked for", async () => {
+    // The echoed scopes and grant are this Mac's only sight of what was
+    // actually minted. A token that reaches the owner's chats must not make it
+    // to the screen — once shown it has been pasted into a client and it is
+    // long-lived.
+    const overGranted = [
+      { scopes: ["relay:call"], chat_uids: ["*"] },
+      { scopes: ["relay:call"], chat_uids: ["cht_1"] },
+      { scopes: ["relay:call", "chats:use"], chat_uids: [] },
+      { scopes: ["relay:*"], chat_uids: [] },
+      { scopes: ["*:*"], chat_uids: [] },
+      // Absent is not the same as empty, and is not evidence of anything.
+      { scopes: ["relay:call"] },
+      { chat_uids: [] },
+    ];
+    for (const minted of overGranted) {
+      const { fetchImpl } = recordingFetch([{ status: 200, body: {
+        id: 41, token: "plow_clienttok", key_prefix: "abcdefgh", name: "Claude Code", ...minted,
+      } }]);
+      await expect(
+        new PlowApi("https://stub.invalid", fetchImpl).createMcpClientKey("owner", "Claude Code"),
+      ).rejects.toThrow("Plow minted a credential wider than the one asked for.");
     }
   });
 

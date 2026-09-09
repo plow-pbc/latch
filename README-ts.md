@@ -260,12 +260,16 @@ process hands it and owns no copy of its own.
   different calls.** An agent answers on a line and is `POST /v1/agents`. A
   static credential is for a client that cannot do OAuth — a tool that needs to
   reach this Mac and nothing else — and it has no line to answer on, so it is
-  `POST /v1/keys` with `scopes: ["relay:call"]` and an EXPLICITLY empty
+  `POST /v1/api-keys` with `scopes: ["relay:call"]` and an EXPLICITLY empty
   `chat_uids`. Empty rather than omitted: plow reads an omitted grant as "inherit
   the caller's", and the caller is this Mac's login session, which holds every
   chat. Removal follows the same split — a key revoke for the credential, never
   `DELETE /v1/agents/{uid}`, which no agent-less key answers to. The modal that
-  mints one asks for a name and nothing else.
+  mints one asks for a name and nothing else. The receipt is checked, not
+  trusted: plow echoes the scopes and chat grant it actually minted, and a
+  credential that came back wider than `relay:call` with no chats is refused
+  and revoked rather than shown — after it is on screen it has been pasted
+  into somebody's client.
 - **The login session IS the credential this Mac keeps.** Latch is the owner's
   manager app, not an agent: it holds the socket, lists chats and Plow's
   numbers, mints agents, buys inference and mints connector tokens. It used to

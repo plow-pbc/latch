@@ -160,7 +160,8 @@ describe("the static-credential fallback", () => {
     const connect = build();
     const state = await connect.createCredential("Claude Code");
 
-    // The device credential mints agents; the login session is long gone.
+    // Minted with this Mac's stored credential — the login session, which is
+    // what the app holds and what `POST /v1/api-keys` is authorised by.
     expect(plow.minted).toEqual([{ token: DEVICE_TOKEN, name: "Claude Code" }]);
     expect(state.credential?.name).toBe("Claude Code");
 
@@ -172,10 +173,10 @@ describe("the static-credential fallback", () => {
     expect(config.mcpServers.plow.command).toBeUndefined();
   });
 
-  it("hands the chosen line to the mint, so the credential is the assistant role", async () => {
+  it("hands the mint a name and nothing else — no line makes this an agent", async () => {
     signIn();
     await build().createCredential("Life");
-    expect(plow.minted[0]).toMatchObject({ name: "Life" });
+    expect(plow.minted[0]).toEqual({ token: DEVICE_TOKEN, name: "Life" });
   });
 
   it("shows it once — after 'I've saved it' the app cannot produce it again", async () => {
@@ -192,7 +193,7 @@ describe("the static-credential fallback", () => {
     expect(JSON.stringify(connect.state())).not.toContain(CLIENT_TOKEN);
   });
 
-  it("rejects an unsafe stored MCP address and deletes the new agent", async () => {
+  it("rejects an unsafe stored MCP address and revokes the new credential", async () => {
     signIn();
     const settings = loadSettings(home);
     settings.mcpUrl = "https://api.plow.co/plow_other_secret/mcp";

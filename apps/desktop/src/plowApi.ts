@@ -179,21 +179,41 @@ export function decodeAgentCreateReceipt(data: unknown, deviceCredential: string
 }
 
 /**
- * Decode the mint receipt from `POST /v1/keys` before exposing its one-time token.
+ * Decode the mint receipt from `POST /v1/api-keys` before exposing its
+ * one-time token.
  *
  * The same guard `decodeAgentCreateReceipt` applies, for the same reason: the
  * response comes from an origin that already holds this Mac's credential, and
  * a body echoing it back — in any encoding this can see — is never shown, kept
  * or handed on. The token in `token` is the MINTED one and is the point of the
  * call; it is the device credential that may not appear.
+ *
+ * **The receipt is CHECKED against what was asked for, not trusted.** Plow
+ * echoes the scopes and the resolved chat grant it actually minted, and that
+ * echo is the only chance this Mac has to see an over-grant: once the token is
+ * on screen it has been copied into somebody's client, and it is long-lived.
+ * So a credential that came back with more than `relay:call`, or with any chat
+ * grant at all, is refused rather than handed over — the caller revokes what it
+ * cannot show. Refusing costs an unusable credential on the account; accepting
+ * would hand a tool the owner's chats.
  */
 export function decodeKeyCreateReceipt(data: unknown, deviceCredential: string): MintedCredential {
-  const receipt = data as { id?: unknown; token?: unknown; name?: unknown } | null;
+  const receipt = data as { id?: unknown; token?: unknown; name?: unknown; scopes?: unknown; chat_uids?: unknown } | null;
   if (!receipt || typeof receipt.id !== "number" || typeof receipt.token !== "string" || !receipt.token) {
     throw new PlowApiError("http", "Plow returned an invalid credential response.");
   }
   if (echoesCredential(JSON.stringify(receipt), deviceCredential)) {
     throw new PlowApiError("http", "Plow returned an unsafe credential response.");
+  }
+  const scopes = receipt.scopes;
+  const chatUids = receipt.chat_uids;
+  const asAsked =
+    Array.isArray(scopes) && Array.isArray(chatUids) &&
+    chatUids.length === 0 &&
+    scopes.length === MCP_CLIENT_SCOPES.length &&
+    scopes.every((scope, index) => scope === MCP_CLIENT_SCOPES[index]);
+  if (!asAsked) {
+    throw new PlowApiError("http", "Plow minted a credential wider than the one asked for.");
   }
   return { id: receipt.id, token: receipt.token, name: typeof receipt.name === "string" ? receipt.name : "" };
 }
@@ -791,20 +811,21 @@ export class PlowApi {
   /**
    * Mint a static credential for one MCP client, and return its one-time token.
    *
-   * An ordinary key, not an agent: `POST /v1/keys` with `relay:call` and an
+   * An ordinary key, not an agent: `POST /v1/api-keys` with `relay:call` and an
    * EXPLICITLY empty chat grant. Empty rather than omitted — plow reads an
    * omitted `chat_uids` as "inherit the caller's own grant", and the caller
    * here is this Mac's login session, which holds every chat. A tool that only
    * needs to reach this Mac would have walked away with all of them.
    *
    * The device credential rides in the Authorization header and nowhere else;
-   * `decodeKeyCreateReceipt` refuses a response that echoes it back.
+   * `decodeKeyCreateReceipt` refuses a response that echoes it back, and
+   * refuses one whose minted scopes or chat grant are wider than these.
    */
   async createMcpClientKey(token: string, name: string): Promise<MintedCredential> {
     const trimmed = name.trim();
     if (!trimmed) throw new PlowApiError("http", "Give this connection a name.");
     const minted = decodeKeyCreateReceipt(await this.call(
-      "POST", "/v1/keys", { token, body: { name: trimmed, scopes: [...MCP_CLIENT_SCOPES], chat_uids: [] } },
+      "POST", "/v1/api-keys", { token, body: { name: trimmed, scopes: [...MCP_CLIENT_SCOPES], chat_uids: [] } },
     ), token);
     return { ...minted, name: minted.name || trimmed };
   }
