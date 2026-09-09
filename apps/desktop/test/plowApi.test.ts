@@ -712,7 +712,10 @@ describe("PlowApi", () => {
       { status: 200, body: { status: "revoked", id: 17 } },
     ]);
     const api = new PlowApi("https://api.plow.co", fetchImpl);
-    await expect(api.listApiKeys(credential)).resolves.toEqual(keys);
+    // `device` is defaulted in on the way through — this row predates it.
+    await expect(api.listApiKeys(credential)).resolves.toEqual(
+      keys.map((row) => ({ ...row, device: null })),
+    );
     await expect(api.revokeApiKey(credential, 17)).resolves.toEqual({
       status: "revoked",
       id: 17,
@@ -729,6 +732,28 @@ describe("PlowApi", () => {
       ),
     ).toBe(true);
     expect(calls.every(({ url }) => !url.includes(credential))).toBe(true);
+  });
+
+  it.each([
+    ["a row that predates the binding", undefined, null],
+    ["an explicit null", null, null],
+    ["a bound device", { uid: "dev_mba", name: "mba" }, { uid: "dev_mba", name: "mba" }],
+    // A device row this cannot read is no device row. Anything else would put
+    // an unusable value in front of the comparison the roster makes.
+    ["a device with no uid", { name: "mba" }, null],
+    ["a device with an empty uid", { uid: "", name: "mba" }, null],
+    ["a device with no name", { uid: "dev_mba" }, { uid: "dev_mba", name: null }],
+    ["a device with an empty name", { uid: "dev_mba", name: "" }, { uid: "dev_mba", name: null }],
+    ["a device that is not an object", "dev_mba", null],
+  ])("reads %s as the row's device", async (_shape, device, expected) => {
+    const { fetchImpl } = recordingFetch([{ status: 200, body: [
+      { id: 17, key_prefix: "agentkey", name: "Claude Code", scopes: ["relay:call"],
+        tokens_used: 0, is_active: true, last_seen_at: null, created_at: null,
+        agent_uid: null, chat_uids: [], device },
+    ] }]);
+
+    const [row] = await new PlowApi("https://api.plow.co", fetchImpl).listApiKeys("plow_device");
+    expect(row.device).toEqual(expected);
   });
 
   it("rejects a path-shaped API key id without making a request", async () => {

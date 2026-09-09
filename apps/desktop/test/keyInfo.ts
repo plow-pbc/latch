@@ -21,5 +21,6 @@ export const keyInfo = (overrides: Partial<KeyInfo> = {}): KeyInfo => ({
   created_at: "2026-08-20T10:00:00Z",
   agent_uid: null,
   chat_uids: [],
+  device: null,
   ...overrides,
 });

@@ -2128,6 +2128,9 @@ app.whenReady().then(async () => {
     home,
     isConnected: () => connected,
     signOutThisMac,
+    // The same uid the relay registers this Mac under and the MCP URL is built
+    // from. Read through the identity, not out of the URL.
+    deviceUid: () => device?.identity.deviceId ?? null,
     onChange: () => notifyRenderer("connect:changed"),
   });
 

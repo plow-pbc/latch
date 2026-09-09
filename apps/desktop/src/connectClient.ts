@@ -83,6 +83,15 @@ export interface ConnectClientDeps {
    * it makes 401s — and the roster promises immediate sign-out.
    */
   signOutThisMac: () => Promise<void>;
+  /**
+   * This Mac's relay device uid, or null before the device identity exists.
+   *
+   * A getter, not a value: the client is built before the identity is read,
+   * and a uid captured at construction would be the empty one forever. The
+   * same typed source the relay registers with — never parsed back out of the
+   * MCP URL, which is a formatting of this, not a second authority on it.
+   */
+  deviceUid?: () => string | null;
   onChange?: () => void;
 }
 
@@ -164,7 +173,10 @@ export class ConnectClient {
       // never undo a newer answer — least of all by restoring a session the
       // newer one saw revoked.
       if (generation !== this.generation || read !== this.rosterReads) return this.state();
-      this.roster = sectionRoster(keys, { deviceCredential: credential });
+      this.roster = sectionRoster(keys, {
+        deviceCredential: credential,
+        deviceUid: this.deps.deviceUid?.() ?? null,
+      });
       this.rosterError = null;
     } catch (error) {
       if (generation !== this.generation || read !== this.rosterReads) return this.state();

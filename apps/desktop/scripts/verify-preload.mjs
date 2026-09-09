@@ -143,6 +143,7 @@ const rosterProbe = {
     chatUids: ["*"],
     chatAccess: "all",
     permissions: { canReadAndReply: true, canReachMac: true, canSpendInference: true },
+    deviceLabel: "this Mac",
     isActive: true,
     isThisMac: false,
   }],
@@ -815,6 +816,19 @@ app.whenReady().then(async () => {
         ?.getAttribute("role") === "button",
       offersNewAgent: [...group.querySelectorAll("button")]
         .some((button) => button.textContent.trim() === "New agent"),
+    };
+  }})()`);
+
+  // A static credential says which Mac it works from, by label. The device uid
+  // is main-process only and must not be anywhere on the screen.
+  const mcpRoster = await win.webContents.executeJavaScript(`(${() => {
+    const group = [...document.querySelectorAll("#view .panel.agents .list-section")]
+      .find((item) => item.querySelector("h2")?.textContent.trim() === "MCP clients");
+    const context = group?.querySelector(".entity-row .entity-context")?.textContent ?? "";
+    return {
+      namesBoundDevice: context.includes("Bound to this Mac"),
+      stillNamesKind: context.includes("MCP client"),
+      noDeviceUid: !document.body.textContent.includes("dev_"),
     };
   }})()`);
 
@@ -2180,6 +2194,9 @@ app.whenReady().then(async () => {
     connect.noConnectTab &&
     cloudRoster.noCredentialIdentity &&
     cloudRoster.hidesProvider &&
+    mcpRoster.namesBoundDevice &&
+    mcpRoster.stillNamesKind &&
+    mcpRoster.noDeviceUid &&
     cloudRoster.namesLine &&
     cloudRoster.showsCreated &&
     cloudRoster.hidesLastUsed &&
@@ -2355,7 +2372,7 @@ app.whenReady().then(async () => {
     errors.length === 0;
   console.log(
     "PROBE:" +
-      JSON.stringify({ main, settings, capabilities, strandedOnDisk, settingsPane, connect, cloudRoster, cloudCreatePicker, cloudCreateSelection, cloudCreateSelectionOnly, cloudCreateRequest, cloudCreateCancelled, cloudCreateCode, cloudExistingCreate, cloudExistingCreateRequest, cloudCodeConfirmed, cloudCodeConfirmedClosed, cloudNoFreeLines, cloudNoNumbers, cloudDetail, cloudChangePicker, cloudChangeSelection, cloudChangeSelectionOnly, cloudChangeCode, cloudChangeRequest, cloudUnknownLines, cloudCreateErrorDetail, failedCloudDetailButtons, cloudChangeErrorDetail, cloudAgentGoneCancelled, cloudDeleteConfirm, loadingCloudDetail, unavailableCloudDetail, agentsShot, approvalsReviewer, approvalsShot, purposeRoundTrip, approvalsAsk, askWithoutReviewer, approvalsShotAsk, agentsOpen, modalClosed, vaultLocked, vaultUnsaved, vaultShot, agentsOpenShot, staleSettingsPane, optimisticMode, settingsShot, approval, reviewerNote, grantPanel, consoleErrors: errors, ok }),
+      JSON.stringify({ main, settings, capabilities, strandedOnDisk, settingsPane, connect, cloudRoster, mcpRoster, cloudCreatePicker, cloudCreateSelection, cloudCreateSelectionOnly, cloudCreateRequest, cloudCreateCancelled, cloudCreateCode, cloudExistingCreate, cloudExistingCreateRequest, cloudCodeConfirmed, cloudCodeConfirmedClosed, cloudNoFreeLines, cloudNoNumbers, cloudDetail, cloudChangePicker, cloudChangeSelection, cloudChangeSelectionOnly, cloudChangeCode, cloudChangeRequest, cloudUnknownLines, cloudCreateErrorDetail, failedCloudDetailButtons, cloudChangeErrorDetail, cloudAgentGoneCancelled, cloudDeleteConfirm, loadingCloudDetail, unavailableCloudDetail, agentsShot, approvalsReviewer, approvalsShot, purposeRoundTrip, approvalsAsk, askWithoutReviewer, approvalsShotAsk, agentsOpen, modalClosed, vaultLocked, vaultUnsaved, vaultShot, agentsOpenShot, staleSettingsPane, optimisticMode, settingsShot, approval, reviewerNote, grantPanel, consoleErrors: errors, ok }),
   );
   app.exit(ok ? 0 : 1);
 }).catch((err) => {

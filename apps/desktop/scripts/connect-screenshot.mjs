@@ -97,14 +97,14 @@ const EMPTY_ROSTER = { mcp: [], other: [], revokedHidden: 0 };
 const ROSTER = {
   mcp: [
     {
-      id: 301, name: "Claude Code on MacBook Pro", kind: "Agent",
+      id: 301, name: "Claude Code on MacBook Pro", kind: "Agent", deviceLabel: "this Mac",
       createdAt: "2026-08-12T17:00:00.000Z", lastSeenAt: new Date(Date.now() - 6 * 60_000).toISOString(),
       chatUids: ["*"], chatAccess: "all",
       permissions: { canReadAndReply: true, canReachMac: true, canSpendInference: true },
       isActive: true, isThisMac: false,
     },
     {
-      id: 302, name: "Cursor desktop", kind: "Agent",
+      id: 302, name: "Cursor desktop", kind: "Agent", deviceLabel: "mba",
       createdAt: new Date().toISOString(), lastSeenAt: null,
       chatUids: [], chatAccess: "none",
       permissions: { canReadAndReply: true, canReachMac: true, canSpendInference: true },
@@ -113,21 +113,21 @@ const ROSTER = {
   ],
   other: [
     {
-      id: 401, name: "Plow Latch on this Mac", kind: "Session",
+      id: 401, name: "Plow Latch on this Mac", kind: "Session", deviceLabel: null,
       createdAt: "2026-07-28T17:00:00.000Z", lastSeenAt: new Date(Date.now() - 3 * 60_000).toISOString(),
       chatUids: [], chatAccess: "none",
       permissions: { canReadAndReply: false, canReachMac: false, canSpendInference: false },
       isActive: true, isThisMac: true,
     },
     {
-      id: 402, name: "Plow website · Safari", kind: "Plow web login",
+      id: 402, name: "Plow website · Safari", kind: "Plow web login", deviceLabel: null,
       createdAt: "2026-08-24T17:00:00.000Z", lastSeenAt: new Date(Date.now() - 12 * 60_000).toISOString(),
       chatUids: [], chatAccess: "none",
       permissions: { canReadAndReply: false, canReachMac: true, canSpendInference: false },
       isActive: true, isThisMac: false,
     },
     {
-      id: 403, name: "Legacy automation token", kind: "Admin — full access",
+      id: 403, name: "Legacy automation token", kind: "Admin — full access", deviceLabel: null,
       createdAt: "2026-08-20T17:00:00.000Z", lastSeenAt: null,
       chatUids: ["*"], chatAccess: "all",
       permissions: { canReadAndReply: true, canReachMac: true, canSpendInference: true },
@@ -336,8 +336,7 @@ async function setUp() {
     return state();
   });
   ipcMain.handle("cloud:openMessages", async () => true);
-  ipcMain.handle("connect:create", async (_e, name, lineUid) =>
-    connect.createCredential(name, lineUid));
+  ipcMain.handle("connect:create", async (_e, name) => connect.createCredential(name));
   ipcMain.handle("connect:dismiss", async () => connect.dismissCredential());
   ipcMain.handle("roster:remove", async (_e, id) => {
     rosterFixture = {
@@ -530,6 +529,9 @@ const SCREENS = [
       "Willow · +1 415-555-0142", "Created Aug 24", "Trip planner", "Setting up…",
       "+1 628-555-0144", "Created today", "Message",
       "MCP clients", "Claude Code on MacBook Pro", "Cursor desktop",
+      // Which Mac each static credential works from — this one, or another by
+      // the name Plow gave it.
+      "Bound to this Mac", "Bound to mba",
       "Other sessions", "Plow Latch on this Mac", "This Mac",
       "Plow website · Safari", "Legacy automation token", "Admin *:*", "14 revoked sessions hidden",
     ],

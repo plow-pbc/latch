@@ -18,6 +18,7 @@ import { keyInfo, keyPrefixOf } from "./keyInfo.js";
 import { loadSettings, saveSettings } from "../src/settings.js";
 
 const DEVICE_TOKEN = "plow_DEVICEtok_secret";
+const DEVICE_UID = "dev_this_mac";
 
 /**
  * What plow publishes as `key_prefix`: `token[5:13]`, the eight characters
@@ -93,12 +94,15 @@ let connected: boolean;
 let changes: number;
 /** How many times the roster asked this Mac to sign out. */
 let signOuts: number;
+/** This Mac's relay device uid, as the identity would report it. */
+let deviceUid: string | null;
 
 function build(): ConnectClient {
   return new ConnectClient({
     api: plow.api(),
     home,
     isConnected: () => connected,
+    deviceUid: () => deviceUid,
     signOutThisMac: async () => {
       signOuts += 1;
     },
@@ -122,6 +126,7 @@ beforeEach(() => {
   plow = new FakePlow();
   connected = true;
   signOuts = 0;
+  deviceUid = DEVICE_UID;
   changes = 0;
 });
 
@@ -499,5 +504,26 @@ describe("removing a roster row", () => {
 
     expect(state.actionError).toBe("Plow returned 500.");
     expect(state.roster.mcp.map((row) => row.id)).toEqual(held);
+  });
+
+  it("labels each row's Mac from this Mac's own device uid, read at refresh", async () => {
+    signIn();
+    plow.keys = [
+      key({ id: 1, device: { uid: DEVICE_UID, name: "mbp" } }),
+      key({ id: 2, device: { uid: "dev_other", name: "mba" } }),
+      key({ id: 3, device: null }),
+    ];
+    const client = build();
+
+    // Read through the getter at refresh time, not captured at construction:
+    // the client is built before the device identity exists, so a uid taken
+    // then would be the empty one for the life of the process.
+    deviceUid = null;
+    expect((await client.refreshRoster()).roster.mcp.map((row) => row.deviceLabel))
+      .toEqual(["mbp", "mba", null]);
+
+    deviceUid = DEVICE_UID;
+    expect((await client.refreshRoster()).roster.mcp.map((row) => row.deviceLabel))
+      .toEqual(["this Mac", "mba", null]);
   });
 });

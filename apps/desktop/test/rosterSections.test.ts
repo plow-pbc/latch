@@ -208,6 +208,46 @@ describe("this Mac's own credential", () => {
   });
 });
 
+describe("which Mac a credential is bound to", () => {
+  const OUR_DEVICE = "dev_this_mac";
+
+  it.each([
+    ["this Mac", { uid: OUR_DEVICE, name: "mbp" }, "this Mac"],
+    // Our own uid wins over the name plow has for us: the owner is looking at
+    // this Mac, and "mbp" would make them go and check which one that is.
+    ["this Mac even when plow names it", { uid: OUR_DEVICE, name: "mbp (2)" }, "this Mac"],
+    ["another Mac by name", { uid: "dev_other", name: "mba" }, "mba"],
+    // Bound somewhere, name unusable. Not blank — blank reads as "works from
+    // any Mac", which is the opposite of the truth.
+    ["another Mac with no name", { uid: "dev_other", name: null }, "another Mac"],
+    ["no Mac at all", null, null],
+  ])("labels a credential bound to %s", (_shape, device, expected) => {
+    const [row] = allRows(sectionRoster([key({ scopes: ["relay:call"], device })], {
+      deviceUid: OUR_DEVICE,
+    }));
+
+    expect(row.deviceLabel).toBe(expected);
+  });
+
+  it("names no Mac before this one knows its own uid", () => {
+    // Startup order: the roster can be read before the device identity exists.
+    // Every row would otherwise compare against "" and be labelled by name —
+    // including this Mac's own, which would read as somewhere else.
+    const [row] = allRows(sectionRoster([key({ device: { uid: OUR_DEVICE, name: "mbp" } })]));
+
+    expect(row.deviceLabel).toBe("mbp");
+  });
+
+  it("never hands the renderer a device uid", () => {
+    const sections = sectionRoster([
+      key({ id: 1, device: { uid: OUR_DEVICE, name: "mbp" } }),
+      key({ id: 2, device: { uid: "dev_other_secret", name: "mba" } }),
+    ], { deviceUid: OUR_DEVICE });
+
+    expect(JSON.stringify(sections)).not.toMatch(/dev_this_mac|dev_other_secret/);
+  });
+});
+
 describe("ordering", () => {
   it("normalizes Plow's offsetless timestamps as UTC before exposing a row", () => {
     const [row] = allRows(sectionRoster([key({

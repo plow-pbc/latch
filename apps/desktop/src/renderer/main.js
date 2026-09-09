@@ -1783,9 +1783,13 @@ function sessionEntityRow(row, section, redraw) {
   const name = rosterName(row, fallback);
   const context = [
     section === "mcp" ? "MCP client" : row.kind,
+    // Which Mac this credential works from, when it is bound to one. The main
+    // process hands down a label and never the device uid, and it goes in as
+    // text — a device name is a string somebody else chose.
+    row.deviceLabel ? `Bound to ${row.deviceLabel}` : null,
     row.createdAt ? `Created ${rosterDate(row.createdAt) ?? "date unknown"}` : "Created date unknown",
     row.lastSeenAt ? `Last used ${rosterAgo(row.lastSeenAt) ?? "date unknown"}` : "Never used",
-  ].join(" · ");
+  ].filter(Boolean).join(" · ");
   const permissions = rosterPermissionCopy(row);
   if (row.kind === "Plow web login") permissions.push("Revoking signs you out of the Plow website");
   if (row.isThisMac) permissions.push("Revoking signs this Mac out");

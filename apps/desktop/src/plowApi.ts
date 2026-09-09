@@ -219,9 +219,29 @@ function decodeKeyCreateReceipt(data: unknown, deviceCredential: string): Minted
   return { id: receipt.id, token: receipt.token, name: typeof receipt.name === "string" ? receipt.name : "" };
 }
 
+/**
+ * The Mac a credential is bound to, as `GET /v1/api-keys` reports it.
+ *
+ * `name` is Plow's durable display name for the device (`mbp`, `mbp (2)`) and
+ * is the only half that may be shown. The uid identifies a device on the
+ * account and is main-process only, like `key_prefix` beside it — the roster
+ * compares against it and projects a label, and the label is what crosses.
+ */
+export interface KeyDevice {
+  uid: string;
+  name: string | null;
+}
+
+/** One device row, or null for anything this cannot read as one. */
+function keyDeviceOf(value: unknown): KeyDevice | null {
+  const device = value as { uid?: unknown; name?: unknown } | null | undefined;
+  if (!device || typeof device.uid !== "string" || !device.uid) return null;
+  return { uid: device.uid, name: typeof device.name === "string" && device.name ? device.name : null };
+}
+
 /** The account credential metadata returned by `GET /v1/api-keys`.
- * Main-process only: `key_prefix` and `scopes` must be projected away before
- * any row crosses the renderer bridge. */
+ * Main-process only: `key_prefix`, `scopes` and `device.uid` must be projected
+ * away before any row crosses the renderer bridge. */
 export interface KeyInfo {
   id: number;
   key_prefix: string | null;
@@ -233,6 +253,8 @@ export interface KeyInfo {
   created_at: string | null;
   agent_uid: string | null;
   chat_uids: string[];
+  /** The Mac this credential may be used from, or null for one bound to none. */
+  device: KeyDevice | null;
 }
 
 /** Parse Plow's UTC timestamp, whose wire form may omit the trailing offset. */
@@ -829,9 +851,15 @@ export class PlowApi {
     return { ...minted, name: minted.name || name };
   }
 
-  /** Credential metadata for the independent sessions section. */
+  /** Credential metadata for the independent sessions section.
+   *
+   * `device` is defaulted here, once, for every reader: an API predating the
+   * binding sends no such field, and `undefined` is not `null` — a row that
+   * reached the roster undefined would be compared against this Mac's uid and
+   * answer neither "bound here" nor "bound nowhere". */
   async listApiKeys(token: string): Promise<KeyInfo[]> {
-    return this.call<KeyInfo[]>("GET", "/v1/api-keys", { token });
+    const keys = await this.call<KeyInfo[]>("GET", "/v1/api-keys", { token });
+    return keys.map((key) => ({ ...key, device: keyDeviceOf(key.device) }));
   }
 
   /** Soft-revoke one credential by its server id. */
