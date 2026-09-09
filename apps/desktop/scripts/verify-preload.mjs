@@ -1432,7 +1432,7 @@ app.whenReady().then(async () => {
   })()`);
   await clickCloudButton(win, "Change line");
   await waitFor(win, `document.querySelector(".cloud-modal .cloud-callout-title")?.textContent
-    .includes("wasn't changed")`, "the change-line error card");
+    .includes("The line change did not finish")`, "the change-line error card");
   const cloudChangeErrorDetail = await win.webContents.executeJavaScript(
     `document.querySelector(".cloud-modal .cloud-callout p")?.textContent.trim() ===
       "Line service is restarting."`,
