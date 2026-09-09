@@ -50,19 +50,15 @@ describe("CloudAgentsClient resources", () => {
     "%" + CREDENTIAL.charCodeAt(0).toString(16) + CREDENTIAL.slice(1),
     [...CREDENTIAL].map((c) => "%" + c.charCodeAt(0).toString(16)).join(""),
   ])(
-    "rejects device credential echoes in both create receipts: %s", async (token) => {
-      for (const localSetup of [false, true]) {
-        const { fetchImpl } = recordingFetch([{ status: 201, body: { agent: wireAgent(), token } }]);
-        const api = new PlowApi("https://stub.invalid", fetchImpl);
-        const onToken = vi.fn();
-        const result = localSetup
-          ? api.createAgent(CREDENTIAL, "Kitchen", "lin_willow")
-          : new CloudAgentsClient(api, undefined, onToken).create(CREDENTIAL, {
-            lineUid: "lin_willow", name: "Kitchen", provider: "self_hosted",
-          });
-        await expect(result).rejects.toThrow("unsafe agent response");
-        expect(onToken).not.toHaveBeenCalled();
-      }
+    "rejects device credential echoes in the agent create receipt: %s", async (token) => {
+      const { fetchImpl } = recordingFetch([{ status: 201, body: { agent: wireAgent(), token } }]);
+      const api = new PlowApi("https://stub.invalid", fetchImpl);
+      const onToken = vi.fn();
+      const result = new CloudAgentsClient(api, undefined, onToken).create(CREDENTIAL, {
+        lineUid: "lin_willow", name: "Kitchen", provider: "self_hosted",
+      });
+      await expect(result).rejects.toThrow("unsafe agent response");
+      expect(onToken).not.toHaveBeenCalled();
     },
   );
 

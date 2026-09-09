@@ -214,10 +214,9 @@ async function setUp() {
 
   /** Plow, stood in for — the one call this screen can make. */
   const api = {
-    async createAgent(token, name, lineUid) {
+    async createMcpClientKey(token, name) {
       if (token !== DEVICE_TOKEN) throw new Error("the mint must use the device credential");
-      if (lineUid !== "lin_ash") throw new Error("the mint must use the selected line");
-      return { agentUid: "agent-static", token: CLIENT_TOKEN, name };
+      return { id: 41, token: CLIENT_TOKEN, name };
     },
   };
 
@@ -1182,32 +1181,34 @@ const SCREENS = [
     expect: [
       "Static credential",
       "Name this connection",
-      "Choose a free line for this self-hosted agent.",
+      "For a tool that only needs MCP access to this Mac",
+      "The token is shown once.",
       "Create Credential",
       "Cancel",
     ],
   },
   {
     name: "static-shown",
-    cloud: { ...CLOUD_EMPTY, cloudFreeLines: [{ uid: "lin_ash", label: "Ash" }] },
     prepare: async (win) => {
       await clickText(win, "Connect MCP client", 0);
       await waitFor(win, `document.querySelector(".connect-modal .connect")`, "the MCP setup modal");
       await clickText(win, "Can't use OAuth");
+      // No line picker: this credential is a tool's key, not an agent, and a
+      // name is the whole form. Asserted here rather than only in `expect`,
+      // which reads text and would not see a select that renders empty.
+      const noLinePicker = await win.webContents.executeJavaScript(
+        `!document.querySelector('.modal select[aria-label="Line"]')`,
+      );
+      if (!noLinePicker) throw new Error("the static form still asks for a line");
       await type(win, `input[placeholder="Claude Code"]`, "Claude Code");
-      const blocked = await win.webContents.executeJavaScript(`(() => {
+      const enabled = await win.webContents.executeJavaScript(`(() => {
         const button = [...document.querySelectorAll(".modal button")]
           .find((node) => node.textContent === "Create Credential");
-        return button?.disabled === true;
+        return button?.disabled === false;
       })()`);
-      if (!blocked) throw new Error("static creation enabled without a line");
-      await win.webContents.executeJavaScript(`(() => {
-        const line = document.querySelector('.modal select[aria-label="Line"]');
-        line.value = "lin_ash";
-        line.dispatchEvent(new Event("change", { bubbles: true }));
-      })()`);
+      if (!enabled) throw new Error("static creation blocked with a name given");
       await clickText(win, "Create Credential");
-      console.log("STATIC-LINE: creation blocked until line selected; selected line minted");
+      console.log("STATIC-NAME: no line picker; a named form mints on the first click");
     },
     // The credential and its "I've Saved It" button are the point of this
     // screen, and they can sit below the fold in a 620pt window. Scroll to

@@ -879,10 +879,9 @@ function syncStaticModal(s, redraw) {
       );
       done.focus();
     } else {
-      staticModal.lineSelect = el("select", { class: "text", attrs: { "aria-label": "Line" } });
       const create = async () => {
         if (createBtn.disabled) return;
-        await window.domo.connectCreate(staticModal.nameInput.value, staticModal.lineSelect.value);
+        await window.domo.connectCreate(staticModal.nameInput.value);
         redraw();
       };
       staticModal.nameInput.addEventListener("keydown", (e) => {
@@ -901,13 +900,12 @@ function syncStaticModal(s, redraw) {
         el("div", { class: "group-title", text: "Static credential" }),
         el("p", {
           class: "faint conn-note",
-          text: "For a client that can't do OAuth. The token is shown once. Delete the agent to revoke it.",
+          text: "For a tool that only needs MCP access to this Mac — a client that can't do OAuth. It reaches no chats and answers on no line.",
         }),
         el("div", { class: "field" }, [el("label", { text: "Name this connection" }), staticModal.nameInput]),
-        el("div", { class: "field" }, [el("label", { text: "Line" }), staticModal.lineSelect]),
         el("p", {
           class: "faint conn-note",
-          text: "Choose a free line for this self-hosted agent. Its credential grants access to this Mac and its chats.",
+          text: "The token is shown once. Revoke it from MCP clients on this pane.",
         }),
         note,
         el("div", { class: "row conn-actions" }, [cancel, el("div", { class: "spacer" }), createBtn]),
@@ -915,25 +913,14 @@ function syncStaticModal(s, redraw) {
       staticModal.nameInput.focus();
     }
   }
-  // The lines arrive with the cloud state, which can land after this modal is
-  // already up — so the options are refilled on every refresh, in place,
-  // keeping whatever was picked.
-  if (kind === "form") {
-    staticModal.lineSelect.onchange = () => syncStaticModal(s, redraw);
-    staticModal.lineSelect.disabled = !!s.busy;
-    const lines = s.cloudFreeLines ?? [];
-    const picked = staticModal.lineSelect.value;
-    staticModal.lineSelect.replaceChildren(
-      el("option", { text: "Choose a line…", attrs: { value: "" } }),
-      ...lines.map((line) => el("option", { text: line.label, attrs: { value: line.uid } })),
-    );
-    staticModal.lineSelect.value = picked;
-  }
   // In-place, every refresh: the field is never rebuilt, so nothing typed is
   // ever taken away by one.
   staticModal.nameInput.disabled = !!s.busy;
   for (const b of staticModal.panel.querySelectorAll("button")) b.disabled = !!s.busy;
-  if (kind === "form") staticModal.actions[1].disabled = !!s.busy || !!s.agentToken || !staticModal.lineSelect.value;
+  // A name is all this mint needs. The one other bar is a cloud-agent token
+  // still on screen: a second one-time secret would overwrite the copy nobody
+  // has saved yet.
+  if (kind === "form") staticModal.actions[1].disabled = !!s.busy || !!s.agentToken;
 }
 
 /**

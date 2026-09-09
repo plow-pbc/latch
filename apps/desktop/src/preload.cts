@@ -179,8 +179,7 @@ contextBridge.exposeInMainWorld("domo", {
   // whole state so the screen renders from one shape. The minted credential
   // lives in that state for exactly as long as it is on screen.
   connectGet: () => ipcRenderer.invoke("connect:get"),
-  connectCreate: (name: string, lineUid: string) =>
-    ipcRenderer.invoke("connect:create", name, lineUid),
+  connectCreate: (name: string) => ipcRenderer.invoke("connect:create", name),
   connectDismiss: () => ipcRenderer.invoke("connect:dismiss"),
   // Revoke an independent session, or sign this Mac out through its lifecycle.
   rosterRemove: (id: number) => ipcRenderer.invoke("roster:remove", id),

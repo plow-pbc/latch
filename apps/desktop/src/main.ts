@@ -698,9 +698,9 @@ ipcMain.handle("cloud:refresh", async () => {
 ipcMain.handle("cloud:agents", async () => {
   return cloudAgentsIpcResult(cloudAgents);
 });
-ipcMain.handle("connect:create", async (_e, name: string, lineUid: string) => {
+ipcMain.handle("connect:create", async (_e, name: string) => {
   requireAgentTokenSaved();
-  await connectClient?.createCredential(name, lineUid);
+  await connectClient?.createCredential(name);
   await cloudAgents?.refresh();
   return agentsTabState();
 });

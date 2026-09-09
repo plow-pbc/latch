@@ -256,6 +256,16 @@ process hands it and owns no copy of its own.
   `POST /v1/agents` with `name`, `provider`, and a required `line_uid`,
   which the stored session may call. Local creation returns `{agent, token}`;
   the token is shown once for self-hosted setup.
+- **An agent and a static MCP credential are two different things, minted by two
+  different calls.** An agent answers on a line and is `POST /v1/agents`. A
+  static credential is for a client that cannot do OAuth — a tool that needs to
+  reach this Mac and nothing else — and it has no line to answer on, so it is
+  `POST /v1/keys` with `scopes: ["relay:call"]` and an EXPLICITLY empty
+  `chat_uids`. Empty rather than omitted: plow reads an omitted grant as "inherit
+  the caller's", and the caller is this Mac's login session, which holds every
+  chat. Removal follows the same split — a key revoke for the credential, never
+  `DELETE /v1/agents/{uid}`, which no agent-less key answers to. The modal that
+  mints one asks for a name and nothing else.
 - **The login session IS the credential this Mac keeps.** Latch is the owner's
   manager app, not an agent: it holds the socket, lists chats and Plow's
   numbers, mints agents, buys inference and mints connector tokens. It used to
@@ -289,11 +299,12 @@ process hands it and owns no copy of its own.
   be wrong. The device socket derives from that base by swapping the scheme; the
   **agent endpoints are not derived at all** — registration
   returns this Mac’s MCP URL, and the server stays authoritative.
-- **Agent credentials are shown exactly once.** The create picker shows a local
-  agent's token for copying. Static MCP setup assembles a single `plow` server
-  config locally, targeting this Mac's server-provided MCP URL with the token
-  in an `Authorization` header, never in the URL. Save the token before creating
-  or deleting another agent; dismissal drops Latch's in-memory copy.
+- **Minted credentials are shown exactly once.** The create picker shows a local
+  agent's token for copying, and the static-credential modal shows the key it
+  minted. Both assemble a single `plow` server config locally, targeting this
+  Mac's server-provided MCP URL with the token in an `Authorization` header,
+  never in the URL. Save the token before creating or deleting another; dismissal
+  drops Latch's in-memory copy, and Plow will not hand it back.
 
 
 Evidence, both reproducible and both failing loudly rather than quietly:

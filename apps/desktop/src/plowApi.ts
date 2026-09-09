@@ -127,11 +127,24 @@ export interface CloudAgentProvider {
 }
 
 export interface MintedCredential {
-  agentUid: string;
-  /** Shown once for self-hosted agent setup. */
+  /** Credential id, used to revoke a mint that cannot be handed to the user. */
+  id: number;
+  /** Shown to the user once, then dropped — never logged, never audited. */
   token: string;
   name: string;
 }
+
+/**
+ * The scopes a static MCP client is minted with, and the whole of them.
+ *
+ * `relay:call` alone: this credential is a tool that reaches this Mac, not an
+ * agent. It gets no `chats:use`, no `llm:chat` and no `payments:request` — the
+ * four together are the assistant role, and an assistant is created through
+ * `POST /v1/agents` on a line, which is a different thing a different screen
+ * makes. Written here as a frozen literal so a caller cannot widen it by
+ * passing scopes in.
+ */
+export const MCP_CLIENT_SCOPES: readonly string[] = Object.freeze(["relay:call"]);
 
 /**
  * Covers percent-decoded plaintext and standard Base64, in full and by 10-character prefix, but not
@@ -163,6 +176,26 @@ export function decodeAgentCreateReceipt(data: unknown, deviceCredential: string
     throw new PlowApiError("http", "Plow returned an unsafe agent response.");
   }
   return receipt as ReturnType<typeof decodeAgentCreateReceipt>;
+}
+
+/**
+ * Decode the mint receipt from `POST /v1/keys` before exposing its one-time token.
+ *
+ * The same guard `decodeAgentCreateReceipt` applies, for the same reason: the
+ * response comes from an origin that already holds this Mac's credential, and
+ * a body echoing it back — in any encoding this can see — is never shown, kept
+ * or handed on. The token in `token` is the MINTED one and is the point of the
+ * call; it is the device credential that may not appear.
+ */
+export function decodeKeyCreateReceipt(data: unknown, deviceCredential: string): MintedCredential {
+  const receipt = data as { id?: unknown; token?: unknown; name?: unknown } | null;
+  if (!receipt || typeof receipt.id !== "number" || typeof receipt.token !== "string" || !receipt.token) {
+    throw new PlowApiError("http", "Plow returned an invalid credential response.");
+  }
+  if (echoesCredential(JSON.stringify(receipt), deviceCredential)) {
+    throw new PlowApiError("http", "Plow returned an unsafe credential response.");
+  }
+  return { id: receipt.id, token: receipt.token, name: typeof receipt.name === "string" ? receipt.name : "" };
 }
 
 /** The account credential metadata returned by `GET /v1/api-keys`.
@@ -755,18 +788,25 @@ export class PlowApi {
     return { accounts, degraded };
   }
 
-  /** Create a self-hosted agent and return its one-time setup token. */
-  async createAgent(token: string, name: string, lineUid: string): Promise<MintedCredential> {
-    if (!lineUid) throw new PlowApiError("http", "Choose a line for this agent.");
-    const data = decodeAgentCreateReceipt(await this.call(
-      "POST", "/v1/agents", { token, body: { name, provider: "self_hosted", line_uid: lineUid } },
+  /**
+   * Mint a static credential for one MCP client, and return its one-time token.
+   *
+   * An ordinary key, not an agent: `POST /v1/keys` with `relay:call` and an
+   * EXPLICITLY empty chat grant. Empty rather than omitted — plow reads an
+   * omitted `chat_uids` as "inherit the caller's own grant", and the caller
+   * here is this Mac's login session, which holds every chat. A tool that only
+   * needs to reach this Mac would have walked away with all of them.
+   *
+   * The device credential rides in the Authorization header and nowhere else;
+   * `decodeKeyCreateReceipt` refuses a response that echoes it back.
+   */
+  async createMcpClientKey(token: string, name: string): Promise<MintedCredential> {
+    const trimmed = name.trim();
+    if (!trimmed) throw new PlowApiError("http", "Give this connection a name.");
+    const minted = decodeKeyCreateReceipt(await this.call(
+      "POST", "/v1/keys", { token, body: { name: trimmed, scopes: [...MCP_CLIENT_SCOPES], chat_uids: [] } },
     ), token);
-    if (!data.token) throw new PlowApiError("http", "Plow did not return an agent token.");
-    return { agentUid: data.agent.uid, token: data.token, name: data.agent.name };
-  }
-
-  async deleteAgent(token: string, uid: string): Promise<void> {
-    await this.call("DELETE", `/v1/agents/${encodeURIComponent(uid)}`, { token });
+    return { ...minted, name: minted.name || trimmed };
   }
 
   /** Credential metadata for the independent sessions section. */

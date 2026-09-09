@@ -91,7 +91,7 @@ describe("PlowApi", () => {
     const timeout = vi.spyOn(AbortSignal, "timeout").mockReturnValue(controller.signal);
 
     const pending = new PlowApi("https://api.plow.co", fetchImpl)
-      .createAgent("plow_device", "Claude Code", "line-7")
+      .createMcpClientKey("plow_device", "Claude Code")
       .catch((e) => e);
     controller.abort(new DOMException("The operation was aborted.", "TimeoutError"));
     const error = await pending;
@@ -493,16 +493,51 @@ describe("PlowApi", () => {
     expect(calls[0].url).not.toContain("act_secret_xyz");
   });
 
-  it("creates a local agent with a required line and returns its one-time token", async () => {
-    const { calls, fetchImpl } = recordingFetch([{ status: 201, body: {
-      agent: { uid: "agent-1", name: "Claude Code", credential: { id: 41 } }, token: "plow_agenttok",
+  it("mints a static MCP client as a key with relay reach and no chats", async () => {
+    const { calls, fetchImpl } = recordingFetch([{ status: 200, body: {
+      id: 41, token: "plow_clienttok", key_prefix: "abcdefgh",
+      scopes: ["relay:call"], name: "Claude Code", chat_uids: [],
     } }]);
     const api = new PlowApi("https://stub.invalid", fetchImpl);
-    await expect(api.createAgent("owner", "Claude Code", "")).rejects.toThrow("Choose a line");
-    const minted = await api.createAgent("owner", "Claude Code", "line-7");
-    expect(calls[0].url).toBe("https://stub.invalid/v1/agents");
-    expect(JSON.parse(String(calls[0].init.body))).toEqual({ provider: "self_hosted", name: "Claude Code", line_uid: "line-7" });
-    expect(minted).toMatchObject({ agentUid: "agent-1", token: "plow_agenttok" });
+    await expect(api.createMcpClientKey("owner", "   ")).rejects.toThrow("Give this connection a name.");
+    const minted = await api.createMcpClientKey("owner", "  Claude Code  ");
+
+    expect(calls[0].url).toBe("https://stub.invalid/v1/keys");
+    // `chat_uids: []` is sent EXPLICITLY. Omitting it makes plow inherit the
+    // caller's grant, and the caller is this Mac's login session — which holds
+    // every chat on the account.
+    expect(JSON.parse(String(calls[0].init.body))).toEqual({
+      name: "Claude Code", scopes: ["relay:call"], chat_uids: [],
+    });
+    expect(minted).toEqual({ id: 41, token: "plow_clienttok", name: "Claude Code" });
+    // The device credential rides in the header and nowhere else.
+    expect(calls[0].init.headers).toMatchObject({ authorization: "Bearer owner" });
+    expect(String(calls[0].init.body)).not.toContain("owner");
+  });
+
+  const STATIC_MINT_CREDENTIAL = "plow_device_static_mint_secret";
+  it.each([
+    STATIC_MINT_CREDENTIAL,
+    Buffer.from(STATIC_MINT_CREDENTIAL).toString("base64"),
+    STATIC_MINT_CREDENTIAL.slice(0, 10),
+    "%" + STATIC_MINT_CREDENTIAL.charCodeAt(0).toString(16) + STATIC_MINT_CREDENTIAL.slice(1),
+    [...STATIC_MINT_CREDENTIAL].map((c) => "%" + c.charCodeAt(0).toString(16)).join(""),
+  ])("refuses a mint receipt that echoes this Mac's own credential: %s", async (echo) => {
+    const { fetchImpl } = recordingFetch([{ status: 200, body: {
+      id: 41, token: "plow_clienttok", name: echo, key_prefix: "abcdefgh", scopes: [], chat_uids: [],
+    } }]);
+    await expect(
+      new PlowApi("https://stub.invalid", fetchImpl).createMcpClientKey(STATIC_MINT_CREDENTIAL, "Claude Code"),
+    ).rejects.toThrow("Plow returned an unsafe credential response.");
+  });
+
+  it("refuses a mint receipt with no usable token or id", async () => {
+    for (const body of [{ token: "plow_t" }, { id: 41 }, { id: 41, token: "" }, { id: "41", token: "plow_t" }]) {
+      const { fetchImpl } = recordingFetch([{ status: 200, body }]);
+      await expect(
+        new PlowApi("https://stub.invalid", fetchImpl).createMcpClientKey("owner", "Claude Code"),
+      ).rejects.toThrow("Plow returned an invalid credential response.");
+    }
   });
 
   it("lists cloud-agent providers with the credential only in the bearer header", async () => {
