@@ -730,6 +730,7 @@ ipcMain.handle("cloud:create", async (_e, input: unknown) => {
     provider: typeof raw.provider === "string" ? raw.provider : "",
     lineUid: raw.lineUid === null ? null : typeof raw.lineUid === "string" ? raw.lineUid : "",
   });
+  await cloudAgents?.refresh();
   await connectClient?.refreshRoster();
   return agentsTabState();
 });
@@ -754,6 +755,7 @@ ipcMain.handle("cloud:changeLine", async (_e, input: unknown) => {
     agentId: typeof raw.agentId === "string" ? raw.agentId : "",
     lineUid: raw.lineUid === null ? null : typeof raw.lineUid === "string" ? raw.lineUid : "",
   });
+  await cloudAgents?.refresh();
   await connectClient?.refreshRoster();
   return agentsTabState();
 });
