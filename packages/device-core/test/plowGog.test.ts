@@ -5,7 +5,13 @@
  * seam.
  */
 import { describe, expect, it } from "vitest";
-import { gogExitReason, mergeFanout, planPlowGog, type PlowGogPlan } from "../src/providers/plowGog.js";
+import {
+  conflictRefusal,
+  gogExitReason,
+  mergeFanout,
+  planPlowGog,
+  type PlowGogPlan,
+} from "../src/providers/plowGog.js";
 
 describe("planPlowGog", () => {
   // One row per behavior. `expected` is the WHOLE plan — a partial match would
@@ -485,5 +491,57 @@ describe("gog exit reasons", () => {
     { why: "a signalled child has no code at all", code: null, reason: "gog exited -1" },
   ])("$why", ({ code, reason }) => {
     expect(gogExitReason(code)).toBe(reason);
+  });
+});
+
+/**
+ * The conflict gate's verdict: complete across every connected account, or a
+ * refusal that says which account it could not clear. Counts only — approving
+ * a create approves no read.
+ */
+describe("conflictRefusal", () => {
+  it("clears a window every account answered clean for", () => {
+    expect(
+      conflictRefusal(
+        [
+          { account: "a@example.com", conflicts: 0 },
+          { account: "b@example.com", conflicts: 0 },
+        ],
+        [],
+      ),
+    ).toBeNull();
+  });
+
+  it("refuses on an overlap in an account the event is not booked on", () => {
+    const refusal = conflictRefusal(
+      [
+        { account: "a@example.com", conflicts: 2 },
+        { account: "b@example.com", conflicts: 0 },
+      ],
+      [],
+    );
+    expect(refusal).toContain("a@example.com: 2 event(s) overlap");
+    // The clean account is not evidence of anything to report.
+    expect(refusal).not.toContain("b@example.com");
+    expect(refusal).toContain("--confirm-conflict");
+  });
+
+  it("refuses when an account could not be checked, naming it", () => {
+    const refusal = conflictRefusal(
+      [{ account: "a@example.com", conflicts: 0 }],
+      [{ account: "c@example.com", reason: "needs_reauth" }],
+    );
+    // A check with a hole in it must not read as clear.
+    expect(refusal).toContain("c@example.com: could not check (needs_reauth)");
+    expect(refusal).toContain("--confirm-conflict");
+  });
+
+  it("reports overlaps and unchecked accounts together", () => {
+    const refusal = conflictRefusal(
+      [{ account: "a@example.com", conflicts: 1 }],
+      [{ account: "c@example.com", reason: "needs_reauth" }],
+    );
+    expect(refusal).toContain("a@example.com: 1 event(s) overlap");
+    expect(refusal).toContain("c@example.com: could not check");
   });
 });

@@ -596,7 +596,13 @@ esac
     expect(String(jv(response).get("output").str ?? "")).toContain("TOKEN=tok-a");
   });
 
-  itSpawns.each([
+  itSpawns.each<{
+    why: string;
+    accounts: () => { account: string; token: string; isDefault: boolean }[];
+    degraded?: { account: string; reason: string }[];
+    extra: string[];
+    expected: string;
+  }>([
     {
       why: "a busy slot",
       accounts: () => AB,
@@ -604,13 +610,30 @@ esac
       expected: "1 event(s) overlap",
     },
     {
+      // The hole this chunk closes: the owner is busy on a calendar the
+      // event is not being booked on, and the old probe never looked.
+      why: "a conflict on a connected account the event is not booked on",
+      accounts: () => AB,
+      extra: ["--account", "b@example.com"],
+      expected: "a@example.com: 1 event(s) overlap",
+    },
+    {
       why: "a probe that cannot answer",
       accounts: () => [{ account: "a@example.com", token: "tok-cbad", isDefault: true }],
       extra: [],
       expected: "could not check",
     },
-  ])("refuses a timed create over $why, recorded as an error", async ({ accounts, extra, expected }) => {
-    const d = device(accountsMinter(accounts()), [plowVendorDir()]);
+    {
+      // A check with a hole in it must not read as clear: the account the
+      // mint could not reach was never checked either.
+      why: "an account the mint could not reach",
+      accounts: () => [AB[1]!],
+      degraded: [{ account: "c@example.com", reason: "needs_reauth" }],
+      extra: ["--account", "b@example.com"],
+      expected: "c@example.com: could not check (needs_reauth)",
+    },
+  ])("refuses a timed create over $why, recorded as an error", async ({ accounts, degraded, extra, expected }) => {
+    const d = device(accountsMinter(accounts(), degraded ?? []), [plowVendorDir()]);
     const response = await run(d, [
       "plow-gog", "calendar", "create", "primary", "--summary", "X",
       "--from", "2026-08-28T10:00:00Z", "--to", "2026-08-28T11:00:00Z", ...extra,
@@ -630,6 +653,15 @@ esac
     const events = d.audit.entries().map((e) => jv(e).get("event").str);
     expect(events).toContain("exec_error");
     expect(events).not.toContain("exec_end");
+  });
+
+  itSpawns("books when every connected account is clear", async () => {
+    const d = device(accountsMinter([AB[1]!]), [plowVendorDir()]);
+    const response = await run(d, [
+      "plow-gog", "calendar", "create", "primary", "--summary", "X",
+      "--from", "2026-08-28T10:00:00Z", "--to", "2026-08-28T11:00:00Z",
+    ]);
+    expect(String(jv(response).get("output").str ?? "")).toContain("evt-1");
   });
 
   itSpawns("books anyway with --confirm-conflict", async () => {

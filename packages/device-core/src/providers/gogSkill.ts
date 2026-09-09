@@ -66,10 +66,14 @@ per-mailbox: a \`gmail get\` on an id from a fan-out result passes
 account that received the thread.
 
 **Timed calendar creates are conflict-gated.** A \`calendar create\` with
-timed \`--from\`/\`--to\` first checks the window on the target account;
-overlaps come back as an error carrying only the overlap count. Re-send the SAME
-command with \`--confirm-conflict\` to book anyway. All-day (date-only)
-events skip the check.
+timed \`--from\`/\`--to\` first checks the window on EVERY connected
+account — the owner is busy if any of their calendars is, whichever account
+the event lands on. Overlaps come back as an error carrying the overlap COUNT
+per account, and an account that could not be checked is named there too.
+Re-send the SAME command with \`--confirm-conflict\` to book anyway — only
+when the owner fixed the time themselves; otherwise tell them what the slot
+overlaps and ask. Use \`calendar conflicts\` if you want the names.
+All-day (date-only) events skip the check.
 
 \`--account\` and \`--confirm-conflict\` are plow-gog's own arguments and never
 reach Google; everything else is the CLI's ordinary grammar.

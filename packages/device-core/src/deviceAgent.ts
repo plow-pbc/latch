@@ -14,7 +14,7 @@
 import { capabilityDisplay, Intent, intentIsExpired, JSONValue, jv, overlapsRoot } from "@domo/protocol";
 import { PROVIDERS, vendoredProvider, type VendoredProvider } from "./providers/registry.js";
 import { MintError, type MintedAccounts, type Minter } from "./providers/mint.js";
-import { gogExitReason, mergeFanout, planPlowGog } from "./providers/plowGog.js";
+import { conflictRefusal, gogExitReason, mergeFanout, planPlowGog } from "./providers/plowGog.js";
 import fs from "node:fs";
 import path from "node:path";
 import { APPROVAL_SOURCE_EXPIRED } from "./approvalStore.js";
@@ -1363,44 +1363,50 @@ export class DeviceAgent {
     this.audit.record("exec_start", { intentId: intent.intentId, argv });
     if (plan.conflictCheck !== null && !plan.confirmConflict) {
       const { from, to } = plan.conflictCheck;
-      const probe = await settled(
-        await runGog(
-          ["calendar", "conflicts", "--from", from, "--to", to, "--json", "--results-only"],
-          target.token,
-        ),
+      // The SAME fan-out the read path gets: the owner is busy if ANY of
+      // their connected calendars is, whichever account the event lands on.
+      const probes = await Promise.all(
+        minted.accounts.map(async (a) => ({
+          a,
+          result: await settled(
+            await runGog(
+              ["calendar", "conflicts", "--from", from, "--to", to, "--json", "--results-only"],
+              a.token,
+            ),
+          ),
+        })),
       );
-      let conflicts: unknown = null;
-      if (probe.exitCode === 0) {
-        try {
-          conflicts = JSON.parse(this.executor.stdout(probe.handle).toString("utf8"));
-        } catch {
-          /* handled below: an unreadable probe is a failed check */
+      const probed: { account: string; conflicts: number }[] = [];
+      // An account the mint could not reach was never checked either, so it
+      // rides the refusal beside the ones whose probe failed.
+      const unchecked: { account: string; reason: string }[] = minted.degraded.map((d) => ({
+        account: d.account,
+        reason: d.reason,
+      }));
+      for (const { a, result } of probes) {
+        let conflicts: unknown = null;
+        if (result.exitCode === 0) {
+          try {
+            conflicts = JSON.parse(this.executor.stdout(result.handle).toString("utf8"));
+          } catch {
+            /* handled below: an unreadable probe is an unchecked account */
+          }
         }
+        if (Array.isArray(conflicts)) probed.push({ account: a.account, conflicts: conflicts.length });
+        else
+          unchecked.push({
+            account: a.account,
+            reason: result.exitCode === 0 ? "the check did not answer readably" : gogExitReason(result.exitCode),
+          });
       }
-      // Both refusals below record exec_error, never a zero-exit exec_end:
-      // the approved create did NOT happen, and the desktop renders an
-      // exit-0 exec_end green (viewModel.ts) — a refusal wearing a success
-      // badge. The create child's own outcome gets the one exec_end, in
-      // finishRun.
-      if (!Array.isArray(conflicts)) {
-        // Fail loud, with the override in hand: silently booking past a
-        // broken check would make the gate's absence invisible.
-        return this.execError(
-          intent.intentId,
-          "could not check the calendar for conflicts; re-send the same command " +
-            "with --confirm-conflict to book without the check",
-        );
-      }
-      if (conflicts.length > 0) {
-        // The COUNT only. The records themselves are calendar content the
-        // owner approved a CREATE for, not a read — returning them would be
-        // an unapproved read riding a create argv.
-        return this.execError(
-          intent.intentId,
-          `the slot is busy — ${conflicts.length} event(s) overlap this window. ` +
-            "Re-send the same command with --confirm-conflict to book anyway.",
-        );
-      }
+      // Fail loud, with the override in hand: silently booking past a broken
+      // or partial check would make the gate's absence invisible.
+      const refusal = conflictRefusal(probed, unchecked);
+      // A refusal records exec_error, never a zero-exit exec_end: the
+      // approved create did NOT happen, and the desktop renders an exit-0
+      // exec_end green (viewModel.ts) — a refusal wearing a success badge.
+      // The create child's own outcome gets the one exec_end, in finishRun.
+      if (refusal !== null) return this.execError(intent.intentId, refusal);
     }
     return this.finishRun(intent.intentId, await runGog(plan.gogArgv.slice(1), target.token));
   }
