@@ -92,7 +92,7 @@ describe("the wire log", () => {
     await loggingFetch(
       home,
       answering(200, { uid: "agent_1", session_id: "session_secret_identity" }),
-    )("https://api.plow.co/v1/assistants", post());
+    )("https://api.plow.co/v1/agents", post());
 
     expect(fs.readFileSync(wireLogPath(home), "utf8")).not.toContain("session_secret_identity");
   });
@@ -108,7 +108,7 @@ describe("the wire log", () => {
     const home = tempHome();
 
     await loggingFetch(home, answering(400, body))(
-      "https://api.plow.co/v1/assistants",
+      "https://api.plow.co/v1/agents",
       post(),
     );
 

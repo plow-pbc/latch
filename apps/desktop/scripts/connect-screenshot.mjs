@@ -93,36 +93,20 @@ const NO_NUMBER_AGENT = {
   canMessage: false,
   threads: [],
 };
-const EMPTY_ROSTER = { cloud: [], mcp: [], other: [], revokedHidden: 0 };
+const EMPTY_ROSTER = { mcp: [], other: [], revokedHidden: 0 };
 const ROSTER = {
-  cloud: [
-    {
-      id: 201, name: ACTIVE_AGENT.name, kind: "Agent",
-      createdAt: "2026-08-24T18:00:00.000Z", lastSeenAt: new Date(Date.now() - 4 * 60_000).toISOString(),
-      agentId: ACTIVE_AGENT.agentId, chatUids: [], chatAccess: "none",
-      permissions: { canReadAndReply: true, canReachMac: true, canSpendInference: true },
-      isActive: true, isThisMac: false,
-    },
-    {
-      id: 202, name: PROVISIONING_AGENT.name, kind: "Agent",
-      createdAt: new Date().toISOString(), lastSeenAt: null,
-      agentId: PROVISIONING_AGENT.agentId, chatUids: ["chat_trip"], chatAccess: "listed",
-      permissions: { canReadAndReply: true, canReachMac: false, canSpendInference: false },
-      isActive: true, isThisMac: false,
-    },
-  ],
   mcp: [
     {
       id: 301, name: "Claude Code on MacBook Pro", kind: "Agent",
       createdAt: "2026-08-12T17:00:00.000Z", lastSeenAt: new Date(Date.now() - 6 * 60_000).toISOString(),
-      agentId: null, chatUids: ["*"], chatAccess: "all",
+      chatUids: ["*"], chatAccess: "all",
       permissions: { canReadAndReply: true, canReachMac: true, canSpendInference: true },
       isActive: true, isThisMac: false,
     },
     {
       id: 302, name: "Cursor desktop", kind: "Agent",
       createdAt: new Date().toISOString(), lastSeenAt: null,
-      agentId: null, chatUids: [], chatAccess: "none",
+      chatUids: [], chatAccess: "none",
       permissions: { canReadAndReply: true, canReachMac: true, canSpendInference: true },
       isActive: true, isThisMac: false,
     },
@@ -131,21 +115,21 @@ const ROSTER = {
     {
       id: 401, name: "Plow Latch on this Mac", kind: "Session",
       createdAt: "2026-07-28T17:00:00.000Z", lastSeenAt: new Date(Date.now() - 3 * 60_000).toISOString(),
-      agentId: null, chatUids: [], chatAccess: "none",
+      chatUids: [], chatAccess: "none",
       permissions: { canReadAndReply: false, canReachMac: false, canSpendInference: false },
       isActive: true, isThisMac: true,
     },
     {
       id: 402, name: "Plow website · Safari", kind: "Plow web login",
       createdAt: "2026-08-24T17:00:00.000Z", lastSeenAt: new Date(Date.now() - 12 * 60_000).toISOString(),
-      agentId: null, chatUids: [], chatAccess: "none",
+      chatUids: [], chatAccess: "none",
       permissions: { canReadAndReply: false, canReachMac: true, canSpendInference: false },
       isActive: true, isThisMac: false,
     },
     {
       id: 403, name: "Legacy automation token", kind: "Admin — full access",
       createdAt: "2026-08-20T17:00:00.000Z", lastSeenAt: null,
-      agentId: null, chatUids: ["*"], chatAccess: "all",
+      chatUids: ["*"], chatAccess: "all",
       permissions: { canReadAndReply: true, canReachMac: true, canSpendInference: true },
       isActive: true, isThisMac: false,
     },
@@ -172,6 +156,7 @@ const CLOUD_EMPTY = {
   cloudChatsNeedReactivation: false,
   cloudActionError: null,
   cloudChatsLoaded: true,
+  cloudLinesLoaded: true,
 };
 const CLOUD_READY = {
   ...CLOUD_EMPTY,
@@ -229,23 +214,10 @@ async function setUp() {
 
   /** Plow, stood in for — the one call this screen can make. */
   const api = {
-    async createAgent(token, name) {
+    async createAgent(token, name, lineUid) {
       if (token !== DEVICE_TOKEN) throw new Error("the mint must use the device credential");
-      return {
-        id: 700,
-        token: CLIENT_TOKEN,
-        keyPrefix: CLIENT_TOKEN.slice(5, 13),
-        name,
-        mcpConfig: JSON.stringify({
-          mcpServers: {
-            "plow-macbook-pro": {
-              type: "http",
-              url: MCP_URL,
-              headers: { Authorization: `Bearer ${CLIENT_TOKEN}` },
-            },
-          },
-        }),
-      };
+      if (lineUid !== "lin_ash") throw new Error("the mint must use the selected line");
+      return { agentUid: "agent-static", token: CLIENT_TOKEN, name };
     },
   };
 
@@ -371,19 +343,8 @@ async function setUp() {
   ipcMain.handle("roster:remove", async (_e, id) => {
     rosterFixture = {
       ...rosterFixture,
-      cloud: rosterFixture.cloud.filter((row) => row.id !== id),
       mcp: rosterFixture.mcp.filter((row) => row.id !== id),
       other: rosterFixture.other.filter((row) => row.id !== id),
-    };
-    return state();
-  });
-  ipcMain.handle("roster:rename", async (_e, id, name) => {
-    const renamed = (rows) => rows.map((row) => (row.id === id ? { ...row, name } : row));
-    rosterFixture = {
-      ...rosterFixture,
-      cloud: renamed(rosterFixture.cloud),
-      mcp: renamed(rosterFixture.mcp),
-      other: renamed(rosterFixture.other),
     };
     return state();
   });
@@ -542,7 +503,7 @@ const SCREENS = [
     prepare: async (win) => {
       const stale = await win.webContents.executeJavaScript(`(() => {
         const cloud = [...document.querySelectorAll(".list-section")]
-          .find((section) => section.querySelector("h2")?.textContent.trim() === "Cloud agents");
+          .find((section) => section.querySelector("h2")?.textContent.trim() === "Agents");
         const labels = [...cloud.querySelectorAll("button")].map((button) =>
           button.textContent.trim());
         const rows = [...cloud.querySelectorAll(".cloud-agent-row")];
@@ -566,7 +527,7 @@ const SCREENS = [
       }
     },
     expect: [
-      "Cloud agents", "2 agents", "New agent", "Household helper", "Ready",
+      "Agents", "2 agents", "New agent", "Household helper", "Ready",
       "Willow · +1 415-555-0142", "Created Aug 24", "Trip planner", "Setting up…",
       "+1 628-555-0144", "Created today", "Message",
       "MCP clients", "Claude Code on MacBook Pro", "Cursor desktop",
@@ -673,7 +634,7 @@ const SCREENS = [
       await waitFor(win, `!document.querySelector(".cloud-modal")`,
         "the existing-line create modal to close");
     },
-    expect: ["Cloud agents", "New helper", "Ash · +1 415-555-0199", "Setting up…", "Created today"],
+    expect: ["Agents", "New helper", "Ash · +1 415-555-0199", "Setting up…", "Created today"],
   },
   {
     name: "cloud-code-confirmed",
@@ -798,6 +759,7 @@ const SCREENS = [
       cloudAgents: [ACTIVE_AGENT],
       cloudFreeLines: [],
       cloudChatsError: "Plow returned 503.",
+      cloudLinesLoaded: false,
       cloudChatsLoaded: false,
     },
     prepare: async (win) => {
@@ -819,7 +781,7 @@ const SCREENS = [
   },
   {
     name: "cloud-detail",
-    roster: { ...ROSTER, cloud: [ROSTER.cloud[0]], mcp: [], other: [] },
+    roster: { ...ROSTER, mcp: [], other: [] },
     cloud: { ...CLOUD_READY, cloudAgents: [ACTIVE_AGENT] },
     prepare: async (win) => {
       await win.webContents.executeJavaScript(
@@ -993,7 +955,7 @@ const SCREENS = [
       await waitFor(win, `document.querySelector(".cloud-modal .cloud-detail-threads")`,
         "the loading-thread detail");
     },
-    expect: ["Household helper", "Line unavailable", "Loading threads…", "Delete agent"],
+    expect: ["Household helper", "No line", "Loading threads…", "Delete agent"],
   },
   {
     name: "cloud-chat-failed-detail",
@@ -1016,7 +978,7 @@ const SCREENS = [
         throw new Error("detail exposed a raw line uid while chats were unavailable");
       }
     },
-    expect: ["Household helper", "Line unavailable", "Threads couldn't be loaded", "Delete agent"],
+    expect: ["Household helper", "No line", "Threads couldn't be loaded", "Delete agent"],
   },
   {
     name: "cloud-delete-confirm",
@@ -1130,7 +1092,7 @@ const SCREENS = [
     expect: [
       "Chats could not be loaded",
       "This Mac cannot list chats yet. Try re-activating it, then try again.",
-      "Cloud agents could not be refreshed",
+      "Agents could not be refreshed",
       "Plow couldn't complete that request. Try again.",
       "Sign out and re-activate",
       "Household helper", "Ready",
@@ -1146,7 +1108,7 @@ const SCREENS = [
       );
       if (hasSetup) throw new Error("removed cloud-agent setup action remains");
     },
-    expect: ["New agent", "No cloud agents.", "No MCP clients.", "No other sessions.", "Connect MCP client"],
+    expect: ["New agent", "No agents.", "No MCP clients.", "No other sessions.", "Connect MCP client"],
   },
   {
     name: "oauth",
@@ -1220,21 +1182,32 @@ const SCREENS = [
     expect: [
       "Static credential",
       "Name this connection",
-      // The picker is what makes a self-hosted agent's credential the assistant
-      // role rather than MCP-only, so the screen has to offer the choice.
-      "Pick the line this agent answers on",
+      "Choose a free line for this self-hosted agent.",
       "Create Credential",
       "Cancel",
     ],
   },
   {
     name: "static-shown",
+    cloud: { ...CLOUD_EMPTY, cloudFreeLines: [{ uid: "lin_ash", label: "Ash" }] },
     prepare: async (win) => {
       await clickText(win, "Connect MCP client", 0);
       await waitFor(win, `document.querySelector(".connect-modal .connect")`, "the MCP setup modal");
       await clickText(win, "Can't use OAuth");
       await type(win, `input[placeholder="Claude Code"]`, "Claude Code");
+      const blocked = await win.webContents.executeJavaScript(`(() => {
+        const button = [...document.querySelectorAll(".modal button")]
+          .find((node) => node.textContent === "Create Credential");
+        return button?.disabled === true;
+      })()`);
+      if (!blocked) throw new Error("static creation enabled without a line");
+      await win.webContents.executeJavaScript(`(() => {
+        const line = document.querySelector('.modal select[aria-label="Line"]');
+        line.value = "lin_ash";
+        line.dispatchEvent(new Event("change", { bubbles: true }));
+      })()`);
       await clickText(win, "Create Credential");
+      console.log("STATIC-LINE: creation blocked until line selected; selected line minted");
     },
     // The credential and its "I've Saved It" button are the point of this
     // screen, and they can sit below the fold in a 620pt window. Scroll to
@@ -1326,5 +1299,15 @@ app.whenReady().then(async () => {
   });
 
   fs.rmSync(home, { recursive: true, force: true });
+  rosterFixture = ROSTER;
+  const id = ROSTER.mcp[0].id;
+  const renameExposed = await win.webContents.executeJavaScript(`
+    typeof window.domo.rosterRename !== "undefined" ||
+    [...document.querySelectorAll(".more-menu button")].some((node) => node.textContent === "Rename")
+  `);
+  if (renameExposed) throw new Error("unsupported session rename remains exposed");
+  const removed = await win.webContents.executeJavaScript(`window.domo.rosterRemove(${id})`);
+  if (removed.roster.mcp.some((row) => row.id === id)) throw new Error("roster remove retained the MCP session");
+  console.log("ROSTER-EDIT: unsupported rename absent; remove passed");
   app.exit(failures + extra.length === 0 ? 0 : 1);
 });

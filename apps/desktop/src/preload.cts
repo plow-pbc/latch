@@ -146,7 +146,8 @@ contextBridge.exposeInMainWorld("domo", {
   onShowSettings: (cb: () => void) => ipcRenderer.on("ui:showSettings", cb),
   // Main asks before it tears the window down; the renderer answers once the
   // owner has had their say about anything unsaved.
-  onConfirmLeave: (cb: () => void) => ipcRenderer.on("ui:confirmLeave", cb),
+  onConfirmLeave: (cb: (hasPendingAgentSetup: boolean) => void) =>
+    ipcRenderer.on("ui:confirmLeave", (_event, hasPendingAgentSetup: boolean) => cb(hasPendingAgentSetup)),
   confirmLeaveReply: (ok: boolean) => ipcRenderer.send("ui:confirmLeaveReply", ok),
 
   // First-run setup window. Every call returns the whole state, so the screen
@@ -178,20 +179,16 @@ contextBridge.exposeInMainWorld("domo", {
   // whole state so the screen renders from one shape. The minted credential
   // lives in that state for exactly as long as it is on screen.
   connectGet: () => ipcRenderer.invoke("connect:get"),
-  connectCreate: (name: string, lineUid: string | null) =>
+  connectCreate: (name: string, lineUid: string) =>
     ipcRenderer.invoke("connect:create", name, lineUid),
   connectDismiss: () => ipcRenderer.invoke("connect:dismiss"),
-  // Remove one roster row — a cloud agent, an MCP client or another session.
-  // The renderer says WHICH row; main decides which call that row needs, because
-  // getting it wrong leaves a live agent nobody can reach.
+  // Revoke an independent session, or sign this Mac out through its lifecycle.
   rosterRemove: (id: number) => ipcRenderer.invoke("roster:remove", id),
-  // Rename one roster row. One route for every section — see
-  // `ConnectClient.renameRosterRow`.
-  rosterRename: (id: number, name: string) => ipcRenderer.invoke("roster:rename", id, name),
   // Remove a cloud agent by its own id. For the agent whose credential row is
   // missing — an inactive credential on a still-running agent — where there is
   // no roster row to name and none is needed.
   cloudRemove: (agentId: string) => ipcRenderer.invoke("cloud:remove", agentId),
+  agentDismissToken: () => ipcRenderer.invoke("agents:dismissToken"),
   cloudRefresh: () => ipcRenderer.invoke("cloud:refresh"),
   cloudAgents: (): Promise<CloudAgentsPreloadState | null> => ipcRenderer.invoke("cloud:agents"),
   cloudCreate: (input: { name: string; provider: string; lineUid: string | null }) =>

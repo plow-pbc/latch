@@ -227,6 +227,10 @@ let onboarding: Onboarding | null = null;
 let connectors: Connectors | null = null;
 let connectClient: ConnectClient | null = null;
 let cloudAgents: CloudAgentState | null = null;
+let agentToken: string | null = null;
+function requireAgentTokenSaved(): void {
+  if (agentToken) throw new Error("Save the agent token before creating or deleting an agent.");
+}
 let onboardingWindow: BrowserWindow | null = null;
 let onboardingWindowReady: BrowserWindow | null = null;
 let updates: UpdateController | null = null;
@@ -586,6 +590,7 @@ function signOut() {
   // And the cloud group: its rows, its chat list and any provision still being
   // polled all belong to the account that just went away.
   cloudAgents?.signedOut();
+  agentToken = null;
   // The gate, not a bare `openOnboardingWindow`: with no credential this Mac is
   // not usable, so the main window goes away as the setup window arrives.
   // Opening it boots at Welcome. Activation is deliberately deferred until
@@ -605,6 +610,7 @@ function signOut() {
  * accepts them.
  */
 async function signOutThisMac(): Promise<void> {
+  if (hasPendingAgentSetup() && !(await mayLeaveMain(mainWindow))) return;
   // A second click, before the button re-rendered. The first already signed
   // out; going round again would reset the setup window and mint a fresh code
   // over the one the user may have just texted.
@@ -692,10 +698,10 @@ ipcMain.handle("cloud:refresh", async () => {
 ipcMain.handle("cloud:agents", async () => {
   return cloudAgentsIpcResult(cloudAgents);
 });
-ipcMain.handle("connect:create", async (_e, name: string, lineUid: string | null) => {
+ipcMain.handle("connect:create", async (_e, name: string, lineUid: string) => {
+  requireAgentTokenSaved();
   await connectClient?.createCredential(name, lineUid);
-  // The credential it just minted is a roster row nobody has read yet.
-  await connectClient?.refreshRoster();
+  await cloudAgents?.refresh();
   return agentsTabState();
 });
 /**
@@ -704,14 +710,10 @@ ipcMain.handle("connect:create", async (_e, name: string, lineUid: string | null
  * A live agent whose credential has gone inactive has no roster row, and the
  * screen used to disable Remove for it — a running agent nobody could take
  * down. Its removal never needed the credential: `DELETE
- * /v1/assistants/{uid}` is keyed on the assistant.
- *
- * The roster is re-read afterwards because the credential row, if there was
- * one, is gone with it.
+ * /v1/agents/{uid}` is keyed on the assistant.
  */
 ipcMain.handle("cloud:remove", async (_e, agentId: string) => {
   await cloudAgents?.remove(agentId);
-  await connectClient?.refreshRoster();
   return agentsTabState();
 });
 
@@ -722,21 +724,22 @@ ipcMain.handle("cloud:create", async (_e, input: unknown) => {
     provider: typeof raw.provider === "string" ? raw.provider : "",
     lineUid: raw.lineUid === null ? null : typeof raw.lineUid === "string" ? raw.lineUid : "",
   });
-  await connectClient?.refreshRoster();
+  await cloudAgents?.refresh();
   return agentsTabState();
 });
+ipcMain.handle("agents:dismissToken", () => { agentToken = null; });
 ipcMain.handle("cloud:cancelLineFlow", async () => {
   cloudAgents?.cancelLineFlow();
   return agentsTabState();
 });
 ipcMain.handle("cloud:retryLineFlow", async () => {
   await cloudAgents?.retryLineFlow();
-  await connectClient?.refreshRoster();
+  await cloudAgents?.refresh();
   return agentsTabState();
 });
 ipcMain.handle("cloud:retryFailed", async (_e, agentId: string) => {
   await cloudAgents?.retryFailed(agentId);
-  await connectClient?.refreshRoster();
+  await cloudAgents?.refresh();
   return agentsTabState();
 });
 ipcMain.handle("cloud:changeLine", async (_e, input: unknown) => {
@@ -745,7 +748,7 @@ ipcMain.handle("cloud:changeLine", async (_e, input: unknown) => {
     agentId: typeof raw.agentId === "string" ? raw.agentId : "",
     lineUid: raw.lineUid === null ? null : typeof raw.lineUid === "string" ? raw.lineUid : "",
   });
-  await connectClient?.refreshRoster();
+  await cloudAgents?.refresh();
   return agentsTabState();
 });
 ipcMain.handle("cloud:openMessages", async (_e, agentId?: unknown) => {
@@ -770,12 +773,6 @@ ipcMain.handle("roster:remove", async (_e, id: number) => {
   return agentsTabState();
 });
 
-/** Rename one roster row. Validation of the id and the name lives in `PlowApi`. */
-ipcMain.handle("roster:rename", async (_e, id: number, name: string) => {
-  await connectClient?.renameRosterRow(id, name);
-  return agentsTabState();
-});
-
 ipcMain.handle("connect:dismiss", async () => {
   connectClient?.dismissCredential();
   return agentsTabState();
@@ -787,7 +784,7 @@ function agentsTabState(): Record<string, unknown> | null {
   const connect = connectClient?.state() ?? null;
   const cloud = cloudAgents?.state() ?? null;
   if (!connect) return null;
-  return { ...connect, ...(cloud ?? {}) };
+  return { ...connect, ...(cloud ?? {}), agentToken };
 }
 
 // MARK: IPC for the first-run setup window
@@ -2112,21 +2109,19 @@ app.whenReady().then(async () => {
       mainWindow?.webContents.send("connectors:changed", state);
     },
   });
-  // Built first: the roster's removal routing needs the cloud-agent client,
-  // because a row naming a cloud assistant must be deleted as an assistant and
-  // never revoked as a key.
   const cloudApi = new PlowApi(apiBaseUrl, loggingFetch(home));
-  const cloudAgentsClient = new CloudAgentsClient(cloudApi);
+  const cloudAgentsClient = new CloudAgentsClient(cloudApi, undefined, (token, owner) => {
+    if (loadSettings(home).relayCredential.trim() !== owner) return;
+    agentToken = token;
+    notifyRenderer("connect:changed");
+  }, (owner) => {
+    if (loadSettings(home).relayCredential.trim() === owner) requireAgentTokenSaved();
+  });
 
   connectClient = new ConnectClient({
     api: new PlowApi(apiBaseUrl),
     home,
     isConnected: () => connected,
-    // Through the state that owns the agent's poll, row and settings — not the
-    // raw client, which would leave all three behind.
-    removeCloudAgent: async (agentId: string) => {
-      await cloudAgents?.remove(agentId);
-    },
     signOutThisMac,
     onChange: () => notifyRenderer("connect:changed"),
   });
@@ -2321,6 +2316,11 @@ app.whenReady().then(async () => {
 let leaveInFlight: Promise<boolean> | null = null;
 /** Settles the question above when the window it was asked of dies unanswered. */
 let settleLeave: ((ok: boolean) => void) | null = null;
+function hasPendingAgentSetup(): boolean {
+  const connect = connectClient?.state();
+  return Boolean(agentToken || connect?.busy || connect?.credential ||
+    cloudAgents?.state().cloudLineFlow.phase === "creating");
+}
 function mayLeaveMain(win: BrowserWindow | null): Promise<boolean> {
   if (!win || win.isDestroyed()) return Promise.resolve(true);
   leaveInFlight ??= new Promise<boolean>((resolve) => {
@@ -2338,7 +2338,7 @@ function mayLeaveMain(win: BrowserWindow | null): Promise<boolean> {
     // bridge uses ipcRenderer.on, which does not replay, so a question sent
     // mid-load is one nobody will ever answer — and this promise is shared, so
     // that would strand every later close behind it. Same wait as showSettings.
-    const ask = () => win.webContents.send("ui:confirmLeave");
+    const ask = () => win.webContents.send("ui:confirmLeave", hasPendingAgentSetup());
     if (win.webContents.isLoading()) win.webContents.once("did-finish-load", ask);
     else ask();
   }).finally(() => { leaveInFlight = null; });

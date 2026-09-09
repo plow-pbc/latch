@@ -19,7 +19,7 @@
  * by launching a window is one nobody tests.
  */
 import { PlowApi, PlowApiError } from "./plowApi.js";
-import { EMPTY_ROSTER, RosterSections, RosterSectionRow, sectionRoster } from "./rosterSections.js";
+import { EMPTY_ROSTER, RosterSections, sectionRoster } from "./rosterSections.js";
 import { loadSettings, Settings } from "./settings.js";
 
 export interface ClientCredential {
@@ -60,7 +60,7 @@ export interface ConnectClientState {
    * credential, like every message here. */
   rosterError: string | null;
   /**
-   * Why Plow could not confirm the last row action — a removal or a rename.
+   * Why Plow could not confirm the last row action — a removal.
    * Not "did not happen": a response lost after Plow committed still lands
    * here, and the re-read roster beside it shows what Plow holds.
    *
@@ -74,15 +74,6 @@ export interface ConnectClientDeps {
   api: PlowApi;
   home: string;
   isConnected: () => boolean;
-  /**
-   * Remove a cloud agent, through the state that owns its lifecycle.
-   *
-   * Not the raw client: `CloudAgentState` holds the poll, the row and the local
-   * settings for that agent, and a delete that goes around it leaves all three
-   * alive — the row comes back on the next render as a disabled zombie the
-   * screen cannot remove again.
-   */
-  removeCloudAgent: (agentId: string) => Promise<void>;
   /**
    * Sign this Mac out, through the one path that owns that.
    *
@@ -184,58 +175,10 @@ export class ConnectClient {
     return this.publish();
   }
 
-  /**
-   * Remove one roster row, by whichever call its section demands.
-   *
-   * **A row naming a cloud assistant goes to the assistant endpoint and NEVER
-   * to the key revoke.** Revoking a cloud agent's key flips `is_active` and
-   * nothing else: the VM keeps running, the chat's webhook keeps firing, and
-   * the row vanishes from this list because we filter inactive rows — a live
-   * agent that 401s on everything and that nobody can reach to remove.
-   *
-   * **This Mac's own row signs this Mac out** rather than revoking its key.
-   * A revoke alone leaves the credential on disk, the socket dialled and the
-   * window open, all of them talking to an account that no longer accepts
-   * them.
-   *
-   * Neither route is taken directly here. Both belong to code that owns more
-   * state than a key row — the agent's poll and settings, this Mac's session —
-   * and going around either leaves that state behind.
-   */
-  removeRosterRow(id: number): Promise<ConnectClientState> {
-    return this.rosterAction(id, (row, credential) => {
-      if (row.isThisMac) return this.deps.signOutThisMac();
-      if (row.agentId !== null) return this.deps.removeCloudAgent(row.agentId);
-      return this.deps.api.revokeApiKey(credential, id);
-    });
-  }
-
-  /**
-   * Rename one roster row.
-   *
-   * One route for every section, unlike removal: a cloud agent, an MCP client
-   * and this Mac's own session are each one credential on Plow, and the name
-   * the screen shows is that credential's name. Plow's cloud-agent resource
-   * carries no name of its own, so renaming the credential IS renaming the
-   * agent — the same call the Plow dashboard makes.
-   */
-  renameRosterRow(id: number, name: string): Promise<ConnectClientState> {
-    return this.rosterAction(id, (_row, credential) => this.deps.api.renameApiKey(credential, id, name));
-  }
-
-  /**
-   * One lifecycle for every row action: find the row, act with this Mac's
-   * credential, then re-read the roster — after a failure too, because a
-   * response lost after Plow committed leaves the server changed, and the
-   * rows on screen must say what Plow holds. `actionError` says why the
-   * action did not confirm; the re-read never clears it.
-   */
-  private async rosterAction(
-    id: number,
-    act: (row: RosterSectionRow, credential: string) => Promise<unknown>,
-  ): Promise<ConnectClientState> {
+  /** Revoke a session, then re-read the roster even if its response was lost. */
+  async removeRosterRow(id: number): Promise<ConnectClientState> {
     this.actionError = null;
-    const row = [...this.roster.cloud, ...this.roster.mcp, ...this.roster.other].find(
+    const row = [...this.roster.mcp, ...this.roster.other].find(
       (candidate) => candidate.id === id,
     );
     if (!row) return this.failAction("That row is no longer on this screen.");
@@ -244,7 +187,8 @@ export class ConnectClient {
 
     const generation = this.generation;
     try {
-      await act(row, credential);
+      if (row.isThisMac) await this.deps.signOutThisMac();
+      else await this.deps.api.revokeApiKey(credential, id);
     } catch (error) {
       if (generation === this.generation) this.failAction(messageOf(error));
     }
@@ -261,10 +205,9 @@ export class ConnectClient {
    * Mint a static credential for one client.
    *
    * Authorised with this Mac's stored credential — the login session itself,
-   * which may create agents. Naming a line is what makes the mint an assistant
-   * rather than an MCP-only client; no line is still the whole flow for one.
+   * which may create agents. A static client is a local agent on a selected line.
    */
-  async createCredential(name: string, lineUid: string | null = null): Promise<ConnectClientState> {
+  async createCredential(name: string, lineUid: string): Promise<ConnectClientState> {
     // SINGLE-FLIGHT. Every mint is a long-lived credential on the account, and
     // the screen can only ever show one of them — so a second Enter before the
     // busy re-render lands would leave a credential live on the account that
@@ -291,14 +234,14 @@ export class ConnectClient {
         // account this Mac is no longer on, so revoke it rather than showing it
         // or leaving an unreachable credential behind.
         if (generation !== this.generation) {
-          await this.deps.api.revokeApiKey(settings.relayCredential, minted.id).catch(() => {});
+          await this.deps.api.deleteAgent(settings.relayCredential, minted.agentUid).catch(() => {});
           return this.state();
         }
         let config: string;
         try {
-          config = validatedAgentConfig(minted.mcpConfig, minted.token);
+          config = agentMcpConfig(settings.mcpUrl, minted.token);
         } catch (error) {
-          await this.deps.api.revokeApiKey(settings.relayCredential, minted.id).catch(() => {});
+          await this.deps.api.deleteAgent(settings.relayCredential, minted.agentUid).catch(() => {});
           throw error;
         }
         this.credential = {
@@ -375,54 +318,19 @@ export class ConnectClient {
   }
 }
 
-export function validatedAgentConfig(config: string, token: string): string {
-  let parsed: unknown;
+/** The API no longer supplies MCP config; target this Mac's server-provided address. */
+export function agentMcpConfig(url: string, token: string): string {
   try {
-    parsed = JSON.parse(config);
+    const parsed = new URL(url);
+    if (!["http:", "https:"].includes(parsed.protocol) || /plow_[A-Za-z0-9_-]+/.test(decodeURIComponent(url))) {
+      throw new Error("Invalid MCP address");
+    }
   } catch {
     throw new PlowApiError("http", "Plow returned an invalid MCP configuration.");
   }
-  if (!parsed || typeof parsed !== "object") {
-    throw new PlowApiError("http", "Plow returned an invalid MCP configuration.");
-  }
-  const servers = (parsed as { mcpServers?: unknown }).mcpServers;
-  if (!servers || typeof servers !== "object" || Array.isArray(servers) || !Object.keys(servers).length) {
-    throw new PlowApiError("http", "Plow returned an invalid MCP configuration.");
-  }
-  const projected: Array<[string, { type: "http"; url: string; headers: { Authorization: string } }]> = [];
-  const credentialPattern = /plow_[A-Za-z0-9_-]+/;
-  for (const [name, server] of Object.entries(servers as Record<string, unknown>)) {
-    if (credentialPattern.test(name)) {
-      throw new PlowApiError("http", "Plow returned an invalid MCP configuration.");
-    }
-    if (!server || typeof server !== "object") {
-      throw new PlowApiError("http", "Plow returned an invalid MCP configuration.");
-    }
-    const headers = (server as { headers?: unknown }).headers;
-    const url = (server as { url?: unknown }).url;
-    let decodedUrl: string;
-    let protocol: string;
-    try {
-      decodedUrl = typeof url === "string" ? decodeURIComponent(url) : "";
-      protocol = typeof url === "string" ? new URL(url).protocol : "";
-    } catch {
-      throw new PlowApiError("http", "Plow returned an invalid MCP configuration.");
-    }
-    if (
-      (server as { type?: unknown }).type !== "http" ||
-      typeof url !== "string" ||
-      (protocol !== "http:" && protocol !== "https:") ||
-      credentialPattern.test(url) ||
-      credentialPattern.test(decodedUrl) ||
-      !headers ||
-      typeof headers !== "object" ||
-      (headers as Record<string, unknown>).Authorization !== `Bearer ${token}`
-    ) {
-      throw new PlowApiError("http", "Plow returned an invalid MCP configuration.");
-    }
-    projected.push([name, { type: "http", url, headers: { Authorization: `Bearer ${token}` } }]);
-  }
-  return JSON.stringify({ mcpServers: Object.fromEntries(projected) }, null, 2);
+  return JSON.stringify({ mcpServers: { plow: {
+    type: "http", url, headers: { Authorization: `Bearer ${token}` },
+  } } }, null, 2);
 }
 
 function messageOf(error: unknown): string {

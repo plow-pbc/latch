@@ -134,26 +134,12 @@ const cloudAgent = {
   createdAt: "2026-08-24T18:00:00.000Z",
 };
 const rosterProbe = {
-  cloud: [{
-    id: 201,
-    name: "Household helper",
-    kind: "Agent",
-    createdAt: cloudAgent.createdAt,
-    lastSeenAt: "2026-08-25T17:55:00.000Z",
-    agentId: cloudAgent.agentId,
-    chatUids: [cloudAgent.threads[0].uid],
-    chatAccess: "listed",
-    permissions: { canReadAndReply: true, canReachMac: true, canSpendInference: true },
-    isActive: true,
-    isThisMac: false,
-  }],
   mcp: [{
     id: 202,
     name: "Claude Code",
     kind: "Agent",
     createdAt: "2026-08-23T18:00:00.000Z",
     lastSeenAt: "2026-08-25T17:50:00.000Z",
-    agentId: null,
     chatUids: ["*"],
     chatAccess: "all",
     permissions: { canReadAndReply: true, canReachMac: true, canSpendInference: true },
@@ -183,12 +169,14 @@ let cloudProbe = {
   cloudChatsNeedReactivation: false,
   cloudActionError: null,
   cloudChatsLoaded: true,
+  cloudLinesLoaded: true,
 };
 let cloudChangeRequest = null;
 let cloudChangeCancelCount = 0;
 let exhaustNextCloudActivation = false;
 const cloudMessageAgentIds = [];
 const cloudCreateRequests = [];
+let staticCreateCount = 0;
 
 // Connect state also carries the cloud-agent display state. It contains no
 // credential, session id or worker URL.
@@ -207,6 +195,9 @@ const agentsTabProbeState = () => ({
   ...cloudProbe,
 });
 ipcMain.handle("connect:get", async () => agentsTabProbeState());
+ipcMain.handle("connect:create", () => { staticCreateCount += 1; return agentsTabProbeState(); });
+ipcMain.handle("connect:dismiss", () => { cloudProbe.credential = null; });
+ipcMain.handle("agents:dismissToken", () => { cloudProbe.agentToken = null; });
 ipcMain.handle("cloud:refresh", async () => agentsTabProbeState());
 ipcMain.handle("cloud:cancelLineFlow", async () => {
   cloudChangeCancelCount += 1;
@@ -266,6 +257,7 @@ ipcMain.handle("cloud:create", async (_e, input) => {
     };
     cloudProbe = {
       ...cloudProbe,
+      agentToken: input.provider === "self_hosted" ? "local-probe-token" : null,
       cloudAgents: [created, ...cloudProbe.cloudAgents],
       cloudFreeLines: [],
       cloudLineFlow: {
@@ -807,7 +799,7 @@ app.whenReady().then(async () => {
 
   const cloudRoster = await win.webContents.executeJavaScript(`(${() => {
     const group = [...document.querySelectorAll("#view .panel.agents .list-section")]
-      .find((item) => item.querySelector("h2")?.textContent.trim() === "Cloud agents");
+      .find((item) => item.querySelector("h2")?.textContent.trim() === "Agents");
     const row = group?.querySelector(".cloud-agent-row");
     return {
       noCredentialIdentity: !group?.textContent.includes("session") &&
@@ -930,6 +922,85 @@ app.whenReady().then(async () => {
     };
   }})()`);
   const cloudExistingCreateRequest = cloudCreateRequests.at(-1);
+
+  cloudProbe = { ...cloudProbeBeforeCreate,
+    cloudProviders: [...cloudProbeBeforeCreate.cloudProviders, { id: "self_hosted", name: "Self-hosted" }] };
+  win.webContents.send("connect:changed");
+  await waitFor(win, `document.querySelectorAll(".cloud-agent-row").length === 1`, "the local-create roster");
+  await win.webContents.executeJavaScript(`[...document.querySelectorAll("#view button")]
+    .find((b) => b.textContent.trim() === "New agent").click()`);
+  await waitFor(win, `document.querySelector('.cloud-modal select[aria-label="Line"]')`, "local agent picker");
+  await win.webContents.executeJavaScript(`(() => {
+    document.querySelector('.cloud-modal select[aria-label="Agent type"]').value = "self_hosted";
+    const line = document.querySelector('.cloud-modal select[aria-label="Line"]');
+    line.value = "lin_ash";
+    line.dispatchEvent(new Event("change"));
+  })()`);
+  await clickCloudButton(win, "Create agent");
+  await waitFor(win, `!document.querySelector(".cloud-modal") && document.body.textContent.includes("local-probe-token")`,
+    "the local token handoff");
+  const tokenBlocksCreate = await win.webContents.executeJavaScript(`[...document.querySelectorAll("#view button")]
+    .find((b) => b.textContent.trim() === "New agent").disabled`);
+  await captureAfterPaint(win, "/tmp/agent-token-handoff.png");
+  await win.webContents.executeJavaScript(`document.querySelector(".cloud-agent-open").click()`);
+  await waitFor(win, `document.querySelector(".cloud-modal .cloud-detail-threads")`, "local agent detail");
+  const tokenBlocksDelete = await win.webContents.executeJavaScript(`[...document.querySelectorAll(".cloud-modal button")]
+    .find((b) => b.textContent.trim() === "Delete agent").disabled`);
+  await clickCloudButton(win, "Close");
+  await win.webContents.executeJavaScript(`[...document.querySelectorAll("#view button")]
+    .find((b) => b.textContent.trim() === "Connect MCP client").click()`);
+  await waitFor(win, `document.querySelector(".connect-modal .linkbtn")`, "the static setup link");
+  await win.webContents.executeJavaScript(`document.querySelector(".connect-modal .linkbtn").click()`);
+  await waitFor(win, `document.querySelector('input[placeholder="Claude Code"]')`, "the static form");
+  const staticCreateDisabled = await win.webContents.executeJavaScript(`(async () => {
+    const input = document.querySelector('input[placeholder="Claude Code"]');
+    input.value = "Blocked setup";
+    const disabled = [...document.querySelectorAll("button")]
+      .find((b) => b.textContent.trim() === "Create Credential").disabled;
+    input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    await window.domo.connectGet();
+    return disabled;
+  })()`);
+  if (!staticCreateDisabled || staticCreateCount !== 0) throw new Error("pending token allowed static creation");
+  await win.webContents.executeJavaScript(`[...document.querySelectorAll(".modal-backdrop button")]
+    .find((b) => b.textContent.trim() === "Cancel").click()`);
+  await win.webContents.executeJavaScript(`window.__domoSelectTab("settings")`);
+  let tokenLeaveReply = null;
+  ipcMain.once("ui:confirmLeaveReply", (_e, ok) => { tokenLeaveReply = ok; });
+  win.webContents.send("ui:confirmLeave", Boolean(cloudProbe.agentToken));
+  await waitForNode(() => tokenLeaveReply !== null, "the pending token leave refusal");
+  if (tokenLeaveReply !== false) throw new Error("pending token allowed the window to close");
+  await waitFor(win, `document.body.textContent.includes("local-probe-token")`, "return to the token handoff");
+  await win.webContents.executeJavaScript(`[...document.querySelectorAll("#view button")]
+    .find((b) => b.textContent.trim() === "I saved the token").click()`);
+  await waitFor(win, `!document.body.textContent.includes("local-probe-token") &&
+    ![...document.querySelectorAll("#view button")].find((b) => b.textContent.trim() === "New agent").disabled`,
+    "token dismissal to clear the secret and release creation");
+  tokenLeaveReply = null;
+  ipcMain.once("ui:confirmLeaveReply", (_e, ok) => { tokenLeaveReply = ok; });
+  win.webContents.send("ui:confirmLeave", Boolean(cloudProbe.agentToken));
+  await waitForNode(() => tokenLeaveReply !== null, "leaving after token dismissal");
+  if (tokenLeaveReply !== true) throw new Error("saved token still blocked leaving");
+  console.log("TOKEN-HANDOFF: static create and leave blocked until dismissal; dismissal releases leave");
+  await win.webContents.executeJavaScript(`window.__domoSelectTab("settings")`);
+  cloudProbe.credential = { name: "Pending static setup", config: "static-probe-secret" };
+  tokenLeaveReply = null;
+  ipcMain.once("ui:confirmLeaveReply", (_e, ok) => { tokenLeaveReply = ok; });
+  win.webContents.send("ui:confirmLeave", true);
+  await waitForNode(() => tokenLeaveReply !== null, "static setup leave refusal");
+  if (tokenLeaveReply !== false) throw new Error("static setup allowed leaving");
+  await waitFor(win, `document.querySelector(".modal-backdrop")?.textContent.includes("static-probe-secret")`,
+    "restored static credential handoff");
+  await captureAfterPaint(win, "/tmp/static-token-restored.png");
+  await win.webContents.executeJavaScript(`[...document.querySelectorAll(".modal-backdrop button")]
+    .find((b) => b.textContent.trim() === "I've Saved It").click()`);
+  await waitFor(win, `!document.querySelector(".modal-backdrop")`, "static credential dismissal");
+  console.log("STATIC-HANDOFF: leave refused, pending credential restored and explicitly dismissed");
+
+  if (!tokenBlocksCreate || !tokenBlocksDelete || cloudProbe.agentToken !== null) {
+    throw new Error("local token handoff did not protect creation/deletion until dismissal");
+  }
+
 
   cloudProbe = {
     ...cloudProbeBeforeCreate,
@@ -1249,6 +1320,7 @@ app.whenReady().then(async () => {
       retryNewLine: false,
     },
     cloudChatsError: "Plow returned 503.",
+    cloudLinesLoaded: false,
     cloudChatsLoaded: false,
   };
   await win.webContents.executeJavaScript(`window.__domoSelectTab("audit")`);
@@ -1277,6 +1349,7 @@ app.whenReady().then(async () => {
     cloudFreeLines: [{ uid: "lin_error", label: "Error line" }],
     cloudChatsError: null,
     cloudChatsLoaded: true,
+    cloudLinesLoaded: true,
   };
   await win.webContents.executeJavaScript(`window.__domoSelectTab("audit")`);
   await win.webContents.executeJavaScript(`window.__domoSelectTab("agents")`);
@@ -1359,7 +1432,7 @@ app.whenReady().then(async () => {
   })()`);
   await clickCloudButton(win, "Change line");
   await waitFor(win, `document.querySelector(".cloud-modal .cloud-callout-title")?.textContent
-    .includes("wasn't changed")`, "the change-line error card");
+    .includes("The line change did not finish")`, "the change-line error card");
   const cloudChangeErrorDetail = await win.webContents.executeJavaScript(
     `document.querySelector(".cloud-modal .cloud-callout p")?.textContent.trim() ===
       "Line service is restarting."`,
@@ -1743,7 +1816,7 @@ app.whenReady().then(async () => {
     let replies = 0;
     const countReply = () => { replies += 1; };
     ipcMain.on("ui:confirmLeaveReply", countReply);
-    win.webContents.send("ui:confirmLeave");
+    win.webContents.send("ui:confirmLeave", Boolean(cloudProbe.agentToken));
     // ...and a row collapse arriving at the same moment, which reaches the
     // dialog by a different route than the window teardown does.
     await click(".vaultui .vitem .vrow");
@@ -1762,7 +1835,7 @@ app.whenReady().then(async () => {
     // route through it). Drive the renderer's half of that conversation.
     let closeAnswer = null;
     ipcMain.once("ui:confirmLeaveReply", (_e, ok) => { closeAnswer = ok; });
-    win.webContents.send("ui:confirmLeave");
+    win.webContents.send("ui:confirmLeave", Boolean(cloudProbe.agentToken));
     await waitAsking();
     const windowCloseAsks = await asking();
     await click(DISCARD);
@@ -1866,7 +1939,7 @@ app.whenReady().then(async () => {
     let busyCloseAnswer = null;
     const onBusyReply = (_e, ok) => { busyCloseAnswer = ok; };
     ipcMain.on("ui:confirmLeaveReply", onBusyReply);
-    win.webContents.send("ui:confirmLeave");
+    win.webContents.send("ui:confirmLeave", Boolean(cloudProbe.agentToken));
     const noDialogUnderInert = await js(() => !document.querySelector(".vaultui .confirm-overlay"));
 
     releaseSave();
@@ -2159,10 +2232,10 @@ app.whenReady().then(async () => {
     cloudDeleteConfirm.title === "Delete Household helper?" &&
     cloudDeleteConfirm.copy &&
     cloudDeleteConfirm.buttons.join("|") === "Cancel|Delete agent" &&
-    loadingCloudDetail.line.includes("LineLine unavailable") &&
+    loadingCloudDetail.line.includes("LineNo line") &&
     loadingCloudDetail.threadState === "Loading threads…" &&
     !loadingCloudDetail.offersMessage &&
-    unavailableCloudDetail.line.includes("LineLine unavailable") &&
+    unavailableCloudDetail.line.includes("LineNo line") &&
     unavailableCloudDetail.threadState === "Threads couldn't be loaded." &&
     unavailableCloudDetail.hidesRawLineUid &&
     !unavailableCloudDetail.offersMessage &&
@@ -2267,5 +2340,6 @@ app.whenReady().then(async () => {
   // runner until the job's own timeout hours later. A failed check has to
   // read as a failed check.
   console.error("PROBE-FAILED:", err?.stack ?? err);
+  console.error("Renderer console:", errors);
   app.exit(1);
 });

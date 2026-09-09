@@ -30,13 +30,14 @@ export interface CloudAgentDisplayRow {
   canRetry: boolean;
   /** Read-only threads on the line. */
   threads: CloudAgentThread[];
-  status: CloudAgentStatus;
+  status: CloudAgentStatus | null;
+  connected: boolean;
   failureReason: string | null;
   createdAt: string;
 }
 
 export interface CloudAgentDisplayContext {
-  /** The agent's line resolved through its home chat. */
+  /** The agent's own line. */
   line?: CloudAgentLine | null;
   /** Whether the resolved line has an E.164 destination for Messages. */
   canMessage?: boolean;
@@ -48,33 +49,28 @@ export interface CloudAgentDisplayContext {
 
 /**
  * Reduce a main-process resource to the renderer's display contract. In
- * particular, credential identity (`sessionId`) and the provider URL have no
+ * particular, credential identity and the provider URL have no
  * representation in the returned object.
  */
 export function toCloudAgentDisplayRow(
   agent: CloudAgentResource,
   context: CloudAgentDisplayContext = {},
 ): CloudAgentDisplayRow {
-  const scrub = (value: string): string => scrubSessionId(value, agent.sessionId);
-  const failureReason = agent.failureCode && Object.hasOwn(FAILURE_LABELS, agent.failureCode)
-    ? FAILURE_LABELS[agent.failureCode]
-    : agent.failureReason;
+  const failureReason = agent.failureCode
+    ? Object.hasOwn(FAILURE_LABELS, agent.failureCode) ? FAILURE_LABELS[agent.failureCode] : "Agent operation failed"
+    : null;
   const line = context.line ?? null;
   return {
-    agentId: scrub(agent.agentId),
-    name: scrub(agent.name ?? "cloud agent"),
-    line: line === null ? null : { uid: scrub(line.uid), label: scrub(line.label) },
+    agentId: agent.agentId,
+    name: agent.name,
+    line: line === null ? null : { uid: line.uid, label: line.label },
     canMessage: context.canMessage === true,
     canRetry: context.canRetry === true,
     threads: (context.threads ?? [])
-      .map((thread) => ({ uid: scrub(thread.uid), label: scrub(thread.label) })),
+      .map((thread) => ({ uid: thread.uid, label: thread.label })),
     status: agent.status,
-    failureReason: failureReason === null ? null : scrub(failureReason),
-    createdAt: agent.createdAt === null ? "" : scrub(agent.createdAt),
+    connected: agent.credential?.connected ?? false,
+    failureReason,
+    createdAt: agent.createdAt,
   };
-}
-
-function scrubSessionId(value: string, sessionId: string | null): string {
-  if (!sessionId) return value;
-  return value.split(sessionId).join("[credential]");
 }

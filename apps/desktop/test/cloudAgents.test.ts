@@ -19,21 +19,15 @@ afterEach(() => {
 
 const LINE = { uid: "lin_willow", object: "line", provider_type: "imessage", provider_key: "+15550000001" };
 
-/** `GET /v1/assistants` answers one slot per pool line, assistant or null. */
-const slots = (...assistants: Array<Record<string, unknown> | null>) =>
-  assistants.map((assistant) => ({ line: LINE, assistant }));
-
 const wireAgent = (overrides: Record<string, unknown> = {}) => ({
   uid: "agent_123",
-  chat_uids: ["cht_home"],
+  line: LINE, credential: null, settings: { daily_payment_cap_usd: { value: 200 }, verbose_output: { value: false } }, image: null,
   url: "https://provider.example/agent_123",
   provider: "exe:hermes",
   name: "Kitchen",
   status: "running",
   failure_code: null,
-  failure_reason: null,
   created_at: "2026-08-20T12:00:00Z",
-  session_id: "session_123",
   ...overrides,
 });
 
@@ -52,70 +46,77 @@ function recordingFetch(responses: Array<{ status: number; body?: unknown }>) {
 }
 
 describe("CloudAgentsClient resources", () => {
-  it.each([
-    ["deployed line-scoped shape", wireAgent(), {
-      agentId: "agent_123",
-      chatUids: ["cht_home"],
-      name: "Kitchen",
-      status: "running",
-    }],
-    ["omitted status", wireAgent({ status: undefined }), { status: "provisioning" }],
-    ["an empty anchor-chat grant", wireAgent({ chat_uids: [] }), { chatUids: [] }],
-    ["failure metadata", wireAgent({
-      status: "failed",
-      failure_code: "capacity_exhausted",
-      failure_reason: "Provider capacity is exhausted.",
-    }), {
-      failureCode: "capacity_exhausted",
-      failureReason: "Provider capacity is exhausted.",
-    }],
-  ])("resource parsing matrix: %s", async (_case, wire, expected) => {
-    const { fetchImpl } = recordingFetch([{ status: 200, body: slots(wire) }]);
+  it.each([CREDENTIAL, Buffer.from(CREDENTIAL).toString("base64"), CREDENTIAL.slice(0, 10),
+    "%" + CREDENTIAL.charCodeAt(0).toString(16) + CREDENTIAL.slice(1),
+    [...CREDENTIAL].map((c) => "%" + c.charCodeAt(0).toString(16)).join(""),
+  ])(
+    "rejects device credential echoes in both create receipts: %s", async (token) => {
+      for (const localSetup of [false, true]) {
+        const { fetchImpl } = recordingFetch([{ status: 201, body: { agent: wireAgent(), token } }]);
+        const api = new PlowApi("https://stub.invalid", fetchImpl);
+        const onToken = vi.fn();
+        const result = localSetup
+          ? api.createAgent(CREDENTIAL, "Kitchen", "lin_willow")
+          : new CloudAgentsClient(api, undefined, onToken).create(CREDENTIAL, {
+            lineUid: "lin_willow", name: "Kitchen", provider: "self_hosted",
+          });
+        await expect(result).rejects.toThrow("unsafe agent response");
+        expect(onToken).not.toHaveBeenCalled();
+      }
+    },
+  );
 
-    await expect(new CloudAgentsClient(new PlowApi("https://api.plow.co", fetchImpl))
-      .list(CREDENTIAL)).resolves.toMatchObject([expected]);
+  it("keeps a local token until saved before allowing another create or delete", async () => {
+    const { calls, fetchImpl } = recordingFetch([
+      { status: 201, body: { agent: wireAgent({ provider: "self_hosted", status: null }), token: "new-agent-token" } },
+      { status: 204 },
+    ]);
+    let pending: string | null = null;
+    const client = new CloudAgentsClient(new PlowApi("https://stub.invalid", fetchImpl), undefined,
+      (token) => { pending = token; },
+      () => { if (pending) throw new Error("Save the token first."); });
+    const request = { lineUid: "lin_willow", name: "Kitchen", provider: "self_hosted" };
+    expect(await client.create(CREDENTIAL, request)).not.toHaveProperty("token");
+    await expect(client.create(CREDENTIAL, request)).rejects.toThrow("Save the token first.");
+    await expect(client.delete(CREDENTIAL, "agent_123")).rejects.toThrow("Save the token first.");
+    expect(pending).toBe("new-agent-token");
+    expect(calls).toHaveLength(1);
+    pending = null;
+    await client.delete(CREDENTIAL, "agent_123");
+    expect(calls).toHaveLength(2);
   });
 
-  it("keeps only the cloud assistants: a free line and a self-hosted Mac are not agents", async () => {
-    const { fetchImpl } = recordingFetch([{
-      status: 200,
-      body: slots(
-        null,
-        wireAgent({ uid: "assistant_mac", provider: "self_hosted", url: null, chat_uids: [] }),
-        wireAgent({ uid: "agent_cloud" }),
-      ),
-    }]);
-
-    await expect(new CloudAgentsClient(new PlowApi("https://api.plow.co", fetchImpl))
-      .list(CREDENTIAL)).resolves.toMatchObject([{ agentId: "agent_cloud" }]);
+  it("lists local and failed agents without credential joins", async () => {
+    const { calls, fetchImpl } = recordingFetch([{ status: 200, body: [
+      wireAgent({ uid: "local", provider: "self_hosted", status: null }),
+      wireAgent({ uid: "failed", status: "failed", credential: null }),
+    ] }]);
+    const rows = await new CloudAgentsClient(new PlowApi("https://stub.invalid", fetchImpl)).list(CREDENTIAL);
+    expect(rows).toMatchObject([
+      { agentId: "local", status: null, line: { uid: LINE.uid, number: LINE.provider_key, displayName: null } },
+      { agentId: "failed", credential: null },
+    ]);
+    expect(calls[0].url).toBe("https://stub.invalid/v1/agents");
   });
 
-  it.each([
-    ["a malformed chat grant", slots(wireAgent({ chat_uids: [7] }))],
-    ["an absent chat grant", slots(Object.fromEntries(
-      Object.entries(wireAgent()).filter(([field]) => field !== "chat_uids"),
-    ))],
-    ["a slot with no assistant field", [{ line: LINE }]],
-    ["an enveloped list", { data: slots(wireAgent()) }],
-  ])("rejects %s", async (_case, body) => {
-    const { fetchImpl } = recordingFetch([{ status: 200, body }]);
-
-    await expect(new CloudAgentsClient(new PlowApi("https://api.plow.co", fetchImpl))
-      .list(CREDENTIAL)).rejects.toThrow("Plow returned an invalid cloud-agent response.");
+  it("rejects a slot wrapper and malformed agent names", async () => {
+    for (const body of [[{ line: LINE, assistant: wireAgent() }], [wireAgent({ name: 7 })]]) {
+      const { fetchImpl } = recordingFetch([{ status: 200, body }]);
+      await expect(new CloudAgentsClient(new PlowApi("https://stub.invalid", fetchImpl)).list(CREDENTIAL)).rejects.toThrow("invalid cloud-agent response");
+    }
   });
-
 });
 
 describe("CloudAgentsClient creation", () => {
-  it.each([200, 202])("accepts %s and sends the selected provider", async (status) => {
-    const { calls, fetchImpl } = recordingFetch([{ status, body: wireAgent() }]);
+  it.each([201])("accepts %s and sends the selected provider", async (status) => {
+    const { calls, fetchImpl } = recordingFetch([{ status, body: { agent: wireAgent(), token: null } }]);
 
     await new CloudAgentsClient(new PlowApi("https://api.plow.co", fetchImpl)).create(
       CREDENTIAL,
       { lineUid: "lin_willow", name: "Kitchen", provider: "exe:life" },
     );
 
-    expect(calls[0].url).toBe("https://api.plow.co/v1/assistants");
+    expect(calls[0].url).toBe("https://api.plow.co/v1/agents");
     expect(calls[0].init.method).toBe("POST");
     expect(JSON.parse(String(calls[0].init.body))).toEqual({
       line_uid: "lin_willow",
@@ -126,7 +127,7 @@ describe("CloudAgentsClient creation", () => {
   });
 
   it("omits a blank optional name", async () => {
-    const { calls, fetchImpl } = recordingFetch([{ status: 200, body: wireAgent() }]);
+    const { calls, fetchImpl } = recordingFetch([{ status: 200, body: { agent: wireAgent(), token: null } }]);
 
     await new CloudAgentsClient(new PlowApi("https://api.plow.co", fetchImpl)).create(
       CREDENTIAL,
@@ -198,7 +199,7 @@ describe("CloudAgentsClient line changes", () => {
       .changeLine(CREDENTIAL, "agent/with space", "lin_ash");
 
     expect(calls[0].url).toBe(
-      "https://api.plow.co/v1/assistants/agent%2Fwith%20space/line",
+      "https://api.plow.co/v1/agents/agent%2Fwith%20space/line",
     );
     expect(calls[0].init.method).toBe("PUT");
     expect(JSON.parse(String(calls[0].init.body))).toEqual({ line_uid: "lin_ash" });
@@ -239,7 +240,7 @@ describe("CloudAgentsClient deletion", () => {
     await new CloudAgentsClient(new PlowApi("https://api.plow.co", fetchImpl))
       .delete(CREDENTIAL, "agent/with space");
 
-    expect(calls[0].url).toBe("https://api.plow.co/v1/assistants/agent%2Fwith%20space");
+    expect(calls[0].url).toBe("https://api.plow.co/v1/agents/agent%2Fwith%20space");
     expect(calls[0].init.method).toBe("DELETE");
     expect(new Headers(calls[0].init.headers).get("authorization")).toBe(`Bearer ${CREDENTIAL}`);
   });
@@ -259,15 +260,13 @@ describe("CloudAgentsClient deletion", () => {
 describe("CloudAgentsClient polling", () => {
   const receipt = (): CloudAgentResource => ({
     agentId: "agent_123",
-    chatUids: ["line:lin_willow"],
+    line: { uid: LINE.uid, displayName: null, number: LINE.provider_key }, credential: null, settings: { daily_payment_cap_usd: { value: 200 }, verbose_output: { value: false } }, image: null,
     url: null,
-    provider: null,
+    provider: "exe:hermes",
     name: "Kitchen",
     status: "provisioning",
     failureCode: null,
-    failureReason: null,
-    createdAt: null,
-    sessionId: null,
+    createdAt: "2026-09-08T00:00:00Z",
   });
 
   it("ignores a mismatched id and stops on the requested agent's terminal state", async () => {

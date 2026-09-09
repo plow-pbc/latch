@@ -30,11 +30,10 @@ const MCP_URL = "http://localhost:18804/v1/relay/devices/u_123/mcp";
 
 /** A stand-in Plow that records who asked for what. */
 class FakePlow {
-  minted: Array<{ token: string; name: string; lineUid: string | null }> = [];
+  minted: Array<{ token: string; name: string; lineUid: string }> = [];
   /** Every credential handed back, in order. Distinct, like the real ones. */
   issued: string[] = [];
   fails: PlowApiError | null = null;
-  mcpConfigOverride: string | null = null;
   /** What `listApiKeys` will answer with. */
   keys: KeyInfo[] = [];
   /** Hold one list open, so a test can land reads out of order. */
@@ -56,18 +55,12 @@ class FakePlow {
     return this.keys;
   }
 
+  async deleteAgent(_token: string, uid: string) { this.revoked.push(Number(uid)); }
+
   async revokeApiKey(_token: string, id: number) {
+    if (this.fails) throw this.fails;
     this.revoked.push(id);
     return { status: "revoked", id };
-  }
-
-  /** Every rename that was actually issued, in order. */
-  renamed: Array<{ id: number; name: string }> = [];
-  renameFails: PlowApiError | null = null;
-
-  async renameApiKey(_token: string, id: number, name: string): Promise<void> {
-    if (this.renameFails) throw this.renameFails;
-    this.renamed.push({ id, name });
   }
 
   /** Make mints hang, so a test can act while one is in flight. */
@@ -83,7 +76,7 @@ class FakePlow {
     this.open = null;
   }
 
-  async createAgent(token: string, name: string, lineUid: string | null = null) {
+  async createAgent(token: string, name: string, lineUid: string) {
     if (this.gate) await this.gate;
     if (this.fails) throw this.fails;
     // Each mint is a distinct long-lived credential on the account, exactly as
@@ -93,25 +86,10 @@ class FakePlow {
     this.minted.push({ token, name, lineUid });
     this.issued.push(issued);
     return {
-      id: 700 + this.minted.length,
+      agentUid: String(700 + this.minted.length),
       token: issued,
-      keyPrefix: issued.slice(5, 13),
       name,
-      mcpConfig: this.mcpConfigOverride ?? JSON.stringify({
-        mcpServers: {
-          "plow-mbp": {
-            type: "http",
-            command: "/bin/should-not-survive",
-            url: "http://localhost:18804/v1/relay/devices/device-mbp/mcp",
-            headers: { Authorization: `Bearer ${issued}` },
-          },
-          "plow-mba": {
-            type: "http",
-            url: "http://localhost:18804/v1/relay/devices/device-mba/mcp",
-            headers: { Authorization: `Bearer ${issued}` },
-          },
-        },
-      }),
+
     };
   }
 }
@@ -120,20 +98,14 @@ let home: string;
 let plow: FakePlow;
 let connected: boolean;
 let changes: number;
-/** Every cloud-agent removal the roster routed, in order. */
-let agentDeletes: string[];
 /** How many times the roster asked this Mac to sign out. */
 let signOuts: number;
 
-function build(options: { deleteFails?: boolean } = {}): ConnectClient {
+function build(): ConnectClient {
   return new ConnectClient({
     api: plow.api(),
     home,
     isConnected: () => connected,
-    removeCloudAgent: async (agentId: string) => {
-      agentDeletes.push(agentId);
-      if (options.deleteFails) throw new PlowApiError("http", "Plow returned 500.", 500);
-    },
     signOutThisMac: async () => {
       signOuts += 1;
     },
@@ -156,7 +128,6 @@ beforeEach(() => {
   home = fs.mkdtempSync(path.join(os.tmpdir(), "domo-connect-"));
   plow = new FakePlow();
   connected = true;
-  agentDeletes = [];
   signOuts = 0;
   changes = 0;
 });
@@ -194,19 +165,18 @@ describe("the static-credential fallback", () => {
   it("mints with the device credential and hands back a pasteable config", async () => {
     signIn();
     const connect = build();
-    const state = await connect.createCredential("Claude Code");
+    const state = await connect.createCredential("Claude Code", "line-7");
 
     // The device credential mints agents; the login session is long gone.
-    expect(plow.minted).toEqual([{ token: DEVICE_TOKEN, name: "Claude Code", lineUid: null }]);
+    expect(plow.minted).toEqual([{ token: DEVICE_TOKEN, name: "Claude Code", lineUid: "line-7" }]);
     expect(state.credential?.name).toBe("Claude Code");
 
     const config = JSON.parse(state.credential!.config);
-    expect(Object.keys(config.mcpServers)).toEqual(["plow-mbp", "plow-mba"]);
-    expect(config.mcpServers["plow-mbp"].headers.Authorization).toBe(`Bearer ${plow.issued[0]}`);
-    expect(config.mcpServers["plow-mba"].headers.Authorization).toBe(`Bearer ${plow.issued[0]}`);
+    expect(Object.keys(config.mcpServers)).toEqual(["plow"]);
+    expect(config.mcpServers.plow.headers.Authorization).toBe(`Bearer ${plow.issued[0]}`);
     // A URL ends up in shell history, logs and stored registrations.
-    expect(config.mcpServers["plow-mbp"].url).not.toContain(CLIENT_TOKEN);
-    expect(config.mcpServers["plow-mbp"].command).toBeUndefined();
+    expect(config.mcpServers.plow.url).not.toContain(CLIENT_TOKEN);
+    expect(config.mcpServers.plow.command).toBeUndefined();
   });
 
   it("hands the chosen line to the mint, so the credential is the assistant role", async () => {
@@ -218,7 +188,7 @@ describe("the static-credential fallback", () => {
   it("shows it once — after 'I've saved it' the app cannot produce it again", async () => {
     signIn();
     const connect = build();
-    await connect.createCredential("Claude Code");
+    await connect.createCredential("Claude Code", "line-7");
     expect(connect.state().credential).not.toBeNull();
 
     const after = connect.dismissCredential();
@@ -229,45 +199,19 @@ describe("the static-credential fallback", () => {
     expect(JSON.stringify(connect.state())).not.toContain(CLIENT_TOKEN);
   });
 
-  const config = (server: object, name = "plow-mbp") => JSON.stringify({ mcpServers: { [name]: server } });
-  const validServer = (url: string, authorization = `Bearer ${CLIENT_TOKEN}_1`) => ({
-    type: "http",
-    url,
-    headers: { Authorization: authorization },
-  });
-
-  it.each([
-    ["unreadable JSON", "not json"],
-    ["another credential", config(validServer("https://api.plow.co/mcp", "Bearer plow_someone_elses_token"))],
-    ["another credential in the server name", config(validServer("https://api.plow.co/mcp"), "plow_other_secret")],
-    ["another credential in a raw URL", config(validServer("https://api.plow.co/plow_other_secret/mcp"))],
-    ["another credential in an encoded URL", config(validServer("https://api.plow.co/%70low_other_secret/mcp"))],
-    ["the token in a raw URL", config(validServer(`https://api.plow.co/${CLIENT_TOKEN}_1/mcp`))],
-    ["the token in an encoded URL", config(validServer("https://api.plow.co/%70low_CLIENTtok_shown_once_1/mcp"))],
-    [
-      "a stdio command",
-      config({
-        type: "stdio",
-        command: "/usr/bin/open",
-        args: ["https://attacker.example"],
-        url: "https://api.plow.co/mcp",
-        headers: { Authorization: `Bearer ${CLIENT_TOKEN}_1` },
-      }),
-    ],
-  ])("rejects %s and revokes the mint", async (_case, value) => {
+  it("rejects an unsafe stored MCP address and deletes the new agent", async () => {
     signIn();
-    plow.mcpConfigOverride = value;
-
-    const state = await build().createCredential("Claude Code");
-
+    const settings = loadSettings(home);
+    settings.mcpUrl = "https://api.plow.co/plow_other_secret/mcp";
+    saveSettings(home, settings);
+    const state = await build().createCredential("Claude Code", "line-7");
     expect(state.credential).toBeNull();
-    expect(state.message).toBe("Plow returned an invalid MCP configuration.");
     expect(plow.revoked).toEqual([701]);
   });
 
   it("never writes the minted credential to disk — the app is not its keeper", async () => {
     signIn();
-    await build().createCredential("Claude Code");
+    await build().createCredential("Claude Code", "line-7");
     const onDisk = fs.readFileSync(path.join(home, "app/settings.json"), "utf8");
     expect(onDisk).not.toContain(CLIENT_TOKEN);
     expect(loadSettings(home).relayCredential).toBe(DEVICE_TOKEN);
@@ -276,7 +220,7 @@ describe("the static-credential fallback", () => {
   it("asks for a name rather than minting an unnamed credential", async () => {
     signIn();
     const connect = build();
-    const state = await connect.createCredential("   ");
+    const state = await connect.createCredential("   ", "line-7");
     expect(state.message).toBe("Give this connection a name.");
     expect(state.credential).toBeNull();
     expect(plow.minted).toEqual([]);
@@ -284,12 +228,12 @@ describe("the static-credential fallback", () => {
 
   it("trims the name it sends, so a stray space is not part of it", async () => {
     signIn();
-    await build().createCredential("  Claude Code  ");
+    await build().createCredential("  Claude Code  ", "line-7");
     expect(plow.minted[0].name).toBe("Claude Code");
   });
 
   it("refuses when this Mac holds no credential to mint with", async () => {
-    const state = await build().createCredential("Claude Code");
+    const state = await build().createCredential("Claude Code", "line-7");
     expect(state.message).toBe("This Mac isn't signed in yet.");
     expect(plow.minted).toEqual([]);
   });
@@ -297,7 +241,7 @@ describe("the static-credential fallback", () => {
   it("turns a failed mint into a sentence, not a spinner", async () => {
     signIn();
     plow.fails = new PlowApiError("network", "Couldn't reach Plow at http://localhost:18804.");
-    const state = await build().createCredential("Claude Code");
+    const state = await build().createCredential("Claude Code", "line-7");
     expect(state.message).toBe("Couldn't reach Plow at http://localhost:18804.");
     expect(state.busy).toBe(false);
     expect(state.credential).toBeNull();
@@ -306,7 +250,7 @@ describe("the static-credential fallback", () => {
   it("tells the screen it is working, so a slow mint is not a dead window", async () => {
     signIn();
     const connect = build();
-    const pending = connect.createCredential("Claude Code");
+    const pending = connect.createCredential("Claude Code", "line-7");
     expect(connect.state().busy).toBe(true);
     await pending;
     expect(connect.state().busy).toBe(false);
@@ -324,9 +268,9 @@ describe("one click, one credential", () => {
     plow.hold();
     const connect = build();
 
-    const first = connect.createCredential("Claude Code");
-    const second = connect.createCredential("Claude Code");
-    const third = connect.createCredential("Claude Code");
+    const first = connect.createCredential("Claude Code", "line-7");
+    const second = connect.createCredential("Claude Code", "line-7");
+    const third = connect.createCredential("Claude Code", "line-7");
     plow.release();
     const [a, b, c] = await Promise.all([first, second, third]);
 
@@ -338,9 +282,9 @@ describe("one click, one credential", () => {
   it("lets the next one through once the first has landed", async () => {
     signIn();
     const connect = build();
-    await connect.createCredential("Claude Code");
+    await connect.createCredential("Claude Code", "line-7");
     connect.dismissCredential();
-    await connect.createCredential("ChatGPT");
+    await connect.createCredential("ChatGPT", "line-7");
 
     expect(plow.minted.map((m) => m.name)).toEqual(["Claude Code", "ChatGPT"]);
   });
@@ -349,10 +293,10 @@ describe("one click, one credential", () => {
     signIn();
     plow.fails = new PlowApiError("network", "Couldn't reach Plow.");
     const connect = build();
-    await connect.createCredential("Claude Code");
+    await connect.createCredential("Claude Code", "line-7");
 
     plow.fails = null;
-    const state = await connect.createCredential("Claude Code");
+    const state = await connect.createCredential("Claude Code", "line-7");
     expect(state.credential).not.toBeNull();
   });
 });
@@ -363,7 +307,7 @@ describe("signing out takes the credential with it", () => {
     // be a different account entirely.
     signIn();
     const connect = build();
-    await connect.createCredential("Claude Code");
+    await connect.createCredential("Claude Code", "line-7");
     expect(connect.state().credential).not.toBeNull();
 
     const after = connect.signedOut();
@@ -376,7 +320,7 @@ describe("signing out takes the credential with it", () => {
     signIn();
     plow.hold();
     const connect = build();
-    const inFlight = connect.createCredential("Claude Code");
+    const inFlight = connect.createCredential("Claude Code", "line-7");
 
     connect.signedOut();
     plow.release();
@@ -394,7 +338,7 @@ describe("signing out takes the credential with it", () => {
     signIn();
     plow.hold();
     const connect = build();
-    const inFlight = connect.createCredential("Claude Code");
+    const inFlight = connect.createCredential("Claude Code", "line-7");
     expect(connect.state().busy).toBe(true);
 
     expect(connect.signedOut().busy).toBe(false);
@@ -407,12 +351,12 @@ describe("signing out takes the credential with it", () => {
     signIn();
     plow.hold();
     const connect = build();
-    const abandoned = connect.createCredential("Claude Code");
+    const abandoned = connect.createCredential("Claude Code", "line-7");
     connect.signedOut();
 
     // Signed in again — a fresh mint must be its own, not the one still in the
     // air from before.
-    const next = connect.createCredential("ChatGPT");
+    const next = connect.createCredential("ChatGPT", "line-7");
     plow.release();
     await abandoned;
     const state = await next;
@@ -452,19 +396,19 @@ describe("removing a roster row", () => {
    */
   it.each([
     [
-      "a cloud agent",
-      () => key({ id: 7, assistant_uid: "agent_7", assistant_provider: "exe:hermes" }),
-      { revoked: [] as number[], deleted: ["agent_7"], signOuts: 0 },
+      "an agent credential omitted from the session roster",
+      () => key({ id: 7, agent_uid: "agent_7" }),
+      { revoked: [] as number[], signOuts: 0 },
     ],
     [
       "this Mac",
       () => key({ id: 4, key_prefix: keyPrefixOf(DEVICE_TOKEN) }),
-      { revoked: [] as number[], deleted: [] as string[], signOuts: 1 },
+      { revoked: [] as number[], signOuts: 1 },
     ],
     [
       "an ordinary credential",
-      () => key({ id: 8, assistant_uid: null }),
-      { revoked: [8], deleted: [] as string[], signOuts: 0 },
+      () => key({ id: 8, agent_uid: null }),
+      { revoked: [8], signOuts: 0 },
     ],
   ])("removes %s down its own route and no other", async (_what, row, expected) => {
     signIn();
@@ -476,7 +420,6 @@ describe("removing a roster row", () => {
     await client.removeRosterRow(only.id);
 
     expect(plow.revoked).toEqual(expected.revoked);
-    expect(agentDeletes).toEqual(expected.deleted);
     expect(signOuts).toBe(expected.signOuts);
   });
 
@@ -490,7 +433,7 @@ describe("removing a roster row", () => {
    */
   it.each([
     ["failure", (d: Deferred<KeyInfo[]>) => d.reject(new PlowApiError("http", "Plow returned 500.", 500))],
-    ["success", (d: Deferred<KeyInfo[]>) => d.resolve([key({ id: 8, assistant_uid: null })])],
+    ["success", (d: Deferred<KeyInfo[]>) => d.resolve([key({ id: 8, agent_uid: null })])],
   ])("a late %s never displaces the newer roster read", async (_ending, finish) => {
     signIn();
     const stale = deferred<KeyInfo[]>();
@@ -524,7 +467,7 @@ describe("removing a roster row", () => {
     await client.refreshRoster();
     plow.keys = [key({ id: 5, name: "Claude Code" })];
 
-    await client.createCredential("Claude Code");
+    await client.createCredential("Claude Code", "line-7");
     await client.refreshRoster();
 
     // The mint IS a new roster row. Without a re-read the credential the user
@@ -532,7 +475,7 @@ describe("removing a roster row", () => {
     expect(client.state().roster.mcp.map((row) => row.id)).toEqual([5]);
   });
 
-  /** Same contract as a failed rename: the banner says why, the rows say what
+  /** The banner says why a removal failed, the rows say what
    * Plow holds — and after a response lost post-commit, Plow no longer holds
    * the row. */
   it.each([
@@ -540,74 +483,17 @@ describe("removing a roster row", () => {
     ["the response is lost after Plow committed", [] as number[]],
   ])("says why when %s, and shows the rows Plow holds", async (_when, held) => {
     signIn();
-    plow.keys = [key({ id: 9, assistant_uid: "agent_9", assistant_provider: "exe:hermes" })];
-    const client = build({ deleteFails: true });
+    plow.keys = [key({ id: 9, agent_uid: null })];
+    const client = build();
     await client.refreshRoster();
-    plow.keys = held.map((id) => key({ id, assistant_uid: "agent_9", assistant_provider: "exe:hermes" }));
+    plow.keys = held.map((id) => key({ id, agent_uid: null }));
 
+    const revoke = plow.revokeApiKey.bind(plow);
+    plow.revokeApiKey = async () => { throw new PlowApiError("http", "Plow returned 500.", 500); };
     const state = await client.removeRosterRow(9);
+    plow.revokeApiKey = revoke;
 
     expect(state.actionError).toBe("Plow returned 500.");
-    expect(state.roster.cloud.map((row) => row.id)).toEqual(held);
-  });
-});
-
-describe("renaming a roster row", () => {
-  it.each([
-    ["a cloud agent", () => key({ id: 7, assistant_uid: "agent_7", assistant_provider: "exe:hermes" })],
-    ["an MCP client", () => key({ id: 8, assistant_uid: null })],
-    ["this Mac", () => key({ id: 4, key_prefix: keyPrefixOf(DEVICE_TOKEN) })],
-  ])("renames %s through its credential and re-reads the roster", async (_what, row) => {
-    signIn();
-    const only = row();
-    plow.keys = [only];
-    const client = build();
-    await client.refreshRoster();
-    plow.keys = [{ ...only, name: "Renamed" }];
-
-    const state = await client.renameRosterRow(only.id, "Renamed");
-
-    expect(plow.renamed).toEqual([{ id: only.id, name: "Renamed" }]);
-    expect(plow.revoked).toEqual([]);
-    expect(agentDeletes).toEqual([]);
-    expect(signOuts).toBe(0);
-    const rows = [...state.roster.cloud, ...state.roster.mcp, ...state.roster.other];
-    expect(rows.map((r) => r.name)).toEqual(["Renamed"]);
-    expect(state.actionError).toBeNull();
-  });
-
-  /**
-   * A failure says why, and the roster says what Plow holds — which differ
-   * when the response was lost after Plow committed: the name changed, and a
-   * screen still showing the old one under "did not finish" would be wrong
-   * about both.
-   */
-  it.each([
-    ["Plow refuses", "Kitchen agent"],
-    ["the response is lost after Plow committed", "Pantry"],
-  ])("says why when %s, and shows the name Plow holds", async (_when, held) => {
-    signIn();
-    plow.keys = [key({ id: 9, name: "Kitchen agent" })];
-    plow.renameFails = new PlowApiError("http", "Plow returned 500.", 500);
-    const client = build();
-    await client.refreshRoster();
-    plow.keys = [key({ id: 9, name: held })];
-
-    const state = await client.renameRosterRow(9, "Pantry");
-
-    expect(state.actionError).toBe("Plow returned 500.");
-    expect(state.roster.mcp.map((row) => row.name)).toEqual([held]);
-  });
-
-  it("refuses a row that is no longer on screen without calling Plow", async () => {
-    signIn();
-    plow.keys = [];
-    const client = build();
-    await client.refreshRoster();
-
-    const state = await client.renameRosterRow(42, "Ghost");
-
-    expect(plow.renamed).toEqual([]);
-    expect(state.actionError).toBe("That row is no longer on this screen.");
+    expect(state.roster.mcp.map((row) => row.id)).toEqual(held);
   });
 });

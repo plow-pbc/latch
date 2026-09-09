@@ -1,4 +1,4 @@
-import { isCloudAssistant, PlowApi, PlowApiError, REQUEST_TIMEOUT_MS } from "./plowApi.js";
+import { PlowApi, PlowApiError, REQUEST_TIMEOUT_MS, decodeAgentCreateReceipt, echoesCredential } from "./plowApi.js";
 
 export const CLOUD_AGENT_POLL_INTERVAL_MS = 2_000;
 const CLOUD_AGENT_POLL_RETRY_WINDOW_MS = 5 * 60_000;
@@ -10,24 +10,16 @@ export type CloudAgentStatus =
   | "teardown"
   | (string & {});
 
-/**
- * Server truth for one cloud agent. The read endpoint adds `name` and
- * `session_id` to the initial create receipt, so both are nullable while the
- * first provisioning response is on screen.
- */
 export interface CloudAgentResource {
   agentId: string;
-  /** The first entry is the home chat used to resolve this agent's line. */
-  chatUids: string[];
+  line: { uid: string; displayName: string | null; number: string } | null;
+  credential: { connected: boolean } | null;
   url: string | null;
-  provider: string | null;
-  name: string | null;
-  status: CloudAgentStatus;
-  failureCode?: string | null;
-  failureReason: string | null;
-  createdAt: string | null;
-  /** Credential identity only. Never use this as the agent's identity. */
-  sessionId: string | null;
+  provider: string;
+  name: string;
+  status: CloudAgentStatus | null;
+  failureCode: string | null;
+  createdAt: string;
 }
 
 export interface CreateCloudAgentRequest {
@@ -79,13 +71,16 @@ export class CloudAgentsClient {
   constructor(
     private readonly api: PlowApi,
     private readonly wait: Wait = defaultWait,
+    private readonly onToken: (token: string, owner: string) => void = () => {},
+    private readonly beforeMutation: (credential: string) => void = () => {},
   ) {}
 
   async create(
     deviceCredential: string,
     request: CreateCloudAgentRequest,
   ): Promise<CloudAgentResource> {
-    const response = await this.api.request("POST", "/v1/assistants", {
+    this.beforeMutation(deviceCredential);
+    const response = await this.api.request("POST", "/v1/agents", {
       token: deviceCredential,
       body: {
         line_uid: request.lineUid,
@@ -96,7 +91,10 @@ export class CloudAgentsClient {
     if (!response.ok) {
       await throwCloudCallError(response);
     }
-    return this.resourceFor(response, deviceCredential);
+    const decoded = decodeAgentCreateReceipt(await decodeJson(response), deviceCredential);
+    const agent = parseResource(decoded.agent, deviceCredential, response.status);
+    if (typeof decoded.token === "string") this.onToken(decoded.token, deviceCredential);
+    return agent;
   }
 
   async changeLine(
@@ -106,7 +104,7 @@ export class CloudAgentsClient {
   ): Promise<CloudAgentResource> {
     const response = await this.api.request(
       "PUT",
-      `/v1/assistants/${encodeURIComponent(agentId)}/line`,
+      `/v1/agents/${encodeURIComponent(agentId)}/line`,
       { token: deviceCredential, body: { line_uid: lineUid } },
     );
     if (!response.ok) {
@@ -115,33 +113,22 @@ export class CloudAgentsClient {
     return this.resourceFor(response, deviceCredential);
   }
 
-  /**
-   * The account's cloud agents, from the slot per pool line the API answers with.
-   *
-   * Two halves are dropped for the same reason — neither is an agent this
-   * screen can act on. A slot with no assistant is a free line, and a
-   * `self_hosted` one is an activated Mac (`isCloudAssistant`).
-   */
   async list(deviceCredential: string): Promise<CloudAgentResource[]> {
-    const response = await this.api.request("GET", "/v1/assistants", {
+    const response = await this.api.request("GET", "/v1/agents", {
       token: deviceCredential,
     });
     if (!response.ok) throw errorFor(response.status);
 
     const decoded = await decodeJson(response);
     if (!Array.isArray(decoded)) throw invalidResponse(response.status);
-    return decoded.flatMap((slot) => {
-      if (!isRecord(slot) || slot.assistant === undefined) throw invalidResponse(response.status);
-      if (slot.assistant === null) return [];
-      const agent = parseResource(slot.assistant, deviceCredential, response.status);
-      return isCloudAssistant(agent.provider) ? [agent] : [];
-    });
+    return decoded.map((row) => parseResource(row, deviceCredential, response.status));
   }
 
   async delete(deviceCredential: string, agentId: string): Promise<void> {
+    this.beforeMutation(deviceCredential);
     const response = await this.api.request(
       "DELETE",
-      `/v1/assistants/${encodeURIComponent(agentId)}`,
+      `/v1/agents/${encodeURIComponent(agentId)}`,
       { token: deviceCredential },
     );
     // Delete is retry-safe from the app's perspective: a record already gone
@@ -170,7 +157,7 @@ export class CloudAgentsClient {
       try {
         const response = await this.api.request(
           "GET",
-          `/v1/assistants/${encodeURIComponent(current.agentId)}`,
+          `/v1/agents/${encodeURIComponent(current.agentId)}`,
           {
             token: deviceCredential,
             signal,
@@ -236,43 +223,29 @@ function parseResource(
     throw invalidResponse(statusCode);
   }
 
-  const chatUids = readChatUids(decoded);
-  if (chatUids === null) throw invalidResponse(statusCode);
-
-  const optionalString = (value: unknown): string | null =>
-    typeof value === "string" ? value : null;
+  if (typeof decoded.name !== "string" || typeof decoded.provider !== "string") {
+    throw invalidResponse(statusCode);
+  }
   const resource: CloudAgentResource = {
     agentId: decoded.uid,
-    chatUids,
-    url: optionalString(decoded.url),
-    provider: optionalString(decoded.provider),
-    name: optionalString(decoded.name),
-    status: typeof decoded.status === "string" ? decoded.status : "provisioning",
-    failureCode: optionalString(decoded.failure_code),
-    failureReason: optionalString(decoded.failure_reason),
-    createdAt: optionalString(decoded.created_at),
-    sessionId: optionalString(decoded.session_id),
+    line: isRecord(decoded.line) ? {
+      uid: decoded.line.uid as string,
+      displayName: typeof decoded.line.display_name === "string" ? decoded.line.display_name : null,
+      number: decoded.line.provider_key as string,
+    } : null,
+    credential: decoded.credential as CloudAgentResource["credential"],
+    url: typeof decoded.url === "string" ? decoded.url : null,
+    provider: decoded.provider,
+    name: decoded.name,
+    status: typeof decoded.status === "string" ? decoded.status : null,
+    failureCode: typeof decoded.failure_code === "string" ? decoded.failure_code : null,
+    createdAt: typeof decoded.created_at === "string" ? decoded.created_at : "",
   };
 
-  if (
-    Object.values(resource)
-      .flatMap((value) => (Array.isArray(value) ? value : [value]))
-      .some((value) => typeof value === "string" && echoesCredential(value, deviceCredential))
-  ) {
+  if (echoesCredential(JSON.stringify(resource), deviceCredential)) {
     throw new PlowApiError("http", "Plow returned an unsafe cloud-agent response.", statusCode);
   }
   return resource;
-}
-
-/**
- * The assistant's lifecycle-anchor chats. Empty is a real answer — a
- * self-hosted assistant anchors none — and `null` means the field was missing
- * or malformed.
- */
-function readChatUids(decoded: Record<string, unknown>): string[] | null {
-  const many = decoded.chat_uids;
-  if (!Array.isArray(many) || !many.every((uid) => typeof uid === "string")) return null;
-  return many as string[];
 }
 
 function errorFor(status: number): PlowApiError {
@@ -316,6 +289,7 @@ const LINE_ERRORS: Readonly<Record<string, {
   code: CloudAgentLineErrorCode;
   message: string;
 }>> = Object.freeze({
+  AGENT_EXISTS: { code: "line_occupied", message: "Another agent already uses that line." },
   NO_HOME_CHAT: {
     code: "no_home_chat",
     message: "Text this line once first, then try again.",
@@ -346,19 +320,6 @@ const LINE_ERRORS: Readonly<Record<string, {
   },
 });
 
-/**
- * Deliberately covers plaintext and standard Base64, in full and by 10-character prefix, but not
- * Base64url: this hardens responses from an origin that already holds the secret rather than
- * providing exhaustive encoding defense.
- */
-export function echoesCredential(text: string, credential: string): boolean {
-  const secret = credential.trim();
-  if (!secret) return false;
-  const encodings = [secret, Buffer.from(secret).toString("base64")];
-  return encodings.some((value) =>
-    text.includes(value) || (value.length > 10 && text.includes(value.slice(0, 10)))
-  );
-}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);

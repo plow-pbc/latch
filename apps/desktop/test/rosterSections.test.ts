@@ -1,6 +1,6 @@
 /**
  * The classification decides which removal call a row gets, and prod returns a
- * null `assistant_uid` while no assistants are live — so the branch that
+ * null `agent_uid` while no assistants are live — so the branch that
  * matters is the one everyday testing never enters.
  */
 import { describe, expect, it } from "vitest";
@@ -24,40 +24,14 @@ const key = (overrides: Partial<KeyInfo> = {}): KeyInfo =>
 
 /** Every placed row, whichever section it landed in. */
 const allRows = (sections: ReturnType<typeof sectionRoster>) => [
-  ...sections.cloud,
   ...sections.mcp,
   ...sections.other,
 ];
 
 describe("which section a credential belongs in", () => {
-  it("puts a cloud assistant's credential in Cloud agents, whatever its scopes", () => {
-    const sections = sectionRoster([
-      key({ id: 1, assistant_uid: "agent_1", assistant_provider: "exe:hermes" }),
-      key({ id: 2, assistant_uid: "agent_2", assistant_provider: "exe:life", scopes: ["relay:*"] }),
-    ]);
-
-    expect(sections.cloud.map((row) => row.id)).toEqual([1, 2]);
-    expect(sections.mcp).toEqual([]);
-    expect(sections.other).toEqual([]);
-  });
-
-  it.each([
-    // Every activated Mac has one of these, and it is revoked like any other
-    // credential — there is no VM behind it to delete.
-    ["a self-hosted assistant", "self_hosted"],
-    // A provider this build cannot name must not fall into the half that
-    // deletes: the safe unknown is a revoke.
-    ["an unrecognised provider", null],
-    // What an API predating the assistant contract sends: no field at all.
-    ["an assistant field the API never sent", undefined],
-  ])("keeps %s out of Cloud agents", (_case, provider) => {
-    const sections = sectionRoster([
-      key({ id: 1, assistant_uid: "assistant_mac", assistant_provider: provider, scopes: ["relay:call"] }),
-    ]);
-
-    expect(sections.cloud).toEqual([]);
-    expect(sections.mcp.map((row) => row.id)).toEqual([1]);
-    expect(sections.mcp[0].agentId).toBeNull();
+  it("excludes all agent credentials from independently revocable sessions", () => {
+    const sections = sectionRoster([key({ id: 1, agent_uid: "local" }), key({ id: 2, agent_uid: "cloud" })]);
+    expect(allRows(sections)).toEqual([]);
   });
 
   it("separates MCP clients from other sessions by scope", () => {
@@ -80,16 +54,16 @@ describe("which section a credential belongs in", () => {
     const sections = sectionRoster([
       key({ id: 1 }),
       key({ id: 2, is_active: false }),
-      key({ id: 3, is_active: false, assistant_uid: "agent_3", assistant_provider: "exe:hermes" }),
+      key({ id: 3, is_active: false, agent_uid: "agent_3" }),
     ]);
 
-    expect(sections.revokedHidden).toBe(2);
-    expect([...sections.cloud, ...sections.mcp, ...sections.other].map((r) => r.id)).toEqual([1]);
+    expect(sections.revokedHidden).toBe(1);
+    expect([...sections.mcp, ...sections.other].map((r) => r.id)).toEqual([1]);
   });
 
-  it("places every row it is given, whatever kind it turns out to be", () => {
+  it("places every non-agent session, whatever its scopes", () => {
     const keys = [
-      key({ id: 1, assistant_uid: "agent_1", assistant_provider: "exe:hermes" }),
+      key({ id: 1, agent_uid: "agent_1" }),
       key({ id: 2, scopes: ["relay:call"] }),
       key({ id: 3, scopes: ["relay:*"] }),
       key({ id: 4, scopes: ["vault:read"] }),
@@ -97,8 +71,8 @@ describe("which section a credential belongs in", () => {
     ];
     const sections = sectionRoster(keys);
 
-    const placed = [...sections.cloud, ...sections.mcp, ...sections.other].map((row) => row.id);
-    expect(placed.sort()).toEqual([1, 2, 3, 4, 5]);
+    const placed = [...sections.mcp, ...sections.other].map((row) => row.id);
+    expect(placed.sort()).toEqual([2, 3, 4, 5]);
     expect(new Set(placed).size).toBe(placed.length);
     expect(sections.other.filter((row) => [4, 5].includes(row.id)).map((row) => row.kind)).toEqual([
       "Session",
@@ -107,28 +81,6 @@ describe("which section a credential belongs in", () => {
     expect(JSON.stringify(sections)).not.toMatch(
       /key_prefix|plow_sk_abc123|scopes|relay:call|tokens_used/,
     );
-  });
-});
-
-describe("how a row is removed", () => {
-  it("never routes a cloud assistant's credential to the key revoke", () => {
-    // The negative, because the key revoke flips `is_active` and nothing else:
-    // the VM keeps running, the chat's webhook keeps firing, and the row
-    // vanishes from the list because inactive rows are filtered out. A live
-    // agent that 401s on everything and nobody can reach to remove.
-    const sections = sectionRoster([
-      key({ id: 1, assistant_uid: "agent_1", assistant_provider: "exe:hermes" }),
-      key({ id: 2, assistant_uid: "agent_2", assistant_provider: "exe:hermes", scopes: ["*:*"] }),
-      key({ id: 3, assistant_uid: "agent_3", assistant_provider: "exe:life", scopes: ["relay:*"], name: null }),
-    ]);
-
-    // The section IS the route: `connectClient.removeRosterRow` reads
-    // `agentId` off the row it finds here, so a row in the wrong section is a
-    // removal down the wrong path. Asserted through the real removal in
-    // connectClient.test.ts; what this pins is the placement it depends on.
-    expect(sections.cloud).toHaveLength(3);
-    for (const row of sections.cloud) expect(row.agentId).not.toBeNull();
-    for (const row of [...sections.mcp, ...sections.other]) expect(row.agentId).toBeNull();
   });
 });
 

@@ -253,7 +253,9 @@ process hands it and owns no copy of its own.
   `GET /v1/relay/info`, registers the stable device identity and Mac hostname at
   `PUT /v1/relay/devices/{device-id}`, and opens the socket. Plow allocates the
   durable display name (`mbp`, `mbp (2)`). Then "create an agent" is
-  `POST /v1/relay/agents`, which the stored session may call.
+  `POST /v1/agents` with `name`, `provider`, and a required `line_uid`,
+  which the stored session may call. Local creation returns `{agent, token}`;
+  the token is shown once for self-hosted setup.
 - **The login session IS the credential this Mac keeps.** Latch is the owner's
   manager app, not an agent: it holds the socket, lists chats and Plow's
   numbers, mints agents, buys inference and mints connector tokens. It used to
@@ -285,14 +287,14 @@ process hands it and owns no copy of its own.
   `DOMO_API_BASE_URL` as an override a developer exports. A credential is only valid
   against the environment that minted it, so an editable origin could only ever
   be wrong. The device socket derives from that base by swapping the scheme; the
-  **agent endpoints are not derived at all** — registration and agent minting
-  return server-authored URLs/configuration, and the server stays authoritative.
-- **Agent credentials are shown exactly once**, as a ready-to-paste MCP config
-  with the token in an `Authorization` header — never in the URL. The config has
-  one named server per active Latch installation (`plow-mbp`, `plow-mba`, …),
-  and every agent credential on the account can reach all of them. The original
-  account URL remains a compatibility alias for the oldest active device; it
-  fails with that device's name when offline and never falls back to another Mac.
+  **agent endpoints are not derived at all** — registration
+  returns this Mac’s MCP URL, and the server stays authoritative.
+- **Agent credentials are shown exactly once.** The create picker shows a local
+  agent's token for copying. Static MCP setup assembles a single `plow` server
+  config locally, targeting this Mac's server-provided MCP URL with the token
+  in an `Authorization` header, never in the URL. Save the token before creating
+  or deleting another agent; dismissal drops Latch's in-memory copy.
+
 
 Evidence, both reproducible and both failing loudly rather than quietly:
 

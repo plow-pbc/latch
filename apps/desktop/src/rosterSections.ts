@@ -1,12 +1,5 @@
-/**
- * The Agents screen's three sections, derived from the account's credentials.
- *
- * Kept out of the renderer deliberately. The classification decides which
- * removal call a row gets, and a row misplaced here is a live cloud agent
- * removed by the wrong endpoint — that is a decision for tested code, not for
- * a template.
- */
-import { isCloudAssistant, parseApiTimestamp, type KeyInfo } from "./plowApi.js";
+/** Independent MCP clients and sessions; agents have their own resource roster. */
+import { parseApiTimestamp, type KeyInfo } from "./plowApi.js";
 
 export type AgentRosterKind =
   | "Agent"
@@ -51,7 +44,6 @@ export interface RosterSectionRow {
   kind: AgentRosterKind;
   createdAt: string | null;
   lastSeenAt: string | null;
-  agentId: string | null;
   chatUids: string[];
   /** How many of `chatUids` to name is the screen's business; whether it is
    * "all", "none" or a list is not. */
@@ -69,8 +61,6 @@ export interface RosterSectionRow {
 }
 
 export interface RosterSections {
-  /** Provisioned cloud agents. Removal goes to the cloud-agent endpoint. */
-  cloud: RosterSectionRow[];
   /** MCP clients: relay-capable, not an agent. Removal is a key revoke. */
   mcp: RosterSectionRow[];
   /**
@@ -87,7 +77,6 @@ export interface RosterSections {
 }
 
 export const EMPTY_ROSTER: RosterSections = Object.freeze({
-  cloud: [],
   mcp: [],
   other: [],
   revokedHidden: 0,
@@ -160,23 +149,13 @@ function rosterKind(scopes: readonly string[]): AgentRosterKind {
   return "Session";
 }
 
-/**
- * Split the account's credentials into the three sections the screen shows.
- *
- * The assistant decides first and decides alone. A credential that belongs to
- * a cloud assistant is a cloud agent however its scopes read — and prod
- * returns a null `assistant_uid` while no assistants are live, so the branch
- * that matters is the one everyday testing never enters.
- *
- * **Belonging to an assistant is not enough: it has to be a cloud one.** Every
- * activated Mac has a `self_hosted` assistant too — see `isCloudAssistant`.
- */
+/** Agent-owned credentials appear only in the agents resource roster. */
 export function sectionRoster(
   keys: readonly KeyInfo[],
   options: { deviceCredential?: string } = {},
 ): RosterSections {
   const credential = (options.deviceCredential ?? "").trim();
-  const sections: RosterSections = { cloud: [], mcp: [], other: [], revokedHidden: 0 };
+  const sections: RosterSections = { mcp: [], other: [], revokedHidden: 0 };
 
   // Exactly one row is this Mac, or none is. Two rows matching means the match
   // is not identifying anything, and marking both would warn about revoking a
@@ -188,6 +167,7 @@ export function sectionRoster(
   const thisMacId = candidates.length === 1 ? candidates[0].id : null;
 
   for (const key of keys) {
+    if (key.agent_uid != null) continue;
     if (!key.is_active) {
       sections.revokedHidden += 1;
       continue;
@@ -202,20 +182,15 @@ export function sectionRoster(
       kind: key.id === thisMacId ? "Session" : rosterKind(key.scopes),
       createdAt: normalizeRosterTimestamp(key.created_at),
       lastSeenAt: normalizeRosterTimestamp(key.last_seen_at),
-      // Only a cloud assistant's uid, because this field is what picks the
-      // removal call below: a self-hosted row carries none and revokes.
-      agentId: isCloudAssistant(key.assistant_provider) ? key.assistant_uid : null,
       chatUids: key.chat_uids,
       chatAccess: chatAccessOf(key.chat_uids),
       permissions: rosterPermissions(key.scopes),
       isThisMac: key.id === thisMacId,
     };
-    if (placed.agentId !== null) sections.cloud.push(placed);
-    else if (placed.kind === "Agent") sections.mcp.push(placed);
+    if (placed.kind === "Agent") sections.mcp.push(placed);
     else sections.other.push(placed);
   }
 
-  sections.cloud.sort(byLastUsed);
   sections.mcp.sort(byLastUsed);
   sections.other.sort(byLastUsed);
   return sections;

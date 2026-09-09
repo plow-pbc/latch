@@ -91,7 +91,7 @@ describe("PlowApi", () => {
     const timeout = vi.spyOn(AbortSignal, "timeout").mockReturnValue(controller.signal);
 
     const pending = new PlowApi("https://api.plow.co", fetchImpl)
-      .createAgent("plow_device", "Claude Code")
+      .createAgent("plow_device", "Claude Code", "line-7")
       .catch((e) => e);
     controller.abort(new DOMException("The operation was aborted.", "TimeoutError"));
     const error = await pending;
@@ -493,35 +493,16 @@ describe("PlowApi", () => {
     expect(calls[0].url).not.toContain("act_secret_xyz");
   });
 
-  // The line is what the server mints the assistant role on. Sending it only
-  // when one is named keeps a line-less mint — Claude Code and every other
-  // MCP-only client — the `relay:call` credential it is today.
-  it.each([
-    { lineUid: null, body: { name: "Claude Code" } },
-    { lineUid: "line-7", body: { name: "Claude Code", line_uid: "line-7" } },
-  ])("mints an agent and sends the line only when one is named ($lineUid)", async ({ lineUid, body }) => {
-    const { calls, fetchImpl } = recordingFetch([
-      {
-        status: 200,
-        body: {
-          id: 41,
-          token: "plow_agenttok",
-          key_prefix: "agenttk",
-          name: "Claude Code",
-          mcp_config: '{"mcpServers":{"plow-mbp":{"headers":{"Authorization":"Bearer plow_agenttok"}}}}',
-        },
-      },
-    ]);
-    const minted = await new PlowApi("https://api.plow.co", fetchImpl).createAgent(
-      "plow_device",
-      "Claude Code",
-      lineUid,
-    );
-
-    expect(calls[0].url).toBe("https://api.plow.co/v1/relay/agents");
-    expect(JSON.parse(String(calls[0].init.body))).toEqual(body);
-    expect(minted.id).toBe(41);
-    expect(minted.token).toBe("plow_agenttok");
+  it("creates a local agent with a required line and returns its one-time token", async () => {
+    const { calls, fetchImpl } = recordingFetch([{ status: 201, body: {
+      agent: { uid: "agent-1", name: "Claude Code", credential: { id: 41 } }, token: "plow_agenttok",
+    } }]);
+    const api = new PlowApi("https://stub.invalid", fetchImpl);
+    await expect(api.createAgent("owner", "Claude Code", "")).rejects.toThrow("Choose a line");
+    const minted = await api.createAgent("owner", "Claude Code", "line-7");
+    expect(calls[0].url).toBe("https://stub.invalid/v1/agents");
+    expect(JSON.parse(String(calls[0].init.body))).toEqual({ provider: "self_hosted", name: "Claude Code", line_uid: "line-7" });
+    expect(minted).toMatchObject({ agentUid: "agent-1", token: "plow_agenttok" });
   });
 
   it("lists cloud-agent providers with the credential only in the bearer header", async () => {
@@ -531,9 +512,9 @@ describe("PlowApi", () => {
         id: " provider/Zeta ",
         name: "Zeta",
         image: "public.ecr.aws/plow/zeta:latest",
-        future_field: true,
+        future_field: true, settings: {},
       },
-      { id: "exe:life", name: "Life", image: "public.ecr.aws/plow/life:latest" },
+      { id: "self_hosted", name: "Self-hosted" },
     ];
     const { calls, fetchImpl } = recordingFetch([{ status: 200, body: roster }]);
 
@@ -541,11 +522,11 @@ describe("PlowApi", () => {
       new PlowApi("https://api.plow.co", fetchImpl).listCloudAgentProviders(credential),
     ).resolves.toEqual([
       { id: " provider/Zeta ", name: "Zeta" },
-      { id: "exe:life", name: "Life" },
+      { id: "self_hosted", name: "Self-hosted" },
     ]);
 
     expect(calls).toHaveLength(1);
-    expect(calls[0].url).toBe("https://api.plow.co/v1/assistants/providers");
+    expect(calls[0].url).toBe("https://api.plow.co/v1/agents/providers");
     expect(calls[0].url).not.toContain(credential);
     expect(calls[0].init.method).toBe("GET");
     expect(calls[0].init.body).toBeUndefined();
@@ -672,26 +653,16 @@ describe("PlowApi", () => {
         is_active: true,
         last_seen_at: "2026-08-17T12:00:00+00:00",
         created_at: "2026-08-16T12:00:00+00:00",
-        assistant_uid: "agent_123",
-        assistant_provider: "exe:hermes",
+        agent_uid: "agent_123",
         chat_uids: ["cht_123"],
       },
     ];
-    // An API predating the assistant contract sends neither field —
-    // `JSON.stringify` drops the undefined pair, so this is that row exactly.
-    const legacy = { ...keys[0], id: 18, assistant_uid: undefined, assistant_provider: undefined };
     const { calls, fetchImpl } = recordingFetch([
-      { status: 200, body: [...keys, legacy] },
+      { status: 200, body: keys },
       { status: 200, body: { status: "revoked", id: 17 } },
     ]);
     const api = new PlowApi("https://api.plow.co", fetchImpl);
-
-    // Absent reads as null. Left undefined it would pass every null test and
-    // file the row as a cloud agent whose Remove deletes nothing.
-    await expect(api.listApiKeys(credential)).resolves.toEqual([
-      ...keys,
-      { ...legacy, assistant_uid: null, assistant_provider: null },
-    ]);
+    await expect(api.listApiKeys(credential)).resolves.toEqual(keys);
     await expect(api.revokeApiKey(credential, 17)).resolves.toEqual({
       status: "revoked",
       id: 17,
@@ -720,32 +691,6 @@ describe("PlowApi", () => {
         "17/../relay/devices/self/revoke" as unknown as number,
       ),
     ).rejects.toMatchObject({ message: "Invalid API key id." });
-    expect(calls).toHaveLength(0);
-  });
-
-  it("renames a credential through its preferences, with the credential only in the header", async () => {
-    const credential = "plow_device_do_not_leak";
-    const { calls, fetchImpl } = recordingFetch([{ status: 200, body: { assistant_name: "Kitchen" } }]);
-    const api = new PlowApi("https://api.plow.co", fetchImpl);
-
-    await expect(api.renameApiKey(credential, 17, "  Kitchen  ")).resolves.toBeUndefined();
-
-    expect(calls.map(({ url, init }) => [init.method, url, init.body])).toEqual([
-      ["PATCH", "https://api.plow.co/v1/api-keys/17/preferences", JSON.stringify({ assistant_name: "Kitchen" })],
-    ]);
-    expect((calls[0].init.headers as Record<string, string>).authorization).toBe(`Bearer ${credential}`);
-    expect(calls[0].url.includes(credential)).toBe(false);
-  });
-
-  it.each([
-    ["a path-shaped id", "17/../relay/devices/self/revoke" as unknown as number, "Kitchen", "Invalid API key id."],
-    ["a blank name", 17, "   ", "A name is required."],
-    ["a name over 200 characters", 17, "x".repeat(201), "A name can be at most 200 characters."],
-  ])("refuses to rename with %s without making a request", async (_what, id, name, message) => {
-    const { calls, fetchImpl } = recordingFetch([]);
-    const api = new PlowApi("https://api.plow.co", fetchImpl);
-
-    await expect(api.renameApiKey("plow_device_do_not_leak", id, name)).rejects.toMatchObject({ message });
     expect(calls).toHaveLength(0);
   });
 

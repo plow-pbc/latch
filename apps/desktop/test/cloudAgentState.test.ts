@@ -38,15 +38,14 @@ function tempHome(): string {
 function agent(overrides: Partial<CloudAgentResource> = {}): CloudAgentResource {
   return {
     agentId: "agent_1",
-    chatUids: ["cht_one"],
+    line: { uid: "lin_willow", displayName: "Willow", number: "+15550100" },
+    credential: null,
     url: null,
     provider: "exe:hermes",
     name: "Kitchen",
     status: "running",
     failureCode: null,
-    failureReason: null,
     createdAt: "2026-08-24T18:02:11Z",
-    sessionId: null,
     ...overrides,
   };
 }
@@ -200,7 +199,7 @@ function build(options: {
         calls.push("listLines");
         return options.listLines
           ? options.listLines()
-          : [{ uid: "lin_willow", displayName: "Willow", number: "+15550100" }];
+          : [{ uid: "lin_willow", agentUid: "agent_1", displayName: "Willow", number: "+15550100" }];
       },
     },
     recordAudit: (event, fields) => {
@@ -211,7 +210,7 @@ function build(options: {
     warn: options.warn,
     onChange: options.onChange,
   });
-  return { state, calls, audit, home };
+  return { state, calls, audit, home, agents };
 }
 
 describe("CloudAgentState line and thread display", () => {
@@ -224,6 +223,7 @@ describe("CloudAgentState line and thread display", () => {
       cloudProviders: null,
       cloudProvidersError: null,
       cloudFreeLines: [],
+      cloudLinesLoaded: false,
       cloudLineFlow: {
         phase: "idle",
         activation: null,
@@ -339,7 +339,7 @@ describe("CloudAgentState line and thread display", () => {
     expect(state.state().cloudAgents[0].canMessage).toBe(true);
 
     const { state: unresolved } = build({
-      listAgents: async () => [agent({ chatUids: ["cht_missing"] })],
+      listAgents: async () => [agent({ line: null })],
     });
     await unresolved.refresh();
 
@@ -349,10 +349,11 @@ describe("CloudAgentState line and thread display", () => {
 
   it("keeps a resolved line without an E.164 number non-messageable", async () => {
     const { state } = build({
+      listAgents: async () => [agent({ line: { uid: "lin_willow", displayName: "Willow", number: "not-a-number" } })],
       listChats: async () => [chat({ recipients: { line: "not-a-number", members: [] } })],
       listLines: async () => [{
         uid: "lin_willow",
-        displayName: "Willow",
+        agentUid: null, displayName: "Willow",
         number: "",
       }],
     });
@@ -388,7 +389,7 @@ describe("CloudAgentState line and thread display", () => {
 
   it("shows no line and no threads when the home chat is absent", async () => {
     const { state } = build({
-      listAgents: async () => [agent({ chatUids: ["cht_missing", "cht_two"] })],
+      listAgents: async () => [agent({ line: null })],
       listChats: async () => [
         chat({ uid: "cht_one" }),
         chat({
@@ -422,6 +423,21 @@ describe("CloudAgentState line and thread display", () => {
     expect(state.state().cloudAgentsError).toBeNull();
     expect(state.state().cloudChatsError).toBe("Plow returned 503.");
     expect(state.state().cloudChatsLoaded).toBe(false);
+  });
+
+  it("deletes a create receipt arriving after sign-out instead of stranding its credential", async () => {
+    const created = deferred<CloudAgentResource>();
+    const { state, calls, home, agents } = build({ createAgent: () => created.promise });
+    const remove = vi.spyOn(agents, "delete");
+    const creating = state.create({ name: "Kitchen", provider: "self_hosted", lineUid: "lin_willow" });
+    await vi.waitFor(() => expect(calls).toContain("create:lin_willow:Kitchen"));
+    state.signedOut();
+    saveSettings(home, { ...loadSettings(home), relayCredential: "another-account" });
+    created.resolve(agent({ provider: "self_hosted", status: null }));
+    expect(await creating).toBeNull();
+    expect(remove).toHaveBeenCalledWith(CREDENTIAL, "agent_1");
+    expect(state.state().cloudAgents).toEqual([]);
+    expect(calls).not.toContain("poll:agent_1");
   });
 
   it("drops a roster read that lands after sign-out", async () => {
@@ -489,13 +505,13 @@ describe("CloudAgentState line and thread display", () => {
 
     await state.refresh();
 
-    expect(state.state().cloudAgents[0].line).toEqual({ uid: "lin_willow", label: "+15550100" });
+    expect(state.state().cloudAgents[0].line).toEqual({ uid: "lin_willow", label: "Willow · +15550100" });
     expect(state.state().cloudAgents[0].threads).toEqual([
       { uid: "cht_one", label: "+15550100 · You · Nina" },
     ]);
   });
 
-  it("keeps the resource provider when agents load before chats resolve the retry line", async () => {
+  it("resolves retry from the agent line before chats load", async () => {
     const chats = deferred<CloudChatOption[]>();
     const requests: Array<{ lineUid: string; name: string; provider: string }> = [];
     const { state } = build({
@@ -509,8 +525,8 @@ describe("CloudAgentState line and thread display", () => {
 
     const refresh = state.refresh();
     await vi.waitFor(() => expect(state.state().cloudAgents).toHaveLength(1));
-    expect(state.state().cloudAgents[0].line).toBeNull();
-    expect(state.state().cloudAgents[0].canRetry).toBe(false);
+    expect(state.state().cloudAgents[0].line?.uid).toBe("lin_willow");
+    expect(state.state().cloudAgents[0].canRetry).toBe(true);
 
     chats.resolve([chat()]);
     await refresh;
@@ -524,66 +540,21 @@ describe("CloudAgentState line and thread display", () => {
     }]);
   });
 
-  it("keeps the selected provider when later resources omit it", async () => {
-    const requests: Array<{ lineUid: string; name: string; provider: string }> = [];
-    let created = false;
-    const { state } = build({
-      listAgents: async () => created
-        ? [agent({ status: "failed", provider: null, chatUids: [] })]
-        : [],
-      createAgent: async (request) => {
-        requests.push(request);
-        created = true;
-        return agent({ status: "provisioning", provider: null });
-      },
-    });
-    await state.refresh();
 
-    await state.create({
-      name: "Kitchen",
-      provider: " provider/live ",
-      lineUid: "lin_willow",
-    });
-    await vi.waitFor(() => expect(state.state().cloudAgents[0]?.status).toBe("failed"));
-    expect(state.state().cloudAgents[0]).toMatchObject({ line: null, canRetry: true });
-    await state.retryFailed("agent_1");
-
-    expect(requests).toEqual([
-      { lineUid: "lin_willow", name: "Kitchen", provider: " provider/live " },
-      { lineUid: "lin_willow", name: "Kitchen", provider: " provider/live " },
-    ]);
-  });
-
-  it("does not offer retry after relaunch when a failed resource omits its provider", async () => {
-    const createAgent = vi.fn(async () => agent());
-    const { state } = build({
-      listAgents: async () => [agent({ status: "failed", provider: null })],
-      createAgent,
-    });
-
-    await state.refresh();
-
-    expect(state.state().cloudAgents[0]).toMatchObject({
-      status: "failed",
-      canRetry: false,
-    });
-    expect(await state.retryFailed("agent_1")).toBeNull();
-    expect(createAgent).not.toHaveBeenCalled();
-  });
 });
 
 describe("CloudAgentState new agent flow", () => {
-  it("derives unique free lines from chats minus agent line uids", async () => {
+  it("reads free lines from API ownership, independent of chats", async () => {
     const { state } = build({
-      listAgents: async () => [agent({ chatUids: ["cht_willow"] })],
+      listAgents: async () => [agent({ line: { uid: "lin_willow", displayName: "Willow", number: "+15550100" } })],
       listChats: async () => [
         chat({ uid: "cht_willow", lineUid: "lin_willow" }),
         chat({ uid: "cht_ash_one", lineUid: "lin_ash", recipients: { line: "+15550200", members: [] } }),
         chat({ uid: "cht_ash_two", lineUid: "lin_ash", recipients: { line: "+15550200", members: [] } }),
       ],
       listLines: async () => [
-        { uid: "lin_willow", displayName: "Willow", number: "+15550100" },
-        { uid: "lin_ash", displayName: "Ash", number: "+15550200" },
+        { uid: "lin_willow", agentUid: "agent_1", displayName: "Willow", number: "+15550100" },
+        { uid: "lin_ash", agentUid: null, displayName: "Ash", number: "+15550200" },
       ],
     });
 
@@ -625,6 +596,7 @@ describe("CloudAgentState new agent flow", () => {
     const created: Array<{ lineUid: string; name: string; provider: string }> = [];
     const { state, calls } = build({
       listAgents: async () => [],
+      listLines: async () => [{ uid: "lin_willow", agentUid: null, displayName: "Willow", number: "+15550100" }],
       wait: async () => {},
       redeemActivation: async () => ({
         status: "verified",
@@ -647,7 +619,7 @@ describe("CloudAgentState new agent flow", () => {
         created.push(request);
         return agent({
           agentId: "agent_new",
-          chatUids: ["cht_new"],
+          line: { uid: "lin_new", displayName: "New", number: "+14155550999" },
           name: request.name,
           status: "provisioning",
         });
@@ -668,7 +640,7 @@ describe("CloudAgentState new agent flow", () => {
     expect(state.state().cloudLineFlow.completedAgentId).toBe("agent_new");
     expect(state.state().cloudAgents[0].line).toEqual({
       uid: "lin_new",
-      label: "+1 415-555-0999",
+      label: "New · +1 415-555-0999",
     });
   });
 
@@ -733,7 +705,7 @@ describe("CloudAgentState new agent flow", () => {
 
   it.each([
     ["no matching sessions", [], { outcome: "no_match" }],
-    ["an assistant-owned key", [activationSession({ assistant_uid: "agent_42" })], { outcome: "no_match" }],
+    ["an assistant-owned key", [activationSession({ agent_uid: "agent_42" })], { outcome: "no_match" }],
     ["a named key", [activationSession({ name: "Deliberate Admin key" })], { outcome: "no_match" }],
     ["a non-wildcard key", [activationSession({ scopes: ["relay:*"] })], { outcome: "no_match" }],
     ["an already-used key", [activationSession({ last_seen_at: "2026-08-30T21:59:03.000000" })], { outcome: "no_match" }],
@@ -946,10 +918,10 @@ describe("CloudAgentState change-line flow", () => {
   it("retains a moved resource's provider bytes for a failed-agent retry", async () => {
     const requests: Array<{ lineUid: string; name: string; provider: string }> = [];
     const { state } = build({
-      listAgents: async () => [agent({ provider: null })],
+      listAgents: async () => [agent()],
       changeAgentLine: async (agentId) => agent({
         agentId,
-        chatUids: ["cht_ash"],
+        line: { uid: "lin_ash", displayName: "Ash", number: "+15550200" },
         provider: " provider/moved ",
         status: "failed",
       }),
@@ -973,18 +945,18 @@ describe("CloudAgentState change-line flow", () => {
   it("moves an agent with no home chat to a picked free line without activating", async () => {
     const moved: Array<{ agentId: string; lineUid: string }> = [];
     const { state, calls } = build({
-      listAgents: async () => [agent({ chatUids: ["cht_missing"] })],
+      listAgents: async () => [agent({ line: null })],
       listChats: async () => [
         chat({ uid: "cht_willow", lineUid: "lin_willow" }),
         chat({ uid: "cht_ash", lineUid: "lin_ash", recipients: { line: "+15550200", members: [] } }),
       ],
       listLines: async () => [
-        { uid: "lin_willow", displayName: "Willow", number: "+15550100" },
-        { uid: "lin_ash", displayName: "Ash", number: "+15550200" },
+        { uid: "lin_willow", agentUid: "agent_1", displayName: "Willow", number: "+15550100" },
+        { uid: "lin_ash", agentUid: null, displayName: "Ash", number: "+15550200" },
       ],
       changeAgentLine: async (agentId, lineUid) => {
         moved.push({ agentId, lineUid });
-        return agent({ agentId, chatUids: ["cht_ash"] });
+        return agent({ agentId, line: { uid: "lin_ash", displayName: "Ash", number: "+15550200" } });
       },
     });
     await state.refresh();
@@ -1023,7 +995,7 @@ describe("CloudAgentState change-line flow", () => {
       }),
       changeAgentLine: async (agentId, lineUid) => {
         moved.push({ agentId, lineUid });
-        return agent({ agentId, chatUids: ["cht_new"] });
+        return agent({ agentId, line: { uid: "lin_new", displayName: "New", number: "+14155550999" } });
       },
     });
     await state.refresh();
@@ -1037,7 +1009,7 @@ describe("CloudAgentState change-line flow", () => {
     expect(calls.some((call) => call.startsWith("create:"))).toBe(false);
     expect(state.state().cloudAgents[0].line).toEqual({
       uid: "lin_new",
-      label: "+1 415-555-0999",
+      label: "New · +1 415-555-0999",
     });
     expect(state.state().cloudLineFlow.completedAgentId).toBe("agent_1");
   });
@@ -1055,7 +1027,7 @@ describe("CloudAgentState change-line flow", () => {
             "Text this line once first, then try again.",
           );
         }
-        return agent({ agentId, chatUids: ["cht_ash"] });
+        return agent({ agentId, line: { uid: "lin_ash", displayName: "Ash", number: "+15550200" } });
       },
     });
     await state.refresh();
@@ -1073,19 +1045,21 @@ describe("CloudAgentState change-line flow", () => {
 
   it("refreshes the picker after another agent claims the chosen line", async () => {
     let lists = 0;
+    let claimed = false;
     const { state } = build({
       listAgents: async () => lists++ === 0
         ? [agent()]
-        : [agent(), agent({ agentId: "agent_2", chatUids: ["cht_ash"] })],
+        : [agent(), agent({ agentId: "agent_2", line: { uid: "lin_ash", displayName: "Ash", number: "+15550200" } })],
       listChats: async () => [
         chat(),
         chat({ uid: "cht_ash", lineUid: "lin_ash", recipients: { line: "+15550200", members: [] } }),
       ],
       listLines: async () => [
-        { uid: "lin_willow", displayName: "Willow", number: "+15550100" },
-        { uid: "lin_ash", displayName: "Ash", number: "+15550200" },
+        { uid: "lin_willow", agentUid: "agent_1", displayName: "Willow", number: "+15550100" },
+        { uid: "lin_ash", agentUid: claimed ? "agent_2" : null, displayName: "Ash", number: "+15550200" },
       ],
       changeAgentLine: async () => {
+        claimed = true;
         throw new CloudAgentLineError(
           "line_occupied",
           "Another agent already uses that line.",
@@ -1179,8 +1153,8 @@ describe("CloudChatsClient", () => {
       data: [{
         uid: "cht_one",
         participants: [
-          { type: "member", provider_key: "+15550111", role: "owner" },
-          { type: "agent", line: { uid: "lin_willow", provider_key: "+15550100" } },
+          { type: "member", agent_uid: null, provider_key: "+15550111", role: "owner" },
+          { type: "agent", line: { uid: "lin_willow", agent_uid: null, provider_key: "+15550100" } },
         ],
       }],
     }).list(CREDENTIAL);
@@ -1198,7 +1172,7 @@ describe("CloudChatsClient", () => {
         uid: "cht_one",
         participants: [{
           type: "agent",
-          line: { uid: `lin_${CREDENTIAL}`, provider_key: "+15550100" },
+          line: { uid: `lin_${CREDENTIAL}`, agent_uid: null, provider_key: "+15550100" },
         }],
       }],
     }).list(CREDENTIAL);
@@ -1228,15 +1202,15 @@ describe("Plow line display metadata", () => {
       "https://api.plow.co",
       async () => new Response(JSON.stringify({
         data: [
-          { uid: "lin_1", provider_key: "+15550100", display_name: "Willow" },
-          { uid: "lin_2", provider_key: "+15550200", display_name: null },
+          { uid: "lin_1", agent_uid: "agent_1", provider_key: "+15550100", display_name: "Willow" },
+          { uid: "lin_2", agent_uid: null, provider_key: "+15550200", display_name: null },
         ],
       }), { status: 200, headers: { "content-type": "application/json" } }),
     ));
 
     await expect(client.list(CREDENTIAL)).resolves.toEqual([
-      { uid: "lin_1", displayName: "Willow", number: "+15550100" },
-      { uid: "lin_2", displayName: null, number: "+15550200" },
+      { uid: "lin_1", agentUid: "agent_1", displayName: "Willow", number: "+15550100" },
+      { uid: "lin_2", agentUid: null, displayName: null, number: "+15550200" },
     ]);
   });
 
@@ -1245,17 +1219,17 @@ describe("Plow line display metadata", () => {
       "https://api.plow.co",
       async () => new Response(JSON.stringify({
         data: [
-          { provider_key: "not-a-number", display_name: "Bad" },
-          { uid: "lin_credential_name", provider_key: "+15550100", display_name: CREDENTIAL },
-          { uid: `lin_${CREDENTIAL}`, provider_key: "+15550150", display_name: "Unsafe" },
-          { uid: "lin_ash", provider_key: "+15550200", display_name: "Ash" },
+          { agent_uid: null, provider_key: "not-a-number", display_name: "Bad" },
+          { uid: "lin_credential_name", agent_uid: null, provider_key: "+15550100", display_name: CREDENTIAL },
+          { uid: `lin_${CREDENTIAL}`, agent_uid: null, provider_key: "+15550150", display_name: "Unsafe" },
+          { uid: "lin_ash", agent_uid: null, provider_key: "+15550200", display_name: "Ash" },
         ],
       }), { status: 200, headers: { "content-type": "application/json" } }),
     ));
 
     await expect(client.list(CREDENTIAL)).resolves.toEqual([
-      { uid: "lin_credential_name", displayName: null, number: "+15550100" },
-      { uid: "lin_ash", displayName: "Ash", number: "+15550200" },
+      { uid: "lin_credential_name", agentUid: null, displayName: null, number: "+15550100" },
+      { uid: "lin_ash", agentUid: null, displayName: "Ash", number: "+15550200" },
     ]);
   });
 });
