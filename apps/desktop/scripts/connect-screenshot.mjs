@@ -996,7 +996,7 @@ const SCREENS = [
     },
     expect: [
       "Delete Household helper?",
-      "The agent will stop reading and replying, and your conversations on this line will be removed. To use an agent again, you’ll need to activate again and may get a different number.",
+      "The agent will stop reading and replying, and your conversations on this line may be removed. To use an agent again, you’ll need to activate again and may get a different number.",
       "Cancel", "Delete agent",
     ],
     after: async (win) => {
