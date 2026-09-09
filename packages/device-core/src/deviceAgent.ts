@@ -1218,6 +1218,13 @@ export class DeviceAgent {
       return this.executor.output(result.handle, 0);
     };
 
+    /** One gog run per account, each waited out — the one child-lifecycle
+     * seam both fan-outs share (the curated reads, and the conflict probe). */
+    const runAcrossAccounts = (accounts: MintedAccounts["accounts"], tail: readonly string[]) =>
+      Promise.all(
+        accounts.map(async (a) => ({ a, result: await settled(await runGog(tail, a.token)) })),
+      );
+
     if (plan.kind === "help") {
       this.audit.record("exec_start", { intentId: intent.intentId, argv });
       return this.finishRun(intent.intentId, await runGog(plan.gogArgv.slice(1), null));
@@ -1266,12 +1273,7 @@ export class DeviceAgent {
         }
       }
       this.audit.record("exec_start", { intentId: intent.intentId, argv });
-      const runs = await Promise.all(
-        targets.map(async (a) => ({
-          a,
-          result: await settled(await runGog(plan.gogArgv.slice(1), a.token)),
-        })),
-      );
+      const runs = await runAcrossAccounts(targets, plan.gogArgv.slice(1));
       const ok: { account: string; stdout: string }[] = [];
       const failed: { account: string; reason: string }[] = [];
       // Accounts that answered with nothing: `--fail-empty` makes gog exit 3
@@ -1365,17 +1367,9 @@ export class DeviceAgent {
       const { from, to } = plan.conflictCheck;
       // The SAME fan-out the read path gets: the owner is busy if ANY of
       // their connected calendars is, whichever account the event lands on.
-      const probes = await Promise.all(
-        minted.accounts.map(async (a) => ({
-          a,
-          result: await settled(
-            await runGog(
-              ["calendar", "conflicts", "--from", from, "--to", to, "--json", "--results-only"],
-              a.token,
-            ),
-          ),
-        })),
-      );
+      const probes = await runAcrossAccounts(minted.accounts, [
+        "calendar", "conflicts", "--from", from, "--to", to, "--json", "--results-only",
+      ]);
       const probed: { account: string; conflicts: number }[] = [];
       // An account the mint could not reach was never checked either, so it
       // rides the refusal beside the ones whose probe failed.

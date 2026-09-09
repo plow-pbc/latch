@@ -65,15 +65,23 @@ per-mailbox: a \`gmail get\` on an id from a fan-out result passes
 \`--account <that item's account>\`. When replying, use the
 account that received the thread.
 
-**Timed calendar creates are conflict-gated.** A \`calendar create\` with
-timed \`--from\`/\`--to\` first checks the window on EVERY connected
-account — the owner is busy if any of their calendars is, whichever account
-the event lands on. Overlaps come back as an error carrying the overlap COUNT
-per account, and an account that could not be checked is named there too.
-Re-send the SAME command with \`--confirm-conflict\` to book anyway — only
-when the owner fixed the time themselves; otherwise tell them what the slot
-overlaps and ask. Use \`calendar conflicts\` if you want the names.
-All-day (date-only) events skip the check.
+**Timed calendar creates are conflict-gated.**
+
+Calendar conflicts are yours to judge, not the owner's to approve. A calendar
+create that overlaps an existing commitment is refused, never queued for
+approval: the check covers every connected account, and the refusal comes back
+to you. Re-send with \`--confirm-conflict\` only when the owner fixed the time
+in the request — "book it regardless", "hold those exact dates", a named slot
+they insist on. Otherwise tell the owner what the slot overlaps and ask. When
+you do book over a conflict, say so in the reply and name the overlap — in a
+shared room, "overlaps an existing commitment" rather than the other event's
+name.
+
+Here that check is a \`calendar create\` with timed \`--from\`/\`--to\`, and the
+refusal carries the overlap COUNT per account plus any account that could not
+be checked — no titles, so use \`calendar conflicts\` if you want the names.
+The override is the SAME command with \`--confirm-conflict\` added. All-day
+(date-only) events skip the check.
 
 \`--account\` and \`--confirm-conflict\` are plow-gog's own arguments and never
 reach Google; everything else is the CLI's ordinary grammar.
