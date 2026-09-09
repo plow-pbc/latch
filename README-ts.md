@@ -266,7 +266,7 @@ process hands it and owns no copy of its own.
   session, which holds every chat. `relay_resource_uid` is this Mac's device uid
   — the segment plow builds the MCP URL from, read from the device identity and
   never parsed back out of that URL — and it BINDS the credential to this Mac,
-  so a token that leaves the machine reaches nothing. It is required, so a mint
+  so the token cannot reach any other Mac. It is required, so a mint
   is refused on this side rather than sent unbound. Removal follows the same split — a key revoke for the credential, never
   `DELETE /v1/agents/{uid}`, which no agent-less key answers to. The modal that
   mints one asks for a name and nothing else. The roster says which Mac each

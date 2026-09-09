@@ -505,7 +505,7 @@ describe("PlowApi", () => {
     // `chat_uids: []` is sent EXPLICITLY. Omitting it makes plow inherit the
     // caller's grant, and the caller is this Mac's login session — which holds
     // every chat on the account. `relay_resource_uid` binds the credential to
-    // this Mac, so a token that leaves the machine reaches nothing.
+    // this Mac, so the token cannot reach any other Mac.
     expect(JSON.parse(String(calls[0].init.body))).toEqual({
       name: "Claude Code", scopes: ["relay:call"], chat_uids: [],
       relay_resource_uid: "dev_this_mac",

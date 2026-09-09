@@ -840,10 +840,10 @@ export class PlowApi {
    * here is this Mac's login session, which holds every chat. A tool that only
    * needs to reach this Mac would have walked away with all of them.
    *
-   * `relay_resource_uid` BINDS the credential to this Mac: plow will not let it
-   * reach any other, so a token that leaves this machine reaches nothing. It is
-   * this Mac's device uid — the segment plow builds its MCP URL from — and it
-   * is required, which is why the caller supplies it rather than this
+   * `relay_resource_uid` BINDS the credential to this Mac: plow checks it
+   * against the Mac the URL names, so the token cannot reach any other Mac. It
+   * is this Mac's device uid — the segment plow builds its MCP URL from — and
+   * it is required, which is why the caller supplies it rather than this
    * defaulting it to something.
    *
    * The device credential rides in the Authorization header and nowhere else;

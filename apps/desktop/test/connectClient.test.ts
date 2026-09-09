@@ -334,28 +334,15 @@ describe("signing out takes the credential with it", () => {
     plow.release();
     const state = await inFlight;
 
-    // The mint did reach Plow — that credential is live on the old account
-    // until it is revoked there — but it never reaches this session's screen.
+    // The mint did reach Plow, so the rollback revokes it there — as a KEY,
+    // `DELETE /v1/api-keys/{id}` with the id the mint returned, since no agent
+    // owns a static credential and `DELETE /v1/agents/{uid}` would answer 404
+    // and leave it live. It never reaches this session's screen either way.
     expect(plow.minted).toHaveLength(1);
+    expect(plow.revoked).toEqual([701]);
     expect(state.credential).toBeNull();
     expect(connect.state().credential).toBeNull();
     expect(JSON.stringify(connect.state())).not.toContain(CLIENT_TOKEN);
-  });
-
-  it("revokes an orphaned mint as a KEY, never as an agent", async () => {
-    signIn();
-    plow.hold();
-    const connect = build();
-    const inFlight = connect.createCredential("Claude Code");
-
-    connect.signedOut();
-    plow.release();
-    await inFlight;
-
-    // The rollback goes to `DELETE /v1/api-keys/{id}` with the id the mint
-    // returned. A static credential is a key and no agent owns it, so
-    // `DELETE /v1/agents/{uid}` would answer 404 and leave it live.
-    expect(plow.revoked).toEqual([701]);
   });
 
   it("clears the busy flag, so the next session is not stuck on 'Talking to Plow'", async () => {
