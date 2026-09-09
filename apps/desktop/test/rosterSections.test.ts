@@ -212,10 +212,9 @@ describe("which Mac a credential is bound to", () => {
   const OUR_DEVICE = "dev_this_mac";
 
   it.each([
-    ["this Mac", { uid: OUR_DEVICE, name: "mbp" }, "this Mac"],
     // Our own uid wins over the name plow has for us: the owner is looking at
     // this Mac, and "mbp" would make them go and check which one that is.
-    ["this Mac even when plow names it", { uid: OUR_DEVICE, name: "mbp (2)" }, "this Mac"],
+    ["this Mac", { uid: OUR_DEVICE, name: "mbp" }, "this Mac"],
     ["another Mac by name", { uid: "dev_other", name: "mba" }, "mba"],
     // Bound somewhere, name unusable. Not blank — blank reads as "works from
     // any Mac", which is the opposite of the truth.

@@ -521,24 +521,19 @@ describe("removing a roster row", () => {
     expect(state.roster.mcp.map((row) => row.id)).toEqual(held);
   });
 
-  it("labels each row's Mac from this Mac's own device uid, read at refresh", async () => {
+  it("reads this Mac's device uid at refresh, not at construction", async () => {
+    // Which labels come out of which device rows belongs to `sectionRoster`.
+    // What this owns is WHEN the uid is read: the client is built before the
+    // identity exists, so a uid captured then would be the empty one for the
+    // life of the process and this Mac's own row would read as somewhere else.
     signIn();
-    plow.keys = [
-      key({ id: 1, device: { uid: DEVICE_UID, name: "mbp" } }),
-      key({ id: 2, device: { uid: "dev_other", name: "mba" } }),
-      key({ id: 3, device: null }),
-    ];
+    plow.keys = [key({ device: { uid: DEVICE_UID, name: "mbp" } })];
     const client = build();
 
-    // Read through the getter at refresh time, not captured at construction:
-    // the client is built before the device identity exists, so a uid taken
-    // then would be the empty one for the life of the process.
     deviceUid = null;
-    expect((await client.refreshRoster()).roster.mcp.map((row) => row.deviceLabel))
-      .toEqual(["mbp", "mba", null]);
+    expect((await client.refreshRoster()).roster.mcp[0].deviceLabel).toBe("mbp");
 
     deviceUid = DEVICE_UID;
-    expect((await client.refreshRoster()).roster.mcp.map((row) => row.deviceLabel))
-      .toEqual(["this Mac", "mba", null]);
+    expect((await client.refreshRoster()).roster.mcp[0].deviceLabel).toBe("this Mac");
   });
 });

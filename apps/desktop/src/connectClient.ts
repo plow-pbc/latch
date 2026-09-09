@@ -91,7 +91,7 @@ export interface ConnectClientDeps {
    * same typed source the relay registers with — never parsed back out of the
    * MCP URL, which is a formatting of this, not a second authority on it.
    */
-  deviceUid?: () => string | null;
+  deviceUid: () => string | null;
   onChange?: () => void;
 }
 
@@ -175,7 +175,7 @@ export class ConnectClient {
       if (generation !== this.generation || read !== this.rosterReads) return this.state();
       this.roster = sectionRoster(keys, {
         deviceCredential: credential,
-        deviceUid: this.deps.deviceUid?.() ?? null,
+        deviceUid: this.deps.deviceUid(),
       });
       this.rosterError = null;
     } catch (error) {
@@ -242,7 +242,7 @@ export class ConnectClient {
     if (!trimmed) return this.fail("Give this connection a name.");
     const settings = this.settings();
     if (!settings.relayCredential.trim()) return this.fail("This Mac isn't signed in yet.");
-    const relayResourceUid = (this.deps.deviceUid?.() ?? "").trim();
+    const relayResourceUid = (this.deps.deviceUid() ?? "").trim();
     if (!relayResourceUid) return this.fail("This Mac isn't registered with Plow yet. Try again in a moment.");
 
     const generation = this.generation;
