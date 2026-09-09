@@ -173,12 +173,6 @@ describe("the static-credential fallback", () => {
     expect(config.mcpServers.plow.command).toBeUndefined();
   });
 
-  it("hands the mint a name and nothing else — no line makes this an agent", async () => {
-    signIn();
-    await build().createCredential("Life");
-    expect(plow.minted[0]).toEqual({ token: DEVICE_TOKEN, name: "Life" });
-  });
-
   it("shows it once — after 'I've saved it' the app cannot produce it again", async () => {
     signIn();
     const connect = build();

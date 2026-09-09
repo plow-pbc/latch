@@ -701,7 +701,12 @@ ipcMain.handle("cloud:agents", async () => {
 ipcMain.handle("connect:create", async (_e, name: string) => {
   requireAgentTokenSaved();
   await connectClient?.createCredential(name);
-  await cloudAgents?.refresh();
+  // The ROSTER, not the cloud agents: what was just minted is a credential,
+  // and it is the MCP clients list it appears in. Refreshing the agents left
+  // the new row off the screen until something else re-read — with it, the
+  // Remove that revokes it. No line changed hands, so there is nothing for the
+  // cloud state to re-read.
+  await connectClient?.refreshRoster();
   return agentsTabState();
 });
 /**

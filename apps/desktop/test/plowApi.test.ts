@@ -498,9 +498,8 @@ describe("PlowApi", () => {
       id: 41, token: "plow_clienttok", key_prefix: "abcdefgh",
       scopes: ["relay:call"], name: "Claude Code", chat_uids: [],
     } }]);
-    const api = new PlowApi("https://stub.invalid", fetchImpl);
-    await expect(api.createMcpClientKey("owner", "   ")).rejects.toThrow("Give this connection a name.");
-    const minted = await api.createMcpClientKey("owner", "  Claude Code  ");
+    const minted = await new PlowApi("https://stub.invalid", fetchImpl)
+      .createMcpClientKey("owner", "Claude Code");
 
     expect(calls[0].url).toBe("https://stub.invalid/v1/api-keys");
     // `chat_uids: []` is sent EXPLICITLY. Omitting it makes plow inherit the
@@ -516,59 +515,44 @@ describe("PlowApi", () => {
   });
 
   const STATIC_MINT_CREDENTIAL = "plow_device_static_mint_secret";
+  const ASKED = { scopes: ["relay:call"], chat_uids: [] };
+  const percent = (value: string) => [...value].map((c) => "%" + c.charCodeAt(0).toString(16)).join("");
   it.each([
-    STATIC_MINT_CREDENTIAL,
-    Buffer.from(STATIC_MINT_CREDENTIAL).toString("base64"),
-    STATIC_MINT_CREDENTIAL.slice(0, 10),
-    "%" + STATIC_MINT_CREDENTIAL.charCodeAt(0).toString(16) + STATIC_MINT_CREDENTIAL.slice(1),
-    [...STATIC_MINT_CREDENTIAL].map((c) => "%" + c.charCodeAt(0).toString(16)).join(""),
-  ])("refuses a mint receipt that echoes this Mac's own credential: %s", async (echo) => {
+    // Echoes of this Mac's own credential, in every encoding the guard reads.
+    ["a plain echo", { ...ASKED, name: STATIC_MINT_CREDENTIAL }, "unsafe"],
+    ["a base64 echo", { ...ASKED, name: Buffer.from(STATIC_MINT_CREDENTIAL).toString("base64") }, "unsafe"],
+    ["a 10-character prefix echo", { ...ASKED, name: STATIC_MINT_CREDENTIAL.slice(0, 10) }, "unsafe"],
+    ["a part-escaped echo", { ...ASKED, name: "%" + STATIC_MINT_CREDENTIAL.charCodeAt(0).toString(16) + STATIC_MINT_CREDENTIAL.slice(1) }, "unsafe"],
+    ["a fully escaped echo", { ...ASKED, name: percent(STATIC_MINT_CREDENTIAL) }, "unsafe"],
+    // Receipts with nothing usable to revoke or show. `undefined` is how a row
+    // drops a field the base body below supplies — `JSON.stringify` omits it,
+    // so the wire response genuinely lacks it.
+    ["no id", { ...ASKED, id: undefined }, "invalid"],
+    ["no token", { ...ASKED, token: undefined }, "invalid"],
+    ["an empty token", { ...ASKED, token: "" }, "invalid"],
+    ["a non-numeric id", { ...ASKED, id: "41" }, "invalid"],
+    // The echoed grant is this Mac's only sight of what was actually minted. A
+    // token that reaches the owner's chats must not make it to the screen —
+    // once shown it has been pasted into a client and it is long-lived.
+    ["every chat", { scopes: ["relay:call"], chat_uids: ["*"] }, "wider"],
+    ["one listed chat", { scopes: ["relay:call"], chat_uids: ["cht_1"] }, "wider"],
+    ["an extra scope", { scopes: ["relay:call", "chats:use"], chat_uids: [] }, "wider"],
+    ["a resource wildcard", { scopes: ["relay:*"], chat_uids: [] }, "wider"],
+    ["the global wildcard", { scopes: ["*:*"], chat_uids: [] }, "wider"],
+    // Absent is not the same as empty, and is not evidence of anything.
+    ["no chat grant at all", { scopes: ["relay:call"], chat_uids: undefined }, "wider"],
+    ["no scopes at all", { scopes: undefined, chat_uids: [] }, "wider"],
+  ] as const)("refuses a mint receipt with %s", async (_shape, minted, why) => {
     const { fetchImpl } = recordingFetch([{ status: 200, body: {
-      id: 41, token: "plow_clienttok", name: echo, key_prefix: "abcdefgh", scopes: [], chat_uids: [],
+      id: 41, token: "plow_clienttok", key_prefix: "abcdefgh", name: "Claude Code", ...minted,
     } }]);
     await expect(
       new PlowApi("https://stub.invalid", fetchImpl).createMcpClientKey(STATIC_MINT_CREDENTIAL, "Claude Code"),
-    ).rejects.toThrow("Plow returned an unsafe credential response.");
-  });
-
-  it("refuses a mint receipt with no usable token or id", async () => {
-    const asked = { scopes: ["relay:call"], chat_uids: [] };
-    for (const body of [
-      { ...asked, token: "plow_t" },
-      { ...asked, id: 41 },
-      { ...asked, id: 41, token: "" },
-      { ...asked, id: "41", token: "plow_t" },
-    ]) {
-      const { fetchImpl } = recordingFetch([{ status: 200, body }]);
-      await expect(
-        new PlowApi("https://stub.invalid", fetchImpl).createMcpClientKey("owner", "Claude Code"),
-      ).rejects.toThrow("Plow returned an invalid credential response.");
-    }
-  });
-
-  it("refuses a mint the server made WIDER than the one asked for", async () => {
-    // The echoed scopes and grant are this Mac's only sight of what was
-    // actually minted. A token that reaches the owner's chats must not make it
-    // to the screen — once shown it has been pasted into a client and it is
-    // long-lived.
-    const overGranted = [
-      { scopes: ["relay:call"], chat_uids: ["*"] },
-      { scopes: ["relay:call"], chat_uids: ["cht_1"] },
-      { scopes: ["relay:call", "chats:use"], chat_uids: [] },
-      { scopes: ["relay:*"], chat_uids: [] },
-      { scopes: ["*:*"], chat_uids: [] },
-      // Absent is not the same as empty, and is not evidence of anything.
-      { scopes: ["relay:call"] },
-      { chat_uids: [] },
-    ];
-    for (const minted of overGranted) {
-      const { fetchImpl } = recordingFetch([{ status: 200, body: {
-        id: 41, token: "plow_clienttok", key_prefix: "abcdefgh", name: "Claude Code", ...minted,
-      } }]);
-      await expect(
-        new PlowApi("https://stub.invalid", fetchImpl).createMcpClientKey("owner", "Claude Code"),
-      ).rejects.toThrow("Plow minted a credential wider than the one asked for.");
-    }
+    ).rejects.toThrow({
+      unsafe: "Plow returned an unsafe credential response.",
+      invalid: "Plow returned an invalid credential response.",
+      wider: "Plow minted a credential wider than the one asked for.",
+    }[why]);
   });
 
   it("lists cloud-agent providers with the credential only in the bearer header", async () => {

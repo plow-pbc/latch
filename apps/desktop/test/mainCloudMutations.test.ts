@@ -13,7 +13,6 @@ const snapshot = source.statements.find((node) =>
 )!;
 
 it.each([
-  ["connect:create", "create"],
   ["cloud:create", "create"],
   ["cloud:changeLine", "move"],
   ["cloud:retryLineFlow", "create"],
@@ -58,9 +57,45 @@ it.each([
       state: () => ({}),
     },
   });
-  const input = channel === "connect:create" ? "Agent"
-    : channel === "cloud:retryFailed" ? "agent"
+  const input = channel === "cloud:retryFailed" ? "agent"
     : { name: "Agent", provider: "local", agentId: "agent-old", lineUid: "line-new" };
   const result = await handler({}, input, "line-new");
   expect(result.cloudFreeLines.map((line) => line.uid)).toEqual(action === "move" ? ["line-old"] : []);
+});
+
+it("connect:create refreshes the roster, so the new credential is listed and revocable", async () => {
+  const registration = source.statements.find((node) =>
+    ts.isExpressionStatement(node) && ts.isCallExpression(node.expression)
+    && node.expression.expression.getText(source) === "ipcMain.handle"
+    && ts.isStringLiteral(node.expression.arguments[0])
+    && node.expression.arguments[0].text === "connect:create",
+  )!;
+  const compiled = ts.transpileModule(
+    `${snapshot.getText(source)}\n${registration.getText(source)}`,
+    { compilerOptions: { target: ts.ScriptTarget.ES2022 } },
+  ).outputText;
+
+  // Refreshing the cloud agents instead left the new row off the screen — and
+  // with it the Remove that revokes it — until something else re-read.
+  const called: string[] = [];
+  let handler!: (...args: unknown[]) => Promise<{ roster: unknown }>;
+  vm.runInNewContext(compiled, {
+    ipcMain: { handle: (_channel: string, fn: typeof handler) => { handler = fn; } },
+    agentToken: null,
+    requireAgentTokenSaved: () => {},
+    cloudAgents: {
+      refresh: async () => { throw new Error("A mint must not re-read the cloud agents"); },
+      state: () => ({ cloudFreeLines: [] }),
+    },
+    connectClient: {
+      createCredential: async () => { called.push("createCredential"); },
+      refreshRoster: async () => { called.push("refreshRoster"); },
+      state: () => ({ roster: { mcp: [{ id: 41 }], other: [], revokedHidden: 0 } }),
+    },
+  });
+
+  const result = await handler({}, "Claude Code");
+  // In that order, or the re-read misses the credential it is there for.
+  expect(called).toEqual(["createCredential", "refreshRoster"]);
+  expect(result.roster).toEqual({ mcp: [{ id: 41 }], other: [], revokedHidden: 0 });
 });

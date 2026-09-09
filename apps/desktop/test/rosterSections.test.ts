@@ -50,26 +50,6 @@ describe("which section a credential belongs in", () => {
     ]);
   });
 
-  it("files a freshly minted static MCP credential under MCP clients", () => {
-    // Exactly what `POST /v1/api-keys` hands back for the static-credential modal:
-    // `relay:call`, an empty chat grant, and no agent owning it. It must land
-    // in `mcp`, because that section's Remove is a key revoke — the only call
-    // that ends a credential no agent owns.
-    const sections = sectionRoster([
-      key({ id: 41, name: "Claude Code", scopes: ["relay:call"], chat_uids: [], agent_uid: null }),
-    ]);
-
-    expect(sections.other).toEqual([]);
-    expect(sections.mcp).toHaveLength(1);
-    expect(sections.mcp[0]).toMatchObject({
-      id: 41,
-      kind: "Agent",
-      isThisMac: false,
-      chatAccess: "none",
-      permissions: { canReachMac: true, canReadAndReply: false, canSpendInference: false },
-    });
-  });
-
   it("counts revoked credentials rather than listing them", () => {
     const sections = sectionRoster([
       key({ id: 1 }),

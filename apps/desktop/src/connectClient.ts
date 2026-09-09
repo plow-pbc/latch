@@ -142,8 +142,8 @@ export class ConnectClient {
   /**
    * Re-read what can reach this account.
    *
-   * Called when the Agents tab comes up and after any removal — the moments the
-   * list can have changed. Nothing polls it.
+   * Called when the Agents tab comes up, after any removal, and after a static
+   * mint — the moments the list can have changed. Nothing polls it.
    */
   async refreshRoster(): Promise<ConnectClientState> {
     const settings = this.settings();

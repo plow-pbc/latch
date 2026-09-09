@@ -126,7 +126,7 @@ export interface CloudAgentProvider {
   name: string;
 }
 
-export interface MintedCredential {
+interface MintedCredential {
   /** Credential id, used to revoke a mint that cannot be handed to the user. */
   id: number;
   /** Shown to the user once, then dropped — never logged, never audited. */
@@ -144,7 +144,7 @@ export interface MintedCredential {
  * makes. Written here as a frozen literal so a caller cannot widen it by
  * passing scopes in.
  */
-export const MCP_CLIENT_SCOPES: readonly string[] = Object.freeze(["relay:call"]);
+const MCP_CLIENT_SCOPES: readonly string[] = Object.freeze(["relay:call"]);
 
 /**
  * Covers percent-decoded plaintext and standard Base64, in full and by 10-character prefix, but not
@@ -198,7 +198,7 @@ export function decodeAgentCreateReceipt(data: unknown, deviceCredential: string
  * unusable credential on the account, which the owner can see and remove under
  * MCP clients; accepting would hand a tool the owner's chats.
  */
-export function decodeKeyCreateReceipt(data: unknown, deviceCredential: string): MintedCredential {
+function decodeKeyCreateReceipt(data: unknown, deviceCredential: string): MintedCredential {
   const receipt = data as { id?: unknown; token?: unknown; name?: unknown; scopes?: unknown; chat_uids?: unknown } | null;
   if (!receipt || typeof receipt.id !== "number" || typeof receipt.token !== "string" || !receipt.token) {
     throw new PlowApiError("http", "Plow returned an invalid credential response.");
@@ -823,12 +823,10 @@ export class PlowApi {
    * refuses one whose minted scopes or chat grant are wider than these.
    */
   async createMcpClientKey(token: string, name: string): Promise<MintedCredential> {
-    const trimmed = name.trim();
-    if (!trimmed) throw new PlowApiError("http", "Give this connection a name.");
     const minted = decodeKeyCreateReceipt(await this.call(
-      "POST", "/v1/api-keys", { token, body: { name: trimmed, scopes: [...MCP_CLIENT_SCOPES], chat_uids: [] } },
+      "POST", "/v1/api-keys", { token, body: { name, scopes: [...MCP_CLIENT_SCOPES], chat_uids: [] } },
     ), token);
-    return { ...minted, name: minted.name || trimmed };
+    return { ...minted, name: minted.name || name };
   }
 
   /** Credential metadata for the independent sessions section. */
