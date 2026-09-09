@@ -51,8 +51,8 @@ Not here:
   canonical; the plugin's section restates it for that one runtime, so a
   change to the wording here is a change to keep in step there.
 - **Chat truth and the bounds on it** — `plow-pbc/plow`: the assistant name and
-  its length bound, the daily payment cap, the roster. This Mac renders and
-  edits them; plow stores and validates them.
+  its length bound, the daily payment cap, the roster. Plow stores and validates
+  them. This Mac renders assistant names but does not edit them.
 
 Examples:
 
@@ -61,11 +61,6 @@ Examples:
   restatement in `packages/mcp-server/test/toolCopy.test.ts`, so one asserter
   owns the sentence and a test fails when a copy drifts:
   https://github.com/plow-pbc/latch/pull/301
-- Drift — #300 correctly writes the assistant name to plow
-  (`PATCH /v1/api-keys/{id}/preferences`) and persists nothing Mac-side, but
-  restates plow's 200-character bound in `apps/desktop/src/plowApi.ts`; that
-  number is plow's, and this side should read it off the error:
-  https://github.com/plow-pbc/latch/pull/300
 
 ## Quickstart with `just`
 
