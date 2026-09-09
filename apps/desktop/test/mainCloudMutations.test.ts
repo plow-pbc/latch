@@ -52,7 +52,11 @@ it.each([
       refresh: async () => { await setImmediate(); cachedLines = lines; },
       state: () => ({ cloudFreeLines: cachedLines.filter((line) => line.agentUid === null) }),
     },
-    connectClient: { createCredential: mutate, refreshRoster: async () => {}, state: () => ({}) },
+    connectClient: {
+      createCredential: mutate,
+      refreshRoster: async () => { throw new Error("Agent mutation must not refresh independent sessions"); },
+      state: () => ({}),
+    },
   });
   const input = channel === "connect:create" ? "Agent"
     : channel === "cloud:retryFailed" ? "agent"

@@ -698,12 +698,10 @@ ipcMain.handle("cloud:refresh", async () => {
 ipcMain.handle("cloud:agents", async () => {
   return cloudAgentsIpcResult(cloudAgents);
 });
-ipcMain.handle("connect:create", async (_e, name: string, lineUid: string | null) => {
+ipcMain.handle("connect:create", async (_e, name: string, lineUid: string) => {
   requireAgentTokenSaved();
   await connectClient?.createCredential(name, lineUid);
   await cloudAgents?.refresh();
-  // The credential it just minted is a roster row nobody has read yet.
-  await connectClient?.refreshRoster();
   return agentsTabState();
 });
 /**
@@ -713,13 +711,9 @@ ipcMain.handle("connect:create", async (_e, name: string, lineUid: string | null
  * screen used to disable Remove for it — a running agent nobody could take
  * down. Its removal never needed the credential: `DELETE
  * /v1/agents/{uid}` is keyed on the assistant.
- *
- * The roster is re-read afterwards because the credential row, if there was
- * one, is gone with it.
  */
 ipcMain.handle("cloud:remove", async (_e, agentId: string) => {
   await cloudAgents?.remove(agentId);
-  await connectClient?.refreshRoster();
   return agentsTabState();
 });
 
@@ -731,7 +725,6 @@ ipcMain.handle("cloud:create", async (_e, input: unknown) => {
     lineUid: raw.lineUid === null ? null : typeof raw.lineUid === "string" ? raw.lineUid : "",
   });
   await cloudAgents?.refresh();
-  await connectClient?.refreshRoster();
   return agentsTabState();
 });
 ipcMain.handle("agents:dismissToken", () => { agentToken = null; });
@@ -742,13 +735,11 @@ ipcMain.handle("cloud:cancelLineFlow", async () => {
 ipcMain.handle("cloud:retryLineFlow", async () => {
   await cloudAgents?.retryLineFlow();
   await cloudAgents?.refresh();
-  await connectClient?.refreshRoster();
   return agentsTabState();
 });
 ipcMain.handle("cloud:retryFailed", async (_e, agentId: string) => {
   await cloudAgents?.retryFailed(agentId);
   await cloudAgents?.refresh();
-  await connectClient?.refreshRoster();
   return agentsTabState();
 });
 ipcMain.handle("cloud:changeLine", async (_e, input: unknown) => {
@@ -758,7 +749,6 @@ ipcMain.handle("cloud:changeLine", async (_e, input: unknown) => {
     lineUid: raw.lineUid === null ? null : typeof raw.lineUid === "string" ? raw.lineUid : "",
   });
   await cloudAgents?.refresh();
-  await connectClient?.refreshRoster();
   return agentsTabState();
 });
 ipcMain.handle("cloud:openMessages", async (_e, agentId?: unknown) => {
@@ -780,12 +770,6 @@ async function openSmsUrl(url: string | null | undefined): Promise<boolean> {
  */
 ipcMain.handle("roster:remove", async (_e, id: number) => {
   await connectClient?.removeRosterRow(id);
-  return agentsTabState();
-});
-
-/** Rename one roster row. Validation of the id and the name lives in `PlowApi`. */
-ipcMain.handle("roster:rename", async (_e, id: number, name: string) => {
-  await connectClient?.renameRosterRow(id, name);
   return agentsTabState();
 });
 

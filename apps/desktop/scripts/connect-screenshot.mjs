@@ -214,23 +214,10 @@ async function setUp() {
 
   /** Plow, stood in for — the one call this screen can make. */
   const api = {
-    async createAgent(token, name) {
+    async createAgent(token, name, lineUid) {
       if (token !== DEVICE_TOKEN) throw new Error("the mint must use the device credential");
-      return {
-        id: 700,
-        token: CLIENT_TOKEN,
-        keyPrefix: CLIENT_TOKEN.slice(5, 13),
-        name,
-        mcpConfig: JSON.stringify({
-          mcpServers: {
-            "plow-macbook-pro": {
-              type: "http",
-              url: MCP_URL,
-              headers: { Authorization: `Bearer ${CLIENT_TOKEN}` },
-            },
-          },
-        }),
-      };
+      if (lineUid !== "lin_ash") throw new Error("the mint must use the selected line");
+      return { agentUid: "agent-static", token: CLIENT_TOKEN, name };
     },
   };
 
@@ -358,15 +345,6 @@ async function setUp() {
       ...rosterFixture,
       mcp: rosterFixture.mcp.filter((row) => row.id !== id),
       other: rosterFixture.other.filter((row) => row.id !== id),
-    };
-    return state();
-  });
-  ipcMain.handle("roster:rename", async (_e, id, name) => {
-    const renamed = (rows) => rows.map((row) => (row.id === id ? { ...row, name } : row));
-    rosterFixture = {
-      ...rosterFixture,
-      mcp: renamed(rosterFixture.mcp),
-      other: renamed(rosterFixture.other),
     };
     return state();
   });
@@ -1211,12 +1189,25 @@ const SCREENS = [
   },
   {
     name: "static-shown",
+    cloud: { ...CLOUD_EMPTY, cloudFreeLines: [{ uid: "lin_ash", label: "Ash" }] },
     prepare: async (win) => {
       await clickText(win, "Connect MCP client", 0);
       await waitFor(win, `document.querySelector(".connect-modal .connect")`, "the MCP setup modal");
       await clickText(win, "Can't use OAuth");
       await type(win, `input[placeholder="Claude Code"]`, "Claude Code");
+      const blocked = await win.webContents.executeJavaScript(`(() => {
+        const button = [...document.querySelectorAll(".modal button")]
+          .find((node) => node.textContent === "Create Credential");
+        return button?.disabled === true;
+      })()`);
+      if (!blocked) throw new Error("static creation enabled without a line");
+      await win.webContents.executeJavaScript(`(() => {
+        const line = document.querySelector('.modal select[aria-label="Line"]');
+        line.value = "lin_ash";
+        line.dispatchEvent(new Event("change", { bubbles: true }));
+      })()`);
       await clickText(win, "Create Credential");
+      console.log("STATIC-LINE: creation blocked until line selected; selected line minted");
     },
     // The credential and its "I've Saved It" button are the point of this
     // screen, and they can sit below the fold in a 620pt window. Scroll to
@@ -1310,12 +1301,13 @@ app.whenReady().then(async () => {
   fs.rmSync(home, { recursive: true, force: true });
   rosterFixture = ROSTER;
   const id = ROSTER.mcp[0].id;
-  const renamed = await win.webContents.executeJavaScript(`window.domo.rosterRename(${id}, "Renamed client")`);
-  if (renamed.roster.mcp.find((row) => row.id === id)?.name !== "Renamed client") {
-    throw new Error("roster rename did not update the MCP session");
-  }
+  const renameExposed = await win.webContents.executeJavaScript(`
+    typeof window.domo.rosterRename !== "undefined" ||
+    [...document.querySelectorAll(".more-menu button")].some((node) => node.textContent === "Rename")
+  `);
+  if (renameExposed) throw new Error("unsupported session rename remains exposed");
   const removed = await win.webContents.executeJavaScript(`window.domo.rosterRemove(${id})`);
   if (removed.roster.mcp.some((row) => row.id === id)) throw new Error("roster remove retained the MCP session");
-  console.log("ROSTER-EDIT: rename and remove passed");
+  console.log("ROSTER-EDIT: unsupported rename absent; remove passed");
   app.exit(failures + extra.length === 0 ? 0 : 1);
 });

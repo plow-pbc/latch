@@ -882,7 +882,7 @@ function syncStaticModal(s, redraw) {
       staticModal.lineSelect = el("select", { class: "text", attrs: { "aria-label": "Line" } });
       const create = async () => {
         if (createBtn.disabled) return;
-        await window.domo.connectCreate(staticModal.nameInput.value, staticModal.lineSelect.value || null);
+        await window.domo.connectCreate(staticModal.nameInput.value, staticModal.lineSelect.value);
         redraw();
       };
       staticModal.nameInput.addEventListener("keydown", (e) => {
@@ -919,6 +919,7 @@ function syncStaticModal(s, redraw) {
   // already up — so the options are refilled on every refresh, in place,
   // keeping whatever was picked.
   if (kind === "form") {
+    staticModal.lineSelect.onchange = () => syncStaticModal(s, redraw);
     staticModal.lineSelect.disabled = !!s.busy;
     const lines = s.cloudFreeLines ?? [];
     const picked = staticModal.lineSelect.value;
@@ -932,7 +933,7 @@ function syncStaticModal(s, redraw) {
   // ever taken away by one.
   staticModal.nameInput.disabled = !!s.busy;
   for (const b of staticModal.panel.querySelectorAll("button")) b.disabled = !!s.busy;
-  if (kind === "form") staticModal.actions[1].disabled = !!s.busy || !!s.agentToken;
+  if (kind === "form") staticModal.actions[1].disabled = !!s.busy || !!s.agentToken || !staticModal.lineSelect.value;
 }
 
 /**
@@ -1325,7 +1326,7 @@ function syncCloudLineModal(state, redraw) {
       el("div", { class: "cloud-callout cloud-error" }, [
         el("div", {
           class: "cloud-callout-title",
-          text: changing ? "The line wasn't changed" : "The agent wasn't created",
+          text: changing ? "The line change did not finish" : "The agent wasn't created",
         }),
         el("p", {
           class: "faint",
@@ -1695,60 +1696,6 @@ function openRosterConfirm(row, trigger, redraw) {
   });
 }
 
-function openRosterRename(row, trigger, redraw, fallback) {
-  const current = rosterName(row, "");
-  const input = el("input", {
-    class: "text",
-    attrs: { placeholder: "Name", maxlength: "200", "aria-label": "New name" },
-  });
-  input.value = current;
-  const cancel = el("button", { class: "btn", text: "Cancel" });
-  const save = el("button", { class: "btn primary", text: "Save" });
-  const note = el("p", { class: "faint modal-note", text: "" });
-  let shell = null;
-  const dismiss = () => closeRosterConfirm(shell);
-  const submit = async () => {
-    const name = input.value.trim();
-    if (!name) {
-      note.textContent = "A name is required.";
-      input.focus();
-      return;
-    }
-    cancel.disabled = true;
-    save.disabled = true;
-    input.disabled = true;
-    note.textContent = "Saving…";
-    try {
-      await window.domo.rosterRename(row.id, name);
-    } finally {
-      dismiss();
-      await redraw();
-    }
-  };
-  cancel.addEventListener("click", dismiss);
-  save.addEventListener("click", submit);
-  input.addEventListener("keydown", (event) => {
-    if (event.key !== "Enter") return;
-    event.preventDefault();
-    void submit();
-  });
-  shell = openModal(trigger, {
-    className: "roster-confirm",
-    focus: input,
-    onDismiss: dismiss,
-    children: [
-      el("div", { class: "group-title", text: `Rename ${current || fallback}` }),
-      row.isThisMac
-        ? el("p", { class: "conn-note", text: "Renames this Mac's Plow session, not the Mac." })
-        : null,
-      input,
-      note,
-      el("div", { class: "row conn-actions" }, [cancel, el("div", { class: "spacer" }), save]),
-    ],
-  });
-  input.select();
-}
-
 function rosterActions(row, section, redraw) {
   const fallback =
     section === "mcp" ? "Unnamed MCP client" : "Unnamed session";
@@ -1758,9 +1705,8 @@ function rosterActions(row, section, redraw) {
     text: "⋯",
     attrs: { "aria-label": `More actions for ${name}` },
   });
-  const rename = el("button", { text: "Rename" });
   const revoke = el("button", { class: "danger", text: "Revoke" });
-  const menu = el("div", { class: "more-menu", attrs: { role: "menu" } }, [rename, revoke]);
+  const menu = el("div", { class: "more-menu", attrs: { role: "menu" } }, [revoke]);
   menu.hidden = true;
   more.addEventListener("click", (event) => {
     event.stopPropagation();
@@ -1768,10 +1714,6 @@ function rosterActions(row, section, redraw) {
       if (open !== menu) open.hidden = true;
     }
     menu.hidden = !menu.hidden;
-  });
-  rename.addEventListener("click", () => {
-    menu.hidden = true;
-    openRosterRename(row, more, redraw, fallback);
   });
   revoke.addEventListener("click", () => {
     menu.hidden = true;

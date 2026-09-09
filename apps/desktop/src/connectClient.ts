@@ -19,7 +19,7 @@
  * by launching a window is one nobody tests.
  */
 import { PlowApi, PlowApiError } from "./plowApi.js";
-import { EMPTY_ROSTER, RosterSections, RosterSectionRow, sectionRoster } from "./rosterSections.js";
+import { EMPTY_ROSTER, RosterSections, sectionRoster } from "./rosterSections.js";
 import { loadSettings, Settings } from "./settings.js";
 
 export interface ClientCredential {
@@ -60,7 +60,7 @@ export interface ConnectClientState {
    * credential, like every message here. */
   rosterError: string | null;
   /**
-   * Why Plow could not confirm the last row action — a removal or a rename.
+   * Why Plow could not confirm the last row action — a removal.
    * Not "did not happen": a response lost after Plow committed still lands
    * here, and the re-read roster beside it shows what Plow holds.
    *
@@ -175,30 +175,8 @@ export class ConnectClient {
     return this.publish();
   }
 
-  /** Revoke an independent credential, or sign out through this Mac's lifecycle. */
-  removeRosterRow(id: number): Promise<ConnectClientState> {
-    return this.rosterAction(id, (row, credential) => {
-      if (row.isThisMac) return this.deps.signOutThisMac();
-      return this.deps.api.revokeApiKey(credential, id);
-    });
-  }
-
-  /** Rename an independent credential and re-read its server state. */
-  renameRosterRow(id: number, name: string): Promise<ConnectClientState> {
-    return this.rosterAction(id, (_row, credential) => this.deps.api.renameApiKey(credential, id, name));
-  }
-
-  /**
-   * One lifecycle for every row action: find the row, act with this Mac's
-   * credential, then re-read the roster — after a failure too, because a
-   * response lost after Plow committed leaves the server changed, and the
-   * rows on screen must say what Plow holds. `actionError` says why the
-   * action did not confirm; the re-read never clears it.
-   */
-  private async rosterAction(
-    id: number,
-    act: (row: RosterSectionRow, credential: string) => Promise<unknown>,
-  ): Promise<ConnectClientState> {
+  /** Revoke a session, then re-read the roster even if its response was lost. */
+  async removeRosterRow(id: number): Promise<ConnectClientState> {
     this.actionError = null;
     const row = [...this.roster.mcp, ...this.roster.other].find(
       (candidate) => candidate.id === id,
@@ -209,7 +187,8 @@ export class ConnectClient {
 
     const generation = this.generation;
     try {
-      await act(row, credential);
+      if (row.isThisMac) await this.deps.signOutThisMac();
+      else await this.deps.api.revokeApiKey(credential, id);
     } catch (error) {
       if (generation === this.generation) this.failAction(messageOf(error));
     }
@@ -228,7 +207,7 @@ export class ConnectClient {
    * Authorised with this Mac's stored credential — the login session itself,
    * which may create agents. A static client is a local agent on a selected line.
    */
-  async createCredential(name: string, lineUid: string | null = null): Promise<ConnectClientState> {
+  async createCredential(name: string, lineUid: string): Promise<ConnectClientState> {
     // SINGLE-FLIGHT. Every mint is a long-lived credential on the account, and
     // the screen can only ever show one of them — so a second Enter before the
     // busy re-render lands would leave a credential live on the account that

@@ -756,7 +756,7 @@ export class PlowApi {
   }
 
   /** Create a self-hosted agent and return its one-time setup token. */
-  async createAgent(token: string, name: string, lineUid: string | null = null): Promise<MintedCredential> {
+  async createAgent(token: string, name: string, lineUid: string): Promise<MintedCredential> {
     if (!lineUid) throw new PlowApiError("http", "Choose a line for this agent.");
     const data = decodeAgentCreateReceipt(await this.call(
       "POST", "/v1/agents", { token, body: { name, provider: "self_hosted", line_uid: lineUid } },
@@ -777,17 +777,6 @@ export class PlowApi {
   /** Soft-revoke one credential by its server id. */
   async revokeApiKey(token: string, id: number): Promise<RevokedKey> {
     return this.call<RevokedKey>("DELETE", `/v1/api-keys/${apiKeyId(id)}`, { token });
-  }
-
-  /** Rename an independent session; agents use their own resource route. */
-  async renameApiKey(token: string, id: number, name: string): Promise<void> {
-    const trimmed = name.trim();
-    if (!trimmed) throw new PlowApiError("http", "A name is required.");
-    if (trimmed.length > 200) throw new PlowApiError("http", "A name can be at most 200 characters.");
-    await this.call<unknown>("PATCH", `/v1/api-keys/${apiKeyId(id)}/preferences`, {
-      token,
-      body: { assistant_name: trimmed },
-    });
   }
 
   /**
