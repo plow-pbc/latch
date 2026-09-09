@@ -27,6 +27,7 @@ import { BrokerCore } from "./browser/brokerCore.js";
 import { LocalVault } from "./browser/localVault.js";
 import { VaultKeyStore } from "./browser/vaultKeyStore.js";
 import { VaultStore } from "./browser/vaultStore.js";
+import { haystackMatches, searchWords } from "./browser/vaultSearch.js";
 import { ResolvedBrowserRuntime } from "./browser/browserRuntime.js";
 import { BROWSING_SKILL } from "./browser/browsingSkill.js";
 import { ExecResult, Executor, REAPED_MESSAGE } from "./executor.js";
@@ -485,20 +486,37 @@ export class DeviceAgent {
    * no browser session involved. Values are never returned here: releasing one
    * only makes sense against the page it is being typed into, which stays in
    * the browser's fill_secret.
+   *
+   * `query` narrows the listing with the Vault tab's own matcher, so an agent
+   * asking for "GitHub" finds an item somebody titled "Github" — a caller
+   * matching case-sensitively on its own side reported no such login and
+   * stopped. Blank or absent is the whole listing, which is what the matcher
+   * already answers for an empty query.
+   *
+   * It reads the rows this method ALREADY returns — title, username, sites —
+   * and nothing else. `LocalVault.search` deliberately searches the open item
+   * including its secrets, which is safe when only ids leave the main process
+   * to the owner's own screen; here the caller is the remote agent, and a
+   * haystack it cannot see would turn this into an oracle it could ask about a
+   * password one guess at a time. Narrowing what is already served reveals
+   * nothing a plain `list` did not.
    */
-  async vaultList(): Promise<JSONValue> {
+  async vaultList(query?: string): Promise<JSONValue> {
     if (!this.credentialBroker) return { status: "error", error: "this machine has no vault" };
     const items = await this.credentialBroker.whatsHere();
     this.audit.record("credential_metadata", { op: "list", source: "vault" });
+    const words = searchWords(query ?? "");
     return {
       status: "completed",
-      items: items.map((i) => ({
-        id: i.id,
-        title: i.title,
-        category: i.category,
-        username: i.username,
-        urls: i.urls,
-      })),
+      items: items
+        .map((i) => ({
+          id: i.id,
+          title: i.title,
+          category: i.category,
+          username: i.username,
+          urls: i.urls,
+        }))
+        .filter((i) => haystackMatches([i.title, i.username, ...i.urls], words)),
     };
   }
 

@@ -206,7 +206,13 @@ Four operations:
 - **`whatsHere(url?)`** — every item, metadata only (id, title, category,
   username, urls, and whether the item's own site is the page on screen —
   advice for the agent, not a filter). Reached by the agent as `plow_vault
-  list`; no capability, no approval, audited as `credential_metadata`.
+  list`; no capability, no approval, audited as `credential_metadata`. That
+  tool takes an optional `query`, narrowed in `DeviceAgent.vaultList` with the
+  Vault tab's own matcher (`vaultSearch.ts`) so the two agree — over the title,
+  username and sites it is already returning, and nothing else. `LocalVault
+  .search` searches the open item with its secrets, which is safe when only ids
+  leave the main process to the owner's own screen; the agent-facing filter
+  must not, or a query becomes a way to ask about a password.
 - **`describeItem(id)`** — one item's field *labels*, each with `hidden`
   (does the vault conceal it), `custom`, and `alias` flags. Never values.
   `plow_vault describe`.

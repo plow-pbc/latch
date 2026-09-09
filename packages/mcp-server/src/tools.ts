@@ -1002,6 +1002,10 @@ export const TOOLS: ToolSpec[] = [
       "Check here before concluding you cannot sign in somewhere. " +
       "This machine keeps its own password vault. 'list' says what is in it — logins, cards, " +
       "identities, notes, custom fields — with titles, usernames and sites but never a value. " +
+      "'list' takes an optional 'query' that narrows it: pass the site or the name you are " +
+      "looking for. Titles, usernames and sites are matched ignoring case and accents, so " +
+      "'GitHub' finds an item titled 'Github' — do not conclude a login is missing from a " +
+      "match you made yourself. Every word must appear somewhere; no query is the whole list. " +
       "'describe' names the fields one item holds, an identity's address and ID numbers " +
       "included. No browser session is needed to ask. To USE any vault field, secret or not, " +
       "open a browser session and call the plow_browser tool's fill_secret — that is the only " +
@@ -1015,6 +1019,12 @@ export const TOOLS: ToolSpec[] = [
       properties: {
         action: { type: "string", enum: ["list", "describe"] },
         item: { type: "string", description: "Item id, for 'describe'." },
+        query: {
+          type: "string",
+          description:
+            "Optional filter for 'list': the site or name to look for, matched against titles, " +
+            "usernames and sites, ignoring case and accents.",
+        },
       },
       additionalProperties: false,
     },
@@ -1023,7 +1033,7 @@ export const TOOLS: ToolSpec[] = [
     async run(args, ctx) {
       const a = jv(args);
       const action = a.get("action").str;
-      if (action === "list") return ctx.device.vaultList();
+      if (action === "list") return ctx.device.vaultList(a.get("query").str ?? "");
       if (action === "describe") return ctx.device.vaultDescribe(a.get("item").str ?? "");
       throw new ToolError("action must be 'list' or 'describe'");
     },

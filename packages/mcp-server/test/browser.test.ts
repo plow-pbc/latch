@@ -49,6 +49,12 @@ function writeVault(dir: string): string {
       { id: "I1", title: "Home", category: "IDENTITY", username: "", urls: [],
         descriptors: [{ label: "date of birth", hidden: false, custom: false, alias: false }],
         values: { "date of birth": "1984-11-09" } },
+      // Titled the way a person types it, not the way the site brands itself:
+      // this is the item a case-sensitive search on the agent's side missed.
+      { id: "G1", title: "Github", category: "LOGIN", username: "elm",
+        urls: ["https://github.com/login"],
+        descriptors: [{ label: "password", hidden: true, custom: false, alias: false }],
+        values: { password: "octocat" } },
     ]),
   );
   return vaultPath;
@@ -110,6 +116,32 @@ describe("browser tools (fake runtime)", () => {
     const body = payload.body as string;
     expect(body.endsWith(SKILL_FOOTER)).toBe(true);
     expect(body.split(SKILL_FOOTER)).toHaveLength(2);
+  });
+
+  it("narrows the vault listing on a query, by name or site, ignoring case", async () => {
+    // An agent that searched case-sensitively on its own side reported there
+    // was no GitHub login, while "Github" sat in the vault. The narrowing is
+    // the Vault tab's matcher, so the tool and the tab agree about what a
+    // query means.
+    const { server } = makeServer();
+    const titles = async (args: Record<string, unknown>): Promise<string[]> => {
+      const { payload, isError } = await callTool(server, "plow_vault", args, AGENT);
+      expect(isError, JSON.stringify(payload)).toBe(false);
+      return (payload.items as { title: string }[]).map((i) => i.title);
+    };
+    const everything = ["Pizza Login", "Visa", "Home", "Github"];
+
+    expect(await titles({ action: "list" })).toEqual(everything);
+    expect(await titles({ action: "list", query: "GitHub" })).toEqual(["Github"]);
+    expect(await titles({ action: "list", query: "github.com" })).toEqual(["Github"]);
+    // A blank query is not a filter that matches nothing.
+    expect(await titles({ action: "list", query: "" })).toEqual(everything);
+    expect(await titles({ action: "list", query: "   " })).toEqual(everything);
+
+    // The haystack is the rows this action already returns. The tab searches
+    // the open item, secrets included; doing that here would answer an agent
+    // guessing at a password one query at a time.
+    expect(await titles({ action: "list", query: "octocat" })).toEqual([]);
   });
 
   it("open → browse → screenshot image block → scope lockout → extend → fill_secret → close", async () => {
