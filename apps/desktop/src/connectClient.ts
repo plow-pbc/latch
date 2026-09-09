@@ -221,6 +221,12 @@ export class ConnectClient {
    * tool that cannot do OAuth needs relay reach and nothing else, and it has no
    * line to answer on. An agent is a different thing, made on a line by the
    * cloud-agent flow.
+   *
+   * Bound to THIS Mac, and refused rather than minted unbound: an unbound
+   * static credential would reach every Mac on the account, which is not what
+   * the person pasting it into one editor is asking for. So a missing device
+   * uid stops the mint here — where there is a screen to say why — rather than
+   * being defaulted into something the server would have to reject.
    */
   async createCredential(name: string): Promise<ConnectClientState> {
     // SINGLE-FLIGHT. Every mint is a long-lived credential on the account, and
@@ -236,6 +242,8 @@ export class ConnectClient {
     if (!trimmed) return this.fail("Give this connection a name.");
     const settings = this.settings();
     if (!settings.relayCredential.trim()) return this.fail("This Mac isn't signed in yet.");
+    const relayResourceUid = (this.deps.deviceUid?.() ?? "").trim();
+    if (!relayResourceUid) return this.fail("This Mac isn't registered with Plow yet. Try again in a moment.");
 
     const generation = this.generation;
     const flightId = ++this.flights;
@@ -244,7 +252,9 @@ export class ConnectClient {
     this.publish();
     const flight = (async () => {
       try {
-        const minted = await this.deps.api.createMcpClientKey(settings.relayCredential, trimmed);
+        const minted = await this.deps.api.createMcpClientKey(
+          settings.relayCredential, trimmed, relayResourceUid,
+        );
         // A sign-out while this was in the air: the credential belongs to an
         // account this Mac is no longer on, so revoke it rather than showing it
         // or leaving an unreachable credential behind. A key revoke, never

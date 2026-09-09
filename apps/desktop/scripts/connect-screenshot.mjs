@@ -190,6 +190,8 @@ let connectorsFixture = CONNECTORS_EMPTY;
 // Nothing is imported or registered at the top level: Electron does not emit
 // `ready` until this entry module finishes evaluating, and a top-level await
 // makes that a race nobody wants to debug. `setUp` runs inside whenReady.
+/** This Mac's relay device uid — the segment plow builds its MCP URL from. */
+const DEVICE_UID = "dev_screenshot_mac";
 const DEVICE_SETTINGS = {
   relayCredential: DEVICE_TOKEN,
   accountUid: "u_7Qk2p9",
@@ -214,13 +216,16 @@ async function setUp() {
 
   /** Plow, stood in for — the one call this screen can make. */
   const api = {
-    async createMcpClientKey(token, name) {
+    async createMcpClientKey(token, name, relayResourceUid) {
       if (token !== DEVICE_TOKEN) throw new Error("the mint must use the device credential");
+      if (relayResourceUid !== DEVICE_UID) throw new Error("the mint must bind to this Mac");
       return { id: 41, token: CLIENT_TOKEN, name };
     },
   };
 
-  const connect = new ConnectClient({ api, home, isConnected: () => true });
+  const connect = new ConnectClient({
+    api, home, isConnected: () => true, deviceUid: () => DEVICE_UID,
+  });
 
   // The main window's IPC surface, as far as this screen reaches. `connect:*`
   // are the real handlers from main.ts, pointed at the same class.

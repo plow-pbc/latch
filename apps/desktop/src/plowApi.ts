@@ -840,13 +840,29 @@ export class PlowApi {
    * here is this Mac's login session, which holds every chat. A tool that only
    * needs to reach this Mac would have walked away with all of them.
    *
+   * `relay_resource_uid` BINDS the credential to this Mac: plow will not let it
+   * reach any other, so a token that leaves this machine reaches nothing. It is
+   * this Mac's device uid — the segment plow builds its MCP URL from — and it
+   * is required, which is why the caller supplies it rather than this
+   * defaulting it to something.
+   *
    * The device credential rides in the Authorization header and nowhere else;
    * `decodeKeyCreateReceipt` refuses a response that echoes it back, and
-   * refuses one whose minted scopes or chat grant are wider than these.
+   * refuses one whose minted scopes or chat grant are wider than these. The
+   * receipt does not echo the device, so there is nothing to check it against.
    */
-  async createMcpClientKey(token: string, name: string): Promise<MintedCredential> {
+  async createMcpClientKey(
+    token: string,
+    name: string,
+    relayResourceUid: string,
+  ): Promise<MintedCredential> {
     const minted = decodeKeyCreateReceipt(await this.call(
-      "POST", "/v1/api-keys", { token, body: { name, scopes: [...MCP_CLIENT_SCOPES], chat_uids: [] } },
+      "POST", "/v1/api-keys", { token, body: {
+        name,
+        scopes: [...MCP_CLIENT_SCOPES],
+        chat_uids: [],
+        relay_resource_uid: relayResourceUid,
+      } },
     ), token);
     return { ...minted, name: minted.name || name };
   }

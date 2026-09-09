@@ -91,7 +91,7 @@ describe("PlowApi", () => {
     const timeout = vi.spyOn(AbortSignal, "timeout").mockReturnValue(controller.signal);
 
     const pending = new PlowApi("https://api.plow.co", fetchImpl)
-      .createMcpClientKey("plow_device", "Claude Code")
+      .createMcpClientKey("plow_device", "Claude Code", "dev_this_mac")
       .catch((e) => e);
     controller.abort(new DOMException("The operation was aborted.", "TimeoutError"));
     const error = await pending;
@@ -499,14 +499,16 @@ describe("PlowApi", () => {
       scopes: ["relay:call"], name: "Claude Code", chat_uids: [],
     } }]);
     const minted = await new PlowApi("https://stub.invalid", fetchImpl)
-      .createMcpClientKey("owner", "Claude Code");
+      .createMcpClientKey("owner", "Claude Code", "dev_this_mac");
 
     expect(calls[0].url).toBe("https://stub.invalid/v1/api-keys");
     // `chat_uids: []` is sent EXPLICITLY. Omitting it makes plow inherit the
     // caller's grant, and the caller is this Mac's login session — which holds
-    // every chat on the account.
+    // every chat on the account. `relay_resource_uid` binds the credential to
+    // this Mac, so a token that leaves the machine reaches nothing.
     expect(JSON.parse(String(calls[0].init.body))).toEqual({
       name: "Claude Code", scopes: ["relay:call"], chat_uids: [],
+      relay_resource_uid: "dev_this_mac",
     });
     expect(minted).toEqual({ id: 41, token: "plow_clienttok", name: "Claude Code" });
     // The device credential rides in the header and nowhere else.
@@ -547,7 +549,8 @@ describe("PlowApi", () => {
       id: 41, token: "plow_clienttok", key_prefix: "abcdefgh", name: "Claude Code", ...minted,
     } }]);
     await expect(
-      new PlowApi("https://stub.invalid", fetchImpl).createMcpClientKey(STATIC_MINT_CREDENTIAL, "Claude Code"),
+      new PlowApi("https://stub.invalid", fetchImpl)
+        .createMcpClientKey(STATIC_MINT_CREDENTIAL, "Claude Code", "dev_this_mac"),
     ).rejects.toThrow({
       unsafe: "Plow returned an unsafe credential response.",
       invalid: "Plow returned an invalid credential response.",

@@ -31,7 +31,7 @@ const MCP_URL = "http://localhost:18804/v1/relay/devices/u_123/mcp";
 
 /** A stand-in Plow that records who asked for what. */
 class FakePlow {
-  minted: Array<{ token: string; name: string }> = [];
+  minted: Array<{ token: string; name: string; relayResourceUid: string }> = [];
   /** Every credential handed back, in order. Distinct, like the real ones. */
   issued: string[] = [];
   fails: PlowApiError | null = null;
@@ -75,14 +75,14 @@ class FakePlow {
     this.open = null;
   }
 
-  async createMcpClientKey(token: string, name: string) {
+  async createMcpClientKey(token: string, name: string, relayResourceUid: string) {
     if (this.gate) await this.gate;
     if (this.fails) throw this.fails;
     // Each mint is a distinct long-lived credential on the account, exactly as
     // the real endpoint is — so a test can see a second one that nobody asked
     // for rather than two copies of the same string.
     const issued = `${CLIENT_TOKEN}_${this.minted.length + 1}`;
-    this.minted.push({ token, name });
+    this.minted.push({ token, name, relayResourceUid });
     this.issued.push(issued);
     return { id: 700 + this.minted.length, token: issued, name };
   }
@@ -166,8 +166,11 @@ describe("the static-credential fallback", () => {
     const state = await connect.createCredential("Claude Code");
 
     // Minted with this Mac's stored credential — the login session, which is
-    // what the app holds and what `POST /v1/api-keys` is authorised by.
-    expect(plow.minted).toEqual([{ token: DEVICE_TOKEN, name: "Claude Code" }]);
+    // what the app holds and what `POST /v1/api-keys` is authorised by — and
+    // BOUND to this Mac, so the token reaches no other.
+    expect(plow.minted).toEqual([
+      { token: DEVICE_TOKEN, name: "Claude Code", relayResourceUid: DEVICE_UID },
+    ]);
     expect(state.credential?.name).toBe("Claude Code");
 
     const config = JSON.parse(state.credential!.config);
@@ -176,6 +179,18 @@ describe("the static-credential fallback", () => {
     // A URL ends up in shell history, logs and stored registrations.
     expect(config.mcpServers.plow.url).not.toContain(CLIENT_TOKEN);
     expect(config.mcpServers.plow.command).toBeUndefined();
+  });
+
+  it("refuses to mint before this Mac has a device uid to bind to", async () => {
+    signIn();
+    deviceUid = null;
+    const state = await build().createCredential("Claude Code");
+
+    // Nothing reached Plow. An unbound static credential would reach every Mac
+    // on the account, which is not what one editor was being set up for.
+    expect(plow.minted).toEqual([]);
+    expect(state.credential).toBeNull();
+    expect(state.message).toBe("This Mac isn't registered with Plow yet. Try again in a moment.");
   });
 
   it("shows it once — after 'I've saved it' the app cannot produce it again", async () => {
