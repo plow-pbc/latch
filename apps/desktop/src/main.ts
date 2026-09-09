@@ -741,11 +741,13 @@ ipcMain.handle("cloud:cancelLineFlow", async () => {
 });
 ipcMain.handle("cloud:retryLineFlow", async () => {
   await cloudAgents?.retryLineFlow();
+  await cloudAgents?.refresh();
   await connectClient?.refreshRoster();
   return agentsTabState();
 });
 ipcMain.handle("cloud:retryFailed", async (_e, agentId: string) => {
   await cloudAgents?.retryFailed(agentId);
+  await cloudAgents?.refresh();
   await connectClient?.refreshRoster();
   return agentsTabState();
 });
