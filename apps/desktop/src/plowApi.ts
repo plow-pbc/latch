@@ -193,9 +193,10 @@ export function decodeAgentCreateReceipt(data: unknown, deviceCredential: string
  * echo is the only chance this Mac has to see an over-grant: once the token is
  * on screen it has been copied into somebody's client, and it is long-lived.
  * So a credential that came back with more than `relay:call`, or with any chat
- * grant at all, is refused rather than handed over — the caller revokes what it
- * cannot show. Refusing costs an unusable credential on the account; accepting
- * would hand a tool the owner's chats.
+ * grant at all, is refused rather than handed over. Nothing revokes it: the
+ * throw happens before the id reaches a caller that could. The cost is one
+ * unusable credential on the account, which the owner can see and remove under
+ * MCP clients; accepting would hand a tool the owner's chats.
  */
 export function decodeKeyCreateReceipt(data: unknown, deviceCredential: string): MintedCredential {
   const receipt = data as { id?: unknown; token?: unknown; name?: unknown; scopes?: unknown; chat_uids?: unknown } | null;

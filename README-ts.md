@@ -268,8 +268,9 @@ process hands it and owns no copy of its own.
   mints one asks for a name and nothing else. The receipt is checked, not
   trusted: plow echoes the scopes and chat grant it actually minted, and a
   credential that came back wider than `relay:call` with no chats is refused
-  and revoked rather than shown — after it is on screen it has been pasted
-  into somebody's client.
+  rather than shown — after it is on screen it has been pasted into somebody's
+  client. Nothing revokes the refused one; it sits on the account as an unusable
+  credential the owner can see and remove under MCP clients.
 - **The login session IS the credential this Mac keeps.** Latch is the owner's
   manager app, not an agent: it holds the socket, lists chats and Plow's
   numbers, mints agents, buys inference and mints connector tokens. It used to
