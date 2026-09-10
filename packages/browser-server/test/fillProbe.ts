@@ -77,6 +77,7 @@ interface HandleOpts {
   assignFails?: boolean;
   maxLength?: number;
   rewrites?: (t: string) => string;
+  resetsCaret?: boolean;
   options?: [value: string, label: string][];
 }
 
@@ -89,6 +90,8 @@ class Handle implements HandleLike {
   keyTimeoutMax: number | null = null;
   keyTimeoutMin: number | null = null;
   typeCalls = 0;
+  tagName = "INPUT";
+  selectionStart = 0;
   private o: HandleOpts;
 
   constructor(private trace: string[], o: HandleOpts = {}) {
@@ -135,7 +138,12 @@ class Handle implements HandleLike {
     }
     if (fn === WAS_MARKED_JS) return this.marked;
     this.trace.push("handle.evaluate:other");
-    return null;
+    return typeof fn === "function" ? fn(this, arg) : null;
+  }
+
+  setSelectionRange(start: number, _end: number): void {
+    this.trace.push("handle.setSelectionRange");
+    this.selectionStart = start;
   }
 
   async evaluateHandle(fn: PageFunction, arg?: Any): Promise<JSHandleLike> {
@@ -152,6 +160,7 @@ class Handle implements HandleLike {
       throw new Error("Cannot type text into input[type=number]");
     }
     this.value = this.o.rewrites ? this.o.rewrites(value) : value;
+    this.selectionStart = this.value.length;
     this.trace.push("handle.assign");
   }
 
@@ -171,9 +180,11 @@ class Handle implements HandleLike {
     if (this.keyTimeoutMax === null || t > this.keyTimeoutMax) this.keyTimeoutMax = t;
     if (this.keyTimeoutMin === null || t < this.keyTimeoutMin) this.keyTimeoutMin = t;
     if (this.o.dropsKeys) return;
-    let landed = (this.value || "") + text;
+    let landed = this.value.slice(0, this.selectionStart) + text + this.value.slice(this.selectionStart);
+    this.selectionStart += text.length;
     if (this.o.rewrites) landed = this.o.rewrites(landed);
     this.value = landed;
+    if (this.o.resetsCaret) this.selectionStart = 0;
     if (this.o.partialFill && this.typeCalls > 1) {
       this.trace[this.trace.length - 1] = "handle.type-failed";
       throw new Error("Element is not attached to the DOM");

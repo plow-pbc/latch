@@ -439,15 +439,19 @@ export class Session {
     });
     // The whole tail draws on ONE budget, not one per key.
     const deadline = now() + TYPING_MAX_MS;
+    let expectedCaret = value.slice(0, value.length - TYPED_CHARS).length;
     for (const ch of value.slice(-TYPED_CHARS)) {
       const left = deadline - now();
       if (left <= 0) throw new Error("typing outran its budget");
-      // A controlled field may restore an old caret after each input event.
-      await el.evaluate((node: { tagName: string; value: string; selectionStart: number | null; setSelectionRange(start: number, end: number): void }) => {
+      // Repair a restored caret without selecting on fields that advance normally.
+      const caret = await el.evaluate((node: { tagName: string; value: string; selectionStart: number | null; setSelectionRange(start: number, end: number): void }, expected: number) => {
         if ((node.tagName === "INPUT" || node.tagName === "TEXTAREA") && node.selectionStart !== null) {
-          node.setSelectionRange(node.value.length, node.value.length);
+          if (node.selectionStart < expected) node.setSelectionRange(node.value.length, node.value.length);
+          return node.selectionStart;
         }
-      });
+        return null;
+      }, expectedCaret);
+      expectedCaret = typeof caret === "number" ? caret + ch.length : 0;
       await el.type(ch, { delay: KEY_DELAY_MS, timeout: left });
     }
     if (await el.evaluate(KEYS_DROPPED_JS, value)) {

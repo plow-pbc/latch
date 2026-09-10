@@ -82,6 +82,24 @@ describe("the server's fill branch, run directly", () => {
     expect(r.result).toEqual({ ok: true, mask: "stylesheet", frame: 0 });
   });
 
+  it("does not select between keys when the caret advances normally", async () => {
+    const r = await run(base, {});
+    expect(r.trace).not.toContain("handle.setSelectionRange");
+    expect(r.result).toEqual({ ok: true, frame: 0 });
+  });
+
+  it("repairs the caret only after a field moves it backwards", async () => {
+    const r = await run(base, { resetsCaret: true });
+    expect(r.trace).toEqual([
+      "frame.wait_for_selector", "handle.assign", "handle.evaluate:other", "handle.type",
+      ...Array.from(base.value.slice(1), () => [
+        "handle.evaluate:other", "handle.setSelectionRange", "handle.type",
+      ]).flat(),
+      "handle.evaluate:unmark",
+    ]);
+    expect(r.result).toEqual({ ok: true, frame: 0 });
+  });
+
   it("types the value in rather than assigning it", async () => {
     const plain = await run(base, {});
     const masked = await run({ ...base, mask: true }, {});
