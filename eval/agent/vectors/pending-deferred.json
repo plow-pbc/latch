@@ -5,7 +5,7 @@
   "answers": {
     "plow_read_file": {
       "handle": "EVAL-HANDLE",
-      "note": "not decided yet — this Mac is deciding it itself (a safety review, a policy check, or preparation). NOBODY HAS BEEN ASKED TO APPROVE ANYTHING: this Mac is not set up to ask its owner, so do not tell the user a request is waiting on them and do not wait for one. Poll plow_get_result with this handle. Do not repeat the original call; that starts a second request.",
+      "note": "not decided yet, and NOBODY HAS BEEN ASKED TO APPROVE ANYTHING YET — this Mac is still working out the answer itself (a safety review, a policy check, or preparing the request). So do not tell the user something is waiting on them: nothing is, at this moment. Poll plow_get_result with this handle; if a person does get asked, the reason becomes awaiting_approval and says so. Do not repeat the original call; that starts a second request.",
       "reason": "deciding",
       "retry_after_ms": 1000,
       "status": "pending"

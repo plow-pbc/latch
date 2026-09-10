@@ -112,15 +112,15 @@ export interface DecideDeps {
     reason: string;
     cause?: ReviewFailureCause;
   }>;
-  /** Show the human the approval dialog, optionally with the reviewer's say. */
-  openApproval: (hint: Promise<ReviewHint> | null) => Promise<ApprovalDecision>;
   /**
-   * A dialog is going up now. The ONE place this is known: every other branch
-   * here returns a verdict without a human. A caller waiting on a call budget
-   * uses it to tell "this Mac is still deciding" from "your owner is looking at
-   * it", and nothing else may claim the latter.
+   * Show the human the approval dialog, optionally with the reviewer's say.
+   *
+   * It reports the window's own existence to whoever is waiting on a call
+   * budget — not this branch being taken. Reaching here only means a dialog is
+   * intended: the titles still have to resolve, and the intent may queue behind
+   * another prompt first.
    */
-  onAsking?: () => void;
+  openApproval: (hint: Promise<ReviewHint> | null) => Promise<ApprovalDecision>;
 }
 
 /**
@@ -268,6 +268,5 @@ export async function decideIntent(
           reason: r.reason,
         }))
       : null;
-  deps.onAsking?.();
   return { decision: await deps.openApproval(hint), source: "ask" };
 }

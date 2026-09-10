@@ -337,7 +337,6 @@ class ElectronPolicy implements PolicyDelegate {
   ): Promise<{ decision: ApprovalDecision; source: string }> {
     const audit = device?.audit;
     return decideIntent(intent, {
-      onAsking: () => progress?.asking(),
       settings: loadSettings(home),
       apiBaseUrl,
       // The real home, deliberately — same resolution the DeviceAgent below
@@ -351,6 +350,7 @@ class ElectronPolicy implements PolicyDelegate {
         openApprovalWindow(
           { kind: "intent", view: approvalViewModel(intent, await resolveCredentialTitles(intent)) },
           hint,
+          () => progress?.asking(),
         ),
     });
   }
@@ -391,6 +391,13 @@ function openApprovalWindow(
   // Resolves to what the adversarial agent had to say, or null when it is not
   // being consulted at all.
   hint: Promise<ReviewHint> | null = null,
+  // Fired when this intent's window actually EXISTS — inside the serialized
+  // run, not when the dialog was decided on. Between those two moments the
+  // intent may sit behind another prompt in `approvalChain` for as long as that
+  // one takes, and credential titles are still being resolved; an agent told
+  // "your owner is looking at it" then would be sending them to a window that
+  // is not on screen.
+  onOpened?: () => void,
 ): Promise<ApprovalDecision> {
   const run = () =>
     new Promise<ApprovalDecision>((resolve) => {
@@ -464,6 +471,7 @@ function openApprovalWindow(
           resolve("deny");
         }
       });
+      onOpened?.();
       void win.loadFile(path.join(rendererDir, "approval.html"));
     });
   const result = approvalChain.then(run, run);

@@ -170,6 +170,14 @@ describe("a pending handle says what to do about it", () => {
     // The two sentences that produced both symptoms.
     expect(payload.note).not.toMatch(/tell the user it is waiting/i);
     expect(payload.note).toMatch(/nobody has been asked to approve anything/i);
+    // …but strictly as a PHASE. The same reason is what an Ask-mode Mac gets
+    // while it resolves a path or queues behind another prompt, so a note that
+    // described the Mac's SETTING would be false exactly there.
+    expect(payload.note).not.toMatch(/not set up to ask/i);
+    expect(payload.note).not.toMatch(/cannot ask/i);
+    // And it has to say the other phase exists, or an agent told "nobody has
+    // been asked" reads it as "nobody ever will".
+    expect(payload.note).toMatch(/awaiting_approval/);
     // …and the advice that keeps the agent moving is still there.
     expect(payload.note).toMatch(/plow_get_result/);
     expect(payload.note).toMatch(/do not repeat the original call/i);

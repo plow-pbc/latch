@@ -617,9 +617,7 @@ export class DeviceAgent {
       capabilities: intent.capabilities.map(capabilityDisplay),
     });
 
-    const grant = await this.policy.decide(intent, this.delegate, {
-      asking: () => progress?.asking(),
-    });
+    const grant = await this.policy.decide(intent, this.delegate, progress);
     progress?.decided();
     this.audit.record("intent_decision", {
       intentId: intent.intentId,

@@ -57,22 +57,27 @@ export type PendingReason = "awaiting_approval" | "deciding" | "running";
  * advice is actually needed. `retry_after_ms` next to it is advice too, never
  * a gate: polling early is answered honestly.
  *
- * `deciding` is where every call starts, and it is the honest answer: no
- * decision yet, and nobody has been asked. It covers the work before anyone
- * could be asked (path resolution, writing the approval record) and the whole
- * of the modes that never ask at all — the adversarial reviewer thinking, on a
- * budget of its own that is minutes wide against this ten seconds.
+ * BOTH ARE PHASES OF THIS CALL, never claims about how the Mac is configured.
+ * That distinction is the whole design: a reason that describes a SETTING is
+ * wrong the moment the call is somewhere the setting does not predict.
  *
- * `awaiting_approval` is claimed ONLY once a dialog is actually in front of a
- * human, which is why it is reported by the code that opens one rather than
- * inferred from a setting. The inference was a lie with teeth: an owner who had
- * set the reviewer as the decider was told by their agent that a request had
- * gone out to them for approval, went looking for a dialog that mode never
- * raises, and found none — while the agent, having been told to tell the user
- * it was waiting, stopped instead of polling. The audit log filled up with
- * approvals nobody was waiting on. Reading the mode instead would only have
- * moved the lie: the mode can change between the read and the decision, and a
- * slow `ask` Mac still has nobody at the dialog while it resolves a path.
+ * `deciding` is where every call starts and means only "nobody has been asked
+ * yet". True of a reviewer thinking on its own budget — minutes wide against
+ * this ten seconds — and equally true of a Mac that always asks but is
+ * still resolving a path or queued behind another prompt. It must not say the
+ * Mac cannot ask its owner; it does not know that, and on an Ask-mode Mac
+ * deferring during preparation it would be false.
+ *
+ * `awaiting_approval` is claimed ONLY once a window exists in front of a human,
+ * which is why it is reported by the code that creates one. Inferring it from
+ * the approval mode was a lie with teeth: an owner who had set the reviewer as
+ * the decider was told by their agent that a request had gone out to them,
+ * went looking for a dialog that mode never raises, and found none — while the
+ * agent, having been told to say it was waiting, stopped instead of polling,
+ * and the audit log filled up with approvals nobody was waiting on. Reporting
+ * it from "the ask branch was taken" would have moved the lie rather than
+ * removed it: the titles still resolve after that, and the intent can sit in
+ * the approval queue behind another prompt for as long as that one takes.
  *
  * `running` means the caller-level decision step is complete and execution is
  * underway. It does not claim that action-specific checks inside that execution
@@ -84,11 +89,12 @@ const PENDING_NOTES: Record<PendingReason, string> = {
     "prepared. Tell the user it is waiting, then poll plow_get_result with this handle. " +
     "Do not repeat the original call; that starts a second request.",
   deciding:
-    "not decided yet — this Mac is deciding it itself (a safety review, a policy check, or " +
-    "preparation). NOBODY HAS BEEN ASKED TO APPROVE ANYTHING: this Mac is not set up to ask " +
-    "its owner, so do not tell the user a request is waiting on them and do not wait for one. " +
-    "Poll plow_get_result with this handle. Do not repeat the original call; that starts a " +
-    "second request.",
+    "not decided yet, and NOBODY HAS BEEN ASKED TO APPROVE ANYTHING YET — this Mac is still " +
+    "working out the answer itself (a safety review, a policy check, or preparing the request). " +
+    "So do not tell the user something is waiting on them: nothing is, at this moment. Poll " +
+    "plow_get_result with this handle; if a person does get asked, the reason becomes " +
+    "awaiting_approval and says so. Do not repeat the original call; that starts a second " +
+    "request.",
   running:
     "execution is underway now. Poll plow_get_result with this handle; do not repeat the " +
     "original call.",

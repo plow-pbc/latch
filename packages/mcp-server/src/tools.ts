@@ -149,10 +149,7 @@ async function decideAndRun(
     capabilities,
     sessionId: ctx.sessionId,
   });
-  const response = await ctx.device.handleIntent(intent, payload, {
-    asking: () => progress.asking(),
-    decided: () => progress.decided(),
-  });
+  const response = await ctx.device.handleIntent(intent, payload, progress);
   const r = jv(response);
   switch (r.get("status").str) {
     case "denied":
