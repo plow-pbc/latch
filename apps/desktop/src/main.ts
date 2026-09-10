@@ -82,6 +82,7 @@ import {
   ApprovalDecision,
   decideIntent,
   ReviewHint,
+  humanMayBeAsked,
   storedRuleMayGrant,
 } from "./reviewPolicy.js";
 import {
@@ -2170,7 +2171,13 @@ app.whenReady().then(async () => {
   // leaves the Mac.
   device.audit.events.on("recorded", (entry) => telemetry?.auditEntryRecorded(entry));
   // The version rides the MCP handshake, so it has to be the app's real one.
-  mcp = createDomoMcpServer(device, { version: app.getVersion() });
+  mcp = createDomoMcpServer(device, {
+    version: app.getVersion(),
+    // Read at the moment an envelope is minted, not captured now: the owner can
+    // change the approval mode while an agent is mid-session, and the agent has
+    // to be told about the mode that is actually in force.
+    humanMayBeAsked: () => humanMayBeAsked(loadSettings(home)),
+  });
   await startRelay();
 
   onboarding = new Onboarding({

@@ -138,6 +138,61 @@ describe("a pending handle says what to do about it", () => {
     expect(payload.note).not.toMatch(/on the user's Mac now/i);
   });
 
+  // The field report this exists for: an owner who had set the reviewer as the
+  // decider was told by their agent that a request had gone out to THEM for
+  // approval. There is no dialog in that mode, so they went looking for one
+  // that cannot appear — and the agent, told to say it was waiting, waited
+  // instead of polling, while the audit log filled with approvals nobody was
+  // waiting on. The envelope has to describe the mode actually in force.
+  it("a Mac that never asks its owner does not claim it is waiting on them", async () => {
+    const home = tempDir();
+    const approvals = new ApprovalStore(path.join(home, "device/approvals"), NEVER_ANSWERS, 60_000);
+    const device = new DeviceAgent(home, "Test Mac", approvals);
+    const server = createDomoMcpServer(device, {
+      budgetMs: 30,
+      humanMayBeAsked: () => false,
+    });
+    cleanups.push(() => server.close());
+    const file = path.join(tempDir(), "a.txt");
+    fs.writeFileSync(file, "contents");
+
+    const { payload } = await callTool(server, "plow_read_file", { path: file }, AGENT);
+
+    expect(payload.status).toBe("pending");
+    expect(payload.reason).toBe("deciding");
+    // The two sentences that produced both symptoms.
+    expect(payload.note).not.toMatch(/tell the user it is waiting/i);
+    expect(payload.note).toMatch(/nobody has been asked to approve anything/i);
+    // …and the advice that keeps the agent moving is still there.
+    expect(payload.note).toMatch(/plow_get_result/);
+    expect(payload.note).toMatch(/do not repeat the original call/i);
+    expect(bareToolNames(payload.note)).toEqual([]);
+  });
+
+  // The predicate is read per envelope, not captured when the server is built:
+  // the owner can change the mode mid-session and the next call has to describe
+  // the mode in force then, not the one that was set at launch.
+  it("a mode change between two calls changes what the next one says", async () => {
+    const home = tempDir();
+    const approvals = new ApprovalStore(path.join(home, "device/approvals"), NEVER_ANSWERS, 60_000);
+    const device = new DeviceAgent(home, "Test Mac", approvals);
+    let asksHuman = false;
+    const server = createDomoMcpServer(device, {
+      budgetMs: 30,
+      humanMayBeAsked: () => asksHuman,
+    });
+    cleanups.push(() => server.close());
+    const file = path.join(tempDir(), "a.txt");
+    fs.writeFileSync(file, "contents");
+
+    const first = await callTool(server, "plow_read_file", { path: file }, AGENT);
+    asksHuman = true;
+    const second = await callTool(server, "plow_read_file", { path: file }, AGENT);
+
+    expect(first.payload.reason).toBe("deciding");
+    expect(second.payload.reason).toBe("awaiting_approval");
+  });
+
   it("polling the handle repeats the advice, so it survives a lost first answer", async () => {
     const { server, file } = serverWith(NEVER_ANSWERS, { ttlMs: 60_000, budgetMs: 30 });
     const first = await callTool(server, "plow_read_file", { path: file }, AGENT);

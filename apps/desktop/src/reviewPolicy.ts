@@ -87,6 +87,24 @@ export function storedRuleMayGrant(settings: Settings): boolean {
   return mode !== "adversarial" && mode !== "deny";
 }
 
+/**
+ * Could this Mac put an approval dialog in front of its owner at all?
+ *
+ * Only `ask` (every operation) and `approve` (scripts alone — see the
+ * applescript carve-out in `decideIntent`) ever reach `openApproval`.
+ * `adversarial` and `deny` decide with nobody in the room.
+ *
+ * It answers for the MODE, not for one intent, because what it feeds is the
+ * pending envelope an agent gets when a call outruns the call budget — minted
+ * before there is an intent to ask about. Saying "a human might be asked" in
+ * approve mode is therefore honest rather than lossy: a script really would
+ * raise the dialog.
+ */
+export function humanMayBeAsked(settings: Settings): boolean {
+  const mode = settings.approvalMode ?? DEFAULT_APPROVAL_MODE;
+  return mode === "ask" || mode === "approve";
+}
+
 /** Everything `decideIntent` needs from the outside world, injected for tests. */
 export interface DecideDeps {
   settings: Settings;

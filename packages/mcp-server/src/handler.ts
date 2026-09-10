@@ -21,7 +21,7 @@ import {
 } from "@modelcontextprotocol/server";
 import { JSONValue } from "@domo/protocol";
 import { DeviceAgent, LIVE_WEB_ROUTING } from "@domo/device-core";
-import { BlockedError, CALL_BUDGET_MS, DeferredResults, DeniedError, DeviceError, Progress } from "./deferred.js";
+import { BlockedError, CALL_BUDGET_MS, DeferredResults, DeniedError, DeviceError, HANDLE_TTL_MS, Progress } from "./deferred.js";
 import { JobOwners } from "./jobs.js";
 import {
   AgentIdentity,
@@ -79,7 +79,7 @@ Call plow_list_skills early. This Mac publishes skills — how-to guides for wha
 
 Use your own tools for your own work: code you are writing, scratch files, and anything you do not need their machine for.
 
-The user approves the operations these tools perform on their machine — reading and writing files, running commands, scripting their apps, and browsing. A call may return a pending handle instead of a result; the handle's own 'reason' and 'note' say what it is waiting for. Tell the user, then poll plow_get_result. Do not re-issue the original call; that starts a second request.
+Every operation these tools perform on the user's machine — reading and writing files, running commands, scripting their apps, and browsing — is decided on that Mac before it runs. WHO decides is the owner's setting, and you cannot see it: on some Macs they are asked each time, on others a safety reviewer they configured decides and they are never asked at all. So never tell the user a request is waiting on them unless a payload says so. A call may return a pending handle instead of a result; the handle's own 'reason' and 'note' say what it is waiting for and what to tell them. Follow the note, then poll plow_get_result. Do not re-issue the original call; that starts a second request.
 
 A call can also come back with status 'blocked': the user approved it, and then their Mac itself refused — a macOS privacy permission the app has not been granted, a permission dialog waiting on the Mac's screen with nobody there to click it, or a path outside the bound that was approved. That is not the user saying no, and it is not the operation breaking. Read the 'diagnosis'. When its 'confidence' is 'confirmed', tell the user its 'owner_action' sentence word for word and stop: do not retry, and do not reword the goal to get a different answer. The one exception is a diagnosis whose 'retry' names a tool: that tool is the one move left, and only for what did not already happen. When it is 'likely' or 'unknown', say what this Mac found — 'evidence', 'ruled_out', and the 'probes' facts — and let the user decide. A command that comes back 'running' with a 'diagnosis' is parked on a permission dialog: leave it running, tell the user, and poll plow_get_output; the user answering the dialog lets it finish.`;
 
@@ -202,6 +202,14 @@ export interface McpServerOptions {
    * hardcoded `0.1.0` hid for as long as it existed.
    */
   version?: string;
+  /**
+   * Can this Mac's mode put an approval dialog in front of its owner?
+   *
+   * Feeds the pending envelope's `reason`, so an agent on a Mac that decides
+   * for itself is never told a request went out to a human. A library default
+   * of "yes" keeps the older wording for a caller that does not say.
+   */
+  humanMayBeAsked?: () => boolean;
 }
 
 export interface DomoMcpServer {
@@ -223,7 +231,12 @@ export function createDomoMcpServer(
 ): DomoMcpServer {
   const budgetMs = options.budgetMs ?? CALL_BUDGET_MS;
   const version = options.version ?? "0.0.0-dev";
-  const deferred = new DeferredResults(budgetMs);
+  const deferred = new DeferredResults(
+    budgetMs,
+    HANDLE_TTL_MS,
+    undefined,
+    options.humanMayBeAsked,
+  );
   const jobs = new JobOwners();
   const sessionId = crypto.randomUUID().toUpperCase();
 

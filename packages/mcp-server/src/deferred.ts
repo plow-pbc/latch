@@ -42,7 +42,7 @@ export const HANDLE_TTL_MS = 15 * 60_000;
 export const RETRY_AFTER_MS = 1_000;
 
 /** Why a call is still outstanding. */
-export type PendingReason = "awaiting_approval" | "running";
+export type PendingReason = "awaiting_approval" | "deciding" | "running";
 
 /**
  * What the agent should DO about a pending handle, in the envelope itself.
@@ -58,12 +58,19 @@ export type PendingReason = "awaiting_approval" | "running";
  * a gate: polling early is answered honestly.
  *
  * `awaiting_approval` must not claim a dialog is on screen, because often
- * there is not one. It means "no decision yet", and that covers the work
- * before anyone is asked (path resolution, writing the approval record), the
- * adversarial reviewer thinking — a budget of its own, minutes wide against this
- * ten seconds, so in that mode deferring while nobody has been asked is
- * still commonplace — and the
- * approve/deny modes, which never show a human anything at all.
+ * there is not one. It means "no decision yet" on a Mac whose mode HAS a human
+ * in it, and that covers the work before anyone is asked (path resolution,
+ * writing the approval record) as well as the wait on the dialog itself.
+ *
+ * `deciding` is the same "no decision yet" on a Mac where nobody will ever be
+ * asked — the adversarial reviewer thinking (a budget of its own, minutes wide
+ * against this ten seconds, so deferring is commonplace there), or the
+ * deny mode. It exists because the alternative was a lie with teeth: an owner
+ * who has set the reviewer as the decider was told by their agent that a
+ * request had gone out to them for approval, went looking for a dialog that
+ * does not exist in that mode, and found none — while the agent, having been
+ * told to tell the user it was waiting, stopped instead of polling. The audit
+ * log filled up with approvals nobody was waiting on.
  *
  * `running` means the caller-level decision step is complete and execution is
  * underway. It does not claim that action-specific checks inside that execution
@@ -74,6 +81,12 @@ const PENDING_NOTES: Record<PendingReason, string> = {
     "not decided yet — it may be waiting on the user, on a policy check, or still being " +
     "prepared. Tell the user it is waiting, then poll plow_get_result with this handle. " +
     "Do not repeat the original call; that starts a second request.",
+  deciding:
+    "not decided yet — this Mac is deciding it itself (a safety review, a policy check, or " +
+    "preparation). NOBODY HAS BEEN ASKED TO APPROVE ANYTHING: this Mac is not set up to ask " +
+    "its owner, so do not tell the user a request is waiting on them and do not wait for one. " +
+    "Poll plow_get_result with this handle. Do not repeat the original call; that starts a " +
+    "second request.",
   running:
     "execution is underway now. Poll plow_get_result with this handle; do not repeat the " +
     "original call.",
@@ -153,9 +166,9 @@ export class DeviceError extends Error {
 }
 
 /**
- * Handed to the work so it can say when it stops waiting on a human and starts
- * actually running. Without it every pending handle would claim
- * `awaiting_approval`, which would be a lie for the second half of a long job.
+ * Handed to the work so it can say when the decision lands and execution
+ * starts. Without it every pending handle would still claim it was undecided,
+ * which would be a lie for the second half of a long job.
  */
 export interface Progress {
   decided(): void;
@@ -178,6 +191,16 @@ export class DeferredResults {
     private readonly ttlMs = HANDLE_TTL_MS,
     /** Injectable for tests; the real one is Date.now. */
     private readonly now: () => number = () => Date.now(),
+    /**
+     * Can this Mac's current mode put an approval dialog in front of a human?
+     * Read per call, never cached: the owner may change the mode between two
+     * operations, and the envelope has to describe the mode in force now.
+     *
+     * Defaults to true — the conservative direction for a caller that does not
+     * know (it keeps the older, human-shaped advice) and what device-core's own
+     * tests, which drive real approval delegates, expect.
+     */
+    private readonly humanMayBeAsked: () => boolean = () => true,
   ) {}
 
   /**
@@ -191,7 +214,7 @@ export class DeferredResults {
     work: (progress: Progress) => Promise<JSONValue>,
   ): Promise<JSONValue> {
     const handle = crypto.randomUUID().toUpperCase();
-    let reason: PendingReason = "awaiting_approval";
+    let reason: PendingReason = this.humanMayBeAsked() ? "awaiting_approval" : "deciding";
     const progress: Progress = {
       decided: () => {
         reason = "running";

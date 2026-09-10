@@ -13,6 +13,9 @@
   --sel: #eef2ff;
   --radius: 10px;
   --radius-sm: 7px;
+  /* The titlebar's height, named because the expanded live view has to start
+     below it — macOS draws the window's own traffic lights on that strip. */
+  --titlebar-h: 44px;
   --shadow: 0 1px 2px rgba(0, 0, 0, 0.06), 0 8px 24px rgba(0, 0, 0, 0.06);
   --green-bg: #ecfdf5; --green-fg: #047857; --green-bd: #a7f3d0;
   --red-bg: #fef2f2; --red-fg: #b91c1c; --red-bd: #fecaca;
@@ -93,7 +96,7 @@ body {
 .banner-close:hover { background: var(--blue-bd); }
 
 .titlebar {
-  height: 44px;
+  height: var(--titlebar-h);
   display: flex;
   align-items: center;
   gap: 12px;
@@ -947,16 +950,47 @@ pre.script {
 }
 .live-cap span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .live-cap .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--green-fg); flex: none; }
-/* Expanded: the same box goes full-window so the owner can actually read the
-   page the agent is on. Toggled by a click on the box, in either direction. */
+/* The size control, in the caption row next to the host. Quiet until you want
+   it; it is the label that makes the click discoverable, not a second action. */
+.live-toggle {
+  flex: none; margin-left: 4px; padding: 1px 7px;
+  font: inherit; font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em;
+  color: var(--muted); background: none;
+  border: 1px solid var(--border-strong); border-radius: 999px;
+  cursor: pointer;
+}
+.live-toggle:hover { color: var(--fg); border-color: var(--fg); }
+
+/* Expanded: the same box grows over the window so the owner can actually read
+   the page the agent is on. Toggled by a click on the box, in either direction.
+
+   It stops BELOW the titlebar rather than covering it. The window is
+   `hiddenInset`, so macOS draws its close/minimise/zoom buttons over our own
+   titlebar — and a backdrop drawn under them left three coloured dots floating
+   on a black field with nothing around them to say whose they were. Leaving the
+   titlebar alone puts them back on the bar they belong to, and keeps the tabs
+   reachable while the view is up.
+
+   The picture is sized to ~60% of the window rather than filling it: a browser
+   frame blown up to the full height of a Mac display is bigger than the thing
+   it is showing needs, and it left the app with nowhere to put anything else. */
 .live-corner img { cursor: zoom-in; }
 .live-corner.expanded {
-  position: fixed; inset: 0; z-index: 60; padding: 24px; gap: 10px;
+  position: fixed; top: var(--titlebar-h); left: 0; right: 0; bottom: 0;
+  z-index: 60; padding: 24px; gap: 10px;
   align-items: center; justify-content: center; cursor: zoom-out;
   background: rgba(0, 0, 0, 0.72);
 }
-.live-corner.expanded img { width: auto; max-width: 100%; max-height: calc(100vh - 90px); cursor: zoom-out; }
+.live-corner.expanded img {
+  width: 60vw; height: auto;
+  max-width: calc(100% - 8px);
+  /* 60% of what is actually visible, which is the window minus the titlebar. */
+  max-height: calc(60vh - var(--titlebar-h) * 0.6);
+  cursor: zoom-out;
+}
 .live-corner.expanded .live-cap { max-width: 100%; color: #fafafa; }
+.live-corner.expanded .live-toggle { color: #fafafa; border-color: rgba(250, 250, 250, 0.55); }
+.live-corner.expanded .live-toggle:hover { color: #fff; border-color: #fff; }
 
 .live-corner.offscope img { border-color: var(--red-bd); }
 .live-corner.offscope .live-cap { color: var(--red-fg); }

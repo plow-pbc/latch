@@ -275,7 +275,7 @@ export const TOOLS: ToolSpec[] = [
     title: "Read a file on the user's Mac",
     description:
       "Read a file on the user's own Mac — their real filesystem, not your workspace. " +
-      "They may be asked to approve, so this can return a pending handle. Paths inside " +
+      "This Mac decides the read before it happens, so this can return a pending handle. Paths inside " +
       "~/Plow (the shared Plow folder — see the plow-folder skill) approve automatically " +
       "unless this Mac is set to deny everything. " +
       BLOCKED_COPY,
@@ -317,7 +317,7 @@ export const TOOLS: ToolSpec[] = [
     title: "Write a file on the user's Mac",
     description:
       "Write a file on the user's own Mac — use this when the file is for them to open or keep, " +
-      "not for your own working files. They may be asked to approve, so this can return a " +
+      "not for your own working files. This Mac decides the write before it happens, so this can return a " +
       "pending handle. Paths inside ~/Plow (the shared Plow folder — see the plow-folder " +
       "skill) approve automatically unless this Mac is set to deny everything; prefer it " +
       "for files you produce for the user. " +

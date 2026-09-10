@@ -185,13 +185,37 @@ async function renderAudit() {
   const liveImg = el("img", { attrs: { alt: "Live browser view" } });
   const liveDot = el("span", { class: "dot" });
   const liveCapText = el("span");
+  // The size control, spelled out. The box was always click-to-toggle, but the
+  // only thing that said so was the zoom cursor — which is not on screen until
+  // you are already hovering the picture, and says nothing about how to get
+  // back. A button that names the next state does both.
+  //
+  // It has NO listener of its own on purpose: the click bubbles to the box,
+  // whose handler is the one that toggles. Two handlers would toggle twice and
+  // land back where it started. Being a real <button> is what makes it
+  // reachable by keyboard — Enter there raises the same click.
+  const liveToggle = el("button", {
+    class: "live-toggle",
+    attrs: { type: "button" },
+  });
   const liveBox = el("div", { class: "live-corner hidden" }, [
     liveImg,
-    el("div", { class: "live-cap" }, [liveDot, liveCapText]),
+    el("div", { class: "live-cap" }, [liveDot, liveCapText, liveToggle]),
   ]);
   // Click the thumbnail to blow it up over the window; click again (anywhere on
   // the blown-up view) to shrink it back to the corner.
-  liveBox.addEventListener("click", () => liveBox.classList.toggle("expanded"));
+  const syncLiveToggle = () => {
+    const big = liveBox.classList.contains("expanded");
+    liveToggle.textContent = big ? "Minimize" : "Enlarge";
+    liveToggle.title = big
+      ? "Click anywhere on the view to shrink it back to the corner"
+      : "Click the view to enlarge it";
+  };
+  liveBox.addEventListener("click", () => {
+    liveBox.classList.toggle("expanded");
+    syncLiveToggle();
+  });
+  syncLiveToggle();
   const detailBox = el("aside", { class: "detail" }, [detailScroll, liveBox]);
   detailBox.style.width = detailWidth + "px";
   const splitter = el("div", { class: "splitter", attrs: { title: "Drag to resize" } });
@@ -212,7 +236,7 @@ async function renderAudit() {
   auditMounted = {
     listBox, detailScroll, count, chipsBox, clearBtn, searchInput, table, tbody, rows: new Map(),
     moreBox, total: 0,
-    liveBox, liveImg, liveDot, liveCapText, liveHasFrame: false,
+    liveBox, liveImg, liveDot, liveCapText, liveToggle, syncLiveToggle, liveHasFrame: false,
   };
   await refreshAudit();
   refreshLiveThumb();
@@ -454,6 +478,7 @@ async function refreshLiveThumb() {
     if (!s.active) {
       m.liveHasFrame = false; // next session starts with a fresh frame
       m.liveBox.classList.remove("expanded"); // never leave the overlay up with no session
+      m.syncLiveToggle(); // …and the button must not still offer "Minimize"
     }
     if (s.active && s.frame && /^image\/(jpeg|png|webp)$/.test(s.frame.mime)) {
       m.liveImg.src = `data:${s.frame.mime};base64,${s.frame.dataB64}`;
