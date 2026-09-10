@@ -96,8 +96,10 @@ Design points:
   waits up to `wait_ms` (default 10 s); if the command is still running it
   returns a `handle` plus output-so-far, and the agent polls `plow_get_output`
   for incremental bytes. stdout and stderr are merged into one stream.
-- **`goal`:** each mutating tool accepts an optional goal/justification string,
-  displayed to the approver. Session-level goals (from the access request or
+- **`goal`:** each mutating tool accepts an optional goal/justification string.
+  It is always recorded; it is displayed only where Ask opens a dialog, and it
+  is never given to the AI reviewer (§4's prompt omits the agent's goal on
+  purpose), so on the default mode nobody reads it. Session-level goals (from the access request or
   spin-up) become the intent's `plan_context`.
 - **Network default:** `run_command` denies network unless `network: true` was
   explicitly declared (and therefore approved). The one exception is a
@@ -106,7 +108,7 @@ Design points:
   invocation — `--help`/`-h` last, with no `--` before it — reaches its
   service by definition, so the capability is added regardless of the field —
   omitted, or explicitly `false`. Nothing is hidden by this; it is in the
-  capability set the human approves, and a provider call approved without it
+  capability set that is approved, and a provider call approved without it
   is a call the sandbox then denies.
 
 ## 4. The intent object
@@ -272,7 +274,7 @@ So a refusal is **diagnosed, never guessed** (`packages/device-core/src/hostGate
   and a child parked on a dialog is killed on a timer and reads as "hung"
   rather than pinning a thread). Automation consent is asked through a
   native helper that calls the non-prompting API.
-- **The battery touches only what the owner approved.** A candidate path
+- **The battery touches only what was approved.** A candidate path
   comes from the caller's declared paths, the failing call's own error, a
   command's argv (kept element by element, so a spaced path is one path),
   its output, and its working directory. Only a candidate inside a declared

@@ -142,8 +142,9 @@ reaches your code, and do not depend on the agent behaving:
   manifest with no Mac state and no side effect.)
 - **Deferred handles are scoped to the agent that created them.** Another agent presenting one gets
   `unknown`, indistinguishable from a handle that never existed.
-- **Goal text never reaches the profile.** It is carried for the human to read and is marked
-  unverified; the capability set is what is passed to profile generation.
+- **Goal text never reaches the profile.** It is carried for the record, marked unverified, and
+  shown only where Ask opens a dialog — the AI reviewer's prompt omits it, so on the default mode
+  nothing reads it at all; the capability set is what is passed to profile generation.
 
 **What we do not guarantee, and never did:** anything about what the generated profile actually
 permits. We construct a capability set and hand it to `SandboxProfile.generate`. What that becomes,
@@ -167,7 +168,7 @@ execution assertions in that file (write-outside-scope blocked, network deny) do
 ### 4.2 A residual symlink-swap window between decision and open
 
 We close the common case: a path is resolved to its physical target before it becomes a capability,
-so the human approves the real target and execution uses the resolved path rather than re-following
+so whatever decides sees the real target and execution uses the resolved path rather than re-following
 the link. Swapping the symlink after approval is therefore inert, and there is a test for it.
 
 What remains open, and needs descriptor-based access to close:
@@ -241,7 +242,7 @@ describe the declared set or the enforced one. We are not proposing either.
 We corrected our own overstatements only. We did not touch profile generation.
 
 - `packages/mcp-server/src/tools.ts` — the `run_command` description no longer claims undeclared
-  paths are blocked. It now says `read_paths` and `write_paths` are what the owner approves and what
+  paths are blocked. It now says `read_paths` and `write_paths` are what this Mac approves and what
   the audit records, that write access is granted from them, and explicitly that they are **not** the
   full extent of what the command can read.
 - `packages/mcp-server/test/mcpServer.test.ts` — the test that asserted the advertised rule now

@@ -451,17 +451,38 @@ def verdict(events, nonce, expired, since=0):
     mine = [r for r in events if r.get("intentId") == received.get("intentId")]
     decision = first(mine, "intent_decision")
     if decision is not None and decision.get("decision") == "deny":
-        # This line HAS the source, so it can name who refused instead of
-        # guessing. "ask" is the only source with a person behind it; the
-        # reviewer and the policy modes decide with nobody at the Mac, and
-        # calling those the owner is how operators came to believe someone had
-        # been shown the request.
-        who = {
+        # This line HAS the source, so it names who refused instead of guessing.
+        # "ask" is the only source with a person behind it; the reviewer and the
+        # policy modes decide with nobody at the Mac, and calling those the
+        # owner is how operators came to believe someone had been shown the
+        # request.
+        #
+        # The second group is the point of splitting these out: they are NOT
+        # refusals. Nothing weighed the request and said no — the reviewer could
+        # not run, could not be paid for, produced no verdict, or the record
+        # aged out. An operator who reads "refused" there goes looking for a
+        # decision that was never made, when the fix is standing infrastructure.
+        source = str(decision.get("source"))
+        refusals = {
             "ask": "the owner refused it",
             "adversarial": "the safety reviewer refused it",
             "policy": "this Mac's standing policy refused it",
             "approve": "this Mac refused it",
-        }.get(str(decision.get("source")), "the configured decider refused it")
+            "rule": "a stored always-allow rule did not cover it",
+        }
+        not_refusals = {
+            "no_reviewer": "the reviewer could not run — this Mac is not signed in, so it failed closed",
+            "no_credits": "the account cannot pay for review, so it failed closed",
+            "reviewer_unavailable": "the reviewer produced no usable verdict, so it failed closed",
+            "reviewer_undecided": "the reviewer would not decide and this Mac has no one to escalate to",
+            "expired": "nobody answered in time — the approval aged out. A timeout, not a refusal",
+            "error": "the decision path itself errored, so it failed closed",
+        }
+        if source in not_refusals:
+            return 1, [json.dumps(decision),
+                       f"DENIED (not a refusal) — {not_refusals[source]}. "
+                       "The relay and the device both worked."], True
+        who = refusals.get(source, f"the configured decider refused it (source: {source})")
         return 1, [json.dumps(decision),
                    f"DENIED — {who}. The relay and the device both worked."], True
     end = first(mine, "exec_end")

@@ -69,7 +69,11 @@ export type PendingReason = "awaiting_approval" | "deciding" | "running";
  * deferring during preparation it would be false.
  *
  * `awaiting_approval` is claimed ONLY once a window exists in front of a human,
- * which is why it is reported by the code that creates one. Inferring it from
+ * which is why it is reported by the code that creates one — and why its note
+ * can now say plainly that a person is holding the call. It used to hedge
+ * ("waiting on the user, on a policy check, or still being prepared") because
+ * it was the catch-all for everything undecided; `deciding` is that catch-all
+ * now, so the hedge only left an Ask-mode agent vaguer than the truth. Inferring it from
  * the approval mode was a lie with teeth: an owner who had set the reviewer as
  * the decider was told by their agent that a request had gone out to them,
  * went looking for a dialog that mode never raises, and found none — while the
@@ -85,9 +89,10 @@ export type PendingReason = "awaiting_approval" | "deciding" | "running";
  */
 const PENDING_NOTES: Record<PendingReason, string> = {
   awaiting_approval:
-    "not decided yet — it may be waiting on the user, on a policy check, or still being " +
-    "prepared. Tell the user it is waiting, then poll plow_get_result with this handle. " +
-    "Do not repeat the original call; that starts a second request.",
+    "a decision window is open on the user's Mac and is waiting for them to answer it — this " +
+    "is the one state where a person really is holding the call. Tell the user it is waiting " +
+    "on them, then poll plow_get_result with this handle. Do not repeat the original call; " +
+    "that starts a second request.",
   deciding:
     "not decided yet, and NOBODY HAS BEEN ASKED TO APPROVE ANYTHING YET — this Mac is still " +
     "working out the answer itself (a safety review, a policy check, or preparing the request). " +

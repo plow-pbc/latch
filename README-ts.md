@@ -115,8 +115,8 @@ every name is prefixed so it cannot be confused with an agent's own built-ins.
 
 **A refusal by the Mac itself is a third answer, `blocked`** — beside `denied`
 (the owner or policy said no) and `failed` (it broke). It is for an operation
-the owner approved and macOS, our own seatbelt, SIP or a locked file then
-refused, and it carries the device's diagnosis: a cause, a confidence, the
+this Mac approved — by whichever decider its mode uses — and macOS, our own
+seatbelt, SIP or a locked file then refused, and it carries the device's diagnosis: a cause, a confidence, the
 evidence, what was ruled out, the fixed sentence the owner needs, and every
 probe's answer (DESIGN.md §6a; `packages/device-core/src/hostGate/`). A
 command that is still `running` but carries a `diagnosis` is parked on a
@@ -159,8 +159,9 @@ handles, command job handles, and always-allow rules, whose keys are
 `(agent, device, capabilities)`. Never to `agent_name`: `Session.name` is
 nullable and not unique, so two credentials can carry the same one. Presenting
 another agent's handle returns exactly what a handle that never existed returns.
-The name is carried for a human to read — in the approval dialog, in the audit
-record, and in the adversarial reviewer's prompt — and for nothing else.
+The name is carried to be read — in the approval dialog, in the audit record,
+and in the adversarial reviewer's prompt — and for nothing else. (Unlike the
+goal, which the reviewer's prompt leaves out.)
 
 **Two kinds of handle, and they are not interchangeable.** `plow_run_command` returns
 a *job* handle for `plow_get_output` when a command outlives its wait. Any tool that

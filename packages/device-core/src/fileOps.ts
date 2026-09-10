@@ -56,7 +56,7 @@ export class FileOpsError extends Error {
 
 /**
  * Resolve and scope-check in one place. Callers pass a path that was ALREADY
- * canonicalized when the human approved it (see the MCP tool layer), so this
+ * canonicalized when it was approved (see the MCP tool layer), so this
  * resolution is normally a no-op — it stays because this is trusted code and
  * must not depend on its caller having done the right thing.
  *

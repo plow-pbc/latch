@@ -179,17 +179,20 @@ describe("a pending handle says what to do about it", () => {
     expect(payload.note).toMatch(/tell the user/i);
     expect(payload.note).toMatch(/plow_get_result/);
     expect(payload.note).toMatch(/do not repeat the original call/i);
-    // Honest about what awaiting_approval actually means: no decision yet,
-    // which also covers the work before anyone is asked.
-    expect(payload.note).toMatch(/not decided yet/i);
+    // This reason now has exactly one producer — the code that creates the
+    // approval window — so the note may say plainly that a person is holding
+    // the call. It used to hedge, because it was also the catch-all for
+    // everything undecided; `deciding` is that catch-all now.
+    expect(payload.note).toMatch(/waiting for them to answer/i);
+    expect(payload.note).not.toMatch(/still being prepared|policy check/i);
     // This note is not in the manifest, so the manifest sweep cannot see it —
     // and it shipped saying "poll get_result" an hour before the tools were
     // prefixed. Sweep it where it actually surfaces: on the payload.
     expect(bareToolNames(payload.note)).toEqual([]);
-    // It must NOT claim a dialog is on screen. Often there is not one: the
-    // adversarial reviewer can outlast this 10s budget, and the
-    // approve/deny modes never ask a human at all.
-    expect(payload.note).not.toMatch(/on the user's Mac now/i);
+    // The inverse of what this line used to assert, and deliberately so: when
+    // this reason is reported a dialog IS on screen. What must never claim one
+    // is `deciding`, which the test below pins.
+    expect(payload.note).toMatch(/on the user's Mac/i);
   });
 
   // The field report this exists for: an owner who had set the reviewer as the

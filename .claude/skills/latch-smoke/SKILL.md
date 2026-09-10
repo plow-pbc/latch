@@ -114,7 +114,8 @@ Only success exits 0.
 | `OK` + `exec_start`/`exec_end` | 0 | it worked — quote both lines as the verification |
 | `FAILED — it ran and …` | 1 | it executed and exited nonzero, or this Mac reaped it. Not a plumbing fault |
 | `FAILED — the executor threw` | 1 | `exec_error` names why; nothing ran |
-| `DENIED` | 1 | the configured decider refused it — the reviewer, a policy, or the owner. The relay and the device both worked |
+| `DENIED` | 1 | something weighed it and said no. The line names which — the owner, the reviewer, a standing policy. The relay and the device both worked |
+| `DENIED (not a refusal)` | 1 | nothing weighed it. The reviewer could not run (`no_reviewer` — this Mac is not signed in), could not be paid for (`no_credits`), returned no usable verdict (`reviewer_unavailable`/`reviewer_undecided`), the approval aged out (`expired`), or the decision path errored. Each fails closed. Fix the standing condition; do not go looking for a decision |
 | `REFUSED — HTTP 3xx` | 1 | the relay tried to redirect and this follows none — `urllib` carries the bearer across a redirect, so following one would hand it to wherever it pointed. Check `--url` |
 | `REFUSED — HTTP 4xx` | 1 | refused before an intent existed, so there is no audit line. 401/403 is the relay or the credential; another 4xx is the MCP handler |
 | `UNVERIFIED — …` | — | not an outcome. The send did not settle the question: anything that is not a response (a timeout, a dropped socket), a 5xx, or an `isError` — which is also how an ordinary **denial** comes back. So the script does not stop; it polls (up to 20s to see it arrive, then the rest of the window), and one of the rows above is still the answer |

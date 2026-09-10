@@ -20,7 +20,7 @@
  *
  * File-bearing flags are deliberately absent from the reserved set. They are
  * parsed by `fileArgsIn` below and turned into canonical read/write
- * capabilities, so the owner approves the path and gog executes that exact
+ * capabilities, so the path that is approved is the one gog executes, that exact
  * path instead of the old blanket refusal making attachments impossible.
  *
  * What a bumper has to DO is not written here. Every bump runs through
