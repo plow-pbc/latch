@@ -200,6 +200,15 @@ export const TYPEABLE_JS = (el: El): string => {
   return el.disabled || el.readOnly ? "" : "single-line";
 };
 
+/** Repair a restored caret without selecting on fields that advance normally. */
+export const MOVE_CARET_IF_REGRESSED_JS = (node: El, expected: number): number | null => {
+  if ((node.tagName === "INPUT" || node.tagName === "TEXTAREA") && node.selectionStart !== null) {
+    if (node.selectionStart < expected) node.setSelectionRange(node.value.length, node.value.length);
+    return node.selectionStart;
+  }
+  return null;
+};
+
 // How a node holds its text: `value` for input/textarea, `textContent` else.
 // Inlined into each function below (a shared const would not survive
 // serialization into the page).

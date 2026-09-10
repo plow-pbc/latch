@@ -21,6 +21,7 @@ import {
   KEYS_DROPPED_JS,
   LINKS_JS,
   MASK_JS,
+  MOVE_CARET_IF_REGRESSED_JS,
   NOTHING_LANDED_JS,
   SCROLL_JS,
   TABLES_JS,
@@ -439,9 +440,12 @@ export class Session {
     });
     // The whole tail draws on ONE budget, not one per key.
     const deadline = now() + TYPING_MAX_MS;
+    let expectedCaret = value.slice(0, value.length - TYPED_CHARS).length;
     for (const ch of value.slice(-TYPED_CHARS)) {
       const left = deadline - now();
       if (left <= 0) throw new Error("typing outran its budget");
+      const caret = await el.evaluate(MOVE_CARET_IF_REGRESSED_JS, expectedCaret);
+      expectedCaret = typeof caret === "number" ? caret + ch.length : 0;
       await el.type(ch, { delay: KEY_DELAY_MS, timeout: left });
     }
     if (await el.evaluate(KEYS_DROPPED_JS, value)) {
