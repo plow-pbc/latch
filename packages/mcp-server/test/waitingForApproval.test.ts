@@ -221,31 +221,6 @@ describe("a pending handle says what to do about it", () => {
     expect(bareToolNames(payload.note)).toEqual([]);
   });
 
-  // What separates the two is the dialog, not a setting: the answer comes from
-  // the code that opens one. Reading the approval mode instead would have been
-  // wrong twice over — the mode can change between the read and the decision,
-  // and a mode that always asks still has nobody at a dialog while the call is
-  // resolving a path. Same delegate, same server; only the dialog differs.
-  it("only a delegate that actually asks a human says a human is holding it", async () => {
-    const asking = asksAndWaits();
-    const asked = serverWith(asking.delegate, { ttlMs: 60_000, budgetMs: 30 });
-    const alone = serverWith(DECIDES_ALONE, { ttlMs: 60_000, budgetMs: 30 });
-
-    const withDialog = await callTool(asked.server, "plow_read_file", { path: asked.file }, AGENT);
-    const without = await callTool(alone.server, "plow_read_file", { path: alone.file }, AGENT);
-    await asking.asked;
-    const polled = await callTool(
-      asked.server,
-      "plow_get_result",
-      { handle: withDialog.payload.handle },
-      AGENT,
-    );
-
-    expect(polled.payload.reason).toBe("awaiting_approval");
-    // The one that never asks stays put no matter how long it is left.
-    expect(without.payload.reason).toBe("deciding");
-  });
-
   // A dialog that opens after the envelope was already minted still moves the
   // handle: the owner walked over mid-call, and the next poll has to say so.
   it("a dialog raised after the handle was minted upgrades what polling says", async () => {

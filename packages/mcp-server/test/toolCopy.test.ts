@@ -18,6 +18,10 @@ import {
   DeviceAgent,
   HeadlessPolicy,
   LIVE_WEB_ROUTING,
+  PROVIDERS,
+  contactsStorePath,
+  imessageStorePath,
+  whatsappStorePath,
 } from "@domo/device-core";
 import {
   BLOCKED_COPY,
@@ -38,9 +42,22 @@ afterEach(async () => {
   while (cleanups.length) await cleanups.pop()!();
 });
 
-function makeServer(options: { version?: string } = {}): DomoMcpServer {
+function makeServer(
+  options: { version?: string } = {},
+  // The message and contacts skills register only when the store they document
+  // actually exists, so a bare home publishes ONE skill and any guard that
+  // walks "every published skill" walks almost nothing. Touching the stores
+  // makes the test server publish what a real Mac publishes.
+  opts: { withStores?: boolean } = {},
+): DomoMcpServer {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), "domo-copy-"));
   cleanups.push(() => fs.rmSync(home, { recursive: true, force: true }));
+  if (opts.withStores) {
+    for (const store of [whatsappStorePath(home), imessageStorePath(home), contactsStorePath(home)]) {
+      fs.mkdirSync(path.dirname(store), { recursive: true });
+      fs.writeFileSync(store, "");
+    }
+  }
   const device = new DeviceAgent(home, "Test Mac", new HeadlessPolicy({ intent: "allow_once" }));
   const server = createDomoMcpServer(device, options);
   cleanups.push(() => server.close());
@@ -340,16 +357,52 @@ describe("the browsing skill agrees with the tools it documents", () => {
   });
 });
 
+/** Every skill a running server publishes, read the way an agent reads them. */
+async function publishedSkills(
+  server: DomoMcpServer,
+): Promise<{ name: string; description: string; body: string }[]> {
+  const listed = parse(
+    await rpc(server, "tools/call", { name: "plow_list_skills", arguments: {} }, { agent_id: "a" }),
+  );
+  const names = (
+    JSON.parse(listed.result?.content?.[0]?.text ?? "{}") as { skills: { name: string }[] }
+  ).skills.map((s) => s.name);
+  expect(names.length).toBeGreaterThan(0);
+  return Promise.all(
+    names.map(async (name) => {
+      const read = parse(
+        await rpc(
+          server,
+          "tools/call",
+          { name: "plow_read_skill", arguments: { name } },
+          { agent_id: "a" },
+        ),
+      );
+      return JSON.parse(read.result?.content?.[0]?.text ?? "{}") as {
+        name: string;
+        description: string;
+        body: string;
+      };
+    }),
+  );
+}
+
 /**
  * Every string the manifest puts in front of a model.
  *
  * "Every" is load-bearing and this list has been short before. It missed tool
  * TITLES (a client shows `title` in preference to `name`, so a model skimming
  * a tool list reads them) and the skill BODY (`plow_read_skill` serves it in
- * full) — both of which the guards below are meant to cover. If you add a
- * string an agent can read, add it here; the guards are only as wide as this.
+ * full) — both of which the guards below are meant to cover.
+ *
+ * The skills are ENUMERATED FROM A RUNNING SERVER rather than listed here, and
+ * that is the point: a hand-written inventory is a second thing to keep in
+ * step, and the last one shipped omitting `plow-folder` while claiming to cover
+ * every built-in. Whatever `plow_list_skills` publishes is what an agent can
+ * read, so that is what gets scanned, and a skill registered tomorrow is
+ * covered the day it is registered.
  */
-function manifestStrings(): { where: string; text: string }[] {
+async function manifestStrings(): Promise<{ where: string; text: string }[]> {
   const out = [{ where: "instructions", text: SERVER_INSTRUCTIONS }];
   for (const tool of TOOLS) {
     out.push({ where: `${tool.name}.title`, text: tool.title });
@@ -361,8 +414,23 @@ function manifestStrings(): { where: string; text: string }[] {
       if (prop?.description) out.push({ where: `${tool.name}.${name}`, text: prop.description });
     }
   }
-  out.push({ where: "skill.description", text: BROWSING_SKILL.description });
-  out.push({ where: "skill.body", text: BROWSING_SKILL.body });
+  const server = makeServer({}, { withStores: true });
+  const seen = new Set<string>();
+  for (const skill of await publishedSkills(server)) {
+    seen.add(skill.name);
+    out.push({ where: `skill ${skill.name}.description`, text: skill.description });
+    out.push({ where: `skill ${skill.name}.body`, text: skill.body });
+  }
+  // Two more cannot be conjured by touching a file — they need a staged
+  // browser runtime and a staged provider CLI — so they come in by import.
+  // PROVIDERS rather than a name apiece, so a new provider's skill arrives
+  // with it; and the `seen` check means each is scanned once, from whichever
+  // source produced it.
+  for (const skill of [BROWSING_SKILL, ...PROVIDERS.map((p) => p.skill)]) {
+    if (seen.has(skill.name)) continue;
+    out.push({ where: `skill ${skill.name}.description`, text: skill.description });
+    out.push({ where: `skill ${skill.name}.body`, text: skill.body });
+  }
   out.push({ where: "skill.footer", text: SKILL_FOOTER });
   out.push({ where: "serverInfo.title", text: SERVER_IDENTITY.title });
   out.push({ where: "serverInfo.description", text: SERVER_IDENTITY.description });
@@ -551,7 +619,58 @@ describe("what the agent-facing copy must and must not say", () => {
       // prescription the sandbox then denies.
       // The script tool IS an unsandboxed osascript, and naming what it
       // replaces (osascript under plow_run_command) is the point of its copy.
-      except: ["plow_run_command.apple_events", "plow_run_applescript.description"],
+      //
+      // The contacts and imessage skills join them now that this guard walks
+      // every published skill rather than just browsing. Sending a message and
+      // writing a contact ARE Apple events; both skills spell
+      // `/usr/bin/osascript` deliberately, because the executor's PATH puts
+      // user-writable dirs ahead of /usr/bin and a bare name would hand the
+      // apple_events grant to a shadow binary. Contacts goes further: it exists
+      // because an agent whose osascript was denied fell back to raw UPDATEs on
+      // the live iCloud store (2026-08-28). Naming the tool is how these close
+      // that door, not a prescription the sandbox then denies.
+      except: [
+        "plow_run_command.apple_events",
+        "plow_run_applescript.description",
+        "skill contacts.body",
+        "skill imessage.body",
+      ],
+    },
+    // Four rounds of review found this family in four different places: the
+    // instructions block, the tool descriptions, the built-in skills, and the
+    // shipped diagnostic skills. Every surface was written as though a human
+    // always sees the request — but on the DEFAULT mode (`adversarial`) the
+    // reviewer decides and no dialog opens, so an agent repeating any of it
+    // tells the owner they saw, or refused, something they never did.
+    //
+    // These ban the CLAIM, not the word. "the owner" is right where they own
+    // the Mac, configure who decides, or answer macOS's own dialogs — and
+    // `HOST_GATE_NOTE`'s "neither ... nor the owner refusing" is a DENIAL of
+    // the claim, which is why these match assertions rather than the noun.
+    {
+      what: "says a human sees the request in a dialog",
+      why: "no dialog opens in the default mode; the reviewer decides",
+      offends: (text) =>
+        /(owner|user|human)[^.\n]{0,40}sees[^.\n]{0,30}approval dialog/i.test(text),
+    },
+    {
+      what: "says the owner reads the goal while deciding",
+      why: "the reviewer is the reader whenever it is the decider",
+      offends: (text) => /(owner|user)[^.\n]{0,30}reads[^.\n]{0,30}(while|when) deciding/i.test(text),
+    },
+    {
+      what: "attributes a decision to a person who may never have been asked",
+      why: "a denial can come from the reviewer or a standing policy",
+      offends: (text) =>
+        /\bthe (owner|user) (approves|approved|denies|denied|refused) (the|this|it)\b/i.test(text),
+    },
+    {
+      what: "asserts the owner laid eyes on the request",
+      why: "on the default path nothing was ever put in front of them",
+      offends: (text) =>
+        /the (owner|user) (will )?(see|sees|saw) (the|this|your) (request|path|command)\b/i.test(
+          text,
+        ),
     },
     {
       what: "names a tool without its plow_ prefix",
@@ -562,8 +681,8 @@ describe("what the agent-facing copy must and must not say", () => {
     },
   ];
 
-  it.each(FORBIDDEN)("no manifest string $what", ({ offends, why, except }) => {
-    for (const { where, text } of manifestStrings()) {
+  it.each(FORBIDDEN)("no manifest string $what", async ({ offends, why, except }) => {
+    for (const { where, text } of await manifestStrings()) {
       if (except?.includes(where)) continue;
       expect(offends(text), `${where}: ${why}`).toBe(false);
     }

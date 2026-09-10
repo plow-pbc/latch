@@ -17,7 +17,7 @@ You are working against the production Plow Latch install on this Mac (`/Applica
 - `app/settings.json` — `relayCredentialEnc` (**SECRET — never print**; the login session sealed with the OS keychain, which is where a signed-in Mac normally keeps it) or `relayCredential` (**SECRET — never print**; the plaintext floor, used where no keychain is available and in homes written before sealing). Exactly one is present while a stored session is readable; an unreadable seal is cleared and treated as signed out. Also `accountUid`, `mcpUrl`, `approvalMode` (e.g. `adversarial`), `agentPurpose` (free text), `setupComplete`, `telemetryEnabled`, `autoCheckUpdates`, `windowBounds.*`.
 - `device/identity.json` — `deviceId`, `name`, `privateKeyBase64` (**SECRET — never print**).
 - `device/audit.ndjson` — NDJSON records keyed by `event`: `intent_received` (`goal`, `capabilities[]`, `intentId`), `intent_decision` (`decision`, `source`, `intentId`), `approval_abandoned`, `exec_start` (`argv`), `exec_end` (`exit_code`). Rolls over by rename at 10MB into `device/audit.1.ndjson` (one previous generation kept) — read that one FIRST, then the current, for the whole history.
-- `device/approvals/*.json` — approvals **in flight** only: a record is written before the owner is asked and removed once its decision is in the audit log, so an empty directory is the normal state. Fields: `intentId`, `agentId`, `agentName`, `capabilities[]`, `status` (`pending`, or settled with `decision`/`source`/`decidedAt` and `recorded: false` for the instant before the audit append). Anything here after a clean start is a bug, not history — the audit log is the history.
+- `device/approvals/*.json` — approvals **in flight** only: a record is written before the decision is made — by the reviewer, or by the owner when this Mac is set to ask them — and removed once that decision is in the audit log, so an empty directory is the normal state. Fields: `intentId`, `agentId`, `agentName`, `capabilities[]`, `status` (`pending`, or settled with `decision`/`source`/`decidedAt` and `recorded: false` for the instant before the audit append). Anything here after a clean start is a bug, not history — the audit log is the history.
 - `device/browser/` — `fingerprint-pin.json` (the one fingerprint this install presents), `profile` (the owner's seed profile), `profiles/<session>` (per-session clones, merged back and removed on close). No screenshots are kept on disk.
 - `device/scratch` — per-run sandbox scratch; each run's directory is removed when it ends.
 - `electron/` — Electron app state.
@@ -48,14 +48,14 @@ Or use the repo recipe: `just audit` (already reads both generations).
 
 ### R2. Who is allowed what?
 
-Decisions live in the audit log, paired to the request by `intentId`; the approvals directory holds only questions still waiting on the owner:
+Decisions live in the audit log, paired to the request by `intentId`; the approvals directory holds only decisions still in flight:
 
 ```bash
 AS="$HOME/Library/Application Support/Plow-Latch"
 # What each agent asked for and what was decided
 cat "$AS/device/audit.1.ndjson" "$AS/device/audit.ndjson" 2>/dev/null \
   | jq -c 'select(.event=="intent_received") | {intentId, agent, capabilities}'
-# Questions the owner has not answered yet (normally none)
+# Decisions not yet made — by the reviewer or the owner (normally none)
 ls "$AS/device/approvals"/*.json 2>/dev/null | xargs -I{} jq -c '{agentId, capabilities, status, createdAt}' {}
 # Standing always-allow rules
 jq -c '.[]' "$AS/device/rules.json" 2>/dev/null
