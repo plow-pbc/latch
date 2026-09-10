@@ -29,7 +29,7 @@ through \`plow_run_command\`, like any other command. There is no Google tool in
 
 ## Every connected account
 
-**Reads fan out by default.** \`gmail search\`, \`calendar events\`,
+**Reads fan out by default.** \`calendar calendars\`, \`gmail search\`, \`calendar events\`,
 \`calendar freebusy\` and \`calendar conflicts\` run once per connected account
 and come back as ONE merged JSON result: \`{items, degraded}\`, every item
 tagged with \`"account"\` (gmail sorted by date, newest first; calendar by
