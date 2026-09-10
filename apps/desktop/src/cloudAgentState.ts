@@ -84,6 +84,11 @@ export interface CloudLineOption {
  * button. `line_occupied` is somebody else's agent already there;
  * `line_unavailable` is a line that is missing, foreign, or has had its chats
  * retired.
+ *
+ * Creating and moving read the same set. A line already taken refuses a create
+ * exactly as it refuses a move — the server answers `AGENT_EXISTS` or
+ * `CHAT_SET_CONFLICT` — and a retry that resends the uid is as futile on the
+ * one path as the other.
  */
 const RETURNS_TO_PICKER: ReadonlySet<CloudAgentLineErrorCode> = new Set([
   "line_occupied",
@@ -745,7 +750,7 @@ export class CloudAgentState {
         return null;
       }
       if (flow === null) this.failAction(messageOf(error));
-      else if (error instanceof CloudAgentLineError && error.code === "line_unavailable") {
+      else if (error instanceof CloudAgentLineError && RETURNS_TO_PICKER.has(error.code)) {
         await this.returnToPicker("create", error.message, generation, flow);
       } else this.setLineFlowError("create", messageOf(error), false);
       return null;

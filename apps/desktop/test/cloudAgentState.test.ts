@@ -619,24 +619,31 @@ describe("CloudAgentState new agent flow", () => {
     expect(state.state().cloudFreeLines).toEqual([]);
   });
 
-  it("returns to the picker when the picked line turns out to be unavailable", async () => {
+  // The same two refusals the move path returns to the picker for. A line taken
+  // between the picker being drawn and the create landing answers
+  // `AGENT_EXISTS`/`CHAT_SET_CONFLICT`; one whose chats were retired in that
+  // window answers the bare 404. Neither is worth resending the uid for.
+  it.each([
+    ["line_occupied", "Another agent already uses that line.", "agent_2"],
+    ["line_unavailable", "This line isn't available right now. Refresh and try again.", null],
+  ] as const)("returns to the picker when the picked line refuses with %s", async (code, message, claimedBy) => {
     let refused = false;
     const attempts: string[] = [];
     const { state } = build({
       listAgents: async () => [],
-      // The line's chats are retired between the picker being drawn and the
-      // create landing, which is exactly how a line goes unusable underfoot.
-      listChats: async () => refused
+      listChats: async () => refused && claimedBy === null
         ? []
         : [homeChat({ uid: "cht_ash", lineUid: "lin_ash", recipients: { line: "+15550200", members: [] } })],
-      listLines: async () => [{ uid: "lin_ash", agentUid: null, displayName: "Ash", number: "+15550200" }],
+      listLines: async () => [{
+        uid: "lin_ash",
+        agentUid: refused ? claimedBy : null,
+        displayName: "Ash",
+        number: "+15550200",
+      }],
       createAgent: async (request) => {
         attempts.push(request.lineUid);
         refused = true;
-        throw new CloudAgentLineError(
-          "line_unavailable",
-          "This line isn't available right now. Refresh and try again.",
-        );
+        throw new CloudAgentLineError(code, message);
       },
     });
     await state.refresh();
@@ -646,10 +653,7 @@ describe("CloudAgentState new agent flow", () => {
 
     // The picker, not an error with a retry button: `phase` is idle and the
     // line that just refused is no longer in it.
-    expect(state.state().cloudLineFlow).toMatchObject({
-      phase: "idle",
-      message: "This line isn't available right now. Refresh and try again.",
-    });
+    expect(state.state().cloudLineFlow).toMatchObject({ phase: "idle", message });
     expect(state.state().cloudFreeLines).toEqual([]);
 
     expect(await state.retryLineFlow()).toBeNull();
