@@ -1104,8 +1104,26 @@ export class CloudAgentState {
     return agent.line?.uid ?? null;
   }
 
+  /**
+   * The lines an agent can actually be created on: no agent occupies them, and
+   * this account holds a chat on them.
+   *
+   * The chat half is not cosmetic. `GET /v1/lines` answers with the service's
+   * entire pool and no ownership predicate — `agentUid` is the only
+   * account-scoped fact on a row — so a line this account has never held, or
+   * one whose chats went away with a deleted agent, arrives looking free.
+   * Offering it produces a refusal at create time, because the server resolves
+   * a live home chat on the line before it will claim anything.
+   *
+   * Gated on `chatsLoaded` because a failed chat refresh empties `chats`. With
+   * the chat list unknown every line would read as unowned and the picker
+   * would go blank on a blip, so unknown falls back to the occupancy test
+   * alone: offering a line that may refuse beats offering none.
+   */
   private freeLines(): CloudAgentLine[] {
-    return (this.lines ?? []).filter((line) => line.agentUid === null)
+    return (this.lines ?? [])
+      .filter((line) => line.agentUid === null
+        && (!this.chatsLoaded || this.chats.some((chat) => chat.lineUid === line.uid)))
       .map((line) => this.lineDetails(line.uid).line!)
       .sort((a, b) => a.label.localeCompare(b.label));
   }

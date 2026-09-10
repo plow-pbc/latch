@@ -544,7 +544,7 @@ describe("CloudAgentState line and thread display", () => {
 });
 
 describe("CloudAgentState new agent flow", () => {
-  it("reads free lines from API ownership, independent of chats", async () => {
+  it("offers a line once per uid, taking occupancy from the API", async () => {
     const { state } = build({
       listAgents: async () => [agent({ line: { uid: "lin_willow", displayName: "Willow", number: "+15550100" } })],
       listChats: async () => [
@@ -563,6 +563,48 @@ describe("CloudAgentState new agent flow", () => {
     expect(state.state().cloudFreeLines).toEqual([
       { uid: "lin_ash", label: "Ash · +15550200" },
     ]);
+  });
+
+  it("withholds a pool line the account holds no chat on", async () => {
+    const { state } = build({
+      listAgents: async () => [],
+      // Willow's chats went with the agent that was deleted off it; Elm is a
+      // pool number this account has never held. `GET /v1/lines` is the whole
+      // pool, so both arrive unoccupied and neither can be created on.
+      listChats: async () => [
+        chat({ uid: "cht_ash", lineUid: "lin_ash", recipients: { line: "+15550200", members: [] } }),
+      ],
+      listLines: async () => [
+        { uid: "lin_willow", agentUid: null, displayName: "Willow", number: "+15550100" },
+        { uid: "lin_ash", agentUid: null, displayName: "Ash", number: "+15550200" },
+        { uid: "lin_elm", agentUid: null, displayName: "Elm", number: "+15550300" },
+      ],
+    });
+
+    await state.refresh();
+
+    expect(state.state().cloudFreeLines.map((line) => line.uid)).toEqual(["lin_ash"]);
+  });
+
+  it("falls back to occupancy alone while the chat list is unknown", async () => {
+    const { state } = build({
+      listAgents: async () => [],
+      listChats: async () => {
+        throw new PlowApiError("http", "Plow returned 503.", 503);
+      },
+      listLines: async () => [
+        { uid: "lin_willow", agentUid: null, displayName: "Willow", number: "+15550100" },
+        { uid: "lin_ash", agentUid: "agent_1", displayName: "Ash", number: "+15550200" },
+      ],
+    });
+
+    await state.refresh();
+
+    // A blip in one request must not empty the picker: unknown ownership
+    // offers the line and lets the create attempt answer, rather than
+    // withholding every line on the account.
+    expect(state.state().cloudChatsLoaded).toBe(false);
+    expect(state.state().cloudFreeLines.map((line) => line.uid)).toEqual(["lin_willow"]);
   });
 
   it("creates directly on a picked free line without activating", async () => {

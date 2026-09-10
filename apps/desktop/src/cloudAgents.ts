@@ -266,11 +266,34 @@ function invalidResponse(status: number): PlowApiError {
 }
 
 function responseCode(decoded: unknown): string | null {
-  if (!isRecord(decoded) || !isRecord(decoded.detail)) return null;
-  if (typeof decoded.detail.code !== "string") return null;
-  const code = decoded.detail.code.trim().toUpperCase();
-  return Object.prototype.hasOwnProperty.call(LINE_ERRORS, code) ? code : null;
+  if (!isRecord(decoded)) return null;
+  if (isRecord(decoded.detail)) {
+    if (typeof decoded.detail.code !== "string") return null;
+    const code = decoded.detail.code.trim().toUpperCase();
+    return Object.prototype.hasOwnProperty.call(LINE_ERRORS, code) ? code : null;
+  }
+  if (typeof decoded.detail !== "string") return null;
+  return DETAIL_SENTENCES[decoded.detail.trim().toLowerCase()] ?? null;
 }
+
+/**
+ * Uncoded server sentences onto the code each one means.
+ *
+ * Creating an agent and moving one both resolve the line's home chat first,
+ * and both answer a missing one with a bare `{"detail": "<sentence>"}` rather
+ * than the `{code, message}` shape the conflicts use. Left unmapped that
+ * surfaces as "Plow returned 404.", which tells the person nothing they can
+ * act on — while the remedy already has copy sitting in `LINE_ERRORS`.
+ *
+ * Matched on the exact sentence, never on the status: the same 404 also
+ * carries "Assistant not found", which is a different problem with no line
+ * remedy to offer. Prose is a weak hinge — a coded conflict from the server
+ * would be the sound fix, and the object branch above already handles one if
+ * it arrives — so this stays a narrow, exact-match backstop.
+ */
+const DETAIL_SENTENCES: Readonly<Record<string, string>> = Object.freeze({
+  "line not found": "NO_HOME_CHAT",
+});
 
 async function throwCloudCallError(
   response: Response,

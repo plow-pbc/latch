@@ -151,6 +151,40 @@ describe("CloudAgentsClient creation", () => {
     );
   });
 
+  it("maps the bare 404 a retired home chat leaves to the same create copy", async () => {
+    const { fetchImpl } = recordingFetch([{ status: 404, body: { detail: "Line not found" } }]);
+
+    const error = await new CloudAgentsClient(new PlowApi("https://api.plow.co", fetchImpl))
+      .create(CREDENTIAL, { lineUid: "lin_willow", name: "Kitchen", provider: "exe:hermes" })
+      .catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(CloudAgentLineError);
+    expect(error).toMatchObject({
+      code: "no_home_chat",
+      message: "Text this line once first, then try again.",
+    });
+    expect(console.error).toHaveBeenCalledWith(
+      "[cloud-agent] request failed status=404 code=NO_HOME_CHAT",
+    );
+  });
+
+  it.each([
+    ["a different 404 sentence", "Assistant not found"],
+    ["a sentence echoing the credential", `provider echoed ${CREDENTIAL}`],
+  ])("leaves %s unmapped and says nothing about the line", async (_label, detail) => {
+    const { fetchImpl } = recordingFetch([{ status: 404, body: { detail } }]);
+
+    const error = await new CloudAgentsClient(new PlowApi("https://api.plow.co", fetchImpl))
+      .create(CREDENTIAL, { lineUid: "lin_willow", name: "Kitchen", provider: "exe:hermes" })
+      .catch((caught: unknown) => caught as Error);
+
+    expect(error).not.toBeInstanceOf(CloudAgentLineError);
+    expect(error.message).toBe("Plow returned 404.");
+    expect(error.message).not.toContain(CREDENTIAL);
+    expect(console.error).toHaveBeenCalledWith("[cloud-agent] request failed status=404");
+    expect(vi.mocked(console.error).mock.calls.flat().join(" ")).not.toContain(CREDENTIAL);
+  });
+
   it("uses fixed copy and logs only status for an unknown authenticated error", async () => {
     const encoded = Buffer.from(CREDENTIAL).toString("base64");
     const { fetchImpl } = recordingFetch([{
@@ -225,6 +259,30 @@ describe("CloudAgentsClient line changes", () => {
     expect(console.error).toHaveBeenCalledWith(
       `[cloud-agent] request failed status=409 code=${wireCode}`,
     );
+  });
+
+  it("maps the bare 404 to the same copy on the move path", async () => {
+    const { fetchImpl } = recordingFetch([{ status: 404, body: { detail: "Line not found" } }]);
+
+    const error = await new CloudAgentsClient(new PlowApi("https://api.plow.co", fetchImpl))
+      .changeLine(CREDENTIAL, "agent_123", "lin_ash")
+      .catch((caught: unknown) => caught);
+
+    expect(error).toMatchObject({
+      code: "no_home_chat",
+      message: "Text this line once first, then try again.",
+    });
+  });
+
+  it("keeps a missing agent apart from a line with no home chat", async () => {
+    const { fetchImpl } = recordingFetch([{ status: 404, body: { detail: "Assistant not found" } }]);
+
+    const error = await new CloudAgentsClient(new PlowApi("https://api.plow.co", fetchImpl))
+      .changeLine(CREDENTIAL, "agent_123", "lin_ash")
+      .catch((caught: unknown) => caught as Error);
+
+    expect(error).not.toBeInstanceOf(CloudAgentLineError);
+    expect(error.message).toBe("Plow returned 404.");
   });
 
 });
