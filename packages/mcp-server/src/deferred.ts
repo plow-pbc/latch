@@ -29,11 +29,11 @@ import { JSONValue, jv } from "@domo/protocol";
  * `@domo/relay-client`'s `wire.ts`, which owns what the relay does — leaving
  * enough behind it for delivery: registering the handle, framing the response,
  * and the relay matching it to the exchange still waiting. Not computed from
- * it: a human gets the whole fifteen seconds to answer inside the original
+ * it: a human gets the whole ten seconds to answer inside the original
  * call, which is the point of the number and why it is a literal.
  * `relay-client/test/wire.test.ts` checks the two still leave room.
  */
-export const CALL_BUDGET_MS = 15_000;
+export const CALL_BUDGET_MS = 10_000;
 
 /** Both halves of §4.3's fifteen minutes: pending lifetime, and result retention. */
 export const HANDLE_TTL_MS = 15 * 60_000;
@@ -61,7 +61,7 @@ export type PendingReason = "awaiting_approval" | "running";
  * there is not one. It means "no decision yet", and that covers the work
  * before anyone is asked (path resolution, writing the approval record), the
  * adversarial reviewer thinking — a budget of its own, minutes wide against this
- * fifteen seconds, so in that mode deferring while nobody has been asked is
+ * ten seconds, so in that mode deferring while nobody has been asked is
  * still commonplace — and the
  * approve/deny modes, which never show a human anything at all.
  *
