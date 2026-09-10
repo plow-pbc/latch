@@ -643,6 +643,8 @@ esac
     expect(error).toContain(expected);
     expect(error).toContain("--confirm-conflict");
     expect(error).not.toContain("to book anyway");
+    expect(error).toContain("overlaps, or the accounts that could not be checked");
+    expect(error).toContain("For known overlaps, use `calendar conflicts` for the titles");
     const body = JSON.stringify(response);
     // The records themselves stay on the Mac: the owner approved a CREATE,
     // and event summaries riding its refusal would be an unapproved read.
