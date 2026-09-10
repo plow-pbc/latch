@@ -214,50 +214,25 @@ describe("which Mac a credential is bound to", () => {
   it.each([
     // Our own uid wins over the name plow has for us: the owner is looking at
     // this Mac, and "mbp" would make them go and check which one that is.
-    ["this Mac", { uid: OUR_DEVICE, name: "mbp" }, "this Mac"],
-    ["another Mac by name", { uid: "dev_other", name: "mba" }, "mba"],
+    ["this Mac", { uid: OUR_DEVICE, name: "mbp" }, null, "this Mac"],
+    ["another Mac by name", { uid: "dev_other", name: "mba" }, null, "mba"],
     // Bound somewhere, name unusable. Not blank — blank reads as "works from
     // any Mac", which is the opposite of the truth.
-    ["another Mac with no name", { uid: "dev_other", name: null }, "another Mac"],
-    ["no Mac at all", null, null],
-  ])("labels a credential bound to %s", (_shape, device, expected) => {
-    const [row] = allRows(sectionRoster([key({ scopes: ["relay:call"], device })], {
-      deviceUid: OUR_DEVICE,
-    }));
+    ["another Mac with no name", { uid: "dev_other", name: null }, null, "another Mac"],
+    ["no Mac at all", null, null, null],
+    // Plow resolved no device row because the binding names the ACCOUNT, which
+    // it accepts only through the primary Mac. Presence is the whole signal: a
+    // resource naming a device would have arrived as `device`.
+    ["the account alias", null, "u_account", "primary Mac"],
+    // Both arrive together for a device-bound credential; the nameable one wins.
+    ["a device despite an alias", { uid: "dev_other", name: "mba" }, "u_account", "mba"],
+  ])("labels a credential bound to %s", (_shape, device, relay_resource_uid, expected) => {
+    const [row] = allRows(sectionRoster(
+      [key({ scopes: ["relay:call"], device, relay_resource_uid })],
+      { deviceUid: OUR_DEVICE },
+    ));
 
     expect(row.deviceLabel).toBe(expected);
-  });
-
-  it("labels one bound to the account alias as the primary Mac", () => {
-    // Plow resolved no device row because the binding names the ACCOUNT, and
-    // it accepts that credential only through the primary Mac. Presence is the
-    // signal: a resource naming a device would have arrived as `device`.
-    const [row] = allRows(sectionRoster([
-      key({ scopes: ["relay:call"], device: null, relay_resource_uid: "u_account" }),
-    ], { deviceUid: OUR_DEVICE }));
-
-    expect(row.deviceLabel).toBe("primary Mac");
-  });
-
-  it("labels one bound to nothing at all not at all", () => {
-    // The contrast the alias case turns on: no device AND no resource is a
-    // credential that works from any Mac, and it must not read as bound.
-    const [row] = allRows(sectionRoster([
-      key({ scopes: ["relay:call"], device: null, relay_resource_uid: null }),
-    ], { deviceUid: OUR_DEVICE }));
-
-    expect(row.deviceLabel).toBeNull();
-  });
-
-  it("names the device rather than the resource it was bound through", () => {
-    // Both arrive together for a device-bound credential. The device row is
-    // the one that can be named, so it wins and "primary Mac" stays for the
-    // rows that have nothing else.
-    const [row] = allRows(sectionRoster([
-      key({ device: { uid: "dev_other", name: "mba" }, relay_resource_uid: "u_account" }),
-    ], { deviceUid: OUR_DEVICE }));
-
-    expect(row.deviceLabel).toBe("mba");
   });
 
   it("names no Mac before this one knows its own uid", () => {
