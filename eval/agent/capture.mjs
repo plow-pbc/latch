@@ -91,14 +91,7 @@ const status = async (server, home) => ["plow_device_status", await call(server,
 /** A server over a fresh home with the given probes (null: this Mac's own) and policy. */
 function scenario({ probes = null, policy = "allow_once", budgetMs, home = tempHome() } = {}) {
   const device = new DeviceAgent(home, "Eval Mac", typeof policy === "string" ? new HeadlessPolicy({ intent: policy }) : policy, null, home, null, [], null, probes);
-  // Every eval scenario runs a HeadlessPolicy: there is no human here, exactly
-  // as in the app's default (adversarial) mode. Say so, or the frozen vectors
-  // teach the model the `awaiting_approval` wording that shipping Macs do not
-  // send — which is the contract this eval exists to hold.
-  const server = createDomoMcpServer(device, {
-    ...(budgetMs === undefined ? {} : { budgetMs }),
-    humanMayBeAsked: () => false,
-  });
+  const server = createDomoMcpServer(device, budgetMs === undefined ? {} : { budgetMs });
   cleanups.push(() => server.close());
   return { server, home };
 }

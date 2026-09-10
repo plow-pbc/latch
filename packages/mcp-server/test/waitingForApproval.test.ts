@@ -40,8 +40,21 @@ function tempDir(): string {
   return dir;
 }
 
-/** A human who never comes back to their desk. */
-const NEVER_ANSWERS: PolicyDelegate = { decideIntent: () => new Promise(() => {}) };
+/** A human who is shown the dialog and never comes back to their desk. */
+const NEVER_ANSWERS: PolicyDelegate = {
+  decideIntent: (_intent, progress) => {
+    progress?.asking();
+    return new Promise(() => {});
+  },
+};
+
+/**
+ * The default mode: a reviewer decides and no dialog is ever raised. It takes
+ * its time — the reviewer's own budget is minutes wide against the call's
+ * fifteen seconds — so this is the ordinary way a call defers on a shipping
+ * Mac, not an edge case.
+ */
+const DECIDES_ALONE: PolicyDelegate = { decideIntent: () => new Promise(() => {}) };
 
 /**
  * A server whose approvals go through a real store — so the deadline, and the
@@ -147,13 +160,9 @@ describe("a pending handle says what to do about it", () => {
   // approval. There is no dialog in that mode, so they went looking for one
   // that cannot appear — and the agent, told to say it was waiting, waited
   // instead of polling, while the audit log filled with approvals nobody was
-  // waiting on. The envelope has to describe the mode actually in force.
+  // waiting on.
   it("a Mac that never asks its owner does not claim it is waiting on them", async () => {
-    const { server, file } = serverWith(NEVER_ANSWERS, {
-      ttlMs: 60_000,
-      budgetMs: 30,
-      humanMayBeAsked: () => false,
-    });
+    const { server, file } = serverWith(DECIDES_ALONE, { ttlMs: 60_000, budgetMs: 30 });
     const { payload } = await callTool(server, "plow_read_file", { path: file }, AGENT);
 
     expect(payload.status).toBe("pending");
@@ -167,22 +176,48 @@ describe("a pending handle says what to do about it", () => {
     expect(bareToolNames(payload.note)).toEqual([]);
   });
 
-  // The predicate is read per envelope, not captured when the server is built:
-  // the owner can change the mode mid-session and the next call has to describe
-  // the mode in force then, not the one that was set at launch.
-  it("a mode change between two calls changes what the next one says", async () => {
-    let asksHuman = false;
-    const { server, file } = serverWith(NEVER_ANSWERS, {
-      ttlMs: 60_000,
-      budgetMs: 30,
-      humanMayBeAsked: () => asksHuman,
-    });
-    const first = await callTool(server, "plow_read_file", { path: file }, AGENT);
-    asksHuman = true;
-    const second = await callTool(server, "plow_read_file", { path: file }, AGENT);
+  // What separates the two is the dialog, not a setting: the answer comes from
+  // the code that opens one. Reading the approval mode instead would have been
+  // wrong twice over — the mode can change between the read and the decision,
+  // and a mode that always asks still has nobody at a dialog while the call is
+  // resolving a path. Same delegate, same server; only the dialog differs.
+  it("only a delegate that actually asks a human says a human is holding it", async () => {
+    const asked = serverWith(NEVER_ANSWERS, { ttlMs: 60_000, budgetMs: 30 });
+    const alone = serverWith(DECIDES_ALONE, { ttlMs: 60_000, budgetMs: 30 });
 
+    const withDialog = await callTool(asked.server, "plow_read_file", { path: asked.file }, AGENT);
+    const without = await callTool(alone.server, "plow_read_file", { path: alone.file }, AGENT);
+
+    expect(withDialog.payload.reason).toBe("awaiting_approval");
+    expect(without.payload.reason).toBe("deciding");
+  });
+
+  // A dialog that opens after the envelope was already minted still moves the
+  // handle: the owner walked over mid-call, and the next poll has to say so.
+  it("a dialog raised after the handle was minted upgrades what polling says", async () => {
+    let raise!: () => void;
+    const opens = new Promise<void>((r) => (raise = r));
+    const late: PolicyDelegate = {
+      decideIntent: (_intent, progress) =>
+        opens.then(() => {
+          progress?.asking();
+          return new Promise<never>(() => {});
+        }),
+    };
+    const { server, file } = serverWith(late, { ttlMs: 60_000, budgetMs: 30 });
+
+    const first = await callTool(server, "plow_read_file", { path: file }, AGENT);
     expect(first.payload.reason).toBe("deciding");
-    expect(second.payload.reason).toBe("awaiting_approval");
+
+    raise();
+    await opens;
+    const polled = await callTool(
+      server,
+      "plow_get_result",
+      { handle: first.payload.handle },
+      AGENT,
+    );
+    expect(polled.payload.reason).toBe("awaiting_approval");
   });
 
   it("polling the handle repeats the advice, so it survives a lost first answer", async () => {

@@ -271,13 +271,18 @@ describe("every tool this Mac can stop says so", () => {
   });
 });
 
-describe("the goal field says a human reads it", () => {
-  it("names the reader, and does not offer access for a better answer", async () => {
+describe("the goal field names whoever will read it", () => {
+  it("names the reader without promising a human, and offers nothing for a better answer", async () => {
     const tools = parse(await rpc(makeServer(), "tools/list", {})).result?.tools as
       | { name: string; inputSchema: { properties?: Record<string, { description?: string }> } }[]
       | undefined;
     const goal = tools?.find((t) => t.name === "plow_read_file")?.inputSchema?.properties?.goal;
-    expect(goal?.description).toMatch(/the user reads/i);
+    // It must say who reads it — but not that the reader is always the owner.
+    // On a Mac in the default mode the reviewer is the only reader, and copy
+    // promising a human there is the drift this file exists to catch.
+    expect(goal?.description).toMatch(/reads exactly this/i);
+    expect(goal?.description).toMatch(/reviewer/i);
+    expect(goal?.description).not.toMatch(/the user reads/i);
     // Goal text is display-only and never influences a decision path, so the
     // copy must not imply that explaining well earns anything.
     expect(goal?.description).not.toMatch(/more likely|grant|permission|access/i);

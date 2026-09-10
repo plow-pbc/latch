@@ -371,7 +371,9 @@ describe("the deferred-result contract (§4.3)", () => {
     const { server, first, file } = await deferredRead(new ScriptedPolicy("allow_once", 200));
     expect(first.isError).toBe(false);
     expect(first.payload.status).toBe("pending");
-    expect(first.payload.reason).toBe("awaiting_approval");
+    // Nobody is asked here: ScriptedPolicy just takes its time, as the
+    // reviewer does on a shipping Mac.
+    expect(first.payload.reason).toBe("deciding");
     expect(first.payload.retry_after_ms).toBeTypeOf("number");
     const handle: string = first.payload.handle;
 

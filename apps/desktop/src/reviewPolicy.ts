@@ -87,24 +87,6 @@ export function storedRuleMayGrant(settings: Settings): boolean {
   return mode !== "adversarial" && mode !== "deny";
 }
 
-/**
- * Could this Mac put an approval dialog in front of its owner at all?
- *
- * Only `ask` (every operation) and `approve` (scripts alone — see the
- * applescript carve-out in `decideIntent`) ever reach `openApproval`.
- * `adversarial` and `deny` decide with nobody in the room.
- *
- * It answers for the MODE, not for one intent, because what it feeds is the
- * pending envelope an agent gets when a call outruns the call budget — minted
- * before there is an intent to ask about. Saying "a human might be asked" in
- * approve mode is therefore honest rather than lossy: a script really would
- * raise the dialog.
- */
-export function humanMayBeAsked(settings: Settings): boolean {
-  const mode = settings.approvalMode ?? DEFAULT_APPROVAL_MODE;
-  return mode === "ask" || mode === "approve";
-}
-
 /** Everything `decideIntent` needs from the outside world, injected for tests. */
 export interface DecideDeps {
   settings: Settings;
@@ -132,6 +114,13 @@ export interface DecideDeps {
   }>;
   /** Show the human the approval dialog, optionally with the reviewer's say. */
   openApproval: (hint: Promise<ReviewHint> | null) => Promise<ApprovalDecision>;
+  /**
+   * A dialog is going up now. The ONE place this is known: every other branch
+   * here returns a verdict without a human. A caller waiting on a call budget
+   * uses it to tell "this Mac is still deciding" from "your owner is looking at
+   * it", and nothing else may claim the latter.
+   */
+  onAsking?: () => void;
 }
 
 /**
@@ -279,5 +268,6 @@ export async function decideIntent(
           reason: r.reason,
         }))
       : null;
+  deps.onAsking?.();
   return { decision: await deps.openApproval(hint), source: "ask" };
 }

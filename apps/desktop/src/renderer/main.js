@@ -236,7 +236,7 @@ async function renderAudit() {
   auditMounted = {
     listBox, detailScroll, count, chipsBox, clearBtn, searchInput, table, tbody, rows: new Map(),
     moreBox, total: 0,
-    liveBox, liveImg, liveDot, liveCapText, liveToggle, syncLiveToggle, liveHasFrame: false,
+    liveBox, liveImg, liveDot, liveCapText, syncLiveToggle, liveHasFrame: false,
   };
   await refreshAudit();
   refreshLiveThumb();

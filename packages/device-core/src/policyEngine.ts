@@ -25,9 +25,21 @@ import {
  */
 export type IntentDecision = Decision | { decision: Decision; source?: string };
 
+/**
+ * What a delegate reports back WHILE it decides, as opposed to when it is done.
+ *
+ * One signal so far: a dialog is now in front of a human. It is reported by the
+ * code that opens one, never inferred from the approval mode — the mode can
+ * change between a read and the decision, and even a mode that always asks has
+ * nobody at a dialog while it is still resolving paths.
+ */
+export interface DecisionProgress {
+  asking(): void;
+}
+
 /** Whoever answers approval questions: app UI, headless script… */
 export interface PolicyDelegate {
-  decideIntent(intent: Intent): Promise<IntentDecision>;
+  decideIntent(intent: Intent, progress?: DecisionProgress): Promise<IntentDecision>;
   /**
    * May a stored always-allow rule answer this intent on its own?
    *
@@ -83,13 +95,17 @@ export class PolicyEngine {
     fs.writeFileSync(this.rulesFile, JSON.stringify([...this.rules.values()], null, 2) + "\n");
   }
 
-  async decide(intent: Intent, delegate: PolicyDelegate): Promise<Grant> {
+  async decide(
+    intent: Intent,
+    delegate: PolicyDelegate,
+    progress?: DecisionProgress,
+  ): Promise<Grant> {
     const key = intentRuleKey(intent);
     const eligible = ruleEligible(intent);
     if (eligible && this.rules.has(key) && (await mayGrantFromStoredRule(intent, delegate))) {
       return makeGrant(intent, "always_allow", "rule");
     }
-    const result = await delegate.decideIntent(intent);
+    const result = await delegate.decideIntent(intent, progress);
     const decision = typeof result === "string" ? result : result.decision;
     const source = typeof result === "string" ? "prompt" : (result.source ?? "prompt");
     if (decision === "always_allow" && eligible) {

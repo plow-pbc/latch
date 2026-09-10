@@ -149,7 +149,10 @@ async function decideAndRun(
     capabilities,
     sessionId: ctx.sessionId,
   });
-  const response = await ctx.device.handleIntent(intent, payload, () => progress.decided());
+  const response = await ctx.device.handleIntent(intent, payload, {
+    asking: () => progress.asking(),
+    decided: () => progress.decided(),
+  });
   const r = jv(response);
   switch (r.get("status").str) {
     case "denied":
@@ -190,7 +193,8 @@ async function decideAndRun(
 const GOAL = {
   type: "string",
   description:
-    "Why you need this, in one line. The user reads exactly this when deciding whether to approve.",
+    "Why you need this, in one line. Whoever decides this operation reads exactly this — the owner " +
+    "of the Mac, or the safety reviewer they have set to decide for them.",
 };
 
 /**
@@ -245,9 +249,9 @@ export const SKILL_FOOTER =
  * from being paraphrased into the wrong System Settings pane.
  */
 export const BLOCKED_COPY =
-  "A result with status 'blocked' means the user approved it and their Mac itself then refused — a " +
-  "macOS privacy permission the app lacks, or a permission dialog waiting on the Mac's screen; not " +
-  "the user saying no. Read its 'diagnosis': when 'confidence' is 'confirmed', tell the user the " +
+  "A result with status 'blocked' means the operation was allowed and their Mac itself then refused " +
+  "— a macOS privacy permission the app lacks, or a permission dialog waiting on the Mac's screen; " +
+  "not the user saying no. Read its 'diagnosis': when 'confidence' is 'confirmed', tell the user the " +
   "'owner_action' sentence word for word and stop; otherwise share the 'evidence' and let them decide. " +
   "One exception, and the diagnosis names it: when its 'retry' names a tool, that tool is the one " +
   "move left, and the only one.";

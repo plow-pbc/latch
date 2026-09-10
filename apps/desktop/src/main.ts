@@ -50,7 +50,7 @@ import {
 } from "@domo/device-core";
 import { createDomoMcpServer, DomoMcpServer } from "@domo/mcp-server";
 import { RelayClient } from "@domo/relay-client";
-import type { AutomationStatus, HostInventory, NativePermissions, RequestablePermission } from "@domo/device-core";
+import type { AutomationStatus, DecisionProgress, HostInventory, NativePermissions, RequestablePermission } from "@domo/device-core";
 import { approvalViewModel, CredentialTitles } from "./viewModel.js";
 import { AuditIndex, AuditQuery } from "./auditIndex.js";
 
@@ -82,7 +82,6 @@ import {
   ApprovalDecision,
   decideIntent,
   ReviewHint,
-  humanMayBeAsked,
   storedRuleMayGrant,
 } from "./reviewPolicy.js";
 import {
@@ -332,9 +331,13 @@ class ElectronPolicy implements PolicyDelegate {
 
   // The branching itself lives in reviewPolicy.ts so it is testable without a
   // display; this only supplies the Electron-shaped pieces.
-  async decideIntent(intent: Intent): Promise<{ decision: ApprovalDecision; source: string }> {
+  async decideIntent(
+    intent: Intent,
+    progress?: DecisionProgress,
+  ): Promise<{ decision: ApprovalDecision; source: string }> {
     const audit = device?.audit;
     return decideIntent(intent, {
+      onAsking: () => progress?.asking(),
       settings: loadSettings(home),
       apiBaseUrl,
       // The real home, deliberately — same resolution the DeviceAgent below
@@ -2171,13 +2174,7 @@ app.whenReady().then(async () => {
   // leaves the Mac.
   device.audit.events.on("recorded", (entry) => telemetry?.auditEntryRecorded(entry));
   // The version rides the MCP handshake, so it has to be the app's real one.
-  mcp = createDomoMcpServer(device, {
-    version: app.getVersion(),
-    // Read at the moment an envelope is minted, not captured now: the owner can
-    // change the approval mode while an agent is mid-session, and the agent has
-    // to be told about the mode that is actually in force.
-    humanMayBeAsked: () => humanMayBeAsked(loadSettings(home)),
-  });
+  mcp = createDomoMcpServer(device, { version: app.getVersion() });
   await startRelay();
 
   onboarding = new Onboarding({

@@ -57,20 +57,22 @@ export type PendingReason = "awaiting_approval" | "deciding" | "running";
  * advice is actually needed. `retry_after_ms` next to it is advice too, never
  * a gate: polling early is answered honestly.
  *
- * `awaiting_approval` must not claim a dialog is on screen, because often
- * there is not one. It means "no decision yet" on a Mac whose mode HAS a human
- * in it, and that covers the work before anyone is asked (path resolution,
- * writing the approval record) as well as the wait on the dialog itself.
+ * `deciding` is where every call starts, and it is the honest answer: no
+ * decision yet, and nobody has been asked. It covers the work before anyone
+ * could be asked (path resolution, writing the approval record) and the whole
+ * of the modes that never ask at all — the adversarial reviewer thinking, on a
+ * budget of its own that is minutes wide against this ten seconds.
  *
- * `deciding` is the same "no decision yet" on a Mac where nobody will ever be
- * asked — the adversarial reviewer thinking (a budget of its own, minutes wide
- * against this ten seconds, so deferring is commonplace there), or the
- * deny mode. It exists because the alternative was a lie with teeth: an owner
- * who has set the reviewer as the decider was told by their agent that a
- * request had gone out to them for approval, went looking for a dialog that
- * does not exist in that mode, and found none — while the agent, having been
- * told to tell the user it was waiting, stopped instead of polling. The audit
- * log filled up with approvals nobody was waiting on.
+ * `awaiting_approval` is claimed ONLY once a dialog is actually in front of a
+ * human, which is why it is reported by the code that opens one rather than
+ * inferred from a setting. The inference was a lie with teeth: an owner who had
+ * set the reviewer as the decider was told by their agent that a request had
+ * gone out to them for approval, went looking for a dialog that mode never
+ * raises, and found none — while the agent, having been told to tell the user
+ * it was waiting, stopped instead of polling. The audit log filled up with
+ * approvals nobody was waiting on. Reading the mode instead would only have
+ * moved the lie: the mode can change between the read and the decision, and a
+ * slow `ask` Mac still has nobody at the dialog while it resolves a path.
  *
  * `running` means the caller-level decision step is complete and execution is
  * underway. It does not claim that action-specific checks inside that execution
@@ -166,11 +168,15 @@ export class DeviceError extends Error {
 }
 
 /**
- * Handed to the work so it can say when the decision lands and execution
- * starts. Without it every pending handle would still claim it was undecided,
- * which would be a lie for the second half of a long job.
+ * Handed to the work so it can report the two moments the envelope's `reason`
+ * turns on: a human actually being asked, and the decision landing. Without the
+ * second, every pending handle would still claim it was undecided, which is a
+ * lie for the second half of a long job; without the first, nothing could ever
+ * honestly say a human is holding it.
  */
 export interface Progress {
+  /** A dialog is now in front of a human. Called by whoever opened it. */
+  asking(): void;
   decided(): void;
 }
 
@@ -191,16 +197,6 @@ export class DeferredResults {
     private readonly ttlMs = HANDLE_TTL_MS,
     /** Injectable for tests; the real one is Date.now. */
     private readonly now: () => number = () => Date.now(),
-    /**
-     * Can this Mac's current mode put an approval dialog in front of a human?
-     * Read per call, never cached: the owner may change the mode between two
-     * operations, and the envelope has to describe the mode in force now.
-     *
-     * Defaults to true — the conservative direction for a caller that does not
-     * know (it keeps the older, human-shaped advice) and what device-core's own
-     * tests, which drive real approval delegates, expect.
-     */
-    private readonly humanMayBeAsked: () => boolean = () => true,
   ) {}
 
   /**
@@ -214,13 +210,19 @@ export class DeferredResults {
     work: (progress: Progress) => Promise<JSONValue>,
   ): Promise<JSONValue> {
     const handle = crypto.randomUUID().toUpperCase();
-    let reason: PendingReason = this.humanMayBeAsked() ? "awaiting_approval" : "deciding";
+    let reason: PendingReason = "deciding";
+    // `asking` never overwrites `running`: a second dialog inside an operation
+    // that is already executing (a banking approval mid-fill) does not put the
+    // whole call back before a human.
+    const advance = (next: PendingReason) => {
+      if (reason === "running") return;
+      reason = next;
+      const entry = this.entries.get(handle);
+      if (entry) entry.reason = next;
+    };
     const progress: Progress = {
-      decided: () => {
-        reason = "running";
-        const entry = this.entries.get(handle);
-        if (entry) entry.reason = "running";
-      },
+      asking: () => advance("awaiting_approval"),
+      decided: () => advance("running"),
     };
 
     // Arm the budget BEFORE the work is invoked. Nothing here needs to know

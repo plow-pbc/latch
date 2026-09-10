@@ -111,7 +111,9 @@ describe("the budget fires while a slow path resolution is still in flight", () 
     const { payload, isError } = await call;
     expect(isError).toBe(false);
     expect(payload.status).toBe("pending");
-    expect(payload.reason).toBe("awaiting_approval");
+    // Still inside path resolution — no delegate has been reached, so no
+    // human has been asked, whatever this Mac's approval mode is.
+    expect(payload.reason).toBe("deciding");
     const handle: string = payload.handle;
 
     // Only now let resolution complete; the work then runs to a real result.

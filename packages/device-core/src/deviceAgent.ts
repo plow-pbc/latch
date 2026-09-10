@@ -51,7 +51,16 @@ import {
 } from "./hostGate/index.js";
 import { readCredentialsState } from "./browser/vaultCredentials.js";
 import { DeviceIdentity, loadOrCreateIdentity } from "./identity.js";
-import { PolicyDelegate, PolicyEngine } from "./policyEngine.js";
+import { DecisionProgress, PolicyDelegate, PolicyEngine } from "./policyEngine.js";
+
+/**
+ * What a caller running against a call budget wants told, as one intent moves
+ * through the decision path. `asking` only ever fires when a human is really
+ * being shown something.
+ */
+export interface IntentProgress extends DecisionProgress {
+  decided(): void;
+}
 import { SkillRegistry } from "./skills.js";
 import { registerContactsSkill } from "./contactsSkill.js";
 import { registerImessageSkill } from "./imessageSkill.js";
@@ -578,15 +587,17 @@ export class DeviceAgent {
    * Run one intent: validate, decide (rules → delegate), execute. The single
    * entry point into the Mac's decision path.
    *
-   * `onDecided` fires the moment the decision lands, before execution starts.
-   * A caller running against a call budget needs it to tell "still waiting on a
-   * human" from "approved and now running" — the two are different answers to
-   * an agent polling a deferred handle.
+   * `progress.decided` fires the moment the decision lands, before execution
+   * starts, and `progress.asking` the moment a dialog goes in front of a human.
+   * A caller running against a call budget needs both to tell "nobody has been
+   * asked yet" from "a human is holding this" from "approved and now running" —
+   * three different answers to an agent polling a deferred handle, and only the
+   * middle one is a reason to go and find the owner.
    */
   async handleIntent(
     intent: Intent,
     payload: JSONValue = null,
-    onDecided?: () => void,
+    progress?: IntentProgress,
   ): Promise<JSONValue> {
     const failure = this.validate(intent);
     if (failure !== null) {
@@ -606,8 +617,10 @@ export class DeviceAgent {
       capabilities: intent.capabilities.map(capabilityDisplay),
     });
 
-    const grant = await this.policy.decide(intent, this.delegate);
-    onDecided?.();
+    const grant = await this.policy.decide(intent, this.delegate, {
+      asking: () => progress?.asking(),
+    });
+    progress?.decided();
     this.audit.record("intent_decision", {
       intentId: intent.intentId,
       decision: grant.decision,
