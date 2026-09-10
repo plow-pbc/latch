@@ -335,7 +335,7 @@ esac
   describe("calendar discovery", () => {
     afterEach(() => { while (cleanups.length) cleanups.pop()!(); });
 
-    it("lists calendars across connected accounts without an account flag", async () => {
+    itSpawns("lists calendars across connected accounts without an account flag", async () => {
       const d = device(accountsMinter(AB), [plowVendorDir()]);
       const response = await run(d, ["gog", "calendar", "calendars", "--json", "--results-only"]);
       expect(response).toMatchObject({
@@ -348,14 +348,14 @@ esac
       });
     });
 
-    it("lists calendars with an explicitly named account", async () => {
+    itSpawns("lists calendars with an explicitly named account", async () => {
       const d = device(accountsMinter(AB), [plowVendorDir()]);
       const response = await run(d, ["gog", "calendar", "calendars", "--json", "--results-only", "--account", "b@example.com"]);
       expect(jv(response).get("status").str).toBe("completed");
       expect(String(jv(response).get("output").str)).toContain('[{"id":"primary","summary":"Calendar"}]');
     });
 
-    it("tags an accountless calendar list when only one account is connected", async () => {
+    itSpawns("tags an accountless calendar list when only one account is connected", async () => {
       const d = device(accountsMinter([AB[0]!]), [plowVendorDir()]);
       const response = await run(d, ["gog", "calendar", "calendars", "--json", "--results-only"]);
       expect(response).toMatchObject({
