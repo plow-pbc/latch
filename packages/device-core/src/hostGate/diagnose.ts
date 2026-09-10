@@ -109,7 +109,7 @@ export interface HostFacts {
   ran_sandboxed: boolean;
   sandbox_allows_read: boolean | null;
   sandbox_allows_write: boolean | null;
-  /** Whether the path of interest lies inside what the owner approved for
+  /** Whether the path of interest lies inside what was approved for
    *  this operation. Only such a path is probed on disk; one outside is
    *  classified by name and can carry one verdict only, the bound. Null
    *  when no path was settled on. */
@@ -234,7 +234,7 @@ export async function collectFacts(
   // the failure itself named outranks one the command line mentioned, which
   // outranks one the caller merely declared (a cwd, a read root).
   //
-  // WHAT MAY BE TOUCHED. The declared paths are what the owner approved,
+  // WHAT MAY BE TOUCHED. The declared paths are what was approved,
   // and they bound everything this battery does on disk: only a candidate
   // under one of them is canonicalized (a realpath walks the disk),
   // inspected, or opened as the app. A command's output is the command's
@@ -255,7 +255,7 @@ export async function collectFacts(
   // string is exactly what a run would write to have this Mac touch it.
   //
   // The approval is a SNAPSHOT, taken before the run and never resolved
-  // again: the caller's paths were canonicalized when the owner approved
+  // again: the caller's paths were canonicalized when they were approved
   // them, and a command that has since replaced one with a symlink must not
   // have this battery follow it — resolving the root now would turn
   // "~/Plow/out is approved" into "wherever ~/Plow/out points now is". Only
@@ -602,7 +602,7 @@ export function diagnose(f: HostFacts): Diagnosis {
     }
     ruledOut.push("locked file", "System Integrity Protection");
 
-    // A path outside what the owner approved was never probed, and needs
+    // A path outside what was approved was never probed, and needs
     // no probe: whatever else macOS might say about it, the run was not
     // allowed there, and declaring it is the agent's next move.
     if (f.ran_sandboxed && f.path_approved === false && (f.sandbox_allows_write === false || f.sandbox_allows_read === false)) {

@@ -70,7 +70,7 @@ export function reservedFlagIn(argv: readonly string[]): string | null {
 
 /**
  * Local paths gog reads from or writes to, including enough location data for
- * the MCP layer to replace each path with the canonical one the owner approved.
+ * the MCP layer to replace each path with the canonical one that was approved.
  *
  * Rules, not a leaf list: every input-file flag ends in `-file`, `--attach` is
  * its one exceptional spelling, and gog's output paths start with `--out`.

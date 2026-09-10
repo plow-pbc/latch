@@ -416,7 +416,7 @@ def verdict(events, nonce, expired, since=0):
     the nonce. Everything after it is anchored to its `intentId`, so no other
     traffic on a busy install can satisfy one of these conditions on a
     different call's record. Matching the nonce alone would not do: it is
-    written BEFORE the decision, so a call the owner denied still carries it.
+    written BEFORE the decision, so a call that was denied still carries it.
     """
     received = next((r for r in events if r.get("event") == "intent_received"
                      and nonce in str(r.get("goal", ""))), None)

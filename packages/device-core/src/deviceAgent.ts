@@ -896,7 +896,7 @@ export class DeviceAgent {
 
     // A vendored provider CLI gets its tokens minted into its children's
     // environment and is orchestrated per account. Everything else is the
-    // ordinary exec path — the capability the owner approved is the argv, the
+    // ordinary exec path — the capability that was approved is the argv, the
     // sandbox profile and the audit are unchanged, and `tools/list` never
     // grew a tool for it.
     const provider = vendoredProvider(argv);

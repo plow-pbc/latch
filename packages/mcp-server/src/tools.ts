@@ -269,7 +269,7 @@ export const BLOCKED_COPY =
 export const HOST_GATE_NOTE =
   "\n\n## When this Mac itself says no\n\n" +
   "A call may come back with status 'blocked', with a 'diagnosis' beside it. That is neither " +
-  "\"no messages\" nor the owner refusing: their Mac would not let the app do what they approved — " +
+  "\"no messages\" nor the owner refusing: their Mac would not let the app do what was approved — " +
   "usually a macOS privacy permission (Full Disk Access, a folder, Automation) the app has not been " +
   "granted, or a permission dialog open on the Mac's screen with nobody there to click it. When the " +
   "diagnosis is 'confirmed', tell the owner its 'owner_action' word for word and stop; do not " +
@@ -464,7 +464,7 @@ export const TOOLS: ToolSpec[] = [
       // A vendored provider CLI refuses some argv outright — an argument that
       // would disarm its safety flags, or a command group the bundled binary
       // may not run. Checked HERE,
-      // before an intent exists, because a card the owner approves mints a
+      // before an intent exists, because a card that is approved mints a
       // live provider token: nobody should be asked to authorise a call this
       // Mac was always going to refuse. The device checks again; it is the
       // chokepoint and cannot rely on this caller.
@@ -495,7 +495,7 @@ export const TOOLS: ToolSpec[] = [
           normalized[fileArg.index] = `${fileArg.joinedPrefix ?? ""}${resolvedPaths.join(",")}`;
           (fileArg.access === "read" ? providerReadPaths : providerWritePaths).push(...resolvedPaths);
         }
-        // The process executes the exact physical path the owner sees. This is
+        // The process executes the exact physical path the approval shows. This is
         // the command equivalent of plow_read_file freezing a symlink target.
         argv = normalized;
       }
@@ -849,7 +849,7 @@ export const TOOLS: ToolSpec[] = [
     name: "plow_browser_request",
     title: "Ask to widen the browser session",
     description:
-      "Ask the owner to widen an open browser session: additional site origins (e.g. a payment " +
+      "Ask this Mac to widen an open browser session: additional site origins (e.g. a payment " +
       "popup went to paypal.com) and/or permission to fill specific vault items into pages " +
       "(find item ids with plow_vault's 'list' action). A secret is never returned to you by " +
       "these tools; it is typed into the page on this Mac, where it is page content like " +

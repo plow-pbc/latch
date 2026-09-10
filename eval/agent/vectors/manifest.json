@@ -281,7 +281,7 @@
     {
       "name": "plow_browser_request",
       "title": "Ask to widen the browser session",
-      "description": "Ask the owner to widen an open browser session: additional site origins (e.g. a payment popup went to paypal.com) and/or permission to fill specific vault items into pages (find item ids with plow_vault's 'list' action). A secret is never returned to you by these tools; it is typed into the page on this Mac, where it is page content like anything else, except that 'eval' is refused while a concealed field on ANY page of the session still holds the value — the refusal names the page; empty that field there if it still resolves, or load another page there, to lift it.",
+      "description": "Ask this Mac to widen an open browser session: additional site origins (e.g. a payment popup went to paypal.com) and/or permission to fill specific vault items into pages (find item ids with plow_vault's 'list' action). A secret is never returned to you by these tools; it is typed into the page on this Mac, where it is page content like anything else, except that 'eval' is refused while a concealed field on ANY page of the session still holds the value — the refusal names the page; empty that field there if it still resolves, or load another page there, to lift it.",
       "inputSchema": {
         "type": "object",
         "required": [
