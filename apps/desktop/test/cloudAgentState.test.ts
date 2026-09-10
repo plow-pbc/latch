@@ -112,6 +112,7 @@ function verifiedProvisionedActivation(): ProvisionedActivationRedeem {
       line: "+14155550999",
       lineUid: "lin_new",
       participants: [],
+      memberCount: 1,
       createdAt: "",
     },
     shape: {
@@ -618,6 +619,43 @@ describe("CloudAgentState new agent flow", () => {
     expect(state.state().cloudFreeLines).toEqual([]);
   });
 
+  it("returns to the picker when the picked line turns out to be unavailable", async () => {
+    let refused = false;
+    const attempts: string[] = [];
+    const { state } = build({
+      listAgents: async () => [],
+      // The line's chats are retired between the picker being drawn and the
+      // create landing, which is exactly how a line goes unusable underfoot.
+      listChats: async () => refused
+        ? []
+        : [homeChat({ uid: "cht_ash", lineUid: "lin_ash", recipients: { line: "+15550200", members: [] } })],
+      listLines: async () => [{ uid: "lin_ash", agentUid: null, displayName: "Ash", number: "+15550200" }],
+      createAgent: async (request) => {
+        attempts.push(request.lineUid);
+        refused = true;
+        throw new CloudAgentLineError(
+          "line_unavailable",
+          "This line isn't available right now. Refresh and try again.",
+        );
+      },
+    });
+    await state.refresh();
+    expect(state.state().cloudFreeLines.map((line) => line.uid)).toEqual(["lin_ash"]);
+
+    await state.create({ name: "Garden", provider: "exe:hermes", lineUid: "lin_ash" });
+
+    // The picker, not an error with a retry button: `phase` is idle and the
+    // line that just refused is no longer in it.
+    expect(state.state().cloudLineFlow).toMatchObject({
+      phase: "idle",
+      message: "This line isn't available right now. Refresh and try again.",
+    });
+    expect(state.state().cloudFreeLines).toEqual([]);
+
+    expect(await state.retryLineFlow()).toBeNull();
+    expect(attempts).toEqual(["lin_ash"]);
+  });
+
   it("creates directly on a picked free line without activating", async () => {
     const providerId = " exe:life ";
     const created: Array<{ lineUid: string; name: string; provider: string }> = [];
@@ -652,23 +690,7 @@ describe("CloudAgentState new agent flow", () => {
       listChats: async () => [homeChat()],
       listLines: async () => [{ uid: "lin_willow", agentUid: null, displayName: "Willow", number: "+15550100" }],
       wait: async () => {},
-      redeemActivation: async () => ({
-        status: "verified",
-        chat: {
-          uid: "cht_new",
-          status: "active",
-          displayName: null,
-          line: "+14155550999",
-          lineUid: "lin_new",
-          participants: [],
-          createdAt: "",
-        },
-        shape: {
-          chat: "object",
-          participantTypes: ["member", "agent"],
-          agentLine: "uid_string",
-        },
-      }),
+      redeemActivation: async () => verifiedProvisionedActivation(),
       createAgent: async (request) => {
         created.push(request);
         return agent({
@@ -1030,23 +1052,7 @@ describe("CloudAgentState change-line flow", () => {
     const moved: Array<{ agentId: string; lineUid: string }> = [];
     const { state, calls } = build({
       wait: async () => {},
-      redeemActivation: async () => ({
-        status: "verified",
-        chat: {
-          uid: "cht_new",
-          status: "active",
-          displayName: null,
-          line: "+14155550999",
-          lineUid: "lin_new",
-          participants: [],
-          createdAt: "",
-        },
-        shape: {
-          chat: "object",
-          participantTypes: ["member", "agent"],
-          agentLine: "uid_string",
-        },
-      }),
+      redeemActivation: async () => verifiedProvisionedActivation(),
       changeAgentLine: async (agentId, lineUid) => {
         moved.push({ agentId, lineUid });
         return agent({ agentId, line: { uid: "lin_new", displayName: "New", number: "+14155550999" } });
@@ -1097,27 +1103,32 @@ describe("CloudAgentState change-line flow", () => {
     expect(state.state().cloudLineFlow.completedAgentId).toBe("agent_1");
   });
 
-  it("refreshes the picker after another agent claims the chosen line", async () => {
+  // Both refusals name a line the account cannot use, and neither is worth
+  // resending: the picker comes back with the reason, and nothing behind the
+  // retry to send again.
+  it.each([
+    ["line_occupied", "Another agent already uses that line."],
+    ["line_unavailable", "This line isn't available right now. Refresh and try again."],
+  ] as const)("returns to the picker instead of retrying a %s line", async (code, message) => {
     let lists = 0;
-    let claimed = false;
+    let refused = false;
+    const attempts: string[] = [];
     const { state } = build({
       listAgents: async () => lists++ === 0
         ? [agent()]
         : [agent(), agent({ agentId: "agent_2", line: { uid: "lin_ash", displayName: "Ash", number: "+15550200" } })],
       listChats: async () => [
         chat(),
-        homeChat({ uid: "cht_ash", lineUid: "lin_ash", recipients: { line: "+15550200", members: [] } }),
+        ...(refused ? [] : [homeChat({ uid: "cht_ash", lineUid: "lin_ash", recipients: { line: "+15550200", members: [] } })]),
       ],
       listLines: async () => [
         { uid: "lin_willow", agentUid: "agent_1", displayName: "Willow", number: "+15550100" },
-        { uid: "lin_ash", agentUid: claimed ? "agent_2" : null, displayName: "Ash", number: "+15550200" },
+        { uid: "lin_ash", agentUid: refused && code === "line_occupied" ? "agent_2" : null, displayName: "Ash", number: "+15550200" },
       ],
-      changeAgentLine: async () => {
-        claimed = true;
-        throw new CloudAgentLineError(
-          "line_occupied",
-          "Another agent already uses that line.",
-        );
+      changeAgentLine: async (_agentId, lineUid) => {
+        attempts.push(lineUid);
+        refused = true;
+        throw new CloudAgentLineError(code, message);
       },
     });
     await state.refresh();
@@ -1125,11 +1136,13 @@ describe("CloudAgentState change-line flow", () => {
 
     await state.changeLine({ agentId: "agent_1", lineUid: "lin_ash" });
 
-    expect(state.state().cloudLineFlow).toMatchObject({
-      phase: "idle",
-      message: "Another agent already uses that line.",
-    });
+    expect(state.state().cloudLineFlow).toMatchObject({ phase: "idle", message });
     expect(state.state().cloudFreeLines).toEqual([]);
+
+    // The whole point: nothing is held to resend, so the modal's retry cannot
+    // walk back into the same refusal.
+    expect(await state.retryLineFlow()).toBeNull();
+    expect(attempts).toEqual(["lin_ash"]);
   });
 });
 

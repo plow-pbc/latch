@@ -136,16 +136,24 @@ describe("CloudAgentsClient creation", () => {
     });
   });
 
-  it("maps NO_HOME_CHAT to fixed create copy", async () => {
+  // The advice belongs to the CODED conflict and to nothing else — see the
+  // bare-404 case below, which is the same situation for a line that cannot be
+  // texted into working.
+  it("maps the coded NO_HOME_CHAT to fixed create copy", async () => {
     const { fetchImpl } = recordingFetch([{
       status: 409,
       body: { detail: { code: "NO_HOME_CHAT", message: `echo ${CREDENTIAL}` } },
     }]);
 
-    await expect(new CloudAgentsClient(new PlowApi("https://api.plow.co", fetchImpl)).create(
-      CREDENTIAL,
-      { lineUid: "lin_willow", name: "Kitchen", provider: "exe:hermes" },
-    )).rejects.toThrow("Text this line once first, then try again.");
+    const error = await new CloudAgentsClient(new PlowApi("https://api.plow.co", fetchImpl))
+      .create(CREDENTIAL, { lineUid: "lin_willow", name: "Kitchen", provider: "exe:hermes" })
+      .catch((caught: unknown) => caught);
+
+    expect(error).toMatchObject({
+      code: "no_home_chat",
+      message: "Text this line once first, then try again.",
+    });
+    expect(String(error)).not.toContain(CREDENTIAL);
     expect(console.error).toHaveBeenCalledWith(
       "[cloud-agent] request failed status=409 code=NO_HOME_CHAT",
     );
@@ -169,22 +177,6 @@ describe("CloudAgentsClient creation", () => {
     expect(console.error).toHaveBeenCalledWith(
       "[cloud-agent] request failed status=404 code=LINE_UNAVAILABLE",
     );
-  });
-
-  it("keeps the text-this-line advice for the server's coded 409", async () => {
-    const { fetchImpl } = recordingFetch([{
-      status: 409,
-      body: { detail: { code: "NO_HOME_CHAT", message: "This line has no active one-to-one home chat." } },
-    }]);
-
-    const error = await new CloudAgentsClient(new PlowApi("https://api.plow.co", fetchImpl))
-      .create(CREDENTIAL, { lineUid: "lin_willow", name: "Kitchen", provider: "exe:hermes" })
-      .catch((caught: unknown) => caught);
-
-    expect(error).toMatchObject({
-      code: "no_home_chat",
-      message: "Text this line once first, then try again.",
-    });
   });
 
   it.each([
