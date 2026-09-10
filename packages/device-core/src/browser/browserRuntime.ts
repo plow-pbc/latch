@@ -90,31 +90,24 @@ function hostNode(): { argv: string[]; env: Record<string, string> } {
   return { argv: [process.execPath], env: {} };
 }
 
-function fromLayout(layout: Layout): ResolvedBrowserRuntime | null {
+function fromLayout(layout: Layout): ResolvedBrowserRuntime | string {
   const server = path.join(layout.serverPkgDir, "dist", "server.js");
   const merger = path.join(layout.serverPkgDir, "dist", "mergeCookies.js");
   const pool = path.join(layout.serverPkgDir, "fingerprints.json");
   const executablePath = process.env.DOMO_CAMOUFOX
     ? camoufoxBinaryIn(process.env.DOMO_CAMOUFOX) ?? process.env.DOMO_CAMOUFOX
     : camoufoxBinaryIn(layout.camoufoxDir);
-  // A materialized browser runtime needs ALL THREE: the built server, a Camoufox
-  // to drive, and the frozen fingerprint pool. Missing any — a checkout that
-  // never ran `just fetch-browser`, a worktree cloned without the pool — means
-  // browsing is not offered: return null so DeviceAgent registers no browsing
-  // skill and no sessions, rather than a runtime that only fails at first launch.
-  // (The DOMO_BROWSER_CMD test seam is handled in resolveBrowserRuntime, before
-  // this, and never reaches here.)
+  // The built server, Camoufox, and the frozen pool must all be present.
+  // Return the missing component so resolution can try another layout and
+  // report failure only when none work. DOMO_BROWSER_CMD bypasses this check.
   if (!layout.serverPkgDir || !fs.existsSync(server)) {
-    console.warn(`browser runtime unavailable: missing browser server ${server}`);
-    return null;
+    return `missing browser server ${server}`;
   }
   if (!executablePath) {
-    console.warn(`browser runtime unavailable: missing Camoufox executable in ${layout.camoufoxDir}`);
-    return null;
+    return `missing Camoufox executable in ${layout.camoufoxDir}`;
   }
   if (!fs.existsSync(pool)) {
-    console.warn(`browser runtime unavailable: missing fingerprint pool ${pool}`);
-    return null;
+    return `missing fingerprint pool ${pool}`;
   }
   const host = hostNode();
   return {
@@ -195,16 +188,20 @@ export function resolveBrowserRuntime(resourcesDir?: string): ResolvedBrowserRun
   }
 
   const runtimeEnv = process.env.DOMO_BROWSER_RUNTIME;
+  const layouts: Layout[] = [];
   if (runtimeEnv) {
-    return fromLayout(packagedLayout(runtimeEnv)) ?? fromLayout(vendorLayout(runtimeEnv));
+    layouts.push(packagedLayout(runtimeEnv), vendorLayout(runtimeEnv));
+  } else {
+    if (resourcesDir) layouts.push(packagedLayout(path.join(resourcesDir, "browser-runtime")));
+    const vendor = repoVendorDir();
+    if (vendor) layouts.push(vendorLayout(vendor));
   }
-
-  if (resourcesDir) {
-    const resolved = fromLayout(packagedLayout(path.join(resourcesDir, "browser-runtime")));
-    if (resolved) return resolved;
+  const failures: string[] = [];
+  for (const layout of layouts) {
+    const result = fromLayout(layout);
+    if (typeof result !== "string") return result;
+    failures.push(result);
   }
-
-  const vendor = repoVendorDir();
-  if (vendor) return fromLayout(vendorLayout(vendor));
+  if (failures.length) console.warn(`browser runtime unavailable: ${failures.join("; ")}`);
   return null;
 }

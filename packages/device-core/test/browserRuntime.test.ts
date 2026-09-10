@@ -190,5 +190,16 @@ it.each([
   }
   const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
   expect(resolveBrowserRuntime()).toBeNull();
+  expect(warn).toHaveBeenCalledOnce();
   expect(warn).toHaveBeenCalledWith(expect.stringContaining(message));
+});
+
+it("does not warn when a later vendor layout supplies the runtime", () => {
+  const { root } = fakePayload();
+  fs.renameSync(path.join(root, "camoufox"), path.join(root, "camoufox-browser"));
+  process.env.DOMO_BROWSER_RUNTIME = root;
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+  expect(resolveBrowserRuntime()).not.toBeNull();
+  expect(warn).not.toHaveBeenCalled();
 });
