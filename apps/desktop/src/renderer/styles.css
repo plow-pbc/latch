@@ -977,6 +977,12 @@ pre.script {
 .live-corner img { cursor: zoom-in; }
 .live-corner.expanded {
   position: fixed; top: var(--titlebar-h); left: 0; right: 0; bottom: 0;
+  /* The collapsed box is a flex item pinned to the bottom of the detail pane,
+     and `align-self: flex-end` survives going out of flow: it wins over
+     top/bottom and shrink-wraps the overlay to its own content, leaving the
+     backdrop as a band across the lower half of the window. Reset it, or the
+     scrim only covers what the picture happens to need. */
+  align-self: auto;
   z-index: 60; padding: 24px; gap: 10px;
   align-items: center; justify-content: center; cursor: zoom-out;
   background: rgba(0, 0, 0, 0.72);
