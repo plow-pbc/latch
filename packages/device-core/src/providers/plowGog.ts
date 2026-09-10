@@ -57,6 +57,7 @@ export type PlowGogPlan =
 const FANOUT: Readonly<Record<string, Readonly<Record<string, PlowGogSort>>>> = {
   gmail: { search: "gmail-date", find: "gmail-date", query: "gmail-date", ls: "gmail-date", list: "gmail-date" },
   calendar: {
+    calendars: "none",
     events: "cal-start",
     list: "cal-start",
     ls: "cal-start",
