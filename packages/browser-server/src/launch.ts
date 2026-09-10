@@ -62,7 +62,7 @@ export interface LaunchedBrowser {
 export function loadPool(poolDir: string): FingerprintPool {
   const file = path.join(poolDir, "fingerprints.json");
   if (!fs.existsSync(file)) {
-    throw new Error(`fingerprint pool ${file} is missing; run node scripts/build-browser-runtime.mjs`);
+    throw new Error(`fingerprint pool ${file} is missing; run just fetch-browser`);
   }
   const pool = JSON.parse(fs.readFileSync(file, "utf8")) as FingerprintPool;
   if (!Array.isArray(pool.entries) || pool.entries.length === 0) {

@@ -41,7 +41,7 @@ it("names the missing fingerprint pool and the build step", () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pool-"));
   dirs.push(dir);
   expect(() => loadPool(dir)).toThrow(
-    `fingerprint pool ${path.join(dir, "fingerprints.json")} is missing; run node scripts/build-browser-runtime.mjs`,
+    `fingerprint pool ${path.join(dir, "fingerprints.json")} is missing; run just fetch-browser`,
   );
 });
 
