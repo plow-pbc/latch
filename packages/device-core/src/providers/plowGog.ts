@@ -291,3 +291,32 @@ function startOf(item: Record<string, unknown>, sort: PlowGogSort): number {
   if (Number.isNaN(parsed)) return -9e15;
   return sort === "gmail-date" ? parsed : -parsed;
 }
+
+/**
+ * The refusal a conflict-gated create earns, or null when every connected
+ * account came back clear.
+ *
+ * Detection is complete or it is nothing: the probe runs on EVERY connected
+ * account, because the owner's availability is the union of their calendars,
+ * and a create that only checked the account it books on is the "if you had a
+ * bunch of calendars, it wouldn't check them all" hole. An account that could
+ * not be checked is named as `degraded` rather than passed over — a check
+ * with a hole in it must not read as clear.
+ *
+ * COUNTS ONLY, per account. Approving a create does not approve a read, so
+ * event titles stay on the Mac; the agent has `calendar conflicts` if it
+ * wants names.
+ */
+export function conflictRefusal(
+  probed: readonly { account: string; conflicts: number }[],
+  degraded: readonly { account: string; reason: string }[],
+): string | null {
+  const busy = probed.filter((p) => p.conflicts > 0);
+  if (busy.length === 0 && degraded.length === 0) return null;
+  const parts = [
+    ...busy.map((p) => `${p.account}: ${p.conflicts} event(s) overlap this window`),
+    ...degraded.map((d) => `${d.account}: could not check (${d.reason})`),
+  ];
+  const head = busy.length > 0 ? "the slot is busy" : "the conflict check did not cover every account";
+  return `${head} — ${parts.join("; ")}. Re-send the same command with --confirm-conflict to book anyway.`;
+}

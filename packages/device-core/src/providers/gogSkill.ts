@@ -65,11 +65,29 @@ per-mailbox: a \`gmail get\` on an id from a fan-out result passes
 \`--account <that item's account>\`. When replying, use the
 account that received the thread.
 
-**Timed calendar creates are conflict-gated.** A \`calendar create\` with
-timed \`--from\`/\`--to\` first checks the window on the target account;
-overlaps come back as an error carrying only the overlap count. Re-send the SAME
-command with \`--confirm-conflict\` to book anyway. All-day (date-only)
-events skip the check.
+**Timed calendar creates are conflict-gated.**
+
+Calendar conflicts are yours to judge, not the owner's to approve. A
+calendar create that overlaps an existing commitment is refused, never
+queued for approval: the check covers every connected account, and the
+refusal comes back to you. To book anyway, re-send the same create — the
+same command, same attendees, same calendar, same everything — with
+\`--confirm-conflict\` added, and only when the owner fixed the time in
+the request ("book it regardless", "hold those exact dates", a named
+slot they insist on). Never rebuild a smaller create to get past the
+refusal; you would drop what you left out. Otherwise tell the owner what
+the slot overlaps and ask. When you do book over one, say so in the
+reply and name the overlap. Whether you are asking about a conflict or
+reporting one you booked over, in a shared room the overlap is "an
+existing commitment" and never the other event's name. Only the owner
+can fix a time, so from any other chat the override is blocked and
+nothing is booked — ask the owner to repeat the request in their direct
+chat.
+
+Here that check is a \`calendar create\` with timed \`--from\`/\`--to\`, and the
+refusal carries the overlap COUNT per account plus any account that could not
+be checked — no titles, so use \`calendar conflicts\` if you want the names.
+All-day (date-only) events skip the check.
 
 \`--account\` and \`--confirm-conflict\` are plow-gog's own arguments and never
 reach Google; everything else is the CLI's ordinary grammar.
