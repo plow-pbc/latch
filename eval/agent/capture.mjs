@@ -91,7 +91,14 @@ const status = async (server, home) => ["plow_device_status", await call(server,
 /** A server over a fresh home with the given probes (null: this Mac's own) and policy. */
 function scenario({ probes = null, policy = "allow_once", budgetMs, home = tempHome() } = {}) {
   const device = new DeviceAgent(home, "Eval Mac", typeof policy === "string" ? new HeadlessPolicy({ intent: policy }) : policy, null, home, null, [], null, probes);
-  const server = createDomoMcpServer(device, budgetMs === undefined ? {} : { budgetMs });
+  // Every eval scenario runs a HeadlessPolicy: there is no human here, exactly
+  // as in the app's default (adversarial) mode. Say so, or the frozen vectors
+  // teach the model the `awaiting_approval` wording that shipping Macs do not
+  // send — which is the contract this eval exists to hold.
+  const server = createDomoMcpServer(device, {
+    ...(budgetMs === undefined ? {} : { budgetMs }),
+    humanMayBeAsked: () => false,
+  });
   cleanups.push(() => server.close());
   return { server, home };
 }
@@ -361,10 +368,12 @@ const pane = (sentence) => { const m = /System Settings > [^,.]+/.exec(sentence 
   const first = await call(server, "plow_read_file", { path: file });
   const settled = await until(() => call(server, "plow_get_result", { handle: first.answer.handle }), (r) => r.answer.status !== "pending");
   vector("pending-deferred", {
-    note: "A pending handle. The reply retrieves the result with plow_get_result and uses it.",
+    note: "A pending handle on a Mac that asks nobody. The reply retrieves the result with plow_get_result and uses it, without sending the owner to a dialog that mode never opens.",
     prompt: "Read the file ~/notes.txt on my Mac and tell me what it says.",
     captured: [["plow_read_file", first, [home]], ["plow_get_result", settled, [home]]],
-    expect: { calls: { min: 2, max: 4 }, tools: ["plow_get_result"], includes: ["Dentist"], excludes: ["System Settings"] },
+    // "your approval" is the sentence this whole change exists to stop: the
+    // owner went looking for a dialog that adversarial mode never raises.
+    expect: { calls: { min: 2, max: 4 }, tools: ["plow_get_result"], includes: ["Dentist"], excludes: ["System Settings", "your approval"] },
   });
 }
 

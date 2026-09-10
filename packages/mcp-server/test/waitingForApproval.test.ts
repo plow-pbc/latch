@@ -23,7 +23,7 @@ import {
   HeadlessPolicy,
   PolicyDelegate,
 } from "@domo/device-core";
-import { createDomoMcpServer, DeferredResults, DomoMcpServer } from "@domo/mcp-server";
+import { createDomoMcpServer, DeferredResults, DomoMcpServer, McpServerOptions } from "@domo/mcp-server";
 import { bareToolNames } from "./toolNames.js";
 import { callTool } from "./client.js";
 
@@ -49,18 +49,16 @@ const NEVER_ANSWERS: PolicyDelegate = { decideIntent: () => new Promise(() => {}
  */
 function serverWith(
   delegate: PolicyDelegate,
-  opts: { ttlMs: number; budgetMs: number; humanMayBeAsked?: () => boolean },
+  opts: { ttlMs: number } & McpServerOptions,
 ): {
   server: DomoMcpServer;
   file: string;
 } {
+  const { ttlMs, ...serverOptions } = opts;
   const home = tempDir();
-  const approvals = new ApprovalStore(path.join(home, "device/approvals"), delegate, opts.ttlMs);
+  const approvals = new ApprovalStore(path.join(home, "device/approvals"), delegate, ttlMs);
   const device = new DeviceAgent(home, "Test Mac", approvals);
-  const server = createDomoMcpServer(device, {
-    budgetMs: opts.budgetMs,
-    humanMayBeAsked: opts.humanMayBeAsked,
-  });
+  const server = createDomoMcpServer(device, serverOptions);
   cleanups.push(() => server.close());
   const file = path.join(tempDir(), "a.txt");
   fs.writeFileSync(file, "contents");
