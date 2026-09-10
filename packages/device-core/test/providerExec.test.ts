@@ -642,6 +642,7 @@ esac
     const error = String(jv(response).get("error").str);
     expect(error).toContain(expected);
     expect(error).toContain("--confirm-conflict");
+    expect(error).not.toContain("to book anyway");
     const body = JSON.stringify(response);
     // The records themselves stay on the Mac: the owner approved a CREATE,
     // and event summaries riding its refusal would be an unapproved read.
