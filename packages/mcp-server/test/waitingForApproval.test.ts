@@ -49,6 +49,33 @@ const NEVER_ANSWERS: PolicyDelegate = {
 };
 
 /**
+ * The same, plus a barrier that resolves once the dialog has been reported.
+ *
+ * Asserting `awaiting_approval` on the FIRST answer is a race, and it failed as
+ * one: the budget is armed before the work starts, and the work has to resolve
+ * a path and write the approval record — real disk — before the delegate is
+ * reached at all. When the budget wins that race the envelope says `deciding`,
+ * which is CORRECT (nobody had been asked yet) and not what the test meant to
+ * check. So wait for the signal, then poll: the phase under test is the one the
+ * handle reports once a dialog exists, not whichever phase 30ms happened to
+ * land in.
+ */
+function asksAndWaits(): { delegate: PolicyDelegate; asked: Promise<void> } {
+  let reached!: () => void;
+  const asked = new Promise<void>((r) => (reached = r));
+  return {
+    asked,
+    delegate: {
+      decideIntent: (_intent, progress) => {
+        progress?.asking();
+        reached();
+        return new Promise(() => {});
+      },
+    },
+  };
+}
+
+/**
  * The default mode: a reviewer decides and no dialog is ever raised. It takes
  * its time — the reviewer's own budget is minutes wide against the call's
  * fifteen seconds — so this is the ordinary way a call defers on a shipping
@@ -128,11 +155,21 @@ describe("a timeout is not a refusal", () => {
 });
 
 describe("a pending handle says what to do about it", () => {
-  it("the first answer tells the agent to speak up, poll, and not ask twice", async () => {
+  it("the answer while a dialog is up tells the agent to speak up, poll, and not ask twice", async () => {
     // Budget under the approval deadline, so the call defers while the human
-    // is still (notionally) looking at a dialog.
-    const { server, file } = serverWith(NEVER_ANSWERS, { ttlMs: 60_000, budgetMs: 30 });
-    const { payload, isError } = await callTool(server, "plow_read_file", { path: file }, AGENT);
+    // is still looking at a dialog.
+    const asking = asksAndWaits();
+    const { server, file } = serverWith(asking.delegate, { ttlMs: 60_000, budgetMs: 30 });
+    const first = await callTool(server, "plow_read_file", { path: file }, AGENT);
+    expect(first.payload.status).toBe("pending");
+
+    await asking.asked;
+    const { payload, isError } = await callTool(
+      server,
+      "plow_get_result",
+      { handle: first.payload.handle },
+      AGENT,
+    );
 
     expect(isError).toBe(false);
     expect(payload.status).toBe("pending");
@@ -190,13 +227,22 @@ describe("a pending handle says what to do about it", () => {
   // and a mode that always asks still has nobody at a dialog while the call is
   // resolving a path. Same delegate, same server; only the dialog differs.
   it("only a delegate that actually asks a human says a human is holding it", async () => {
-    const asked = serverWith(NEVER_ANSWERS, { ttlMs: 60_000, budgetMs: 30 });
+    const asking = asksAndWaits();
+    const asked = serverWith(asking.delegate, { ttlMs: 60_000, budgetMs: 30 });
     const alone = serverWith(DECIDES_ALONE, { ttlMs: 60_000, budgetMs: 30 });
 
     const withDialog = await callTool(asked.server, "plow_read_file", { path: asked.file }, AGENT);
     const without = await callTool(alone.server, "plow_read_file", { path: alone.file }, AGENT);
+    await asking.asked;
+    const polled = await callTool(
+      asked.server,
+      "plow_get_result",
+      { handle: withDialog.payload.handle },
+      AGENT,
+    );
 
-    expect(withDialog.payload.reason).toBe("awaiting_approval");
+    expect(polled.payload.reason).toBe("awaiting_approval");
+    // The one that never asks stays put no matter how long it is left.
     expect(without.payload.reason).toBe("deciding");
   });
 
@@ -205,10 +251,16 @@ describe("a pending handle says what to do about it", () => {
   it("a dialog raised after the handle was minted upgrades what polling says", async () => {
     let raise!: () => void;
     const opens = new Promise<void>((r) => (raise = r));
+    // Awaiting `opens` would only prove the delegate was WOKEN — its own
+    // continuation, and the asking() inside it, are a microtask later, so the
+    // poll below could beat the signal it is testing for. Wait on the signal.
+    let asked!: () => void;
+    const hasAsked = new Promise<void>((r) => (asked = r));
     const late: PolicyDelegate = {
       decideIntent: (_intent, progress) =>
         opens.then(() => {
           progress?.asking();
+          asked();
           return new Promise<never>(() => {});
         }),
     };
@@ -218,7 +270,7 @@ describe("a pending handle says what to do about it", () => {
     expect(first.payload.reason).toBe("deciding");
 
     raise();
-    await opens;
+    await hasAsked;
     const polled = await callTool(
       server,
       "plow_get_result",

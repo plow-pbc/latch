@@ -159,7 +159,7 @@ in an empty scratch directory where the relative name does not exist.
 
 **Always \`-readonly\`, and never name the store in \`write_paths\`.** Reading needs no write,
 and declaring one on this store means you have made a mistake (writing it is never right —
-see Writing, below). \`read_paths\` is what the owner sees in the approval dialog and what
+see Writing, below). \`read_paths\` is what this Mac shows whoever decides, and what
 the audit log records — declare the AddressBook directory above and nothing wider.
 
 Core Data schema, so every table and column carries a \`Z\` prefix and values join back to

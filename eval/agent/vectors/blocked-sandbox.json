@@ -11,7 +11,7 @@
           "the kernel answered EPERM for ~/out.txt",
           "~/out.txt is not among the paths approved for this run, and the sandbox profile allows it nothing"
         ],
-        "owner_action": "The path was outside what was approved for this run. Ask again declaring it in write_paths (or read_paths); the owner will see the path in the approval.",
+        "owner_action": "The path was outside what was approved for this run. Ask again declaring it in write_paths (or read_paths); the path will be shown in the approval.",
         "permission": null,
         "requires_relaunch": false,
         "retry": "with_declared_path",

@@ -160,7 +160,7 @@ word-split: a query with spaces is a single element, exactly as written.
 
 You do not pass \`network\`, and passing \`false\` does not turn it off. A
 plow-gog command reaches Google by definition, so this Mac adds the capability
-itself and the human sees it in the approval dialog either way. Asking for
+itself and whoever decides sees it either way. Asking for
 help is the exception and needs nothing — but only in its narrow form:
 \`--help\` or \`-h\` as the LAST argument, with no \`--\` before it.
 \`["plow-gog","gmail","search","--help","q"]\` is a real search, not a help
@@ -193,11 +193,11 @@ precedes it.
 - **You never see or supply a token.** Tokens are minted per command — one per
   account on a fan-out — and passed in the child's environment.
 
-## What the owner sees
+## What the decider sees
 
-The literal command, in an approval dialog, before it runs. Write the argv you
+The literal command, in the approval record, before it runs. Write the argv you
 would be comfortable having read back to you: a search's query and a message's
 recipient and body are all visible there. A read with stable arguments can be
-approved once and remembered; a send varies every time and will always ask.
+approved once and remembered; a send varies every time and is decided afresh.
 `,
 };

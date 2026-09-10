@@ -246,8 +246,8 @@ reports \`unable to open database file\` — an error that reads like a permissi
 is not one.
 
 **Always \`-readonly\`, and never name the store in \`write_paths\`.** Reading needs no write,
-and declaring one on this store means you have made a mistake. \`read_paths\` is what the
-owner sees in the approval dialog and what the audit log records — declare the directory
+and declaring one on this store means you have made a mistake. \`read_paths\` is what this
+Mac shows whoever decides, and what the audit log records — declare the directory
 above and nothing wider.
 
 **Which chats, most recent first** — start here when the owner names someone. This hands you

@@ -367,7 +367,7 @@ export const TOOLS: ToolSpec[] = [
       "Their Mac is a macOS workstation, so reach for tooling your workspace does not have when " +
       `it fits the job: ${MACOS_TOOLING}. ` +
       "It runs inside a seatbelt sandbox. Declare every path you need: " +
-      "read_paths and write_paths are what the owner approves and what the audit record shows, and " +
+      "read_paths and write_paths are what this Mac approves and what the audit record shows, and " +
       "write access is granted from them. They are NOT the full extent of what the command can " +
       "read — the sandbox profile permits reads more broadly than the paths declared here. " +
       "If the command is still running when the wait elapses you get a job handle for plow_get_output. " +
@@ -785,7 +785,7 @@ export const TOOLS: ToolSpec[] = [
       "same window. The Mac runs a few at once — every one of them the user's — and says so " +
       "plainly when it is full. " +
       "It is a supervised anti-detection browser, scoped to the listed " +
-      "site origins. The owner approves the origin list — include every domain you expect (apex AND " +
+      "site origins. This Mac approves the origin list — include every domain you expect (apex AND " +
       "wildcard: 'dominos.com', '*.dominos.com'). Vault item names are listed by 'plow_vault'. " +
       "The browser window is " +
       "hidden by default; pass headed:true only when the owner asked to watch it run. " +

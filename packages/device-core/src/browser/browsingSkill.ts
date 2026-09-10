@@ -129,7 +129,7 @@ item's, and \`fill_secret\` types them into the page the same way.
 2. Open the session on the merchant's origins.
 3. Pick the right item by reading the page.
 4. Ask for fill rights: \`plow_browser_request {session, credential_items: ["<item-id>"]}\` —
-   the owner approves the named items.
+   this Mac decides the named items.
 5. \`plow_browser {action: "fill_secret", selector: "#password", item: "<item-id>", field: "password"}\`
    types the value on the Mac. You get \`{ok: true}\` — never the value itself, and it is not
    yours to carry anywhere: do not restate it, and do not put it in a goal or a plan. Use it

@@ -723,7 +723,7 @@ export function ownerAction(
     case "outside_approved_bound":
       return (
         `The path was outside what was approved for this run. Ask again declaring it in write_paths (or read_paths); ` +
-        `the owner will see the path in the approval.`
+        `the path will be shown in the approval.`
       );
     case "posix_permissions":
       return `The file's ownership or mode denies the owner's account. Fixing it means chown/chmod at the Mac; there is no switch in System Settings for this.`;

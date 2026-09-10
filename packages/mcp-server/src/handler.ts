@@ -115,7 +115,7 @@ export const SERVER_IDENTITY = {
   description:
     "Operate this person's own Mac: read and write their files, run shell and macOS " +
     "tooling, and drive a real browser on their own network. Operations stay within " +
-    "the scope the owner approved.",
+    "the scope this Mac approved.",
   websiteUrl: "https://watchmepivot.com/",
 } as const;
 
