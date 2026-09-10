@@ -1256,7 +1256,7 @@ app.whenReady().then(async () => {
     const modal = document.querySelector(".cloud-modal");
     return {
       title: modal.querySelector(".group-title")?.textContent.trim(),
-      copy: modal.textContent.includes("stop reading and replying."),
+      copy: modal.textContent.includes("The agent will stop reading and replying, and your conversations on this line may be removed. To use an agent again, you’ll need to activate again and may get a different number."),
       buttons: [...modal.querySelectorAll("button")].map((button) => button.textContent.trim()),
     };
   }})()`);
