@@ -52,11 +52,12 @@ export interface RosterSectionRow {
   /**
    * The Mac this credential may be used from, ready to read.
    *
-   * A LABEL and never the device uid: the uid identifies a device on the
-   * account and stays in the main process, the same rule `key_prefix` and
-   * `scopes` follow. `null` means the credential is bound to no device and
-   * works from any of them — which is a different thing from being bound
-   * somewhere this screen cannot name, and reads differently.
+   * A LABEL and never a uid: a device uid identifies a device on the account
+   * and a resource uid identifies what a credential was bound through, and
+   * both stay in the main process, the same rule `key_prefix` and `scopes`
+   * follow. `null` means the credential is bound to nothing and works from any
+   * Mac — which is a different thing from being bound somewhere this screen
+   * cannot name, and reads differently.
    */
   deviceLabel: string | null;
   /**
@@ -149,19 +150,31 @@ function rosterPermissions(scopes: readonly string[]): RosterPermissions {
 /**
  * What to call the Mac a credential is bound to.
  *
- * Three answers and no fourth: this Mac, the name Plow gave another one, or —
- * for a device row with no usable name — "another Mac". Never the uid, and
- * never nothing: a bound credential that rendered blank reads exactly like an
+ * Four answers and no fifth: this Mac, the name Plow gave another one,
+ * "another Mac" for a device row with no usable name, and "primary Mac" for one
+ * bound to a resource Plow resolved no device row for. Never the uid, and never
+ * nothing for a bound credential: one that rendered blank reads exactly like an
  * unbound one, and those differ in whether the thing holding it can reach this
  * screen's Mac at all.
+ *
+ * That last answer is the ACCOUNT alias, and PRESENCE is the whole signal: a
+ * resource naming a device arrives as `device`, so a row bound to something
+ * with no device row is bound to the account — which Plow accepts only through
+ * the primary Mac, so the primary Mac is where it lands. Deliberately not a
+ * comparison against the account uid: this app is never told what that is, and
+ * a label that guessed would be wrong about a resource kind added later.
  *
  * "This Mac" is decided by the DEVICE uid rather than by `isThisMac`, which
  * answers a different question — whether the row IS this Mac's own login
  * session. A credential minted here for someone's editor is bound to this Mac
  * and is not this Mac's session.
  */
-function deviceLabelOf(device: KeyDevice | null, ourDeviceUid: string): string | null {
-  if (!device) return null;
+function deviceLabelOf(
+  device: KeyDevice | null,
+  relayResourceUid: string | null,
+  ourDeviceUid: string,
+): string | null {
+  if (!device) return relayResourceUid ? "primary Mac" : null;
   if (ourDeviceUid && device.uid === ourDeviceUid) return "this Mac";
   return device.name ?? "another Mac";
 }
@@ -216,7 +229,7 @@ export function sectionRoster(
       chatUids: key.chat_uids,
       chatAccess: chatAccessOf(key.chat_uids),
       permissions: rosterPermissions(key.scopes),
-      deviceLabel: deviceLabelOf(key.device, ourDeviceUid),
+      deviceLabel: deviceLabelOf(key.device, key.relay_resource_uid, ourDeviceUid),
       isThisMac: key.id === thisMacId,
     };
     if (placed.kind === "Agent") sections.mcp.push(placed);

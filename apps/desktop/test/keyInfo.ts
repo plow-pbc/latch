@@ -22,5 +22,6 @@ export const keyInfo = (overrides: Partial<KeyInfo> = {}): KeyInfo => ({
   agent_uid: null,
   chat_uids: [],
   device: null,
+  relay_resource_uid: null,
   ...overrides,
 });

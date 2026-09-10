@@ -228,6 +228,38 @@ describe("which Mac a credential is bound to", () => {
     expect(row.deviceLabel).toBe(expected);
   });
 
+  it("labels one bound to the account alias as the primary Mac", () => {
+    // Plow resolved no device row because the binding names the ACCOUNT, and
+    // it accepts that credential only through the primary Mac. Presence is the
+    // signal: a resource naming a device would have arrived as `device`.
+    const [row] = allRows(sectionRoster([
+      key({ scopes: ["relay:call"], device: null, relay_resource_uid: "u_account" }),
+    ], { deviceUid: OUR_DEVICE }));
+
+    expect(row.deviceLabel).toBe("primary Mac");
+  });
+
+  it("labels one bound to nothing at all not at all", () => {
+    // The contrast the alias case turns on: no device AND no resource is a
+    // credential that works from any Mac, and it must not read as bound.
+    const [row] = allRows(sectionRoster([
+      key({ scopes: ["relay:call"], device: null, relay_resource_uid: null }),
+    ], { deviceUid: OUR_DEVICE }));
+
+    expect(row.deviceLabel).toBeNull();
+  });
+
+  it("names the device rather than the resource it was bound through", () => {
+    // Both arrive together for a device-bound credential. The device row is
+    // the one that can be named, so it wins and "primary Mac" stays for the
+    // rows that have nothing else.
+    const [row] = allRows(sectionRoster([
+      key({ device: { uid: "dev_other", name: "mba" }, relay_resource_uid: "u_account" }),
+    ], { deviceUid: OUR_DEVICE }));
+
+    expect(row.deviceLabel).toBe("mba");
+  });
+
   it("names no Mac before this one knows its own uid", () => {
     // Startup order: the roster can be read before the device identity exists.
     // Every row would otherwise compare against "" and be labelled by name —
@@ -237,13 +269,17 @@ describe("which Mac a credential is bound to", () => {
     expect(row.deviceLabel).toBe("mbp");
   });
 
-  it("never hands the renderer a device uid", () => {
+  it("never hands the renderer a device or resource uid", () => {
     const sections = sectionRoster([
       key({ id: 1, device: { uid: OUR_DEVICE, name: "mbp" } }),
       key({ id: 2, device: { uid: "dev_other_secret", name: "mba" } }),
+      // A resource uid is no more renderable than a device uid: it identifies
+      // something on the account, and only the label it projects may cross.
+      key({ id: 3, device: null, relay_resource_uid: "u_account_secret" }),
     ], { deviceUid: OUR_DEVICE });
 
-    expect(JSON.stringify(sections)).not.toMatch(/dev_this_mac|dev_other_secret/);
+    expect(JSON.stringify(sections))
+      .not.toMatch(/dev_this_mac|dev_other_secret|u_account_secret/);
   });
 });
 

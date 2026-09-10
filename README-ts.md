@@ -271,7 +271,8 @@ process hands it and owns no copy of its own.
   `DELETE /v1/agents/{uid}`, which no agent-less key answers to. The modal that
   mints one asks for a name and nothing else. The roster says which Mac each
   credential is bound to — a LABEL ("this Mac", the name plow gave another one,
-  or "another Mac" when it has none); the device uid stays in the main process
+  "another Mac" when it has none, or "primary Mac" for one bound to the account
+  alias, which plow accepts only there); both uids stay in the main process
   beside `key_prefix` and `scopes`. The receipt is checked, not
   trusted: plow echoes the scopes and chat grant it actually minted, and a
   credential that came back wider than `relay:call` with no chats is refused

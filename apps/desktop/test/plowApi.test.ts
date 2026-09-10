@@ -715,9 +715,10 @@ describe("PlowApi", () => {
       { status: 200, body: { status: "revoked", id: 17 } },
     ]);
     const api = new PlowApi("https://api.plow.co", fetchImpl);
-    // `device` is defaulted in on the way through — this row predates it.
+    // Both halves of the binding are defaulted in on the way through — this
+    // row predates them.
     await expect(api.listApiKeys(credential)).resolves.toEqual(
-      keys.map((row) => ({ ...row, device: null })),
+      keys.map((row) => ({ ...row, device: null, relay_resource_uid: null })),
     );
     await expect(api.revokeApiKey(credential, 17)).resolves.toEqual({
       status: "revoked",
@@ -757,6 +758,26 @@ describe("PlowApi", () => {
 
     const [row] = await new PlowApi("https://api.plow.co", fetchImpl).listApiKeys("plow_device");
     expect(row.device).toEqual(expected);
+  });
+
+  it.each([
+    ["a row that predates the binding", undefined, null],
+    ["an explicit null", null, null],
+    ["a bound resource", "u_account", "u_account"],
+    // Nothing usable is no binding. A row that carried one of these forward
+    // would be labelled "primary Mac" on the strength of a value that names
+    // nothing, which is the unbound case wearing a bound one's label.
+    ["an empty string", "", null],
+    ["a value that is not a string", 17, null],
+  ])("reads %s as the row's relay resource", async (_shape, relay_resource_uid, expected) => {
+    const { fetchImpl } = recordingFetch([{ status: 200, body: [
+      { id: 17, key_prefix: "agentkey", name: "Claude Code", scopes: ["relay:call"],
+        tokens_used: 0, is_active: true, last_seen_at: null, created_at: null,
+        agent_uid: null, chat_uids: [], device: null, relay_resource_uid },
+    ] }]);
+
+    const [row] = await new PlowApi("https://api.plow.co", fetchImpl).listApiKeys("plow_device");
+    expect(row.relay_resource_uid).toBe(expected);
   });
 
   it("rejects a path-shaped API key id without making a request", async () => {

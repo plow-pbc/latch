@@ -232,6 +232,11 @@ export interface KeyDevice {
   name: string | null;
 }
 
+/** A relay resource uid, or null for anything this cannot read as one. */
+function relayResourceUidOf(value: unknown): string | null {
+  return typeof value === "string" && value ? value : null;
+}
+
 /** One device row, or null for anything this cannot read as one. */
 function keyDeviceOf(value: unknown): KeyDevice | null {
   const device = value as { uid?: unknown; name?: unknown } | null | undefined;
@@ -255,6 +260,13 @@ export interface KeyInfo {
   chat_uids: string[];
   /** The Mac this credential may be used from, or null for one bound to none. */
   device: KeyDevice | null;
+  /**
+   * The relay resource the credential is bound to, when Plow resolved no
+   * device row for it — the account alias, which Plow accepts only through the
+   * primary Mac. Main-process only, exactly like `device.uid`: the roster reads
+   * it and projects a label, and the label is what crosses.
+   */
+  relay_resource_uid: string | null;
 }
 
 /** Parse Plow's UTC timestamp, whose wire form may omit the trailing offset. */
@@ -869,13 +881,17 @@ export class PlowApi {
 
   /** Credential metadata for the independent sessions section.
    *
-   * `device` is defaulted here, once, for every reader: an API predating the
-   * binding sends no such field, and `undefined` is not `null` — a row that
-   * reached the roster undefined would be compared against this Mac's uid and
-   * answer neither "bound here" nor "bound nowhere". */
+   * Both halves of the binding are defaulted here, once, for every reader: an
+   * API predating either sends no such field, and `undefined` is not `null` — a
+   * row that reached the roster undefined would be compared against this Mac's
+   * uid and answer neither "bound here" nor "bound nowhere". */
   async listApiKeys(token: string): Promise<KeyInfo[]> {
     const keys = await this.call<KeyInfo[]>("GET", "/v1/api-keys", { token });
-    return keys.map((key) => ({ ...key, device: keyDeviceOf(key.device) }));
+    return keys.map((key) => ({
+      ...key,
+      device: keyDeviceOf(key.device),
+      relay_resource_uid: relayResourceUidOf(key.relay_resource_uid),
+    }));
   }
 
   /** Soft-revoke one credential by its server id. */
