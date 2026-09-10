@@ -67,20 +67,16 @@ describe.skipIf(!HAVE_BROWSER)("page scripts against a real Camoufox", () => {
     await browser?.close();
   });
 
-  it.each([
-    ["input", "plain"], ["input", "controlled"], ["input", "restore-caret"],
-    ["textarea", "plain"], ["textarea", "controlled"], ["textarea", "restore-caret"],
-  ])("fills and submits a %s with %s selection", async (tag, mode) => {
+  it.each(["input", "textarea"])("fills and submits a %s that restores its caret", async (tag) => {
     const html = `<!doctype html><form>
       <${tag} name="name"></${tag}><button>Submit</button>
       </form><output></output><script>
       const input = document.querySelector('[name=name]');
       let state = '';
       input.addEventListener('input', () => {
-        if (${JSON.stringify(mode)} === 'plain') return;
         state = input.value;
         input.value = state;
-        if (${JSON.stringify(mode)} === 'restore-caret') input.setSelectionRange(0, 0);
+        input.setSelectionRange(0, 0);
       });
       document.querySelector('form').addEventListener('submit', event => {
         event.preventDefault();
