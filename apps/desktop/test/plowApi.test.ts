@@ -427,6 +427,10 @@ describe("PlowApi", () => {
           { providerKey: "+15551230000", displayName: "You", isOwner: true },
           { providerKey: "+15557654321", displayName: "Ada Lovelace", isOwner: false },
         ],
+        // What the SERVER counts as the roster: the two members, with the
+        // chat's own line taken back off. Not `participants.length` by
+        // coincidence — a thread with a peer line seated diverges.
+        memberCount: 2,
       },
     });
     // The thread id is not carried at all, so no screen can show it as a
@@ -444,6 +448,7 @@ describe("PlowApi", () => {
       line: null,
       lineUid: null,
       participants: [],
+      memberCount: 0,
       createdAt: "",
     });
     // An untyped or unknown participant is neither the agent nor a member: no
@@ -457,6 +462,9 @@ describe("PlowApi", () => {
       line: null,
       lineUid: null,
       participants: [],
+      // Shown as nobody, still counted. An unreadable roster must not read as
+      // a one-to-one thread and offer the line it sits on.
+      memberCount: 2,
       createdAt: "",
     });
     // An agent participant with no line at all is still not the thread id.

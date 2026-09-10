@@ -54,6 +54,11 @@ function chat(overrides: Partial<CloudChatOption> = {}): CloudChatOption {
   return {
     uid: "cht_one",
     lineUid: "lin_willow",
+    status: "active",
+    // Coherent with `people` below: the owner and Nina, so this default is a
+    // group thread and NOT a line an agent can be created on.
+    memberCount: 2,
+    hasOwnerMember: true,
     label: "Willow · You · Nina",
     recipients: { line: "+15550100", members: ["+15550111", "+15550122"] },
     people: [
@@ -62,6 +67,21 @@ function chat(overrides: Partial<CloudChatOption> = {}): CloudChatOption {
     ],
     ...overrides,
   };
+}
+
+/** The one thread shape a line can have an agent created on: active, and the
+ * account holder alone in it. */
+function homeChat(overrides: Partial<CloudChatOption> = {}): CloudChatOption {
+  return chat({
+    uid: "cht_home",
+    status: "active",
+    memberCount: 1,
+    hasOwnerMember: true,
+    label: "Willow · You",
+    recipients: { line: "+15550100", members: ["+15550111"] },
+    people: [{ number: "+15550111", name: null, isOwner: true }],
+    ...overrides,
+  });
 }
 
 const activationSession = (overrides: Partial<KeyInfo> = {}): KeyInfo =>
@@ -92,6 +112,7 @@ function verifiedProvisionedActivation(): ProvisionedActivationRedeem {
       line: "+14155550999",
       lineUid: "lin_new",
       participants: [],
+      memberCount: 1,
       createdAt: "",
     },
     shape: {
@@ -544,25 +565,99 @@ describe("CloudAgentState line and thread display", () => {
 });
 
 describe("CloudAgentState new agent flow", () => {
-  it("reads free lines from API ownership, independent of chats", async () => {
+  // The server will only claim an agent on a line the account holds an ACTIVE
+  // one-to-one thread with itself on. Everything below is that rule, read off
+  // the chats already loaded — `lin_ash` carries two threads of the shape under
+  // test so a line that does qualify is still offered exactly once.
+  it.each([
+    ["an active one-to-one thread with the owner", { status: "active", memberCount: 1, hasOwnerMember: true }, ["lin_ash"]],
+    ["a thread the provider has not confirmed", { status: "pending", memberCount: 1, hasOwnerMember: true }, []],
+    ["a group thread", { status: "active", memberCount: 2, hasOwnerMember: true }, []],
+    ["a one-to-one thread that is not the owner's", { status: "active", memberCount: 1, hasOwnerMember: false }, []],
+    ["no thread at all", null, []],
+  ] as const)("offers a free line on %s", async (_label, shape, offered) => {
     const { state } = build({
       listAgents: async () => [agent({ line: { uid: "lin_willow", displayName: "Willow", number: "+15550100" } })],
       listChats: async () => [
         chat({ uid: "cht_willow", lineUid: "lin_willow" }),
-        chat({ uid: "cht_ash_one", lineUid: "lin_ash", recipients: { line: "+15550200", members: [] } }),
-        chat({ uid: "cht_ash_two", lineUid: "lin_ash", recipients: { line: "+15550200", members: [] } }),
+        ...(shape === null ? [] : [
+          homeChat({ uid: "cht_ash_one", lineUid: "lin_ash", recipients: { line: "+15550200", members: [] }, ...shape }),
+          homeChat({ uid: "cht_ash_two", lineUid: "lin_ash", recipients: { line: "+15550200", members: [] }, ...shape }),
+        ]),
       ],
       listLines: async () => [
+        // Occupied, and never offered whatever its threads look like.
         { uid: "lin_willow", agentUid: "agent_1", displayName: "Willow", number: "+15550100" },
         { uid: "lin_ash", agentUid: null, displayName: "Ash", number: "+15550200" },
+        // A pool number this account has never held: no threads, never offered.
+        { uid: "lin_elm", agentUid: null, displayName: "Elm", number: "+15550300" },
       ],
     });
 
     await state.refresh();
 
-    expect(state.state().cloudFreeLines).toEqual([
-      { uid: "lin_ash", label: "Ash · +15550200" },
-    ]);
+    expect(state.state().cloudFreeLines.map((line) => line.uid)).toEqual(offered);
+  });
+
+  it("offers nothing while the chat list is unknown", async () => {
+    const { state } = build({
+      listAgents: async () => [],
+      listChats: async () => {
+        throw new PlowApiError("http", "Plow returned 503.", 503);
+      },
+      listLines: async () => [
+        { uid: "lin_willow", agentUid: null, displayName: "Willow", number: "+15550100" },
+        { uid: "lin_ash", agentUid: "agent_1", displayName: "Ash", number: "+15550200" },
+      ],
+    });
+
+    await state.refresh();
+
+    // Ownership is unknown, and the whole service pool is the wrong guess to
+    // make about it — every line here would fail at create.
+    expect(state.state().cloudChatsLoaded).toBe(false);
+    expect(state.state().cloudFreeLines).toEqual([]);
+  });
+
+  // The same two refusals the move path returns to the picker for. A line taken
+  // between the picker being drawn and the create landing answers
+  // `AGENT_EXISTS`/`CHAT_SET_CONFLICT`; one whose chats were retired in that
+  // window answers the bare 404. Neither is worth resending the uid for.
+  it.each([
+    ["line_occupied", "Another agent already uses that line.", "agent_2"],
+    ["line_unavailable", "This line isn't available right now. Refresh and try again.", null],
+  ] as const)("returns to the picker when the picked line refuses with %s", async (code, message, claimedBy) => {
+    let refused = false;
+    const attempts: string[] = [];
+    const { state } = build({
+      listAgents: async () => [],
+      listChats: async () => refused && claimedBy === null
+        ? []
+        : [homeChat({ uid: "cht_ash", lineUid: "lin_ash", recipients: { line: "+15550200", members: [] } })],
+      listLines: async () => [{
+        uid: "lin_ash",
+        agentUid: refused ? claimedBy : null,
+        displayName: "Ash",
+        number: "+15550200",
+      }],
+      createAgent: async (request) => {
+        attempts.push(request.lineUid);
+        refused = true;
+        throw new CloudAgentLineError(code, message);
+      },
+    });
+    await state.refresh();
+    expect(state.state().cloudFreeLines.map((line) => line.uid)).toEqual(["lin_ash"]);
+
+    await state.create({ name: "Garden", provider: "exe:hermes", lineUid: "lin_ash" });
+
+    // The picker, not an error with a retry button: `phase` is idle and the
+    // line that just refused is no longer in it.
+    expect(state.state().cloudLineFlow).toMatchObject({ phase: "idle", message });
+    expect(state.state().cloudFreeLines).toEqual([]);
+
+    expect(await state.retryLineFlow()).toBeNull();
+    expect(attempts).toEqual(["lin_ash"]);
   });
 
   it("creates directly on a picked free line without activating", async () => {
@@ -596,25 +691,10 @@ describe("CloudAgentState new agent flow", () => {
     const created: Array<{ lineUid: string; name: string; provider: string }> = [];
     const { state, calls } = build({
       listAgents: async () => [],
+      listChats: async () => [homeChat()],
       listLines: async () => [{ uid: "lin_willow", agentUid: null, displayName: "Willow", number: "+15550100" }],
       wait: async () => {},
-      redeemActivation: async () => ({
-        status: "verified",
-        chat: {
-          uid: "cht_new",
-          status: "active",
-          displayName: null,
-          line: "+14155550999",
-          lineUid: "lin_new",
-          participants: [],
-          createdAt: "",
-        },
-        shape: {
-          chat: "object",
-          participantTypes: ["member", "agent"],
-          agentLine: "uid_string",
-        },
-      }),
+      redeemActivation: async () => verifiedProvisionedActivation(),
       createAgent: async (request) => {
         created.push(request);
         return agent({
@@ -976,23 +1056,7 @@ describe("CloudAgentState change-line flow", () => {
     const moved: Array<{ agentId: string; lineUid: string }> = [];
     const { state, calls } = build({
       wait: async () => {},
-      redeemActivation: async () => ({
-        status: "verified",
-        chat: {
-          uid: "cht_new",
-          status: "active",
-          displayName: null,
-          line: "+14155550999",
-          lineUid: "lin_new",
-          participants: [],
-          createdAt: "",
-        },
-        shape: {
-          chat: "object",
-          participantTypes: ["member", "agent"],
-          agentLine: "uid_string",
-        },
-      }),
+      redeemActivation: async () => verifiedProvisionedActivation(),
       changeAgentLine: async (agentId, lineUid) => {
         moved.push({ agentId, lineUid });
         return agent({ agentId, line: { uid: "lin_new", displayName: "New", number: "+14155550999" } });
@@ -1043,27 +1107,32 @@ describe("CloudAgentState change-line flow", () => {
     expect(state.state().cloudLineFlow.completedAgentId).toBe("agent_1");
   });
 
-  it("refreshes the picker after another agent claims the chosen line", async () => {
+  // Both refusals name a line the account cannot use, and neither is worth
+  // resending: the picker comes back with the reason, and nothing behind the
+  // retry to send again.
+  it.each([
+    ["line_occupied", "Another agent already uses that line."],
+    ["line_unavailable", "This line isn't available right now. Refresh and try again."],
+  ] as const)("returns to the picker instead of retrying a %s line", async (code, message) => {
     let lists = 0;
-    let claimed = false;
+    let refused = false;
+    const attempts: string[] = [];
     const { state } = build({
       listAgents: async () => lists++ === 0
         ? [agent()]
         : [agent(), agent({ agentId: "agent_2", line: { uid: "lin_ash", displayName: "Ash", number: "+15550200" } })],
       listChats: async () => [
         chat(),
-        chat({ uid: "cht_ash", lineUid: "lin_ash", recipients: { line: "+15550200", members: [] } }),
+        ...(refused ? [] : [homeChat({ uid: "cht_ash", lineUid: "lin_ash", recipients: { line: "+15550200", members: [] } })]),
       ],
       listLines: async () => [
         { uid: "lin_willow", agentUid: "agent_1", displayName: "Willow", number: "+15550100" },
-        { uid: "lin_ash", agentUid: claimed ? "agent_2" : null, displayName: "Ash", number: "+15550200" },
+        { uid: "lin_ash", agentUid: refused && code === "line_occupied" ? "agent_2" : null, displayName: "Ash", number: "+15550200" },
       ],
-      changeAgentLine: async () => {
-        claimed = true;
-        throw new CloudAgentLineError(
-          "line_occupied",
-          "Another agent already uses that line.",
-        );
+      changeAgentLine: async (_agentId, lineUid) => {
+        attempts.push(lineUid);
+        refused = true;
+        throw new CloudAgentLineError(code, message);
       },
     });
     await state.refresh();
@@ -1071,11 +1140,13 @@ describe("CloudAgentState change-line flow", () => {
 
     await state.changeLine({ agentId: "agent_1", lineUid: "lin_ash" });
 
-    expect(state.state().cloudLineFlow).toMatchObject({
-      phase: "idle",
-      message: "Another agent already uses that line.",
-    });
+    expect(state.state().cloudLineFlow).toMatchObject({ phase: "idle", message });
     expect(state.state().cloudFreeLines).toEqual([]);
+
+    // The whole point: nothing is held to resend, so the modal's retry cannot
+    // walk back into the same refusal.
+    expect(await state.retryLineFlow()).toBeNull();
+    expect(attempts).toEqual(["lin_ash"]);
   });
 });
 

@@ -17,6 +17,7 @@ import {
 } from "./cloudAgentMapper.js";
 import {
   CloudAgentLineError,
+  CloudAgentLineErrorCode,
   CloudAgentResource,
   CreateCloudAgentRequest,
 } from "./cloudAgents.js";
@@ -75,10 +76,35 @@ export interface CloudLineOption {
   number: string;
 }
 
+/**
+ * Refusals that mean "not this line" rather than "not right now".
+ *
+ * Both name a line the account cannot put an agent on, and neither improves by
+ * resending the same uid — so both end at the picker rather than at a retry
+ * button. `line_occupied` is somebody else's agent already there;
+ * `line_unavailable` is a line that is missing, foreign, or has had its chats
+ * retired.
+ *
+ * Creating and moving read the same set. A line already taken refuses a create
+ * exactly as it refuses a move — the server answers `AGENT_EXISTS` or
+ * `CHAT_SET_CONFLICT` — and a retry that resends the uid is as futile on the
+ * one path as the other.
+ */
+const RETURNS_TO_PICKER: ReadonlySet<CloudAgentLineErrorCode> = new Set([
+  "line_occupied",
+  "line_unavailable",
+]);
+
 export interface CloudChatOption {
   uid: string;
   /** Stable identity of the line this thread belongs to. */
   lineUid: string | null;
+  /** As served: `pending` until the provider confirms the thread, then `active`. */
+  status: string;
+  /** The server's own roster size for this chat — see `ActivationChat.memberCount`. */
+  memberCount: number;
+  /** Whether a roster row is flagged as the account holder's. */
+  hasOwnerMember: boolean;
   label: string;
   /**
    * The numbers a message to this chat goes to, or `null` when we do not know
@@ -603,6 +629,9 @@ export class CloudAgentState {
         const createdChat: CloudChatOption = {
           uid: safe.uid,
           lineUid: safe.lineUid,
+          status: safe.status,
+          memberCount: safe.memberCount,
+          hasOwnerMember: safe.participants.some((member) => member.isOwner),
           label: activationChatLabel(safe),
           recipients: activationChatRecipients(safe),
           people: chatPeople(safe),
@@ -721,7 +750,9 @@ export class CloudAgentState {
         return null;
       }
       if (flow === null) this.failAction(messageOf(error));
-      else this.setLineFlowError("create", messageOf(error), false);
+      else if (error instanceof CloudAgentLineError && RETURNS_TO_PICKER.has(error.code)) {
+        await this.returnToPicker("create", error.message, generation, flow);
+      } else this.setLineFlowError("create", messageOf(error), false);
       return null;
     }
     if (generation !== this.generation) {
@@ -759,15 +790,8 @@ export class CloudAgentState {
       ));
     } catch (error) {
       if (!this.isCurrentLineFlow("change", generation, flow)) return null;
-      if (error instanceof CloudAgentLineError && error.code === "line_occupied") {
-        await this.refresh();
-        if (!this.isCurrentLineFlow("change", generation, flow)) return null;
-        this.lineFlow = {
-          kind: "change",
-          request: null,
-          ui: { ...idleLineFlowUi(), message: error.message },
-        };
-        this.publish();
+      if (error instanceof CloudAgentLineError && RETURNS_TO_PICKER.has(error.code)) {
+        await this.returnToPicker("change", error.message, generation, flow);
       } else {
         this.setLineFlowError("change", messageOf(error), false);
       }
@@ -864,6 +888,33 @@ export class CloudAgentState {
       request: null,
       ui: { ...idleLineFlowUi(), completedAgentId: agentId },
     };
+  }
+
+  /**
+   * Hand the picker back, with the reason and NO request behind it.
+   *
+   * The alternative to `setLineFlowError` for a line that turned out not to be
+   * usable, and the difference is the request. That one keeps it so "Try again"
+   * can resend, which is right for a timeout and wrong here: the same uid earns
+   * the same refusal every time, so the button would spin forever on a line
+   * that is never coming back. Dropping it turns the retry into a fresh choice
+   * of line, and the refresh first is what makes the choice honest — the line
+   * that just failed is gone from the list by the time it is offered.
+   */
+  private async returnToPicker(
+    kind: CloudLineRequest["kind"],
+    message: string,
+    generation: number,
+    flow: number,
+  ): Promise<void> {
+    await this.refresh();
+    if (!this.isCurrentLineFlow(kind, generation, flow)) return;
+    this.lineFlow = {
+      kind,
+      request: null,
+      ui: { ...idleLineFlowUi(), message },
+    };
+    this.publish();
   }
 
   private setLineFlowError(
@@ -1104,10 +1155,44 @@ export class CloudAgentState {
     return agent.line?.uid ?? null;
   }
 
+  /**
+   * The lines an agent can actually be created on: no agent occupies them, and
+   * this account holds a home chat on them.
+   *
+   * The chat half is not cosmetic. `GET /v1/lines` answers with the service's
+   * entire pool and no ownership predicate — `agentUid` is the only
+   * account-scoped fact on a row — so a line this account has never held, or
+   * one whose chats went away with a deleted agent, arrives looking free.
+   * Offering it produces a refusal at create time, because the server resolves
+   * a live home chat on the line before it will claim anything.
+   *
+   * Nothing is offered while the chat list is unknown. A failed refresh means
+   * ownership is unknown, and the whole service pool is the wrong guess to make
+   * about it — an empty picker says so, where a full one invites the failure
+   * this exists to prevent.
+   */
   private freeLines(): CloudAgentLine[] {
-    return (this.lines ?? []).filter((line) => line.agentUid === null)
+    if (!this.chatsLoaded) return [];
+    return (this.lines ?? [])
+      .filter((line) => line.agentUid === null && this.hasHomeChatOn(line.uid))
       .map((line) => this.lineDetails(line.uid).line!)
       .sort((a, b) => a.label.localeCompare(b.label));
+  }
+
+  /**
+   * The server's home-chat test, applied to the chats already loaded.
+   *
+   * A line qualifies on an ACTIVE one-to-one thread with the account holder and
+   * nothing else — the same three facts the API checks before it will claim an
+   * agent. A thread still pending, or one with anybody else in it, is a real
+   * chat on the line and still not somewhere an agent can be put.
+   */
+  private hasHomeChatOn(lineUid: string): boolean {
+    return this.chats.some((chat) =>
+      chat.lineUid === lineUid
+      && chat.status === "active"
+      && chat.memberCount === 1
+      && chat.hasOwnerMember);
   }
 
   /** Resolve the line's current threads. */
@@ -1345,6 +1430,9 @@ export class CloudChatsClient implements CloudChatsApi {
         return [{
           uid: chat.uid,
           lineUid: chat.lineUid,
+          status: chat.status,
+          memberCount: chat.memberCount,
+          hasOwnerMember: chat.participants.some((member) => member.isOwner),
           label: activationChatLabel(safe),
           recipients: activationChatRecipients(safe),
           people: chatPeople(safe),

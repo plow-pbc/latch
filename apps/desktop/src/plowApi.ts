@@ -346,6 +346,16 @@ export interface ActivationChat {
   lineUid: string | null;
   /** Members only — the humans in the chat. */
   participants: ActivationChatParticipant[];
+  /**
+   * The size of the roster the server keeps, which is not `participants.length`.
+   *
+   * A chat resource is served as one entry for the line itself followed by one
+   * per roster row, and `participants` above drops both the line and any peer
+   * line seated in the thread. Counting what the server counts is what lets a
+   * caller ask whether a chat is one-to-one, so it is carried rather than
+   * recomputed from a list two kinds of row have already been taken out of.
+   */
+  memberCount: number;
   createdAt: string;
 }
 
@@ -424,6 +434,11 @@ export function parseActivationChat(raw: unknown): ActivationChat | null {
     line: line && typeof line.provider_key === "string" ? line.provider_key : null,
     lineUid: line && typeof line.uid === "string" ? line.uid : null,
     participants,
+    // Everything but the chat's own line, which is served as the first entry.
+    // A row that arrived without one is counted whole rather than short: an
+    // over-count only ever withholds a line, and guessing low would offer one
+    // that cannot be used.
+    memberCount: Math.max(0, all.length - (agent ? 1 : 0)),
     createdAt: typeof chat.created_at === "string" ? chat.created_at : "",
   };
 }

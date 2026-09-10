@@ -136,19 +136,69 @@ describe("CloudAgentsClient creation", () => {
     });
   });
 
-  it("maps NO_HOME_CHAT to fixed create copy", async () => {
+  // The advice belongs to the CODED conflict and to nothing else — see the
+  // bare-404 case below, which is the same situation for a line that cannot be
+  // texted into working.
+  it("maps the coded NO_HOME_CHAT to fixed create copy", async () => {
     const { fetchImpl } = recordingFetch([{
       status: 409,
       body: { detail: { code: "NO_HOME_CHAT", message: `echo ${CREDENTIAL}` } },
     }]);
 
-    await expect(new CloudAgentsClient(new PlowApi("https://api.plow.co", fetchImpl)).create(
-      CREDENTIAL,
-      { lineUid: "lin_willow", name: "Kitchen", provider: "exe:hermes" },
-    )).rejects.toThrow("Text this line once first, then try again.");
+    const error = await new CloudAgentsClient(new PlowApi("https://api.plow.co", fetchImpl))
+      .create(CREDENTIAL, { lineUid: "lin_willow", name: "Kitchen", provider: "exe:hermes" })
+      .catch((caught: unknown) => caught);
+
+    expect(error).toMatchObject({
+      code: "no_home_chat",
+      message: "Text this line once first, then try again.",
+    });
+    expect(String(error)).not.toContain(CREDENTIAL);
     expect(console.error).toHaveBeenCalledWith(
       "[cloud-agent] request failed status=409 code=NO_HOME_CHAT",
     );
+  });
+
+  // Not `no_home_chat`: that one tells the person to text the line, and this
+  // 404 is equally the answer for a line that is missing, is somebody else's,
+  // or has had every chat on it retired — where texting it cannot work.
+  it("maps the bare 404 to unavailable copy, not to the coded no-home-chat advice", async () => {
+    const { fetchImpl } = recordingFetch([{ status: 404, body: { detail: "Line not found" } }]);
+
+    const error = await new CloudAgentsClient(new PlowApi("https://api.plow.co", fetchImpl))
+      .create(CREDENTIAL, { lineUid: "lin_willow", name: "Kitchen", provider: "exe:hermes" })
+      .catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(CloudAgentLineError);
+    expect(error).toMatchObject({
+      code: "line_unavailable",
+      message: "This line isn't available right now. Refresh and try again.",
+    });
+    expect(console.error).toHaveBeenCalledWith(
+      "[cloud-agent] request failed status=404 code=LINE_UNAVAILABLE",
+    );
+  });
+
+  it.each([
+    ["a different 404 sentence", "Assistant not found"],
+    ["a sentence echoing the credential", `provider echoed ${CREDENTIAL}`],
+    // Inherited keys are not codes. Unguarded, these resolve up the prototype
+    // chain and put a function where the log expects a code.
+    ["a prototype key", "constructor"],
+    ["the proto key", "__proto__"],
+    ["a prototype method", "hasOwnProperty"],
+  ])("leaves %s unmapped and says nothing about the line", async (_label, detail) => {
+    const { fetchImpl } = recordingFetch([{ status: 404, body: { detail } }]);
+
+    const error = await new CloudAgentsClient(new PlowApi("https://api.plow.co", fetchImpl))
+      .create(CREDENTIAL, { lineUid: "lin_willow", name: "Kitchen", provider: "exe:hermes" })
+      .catch((caught: unknown) => caught as Error);
+
+    expect(error).not.toBeInstanceOf(CloudAgentLineError);
+    expect(error.message).toBe("Plow returned 404.");
+    expect(error.message).not.toContain(CREDENTIAL);
+    expect(console.error).toHaveBeenCalledWith("[cloud-agent] request failed status=404");
+    expect(vi.mocked(console.error).mock.calls.flat().join(" ")).not.toContain(CREDENTIAL);
   });
 
   it("uses fixed copy and logs only status for an unknown authenticated error", async () => {
@@ -225,6 +275,30 @@ describe("CloudAgentsClient line changes", () => {
     expect(console.error).toHaveBeenCalledWith(
       `[cloud-agent] request failed status=409 code=${wireCode}`,
     );
+  });
+
+  it("maps the bare 404 to the same unavailable copy on the move path", async () => {
+    const { fetchImpl } = recordingFetch([{ status: 404, body: { detail: "Line not found" } }]);
+
+    const error = await new CloudAgentsClient(new PlowApi("https://api.plow.co", fetchImpl))
+      .changeLine(CREDENTIAL, "agent_123", "lin_ash")
+      .catch((caught: unknown) => caught);
+
+    expect(error).toMatchObject({
+      code: "line_unavailable",
+      message: "This line isn't available right now. Refresh and try again.",
+    });
+  });
+
+  it("keeps a missing agent apart from a line with no home chat", async () => {
+    const { fetchImpl } = recordingFetch([{ status: 404, body: { detail: "Assistant not found" } }]);
+
+    const error = await new CloudAgentsClient(new PlowApi("https://api.plow.co", fetchImpl))
+      .changeLine(CREDENTIAL, "agent_123", "lin_ash")
+      .catch((caught: unknown) => caught as Error);
+
+    expect(error).not.toBeInstanceOf(CloudAgentLineError);
+    expect(error.message).toBe("Plow returned 404.");
   });
 
 });
