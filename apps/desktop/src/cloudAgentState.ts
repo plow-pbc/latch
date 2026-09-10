@@ -79,6 +79,12 @@ export interface CloudChatOption {
   uid: string;
   /** Stable identity of the line this thread belongs to. */
   lineUid: string | null;
+  /** As served: `pending` until the provider confirms the thread, then `active`. */
+  status: string;
+  /** The server's own roster size for this chat — see `ActivationChat.memberCount`. */
+  memberCount: number;
+  /** Whether a roster row is flagged as the account holder's. */
+  hasOwnerMember: boolean;
   label: string;
   /**
    * The numbers a message to this chat goes to, or `null` when we do not know
@@ -603,6 +609,9 @@ export class CloudAgentState {
         const createdChat: CloudChatOption = {
           uid: safe.uid,
           lineUid: safe.lineUid,
+          status: safe.status,
+          memberCount: safe.memberCount,
+          hasOwnerMember: safe.participants.some((member) => member.isOwner),
           label: activationChatLabel(safe),
           recipients: activationChatRecipients(safe),
           people: chatPeople(safe),
@@ -1106,7 +1115,7 @@ export class CloudAgentState {
 
   /**
    * The lines an agent can actually be created on: no agent occupies them, and
-   * this account holds a chat on them.
+   * this account holds a home chat on them.
    *
    * The chat half is not cosmetic. `GET /v1/lines` answers with the service's
    * entire pool and no ownership predicate — `agentUid` is the only
@@ -1115,17 +1124,33 @@ export class CloudAgentState {
    * Offering it produces a refusal at create time, because the server resolves
    * a live home chat on the line before it will claim anything.
    *
-   * Gated on `chatsLoaded` because a failed chat refresh empties `chats`. With
-   * the chat list unknown every line would read as unowned and the picker
-   * would go blank on a blip, so unknown falls back to the occupancy test
-   * alone: offering a line that may refuse beats offering none.
+   * Nothing is offered while the chat list is unknown. A failed refresh means
+   * ownership is unknown, and the whole service pool is the wrong guess to make
+   * about it — an empty picker says so, where a full one invites the failure
+   * this exists to prevent.
    */
   private freeLines(): CloudAgentLine[] {
+    if (!this.chatsLoaded) return [];
     return (this.lines ?? [])
-      .filter((line) => line.agentUid === null
-        && (!this.chatsLoaded || this.chats.some((chat) => chat.lineUid === line.uid)))
+      .filter((line) => line.agentUid === null && this.hasHomeChatOn(line.uid))
       .map((line) => this.lineDetails(line.uid).line!)
       .sort((a, b) => a.label.localeCompare(b.label));
+  }
+
+  /**
+   * The server's home-chat test, applied to the chats already loaded.
+   *
+   * A line qualifies on an ACTIVE one-to-one thread with the account holder and
+   * nothing else — the same three facts the API checks before it will claim an
+   * agent. A thread still pending, or one with anybody else in it, is a real
+   * chat on the line and still not somewhere an agent can be put.
+   */
+  private hasHomeChatOn(lineUid: string): boolean {
+    return this.chats.some((chat) =>
+      chat.lineUid === lineUid
+      && chat.status === "active"
+      && chat.memberCount === 1
+      && chat.hasOwnerMember);
   }
 
   /** Resolve the line's current threads. */
@@ -1363,6 +1388,9 @@ export class CloudChatsClient implements CloudChatsApi {
         return [{
           uid: chat.uid,
           lineUid: chat.lineUid,
+          status: chat.status,
+          memberCount: chat.memberCount,
+          hasOwnerMember: chat.participants.some((member) => member.isOwner),
           label: activationChatLabel(safe),
           recipients: activationChatRecipients(safe),
           people: chatPeople(safe),

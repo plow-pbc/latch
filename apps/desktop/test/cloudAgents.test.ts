@@ -151,7 +151,10 @@ describe("CloudAgentsClient creation", () => {
     );
   });
 
-  it("maps the bare 404 a retired home chat leaves to the same create copy", async () => {
+  // Not `no_home_chat`: that one tells the person to text the line, and this
+  // 404 is equally the answer for a line that is missing, is somebody else's,
+  // or has had every chat on it retired — where texting it cannot work.
+  it("maps the bare 404 to unavailable copy, not to the coded no-home-chat advice", async () => {
     const { fetchImpl } = recordingFetch([{ status: 404, body: { detail: "Line not found" } }]);
 
     const error = await new CloudAgentsClient(new PlowApi("https://api.plow.co", fetchImpl))
@@ -160,12 +163,28 @@ describe("CloudAgentsClient creation", () => {
 
     expect(error).toBeInstanceOf(CloudAgentLineError);
     expect(error).toMatchObject({
+      code: "line_unavailable",
+      message: "This line isn't available right now. Refresh and try again.",
+    });
+    expect(console.error).toHaveBeenCalledWith(
+      "[cloud-agent] request failed status=404 code=LINE_UNAVAILABLE",
+    );
+  });
+
+  it("keeps the text-this-line advice for the server's coded 409", async () => {
+    const { fetchImpl } = recordingFetch([{
+      status: 409,
+      body: { detail: { code: "NO_HOME_CHAT", message: "This line has no active one-to-one home chat." } },
+    }]);
+
+    const error = await new CloudAgentsClient(new PlowApi("https://api.plow.co", fetchImpl))
+      .create(CREDENTIAL, { lineUid: "lin_willow", name: "Kitchen", provider: "exe:hermes" })
+      .catch((caught: unknown) => caught);
+
+    expect(error).toMatchObject({
       code: "no_home_chat",
       message: "Text this line once first, then try again.",
     });
-    expect(console.error).toHaveBeenCalledWith(
-      "[cloud-agent] request failed status=404 code=NO_HOME_CHAT",
-    );
   });
 
   it.each([
@@ -266,7 +285,7 @@ describe("CloudAgentsClient line changes", () => {
     );
   });
 
-  it("maps the bare 404 to the same copy on the move path", async () => {
+  it("maps the bare 404 to the same unavailable copy on the move path", async () => {
     const { fetchImpl } = recordingFetch([{ status: 404, body: { detail: "Line not found" } }]);
 
     const error = await new CloudAgentsClient(new PlowApi("https://api.plow.co", fetchImpl))
@@ -274,8 +293,8 @@ describe("CloudAgentsClient line changes", () => {
       .catch((caught: unknown) => caught);
 
     expect(error).toMatchObject({
-      code: "no_home_chat",
-      message: "Text this line once first, then try again.",
+      code: "line_unavailable",
+      message: "This line isn't available right now. Refresh and try again.",
     });
   });
 

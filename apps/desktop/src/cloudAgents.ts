@@ -35,7 +35,8 @@ export type CloudAgentLineErrorCode =
   | "provision_in_flight"
   | "pending_teardown"
   | "chat_deleted"
-  | "provider_conflict";
+  | "provider_conflict"
+  | "line_unavailable";
 
 export class CloudAgentLineError extends PlowApiError {
   constructor(
@@ -288,8 +289,15 @@ function responseCode(decoded: unknown): string | null {
  * Creating an agent and moving one both resolve the line's home chat first,
  * and both answer a missing one with a bare `{"detail": "<sentence>"}` rather
  * than the `{code, message}` shape the conflicts use. Left unmapped that
- * surfaces as "Plow returned 404.", which tells the person nothing they can
- * act on — while the remedy already has copy sitting in `LINE_ERRORS`.
+ * surfaces as "Plow returned 404.", which tells the person nothing at all.
+ *
+ * It does NOT mean the same thing as the coded `NO_HOME_CHAT` conflict, and is
+ * deliberately not mapped to it. That one says the line is the account's and
+ * needs a first message; this one is the answer to a line that is missing, is
+ * somebody else's, or has had every chat on it retired — and "text this line
+ * once first" is advice that cannot be followed for any of the three. So the
+ * copy claims only what is known, and `no_home_chat` stays reserved for the
+ * server saying it in a code.
  *
  * Matched on the exact sentence, never on the status: the same 404 also
  * carries "Assistant not found", which is a different problem with no line
@@ -298,7 +306,7 @@ function responseCode(decoded: unknown): string | null {
  * it arrives — so this stays a narrow, exact-match backstop.
  */
 const DETAIL_SENTENCES: Readonly<Record<string, string>> = Object.freeze({
-  "line not found": "NO_HOME_CHAT",
+  "line not found": "LINE_UNAVAILABLE",
 });
 
 async function throwCloudCallError(
@@ -346,6 +354,14 @@ const LINE_ERRORS: Readonly<Record<string, {
   PROVIDER_CONFLICT: {
     code: "provider_conflict",
     message: "Another kind of agent already uses that line.",
+  },
+  // Not a server code today — see `DETAIL_SENTENCES`. Refreshing is a real
+  // remedy rather than a shrug: the picker reads the same chats the server
+  // decides on, so a line in this state goes away on the next read instead of
+  // staying there to be picked again.
+  LINE_UNAVAILABLE: {
+    code: "line_unavailable",
+    message: "This line isn't available right now. Refresh and try again.",
   },
 });
 
