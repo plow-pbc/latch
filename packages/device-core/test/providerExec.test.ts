@@ -5,7 +5,7 @@
  * tool-shaped: the capability is the argv the owner approved, the token never
  * touches it, and a refusal or a failed mint never spawns a child.
  */
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -297,6 +297,7 @@ case "$*" in
       tok-cbad) exit 9 ;;
       *) echo '[]' ;;
     esac ;;
+  *"calendar calendars"*) echo '[{"id":"primary","summary":"Calendar"}]' ;;
   *"calendar create"*) echo '{"created":"evt-1"}' ;;
   *"calendar events"*) echo '[{"summary":"argv: '"$*"'","start":"2026-01-01T00:00:00Z"}]' ;;
   *"gmail search"*)
@@ -330,6 +331,40 @@ esac
     { account: "a@example.com", token: "tok-a", isDefault: true },
     { account: "b@example.com", token: "tok-b", isDefault: false },
   ];
+
+  describe("calendar discovery", () => {
+    afterEach(() => { while (cleanups.length) cleanups.pop()!(); });
+
+    itSpawns("lists calendars across connected accounts without an account flag", async () => {
+      const d = device(accountsMinter(AB), [plowVendorDir()]);
+      const response = await run(d, ["gog", "calendar", "calendars", "--json", "--results-only"]);
+      expect(response).toMatchObject({
+        status: "completed",
+        items: [
+          { id: "primary", summary: "Calendar", account: "a@example.com" },
+          { id: "primary", summary: "Calendar", account: "b@example.com" },
+        ],
+        degraded: [],
+      });
+    });
+
+    itSpawns("lists calendars with an explicitly named account", async () => {
+      const d = device(accountsMinter(AB), [plowVendorDir()]);
+      const response = await run(d, ["gog", "calendar", "calendars", "--json", "--results-only", "--account", "b@example.com"]);
+      expect(jv(response).get("status").str).toBe("completed");
+      expect(String(jv(response).get("output").str)).toContain('[{"id":"primary","summary":"Calendar"}]');
+    });
+
+    itSpawns("tags an accountless calendar list when only one account is connected", async () => {
+      const d = device(accountsMinter([AB[0]!]), [plowVendorDir()]);
+      const response = await run(d, ["gog", "calendar", "calendars", "--json", "--results-only"]);
+      expect(response).toMatchObject({
+        status: "completed",
+        items: [{ id: "primary", summary: "Calendar", account: "a@example.com" }],
+        degraded: [],
+      });
+    });
+  });
 
   itSpawns("fans a read out across accounts and returns one merged, tagged, sorted result", async () => {
     const d = device(accountsMinter(AB, [{ account: "c@example.com", reason: "needs_reauth" }]), [
