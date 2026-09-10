@@ -1038,7 +1038,7 @@ reach it (`Onboarding.advance()` → the injected `applyAvailabilityDefault`).
 survives sign-out, so a user who turned a switch off stays off (a from-source
 run has its own home, so it never spends a packaged install's first run).
 Agent-side, the per-turn prefix says the Mac has to be awake
-(plow-pbc/hermes-plow-chat#75); this screen is where the owner can act on it.
+(plow-pbc/hermes-plugin-plow#75); this screen is where the owner can act on it.
 
 ## 11c. Telemetry (PostHog)
 

@@ -45,7 +45,7 @@ Not here:
   calling agent and forwards MCP to this Mac. This repo owns the client that
   dials it (`packages/relay-client`, `wire.ts`) and the server it forwards to,
   not the relay.
-- **Prompt framing of these tools** — `plow-pbc/hermes-plow-chat`, the
+- **Prompt framing of these tools** — `plow-pbc/hermes-plugin-plow`, the
   `plow_chat` plugin: the section that tells a runtime dropping MCP
   `instructions` what the Mac tools are for. `SERVER_INSTRUCTIONS` here stays
   canonical; the plugin's section restates it for that one runtime, so a

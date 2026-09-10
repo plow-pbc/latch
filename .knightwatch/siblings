@@ -7,8 +7,8 @@
 # MCP tools; a latch reviewer that cannot see it reviews the device half of a
 # cross-repo contract blind.
 #
-# hermes-plow-chat carries the plugin's restatement of SERVER_INSTRUCTIONS for
+# hermes-plugin-plow carries the plugin's restatement of SERVER_INSTRUCTIONS for
 # runtimes that drop MCP `instructions`; a change to what these tools say about
 # themselves has to be read against that copy.
 plow-pbc/plow
-plow-pbc/hermes-plow-chat
+plow-pbc/hermes-plugin-plow
