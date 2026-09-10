@@ -32,9 +32,9 @@ export interface BrowserHostConfig {
   command: string[];
   env?: Record<string, string>;
   profileDir?: string;
-  /** The user's own browser profile. Every session opens on a clone of it, so
-   * every browser is signed in wherever they are, and merges what it signed
-   * into back on close. Unset means sessions start on an empty profile. */
+  /** The user's own browser profile. DeviceAgent always supplies this path;
+   * sessions clone it and merge cookies back on close. Their sign-in state
+   * depends on the seed profile's contents. */
   seedProfile?: string;
   /** Argv that reconciles a session's cookies into the user's, before its
    * three paths: the user's profile, the session's clone, and the baseline

@@ -9,6 +9,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import {
+  loadPool,
   pinnedEntry,
   poolBrowserBuild,
   poolMatchesBrowser,
@@ -34,6 +35,14 @@ const pinPath = (): string => {
 afterEach(() => {
   for (const d of dirs) fs.rmSync(d, { recursive: true, force: true });
   dirs = [];
+});
+
+it("names the missing fingerprint pool and the build step", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pool-"));
+  dirs.push(dir);
+  expect(() => loadPool(dir)).toThrow(
+    `fingerprint pool ${path.join(dir, "fingerprints.json")} is missing; run node scripts/build-browser-runtime.mjs`,
+  );
 });
 
 describe("fingerprint pinning", () => {
