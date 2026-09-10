@@ -33,7 +33,7 @@ export const REVIEWER_MAX_TOKENS = 4096;
  * (`reviewPolicy.ts`), so a budget inside the spread of real reviews refuses
  * operations the reviewer would have allowed. It was 30s, against a p90 of 16s
  * and a slowest-observed 24s. The tunnelled call handed back a deferred handle
- * long ago — `CALL_BUDGET_MS` is 15s — and both the handle and the approval
+ * long ago — `CALL_BUDGET_MS` is 10s — and both the handle and the approval
  * record live fifteen minutes, so this still lands well inside the window there
  * is to land in.
  */

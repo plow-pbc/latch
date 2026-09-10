@@ -35,8 +35,13 @@ export const HEARTBEAT_INTERVAL_MS = 15_000;
  * a relay implementation must agree with, rather than beside the timeout it
  * constrains. `@domo/mcp-server`'s `CALL_BUDGET_MS` is chosen against it, and
  * `test/wire.test.ts` checks the two still leave room to deliver.
+ *
+ * Twenty seconds is what the Plow API actually waits (`CALL_TIMEOUT_S` in
+ * `plow/relay/pending.py`, itself sized under the MCP client's 30s). This
+ * used to say 25s, so the budget below ran five seconds from the real ceiling
+ * — a busy Mac's delivery lag ate that and agents saw 504s instead of handles.
  */
-export const RELAY_TIMEOUT_MS = 25_000;
+export const RELAY_TIMEOUT_MS = 20_000;
 
 /**
  * Headers that must not be tunnelled in either direction.

@@ -338,11 +338,11 @@ describe("the deferred-result contract (§4.3)", () => {
   });
 
   it("the call budget and handle lifetime are pinned, not merely bounded", () => {
-    // The point of the budget is that a human gets the whole fifteen seconds to
+    // The point of the budget is that a human gets the whole ten seconds to
     // answer inside the original call. Whether that still leaves the relay room
     // to deliver is checked at the seam owning the relay's ceiling —
     // `relay-client/test/wire.test.ts`.
-    expect(CALL_BUDGET_MS).toBe(15_000);
+    expect(CALL_BUDGET_MS).toBe(10_000);
     expect(HANDLE_TTL_MS).toBe(15 * 60_000);
   });
 });
