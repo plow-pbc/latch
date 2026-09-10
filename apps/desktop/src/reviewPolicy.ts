@@ -87,6 +87,35 @@ export function storedRuleMayGrant(settings: Settings): boolean {
   return mode !== "adversarial" && mode !== "deny";
 }
 
+/**
+ * Will this intent be put in front of a person?
+ *
+ * THE one answer to that question. `decideIntent` branches on it below rather
+ * than re-deriving it, and the `goal` field's copy describes THIS — because
+ * copy that enumerated modes was wrong on the live path it forgot: a script in
+ * Approve mode raises the dialog, so "a person sees it only on Macs set to Ask"
+ * was false there.
+ *
+ * A script is that exception. It runs outside the sandbox with nothing but its
+ * own text as the bound (DESIGN.md §6), and a source-level tripwire is not
+ * sound against a dynamic language — the boundary is someone reading the whole
+ * script. Approve mode has no such someone, so a script goes to the dialog.
+ *
+ * Two earlier returns in `decideIntent` mean a `true` here is still not a
+ * promise: `deny` refuses first, and a file operation confined to ~/Plow is
+ * granted without a dialog in any mode. So this answers "does this MODE, for
+ * these capabilities, use the dialog" — which is what the copy claims and no
+ * more.
+ */
+export function opensApprovalWindow(
+  settings: Settings,
+  capabilities: readonly { kind: string }[],
+): boolean {
+  const mode = settings.approvalMode ?? DEFAULT_APPROVAL_MODE;
+  if (mode === "ask") return true;
+  return mode === "approve" && capabilities.some((c) => c.kind === "applescript");
+}
+
 /** Everything `decideIntent` needs from the outside world, injected for tests. */
 export interface DecideDeps {
   settings: Settings;
@@ -148,20 +177,19 @@ export async function decideIntent(
     return { decision: "allow_once", source: APPROVAL_SOURCE_PLOW_FOLDER };
   }
 
-  /** Is the reviewer the decider for this intent? */
-  // Approve: the whole point of the mode. Above the reviewer, because by here
-  // `deny` has already returned and `ask` still wants the human.
-  //
-  // Except a script. It runs outside the sandbox with nothing but its own
-  // text as the bound (DESIGN.md §6), and the source tripwire against a
-  // shell is not sound against a dynamic language — the boundary is
-  // someone reading the whole script. Approve mode has no such someone, so
-  // a script takes the ask path below: the dialog, with the reviewer's hint.
-  if (mode === "approve" && !intent.capabilities.some((c) => c.kind === "applescript")) {
+  // From here there are exactly two outcomes: a dialog, or the reviewer. One
+  // predicate decides which, and the `goal` copy describes that predicate.
+  const dialogWillOpen = opensApprovalWindow(settings, intent.capabilities);
+
+  // Approve: the whole point of the mode, and reached only when no dialog is
+  // owed — a script in this mode goes to the dialog instead (see the predicate).
+  if (!dialogWillOpen && mode === "approve") {
     return { decision: "allow_once", source: "approve" };
   }
 
-  const reviewDecides = mode === "adversarial";
+  // `deny` returned above, approve just did, and ask/approve-with-a-script are
+  // the dialog. What is left is adversarial.
+  const reviewDecides = !dialogWillOpen;
 
   // Run one review, recording its start and outcome onto the intent's audit
   // timeline so the app shows "adversarial agent started" + its verdict between

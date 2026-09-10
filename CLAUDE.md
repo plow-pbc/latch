@@ -89,9 +89,9 @@ Integration coverage, which owns that list.
 - **Capabilities are built on this Mac, from tool arguments.** An agent never
   sends a capability set or an intent — it calls a tool, and `mcp-server`
   derives the capabilities the policy engine and the sandbox will enforce. Goal
-  text rides along for the record — shown only when Ask opens a dialog, and
-  never sent to the reviewer, whose prompt omits it on purpose — and never
-  influences the bound.
+  text rides along for the record — shown to a person only where this Mac opens
+  its approval dialog (`opensApprovalWindow`), and never sent to the reviewer,
+  whose prompt omits it on purpose — and never influences the bound.
 - **Nothing may block past the call budget.** `RELAY_TIMEOUT_MS` in
   `@domo/relay-client`'s `wire.ts` is the relay's ceiling — it belongs with the
   rest of the cross-repo contract — and `CALL_BUDGET_MS` in `@domo/mcp-server`

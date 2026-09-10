@@ -97,8 +97,9 @@ Design points:
   returns a `handle` plus output-so-far, and the agent polls `plow_get_output`
   for incremental bytes. stdout and stderr are merged into one stream.
 - **`goal`:** each mutating tool accepts an optional goal/justification string.
-  It is always recorded; it is displayed only where Ask opens a dialog, and it
-  is never given to the AI reviewer (§4's prompt omits the agent's goal on
+  It is always recorded; it is displayed only where this Mac opens its approval
+  dialog (`opensApprovalWindow` — Ask, and a script under Approve), and it is
+  never given to the AI reviewer (§4's prompt omits the agent's goal on
   purpose), so on the default mode nobody reads it. Session-level goals (from the access request or
   spin-up) become the intent's `plan_context`.
 - **Network default:** `run_command` denies network unless `network: true` was

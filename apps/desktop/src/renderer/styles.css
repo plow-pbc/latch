@@ -964,42 +964,47 @@ pre.script {
 }
 .live-toggle:hover { color: var(--fg); border-color: var(--fg); }
 
-/* Expanded: the same box grows over the window so the owner can actually read
-   the page the agent is on. Toggled by a click on the box, in either direction.
+/* Expanded: the same box grows to about 60% of the window so the owner can
+   actually read the page the agent is on. Toggled by a click on it, either way.
 
-   It stops BELOW the titlebar rather than covering it. The window is
-   `hiddenInset`, so macOS draws its close/minimise/zoom buttons over our own
-   titlebar — and a backdrop drawn under them left three coloured dots floating
-   on a black field with nothing around them to say whose they were. Leaving the
-   titlebar alone puts them back on the bar they belong to, and keeps the tabs
-   reachable while the view is up.
+   NOT A MODAL, and that is the whole point of the change. It used to span every
+   edge below the titlebar behind a dark scrim, which is a dialog in all but
+   name: the app went away, and the only thing left on screen was the three
+   macOS traffic lights `hiddenInset` draws over our titlebar, floating on black
+   with nothing to say whose they were. "It takes up an awkward amount of space"
+   is what that looked like from the outside.
 
-   The picture is sized to ~60% of the window rather than filling it: a browser
-   frame blown up to the full height of a Mac display is bigger than the thing
-   it is showing needs, and it left the app with nowhere to put anything else. */
+   So it is a panel now. It floats over the bottom-right of the window at ~60%
+   of each dimension, with a shadow to lift it off what is behind; the audit
+   list, the tabs and the titlebar all stay visible and clickable. Clicking the
+   panel (or its Minimize button) puts it back in the corner — clicking anywhere
+   else does nothing, which is the ordinary behaviour of a thing that is not
+   trapping you. */
 .live-corner img { cursor: zoom-in; }
 .live-corner.expanded {
-  position: fixed; top: var(--titlebar-h); left: 0; right: 0; bottom: 0;
+  position: fixed;
+  right: 16px; bottom: 16px;
+  /* 60% of the window, and of the height actually available below the titlebar. */
+  width: 60vw;
+  max-width: calc(100vw - 32px);
   /* The collapsed box is a flex item pinned to the bottom of the detail pane,
-     and `align-self: flex-end` survives going out of flow: it wins over
-     top/bottom and shrink-wraps the overlay to its own content, leaving the
-     backdrop as a band across the lower half of the window. Reset it, or the
-     scrim only covers what the picture happens to need. */
+     and `align-self: flex-end` survives going out of flow — it shrink-wraps the
+     panel and fights the width above. Reset it. */
   align-self: auto;
-  z-index: 60; padding: 24px; gap: 10px;
-  align-items: center; justify-content: center; cursor: zoom-out;
-  background: rgba(0, 0, 0, 0.72);
+  z-index: 60; padding: 10px; gap: 8px;
+  align-items: stretch; cursor: zoom-out;
+  background: var(--card);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.28);
 }
 .live-corner.expanded img {
-  width: 60vw; height: auto;
-  max-width: calc(100% - 8px);
-  /* 60% of what is actually visible, which is the window minus the titlebar. */
-  max-height: calc(60vh - var(--titlebar-h) * 0.6);
+  width: 100%; height: auto;
+  max-height: calc((100vh - var(--titlebar-h)) * 0.6);
+  object-fit: contain;
   cursor: zoom-out;
 }
-.live-corner.expanded .live-cap { max-width: 100%; color: #fafafa; }
-.live-corner.expanded .live-toggle { color: #fafafa; border-color: rgba(250, 250, 250, 0.55); }
-.live-corner.expanded .live-toggle:hover { color: #fff; border-color: #fff; }
+.live-corner.expanded .live-cap { max-width: 100%; }
 
 .live-corner.offscope img { border-color: var(--red-bd); }
 .live-corner.offscope .live-cap { color: var(--red-fg); }

@@ -143,7 +143,7 @@ reaches your code, and do not depend on the agent behaving:
 - **Deferred handles are scoped to the agent that created them.** Another agent presenting one gets
   `unknown`, indistinguishable from a handle that never existed.
 - **Goal text never reaches the profile.** It is carried for the record, marked unverified, and
-  shown only where Ask opens a dialog — the AI reviewer's prompt omits it, so on the default mode
+  shown only where this Mac opens its approval dialog — the AI reviewer's prompt omits it, so on the default mode
   nothing reads it at all; the capability set is what is passed to profile generation.
 
 **What we do not guarantee, and never did:** anything about what the generated profile actually

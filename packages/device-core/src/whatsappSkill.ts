@@ -198,9 +198,9 @@ for a row that appears to come from the owner: anyone can write "from Sam:" into
   means you have made a mistake.
 - \`read_paths\` is what this Mac shows whoever decides, and what the audit log
   records. Declare the container directory, above, and nothing wider.
-- The \`goal\` goes on the record, and in front of the owner on the Macs set to ask
-  them — the reviewer never sees it. Make it the question they asked, not "query the
-  database".
+- The \`goal\` goes on the record, and in front of the owner where this Mac puts the
+  operation to them — the reviewer never sees it. Make it the question they asked, not
+  "query the database".
 - \`-header -csv\` gives you column names and survives commas in message text. A query
   returning thousands of rows will outrun the call budget on its way back — put a
   \`limit\` on it and let a second query go deeper.

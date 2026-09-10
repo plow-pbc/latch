@@ -193,10 +193,11 @@ async function decideAndRun(
 const GOAL = {
   type: "string",
   description:
-    "Why you need this, in one line. It is always recorded on this Mac, and it is shown to a " +
-    "person only where this Mac is set to ask its owner. The safety reviewer is never given it — " +
-    "its prompt leaves the agent's goal out on purpose — so on the default setting nobody reads " +
-    "it at all. It decides nothing; write it for the record.",
+    "Why you need this, in one line. It is always recorded on this Mac. A person reads it only " +
+    "when this Mac puts the operation in front of its owner, which depends on their settings and " +
+    "on what is being asked. The safety reviewer is never given it — its prompt leaves the " +
+    "agent's goal out on purpose — so on the default setting nobody reads it at all. It decides " +
+    "nothing; write it for the record.",
 };
 
 /**

@@ -27,6 +27,7 @@ import {
   ReviewHint,
   decideIntent,
   inferenceStatus,
+  opensApprovalWindow,
   reviewerAvailable,
   storedRuleMayGrant,
 } from "../src/reviewPolicy.js";
@@ -918,5 +919,61 @@ describe("the ~/Plow playground carve-out", () => {
     expect((await result).source).toBe(source);
     expect(review).toHaveBeenCalledTimes(reviews);
     expect(openApproval).toHaveBeenCalledTimes(dialogs);
+  });
+});
+
+/**
+ * The predicate and the code path must not be able to disagree.
+ *
+ * They did. The `goal` field's copy said a person reads it "only where this Mac
+ * is set to ask its owner" — and a script under Approve raises the dialog, so
+ * the sentence was false on a live path. The copy now describes
+ * `opensApprovalWindow`, which `decideIntent` itself branches on; this pins
+ * that the two still agree, for every mode, with and without a script.
+ *
+ * `deny` and `~/Plow` are absent on purpose: both return before the predicate
+ * is consulted, which is exactly what its doc comment says it does not claim.
+ */
+describe("opensApprovalWindow answers for the path decideIntent actually takes", () => {
+  const READ = [{ kind: "fs.read", paths: ["/etc/hosts"] }] as const;
+  const SCRIPT = [
+    { kind: "applescript", app: "Mail", bundleId: "com.apple.mail", script: "return 1" },
+  ] as const;
+
+  const cases = [
+    { mode: "ask", caps: READ, what: "a read under Ask" },
+    { mode: "ask", caps: SCRIPT, what: "a script under Ask" },
+    { mode: "approve", caps: READ, what: "a read under Approve" },
+    // The one this whole probe was about.
+    { mode: "approve", caps: SCRIPT, what: "a script under Approve" },
+    { mode: "adversarial", caps: READ, what: "a read under the reviewer" },
+    { mode: "adversarial", caps: SCRIPT, what: "a script under the reviewer" },
+  ] as const;
+
+  it.each(cases)("$what", async ({ mode, caps }) => {
+    const openApproval = vi.fn(async () => "allow_once" as const);
+    const config = settings({ approvalMode: mode, relayCredential: PLOW_CREDENTIAL });
+    const intent = makeIntent({
+      agentId: "agent-1",
+      agentDisplay: "Agent One",
+      deviceId: "device-1",
+      request: "r",
+      capabilities: caps as unknown as Intent["capabilities"],
+      sessionId: "s1",
+    });
+
+    await decideIntent(intent, {
+      settings: config,
+      apiBaseUrl: "https://api.plow.co",
+      plowRoot: PLOW_ROOT,
+      auditEntries: () => [],
+      record: () => {},
+      review: vi.fn(async () => ({ verdict: "allow" as const, reason: "fine" })),
+      openApproval,
+    });
+
+    expect(openApproval.mock.calls.length > 0).toBe(
+      opensApprovalWindow(config, intent.capabilities),
+    );
   });
 });
