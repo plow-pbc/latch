@@ -273,9 +273,16 @@ describe("a tool call end to end, in process", () => {
     );
     expect(isError).toBe(true);
     expect(payload.status).toBe("denied");
-    // A human saying no is between them and their Mac: it explains nothing, and
-    // in particular must not read like an account problem.
-    expect(payload.reason).toBe("the owner of this Mac denied the request");
+    // A refusal is between this Mac and its owner: it explains nothing, and in
+    // particular must not read like an account problem.
+    //
+    // It also must not name WHO refused. This default sentence is reached with
+    // no source in hand — a reviewer denial arrives carrying no reason at all —
+    // and it used to say "the owner of this Mac denied the request", which is
+    // how agents came to tell people they had refused something they were never
+    // shown. Where the source IS known the wording is per-source, below.
+    expect(payload.reason).toBe("this Mac denied the request");
+    expect(payload.reason).not.toMatch(/\bowner\b/);
     expect(JSON.stringify(payload)).not.toMatch(/credit|balance|plow/i);
     expect(events(device)).toEqual(["intent_received", "intent_decision"]);
     expect(events(device)).not.toContain("file_read");

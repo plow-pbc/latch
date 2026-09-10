@@ -288,18 +288,21 @@ describe("every tool this Mac can stop says so", () => {
   });
 });
 
-describe("the goal field names whoever will read it", () => {
-  it("names the reader without promising a human, and offers nothing for a better answer", async () => {
+describe("the goal field is honest about who ever reads it", () => {
+  it("promises no reader it does not have, and offers nothing for a better answer", async () => {
     const tools = parse(await rpc(makeServer(), "tools/list", {})).result?.tools as
       | { name: string; inputSchema: { properties?: Record<string, { description?: string }> } }[]
       | undefined;
     const goal = tools?.find((t) => t.name === "plow_read_file")?.inputSchema?.properties?.goal;
-    // It must say who reads it — but not that the reader is always the owner.
-    // On a Mac in the default mode the reviewer is the only reader, and copy
-    // promising a human there is the drift this file exists to catch.
-    expect(goal?.description).toMatch(/reads exactly this/i);
-    expect(goal?.description).toMatch(/reviewer/i);
-    expect(goal?.description).not.toMatch(/the user reads/i);
+    // Two readers were promised here and neither was real. First the owner,
+    // who is never asked in the default mode. Then — my fix for that — the
+    // safety reviewer, which is worse: `adversarialAgent`'s prompt says "the
+    // agent's goal and plan are deliberately absent", so on the default path
+    // NOBODY reads this. The copy now says where it actually goes, and the
+    // assertions pin the two claims rather than the wording.
+    expect(goal?.description).toMatch(/recorded on this Mac/i);
+    expect(goal?.description).toMatch(/reviewer is never given it/i);
+    expect(goal?.description).not.toMatch(/the (user|owner|reviewer) reads/i);
     // Goal text is display-only and never influences a decision path, so the
     // copy must not imply that explaining well earns anything.
     expect(goal?.description).not.toMatch(/more likely|grant|permission|access/i);

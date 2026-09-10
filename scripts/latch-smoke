@@ -451,8 +451,19 @@ def verdict(events, nonce, expired, since=0):
     mine = [r for r in events if r.get("intentId") == received.get("intentId")]
     decision = first(mine, "intent_decision")
     if decision is not None and decision.get("decision") == "deny":
+        # This line HAS the source, so it can name who refused instead of
+        # guessing. "ask" is the only source with a person behind it; the
+        # reviewer and the policy modes decide with nobody at the Mac, and
+        # calling those the owner is how operators came to believe someone had
+        # been shown the request.
+        who = {
+            "ask": "the owner refused it",
+            "adversarial": "the safety reviewer refused it",
+            "policy": "this Mac's standing policy refused it",
+            "approve": "this Mac refused it",
+        }.get(str(decision.get("source")), "the configured decider refused it")
         return 1, [json.dumps(decision),
-                   "DENIED — the owner refused it. The relay and the device both worked."], True
+                   f"DENIED — {who}. The relay and the device both worked."], True
     end = first(mine, "exec_end")
     if end is not None:
         lines = [json.dumps(r) for r in (first(mine, "exec_start"), end) if r is not None]

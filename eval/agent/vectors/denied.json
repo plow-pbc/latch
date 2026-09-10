@@ -4,11 +4,11 @@
   "prompt": "Read the file ~/notes.txt on my Mac and tell me what it says.",
   "answers": {
     "plow_read_file": {
-      "reason": "the owner of this Mac denied the request",
+      "reason": "this Mac denied the request",
       "status": "denied"
     },
     "plow_run_command": {
-      "reason": "the owner of this Mac denied the request",
+      "reason": "this Mac denied the request",
       "status": "denied"
     },
     "plow_device_status": {

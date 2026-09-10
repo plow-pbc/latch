@@ -44,7 +44,7 @@ out of the page, so it is refused while a field the vault filled still holds one
 ## Sessions and scope
 
 - \`plow_browser_open {origins: ["dominos.com", "*.dominos.com"], goal}\`
-  asks the owner to approve a browsing session bound to those site origins. List every
+  asks this Mac to approve a browsing session bound to those site origins. List every
   domain you expect up front — the apex and the wildcard are separate entries.
 - The window is **hidden by default** — the browser runs in the background and does not
   take over the owner's screen. If they ask to watch it ("show me", "open it where I can

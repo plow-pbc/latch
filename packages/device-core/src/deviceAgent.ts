@@ -628,9 +628,11 @@ export class DeviceAgent {
     // question is what survives a crash between the answer and this line.
     await this.delegate.decisionRecorded?.(intent.intentId);
     if (grant.decision === "deny") {
-      // Most denials need no explanation — the owner said no, and why is
-      // between them and their Mac. A few are standing conditions the calling
-      // agent can actually act on, and those carry a fixed sentence.
+      // Most denials need no explanation — this Mac said no, and why is between
+      // its owner and it. A few are standing conditions the calling agent can
+      // actually act on, and those carry a fixed sentence. What is NOT said
+      // here is who decided: `grant.source` knows, this sentence does not, and
+      // guessing produced "the owner denied it" for reviewer denials.
       const reason = EXPLAINED_DENIALS[grant.source];
       return reason ? { status: "denied", reason } : { status: "denied" };
     }

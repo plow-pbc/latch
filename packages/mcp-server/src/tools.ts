@@ -156,7 +156,10 @@ async function decideAndRun(
       // Most denials say only that they happened. When the device supplies a
       // reason it is a standing condition the caller can act on — forward it
       // verbatim rather than flattening every denial to the same sentence.
-      throw new DeniedError(r.get("reason").str ?? "the owner of this Mac denied the request");
+      // No actor here. A reviewer denial arrives with no reason at all, and
+      // naming the owner made this the sentence agents repeated back to people
+      // who had never been shown anything.
+      throw new DeniedError(r.get("reason").str ?? "this Mac denied the request");
     case "rejected":
       throw new ToolError(`rejected: ${r.get("reason").str ?? "unknown"}`);
     case "blocked":
@@ -190,8 +193,9 @@ async function decideAndRun(
 const GOAL = {
   type: "string",
   description:
-    "Why you need this, in one line. Whoever decides this operation reads exactly this — the owner " +
-    "of the Mac, or the safety reviewer they have set to decide for them.",
+    "Why you need this, in one line. It is recorded on this Mac, and shown in the approval dialog " +
+    "on the Macs whose owner has chosen to be asked. The safety reviewer is never given it — its " +
+    "prompt leaves the agent's goal out on purpose. So it decides nothing; write it for the record.",
 };
 
 /**
