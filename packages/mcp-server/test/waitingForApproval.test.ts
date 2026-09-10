@@ -47,14 +47,20 @@ const NEVER_ANSWERS: PolicyDelegate = { decideIntent: () => new Promise(() => {}
  * A server whose approvals go through a real store — so the deadline, and the
  * deny-by-deadline it produces, are the real ones.
  */
-function serverWith(delegate: PolicyDelegate, opts: { ttlMs: number; budgetMs: number }): {
+function serverWith(
+  delegate: PolicyDelegate,
+  opts: { ttlMs: number; budgetMs: number; humanMayBeAsked?: () => boolean },
+): {
   server: DomoMcpServer;
   file: string;
 } {
   const home = tempDir();
   const approvals = new ApprovalStore(path.join(home, "device/approvals"), delegate, opts.ttlMs);
   const device = new DeviceAgent(home, "Test Mac", approvals);
-  const server = createDomoMcpServer(device, { budgetMs: opts.budgetMs });
+  const server = createDomoMcpServer(device, {
+    budgetMs: opts.budgetMs,
+    humanMayBeAsked: opts.humanMayBeAsked,
+  });
   cleanups.push(() => server.close());
   const file = path.join(tempDir(), "a.txt");
   fs.writeFileSync(file, "contents");
@@ -145,17 +151,11 @@ describe("a pending handle says what to do about it", () => {
   // instead of polling, while the audit log filled with approvals nobody was
   // waiting on. The envelope has to describe the mode actually in force.
   it("a Mac that never asks its owner does not claim it is waiting on them", async () => {
-    const home = tempDir();
-    const approvals = new ApprovalStore(path.join(home, "device/approvals"), NEVER_ANSWERS, 60_000);
-    const device = new DeviceAgent(home, "Test Mac", approvals);
-    const server = createDomoMcpServer(device, {
+    const { server, file } = serverWith(NEVER_ANSWERS, {
+      ttlMs: 60_000,
       budgetMs: 30,
       humanMayBeAsked: () => false,
     });
-    cleanups.push(() => server.close());
-    const file = path.join(tempDir(), "a.txt");
-    fs.writeFileSync(file, "contents");
-
     const { payload } = await callTool(server, "plow_read_file", { path: file }, AGENT);
 
     expect(payload.status).toBe("pending");
@@ -173,18 +173,12 @@ describe("a pending handle says what to do about it", () => {
   // the owner can change the mode mid-session and the next call has to describe
   // the mode in force then, not the one that was set at launch.
   it("a mode change between two calls changes what the next one says", async () => {
-    const home = tempDir();
-    const approvals = new ApprovalStore(path.join(home, "device/approvals"), NEVER_ANSWERS, 60_000);
-    const device = new DeviceAgent(home, "Test Mac", approvals);
     let asksHuman = false;
-    const server = createDomoMcpServer(device, {
+    const { server, file } = serverWith(NEVER_ANSWERS, {
+      ttlMs: 60_000,
       budgetMs: 30,
       humanMayBeAsked: () => asksHuman,
     });
-    cleanups.push(() => server.close());
-    const file = path.join(tempDir(), "a.txt");
-    fs.writeFileSync(file, "contents");
-
     const first = await callTool(server, "plow_read_file", { path: file }, AGENT);
     asksHuman = true;
     const second = await callTool(server, "plow_read_file", { path: file }, AGENT);

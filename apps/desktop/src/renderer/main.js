@@ -184,7 +184,7 @@ async function renderAudit() {
   const detailScroll = el("div", { class: "detail-scroll" });
   const liveImg = el("img", { attrs: { alt: "Live browser view" } });
   const liveDot = el("span", { class: "dot" });
-  const liveCapText = el("span");
+  const liveCapText = el("span", { class: "live-cap-text" });
   // The size control, spelled out. The box was always click-to-toggle, but the
   // only thing that said so was the zoom cursor — which is not on screen until
   // you are already hovering the picture, and says nothing about how to get

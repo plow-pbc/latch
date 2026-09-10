@@ -948,7 +948,10 @@ pre.script {
   font-size: 11px; color: var(--faint);
   max-width: 220px; overflow: hidden;
 }
-.live-cap span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* By name, not by position: the caption gained a trailing button, and
+   `span:last-child` silently stopped matching the host — which is the one
+   child that has to truncate. */
+.live-cap-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .live-cap .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--green-fg); flex: none; }
 /* The size control, in the caption row next to the host. Quiet until you want
    it; it is the label that makes the click discoverable, not a second action. */

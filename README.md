@@ -3,8 +3,11 @@
 Lets a remote AI agent (Claude Code or any MCP client) use a Mac — read/write
 files, run CLI commands with streaming output, and drive a real browser —
 through an **intent-based approval system**. Every operation becomes a
-structured intent that a human approves before it runs inside an on-the-fly
-seatbelt sandbox derived from the approved capabilities. Note what that does and
+structured intent that is decided before it runs inside an on-the-fly seatbelt
+sandbox derived from the granted capabilities. Who decides is the owner's
+setting: out of the box an adversarial reviewer does, and no dialog is ever
+raised (`DEFAULT_APPROVAL_MODE` in `apps/desktop/src/settings.ts`); the owner
+can opt into being asked per operation instead. Note what that does and
 does not mean: the profile is *built from* those capabilities, but it is not a
 tight fit around them — reads in particular are permitted more broadly. See
 [docs/SANDBOX-BOUNDARY.md](docs/SANDBOX-BOUNDARY.md).
