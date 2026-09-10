@@ -94,7 +94,7 @@ export interface InventoryDeps {
    *  none (a non-Mac test host): the sandbox rows say so. */
   runSandboxed: ChildRunner | null;
   /** The vault's key state, as the vault reports it. Null when this Mac has
-   *  no vault (no browser runtime). */
+   *  no vault. */
   vaultKey: (() => { status: string; reason?: string }) | null;
   /** Which targets to ask about; the built-in list by default. */
   automationTargets?: readonly string[];

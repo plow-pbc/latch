@@ -104,7 +104,16 @@ function fromLayout(layout: Layout): ResolvedBrowserRuntime | null {
   // skill and no sessions, rather than a runtime that only fails at first launch.
   // (The DOMO_BROWSER_CMD test seam is handled in resolveBrowserRuntime, before
   // this, and never reaches here.)
-  if (!layout.serverPkgDir || !fs.existsSync(server) || !executablePath || !fs.existsSync(pool)) {
+  if (!layout.serverPkgDir || !fs.existsSync(server)) {
+    console.warn(`browser runtime unavailable: missing browser server ${server}`);
+    return null;
+  }
+  if (!executablePath) {
+    console.warn(`browser runtime unavailable: missing Camoufox executable in ${layout.camoufoxDir}`);
+    return null;
+  }
+  if (!fs.existsSync(pool)) {
+    console.warn(`browser runtime unavailable: missing fingerprint pool ${pool}`);
     return null;
   }
   const host = hostNode();

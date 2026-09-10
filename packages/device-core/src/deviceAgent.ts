@@ -393,9 +393,41 @@ export class DeviceAgent {
     // sites answering one question two ways is what produces that gap — and
     // driven off the registry, so a provider's name has one spelling.
     for (const p of PROVIDERS) if (this.hasStaged(p.binary)) this.skills.register(p.skill);
+    const browserDir = path.join(home, "device/browser");
+    const vaultDir = path.join(browserDir, "vault");
+    if (browserRuntime || fs.existsSync(vaultDir)) {
+      // The vault: items in an encrypted local file, master key in the
+      // Keychain (vaultKeyStore.ts). Same directory the old server kept its
+      // data in, which is what lets migration find a legacy vault beside the
+      // new store.
+      this.vaultDir = vaultDir;
+      const keyStore = new VaultKeyStore(vaultDir);
+      const auditPath = path.join(browserDir, "credential-audit.log");
+      // What the Vault tab talks to. The broker below is for the AGENT, where
+      // a release is bound to the page on screen; this is the owner's.
+      this.vaultClient = new LocalVault(vaultDir, keyStore, auditPath);
+      // The broker: in-process against the same store — no server, no CLI, no
+      // subprocess, and the master key never leaves this process. A command in
+      // the resolved runtime is the test seam (DOMO_VAULT_BROKER_CMD) and wins,
+      // so the fill path can still be driven against a scripted fake.
+      this.credentialBroker = new CredentialBroker(
+        browserRuntime?.credentialBrokerCommand
+          ? {
+              command: browserRuntime.credentialBrokerCommand,
+              env: browserRuntime.env,
+              auditPath,
+              // Innermost of three nested deadlines: the broker fails inside
+              // the per-action cap, which sits inside the relay's own ceiling.
+              // It has to give up first or the session dies with it.
+              timeoutMs: 12_000,
+            }
+          : {
+              local: new BrokerCore({ dir: vaultDir, store: new VaultStore(vaultDir), keyStore, auditPath }),
+            },
+      );
+    }
     if (browserRuntime) {
       this.skills.register(BROWSING_SKILL);
-      const browserDir = path.join(home, "device/browser");
       // Earlier builds wrote every agent screenshot under here and never
       // removed one. Nothing reads them, so an install that still has the
       // directory loses it on the next start.
@@ -434,40 +466,9 @@ export class DeviceAgent {
         actionTimeoutMs: 15_000,
         audit: auditFn,
       };
-      // The vault: items in an encrypted local file, master key in the
-      // Keychain (vaultKeyStore.ts). Same directory the old server kept its
-      // data in, which is what lets migration find a legacy vault beside the
-      // new store.
-      const vaultDir = path.join(browserDir, "vault");
-      this.vaultDir = vaultDir;
-      const keyStore = new VaultKeyStore(vaultDir);
-      const auditPath = path.join(browserDir, "credential-audit.log");
-      // What the Vault tab talks to. The broker below is for the AGENT, where
-      // a release is bound to the page on screen; this is the owner's.
-      this.vaultClient = new LocalVault(vaultDir, keyStore, auditPath);
-      // The broker: in-process against the same store — no server, no CLI, no
-      // subprocess, and the master key never leaves this process. A command in
-      // the resolved runtime is the test seam (DOMO_VAULT_BROKER_CMD) and wins,
-      // so the fill path can still be driven against a scripted fake.
-      const credentials = new CredentialBroker(
-        browserRuntime.credentialBrokerCommand
-          ? {
-              command: browserRuntime.credentialBrokerCommand,
-              env: browserRuntime.env,
-              auditPath,
-              // Innermost of three nested deadlines: the broker fails inside
-              // the per-action cap, which sits inside the relay's own ceiling.
-              // It has to give up first or the session dies with it.
-              timeoutMs: 12_000,
-            }
-          : {
-              local: new BrokerCore({ dir: vaultDir, store: new VaultStore(vaultDir), keyStore, auditPath }),
-            },
-      );
-      this.credentialBroker = credentials;
       this.browserSessions = new BrowserSessions(
         this.browserConfig,
-        credentials,
+        this.credentialBroker,
         auditFn,
         undefined,
         approval,

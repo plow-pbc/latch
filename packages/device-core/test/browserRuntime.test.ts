@@ -173,3 +173,22 @@ describe("resolveBrowserRuntime", () => {
     expect(resolveBrowserRuntime(resources)).toBeNull();
   });
 });
+
+it.each([
+  ["server", "browser runtime unavailable: missing browser server"],
+  ["camoufox", "browser runtime unavailable: missing Camoufox executable"],
+  ["pool", "browser runtime unavailable: missing fingerprint pool"],
+])("logs why browsing is unavailable when %s is missing", (missing, message) => {
+  const { root, binary } = fakePayload();
+  process.env.DOMO_BROWSER_RUNTIME = root;
+  if (missing === "camoufox") fs.unlinkSync(binary);
+  if (missing === "pool") poolPresent = false;
+  if (missing === "server") {
+    vi.mocked(fs.existsSync).mockImplementation((p) =>
+      String(p).endsWith(path.join("dist", "server.js")) ? false : p === POOL ? poolPresent : realExistsSync(p),
+    );
+  }
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  expect(resolveBrowserRuntime()).toBeNull();
+  expect(warn).toHaveBeenCalledWith(expect.stringContaining(message));
+});

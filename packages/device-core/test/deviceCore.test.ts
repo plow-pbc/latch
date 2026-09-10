@@ -23,6 +23,9 @@ import {
   PolicyEngine,
 } from "@domo/device-core";
 
+import { LocalVault } from "../src/browser/localVault.js";
+import { VaultKeyStore } from "../src/browser/vaultKeyStore.js";
+
 const cleanups: (() => void)[] = [];
 afterEach(() => {
   while (cleanups.length) cleanups.pop()!();
@@ -331,5 +334,28 @@ describe("browser fingerprint pinning is wired to the runtime", () => {
     expect(env.DOMO_FINGERPRINT_PIN).toBe(path.join(home, "device/browser", "fingerprint-pin.json"));
     // The runtime's own env survives alongside it.
     expect(env.ELECTRON_RUN_AS_NODE).toBe("1");
+  });
+});
+
+describe("vault without a browser runtime", () => {
+  it("lists and describes existing credentials while browsing is unavailable", async () => {
+    const home = tempDir();
+    const dir = path.join(home, "device/browser/vault");
+    const vault = new LocalVault(dir, new VaultKeyStore(dir));
+    const item = await vault.save({ type: "login", name: "Example", urls: ["https://example.com"], username: "owner", password: "test-vault-secret" });
+    const device = new DeviceAgent(home, "Test Mac", new HeadlessPolicy({ intent: "deny" }), null);
+
+    expect(await device.vaultList()).toMatchObject({ status: "completed", items: [{ id: item.id, title: "Example", username: "owner" }] });
+    const description = await device.vaultDescribe(item.id);
+    expect(description).toMatchObject({ status: "completed", id: item.id, title: "Example" });
+    expect(JSON.stringify(description)).not.toContain("test-vault-secret");
+    expect(await device.vaultClient!.list()).toMatchObject([{ id: item.id, title: "Example" }]);
+    expect(device.browserSessions).toBeNull();
+  });
+
+  it("reports no vault when neither a vault directory nor browser runtime exists", async () => {
+    const device = new DeviceAgent(tempDir(), "Test Mac", new HeadlessPolicy({ intent: "deny" }), null);
+    expect(await device.vaultList()).toEqual({ status: "error", error: "this machine has no vault" });
+    expect(await device.vaultDescribe("missing")).toEqual({ status: "error", error: "this machine has no vault" });
   });
 });
