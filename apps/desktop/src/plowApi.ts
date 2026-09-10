@@ -126,12 +126,25 @@ export interface CloudAgentProvider {
   name: string;
 }
 
-export interface MintedCredential {
-  agentUid: string;
-  /** Shown once for self-hosted agent setup. */
+interface MintedCredential {
+  /** Credential id, used to revoke a mint that cannot be handed to the user. */
+  id: number;
+  /** Shown to the user once, then dropped — never logged, never audited. */
   token: string;
   name: string;
 }
+
+/**
+ * The scopes a static MCP client is minted with, and the whole of them.
+ *
+ * `relay:call` alone: this credential is a tool that reaches this Mac, not an
+ * agent. It gets no `chats:use`, no `llm:chat` and no `payments:request` — the
+ * four together are the assistant role, and an assistant is created through
+ * `POST /v1/agents` on a line, which is a different thing a different screen
+ * makes. Written here as a frozen literal so a caller cannot widen it by
+ * passing scopes in.
+ */
+const MCP_CLIENT_SCOPES: readonly string[] = Object.freeze(["relay:call"]);
 
 /**
  * Covers percent-decoded plaintext and standard Base64, in full and by 10-character prefix, but not
@@ -165,9 +178,75 @@ export function decodeAgentCreateReceipt(data: unknown, deviceCredential: string
   return receipt as ReturnType<typeof decodeAgentCreateReceipt>;
 }
 
+/**
+ * Decode the mint receipt from `POST /v1/api-keys` before exposing its
+ * one-time token.
+ *
+ * The same guard `decodeAgentCreateReceipt` applies, for the same reason: the
+ * response comes from an origin that already holds this Mac's credential, and
+ * a body echoing it back — in any encoding this can see — is never shown, kept
+ * or handed on. The token in `token` is the MINTED one and is the point of the
+ * call; it is the device credential that may not appear.
+ *
+ * **The receipt is CHECKED against what was asked for, not trusted.** Plow
+ * echoes the scopes and the resolved chat grant it actually minted, and that
+ * echo is the only chance this Mac has to see an over-grant: once the token is
+ * on screen it has been copied into somebody's client, and it is long-lived.
+ * So a credential that came back with more than `relay:call`, or with any chat
+ * grant at all, is refused rather than handed over. Nothing revokes it: the
+ * throw happens before the id reaches a caller that could. The cost is one
+ * unusable credential on the account, which the owner can see and remove under
+ * MCP clients; accepting would hand a tool the owner's chats.
+ */
+function decodeKeyCreateReceipt(data: unknown, deviceCredential: string): MintedCredential {
+  const receipt = data as { id?: unknown; token?: unknown; name?: unknown; scopes?: unknown; chat_uids?: unknown } | null;
+  if (!receipt || typeof receipt.id !== "number" || typeof receipt.token !== "string" || !receipt.token) {
+    throw new PlowApiError("http", "Plow returned an invalid credential response.");
+  }
+  if (echoesCredential(JSON.stringify(receipt), deviceCredential)) {
+    throw new PlowApiError("http", "Plow returned an unsafe credential response.");
+  }
+  const scopes = receipt.scopes;
+  const chatUids = receipt.chat_uids;
+  const asAsked =
+    Array.isArray(scopes) && Array.isArray(chatUids) &&
+    chatUids.length === 0 &&
+    scopes.length === MCP_CLIENT_SCOPES.length &&
+    scopes.every((scope, index) => scope === MCP_CLIENT_SCOPES[index]);
+  if (!asAsked) {
+    throw new PlowApiError("http", "Plow minted a credential wider than the one asked for.");
+  }
+  return { id: receipt.id, token: receipt.token, name: typeof receipt.name === "string" ? receipt.name : "" };
+}
+
+/**
+ * The Mac a credential is bound to, as `GET /v1/api-keys` reports it.
+ *
+ * `name` is Plow's durable display name for the device (`mbp`, `mbp (2)`) and
+ * is the only half that may be shown. The uid identifies a device on the
+ * account and is main-process only, like `key_prefix` beside it — the roster
+ * compares against it and projects a label, and the label is what crosses.
+ */
+export interface KeyDevice {
+  uid: string;
+  name: string | null;
+}
+
+/** A relay resource uid, or null for anything this cannot read as one. */
+function relayResourceUidOf(value: unknown): string | null {
+  return typeof value === "string" && value ? value : null;
+}
+
+/** One device row, or null for anything this cannot read as one. */
+function keyDeviceOf(value: unknown): KeyDevice | null {
+  const device = value as { uid?: unknown; name?: unknown } | null | undefined;
+  if (!device || typeof device.uid !== "string" || !device.uid) return null;
+  return { uid: device.uid, name: typeof device.name === "string" && device.name ? device.name : null };
+}
+
 /** The account credential metadata returned by `GET /v1/api-keys`.
- * Main-process only: `key_prefix` and `scopes` must be projected away before
- * any row crosses the renderer bridge. */
+ * Main-process only: `key_prefix`, `scopes` and `device.uid` must be projected
+ * away before any row crosses the renderer bridge. */
 export interface KeyInfo {
   id: number;
   key_prefix: string | null;
@@ -179,6 +258,15 @@ export interface KeyInfo {
   created_at: string | null;
   agent_uid: string | null;
   chat_uids: string[];
+  /** The Mac this credential may be used from, or null for one bound to none. */
+  device: KeyDevice | null;
+  /**
+   * The relay resource the credential is bound to, when Plow resolved no
+   * device row for it — the account alias, which Plow accepts only through the
+   * primary Mac. Main-process only, exactly like `device.uid`: the roster reads
+   * it and projects a label, and the label is what crosses.
+   */
+  relay_resource_uid: string | null;
 }
 
 /** Parse Plow's UTC timestamp, whose wire form may omit the trailing offset. */
@@ -755,23 +843,55 @@ export class PlowApi {
     return { accounts, degraded };
   }
 
-  /** Create a self-hosted agent and return its one-time setup token. */
-  async createAgent(token: string, name: string, lineUid: string): Promise<MintedCredential> {
-    if (!lineUid) throw new PlowApiError("http", "Choose a line for this agent.");
-    const data = decodeAgentCreateReceipt(await this.call(
-      "POST", "/v1/agents", { token, body: { name, provider: "self_hosted", line_uid: lineUid } },
+  /**
+   * Mint a static credential for one MCP client, and return its one-time token.
+   *
+   * An ordinary key, not an agent: `POST /v1/api-keys` with `relay:call` and an
+   * EXPLICITLY empty chat grant. Empty rather than omitted — plow reads an
+   * omitted `chat_uids` as "inherit the caller's own grant", and the caller
+   * here is this Mac's login session, which holds every chat. A tool that only
+   * needs to reach this Mac would have walked away with all of them.
+   *
+   * `relay_resource_uid` BINDS the credential to this Mac: plow checks it
+   * against the Mac the URL names, so the token cannot reach any other Mac. It
+   * is this Mac's device uid — the segment plow builds its MCP URL from — and
+   * it is required, which is why the caller supplies it rather than this
+   * defaulting it to something.
+   *
+   * The device credential rides in the Authorization header and nowhere else;
+   * `decodeKeyCreateReceipt` refuses a response that echoes it back, and
+   * refuses one whose minted scopes or chat grant are wider than these. The
+   * receipt does not echo the device, so there is nothing to check it against.
+   */
+  async createMcpClientKey(
+    token: string,
+    name: string,
+    relayResourceUid: string,
+  ): Promise<MintedCredential> {
+    const minted = decodeKeyCreateReceipt(await this.call(
+      "POST", "/v1/api-keys", { token, body: {
+        name,
+        scopes: [...MCP_CLIENT_SCOPES],
+        chat_uids: [],
+        relay_resource_uid: relayResourceUid,
+      } },
     ), token);
-    if (!data.token) throw new PlowApiError("http", "Plow did not return an agent token.");
-    return { agentUid: data.agent.uid, token: data.token, name: data.agent.name };
+    return { ...minted, name: minted.name || name };
   }
 
-  async deleteAgent(token: string, uid: string): Promise<void> {
-    await this.call("DELETE", `/v1/agents/${encodeURIComponent(uid)}`, { token });
-  }
-
-  /** Credential metadata for the independent sessions section. */
+  /** Credential metadata for the independent sessions section.
+   *
+   * Both halves of the binding are defaulted here, once, for every reader: an
+   * API predating either sends no such field, and `undefined` is not `null` — a
+   * row that reached the roster undefined would be compared against this Mac's
+   * uid and answer neither "bound here" nor "bound nowhere". */
   async listApiKeys(token: string): Promise<KeyInfo[]> {
-    return this.call<KeyInfo[]>("GET", "/v1/api-keys", { token });
+    const keys = await this.call<KeyInfo[]>("GET", "/v1/api-keys", { token });
+    return keys.map((key) => ({
+      ...key,
+      device: keyDeviceOf(key.device),
+      relay_resource_uid: relayResourceUidOf(key.relay_resource_uid),
+    }));
   }
 
   /** Soft-revoke one credential by its server id. */

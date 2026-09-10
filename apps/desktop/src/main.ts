@@ -698,10 +698,15 @@ ipcMain.handle("cloud:refresh", async () => {
 ipcMain.handle("cloud:agents", async () => {
   return cloudAgentsIpcResult(cloudAgents);
 });
-ipcMain.handle("connect:create", async (_e, name: string, lineUid: string) => {
+ipcMain.handle("connect:create", async (_e, name: string) => {
   requireAgentTokenSaved();
-  await connectClient?.createCredential(name, lineUid);
-  await cloudAgents?.refresh();
+  await connectClient?.createCredential(name);
+  // The ROSTER, not the cloud agents: what was just minted is a credential,
+  // and it is the MCP clients list it appears in. Refreshing the agents left
+  // the new row off the screen until something else re-read — with it, the
+  // Remove that revokes it. No line changed hands, so there is nothing for the
+  // cloud state to re-read.
+  await connectClient?.refreshRoster();
   return agentsTabState();
 });
 /**
@@ -2123,6 +2128,9 @@ app.whenReady().then(async () => {
     home,
     isConnected: () => connected,
     signOutThisMac,
+    // The same uid the relay registers this Mac under and the MCP URL is built
+    // from. Read through the identity, not out of the URL.
+    deviceUid: () => device?.identity.deviceId ?? null,
     onChange: () => notifyRenderer("connect:changed"),
   });
 

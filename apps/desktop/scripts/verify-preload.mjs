@@ -143,6 +143,7 @@ const rosterProbe = {
     chatUids: ["*"],
     chatAccess: "all",
     permissions: { canReadAndReply: true, canReachMac: true, canSpendInference: true },
+    deviceLabel: "this Mac",
     isActive: true,
     isThisMac: false,
   }],
@@ -818,6 +819,19 @@ app.whenReady().then(async () => {
     };
   }})()`);
 
+  // A static credential says which Mac it works from, by label. The device uid
+  // is main-process only and must not be anywhere on the screen.
+  const mcpRoster = await win.webContents.executeJavaScript(`(${() => {
+    const group = [...document.querySelectorAll("#view .panel.agents .list-section")]
+      .find((item) => item.querySelector("h2")?.textContent.trim() === "MCP clients");
+    const context = group?.querySelector(".entity-row .entity-context")?.textContent ?? "";
+    return {
+      namesBoundDevice: context.includes("Bound to this Mac"),
+      stillNamesKind: context.includes("MCP client"),
+      noDeviceUid: !document.body.textContent.includes("dev_"),
+    };
+  }})()`);
+
   await win.webContents.executeJavaScript(
     `document.querySelector(".cloud-agent-row .message-btn").click()`,
   );
@@ -952,16 +966,22 @@ app.whenReady().then(async () => {
   await waitFor(win, `document.querySelector(".connect-modal .linkbtn")`, "the static setup link");
   await win.webContents.executeJavaScript(`document.querySelector(".connect-modal .linkbtn").click()`);
   await waitFor(win, `document.querySelector('input[placeholder="Claude Code"]')`, "the static form");
-  const staticCreateDisabled = await win.webContents.executeJavaScript(`(async () => {
+  // The static form asks for a NAME and nothing else: this mints a credential
+  // for a tool, not an agent on a line. A named form still refuses while a
+  // one-time cloud-agent token is on screen, and that is now the only thing
+  // holding the button — which is what makes this check mean anything.
+  const staticForm = await win.webContents.executeJavaScript(`(async () => {
     const input = document.querySelector('input[placeholder="Claude Code"]');
     input.value = "Blocked setup";
     const disabled = [...document.querySelectorAll("button")]
       .find((b) => b.textContent.trim() === "Create Credential").disabled;
+    const noLinePicker = !document.querySelector('.modal-backdrop select[aria-label="Line"]');
     input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
     await window.domo.connectGet();
-    return disabled;
+    return { disabled, noLinePicker };
   })()`);
-  if (!staticCreateDisabled || staticCreateCount !== 0) throw new Error("pending token allowed static creation");
+  if (!staticForm.noLinePicker) throw new Error("the static form still asks for a line");
+  if (!staticForm.disabled || staticCreateCount !== 0) throw new Error("pending token allowed static creation");
   await win.webContents.executeJavaScript(`[...document.querySelectorAll(".modal-backdrop button")]
     .find((b) => b.textContent.trim() === "Cancel").click()`);
   await win.webContents.executeJavaScript(`window.__domoSelectTab("settings")`);
@@ -982,6 +1002,25 @@ app.whenReady().then(async () => {
   await waitForNode(() => tokenLeaveReply !== null, "leaving after token dismissal");
   if (tokenLeaveReply !== true) throw new Error("saved token still blocked leaving");
   console.log("TOKEN-HANDOFF: static create and leave blocked until dismissal; dismissal releases leave");
+
+  // …and with the token dismissed, nothing else holds the button. The mirror
+  // of the check above: without this, "disabled" proves nothing about WHAT
+  // disabled it — a line picker that is gone would read the same way.
+  await win.webContents.executeJavaScript(`[...document.querySelectorAll("#view button")]
+    .find((b) => b.textContent.trim() === "Connect MCP client").click()`);
+  await waitFor(win, `document.querySelector(".connect-modal .linkbtn")`, "the static setup link after dismissal");
+  await win.webContents.executeJavaScript(`document.querySelector(".connect-modal .linkbtn").click()`);
+  await waitFor(win, `document.querySelector('input[placeholder="Claude Code"]')`, "the static form after dismissal");
+  const staticNameEnables = await win.webContents.executeJavaScript(`(() => {
+    document.querySelector('input[placeholder="Claude Code"]').value = "Released setup";
+    return [...document.querySelectorAll(".modal-backdrop button")]
+      .find((b) => b.textContent.trim() === "Create Credential").disabled === false;
+  })()`);
+  await win.webContents.executeJavaScript(`[...document.querySelectorAll(".modal-backdrop button")]
+    .find((b) => b.textContent.trim() === "Cancel").click()`);
+  await waitFor(win, `!document.querySelector(".modal-backdrop")`, "the static form to close");
+  if (!staticNameEnables) throw new Error("the static form stayed disabled after token dismissal");
+  console.log("STATIC-NAME: no line picker; the form mints on a name alone once no token is pending");
   await win.webContents.executeJavaScript(`window.__domoSelectTab("settings")`);
   cloudProbe.credential = { name: "Pending static setup", config: "static-probe-secret" };
   tokenLeaveReply = null;
@@ -2155,6 +2194,9 @@ app.whenReady().then(async () => {
     connect.noConnectTab &&
     cloudRoster.noCredentialIdentity &&
     cloudRoster.hidesProvider &&
+    mcpRoster.namesBoundDevice &&
+    mcpRoster.stillNamesKind &&
+    mcpRoster.noDeviceUid &&
     cloudRoster.namesLine &&
     cloudRoster.showsCreated &&
     cloudRoster.hidesLastUsed &&
@@ -2330,7 +2372,7 @@ app.whenReady().then(async () => {
     errors.length === 0;
   console.log(
     "PROBE:" +
-      JSON.stringify({ main, settings, capabilities, strandedOnDisk, settingsPane, connect, cloudRoster, cloudCreatePicker, cloudCreateSelection, cloudCreateSelectionOnly, cloudCreateRequest, cloudCreateCancelled, cloudCreateCode, cloudExistingCreate, cloudExistingCreateRequest, cloudCodeConfirmed, cloudCodeConfirmedClosed, cloudNoFreeLines, cloudNoNumbers, cloudDetail, cloudChangePicker, cloudChangeSelection, cloudChangeSelectionOnly, cloudChangeCode, cloudChangeRequest, cloudUnknownLines, cloudCreateErrorDetail, failedCloudDetailButtons, cloudChangeErrorDetail, cloudAgentGoneCancelled, cloudDeleteConfirm, loadingCloudDetail, unavailableCloudDetail, agentsShot, approvalsReviewer, approvalsShot, purposeRoundTrip, approvalsAsk, askWithoutReviewer, approvalsShotAsk, agentsOpen, modalClosed, vaultLocked, vaultUnsaved, vaultShot, agentsOpenShot, staleSettingsPane, optimisticMode, settingsShot, approval, reviewerNote, grantPanel, consoleErrors: errors, ok }),
+      JSON.stringify({ main, settings, capabilities, strandedOnDisk, settingsPane, connect, cloudRoster, mcpRoster, cloudCreatePicker, cloudCreateSelection, cloudCreateSelectionOnly, cloudCreateRequest, cloudCreateCancelled, cloudCreateCode, cloudExistingCreate, cloudExistingCreateRequest, cloudCodeConfirmed, cloudCodeConfirmedClosed, cloudNoFreeLines, cloudNoNumbers, cloudDetail, cloudChangePicker, cloudChangeSelection, cloudChangeSelectionOnly, cloudChangeCode, cloudChangeRequest, cloudUnknownLines, cloudCreateErrorDetail, failedCloudDetailButtons, cloudChangeErrorDetail, cloudAgentGoneCancelled, cloudDeleteConfirm, loadingCloudDetail, unavailableCloudDetail, agentsShot, approvalsReviewer, approvalsShot, purposeRoundTrip, approvalsAsk, askWithoutReviewer, approvalsShotAsk, agentsOpen, modalClosed, vaultLocked, vaultUnsaved, vaultShot, agentsOpenShot, staleSettingsPane, optimisticMode, settingsShot, approval, reviewerNote, grantPanel, consoleErrors: errors, ok }),
   );
   app.exit(ok ? 0 : 1);
 }).catch((err) => {

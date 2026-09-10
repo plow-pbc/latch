@@ -256,6 +256,29 @@ process hands it and owns no copy of its own.
   `POST /v1/agents` with `name`, `provider`, and a required `line_uid`,
   which the stored session may call. Local creation returns `{agent, token}`;
   the token is shown once for self-hosted setup.
+- **An agent and a static MCP credential are two different things, minted by two
+  different calls.** An agent answers on a line and is `POST /v1/agents`. A
+  static credential is for a client that cannot do OAuth — a tool that needs to
+  reach this Mac and nothing else — and it has no line to answer on, so it is
+  `POST /v1/api-keys` with `scopes: ["relay:call"]`, an EXPLICITLY empty
+  `chat_uids`, and `relay_resource_uid`. Empty rather than omitted: plow reads an
+  omitted grant as "inherit the caller's", and the caller is this Mac's login
+  session, which holds every chat. `relay_resource_uid` is this Mac's device uid
+  — the segment plow builds the MCP URL from, read from the device identity and
+  never parsed back out of that URL — and it BINDS the credential to this Mac,
+  so the token cannot reach any other Mac. It is required, so a mint
+  is refused on this side rather than sent unbound. Removal follows the same split — a key revoke for the credential, never
+  `DELETE /v1/agents/{uid}`, which no agent-less key answers to. The modal that
+  mints one asks for a name and nothing else. The roster says which Mac each
+  credential is bound to — a LABEL ("this Mac", the name plow gave another one,
+  "another Mac" when it has none, or "primary Mac" for one bound to the account
+  alias, which plow accepts only there); both uids stay in the main process
+  beside `key_prefix` and `scopes`. The receipt is checked, not
+  trusted: plow echoes the scopes and chat grant it actually minted, and a
+  credential that came back wider than `relay:call` with no chats is refused
+  rather than shown — after it is on screen it has been pasted into somebody's
+  client. Nothing revokes the refused one; it sits on the account as an unusable
+  credential the owner can see and remove under MCP clients.
 - **The login session IS the credential this Mac keeps.** Latch is the owner's
   manager app, not an agent: it holds the socket, lists chats and Plow's
   numbers, mints agents, buys inference and mints connector tokens. It used to
@@ -289,11 +312,12 @@ process hands it and owns no copy of its own.
   be wrong. The device socket derives from that base by swapping the scheme; the
   **agent endpoints are not derived at all** — registration
   returns this Mac’s MCP URL, and the server stays authoritative.
-- **Agent credentials are shown exactly once.** The create picker shows a local
-  agent's token for copying. Static MCP setup assembles a single `plow` server
-  config locally, targeting this Mac's server-provided MCP URL with the token
-  in an `Authorization` header, never in the URL. Save the token before creating
-  or deleting another agent; dismissal drops Latch's in-memory copy.
+- **Minted credentials are shown exactly once.** The create picker shows a local
+  agent's token for copying, and the static-credential modal shows the key it
+  minted. Both assemble a single `plow` server config locally, targeting this
+  Mac's server-provided MCP URL with the token in an `Authorization` header,
+  never in the URL. Save the token before creating or deleting another; dismissal
+  drops Latch's in-memory copy, and Plow will not hand it back.
 
 
 Evidence, both reproducible and both failing loudly rather than quietly:

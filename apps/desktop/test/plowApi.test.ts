@@ -91,7 +91,7 @@ describe("PlowApi", () => {
     const timeout = vi.spyOn(AbortSignal, "timeout").mockReturnValue(controller.signal);
 
     const pending = new PlowApi("https://api.plow.co", fetchImpl)
-      .createAgent("plow_device", "Claude Code", "line-7")
+      .createMcpClientKey("plow_device", "Claude Code", "dev_this_mac")
       .catch((e) => e);
     controller.abort(new DOMException("The operation was aborted.", "TimeoutError"));
     const error = await pending;
@@ -493,16 +493,69 @@ describe("PlowApi", () => {
     expect(calls[0].url).not.toContain("act_secret_xyz");
   });
 
-  it("creates a local agent with a required line and returns its one-time token", async () => {
-    const { calls, fetchImpl } = recordingFetch([{ status: 201, body: {
-      agent: { uid: "agent-1", name: "Claude Code", credential: { id: 41 } }, token: "plow_agenttok",
+  it("mints a static MCP client as a key with relay reach and no chats", async () => {
+    const { calls, fetchImpl } = recordingFetch([{ status: 200, body: {
+      id: 41, token: "plow_clienttok", key_prefix: "abcdefgh",
+      scopes: ["relay:call"], name: "Claude Code", chat_uids: [],
     } }]);
-    const api = new PlowApi("https://stub.invalid", fetchImpl);
-    await expect(api.createAgent("owner", "Claude Code", "")).rejects.toThrow("Choose a line");
-    const minted = await api.createAgent("owner", "Claude Code", "line-7");
-    expect(calls[0].url).toBe("https://stub.invalid/v1/agents");
-    expect(JSON.parse(String(calls[0].init.body))).toEqual({ provider: "self_hosted", name: "Claude Code", line_uid: "line-7" });
-    expect(minted).toMatchObject({ agentUid: "agent-1", token: "plow_agenttok" });
+    const minted = await new PlowApi("https://stub.invalid", fetchImpl)
+      .createMcpClientKey("owner", "Claude Code", "dev_this_mac");
+
+    expect(calls[0].url).toBe("https://stub.invalid/v1/api-keys");
+    // `chat_uids: []` is sent EXPLICITLY. Omitting it makes plow inherit the
+    // caller's grant, and the caller is this Mac's login session — which holds
+    // every chat on the account. `relay_resource_uid` binds the credential to
+    // this Mac, so the token cannot reach any other Mac.
+    expect(JSON.parse(String(calls[0].init.body))).toEqual({
+      name: "Claude Code", scopes: ["relay:call"], chat_uids: [],
+      relay_resource_uid: "dev_this_mac",
+    });
+    expect(minted).toEqual({ id: 41, token: "plow_clienttok", name: "Claude Code" });
+    // The device credential rides in the header and nowhere else.
+    expect(calls[0].init.headers).toMatchObject({ authorization: "Bearer owner" });
+    expect(String(calls[0].init.body)).not.toContain("owner");
+  });
+
+  const STATIC_MINT_CREDENTIAL = "plow_device_static_mint_secret";
+  const ASKED = { scopes: ["relay:call"], chat_uids: [] };
+  const percent = (value: string) => [...value].map((c) => "%" + c.charCodeAt(0).toString(16)).join("");
+  it.each([
+    // Echoes of this Mac's own credential, in every encoding the guard reads.
+    ["a plain echo", { ...ASKED, name: STATIC_MINT_CREDENTIAL }, "unsafe"],
+    ["a base64 echo", { ...ASKED, name: Buffer.from(STATIC_MINT_CREDENTIAL).toString("base64") }, "unsafe"],
+    ["a 10-character prefix echo", { ...ASKED, name: STATIC_MINT_CREDENTIAL.slice(0, 10) }, "unsafe"],
+    ["a part-escaped echo", { ...ASKED, name: "%" + STATIC_MINT_CREDENTIAL.charCodeAt(0).toString(16) + STATIC_MINT_CREDENTIAL.slice(1) }, "unsafe"],
+    ["a fully escaped echo", { ...ASKED, name: percent(STATIC_MINT_CREDENTIAL) }, "unsafe"],
+    // Receipts with nothing usable to revoke or show. `undefined` is how a row
+    // drops a field the base body below supplies — `JSON.stringify` omits it,
+    // so the wire response genuinely lacks it.
+    ["no id", { ...ASKED, id: undefined }, "invalid"],
+    ["no token", { ...ASKED, token: undefined }, "invalid"],
+    ["an empty token", { ...ASKED, token: "" }, "invalid"],
+    ["a non-numeric id", { ...ASKED, id: "41" }, "invalid"],
+    // The echoed grant is this Mac's only sight of what was actually minted. A
+    // token that reaches the owner's chats must not make it to the screen —
+    // once shown it has been pasted into a client and it is long-lived.
+    ["every chat", { scopes: ["relay:call"], chat_uids: ["*"] }, "wider"],
+    ["one listed chat", { scopes: ["relay:call"], chat_uids: ["cht_1"] }, "wider"],
+    ["an extra scope", { scopes: ["relay:call", "chats:use"], chat_uids: [] }, "wider"],
+    ["a resource wildcard", { scopes: ["relay:*"], chat_uids: [] }, "wider"],
+    ["the global wildcard", { scopes: ["*:*"], chat_uids: [] }, "wider"],
+    // Absent is not the same as empty, and is not evidence of anything.
+    ["no chat grant at all", { scopes: ["relay:call"], chat_uids: undefined }, "wider"],
+    ["no scopes at all", { scopes: undefined, chat_uids: [] }, "wider"],
+  ] as const)("refuses a mint receipt with %s", async (_shape, minted, why) => {
+    const { fetchImpl } = recordingFetch([{ status: 200, body: {
+      id: 41, token: "plow_clienttok", key_prefix: "abcdefgh", name: "Claude Code", ...minted,
+    } }]);
+    await expect(
+      new PlowApi("https://stub.invalid", fetchImpl)
+        .createMcpClientKey(STATIC_MINT_CREDENTIAL, "Claude Code", "dev_this_mac"),
+    ).rejects.toThrow({
+      unsafe: "Plow returned an unsafe credential response.",
+      invalid: "Plow returned an invalid credential response.",
+      wider: "Plow minted a credential wider than the one asked for.",
+    }[why]);
   });
 
   it("lists cloud-agent providers with the credential only in the bearer header", async () => {
@@ -662,7 +715,11 @@ describe("PlowApi", () => {
       { status: 200, body: { status: "revoked", id: 17 } },
     ]);
     const api = new PlowApi("https://api.plow.co", fetchImpl);
-    await expect(api.listApiKeys(credential)).resolves.toEqual(keys);
+    // Both halves of the binding are defaulted in on the way through — this
+    // row predates them.
+    await expect(api.listApiKeys(credential)).resolves.toEqual(
+      keys.map((row) => ({ ...row, device: null, relay_resource_uid: null })),
+    );
     await expect(api.revokeApiKey(credential, 17)).resolves.toEqual({
       status: "revoked",
       id: 17,
@@ -679,6 +736,48 @@ describe("PlowApi", () => {
       ),
     ).toBe(true);
     expect(calls.every(({ url }) => !url.includes(credential))).toBe(true);
+  });
+
+  it.each([
+    ["a row that predates the binding", undefined, null],
+    ["an explicit null", null, null],
+    ["a bound device", { uid: "dev_mba", name: "mba" }, { uid: "dev_mba", name: "mba" }],
+    // A device row this cannot read is no device row. Anything else would put
+    // an unusable value in front of the comparison the roster makes.
+    ["a device with no uid", { name: "mba" }, null],
+    ["a device with an empty uid", { uid: "", name: "mba" }, null],
+    ["a device with no name", { uid: "dev_mba" }, { uid: "dev_mba", name: null }],
+    ["a device with an empty name", { uid: "dev_mba", name: "" }, { uid: "dev_mba", name: null }],
+    ["a device that is not an object", "dev_mba", null],
+  ])("reads %s as the row's device", async (_shape, device, expected) => {
+    const { fetchImpl } = recordingFetch([{ status: 200, body: [
+      { id: 17, key_prefix: "agentkey", name: "Claude Code", scopes: ["relay:call"],
+        tokens_used: 0, is_active: true, last_seen_at: null, created_at: null,
+        agent_uid: null, chat_uids: [], device },
+    ] }]);
+
+    const [row] = await new PlowApi("https://api.plow.co", fetchImpl).listApiKeys("plow_device");
+    expect(row.device).toEqual(expected);
+  });
+
+  it.each([
+    ["a row that predates the binding", undefined, null],
+    ["an explicit null", null, null],
+    ["a bound resource", "u_account", "u_account"],
+    // Nothing usable is no binding. A row that carried one of these forward
+    // would be labelled "primary Mac" on the strength of a value that names
+    // nothing, which is the unbound case wearing a bound one's label.
+    ["an empty string", "", null],
+    ["a value that is not a string", 17, null],
+  ])("reads %s as the row's relay resource", async (_shape, relay_resource_uid, expected) => {
+    const { fetchImpl } = recordingFetch([{ status: 200, body: [
+      { id: 17, key_prefix: "agentkey", name: "Claude Code", scopes: ["relay:call"],
+        tokens_used: 0, is_active: true, last_seen_at: null, created_at: null,
+        agent_uid: null, chat_uids: [], device: null, relay_resource_uid },
+    ] }]);
+
+    const [row] = await new PlowApi("https://api.plow.co", fetchImpl).listApiKeys("plow_device");
+    expect(row.relay_resource_uid).toBe(expected);
   });
 
   it("rejects a path-shaped API key id without making a request", async () => {
