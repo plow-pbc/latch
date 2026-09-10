@@ -171,6 +171,11 @@ describe("CloudAgentsClient creation", () => {
   it.each([
     ["a different 404 sentence", "Assistant not found"],
     ["a sentence echoing the credential", `provider echoed ${CREDENTIAL}`],
+    // Inherited keys are not codes. Unguarded, these resolve up the prototype
+    // chain and put a function where the log expects a code.
+    ["a prototype key", "constructor"],
+    ["the proto key", "__proto__"],
+    ["a prototype method", "hasOwnProperty"],
   ])("leaves %s unmapped and says nothing about the line", async (_label, detail) => {
     const { fetchImpl } = recordingFetch([{ status: 404, body: { detail } }]);
 

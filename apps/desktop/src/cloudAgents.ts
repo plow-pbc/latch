@@ -273,7 +273,13 @@ function responseCode(decoded: unknown): string | null {
     return Object.prototype.hasOwnProperty.call(LINE_ERRORS, code) ? code : null;
   }
   if (typeof decoded.detail !== "string") return null;
-  return DETAIL_SENTENCES[decoded.detail.trim().toLowerCase()] ?? null;
+  const sentence = decoded.detail.trim().toLowerCase();
+  // Own keys only, as the coded branch reads `LINE_ERRORS`. A detail of
+  // `constructor` or `__proto__` otherwise resolves up the prototype chain and
+  // returns something that is not a code at all.
+  return Object.prototype.hasOwnProperty.call(DETAIL_SENTENCES, sentence)
+    ? DETAIL_SENTENCES[sentence]
+    : null;
 }
 
 /**
