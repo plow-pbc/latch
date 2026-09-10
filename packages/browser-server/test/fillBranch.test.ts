@@ -77,7 +77,7 @@ describe("the server's fill branch, run directly", () => {
       "frame.wait_for_selector",
       "handle.evaluate:mark",
       "handle.assign",
-      "handle.type",
+      ...Array.from(base.value, () => ["handle.evaluate:other", "handle.type"]).flat(),
     ]);
     expect(r.result).toEqual({ ok: true, mask: "stylesheet", frame: 0 });
   });

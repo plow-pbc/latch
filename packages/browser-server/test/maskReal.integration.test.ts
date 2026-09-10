@@ -67,6 +67,36 @@ describe.skipIf(!HAVE_BROWSER)("page scripts against a real Camoufox", () => {
     await browser?.close();
   });
 
+  it.each([
+    ["input", "plain"], ["input", "controlled"], ["input", "restore-caret"],
+    ["textarea", "plain"], ["textarea", "controlled"], ["textarea", "restore-caret"],
+  ])("fills and submits a %s with %s selection", async (tag, mode) => {
+    const html = `<!doctype html><form>
+      <${tag} name="name"></${tag}><button>Submit</button>
+      </form><output></output><script>
+      const input = document.querySelector('[name=name]');
+      let state = '';
+      input.addEventListener('input', () => {
+        if (${JSON.stringify(mode)} === 'plain') return;
+        state = input.value;
+        input.value = state;
+        if (${JSON.stringify(mode)} === 'restore-caret') input.setSelectionRange(0, 0);
+      });
+      document.querySelector('form').addEventListener('submit', event => {
+        event.preventDefault();
+        document.querySelector('output').textContent = new FormData(event.target).get('name');
+      });
+      </script>`;
+    await browser.page.goto(`data:text/html,${encodeURIComponent(html)}`);
+    const result = await session.handle({ action: "fill", selector: "[name=name]", value: "Rowan" });
+    await session.handle({ action: "click", selector: "button" });
+    const submitted = await browser.page.evaluate(() =>
+      (globalThis as any).document.querySelector('output').textContent,
+    );
+    expect(submitted).toBe("Rowan");
+    expect(result).not.toHaveProperty("altered", true);
+  });
+
   it("actually masks a filled secret (would be UNMASKED with string scripts)", async () => {
     await browser.page.goto("data:text/html,<input id=pw type=text value=''>");
     const r = (await session.handle(
