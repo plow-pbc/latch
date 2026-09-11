@@ -1028,30 +1028,23 @@ describe("the mode × capability contract", () => {
  * this is the same distinction at the other end.
  */
 describe("a dismissed window is not recorded as an answer", () => {
-  const dismissedDeps = (dismissed: boolean) => ({
-    settings: settings({ approvalMode: "ask" as const, relayCredential: PLOW_CREDENTIAL }),
-    apiBaseUrl: "https://api.plow.co",
-    plowRoot: PLOW_ROOT,
-    record: () => {},
-    review: vi.fn(async () => ({ verdict: "allow" as const, reason: "fine" })),
-    openApproval: async () => "deny" as const,
-    approvalWasDismissed: () => dismissed,
-  });
-
-  it("records the dismissal, not the owner", async () => {
-    const result = await decideIntent(intent(), dismissedDeps(true));
+  it.each([
+    { dismissed: true, source: "dismissed", label: "No one (window closed)", what: "a dismissal" },
+    { dismissed: false, source: "ask", label: "You (asked)", what: "an explicit Deny" },
+  ])("$what is recorded as $source", async ({ dismissed, source, label }) => {
+    const result = await decideIntent(intent(), {
+      settings: settings({ approvalMode: "ask", relayCredential: PLOW_CREDENTIAL }),
+      apiBaseUrl: "https://api.plow.co",
+      plowRoot: PLOW_ROOT,
+      record: () => {},
+      review: vi.fn(async () => ({ verdict: "allow" as const, reason: "fine" })),
+      openApproval: async () => "deny" as const,
+      approvalWasDismissed: () => dismissed,
+    });
 
     expect(result.decision).toBe("deny");
-    expect(result.source).toBe("dismissed");
+    expect(result.source).toBe(source);
     // What the owner reads in their own audit log.
-    expect(decidedByLabel(result.source)).toBe("No one (window closed)");
-    expect(decidedByLabel(result.source)).not.toMatch(/you/i);
-  });
-
-  it("a real Deny is still the owner's", async () => {
-    const result = await decideIntent(intent(), dismissedDeps(false));
-
-    expect(result.source).toBe("ask");
-    expect(decidedByLabel(result.source)).toBe("You (asked)");
+    expect(decidedByLabel(result.source)).toBe(label);
   });
 });

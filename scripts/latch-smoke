@@ -474,13 +474,18 @@ def verdict(events, nonce, expired, since=0):
             "reviewer_unavailable": "the reviewer produced no usable verdict, so it failed closed",
             "reviewer_undecided": "the reviewer would not decide and this Mac has no one to escalate to",
             "expired": "nobody answered in time — the approval aged out. A timeout, not a refusal",
+            "dismissed": "the owner closed the approval window without answering, so it failed closed. Nobody chose this",
             "error": "the decision path itself errored, so it failed closed",
         }
         if source in not_refusals:
             return 1, [json.dumps(decision),
                        f"DENIED (not a refusal) — {not_refusals[source]}. "
                        "The relay and the device both worked."], True
-        who = refusals.get(source, f"the configured decider refused it (source: {source})")
+        # A source in neither map is one this script has not been taught. Name
+        # it rather than calling it a refusal: the last two sources added here
+        # were NOT refusals, and an operator sent to look for a decision nobody
+        # made loses more time than one handed a word to grep for.
+        who = refusals.get(source, f"decided by {source!r} — this smoke script does not know that source")
         return 1, [json.dumps(decision),
                    f"DENIED — {who}. The relay and the device both worked."], True
     end = first(mine, "exec_end")
