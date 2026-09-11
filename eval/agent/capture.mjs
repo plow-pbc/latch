@@ -364,8 +364,7 @@ const pane = (sentence) => { const m = /System Settings > [^,.]+/.exec(sentence 
     note: "A pending handle on a Mac that asks nobody. The reply retrieves the result with plow_get_result and uses it, without sending the owner to a dialog that mode never opens.",
     prompt: "Read the file ~/notes.txt on my Mac and tell me what it says.",
     captured: [["plow_read_file", first, [home]], ["plow_get_result", settled, [home]]],
-    // "your approval" is the sentence this whole change exists to stop: the
-    // owner went looking for a dialog that adversarial mode never raises.
+    // "your approval" names a dialog adversarial mode never raises.
     expect: { calls: { min: 2, max: 4 }, tools: ["plow_get_result"], includes: ["Dentist"], excludes: ["System Settings", "your approval"] },
   });
 }

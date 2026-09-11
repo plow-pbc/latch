@@ -632,17 +632,13 @@ export class DeviceAgent {
     if (grant.decision === "deny") {
       // Most denials need no explanation — this Mac said no, and why is between
       // its owner and it. A few are standing conditions the calling agent can
-      // actually act on, and those carry a fixed sentence. What is NOT said
-      // here is who decided: `grant.source` knows, this sentence does not, and
-      // guessing produced "the owner denied it" for reviewer denials.
+      // act on, and those carry a fixed sentence. Who decided is deliberately
+      // absent: `grant.source` knows it, this sentence does not.
       const reason = EXPLAINED_DENIALS[grant.source];
       return reason ? { status: "denied", reason } : { status: "denied" };
     }
-    // AFTER the deny return, not before it. `running` means execution is
-    // underway, and a denied request never executes — announcing it here put a
-    // refused call into the running phase for as long as it took the denial to
-    // reach the caller, so an agent polling in that window was told its work
-    // had started.
+    // AFTER the deny return, not before it: `running` means execution is
+    // underway, and a denied request never executes.
     progress?.decided();
     return this.execute(intent, payload);
   }

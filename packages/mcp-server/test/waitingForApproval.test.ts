@@ -51,14 +51,10 @@ const NEVER_ANSWERS: PolicyDelegate = {
 /**
  * The same, plus a barrier that resolves once the dialog has been reported.
  *
- * Asserting `awaiting_approval` on the FIRST answer is a race, and it failed as
- * one: the budget is armed before the work starts, and the work has to resolve
- * a path and write the approval record — real disk — before the delegate is
- * reached at all. When the budget wins that race the envelope says `deciding`,
- * which is CORRECT (nobody had been asked yet) and not what the test meant to
- * check. So wait for the signal, then poll: the phase under test is the one the
- * handle reports once a dialog exists, not whichever phase 30ms happened to
- * land in.
+ * Asserting `awaiting_approval` on the FIRST answer is a race: the budget is
+ * armed before the work starts, so it can expire before the delegate is reached
+ * and the envelope then says `deciding` — correct, and not what is under test.
+ * Wait for the signal, then poll.
  */
 function asksAndWaits(): { delegate: PolicyDelegate; asked: Promise<void> } {
   let reached!: () => void;
@@ -179,28 +175,21 @@ describe("a pending handle says what to do about it", () => {
     expect(payload.note).toMatch(/tell the user/i);
     expect(payload.note).toMatch(/plow_get_result/);
     expect(payload.note).toMatch(/do not repeat the original call/i);
-    // This reason now has exactly one producer — the code that creates the
-    // approval window — so the note may say plainly that a person is holding
-    // the call. It used to hedge, because it was also the catch-all for
-    // everything undecided; `deciding` is that catch-all now.
+    // One producer — the code that creates the window — so the note may say
+    // plainly that a person is holding the call.
     expect(payload.note).toMatch(/waiting for them to answer/i);
     expect(payload.note).not.toMatch(/still being prepared|policy check/i);
     // This note is not in the manifest, so the manifest sweep cannot see it —
     // and it shipped saying "poll get_result" an hour before the tools were
     // prefixed. Sweep it where it actually surfaces: on the payload.
     expect(bareToolNames(payload.note)).toEqual([]);
-    // The inverse of what this line used to assert, and deliberately so: when
-    // this reason is reported a dialog IS on screen. What must never claim one
-    // is `deciding`, which the test below pins.
+    // When this reason is reported a dialog IS on screen. What must never claim
+    // one is `deciding`, which the test below pins.
     expect(payload.note).toMatch(/on the user's Mac/i);
   });
 
-  // The field report this exists for: an owner who had set the reviewer as the
-  // decider was told by their agent that a request had gone out to THEM for
-  // approval. There is no dialog in that mode, so they went looking for one
-  // that cannot appear — and the agent, told to say it was waiting, waited
-  // instead of polling, while the audit log filled with approvals nobody was
-  // waiting on.
+  // The default mode raises no dialog, so an agent told "a request has gone out
+  // to you for approval" sends its owner looking for one that cannot appear.
   it("a Mac that never asks its owner does not claim it is waiting on them", async () => {
     const { server, file } = serverWith(DECIDES_ALONE, { ttlMs: 60_000, budgetMs: 30 });
     const { payload } = await callTool(server, "plow_read_file", { path: file }, AGENT);
@@ -258,14 +247,9 @@ describe("a pending handle says what to do about it", () => {
     expect(polled.payload.reason).toBe("awaiting_approval");
   });
 
-  // The window closes, and then this Mac still has to write the approval
-  // record, append the audit line and carry the decision back. The handle said
-  // `awaiting_approval` through all of it — so an agent polling right then,
-  // which is exactly what the note had just told it to do, sent the user back
-  // to a dialog that was no longer there.
-  //
-  // The barrier is the persist-and-audit stretch, held open on purpose: that is
-  // the window under test, not the final answer.
+  // After the window closes this Mac still writes the approval record, appends
+  // the audit line and carries the decision back. The barrier holds that
+  // stretch open on purpose: it is the window under test, not the final answer.
   it("a dialog that has been answered stops claiming the user is holding it", async () => {
     let release!: () => void;
     const persisting = new Promise<void>((r) => (release = r));
@@ -300,8 +284,13 @@ describe("a pending handle says what to do about it", () => {
     release();
   });
 
+  // DECIDES_ALONE, not a delegate that asks: a delegate that calls `asking()`
+  // can change the phase between the first answer and the poll, because the
+  // budget may expire before the delegate is even reached. The notes would then
+  // differ for a good reason, and this test is about neither phase — it is
+  // about the same phase answering the same way twice.
   it("polling the handle repeats the advice, so it survives a lost first answer", async () => {
-    const { server, file } = serverWith(NEVER_ANSWERS, { ttlMs: 60_000, budgetMs: 30 });
+    const { server, file } = serverWith(DECIDES_ALONE, { ttlMs: 60_000, budgetMs: 30 });
     const first = await callTool(server, "plow_read_file", { path: file }, AGENT);
     const polled = await callTool(server, "plow_get_result", { handle: first.payload.handle }, AGENT);
 

@@ -398,12 +398,9 @@ async function publishedSkills(
  * a tool list reads them) and the skill BODY (`plow_read_skill` serves it in
  * full) — both of which the guards below are meant to cover.
  *
- * The skills are ENUMERATED FROM A RUNNING SERVER rather than listed here, and
- * that is the point: a hand-written inventory is a second thing to keep in
- * step, and the last one shipped omitting `plow-folder` while claiming to cover
- * every built-in. Whatever `plow_list_skills` publishes is what an agent can
- * read, so that is what gets scanned, and a skill registered tomorrow is
- * covered the day it is registered.
+ * The skills are ENUMERATED FROM A RUNNING SERVER rather than listed here: a
+ * hand-written inventory is a second thing to keep in step, and whatever
+ * `plow_list_skills` publishes is what an agent can actually read.
  */
 async function manifestStrings(): Promise<{ where: string; text: string }[]> {
   const out = [{ where: "instructions", text: SERVER_INSTRUCTIONS }];
@@ -623,15 +620,11 @@ describe("what the agent-facing copy must and must not say", () => {
       // The script tool IS an unsandboxed osascript, and naming what it
       // replaces (osascript under plow_run_command) is the point of its copy.
       //
-      // The contacts and imessage skills join them now that this guard walks
-      // every published skill rather than just browsing. Sending a message and
-      // writing a contact ARE Apple events; both skills spell
-      // `/usr/bin/osascript` deliberately, because the executor's PATH puts
-      // user-writable dirs ahead of /usr/bin and a bare name would hand the
-      // apple_events grant to a shadow binary. Contacts goes further: it exists
-      // because an agent whose osascript was denied fell back to raw UPDATEs on
-      // the live iCloud store (2026-08-28). Naming the tool is how these close
-      // that door, not a prescription the sandbox then denies.
+      // Contacts and imessage too: sending a message and writing a contact ARE
+      // Apple events, and both spell `/usr/bin/osascript` deliberately — the
+      // executor's PATH puts user-writable dirs ahead of /usr/bin, so a bare
+      // name would hand the apple_events grant to a shadow binary. Naming the
+      // tool is how they close that door, not a prescription.
       except: [
         "plow_run_command.apple_events",
         "plow_run_applescript.description",
@@ -639,17 +632,13 @@ describe("what the agent-facing copy must and must not say", () => {
         "skill imessage.body",
       ],
     },
-    // Four rounds of review found this family in four different places: the
-    // instructions block, the tool descriptions, the built-in skills, and the
-    // shipped diagnostic skills. Every surface was written as though a human
-    // always sees the request — but on the DEFAULT mode (`adversarial`) the
-    // reviewer decides and no dialog opens, so an agent repeating any of it
-    // tells the owner they saw, or refused, something they never did.
+    // On the default mode the reviewer decides and no dialog opens, so copy
+    // written as though a human always sees the request makes an agent tell the
+    // owner they saw, or refused, something they never did. See DESIGN.md §5.
     //
-    // These ban the CLAIM, not the word. "the owner" is right where they own
-    // the Mac, configure who decides, or answer macOS's own dialogs — and
-    // `HOST_GATE_NOTE`'s "neither ... nor the owner refusing" is a DENIAL of
-    // the claim, which is why these match assertions rather than the noun.
+    // These ban the CLAIM, not the word: "the owner" is right where they own
+    // the Mac, configure who decides, or answer macOS's own dialogs, and
+    // `HOST_GATE_NOTE` DENIES the claim rather than making it.
     {
       what: "says a human sees the request in a dialog",
       why: "no dialog opens in the default mode; the reviewer decides",

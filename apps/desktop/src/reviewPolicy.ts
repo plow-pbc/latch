@@ -90,30 +90,32 @@ export function storedRuleMayGrant(settings: Settings): boolean {
 /**
  * Will this intent be put in front of a person?
  *
- * THE one answer to that question. `decideIntent` branches on it below rather
- * than re-deriving it, and the `goal` field's copy describes THIS — because
- * copy that enumerated modes was wrong on the live path it forgot: a script in
- * Approve mode raises the dialog, so "a person sees it only on Macs set to Ask"
- * was false there.
+ * THE one answer. `decideIntent` branches on it rather than re-deriving it, and
+ * the `goal` field's copy describes it rather than enumerating modes.
  *
- * A script is that exception. It runs outside the sandbox with nothing but its
- * own text as the bound (DESIGN.md §6), and a source-level tripwire is not
- * sound against a dynamic language — the boundary is someone reading the whole
- * script. Approve mode has no such someone, so a script goes to the dialog.
+ * A script under Approve is the exception that makes it worth having: it runs
+ * outside the sandbox with nothing but its own text as the bound (DESIGN.md
+ * §6), and the boundary is someone reading the whole script, so it goes to the
+ * dialog even in a mode that otherwise asks nobody.
  *
- * Two earlier returns in `decideIntent` mean a `true` here is still not a
- * promise: `deny` refuses first, and a file operation confined to ~/Plow is
- * granted without a dialog in any mode. So this answers "does this MODE, for
- * these capabilities, use the dialog" — which is what the copy claims and no
- * more.
+ * A `true` here is not a promise — `deny` and the ~/Plow carve-out both return
+ * before it is consulted. It answers "does this mode, for these capabilities,
+ * use the dialog" and no more.
  */
 export function opensApprovalWindow(
   settings: Settings,
   capabilities: readonly { kind: string }[],
 ): boolean {
   const mode = settings.approvalMode ?? DEFAULT_APPROVAL_MODE;
-  if (mode === "ask") return true;
-  return mode === "approve" && capabilities.some((c) => c.kind === "applescript");
+  // ENUMERATE THE MODES THAT DECIDE WITHOUT A PERSON, and send everything else
+  // to the dialog. Listing the modes that ask reads the same and fails OPEN:
+  // `loadSettings` does not validate `approvalMode` (only `setApprovalMode`
+  // does, on the way in), so a tampered or downgraded settings file can carry a
+  // value no branch recognises — and under a list of askers that value would
+  // buy a decision with no human in it.
+  if (mode === "adversarial" || mode === "deny") return false;
+  if (mode === "approve") return capabilities.some((c) => c.kind === "applescript");
+  return true;
 }
 
 /** Everything `decideIntent` needs from the outside world, injected for tests. */
@@ -153,12 +155,10 @@ export interface DecideDeps {
   /**
    * The dialog is gone — answered, or closed on them.
    *
-   * Fired HERE rather than inside the window, because `openApproval` resolving
-   * is that same instant and this side of it can be tested without a display.
-   * Everything after this line — the store's write, the audit append, the
-   * decision travelling back — happens with nothing on screen, and a caller
-   * polling through it was being told to go and look at a window that had
-   * already closed.
+   * Fired here rather than inside the window: `openApproval` resolving is the
+   * same instant, and this side of it can be tested without a display.
+   * Everything after it — the store's write, the audit append, the decision
+   * travelling back — happens with nothing on screen.
    */
   onAnswered?: () => void;
 }
@@ -188,8 +188,7 @@ export async function decideIntent(
     return { decision: "allow_once", source: APPROVAL_SOURCE_PLOW_FOLDER };
   }
 
-  // From here there are exactly two outcomes: a dialog, or the reviewer. One
-  // predicate decides which, and the `goal` copy describes that predicate.
+  // Two outcomes from here: a dialog, or the reviewer. One predicate decides.
   const dialogWillOpen = opensApprovalWindow(settings, intent.capabilities);
 
   // Approve: the whole point of the mode, and reached only when no dialog is
@@ -198,8 +197,7 @@ export async function decideIntent(
     return { decision: "allow_once", source: "approve" };
   }
 
-  // `deny` returned above, approve just did, and ask/approve-with-a-script are
-  // the dialog. What is left is adversarial.
+  // `deny` returned above and approve just did; what is left is adversarial.
   const reviewDecides = !dialogWillOpen;
 
   // Run one review, recording its start and outcome onto the intent's audit

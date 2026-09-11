@@ -163,9 +163,9 @@ from, the audit log stores, and the adversarial reviewer evaluates.
 
 ### The decider, and the words for it
 
-One vocabulary, because this class of drift has been found and fixed six times
-in review: prose that named the owner as the one who sees, reads, approves or
-refuses, on a Mac whose default mode shows them nothing.
+One vocabulary. Prose that names the owner as the one who sees, reads,
+approves or refuses is false on a Mac whose default mode shows them nothing,
+and it has drifted back repeatedly.
 
 - **The decider** is whatever this Mac's mode puts the decision to: the owner at
   a dialog (`ask`, and a script under `approve`), the AI reviewer

@@ -57,31 +57,19 @@ export type PendingReason = "awaiting_approval" | "deciding" | "running";
  * advice is actually needed. `retry_after_ms` next to it is advice too, never
  * a gate: polling early is answered honestly.
  *
- * BOTH ARE PHASES OF THIS CALL, never claims about how the Mac is configured.
- * That distinction is the whole design: a reason that describes a SETTING is
- * wrong the moment the call is somewhere the setting does not predict.
+ * BOTH ARE PHASES OF THIS CALL, never claims about how the Mac is configured:
+ * a reason that describes a SETTING is wrong the moment the call is somewhere
+ * the setting does not predict.
  *
- * `deciding` is where every call starts and means only "nobody has been asked
- * yet". True of a reviewer thinking on its own budget — minutes wide against
- * this ten seconds — and equally true of a Mac that always asks but is
- * still resolving a path or queued behind another prompt. It must not say the
- * Mac cannot ask its owner; it does not know that, and on an Ask-mode Mac
- * deferring during preparation it would be false.
+ * `deciding` means only "nobody has been asked yet", which is where every call
+ * starts — a reviewer thinking on its own budget, and equally a Mac that always
+ * asks but is still resolving a path or queued behind another prompt.
  *
- * `awaiting_approval` is claimed ONLY once a window exists in front of a human,
- * which is why it is reported by the code that creates one — and why its note
- * can now say plainly that a person is holding the call. It used to hedge
- * ("waiting on the user, on a policy check, or still being prepared") because
- * it was the catch-all for everything undecided; `deciding` is that catch-all
- * now, so the hedge only left an Ask-mode agent vaguer than the truth. Inferring it from
- * the approval mode was a lie with teeth: an owner who had set the reviewer as
- * the decider was told by their agent that a request had gone out to them,
- * went looking for a dialog that mode never raises, and found none — while the
- * agent, having been told to say it was waiting, stopped instead of polling,
- * and the audit log filled up with approvals nobody was waiting on. Reporting
- * it from "the ask branch was taken" would have moved the lie rather than
- * removed it: the titles still resolve after that, and the intent can sit in
- * the approval queue behind another prompt for as long as that one takes.
+ * `awaiting_approval` is claimed ONLY while a window exists in front of a
+ * human: reported by the code that creates one, withdrawn by the same code when
+ * it closes. Neither the approval mode nor "the ask branch was taken" is a
+ * sound source for it — the mode can change mid-call, and after that branch the
+ * titles still resolve and the intent can sit in the approval queue.
  *
  * `running` means the caller-level decision step is complete and execution is
  * underway. It does not claim that action-specific checks inside that execution
@@ -189,13 +177,10 @@ export interface Progress {
   /** A dialog is now in front of a human. Called by whoever opened it. */
   asking(): void;
   /**
-   * That dialog is gone — answered, or closed. Called by whoever opened it,
-   * and the counterpart to `asking`.
-   *
-   * Without it the handle kept saying a person was holding the call while the
-   * answer was being persisted, audited and acted on. That is a short window,
-   * but it is exactly when an agent polls (it has just been told to), and what
-   * it read sent the user back to a window that had already closed.
+   * That dialog is gone — answered, or closed. The counterpart to `asking`:
+   * without it the handle claims a person is holding the call while the answer
+   * is merely being persisted and audited, which is exactly when an agent
+   * polls.
    */
   answered(): void;
   decided(): void;

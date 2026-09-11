@@ -967,19 +967,11 @@ pre.script {
 /* Expanded: the same box grows to about 60% of the window so the owner can
    actually read the page the agent is on. Toggled by a click on it, either way.
 
-   NOT A MODAL, and that is the whole point of the change. It used to span every
-   edge below the titlebar behind a dark scrim, which is a dialog in all but
-   name: the app went away, and the only thing left on screen was the three
-   macOS traffic lights `hiddenInset` draws over our titlebar, floating on black
-   with nothing to say whose they were. "It takes up an awkward amount of space"
-   is what that looked like from the outside.
-
-   So it is a panel now. It floats over the bottom-right of the window at ~60%
-   of each dimension, with a shadow to lift it off what is behind; the audit
-   list, the tabs and the titlebar all stay visible and clickable. Clicking the
-   panel (or its Minimize button) puts it back in the corner — clicking anywhere
-   else does nothing, which is the ordinary behaviour of a thing that is not
-   trapping you. */
+   NOT A MODAL. It floats over the bottom-right with a shadow; the audit list,
+   the tabs and the titlebar stay visible and clickable, and clicking anywhere
+   outside it does nothing. A full-bleed scrim below the titlebar was a dialog
+   in all but name, and left the window's own traffic lights stranded on black
+   with nothing around them to say whose they were. */
 .live-corner img { cursor: zoom-in; }
 .live-corner.expanded {
   position: fixed;

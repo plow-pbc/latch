@@ -359,26 +359,11 @@ describe("browser fingerprint pinning is wired to the runtime", () => {
   });
 });
 
-/**
- * `running` is a promise that execution is underway, and a denied intent never
- * executes.
- *
- * `decided()` used to fire on the decision rather than on the allow, so a
- * refused call entered the running phase for as long as the denial took to
- * reach the caller. Asserted here rather than through a served handle: end to
- * end that window is a few microseconds wide, and a test that has to lose a
- * race to see a bug passes when the bug is present — one written that way did.
- * The callback either fires for a denial or it does not.
- */
 describe("a denial never announces execution", () => {
   // `running` promises execution is underway, and a denied intent never
-  // executes. `decided()` used to fire on the decision rather than on the
-  // allow, so a refused call entered the running phase for as long as the
-  // denial took to reach the caller.
-  //
-  // Asserted on the callback rather than through a served handle: end to end
-  // that window is microseconds wide, and a test that has to win a race to see
-  // a bug passes when the bug is present — one written that way did.
+  // executes. Asserted on the callback rather than through a served handle:
+  // end to end that window is microseconds wide, so a test of it would have to
+  // win a race to see anything.
   it.each([
     ["deny", "denied", false],
     ["allow_once", "completed", true],

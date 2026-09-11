@@ -2,15 +2,24 @@
 
 Lets a remote AI agent (Claude Code or any MCP client) use a Mac — read/write
 files, run CLI commands with streaming output, and drive a real browser —
-through an **intent-based approval system**. Every operation becomes a
-structured intent that is decided before it runs inside an on-the-fly seatbelt
-sandbox derived from the granted capabilities. Who decides is the owner's
-setting: out of the box an adversarial reviewer does, and no dialog is ever
-raised (`DEFAULT_APPROVAL_MODE` in `apps/desktop/src/settings.ts`); the owner
-can opt into being asked per operation instead. Note what that does and
-does not mean: the profile is *built from* those capabilities, but it is not a
-tight fit around them — reads in particular are permitted more broadly. See
-[docs/SANDBOX-BOUNDARY.md](docs/SANDBOX-BOUNDARY.md).
+through an **intent-based approval system**. An operation that touches the Mac
+becomes a structured intent, decided before it runs inside an on-the-fly
+seatbelt sandbox derived from the granted capabilities. Who decides is the
+owner's setting: out of the box an adversarial reviewer does, and no dialog is
+ever raised (`DEFAULT_APPROVAL_MODE` in `apps/desktop/src/settings.ts`); the
+owner can opt into being asked per operation instead.
+
+Two things about that boundary, because both are narrower than "every call is
+approved" sounds:
+
+- **Not every call mints an intent.** `plow_vault`'s list and describe build
+  none and ask nobody — they report what the vault holds, never a value. And
+  inside an approved browsing session, `plow_browser`'s actions ride the grant
+  that opened it rather than minting one each; widening that session
+  (`plow_browser_request`) is its own intent, and so is releasing a credential.
+- **The sandbox profile is *built from* the approved capabilities, not fitted
+  tightly to them** — reads in particular are permitted more broadly. See
+  [docs/SANDBOX-BOUNDARY.md](docs/SANDBOX-BOUNDARY.md).
 
 Implemented in **TypeScript** (Node + Electron). See [DESIGN.md](DESIGN.md) for
 the architecture and [README-ts.md](README-ts.md) for the package/app layout.

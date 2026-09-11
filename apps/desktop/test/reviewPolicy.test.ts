@@ -923,16 +923,9 @@ describe("the ~/Plow playground carve-out", () => {
 });
 
 /**
- * The predicate and the code path must not be able to disagree.
- *
- * They did. The `goal` field's copy said a person reads it "only where this Mac
- * is set to ask its owner" — and a script under Approve raises the dialog, so
- * the sentence was false on a live path. The copy now describes
- * `opensApprovalWindow`, which `decideIntent` itself branches on; this pins
- * that the two still agree, for every mode, with and without a script.
- *
- * `deny` and `~/Plow` are absent on purpose: both return before the predicate
- * is consulted, which is exactly what its doc comment says it does not claim.
+ * The predicate and the code path must not be able to disagree — for every
+ * mode, with and without a script. `deny` and `~/Plow` are absent on purpose:
+ * both return before the predicate is consulted.
  */
 describe("opensApprovalWindow answers for the path decideIntent actually takes", () => {
   const READ = [{ kind: "fs.read", paths: ["/etc/hosts"] }] as const;
@@ -941,6 +934,11 @@ describe("opensApprovalWindow answers for the path decideIntent actually takes",
   ] as const;
 
   const cases = [
+    // A settings file this build does not recognise — hand-edited, or written
+    // by a newer build and downgraded. `loadSettings` does not validate the
+    // mode, so the decision path has to, and its answer must be the human.
+    { mode: "something-else" as never, caps: READ, what: "a read under an unknown mode" },
+    { mode: "something-else" as never, caps: SCRIPT, what: "a script under an unknown mode" },
     { mode: "ask", caps: READ, what: "a read under Ask" },
     { mode: "ask", caps: SCRIPT, what: "a script under Ask" },
     { mode: "approve", caps: READ, what: "a read under Approve" },
@@ -979,13 +977,8 @@ describe("opensApprovalWindow answers for the path decideIntent actually takes",
 });
 
 /**
- * The dialog's closing is reported, not just its opening.
- *
- * Between the owner clicking and the caller getting an answer, this Mac still
- * writes the approval record, appends the audit line and carries the decision
- * back. The handle said `awaiting_approval` through all of it — so an agent
- * that polled right then (which is precisely what it had just been told to do)
- * sent the user back to a window that had already closed.
+ * The dialog's closing is reported, not just its opening: the record, the audit
+ * line and the decision's return all happen with nothing on screen.
  */
 describe("a closed dialog stops claiming a person is holding the call", () => {
   it("onAnswered fires after openApproval settles, and before the decision returns", async () => {
@@ -1042,5 +1035,46 @@ describe("a closed dialog stops claiming a person is holding the call", () => {
     );
 
     expect(order).toEqual([]);
+  });
+});
+
+/**
+ * An unrecognised approval mode must not buy a decision with no human in it.
+ * `loadSettings` does not validate the mode, so a tampered or downgraded file
+ * can carry one no branch matches; it falls to the dialog.
+ */
+describe("an unrecognised approval mode falls to the human", () => {
+  it("does not let the reviewer authorise it", async () => {
+    const review = vi.fn(async () => ({ verdict: "allow" as const, reason: "fine" }));
+    const openApproval = vi.fn(async () => "allow_once" as const);
+
+    const result = await decideIntent(
+      makeIntent({
+        agentId: "agent-1",
+        agentDisplay: "Agent One",
+        deviceId: "device-1",
+        request: "read",
+        capabilities: [{ kind: "fs.read", paths: ["/etc/hosts"] }],
+        sessionId: "s1",
+      }),
+      {
+        settings: settings({
+          approvalMode: "nonsense-from-a-newer-build" as never,
+          relayCredential: PLOW_CREDENTIAL,
+        }),
+        apiBaseUrl: "https://api.plow.co",
+        plowRoot: PLOW_ROOT,
+        auditEntries: () => [],
+        record: () => {},
+        review,
+        openApproval,
+      },
+    );
+
+    expect(openApproval).toHaveBeenCalledTimes(1);
+    expect(result.source).toBe("ask");
+    // The reviewer may still be consulted for a HINT — that is Ask mode's
+    // behaviour and costs nothing. What it must never be here is the decider.
+    expect(result.decision).toBe("allow_once");
   });
 });
