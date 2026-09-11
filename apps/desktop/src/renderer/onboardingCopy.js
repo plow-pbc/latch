@@ -22,7 +22,7 @@ export const TRUST_ROWS = [
   {
     title: "You decide who decides",
     detail:
-      "Out of the box the AI reviewer approves each action. Switch to approving them yourself whenever you want.",
+      "Out of the box the AI reviewer decides each action — allowing it, or refusing it. Switch to deciding them yourself whenever you want.",
     glyph: "sliders",
   },
   {

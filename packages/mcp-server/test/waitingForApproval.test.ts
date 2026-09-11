@@ -278,9 +278,12 @@ describe("a pending handle says what to do about it", () => {
       AGENT,
     );
 
-    // Not "go and look at your Mac": there is nothing there to look at.
-    expect(polled.payload.reason).not.toBe("awaiting_approval");
-    expect(polled.payload.reason).toBe("deciding");
+    // Not "go and look at your Mac": there is nothing there to look at. And not
+    // `deciding` either, whose note says nobody has been asked — somebody has
+    // just done the asking AND the answering. This stretch is its own phase.
+    expect(polled.payload.reason).toBe("answered");
+    expect(polled.payload.note).toMatch(/has ANSWERED/);
+    expect(polled.payload.note).not.toMatch(/nobody has been asked/i);
     release();
   });
 

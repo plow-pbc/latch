@@ -134,12 +134,6 @@ export interface DecideDeps {
    * for what "confined" refuses). Deny mode outranks it.
    */
   plowRoot: string;
-  /**
-   * The audit log's current entries. NOT review context any more — nothing
-   * below reads this, and the reviewer is handed `history: []` (DESIGN.md
-   * §4). It comes out with `ReviewArgs.history` (#140).
-   */
-  auditEntries: () => JSONValue[];
   record: (event: string, fields: Record<string, JSONValue>) => void;
   review: (
     args: ReviewArgs,

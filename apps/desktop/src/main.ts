@@ -343,7 +343,6 @@ class ElectronPolicy implements PolicyDelegate {
       // gets as ownerHome. A from-source run shares the packaged app's
       // playground; the folder is the owner's, not the instance's.
       plowRoot: plowFolderPath(os.homedir()),
-      auditEntries: () => audit?.entries() ?? [],
       record: (event, fields) => audit?.record(event, fields),
       review: adversarialReview,
       openApproval: async (hint) =>

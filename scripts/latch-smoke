@@ -467,8 +467,6 @@ def verdict(events, nonce, expired, since=0):
             "ask": "the owner refused it",
             "adversarial": "the safety reviewer refused it",
             "policy": "this Mac's standing policy refused it",
-            "approve": "this Mac refused it",
-            "rule": "a stored always-allow rule did not cover it",
         }
         not_refusals = {
             "no_reviewer": "the reviewer could not run — this Mac is not signed in, so it failed closed",

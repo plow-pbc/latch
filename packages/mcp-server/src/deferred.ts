@@ -42,7 +42,7 @@ export const HANDLE_TTL_MS = 15 * 60_000;
 export const RETRY_AFTER_MS = 1_000;
 
 /** Why a call is still outstanding. */
-export type PendingReason = "awaiting_approval" | "deciding" | "running";
+export type PendingReason = "awaiting_approval" | "answered" | "deciding" | "running";
 
 /**
  * What the agent should DO about a pending handle, in the envelope itself.
@@ -71,6 +71,12 @@ export type PendingReason = "awaiting_approval" | "deciding" | "running";
  * sound source for it — the mode can change mid-call, and after that branch the
  * titles still resolve and the intent can sit in the approval queue.
  *
+ * `answered` is the stretch after that window closes and before the decision
+ * reaches the caller: the record is written, the audit line appended. It is its
+ * own phase because neither neighbour describes it — `awaiting_approval` sends
+ * the user to a dialog that has gone, and `deciding` tells the agent nobody has
+ * been asked, when somebody just did the asking and the answering.
+ *
  * `running` means the caller-level decision step is complete and execution is
  * underway. It does not claim that action-specific checks inside that execution
  * have succeeded.
@@ -81,6 +87,11 @@ const PENDING_NOTES: Record<PendingReason, string> = {
     "is the one state where a person really is holding the call. Tell the user it is waiting " +
     "on them, then poll plow_get_result with this handle. Do not repeat the original call; " +
     "that starts a second request.",
+  answered:
+    "the user has ANSWERED — the window is gone and this Mac is recording what they said. Do not " +
+    "ask them again, and do not tell them something is still waiting on them. Poll " +
+    "plow_get_result with this handle; the settled answer lands there. Do not repeat the original " +
+    "call; that starts a second request.",
   deciding:
     "not decided yet, and NOBODY HAS BEEN ASKED TO APPROVE ANYTHING YET — this Mac is still " +
     "working out the answer itself (a safety review, a policy check, or preparing the request). " +
@@ -228,9 +239,7 @@ export class DeferredResults {
     };
     const progress: Progress = {
       asking: () => advance("awaiting_approval"),
-      // Back to `deciding`, which is honest: undecided as far as the caller is
-      // concerned, and nobody is being asked any more.
-      answered: () => advance("deciding"),
+      answered: () => advance("answered"),
       decided: () => advance("running"),
     };
 

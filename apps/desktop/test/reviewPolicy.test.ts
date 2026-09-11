@@ -92,7 +92,6 @@ function harness(
       settings: s,
       apiBaseUrl: "https://api.plow.co",
       plowRoot: PLOW_ROOT,
-      auditEntries: () => [],
       record: (event, fields) => records.push({ event, fields }),
       review,
       openApproval,
@@ -103,33 +102,23 @@ function harness(
 /**
  * What is actually PASSED, not what the prompt says.
  *
- * The ratchet was never a wording problem, so this asserts on the argument
- * `decideIntent` builds: a denial-soaked audit log and an empty one produce the
- * identical review call, because the history handed over is empty either way.
+ * `DecideDeps` no longer carries the audit log at all — the soak this test used
+ * to perform has nothing to flow through, which is a stronger guarantee than
+ * the assertion was. What remains worth pinning is the argument itself: the
+ * reviewer is handed an empty history, every time.
  */
 describe("nothing about the past reaches the reviewer", () => {
-  it("passes an empty history however full the audit log is", async () => {
+  it("passes an empty history", async () => {
     const reviewCalls: ReviewArgs[] = [];
     const review = vi.fn(async (args: ReviewArgs) => {
       reviewCalls.push(args);
       return { verdict: "allow" as const, reason: "fine" };
     });
-    const soaked: JSONValue[] = [
-      { event: "intent_received", intentId: "old", agent: "agent-1", request: "browse: doordash.com" },
-      { event: "intent_decision", intentId: "old", decision: "deny", source: "adversarial" },
-      {
-        event: "adversarial_review_result",
-        intentId: "old",
-        verdict: "deny",
-        reason: "compromised or misaligned agent",
-      },
-      { event: "file_read", intentId: "old", path: "/tmp/earlier.txt" },
-    ];
+
     await decideIntent(intent(), {
       settings: settings({ approvalMode: "adversarial", relayCredential: PLOW_CREDENTIAL }),
       apiBaseUrl: "https://api.plow.co",
       plowRoot: PLOW_ROOT,
-      auditEntries: () => soaked,
       record: () => {},
       review,
       openApproval: async () => "deny" as const,
@@ -137,9 +126,6 @@ describe("nothing about the past reaches the reviewer", () => {
 
     expect(reviewCalls).toHaveLength(1);
     expect(reviewCalls[0].history).toEqual([]);
-    const serialized = JSON.stringify(reviewCalls[0]);
-    expect(serialized).not.toContain("compromised");
-    expect(serialized).not.toContain("earlier.txt");
   });
 });
 
@@ -245,7 +231,6 @@ describe("decideIntent — modes that never reach the reviewer", () => {
       settings: settings({ approvalMode: "approve", relayCredential: PLOW_CREDENTIAL }),
       apiBaseUrl: "https://api.plow.co",
       plowRoot: PLOW_ROOT,
-      auditEntries: () => [],
       record: () => {},
       review,
       openApproval,
@@ -293,7 +278,6 @@ describe("a stored rule cannot stand in for a required review", () => {
           settings: s,
           apiBaseUrl: "https://api.plow.co",
       plowRoot: PLOW_ROOT,
-          auditEntries: () => [],
           record: () => {},
           review: async () => ({ verdict: await answer(), reason: "because" }),
           openApproval: async () => "deny" as const,
@@ -669,7 +653,6 @@ describe("the approval dialog's advice note carries no credential either", () =>
       }),
       apiBaseUrl: "https://api.plow.co",
       plowRoot: PLOW_ROOT,
-      auditEntries: () => [],
       record: () => {},
       review: adversarialReview, // the REAL one, guard included
       openApproval: async (hint) => {
@@ -896,7 +879,6 @@ describe("the ~/Plow playground carve-out", () => {
       settings: settings({ approvalMode: mode, relayCredential: PLOW_CREDENTIAL }),
       apiBaseUrl: "https://api.plow.co",
       plowRoot: PLOW_ROOT,
-      auditEntries: () => [],
       record: () => {},
       review,
       openApproval,
@@ -970,7 +952,6 @@ describe("opensApprovalWindow answers for the path decideIntent actually takes",
       settings: config,
       apiBaseUrl: "https://api.plow.co",
       plowRoot: PLOW_ROOT,
-      auditEntries: () => [],
       record: () => {},
       review: vi.fn(async () => ({ verdict: "allow" as const, reason: "fine" })),
       openApproval,
@@ -1003,7 +984,6 @@ describe("a closed dialog stops claiming a person is holding the call", () => {
         settings: settings({ approvalMode: "ask", relayCredential: PLOW_CREDENTIAL }),
         apiBaseUrl: "https://api.plow.co",
         plowRoot: PLOW_ROOT,
-        auditEntries: () => [],
         record: () => {},
         review: vi.fn(async () => ({ verdict: "allow" as const, reason: "fine" })),
         openApproval: async () => {
@@ -1033,7 +1013,6 @@ describe("a closed dialog stops claiming a person is holding the call", () => {
         settings: settings({ approvalMode: "adversarial", relayCredential: PLOW_CREDENTIAL }),
         apiBaseUrl: "https://api.plow.co",
         plowRoot: PLOW_ROOT,
-        auditEntries: () => [],
         record: () => {},
         review: vi.fn(async () => ({ verdict: "allow" as const, reason: "fine" })),
         openApproval: async () => "allow_once" as const,
