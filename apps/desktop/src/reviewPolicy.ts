@@ -9,6 +9,7 @@
  */
 import { Intent, JSONValue } from "@domo/protocol";
 import {
+  DENIAL_SOURCE_DISMISSED,
   APPROVAL_SOURCE_PLOW_FOLDER,
   confinedToPlowFolder,
   DENIAL_SOURCE_NO_CREDITS,
@@ -347,6 +348,10 @@ export async function decideIntent(
   const decision = await deps.openApproval(hint);
   // `openApproval` reports how it ended; this branch cannot tell a Deny from a
   // dismissal by the decision alone, because both are "deny".
-  deps.onAnswered?.(deps.approvalWasDismissed?.() ? "dismissed" : "chosen");
-  return { decision, source: "ask" };
+  const dismissed = deps.approvalWasDismissed?.() ?? false;
+  deps.onAnswered?.(dismissed ? "dismissed" : "chosen");
+  // The source is persisted and rendered, so the distinction has to survive
+  // past the pending phase: under `ask` the audit view says "You (asked)", and
+  // for a window nobody answered that is a decision the owner never made.
+  return { decision, source: dismissed ? DENIAL_SOURCE_DISMISSED : "ask" };
 }

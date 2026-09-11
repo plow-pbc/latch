@@ -1018,3 +1018,40 @@ describe("the mode × capability contract", () => {
     expect(openApproval.mock.calls.length > 0).toBe(decider === "human");
   });
 });
+
+/**
+ * A dismissal has to survive the pending phase.
+ *
+ * `source` is what `ApprovalStore` persists and what the Audit view renders, so
+ * a window nobody answered arriving as `ask` told the owner — in their own log
+ * — that they had refused it. The pending note already drew the distinction;
+ * this is the same distinction at the other end.
+ */
+describe("a dismissed window is not recorded as an answer", () => {
+  const dismissedDeps = (dismissed: boolean) => ({
+    settings: settings({ approvalMode: "ask" as const, relayCredential: PLOW_CREDENTIAL }),
+    apiBaseUrl: "https://api.plow.co",
+    plowRoot: PLOW_ROOT,
+    record: () => {},
+    review: vi.fn(async () => ({ verdict: "allow" as const, reason: "fine" })),
+    openApproval: async () => "deny" as const,
+    approvalWasDismissed: () => dismissed,
+  });
+
+  it("records the dismissal, not the owner", async () => {
+    const result = await decideIntent(intent(), dismissedDeps(true));
+
+    expect(result.decision).toBe("deny");
+    expect(result.source).toBe("dismissed");
+    // What the owner reads in their own audit log.
+    expect(decidedByLabel(result.source)).toBe("No one (window closed)");
+    expect(decidedByLabel(result.source)).not.toMatch(/you/i);
+  });
+
+  it("a real Deny is still the owner's", async () => {
+    const result = await decideIntent(intent(), dismissedDeps(false));
+
+    expect(result.source).toBe("ask");
+    expect(decidedByLabel(result.source)).toBe("You (asked)");
+  });
+});

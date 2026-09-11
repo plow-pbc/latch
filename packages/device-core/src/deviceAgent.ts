@@ -83,6 +83,16 @@ export const DENIAL_SOURCE_NO_CREDITS = "no_credits";
 export const DENIAL_SOURCE_NO_REVIEWER = "no_reviewer";
 
 /**
+ * Denied because the approval window closed with no button pressed.
+ *
+ * Distinct from `ask`, which means a person chose Deny. Both fail closed and
+ * both are the owner's dialog, but only one is a decision — and the audit view
+ * rendered the pair identically as "You (asked)", which told an owner reading
+ * their own log that they had refused something they never saw the end of.
+ */
+export const DENIAL_SOURCE_DISMISSED = "dismissed";
+
+/**
  * Denied because the reviewer looked and would not commit — it answered `ask`,
  * in a mode where there is nobody to ask. Distinct from the source below, and
  * the distinction is the whole point: this is a reviewer that ran.
@@ -108,6 +118,9 @@ export const DENIAL_SOURCE_REVIEWER_UNAVAILABLE = "reviewer_unavailable";
  * misbehaviour can put any of those in front of a caller.
  */
 const EXPLAINED_DENIALS: Record<string, string> = {
+  [DENIAL_SOURCE_DISMISSED]:
+    "the approval window on the owner's Mac was closed without an answer, so this failed closed. " +
+    "Nobody chose to refuse it. Tell them the window was closed and ask whether to try again",
   [DENIAL_SOURCE_NO_CREDITS]:
     "inference unavailable: this Plow account is out of credits, so the " +
     "adversarial reviewer could not run and the operation was denied",

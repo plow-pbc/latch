@@ -223,6 +223,9 @@ export function decidedByLabel(source: string | null): string | null {
     case "reviewer_unavailable": return "AI Reviewer (no usable verdict)";
     case "ask":
     case "prompt": return "You (asked)";
+    // The window went away without a button. Not "You (asked)": the owner
+    // never finished answering, and their own log should not say they did.
+    case "dismissed": return "No one (window closed)";
     // The deadline, not a person — see APPROVAL_SOURCE_EXPIRED.
     case "expired": return "No one (timed out)";
     case "error": return "Error while asking";
