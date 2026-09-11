@@ -294,7 +294,6 @@ async function refreshAuditNow(opts) {
   // viewModel.activityMatches makes — title, command, agent, goal, the
   // permission a block named, and the timeline lines.
   const page = await window.domo.auditPage({
-    offset: 0,
     limit: auditLimit,
     search: auditSearch,
     decision: decisionFilter,

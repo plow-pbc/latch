@@ -89,7 +89,7 @@ const activity = {
   ],
 };
 const { timeline: _timeline, ...row } = activity;
-ipcMain.handle("audit:page", async () => ({ rows: [row], total: 1, size: 1, topId: row.id }));
+ipcMain.handle("audit:page", async () => ({ rows: [row], total: 1, size: 1 }));
 ipcMain.handle("audit:activity", async (_e, id) => (id === activity.id ? activity : null));
 
 app.whenReady().then(async () => {

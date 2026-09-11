@@ -287,7 +287,6 @@ function auditQuery(raw: unknown): AuditQuery {
   const oneOf = <T extends string>(v: unknown, allowed: readonly T[]): T | "any" =>
     typeof v === "string" && (allowed as readonly string[]).includes(v) ? (v as T) : "any";
   return {
-    offset: int(q.offset),
     limit: int(q.limit),
     search: typeof q.search === "string" ? q.search : "",
     decision: oneOf(q.decision, ["allowed", "denied", "unanswered", "none"] as const),
@@ -555,7 +554,6 @@ function restorableBounds(saved: WindowBounds | undefined): WindowBounds | null 
 
 // MARK: IPC for the main window (audit / rules / settings / status)
 
-ipcMain.handle("audit:list", async () => device?.audit.entries() ?? []);
 // Events are grouped into logical activities in the main process, so the
 // sandboxed renderer receives plain view models (never agent-controlled
 // markup) — and only a page of them, from the live index: the rows its
@@ -1388,9 +1386,8 @@ async function capabilitiesNow(inventory?: HostInventory | null): Promise<Capabi
   return capabilitiesView({
     inventory: inv,
     automation: await automationRows(),
-    // The lines the tab reads, from the live index — not the whole log off
-    // disk (auditIndex.ts says why the subset folds to the same tab).
-    events: device ? ensureAuditIndex().permissionEvents() : [],
+    // The log as the live index holds it — not read off disk again.
+    events: device ? ensureAuditIndex().events() : [],
     dismissals: settings.capabilityDismissals ?? {},
     bannerSeenAt: settings.blockedBannerSeenAt ?? null,
     folders: settings.folderConsent ?? {},

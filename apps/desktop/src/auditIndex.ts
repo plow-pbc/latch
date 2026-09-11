@@ -15,7 +15,7 @@
  * each `recorded` entry after that; auditIndex.test.ts pins that the fold
  * never disagrees with the batch `auditActivities`.
  */
-import { JSONValue, jv } from "@domo/protocol";
+import { JSONValue } from "@domo/protocol";
 import {
   ActivityGrouper,
   activityHaystack,
@@ -27,10 +27,9 @@ import {
   StatusKind,
 } from "./viewModel.js";
 
-/** What the renderer asks for: a window of the filtered listing. */
+/** What the renderer asks for: the first rows of the filtered listing. */
 export interface AuditQuery {
-  /** Rows to skip and to return, newest first. Absent = the whole listing. */
-  offset?: number;
+  /** Rows to return, newest first. Absent = the whole listing. */
   limit?: number;
   /** Free text, matched the way `activityMatches` does (title, command,
    *  agent, goal, permission, every timeline line). */
@@ -57,8 +56,6 @@ export interface AuditPage {
   /** How many rows there are in all, filters aside — whether there is a log
    *  to clear, and whether an empty listing is the filters' doing. */
   size: number;
-  /** The newest matching row, so a selection pinned to the top can follow it. */
-  topId: string | null;
 }
 
 interface Built {
@@ -68,39 +65,29 @@ interface Built {
   blockedMs: number;
 }
 
-const HOST_PERMISSION_PREFIX = "host_permission_";
-
 export class AuditIndex {
   private grouper = new ActivityGrouper();
   private built = new Map<string, Built>();
   /** Newest first; rebuilt lazily after an add. */
   private listing: Built[] | null = null;
-  /** The `host_permission_*` lines, in the order the log wrote them. */
-  private hostEvents: JSONValue[] = [];
-  /** The `intent_received` behind each block, by intentId — what the
-   *  Capabilities tab names beside a blocked request. */
-  private blockedIntents = new Map<string, JSONValue>();
-  private wantedIntents = new Set<string>();
+  /** Every event, in the order the log wrote it — the log as read, for the
+   *  readers that fold it themselves (the Capabilities tab). */
+  private all: JSONValue[] = [];
 
   /** Start over from a whole log (first load, a rotation, a clear). */
   reset(events: readonly JSONValue[]): void {
     this.grouper = new ActivityGrouper();
     this.built = new Map();
     this.listing = null;
-    this.hostEvents = [];
-    this.blockedIntents = new Map();
-    this.wantedIntents = new Set();
+    this.all = [...events];
     const touched = new Set<string>();
-    for (const e of events) {
-      this.track(e);
-      for (const id of this.grouper.add(e)) touched.add(id);
-    }
+    for (const e of events) for (const id of this.grouper.add(e)) touched.add(id);
     for (const id of touched) this.rebuild(id);
   }
 
   /** Fold one recorded event in; returns the ids of the rows it changed. */
   add(e: JSONValue): string[] {
-    this.track(e);
+    this.all.push(e);
     const touched = this.grouper.add(e);
     for (const id of touched) this.rebuild(id);
     if (touched.length > 0) this.listing = null;
@@ -110,6 +97,12 @@ export class AuditIndex {
   /** How many activities the index holds. */
   get size(): number {
     return this.built.size;
+  }
+
+  /** The log as read, oldest first — what `AuditLog.entries()` would return,
+   *  without the read. */
+  events(): readonly JSONValue[] {
+    return this.all;
   }
 
   /** One activity, timeline and all — for the detail pane. */
@@ -122,7 +115,7 @@ export class AuditIndex {
     return this.newestFirst().map((b) => b.activity);
   }
 
-  /** A window of the filtered listing, rows without timelines. */
+  /** The first rows of the filtered listing, without timelines. */
   page(query: AuditQuery = {}): AuditPage {
     const q = (query.search ?? "").trim().toLowerCase();
     const decision = query.decision ?? "any";
@@ -140,49 +133,16 @@ export class AuditIndex {
       if (q && !b.haystack.includes(q)) return false;
       return true;
     });
-    const offset = Math.max(0, query.offset ?? 0);
-    let end = query.limit === undefined ? matching.length : offset + Math.max(0, query.limit);
+    let end = query.limit === undefined ? matching.length : Math.max(0, query.limit);
     if (query.keepId) {
       const kept = matching.findIndex((b) => b.activity.id === query.keepId);
       if (kept >= end) end = kept + 1;
     }
     return {
-      rows: matching.slice(offset, end).map((b) => activityRow(b.activity)),
+      rows: matching.slice(0, end).map((b) => activityRow(b.activity)),
       total: matching.length,
       size: this.built.size,
-      topId: matching[0]?.activity.id ?? null,
     };
-  }
-
-  /**
-   * The subset of the log the Capabilities tab reads (capabilitiesModel.ts):
-   * every `host_permission_*` line, in order, and the `intent_received` each
-   * block points at. Folding this subset gives the same tab as folding the
-   * whole log — its readers key on `permission` and on the block's intentId,
-   * and nothing else in the log carries either — without a scan of every
-   * event on every refresh.
-   */
-  permissionEvents(): JSONValue[] {
-    return [...this.blockedIntents.values(), ...this.hostEvents];
-  }
-
-  private track(e: JSONValue): void {
-    const ev = jv(e);
-    const event = ev.get("event").str ?? "";
-    const intentId = ev.get("intentId").str;
-    if (event.startsWith(HOST_PERMISSION_PREFIX)) {
-      this.hostEvents.push(e);
-      if (event === "host_permission_blocked" && intentId !== null && !this.blockedIntents.has(intentId)) {
-        const request = this.grouper
-          .eventsOf(`intent:${intentId}`)
-          .find((x) => jv(x).get("event").str === "intent_received");
-        if (request !== undefined) this.blockedIntents.set(intentId, request);
-        else this.wantedIntents.add(intentId);
-      }
-    } else if (event === "intent_received" && intentId !== null && this.wantedIntents.has(intentId)) {
-      this.blockedIntents.set(intentId, e);
-      this.wantedIntents.delete(intentId);
-    }
   }
 
   private rebuild(id: string): void {

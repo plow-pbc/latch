@@ -102,14 +102,13 @@ describe("AuditIndex", () => {
     const index = new AuditIndex();
     index.reset(sampleLog());
     const all = index.activities();
-    const page = index.page({ offset: 0, limit: 2 });
+    const page = index.page({ limit: 2 });
     expect(page.rows.map((r) => r.id)).toEqual(all.slice(0, 2).map((a) => a.id));
     expect(page.rows[0]).not.toHaveProperty("timeline");
     expect(page.total).toBe(all.length);
     expect(page.size).toBe(all.length);
-    expect(page.topId).toBe(all[0]!.id);
-    const next = index.page({ offset: 2, limit: 2 });
-    expect(next.rows.map((r) => r.id)).toEqual(all.slice(2, 4).map((a) => a.id));
+    // A longer page is the same listing, further down.
+    expect(index.page({ limit: 4 }).rows.map((r) => r.id)).toEqual(all.slice(0, 4).map((a) => a.id));
     // The whole activity, timeline and all, by id.
     expect(index.get(all[0]!.id)).toEqual(all[0]);
     expect(index.get("nope")).toBeNull();
@@ -173,18 +172,14 @@ describe("AuditIndex", () => {
     expect(none.size).toBe(all.length);
   });
 
-  it("hands the Capabilities tab the lines it reads, and they fold to the same tab as the whole log", () => {
+  it("keeps the log as read, so the Capabilities tab folds it without a read off disk", () => {
     const events = sampleLog();
     const index = new AuditIndex();
-    for (const e of events) index.add(e);
-    const subset = index.permissionEvents();
-    // Every host_permission line, in order, and the request behind the block.
-    expect(subset.map((e) => (e as { event: string }).event)).toEqual([
-      "intent_received",
-      "host_permission_blocked",
-      "host_permission_cleared",
-    ]);
-    expect((subset[0] as { intentId: string }).intentId).toBe("I4");
+    index.reset(events.slice(0, 5));
+    for (const e of events.slice(5)) index.add(e);
+    // Every line, noise included, in the order the log wrote it — what
+    // `AuditLog.entries()` returns.
+    expect(index.events()).toEqual(events);
     const input = (evs: readonly JSONValue[]) => ({
       inventory: null,
       automation: [],
@@ -192,18 +187,10 @@ describe("AuditIndex", () => {
       dismissals: {},
       bannerSeenAt: null,
     });
-    expect(capabilitiesView(input(subset))).toEqual(capabilitiesView(input(events)));
-
-    // A block whose request the log has not seen yet still names it once
-    // it arrives (the log is append-only, but a reader may start mid-way).
-    const late = new AuditIndex();
-    late.add({ event: "host_permission_blocked", intentId: "I9", permission: "contacts", cause: "macos_permission", ts: at(1) });
-    expect(late.permissionEvents()).toHaveLength(1);
-    late.add({ event: "intent_received", intentId: "I9", request: "contacts", ts: at(2) });
-    expect(late.permissionEvents().map((e) => (e as { event: string }).event)).toEqual([
-      "intent_received",
-      "host_permission_blocked",
-    ]);
+    const view = capabilitiesView(input(index.events()));
+    expect(view).toEqual(capabilitiesView(input(events)));
+    // ...and the sample does exercise the tab: the block is on it.
+    expect(view.sections.flatMap((s) => s.rows).some((r) => r.key === "files_desktop")).toBe(true);
   });
 
   it("starts over on reset: the old rows are gone, the new log is what there is", () => {
@@ -213,7 +200,7 @@ describe("AuditIndex", () => {
     index.reset([]);
     expect(index.size).toBe(0);
     expect(index.page().rows).toEqual([]);
-    expect(index.permissionEvents()).toEqual([]);
+    expect(index.events()).toEqual([]);
     index.reset([{ event: "exec_end", intentId: "X", exit_code: 1, ts: at(1) }]);
     expect(index.activities().map((a) => a.id)).toEqual(["intent:X"]);
   });

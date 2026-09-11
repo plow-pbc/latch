@@ -35,7 +35,7 @@ saveSettings(probeHome, {
 
 // Stub the IPC handlers the renderer calls on load, so this probe needs no
 // device — we're testing the bridge + render path, not the data.
-ipcMain.handle("audit:page", async () => ({ rows: [], total: 0, size: 0, topId: null }));
+ipcMain.handle("audit:page", async () => ({ rows: [], total: 0, size: 0 }));
 ipcMain.handle("audit:activity", async () => null);
 ipcMain.handle("status:get", async () => ({ deviceId: "probe", name: "Probe", connected: false }));
 ipcMain.handle("rules:list", async () => []);

@@ -18,7 +18,6 @@ type ConnectorsState = {
 
 contextBridge.exposeInMainWorld("domo", {
   // Main window data.
-  auditList: () => ipcRenderer.invoke("audit:list"),
   // The Audit tab reads a page of rows (auditIndex.ts AuditQuery / AuditPage)
   // and the selected row's timeline by id — never the whole log.
   auditPage: (query: unknown) => ipcRenderer.invoke("audit:page", query),

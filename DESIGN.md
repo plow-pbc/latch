@@ -529,8 +529,8 @@ repo can prove they broke nothing.
   recorded event is folded into the one or two rows it touches, a rotation
   or a clear rebuilds it from the files, and the renderer is served a page
   of rows (no timelines) plus the selected row by id. The Capabilities tab
-  reads the `host_permission_*` lines from the same index and refreshes
-  only when one is written. Nothing re-reads the log per event: that
+  folds the log as the index holds it and refreshes only when a
+  `host_permission_*` line is written. Nothing re-reads the log per event: that
   re-read, the regroup of every event behind it, and a locale time format
   per step were seconds of main-thread CPU per audit line with an agent
   active, and the cost grew with the log rather than with what changed.
