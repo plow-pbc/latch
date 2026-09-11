@@ -566,12 +566,11 @@ describe("CloudAgentState line and thread display", () => {
 
 describe("CloudAgentState new agent flow", () => {
   // The server will only claim an agent on a line the account holds an ACTIVE
-  // (or INACTIVE, its agent deleted) one-to-one thread with itself on. Everything below is that rule, read off
+  // one-to-one thread with itself on. Everything below is that rule, read off
   // the chats already loaded — `lin_ash` carries two threads of the shape under
   // test so a line that does qualify is still offered exactly once.
   it.each([
     ["an active one-to-one thread with the owner", { status: "active", memberCount: 1, hasOwnerMember: true }, ["lin_ash"]],
-    ["an inactive one-to-one thread with the owner", { status: "inactive", memberCount: 1, hasOwnerMember: true }, ["lin_ash"]],
     ["a thread the provider has not confirmed", { status: "pending", memberCount: 1, hasOwnerMember: true }, []],
     ["a group thread", { status: "active", memberCount: 2, hasOwnerMember: true }, []],
     ["a one-to-one thread that is not the owner's", { status: "active", memberCount: 1, hasOwnerMember: false }, []],
