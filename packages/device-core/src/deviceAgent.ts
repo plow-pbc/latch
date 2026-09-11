@@ -55,7 +55,6 @@ import { PolicyDelegate, PolicyEngine } from "./policyEngine.js";
 import { SkillRegistry } from "./skills.js";
 import { registerContactsSkill } from "./contactsSkill.js";
 import { registerImessageSkill } from "./imessageSkill.js";
-import { registerHistorySkill } from "./historySkill.js";
 import { ensurePlowFolder, registerPlowFolderSkill } from "./plowFolder.js";
 import { registerWhatsappSkill } from "./whatsappSkill.js";
 
@@ -381,7 +380,6 @@ export class DeviceAgent {
     // while the app is running needs a restart to publish the skill.
     registerWhatsappSkill(this.skills, ownerHome);
     registerImessageSkill(this.skills, ownerHome);
-    registerHistorySkill(this.skills, home, ownerHome);
     // The playground exists before any agent asks about it, and the skill can
     // therefore name a folder that is really there. `ownerHome` for the same
     // reason as WhatsApp above: the folder belongs to the owner's real home,
@@ -642,7 +640,17 @@ export class DeviceAgent {
     // Browser/credential intents contain only those kinds; dispatch them first
     // so they can never fall into the exec path.
     if (intent.capabilities.some((c) => c.kind === "browser" || c.kind === "credential")) {
-      return this.executeBrowserIntent(intent, payload);
+      const result = await this.executeBrowserIntent(intent, payload);
+      // Every way a browser request can fail before a session exists -- no
+      // runtime, the cap, a cold start that never came up -- ends here, so the
+      // owner's log ends the request here too; without a terminal line an
+      // allowed request that never ran reads as still running.
+      const error = jv(result).get("status").str === "error" ? jv(result).get("error").str : null;
+      if (error !== null) {
+        const tool = jv(payload).get("session").str === null ? "plow_browser_open" : "plow_browser_request";
+        this.audit.record("tool_error", { intentId: intent.intentId, tool, error });
+      }
+      return result;
     }
     const exec = intent.capabilities.find((c) => c.kind === "process.exec");
     if (exec) return this.executeCommand(intent, exec, payload);

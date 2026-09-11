@@ -411,6 +411,9 @@ describe("every tool says what kind of tool it is", () => {
         "plow_device_status",
         "plow_get_output",
         "plow_get_result",
+        // The audit log, grouped the way the Audit tab shows it. Read-only by
+        // construction: it records nothing, not even the read.
+        "plow_history",
         "plow_list_skills",
         "plow_read_file",
         "plow_read_skill",

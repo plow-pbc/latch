@@ -89,6 +89,7 @@ describe("the reduced tool surface (§4.5)", () => {
       "plow_device_status",
       "plow_get_output",
       "plow_get_result",
+      "plow_history",
       "plow_list_skills",
       "plow_read_file",
       "plow_read_skill",
@@ -106,6 +107,64 @@ describe("the reduced tool surface (§4.5)", () => {
     }
   });
 
+});
+
+describe("plow_history", () => {
+  it("shows every agent's requests joined to their decision and outcome, newest first", async () => {
+    const { server, device } = makeServer();
+    const rec = (event: string, fields: { [k: string]: JSONValue }) => device.audit.record(event, fields);
+    rec("intent_received", { intentId: "a", agent: "1152", agent_name: "Elm", request: "curl", goal: "Cancel the booking", capabilities: [] });
+    rec("intent_decision", { intentId: "a", decision: "allow_once", source: "ask" });
+    rec("exec_start", { intentId: "a", argv: ["curl"] });
+    rec("exec_end", { intentId: "a", exit_code: 0 });
+    rec("intent_received", { intentId: "b", agent: "1152", agent_name: "Elm", request: "open bank", goal: "Pay the mortgage", capabilities: [] });
+    rec("intent_decision", { intentId: "b", decision: "deny", source: "ask" });
+    rec("intent_received", { intentId: "c", agent: "1337", agent_name: "Willow", request: "plow-gog", goal: "Read the calendar", capabilities: [] });
+    rec("intent_decision", { intentId: "c", decision: "always_allow", source: "rule" });
+    rec("exec_start", { intentId: "c", argv: ["plow-gog"] });
+    rec("exec_end", { intentId: "c", exit_code: 1 });
+
+    const { payload, isError } = await callTool(server, "plow_history", {}, AGENT);
+    expect(isError).toBe(false);
+    const rows = (payload as { rows: { agent: string; decision: string; status: string; goal: string }[] }).rows;
+    expect(rows.map((r) => [r.agent, r.decision, r.status, r.goal])).toEqual([
+      ["Willow", "Always allowed", "Failed · exit 1", "Read the calendar"],
+      ["Elm", "Denied", "", "Pay the mortgage"],
+      ["Elm", "Allowed", "Completed", "Cancel the booking"],
+    ]);
+    // Reading history is not itself a request: nothing new in the log.
+    expect(events(device).filter((e) => e === "intent_received").length).toBe(3);
+
+    const limited = await callTool(server, "plow_history", { limit: 1 }, AGENT);
+    expect((limited.payload as { rows: unknown[] }).rows.length).toBe(1);
+  });
+
+  it("a browser request that fails before a session exists ends in the log", async () => {
+    const { server, device } = makeServer();
+    const { isError } = await callTool(
+      server,
+      "plow_browser_open",
+      { origins: ["https://example.com"], goal: "open the bank" },
+      AGENT,
+    );
+    expect(isError).toBe(true);
+    expect(events(device)).toEqual(["intent_received", "intent_decision", "tool_error"]);
+    const rows = (await callTool(server, "plow_history", {}, AGENT)).payload as { rows: { status: string }[] };
+    expect(rows.rows[0]!.status).toBe("Error");
+    // A widening that fails is the other tool's failure, and the log says which.
+    const widen = await callTool(
+      server,
+      "plow_browser_request",
+      { session: "no-such-session", origins: ["https://example.org"], goal: "widen it" },
+      AGENT,
+    );
+    expect(widen.isError).toBe(true);
+    const tools = device.audit
+      .entries()
+      .filter((e) => jv(e as JSONValue).get("event").str === "tool_error")
+      .map((e) => jv(e as JSONValue).get("tool").str);
+    expect(tools).toEqual(["plow_browser_open", "plow_browser_request"]);
+  });
 });
 
 describe("a tool call end to end, in process", () => {
