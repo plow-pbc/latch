@@ -60,35 +60,37 @@ app.on("window-all-closed", () => {});
 ipcMain.handle("status:get", async () => ({ deviceId: "probe", name: "Probe", connected: true }));
 ipcMain.handle("ui:getTab", async () => "audit");
 ipcMain.handle("ui:setTab", async () => {});
-ipcMain.handle("audit:activities", async () => [
-  {
-    id: "act-1",
-    time: "16:20:05",
-    ts: "2026-08-18T16:20:05Z",
-    blockedAt: null,
-    decision: "",
-    decisionTone: "zinc",
-    tone: "green",
-    status: "Browsing",
-    title: "Browse pizza.example",
-    kind: "browser",
-    decisionKind: "none",
-    statusKind: "running",
-    agentDisplay: "Pizza Agent",
-    agentId: "sess_01HZX9K4M2QP",
-    goal: "Order a pepperoni pizza for tonight",
-    command: null,
-    intentId: "9F2C1A44-0B77-4E3D-9A21-6C5E0D8B4417",
-    exitCode: null,
-    capabilities: ["browse: pizza.example, *.pizza.example", "credentials: list names/labels"],
-    decidedBy: "You approved it",
-    timeline: [
-      { text: "Session opened for pizza.example", time: "16:20:05", state: "ok" },
-      { text: "Visited pizza.example/menu", time: "16:20:11", state: "ok" },
-      { text: "Screenshot taken", time: "16:20:14", state: "" },
-    ],
-  },
-]);
+// The renderer reads a page of rows (no timelines) and then the selected
+// row by id, the way main's live index serves them.
+const activity = {
+  id: "act-1",
+  ts: "2026-08-18T16:20:05Z",
+  blockedAt: null,
+  decision: "",
+  decisionTone: "zinc",
+  tone: "green",
+  status: "Browsing",
+  title: "Browse pizza.example",
+  kind: "browser",
+  decisionKind: "none",
+  statusKind: "running",
+  agentDisplay: "Pizza Agent",
+  agentId: "sess_01HZX9K4M2QP",
+  goal: "Order a pepperoni pizza for tonight",
+  command: null,
+  intentId: "9F2C1A44-0B77-4E3D-9A21-6C5E0D8B4417",
+  exitCode: null,
+  capabilities: ["browse: pizza.example, *.pizza.example", "credentials: list names/labels"],
+  decidedBy: "You approved it",
+  timeline: [
+    { text: "Session opened for pizza.example", at: "2026-08-18T16:20:05Z", state: "ok" },
+    { text: "Visited pizza.example/menu", at: "2026-08-18T16:20:11Z", state: "ok" },
+    { text: "Screenshot taken", at: "2026-08-18T16:20:14Z", state: "" },
+  ],
+};
+const { timeline: _timeline, ...row } = activity;
+ipcMain.handle("audit:page", async () => ({ rows: [row], total: 1, size: 1 }));
+ipcMain.handle("audit:activity", async (_e, id) => (id === activity.id ? activity : null));
 
 app.whenReady().then(async () => {
   const dataB64 = await fakeFrame();

@@ -210,7 +210,10 @@ export type BadgeTone = "green" | "red" | "amber" | "blue" | "zinc";
 export type StepState = "neutral" | "ok" | "bad";
 
 export interface AuditStep {
-  time: string;
+  /** When, as the log wrote it (ISO 8601). The renderer formats it at draw
+   *  time: a locale format built per step, for every step in the log, was
+   *  most of what the main process spent its time on. */
+  at: string;
   text: string;
   state: StepState;
 }
@@ -233,9 +236,8 @@ export type StatusKind = "completed" | "running" | "blocked" | "failed" | "none"
 
 export interface AuditActivity {
   id: string;
-  /** When the row starts, formatted for the table. */
-  time: string;
-  /** The same moment as the log wrote it (ISO 8601), for the date filter. */
+  /** When the row starts, as the log wrote it (ISO 8601): the table's Time
+   *  column (formatted by the renderer at draw time) and the date filter. */
   ts: string;
   /** When this Mac refused it, if it did — the moment the Capabilities tab
    *  counts by, so "Show in Audit" keys its cutoff on the block rather than
@@ -280,6 +282,18 @@ export interface AuditActivity {
   timeline: AuditStep[];
 }
 
+/**
+ * One row of the Audit table: the activity without its timeline. A listing
+ * ships hundreds of these; the timeline — which can run to hundreds of
+ * steps for one browsing session — is fetched for the selected row alone.
+ */
+export type AuditActivityRow = Omit<AuditActivity, "timeline">;
+
+export function activityRow(a: AuditActivity): AuditActivityRow {
+  const { timeline: _timeline, ...row } = a;
+  return row;
+}
+
 /** Friendly label for an intent_decision / grant `source`. */
 export function decidedByLabel(source: string | null): string | null {
   switch (source) {
@@ -305,36 +319,56 @@ export function decidedByLabel(source: string | null): string | null {
 }
 
 /**
- * Collapse the append-only event stream into activities: intent events grouped
- * by intentId, an access request paired with its decision (by agent), and
- * everything else standalone. Newest activity first. Port of the Swift
- * MainWindow group() + AuditActivity.
+ * The fold that turns the append-only event stream into activities: intent
+ * events grouped by intentId, an access request paired with its decision (by
+ * agent), and everything else standalone. Port of the Swift MainWindow
+ * group() + AuditActivity.
+ *
+ * It is a fold on purpose — one event in, the ids it touched out — so the
+ * desktop's live index (auditIndex.ts) can take each event as the log records
+ * it and rebuild only the row it landed in. `auditActivities` below is the
+ * same fold run over a whole log at once; the two must never disagree, which
+ * auditIndex.test.ts pins.
  */
-export function auditActivities(events: JSONValue[]): AuditActivity[] {
-  const order: string[] = [];
-  const map = new Map<string, JSONValue[]>();
-  const pendingAccess = new Map<string, string>(); // agent -> activity id
-  const requests = new Map<string, JSONValue>(); // intentId -> its intent_received
-  let counter = 0;
-  const push = (id: string, e: JSONValue) => {
-    if (!map.has(id)) {
-      map.set(id, []);
-      order.push(id);
-    }
-    map.get(id)!.push(e);
-  };
+export class ActivityGrouper {
+  /** Activity ids, oldest first. */
+  readonly order: string[] = [];
+  private readonly map = new Map<string, JSONValue[]>();
+  private readonly pendingAccess = new Map<string, string>(); // agent -> activity id
+  private readonly requests = new Map<string, JSONValue>(); // intentId -> its intent_received
+  private counter = 0;
 
-  for (const e of events) {
+  /** The raw events of one activity, in the order the log wrote them. */
+  eventsOf(id: string): JSONValue[] {
+    return this.map.get(id) ?? [];
+  }
+
+  /**
+   * Fold one event in. Returns the ids of the activities it changed — none
+   * for lifecycle noise, two for a session opening (the intent row and the
+   * session row both tell that story).
+   */
+  add(e: JSONValue): string[] {
+    const touched: string[] = [];
+    const push = (id: string, event: JSONValue) => {
+      if (!this.map.has(id)) {
+        this.map.set(id, []);
+        this.order.push(id);
+      }
+      this.map.get(id)!.push(event);
+      if (!touched.includes(id)) touched.push(id);
+    };
+
     const ev = jv(e);
     const event = ev.get("event").str ?? "";
     // Lifecycle noise, never a row of its own: the device starting, and the
     // browser runtime starting/stopping under a session whose activity already
     // tells that story. (A crash IS surfaced, as its own activity.)
     if (event === "device_started" || event === "browser_started" || event === "browser_stopped")
-      continue;
+      return touched;
     const intentId = ev.get("intentId").str;
     const session = ev.get("session").str;
-    if (event === "intent_received" && intentId !== null) requests.set(intentId, e);
+    if (event === "intent_received" && intentId !== null) this.requests.set(intentId, e);
     if (
       (event === "browser_session_opened" || event === "browser_session_extended") &&
       intentId !== null &&
@@ -356,7 +390,7 @@ export function auditActivities(events: JSONValue[]): AuditActivity[] {
       // deliberately NOT copied — it outranks the browser branch in
       // classifyActivity, and would replace the session's live status with
       // "Allowed once".
-      const request = requests.get(intentId);
+      const request = this.requests.get(intentId);
       if (request !== undefined) push(`browser:${session}`, request);
       push(`browser:${session}`, e);
     } else if (intentId !== null) {
@@ -365,32 +399,42 @@ export function auditActivities(events: JSONValue[]): AuditActivity[] {
       // One activity per browser session, not one per command.
       push(`browser:${session}`, e);
     } else if (event === "access_request") {
-      counter += 1;
-      const id = `access:${counter}`;
+      this.counter += 1;
+      const id = `access:${this.counter}`;
       push(id, e);
       const agent = ev.get("agent").str;
-      if (agent !== null) pendingAccess.set(agent, id);
+      if (agent !== null) this.pendingAccess.set(agent, id);
     } else if (event === "access_decision") {
       const agent = ev.get("agent").str ?? "";
-      const id = pendingAccess.get(agent);
+      const id = this.pendingAccess.get(agent);
       if (id !== undefined) {
         push(id, e);
-        pendingAccess.delete(agent);
+        this.pendingAccess.delete(agent);
       } else {
-        counter += 1;
-        push(`access:${counter}`, e);
+        this.counter += 1;
+        push(`access:${this.counter}`, e);
       }
     } else {
-      counter += 1;
-      push(`${event}:${counter}`, e);
+      this.counter += 1;
+      push(`${event}:${this.counter}`, e);
     }
+    return touched;
   }
+}
 
-  const activities = order.map((id) => buildActivity(id, map.get(id) ?? []));
+/**
+ * Collapse a whole event stream into activities, newest first. The batch
+ * form of `ActivityGrouper`, for tests and one-shot readers; the app's live
+ * view folds the same way one event at a time (auditIndex.ts).
+ */
+export function auditActivities(events: JSONValue[]): AuditActivity[] {
+  const grouper = new ActivityGrouper();
+  for (const e of events) grouper.add(e);
+  const activities = grouper.order.map((id) => buildActivity(id, grouper.eventsOf(id)));
   return activities.reverse(); // newest first for the table
 }
 
-function buildActivity(id: string, events: JSONValue[]): AuditActivity {
+export function buildActivity(id: string, events: JSONValue[]): AuditActivity {
   const has = (event: string) => events.some((e) => jv(e).get("event").str === event);
   const entry = (event: string) => events.find((e) => jv(e).get("event").str === event) ?? null;
   // A verdict can be corrected under the same handle (a parked run the
@@ -408,7 +452,6 @@ function buildActivity(id: string, events: JSONValue[]): AuditActivity {
   const { decision, decisionTone, decisionKind, status, tone, statusKind } = classifyActivity(events, has, entry, latest);
   return {
     id,
-    time: dayTime(jv(events[0]).get("ts").str ?? ""),
     ts: jv(events[0]).get("ts").str ?? "",
     blockedAt: latest("host_permission_blocked") ? jv(latest("host_permission_blocked")!).get("ts").str : null,
     decision,
@@ -959,7 +1002,7 @@ function describeStep(e: JSONValue): AuditStep {
       break;
     default: text = event;
   }
-  return { time: clock(ev.get("ts").str ?? ""), text, state };
+  return { at: ev.get("ts").str ?? "", text, state };
 }
 
 /**
@@ -970,6 +1013,15 @@ function describeStep(e: JSONValue): AuditStep {
 export function activityMatches(a: AuditActivity, query: string): boolean {
   const q = query.trim().toLowerCase();
   if (!q) return true;
+  return activityHaystack(a).includes(q);
+}
+
+/**
+ * Everything the search box matches against, lowercased and joined once.
+ * The live index keeps this beside each activity so a keystroke scans
+ * strings that already exist instead of rebuilding them per row.
+ */
+export function activityHaystack(a: AuditActivity): string {
   return [
     a.title,
     a.command ?? "",
@@ -980,26 +1032,5 @@ export function activityMatches(a: AuditActivity, query: string): boolean {
     ...a.timeline.map((s) => s.text),
   ]
     .join(" ")
-    .toLowerCase()
-    .includes(q);
-}
-
-function dayTime(iso: string): string {
-  if (!iso) return "";
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return iso;
-  return d.toLocaleString(undefined, {
-    month: "short",
-    day: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-    second: "2-digit",
-  });
-}
-
-function clock(iso: string): string {
-  if (!iso) return "";
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return iso;
-  return d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit", second: "2-digit" });
+    .toLowerCase();
 }

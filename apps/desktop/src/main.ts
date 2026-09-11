@@ -22,7 +22,7 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { PostHog } from "posthog-node";
-import { Intent } from "@domo/protocol";
+import { Intent, JSONValue } from "@domo/protocol";
 import {
   ApprovalStore,
   LEGACY_VAULT_SERVER_FRAGMENTS,
@@ -51,7 +51,8 @@ import {
 import { createDomoMcpServer, DomoMcpServer } from "@domo/mcp-server";
 import { RelayClient } from "@domo/relay-client";
 import type { AutomationStatus, HostInventory, NativePermissions, RequestablePermission } from "@domo/device-core";
-import { approvalViewModel, auditActivities, CredentialTitles } from "./viewModel.js";
+import { approvalViewModel, CredentialTitles } from "./viewModel.js";
+import { AuditIndex, AuditQuery } from "./auditIndex.js";
 
 import { appBundleName, appBundlePath, decodeTileImage } from "./permissionFlow.js";
 import { FdaGrantFlow, GrantTarget } from "./fdaGrantFlow.js";
@@ -235,6 +236,66 @@ let onboardingWindow: BrowserWindow | null = null;
 let onboardingWindowReady: BrowserWindow | null = null;
 let updates: UpdateController | null = null;
 let telemetry: Telemetry | null = null;
+
+// MARK: The audit log's live index (auditIndex.ts)
+
+/**
+ * The Audit tab's rows, folded from the log once and kept current by each
+ * recorded event — never re-read from disk per event (that re-read, and the
+ * regroup of the whole log behind it, was seconds of main-thread CPU per
+ * event with an agent active). Built on first use; the "recorded" tap below
+ * folds into it from then on, and "reset" (a rotation, a clear) rebuilds it.
+ */
+let auditIndex: AuditIndex | null = null;
+function ensureAuditIndex(): AuditIndex {
+  if (auditIndex === null) {
+    const index = new AuditIndex();
+    // Before the device exists there is no log to load: answer empty, and
+    // keep nothing — an index kept now would never see the lines on disk.
+    if (device === null) return index;
+    index.reset(device.audit.entries());
+    auditIndex = index;
+  }
+  return auditIndex;
+}
+
+/**
+ * A burst of events (a browsing session records several a second) becomes
+ * one "audit:changed" to the renderer, carrying the rows they touched — the
+ * renderer re-reads its page once and refetches the selected row's detail
+ * only if it is among them.
+ */
+const auditChangedIds = new Set<string>();
+let auditChangedTimer: ReturnType<typeof setTimeout> | null = null;
+function auditChanged(ids: readonly string[], reset = false): void {
+  if (reset) auditChangedIds.add("*");
+  for (const id of ids) auditChangedIds.add(id);
+  if (auditChangedTimer !== null) return;
+  auditChangedTimer = setTimeout(() => {
+    auditChangedTimer = null;
+    const batch = [...auditChangedIds];
+    auditChangedIds.clear();
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("audit:changed", { ids: batch });
+  }, 50);
+}
+
+/** The renderer's listing request, shape-checked: anything off goes to "any"
+ *  or unset rather than into the index. */
+function auditQuery(raw: unknown): AuditQuery {
+  const q = (raw !== null && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
+  const int = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? Math.max(0, Math.floor(v)) : undefined);
+  const oneOf = <T extends string>(v: unknown, allowed: readonly T[]): T | "any" =>
+    typeof v === "string" && (allowed as readonly string[]).includes(v) ? (v as T) : "any";
+  return {
+    limit: int(q.limit),
+    search: typeof q.search === "string" ? q.search : "",
+    decision: oneOf(q.decision, ["allowed", "denied", "unanswered", "none"] as const),
+    status: oneOf(q.status, ["completed", "running", "blocked", "failed", "none"] as const),
+    cutoffMs: typeof q.cutoffMs === "number" && Number.isFinite(q.cutoffMs) ? q.cutoffMs : null,
+    cutoffKey: q.cutoffKey === "blocked" ? "blocked" : "ts",
+    keepId: typeof q.keepId === "string" ? q.keepId : null,
+  };
+}
 
 // Error reporting for the main process. `uncaughtExceptionMonitor` observes
 // without handling — whatever Electron was going to do with the crash (the
@@ -493,10 +554,15 @@ function restorableBounds(saved: WindowBounds | undefined): WindowBounds | null 
 
 // MARK: IPC for the main window (audit / rules / settings / status)
 
-ipcMain.handle("audit:list", async () => device?.audit.entries() ?? []);
-// Group events into logical activities in the main process, so the sandboxed
-// renderer receives plain view models (never agent-controlled markup).
-ipcMain.handle("audit:activities", async () => auditActivities(device?.audit.entries() ?? []));
+// Events are grouped into logical activities in the main process, so the
+// sandboxed renderer receives plain view models (never agent-controlled
+// markup) — and only a page of them, from the live index: the rows its
+// filters match, without timelines, plus how many there are in all.
+ipcMain.handle("audit:page", async (_e, query: unknown) => ensureAuditIndex().page(auditQuery(query)));
+// One activity with its timeline, for the detail pane.
+ipcMain.handle("audit:activity", async (_e, id: unknown) =>
+  typeof id === "string" ? ensureAuditIndex().get(id) : null,
+);
 // Clear the audit log after a native confirmation (it's a destructive, local
 // action). Returns whether the log was actually cleared.
 ipcMain.handle("audit:clear", async () => {
@@ -1312,15 +1378,16 @@ async function automationRows(): Promise<{ app: (typeof AUTOMATION_APPS)[number]
   return rows;
 }
 
-/** The whole tab, fresh: inventory, Automation rows, the audit log, and the
- *  owner's "not now"s. */
+/** The whole tab, fresh: inventory, Automation rows, the audit log's blocks,
+ *  and the owner's "not now"s. */
 async function capabilitiesNow(inventory?: HostInventory | null): Promise<CapabilitiesView> {
   const inv = inventory === undefined ? (device ? await device.hostInventory() : null) : inventory;
   const settings = loadSettings(home);
   return capabilitiesView({
     inventory: inv,
     automation: await automationRows(),
-    events: device?.audit.entries() ?? [],
+    // The log as the live index holds it — not read off disk again.
+    events: device ? ensureAuditIndex().events() : [],
     dismissals: settings.capabilityDismissals ?? {},
     bannerSeenAt: settings.blockedBannerSeenAt ?? null,
     folders: settings.folderConsent ?? {},
@@ -2067,8 +2134,20 @@ app.whenReady().then(async () => {
         (vaultState.status === "locked" ? ` (${vaultState.reason})` : ""),
     );
   }
-  // Live-refresh the audit view whenever a new event is recorded.
-  device.audit.events.on("change", () => notifyRenderer("audit:changed"));
+  // Live-refresh the audit view whenever a new event is recorded: fold the
+  // line into the index (once it exists — before first use the initial load
+  // reads it off disk) and tell the renderer which rows moved. A rotation or
+  // a clear changes the files under the index; it starts over from them.
+  device.audit.events.on("recorded", (entry: { entry: JSONValue }) => {
+    if (auditIndex !== null) auditChanged(auditIndex.add(entry.entry));
+  });
+  device.audit.events.on("reset", () => {
+    if (auditIndex !== null) auditIndex.reset(device?.audit.entries() ?? []);
+    auditChanged([], true);
+    // A clear takes the blocks the Capabilities tab counts with it, and a
+    // rotation can age some out: the tab reads the log too, so it re-reads.
+    notifyRenderer("capabilities:changed");
+  });
   // A block by this Mac itself is the owner's to clear, and the owner is
   // usually not looking at this window when it happens: it goes to the tray
   // and, once per permission per run, to a notification.
@@ -2081,6 +2160,10 @@ app.whenReady().then(async () => {
     if (entry.event === "host_permission_cleared" || entry.event === "host_permission_observed") {
       learnFolderConsent(entry.fields);
     }
+    // Only these lines change what the Capabilities tab shows (its badge, a
+    // row's line, the banner). Every other event used to refresh it too —
+    // the standing inventory, a dozen helper processes, per audit line.
+    if (entry.event.startsWith("host_permission_")) notifyRenderer("capabilities:changed");
   });
   // Usage stats ride the same funnel as the audit log — one source of truth
   // for what happened, with telemetry.ts's allowlist deciding the little that
