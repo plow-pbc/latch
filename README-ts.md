@@ -108,7 +108,7 @@ POST-only, so there is no session lifecycle and no GET/SSE requirement:
 
 The tool surface is one Mac's, not a fleet's: `plow_read_file`,
 `plow_write_file`, `plow_run_command`, `plow_run_applescript`, `plow_get_output`, `plow_get_result`,
-`plow_list_skills`, `plow_read_skill`, `plow_vault`, `plow_device_status`, and
+`plow_list_skills`, `plow_read_skill`, `plow_history`, `plow_vault`, `plow_device_status`, and
 the four browser tools (`plow_browser_open`, `plow_browser_request`,
 `plow_browser`, `plow_browser_close`). No tool takes a `device` argument, and
 every name is prefixed so it cannot be confused with an agent's own built-ins.
