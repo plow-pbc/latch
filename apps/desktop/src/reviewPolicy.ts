@@ -197,7 +197,15 @@ export interface DecideDeps {
    * Everything after it — the store's write, the audit append, the decision
    * travelling back — happens with nothing on screen.
    */
-  onAnswered?: () => void;
+  onAnswered?: (how: "chosen" | "dismissed") => void;
+  /**
+   * Did the last `openApproval` end by being dismissed rather than answered?
+   *
+   * Asked rather than returned, so `openApproval` keeps its
+   * `Promise<ApprovalDecision>` shape: a dismissal and a Deny are the same
+   * decision, and only the window knows which happened.
+   */
+  approvalWasDismissed?: () => boolean;
 }
 
 /**
@@ -337,6 +345,8 @@ export async function decideIntent(
         }))
       : null;
   const decision = await deps.openApproval(hint);
-  deps.onAnswered?.();
+  // `openApproval` reports how it ended; this branch cannot tell a Deny from a
+  // dismissal by the decision alone, because both are "deny".
+  deps.onAnswered?.(deps.approvalWasDismissed?.() ? "dismissed" : "chosen");
   return { decision, source: "ask" };
 }

@@ -41,9 +41,9 @@ if (!bundle.endsWith(".app") || !fs.existsSync(plist)) {
 
 // The same strings electron-builder.yml declares for the packaged app.
 const STRINGS = {
-  NSContactsUsageDescription: "Plow Latch reads and updates your contacts only for requests you approve.",
-  NSCalendarsUsageDescription: "Plow Latch reads your calendars only for requests you approve.",
-  NSCalendarsFullAccessUsageDescription: "Plow Latch reads your calendars only for requests you approve.",
+  NSContactsUsageDescription: "Plow Latch reads and updates your contacts only for requests this Mac approves.",
+  NSCalendarsUsageDescription: "Plow Latch reads your calendars only for requests this Mac approves.",
+  NSCalendarsFullAccessUsageDescription: "Plow Latch reads your calendars only for requests this Mac approves.",
 };
 
 const plistBuddy = "/usr/libexec/PlistBuddy";

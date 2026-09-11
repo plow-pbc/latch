@@ -35,8 +35,9 @@ export type IntentDecision = Decision | { decision: Decision; source?: string };
  */
 export interface DecisionProgress {
   asking(): void;
-  /** The dialog `asking` announced is gone — answered, or closed. */
-  answered(): void;
+  /** The dialog `asking` announced is gone — `how` says whether a button was
+   * pressed or it was dismissed without one. */
+  answered(how: "chosen" | "dismissed"): void;
 }
 
 /** Whoever answers approval questions: app UI, headless script… */

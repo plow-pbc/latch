@@ -336,6 +336,8 @@ class ElectronPolicy implements PolicyDelegate {
     progress?: DecisionProgress,
   ): Promise<{ decision: ApprovalDecision; source: string }> {
     const audit = device?.audit;
+    // One per decision: the window sets it, `approvalWasDismissed` reads it.
+    let dismissed = false;
     return decideIntent(intent, {
       settings: loadSettings(home),
       apiBaseUrl,
@@ -345,13 +347,17 @@ class ElectronPolicy implements PolicyDelegate {
       plowRoot: plowFolderPath(os.homedir()),
       record: (event, fields) => audit?.record(event, fields),
       review: adversarialReview,
-      openApproval: async (hint) =>
-        openApprovalWindow(
+      openApproval: async (hint) => {
+        dismissed = false;
+        return openApprovalWindow(
           { kind: "intent", view: approvalViewModel(intent, await resolveCredentialTitles(intent)) },
           hint,
           () => progress?.asking(),
-        ),
-      onAnswered: () => progress?.answered(),
+          () => (dismissed = true),
+        );
+      },
+      approvalWasDismissed: () => dismissed,
+      onAnswered: (how) => progress?.answered(how),
     });
   }
 }
@@ -398,6 +404,9 @@ function openApprovalWindow(
   // "your owner is looking at it" then would be sending them to a window that
   // is not on screen.
   onOpened?: () => void,
+  // Fired when the window goes away with no button pressed. Both exits produce
+  // "deny", so this is the only way to tell them apart.
+  onDismissed?: () => void,
 ): Promise<ApprovalDecision> {
   const run = () =>
     new Promise<ApprovalDecision>((resolve) => {
@@ -468,6 +477,7 @@ function openApprovalWindow(
         ipcMain.removeListener("approval:decide", onDecision);
         if (!settled) {
           settled = true;
+          onDismissed?.();
           resolve("deny");
         }
       });

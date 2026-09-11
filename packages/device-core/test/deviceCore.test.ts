@@ -381,7 +381,7 @@ describe("a denial never announces execution", () => {
         sessionId: "s1",
       }),
       null,
-      { asking: () => {}, decided: () => (announced = true) },
+      { asking: () => {}, answered: () => {}, decided: () => (announced = true) },
     )) as { status?: string };
 
     expect(response.status).toBe(status);

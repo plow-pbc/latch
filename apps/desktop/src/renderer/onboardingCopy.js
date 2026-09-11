@@ -16,13 +16,13 @@ export const TRUST_ROWS = [
   {
     title: "Data stays on your Mac",
     detail:
-      "Your messages, calendar, and logins live on your Mac, and reach an agent only through an action this Mac approved.",
+      "Your messages and calendar reach an agent only through an action this Mac approved. Your passwords never reach one at all: an agent can see which logins you have, and this Mac types them into the page itself.",
     glyph: "desktop",
   },
   {
     title: "You decide who decides",
     detail:
-      "Out of the box the AI reviewer decides each action — allowing it, or refusing it. Switch to deciding them yourself whenever you want.",
+      "Out of the box the AI reviewer decides what an agent may do here — allowing it, or refusing it. Switch to deciding yourself whenever you want.",
     glyph: "sliders",
   },
   {

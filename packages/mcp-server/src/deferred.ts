@@ -42,7 +42,12 @@ export const HANDLE_TTL_MS = 15 * 60_000;
 export const RETRY_AFTER_MS = 1_000;
 
 /** Why a call is still outstanding. */
-export type PendingReason = "awaiting_approval" | "answered" | "deciding" | "running";
+export type PendingReason =
+  | "awaiting_approval"
+  | "answered"
+  | "dismissed"
+  | "deciding"
+  | "running";
 
 /**
  * What the agent should DO about a pending handle, in the envelope itself.
@@ -77,6 +82,12 @@ export type PendingReason = "awaiting_approval" | "answered" | "deciding" | "run
  * the user to a dialog that has gone, and `deciding` tells the agent nobody has
  * been asked, when somebody just did the asking and the answering.
  *
+ * `dismissed` is the same stretch when the window went away without a button
+ * being pressed. It fails closed like any unanswered approval, but saying the
+ * user "answered" and that this Mac is recording "what they said" would be an
+ * account of a choice nobody made — and the agent's next move differs: there is
+ * a person to ask again, which there is not after a deliberate Deny.
+ *
  * `running` means the caller-level decision step is complete and execution is
  * underway. It does not claim that action-specific checks inside that execution
  * have succeeded.
@@ -87,6 +98,12 @@ const PENDING_NOTES: Record<PendingReason, string> = {
     "is the one state where a person really is holding the call. Tell the user it is waiting " +
     "on them, then poll plow_get_result with this handle. Do not repeat the original call; " +
     "that starts a second request.",
+  dismissed:
+    "the approval window CLOSED WITHOUT AN ANSWER — dismissed, not decided. This Mac fails closed, " +
+    "so it is being recorded as a refusal, but nobody chose it. Poll plow_get_result with this " +
+    "handle for the settled result; if the user wants it done, the honest thing is to say the " +
+    "window was closed and ask whether to try again. Do not repeat the original call before they " +
+    "say so; that starts a second request.",
   answered:
     "the user has ANSWERED — the window is gone and this Mac is recording what they said. Do not " +
     "ask them again, and do not tell them something is still waiting on them. Poll " +
@@ -188,12 +205,14 @@ export interface Progress {
   /** A dialog is now in front of a human. Called by whoever opened it. */
   asking(): void;
   /**
-   * That dialog is gone — answered, or closed. The counterpart to `asking`:
+   * That dialog is gone. `how` separates a button from a dismissal: both fail
+   * closed, but only one is a choice, and only one leaves a person to ask
+   * again. The counterpart to `asking`:
    * without it the handle claims a person is holding the call while the answer
    * is merely being persisted and audited, which is exactly when an agent
    * polls.
    */
-  answered(): void;
+  answered(how: "chosen" | "dismissed"): void;
   decided(): void;
 }
 
@@ -239,7 +258,7 @@ export class DeferredResults {
     };
     const progress: Progress = {
       asking: () => advance("awaiting_approval"),
-      answered: () => advance("answered"),
+      answered: (how) => advance(how === "dismissed" ? "dismissed" : "answered"),
       decided: () => advance("running"),
     };
 

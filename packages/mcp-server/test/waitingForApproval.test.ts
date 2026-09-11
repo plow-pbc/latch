@@ -259,7 +259,7 @@ describe("a pending handle says what to do about it", () => {
     const clickedThenSlow: PolicyDelegate = {
       decideIntent: async (_intent, progress) => {
         progress?.asking();
-        progress?.answered(); // they clicked; the window is gone
+        progress?.answered("chosen"); // they pressed a button; the window is gone
         answered();
         await persisting; // …and this Mac is still writing it down
         return "allow_once";
@@ -292,6 +292,42 @@ describe("a pending handle says what to do about it", () => {
   // budget may expire before the delegate is even reached. The notes would then
   // differ for a good reason, and this test is about neither phase — it is
   // about the same phase answering the same way twice.
+  // Closing the window without pressing anything fails closed like any
+  // unanswered approval — but it is not a choice, and saying the user "answered"
+  // and that this Mac is recording "what they said" is an account of a decision
+  // nobody made. It is also the one case where there is still a person to ask.
+  it("a window dismissed without a button does not claim the user answered", async () => {
+    let release!: () => void;
+    const persisting = new Promise<void>((r) => (release = r));
+    let gone!: () => void;
+    const hasGone = new Promise<void>((r) => (gone = r));
+
+    const walkedAway: PolicyDelegate = {
+      decideIntent: async (_intent, progress) => {
+        progress?.asking();
+        progress?.answered("dismissed");
+        gone();
+        await persisting;
+        return "deny";
+      },
+    };
+    const { server, file } = serverWith(walkedAway, { ttlMs: 60_000, budgetMs: 30 });
+
+    const first = await callTool(server, "plow_read_file", { path: file }, AGENT);
+    await hasGone;
+    const polled = await callTool(
+      server,
+      "plow_get_result",
+      { handle: first.payload.handle },
+      AGENT,
+    );
+
+    expect(polled.payload.reason).toBe("dismissed");
+    expect(polled.payload.note).toMatch(/closed without an answer/i);
+    expect(polled.payload.note).not.toMatch(/has ANSWERED/);
+    release();
+  });
+
   it("polling the handle repeats the advice, so it survives a lost first answer", async () => {
     const { server, file } = serverWith(DECIDES_ALONE, { ttlMs: 60_000, budgetMs: 30 });
     const first = await callTool(server, "plow_read_file", { path: file }, AGENT);
