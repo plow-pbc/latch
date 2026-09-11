@@ -82,45 +82,83 @@ export function reviewerAvailable(settings: Settings): boolean {
  * Refusing here is not itself a denial. It routes the intent down the normal
  * path, where `decideIntent` runs the review or denies as the mode requires.
  */
-export function storedRuleMayGrant(settings: Settings): boolean {
+/** Who answers an intent, once rules and carve-outs have had their say. */
+export type Decider = "human" | "reviewer" | "allow" | "deny";
+
+/** What this Mac's mode does with an intent. */
+export interface ModeRouting {
+  decider: Decider;
+  /** May a stored always-allow rule answer instead, before any of that? */
+  storedRuleMayGrant: boolean;
+}
+
+/**
+ * CLASSIFY THE MODE ONCE. Everything that needs to know where an intent goes
+ * reads this — `storedRuleMayGrant`, `opensApprovalWindow` and `decideIntent`
+ * itself — rather than re-deriving it from the mode string.
+ *
+ * Three independent derivations is how the same value ended up routed two ways:
+ * `loadSettings` does not validate `approvalMode` (only `setApprovalMode` does,
+ * on the way in), so a tampered or downgraded settings file can carry a mode no
+ * branch recognises, and each site had its own idea of where that fell. One of
+ * them let it replay a cached allow, which happened before any delegate and so
+ * skipped the fail-safe the other had just grown.
+ *
+ * The `default` arm is that fail-safe, and it is why this is a `switch` on the
+ * known modes rather than a chain of tests: a mode this build cannot read gets
+ * a human and no cached replay. A mode added later and not handled here lands
+ * there too, which is the safe place for it to land.
+ */
+export function routeIntent(
+  settings: Settings,
+  capabilities: readonly { kind: string }[],
+): ModeRouting {
   const mode = settings.approvalMode ?? DEFAULT_APPROVAL_MODE;
-  // An ALLOW-list, for the same reason `opensApprovalWindow` below is one. The
-  // engine replays a stored rule BEFORE any delegate is consulted, so a mode
-  // this build cannot read must not land in the permissive half by default:
-  // written as "not adversarial and not deny", an unrecognised value replayed a
-  // cached allow and never reached the fail-safe dialog at all.
-  return mode === "ask" || mode === "approve";
+  switch (mode) {
+    case "deny":
+      return { decider: "deny", storedRuleMayGrant: false };
+    case "adversarial":
+      // The reviewer decides, and a cached human decision must not outrank it.
+      return { decider: "reviewer", storedRuleMayGrant: false };
+    case "approve":
+      // A script is the exception: it runs outside the sandbox with nothing but
+      // its own text as the bound (DESIGN.md §6), and the boundary is someone
+      // reading the whole script, so it goes to the dialog even here.
+      return {
+        decider: capabilities.some((c) => c.kind === "applescript") ? "human" : "allow",
+        storedRuleMayGrant: true,
+      };
+    case "ask":
+      return { decider: "human", storedRuleMayGrant: true };
+    default:
+      return { decider: "human", storedRuleMayGrant: false };
+  }
+}
+
+/**
+ * May a stored always-allow rule answer this intent on its own?
+ *
+ * Refusing here is not a denial: it routes the intent down the normal path,
+ * where `decideIntent` decides as it would have the first time.
+ */
+export function storedRuleMayGrant(
+  settings: Settings,
+  capabilities: readonly { kind: string }[],
+): boolean {
+  return routeIntent(settings, capabilities).storedRuleMayGrant;
 }
 
 /**
  * Will this intent be put in front of a person?
  *
- * THE one answer. `decideIntent` branches on it rather than re-deriving it, and
- * the `goal` field's copy describes it rather than enumerating modes.
- *
- * A script under Approve is the exception that makes it worth having: it runs
- * outside the sandbox with nothing but its own text as the bound (DESIGN.md
- * §6), and the boundary is someone reading the whole script, so it goes to the
- * dialog even in a mode that otherwise asks nobody.
- *
- * A `true` here is not a promise — `deny` and the ~/Plow carve-out both return
- * before it is consulted. It answers "does this mode, for these capabilities,
- * use the dialog" and no more.
+ * What the `goal` field's copy describes. A `true` is not a promise: `deny` and
+ * the ~/Plow carve-out both return before this is consulted.
  */
 export function opensApprovalWindow(
   settings: Settings,
   capabilities: readonly { kind: string }[],
 ): boolean {
-  const mode = settings.approvalMode ?? DEFAULT_APPROVAL_MODE;
-  // ENUMERATE THE MODES THAT DECIDE WITHOUT A PERSON, and send everything else
-  // to the dialog. Listing the modes that ask reads the same and fails OPEN:
-  // `loadSettings` does not validate `approvalMode` (only `setApprovalMode`
-  // does, on the way in), so a tampered or downgraded settings file can carry a
-  // value no branch recognises — and under a list of askers that value would
-  // buy a decision with no human in it.
-  if (mode === "adversarial" || mode === "deny") return false;
-  if (mode === "approve") return capabilities.some((c) => c.kind === "applescript");
-  return true;
+  return routeIntent(settings, capabilities).decider === "human";
 }
 
 /** Everything `decideIntent` needs from the outside world, injected for tests. */
@@ -175,9 +213,11 @@ export async function decideIntent(
   deps: DecideDeps,
 ): Promise<{ decision: ApprovalDecision; source: string }> {
   const { settings } = deps;
-  const mode = settings.approvalMode ?? DEFAULT_APPROVAL_MODE;
 
-  if (mode === "deny") return { decision: "deny", source: "policy" };
+  // One classification, read three times below — never re-derived from `mode`.
+  const route = routeIntent(settings, intent.capabilities);
+
+  if (route.decider === "deny") return { decision: "deny", source: "policy" };
 
   // The playground: file operations confined to ~/Plow are granted here, in
   // every mode that grants anything — no review spent, no dialog raised. After
@@ -187,17 +227,9 @@ export async function decideIntent(
     return { decision: "allow_once", source: APPROVAL_SOURCE_PLOW_FOLDER };
   }
 
-  // Two outcomes from here: a dialog, or the reviewer. One predicate decides.
-  const dialogWillOpen = opensApprovalWindow(settings, intent.capabilities);
+  if (route.decider === "allow") return { decision: "allow_once", source: "approve" };
 
-  // Approve: the whole point of the mode, and reached only when no dialog is
-  // owed — a script in this mode goes to the dialog instead (see the predicate).
-  if (!dialogWillOpen && mode === "approve") {
-    return { decision: "allow_once", source: "approve" };
-  }
-
-  // `deny` returned above and approve just did; what is left is adversarial.
-  const reviewDecides = !dialogWillOpen;
+  const reviewDecides = route.decider === "reviewer";
 
   // Run one review, recording its start and outcome onto the intent's audit
   // timeline so the app shows "adversarial agent started" + its verdict between

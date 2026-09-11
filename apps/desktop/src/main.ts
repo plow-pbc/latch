@@ -325,8 +325,8 @@ class ElectronPolicy implements PolicyDelegate {
    * hands the decision to it. The rule itself is left alone — it applies again
    * as soon as the mode is one that lets a rule answer.
    */
-  mayGrantFromStoredRule(): boolean {
-    return storedRuleMayGrant(loadSettings(home));
+  mayGrantFromStoredRule(intent: Intent): boolean {
+    return storedRuleMayGrant(loadSettings(home), intent.capabilities);
   }
 
   // The branching itself lives in reviewPolicy.ts so it is testable without a

@@ -28,6 +28,7 @@ import {
   decideIntent,
   inferenceStatus,
   opensApprovalWindow,
+  routeIntent,
   reviewerAvailable,
   storedRuleMayGrant,
 } from "../src/reviewPolicy.js";
@@ -271,7 +272,7 @@ describe("a stored rule cannot stand in for a required review", () => {
   } => {
     const d = {
       calls: 0,
-      mayGrantFromStoredRule: () => storedRuleMayGrant(s),
+      mayGrantFromStoredRule: (i: Intent) => storedRuleMayGrant(s, i.capabilities),
       async decideIntent(i: Intent) {
         d.calls += 1;
         return decideIntent(i, {
@@ -403,9 +404,11 @@ describe("storedRuleMayGrant", () => {
     // adversarial gives it to the reviewer, deny refuses everything, and an
     // unrecognised mode is not a mode this build should act on. A rule is a
     // cached human decision, and none of them wants one.
-    expect(storedRuleMayGrant(settings({ approvalMode: mode as Settings["approvalMode"] }))).toBe(
-      expected,
-    );
+    expect(
+      storedRuleMayGrant(settings({ approvalMode: mode as Settings["approvalMode"] }), [
+        { kind: "fs.read" },
+      ]),
+    ).toBe(expected);
   });
 });
 
@@ -1021,5 +1024,37 @@ describe("a closed dialog stops claiming a person is holding the call", () => {
     );
 
     expect(order).toEqual([]);
+  });
+});
+
+/**
+ * One classification, three readers.
+ *
+ * `storedRuleMayGrant`, `opensApprovalWindow` and `decideIntent` each used to
+ * derive the routing from the mode string themselves, and an unrecognised value
+ * landed in different halves depending on which one you asked. They read
+ * `routeIntent` now; this pins that they still agree with it, including for a
+ * mode this build cannot read.
+ */
+describe("the mode is classified once", () => {
+  const READ = [{ kind: "fs.read" }] as const;
+  const SCRIPT = [{ kind: "applescript" }] as const;
+
+  it.each([
+    ["ask", READ, "human", true],
+    ["ask", SCRIPT, "human", true],
+    ["approve", READ, "allow", true],
+    ["approve", SCRIPT, "human", true],
+    ["adversarial", READ, "reviewer", false],
+    ["deny", READ, "deny", false],
+    ["nonsense-from-a-newer-build", READ, "human", false],
+    ["nonsense-from-a-newer-build", SCRIPT, "human", false],
+  ] as const)("%s + %o → %s, rule replay %s", (mode, caps, decider, replay) => {
+    const config = settings({ approvalMode: mode as Settings["approvalMode"] });
+
+    expect(routeIntent(config, caps)).toEqual({ decider, storedRuleMayGrant: replay });
+    // The two thin readers must not have opinions of their own.
+    expect(opensApprovalWindow(config, caps)).toBe(decider === "human");
+    expect(storedRuleMayGrant(config, caps)).toBe(replay);
   });
 });
