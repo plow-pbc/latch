@@ -953,29 +953,45 @@ pre.script {
    child that has to truncate. */
 .live-cap-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .live-cap .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--green-fg); flex: none; }
-/* The size control, in the caption row next to the host. Quiet until you want
-   it; it is the label that makes the click discoverable, not a second action. */
-.live-toggle {
-  flex: none; margin-left: 4px; padding: 1px 7px;
-  font: inherit; font-size: 10px; text-transform: uppercase; letter-spacing: 0.04em;
-  color: var(--muted); background: none;
-  border: 1px solid var(--border-strong); border-radius: 999px;
-  cursor: pointer;
+/* The hint. Fade IN is quick and fade OUT is slow, because arriving and
+   leaving are different events: a hint that vanishes as fast as it appeared
+   reads as a glitch, one that drifts out reads as finished. The owner picked
+   the soft leave (600ms) over quick and slow. */
+.live-shot { position: relative; }
+.live-hint {
+  position: absolute; left: 50%; top: 50%;
+  transform: translate(-50%, -50%) scale(0.98);
+  padding: 7px 13px; border-radius: 999px; white-space: nowrap;
+  background: rgba(9, 9, 11, 0.82); color: #fafafa;
+  font-size: 12px; font-weight: 500;
+  opacity: 0; pointer-events: none;   /* never in the way of the click it describes */
+  transition: opacity 600ms ease, transform 600ms ease;
 }
-.live-toggle:hover { color: var(--fg); border-color: var(--fg); }
+.live-hint.on {
+  opacity: 1; transform: translate(-50%, -50%) scale(1);
+  transition: opacity 160ms ease, transform 160ms ease;
+}
+@media (prefers-reduced-motion: reduce) {
+  .live-hint { transition: none; }
+  .live-hint.on { transform: translate(-50%, -50%); }
+}
 
 /* Expanded: the same box grows to about 60% of the window so the owner can
    actually read the page the agent is on. Toggled by a click on it, either way.
 
-   NOT A MODAL. It floats over the bottom-right with a shadow; the audit list,
-   the tabs and the titlebar stay visible and clickable, and clicking anywhere
-   outside it does nothing. A full-bleed scrim below the titlebar was a dialog
-   in all but name, and left the window's own traffic lights stranded on black
-   with nothing around them to say whose they were. */
+   NOT A MODAL. It sits centred with a shadow, and the audit list, the tabs and
+   the titlebar stay visible and clickable around it; clicking anywhere outside
+   it does nothing. A full-bleed scrim below the titlebar was a dialog in all
+   but name, and left the window's own traffic lights stranded on black with
+   nothing around them to say whose they were. */
 .live-corner img { cursor: zoom-in; }
 .live-corner.expanded {
+  /* Centred in the window, under the titlebar rather than over it: that strip
+     is --titlebar-h tall, so the middle of what is actually visible sits half
+     of it below the window's own centre. */
   position: fixed;
-  right: 16px; bottom: 16px;
+  left: 50%; top: calc(50% + var(--titlebar-h) / 2);
+  transform: translate(-50%, -50%);
   /* 60% of the window, and of the height actually available below the titlebar. */
   width: 60vw;
   max-width: calc(100vw - 32px);
@@ -997,6 +1013,7 @@ pre.script {
   cursor: zoom-out;
 }
 .live-corner.expanded .live-cap { max-width: 100%; }
+.live-corner.expanded .live-shot { width: 100%; }
 
 .live-corner.offscope img { border-color: var(--red-bd); }
 .live-corner.offscope .live-cap { color: var(--red-fg); }

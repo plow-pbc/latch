@@ -185,37 +185,61 @@ async function renderAudit() {
   const liveImg = el("img", { attrs: { alt: "Live browser view" } });
   const liveDot = el("span", { class: "dot" });
   const liveCapText = el("span", { class: "live-cap-text" });
-  // The size control, spelled out. The box was always click-to-toggle, but the
-  // only thing that said so was the zoom cursor — which is not on screen until
-  // you are already hovering the picture, and says nothing about how to get
-  // back. A button that names the next state does both.
+  // What tells the owner the picture is a control.
   //
-  // It has NO listener of its own on purpose: the click bubbles to the box,
-  // whose handler is the one that toggles. Two handlers would toggle twice and
-  // land back where it started. Being a real <button> is what makes it
-  // reachable by keyboard — Enter there raises the same click.
-  const liveToggle = el("button", {
-    class: "live-toggle",
-    attrs: { type: "button" },
-  });
+  // A button that named the next state was the first answer and it was wrong in
+  // the small view: a word sitting permanently under a 200px thumbnail is chrome
+  // on something that is mostly not being looked at. A hint the pointer summons
+  // costs nothing when ignored.
+  //
+  // The two states get different rules, because the question differs. Small, it
+  // is "is this a control at all?" — so the hint holds for as long as the
+  // pointer is on it and never fades. Enlarged, it is "how do I get out?" —
+  // asked once, on arrival, then answered and gone: the clock starts when the
+  // panel opens and runs whether or not the pointer stays. Hiding on mouse-out
+  // instead would mean the exit almost always beat the timer, and the hint
+  // would look like it never left on its own.
+  const liveHint = el("span", { class: "live-hint" });
+  const liveShot = el("div", { class: "live-shot" }, [liveImg, liveHint]);
   const liveBox = el("div", { class: "live-corner hidden" }, [
-    liveImg,
-    el("div", { class: "live-cap" }, [liveDot, liveCapText, liveToggle]),
+    liveShot,
+    el("div", { class: "live-cap" }, [liveDot, liveCapText]),
   ]);
+
+  /** How long the enlarged hint stays before it fades. The owner picked 1s. */
+  const HINT_MS = 1000;
+  let hintTimer = null;
+
+  const hideHint = () => {
+    clearTimeout(hintTimer);
+    liveHint.classList.remove("on");
+  };
+  const showHint = (text, timed) => {
+    clearTimeout(hintTimer);
+    liveHint.textContent = text;
+    liveHint.classList.add("on");
+    if (timed) hintTimer = setTimeout(() => liveHint.classList.remove("on"), HINT_MS);
+  };
+
+  liveShot.addEventListener("mouseenter", () => {
+    if (liveBox.classList.contains("expanded")) showHint("Click to minimize", true);
+    else showHint("Click to enlarge", false);
+  });
+  // Only the small view's hint answers to the pointer leaving; the enlarged
+  // one belongs to its timer.
+  liveShot.addEventListener("mouseleave", () => {
+    if (!liveBox.classList.contains("expanded")) hideHint();
+  });
+
   // Click the thumbnail to blow it up over the window; click again (anywhere on
   // the blown-up view) to shrink it back to the corner.
-  const syncLiveToggle = () => {
-    const big = liveBox.classList.contains("expanded");
-    liveToggle.textContent = big ? "Minimize" : "Enlarge";
-    liveToggle.title = big
-      ? "Click anywhere on the view to shrink it back to the corner"
-      : "Click the view to enlarge it";
-  };
   liveBox.addEventListener("click", () => {
-    liveBox.classList.toggle("expanded");
-    syncLiveToggle();
+    const big = liveBox.classList.toggle("expanded");
+    // The pointer is already inside after the click, so no mouseenter follows:
+    // opening the panel IS the arrival its hint answers to.
+    if (big) showHint("Click to minimize", true);
+    else hideHint();
   });
-  syncLiveToggle();
   const detailBox = el("aside", { class: "detail" }, [detailScroll, liveBox]);
   detailBox.style.width = detailWidth + "px";
   const splitter = el("div", { class: "splitter", attrs: { title: "Drag to resize" } });
@@ -236,7 +260,7 @@ async function renderAudit() {
   auditMounted = {
     listBox, detailScroll, count, chipsBox, clearBtn, searchInput, table, tbody, rows: new Map(),
     moreBox, total: 0,
-    liveBox, liveImg, liveDot, liveCapText, syncLiveToggle, liveHasFrame: false,
+    liveBox, liveImg, liveDot, liveCapText, hideHint, liveHasFrame: false,
   };
   await refreshAudit();
   refreshLiveThumb();
@@ -478,7 +502,7 @@ async function refreshLiveThumb() {
     if (!s.active) {
       m.liveHasFrame = false; // next session starts with a fresh frame
       m.liveBox.classList.remove("expanded"); // never leave the overlay up with no session
-      m.syncLiveToggle(); // …and the button must not still offer "Minimize"
+      m.hideHint(); // …and no hint left over for a view that is gone
     }
     if (s.active && s.frame && /^image\/(jpeg|png|webp)$/.test(s.frame.mime)) {
       m.liveImg.src = `data:${s.frame.mime};base64,${s.frame.dataB64}`;
