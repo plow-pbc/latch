@@ -358,3 +358,56 @@ describe("browser fingerprint pinning is wired to the runtime", () => {
     expect(env.ELECTRON_RUN_AS_NODE).toBe("1");
   });
 });
+
+/**
+ * `running` is a promise that execution is underway, and a denied intent never
+ * executes.
+ *
+ * `decided()` used to fire on the decision rather than on the allow, so a
+ * refused call entered the running phase for as long as the denial took to
+ * reach the caller. Asserted here rather than through a served handle: end to
+ * end that window is a few microseconds wide, and a test that has to lose a
+ * race to see a bug passes when the bug is present — one written that way did.
+ * The callback either fires for a denial or it does not.
+ */
+describe("a denial never announces execution", () => {
+  function intentFor(device: DeviceAgent): Intent {
+    return makeIntent({
+      agentId: new KeyPair().fingerprint,
+      agentDisplay: "Agent",
+      deviceId: device.identity.deviceId,
+      request: "read",
+      capabilities: [{ kind: "fs.read", paths: ["/etc/hosts"] }],
+      sessionId: "s1",
+    });
+  }
+
+  it("deny reaches the caller without ever reporting decided()", async () => {
+    const device = new DeviceAgent(tempDir(), "Test Mac", new HeadlessPolicy({ intent: "deny" }));
+    const phases: string[] = [];
+
+    const response = await device.handleIntent(intentFor(device), null, {
+      asking: () => phases.push("asking"),
+      decided: () => phases.push("decided"),
+    });
+
+    expect(jvStatus(response)).toBe("denied");
+    expect(phases).not.toContain("decided");
+  });
+
+  it("an allow still reports it, or nothing would ever leave the deciding phase", async () => {
+    const device = new DeviceAgent(tempDir(), "Test Mac", new HeadlessPolicy({ intent: "allow_once" }));
+    const phases: string[] = [];
+
+    await device.handleIntent(intentFor(device), null, {
+      asking: () => phases.push("asking"),
+      decided: () => phases.push("decided"),
+    });
+
+    expect(phases).toContain("decided");
+  });
+});
+
+function jvStatus(response: unknown): string | undefined {
+  return (response as { status?: string })?.status;
+}

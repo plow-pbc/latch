@@ -587,8 +587,10 @@ export class DeviceAgent {
    * Run one intent: validate, decide (rules → delegate), execute. The single
    * entry point into the Mac's decision path.
    *
-   * `progress.decided` fires the moment the decision lands, before execution
-   * starts, and `progress.asking` the moment a dialog goes in front of a human.
+   * `progress.decided` fires once the decision has landed AND is an allow, so
+   * it marks the start of execution rather than the end of deciding — a denial
+   * never reaches the running phase. `progress.asking` fires the moment a
+   * dialog goes in front of a human.
    * A caller running against a call budget needs both to tell "nobody has been
    * asked yet" from "a human is holding this" from "approved and now running" —
    * three different answers to an agent polling a deferred handle, and only the
@@ -619,7 +621,6 @@ export class DeviceAgent {
     });
 
     const grant = await this.policy.decide(intent, this.delegate, progress);
-    progress?.decided();
     this.audit.record("intent_decision", {
       intentId: intent.intentId,
       decision: grant.decision,
@@ -637,6 +638,12 @@ export class DeviceAgent {
       const reason = EXPLAINED_DENIALS[grant.source];
       return reason ? { status: "denied", reason } : { status: "denied" };
     }
+    // AFTER the deny return, not before it. `running` means execution is
+    // underway, and a denied request never executes — announcing it here put a
+    // refused call into the running phase for as long as it took the denial to
+    // reach the caller, so an agent polling in that window was told its work
+    // had started.
+    progress?.decided();
     return this.execute(intent, payload);
   }
 
