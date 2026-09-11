@@ -42,13 +42,14 @@ describe("approvalViewModel", () => {
     ]);
   });
 
-  it("an applescript intent shows the target as a chip, hands the card the whole script, and offers no Always Allow", () => {
-    const script = 'tell application "Mail"\n\tmake new outgoing message\nend tell';
+  it("an applescript intent shows the target as a chip, hands the card the whole script and its args, and offers no Always Allow", () => {
+    const script = 'on run argv\n\ttell application "Mail" to make new outgoing message with properties {subject:item 1 of argv}\nend run';
+    const args = ["Lunch?"];
     const vm = approvalViewModel(
-      intentOf({ capabilities: [{ kind: "applescript", app: "Mail", bundleId: "com.apple.mail", script }] }),
+      intentOf({ capabilities: [{ kind: "applescript", app: "Mail", bundleId: "com.apple.mail", script, args }] }),
     );
     expect(vm.capabilities.map((c) => c.display)).toEqual(["Script Mail (com.apple.mail)"]);
-    expect(vm.scriptsApp).toEqual({ app: "Mail", bundleId: "com.apple.mail", script });
+    expect(vm.scriptsApp).toEqual({ app: "Mail", bundleId: "com.apple.mail", script, args });
     expect(vm.runsCommand).toBe(false);
     // The same mutation as an Apple-event send: never a stored rule.
     expect(vm.sendsAppleEvents).toBe(true);
