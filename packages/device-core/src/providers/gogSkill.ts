@@ -40,6 +40,14 @@ accounts rather than all, name them: \`--account a@x,b@y\`. A calendar id
 (\`--calendars\`) needs its owner, so under a fan-out it is refused — add
 \`--account\` for the one account whose calendar it is.
 
+**\`primary\` is one calendar per account, not the owner's week.** Their
+commitments also sit on the other calendars they keep — a shared family
+calendar, a second work calendar, an old address. For availability, list them
+first (\`calendar calendars\` fans out) and read every one the owner shows
+(\`selected: true\`), one account at a time: \`--calendars <ids> --account
+<that account>\`. \`--all\` is not the same: it also reads the calendars they
+have hidden.
+
     ["plow-gog", "accounts"]
 
 lists the connected accounts, from the mint — no Google call at all. Which is
@@ -153,7 +161,8 @@ Useful starting points:
     ["plow-gog","gmail","drafts","reply","<messageId>","--body","...","--account","..."]  # draft, for review
     ["plow-gog","gmail","send","--to","a@b.com","--subject","...","--body","...","--account","..."]
     ["plow-gog","gmail","send","--to","a@b.com","--subject","...","--body","...","--attach","/Users/me/Plow/receipt.jpg","--account","..."]
-    ["plow-gog","calendar","events","primary","--from","2026-09-01T00:00:00Z","--to","2026-09-08T00:00:00Z","--fields","summary,start,end,attendees"]
+    ["plow-gog","calendar","calendars"]   # every account's calendars; the shown ones carry selected
+    ["plow-gog","calendar","events","--calendars","<the shown ids>","--from","2026-09-01T00:00:00-07:00","--to","2026-09-08T00:00:00-07:00","--account","..."]
     ["plow-gog","calendar","conflicts","--from","...","--to","..."]   # overlaps, every account
     ["plow-gog","calendar","create","primary","--summary","...","--from","...","--to","...","--account","..."]
 
