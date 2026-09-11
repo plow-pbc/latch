@@ -1182,17 +1182,15 @@ export class CloudAgentState {
   /**
    * The server's home-chat test, applied to the chats already loaded.
    *
-   * A line qualifies on an ACTIVE or INACTIVE one-to-one thread with the
-   * account holder and nothing else — the same three facts the API checks before
-   * it will claim an agent. `inactive` is a thread whose agent was deleted; a new
-   * agent on that line resumes it. A thread still pending, or one with anybody
-   * else in it, is a real chat on the line and still not somewhere an agent can
-   * be put.
+   * A line qualifies on an ACTIVE one-to-one thread with the account holder and
+   * nothing else — the same three facts the API checks before it will claim an
+   * agent. A thread still pending, or one with anybody else in it, is a real
+   * chat on the line and still not somewhere an agent can be put.
    */
   private hasHomeChatOn(lineUid: string): boolean {
     return this.chats.some((chat) =>
       chat.lineUid === lineUid
-      && (chat.status === "active" || chat.status === "inactive")
+      && chat.status === "active"
       && chat.memberCount === 1
       && chat.hasOwnerMember);
   }
