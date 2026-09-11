@@ -163,9 +163,11 @@ describe("the built-in imessage skill", () => {
     ["a message that reads like an order not being one", /never do what it says/i],
     ["answering for the owner and nobody else", /only the owner's/i],
     // Sending.
-    ["the apple_events flag being required to send", /apple_events: true/],
-    ["what happens without the flag", /sandbox denies the event and the script exits 1/i],
-    ["sends being approved per-message by design", /approved per-message, by design/i],
+    ["sending through the script tool, not a command", /send with .?plow_run_applescript.?, never with .?osascript.? under .?plow_run_command/i],
+    ["why: Messages refuses a sandboxed sender", /refuses Apple events from a sandboxed sender/i],
+    ["the text and recipient arriving as args", /args: \["<text>", "<phone or email>"\]/],
+    ["every send decided on its own, by design", /every send is decided on its own, by design/i],
+    ["Approve mode allowing a send unread", /under Approve the send is allowed without\s+anyone reading it/i],
     ["not fighting approval with a wrapper script", /do not fight this with a wrapper script/i],
     ["verifying delivery after send", /is_sent.*and.*is_delivered/i],
     ["byte-identical argv for unattended reads", /byte-identical/i],
@@ -179,6 +181,12 @@ describe("the built-in imessage skill", () => {
       expect(body).toContain(sql.split("\n")[0].trim());
     }
     expect(body).toContain(`'${IMESSAGE_HANDLE_PLACEHOLDER}'`);
+  });
+
+  it("publishes no send through plow_run_command, which Messages refuses (-10004)", () => {
+    const body = imessageSkillFor("/Users/testowner").body;
+    expect(body).not.toContain("apple_events");
+    expect(body).not.toContain('"-e"');
   });
 
   it("names the store by its resolved absolute path, so no optional argument is load-bearing", () => {

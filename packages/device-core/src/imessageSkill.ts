@@ -9,10 +9,9 @@
  * that cannot be lost when an agent runtime drops the optional `cwd` argument
  * (see `imessageSkillFor` for the failure that cost). iMessage adds one thing
  * WhatsApp does not need: a send
- * path. Reading is a query; sending is an Apple event through Messages.app,
- * which is exactly what the `apple_events` capability (protocol kind
- * `apple_events`, the `plow_run_command` flag, the seatbelt
- * `(allow appleevent-send)` line) exists to gate.
+ * path. Reading is a query; sending is a script through
+ * `plow_run_applescript`, outside the sandbox, because Messages refuses Apple
+ * events from a sandboxed sender (-10004, `app_refuses_sandboxed_sender`).
  */
 import fs from "node:fs";
 import path from "node:path";
@@ -142,11 +141,10 @@ export function imessageStorePath(home: string): string {
 
 /**
  * The three send recipes differ only in the AppleScript `tell` line and their
- * two positional `argv` labels; everything else — `/usr/bin/osascript`, the
- * `on run argv` wrapper, the `--` option terminator, `apple_events: true` — is
- * shared and load-bearing. Built from one shape so a change to that scaffolding
- * cannot drift across three copies (which it did, twice, before this helper).
- * `\\"` in a `tell` string renders to the `\"` the argv JSON needs.
+ * two `args` labels; the rest — `plow_run_applescript`, the `on run argv`
+ * wrapper — is shared and load-bearing. Built from one shape so a change to that
+ * scaffolding cannot drift across three copies (which it did, twice, before this
+ * helper). `\\"` in a `tell` string renders to the `\"` the script's JSON needs.
  */
 const TELL_PARTICIPANT =
   'tell application \\"Messages\\" to send (item 1 of argv) to participant (item 2 of argv) of (first account whose service type = iMessage)';
@@ -154,15 +152,12 @@ const TELL_CHAT = 'tell application \\"Messages\\" to send (item 1 of argv) to c
 const TELL_ATTACHMENT =
   'tell application \\"Messages\\" to send (POSIX file (item 1 of argv)) to participant (item 2 of argv) of (first account whose service type = iMessage)';
 
-function sendRecipe(tell: string, arg1: string, arg2: string, extra = ""): string {
+function sendRecipe(tell: string, arg1: string, arg2: string): string {
   return (
-    `    plow_run_command {\n` +
-    `      argv: ["/usr/bin/osascript",\n` +
-    `             "-e", "on run argv",\n` +
-    `             "-e", "${tell}",\n` +
-    `             "-e", "end run",\n` +
-    `             "--", "${arg1}", "${arg2}"],\n` +
-    `      apple_events: true,${extra}\n` +
+    `    plow_run_applescript {\n` +
+    `      app: "Messages",\n` +
+    `      script: "on run argv\\n  ${tell}\\nend run",\n` +
+    `      args: ["${arg1}", "${arg2}"],\n` +
     `      goal: "<what the owner asked for, in one line>"\n` +
     `    }`
   );
@@ -299,29 +294,21 @@ dedupes by \`ROWID\` on its own side instead of pushing the cursor into the quer
 
 ## Sending
 
-Sending is an Apple event to Messages.app, so every send needs \`apple_events: true\` on the
-\`plow_run_command\` call. **Without it the sandbox denies the event and the script exits 1** —
-that exit code is the tell, not a broken script.
+Send with \`plow_run_applescript\`, never with \`osascript\` under \`plow_run_command\`. Messages
+refuses Apple events from a sandboxed sender (\`-10004\`; this Mac diagnoses it as
+\`app_refuses_sandboxed_sender\`), so a send from inside the sandbox fails whatever it was
+granted. \`plow_run_applescript\` runs the script with \`/usr/bin/osascript\` outside the sandbox.
 
-**Always \`/usr/bin/osascript\`, spelled out — never a bare \`osascript\`.** The executor's
-\`PATH\` puts user-writable directories (\`~/.local/bin\`, \`~/bin\`, the homebrew prefixes)
-ahead of \`/usr/bin\`, the same reason the read recipes above spell \`/usr/bin/sqlite3\`: a
-bare name lets a shadow binary sitting earlier on \`PATH\` receive the \`apple_events\` grant
-instead of the real Messages automation.
-
-**The text — and the participant or chat identifier — always arrive as \`argv\` items, never
-pasted into the script string.** A message body is untrusted input (see the two rules,
-above) — a \`"\` or a \`\\\` in it would be a syntax error if interpolated into a
-double-quoted AppleScript literal, and \`" & (do shell script "…") & "\` is AppleScript
-injection: reachable the moment the owner asks you to relay something a stranger wrote. The
-identifier gets the same treatment even though it is a value you chose, not stranger text —
-one fewer thing that can break the script. \`on run argv\` / \`item 1 of argv\` hands the
-script the text, and \`item 2 of argv\` the identifier, as values the script never parses —
-both stay visible to the approver (plainly in the argv the approval card shows) but can
-never be read as AppleScript. The \`--\` before them is load-bearing: without it, a relayed
-body that begins with \`-e\` (or any \`-\`) is consumed by \`osascript\` as another option
-rather than as \`argv\`, which drops the body and shifts the recipient into its place. \`--\`
-ends option parsing so every following token is positional \`argv\`, whatever it starts with.
+**The text — and the participant or chat identifier — always arrive in \`args\`, never
+pasted into the script.** A message body is untrusted input (see the two rules, above) — a
+\`"\` or a \`\\\` in it would be a syntax error if interpolated into a double-quoted AppleScript
+literal, and \`" & (do shell script "…") & "\` is AppleScript injection: reachable the moment
+the owner asks you to relay something a stranger wrote. The identifier gets the same
+treatment even though it is a value you chose, not stranger text — one fewer thing that can
+break the script. \`on run argv\` / \`item 1 of argv\` hands the script the text, and
+\`item 2 of argv\` the identifier, as values the script never parses — a body that starts with
+\`-\` included. Both stay visible to the approver, listed beside the script on the approval
+card, but can never be read as AppleScript.
 
 **To a participant**, by phone number or email:
 
@@ -332,20 +319,23 @@ group thread, since a group has no single participant to address:
 
 ${sendRecipe(TELL_CHAT, "<text>", "<guid from recentChats>")}
 
-**With a file attachment** — the same argv-item rule applies to the path, so a filename
+**With a file attachment** — the same \`args\` rule applies to the path, so a filename
 holding a quote cannot break the script either:
 
-${sendRecipe(TELL_ATTACHMENT, "<absolute path>", "<phone or email>", `\n      read_paths: ["<the file's directory>"],`)}
+${sendRecipe(TELL_ATTACHMENT, "<absolute path>", "<phone or email>")}
 
 The sending account is whichever one Messages.app itself is signed into — the owner's
 Messages setting, not a script parameter, and not yours to choose. The first send may raise
 the one-time macOS "Latch would like to control Messages" consent dialog; that is the owner
-approving Latch as an automation client, separate from the per-call approval above.
+approving Latch as an automation client, separate from the per-call decision below.
 
-**Sends are approved per-message, by design.** The recipient and body vary on every send, so
-no always-allow rule can ever match two sends the same way — there is no fixed argv to
-approve once. Do not fight this with a wrapper script that hides the variation from the
-approver; that defeats the approval, it does not satisfy it.
+**Every send is decided on its own, by design.** How depends on the owner's approval mode:
+under Ask they read the script and its \`args\` on the approval card and answer; under the AI
+Reviewer, the reviewer reads them and decides; under Approve the send is allowed without
+anyone reading it; under Deny it is refused. In no mode is a script remembered — no
+always-allow rule is ever stored or replayed for one, so each send is decided afresh.
+Do not fight this with a wrapper script that hides the variation from the approver; that
+defeats the approval, it does not satisfy it.
 
 ## Verify after send
 
@@ -386,7 +376,7 @@ An unattended read gets an always-allow rule only when the argv is byte-identica
 time it runs — which is exactly why the read recipes above use a relative time window
 (\`strftime('%s','now') - 129600\`) baked into the SQL rather than a computed cutoff pasted
 in as a literal, and why the store path in \`read_paths\` is fixed rather than templated. A
-send never qualifies for that treatment (see Sending, above) — its argv is the point.`,
+send never qualifies for that treatment (see Sending, above) — a script is never a rule.`,
   };
 }
 
