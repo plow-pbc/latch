@@ -37,9 +37,6 @@ import {
   impliesNetwork,
   vendoredProvider,
   resolveAppBundleId,
-  SCRIPT_SHELL_ESCAPE,
-  SCRIPT_SHELL_ESCAPE_APPS,
-  SCRIPT_SHELL_ESCAPE_REFUSAL,
 } from "@domo/device-core";
 import { BlockedError, DeferredResults, DeniedError, DeviceError, Progress } from "./deferred.js";
 import { JobOwners } from "./jobs.js";
@@ -572,17 +569,17 @@ export const TOOLS: ToolSpec[] = [
       "Run an AppleScript that controls one app on the user's own Mac through Latch — Mail, Finder, " +
       "Calendar, Notes, Reminders, Messages, System Events — and return what it produces. Use this " +
       "for AppleScript rather than plow_run_command with osascript: some apps refuse commands " +
-      "from inside the sandbox (-10004), and this tool runs outside it, so the approver reads the " +
-      "whole script. Name the app the script addresses in 'app', by the name it has in " +
-      "`tell application \"…\"`; it is resolved to an installed app on this Mac before anyone is " +
-      "asked, and an app the Mac does not have is an error. Keep the script to that app: shell " +
-      "commands and scripts-within-scripts (`do shell script`, `run script`, Terminal's `do script`, " +
-      "scripting Terminal or Script Editor) are refused — run commands with plow_run_command. " +
-      "The first time an app is scripted macOS may ask this Mac's owner " +
-      "to allow it. Output is the script's result plus anything it logs; a script error comes " +
-      "back as osascript's message with a non-zero exit_code and 'host_gate': 'none' — the script's " +
-      "own problem, not a permission. A long script returns a job handle for plow_get_output, and " +
-      "a call that outruns this Mac's budget defers to plow_get_result. " +
+      "from inside the sandbox (-10004), and this tool runs outside it. Name the app the script " +
+      "addresses in 'app', by the name it has in `tell application \"…\"`; it is resolved to an " +
+      "installed app on this Mac before anyone is asked, and an app the Mac does not have is an " +
+      "error. Pass any value the script acts on — a message's text, a recipient, a path — in " +
+      "'args', read as `on run argv` / `item 1 of argv`, never pasted into the source: each one " +
+      "reaches the script as a value, not as part of its text. " +
+      "The first time an app is scripted macOS may ask this Mac's owner to allow it. " +
+      "Output is the script's result plus anything it logs; a script error comes back as " +
+      "osascript's message with a non-zero exit_code and 'host_gate': 'none' — the script's own " +
+      "problem, not a permission. A long script returns a job handle for plow_get_output, and a " +
+      "call that outruns this Mac's budget defers to plow_get_result. " +
       BLOCKED_COPY,
     inputSchema: {
       type: "object",
@@ -593,6 +590,11 @@ export const TOOLS: ToolSpec[] = [
           description: 'The application the script controls, by name as in `tell application "Mail"`',
         },
         script: { type: "string", description: "The complete AppleScript source" },
+        args: {
+          type: "array",
+          items: { type: "string" },
+          description: "Values handed to the script's `on run argv`, in order; shown to the approver beside the script",
+        },
         wait_ms: {
           type: "integer",
           description:
@@ -613,10 +615,9 @@ export const TOOLS: ToolSpec[] = [
       if (app === null || app === "") throw new ToolError("missing 'app'");
       const script = a.get("script").str;
       if (script === null || script === "") throw new ToolError("missing 'script'");
-      // Refused HERE, before an intent exists: nobody should be asked to
-      // approve a script this Mac was always going to refuse. The device
-      // checks again; it is the chokepoint and cannot rely on this caller.
-      if (SCRIPT_SHELL_ESCAPE.test(script)) throw new ToolError(SCRIPT_SHELL_ESCAPE_REFUSAL);
+      const argValues = a.get("args").arr ?? [];
+      const scriptArgs = strings(argValues);
+      if (scriptArgs.length !== argValues.length) throw new ToolError("args must be strings");
       // Resolved on this Mac before it becomes the capability the human
       // reads, like a path — and without asking macOS, which would put a
       // "Where is X?" chooser on the owner's screen for a name it can't place.
@@ -627,8 +628,9 @@ export const TOOLS: ToolSpec[] = [
         if (error instanceof AppNotFoundError) throw new ToolError(error.message);
         throw error;
       }
-      if (SCRIPT_SHELL_ESCAPE_APPS.has(bundleId)) throw new ToolError(SCRIPT_SHELL_ESCAPE_REFUSAL);
-      const capabilities: Capability[] = [{ kind: "applescript", app, bundleId, script }];
+      const capabilities: Capability[] = [
+        { kind: "applescript", app, bundleId, script, ...(scriptArgs.length > 0 ? { args: scriptArgs } : {}) },
+      ];
       const waitMs = Math.min(a.get("wait_ms").int ?? 10_000, ctx.commandWaitCapMs);
       // The job is this agent's, on a blocked run too (see plow_run_command).
       const claim = (result: JSONValue) => {

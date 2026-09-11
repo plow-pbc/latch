@@ -114,10 +114,14 @@ describe("overlapsRoot", () => {
 });
 
 describe("capabilityDisplay", () => {
-  it("applescript names the app, its bundle id, and the whole script", () => {
+  it("applescript names the app, its bundle id, the whole script, and the args it is handed", () => {
     expect(
       capabilityDisplay({ kind: "applescript", app: "Mail", bundleId: "com.apple.mail", script: "return 1" }),
     ).toBe("Script Mail (com.apple.mail): return 1");
+    // Each value quoted, so where one ends is never a guess.
+    expect(
+      capabilityDisplay({ kind: "applescript", app: "Mail", bundleId: "com.apple.mail", script: "return 1", args: ['a "b"', "c"] }),
+    ).toBe('Script Mail (com.apple.mail): return 1\nargs: ["a \\"b\\"","c"]');
   });
 
   it("browser shows the origin list", () => {

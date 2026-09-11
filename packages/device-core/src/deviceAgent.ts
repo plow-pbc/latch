@@ -201,37 +201,6 @@ interface ExecDiagnosisContext {
 }
 
 /**
- * A script's roads to a shell — `do shell script`, Terminal's `do script`,
- * text evaluated as a script (`run script`, `load script`, `store script`),
- * or driving an app whose whole purpose is running things — would run
- * outside the sandbox, which is the one thing a script must not be a road
- * to. Refused before anything runs, by a fixed sentence.
- *
- * A TRIPWIRE, not the boundary. AppleScript is a dynamic language and a
- * source-level check cannot be sound against it (a string assembled at run
- * time is still a string); the boundary is the approval card, which shows
- * the whole script, and the reviewer, who is told to read it as such
- * (DESIGN.md §6). This catches the honest mistake and the lazy attempt.
- */
-export const SCRIPT_SHELL_ESCAPE =
-  // `«event …»` is every command by its raw four-char code — `«event
-  // sysoexec»` IS `do shell script` — and no honest script needs the raw
-  // form for any command this Mac would run.
-  /\b(?:do\s+(?:shell\s+)?script|(?:run|load|store)\s+script)\b|\u00abevent\b|\b(?:application|app)\s+(?:id\s+)?"(?:Terminal|iTerm2?|Script Editor|Automator|com\.apple\.Terminal|com\.googlecode\.iterm2|com\.apple\.ScriptEditor2|com\.apple\.Automator)"/i;
-/** The apps a script may not name as its target, by bundle id: each one
- *  exists to run other things. */
-export const SCRIPT_SHELL_ESCAPE_APPS: ReadonlySet<string> = new Set([
-  "com.apple.Terminal",
-  "com.googlecode.iterm2",
-  "com.apple.ScriptEditor2",
-  "com.apple.Automator",
-]);
-export const SCRIPT_SHELL_ESCAPE_REFUSAL =
-  "Latch does not run shell commands or other scripts from an AppleScript (`do shell script`, " +
-  "`run script`, Terminal's `do script`, or scripting Terminal, iTerm, Script Editor or Automator): " +
-  "run commands with plow_run_command, inside the sandbox, and keep the script to the app it controls.";
-
-/**
  * One shape for a run, whether it is answering the call that started it or a
  * later `plow_get_output` poll. Written once because the two used to be
  * written twice and had already drifted: only the polling path told the agent
@@ -954,17 +923,11 @@ export class DeviceAgent {
    */
   private async executeAppleScript(
     intent: Intent,
-    cap: { app?: string; bundleId?: string; script?: string },
+    cap: { app?: string; bundleId?: string; script?: string; args?: string[] },
     payload: JSONValue,
   ): Promise<JSONValue> {
     const script = cap.script ?? "";
     if (script === "") return this.scriptError(intent.intentId, "missing script");
-    // The tool refuses this too, so a refusal never reaches an approval
-    // dialog — but the device is the chokepoint, and an intent can arrive
-    // from a replayed or hand-built request that never passed through it.
-    if (SCRIPT_SHELL_ESCAPE.test(script) || SCRIPT_SHELL_ESCAPE_APPS.has(cap.bundleId ?? "")) {
-      return this.scriptError(intent.intentId, SCRIPT_SHELL_ESCAPE_REFUSAL);
-    }
     const waitMs = jv(payload).get("wait_ms").int ?? 10000;
     this.audit.record("applescript_start", {
       intentId: intent.intentId,
@@ -972,14 +935,16 @@ export class DeviceAgent {
       bundle_id: cap.bundleId ?? "",
     });
     try {
-      const result = await this.executor.runAppleScript({ script, waitMs });
+      const args = cap.args ?? [];
+      const result = await this.executor.runAppleScript({ script, args, waitMs });
       return this.finishRun(
         intent.intentId,
         result,
         {
           // The script rides as an argv word, the way `osascript -e` takes
-          // it: a path the script names is a candidate for the probes.
-          argv: ["/usr/bin/osascript", "-e", script],
+          // it, and its args after it: a path either names is a candidate
+          // for the probes.
+          argv: ["/usr/bin/osascript", "-e", script, ...args],
           cwd: undefined,
           readPaths: [],
           writePaths: [],

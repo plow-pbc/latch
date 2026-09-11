@@ -113,7 +113,8 @@ A script intent ("Script Mail (com.apple.mail): …") runs the quoted AppleScrip
 with osascript OUTSIDE the sandbox: it can do whatever the owner can do in that \
 app (read mail, send it, delete events, move files in Finder), and nothing but its \
 own text bounds it — the named app is a label, not a fence, and a script may \
-address other apps too. Read the whole script. Allow one whose every statement \
+address other apps too. An "args: [...]" part after the script lists the values \
+it receives as argv. Read the whole script. Allow one whose every statement \
 serves the errand against the named app; deny one that sends, deletes or forwards \
 without the errand calling for it, addresses apps the errand does not mention, runs \
 a shell command or evaluates text as a script however it is spelled or assembled \

@@ -32,6 +32,7 @@ export interface Capability {
   app?: string; // applescript: the app as the agent named it ("Mail")
   bundleId?: string; // applescript: that app's bundle id, resolved on this Mac
   script?: string; // applescript: the whole script, verbatim
+  args?: string[]; // applescript: values handed to its `on run argv`, not pasted into its text
   reason?: string; // display-only justification
 }
 
@@ -73,7 +74,10 @@ export function capabilityDisplay(c: Capability): string {
     case "credential":
       return `Credentials: fill ${(c.items ?? []).join(", ")} into approved sites (typed on this Mac; the agent can see the page it types into)`;
     case "applescript":
-      return `Script ${c.app ?? "?"} (${c.bundleId ?? "?"}): ${c.script ?? ""}`;
+      return (
+        `Script ${c.app ?? "?"} (${c.bundleId ?? "?"}): ${c.script ?? ""}` +
+        (c.args?.length ? `\nargs: ${JSON.stringify(c.args)}` : "")
+      );
   }
 }
 

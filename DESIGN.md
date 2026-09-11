@@ -153,8 +153,8 @@ from, the audit log stores, and the adversarial reviewer evaluates.
 - **Replay protection:** nonce (rejected if seen) + expiry + device-id check.
 - Capability `kind`s: `fs.read`, `fs.write`, `process.exec`, `network`, `tool`,
   `apple_events`, `browser`, `credential`, `applescript` (an app by name + its
-  bundle id resolved on this Mac + the whole script; runs via osascript
-  outside the sandbox — §6).
+  bundle id resolved on this Mac + the whole script + the `args` handed to
+  its `on run argv`; runs via osascript outside the sandbox — §6).
 
 ## 5. Approval model
 
@@ -221,24 +221,27 @@ set:
   the app (resolved to a bundle id on this Mac, from the application
   folders, never by asking macOS, which would put a "Where is X?" chooser on
   the screen) and the whole script, which the approval card shows verbatim
-  and the AI reviewer is told to read as the bound. Its gates are that
-  approval, TCC's Automation grant for the responsible process (the app
+  and the AI reviewer is told to read as the bound, plus any `args` —
+  values handed to the script's `on run argv`, not pasted into its text, so
+  a stranger's text cannot break or inject into its syntax; what the script
+  does with them is in the script (the approval card and the audit list
+  them beside it). Its gates are the approval
+  mode and TCC's Automation grant for the responsible process (the app
   bundle, hence the `automation.apple-events` entitlement and usage string;
-  the terminal for a from-source run), and a fixed refusal of a script's
-  roads to a shell (`do shell script`, `run script` and its kin, Terminal's
-  `do script`, scripting Terminal, iTerm, Script Editor or Automator) at the
-  tool and again at the device. That refusal is a tripwire, not the
-  boundary: AppleScript is dynamic, and a source-level check cannot be sound
-  against a string assembled at run time. The boundary is the approval —
-  the owner reads the whole script, and the AI reviewer is told to deny a
-  shell however it is spelled — which is the same boundary every other
-  unsandboxed thing on this Mac has, and why the tool was accepted with it.
-  That boundary needs a reader, so "Approve everything" mode does not cover
-  a script: it takes the ask path, dialog and reviewer hint, like any other
-  intent under ask.
+  the terminal for a from-source run). In Ask and AI Reviewer the boundary
+  is the approval — the owner reads the whole script, and the AI reviewer
+  is told to deny a shell however it is spelled — which is the same
+  boundary every other unsandboxed thing on this Mac has. No source check
+  stands in for that reader: AppleScript is dynamic, and a check against a
+  string assembled at run time cannot be sound. "Approve everything" means
+  what it says and covers a script too, unread — the owner's choice to give
+  agents full access to this Mac (the mode's hint says so). A `do shell
+  script` is therefore reachable under Approve, and `plow_run_command`
+  staying sandboxed does not change that.
   Like an `apple_events` command it is never a stored rule: the same script
   is decided fresh every time. The script is written to the run's scratch
-  dir `0600` rather than passed as an argument, so it never shows in `ps`.
+  dir `0600` rather than passed as an argument, so it never shows in `ps`;
+  its `args` follow the file on osascript's command line and do.
 
 Known caveats, accepted for v1: `sandbox-exec` is deprecated-but-load-bearing
 (Chromium, Bazel, Anthropic's sandbox-runtime all rely on it); `mach-lookup`

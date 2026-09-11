@@ -214,6 +214,11 @@ describe("decideIntent — modes that never reach the reviewer", () => {
         { kind: "apple_events", allowed: true },
       ],
     ],
+    // Approve means approve: a script runs outside the sandbox and is still allowed unread.
+    [
+      "an AppleScript (runs outside the sandbox)",
+      [{ kind: "applescript", app: "Messages", bundleId: "com.apple.MobileSMS", script: 'on run argv\n  tell application "Messages" to send (item 1 of argv) to chat id (item 2 of argv)\nend run' }],
+    ],
   ] as const)("approve auto-allows %s without reviewing or prompting", async (_label, capabilities) => {
     const send = makeIntent({
       agentId: "agent-1",
@@ -227,32 +232,6 @@ describe("decideIntent — modes that never reach the reviewer", () => {
     expect(await h.run()).toEqual({ decision: "allow_once", source: "approve" });
     expect(h.review).not.toHaveBeenCalled();
     expect(h.openApproval).not.toHaveBeenCalled();
-  });
-
-  it("approve still asks for a script: the one intent whose only bound is a reader", async () => {
-    const review = vi.fn(async () => ({ verdict: "allow" as const, reason: "fine" }));
-    const openApproval = vi.fn(async () => "allow_once" as const);
-    const script = makeIntent({
-      agentId: "agent-1",
-      agentDisplay: "Agent One",
-      deviceId: "device-1",
-      request: "applescript: Mail",
-      capabilities: [{ kind: "applescript", app: "Mail", bundleId: "com.apple.mail", script: "return 1" }],
-      sessionId: "s1",
-    });
-    const result = await decideIntent(script, {
-      settings: settings({ approvalMode: "approve", relayCredential: PLOW_CREDENTIAL }),
-      apiBaseUrl: "https://api.plow.co",
-      plowRoot: PLOW_ROOT,
-      auditEntries: () => [],
-      record: () => {},
-      review,
-      openApproval,
-    });
-    expect(result).toEqual({ decision: "allow_once", source: "ask" });
-    expect(openApproval).toHaveBeenCalledTimes(1);
-    // With a hint, as under ask.
-    expect(review).toHaveBeenCalledTimes(1);
   });
 
   it("deny auto-denies without reviewing or prompting", async () => {

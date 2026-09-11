@@ -49,9 +49,9 @@ export interface ApprovalViewModel {
    * Always Allow for them (the policy engine would refuse the rule anyway).
    * An AppleScript intent is the same mutation by another road, so it too. */
   sendsAppleEvents: boolean;
-  /** applescript capability: the app it controls and the script, verbatim —
-   * runs outside the sandbox, so the card shows the whole script. */
-  scriptsApp: { app: string; bundleId: string; script: string } | null;
+  /** applescript capability: the app it controls, the script verbatim and the
+   * args handed to it — runs outside the sandbox, so the card shows them all. */
+  scriptsApp: { app: string; bundleId: string; script: string; args: string[] } | null;
   /** browser capability origins, for the card. */
   origins: string[];
   /** credential(fill) items with titles resolved ON-DEVICE (never from the
@@ -110,7 +110,12 @@ export function approvalViewModel(
     fillsCredentials: caps.some((c) => c.kind === "credential" && c.access === "fill"),
     sendsAppleEvents: caps.some((c) => (c.kind === "apple_events" && c.allowed === true) || c.kind === "applescript"),
     scriptsApp: scriptCap
-      ? { app: scriptCap.app ?? "?", bundleId: scriptCap.bundleId ?? "?", script: scriptCap.script ?? "" }
+      ? {
+          app: scriptCap.app ?? "?",
+          bundleId: scriptCap.bundleId ?? "?",
+          script: scriptCap.script ?? "",
+          args: scriptCap.args ?? [],
+        }
       : null,
     origins: caps.find((c) => c.kind === "browser")?.origins ?? [],
     credentialItems,

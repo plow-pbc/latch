@@ -149,13 +149,15 @@ describe.skipIf(!ON_MAC)("real sandboxed execution", () => {
     expect(result.exitCode).toBe(0);
   });
 
-  it("runs an AppleScript bare, from a 0600 file in its own scratch, and keeps a handle for its output", async () => {
+  it("runs an AppleScript bare, from a 0600 file in its own scratch, hands it its args, and keeps a handle for its output", async () => {
     const executor = new Executor(tempDir());
-    const result = await executor.runAppleScript({ script: "return 20 + 22", waitMs: 10_000 });
+    const script = "on run argv\n\treturn (item 1 of argv) & (item 2 of argv)\nend run";
+    // An arg that starts with `-` is still a value: the file ended osascript's options.
+    const result = await executor.runAppleScript({ script, args: ["-e ", "42"], waitMs: 10_000 });
     expect(result.exitCode).toBe(0);
-    expect(result.output.toString().trim()).toBe("42");
+    expect(result.output.toString().trim()).toBe("-e 42");
     const file = path.join(executor.scratchRoot, result.handle, "script.applescript");
-    expect(fs.readFileSync(file, "utf8")).toBe("return 20 + 22");
+    expect(fs.readFileSync(file, "utf8")).toBe(script);
     expect(fs.statSync(file).mode & 0o777).toBe(0o600);
     expect(executor.output(result.handle, 0).exitCode).toBe(0);
     // No profile was generated for it, so it writes nowhere a hold would guard.

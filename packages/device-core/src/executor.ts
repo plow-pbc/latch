@@ -499,29 +499,32 @@ export class Executor {
    * apps refuse commands from any seatbelt-sandboxed sender whose own code
    * signature lacks an apple-events entitlement (-10004, whatever the profile
    * says — verified with `(allow default)`), and osascript is Apple's binary,
-   * so no profile can admit it. The gates are the approval this intent
-   * carried (the approver read the whole script) and TCC's Automation grant
-   * for the responsible process — the app bundle, or the terminal that ran it
+   * so no profile can admit it. The gates are the decision this intent
+   * carried (under Ask or the AI Reviewer, someone read the whole script;
+   * Approve allows it unread) and TCC's Automation grant for the responsible
+   * process — the app bundle, or the terminal that ran it
    * from source. The script is written to this run's scratch dir, 0600,
    * rather than passed as an argument, so it never shows up in `ps` output or
-   * a too-long-argv failure.
+   * a too-long-argv failure. Its `args` do: they follow the file, which ends
+   * osascript's option parsing, so each reaches `on run argv` as a value
+   * (one starting with `-` included), never pasted into the source.
    *
    * Never reapable: a script that has sent an event has changed another
    * app's state, the same reason an `apple_events` command is exempt.
    */
-  async runAppleScript(args: { script: string; waitMs: number }): Promise<ExecResult> {
+  async runAppleScript(run: { script: string; args: readonly string[]; waitMs: number }): Promise<ExecResult> {
     const handle = crypto.randomUUID().toUpperCase();
     const scratch = path.join(this.scratchRoot, handle);
     fs.mkdirSync(scratch, { recursive: true });
     const file = path.join(scratch, "script.applescript");
-    fs.writeFileSync(file, args.script, { mode: 0o600 });
+    fs.writeFileSync(file, run.script, { mode: 0o600 });
     // By its bare name, from the scratch dir: osascript prefixes every error
     // with the script's path as given, and the agent's output should read
     // `script.applescript:6:56: execution error: …`, not this Mac's
     // application-support path.
-    return this.launch(handle, scratch, "/usr/bin/osascript", [path.basename(file)], {
+    return this.launch(handle, scratch, "/usr/bin/osascript", [path.basename(file), ...run.args], {
       cwd: scratch,
-      waitMs: args.waitMs,
+      waitMs: run.waitMs,
       reapable: false,
     });
   }

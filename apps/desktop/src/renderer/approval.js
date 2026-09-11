@@ -129,6 +129,10 @@ async function render() {
       // The script is the action: the whole text, verbatim, as textContent.
       v.scriptsApp ? el("div", { class: "lbl", text: "The script, exactly as it will run" }) : null,
       v.scriptsApp ? el("pre", { class: "script", text: v.scriptsApp.script }) : null,
+      v.scriptsApp?.args.length ? el("div", { class: "lbl", text: "Values handed to the script (on run argv), not pasted into its text — what it does with them is in the script above" }) : null,
+      v.scriptsApp?.args.length
+        ? el("pre", { class: "script", text: v.scriptsApp.args.map((a, i) => `item ${i + 1} of argv: ${JSON.stringify(a)}`).join("\n") })
+        : null,
       v.planContext ? el("div", { class: "lbl", text: "Session context" }) : null,
       v.planContext ? el("div", { class: "faint", text: v.planContext }) : null,
     ]),

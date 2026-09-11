@@ -124,7 +124,7 @@
     {
       "name": "plow_run_applescript",
       "title": "Script an app on the user's Mac",
-      "description": "Run an AppleScript that controls one app on the user's own Mac through Latch — Mail, Finder, Calendar, Notes, Reminders, Messages, System Events — and return what it produces. Use this for AppleScript rather than plow_run_command with osascript: some apps refuse commands from inside the sandbox (-10004), and this tool runs outside it, so the approver reads the whole script. Name the app the script addresses in 'app', by the name it has in `tell application \"…\"`; it is resolved to an installed app on this Mac before anyone is asked, and an app the Mac does not have is an error. Keep the script to that app: shell commands and scripts-within-scripts (`do shell script`, `run script`, Terminal's `do script`, scripting Terminal or Script Editor) are refused — run commands with plow_run_command. The first time an app is scripted macOS may ask this Mac's owner to allow it. Output is the script's result plus anything it logs; a script error comes back as osascript's message with a non-zero exit_code and 'host_gate': 'none' — the script's own problem, not a permission. A long script returns a job handle for plow_get_output, and a call that outruns this Mac's budget defers to plow_get_result. A result with status 'blocked' means the user approved it and their Mac itself then refused — a macOS privacy permission the app lacks, or a permission dialog waiting on the Mac's screen; not the user saying no. Read its 'diagnosis': when 'confidence' is 'confirmed', tell the user the 'owner_action' sentence word for word and stop; otherwise share the 'evidence' and let them decide. One exception, and the diagnosis names it: when its 'retry' names a tool, that tool is the one move left, and the only one.",
+      "description": "Run an AppleScript that controls one app on the user's own Mac through Latch — Mail, Finder, Calendar, Notes, Reminders, Messages, System Events — and return what it produces. Use this for AppleScript rather than plow_run_command with osascript: some apps refuse commands from inside the sandbox (-10004), and this tool runs outside it. Name the app the script addresses in 'app', by the name it has in `tell application \"…\"`; it is resolved to an installed app on this Mac before anyone is asked, and an app the Mac does not have is an error. Pass any value the script acts on — a message's text, a recipient, a path — in 'args', read as `on run argv` / `item 1 of argv`, never pasted into the source: each one reaches the script as a value, not as part of its text. The first time an app is scripted macOS may ask this Mac's owner to allow it. Output is the script's result plus anything it logs; a script error comes back as osascript's message with a non-zero exit_code and 'host_gate': 'none' — the script's own problem, not a permission. A long script returns a job handle for plow_get_output, and a call that outruns this Mac's budget defers to plow_get_result. A result with status 'blocked' means the user approved it and their Mac itself then refused — a macOS privacy permission the app lacks, or a permission dialog waiting on the Mac's screen; not the user saying no. Read its 'diagnosis': when 'confidence' is 'confirmed', tell the user the 'owner_action' sentence word for word and stop; otherwise share the 'evidence' and let them decide. One exception, and the diagnosis names it: when its 'retry' names a tool, that tool is the one move left, and the only one.",
       "inputSchema": {
         "type": "object",
         "required": [
@@ -139,6 +139,13 @@
           "script": {
             "type": "string",
             "description": "The complete AppleScript source"
+          },
+          "args": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Values handed to the script's `on run argv`, in order; shown to the approver beside the script"
           },
           "wait_ms": {
             "type": "integer",
