@@ -276,6 +276,22 @@ describe("AuditLog", () => {
     expect(log.entries()).toHaveLength(0);
   });
 
+  it('emits "reset" when the file set changes — a rotation, a clear — and "recorded" after a rotation sees only the new line', () => {
+    const dir = tempDir();
+    const log = new AuditLog(path.join(dir, "audit.ndjson"), 40);
+    const trace: string[] = [];
+    // What a live index does on "reset": read the files again. After the
+    // rotation's reset the current generation is empty and the previous
+    // holds what was there; the line that caused it arrives as "recorded".
+    log.events.on("reset", () => trace.push(`reset:${log.entries().length}`));
+    log.events.on("recorded", (r: { event: string }) => trace.push(`recorded:${r.event}`));
+    log.record("first");
+    log.record("second"); // finds the file full: rotates, then appends
+    expect(trace).toEqual(["recorded:first", "reset:1", "recorded:second"]);
+    log.clear();
+    expect(trace.at(-1)).toBe("reset:0");
+  });
+
   it("never rotates a log that has not reached its ceiling", () => {
     const dir = tempDir();
     const log = new AuditLog(path.join(dir, "audit.ndjson"));
@@ -292,8 +308,17 @@ describe("AuditLog", () => {
       // The telemetry tap could throw too; record() must still succeed.
       throw new Error("sink offline");
     });
-    expect(() => log.record("exec_end", { intentId: "I", exit_code: 0 })).not.toThrow();
-    expect(seen).toEqual([{ event: "exec_end", fields: { intentId: "I", exit_code: 0 } }]);
+    expect(() => log.record("exec_end", { intentId: "I", exit_code: 0, skipped: undefined })).not.toThrow();
+    // `entry` is the line as a reader parses it back: the undefined field
+    // dropped, the stamp on it — what a live index folds in.
+    expect(seen).toEqual([
+      {
+        event: "exec_end",
+        fields: { intentId: "I", exit_code: 0, skipped: undefined },
+        entry: { event: "exec_end", intentId: "I", exit_code: 0, ts: expect.any(String) },
+      },
+    ]);
+    expect(log.entries()).toEqual([(seen[0] as { entry: unknown }).entry]);
     expect(log.entries()).toHaveLength(1);
   });
 });

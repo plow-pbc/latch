@@ -18,13 +18,20 @@ import { canonicalJSON, isoNow, JSONValue, parseJSON } from "@domo/protocol";
 
 /**
  * Where the current generation rolls over. Around a hundred thousand events —
- * months of ordinary use — and small enough that the desktop UI, which parses
- * the whole log on every listing, stays quick.
+ * months of ordinary use. The desktop UI parses the log once and folds each
+ * recorded event into a live index after that (apps/desktop's auditIndex.ts),
+ * so this bounds memory and a first load, not the cost of an event.
  */
 export const AUDIT_ROTATE_BYTES = 10 * 1024 * 1024;
 
 export class AuditLog {
-  /** Emits "change" whenever an event is recorded, so UIs refresh live. */
+  /**
+   * "recorded" carries each event as written — `{ event, fields, entry }`,
+   * where `entry` is the line a reader would parse back — so a live index
+   * can fold it in without re-reading the file. "reset" says the file set
+   * changed under the readers (a rotation, a clear): read `entries()` again.
+   * "change" is the plain refresh cue, after either.
+   */
   readonly events = new EventEmitter();
 
   /** The generation before the current one, or nothing. */
@@ -43,13 +50,16 @@ export class AuditLog {
     entry.event = event;
     entry.ts = isoNow();
     this.rotateIfFull();
-    fs.appendFileSync(this.file, canonicalJSON(entry as JSONValue) + "\n");
+    const line = canonicalJSON(entry as JSONValue);
+    fs.appendFileSync(this.file, line + "\n");
     // "recorded" carries the entry itself (telemetry's allowlist tap wants the
-    // fields, not just a refresh signal); "change" stays the UI's cue. Same
-    // best-effort contract as notify(): the event is already durably appended,
-    // so a throwing listener must not fail the record.
+    // fields, not just a refresh signal, and the live index wants the line as
+    // a reader would parse it — undefined fields dropped, keys canonical);
+    // "change" stays the UI's cue. Same best-effort contract as notify(): the
+    // event is already durably appended, so a throwing listener must not fail
+    // the record.
     try {
-      this.events.emit("recorded", { event, fields: { ...fields } });
+      this.events.emit("recorded", { event, fields: { ...fields }, entry: parseJSON(line) });
     } catch (error: unknown) {
       console.error("[audit] recorded listener failed after a recorded event:", error);
     }
@@ -62,6 +72,17 @@ export class AuditLog {
     const size = fs.statSync(this.file, { throwIfNoEntry: false })?.size ?? 0;
     if (size < this.rotateBytes) return;
     fs.renameSync(this.file, this.previous);
+    this.reset();
+  }
+
+  /** The file set changed under the readers: a live index must reload.
+   *  Best-effort, like notify() — the rotation or clear has already happened. */
+  private reset(): void {
+    try {
+      this.events.emit("reset");
+    } catch (error: unknown) {
+      console.error("[audit] reset listener failed:", error);
+    }
   }
 
   /**
@@ -80,10 +101,12 @@ export class AuditLog {
     }
   }
 
-  /** Erase the log, both generations. Emits "change" so UIs refresh. */
+  /** Erase the log, both generations. Emits "reset" then "change" so a live
+   *  index reloads and UIs refresh. */
   clear(): void {
     fs.rmSync(this.previous, { force: true });
     fs.writeFileSync(this.file, "");
+    this.reset();
     this.notify();
   }
 

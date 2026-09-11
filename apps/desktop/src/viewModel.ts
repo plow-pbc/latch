@@ -9,13 +9,20 @@
  */
 import { Capability, capabilityDisplay, Intent, JSONValue, jv } from "@domo/protocol";
 // The audit view lives in device-core so the MCP server's `plow_history`
-// shows an agent the same rows this window shows the owner.
+// shows an agent the same rows this window shows the owner. Everything the
+// desktop reads of it comes back through here.
 export {
+  ActivityGrouper,
+  activityHaystack,
+  activityMatches,
+  activityRow,
   auditActivities,
+  buildActivity,
   decidedByLabel,
 } from "@domo/device-core";
 export type {
   AuditActivity,
+  AuditActivityRow,
   AuditStep,
   BadgeTone,
   DecisionKind,
