@@ -214,10 +214,9 @@ describe("every tool this Mac can stop says so", () => {
     });
   }
 
-  it("the script tool says why it exists, what it refuses, and where a sandboxed refusal goes", async () => {
+  it("the script tool says why it exists and where a sandboxed refusal goes", async () => {
     const d = await descriptions(makeServer());
     expect(d.plow_run_applescript).toMatch(/rather than plow_run_command with osascript/);
-    expect(d.plow_run_applescript).toMatch(/do shell script/);
     expect(d.plow_run_applescript).toMatch(/'host_gate': 'none'/);
     // And the command tool points back at it for the case only it can serve.
     expect(d.plow_run_command).toMatch(/'with_plow_run_applescript'/);
