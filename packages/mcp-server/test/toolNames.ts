@@ -18,12 +18,12 @@ import { TOOLS } from "@domo/mcp-server";
  * first-match-only test stayed green. So the rule lives here once, and every
  * agent-facing string is swept through it.
  *
- * Underscored names are unambiguous: `get_result` is never English. `browser`
- * and `vault` are ordinary words that belong in prose ("open a browser on the
- * user's own Mac"), so only call-shaped or quoted uses count as a tool
- * reference.
+ * Underscored names are unambiguous: `get_result` is never English. `browser`,
+ * `vault` and `history` are ordinary words that belong in prose ("open a
+ * browser on the user's own Mac"; "zsh history expansion ate it"), so only
+ * call-shaped or quoted uses count as a tool reference.
  */
-const AMBIGUOUS = new Set(["browser", "vault"]);
+const AMBIGUOUS = new Set(["browser", "vault", "history"]);
 
 export function bareToolNames(text: string): string[] {
   const hits = new Set<string>();
