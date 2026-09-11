@@ -26,6 +26,7 @@ export * from "./browser/browsingSkill.js";
 export * from "./skills.js";
 export * from "./whatsappSkill.js";
 export * from "./imessageSkill.js";
+export * from "./historySkill.js";
 export * from "./plowFolder.js";
 export * from "./contactsSkill.js";
 export * from "./deviceAgent.js";

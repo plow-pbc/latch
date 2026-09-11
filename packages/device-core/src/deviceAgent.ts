@@ -55,6 +55,7 @@ import { PolicyDelegate, PolicyEngine } from "./policyEngine.js";
 import { SkillRegistry } from "./skills.js";
 import { registerContactsSkill } from "./contactsSkill.js";
 import { registerImessageSkill } from "./imessageSkill.js";
+import { registerHistorySkill } from "./historySkill.js";
 import { ensurePlowFolder, registerPlowFolderSkill } from "./plowFolder.js";
 import { registerWhatsappSkill } from "./whatsappSkill.js";
 
@@ -380,6 +381,7 @@ export class DeviceAgent {
     // while the app is running needs a restart to publish the skill.
     registerWhatsappSkill(this.skills, ownerHome);
     registerImessageSkill(this.skills, ownerHome);
+    registerHistorySkill(this.skills, home, ownerHome);
     // The playground exists before any agent asks about it, and the skill can
     // therefore name a folder that is really there. `ownerHome` for the same
     // reason as WhatsApp above: the folder belongs to the owner's real home,
