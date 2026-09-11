@@ -960,7 +960,6 @@ pre.script {
   cursor: zoom-in;
 }
 .live-corner.expanded .live-shot { cursor: zoom-out; width: 100%; }
-.live-shot:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 .live-hint {
   position: absolute; left: 50%; top: 50%;
   transform: translate(-50%, -50%) scale(0.98);
@@ -983,7 +982,6 @@ pre.script {
    `inset: 0` behind a scrim, which took the whole screen and left the window's
    own traffic lights stranded on black; the audit list, the tabs and the
    titlebar now stay visible and clickable around it. */
-.live-corner img { cursor: zoom-in; }
 .live-corner.expanded {
   /* The titlebar is --titlebar-h tall, so the middle of what is actually
      visible sits half of it below the window's centre. */
@@ -1005,7 +1003,7 @@ pre.script {
 .live-corner.expanded img {
   width: 100%; height: auto;
   max-height: calc((100vh - var(--titlebar-h)) * 0.6);
-  object-fit: contain; cursor: zoom-out;
+  object-fit: contain;
 }
 .live-corner.expanded .live-cap { max-width: 100%; }
 
