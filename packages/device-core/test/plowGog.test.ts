@@ -107,11 +107,23 @@ describe("planPlowGog", () => {
       },
     },
     {
-      why: "fans calendar events out, sorted by start",
+      // gog's own default is 10 per account, which cut an owner's calendar
+      // off mid-week and read the rest as free.
+      why: "fans calendar events out, sorted by start, 100 deep by default",
       argv: ["plow-gog", "calendar", "events", "primary"],
       expected: {
         kind: "fanout",
-        gogArgv: ["plow-gog", "calendar", "events", "primary", "--json", "--results-only"],
+        gogArgv: ["plow-gog", "calendar", "events", "primary", "--max", "100", "--json", "--results-only"],
+        sort: "cal-start",
+        accounts: null,
+      },
+    },
+    {
+      why: "keeps the agent's own --max on a calendar list",
+      argv: ["plow-gog", "cal", "ls", "--max=5"],
+      expected: {
+        kind: "fanout",
+        gogArgv: ["plow-gog", "cal", "ls", "--max=5", "--json", "--results-only"],
         sort: "cal-start",
         accounts: null,
       },
@@ -175,7 +187,7 @@ describe("planPlowGog", () => {
       argv: ["plow-gog", "calendar", "events", "list", "--calendars=a,b", "--account", "a@example.com"],
       expected: {
         kind: "single",
-        gogArgv: ["plow-gog", "calendar", "events", "list", "--calendars=a,b"],
+        gogArgv: ["plow-gog", "calendar", "events", "list", "--calendars=a,b", "--max", "100"],
         account: "a@example.com",
         confirmConflict: false,
         conflictCheck: null,

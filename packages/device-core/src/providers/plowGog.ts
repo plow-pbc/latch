@@ -78,6 +78,9 @@ const FANOUT: Readonly<Record<string, Readonly<Record<string, PlowGogSort>>>> = 
  */
 const CONFLICT_GATED: ReadonlySet<string> = new Set(["create", "add", "new"]);
 
+/** The `--max` a calendar event list gets when the agent names none — per account. */
+export const CALENDAR_EVENTS_MAX = "100";
+
 /** The value of `--<name> v` / `--<name>=v` in an argv, or null. Last wins,
  * matching gog's own flag resolution. */
 function flagValue(args: readonly string[], name: string): string | null {
@@ -204,6 +207,10 @@ export function planPlowGog(argv: readonly string[]): PlowGogPlan {
   const verb = stripped[1];
 
   const sort = verb !== undefined ? FANOUT[group]?.[verb] : undefined;
+  // gog lists 10 events unless told otherwise — fewer than a busy week holds —
+  // and a fan-out's --results-only drops the page token that would say so, so
+  // a cut-off calendar read as free time.
+  if (sort === "cal-start" && flagValue(stripped, "max") === null) gogArgv.push("--max", CALENDAR_EVENTS_MAX);
   if (sort !== undefined && account === null) {
     // Every account asked, or the several named. A calendar id under that
     // has no owner to send it to — forwarded, it reached every account, the

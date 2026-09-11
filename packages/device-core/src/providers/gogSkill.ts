@@ -12,6 +12,7 @@
  */
 import type { Skill } from "../skills.js";
 import { GOG_CANONICAL } from "./gogGroups.js";
+import { CALENDAR_EVENTS_MAX } from "./plowGog.js";
 
 export const GOG_SKILL: Skill = {
   name: "google-workspace",
@@ -126,13 +127,14 @@ not as a bug to work around.
 Every byte you fetch lands in your own context and stays there, so ask for
 exactly what you need — the flags exist:
 
-- **Always cap lists.** \`--max <n>\` (default 10) and continue with
-  \`--page <cursor>\` when you truly need more. Never \`--all-pages\` on an
-  open-ended query. On a fan-out read the cap applies PER ACCOUNT before the
-  merge — a \`--max 10\` across 4 accounts can return up to 40 items, so size
-  it for the merged total you actually want. A fan-out result carries NO page
-  cursor (items and degraded accounts only); to paginate, narrow to one
-  \`--account\` and request JSON.
+- **Always cap lists.** \`--max <n>\` (default 10; ${CALENDAR_EVENTS_MAX} for calendar
+  events) and continue with \`--page <cursor>\` when you truly need more. Never
+  \`--all-pages\` on an open-ended query. On a fan-out read the cap applies PER
+  ACCOUNT before the merge — a \`--max 10\` across 4 accounts can return up to 40
+  items, so size it for the merged total you actually want. A fan-out result
+  carries NO page cursor (items and degraded accounts only), so an account that
+  returned exactly \`--max\` events was cut off: never read the time after its
+  last event as free. To paginate, narrow to one \`--account\` and request JSON.
 - **Select fields on lists**: \`--fields\` (or \`--select\` with dot paths in
   JSON mode) instead of taking every property of every row. On a fan-out,
   keep the merge's sort key in the selection — \`date\` for gmail, \`start\`
