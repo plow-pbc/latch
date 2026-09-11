@@ -1631,7 +1631,7 @@ function syncCloudModal(state, redraw) {
       el("div", { class: "group-title", text: `Delete ${name}?` }),
       el("p", {
         class: "conn-note",
-        text: "The agent will stop reading and replying. Your conversations on this line are kept, so a new agent on this line continues them.",
+        text: "The agent will stop reading and replying. Deleting this agent does not remove your conversations. The next agent assigned to a line continues that line’s conversations.",
       }),
       note,
       el("div", { class: "row cloud-modal-actions" }, [

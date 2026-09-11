@@ -1002,7 +1002,7 @@ const SCREENS = [
     },
     expect: [
       "Delete Household helper?",
-      "The agent will stop reading and replying. Your conversations on this line are kept, so a new agent on this line continues them.",
+      "The agent will stop reading and replying. Deleting this agent does not remove your conversations. The next agent assigned to a line continues that line’s conversations.",
       "Cancel", "Delete agent",
     ],
     after: async (win) => {
