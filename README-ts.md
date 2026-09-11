@@ -114,7 +114,7 @@ the four browser tools (`plow_browser_open`, `plow_browser_request`,
 every name is prefixed so it cannot be confused with an agent's own built-ins.
 
 **A refusal by the Mac itself is a third answer, `blocked`** — beside `denied`
-(the owner or policy said no) and `failed` (it broke). It is for an operation
+(the decider said no — see DESIGN.md §5) and `failed` (it broke). It is for an operation
 this Mac approved — by whichever decider its mode uses — and macOS, our own
 seatbelt, SIP or a locked file then refused, and it carries the device's diagnosis: a cause, a confidence, the
 evidence, what was ruled out, the fixed sentence the owner needs, and every
@@ -165,17 +165,19 @@ goal, which the reviewer's prompt leaves out.)
 
 **Two kinds of handle, and they are not interchangeable.** `plow_run_command` returns
 a *job* handle for `plow_get_output` when a command outlives its wait. Any tool that
-outlives the **call budget** — a human who has not answered yet, or slow work —
+outlives the **call budget** — a decision that has not landed yet, or slow work —
 returns a *deferred* handle for `plow_get_result`, which answers `pending` / `ready` /
 `denied` / `blocked` / `failed` / `expired` / `unknown`. A deferred handle belongs to the
 agent that created it; another agent presenting it gets `unknown`, which is
 indistinguishable from a handle that never existed.
 
 **An approval outlives the call that needed it.** A tunnelled call cannot wait
-for a human, so the call returns a handle and the human answers whenever they
-get back. In between, the only thing that says an agent asked to read your SSH
-key would be a promise in memory — so `ApprovalStore` writes the pending
-approval to disk (owner-only) *before* the human is asked, and writes the
+for a decision, so the call returns a handle and the answer lands whenever it
+lands — immediately for a policy, seconds for the reviewer, whenever they get
+back for an owner at a dialog. In between, the only thing that says an agent
+asked to read your SSH key would be a promise in memory — so `ApprovalStore`
+writes the pending approval to disk (owner-only) *before* the decision, and
+writes the
 outcome next to it. It also bounds the wait: an approval nobody answers expires
 after the same fifteen minutes and **fails closed**. A record still marked
 pending when the app next starts is marked `abandoned` — the call it belonged to

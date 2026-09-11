@@ -161,6 +161,28 @@ from, the audit log stores, and the adversarial reviewer evaluates.
 
 ## 5. Approval model
 
+### The decider, and the words for it
+
+One vocabulary, because this class of drift has been found and fixed six times
+in review: prose that named the owner as the one who sees, reads, approves or
+refuses, on a Mac whose default mode shows them nothing.
+
+- **The decider** is whatever this Mac's mode puts the decision to: the owner at
+  a dialog (`ask`, and a script under `approve`), the AI reviewer
+  (`adversarial`, the default), or a standing policy or stored rule.
+  `opensApprovalWindow` in `reviewPolicy.ts` is the one answer to "will a person
+  see this", and `decideIntent` branches on it rather than re-deriving it.
+- **Static prose says "this Mac" or "the decider"**, never a person. A sentence
+  that names an actor is wrong wherever the reader's mode does not match the
+  writer's assumption, and a reader cannot see their mode from the page.
+- **Only a runtime path that holds `intent_decision.source` names an actor** —
+  `latch-smoke` does, and says which; the `denied` envelope does not, and so
+  says "this Mac".
+- **"The owner" is reserved for what only they can do**: the 👍 on a bank
+  payment in their Plow thread, a calendar override from their own chat, macOS's
+  own consent dialogs, `headed: true` because they asked to watch, and the
+  `owner_action` sentence a blocked result tells them.
+
 Two levels on every approval card:
 
 1. **High level** — the agent's `goal` / `request` / `plan_context`. Context
@@ -211,7 +233,7 @@ set:
   writes don't break tools — except a run that may be reaped for going silent,
   which gets none of them (`SANDBOX-BOUNDARY.md` §1). Writes to arbitrary or
   system locations are denied — write confinement (plus network gating and
-  per-command human approval) is the enforced protection.
+  per-command approval) is the enforced protection.
 - `network*` allowed only if declared and approved
 - children inherit the profile (`process-exec` allowed)
 - `lsopen` allowed: a command may ask LaunchServices to open an app or a
@@ -233,8 +255,9 @@ set:
   tool and again at the device. That refusal is a tripwire, not the
   boundary: AppleScript is dynamic, and a source-level check cannot be sound
   against a string assembled at run time. The boundary is the approval —
-  the owner reads the whole script, and the AI reviewer is told to deny a
-  shell however it is spelled — which is the same boundary every other
+  the decider reads the whole script — the owner where a dialog opens, the
+  AI reviewer otherwise, and the reviewer is told to deny a shell however it is
+  spelled — which is the same boundary every other
   unsandboxed thing on this Mac has, and why the tool was accepted with it.
   That boundary needs a reader, so "Approve everything" mode does not cover
   a script: it takes the ask path, dialog and reviewer hint, like any other
@@ -256,7 +279,7 @@ a v2 item.
 An approval is not the last gate. macOS has its own — the TCC privacy switches
 (Full Disk Access, the Desktop/Documents/Downloads folders, Automation per
 target app, and the rest), System Integrity Protection, a locked file — and
-they refuse *after* the owner has said yes. Every one of them answers `EPERM`,
+they refuse *after* the operation was allowed. Every one of them answers `EPERM`,
 which is also what our own seatbelt profile answers, and one of TCC's failure
 modes is not an error at all: an unconsented open of a guarded folder is
 **parked** until someone at the Mac clicks a dialog. An agent handed the bare
