@@ -507,7 +507,7 @@ export class Executor {
    * rather than passed as an argument, so it never shows up in `ps` output or
    * a too-long-argv failure. Its `args` do: they follow the file, which ends
    * osascript's option parsing, so each reaches `on run argv` as a value
-   * (one starting with `-` included) and is never parsed as source.
+   * (one starting with `-` included), never pasted into the source.
    *
    * Never reapable: a script that has sent an event has changed another
    * app's state, the same reason an `apple_events` command is exempt.
