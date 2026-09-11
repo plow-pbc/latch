@@ -32,7 +32,7 @@ export interface Capability {
   app?: string; // applescript: the app as the agent named it ("Mail")
   bundleId?: string; // applescript: that app's bundle id, resolved on this Mac
   script?: string; // applescript: the whole script, verbatim
-  args?: string[]; // applescript: values handed to its `on run argv`, never parsed as source
+  args?: string[]; // applescript: values handed to its `on run argv`, not pasted into its text
   reason?: string; // display-only justification
 }
 
