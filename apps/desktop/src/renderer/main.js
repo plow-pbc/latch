@@ -185,22 +185,19 @@ async function renderAudit() {
   const liveImg = el("img", { attrs: { alt: "Live browser view" } });
   const liveDot = el("span", { class: "dot" });
   const liveCapText = el("span", { class: "live-cap-text" });
-  // What tells the owner the picture is a control.
-  //
-  // A button that named the next state was the first answer and it was wrong in
-  // the small view: a word sitting permanently under a 200px thumbnail is chrome
-  // on something that is mostly not being looked at. A hint the pointer summons
-  // costs nothing when ignored.
-  //
-  // The two states get different rules, because the question differs. Small, it
-  // is "is this a control at all?" — so the hint holds for as long as the
-  // pointer is on it and never fades. Enlarged, it is "how do I get out?" —
-  // asked once, on arrival, then answered and gone: the clock starts when the
-  // panel opens and runs whether or not the pointer stays. Hiding on mouse-out
-  // instead would mean the exit almost always beat the timer, and the hint
-  // would look like it never left on its own.
+  // Small: the hint follows hover. Expanded: it fades after HINT_MS even if
+  // still hovered — the clock starts when the panel opens or the pointer
+  // arrives, and mouse-out does not dismiss it.
   const liveHint = el("span", { class: "live-hint" });
-  const liveShot = el("div", { class: "live-shot" }, [liveImg, liveHint]);
+  // A REAL BUTTON, because it is the control. The first version of this was the
+  // picture in a div with a click handler, which works for a pointer and leaves
+  // a keyboard with nothing to reach — the hint it replaced was at least a
+  // <button>. Its label carries the state, since the visual hint is not on
+  // screen most of the time and is decorative when it is.
+  const liveShot = el("button", {
+    class: "live-shot",
+    attrs: { type: "button" },
+  }, [liveImg, liveHint]);
   const liveBox = el("div", { class: "live-corner hidden" }, [
     liveShot,
     el("div", { class: "live-cap" }, [liveDot, liveCapText]),
@@ -210,6 +207,14 @@ async function renderAudit() {
   const HINT_MS = 1000;
   let hintTimer = null;
 
+  /** The button's own name for what it does next — what a screen reader reads. */
+  const syncLabel = () => {
+    const big = liveBox.classList.contains("expanded");
+    liveShot.setAttribute(
+      "aria-label",
+      (big ? "Minimize" : "Enlarge") + " live browser view",
+    );
+  };
   const hideHint = () => {
     clearTimeout(hintTimer);
     liveHint.classList.remove("on");
@@ -220,6 +225,8 @@ async function renderAudit() {
     liveHint.classList.add("on");
     if (timed) hintTimer = setTimeout(() => liveHint.classList.remove("on"), HINT_MS);
   };
+
+  syncLabel();
 
   liveShot.addEventListener("mouseenter", () => {
     if (liveBox.classList.contains("expanded")) showHint("Click to minimize", true);
@@ -235,6 +242,7 @@ async function renderAudit() {
   // the blown-up view) to shrink it back to the corner.
   liveBox.addEventListener("click", () => {
     const big = liveBox.classList.toggle("expanded");
+    syncLabel();
     // The pointer is already inside after the click, so no mouseenter follows:
     // opening the panel IS the arrival its hint answers to.
     if (big) showHint("Click to minimize", true);
@@ -260,7 +268,7 @@ async function renderAudit() {
   auditMounted = {
     listBox, detailScroll, count, chipsBox, clearBtn, searchInput, table, tbody, rows: new Map(),
     moreBox, total: 0,
-    liveBox, liveImg, liveDot, liveCapText, hideHint, liveHasFrame: false,
+    liveBox, liveImg, liveDot, liveCapText, hideHint, syncLabel, liveHasFrame: false,
   };
   await refreshAudit();
   refreshLiveThumb();
@@ -503,6 +511,7 @@ async function refreshLiveThumb() {
       m.liveHasFrame = false; // next session starts with a fresh frame
       m.liveBox.classList.remove("expanded"); // never leave the overlay up with no session
       m.hideHint(); // …and no hint left over for a view that is gone
+      m.syncLabel();
     }
     if (s.active && s.frame && /^image\/(jpeg|png|webp)$/.test(s.frame.mime)) {
       m.liveImg.src = `data:${s.frame.mime};base64,${s.frame.dataB64}`;

@@ -124,8 +124,13 @@ evaluates.
 
 Two paths deliberately mint none. `plow_vault`'s list and describe report what
 the vault holds, never a value, and are decided by nobody. Actions inside an
-already-granted browsing session ride that grant rather than minting one each —
-widening the session, or releasing a credential into a page, is its own intent.
+already-granted browsing session ride that grant rather than minting one each,
+and `fill_secret` is one of them: the credential capability on the
+`plow_browser_request` intent grants fill rights for the named items, and each
+fill rides that grant rather than being decided again. Widening a session is
+its own intent. The exception is money — a destination in the bundled bank
+registry (§11a) requires the owner's own single-use approval in addition to the
+item rights, and the fill fails closed without it.
 
 ```json
 {

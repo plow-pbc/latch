@@ -957,7 +957,16 @@ pre.script {
    leaving are different events: a hint that vanishes as fast as it appeared
    reads as a glitch, one that drifts out reads as finished. The owner picked
    the soft leave (600ms) over quick and slow. */
-.live-shot { position: relative; }
+/* The control is a <button>, so its chrome has to go: the picture is the
+   affordance, not a UA-styled box around it. Focus is the exception — it gets
+   a visible ring, because a keyboard user cannot see a cursor change. */
+.live-shot {
+  position: relative; display: block;
+  padding: 0; border: 0; background: none; font: inherit; color: inherit;
+  cursor: zoom-in;
+}
+.live-corner.expanded .live-shot { cursor: zoom-out; }
+.live-shot:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 .live-hint {
   position: absolute; left: 50%; top: 50%;
   transform: translate(-50%, -50%) scale(0.98);
@@ -976,14 +985,9 @@ pre.script {
   .live-hint.on { transform: translate(-50%, -50%); }
 }
 
-/* Expanded: the same box grows to about 60% of the window so the owner can
-   actually read the page the agent is on. Toggled by a click on it, either way.
-
-   NOT A MODAL. It sits centred with a shadow, and the audit list, the tabs and
-   the titlebar stay visible and clickable around it; clicking anywhere outside
-   it does nothing. A full-bleed scrim below the titlebar was a dialog in all
-   but name, and left the window's own traffic lights stranded on black with
-   nothing around them to say whose they were. */
+/* Expanded: ~60% of the window, centred under the titlebar — a panel, not a
+   modal. The audit list, the tabs and the window's own controls stay visible
+   and clickable around it, and a click outside does nothing. */
 .live-corner img { cursor: zoom-in; }
 .live-corner.expanded {
   /* Centred in the window, under the titlebar rather than over it: that strip

@@ -15,8 +15,11 @@ approved" sounds:
 - **Not every call mints an intent.** `plow_vault`'s list and describe build
   none and ask nobody — they report what the vault holds, never a value. And
   inside an approved browsing session, `plow_browser`'s actions ride the grant
-  that opened it rather than minting one each; widening that session
-  (`plow_browser_request`) is its own intent, and so is releasing a credential.
+  that opened it rather than minting one each — **filling a credential
+  included**: the right to fill a particular item is granted by the
+  `plow_browser_request` intent that asked for it, not re-decided per fill.
+  Widening a session is its own intent; so is a payment, which needs the
+  owner's separate approval on top of the item rights.
 - **The sandbox profile is *built from* the approved capabilities, not fitted
   tightly to them** — reads in particular are permitted more broadly. See
   [docs/SANDBOX-BOUNDARY.md](docs/SANDBOX-BOUNDARY.md).
