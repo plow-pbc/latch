@@ -76,7 +76,13 @@ describe("history recipe", () => {
       { event: "exec_end", ts: "2026-09-10T15:00:05Z", intentId: "g", exit_code: 1 },
       received("h", "Willow", "Write outside the grant", "cp a b", "2026-09-10T16:00:00Z"),
       { event: "intent_decision", ts: "2026-09-10T16:00:01Z", intentId: "h", decision: "allow_once", source: "owner" },
-      { event: "denied_operation", ts: "2026-09-10T16:00:02Z", intentId: "h", path: "/etc", error: "outside" },
+      { event: "denied_operation", ts: "2026-09-10T16:00:02Z", intentId: "h", path: "/etc", error: "outside", cause: "outside_approved_bound" },
+      received("h2", "Willow", "Read a missing file", "cat gone", "2026-09-10T16:30:00Z"),
+      { event: "intent_decision", ts: "2026-09-10T16:30:01Z", intentId: "h2", decision: "allow_once", source: "owner" },
+      { event: "denied_operation", ts: "2026-09-10T16:30:02Z", intentId: "h2", path: "gone", error: "ENOENT", cause: "not_found" },
+      received("h3", "Willow", "Open the bank", "https://bank", "2026-09-10T16:45:00Z"),
+      { event: "intent_decision", ts: "2026-09-10T16:45:01Z", intentId: "h3", decision: "allow_once", source: "owner" },
+      { event: "tool_error", ts: "2026-09-10T16:45:02Z", intentId: "h3", error: "browser failed to start: crash" },
       received("i", "Willow", "Ask the owner", "open x", "2026-09-10T17:00:00Z"),
       { event: "intent_decision", ts: "2026-09-10T17:00:01Z", intentId: "i", decision: "deny", source: "error" },
     ]
@@ -96,19 +102,26 @@ describe("history recipe", () => {
       ["2026-09-10T14:00:00Z", "Willow", "allowed", "", "Still running", "sleep 999"],
       ["2026-09-10T15:00:00Z", "Willow", "allowed", "blocked by this Mac", "Read Messages", "sqlite3 chat.db"],
       ["2026-09-10T16:00:00Z", "Willow", "allowed", "blocked by sandbox", "Write outside the grant", "cp a b"],
+      ["2026-09-10T16:30:00Z", "Willow", "allowed", "error", "Read a missing file", "cat gone"],
+      ["2026-09-10T16:45:00Z", "Willow", "allowed", "error", "Open the bank", "https://bank"],
       ["2026-09-10T17:00:00Z", "Willow", "approval failed", "", "Ask the owner", "open x"],
     ]);
   });
 
   it("keeps only the newest N rows when a limit is given", () => {
     const rows = read(dir, "2");
-    expect(rows.slice(1).map((r) => r[4])).toEqual(["Write outside the grant", "Ask the owner"]);
+    expect(rows.slice(1).map((r) => r[4])).toEqual(["Open the bank", "Ask the owner"]);
+  });
+
+  it("refuses to print an empty history from the wrong directory", () => {
+    const empty = fs.mkdtempSync(path.join(os.tmpdir(), "history-empty-"));
+    expect(() => read(empty)).toThrow(/no audit log opened \(audit\.ndjson: No such file or directory\)/);
   });
 
   it("reads a log that has never rotated", () => {
     const fresh = fs.mkdtempSync(path.join(os.tmpdir(), "history-fresh-"));
     fs.copyFileSync(path.join(dir, "audit.ndjson"), path.join(fresh, "audit.ndjson"));
-    expect(read(fresh).length).toBe(9);
+    expect(read(fresh).length).toBe(11);
   });
 });
 

@@ -31,14 +31,16 @@ import { Skill, SkillRegistry } from "./skills.js";
  *
  * Arguments: a row limit, then the log generations oldest first. A generation
  * that does not exist yet (`audit.1.ndjson` before the first rotation) is
- * skipped. Output is tab-separated, one request per line, oldest first:
+ * skipped; none opening at all is a wrong `cwd`, and the reader says so rather
+ * than printing an empty history. Output is tab-separated, one request per line, oldest first:
  * `ts  agent  decision  outcome  goal  request`.
  */
 export const HISTORY_SCRIPT = `use strict; use JSON::PP;
 my $limit = shift @ARGV;
-my (%i, @order);
+my (%i, @order, $opened, $why);
 for my $file (@ARGV) {
-  open(my $fh, "<", $file) or next;
+  open(my $fh, "<", $file) or do { $why = "$file: $!"; next };
+  $opened = 1;
   while (my $line = <$fh>) {
     my $e = eval { decode_json($line) };
     next unless ref($e) eq "HASH";
@@ -48,6 +50,7 @@ for my $file (@ARGV) {
   }
   close $fh;
 }
+die "no audit log opened ($why): run this from Latch's device directory\n" unless $opened;
 sub outcome {
   my ($ev) = @_;
   my %has = map { $_->{event} => $_ } @$ev;
@@ -62,7 +65,7 @@ sub outcome {
     my ($gate) = grep { $_->{event} =~ /^host_permission_(blocked|cleared)$/ } reverse @$ev;
     my $blocked = $gate && $gate->{event} eq "host_permission_blocked";
     $outcome = $blocked ? "blocked by this Mac"
-      : $has{denied_operation} ? "blocked by sandbox"
+      : $has{denied_operation} ? (($has{denied_operation}{cause} // "outside_approved_bound") eq "outside_approved_bound" ? "blocked by sandbox" : "error")
       : ($has{exec_error} || $has{applescript_error} || $has{tool_error}) ? "error"
       : $end ? ($end->{reaped} ? "killed (silent run)" : ($end->{exit_code} // 0) == 0 ? "completed" : "exit $end->{exit_code}")
       : ($has{file_read} || $has{file_write}) ? "completed"

@@ -319,6 +319,9 @@ export class BrowserSessions {
     } catch (error: unknown) {
       await rollBack();
       const message = error instanceof Error ? error.message : String(error);
+      // The owner's log must end this request somewhere: without a line here
+      // an allowed browser open that never started reads as still running.
+      this.audit("tool_error", { intentId, tool: "plow_browser_open", error: `browser failed to start: ${message}` });
       return { status: "error", error: `browser failed to start: ${message}` };
     }
 
