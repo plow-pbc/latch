@@ -185,13 +185,61 @@ async function renderAudit() {
   const liveImg = el("img", { attrs: { alt: "Live browser view" } });
   const liveDot = el("span", { class: "dot" });
   const liveCapText = el("span");
-  const liveBox = el("div", { class: "live-corner hidden" }, [
+  const liveHint = el("span", { class: "live-hint" });
+  // A REAL BUTTON, because the picture IS the control: a div with a click
+  // handler works for a pointer and leaves a keyboard with nothing to reach.
+  // Its label carries the state, since the visual hint is off screen most of
+  // the time and decorative when it is not.
+  const liveShot = el("button", { class: "live-shot", attrs: { type: "button" } }, [
     liveImg,
+    liveHint,
+  ]);
+  const liveBox = el("div", { class: "live-corner hidden" }, [
+    liveShot,
     el("div", { class: "live-cap" }, [liveDot, liveCapText]),
   ]);
+
+  /** How long the enlarged hint stays before it fades. */
+  const HINT_MS = 1000;
+  let hintTimer = null;
+
+  const syncLabel = () => {
+    const big = liveBox.classList.contains("expanded");
+    liveShot.setAttribute("aria-label", (big ? "Minimize" : "Enlarge") + " live browser view");
+  };
+  const hideHint = () => {
+    clearTimeout(hintTimer);
+    liveHint.classList.remove("on");
+  };
+  const showHint = (text, timed) => {
+    clearTimeout(hintTimer);
+    liveHint.textContent = text;
+    liveHint.classList.add("on");
+    if (timed) hintTimer = setTimeout(() => liveHint.classList.remove("on"), HINT_MS);
+  };
+  syncLabel();
+
+  // Small: the hint follows hover. Expanded: it fades after HINT_MS even if
+  // still hovered — the clock starts on arrival, and mouse-out does not dismiss
+  // it, or leaving would almost always beat the timer.
+  liveShot.addEventListener("mouseenter", () => {
+    if (liveBox.classList.contains("expanded")) showHint("Click to minimize", true);
+    else showHint("Click to enlarge", false);
+  });
+  liveShot.addEventListener("mouseleave", () => {
+    if (!liveBox.classList.contains("expanded")) hideHint();
+  });
+
   // Click the thumbnail to blow it up over the window; click again (anywhere on
   // the blown-up view) to shrink it back to the corner.
-  liveBox.addEventListener("click", () => liveBox.classList.toggle("expanded"));
+  liveBox.addEventListener("click", () => {
+    const big = liveBox.classList.toggle("expanded");
+    syncLabel();
+    // Opening the panel IS the arrival its hint answers to: the pointer is
+    // already inside after the click, so no mouseenter follows.
+    if (big) showHint("Click to minimize", true);
+    else hideHint();
+  });
   const detailBox = el("aside", { class: "detail" }, [detailScroll, liveBox]);
   detailBox.style.width = detailWidth + "px";
   const splitter = el("div", { class: "splitter", attrs: { title: "Drag to resize" } });
@@ -212,7 +260,7 @@ async function renderAudit() {
   auditMounted = {
     listBox, detailScroll, count, chipsBox, clearBtn, searchInput, table, tbody, rows: new Map(),
     moreBox, total: 0,
-    liveBox, liveImg, liveDot, liveCapText, liveHasFrame: false,
+    liveBox, liveImg, liveDot, liveCapText, hideHint, syncLabel, liveHasFrame: false,
   };
   await refreshAudit();
   refreshLiveThumb();
@@ -454,6 +502,8 @@ async function refreshLiveThumb() {
     if (!s.active) {
       m.liveHasFrame = false; // next session starts with a fresh frame
       m.liveBox.classList.remove("expanded"); // never leave the overlay up with no session
+      m.hideHint();
+      m.syncLabel();
     }
     if (s.active && s.frame && /^image\/(jpeg|png|webp)$/.test(s.frame.mime)) {
       m.liveImg.src = `data:${s.frame.mime};base64,${s.frame.dataB64}`;

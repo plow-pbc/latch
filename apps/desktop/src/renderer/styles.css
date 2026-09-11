@@ -13,6 +13,8 @@
   --sel: #eef2ff;
   --radius: 10px;
   --radius-sm: 7px;
+  /* Named because the enlarged live view centres itself below this strip. */
+  --titlebar-h: 44px;
   --shadow: 0 1px 2px rgba(0, 0, 0, 0.06), 0 8px 24px rgba(0, 0, 0, 0.06);
   --green-bg: #ecfdf5; --green-fg: #047857; --green-bd: #a7f3d0;
   --red-bg: #fef2f2; --red-fg: #b91c1c; --red-bd: #fecaca;
@@ -93,7 +95,7 @@ body {
 .banner-close:hover { background: var(--blue-bd); }
 
 .titlebar {
-  height: 44px;
+  height: var(--titlebar-h);
   display: flex;
   align-items: center;
   gap: 12px;
@@ -947,16 +949,65 @@ pre.script {
 }
 .live-cap span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .live-cap .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--green-fg); flex: none; }
-/* Expanded: the same box goes full-window so the owner can actually read the
-   page the agent is on. Toggled by a click on the box, in either direction. */
+/* The hint: what tells the owner the picture is a control.
+   Small, it follows the pointer and never fades. Expanded, it fades after
+   HINT_MS even while hovered — the clock starts on arrival, and leaving does
+   not dismiss it. Fade in is quick and out is slow, because a hint that
+   vanishes as fast as it appeared reads as a glitch. */
+.live-shot {
+  position: relative; display: block;
+  padding: 0; border: 0; background: none; font: inherit; color: inherit;
+  cursor: zoom-in;
+}
+.live-corner.expanded .live-shot { cursor: zoom-out; width: 100%; }
+.live-shot:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.live-hint {
+  position: absolute; left: 50%; top: 50%;
+  transform: translate(-50%, -50%) scale(0.98);
+  padding: 7px 13px; border-radius: 999px; white-space: nowrap;
+  background: rgba(9, 9, 11, 0.82); color: #fafafa;
+  font-size: 12px; font-weight: 500;
+  opacity: 0; pointer-events: none;   /* never in the way of the click it describes */
+  transition: opacity 600ms ease, transform 600ms ease;
+}
+.live-hint.on {
+  opacity: 1; transform: translate(-50%, -50%) scale(1);
+  transition: opacity 160ms ease, transform 160ms ease;
+}
+@media (prefers-reduced-motion: reduce) {
+  .live-hint { transition: none; }
+  .live-hint.on { transform: translate(-50%, -50%); }
+}
+
+/* Expanded: ~60% of the window, centred, and NOT a modal. It used to be
+   `inset: 0` behind a scrim, which took the whole screen and left the window's
+   own traffic lights stranded on black; the audit list, the tabs and the
+   titlebar now stay visible and clickable around it. */
 .live-corner img { cursor: zoom-in; }
 .live-corner.expanded {
-  position: fixed; inset: 0; z-index: 60; padding: 24px; gap: 10px;
-  align-items: center; justify-content: center; cursor: zoom-out;
-  background: rgba(0, 0, 0, 0.72);
+  /* The titlebar is --titlebar-h tall, so the middle of what is actually
+     visible sits half of it below the window's centre. */
+  position: fixed;
+  left: 50%; top: calc(50% + var(--titlebar-h) / 2);
+  transform: translate(-50%, -50%);
+  width: 60vw; max-width: calc(100vw - 32px);
+  /* The collapsed box is a flex item pinned to the bottom of the detail pane,
+     and `align-self: flex-end` survives going out of flow — it would shrink-wrap
+     the panel and fight the width above. */
+  align-self: auto;
+  z-index: 60; padding: 10px; gap: 8px;
+  align-items: stretch; cursor: zoom-out;
+  background: var(--card);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.28);
 }
-.live-corner.expanded img { width: auto; max-width: 100%; max-height: calc(100vh - 90px); cursor: zoom-out; }
-.live-corner.expanded .live-cap { max-width: 100%; color: #fafafa; }
+.live-corner.expanded img {
+  width: 100%; height: auto;
+  max-height: calc((100vh - var(--titlebar-h)) * 0.6);
+  object-fit: contain; cursor: zoom-out;
+}
+.live-corner.expanded .live-cap { max-width: 100%; }
 
 .live-corner.offscope img { border-color: var(--red-bd); }
 .live-corner.offscope .live-cap { color: var(--red-fg); }
