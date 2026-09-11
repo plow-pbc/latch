@@ -352,6 +352,7 @@ class ElectronPolicy implements PolicyDelegate {
           hint,
           () => progress?.asking(),
         ),
+      onAnswered: () => progress?.answered(),
     });
   }
 }

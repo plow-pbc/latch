@@ -258,6 +258,48 @@ describe("a pending handle says what to do about it", () => {
     expect(polled.payload.reason).toBe("awaiting_approval");
   });
 
+  // The window closes, and then this Mac still has to write the approval
+  // record, append the audit line and carry the decision back. The handle said
+  // `awaiting_approval` through all of it — so an agent polling right then,
+  // which is exactly what the note had just told it to do, sent the user back
+  // to a dialog that was no longer there.
+  //
+  // The barrier is the persist-and-audit stretch, held open on purpose: that is
+  // the window under test, not the final answer.
+  it("a dialog that has been answered stops claiming the user is holding it", async () => {
+    let release!: () => void;
+    const persisting = new Promise<void>((r) => (release = r));
+    let answered!: () => void;
+    const hasAnswered = new Promise<void>((r) => (answered = r));
+
+    const clickedThenSlow: PolicyDelegate = {
+      decideIntent: async (_intent, progress) => {
+        progress?.asking();
+        progress?.answered(); // they clicked; the window is gone
+        answered();
+        await persisting; // …and this Mac is still writing it down
+        return "allow_once";
+      },
+    };
+    const { server, file } = serverWith(clickedThenSlow, { ttlMs: 60_000, budgetMs: 30 });
+
+    const first = await callTool(server, "plow_read_file", { path: file }, AGENT);
+    expect(first.payload.status).toBe("pending");
+
+    await hasAnswered;
+    const polled = await callTool(
+      server,
+      "plow_get_result",
+      { handle: first.payload.handle },
+      AGENT,
+    );
+
+    // Not "go and look at your Mac": there is nothing there to look at.
+    expect(polled.payload.reason).not.toBe("awaiting_approval");
+    expect(polled.payload.reason).toBe("deciding");
+    release();
+  });
+
   it("polling the handle repeats the advice, so it survives a lost first answer", async () => {
     const { server, file } = serverWith(NEVER_ANSWERS, { ttlMs: 60_000, budgetMs: 30 });
     const first = await callTool(server, "plow_read_file", { path: file }, AGENT);

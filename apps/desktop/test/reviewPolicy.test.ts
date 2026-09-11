@@ -977,3 +977,70 @@ describe("opensApprovalWindow answers for the path decideIntent actually takes",
     );
   });
 });
+
+/**
+ * The dialog's closing is reported, not just its opening.
+ *
+ * Between the owner clicking and the caller getting an answer, this Mac still
+ * writes the approval record, appends the audit line and carries the decision
+ * back. The handle said `awaiting_approval` through all of it — so an agent
+ * that polled right then (which is precisely what it had just been told to do)
+ * sent the user back to a window that had already closed.
+ */
+describe("a closed dialog stops claiming a person is holding the call", () => {
+  it("onAnswered fires after openApproval settles, and before the decision returns", async () => {
+    const order: string[] = [];
+    const result = await decideIntent(
+      makeIntent({
+        agentId: "agent-1",
+        agentDisplay: "Agent One",
+        deviceId: "device-1",
+        request: "read",
+        capabilities: [{ kind: "fs.read", paths: ["/etc/hosts"] }],
+        sessionId: "s1",
+      }),
+      {
+        settings: settings({ approvalMode: "ask", relayCredential: PLOW_CREDENTIAL }),
+        apiBaseUrl: "https://api.plow.co",
+        plowRoot: PLOW_ROOT,
+        auditEntries: () => [],
+        record: () => {},
+        review: vi.fn(async () => ({ verdict: "allow" as const, reason: "fine" })),
+        openApproval: async () => {
+          order.push("dialog settled");
+          return "allow_once" as const;
+        },
+        onAnswered: () => order.push("answered"),
+      },
+    );
+
+    expect(result.decision).toBe("allow_once");
+    expect(order).toEqual(["dialog settled", "answered"]);
+  });
+
+  it("a mode that opens no dialog never claims one closed", async () => {
+    const order: string[] = [];
+    await decideIntent(
+      makeIntent({
+        agentId: "agent-1",
+        agentDisplay: "Agent One",
+        deviceId: "device-1",
+        request: "read",
+        capabilities: [{ kind: "fs.read", paths: ["/etc/hosts"] }],
+        sessionId: "s1",
+      }),
+      {
+        settings: settings({ approvalMode: "adversarial", relayCredential: PLOW_CREDENTIAL }),
+        apiBaseUrl: "https://api.plow.co",
+        plowRoot: PLOW_ROOT,
+        auditEntries: () => [],
+        record: () => {},
+        review: vi.fn(async () => ({ verdict: "allow" as const, reason: "fine" })),
+        openApproval: async () => "allow_once" as const,
+        onAnswered: () => order.push("answered"),
+      },
+    );
+
+    expect(order).toEqual([]);
+  });
+});

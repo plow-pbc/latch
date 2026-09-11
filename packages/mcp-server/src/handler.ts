@@ -285,7 +285,7 @@ export function createDomoMcpServer(
                 ? await deferred.run(agent.agentId, body)
                 // A non-deferrable tool mints no handle, so nothing reads
                 // either signal — but the shape still has to be whole.
-                : await body({ asking: () => {}, decided: () => {} });
+                : await body({ asking: () => {}, answered: () => {}, decided: () => {} });
               // Most results are one text block; a screenshot expands into an
               // image + text block via `__mcpContent`.
               return { content: toolBlocks(result) };

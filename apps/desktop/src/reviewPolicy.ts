@@ -150,6 +150,17 @@ export interface DecideDeps {
    * another prompt first.
    */
   openApproval: (hint: Promise<ReviewHint> | null) => Promise<ApprovalDecision>;
+  /**
+   * The dialog is gone — answered, or closed on them.
+   *
+   * Fired HERE rather than inside the window, because `openApproval` resolving
+   * is that same instant and this side of it can be tested without a display.
+   * Everything after this line — the store's write, the audit append, the
+   * decision travelling back — happens with nothing on screen, and a caller
+   * polling through it was being told to go and look at a window that had
+   * already closed.
+   */
+  onAnswered?: () => void;
 }
 
 /**
@@ -296,5 +307,7 @@ export async function decideIntent(
           reason: r.reason,
         }))
       : null;
-  return { decision: await deps.openApproval(hint), source: "ask" };
+  const decision = await deps.openApproval(hint);
+  deps.onAnswered?.();
+  return { decision, source: "ask" };
 }

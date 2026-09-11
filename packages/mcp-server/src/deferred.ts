@@ -188,6 +188,16 @@ export class DeviceError extends Error {
 export interface Progress {
   /** A dialog is now in front of a human. Called by whoever opened it. */
   asking(): void;
+  /**
+   * That dialog is gone — answered, or closed. Called by whoever opened it,
+   * and the counterpart to `asking`.
+   *
+   * Without it the handle kept saying a person was holding the call while the
+   * answer was being persisted, audited and acted on. That is a short window,
+   * but it is exactly when an agent polls (it has just been told to), and what
+   * it read sent the user back to a window that had already closed.
+   */
+  answered(): void;
   decided(): void;
 }
 
@@ -233,6 +243,9 @@ export class DeferredResults {
     };
     const progress: Progress = {
       asking: () => advance("awaiting_approval"),
+      // Back to `deciding`, which is honest: undecided as far as the caller is
+      // concerned, and nobody is being asked any more.
+      answered: () => advance("deciding"),
       decided: () => advance("running"),
     };
 
