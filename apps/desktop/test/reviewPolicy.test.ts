@@ -68,6 +68,7 @@ function harness(
     reason?: string;
     cause?: ReviewFailureCause;
     decision?: "allow_once" | "always_allow" | "deny";
+    intent?: Intent;
   } = {},
 ) {
   const records: { event: string; fields: Record<string, JSONValue> }[] = [];
@@ -86,7 +87,7 @@ function harness(
     return opts.decision ?? ("deny" as const);
   });
   const run = () =>
-    decideIntent(intent(), {
+    decideIntent(opts.intent ?? intent(), {
       settings: s,
       apiBaseUrl: "https://api.plow.co",
       plowRoot: PLOW_ROOT,
@@ -214,8 +215,6 @@ describe("decideIntent — modes that never reach the reviewer", () => {
       ],
     ],
   ] as const)("approve auto-allows %s without reviewing or prompting", async (_label, capabilities) => {
-    const review = vi.fn(async () => ({ verdict: "allow" as const, reason: "fine" }));
-    const openApproval = vi.fn(async () => "allow_once" as const);
     const send = makeIntent({
       agentId: "agent-1",
       agentDisplay: "Agent One",
@@ -224,18 +223,10 @@ describe("decideIntent — modes that never reach the reviewer", () => {
       capabilities: [...capabilities],
       sessionId: "s1",
     });
-    const result = await decideIntent(send, {
-      settings: settings({ approvalMode: "approve", relayCredential: PLOW_CREDENTIAL }),
-      apiBaseUrl: "https://api.plow.co",
-      plowRoot: PLOW_ROOT,
-      auditEntries: () => [],
-      record: () => {},
-      review,
-      openApproval,
-    });
-    expect(result).toEqual({ decision: "allow_once", source: "approve" });
-    expect(review).not.toHaveBeenCalled();
-    expect(openApproval).not.toHaveBeenCalled();
+    const h = harness(settings({ approvalMode: "approve", relayCredential: PLOW_CREDENTIAL }), { intent: send });
+    expect(await h.run()).toEqual({ decision: "allow_once", source: "approve" });
+    expect(h.review).not.toHaveBeenCalled();
+    expect(h.openApproval).not.toHaveBeenCalled();
   });
 
   it("approve still asks for a script: the one intent whose only bound is a reader", async () => {
