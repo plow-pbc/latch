@@ -389,29 +389,6 @@ describe("a stored rule cannot stand in for a required review", () => {
   });
 });
 
-describe("storedRuleMayGrant", () => {
-  it.each([
-    ["adversarial", false],
-    ["approve", true],
-    ["ask", true],
-    ["deny", false],
-    // A value this build cannot read must not replay a cached allow: the engine
-    // does that BEFORE any delegate, so it would never reach the fail-safe
-    // dialog at all.
-    ["nonsense-from-a-newer-build", false],
-  ])("under %s mode: %s", (mode, expected) => {
-    // The modes that take the decision away from the human refuse a replay:
-    // adversarial gives it to the reviewer, deny refuses everything, and an
-    // unrecognised mode is not a mode this build should act on. A rule is a
-    // cached human decision, and none of them wants one.
-    expect(
-      storedRuleMayGrant(settings({ approvalMode: mode as Settings["approvalMode"] }), [
-        { kind: "fs.read" },
-      ]),
-    ).toBe(expected);
-  });
-});
-
 describe("decideIntent — adversarial mode", () => {
   const adversarial = (over: Partial<Settings> = {}) =>
     settings({ approvalMode: "adversarial", relayCredential: PLOW_CREDENTIAL, ...over });
@@ -913,61 +890,6 @@ describe("the ~/Plow playground carve-out", () => {
 });
 
 /**
- * The predicate and the code path must not be able to disagree — for every
- * mode, with and without a script. `deny` and `~/Plow` are absent on purpose:
- * both return before the predicate is consulted.
- */
-describe("opensApprovalWindow answers for the path decideIntent actually takes", () => {
-  const READ = [{ kind: "fs.read", paths: ["/etc/hosts"] }] as const;
-  const SCRIPT = [
-    { kind: "applescript", app: "Mail", bundleId: "com.apple.mail", script: "return 1" },
-  ] as const;
-
-  // `dialog` is written out rather than derived, so this cannot pass by the code
-  // and the predicate being wrong in the same direction. A settings file this
-  // build cannot read — hand-edited, or written by a newer build and downgraded
-  // — is the human's: `loadSettings` does not validate the mode, and an
-  // unreadable one is not a mode to act on unsupervised.
-  const cases = [
-    { mode: "something-else" as never, caps: READ, dialog: true, what: "a read under an unknown mode" },
-    { mode: "something-else" as never, caps: SCRIPT, dialog: true, what: "a script under an unknown mode" },
-    { mode: "ask", caps: READ, dialog: true, what: "a read under Ask" },
-    { mode: "ask", caps: SCRIPT, dialog: true, what: "a script under Ask" },
-    { mode: "approve", caps: READ, dialog: false, what: "a read under Approve" },
-    { mode: "approve", caps: SCRIPT, dialog: true, what: "a script under Approve" },
-    { mode: "adversarial", caps: READ, dialog: false, what: "a read under the reviewer" },
-    { mode: "adversarial", caps: SCRIPT, dialog: false, what: "a script under the reviewer" },
-  ] as const;
-
-  it.each(cases)("$what", async ({ mode, caps, dialog }) => {
-    const openApproval = vi.fn(async () => "allow_once" as const);
-    const config = settings({ approvalMode: mode, relayCredential: PLOW_CREDENTIAL });
-    const intent = makeIntent({
-      agentId: "agent-1",
-      agentDisplay: "Agent One",
-      deviceId: "device-1",
-      request: "r",
-      capabilities: caps as unknown as Intent["capabilities"],
-      sessionId: "s1",
-    });
-
-    await decideIntent(intent, {
-      settings: config,
-      apiBaseUrl: "https://api.plow.co",
-      plowRoot: PLOW_ROOT,
-      record: () => {},
-      review: vi.fn(async () => ({ verdict: "allow" as const, reason: "fine" })),
-      openApproval,
-    });
-
-    // What actually happened, against the written-down expectation…
-    expect(openApproval.mock.calls.length > 0).toBe(dialog);
-    // …and the predicate the copy describes, against that same expectation.
-    expect(opensApprovalWindow(config, intent.capabilities)).toBe(dialog);
-  });
-});
-
-/**
  * The dialog's closing is reported, not just its opening: the record, the audit
  * line and the decision's return all happen with nothing on screen.
  */
@@ -1028,33 +950,71 @@ describe("a closed dialog stops claiming a person is holding the call", () => {
 });
 
 /**
- * One classification, three readers.
+ * ONE table for the mode × capability contract.
  *
- * `storedRuleMayGrant`, `opensApprovalWindow` and `decideIntent` each used to
- * derive the routing from the mode string themselves, and an unrecognised value
- * landed in different halves depending on which one you asked. They read
- * `routeIntent` now; this pins that they still agree with it, including for a
- * mode this build cannot read.
+ * It replaces three that kept the same inventory separately — a
+ * `storedRuleMayGrant` matrix, a dialog matrix, and a classifier table — which
+ * is how an unreadable mode came to be routed two ways: the inventories could
+ * drift, and did.
+ *
+ * `decider` and `replay` are written out, not derived, so the classifier and
+ * its readers cannot pass by agreeing on a wrong answer. Every row asserts all
+ * four: the classification, both thin readers over it, and what `decideIntent`
+ * actually does.
  */
-describe("the mode is classified once", () => {
-  const READ = [{ kind: "fs.read" }] as const;
-  const SCRIPT = [{ kind: "applescript" }] as const;
+describe("the mode × capability contract", () => {
+  const READ = [{ kind: "fs.read", paths: ["/etc/hosts"] }] as const;
+  const SCRIPT = [
+    { kind: "applescript", app: "Mail", bundleId: "com.apple.mail", script: "return 1" },
+  ] as const;
 
   it.each([
-    ["ask", READ, "human", true],
-    ["ask", SCRIPT, "human", true],
-    ["approve", READ, "allow", true],
-    ["approve", SCRIPT, "human", true],
-    ["adversarial", READ, "reviewer", false],
-    ["deny", READ, "deny", false],
-    ["nonsense-from-a-newer-build", READ, "human", false],
-    ["nonsense-from-a-newer-build", SCRIPT, "human", false],
-  ] as const)("%s + %o → %s, rule replay %s", (mode, caps, decider, replay) => {
-    const config = settings({ approvalMode: mode as Settings["approvalMode"] });
+    { mode: "ask", caps: READ, decider: "human", replay: true, what: "a read under Ask" },
+    { mode: "ask", caps: SCRIPT, decider: "human", replay: true, what: "a script under Ask" },
+    { mode: "approve", caps: READ, decider: "allow", replay: true, what: "a read under Approve" },
+    // A script runs outside the sandbox, so it goes to the dialog even here.
+    { mode: "approve", caps: SCRIPT, decider: "human", replay: true, what: "a script under Approve" },
+    { mode: "adversarial", caps: READ, decider: "reviewer", replay: false, what: "a read under the reviewer" },
+    { mode: "adversarial", caps: SCRIPT, decider: "reviewer", replay: false, what: "a script under the reviewer" },
+    { mode: "deny", caps: READ, decider: "deny", replay: false, what: "a read under Deny" },
+    // A settings file this build cannot read — hand-edited, or written by a
+    // newer build and downgraded. `loadSettings` does not validate the mode, so
+    // the routing has to: a human, and no cached replay.
+    { mode: "unknown-to-this-build" as never, caps: READ, decider: "human", replay: false, what: "a read under an unknown mode" },
+    { mode: "unknown-to-this-build" as never, caps: SCRIPT, decider: "human", replay: false, what: "a script under an unknown mode" },
+  ] as const)("$what", async ({ mode, caps, decider, replay }) => {
+    const config = settings({ approvalMode: mode, relayCredential: PLOW_CREDENTIAL });
+    const capabilities = caps as unknown as Intent["capabilities"];
 
-    expect(routeIntent(config, caps)).toEqual({ decider, storedRuleMayGrant: replay });
-    // The two thin readers must not have opinions of their own.
-    expect(opensApprovalWindow(config, caps)).toBe(decider === "human");
-    expect(storedRuleMayGrant(config, caps)).toBe(replay);
+    // 1. The classification itself.
+    expect(routeIntent(config, capabilities)).toEqual({
+      decider,
+      storedRuleMayGrant: replay,
+    });
+    // 2 and 3. The two thin readers must have no opinions of their own.
+    expect(opensApprovalWindow(config, capabilities)).toBe(decider === "human");
+    expect(storedRuleMayGrant(config, capabilities)).toBe(replay);
+
+    // 4. And what the decision path actually does with it.
+    const openApproval = vi.fn(async () => "allow_once" as const);
+    await decideIntent(
+      makeIntent({
+        agentId: "agent-1",
+        agentDisplay: "Agent One",
+        deviceId: "device-1",
+        request: "r",
+        capabilities,
+        sessionId: "s1",
+      }),
+      {
+        settings: config,
+        apiBaseUrl: "https://api.plow.co",
+        plowRoot: PLOW_ROOT,
+        record: () => {},
+        review: vi.fn(async () => ({ verdict: "allow" as const, reason: "fine" })),
+        openApproval,
+      },
+    );
+    expect(openApproval.mock.calls.length > 0).toBe(decider === "human");
   });
 });
