@@ -573,8 +573,8 @@ export const TOOLS: ToolSpec[] = [
       "addresses in 'app', by the name it has in `tell application \"…\"`; it is resolved to an " +
       "installed app on this Mac before anyone is asked, and an app the Mac does not have is an " +
       "error. Pass any value the script acts on — a message's text, a recipient, a path — in " +
-      "'args', read as `on run argv` / `item 1 of argv`, never pasted into the source: the script " +
-      "gets each one as a value it never parses. " +
+      "'args', read as `on run argv` / `item 1 of argv`, never pasted into the source: each one " +
+      "reaches the script as a value, not as part of its text. " +
       "The first time an app is scripted macOS may ask this Mac's owner to allow it. " +
       "Output is the script's result plus anything it logs; a script error comes back as " +
       "osascript's message with a non-zero exit_code and 'host_gate': 'none' — the script's own " +

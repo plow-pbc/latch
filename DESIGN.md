@@ -236,11 +236,7 @@ set:
   what it says and covers a script too, unread — the owner's choice to give
   agents full access to this Mac (the mode's hint says so). A `do shell
   script` is therefore reachable under Approve, and `plow_run_command`
-  staying sandboxed does not change that. (Approve used to send a script to
-  the dialog, and a source tripwire refused a shell at the tool; both went
-  when iMessage sends moved to this tool, because Messages refuses a
-  sandboxed sender, and an Approve that asks is not the mode the owner
-  chose.)
+  staying sandboxed does not change that.
   Like an `apple_events` command it is never a stored rule: the same script
   is decided fresh every time. The script is written to the run's scratch
   dir `0600` rather than passed as an argument, so it never shows in `ps`;
