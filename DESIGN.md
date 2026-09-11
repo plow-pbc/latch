@@ -6,10 +6,12 @@
 Domo lets a remote AI agent (Claude Code or any MCP-speaking agent) use a
 person's Mac — read and write files, run CLI commands with streaming output,
 and drive a real browser on their machine — through an **intent-based request
-system**: every operation is a structured intent that a human and an
-adversarial reviewer agent can inspect and approve, with the configured
-approval mode deciding which of them is consulted, before it executes inside an
-on-the-fly sandbox derived from exactly the approved capabilities.
+system**: an operation that touches the Mac is a structured intent that a human
+or an adversarial reviewer agent can inspect and approve — the configured
+approval mode decides which is consulted — before it executes inside an
+on-the-fly sandbox derived from exactly the approved capabilities. Two paths
+mint no intent of their own: vault metadata reads, and actions inside a
+browsing session that was already granted (§11a).
 
 v1 runs entirely on one Mac, but every flow — enrollment, discovery, access
 requests, intents, approvals, revocation — goes through the same protocol a
@@ -29,8 +31,9 @@ redesigning.
 - The **device app** is the only principal that touches the OS. It owns the
   approval UI, the policy engine (always-allow rules), the executor + sandbox,
   the audit log, and the blessed-tools registry.
-- The **agent** never gets raw OS access. It sees an MCP tool surface; every
-  call becomes an intent evaluated on the device.
+- The **agent** never gets raw OS access. It sees an MCP tool surface, and a
+  call that acts on the Mac becomes an intent evaluated on the device — see §4
+  for the two that do not.
 - The **broker** tracks which devices exist and are online, holds agent
   identities/grants, routes messages, and hosts the MCP endpoint. It is
   *not* trusted with OS access and (in the remote milestone) not trusted with
@@ -114,9 +117,15 @@ Design points:
 
 ## 4. The intent object
 
-Every operation (file read/write, command, browser session) becomes one intent
-— the single artifact that the approval UI renders, the sandbox is derived
-from, the audit log stores, and the adversarial reviewer evaluates.
+An operation that acts on the Mac (file read/write, command, opening a browser
+session) becomes one intent — the single artifact that the approval UI renders,
+the sandbox is derived from, the audit log stores, and the adversarial reviewer
+evaluates.
+
+Two paths deliberately mint none. `plow_vault`'s list and describe report what
+the vault holds, never a value, and are decided by nobody. Actions inside an
+already-granted browsing session ride that grant rather than minting one each —
+widening the session, or releasing a credential into a page, is its own intent.
 
 ```json
 {

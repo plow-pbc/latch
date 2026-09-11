@@ -143,12 +143,12 @@ function welcomeScreen() {
 const TRUST_ROWS = [
   {
     title: "Data stays on your Mac",
-    detail: "Your messages, calendar, and logins live on your Mac and reach an agent only through actions you approve.",
+    detail: "Your messages, calendar, and logins live on your Mac, and reach an agent only through an action this Mac approved.",
     glyph: "desktop",
   },
   {
-    title: "You stay in control",
-    detail: "Choose what runs automatically and what needs your approval.",
+    title: "You decide who decides",
+    detail: "Out of the box the AI reviewer approves each action. Switch to approving them yourself whenever you want.",
     glyph: "sliders",
   },
   {
@@ -531,7 +531,7 @@ function dataScreen() {
             ]),
             el("span", {
               class: "permission-detail",
-              text: "Plow Latch reads your Messages right on your Mac, so you never miss the texts that matter. Apple keeps Messages behind this permission. Only what you approve an agent to read is ever sent to it.",
+              text: "Plow Latch reads your Messages right on your Mac, so you never miss the texts that matter. Apple keeps Messages behind this permission. Only what this Mac approves for an agent is ever sent to it.",
             }),
           ]),
           el("span", { class: "permission-control" }, [permissionControl]),

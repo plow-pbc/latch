@@ -84,7 +84,12 @@ export function reviewerAvailable(settings: Settings): boolean {
  */
 export function storedRuleMayGrant(settings: Settings): boolean {
   const mode = settings.approvalMode ?? DEFAULT_APPROVAL_MODE;
-  return mode !== "adversarial" && mode !== "deny";
+  // An ALLOW-list, for the same reason `opensApprovalWindow` below is one. The
+  // engine replays a stored rule BEFORE any delegate is consulted, so a mode
+  // this build cannot read must not land in the permissive half by default:
+  // written as "not adversarial and not deny", an unrecognised value replayed a
+  // cached allow and never reached the fail-safe dialog at all.
+  return mode === "ask" || mode === "approve";
 }
 
 /**
