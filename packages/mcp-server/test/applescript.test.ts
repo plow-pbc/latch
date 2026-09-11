@@ -52,12 +52,12 @@ const events = (device: DeviceAgent): string[] =>
   device.audit.entries().map((e) => jv(e as JSONValue).get("event").str ?? "");
 
 describe.skipIf(!ON_MAC)("plow_run_applescript", () => {
-  it("runs the script with osascript and returns its result", async () => {
+  it("runs the script with osascript, hands it its args, and returns its result", async () => {
     const { server, device } = makeServer();
     const { isError, payload } = await callTool(
       server,
       "plow_run_applescript",
-      { app: "Finder", script: "return 20 + 22", wait_ms: 5_000 },
+      { app: "Finder", script: "on run argv\n\treturn (item 1 of argv) + (item 2 of argv)\nend run", args: ["20", "22"], wait_ms: 5_000 },
       AGENT,
     );
     expect(isError).toBe(false);
@@ -77,7 +77,7 @@ describe.skipIf(!ON_MAC)("plow_run_applescript", () => {
     expect(jv(start as JSONValue).get("bundle_id").str).toBe("com.apple.finder");
   });
 
-  it("the approver sees the app, its bundle id resolved on this Mac, and the whole script", async () => {
+  it("the approver sees the app, its bundle id resolved on this Mac, the whole script, and its args", async () => {
     let seen: Capability[] = [];
     const { server, device } = makeServer({
       async decideIntent(intent) {
@@ -88,9 +88,10 @@ describe.skipIf(!ON_MAC)("plow_run_applescript", () => {
     const script = 'tell application "Finder"\n\treturn name of it\nend tell';
     // Denied, so never run: this script addresses a real app, and the deny
     // is what keeps the event from being sent on the suite's own Mac.
-    const { payload } = await callTool(server, "plow_run_applescript", { app: "Finder", script, wait_ms: 5_000 }, AGENT);
+    const args = ["a value", "-another"];
+    const { payload } = await callTool(server, "plow_run_applescript", { app: "Finder", script, args, wait_ms: 5_000 }, AGENT);
     expect(payload.status).toBe("denied");
-    expect(seen).toEqual([{ kind: "applescript", app: "Finder", bundleId: "com.apple.finder", script }]);
+    expect(seen).toEqual([{ kind: "applescript", app: "Finder", bundleId: "com.apple.finder", script, args }]);
     expect(events(device)).toEqual(["intent_received", "intent_decision"]);
   });
 

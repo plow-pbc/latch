@@ -923,7 +923,7 @@ export class DeviceAgent {
    */
   private async executeAppleScript(
     intent: Intent,
-    cap: { app?: string; bundleId?: string; script?: string },
+    cap: { app?: string; bundleId?: string; script?: string; args?: string[] },
     payload: JSONValue,
   ): Promise<JSONValue> {
     const script = cap.script ?? "";
@@ -935,14 +935,16 @@ export class DeviceAgent {
       bundle_id: cap.bundleId ?? "",
     });
     try {
-      const result = await this.executor.runAppleScript({ script, waitMs });
+      const args = cap.args ?? [];
+      const result = await this.executor.runAppleScript({ script, args, waitMs });
       return this.finishRun(
         intent.intentId,
         result,
         {
           // The script rides as an argv word, the way `osascript -e` takes
-          // it: a path the script names is a candidate for the probes.
-          argv: ["/usr/bin/osascript", "-e", script],
+          // it, and its args after it: a path either names is a candidate
+          // for the probes.
+          argv: ["/usr/bin/osascript", "-e", script, ...args],
           cwd: undefined,
           readPaths: [],
           writePaths: [],
