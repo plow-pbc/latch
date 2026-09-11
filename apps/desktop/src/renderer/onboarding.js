@@ -3,6 +3,7 @@
    persistent shell. The page is sandboxed and receives no Node primitives. */
 
 import { el, icon } from "./dom.js";
+import { TRUST_ROWS } from "./onboardingCopy.js";
 import { googleConnectorCard } from "./connectorsCard.js";
 import { singleFlight } from "./onboardingAction.js";
 import { loadDoneAgent } from "./onboardingDone.js";
@@ -140,28 +141,6 @@ function welcomeScreen() {
   ]);
 }
 
-const TRUST_ROWS = [
-  {
-    title: "Data stays on your Mac",
-    detail: "Your messages, calendar, and logins live on your Mac, and reach an agent only through an action this Mac approved.",
-    glyph: "desktop",
-  },
-  {
-    title: "You decide who decides",
-    detail: "Out of the box the AI reviewer approves each action. Switch to approving them yourself whenever you want.",
-    glyph: "sliders",
-  },
-  {
-    title: "A second AI checks the risky stuff",
-    detail: "An independent reviewer catches actions that don't look right.",
-    glyph: "shieldCheck",
-  },
-  {
-    title: "Never sold. Never trained on.",
-    detail: "Your data isn't sold, stored, or used to train AI models.",
-    glyph: "lock",
-  },
-];
 
 function privacyScreen() {
   const rows = TRUST_ROWS.map(({ title, detail, glyph }) =>

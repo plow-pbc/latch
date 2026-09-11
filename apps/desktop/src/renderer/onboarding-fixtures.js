@@ -1,3 +1,5 @@
+import { TRUST_ROWS } from "./onboardingCopy.js";
+
 /** Shared states for the browser picker and the offscreen screenshot harness. */
 export function onboardingFixtures(now) {
   const displayCode = "Z1SWY";
@@ -54,14 +56,10 @@ export function onboardingFixtures(now) {
       expect: [
         "Privacy",
         "Your agents can get things done without giving up control of your data",
-        "Data stays on your Mac",
-        "Your messages, calendar, and logins live on your Mac and reach an agent only through actions you approve",
-        "You stay in control",
-        "Choose what runs automatically and what needs your approval",
-        "A second AI checks the risky stuff",
-        "An independent reviewer catches actions that don't look right",
-        "Never sold. Never trained on.",
-        "Your data isn't sold, stored, or used to train AI models",
+        // Generated from the copy the screen renders, not retyped: the retyped
+        // version demanded a promise the product had stopped making, and the
+        // screenshot run failed on text that was correctly no longer there.
+        ...TRUST_ROWS.flatMap(({ title, detail }) => [title, detail]),
         "Back",
         "Continue",
       ],
