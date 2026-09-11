@@ -19,7 +19,10 @@ type ConnectorsState = {
 contextBridge.exposeInMainWorld("domo", {
   // Main window data.
   auditList: () => ipcRenderer.invoke("audit:list"),
-  auditActivities: () => ipcRenderer.invoke("audit:activities"),
+  // The Audit tab reads a page of rows (auditIndex.ts AuditQuery / AuditPage)
+  // and the selected row's timeline by id — never the whole log.
+  auditPage: (query: unknown) => ipcRenderer.invoke("audit:page", query),
+  auditActivity: (id: string) => ipcRenderer.invoke("audit:activity", id),
   auditClear: () => ipcRenderer.invoke("audit:clear"),
   approvalsPending: () => ipcRenderer.invoke("approvals:pending"),
   rulesList: () => ipcRenderer.invoke("rules:list"),
@@ -131,7 +134,13 @@ contextBridge.exposeInMainWorld("domo", {
   // Usage statistics + error reporting opt-out (telemetry.ts).
   telemetryGet: () => ipcRenderer.invoke("telemetry:get"),
   telemetrySet: (on: boolean) => ipcRenderer.invoke("telemetry:set", on),
-  onAuditChanged: (cb: () => void) => ipcRenderer.on("audit:changed", cb),
+  // `ids` are the rows a burst of events touched; "*" means start over (the
+  // log rotated or was cleared).
+  onAuditChanged: (cb: (change: { ids: string[] }) => void) =>
+    ipcRenderer.on("audit:changed", (_event, change: { ids: string[] }) => cb(change)),
+  // A block by this Mac, or its clearing: the only lines that move the
+  // Capabilities tab, so the only ones that refresh it.
+  onCapabilitiesChanged: (cb: () => void) => ipcRenderer.on("capabilities:changed", cb),
   onStatusChanged: (cb: () => void) => ipcRenderer.on("status:changed", cb),
 
   // Software updates: one whole-state shape per read (see updates:get).

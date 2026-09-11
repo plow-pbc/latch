@@ -109,6 +109,30 @@ let detailWidth = 340; // resizable detail pane width (px), kept across refreshe
 // References to the mounted audit chrome, so typing in the search box refreshes
 // only the list/detail (not the input itself → no focus loss).
 let auditMounted = null;
+// The listing is paged from main's live index: this many rows at a time,
+// more as the list is scrolled. The count starts over for a new filter set.
+const AUDIT_PAGE = 200;
+let auditLimit = AUDIT_PAGE;
+let auditQueryKey = null;
+// The selected row with its timeline, as last fetched — refetched when the
+// selection moves or a live change touched that row.
+let auditDetail = { id: null, activity: null };
+
+// Times are formatted here, at draw time, from the ISO stamps the rows carry.
+// One formatter per shape, built once: the locale lookup behind each call is
+// the expensive part, and the old per-step call in the main process was most
+// of what it spent on the log.
+const DAY_TIME_FMT = new Intl.DateTimeFormat(undefined, {
+  month: "short", day: "numeric", hour: "numeric", minute: "2-digit", second: "2-digit",
+});
+const CLOCK_FMT = new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit", second: "2-digit" });
+function fmtWith(fmt, iso) {
+  if (!iso) return "";
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? iso : fmt.format(d);
+}
+const fmtDayTime = (iso) => fmtWith(DAY_TIME_FMT, iso);
+const fmtClock = (iso) => fmtWith(CLOCK_FMT, iso);
 
 // Mount the audit chrome once (search input, chips, list + detail containers).
 async function renderAudit() {
@@ -126,13 +150,35 @@ async function renderAudit() {
   const clearBtn = el("button", { class: "btn small", text: "Clear Log" });
   clearBtn.addEventListener("click", async () => {
     const cleared = await window.domo.auditClear();
-    if (cleared) { selectedId = null; refreshAudit(); }
+    if (cleared) {
+      selectedId = null;
+      auditDetail = { id: null, activity: null };
+      refreshAudit({ changed: new Set(["*"]) });
+    }
   });
   const toolbar = el("div", { class: "toolbar" }, [
     search, chipsBox, el("div", { class: "spacer" }), count, clearBtn,
   ]);
 
   const listBox = el("div", { class: "list" });
+  // The line under the last loaded row while there are more; nearing it
+  // asks main for the next page. Asked once per page: a further scroll
+  // while that read is in flight finds the limit already past the rows.
+  const moreBox = el("div", { class: "empty", attrs: { hidden: "" } });
+  auditLimit = AUDIT_PAGE;
+  auditQueryKey = null;
+  // Live changes are not followed while another tab is up, so a detail
+  // cached before leaving may be behind the row it sits beside on return.
+  // Start clean: the first refresh reads the selected row again.
+  auditDetail = { id: null, activity: null };
+  listBox.addEventListener("scroll", () => {
+    const m = auditMounted;
+    if (!m || m.listBox !== listBox) return;
+    if (m.total <= m.rows.size || auditLimit > m.rows.size) return;
+    if (listBox.scrollTop + listBox.clientHeight < listBox.scrollHeight - 300) return;
+    auditLimit += AUDIT_PAGE;
+    refreshAudit();
+  });
   // The detail pane is a column: the activity info scrolls in .detail-scroll;
   // the live browser thumbnail sits pinned below it, outside the scroll.
   const detailScroll = el("div", { class: "detail-scroll" });
@@ -165,6 +211,7 @@ async function renderAudit() {
 
   auditMounted = {
     listBox, detailScroll, count, chipsBox, clearBtn, searchInput, table, tbody, rows: new Map(),
+    moreBox, total: 0,
     liveBox, liveImg, liveDot, liveCapText, liveHasFrame: false,
   };
   await refreshAudit();
@@ -199,31 +246,72 @@ function wireSplitter(splitter, detailBox) {
 // Refresh just the data-bound parts — leaves the search input untouched.
 // `opts.followTop` (set on live data changes) moves the selection to the new
 // newest row when it was pinned to the top, so streaming activity stays in view.
+// `opts.changed` is the set of row ids a live change touched ("*" for all of
+// them), so the selected row's timeline is refetched only when it moved.
+//
+// One refresh at a time: live changes arriving while one is in flight fold
+// into a single follow-up, not a pile of overlapping reads.
+let auditRefreshing = false;
+let auditRefreshQueued = null;
 async function refreshAudit(opts = {}) {
   if (!auditMounted) return;
-  const { listBox, detailScroll, count, chipsBox, clearBtn, searchInput, table, tbody, rows } = auditMounted;
-  const activities = await window.domo.auditActivities();
-  clearBtn.disabled = activities.length === 0;
+  if (auditRefreshing) {
+    const queued = auditRefreshQueued ?? { followTop: false, changed: new Set() };
+    queued.followTop = queued.followTop || !!opts.followTop;
+    for (const id of opts.changed ?? []) queued.changed.add(id);
+    auditRefreshQueued = queued;
+    return;
+  }
+  auditRefreshing = true;
+  try {
+    await refreshAuditNow(opts);
+  } finally {
+    auditRefreshing = false;
+    if (auditRefreshQueued !== null) {
+      const next = auditRefreshQueued;
+      auditRefreshQueued = null;
+      void refreshAudit(next);
+    }
+  }
+}
+
+async function refreshAuditNow(opts) {
+  const mounted = auditMounted;
+  const { listBox, detailScroll, count, chipsBox, clearBtn, searchInput, table, tbody, rows, moreBox } = mounted;
   const q = auditSearch.trim().toLowerCase();
   const cutoff = dateCutoff();
-  const shown = activities.filter((a) => {
-    const inCat =
-      (decisionFilter === "any" || a.decisionKind === decisionFilter) &&
-      (statusFilter === "any" || a.statusKind === statusFilter) &&
-      // The Capabilities tab counts by the block's own time, so its cutoff
-      // keys on that; the presets key on when the row began.
-      (cutoff === null || new Date(dateFilter === "since" ? (a.blockedAt || a.ts) : a.ts).getTime() >= cutoff);
-    // The same match viewModel.activityMatches makes: title, command, agent,
-    // goal, the permission a block named, and the timeline lines.
-    const inSearch =
-      !q ||
-      [a.title, a.command || "", a.agentDisplay || "", a.agentId || "", a.goal || "", a.permission || "",
-        ...(a.timeline || []).map((s) => s.text)]
-        .join(" ")
-        .toLowerCase()
-        .includes(q);
-    return inCat && inSearch;
+  // A new result set starts at the first page; the same one keeps what was
+  // scrolled into view. Keyed on the settings, not the computed cutoff: a
+  // relative preset's cutoff moves with the clock, and keying on it made
+  // every scroll refresh look like a new filter set, snapping back to page one.
+  const key = JSON.stringify([q, decisionFilter, statusFilter, dateFilter, dateSince]);
+  if (key !== auditQueryKey) {
+    auditQueryKey = key;
+    auditLimit = AUDIT_PAGE;
+  }
+  // Main filters and pages from its live index: the rows this view matches,
+  // without their timelines. The search is the same match
+  // viewModel.activityMatches makes — title, command, agent, goal, the
+  // permission a block named, and the timeline lines.
+  const page = await window.domo.auditPage({
+    offset: 0,
+    limit: auditLimit,
+    search: auditSearch,
+    decision: decisionFilter,
+    status: statusFilter,
+    cutoffMs: cutoff,
+    // The Capabilities tab counts by the block's own time, so its cutoff
+    // keys on that; the presets key on when the row began.
+    cutoffKey: dateFilter === "since" ? "blocked" : "ts",
+    // The selected row stays loaded even when new activity above it pushes
+    // it past the page; the window grows through it and stays grown.
+    keepId: selectedId,
   });
+  if (auditMounted !== mounted) return; // the tab was left meanwhile
+  const shown = page.rows;
+  if (shown.length > auditLimit) auditLimit = shown.length;
+  mounted.total = page.total;
+  clearBtn.disabled = page.size === 0;
   // Selection: on a live data change, if the selection was pinned to the top
   // (newest) row, follow the new newest row so it keeps streaming into view.
   // Otherwise keep the same item, falling back to the newest if it's gone.
@@ -234,7 +322,23 @@ async function refreshAudit(opts = {}) {
     selectedId = shown.some((a) => a.id === selectedId) ? selectedId : newTopId;
   }
   auditTopId = newTopId;
-  const selected = shown.find((a) => a.id === selectedId) || null;
+  // The detail pane's row, timeline and all — one read, for the selected row
+  // only, and only when the selection or that row itself changed.
+  const changed = opts.changed ?? new Set();
+  let selected = null;
+  if (selectedId !== null) {
+    if (auditDetail.id !== selectedId || changed.has(selectedId) || changed.has("*")) {
+      // The id is captured before the read: a click on another row while
+      // this one is in flight moves `selectedId`, and the answer must be
+      // cached under the row it is for — the queued refresh then sees the
+      // mismatch and reads the new selection.
+      const wanted = selectedId;
+      const activity = await window.domo.auditActivity(wanted);
+      if (auditMounted !== mounted) return;
+      auditDetail = { id: wanted, activity };
+    }
+    selected = auditDetail.id === selectedId ? auditDetail.activity : null;
+  }
 
   const filterButton = (name, options, current, set) => {
     const label = options.find(([key]) => key === current)?.[1] ?? "Any";
@@ -275,7 +379,8 @@ async function refreshAudit(opts = {}) {
     filterButton("Date", dateOptions, dateFilter, (k) => { dateFilter = k; }),
     ...(filtering ? [clearFilters] : []),
   );
-  count.textContent = `${shown.length} ${shown.length === 1 ? "activity" : "activities"}`;
+  const total = page.total;
+  count.textContent = `${total} ${total === 1 ? "activity" : "activities"}`;
 
   // Empty state — no rows to reconcile; drop any cached row nodes.
   if (!shown.length) {
@@ -285,7 +390,10 @@ async function refreshAudit(opts = {}) {
     detailScroll.replaceChildren(detailFor(selected));
     return;
   }
-  if (listBox.firstChild !== table) listBox.replaceChildren(table);
+  if (listBox.firstChild !== table) listBox.replaceChildren(table, moreBox);
+  // What is not on screen yet: scrolling to the bottom loads the next page.
+  moreBox.hidden = shown.length >= total;
+  moreBox.textContent = `Showing ${shown.length} of ${total} — scroll for more`;
 
   // Only animate genuinely new rows arriving on a live data change (not on first
   // mount, tab switch, search, or filter — those would animate the whole list).
@@ -416,7 +524,7 @@ function statusPill(a) {
 
 // Update a row's content in place, touching only what changed.
 function updateAuditRow(r, a) {
-  if (r.time !== a.time) { r.timeCw.textContent = a.time; r.time = a.time; }
+  if (r.time !== a.ts) { r.timeCw.textContent = fmtDayTime(a.ts); r.time = a.ts; }
   if (r.decisionTone !== a.decisionTone || r.decision !== a.decision) {
     r.decisionCw.replaceChildren(decisionMark(a));
     r.decisionTone = a.decisionTone; r.decision = a.decision;
@@ -489,7 +597,7 @@ function detailFor(a) {
     children.push(el("div", { class: "timeline" }, a.timeline.map((s) =>
       el("div", { class: "tl" + (s.state === "ok" ? " ok" : s.state === "bad" ? " bad" : "") }, [
         el("div", { class: "tt", text: s.text }),
-        el("div", { class: "tm", text: s.time }),
+        el("div", { class: "tm", text: fmtClock(s.at) }),
       ]),
     )));
   }
@@ -2695,10 +2803,14 @@ seg.addEventListener("mousedown", async (e) => {
   if (await selectTab(btn.dataset.tab)) window.domo.uiSetTab(btn.dataset.tab); // persist across launches
 });
 
-window.domo.onAuditChanged(() => {
-  if (currentTab === "audit") refreshAudit({ followTop: true });
-  // A block by this Mac is an audit row, so this is also when the tab's
-  // badge (and an open Capabilities tab) can change.
+window.domo.onAuditChanged((change) => {
+  if (currentTab === "audit") refreshAudit({ followTop: true, changed: new Set(change?.ids ?? ["*"]) });
+});
+// A block by this Mac is an audit row, and the only kind that moves the
+// Capabilities tab's badge, lines and banner — main says so only for those,
+// because refreshing the tab takes the standing permission inventory (a
+// helper process per switch), which every audit line used to trigger.
+window.domo.onCapabilitiesChanged(() => {
   if (currentTab === "capabilities") capabilitiesMounted?.refresh();
   else refreshCapabilitiesBadge();
 });
