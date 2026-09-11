@@ -214,8 +214,9 @@ recipes spell \`/usr/bin/sqlite3\`: a bare name lets a shadow binary receive the
 **Every value arrives as an \`argv\` item, never pasted into the script string.** Contact
 fields are untrusted input (see the two rules, above) — a \`"\` in a street name would be a
 syntax error if interpolated into an AppleScript literal, and worse is injection.
-\`on run argv\` hands the script each value as data it never parses — still plainly visible
-to the approver in the argv the approval card shows.
+\`on run argv\` hands the script each value, not pasted into its text; what the script does
+with it is in the script — still plainly visible to the approver in the argv the approval card
+shows.
 
 **Set labels with AppleScript's plain words — \`home\`, \`work\` — never the stored
 constant.** \`_$!<Home>!$_\` contains \`$!\`, which zsh and bash mangle inside double quotes

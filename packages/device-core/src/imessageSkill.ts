@@ -306,9 +306,10 @@ literal, and \`" & (do shell script "…") & "\` is AppleScript injection: reach
 the owner asks you to relay something a stranger wrote. The identifier gets the same
 treatment even though it is a value you chose, not stranger text — one fewer thing that can
 break the script. \`on run argv\` / \`item 1 of argv\` hands the script the text, and
-\`item 2 of argv\` the identifier, as values the script never parses — a body that starts with
-\`-\` included. Both stay visible to the approver, listed beside the script on the approval
-card, but can never be read as AppleScript.
+\`item 2 of argv\` the identifier, as values — a body that starts with \`-\` included — not
+pasted into its text; what the script does with them is in the script, and the recipes below
+only send them. Both stay visible to the approver, listed beside the script on the approval
+card.
 
 **To a participant**, by phone number or email:
 

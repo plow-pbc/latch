@@ -222,9 +222,10 @@ set:
   folders, never by asking macOS, which would put a "Where is X?" chooser on
   the screen) and the whole script, which the approval card shows verbatim
   and the AI reviewer is told to read as the bound, plus any `args` —
-  values handed to the script's `on run argv`, never pasted into its source,
-  so text a stranger wrote reaches the script as data (the approval card
-  and the audit list them beside the script). Its gates are the approval
+  values handed to the script's `on run argv`, not pasted into its text, so
+  a stranger's text cannot break or inject into its syntax; what the script
+  does with them is in the script (the approval card and the audit list
+  them beside it). Its gates are the approval
   mode and TCC's Automation grant for the responsible process (the app
   bundle, hence the `automation.apple-events` entitlement and usage string;
   the terminal for a from-source run). In Ask and AI Reviewer the boundary
