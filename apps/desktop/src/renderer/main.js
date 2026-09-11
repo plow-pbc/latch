@@ -690,8 +690,8 @@ async function renderRules() {
         `The AI Reviewer has no credential, so it cannot suggest an answer${remedy}`;
     } else if (mode === "approve") {
       modeHintLine.textContent =
-        "Every request is allowed without asking you and without review — except an AppleScript, " +
-        "which runs outside the sandbox and always asks you.";
+        "Every request is allowed without asking you and without review — including AppleScript, " +
+        "which runs outside the sandbox. Agents get full access to this Mac.";
     } else if (mode === "deny") {
       modeHintLine.textContent =
         "Every request is refused without asking you.";
