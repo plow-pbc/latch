@@ -319,5 +319,5 @@ export function conflictRefusal(
     ...degraded.map((d) => `${d.account}: could not check (${d.reason})`),
   ];
   const head = busy.length > 0 ? "the slot is busy" : "the conflict check did not cover every account";
-  return `${head} — ${parts.join("; ")}. Tell whoever carries the owner's authority in this conversation about the overlaps, or the accounts that could not be checked, and get their go-ahead, then re-send the same command with --confirm-conflict. For known overlaps, use \`calendar conflicts\` for the titles; this refusal carries counts only.`;
+  return `${head} — ${parts.join("; ")}. Follow the Google Workspace skill's conflict rule before re-sending the same command with --confirm-conflict; this refusal carries counts only.`;
 }
