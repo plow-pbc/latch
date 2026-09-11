@@ -142,17 +142,10 @@ export async function decideIntent(
   }
 
   /** Is the reviewer the decider for this intent? */
-  // Approve: the whole point of the mode. Above the reviewer, because by here
+  // Approve: the whole point of the mode, for every intent — a script that
+  // runs outside the sandbox included. Above the reviewer, because by here
   // `deny` has already returned and `ask` still wants the human.
-  //
-  // Except a script. It runs outside the sandbox with nothing but its own
-  // text as the bound (DESIGN.md §6), and the source tripwire against a
-  // shell is not sound against a dynamic language — the boundary is
-  // someone reading the whole script. Approve mode has no such someone, so
-  // a script takes the ask path below: the dialog, with the reviewer's hint.
-  if (mode === "approve" && !intent.capabilities.some((c) => c.kind === "applescript")) {
-    return { decision: "allow_once", source: "approve" };
-  }
+  if (mode === "approve") return { decision: "allow_once", source: "approve" };
 
   const reviewDecides = mode === "adversarial";
 
