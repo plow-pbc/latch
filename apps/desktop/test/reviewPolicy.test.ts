@@ -204,11 +204,38 @@ describe("the reviewer is told whether anyone is behind it", () => {
 });
 
 describe("decideIntent — modes that never reach the reviewer", () => {
-  it("approve auto-allows without reviewing or prompting", async () => {
-    const h = harness(settings({ approvalMode: "approve", relayCredential: PLOW_CREDENTIAL }));
-    expect(await h.run()).toEqual({ decision: "allow_once", source: "approve" });
-    expect(h.review).not.toHaveBeenCalled();
-    expect(h.openApproval).not.toHaveBeenCalled();
+  it.each([
+    ["a plain command", [{ kind: "process.exec", argv: ["ls"] }]],
+    [
+      "a Messages send (process.exec + apple_events)",
+      [
+        { kind: "process.exec", argv: ["/usr/bin/osascript", "-e", "on run argv", "--", "hi", "+15555550100"] },
+        { kind: "apple_events", allowed: true },
+      ],
+    ],
+  ] as const)("approve auto-allows %s without reviewing or prompting", async (_label, capabilities) => {
+    const review = vi.fn(async () => ({ verdict: "allow" as const, reason: "fine" }));
+    const openApproval = vi.fn(async () => "allow_once" as const);
+    const send = makeIntent({
+      agentId: "agent-1",
+      agentDisplay: "Agent One",
+      deviceId: "device-1",
+      request: "run",
+      capabilities: [...capabilities],
+      sessionId: "s1",
+    });
+    const result = await decideIntent(send, {
+      settings: settings({ approvalMode: "approve", relayCredential: PLOW_CREDENTIAL }),
+      apiBaseUrl: "https://api.plow.co",
+      plowRoot: PLOW_ROOT,
+      auditEntries: () => [],
+      record: () => {},
+      review,
+      openApproval,
+    });
+    expect(result).toEqual({ decision: "allow_once", source: "approve" });
+    expect(review).not.toHaveBeenCalled();
+    expect(openApproval).not.toHaveBeenCalled();
   });
 
   it("approve still asks for a script: the one intent whose only bound is a reader", async () => {
