@@ -732,8 +732,8 @@ export const TOOLS: ToolSpec[] = [
     description:
       "What Plow has already done on this Mac, by any agent, from Latch's audit log: every request, " +
       "who made it, how it was decided (Allowed, Always allowed, Denied, Timed out) and how it ended " +
-      "(Completed, Failed \u00b7 exit 1, Blocked \u00b7 Full Disk Access, Killed, Error, a browser " +
-      "session's state), newest first. Use it when the owner asks what Plow has done for them, " +
+      "(Completed, Failed \u00b7 exit 1, Blocked \u00b7 Full Disk Access, Killed, Error), newest first. " +
+      "Use it when the owner asks what Plow has done for them, " +
       "whether something was booked, sent, cancelled or paid, or what an earlier agent did \u2014 your own " +
       "sessions hold only your own conversations, so they cannot answer those. A row is a request, " +
       "not work done: only an allowed request with a clean outcome is something Plow did, and a " +
@@ -751,12 +751,17 @@ export const TOOLS: ToolSpec[] = [
     async run(args, ctx) {
       const a = jv(args);
       const limit = a.get("limit").num ?? 50;
+      // Requests only: a browser session's own row carries its opening
+      // request's intentId too, and would show beside it as a second line.
       const rows = auditActivities(ctx.device.audit.entries())
-        .filter((row) => row.intentId !== null)
+        .filter((row) => row.id.startsWith("intent:"))
         .slice(0, limit)
         .map((row) => ({
           ts: row.ts,
-          agent: row.agentDisplay,
+          // The credential's session id is the identity; the name is a label
+          // two credentials can share, and old logs carry no name at all.
+          agent_id: row.agentId,
+          agent: row.agentDisplay ?? row.agentId,
           decision: row.decision,
           decided_by: row.decidedBy,
           status: row.status,

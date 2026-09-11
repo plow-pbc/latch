@@ -123,17 +123,24 @@ describe("plow_history", () => {
     rec("intent_decision", { intentId: "c", decision: "always_allow", source: "rule" });
     rec("exec_start", { intentId: "c", argv: ["plow-gog"] });
     rec("exec_end", { intentId: "c", exit_code: 1 });
+    // A browser open is one request, however long the session it opened lives
+    // -- and an old log's request with no display name still names its agent.
+    rec("intent_received", { intentId: "d", agent: "850", request: "open browser: dominos.com", goal: "Order dinner", capabilities: [] });
+    rec("intent_decision", { intentId: "d", decision: "allow_once", source: "ask" });
+    rec("browser_session_opened", { intentId: "d", session: "S", origins: ["dominos.com"], headed: false });
+    rec("browser_navigated", { session: "S", url: "https://dominos.com/" });
 
     const { payload, isError } = await callTool(server, "plow_history", {}, AGENT);
     expect(isError).toBe(false);
-    const rows = (payload as { rows: { agent: string; decision: string; status: string; goal: string }[] }).rows;
-    expect(rows.map((r) => [r.agent, r.decision, r.status, r.goal])).toEqual([
-      ["Willow", "Always allowed", "Failed · exit 1", "Read the calendar"],
-      ["Elm", "Denied", "", "Pay the mortgage"],
-      ["Elm", "Allowed", "Completed", "Cancel the booking"],
+    const rows = (payload as { rows: { agent: string; agent_id: string; decision: string; status: string; goal: string }[] }).rows;
+    expect(rows.map((r) => [r.agent, r.agent_id, r.decision, r.status, r.goal])).toEqual([
+      ["850", "850", "Allowed", "Completed", "Order dinner"],
+      ["Willow", "1337", "Always allowed", "Failed · exit 1", "Read the calendar"],
+      ["Elm", "1152", "Denied", "", "Pay the mortgage"],
+      ["Elm", "1152", "Allowed", "Completed", "Cancel the booking"],
     ]);
     // Reading history is not itself a request: nothing new in the log.
-    expect(events(device).filter((e) => e === "intent_received").length).toBe(3);
+    expect(events(device).filter((e) => e === "intent_received").length).toBe(4);
 
     const limited = await callTool(server, "plow_history", { limit: 1 }, AGENT);
     expect((limited.payload as { rows: unknown[] }).rows.length).toBe(1);

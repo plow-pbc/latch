@@ -873,28 +873,6 @@ function describeStep(e: JSONValue): AuditStep {
   return { time: clock(ev.get("ts").str ?? ""), text, state };
 }
 
-/**
- * Whether an activity matches a free-text search: title, command, agent,
- * goal, the permission a block named, and every timeline line — so what the
- * detail pane would show is what the box finds.
- */
-export function activityMatches(a: AuditActivity, query: string): boolean {
-  const q = query.trim().toLowerCase();
-  if (!q) return true;
-  return [
-    a.title,
-    a.command ?? "",
-    a.agentDisplay ?? "",
-    a.agentId ?? "",
-    a.goal ?? "",
-    a.permission ?? "",
-    ...a.timeline.map((s) => s.text),
-  ]
-    .join(" ")
-    .toLowerCase()
-    .includes(q);
-}
-
 function dayTime(iso: string): string {
   if (!iso) return "";
   const d = new Date(iso);

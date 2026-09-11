@@ -11,7 +11,6 @@ import { Capability, capabilityDisplay, Intent, JSONValue, jv } from "@domo/prot
 // The audit view lives in device-core so the MCP server's `plow_history`
 // shows an agent the same rows this window shows the owner.
 export {
-  activityMatches,
   auditActivities,
   decidedByLabel,
 } from "@domo/device-core";

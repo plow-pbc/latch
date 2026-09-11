@@ -6,7 +6,7 @@
  */
 import { describe, expect, it } from "vitest";
 import { Intent, JSONValue, makeIntent } from "@domo/protocol";
-import { activityMatches, approvalViewModel, auditActivities } from "../src/viewModel.js";
+import { approvalViewModel, auditActivities } from "../src/viewModel.js";
 
 function intentOf(overrides: Partial<Intent> = {}): Intent {
   return {
@@ -282,14 +282,6 @@ describe("auditActivities (grouping)", () => {
     expect(blocked[0]!.statusKind).toBe("blocked");
   });
 
-  it("search matches across title, command, agent, and goal", () => {
-    const a = auditActivities(commandRun)[0]!;
-    expect(activityMatches(a, "df")).toBe(true);
-    expect(activityMatches(a, "disk")).toBe(true);
-    expect(activityMatches(a, "agentA")).toBe(true);
-    expect(activityMatches(a, "nonexistent")).toBe(false);
-  });
-
   it("a vault metadata read is over when logged — never Pending", () => {
     const acts = auditActivities([
       { event: "credential_metadata", op: "list", source: "vault", ts: "2026-08-18T12:00:00Z" },
@@ -548,10 +540,6 @@ describe("auditActivities (grouping)", () => {
     // The block's own time, for the Capabilities tab's "Show in Audit" cutoff:
     // the request began before a dismissal could, the refusal after.
     expect(run.blockedAt).toBe("2026-08-18T12:00:03Z");
-    expect(activityMatches(run, "full disk access")).toBe(true);
-    expect(activityMatches(run, "quit and reopen")).toBe(true);
-    expect(activityMatches(file, "Desktop folder")).toBe(true);
-    expect(activityMatches(orphan, "Full Disk Access")).toBe(false);
     expect(orphan.permission).toBeNull();
   });
 
