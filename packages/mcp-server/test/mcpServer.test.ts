@@ -5,9 +5,11 @@
  * audited. The audit log is the oracle.
  */
 import { afterEach, describe, expect, it } from "vitest";
+import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { canonicalize, JSONValue, jv } from "@domo/protocol";
 import {
   DENIAL_SOURCE_NO_CREDITS,
@@ -75,6 +77,13 @@ function makeServer(
 
 const events = (device: DeviceAgent): string[] =>
   device.audit.entries().map((e) => jv(e as JSONValue).get("event").str ?? "");
+
+/** A binary result's content array — `callTool` only reads the first text block. */
+type Block = { type: string; text?: string; resource?: { uri: string; blob: string } };
+async function blocks(server: DomoMcpServer, name: string, args: object): Promise<Block[]> {
+  return parse(await rpc(server, "tools/call", { name, arguments: args }, AGENT)).result!
+    .content as unknown as Block[];
+}
 
 describe("the reduced tool surface (§4.5)", () => {
   it("advertises exactly the surviving tools and no device selection", async () => {
@@ -201,6 +210,28 @@ describe("a tool call end to end, in process", () => {
     expect(jv(received).get("capabilities").arr).toEqual([`Read: ${canonicalize(file)}`]);
     expect(jv(received).get("agent").str).toBe("agent-1");
     expect(jv(received).get("goal").str).toBe("check the greeting");
+  });
+
+  it("returns a binary file as an embedded resource, not base64 text", async () => {
+    // A binary file must reach the agent as bytes, not as a string a client
+    // may shorten: Hermes cuts any MCP text result over 2,000,000 chars,
+    // which corrupted every iPhone photo over ~1.5 MB (latch#368). 3 MiB of
+    // random bytes is never valid UTF-8, and its base64 (4 MiB) is past that
+    // cut point.
+    const { server } = makeServer();
+    const file = path.join(tempDir(), "IMG_7287.heic");
+    const bytes = crypto.randomBytes(3 * 1024 * 1024);
+    fs.writeFileSync(file, bytes);
+
+    const [resource, summary] = await blocks(server, "plow_read_file", { path: file });
+    expect(resource.type).toBe("resource");
+    expect(resource.resource!.uri).toBe(pathToFileURL(canonicalize(file)).href);
+    expect(Buffer.from(resource.resource!.blob, "base64").equals(bytes)).toBe(true);
+    expect(JSON.parse(summary.text!)).toEqual({
+      status: "completed",
+      path: canonicalize(file),
+      bytes: bytes.length,
+    });
   });
 
   it.skipIf(!ON_MAC)("goal text cannot widen the sandbox: a path outside its permitted region is blocked", async () => {
@@ -391,6 +422,28 @@ describe("the deferred-result contract (§4.3)", () => {
     // A call that finishes inside the budget says so in its own payload.
     const { first: fast } = await deferredRead(new ScriptedPolicy("allow_once"));
     expect(fast.payload.status).toBe("completed");
+  });
+
+  it("a deferred binary read returns the same resource as a direct one", async () => {
+    const { server } = makeServer(new ScriptedPolicy("allow_once", 200), SHORT);
+    const file = path.join(tempDir(), "IMG_7287.heic");
+    const bytes = crypto.randomBytes(3 * 1024 * 1024);
+    fs.writeFileSync(file, bytes);
+
+    const pending = await callTool(server, "plow_read_file", { path: file }, AGENT);
+    expect(pending.payload.status).toBe("pending");
+
+    const [resource, summary, envelope] = await pollUntil(
+      () => blocks(server, "plow_get_result", { handle: pending.payload.handle }),
+      (b) => b[0]?.type === "resource",
+    );
+    expect(Buffer.from(resource.resource!.blob, "base64").equals(bytes)).toBe(true);
+    expect(JSON.parse(summary.text!)).toEqual({
+      status: "completed",
+      path: canonicalize(file),
+      bytes: bytes.length,
+    });
+    expect(JSON.parse(envelope.text!)).toEqual({ status: "ready", handle: pending.payload.handle });
   });
 
   it("a handle belongs to the agent that created it — another agent gets `unknown`", async () => {
