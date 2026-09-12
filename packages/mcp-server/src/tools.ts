@@ -41,6 +41,7 @@ import {
 import { BlockedError, DeferredResults, DeniedError, DeviceError, Progress } from "./deferred.js";
 import { JobOwners } from "./jobs.js";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 
 /** One promise, four descriptions: four wordings of it are four things to drift. */
 const EVAL_REFUSED =
@@ -275,6 +276,8 @@ export const TOOLS: ToolSpec[] = [
       "They may be asked to approve, so this can return a pending handle. Paths inside " +
       "~/Plow (the shared Plow folder — see the plow-folder skill) approve automatically " +
       "unless this Mac is set to deny everything. " +
+      "Text comes back inline; any other file (a photo, a PDF) comes back as an embedded " +
+      "resource your client saves as a local file, so read or convert that file. " +
       BLOCKED_COPY,
     inputSchema: {
       type: "object",
@@ -303,10 +306,17 @@ export const TOOLS: ToolSpec[] = [
       if (base64 === null) throw new Error("no content returned");
       const data = Buffer.from(base64, "base64");
       const text = data.toString("utf8");
-      // Text when it round-trips as UTF-8, base64 otherwise — binary safety.
-      return Buffer.from(text, "utf8").equals(data)
-        ? { path, content: text }
-        : { path, content_base64: base64 };
+      // Text when it round-trips as UTF-8. Anything else goes out as an MCP
+      // embedded resource, which the client stores as a file: base64 in a text
+      // block is only a string, and clients shorten long strings (Hermes cuts
+      // any text result over 2M chars mid-payload).
+      if (Buffer.from(text, "utf8").equals(data)) return { path, content: text };
+      return {
+        __mcpContent: [
+          { type: "resource", resource: { uri: pathToFileURL(path).href, blob: base64 } },
+          { type: "text", text: canonicalJSON({ status: "completed", path, bytes: data.length }) },
+        ],
+      };
     },
   },
   {
@@ -1165,7 +1175,8 @@ export const TOOLS: ToolSpec[] = [
 /** An MCP content block a tool result can become. */
 export type ToolBlock =
   | { type: "text"; text: string }
-  | { type: "image"; data: string; mimeType: string };
+  | { type: "image"; data: string; mimeType: string }
+  | { type: "resource"; resource: { uri: string; blob: string } };
 
 /** The single text block a plain tool result becomes. */
 export function toolContent(value: JSONValue): { type: "text"; text: string } {
@@ -1174,22 +1185,34 @@ export function toolContent(value: JSONValue): { type: "text"; text: string } {
 
 /**
  * The content blocks a tool result becomes. Most results are one JSON text
- * block; a result carrying `__mcpContent` (a screenshot) is expanded into its
- * prebuilt image + text blocks so the agent SEES the page instead of a base64
- * string it cannot render.
+ * block; a result carrying `__mcpContent` (a screenshot, a binary file) expands
+ * into its prebuilt blocks. A deferred call that finished carries that result
+ * under `result` and expands the same way, followed by the envelope itself, so
+ * waiting for approval never turns bytes back into a string.
  */
 export function toolBlocks(value: JSONValue): ToolBlock[] {
-  const mc = jv(value).get("__mcpContent").arr;
-  if (mc === null) return [toolContent(value)];
-  return mc.map((block) => {
-    const b = jv(block);
-    if (b.get("type").str === "image") {
+  const v = jv(value);
+  const deferred = v.get("result").get("__mcpContent").arr;
+  if (deferred !== null) {
+    const envelope = { ...(v.obj ?? {}) };
+    delete envelope.result;
+    return [...deferred.map(toolBlock), toolContent(envelope as JSONValue)];
+  }
+  const mc = v.get("__mcpContent").arr;
+  return mc === null ? [toolContent(value)] : mc.map(toolBlock);
+}
+
+function toolBlock(block: JSONValue): ToolBlock {
+  const b = jv(block);
+  switch (b.get("type").str) {
+    case "image":
+      return { type: "image", data: b.get("data").str ?? "", mimeType: b.get("mimeType").str ?? "image/jpeg" };
+    case "resource":
       return {
-        type: "image",
-        data: b.get("data").str ?? "",
-        mimeType: b.get("mimeType").str ?? "image/jpeg",
+        type: "resource",
+        resource: { uri: b.get("resource").get("uri").str ?? "", blob: b.get("resource").get("blob").str ?? "" },
       };
-    }
-    return { type: "text", text: b.get("text").str ?? "" };
-  });
+    default:
+      return { type: "text", text: b.get("text").str ?? "" };
+  }
 }
