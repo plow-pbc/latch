@@ -173,6 +173,7 @@ describe("browser tools (fake runtime)", () => {
     const ext = await callTool(server, "plow_browser_request", { session, origins: ["popup.example"] }, AGENT);
     expect(ext.isError).toBe(false);
     expect(ext.payload.status).toBe("completed");
+    expect(ext.payload.note).toMatch(/now reaches/);
     expect((await act(server, session, "text")).isError).toBe(false);
 
     // The vault answers on its own tool now, with no session involved; filling
