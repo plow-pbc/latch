@@ -67,3 +67,19 @@ html, body { height: 100%; background: transparent; overflow: hidden; }
 }
 .fda-drag-hint span { font-size: 8px; font-weight: 300; }
 .fda-hand { width: 15px; height: 15px; }
+
+/* Dark theme. styles.css flips the tokens (--fg, --muted, --green-fg) on its
+   own; the hardcoded translucent light surfaces above are what must flip
+   here, or the panel reads as a light-mode card on a dark desktop. */
+@media (prefers-color-scheme: dark) {
+  .fda-panel {
+    background: rgba(38, 38, 42, 0.94);
+    border-color: rgba(255, 255, 255, 0.14);
+  }
+  .fda-close { background: rgba(255, 255, 255, 0.14); }
+  .fda-close:hover { background: rgba(255, 255, 255, 0.24); }
+  .fda-drag-tile {
+    background: rgba(255, 255, 255, 0.08);
+    border-color: rgba(255, 255, 255, 0.1);
+  }
+}

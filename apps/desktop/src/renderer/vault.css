@@ -178,6 +178,16 @@
 .vaultui .btn-primary svg { width: 15px; height: 15px; }
 .vaultui .btn-primary:hover { filter: brightness(1.06); }
 .vaultui .btn-primary:active { transform: translateY(.5px); }
+/* Same dark-theme primary as styles.css's .btn.primary: the welcome screen's
+   volt, so every primary button in the app matches. */
+@media (prefers-color-scheme: dark) {
+  .vaultui .btn-primary,
+  .vaultui .btn.save,
+  .vaultui .btn.save:hover {
+    background: var(--volt); color: var(--midnight); border-color: var(--volt);
+    box-shadow: 0 8px 26px -10px var(--volt-glow);
+  }
+}
 .vaultui .sheet-sub { font-size: 13px; color: var(--muted); margin: 0 0 16px; }
 .vaultui .confirm-overlay { z-index: 90; }
 .vaultui .confirm-p { font-size: 13px; color: var(--muted); line-height: 1.55; margin: 9px 0 20px; }
