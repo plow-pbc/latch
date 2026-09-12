@@ -897,7 +897,12 @@ export const TOOLS: ToolSpec[] = [
       // empty fields: "your browser is closing" must not read as "widened".
       const failed = r.get("error").str;
       if (failed !== null) throw new ToolError(failed);
-      return { session, origins: r.get("origins").value ?? null, items: r.get("items").value ?? null };
+      return {
+        session,
+        origins: r.get("origins").value ?? null,
+        items: r.get("items").value ?? null,
+        note: "approved — this session now reaches these origins and items; continue with plow_browser on the same session handle",
+      };
     },
   },
   {

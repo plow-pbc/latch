@@ -112,6 +112,10 @@ describe("the server tells the agent what it is for", () => {
     expect(SERVER_INSTRUCTIONS).toMatch(/tell the user/i);
     expect(SERVER_INSTRUCTIONS).toMatch(/plow_get_result/);
     expect(SERVER_INSTRUCTIONS).toMatch(/do not re-issue/i);
+    // The opposite answer: finished, and nothing left for the user to do.
+    expect(SERVER_INSTRUCTIONS).toMatch(/status 'completed'/);
+    expect(SERVER_INSTRUCTIONS).toMatch(/nothing is waiting on the user/i);
+    expect(SERVER_INSTRUCTIONS).toMatch(/never tell the user .* pending/i);
   });
 
   // The third answer: this Mac itself said no. The distinction agents got

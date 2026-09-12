@@ -189,7 +189,7 @@ describe("a tool call end to end, in process", () => {
     );
     expect(status).toBe(200);
     expect(isError).toBe(false);
-    expect(payload).toEqual({ path: canonicalize(file), content: "hello mac" });
+    expect(payload).toEqual({ status: "completed", path: canonicalize(file), content: "hello mac" });
 
     expect(events(device)).toEqual([
       "intent_received",
@@ -387,7 +387,10 @@ describe("the deferred-result contract (§4.3)", () => {
     ).payload;
     expect(poll.status).toBe("ready");
     // Byte-for-byte what the original call would have returned.
-    expect(poll.result).toEqual({ path: canonicalize(file), content: "slow content" });
+    expect(poll.result).toEqual({ status: "completed", path: canonicalize(file), content: "slow content" });
+    // A call that finishes inside the budget says so in its own payload.
+    const { first: fast } = await deferredRead(new ScriptedPolicy("allow_once"));
+    expect(fast.payload.status).toBe("completed");
   });
 
   it("a handle belongs to the agent that created it — another agent gets `unknown`", async () => {
