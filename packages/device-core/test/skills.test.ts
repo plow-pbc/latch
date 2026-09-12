@@ -169,7 +169,9 @@ describe("the built-in imessage skill", () => {
     ["every send decided on its own, by design", /every send is decided on its own, by design/i],
     ["Approve mode allowing a send unread", /under Approve the send is allowed without\s+anyone reading it/i],
     ["not fighting approval with a wrapper script", /do not fight this with a wrapper script/i],
-    ["verifying delivery after send", /is_sent.*and.*is_delivered/i],
+    ["the success criterion for a send", /success criterion is .?is_sent = 1.? and .?error = 0.?/i],
+    ["is_delivered not being part of that criterion", /is_delivered.? is not part of it/i],
+    ["what a non-zero error means", /error = 22.?\s+is the\s+common one/i],
     ["byte-identical argv for unattended reads", /byte-identical/i],
   ])("publishes %s", (_what, pattern) => {
     expect(imessageSkillFor("/Users/testowner").body).toMatch(pattern);
