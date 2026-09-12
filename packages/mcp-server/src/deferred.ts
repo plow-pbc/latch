@@ -224,10 +224,19 @@ export class DeferredResults {
         entry.expiresAt = this.now() + this.ttlMs;
       }
     };
+    // A call that finished says so in its own payload. The pending envelope
+    // is self-describing; a bare object that came back inside the budget was
+    // not, and an agent read one as still waiting and told the owner so. A
+    // `status` the tool set itself (`running`, `blocked`) stands.
+    const completed = (result: JSONValue): JSONValue =>
+      result !== null && typeof result === "object" && !Array.isArray(result) && !("status" in result)
+        ? { status: "completed", ...result }
+        : result;
     const done = started.then(
       (result) => {
-        record({ status: "ready", handle, result });
-        return { ok: true as const, result };
+        const finished = completed(result);
+        record({ status: "ready", handle, result: finished });
+        return { ok: true as const, result: finished };
       },
       (error: unknown) => {
         record(terminalFailure(handle, error));
