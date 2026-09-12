@@ -224,6 +224,22 @@ describe("every tool this Mac can stop says so", () => {
     expect(d.plow_get_output).toMatch(/plow_run_applescript/);
   });
 
+  // A driving agent scripted Messages, read exit_code 0 as proof, and told the
+  // owner "sent" — from the owner's own account, without saying so. Both facts
+  // were already correct in the iMessage skill and neither had ever been read:
+  // that agent had called plow_list_skills zero times while scripting this Mac.
+  // Copy an agent must opt into reading is copy it can miss, so the two that
+  // decide whether a report to a human is true live on the tool itself.
+  it("the script tool says exit 0 is not delivery, and that a send goes out as the owner", async () => {
+    const d = await descriptions(makeServer());
+    expect(d.plow_run_applescript).toMatch(/zero exit_code means the app accepted the script/);
+    expect(d.plow_run_applescript).toMatch(/fails silently/);
+    expect(d.plow_run_applescript).toMatch(/as the owner's own account/);
+    expect(d.plow_run_applescript).toMatch(/not yours to choose/);
+    // And it points at where the after-the-fact check actually lives.
+    expect(d.plow_run_applescript).toMatch(/plow_list_skills/);
+  });
+
   it("plow_run_command explains a running result that carries a diagnosis", async () => {
     const d = await descriptions(makeServer());
     expect(d.plow_run_command).toMatch(/still 'running' but carries a 'diagnosis'/);
