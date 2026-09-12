@@ -284,8 +284,8 @@ export function createDomoMcpServer(
               const result = spec.deferrable
                 ? await deferred.run(agent.agentId, body)
                 : await body({ decided: () => {} });
-              // Most results are one text block; a screenshot expands into an
-              // image + text block via `__mcpContent`.
+              // Most results are one text block; a screenshot or a binary file
+              // expands into its prebuilt blocks via `__mcpContent`.
               return { content: toolBlocks(result) };
             } catch (error: unknown) {
               const message = error instanceof Error ? error.message : String(error);
