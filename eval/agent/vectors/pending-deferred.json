@@ -14,7 +14,8 @@
       "handle": "EVAL-HANDLE",
       "result": {
         "content": "Dentist Tuesday 3pm.\n",
-        "path": "~/notes.txt"
+        "path": "~/notes.txt",
+        "status": "completed"
       },
       "status": "ready"
     }

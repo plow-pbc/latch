@@ -5,7 +5,8 @@
   "answers": {
     "plow_read_file": {
       "content": "Dentist Tuesday 3pm. Pick up the dry cleaning.\n",
-      "path": "~/notes.txt"
+      "path": "~/notes.txt",
+      "status": "completed"
     },
     "plow_run_command": {
       "exit_code": 0,
