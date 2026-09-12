@@ -580,10 +580,11 @@ export const TOOLS: ToolSpec[] = [
       "osascript's message with a non-zero exit_code and 'host_gate': 'none' — the script's own " +
       "problem, not a permission. A zero exit_code means the app accepted the script, not that " +
       "anything reached anyone — a send to an unreachable handle fails silently, so it is never " +
-      "your evidence a message went out; this Mac's skill for the app (plow_list_skills) carries " +
-      "the check that is. And a script that sends goes out as the owner's own account, whichever " +
-      "one the app is signed into — their setting, not yours to choose — so say whose it went out " +
-      "as when you report it. A long script returns a job handle for plow_get_output, and a " +
+      "your evidence a message went out; for a Messages send, this Mac's iMessage skill " +
+      "(plow_list_skills) carries the check that is. And a script that sends goes out as the " +
+      "owner's own account, whichever one the app is signed into — their setting, not yours to " +
+      "choose — so say whose it went out as when you report it. A long script returns a job " +
+      "handle for plow_get_output, and a " +
       "call that outruns this Mac's budget defers to plow_get_result. " +
       BLOCKED_COPY,
     inputSchema: {
