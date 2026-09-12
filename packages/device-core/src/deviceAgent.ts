@@ -11,7 +11,7 @@
  * key to pin. That is provenance, not confinement — DESIGN.md §4 *The intent
  * object* owns where an intent's contents go.
  */
-import { capabilityDisplay, Intent, intentIsExpired, JSONValue, jv, overlapsRoot } from "@domo/protocol";
+import { AlwaysAllowRule, capabilityDisplay, Intent, intentIsExpired, JSONValue, jv, overlapsRoot } from "@domo/protocol";
 import { PROVIDERS, vendoredProvider, type VendoredProvider } from "./providers/registry.js";
 import { MintError, type MintedAccounts, type Minter } from "./providers/mint.js";
 import { conflictRefusal, gogExitReason, mergeFanout, planPlowGog } from "./providers/plowGog.js";
@@ -337,6 +337,29 @@ export class DeviceAgent {
     this.hostProbes = hostProbes ?? nodeProbes({ ownerHome });
     this.audit = new AuditLog(path.join(home, "device/audit.ndjson"));
     this.policy = new PolicyEngine(path.join(home, "device/rules.json"));
+    // Every rule that comes to exist, and every one that stops, is a line in
+    // the log. A rule is not always the twin of an `always_allow` decision:
+    // an answer that arrived after the approval's deadline denies the request
+    // as expired and still stores the rule (the deadline is the request's,
+    // not the owner's choice — reviewPolicy.ts), and a revoke has no intent
+    // at all. Without these lines the log could not explain either.
+    this.policy.events.on("stored", ({ rule, intentId }: { rule: AlwaysAllowRule; intentId: string }) => {
+      this.audit.record("rule_stored", {
+        intentId,
+        ruleKey: rule.ruleKey,
+        agent: rule.agentId,
+        agent_name: rule.agentDisplay,
+        capabilities: rule.capabilities.map(capabilityDisplay),
+      });
+    });
+    this.policy.events.on("revoked", ({ rule }: { rule: AlwaysAllowRule }) => {
+      this.audit.record("rule_revoked", {
+        ruleKey: rule.ruleKey,
+        agent: rule.agentId,
+        agent_name: rule.agentDisplay,
+        capabilities: rule.capabilities.map(capabilityDisplay),
+      });
+    });
     this.executor = new Executor(path.join(home, "device/scratch"), undefined, this.vendorDirs);
     this.skills = new SkillRegistry();
     // `ownerHome`, not `home` — this describes where WhatsApp put the owner's

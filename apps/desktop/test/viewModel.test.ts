@@ -146,6 +146,29 @@ describe("auditActivities (grouping)", () => {
     expect(a.timeline.find((s) => s.text.startsWith("Run finished"))!.state).toBe("ok");
   });
 
+  it("a rule saved by a late click sits in the timed-out request's timeline; a revoke is its own row", () => {
+    const acts = auditActivities([
+      { event: "intent_received", intentId: "i", agent: "a1", agent_name: "Agent", request: "run: x", ts: "2026-08-09T12:00:00Z" },
+      { event: "rule_stored", intentId: "i", ruleKey: "k", agent: "a1", agent_name: "Agent", capabilities: ["Run: x"], ts: "2026-08-09T12:16:00Z" },
+      { event: "intent_decision", intentId: "i", decision: "deny", source: "expired", ts: "2026-08-09T12:16:01Z" },
+      { event: "rule_revoked", ruleKey: "k", agent: "a1", agent_name: "Agent", capabilities: ["Run: x"], ts: "2026-08-09T12:20:00Z" },
+    ]);
+    expect(acts).toHaveLength(2);
+    const [revoke, request] = acts as [typeof acts[0], typeof acts[0]];
+    expect(request.decision).toBe("Timed out");
+    expect(request.timeline.map((s) => s.text)).toEqual([
+      "Request: run: x",
+      "Always-allow rule saved",
+      "Decision: deny — No one (timed out)",
+    ]);
+    expect(revoke.title).toBe("Always-allow rule revoked — Agent");
+    expect(revoke.status).toBe("Revoked");
+    expect(revoke.kind).toBe("access");
+    expect(revoke.agentId).toBe("a1");
+    expect(revoke.agentDisplay).toBe("Agent");
+    expect(revoke.timeline.map((s) => s.text)).toEqual(["Always-allow rule revoked — Agent"]);
+  });
+
   it("records how each intent was decided (decidedBy from source)", () => {
     const mk = (source: string, decision = "allow_once") =>
       auditActivities([

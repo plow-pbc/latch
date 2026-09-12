@@ -16,7 +16,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { Intent, JSONValue, makeIntent } from "@domo/protocol";
 import { adversarialReview } from "../src/adversarialAgent.js";
 import type { ReviewArgs, ReviewFailureCause, Verdict } from "../src/adversarialAgent.js";
-import { DENIAL_SOURCE_NO_REVIEWER, PolicyEngine } from "@domo/device-core";
+import { APPROVAL_SOURCE_EXPIRED, ApprovalStore, DENIAL_SOURCE_NO_REVIEWER, PolicyEngine } from "@domo/device-core";
 import type { PolicyDelegate } from "@domo/device-core";
 import fs from "node:fs";
 import os from "node:os";
@@ -24,6 +24,7 @@ import path from "node:path";
 import { Settings } from "../src/settings.js";
 import { auditActivities, decidedByLabel } from "../src/viewModel.js";
 import {
+  ApprovalQueue,
   ReviewHint,
   decideIntent,
   inferenceStatus,
@@ -92,6 +93,9 @@ function harness(
       apiBaseUrl: "https://api.plow.co",
       plowRoot: PLOW_ROOT,
       auditEntries: () => [],
+      queue: new ApprovalQueue(),
+      ruleAnswers: async () => false,
+      storeRule: () => {},
       record: (event, fields) => records.push({ event, fields }),
       review,
       openApproval,
@@ -272,6 +276,9 @@ describe("a stored rule cannot stand in for a required review", () => {
           apiBaseUrl: "https://api.plow.co",
       plowRoot: PLOW_ROOT,
           auditEntries: () => [],
+      queue: new ApprovalQueue(),
+      ruleAnswers: async () => false,
+      storeRule: () => {},
           record: () => {},
           review: async () => ({ verdict: await answer(), reason: "because" }),
           openApproval: async () => "deny" as const,
@@ -379,6 +386,236 @@ describe("a stored rule cannot stand in for a required review", () => {
     });
 
     expect(grant.source).toBe("rule");
+  });
+});
+
+describe("a queued dialog is answered by a rule stored ahead of it", () => {
+  let rulesDir: string;
+  let engine: PolicyEngine;
+
+  beforeEach(() => {
+    rulesDir = fs.mkdtempSync(path.join(os.tmpdir(), "domo-rules-"));
+    engine = new PolicyEngine(path.join(rulesDir, "rules.json"));
+  });
+  afterEach(() => {
+    fs.rmSync(rulesDir, { recursive: true, force: true });
+  });
+
+  /** The first dialog is on screen. Its opening awaits the Plow-folder
+   * confinement check, which is real file-system I/O, so wait rather than tick. */
+  const firstShown = async (shown: string[]) => {
+    for (let i = 0; i < 200 && shown.length === 0; i++) await new Promise((r) => setTimeout(r, 1));
+  };
+
+  /** The intent a second agent call makes: same bound, so the same rule key. */
+  const twin = () => intent();
+  const other = () =>
+    makeIntent({
+      agentId: "agent-1",
+      agentDisplay: "Agent One",
+      deviceId: "device-1",
+      request: "run: pwd",
+      capabilities: [{ kind: "process.exec", argv: ["pwd"] }],
+      sessionId: "s1",
+    });
+
+  /**
+   * The app's delegate, minus Electron: ONE queue for every dialog, and the
+   * engine re-asked for a rule when an intent's turn comes. `answers` is what
+   * the human clicks, per request text, in the order that request's dialogs
+   * open — per request, not per dialog, because each intent's confinement
+   * check is file I/O and the order they reach the queue is not the order
+   * they were made. A dialog with no answer left is a bug. Every dialog
+   * stays open until `release()` lets the oldest open one go, so the rest
+   * queue up behind it the way a burst of agent calls does.
+   */
+  type Answer = "allow_once" | "always_allow" | "deny";
+  const delegate = (s: Settings, answers: Record<string, Answer[]>) => {
+    const queue = new ApprovalQueue();
+    const shown: string[] = [];
+    const open: (() => void)[] = [];
+    const d: PolicyDelegate = {
+      mayGrantFromStoredRule: () => storedRuleMayGrant(s),
+      decideIntent: (i: Intent) =>
+        decideIntent(i, {
+          settings: s,
+          apiBaseUrl: "https://api.plow.co",
+          plowRoot: PLOW_ROOT,
+          auditEntries: () => [],
+          record: () => {},
+          review: async () => ({ verdict: "ask", reason: "" }),
+          queue,
+          ruleAnswers: () => engine.ruleAnswers(i, d),
+          storeRule: () => engine.storeRule(i),
+          openApproval: async () => {
+            shown.push(i.request);
+            await new Promise<void>((r) => open.push(r));
+            const answer = answers[i.request]?.shift();
+            if (!answer) throw new Error(`unexpected dialog for ${i.request}`);
+            return answer;
+          },
+        }),
+    };
+    /** The human answers the dialog on screen — once there is one. */
+    const release = async () => {
+      for (let i = 0; i < 200 && open.length === 0; i++) await new Promise((r) => setTimeout(r, 1));
+      const answer = open.shift();
+      if (!answer) throw new Error("no dialog to answer");
+      answer();
+    };
+    return { d, shown, release };
+  };
+
+  /** Settled, or still waiting: what a grant promise has done so far. */
+  const settled = async (p: Promise<unknown>) =>
+    Promise.race([p.then(() => true), new Promise<boolean>((r) => setTimeout(() => r(false), 20))]);
+
+  it("grants the twins behind an 'always allow' as the rule, with no dialog", async () => {
+    const { d, shown, release } = delegate(settings(), { "run: ls": ["always_allow"] });
+    const first = engine.decide(intent(), d);
+    const second = engine.decide(twin(), d);
+    const third = engine.decide(twin(), d);
+    // All three were checked against an empty rule set and are waiting on the
+    // human; only the first has a window.
+    await firstShown(shown);
+    expect(shown).toEqual(["run: ls"]);
+
+    await release();
+    const grants = await Promise.all([first, second, third]);
+    expect(grants.map((g) => g.decision)).toEqual(["always_allow", "always_allow", "always_allow"]);
+    // The one the human answered, and the two the rule answered for them.
+    expect(grants.map((g) => g.source).sort()).toEqual(["ask", "rule", "rule"]);
+    expect(shown).toEqual(["run: ls"]);
+    // One rule, stored once — the replayed grants did not rewrite it.
+    expect(engine.allRules()).toHaveLength(1);
+  });
+
+  it("[A, B, A] answered 'always allow' on A leaves the human with [B]", async () => {
+    const { d, shown, release } = delegate(settings(), {
+      "run: ls": ["always_allow"],
+      "run: pwd": ["deny"],
+    });
+    const a1 = engine.decide(intent(), d);
+    const b = engine.decide(other(), d);
+    const a2 = engine.decide(twin(), d);
+    await firstShown(shown);
+    // Whichever reached the queue first is on screen; answer until it is an A.
+    while (shown[shown.length - 1] !== "run: ls") await release();
+    expect(await settled(a2)).toBe(false);
+    await release();
+
+    // The trailing A is granted by the rule NOW, with B's dialog still open
+    // — not once B is answered, and not by a dialog of its own.
+    const [first, trailing] = await Promise.all([a1, a2]);
+    expect(first.source).toBe("ask");
+    expect(trailing).toMatchObject({ decision: "always_allow", source: "rule" });
+    expect(await settled(b)).toBe(false);
+    expect(shown.filter((r) => r === "run: ls")).toEqual(["run: ls"]);
+
+    await release();
+    expect(await b).toMatchObject({ decision: "deny", source: "ask" });
+    expect(shown.sort()).toEqual(["run: ls", "run: pwd"]);
+  });
+
+  it("still asks about a queued request the new rule does not cover", async () => {
+    const { d, shown, release } = delegate(settings(), {
+      "run: ls": ["always_allow"],
+      "run: pwd": ["deny"],
+    });
+    const first = engine.decide(intent(), d);
+    const second = engine.decide(other(), d);
+    await release();
+    await release();
+    const grants = await Promise.all([first, second]);
+    expect(grants.map((g) => [g.decision, g.source])).toEqual([
+      ["always_allow", "ask"],
+      ["deny", "ask"],
+    ]);
+    expect(shown.sort()).toEqual(["run: ls", "run: pwd"]);
+  });
+
+  it("an 'allow once' ahead of a twin decides nothing for it", async () => {
+    const { d, shown, release } = delegate(settings(), { "run: ls": ["allow_once", "deny"] });
+    const first = engine.decide(intent(), d);
+    const second = engine.decide(twin(), d);
+    await release();
+    await release();
+    const grants = await Promise.all([first, second]);
+    expect(grants.map((g) => g.decision).sort()).toEqual(["allow_once", "deny"]);
+    expect(shown).toEqual(["run: ls", "run: ls"]);
+    expect(engine.allRules()).toHaveLength(0);
+  });
+
+  it("opens the dialogs one at a time", async () => {
+    const { d, shown, release } = delegate(settings(), {
+      "run: ls": ["deny", "deny"],
+      "run: pwd": ["deny"],
+    });
+    const all = Promise.all([engine.decide(intent(), d), engine.decide(other(), d), engine.decide(twin(), d)]);
+    await firstShown(shown);
+    // Two more are waiting on the queue, not on screen.
+    await new Promise((r) => setTimeout(r, 5));
+    expect(shown).toHaveLength(1);
+    await release();
+    await release();
+    await release();
+    await all;
+    expect(shown.sort()).toEqual(["run: ls", "run: ls", "run: pwd"]);
+  });
+
+  it("an 'always allow' after the approval's deadline keeps its rule — only the request expires", async () => {
+    // The app's real stack: the approval store's deadline wraps the dialog.
+    // A clock the test controls, and a deadline the click will miss.
+    let clock = 1_000;
+    const ttl = 50;
+    const openApproval = vi.fn(async () => {
+      clock += ttl + 1; // the owner comes back to the window late
+      return "always_allow" as const;
+    });
+    const dialog: PolicyDelegate = {
+      mayGrantFromStoredRule: () => storedRuleMayGrant(settings()),
+      decideIntent: (i: Intent) =>
+        decideIntent(i, {
+          settings: settings(),
+          apiBaseUrl: "https://api.plow.co",
+          plowRoot: PLOW_ROOT,
+          auditEntries: () => [],
+          record: () => {},
+          review: async () => ({ verdict: "ask", reason: "" }),
+          queue: new ApprovalQueue(),
+          ruleAnswers: () => engine.ruleAnswers(i, dialog),
+          storeRule: () => engine.storeRule(i),
+          openApproval,
+        }),
+    };
+    const store = new ApprovalStore(path.join(rulesDir, "approvals"), dialog, ttl, () => clock);
+    const stored: string[] = [];
+    engine.events.on("stored", ({ intentId }: { intentId: string }) => stored.push(intentId));
+
+    const late = intent();
+    const grant = await engine.decide(late, store);
+    // The request: denied, as a timeout — the click came too late for it.
+    expect(grant.decision).toBe("deny");
+    expect(grant.source).toBe(APPROVAL_SOURCE_EXPIRED);
+    // The choice: kept, and attributed to the request that made it.
+    expect(engine.allRules()).toHaveLength(1);
+    expect(stored).toEqual([late.intentId]);
+
+    // So the next matching request is the rule's, with no dialog.
+    const next = await engine.decide(twin(), store);
+    expect(next).toMatchObject({ decision: "always_allow", source: "rule" });
+    expect(openApproval).toHaveBeenCalledTimes(1);
+  });
+
+  it("a dialog that throws does not stall the ones behind it", async () => {
+    const queue = new ApprovalQueue();
+    const wait = { preempt: async () => null };
+    await expect(
+      queue.run({ ...wait, show: async () => { throw new Error("boom"); } }),
+    ).rejects.toThrow("boom");
+    await expect(
+      queue.run({ ...wait, show: async () => ({ decision: "deny", source: "ask" }) }),
+    ).resolves.toMatchObject({ decision: "deny" });
   });
 });
 
@@ -643,6 +880,9 @@ describe("the approval dialog's advice note carries no credential either", () =>
       apiBaseUrl: "https://api.plow.co",
       plowRoot: PLOW_ROOT,
       auditEntries: () => [],
+      queue: new ApprovalQueue(),
+      ruleAnswers: async () => false,
+      storeRule: () => {},
       record: () => {},
       review: adversarialReview, // the REAL one, guard included
       openApproval: async (hint) => {
@@ -870,6 +1110,9 @@ describe("the ~/Plow playground carve-out", () => {
       apiBaseUrl: "https://api.plow.co",
       plowRoot: PLOW_ROOT,
       auditEntries: () => [],
+      queue: new ApprovalQueue(),
+      ruleAnswers: async () => false,
+      storeRule: () => {},
       record: () => {},
       review,
       openApproval,

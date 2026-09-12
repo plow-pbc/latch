@@ -1135,3 +1135,36 @@ describe.skipIf(!ON_MAC)("a command this Mac refused", () => {
     expect(jv(await d.getOutput(response.get("handle").str!)).get("status").str).toBe("completed");
   });
 });
+
+describe("the rules an owner keeps are in the log", () => {
+  it("writes rule_stored under the intent that made it, and rule_revoked when it goes", async () => {
+    const home = tempDir();
+    const d = new DeviceAgent(home, "Test Mac", new HeadlessPolicy({ intent: "always_allow" }), null, home, null, [], null, null);
+    const caps: Capability[] = [{ kind: "process.exec", argv: ["/bin/echo", "hi"] }];
+    const first = intentFor(d, "run: echo hi", caps);
+    await d.handleIntent(first, {});
+
+    const lines = () => d.audit.entries().map((e) => jv(e as JSONValue));
+    const stored = lines().find((e) => e.get("event").str === "rule_stored")!;
+    expect(stored).toBeDefined();
+    expect(stored.get("intentId").str).toBe(first.intentId);
+    expect(stored.get("agent").str).toBe("agent-1");
+    expect(stored.get("agent_name").str).toBe("Agent");
+    expect(stored.get("ruleKey").str).toBe(d.policy.allRules()[0]!.ruleKey);
+    expect(stored.get("capabilities").arr).toHaveLength(1);
+    // Ahead of the decision line: the rule exists from the click, whatever
+    // the decision line goes on to say about the request.
+    const order = events(d);
+    expect(order.indexOf("rule_stored")).toBeLessThan(order.indexOf("intent_decision"));
+
+    // The replay stores nothing new, so says nothing.
+    await d.handleIntent(intentFor(d, "run: echo hi", caps), {});
+    expect(events(d).filter((e) => e === "rule_stored")).toHaveLength(1);
+
+    d.policy.removeRule(stored.get("ruleKey").str!);
+    const revoked = lines().find((e) => e.get("event").str === "rule_revoked")!;
+    expect(revoked.get("ruleKey").str).toBe(stored.get("ruleKey").str);
+    expect(revoked.get("intentId").str).toBeNull();
+    expect(revoked.get("agent_name").str).toBe("Agent");
+  });
+});

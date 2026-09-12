@@ -87,6 +87,70 @@ export function storedRuleMayGrant(settings: Settings): boolean {
   return mode !== "adversarial" && mode !== "deny";
 }
 
+/** A decision and HOW it was reached, for the audit log. */
+export type Decided = { decision: ApprovalDecision; source: string };
+
+/** A request waiting its turn for the human. */
+export interface QueuedApproval {
+  /**
+   * Answer without a dialog, if something decided this request while it
+   * waited — a rule stored by an "always allow" ahead of it. Null: wait.
+   */
+  preempt: () => Promise<Decided | null>;
+  /** Show the dialog. Runs only when no other dialog is open. */
+  show: () => Promise<Decided>;
+}
+
+/**
+ * One dialog at a time. Two approval windows must never overlap, so every
+ * request waits its turn here. A request is `preempt`ed rather than shown
+ * whenever something has already decided it: `sweep` asks every waiting
+ * request at once, the moment a rule is stored, so [A, B, A] answered
+ * "always allow" on the first A leaves the human with [B] — the second A is
+ * granted right then, not when its turn would have come. The head of the
+ * line is asked once more before its dialog opens, for a rule that landed
+ * between a sweep and its turn. A dialog that throws fails its own request
+ * and nothing behind it.
+ */
+export class ApprovalQueue {
+  private busy = false;
+  private line: { entry: QueuedApproval; resolve: (d: Decided) => void; reject: (e: unknown) => void }[] = [];
+
+  run(entry: QueuedApproval): Promise<Decided> {
+    return new Promise<Decided>((resolve, reject) => {
+      this.line.push({ entry, resolve, reject });
+      void this.advance();
+    });
+  }
+
+  /** Something may now answer waiting requests: settle every one it does, in place. */
+  async sweep(): Promise<void> {
+    for (const waiting of [...this.line]) {
+      const answer = await waiting.entry.preempt().catch(() => null);
+      if (answer === null) continue;
+      const at = this.line.indexOf(waiting);
+      if (at < 0) continue; // its turn came, and it answered for itself
+      this.line.splice(at, 1);
+      waiting.resolve(answer);
+    }
+  }
+
+  private async advance(): Promise<void> {
+    if (this.busy) return;
+    const next = this.line.shift();
+    if (!next) return;
+    this.busy = true;
+    try {
+      next.resolve((await next.entry.preempt()) ?? (await next.entry.show()));
+    } catch (e) {
+      next.reject(e);
+    } finally {
+      this.busy = false;
+      void this.advance();
+    }
+  }
+}
+
 /** Everything `decideIntent` needs from the outside world, injected for tests. */
 export interface DecideDeps {
   settings: Settings;
@@ -112,8 +176,29 @@ export interface DecideDeps {
     reason: string;
     cause?: ReviewFailureCause;
   }>;
-  /** Show the human the approval dialog, optionally with the reviewer's say. */
+  /**
+   * Show the human the approval dialog, optionally with the reviewer's say.
+   * Not serialized by the caller: `decideIntent` runs it through `queue`.
+   */
   openApproval: (hint: Promise<ReviewHint> | null) => Promise<ApprovalDecision>;
+  /** The one queue every dialog on this Mac goes through. */
+  queue: ApprovalQueue;
+  /**
+   * Does a stored always-allow rule cover this intent NOW, under the current
+   * mode? The policy engine asked once, before this delegate was consulted;
+   * this asks again when the dialog's turn comes, because the answer can
+   * have changed while it waited (the engine's `ruleAnswers`).
+   */
+  ruleAnswers: () => Promise<boolean>;
+  /**
+   * Store this intent's always-allow rule now (the engine's `storeRule`).
+   * Called the moment the human answers "always allow", while the dialog
+   * still holds the queue: the next dialog in line asks `ruleAnswers` as
+   * soon as this one lets go, and the engine's own store, which waits for
+   * the answer to travel back up through `decide`, comes a few microtasks
+   * too late for it.
+   */
+  storeRule: () => void;
 }
 
 /**
@@ -124,10 +209,7 @@ export interface DecideDeps {
  * adversarial mode denies (`DENIAL_SOURCE_NO_REVIEWER`) and Ask
  * mode's suggestions are skipped.
  */
-export async function decideIntent(
-  intent: Intent,
-  deps: DecideDeps,
-): Promise<{ decision: ApprovalDecision; source: string }> {
+export async function decideIntent(intent: Intent, deps: DecideDeps): Promise<Decided> {
   const { settings } = deps;
   const mode = settings.approvalMode ?? DEFAULT_APPROVAL_MODE;
 
@@ -254,5 +336,32 @@ export async function decideIntent(
           reason: r.reason,
         }))
       : null;
-  return { decision: await deps.openApproval(hint), source: "ask" };
+  return deps.queue.run({
+    // A dialog ahead of this one in the queue may have been answered "always
+    // allow", storing a rule that covers this intent too. Then the human has
+    // already decided it: it is granted the way the engine grants a matching
+    // rule — as the rule's answer, not the dialog's — and no window opens.
+    preempt: async () =>
+      (await deps.ruleAnswers()) ? { decision: "always_allow", source: "rule" } : null,
+    show: async () => {
+      const decision = await deps.openApproval(hint);
+      if (decision === "always_allow") {
+        // Stored, then every request still waiting is asked whether the new
+        // rule covers it — before this dialog's own answer goes back, so
+        // the ones it covers are granted now and never reach the human.
+        //
+        // DELIBERATELY ahead of the approval store's deadline check. That
+        // deadline is the REQUEST's: an answer past it denies the request as
+        // expired, because the agent's call is long stale. The rule is not
+        // stale — it is the owner's standing choice about exactly the bound
+        // they were shown, and would be asked for again on the next matching
+        // request only to get the same click. So a late "always allow" keeps
+        // its rule, and the audit log says so: `rule_stored` is written when
+        // the rule is, and the decision line then says what the request got.
+        deps.storeRule();
+        await deps.queue.sweep();
+      }
+      return { decision, source: "ask" };
+    },
+  });
 }
