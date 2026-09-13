@@ -698,13 +698,19 @@ export class BrowserSessions {
     // settling, up to what the exchange can carry. Read here, before the
     // command runs, because the clicks worth counting later are the ones that
     // failed, and those are audited from the catch below.
-    const knobs: { timeout_ms?: number } = {};
+    const knobs: { [k: string]: JSONValue } = {};
     const timeoutMs = action === "click" ? p.get("timeout_ms").num : null;
     if (timeoutMs !== null) {
       knobs.timeout_ms = Math.min(
         Math.max(timeoutMs, MIN_CLICK_TIMEOUT_MS),
         MAX_CLICK_TIMEOUT_MS,
       );
+    }
+    if (action === "click_at") {
+      const x = p.get("x").num;
+      const y = p.get("y").num;
+      if (x !== null) knobs.x = x;
+      if (y !== null) knobs.y = y;
     }
 
     try {
@@ -761,7 +767,7 @@ export class BrowserSessions {
         default: {
           // Pass-through actions; the server rejects unknown ones.
           const forwarded: { [k: string]: JSONValue } = { action, ...knobs };
-          for (const key of ["selector", "value", "expression", "index", "direction", "seconds", "max", "frame"]) {
+          for (const key of ["selector", "value", "expression", "index", "direction", "seconds", "max", "frame", "x", "y"]) {
             const v = p.get(key).value;
             if (v !== null && v !== undefined) forwarded[key] = v;
           }

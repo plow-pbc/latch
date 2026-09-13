@@ -297,6 +297,23 @@ describe("session lifecycle", () => {
     expect(failure.timeout_ms).toBe(6000);
     expect(String(failure.error)).toContain("intercepts pointer events");
   });
+
+  it("forwards and audits viewport coordinates for click_at", async () => {
+    const s = await openSession(["pizza.example"]);
+    await ctx.sessions.command(s, { action: "goto", url: "https://pizza.example/" });
+
+    const r = jv(await ctx.sessions.command(s, { action: "click_at", x: 120, y: 80 }));
+
+    expect(r.get("status").str).toBe("completed");
+    expect(r.get("x").int).toBe(120);
+    expect(r.get("y").int).toBe(80);
+    const sent = fs.readFileSync(ctx.cmdLog, "utf8").trim().split("\n")
+      .map((line) => JSON.parse(line) as Record<string, JSONValue>);
+    expect(sent.at(-1)).toMatchObject({ action: "click_at", x: 120, y: 80 });
+    const audited = ctx.events.filter((e) => e.event === "browser_command").at(-1)?.fields;
+    expect(audited).toMatchObject({ action: "click_at", x: 120, y: 80 });
+    expect(audited?.session).not.toBe(s);
+  });
 });
 
 describe("origin scope", () => {
@@ -332,6 +349,13 @@ describe("origin scope", () => {
     expect(text.get("error").str).toContain("offsite.example");
     const shot = jv(await ctx.sessions.command(s, { action: "screenshot" }));
     expect(shot.get("status").str).toBe("error");
+    const coordinateClick = jv(
+      await ctx.sessions.command(s, { action: "click_at", x: 120, y: 80 }),
+    );
+    expect(coordinateClick.get("status").str).toBe("error");
+    expect(coordinateClick.get("error").str).toContain("outside the approved origins");
+    const sent = fs.readFileSync(ctx.cmdLog, "utf8");
+    expect(sent).not.toContain('"action":"click_at"');
 
     // Way back is allowed.
     const back = jv(

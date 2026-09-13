@@ -1006,6 +1006,15 @@ export const TOOLS: ToolSpec[] = [
       const action = a.get("action").str;
       if (action === null) throw new ToolError("missing 'action'");
       const params: { [k: string]: JSONValue } = { action };
+      if (action === "click_at") {
+        const x = a.get("x").int;
+        const y = a.get("y").int;
+        if (x === null || y === null) {
+          throw new ToolError("click_at requires integer viewport coordinates 'x' and 'y'");
+        }
+        params.x = x;
+        params.y = y;
+      }
       for (const key of ["url", "selector", "selectors", "value", "expression", "index", "item", "field", "format", "direction", "seconds", "frame", "timeout_ms"]) {
         const v = a.get(key).value;
         if (v !== null && v !== undefined) params[key] = v;

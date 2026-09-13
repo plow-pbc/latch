@@ -150,6 +150,7 @@ function handle(cmd) {
     };
   }
   if (a === "eval") return { result: "eval:" + cmd.expression };
+  if (a === "click_at") return { ok: true, x: cmd.x, y: cmd.y };
   if (a === "click") {
     // The shape a real click failure has: the browser names what was over it.
     if (cmd.selector === "#swallowed") {

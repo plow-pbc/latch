@@ -64,10 +64,11 @@ function makeServer(
   delegate: PolicyDelegate = new HeadlessPolicy({ intent: "allow_once" }),
   budgetMs?: number,
   brokerEnv: Record<string, string> = {},
-): { server: DomoMcpServer; device: DeviceAgent; fillLog: string; argvLog: string } {
+): { server: DomoMcpServer; device: DeviceAgent; fillLog: string; argvLog: string; cmdLog: string } {
   const dir = tempDir();
   const fillLog = path.join(dir, "fills.log");
   const argvLog = path.join(dir, "argv.log");
+  const cmdLog = path.join(dir, "commands.log");
   const runtime: ResolvedBrowserRuntime = {
     serverCommand: ["node", FAKE_SERVER],
     mergeCookiesCommand: [],
@@ -76,6 +77,7 @@ function makeServer(
       FAKE_BROKER_VAULT: writeVault(dir),
       FAKE_FILL_LOG: fillLog,
       FAKE_ARGV_LOG: argvLog,
+      FAKE_CMD_LOG: cmdLog,
       ...brokerEnv,
     },
     executablePath: null,
@@ -84,7 +86,7 @@ function makeServer(
   const server = createDomoMcpServer(device, budgetMs === undefined ? {} : { budgetMs });
   cleanups.push(() => server.close());
   cleanups.push(() => device.shutdown());
-  return { server, device, fillLog, argvLog };
+  return { server, device, fillLog, argvLog, cmdLog };
 }
 
 /** How each browser launch was spawned, oldest first. */
@@ -104,6 +106,27 @@ const act = (server: DomoMcpServer, session: string, action: string, extra: Reco
   callTool(server, "plow_browser", { session, action, ...extra }, AGENT);
 
 describe("browser tools (fake runtime)", () => {
+  it("carries click_at coordinates from MCP to the browser and rejects missing coordinates", async () => {
+    const { server, device, cmdLog } = makeServer();
+    const session = await open(server, ["pizza.example"]);
+    await act(server, session, "goto", { url: "https://pizza.example/verify" });
+
+    const clicked = await act(server, session, "click_at", { x: 120, y: 80 });
+    expect(clicked.isError, JSON.stringify(clicked.payload)).toBe(false);
+    expect(clicked.payload).toMatchObject({ ok: true, x: 120, y: 80 });
+    const sent = fs.readFileSync(cmdLog, "utf8").trim().split("\n")
+      .map((line) => JSON.parse(line) as Record<string, unknown>);
+    expect(sent.at(-1)).toMatchObject({ action: "click_at", x: 120, y: 80 });
+    const audited = device.audit.entries()
+      .filter((entry) => jv(entry as JSONValue).get("event").str === "browser_command")
+      .at(-1);
+    expect(audited).toMatchObject({ action: "click_at", x: 120, y: 80 });
+
+    const missing = await act(server, session, "click_at", { x: 120 });
+    expect(missing.isError).toBe(true);
+    expect(JSON.stringify(missing.payload)).toMatch(/integer viewport coordinates/i);
+  });
+
   it("advertises the browsing skill via plow_list_skills + plow_read_skill", async () => {
     const { server } = makeServer();
     const list = parse(await rpc(server, "tools/call", { name: "plow_list_skills", arguments: {} }, AGENT));
