@@ -10,9 +10,11 @@ import { MAX_CLICK_TIMEOUT_MS } from "./browserSessions.js";
 /**
  * Why this Mac's browser is the one that answers a live-web question, in ONE
  * place. Three surfaces said it in three independent wordings — the server
- * instructions, `plow_browser_open`, and the skill description below — which
- * meant three prose edits and a regex guard to keep them in step. They
- * interpolate this instead.
+ * instructions, `plow_browser_open`, and the skill body below — which meant
+ * three prose edits and a regex guard to keep them in step. They interpolate
+ * this instead. (The skill's description is the routing trigger only: the
+ * Hermes plugin clips each description at 280 characters when it renders the
+ * manifest into the prompt, and this sentence alone is most of that.)
  *
  * Every clause is a fact the agent's own fetch cannot match, and none of them
  * overstates: the profile really is a copy of the user's, so "already signed
@@ -26,12 +28,12 @@ export const LIVE_WEB_ROUTING =
 export const BROWSING_SKILL: Skill = {
   name: "camoufox-browsing",
   description:
-    "Browse websites on this Mac with a real anti-detection Firefox browser, using the " +
-    "owner's local credentials (their vault): a secret is typed into the page rather than "
-    + `returned to you. Use it for reading the live web at all — ${LIVE_WEB_ROUTING} — and ` +
-    "whenever the task needs the OWNER'S browser rather than any browser: signing in as them, " +
-    "filling forms, buying things, or reading a page only their session can see.",
+    "Browse websites in the owner's own anti-detection Firefox on this Mac, signed in as them. " +
+    "Use it for reading the live web at all, not your own fetch, and whenever the task needs " +
+    "the OWNER'S browser: signing in, filling forms, buying, or reading what only they can see.",
   body: `# Browsing on this Mac
+
+Use this for reading the live web at all, not your own fetch: ${LIVE_WEB_ROUTING}.
 
 You drive a real anti-detection Firefox (Camoufox) running ON this Mac via three tools:
 \`plow_browser_open\` (start a session), \`plow_browser\` (act), \`plow_browser_request\` (widen scope),

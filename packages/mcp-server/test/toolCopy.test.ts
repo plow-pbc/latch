@@ -510,7 +510,7 @@ describe("what the agent-facing copy must and must not say", () => {
   it("all three surfaces interpolate the one live-web routing sentence", async () => {
     expect(SERVER_INSTRUCTIONS).toContain(LIVE_WEB_ROUTING);
     expect((await descriptions(makeServer())).plow_browser_open).toContain(LIVE_WEB_ROUTING);
-    expect(BROWSING_SKILL.description).toContain(LIVE_WEB_ROUTING);
+    expect(BROWSING_SKILL.body).toContain(LIVE_WEB_ROUTING);
   });
 
   /**

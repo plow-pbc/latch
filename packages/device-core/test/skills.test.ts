@@ -15,8 +15,11 @@ import {
   IMESSAGE_QUERIES,
   imessageSkillFor,
   imessageStorePath,
+  PROVIDERS,
   registerImessageSkill,
+  registerPlowFolderSkill,
   registerWhatsappSkill,
+  Skill,
   SkillRegistry,
   WHATSAPP_CHAT_PLACEHOLDER,
   WHATSAPP_FALLBACK_SCRIPT,
@@ -25,6 +28,26 @@ import {
   whatsappStorePath,
 } from "@domo/device-core";
 import { jv, JSONValue } from "@domo/protocol";
+
+describe("every built-in skill description", () => {
+  // The Hermes plugin (plow-chat-platform/__init__.py, _render_mac_skills)
+  // renders the manifest into the agent's prompt and clips each description
+  // at 280 characters. A description over that loses its tail, which is where
+  // the routing clause ("rather than answering that you cannot ...") sits.
+  const PLUGIN_DESCRIPTION_CLIP = 280;
+  const folder = new SkillRegistry();
+  registerPlowFolderSkill(folder, "/Users/example");
+  it.each([
+    ["browsing", BROWSING_SKILL],
+    ["whatsapp-history", whatsappSkillFor("/Users/example")],
+    ["imessage", imessageSkillFor("/Users/example")],
+    ["contacts", contactsSkillFor("/Users/example")],
+    ["plow-folder", folder.skill("plow-folder")!],
+    ...PROVIDERS.map((p): [string, Skill] => [p.skill.name, p.skill]),
+  ])("%s fits the plugin's clip whole", (_name, skill) => {
+    expect(skill.description.length).toBeLessThanOrEqual(PLUGIN_DESCRIPTION_CLIP);
+  });
+});
 
 describe("SkillRegistry", () => {
   it("loads *.md with frontmatter and skips malformed files", () => {
