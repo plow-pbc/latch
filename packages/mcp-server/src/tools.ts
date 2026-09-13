@@ -925,7 +925,7 @@ export const TOOLS: ToolSpec[] = [
     name: "plow_browser",
     title: "Drive the user's browser",
     description:
-      "Act within an approved browser session. Actions: goto, click, fill, fill_secret, scroll, " +
+      "Act within an approved browser session. Actions: goto, click, click_at, fill, fill_secret, scroll, " +
       "wait, back, eval, use_page, screenshot, text, url, title, links, forms, tables, pages. " +
       "'screenshot' returns an image of the page — take one after " +
       "every navigation to see where you are. When a 'click' fails, give it a longer " +
@@ -966,12 +966,14 @@ export const TOOLS: ToolSpec[] = [
         action: {
           type: "string",
           enum: [
-            "goto", "click", "fill", "fill_secret", "scroll", "wait", "back", "eval", "use_page",
+            "goto", "click", "click_at", "fill", "fill_secret", "scroll", "wait", "back", "eval", "use_page",
             "screenshot", "text", "url", "title", "links", "forms", "tables", "pages",
           ],
         },
         url: { type: "string", description: "goto: target URL (within approved origins)" },
         selector: { type: "string", description: "click / fill / fill_secret: CSS selector" },
+        x: { type: "integer", description: "click_at: horizontal viewport coordinate from the latest screenshot" },
+        y: { type: "integer", description: "click_at: vertical viewport coordinate from the latest screenshot" },
         selectors: {
           type: "array",
           items: { type: "string" },
@@ -1010,6 +1012,15 @@ export const TOOLS: ToolSpec[] = [
       const action = a.get("action").str;
       if (action === null) throw new ToolError("missing 'action'");
       const params: { [k: string]: JSONValue } = { action };
+      if (action === "click_at") {
+        const x = a.get("x").int;
+        const y = a.get("y").int;
+        if (x === null || y === null) {
+          throw new ToolError("click_at requires integer viewport coordinates 'x' and 'y'");
+        }
+        params.x = x;
+        params.y = y;
+      }
       for (const key of ["url", "selector", "selectors", "value", "expression", "index", "item", "field", "format", "direction", "seconds", "frame", "timeout_ms"]) {
         const v = a.get(key).value;
         if (v !== null && v !== undefined) params[key] = v;

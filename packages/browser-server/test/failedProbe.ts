@@ -36,6 +36,7 @@ class StubContext implements ContextLike {
 }
 
 class StubPage implements PageLike {
+  mouse = { click: async () => {} };
   ctx = new StubContext();
   constructor() {
     this.ctx.pageList.push(this);
@@ -69,6 +70,9 @@ class StubPage implements PageLike {
   }
   async bringToFront(): Promise<void> {}
   async waitForTimeout(): Promise<void> {}
+  viewportSize(): { width: number; height: number } {
+    return { width: 640, height: 480 };
+  }
 }
 
 interface ReqOpts {

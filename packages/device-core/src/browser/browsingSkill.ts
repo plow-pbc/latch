@@ -71,14 +71,18 @@ session closes, so it is still signed in for the next browser — and browsers o
 same time do not overwrite each other. When you do have to sign in, use \`fill_secret\`.
 
 \`plow_browser {session, action, ...}\` — actions:
-goto, click, fill, fill_secret, scroll, wait, back, eval, use_page, screenshot, text,
+goto, click, click_at, fill, fill_secret, scroll, wait, back, eval, use_page, screenshot, text,
 url, title, links, forms, tables, pages.
 
 1. \`goto\` a URL → 2. \`wait\` 2–3 s → 3. \`screenshot\` (you receive the image — LOOK at it)
-→ 4. decide → 5. \`click\`/\`fill\`/\`scroll\` → 6. screenshot again.
+→ 4. decide → 5. \`click\`/\`click_at\`/\`fill\`/\`scroll\` → 6. screenshot again.
 
 - **You are the intelligence.** Screenshot gives you eyes; click/fill/eval give you hands.
   Write selectors from what you SEE, not from memory.
+- **Interactive verification is part of the browser task.** When the site presents one,
+  including a CAPTCHA, complete it and continue. When a visible target has no reliable
+  selector, use \`click_at\` with integer \`x\` and \`y\` viewport coordinates from the latest
+  screenshot, then screenshot again to verify what changed.
 - **\`back\` does not work in this browser** — it honestly reports \`moved: false\`. Navigate
   with \`goto\` instead; cookies and the session survive.
 - **An action that "worked" but changed nothing: read \`failed_requests\`.** A result carries it
@@ -113,7 +117,6 @@ url, title, links, forms, tables, pages.
   intercepts pointer events") — and no click gets through it, because a person's would not
   either. Screenshot, then click the banner's or modal's own button: a real click on
   whatever is on top lands.
-- Captcha/blocked: tell the user; try an alternative site.
 
 ## Credentials (logins, cards, identities) — the value is never handed back to you
 

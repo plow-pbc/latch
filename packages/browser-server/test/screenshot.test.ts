@@ -3,14 +3,15 @@
  * be written under a per-session directory that nothing read and nothing
  * cleaned, so every page an agent ever looked at stayed on the Mac.
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { Session, type PageLike } from "../src/session.js";
 
-function page(shot: Buffer): PageLike {
+function page(shot: Buffer, screenshot = vi.fn(async () => shot)): PageLike {
   const self: PageLike = {
+    mouse: { click: async () => {} },
     url: () => "https://example.test/",
     title: async () => "Example",
     frames: () => [],
@@ -18,10 +19,11 @@ function page(shot: Buffer): PageLike {
     evaluate: async () => undefined,
     goto: async () => undefined,
     goBack: async () => undefined,
-    screenshot: async () => shot,
+    screenshot,
     innerText: async () => "",
     bringToFront: async () => {},
     waitForTimeout: async () => {},
+    viewportSize: () => ({ width: 640, height: 480 }),
   };
   return self;
 }
@@ -33,8 +35,10 @@ describe("screenshot", () => {
     process.chdir(dir);
     try {
       const shot = Buffer.from("not-really-a-jpeg");
-      const result = await new Session(page(shot)).handle({ action: "screenshot" });
+      const screenshot = vi.fn(async () => shot);
+      const result = await new Session(page(shot, screenshot)).handle({ action: "screenshot" });
       expect(result).toEqual({ data_b64: shot.toString("base64"), mime: "image/jpeg" });
+      expect(screenshot).toHaveBeenCalledWith(expect.objectContaining({ scale: "css" }));
       expect(result).not.toHaveProperty("path");
       expect(fs.readdirSync(dir)).toEqual([]);
     } finally {

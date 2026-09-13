@@ -178,6 +178,41 @@ export function createPizzaSite(): Promise<PizzaSite> {
            });
          </script>`,
       );
+    } else if (req.method === "GET" && url.pathname === "/visual-grid") {
+      // A target with no DOM node per cell: the only honest interaction seam
+      // is a real mouse click at coordinates read from the screenshot.
+      html(
+        "Visual verification",
+        `<h1 style="position:fixed;left:100px;top:40px;margin:0">Select every CHAIR</h1>
+         <canvas id="grid" width="300" height="300"
+                 style="position:fixed;left:100px;top:100px;border:2px solid #222"></canvas>
+         <p id="result" style="position:fixed;left:100px;top:420px">waiting</p>
+         <script>
+           const canvas = document.getElementById("grid");
+           const ctx = canvas.getContext("2d");
+           const labels = ["CHAIR", "TREE", "BALL", "CAR", "DOG", "CHAIR", "BIKE", "CUP", "BOOK"];
+           ctx.font = "18px sans-serif";
+           ctx.textAlign = "center";
+           ctx.textBaseline = "middle";
+           labels.forEach((label, i) => {
+             const col = i % 3;
+             const row = Math.floor(i / 3);
+             ctx.strokeRect(col * 100, row * 100, 100, 100);
+             ctx.fillText(label, col * 100 + 50, row * 100 + 50);
+           });
+           const selected = [];
+           let trusted = true;
+           canvas.addEventListener("click", (event) => {
+             const cell = Math.floor(event.offsetX / 100) + "," + Math.floor(event.offsetY / 100);
+             if (!selected.includes(cell)) selected.push(cell);
+             trusted = trusted && event.isTrusted;
+             if (selected.includes("0,0") && selected.includes("2,1")) {
+               document.getElementById("result").textContent =
+                 "verified cells=" + selected.join(";") + " trusted=" + trusted;
+             }
+           });
+         </script>`,
+      );
     } else if (req.method === "GET" && url.pathname === "/tracker") {
       // Inert, and only ever embedded: somewhere for a frame to be that has
       // nothing an action could resolve.

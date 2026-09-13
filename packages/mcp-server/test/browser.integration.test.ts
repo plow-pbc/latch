@@ -335,4 +335,33 @@ describe.skipIf(!enabled)("Integration — real Camoufox orders a pizza", () => 
 
     await callTool(server, "plow_browser_close", { session }, AGENT);
   }, 300_000);
+
+  it("clicks visual-only cells at coordinates from a screenshot", async () => {
+    const opened = await callTool(
+      server, "plow_browser_open",
+      { origins: ["127.0.0.1"], headed: false, goal: "complete a visual verification" },
+      AGENT,
+    );
+    expect(opened.isError, JSON.stringify(opened.payload)).toBe(false);
+    session = opened.payload.session as string;
+    await act("goto", { url: site.url + "/visual-grid" });
+
+    const shot = parse(await rpc(
+      server,
+      "tools/call",
+      { name: "plow_browser", arguments: { session, action: "screenshot" } },
+      AGENT,
+    ));
+    const blocks = shot.result!.content as { type: string; data?: string }[];
+    expect(blocks[0].type).toBe("image");
+    expect(Buffer.from(blocks[0].data ?? "", "base64").length).toBeGreaterThan(5000);
+
+    await act("click_at", { x: 150, y: 150 });
+    await act("click_at", { x: 350, y: 250 });
+    expect((await act("text")).payload.text).toContain(
+      "verified cells=0,0;2,1 trusted=true",
+    );
+
+    await callTool(server, "plow_browser_close", { session }, AGENT);
+  }, 300_000);
 });
