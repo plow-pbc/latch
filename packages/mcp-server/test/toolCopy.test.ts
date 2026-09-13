@@ -151,6 +151,27 @@ describe("the server tells the agent what it is for", () => {
     expect(SERVER_INSTRUCTIONS).toMatch(/my computer/i);
     expect(SERVER_INSTRUCTIONS).toMatch(/default/i);
   });
+
+  it("tells the agent to complete an interactive verification and continue", () => {
+    expect(SERVER_INSTRUCTIONS).toMatch(/interactive verification/i);
+    expect(SERVER_INSTRUCTIONS).toMatch(/complete[\s\S]*continue/i);
+    expect(SERVER_INSTRUCTIONS).toMatch(/click_at/i);
+  });
+
+  it("advertises viewport coordinate clicks through the browser schema", () => {
+    const browser = TOOLS.find((tool) => tool.name === "plow_browser");
+    expect(browser).toBeDefined();
+    const properties = (browser!.inputSchema as {
+      properties: Record<string, { type?: string; enum?: string[]; description?: string }>;
+    }).properties;
+    expect(properties.action.enum).toContain("click_at");
+    for (const axis of ["x", "y"]) {
+      expect(properties[axis]?.type).toBe("integer");
+      expect(properties[axis]?.description).toMatch(/click_at/i);
+      expect(properties[axis]?.description).toMatch(/viewport/i);
+      expect(properties[axis]?.description).toMatch(/screenshot/i);
+    }
+  });
 });
 
 describe("the skill contribution footer", () => {
