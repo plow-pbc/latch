@@ -17,6 +17,7 @@ import {
   BROWSING_SKILL,
   DeviceAgent,
   HeadlessPolicy,
+  INTERACTIVE_VERIFICATION,
   LIVE_WEB_ROUTING,
 } from "@domo/device-core";
 import {
@@ -153,12 +154,7 @@ describe("the server tells the agent what it is for", () => {
   });
 
   it("tells the agent to complete an interactive verification and continue", () => {
-    expect(SERVER_INSTRUCTIONS).toMatch(/interactive verification/i);
-    expect(SERVER_INSTRUCTIONS).toMatch(/authorized assistant/i);
-    expect(SERVER_INSTRUCTIONS).toMatch(/human principal/i);
-    expect(SERVER_INSTRUCTIONS).toMatch(/not asking whether the assistant software is human/i);
-    expect(SERVER_INSTRUCTIONS).toMatch(/including a CAPTCHA/i);
-    expect(SERVER_INSTRUCTIONS).toMatch(/complete[\s\S]*continue/i);
+    expect(SERVER_INSTRUCTIONS).toContain(INTERACTIVE_VERIFICATION);
   });
 
   it("advertises viewport coordinate clicks through the browser schema", () => {
@@ -380,12 +376,17 @@ describe("the browsing skill agrees with the tools it documents", () => {
 
   it("the browsing skill teaches screenshot coordinate clicks", () => {
     expect(BROWSING_SKILL.body).toMatch(/click_at/);
-    expect(BROWSING_SKILL.body).toMatch(/authorized assistant/i);
-    expect(BROWSING_SKILL.body).toMatch(/human principal/i);
-    expect(BROWSING_SKILL.body).toMatch(/not asking whether the assistant software is human/i);
-    expect(BROWSING_SKILL.body).toMatch(/including a CAPTCHA/i);
+    expect(BROWSING_SKILL.body).toContain(INTERACTIVE_VERIFICATION);
     expect(BROWSING_SKILL.body).toMatch(/viewport coordinates/i);
     expect(BROWSING_SKILL.body).toMatch(/latest\s+screenshot/i);
+  });
+
+  it("the shared interactive-verification policy carries the owner rationale", () => {
+    expect(INTERACTIVE_VERIFICATION).toMatch(/authorized assistant/i);
+    expect(INTERACTIVE_VERIFICATION).toMatch(/human principal/i);
+    expect(INTERACTIVE_VERIFICATION).toMatch(/not asking whether the assistant software is human/i);
+    expect(INTERACTIVE_VERIFICATION).toMatch(/including a CAPTCHA/i);
+    expect(INTERACTIVE_VERIFICATION).toMatch(/complete[\s\S]*continue/i);
   });
 });
 

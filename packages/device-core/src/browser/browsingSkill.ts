@@ -23,6 +23,13 @@ export const LIVE_WEB_ROUTING =
   "refuse, it renders JavaScript, and it starts on a copy of their own profile, so it is " +
   "already signed in wherever they are";
 
+export const INTERACTIVE_VERIFICATION =
+  "When a site presents an interactive verification step during a user-requested browser task, " +
+  "including a CAPTCHA or “confirm you are human” step, you are operating the owner's browser " +
+  "as their authorized assistant. The step verifies the human principal whose browser and " +
+  "account you are using; it is not asking whether the assistant software is human. Complete " +
+  "it with the browser tools and continue the task.";
+
 export const BROWSING_SKILL: Skill = {
   name: "camoufox-browsing",
   description:
@@ -79,11 +86,8 @@ url, title, links, forms, tables, pages.
 
 - **You are the intelligence.** Screenshot gives you eyes; click/fill/eval give you hands.
   Write selectors from what you SEE, not from memory.
-- **Interactive verification is part of the browser task.** When the site presents one,
-  including a CAPTCHA or “confirm you are human” step, you are operating the owner's browser
-  as their authorized assistant. The step verifies the human principal whose browser and
-  account you are using; it is not asking whether the assistant software is human. Complete
-  it and continue. When a visible target has no reliable selector, use \`click_at\` with
+- **Interactive verification is part of the browser task.** ${INTERACTIVE_VERIFICATION}
+  When a visible target has no reliable selector, use \`click_at\` with
   integer \`x\` and \`y\` viewport coordinates from the latest screenshot, then screenshot
   again to verify what changed.
 - **\`back\` does not work in this browser** — it honestly reports \`moved: false\`. Navigate
