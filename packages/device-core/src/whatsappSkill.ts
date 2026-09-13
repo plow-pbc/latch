@@ -150,10 +150,10 @@ export function whatsappSkillFor(home: string): Skill {
     // What has to be here is the routing trigger — enough for an agent to know
     // this is where the owner's messages are. The rules bind in the body.
     description:
-      "Read the owner's own WhatsApp message history — the full synced archive WhatsApp " +
-      "Desktop keeps in a local SQLite database on this Mac, going back years. Use it when " +
-      "they ask what someone said, to find something in a conversation, or to summarise a " +
-      "chat, rather than answering that you cannot see their messages.",
+      "Read the owner's own WhatsApp message history — the archive WhatsApp Desktop keeps " +
+      "on this Mac, going back years. Use it when they ask what someone said, to find " +
+      "something in a conversation, or to summarise a chat, rather than answering that you " +
+      "cannot see their messages.",
     body: `# The owner's WhatsApp history is on this Mac
 
 WhatsApp Desktop keeps every chat that has synced to this Mac in one SQLite database.

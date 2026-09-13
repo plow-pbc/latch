@@ -26,6 +26,22 @@ import {
 } from "@domo/device-core";
 import { jv, JSONValue } from "@domo/protocol";
 
+describe("every built-in skill description", () => {
+  // The Hermes plugin (plow-chat-platform/__init__.py, _render_mac_skills)
+  // renders the manifest into the agent's prompt and clips each description
+  // at 280 characters. A description over that loses its tail, which is where
+  // the routing clause ("rather than answering that you cannot ...") sits.
+  const PLUGIN_DESCRIPTION_CLIP = 280;
+  it.each([
+    ["browsing", BROWSING_SKILL],
+    ["whatsapp-history", whatsappSkillFor("/Users/example")],
+    ["imessage", imessageSkillFor("/Users/example")],
+    ["contacts", contactsSkillFor("/Users/example")],
+  ])("%s fits the plugin's clip whole", (_name, skill) => {
+    expect(skill.description.length).toBeLessThanOrEqual(PLUGIN_DESCRIPTION_CLIP);
+  });
+});
+
 describe("SkillRegistry", () => {
   it("loads *.md with frontmatter and skips malformed files", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "domo-sk-"));
