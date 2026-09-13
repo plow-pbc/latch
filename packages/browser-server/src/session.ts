@@ -78,6 +78,7 @@ export interface ContextLike {
   pages(): PageLike[];
 }
 export interface PageLike {
+  mouse: { click(x: number, y: number): Promise<void> };
   url(): string;
   title(): Promise<string>;
   frames(): FrameLike[];
@@ -93,6 +94,7 @@ export interface PageLike {
   innerText(selector: string): Promise<string>;
   bringToFront(): Promise<void>;
   waitForTimeout(ms: number): Promise<void>;
+  viewportSize(): { width: number; height: number } | null;
 }
 
 // ---- Tunables (identical to server.py's, and asserted against by tests) ----
@@ -498,6 +500,22 @@ export class Session {
     throw last ?? new Error(`selector not found: ${sel}`);
   }
 
+  private async clickAt(cmd: Obj): Promise<Obj> {
+    const x = cmd.x;
+    const y = cmd.y;
+    if (!Number.isInteger(x) || !Number.isInteger(y)) {
+      throw new Error("click_at requires integer viewport coordinates 'x' and 'y'");
+    }
+    const viewport = this.page.viewportSize();
+    if (viewport === null) throw new Error("click_at cannot run because the page has no viewport");
+    if ((x as number) < 0 || (y as number) < 0 || (x as number) >= viewport.width || (y as number) >= viewport.height) {
+      throw new Error(`click_at coordinates (${x}, ${y}) are outside the ${viewport.width}x${viewport.height} viewport`);
+    }
+    await this.page.mouse.click(x as number, y as number);
+    await this.page.waitForTimeout(SETTLE_MS);
+    return { ok: true, x: x as number, y: y as number };
+  }
+
   private async fill(cmd: Obj): Promise<Obj> {
     const sel = String(cmd.selector);
     let last: Error | null = null;
@@ -679,6 +697,7 @@ export class Session {
     }
 
     if (action === "click") return this.click(cmd);
+    if (action === "click_at") return this.clickAt(cmd);
     if (action === "fill") return this.fill(cmd);
 
     if (action === "locate") {

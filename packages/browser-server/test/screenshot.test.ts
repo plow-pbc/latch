@@ -11,6 +11,7 @@ import { Session, type PageLike } from "../src/session.js";
 
 function page(shot: Buffer): PageLike {
   const self: PageLike = {
+    mouse: { click: async () => {} },
     url: () => "https://example.test/",
     title: async () => "Example",
     frames: () => [],
@@ -22,6 +23,7 @@ function page(shot: Buffer): PageLike {
     innerText: async () => "",
     bringToFront: async () => {},
     waitForTimeout: async () => {},
+    viewportSize: () => ({ width: 640, height: 480 }),
   };
   return self;
 }

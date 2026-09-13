@@ -261,6 +261,7 @@ class Frame implements FrameLike {
 }
 
 class Page implements PageLike {
+  mouse = { click: async () => {} };
   frameList: Frame[];
   documentToken = "doc-1";
   urlValue = "https://pizza.example/login";
@@ -304,6 +305,9 @@ class Page implements PageLike {
   }
   async bringToFront(): Promise<void> {}
   async waitForTimeout(): Promise<void> {}
+  viewportSize(): { width: number; height: number } {
+    return { width: 640, height: 480 };
+  }
 }
 
 interface RunOpts extends HandleOpts {
