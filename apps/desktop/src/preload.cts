@@ -26,6 +26,9 @@ contextBridge.exposeInMainWorld("domo", {
   approvalsPending: () => ipcRenderer.invoke("approvals:pending"),
   rulesList: () => ipcRenderer.invoke("rules:list"),
   rulesRemove: (key: string) => ipcRenderer.invoke("rules:remove", key),
+  // The rule set changed under the pane: an approval answered "always allow"
+  // stored one, or one was revoked.
+  onRulesChanged: (cb: () => void) => ipcRenderer.on("rules:changed", cb),
   uiGetTab: () => ipcRenderer.invoke("ui:getTab"),
   uiSetTab: (tab: string) => ipcRenderer.invoke("ui:setTab", tab),
   relayGet: () => ipcRenderer.invoke("settings:getRelay"),

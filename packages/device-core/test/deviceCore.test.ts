@@ -3,7 +3,7 @@
  * (traversal, symlink escape), policy rule reuse / deny-not-stored, audit log
  * shape, and the intent validation path.
  */
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -125,6 +125,159 @@ describe("PolicyEngine", () => {
     const second = await engine.decide(intentWith(caps), denyAll);
     expect(second.decision).toBe("always_allow");
     expect(second.source).toBe("rule");
+  });
+
+  it("announces every change to the rule set, and only those", async () => {
+    const engine = new PolicyEngine(path.join(tempDir(), "rules.json"));
+    const caps: Capability[] = [{ kind: "process.exec", argv: ["ls"], cwd: "/tmp" }];
+    let changes = 0;
+    engine.events.on("changed", () => changes++);
+
+    // A one-off answer stores nothing, so nothing to announce.
+    await engine.decide(intentWith(caps), new HeadlessPolicy({ intent: "allow_once" }));
+    expect(changes).toBe(0);
+
+    // Storing a rule — the Rules pane learns of it from this, not a tab switch.
+    await engine.decide(intentWith(caps), new HeadlessPolicy({ intent: "always_allow" }));
+    expect(changes).toBe(1);
+
+    // Replaying the stored rule writes nothing.
+    await engine.decide(intentWith(caps), new HeadlessPolicy({ intent: "deny" }));
+    expect(changes).toBe(1);
+
+    engine.removeRule(engine.allRules()[0].ruleKey);
+    expect(changes).toBe(2);
+    expect(engine.allRules()).toHaveLength(0);
+  });
+
+  it("a rule stored early is stored once, and stays revoked if revoked meanwhile", async () => {
+    const engine = new PolicyEngine(path.join(tempDir(), "rules.json"));
+    const caps: Capability[] = [{ kind: "process.exec", argv: ["ls"], cwd: "/tmp" }];
+    let changes = 0;
+    engine.events.on("changed", () => changes++);
+
+    // The app's dialog path: the rule goes in when the human clicks, and the
+    // answer reaches `decide` only after the approval store's disk write.
+    const early: PolicyDelegate = {
+      async decideIntent(i) {
+        engine.storeRule(i);
+        await new Promise((r) => setTimeout(r, 1));
+        return { decision: "always_allow" as const, source: "ask", ruleStored: true as const };
+      },
+    };
+    const first = await engine.decide(intentWith(caps), early);
+    expect(first.decision).toBe("always_allow");
+    expect(engine.allRules()).toHaveLength(1);
+    expect(changes).toBe(1); // stored once, not again when the answer arrived
+
+    // Revoked while the answer was still on its way back: it stays revoked.
+    const revoking: PolicyDelegate = {
+      async decideIntent(i) {
+        engine.storeRule(i);
+        engine.removeRule(engine.allRules()[0].ruleKey);
+        await new Promise((r) => setTimeout(r, 1));
+        return { decision: "always_allow" as const, source: "ask", ruleStored: true as const };
+      },
+    };
+    engine.removeRule(engine.allRules()[0].ruleKey);
+    const second = await engine.decide(intentWith(caps), revoking);
+    expect(second.decision).toBe("always_allow");
+    expect(engine.allRules()).toHaveLength(0);
+
+    // A delegate that never stores early still gets the engine's store.
+    const plain = await engine.decide(intentWith(caps), new HeadlessPolicy({ intent: "always_allow" }));
+    expect(plain.decision).toBe("always_allow");
+    expect(engine.allRules()).toHaveLength(1);
+  });
+
+  it("a rule the log cannot record does not exist: the store is undone and the error surfaces", async () => {
+    const file = path.join(tempDir(), "rules.json");
+    const engine = new PolicyEngine(file);
+    const caps: Capability[] = [{ kind: "process.exec", argv: ["ls"], cwd: "/tmp" }];
+    let appendFails = true;
+    let changes = 0;
+    engine.events.on("stored", () => { if (appendFails) throw new Error("ENOSPC"); });
+    engine.events.on("revoked", () => { if (appendFails) throw new Error("ENOSPC"); });
+    engine.events.on("changed", () => changes++);
+
+    // Storing: the rule is on disk for the record's duration, then gone.
+    await expect(engine.decide(intentWith(caps), new HeadlessPolicy({ intent: "always_allow" }))).rejects.toThrow("ENOSPC");
+    expect(engine.allRules()).toHaveLength(0);
+    expect(JSON.parse(fs.readFileSync(file, "utf8"))).toEqual([]);
+    expect(changes).toBe(0); // nothing stood, so nothing to tell the renderer
+
+    // Revoking: the rule stays, on disk too.
+    appendFails = false;
+    await engine.decide(intentWith(caps), new HeadlessPolicy({ intent: "always_allow" }));
+    const rule = engine.allRules()[0]!;
+    appendFails = true;
+    expect(() => engine.removeRule(rule.ruleKey)).toThrow("ENOSPC");
+    expect(engine.allRules()).toEqual([rule]);
+    expect(() => engine.removeAllRules()).toThrow("ENOSPC");
+    expect(engine.allRules()).toEqual([rule]);
+    expect(changes).toBe(1);
+  });
+
+  it("a rule that could not reach disk does not exist in memory either", async () => {
+    // A rules file whose directory cannot be made: a file is in its way.
+    const blocker = path.join(tempDir(), "device");
+    fs.writeFileSync(blocker, "");
+    const engine = new PolicyEngine(path.join(blocker, "rules.json"));
+    const caps: Capability[] = [{ kind: "process.exec", argv: ["ls"], cwd: "/tmp" }];
+    const quiet = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      let recorded = 0;
+      engine.events.on("stored", () => recorded++);
+      await expect(engine.decide(intentWith(caps), new HeadlessPolicy({ intent: "always_allow" }))).rejects.toThrow(/ENOTDIR|EEXIST/);
+      expect(engine.allRules()).toHaveLength(0);
+      expect(recorded).toBe(0); // nothing to record: the rule never stood
+      // The next matching request is not answered by a rule that is nowhere.
+      const asked: PolicyDelegate = { decideIntent: async () => "deny" as const };
+      const next = await engine.decide(intentWith(caps), asked);
+      expect(next).toMatchObject({ decision: "deny", source: "prompt" });
+    } finally {
+      quiet.mockRestore();
+    }
+  });
+
+  it("the renderer's listener throwing takes nothing with it", async () => {
+    const engine = new PolicyEngine(path.join(tempDir(), "rules.json"));
+    const caps: Capability[] = [{ kind: "process.exec", argv: ["ls"], cwd: "/tmp" }];
+    // Mid-teardown: it fires after the write and its record, and must fail
+    // neither the answer nor the revoke.
+    const stored: string[] = [];
+    engine.events.on("changed", () => { throw new Error("webContents destroyed"); });
+    engine.events.on("stored", ({ intentId }: { intentId: string }) => stored.push(intentId));
+    const quiet = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const i = intentWith(caps);
+      const grant = await engine.decide(i, new HeadlessPolicy({ intent: "always_allow" }));
+      expect(grant.decision).toBe("always_allow");
+      expect(engine.allRules()).toHaveLength(1);
+      expect(stored).toEqual([i.intentId]);
+      expect(() => engine.removeRule(engine.allRules()[0]!.ruleKey)).not.toThrow();
+      expect(engine.allRules()).toHaveLength(0);
+      expect(quiet).toHaveBeenCalledTimes(2);
+    } finally {
+      quiet.mockRestore();
+    }
+  });
+
+  it("names the rule's making and its revoking as events, with the rule", async () => {
+    const engine = new PolicyEngine(path.join(tempDir(), "rules.json"));
+    const seen: [string, unknown][] = [];
+    engine.events.on("stored", (e) => seen.push(["stored", e]));
+    engine.events.on("revoked", (e) => seen.push(["revoked", e]));
+    const caps: Capability[] = [{ kind: "process.exec", argv: ["ls"], cwd: "/tmp" }];
+
+    const i = intentWith(caps);
+    await engine.decide(i, new HeadlessPolicy({ intent: "always_allow" }));
+    const rule = engine.allRules()[0]!;
+    expect(seen).toEqual([["stored", { rule, intentId: i.intentId }]]);
+
+    engine.removeRule("no-such-rule"); // nothing to revoke, nothing said
+    engine.removeRule(rule.ruleKey);
+    expect(seen).toEqual([["stored", { rule, intentId: i.intentId }], ["revoked", { rule }]]);
   });
 
   it("apple_events intents are never stored as rules, and never replayed from one", async () => {

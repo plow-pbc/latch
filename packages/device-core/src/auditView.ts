@@ -379,11 +379,15 @@ export function buildActivity(id: string, events: JSONValue[]): AuditActivity {
       value("intent_received", "agent") ??
       value("access_request", "agent") ??
       value("access_decision", "agent") ??
-      value("agent_spawned", "agent"),
+      value("agent_spawned", "agent") ??
+      value("rule_revoked", "agent"),
     // Newer entries carry the relay-asserted name; `access_request.display` is
     // the pre-relay shape, kept because the audit log is append-only and old
     // entries are still on disk.
-    agentDisplay: value("intent_received", "agent_name") ?? value("access_request", "display"),
+    agentDisplay:
+      value("intent_received", "agent_name") ??
+      value("access_request", "display") ??
+      value("rule_revoked", "agent_name"),
     goal:
       value("intent_received", "goal") ??
       value("access_request", "goals") ??
@@ -448,6 +452,9 @@ function activityTitle(
     return `Made Google account ${value("connector_default_changed", "account") ?? ""} the default`;
   }
   if (has("activation_session_cleanup")) return "Activation session cleanup";
+  if (has("rule_revoked")) {
+    return `Always-allow rule revoked — ${value("rule_revoked", "agent_name") ?? value("rule_revoked", "agent") ?? "agent"}`;
+  }
   if (has("agent_spawned")) return "Agent spawned";
   if (has("exec_end")) return "Command finished";
   if (has("applescript_end")) return "Script finished";
@@ -519,6 +526,9 @@ function classifyActivity(
     return outcome("Completed", "green", "completed");
   }
   if (has("agent_spawned")) return outcome("Spawned", "blue", "completed");
+  // A revoke is its own row: the owner did it, from the Rules pane, with no
+  // request behind it.
+  if (has("rule_revoked")) return outcome("Revoked", "green", "completed");
   // The decision outranks any browser events riding in the intent's group: a
   // browser_open/browser_request row says how it was decided, and the live
   // browsing state belongs to the session's own activity.
@@ -648,7 +658,7 @@ function activityKind(
   value: (e: string, k: string) => string | null,
 ): string {
   if (has("agent_spawned")) return "agent";
-  if (has("access_request") || has("access_decision")) return "access";
+  if (has("access_request") || has("access_decision") || has("rule_revoked")) return "access";
   if (
     has("connector_connected") ||
     has("connector_disconnected") ||
@@ -749,6 +759,13 @@ function describeStep(e: JSONValue): AuditStep {
       break;
     }
     case "intent_received": text = `Request: ${ev.get("request").str ?? ""}`; break;
+    // Stored the moment the owner clicks — before the decision line, and
+    // kept even when that line then says the request timed out.
+    case "rule_stored": text = "Always-allow rule saved"; state = "ok"; break;
+    case "rule_revoked":
+      text = `Always-allow rule revoked — ${ev.get("agent_name").str ?? ev.get("agent").str ?? ""}`;
+      state = "ok";
+      break;
     case "adversarial_review_started": text = "AI Reviewer started reviewing…"; break;
     case "adversarial_review_result": {
       const verdict = ev.get("verdict").str ?? "";

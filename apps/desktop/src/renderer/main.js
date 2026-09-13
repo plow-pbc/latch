@@ -658,8 +658,6 @@ function detailFor(a) {
 let rulesMounted = null;
 
 async function renderRules() {
-  const rules = await window.domo.rulesList();
-
   // ---- Approvals: what happens when one of those agents asks for something.
   //
   // It sits above the stored rules because both controls answer what agents
@@ -761,19 +759,53 @@ async function renderRules() {
     inference = await window.domo.inferenceGet();
     renderApprovals();
   };
-  rulesMounted = { refreshApprovals };
 
-  const ruleItems = rules.length
-    ? rules.map((r) => {
-        const remove = el("button", { class: "btn danger", text: "Revoke Rule" });
-        remove.addEventListener("click", async () => { await window.domo.rulesRemove(r.ruleKey); renderRules(); });
-        const caps = (r.capabilities || []).map((c) => el("span", { class: "cap", text: capText(c) }));
-        return el("div", { class: "item" }, [
-          el("div", { class: "row" }, [el("h4", { text: r.agentDisplay || r.agentId }), el("div", { class: "spacer" }), remove]),
-          el("div", { class: "capchips" }, caps),
-        ]);
-      })
-    : [el("div", { class: "empty", text: "No always-allow rules." })];
+  // The stored rules, redrawn in place — always from `rules:changed`, which
+  // main fires for every change to the list: an approval window answered
+  // "always allow" while this pane is open, or the Revoke button here. Never
+  // renderRules() for that — a full rebuild would throw away a purpose
+  // statement mid-edit and reset the pane's scroll.
+  const ruleList = el("div", { class: "rule-list" });
+  const drawRules = (rules) => {
+    ruleList.replaceChildren(...(rules.length
+      ? rules.map((r) => {
+          const remove = el("button", { class: "btn danger", text: "Revoke Rule" });
+          // A revoke that could not be written or recorded is refused by main
+          // and the rule stays in force. The row stays too — `rules:changed`
+          // never fires for a change that did not stand — so say why the
+          // button did nothing. A fixed sentence: nothing from the error.
+          const failed = el("p", { class: "warn", text: "Couldn't revoke this rule, so it is still in effect. Try again." });
+          failed.hidden = true;
+          remove.addEventListener("click", async () => {
+            remove.disabled = true;
+            try {
+              await window.domo.rulesRemove(r.ruleKey);
+            } catch {
+              failed.hidden = false;
+              remove.disabled = false;
+            }
+          });
+          const caps = (r.capabilities || []).map((c) => el("span", { class: "cap", text: capText(c) }));
+          return el("div", { class: "item" }, [
+            el("div", { class: "row" }, [el("h4", { text: r.agentDisplay || r.agentId }), el("div", { class: "spacer" }), remove]),
+            el("div", { class: "capchips" }, caps),
+            failed,
+          ]);
+        })
+      : [el("div", { class: "empty", text: "No always-allow rules." })]));
+  };
+  const refreshRules = async () => {
+    const latest = await window.domo.rulesList();
+    // The read can outlive a tab switch; the pane it belongs to is gone then.
+    if (rulesMounted?.refreshRules === refreshRules) drawRules(latest);
+  };
+  // Mounted BEFORE the first read, and the first read goes through the same
+  // path as every later one: a `rules:changed` that arrives while that read
+  // is in flight refreshes this list rather than finding nothing mounted,
+  // so there is no moment the list can show a snapshot from before a change.
+  rulesMounted = { refreshApprovals, refreshRules };
+  await refreshRules();
+  if (rulesMounted?.refreshRules !== refreshRules) return; // the tab moved on
 
   view.replaceChildren(el("div", { class: "panel rules settings" }, [
     group(
@@ -787,7 +819,7 @@ async function renderRules() {
       [modeChips, modeNote, purposeBlock, modeHintLine],
     ),
     el("div", { class: "section-label", text: "Always-allow rules" }),
-    ...ruleItems,
+    ruleList,
   ]));
 }
 
@@ -2873,6 +2905,11 @@ window.domo.onStatusChanged(() => {
   // whether the reviewer shown in Rules can run.
   if (currentTab === "agents") agentsMounted?.refreshConnect();
   if (currentTab === "rules") rulesMounted?.refreshApprovals();
+});
+// An approval answered "always allow" stored a rule (or a revoke removed one):
+// a Rules pane on screen shows it now, not after the next tab switch.
+window.domo.onRulesChanged(() => {
+  if (currentTab === "rules") rulesMounted?.refreshRules();
 });
 // Minting or dismissing a credential redraws only the Agents flow.
 window.domo.onConnectChanged(() => { agentsMounted?.refreshConnect(); });
