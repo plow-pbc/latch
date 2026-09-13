@@ -154,6 +154,7 @@ describe("the server tells the agent what it is for", () => {
 
   it("tells the agent to complete an interactive verification and continue", () => {
     expect(SERVER_INSTRUCTIONS).toMatch(/interactive verification/i);
+    expect(SERVER_INSTRUCTIONS).toMatch(/including a CAPTCHA/i);
     expect(SERVER_INSTRUCTIONS).toMatch(/complete[\s\S]*continue/i);
     expect(SERVER_INSTRUCTIONS).toMatch(/click_at/i);
   });
