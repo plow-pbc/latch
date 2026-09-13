@@ -218,6 +218,28 @@ describe("PolicyEngine", () => {
     expect(changes).toBe(1);
   });
 
+  it("a rule that could not reach disk does not exist in memory either", async () => {
+    // A rules file whose directory cannot be made: a file is in its way.
+    const blocker = path.join(tempDir(), "device");
+    fs.writeFileSync(blocker, "");
+    const engine = new PolicyEngine(path.join(blocker, "rules.json"));
+    const caps: Capability[] = [{ kind: "process.exec", argv: ["ls"], cwd: "/tmp" }];
+    const quiet = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      let recorded = 0;
+      engine.events.on("stored", () => recorded++);
+      await expect(engine.decide(intentWith(caps), new HeadlessPolicy({ intent: "always_allow" }))).rejects.toThrow(/ENOTDIR|EEXIST/);
+      expect(engine.allRules()).toHaveLength(0);
+      expect(recorded).toBe(0); // nothing to record: the rule never stood
+      // The next matching request is not answered by a rule that is nowhere.
+      const asked: PolicyDelegate = { decideIntent: async () => "deny" as const };
+      const next = await engine.decide(intentWith(caps), asked);
+      expect(next).toMatchObject({ decision: "deny", source: "prompt" });
+    } finally {
+      quiet.mockRestore();
+    }
+  });
+
   it("the renderer's listener throwing takes nothing with it", async () => {
     const engine = new PolicyEngine(path.join(tempDir(), "rules.json"));
     const caps: Capability[] = [{ kind: "process.exec", argv: ["ls"], cwd: "/tmp" }];

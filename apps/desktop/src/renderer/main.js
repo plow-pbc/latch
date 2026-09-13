@@ -770,11 +770,26 @@ async function renderRules() {
     ruleList.replaceChildren(...(rules.length
       ? rules.map((r) => {
           const remove = el("button", { class: "btn danger", text: "Revoke Rule" });
-          remove.addEventListener("click", () => { void window.domo.rulesRemove(r.ruleKey); });
+          // A revoke that could not be written or recorded is refused by main
+          // and the rule stays in force. The row stays too — `rules:changed`
+          // never fires for a change that did not stand — so say why the
+          // button did nothing. A fixed sentence: nothing from the error.
+          const failed = el("p", { class: "warn", text: "Couldn't revoke this rule, so it is still in effect. Try again." });
+          failed.hidden = true;
+          remove.addEventListener("click", async () => {
+            remove.disabled = true;
+            try {
+              await window.domo.rulesRemove(r.ruleKey);
+            } catch {
+              failed.hidden = false;
+              remove.disabled = false;
+            }
+          });
           const caps = (r.capabilities || []).map((c) => el("span", { class: "cap", text: capText(c) }));
           return el("div", { class: "item" }, [
             el("div", { class: "row" }, [el("h4", { text: r.agentDisplay || r.agentId }), el("div", { class: "spacer" }), remove]),
             el("div", { class: "capchips" }, caps),
+            failed,
           ]);
         })
       : [el("div", { class: "empty", text: "No always-allow rules." })]));

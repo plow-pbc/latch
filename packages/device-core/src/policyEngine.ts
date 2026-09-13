@@ -121,12 +121,14 @@ export class PolicyEngine {
    * One change to the rule set: apply it, put it on disk, record it, tell the
    * renderer — in that order.
    *
-   * The record (`stored`/`revoked`) FAILS CLOSED: if its listener throws —
-   * the audit log could not append — the change is undone in memory and on
-   * disk and the error rethrown, so no rule exists that the log does not
-   * account for. In the dialog path that turns the owner's click into an
-   * error the request is denied on, which is the same answer any other
-   * un-auditable operation gets.
+   * The disk write and the record (`stored`/`revoked`) FAIL CLOSED: if
+   * either throws — the file could not be written, the audit log could not
+   * append — the change is undone in memory, disk is put back as far as it
+   * can be, and the error rethrown, so no rule exists that disk and the log
+   * do not both account for. Memory is what answers the next request, so it
+   * is what must be undone first and without fail. In the dialog path that
+   * turns the owner's click into an error the request is denied on, which
+   * is the same answer any other un-auditable operation gets.
    *
    * The notification (`changed`) is best-effort, and only sent for a change
    * that stood: the renderer's listener can throw while a window is being
@@ -134,12 +136,18 @@ export class PolicyEngine {
    */
   private write(apply: () => void, undo: () => void, record: () => void): void {
     apply();
-    this.persist();
     try {
+      this.persist();
       record();
     } catch (error) {
       undo();
-      this.persist();
+      // If the write is what failed this likely fails too; the first error
+      // is the one to surface, and memory — undone above — is already right.
+      try {
+        this.persist();
+      } catch (restore) {
+        console.error("[rules] could not restore rules.json after a failed change:", restore);
+      }
       throw error;
     }
     try {
@@ -149,9 +157,17 @@ export class PolicyEngine {
     }
   }
 
+  /**
+   * Whole or not at all: a write that dies part-way must not leave a
+   * truncated file that the next launch reads as "no rules" — every rule the
+   * owner ever kept, gone without a line anywhere. Written beside, then
+   * renamed over, which is atomic on the same volume.
+   */
   private persist(): void {
     fs.mkdirSync(path.dirname(this.rulesFile), { recursive: true });
-    fs.writeFileSync(this.rulesFile, JSON.stringify([...this.rules.values()], null, 2) + "\n");
+    const tmp = `${this.rulesFile}.${process.pid}.tmp`;
+    fs.writeFileSync(tmp, JSON.stringify([...this.rules.values()], null, 2) + "\n");
+    fs.renameSync(tmp, this.rulesFile);
   }
 
   /**
