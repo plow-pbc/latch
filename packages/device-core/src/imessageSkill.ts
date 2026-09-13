@@ -113,8 +113,14 @@ export const IMESSAGE_QUERIES = {
   /** Did my send land? Newest outbound rows NEWER than the pre-send
    *  snapshot, scoped to the handle you sent to (a participant send) or the
    *  chat guid you sent to (a chat/group send has no single handle, so it
-   *  is only findable by guid). */
-  verifySend: `select m.ROWID, c.guid as chat_guid, h.id as handle, m.is_sent, m.is_delivered,
+   *  is only findable by guid).
+   *
+   *  `error` is selected because it, not `is_delivered`, is what separates a
+   *  failure from a send still awaiting its receipt. A send to a handle that
+   *  is not reachable on the service the script pinned lands here as
+   *  `is_sent = 0, error = 22` — a loud signal, not the silence this recipe
+   *  once claimed. */
+  verifySend: `select m.ROWID, c.guid as chat_guid, h.id as handle, m.is_sent, m.is_delivered, m.error,
        datetime(m.date/1000000000 + 978307200, 'unixepoch', 'localtime') as at
   from message m
   join chat_message_join j on j.message_id = m.ROWID
@@ -341,8 +347,10 @@ defeats the approval, it does not satisfy it.
 
 ## Verify after send
 
-\`osascript\` returns as soon as Messages.app accepts the request — before delivery — and a
-send to an unrecognized or unreachable handle can fail silently with no error at all. Worse,
+\`osascript\` returns as soon as Messages.app accepts the request — before delivery — so exit
+0 means Messages queued it, never that anyone received it. A send to a handle that is not
+reachable on the service the script pinned fails *after* that exit, and silently as far as
+\`osascript\` is concerned — but not silently in the store, which records why. Worse,
 a bare "newest row for this handle" query can hand back an OLDER successful send as if it
 were confirmation of the one that just (silently) failed — so snapshot first, **before**
 you send:
@@ -358,9 +366,16 @@ and whichever you sent to for \`${IMESSAGE_HANDLE_PLACEHOLDER}\` (a participant 
 \`${IMESSAGE_CHAT_GUID_PLACEHOLDER}\` (a chat/group send — leave the other placeholder as
 text, it will simply never match). The handle and guid go inside SQL string literals, so
 **double every \`'\` in the value you substitute** (\`o'brien@x.com\` → \`o''brien@x.com\`);
-an un-doubled apostrophe ends the string early and the query fails to parse. Then read
-\`is_sent\` and \`is_delivered\` on the newest row. A send that never shows up here did not go
-out, whatever \`osascript\` returned — and because every row is newer than the snapshot, an
+an un-doubled apostrophe ends the string early and the query fails to parse.
+
+Then read the newest row. **The success criterion is \`is_sent = 1\` and \`error = 0\`.**
+\`is_delivered\` is not part of it: a receipt may never come back, so plenty of genuinely
+delivered messages sit at \`is_delivered = 0\` forever, and treating that as failure reports
+a good send as a bad one. A row with \`error\` non-zero did NOT go out — \`error = 22\` is the
+common one, the recipient not being reachable on the service the script pinned (typically
+an iMessage send to a number that only does SMS, which never falls back once the script
+binds the buddy to the iMessage service). A send that never shows up here did not go out at
+all, whatever \`osascript\` returned — and because every row is newer than the snapshot, an
 older success at the same handle or chat can never be mistaken for this send's delivery.
 
 This check is **best-effort, not an identity proof.** \`chat.db\` puts no per-sender marker on

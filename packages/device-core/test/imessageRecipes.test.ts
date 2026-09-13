@@ -86,7 +86,7 @@ const SCHEMA = [
   "create table message (ROWID integer primary key, guid text, text text," +
     " attributedBody blob, handle_id integer, date integer," +
     " is_from_me integer default 0, is_sent integer default 0," +
-    " is_delivered integer default 0," +
+    " is_delivered integer default 0, error integer default 0," +
     " associated_message_type integer default 0," +
     " item_type integer default 0);",
   "create table chat_message_join (chat_id integer, message_id integer, message_date integer);",
@@ -205,13 +205,18 @@ function makeStore(dir: string): string {
       "insert into chat_message_join (chat_id, message_id) values (20, 3004);",
       "insert into chat_message_join (chat_id, message_id) values (20, 3005);",
 
-      // verifySend probe-3 fix, scenario (a): a NEWER send that silently
-      // FAILED (is_sent=0, is_delivered=0), at ROWID 3010 — higher than
-      // every already-successful row above (3001..3004). A snapshot taken
-      // right before this send (ROWID 3004) must return ONLY 3010, never
-      // the older successful rows at the same handle.
-      `insert into message (ROWID, handle_id, date, is_from_me, is_sent, is_delivered)` +
-        ` values (3010, 300, ${ns(10)}, 1, 0, 0);`,
+      // verifySend probe-3 fix, scenario (a): a NEWER send that FAILED
+      // (is_sent=0) at ROWID 3010 — higher than every already-successful row
+      // above (3001..3004). A snapshot taken right before this send (ROWID
+      // 3004) must return ONLY 3010, never the older successful rows at the
+      // same handle.
+      //
+      // error=22 is the real shape of this failure: an iMessage-pinned send
+      // to a handle that is only reachable over SMS. It is what distinguishes
+      // 3010 from 3002 below, which is a genuinely-sent message still waiting
+      // on a delivery receipt (is_delivered=0, error=0).
+      `insert into message (ROWID, handle_id, date, is_from_me, is_sent, is_delivered, error)` +
+        ` values (3010, 300, ${ns(10)}, 1, 0, 0, 22);`,
       "insert into chat_message_join (chat_id, message_id) values (20, 3010);",
 
       // verifySend probe-3 fix, scenario (b): a group send has no single
@@ -313,7 +318,7 @@ describe("the imessage recipes the skill publishes", () => {
       .replace(`'${IMESSAGE_HANDLE_PLACEHOLDER}'`, `'${handle}'`)
       .replace(`'${IMESSAGE_CHAT_GUID_PLACEHOLDER}'`, `'${chatGuid}'`);
 
-  it("verifies a send: newest outbound rows within the snapshot, is_sent/is_delivered as stored", () => {
+  it("verifies a send: newest outbound rows within the snapshot, is_sent/is_delivered/error as stored", () => {
     // Snapshot of 0 excludes nothing, so this is the "just sent, no older
     // history to confuse it with" case — the ordering + column contract.
     const rows = query(store, verifySendQuery(0, "verify@example.com", "no-such-chat-guid"));
@@ -321,10 +326,13 @@ describe("the imessage recipes the skill publishes", () => {
     // most recent by date); the newer INBOUND row (3005) never appears
     // despite postdating every outbound row.
     expect(rows.map((r) => Number(r[0]))).toEqual([3010, 3001, 3002]);
-    expect(rows.map((r) => [r[0], r[1], r[3], r[4]])).toEqual([
-      ["3010", "chat-guid-20", "0", "0"],
-      ["3001", "chat-guid-20", "1", "1"],
-      ["3002", "chat-guid-20", "1", "0"],
+    // is_sent, is_delivered, error. The last two rows are why `error` has to
+    // be in the recipe at all: 3002 and 3010 are indistinguishable on
+    // is_delivered alone, and only one of them failed.
+    expect(rows.map((r) => [r[0], r[1], r[3], r[4], r[5]])).toEqual([
+      ["3010", "chat-guid-20", "0", "0", "22"], // failed: not reachable on the pinned service
+      ["3001", "chat-guid-20", "1", "1", "0"], // sent and receipted
+      ["3002", "chat-guid-20", "1", "0", "0"], // sent, no receipt back — NOT a failure
     ]);
   });
 
@@ -335,6 +343,7 @@ describe("the imessage recipes the skill publishes", () => {
     expect(rows.map((r) => Number(r[0]))).toEqual([3010]);
     expect(rows[0][3]).toBe("0"); // is_sent
     expect(rows[0][4]).toBe("0"); // is_delivered
+    expect(rows[0][5]).toBe("22"); // error: the failure is recorded, not silent
     // None of the older, already-successful sends leak through as if they
     // confirmed this one.
     expect(rows.some((r) => Number(r[0]) <= 3004)).toBe(false);
