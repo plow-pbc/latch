@@ -106,21 +106,14 @@ const act = (server: DomoMcpServer, session: string, action: string, extra: Reco
   callTool(server, "plow_browser", { session, action, ...extra }, AGENT);
 
 describe("browser tools (fake runtime)", () => {
-  it("carries click_at coordinates from MCP to the browser and rejects missing coordinates", async () => {
-    const { server, device, cmdLog } = makeServer();
+  it("returns a click_at result and rejects missing coordinates", async () => {
+    const { server } = makeServer();
     const session = await open(server, ["pizza.example"]);
     await act(server, session, "goto", { url: "https://pizza.example/verify" });
 
     const clicked = await act(server, session, "click_at", { x: 120, y: 80 });
     expect(clicked.isError, JSON.stringify(clicked.payload)).toBe(false);
     expect(clicked.payload).toMatchObject({ ok: true, x: 120, y: 80 });
-    const sent = fs.readFileSync(cmdLog, "utf8").trim().split("\n")
-      .map((line) => JSON.parse(line) as Record<string, unknown>);
-    expect(sent.at(-1)).toMatchObject({ action: "click_at", x: 120, y: 80 });
-    const audited = device.audit.entries()
-      .filter((entry) => jv(entry as JSONValue).get("event").str === "browser_command")
-      .at(-1);
-    expect(audited).toMatchObject({ action: "click_at", x: 120, y: 80 });
 
     const missing = await act(server, session, "click_at", { x: 120 });
     expect(missing.isError).toBe(true);

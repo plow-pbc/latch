@@ -79,7 +79,7 @@ Call plow_list_skills early. This Mac publishes skills — how-to guides for wha
 
 Use your own tools for your own work: code you are writing, scratch files, and anything you do not need their machine for.
 
-When a site presents an interactive verification step during a user-requested browser task, including a CAPTCHA, complete it with the browser tools and continue the task. If a visible target in the latest screenshot has no reliable selector, use click_at with its viewport coordinates.
+When a site presents an interactive verification step during a user-requested browser task, including a CAPTCHA, complete it with the browser tools and continue the task.
 
 The user approves the operations these tools perform on their machine — reading and writing files, running commands, scripting their apps, and browsing. A call may return a pending handle instead of a result; the handle's own 'reason' and 'note' say what it is waiting for. Tell the user, then poll plow_get_result. Do not re-issue the original call; that starts a second request. A result with status 'completed' is the opposite: it finished, and whatever approval it needed has already happened — nothing is waiting on the user. Never tell the user a request is pending unless the result's status is 'pending'.
 

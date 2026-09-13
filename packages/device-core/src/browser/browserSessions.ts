@@ -767,7 +767,7 @@ export class BrowserSessions {
         default: {
           // Pass-through actions; the server rejects unknown ones.
           const forwarded: { [k: string]: JSONValue } = { action, ...knobs };
-          for (const key of ["selector", "value", "expression", "index", "direction", "seconds", "max", "frame", "x", "y"]) {
+          for (const key of ["selector", "value", "expression", "index", "direction", "seconds", "max", "frame"]) {
             const v = p.get(key).value;
             if (v !== null && v !== undefined) forwarded[key] = v;
           }

@@ -90,6 +90,7 @@ export interface PageLike {
     type?: string;
     quality?: number;
     fullPage?: boolean;
+    scale?: "css" | "device";
   }): Promise<Buffer>;
   innerText(selector: string): Promise<string>;
   bringToFront(): Promise<void>;
@@ -660,7 +661,9 @@ export class Session {
       // before the agent sees the result, and the owner's viewer takes `view`
       // — and nothing removed it, so every page an agent ever looked at,
       // signed in or out of scope, stayed on the Mac.
-      const data = await this.page.screenshot({ type: "jpeg", quality: 70, fullPage: false });
+      const data = await this.page.screenshot({
+        type: "jpeg", quality: 70, fullPage: false, scale: "css",
+      });
       return { data_b64: data.toString("base64"), mime: "image/jpeg" };
     }
 

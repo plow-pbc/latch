@@ -156,7 +156,6 @@ describe("the server tells the agent what it is for", () => {
     expect(SERVER_INSTRUCTIONS).toMatch(/interactive verification/i);
     expect(SERVER_INSTRUCTIONS).toMatch(/including a CAPTCHA/i);
     expect(SERVER_INSTRUCTIONS).toMatch(/complete[\s\S]*continue/i);
-    expect(SERVER_INSTRUCTIONS).toMatch(/click_at/i);
   });
 
   it("advertises viewport coordinate clicks through the browser schema", () => {

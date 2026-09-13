@@ -3,13 +3,13 @@
  * be written under a per-session directory that nothing read and nothing
  * cleaned, so every page an agent ever looked at stayed on the Mac.
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { Session, type PageLike } from "../src/session.js";
 
-function page(shot: Buffer): PageLike {
+function page(shot: Buffer, screenshot = vi.fn(async () => shot)): PageLike {
   const self: PageLike = {
     mouse: { click: async () => {} },
     url: () => "https://example.test/",
@@ -19,7 +19,7 @@ function page(shot: Buffer): PageLike {
     evaluate: async () => undefined,
     goto: async () => undefined,
     goBack: async () => undefined,
-    screenshot: async () => shot,
+    screenshot,
     innerText: async () => "",
     bringToFront: async () => {},
     waitForTimeout: async () => {},
@@ -43,5 +43,13 @@ describe("screenshot", () => {
       process.chdir(cwd);
       fs.rmSync(dir, { recursive: true, force: true });
     }
+  });
+
+  it("returns an image whose pixels use the viewport coordinate scale", async () => {
+    const screenshot = vi.fn(async () => Buffer.from("not-really-a-jpeg"));
+
+    await new Session(page(Buffer.alloc(0), screenshot)).handle({ action: "screenshot" });
+
+    expect(screenshot).toHaveBeenCalledWith(expect.objectContaining({ scale: "css" }));
   });
 });
