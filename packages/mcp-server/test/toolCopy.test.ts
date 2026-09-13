@@ -359,6 +359,13 @@ describe("the browsing skill agrees with the tools it documents", () => {
     expect(BROWSING_SKILL.description).toMatch(/reading the live web/i);
     expect(BROWSING_SKILL.description).not.toMatch(/any task that requires visiting/i);
   });
+
+  it("the browsing skill teaches screenshot coordinate clicks", () => {
+    expect(BROWSING_SKILL.body).toMatch(/click_at/);
+    expect(BROWSING_SKILL.body).toMatch(/including a CAPTCHA/i);
+    expect(BROWSING_SKILL.body).toMatch(/viewport coordinates/i);
+    expect(BROWSING_SKILL.body).toMatch(/latest\s+screenshot/i);
+  });
 });
 
 /**
