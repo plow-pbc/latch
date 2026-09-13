@@ -81,6 +81,7 @@ import { adversarialReview } from "./adversarialAgent.js";
 import {
   ApprovalDecision,
   ApprovalQueue,
+  Decided,
   decideIntent,
   ReviewHint,
   storedRuleMayGrant,
@@ -332,7 +333,7 @@ class ElectronPolicy implements PolicyDelegate {
 
   // The branching itself lives in reviewPolicy.ts so it is testable without a
   // display; this only supplies the Electron-shaped pieces.
-  async decideIntent(intent: Intent): Promise<{ decision: ApprovalDecision; source: string }> {
+  async decideIntent(intent: Intent): Promise<Decided> {
     const audit = device?.audit;
     return decideIntent(intent, {
       settings: loadSettings(home),
@@ -589,9 +590,10 @@ ipcMain.handle("audit:clear", async () => {
 // rather than relying on a window that may have been closed.
 ipcMain.handle("approvals:pending", async () => (await approvals?.pending()) ?? []);
 ipcMain.handle("rules:list", async () => device?.policy.allRules() ?? []);
+// Answers nothing: the redraw is `rules:changed`'s, which the removal fires
+// — one path for every change to the list, whoever made it.
 ipcMain.handle("rules:remove", async (_e, key: string) => {
   device?.policy.removeRule(key);
-  return device?.policy.allRules() ?? [];
 });
 ipcMain.handle("ui:getTab", async () => {
   const tab = loadSettings(home).selectedTab;

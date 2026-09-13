@@ -87,8 +87,12 @@ export function storedRuleMayGrant(settings: Settings): boolean {
   return mode !== "adversarial" && mode !== "deny";
 }
 
-/** A decision and HOW it was reached, for the audit log. */
-export type Decided = { decision: ApprovalDecision; source: string };
+/**
+ * A decision and HOW it was reached, for the audit log — and whether the
+ * dialog path already stored the rule an `always_allow` makes, so the engine
+ * does not store it twice (PolicyEngine's `IntentDecision`).
+ */
+export type Decided = { decision: ApprovalDecision; source: string; ruleStored?: true };
 
 /** A request waiting its turn for the human. */
 export interface QueuedApproval {
@@ -360,6 +364,7 @@ export async function decideIntent(intent: Intent, deps: DecideDeps): Promise<De
         // the rule is, and the decision line then says what the request got.
         deps.storeRule();
         await deps.queue.sweep();
+        return { decision, source: "ask", ruleStored: true };
       }
       return { decision, source: "ask" };
     },

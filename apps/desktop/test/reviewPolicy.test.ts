@@ -775,7 +775,8 @@ describe("decideIntent — ask mode and suggestions", () => {
       settings({ approvalMode: "ask", relayCredential: PLOW_CREDENTIAL }),
       { verdict: "allow", decision: "always_allow" },
     );
-    expect(await h.run()).toEqual({ decision: "always_allow", source: "ask" });
+    // `ruleStored`: the dialog path stored the rule itself, and says so.
+    expect(await h.run()).toEqual({ decision: "always_allow", source: "ask", ruleStored: true });
     expect(h.dialogs).toHaveLength(1);
     await expect(h.dialogs[0]).resolves.toEqual({
       decision: "allow_once",

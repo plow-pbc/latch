@@ -3,7 +3,7 @@
  * (traversal, symlink escape), policy rule reuse / deny-not-stored, audit log
  * shape, and the intent validation path.
  */
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -162,7 +162,7 @@ describe("PolicyEngine", () => {
       async decideIntent(i) {
         engine.storeRule(i);
         await new Promise((r) => setTimeout(r, 1));
-        return { decision: "always_allow" as const, source: "ask" };
+        return { decision: "always_allow" as const, source: "ask", ruleStored: true as const };
       },
     };
     const first = await engine.decide(intentWith(caps), early);
@@ -176,7 +176,7 @@ describe("PolicyEngine", () => {
         engine.storeRule(i);
         engine.removeRule(engine.allRules()[0].ruleKey);
         await new Promise((r) => setTimeout(r, 1));
-        return { decision: "always_allow" as const, source: "ask" };
+        return { decision: "always_allow" as const, source: "ask", ruleStored: true as const };
       },
     };
     engine.removeRule(engine.allRules()[0].ruleKey);
@@ -188,6 +188,30 @@ describe("PolicyEngine", () => {
     const plain = await engine.decide(intentWith(caps), new HeadlessPolicy({ intent: "always_allow" }));
     expect(plain.decision).toBe("always_allow");
     expect(engine.allRules()).toHaveLength(1);
+  });
+
+  it("a listener that throws loses nothing: the file, the record, and the answer all stand", async () => {
+    const engine = new PolicyEngine(path.join(tempDir(), "rules.json"));
+    const caps: Capability[] = [{ kind: "process.exec", argv: ["ls"], cwd: "/tmp" }];
+    // The renderer's listener, mid-teardown — it fires between the write and
+    // the audit listener, and must take neither down with it.
+    const stored: string[] = [];
+    engine.events.on("changed", () => { throw new Error("webContents destroyed"); });
+    engine.events.on("stored", ({ intentId }: { intentId: string }) => stored.push(intentId));
+    engine.events.on("revoked", () => { throw new Error("webContents destroyed"); });
+    const quiet = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const i = intentWith(caps);
+      const grant = await engine.decide(i, new HeadlessPolicy({ intent: "always_allow" }));
+      expect(grant.decision).toBe("always_allow");
+      expect(engine.allRules()).toHaveLength(1);
+      expect(stored).toEqual([i.intentId]);
+      expect(() => engine.removeRule(engine.allRules()[0]!.ruleKey)).not.toThrow();
+      expect(engine.allRules()).toHaveLength(0);
+      expect(quiet).toHaveBeenCalledTimes(3);
+    } finally {
+      quiet.mockRestore();
+    }
   });
 
   it("names the rule's making and its revoking as events, with the rule", async () => {

@@ -658,8 +658,6 @@ function detailFor(a) {
 let rulesMounted = null;
 
 async function renderRules() {
-  const rules = await window.domo.rulesList();
-
   // ---- Approvals: what happens when one of those agents asks for something.
   //
   // It sits above the stored rules because both controls answer what agents
@@ -688,6 +686,12 @@ async function renderRules() {
     el("div", { class: "field" }, [el("label", { text: PURPOSE_LABEL }), purposeInput]),
     ...PURPOSE_CAVEATS.map((text) => el("p", { class: "faint", text })),
   ]);
+
+  // Read LAST, with nothing awaited between this and the mount below: a rule
+  // stored while an earlier read was in flight would arrive as a
+  // `rules:changed` that finds no pane to refresh yet, and the list would
+  // then show a snapshot from before it.
+  const rules = await window.domo.rulesList();
 
   // The reads above can outlive a quick tab switch. Do not let the
   // completed Rules render replace the pane the user switched to meanwhile.
@@ -762,16 +766,17 @@ async function renderRules() {
     renderApprovals();
   };
 
-  // The stored rules, redrawn in place: an approval window answered "always
-  // allow" while this pane is open adds one, and a revoke here removes one.
-  // Never renderRules() for that — a full rebuild would throw away a purpose
+  // The stored rules, redrawn in place — always from `rules:changed`, which
+  // main fires for every change to the list: an approval window answered
+  // "always allow" while this pane is open, or the Revoke button here. Never
+  // renderRules() for that — a full rebuild would throw away a purpose
   // statement mid-edit and reset the pane's scroll.
   const ruleList = el("div", { class: "rule-list" });
   const drawRules = (rules) => {
     ruleList.replaceChildren(...(rules.length
       ? rules.map((r) => {
           const remove = el("button", { class: "btn danger", text: "Revoke Rule" });
-          remove.addEventListener("click", async () => drawRules(await window.domo.rulesRemove(r.ruleKey)));
+          remove.addEventListener("click", () => { void window.domo.rulesRemove(r.ruleKey); });
           const caps = (r.capabilities || []).map((c) => el("span", { class: "cap", text: capText(c) }));
           return el("div", { class: "item" }, [
             el("div", { class: "row" }, [el("h4", { text: r.agentDisplay || r.agentId }), el("div", { class: "spacer" }), remove]),

@@ -24,7 +24,19 @@ import {
  * "adversarial" (adversarial-agent review), "policy" (auto-deny). Rule matches
  * are labeled "rule" by the engine itself.
  */
-export type IntentDecision = Decision | { decision: Decision; source?: string };
+export type IntentDecision =
+  | Decision
+  | {
+      decision: Decision;
+      source?: string;
+      /**
+       * The delegate already stored this intent's always-allow rule (via
+       * `storeRule`), so the engine must not store it again: the rule may
+       * have been revoked on the answer's way back, and a second store would
+       * put it back. Travels with the decision, so it cannot outlive it.
+       */
+      ruleStored?: true;
+    };
 
 /** Whoever answers approval questions: app UI, headless script… */
 export interface PolicyDelegate {
@@ -87,20 +99,37 @@ export class PolicyEngine {
     if (!rule) return;
     this.rules.delete(key);
     this.persist();
-    this.events.emit("revoked", { rule });
+    this.announce("revoked", { rule });
   }
 
   removeAllRules(): void {
     const rules = [...this.rules.values()];
     this.rules.clear();
     this.persist();
-    for (const rule of rules) this.events.emit("revoked", { rule });
+    for (const rule of rules) this.announce("revoked", { rule });
   }
 
+  /** The file, and nothing else: what listeners do is not this write's problem. */
   private persist(): void {
     fs.mkdirSync(path.dirname(this.rulesFile), { recursive: true });
     fs.writeFileSync(this.rulesFile, JSON.stringify([...this.rules.values()], null, 2) + "\n");
-    this.events.emit("changed");
+  }
+
+  /**
+   * The write's record first (`stored`/`revoked` — the audit line), then the
+   * best-effort `changed` (the renderer). Each listener is isolated: the
+   * renderer's can throw while a window is being torn down, and a throw here
+   * would escape from the dialog path — the rule on disk, no audit line, and
+   * the request denied as an error. Same shape as AuditLog's emits.
+   */
+  private announce(event: "stored" | "revoked", payload: object): void {
+    for (const [name, arg] of [[event, payload], ["changed", undefined]] as const) {
+      try {
+        this.events.emit(name, arg);
+      } catch (error) {
+        console.error(`[rules] ${name} listener failed:`, error);
+      }
+    }
   }
 
   /**
@@ -120,55 +149,36 @@ export class PolicyEngine {
   }
 
   /**
-   * Intents whose rule was stored ahead of `decide`'s own turn to store it
-   * (`storeRule`), so that turn is skipped. Cleared as each decision completes.
-   */
-  private readonly storedEarly = new Set<string>();
-
-  /**
    * Store the always-allow rule for this intent now, ahead of its decision
    * completing. `decide` stores on an `always_allow` answer; a delegate that
    * queues dialogs calls this the moment the human answers, BEFORE the answer
    * travels back — the dialogs waiting behind it ask `ruleAnswers` right
-   * then, and a store that waited for `decide` comes too late for them.
-   *
-   * A decision stores its rule ONCE. The answer's way back to `decide` can
-   * cross disk I/O (the approval store's write), and the owner may revoke
-   * the rule in that interval — it is already on screen. `decide` must not
-   * put it back: that store is this one, already done, so `decide` skips it.
-   * An existing rule is left alone either way, so its creation time and the
-   * change event stay honest.
+   * then, and a store that waited for `decide` comes too late for them. The
+   * delegate then says so on its decision (`ruleStored`), and `decide` does
+   * not store again: the answer's way back can cross disk I/O (the approval
+   * store's write), the owner may revoke the rule in that interval — it is
+   * already on screen — and a second store would put it back. An existing
+   * rule is left alone either way, so its creation time and the events stay
+   * honest.
    */
   storeRule(intent: Intent): void {
-    this.storedEarly.add(intent.intentId);
     const key = intentRuleKey(intent);
     if (!ruleEligible(intent) || this.rules.has(key)) return;
     const rule = makeAlwaysAllowRule(intent);
     this.rules.set(key, rule);
     this.persist();
-    this.events.emit("stored", { rule, intentId: intent.intentId });
+    this.announce("stored", { rule, intentId: intent.intentId });
   }
 
   async decide(intent: Intent, delegate: PolicyDelegate): Promise<Grant> {
     if (await this.ruleAnswers(intent, delegate)) {
       return makeGrant(intent, "always_allow", "rule");
     }
-    let result;
-    try {
-      result = await delegate.decideIntent(intent);
-    } catch (e) {
-      this.storedEarly.delete(intent.intentId);
-      throw e;
-    }
+    const result = await delegate.decideIntent(intent);
     const decision = typeof result === "string" ? result : result.decision;
     const source = typeof result === "string" ? "prompt" : (result.source ?? "prompt");
-    // Consumed here whatever the decision: a delegate that stored early and
-    // then answered otherwise must not leave a mark for a later intent.
-    const alreadyStored = this.storedEarly.delete(intent.intentId);
-    if (decision === "always_allow" && !alreadyStored) {
-      this.storeRule(intent);
-      this.storedEarly.delete(intent.intentId);
-    }
+    const ruleStored = typeof result !== "string" && result.ruleStored === true;
+    if (decision === "always_allow" && !ruleStored) this.storeRule(intent);
     return makeGrant(intent, decision, source);
   }
 }
