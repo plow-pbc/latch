@@ -607,6 +607,25 @@ describe("a queued dialog is answered by a rule stored ahead of it", () => {
     expect(openApproval).toHaveBeenCalledTimes(1);
   });
 
+  it("an answer from a rule says the rule is in place, so completing it stores nothing", async () => {
+    // What the engine sees when a queued request was answered by a rule: the
+    // decision must carry `ruleStored`, or `decide` would store again on the
+    // way out — and put back a rule revoked while the answer travelled.
+    const decided = await decideIntent(intent(), {
+      settings: settings(),
+      apiBaseUrl: "https://api.plow.co",
+      plowRoot: PLOW_ROOT,
+      auditEntries: () => [],
+      record: () => {},
+      review: async () => ({ verdict: "ask", reason: "" }),
+      queue: new ApprovalQueue(),
+      ruleAnswers: async () => true,
+      storeRule: () => { throw new Error("nothing to store"); },
+      openApproval: async () => { throw new Error("no dialog"); },
+    });
+    expect(decided).toEqual({ decision: "always_allow", source: "rule", ruleStored: true });
+  });
+
   it("a dialog that throws does not stall the ones behind it", async () => {
     const queue = new ApprovalQueue();
     const wait = { preempt: async () => null };

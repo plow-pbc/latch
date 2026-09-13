@@ -88,9 +88,10 @@ export function storedRuleMayGrant(settings: Settings): boolean {
 }
 
 /**
- * A decision and HOW it was reached, for the audit log — and whether the
- * dialog path already stored the rule an `always_allow` makes, so the engine
- * does not store it twice (PolicyEngine's `IntentDecision`).
+ * A decision and HOW it was reached, for the audit log — and, on an
+ * `always_allow`, whether its rule is already in place (stored by the dialog
+ * path, or the rule that answered), so the engine does not store it again
+ * (PolicyEngine's `IntentDecision`).
  */
 export type Decided = { decision: ApprovalDecision; source: string; ruleStored?: true };
 
@@ -345,8 +346,11 @@ export async function decideIntent(intent: Intent, deps: DecideDeps): Promise<De
     // allow", storing a rule that covers this intent too. Then the human has
     // already decided it: it is granted the way the engine grants a matching
     // rule — as the rule's answer, not the dialog's — and no window opens.
+    // `ruleStored`: this answer came FROM a rule, so the engine has nothing to
+    // store — and must not, or a rule revoked while the answer travels back
+    // through the approval store's write would come back.
     preempt: async () =>
-      (await deps.ruleAnswers()) ? { decision: "always_allow", source: "rule" } : null,
+      (await deps.ruleAnswers()) ? { decision: "always_allow", source: "rule", ruleStored: true } : null,
     show: async () => {
       const decision = await deps.openApproval(hint);
       if (decision === "always_allow") {

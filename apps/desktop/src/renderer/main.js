@@ -687,12 +687,6 @@ async function renderRules() {
     ...PURPOSE_CAVEATS.map((text) => el("p", { class: "faint", text })),
   ]);
 
-  // Read LAST, with nothing awaited between this and the mount below: a rule
-  // stored while an earlier read was in flight would arrive as a
-  // `rules:changed` that finds no pane to refresh yet, and the list would
-  // then show a snapshot from before it.
-  const rules = await window.domo.rulesList();
-
   // The reads above can outlive a quick tab switch. Do not let the
   // completed Rules render replace the pane the user switched to meanwhile.
   if (currentTab !== "rules") return;
@@ -785,13 +779,18 @@ async function renderRules() {
         })
       : [el("div", { class: "empty", text: "No always-allow rules." })]));
   };
-  drawRules(rules);
   const refreshRules = async () => {
     const latest = await window.domo.rulesList();
     // The read can outlive a tab switch; the pane it belongs to is gone then.
     if (rulesMounted?.refreshRules === refreshRules) drawRules(latest);
   };
+  // Mounted BEFORE the first read, and the first read goes through the same
+  // path as every later one: a `rules:changed` that arrives while that read
+  // is in flight refreshes this list rather than finding nothing mounted,
+  // so there is no moment the list can show a snapshot from before a change.
   rulesMounted = { refreshApprovals, refreshRules };
+  await refreshRules();
+  if (rulesMounted?.refreshRules !== refreshRules) return; // the tab moved on
 
   view.replaceChildren(el("div", { class: "panel rules settings" }, [
     group(

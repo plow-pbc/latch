@@ -30,10 +30,11 @@ export type IntentDecision =
       decision: Decision;
       source?: string;
       /**
-       * The delegate already stored this intent's always-allow rule (via
-       * `storeRule`), so the engine must not store it again: the rule may
-       * have been revoked on the answer's way back, and a second store would
-       * put it back. Travels with the decision, so it cannot outlive it.
+       * This intent's always-allow rule is already in place — the delegate
+       * stored it (`storeRule`), or answered from it — so the engine must not
+       * store it again: the rule may have been revoked on the answer's way
+       * back, and a second store would put it back. Travels with the
+       * decision, so it cannot outlive it.
        */
       ruleStored?: true;
     };
@@ -77,7 +78,10 @@ export class PolicyEngine {
    * intent whose answer made the rule) and `revoked` with `{ rule }`. The
    * device agent turns these into audit lines, so the log accounts for every
    * rule that exists — including one made by an answer the request itself
-   * did not get (see `storeRule`).
+   * did not get (see `storeRule`). These two are the write's RECORD, and a
+   * listener that throws fails the write: the rule set goes back to what it
+   * was and the error is rethrown, because an authorization the log cannot
+   * account for must not exist. Only `changed` is best-effort.
    */
   readonly events = new EventEmitter();
 
@@ -97,39 +101,57 @@ export class PolicyEngine {
   removeRule(key: string): void {
     const rule = this.rules.get(key);
     if (!rule) return;
-    this.rules.delete(key);
-    this.persist();
-    this.announce("revoked", { rule });
+    this.write(
+      () => this.rules.delete(key),
+      () => this.rules.set(key, rule),
+      () => this.events.emit("revoked", { rule }),
+    );
   }
 
   removeAllRules(): void {
-    const rules = [...this.rules.values()];
-    this.rules.clear();
-    this.persist();
-    for (const rule of rules) this.announce("revoked", { rule });
-  }
-
-  /** The file, and nothing else: what listeners do is not this write's problem. */
-  private persist(): void {
-    fs.mkdirSync(path.dirname(this.rulesFile), { recursive: true });
-    fs.writeFileSync(this.rulesFile, JSON.stringify([...this.rules.values()], null, 2) + "\n");
+    const before = new Map(this.rules);
+    this.write(
+      () => this.rules.clear(),
+      () => { this.rules = new Map(before); },
+      () => { for (const rule of before.values()) this.events.emit("revoked", { rule }); },
+    );
   }
 
   /**
-   * The write's record first (`stored`/`revoked` — the audit line), then the
-   * best-effort `changed` (the renderer). Each listener is isolated: the
-   * renderer's can throw while a window is being torn down, and a throw here
-   * would escape from the dialog path — the rule on disk, no audit line, and
-   * the request denied as an error. Same shape as AuditLog's emits.
+   * One change to the rule set: apply it, put it on disk, record it, tell the
+   * renderer — in that order.
+   *
+   * The record (`stored`/`revoked`) FAILS CLOSED: if its listener throws —
+   * the audit log could not append — the change is undone in memory and on
+   * disk and the error rethrown, so no rule exists that the log does not
+   * account for. In the dialog path that turns the owner's click into an
+   * error the request is denied on, which is the same answer any other
+   * un-auditable operation gets.
+   *
+   * The notification (`changed`) is best-effort, and only sent for a change
+   * that stood: the renderer's listener can throw while a window is being
+   * torn down, and that must take nothing down with it.
    */
-  private announce(event: "stored" | "revoked", payload: object): void {
-    for (const [name, arg] of [[event, payload], ["changed", undefined]] as const) {
-      try {
-        this.events.emit(name, arg);
-      } catch (error) {
-        console.error(`[rules] ${name} listener failed:`, error);
-      }
+  private write(apply: () => void, undo: () => void, record: () => void): void {
+    apply();
+    this.persist();
+    try {
+      record();
+    } catch (error) {
+      undo();
+      this.persist();
+      throw error;
     }
+    try {
+      this.events.emit("changed");
+    } catch (error) {
+      console.error("[rules] changed listener failed after a recorded change:", error);
+    }
+  }
+
+  private persist(): void {
+    fs.mkdirSync(path.dirname(this.rulesFile), { recursive: true });
+    fs.writeFileSync(this.rulesFile, JSON.stringify([...this.rules.values()], null, 2) + "\n");
   }
 
   /**
@@ -165,9 +187,11 @@ export class PolicyEngine {
     const key = intentRuleKey(intent);
     if (!ruleEligible(intent) || this.rules.has(key)) return;
     const rule = makeAlwaysAllowRule(intent);
-    this.rules.set(key, rule);
-    this.persist();
-    this.announce("stored", { rule, intentId: intent.intentId });
+    this.write(
+      () => this.rules.set(key, rule),
+      () => this.rules.delete(key),
+      () => this.events.emit("stored", { rule, intentId: intent.intentId }),
+    );
   }
 
   async decide(intent: Intent, delegate: PolicyDelegate): Promise<Grant> {

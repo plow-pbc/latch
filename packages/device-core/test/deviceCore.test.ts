@@ -190,15 +190,42 @@ describe("PolicyEngine", () => {
     expect(engine.allRules()).toHaveLength(1);
   });
 
-  it("a listener that throws loses nothing: the file, the record, and the answer all stand", async () => {
+  it("a rule the log cannot record does not exist: the store is undone and the error surfaces", async () => {
+    const file = path.join(tempDir(), "rules.json");
+    const engine = new PolicyEngine(file);
+    const caps: Capability[] = [{ kind: "process.exec", argv: ["ls"], cwd: "/tmp" }];
+    let appendFails = true;
+    let changes = 0;
+    engine.events.on("stored", () => { if (appendFails) throw new Error("ENOSPC"); });
+    engine.events.on("revoked", () => { if (appendFails) throw new Error("ENOSPC"); });
+    engine.events.on("changed", () => changes++);
+
+    // Storing: the rule is on disk for the record's duration, then gone.
+    await expect(engine.decide(intentWith(caps), new HeadlessPolicy({ intent: "always_allow" }))).rejects.toThrow("ENOSPC");
+    expect(engine.allRules()).toHaveLength(0);
+    expect(JSON.parse(fs.readFileSync(file, "utf8"))).toEqual([]);
+    expect(changes).toBe(0); // nothing stood, so nothing to tell the renderer
+
+    // Revoking: the rule stays, on disk too.
+    appendFails = false;
+    await engine.decide(intentWith(caps), new HeadlessPolicy({ intent: "always_allow" }));
+    const rule = engine.allRules()[0]!;
+    appendFails = true;
+    expect(() => engine.removeRule(rule.ruleKey)).toThrow("ENOSPC");
+    expect(engine.allRules()).toEqual([rule]);
+    expect(() => engine.removeAllRules()).toThrow("ENOSPC");
+    expect(engine.allRules()).toEqual([rule]);
+    expect(changes).toBe(1);
+  });
+
+  it("the renderer's listener throwing takes nothing with it", async () => {
     const engine = new PolicyEngine(path.join(tempDir(), "rules.json"));
     const caps: Capability[] = [{ kind: "process.exec", argv: ["ls"], cwd: "/tmp" }];
-    // The renderer's listener, mid-teardown — it fires between the write and
-    // the audit listener, and must take neither down with it.
+    // Mid-teardown: it fires after the write and its record, and must fail
+    // neither the answer nor the revoke.
     const stored: string[] = [];
     engine.events.on("changed", () => { throw new Error("webContents destroyed"); });
     engine.events.on("stored", ({ intentId }: { intentId: string }) => stored.push(intentId));
-    engine.events.on("revoked", () => { throw new Error("webContents destroyed"); });
     const quiet = vi.spyOn(console, "error").mockImplementation(() => {});
     try {
       const i = intentWith(caps);
@@ -208,7 +235,7 @@ describe("PolicyEngine", () => {
       expect(stored).toEqual([i.intentId]);
       expect(() => engine.removeRule(engine.allRules()[0]!.ruleKey)).not.toThrow();
       expect(engine.allRules()).toHaveLength(0);
-      expect(quiet).toHaveBeenCalledTimes(3);
+      expect(quiet).toHaveBeenCalledTimes(2);
     } finally {
       quiet.mockRestore();
     }
