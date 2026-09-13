@@ -35,21 +35,15 @@ describe("screenshot", () => {
     process.chdir(dir);
     try {
       const shot = Buffer.from("not-really-a-jpeg");
-      const result = await new Session(page(shot)).handle({ action: "screenshot" });
+      const screenshot = vi.fn(async () => shot);
+      const result = await new Session(page(shot, screenshot)).handle({ action: "screenshot" });
       expect(result).toEqual({ data_b64: shot.toString("base64"), mime: "image/jpeg" });
+      expect(screenshot).toHaveBeenCalledWith(expect.objectContaining({ scale: "css" }));
       expect(result).not.toHaveProperty("path");
       expect(fs.readdirSync(dir)).toEqual([]);
     } finally {
       process.chdir(cwd);
       fs.rmSync(dir, { recursive: true, force: true });
     }
-  });
-
-  it("returns an image whose pixels use the viewport coordinate scale", async () => {
-    const screenshot = vi.fn(async () => Buffer.from("not-really-a-jpeg"));
-
-    await new Session(page(Buffer.alloc(0), screenshot)).handle({ action: "screenshot" });
-
-    expect(screenshot).toHaveBeenCalledWith(expect.objectContaining({ scale: "css" }));
   });
 });
