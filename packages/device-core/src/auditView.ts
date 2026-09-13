@@ -402,11 +402,13 @@ export function buildActivity(id: string, events: JSONValue[]): AuditActivity {
     // Every request in this row, not just the first: a session that was
     // widened carries the opening intent AND each `browser_request` that
     // extended it, and showing only the first understates to the owner what
-    // their browser was actually allowed to reach.
+    // their browser was actually allowed to reach. A revoke row has no
+    // request; its bound is the revoked rule's, and it is what tells an
+    // owner with several rules for one agent WHICH one this was.
     capabilities: [
       ...new Set(
         events
-          .filter((e) => jv(e).get("event").str === "intent_received")
+          .filter((e) => ["intent_received", "rule_revoked"].includes(jv(e).get("event").str ?? ""))
           .flatMap((e) =>
             (jv(e).get("capabilities").arr ?? []).filter((c): c is string => typeof c === "string"),
           ),
@@ -765,6 +767,14 @@ function describeStep(e: JSONValue): AuditStep {
     case "rule_revoked":
       text = `Always-allow rule revoked — ${ev.get("agent_name").str ?? ev.get("agent").str ?? ""}`;
       state = "ok";
+      break;
+    // The line before this one announced a change that then could not be
+    // written; the rule set is as it was.
+    case "rule_write_failed":
+      text = ev.get("op").str === "revoked"
+        ? "Always-allow rule could not be revoked — it is still in effect"
+        : "Always-allow rule could not be saved — it does not exist";
+      state = "bad";
       break;
     case "adversarial_review_started": text = "AI Reviewer started reviewing…"; break;
     case "adversarial_review_result": {

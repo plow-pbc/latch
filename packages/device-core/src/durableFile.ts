@@ -1,6 +1,7 @@
 /**
- * One durable, atomic file write, for the two files the vault cannot afford
- * to lose to a power cut: the key blob and the item store.
+ * One durable, atomic file write, for the files this Mac cannot afford to
+ * lose to a power cut: the vault's key blob and item store, and the
+ * always-allow rules.
  *
  * A bare tmp-write + rename is atomic against a CRASH but not against power
  * loss — the kernel may persist the rename before the data, or persist one

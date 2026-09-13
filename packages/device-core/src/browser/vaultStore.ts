@@ -14,7 +14,7 @@
 import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { writeFileDurable } from "./durableFile.js";
+import { writeFileDurable } from "../durableFile.js";
 import { Cipher } from "./vaultItems.js";
 
 const FILE_NAME = "items.json";

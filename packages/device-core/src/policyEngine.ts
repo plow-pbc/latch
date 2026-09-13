@@ -6,6 +6,7 @@
 import { EventEmitter } from "node:events";
 import fs from "node:fs";
 import path from "node:path";
+import { writeFileDurable } from "./durableFile.js";
 import {
   AlwaysAllowRule,
   Decision,
@@ -81,7 +82,9 @@ export class PolicyEngine {
    * did not get (see `storeRule`). These two are the write's RECORD, and a
    * listener that throws fails the write: the rule set goes back to what it
    * was and the error is rethrown, because an authorization the log cannot
-   * account for must not exist. Only `changed` is best-effort.
+   * account for must not exist. A write that then fails to reach disk is
+   * announced as `write_failed` with `{ op, rule, intentId? }`, so the log
+   * can say the recorded change did not stand. Only `changed` is best-effort.
    */
   readonly events = new EventEmitter();
 
@@ -105,6 +108,7 @@ export class PolicyEngine {
       () => this.rules.delete(key),
       () => this.rules.set(key, rule),
       () => this.events.emit("revoked", { rule }),
+      () => this.events.emit("write_failed", { op: "revoked", rule }),
     );
   }
 
@@ -114,39 +118,57 @@ export class PolicyEngine {
       () => this.rules.clear(),
       () => { this.rules = new Map(before); },
       () => { for (const rule of before.values()) this.events.emit("revoked", { rule }); },
+      () => { for (const rule of before.values()) this.events.emit("write_failed", { op: "revoked", rule }); },
     );
   }
 
   /**
-   * One change to the rule set: apply it, put it on disk, record it, tell the
-   * renderer — in that order.
+   * One change to the rule set: apply it, record it, put it on disk, tell
+   * the renderer — in that order, and the order is the guarantee.
    *
-   * The disk write and the record (`stored`/`revoked`) FAIL CLOSED: if
-   * either throws — the file could not be written, the audit log could not
-   * append — the change is undone in memory, disk is put back as far as it
-   * can be, and the error rethrown, so no rule exists that disk and the log
-   * do not both account for. Memory is what answers the next request, so it
-   * is what must be undone first and without fail. In the dialog path that
-   * turns the owner's click into an error the request is denied on, which
-   * is the same answer any other un-auditable operation gets.
+   * The record (`stored`/`revoked`) comes BEFORE the disk write. Either can
+   * fail, and each failure is fail-closed: the change is undone in memory
+   * (memory is what answers the next request, so it is undone first and
+   * without fail) and the error rethrown. What differs is what disk and the
+   * log are left saying, and this order makes the only possible
+   * disagreement the safe one:
+   *
+   * - The record fails: nothing has touched disk, so nothing is there to
+   *   undo, and no second write can fail. A rule the log cannot account for
+   *   never exists on disk — not even for a moment, not even if the process
+   *   dies right here.
+   * - The write fails (or the process dies between the record and the
+   *   write): the log says a rule was saved that the file does not hold —
+   *   over-reporting, never a silent authorization — and the log is told so
+   *   with `write_failed`, best-effort, since the disk may be the problem.
+   *
+   * The other order — write, then record — could leave a rule on disk with
+   * no line to account for it, if the record failed and the undo-write
+   * failed after it (disk full does both), and the next launch would load
+   * it and grant on it. In the dialog path a failure here turns the owner's
+   * click into an error the request is denied on, which is the same answer
+   * any other un-auditable operation gets.
    *
    * The notification (`changed`) is best-effort, and only sent for a change
    * that stood: the renderer's listener can throw while a window is being
    * torn down, and that must take nothing down with it.
    */
-  private write(apply: () => void, undo: () => void, record: () => void): void {
+  private write(apply: () => void, undo: () => void, record: () => void, recordFailure: () => void): void {
     apply();
     try {
-      this.persist();
       record();
     } catch (error) {
       undo();
-      // If the write is what failed this likely fails too; the first error
-      // is the one to surface, and memory — undone above — is already right.
+      throw error;
+    }
+    try {
+      this.persist();
+    } catch (error) {
+      undo();
       try {
-        this.persist();
-      } catch (restore) {
-        console.error("[rules] could not restore rules.json after a failed change:", restore);
+        recordFailure();
+      } catch (also) {
+        console.error("[rules] could not record a failed rules.json write:", also);
       }
       throw error;
     }
@@ -158,16 +180,14 @@ export class PolicyEngine {
   }
 
   /**
-   * Whole or not at all: a write that dies part-way must not leave a
-   * truncated file that the next launch reads as "no rules" — every rule the
-   * owner ever kept, gone without a line anywhere. Written beside, then
-   * renamed over, which is atomic on the same volume.
+   * Whole or not at all, and on disk before it counts: a write that dies
+   * part-way must not leave a truncated file the next launch reads as "no
+   * rules", and a revoke the owner saw complete must not come back after a
+   * power cut because the rename reached the platter and the data did not.
    */
   private persist(): void {
     fs.mkdirSync(path.dirname(this.rulesFile), { recursive: true });
-    const tmp = `${this.rulesFile}.${process.pid}.tmp`;
-    fs.writeFileSync(tmp, JSON.stringify([...this.rules.values()], null, 2) + "\n");
-    fs.renameSync(tmp, this.rulesFile);
+    writeFileDurable(this.rulesFile, JSON.stringify([...this.rules.values()], null, 2) + "\n");
   }
 
   /**
@@ -207,6 +227,7 @@ export class PolicyEngine {
       () => this.rules.set(key, rule),
       () => this.rules.delete(key),
       () => this.events.emit("stored", { rule, intentId: intent.intentId }),
+      () => this.events.emit("write_failed", { op: "stored", rule, intentId: intent.intentId }),
     );
   }
 

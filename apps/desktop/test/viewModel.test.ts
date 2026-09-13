@@ -166,7 +166,24 @@ describe("auditActivities (grouping)", () => {
     expect(revoke.kind).toBe("access");
     expect(revoke.agentId).toBe("a1");
     expect(revoke.agentDisplay).toBe("Agent");
+    // The bound: with several rules for one agent, this is what says which.
+    expect(revoke.capabilities).toEqual(["Run: x"]);
     expect(revoke.timeline.map((s) => s.text)).toEqual(["Always-allow rule revoked — Agent"]);
+  });
+
+  it("a recorded change that could not be written says so, in place", () => {
+    const [a] = auditActivities([
+      { event: "intent_received", intentId: "i", agent: "a1", agent_name: "Agent", request: "run: x", ts: "2026-08-09T12:00:00Z" },
+      { event: "rule_stored", intentId: "i", ruleKey: "k", agent: "a1", agent_name: "Agent", capabilities: ["Run: x"], ts: "2026-08-09T12:00:01Z" },
+      { event: "rule_write_failed", intentId: "i", op: "stored", ruleKey: "k", agent: "a1", agent_name: "Agent", ts: "2026-08-09T12:00:01Z" },
+      { event: "intent_decision", intentId: "i", decision: "deny", source: "error", ts: "2026-08-09T12:00:02Z" },
+    ]);
+    expect(a!.timeline.map((s) => [s.text, s.state])).toEqual([
+      ["Request: run: x", "neutral"],
+      ["Always-allow rule saved", "ok"],
+      ["Always-allow rule could not be saved — it does not exist", "bad"],
+      ["Decision: deny — Error while asking", "bad"],
+    ]);
   });
 
   it("records how each intent was decided (decidedBy from source)", () => {

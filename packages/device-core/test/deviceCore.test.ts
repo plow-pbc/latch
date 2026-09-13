@@ -200,10 +200,11 @@ describe("PolicyEngine", () => {
     engine.events.on("revoked", () => { if (appendFails) throw new Error("ENOSPC"); });
     engine.events.on("changed", () => changes++);
 
-    // Storing: the rule is on disk for the record's duration, then gone.
+    // Storing: the record comes first, so the file was never touched — not
+    // even for a moment, and no second write had to succeed to make it so.
     await expect(engine.decide(intentWith(caps), new HeadlessPolicy({ intent: "always_allow" }))).rejects.toThrow("ENOSPC");
     expect(engine.allRules()).toHaveLength(0);
-    expect(JSON.parse(fs.readFileSync(file, "utf8"))).toEqual([]);
+    expect(fs.existsSync(file)).toBe(false);
     expect(changes).toBe(0); // nothing stood, so nothing to tell the renderer
 
     // Revoking: the rule stays, on disk too.
@@ -226,11 +227,15 @@ describe("PolicyEngine", () => {
     const caps: Capability[] = [{ kind: "process.exec", argv: ["ls"], cwd: "/tmp" }];
     const quiet = vi.spyOn(console, "error").mockImplementation(() => {});
     try {
-      let recorded = 0;
-      engine.events.on("stored", () => recorded++);
+      const seen: string[] = [];
+      engine.events.on("stored", () => seen.push("stored"));
+      engine.events.on("write_failed", ({ op }: { op: string }) => seen.push(`write_failed:${op}`));
+      engine.events.on("changed", () => seen.push("changed"));
       await expect(engine.decide(intentWith(caps), new HeadlessPolicy({ intent: "always_allow" }))).rejects.toThrow(/ENOTDIR|EEXIST/);
       expect(engine.allRules()).toHaveLength(0);
-      expect(recorded).toBe(0); // nothing to record: the rule never stood
+      // Recorded, then the write failed, and the log is told the change did
+      // not stand. Nothing for the renderer: nothing changed.
+      expect(seen).toEqual(["stored", "write_failed:stored"]);
       // The next matching request is not answered by a rule that is nowhere.
       const asked: PolicyDelegate = { decideIntent: async () => "deny" as const };
       const next = await engine.decide(intentWith(caps), asked);

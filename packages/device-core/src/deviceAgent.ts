@@ -360,6 +360,21 @@ export class DeviceAgent {
         capabilities: rule.capabilities.map(capabilityDisplay),
       });
     });
+    // The line above was written and then the file could not be: the change
+    // it announced did not stand (policyEngine.ts `write`). Said here so the
+    // log over-reports nothing without also saying so.
+    this.policy.events.on(
+      "write_failed",
+      ({ op, rule, intentId }: { op: "stored" | "revoked"; rule: AlwaysAllowRule; intentId?: string }) => {
+        this.audit.record("rule_write_failed", {
+          ...(intentId ? { intentId } : {}),
+          op,
+          ruleKey: rule.ruleKey,
+          agent: rule.agentId,
+          agent_name: rule.agentDisplay,
+        });
+      },
+    );
     this.executor = new Executor(path.join(home, "device/scratch"), undefined, this.vendorDirs);
     this.skills = new SkillRegistry();
     // `ownerHome`, not `home` — this describes where WhatsApp put the owner's

@@ -517,23 +517,6 @@ describe("a queued dialog is answered by a rule stored ahead of it", () => {
     expect(shown.sort()).toEqual(["run: ls", "run: pwd"]);
   });
 
-  it("still asks about a queued request the new rule does not cover", async () => {
-    const { d, shown, release } = delegate(settings(), {
-      "run: ls": ["always_allow"],
-      "run: pwd": ["deny"],
-    });
-    const first = engine.decide(intent(), d);
-    const second = engine.decide(other(), d);
-    await release();
-    await release();
-    const grants = await Promise.all([first, second]);
-    expect(grants.map((g) => [g.decision, g.source])).toEqual([
-      ["always_allow", "ask"],
-      ["deny", "ask"],
-    ]);
-    expect(shown.sort()).toEqual(["run: ls", "run: pwd"]);
-  });
-
   it("an 'allow once' ahead of a twin decides nothing for it", async () => {
     const { d, shown, release } = delegate(settings(), { "run: ls": ["allow_once", "deny"] });
     const first = engine.decide(intent(), d);

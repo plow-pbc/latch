@@ -638,7 +638,7 @@ function detailFor(a) {
     meta,
   ];
   if (a.capabilities && a.capabilities.length) {
-    children.push(el("div", { class: "section-label", text: "Approved capability bounds" }));
+    children.push(el("div", { class: "section-label", text: "Capability bounds" }));
     children.push(el("div", { class: "capchips" }, a.capabilities.map((c) => el("span", { class: "cap", text: String(c) }))));
   }
   if (a.timeline && a.timeline.length) {

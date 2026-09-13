@@ -32,7 +32,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { createRequire } from "node:module";
-import { writeFileDurable } from "./durableFile.js";
+import { writeFileDurable } from "../durableFile.js";
 import { safeStorage } from "./vaultSecretStore.js";
 import { vaultStoreIdentity } from "./vaultKeychain.js";
 
