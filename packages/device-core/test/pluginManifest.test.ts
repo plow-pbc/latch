@@ -55,6 +55,11 @@ describe("parseManifest", () => {
     ["an empty prefix", withPatch({ argv: { read: [[]], write: [] } }), "argv prefixes must not be empty"],
     ["a missing exec", withPatch({ exec: undefined }), "manifest needs exec.cwd and exec.argv"],
     ["a daemon without health", withPatch({ daemon: { argv: ["serve"] } }), "daemon needs argv and health"],
+    ["a non-string version", withPatch({ version: {} }), "manifest version must be a string"],
+    ["a runtime that is not an object", withPatch({ runtime: "nope" }), "runtime must be an object"],
+    ["an env that is not an object", withPatch({ env: [] }), "env must be an object"],
+    ["an argv that is not an object", withPatch({ argv: "nope" }), "argv must be an object"],
+    ["an empty daemon argv", withPatch({ daemon: { argv: [], health: "/health" } }), "daemon needs argv and health"],
   ])("refuses %s", (_name, raw, message) => {
     expect(() => parseManifest(raw)).toThrow(new PluginError(message));
   });

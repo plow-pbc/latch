@@ -61,6 +61,17 @@ function unique(names: string[], what: string): void {
 const isStrings = (v: unknown): v is string[] => Array.isArray(v) && v.every((s) => typeof s === "string");
 const obj = (v: unknown): Record<string, unknown> =>
   v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
+/** An absent container defaults empty; a present one of the wrong type is refused, never coerced. */
+function typedObj(v: unknown, what: string): Record<string, unknown> {
+  if (v === undefined || v === null) return {};
+  if (typeof v !== "object" || Array.isArray(v)) fail(`${what} must be an object`);
+  return v as Record<string, unknown>;
+}
+function typedArray(v: unknown, what: string): unknown[] {
+  if (v === undefined || v === null) return [];
+  if (!Array.isArray(v)) fail(`${what} must be an array`);
+  return v;
+}
 
 export function parseManifest(raw: string): PluginManifest {
   let json: unknown;
@@ -75,11 +86,12 @@ export function parseManifest(raw: string): PluginManifest {
   if (!SLUG.test(name)) fail("manifest name must be lowercase letters, digits and dashes");
   const command = String(m.command ?? "");
   if (!SLUG.test(command)) fail("manifest command must be lowercase letters, digits and dashes");
+  if (m.version !== undefined && typeof m.version !== "string") fail("manifest version must be a string");
   const version = String(m.version ?? "");
   if (!version) fail("manifest needs a version");
 
-  const runtime = obj(m.runtime);
-  const binaries = (Array.isArray(runtime.binaries) ? runtime.binaries : []).map((b: unknown) => {
+  const runtime = typedObj(m.runtime, "runtime");
+  const binaries = typedArray(runtime.binaries, "runtime.binaries").map((b: unknown) => {
     const bin = obj(b);
     const bname = String(bin.name ?? "");
     if (!SLUG.test(bname)) fail("binary name must be lowercase letters, digits and dashes");
@@ -104,7 +116,7 @@ export function parseManifest(raw: string): PluginManifest {
     };
   });
   unique(binaries.map((b) => b.name), "binary");
-  const sources = (Array.isArray(runtime.sources) ? runtime.sources : []).map((s: unknown) => {
+  const sources = typedArray(runtime.sources, "runtime.sources").map((s: unknown) => {
     const src = obj(s);
     const sname = String(src.name ?? "");
     if (!SLUG.test(sname)) fail("source name must be lowercase letters, digits and dashes");
@@ -129,15 +141,15 @@ export function parseManifest(raw: string): PluginManifest {
 
   let daemon: PluginManifest["daemon"] = null;
   if (m.daemon !== undefined && m.daemon !== null) {
-    const d = obj(m.daemon);
-    if (!isStrings(d.argv) || typeof d.health !== "string" || !d.health.startsWith("/")) {
+    const d = typedObj(m.daemon, "daemon");
+    if (!isStrings(d.argv) || d.argv.length === 0 || typeof d.health !== "string" || !d.health.startsWith("/")) {
       fail("daemon needs argv and health");
     }
     daemon = { argv: d.argv, health: d.health };
   }
 
   const env: Record<string, EnvSource> = {};
-  for (const [key, value] of Object.entries(obj(m.env))) {
+  for (const [key, value] of Object.entries(typedObj(m.env, "env"))) {
     if (!/^[A-Z][A-Z0-9_]*$/.test(key)) fail("env names must be UPPER_SNAKE_CASE");
     const v = obj(value);
     const kinds = (["fixed", "secret", "mint"] as const).filter((k) => typeof v[k] === "string");
@@ -145,9 +157,9 @@ export function parseManifest(raw: string): PluginManifest {
     env[key] = { [kinds[0]]: v[kinds[0]] } as EnvSource;
   }
 
-  const argv = obj(m.argv);
-  const read = Array.isArray(argv.read) ? (argv.read as unknown[]) : [];
-  const write = Array.isArray(argv.write) ? (argv.write as unknown[]) : [];
+  const argv = typedObj(m.argv, "argv");
+  const read = typedArray(argv.read, "argv.read");
+  const write = typedArray(argv.write, "argv.write");
   const prefixes = [...read, ...write];
   if (!prefixes.every(isStrings)) fail("argv prefixes must be arrays of strings");
   const stringPrefixes = prefixes as string[][];
