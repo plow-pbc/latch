@@ -95,7 +95,10 @@ export class PolicyEngine {
      * itself. A plugin read (`plugins/argvRules.ts`) is viewed with its argv cut
      * to `<command> <prefix>`, so one "always allow" covers every future query
      * regardless of text. Only the rule sees the view: the approval card, the
-     * sandbox profile and the audit log all get the real argv.
+     * sandbox profile and the audit log all get the real argv. The view MUST
+     * return a new Intent and must never mutate the intent it is handed — the
+     * same object is reused afterwards for the grant, the approval card, the
+     * sandbox profile and the audit log.
      */
     private readonly ruleView: (intent: Intent) => Intent = (i) => i,
   ) {
@@ -230,9 +233,10 @@ export class PolicyEngine {
    * honest.
    */
   storeRule(intent: Intent): void {
-    const key = intentRuleKey(this.ruleView(intent));
+    const viewed = this.ruleView(intent);
+    const key = intentRuleKey(viewed);
     if (!ruleEligible(intent) || this.rules.has(key)) return;
-    const rule = makeAlwaysAllowRule(this.ruleView(intent));
+    const rule = makeAlwaysAllowRule(viewed);
     this.write(
       () => this.rules.set(key, rule),
       () => this.rules.delete(key),
