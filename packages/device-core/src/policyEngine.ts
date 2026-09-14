@@ -88,7 +88,17 @@ export class PolicyEngine {
    */
   readonly events = new EventEmitter();
 
-  constructor(private readonly rulesFile: string) {
+  constructor(
+    private readonly rulesFile: string,
+    /**
+     * The intent a RULE is keyed on and stored as — by default the intent
+     * itself. A plugin read (`plugins/argvRules.ts`) is viewed with its argv cut
+     * to `<command> <prefix>`, so one "always allow" covers every future query
+     * regardless of text. Only the rule sees the view: the approval card, the
+     * sandbox profile and the audit log all get the real argv.
+     */
+    private readonly ruleView: (intent: Intent) => Intent = (i) => i,
+  ) {
     try {
       const stored = JSON.parse(fs.readFileSync(rulesFile, "utf8")) as AlwaysAllowRule[];
       for (const rule of stored) this.rules.set(rule.ruleKey, rule);
@@ -201,7 +211,7 @@ export class PolicyEngine {
   async ruleAnswers(intent: Intent, delegate: PolicyDelegate): Promise<boolean> {
     return (
       ruleEligible(intent) &&
-      this.rules.has(intentRuleKey(intent)) &&
+      this.rules.has(intentRuleKey(this.ruleView(intent))) &&
       (await mayGrantFromStoredRule(intent, delegate))
     );
   }
@@ -220,9 +230,9 @@ export class PolicyEngine {
    * honest.
    */
   storeRule(intent: Intent): void {
-    const key = intentRuleKey(intent);
+    const key = intentRuleKey(this.ruleView(intent));
     if (!ruleEligible(intent) || this.rules.has(key)) return;
-    const rule = makeAlwaysAllowRule(intent);
+    const rule = makeAlwaysAllowRule(this.ruleView(intent));
     this.write(
       () => this.rules.set(key, rule),
       () => this.rules.delete(key),
