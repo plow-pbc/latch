@@ -921,6 +921,39 @@ export class DeviceAgent {
       if (!this.hasStaged(provider.binary)) {
         return this.execError(intent.intentId, `${provider.command} is not installed on this Mac`);
       }
+      // A first-party CLI over a local store reaches no service, so there is
+      // nothing to mint and no account to fan out across: one run, the
+      // agent's argv behind the staged binary. Everything the fan-out does
+      // for the rest of the seam is unchanged here — the capability the owner
+      // approved is still the literal argv, and the sandbox, the reaper and
+      // the audit never knew which kind of provider they were running.
+      if (provider.mint === null) {
+        this.audit.record("exec_start", { intentId: intent.intentId, argv });
+        try {
+          const result = await this.executor.run({
+            argv: [provider.binary, ...provider.belt, ...argv.slice(1)],
+            readPaths,
+            writePaths,
+            network,
+            appleEvents,
+            waitMs,
+          });
+          return this.finishRun(intent.intentId, result, {
+            argv,
+            // A provider never takes the agent's cwd: the child runs from the
+            // executor's per-run scratch dir, so there is none to diagnose
+            // against.
+            cwd: undefined,
+            readPaths,
+            writePaths,
+            automationTarget: null,
+            sandboxed: true,
+          });
+        } catch (error: unknown) {
+          const message = error instanceof Error ? error.message : String(error);
+          return this.execError(intent.intentId, message);
+        }
+      }
       return this.executePlowGog(intent, provider, argv, { readPaths, writePaths, network, appleEvents, waitMs });
     }
 

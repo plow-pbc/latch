@@ -760,3 +760,54 @@ esac
     expectNeverSpawned(d);
   });
 });
+
+/**
+ * A vendor dir whose `plow-messages` echoes its argv and whether any Google
+ * token reached it, so the test sees exactly what the exec path handed the
+ * child.
+ */
+function messagesVendorDir(): string {
+  const dir = tmp();
+  fs.writeFileSync(
+    path.join(dir, "plow-messages"),
+    '#!/bin/sh\necho "ARGV=$* TOKEN=${GOG_ACCESS_TOKEN:-none}"\n',
+    { mode: 0o755 },
+  );
+  return dir;
+}
+
+/**
+ * The token-less half of the provider seam: a first-party CLI over a local
+ * store reaches no service, so there is nothing to mint and no account to fan
+ * out across. What must survive is everything else — the approved argv is what
+ * runs, the sandbox and audit are unchanged, and a refusal still precedes any
+ * spawn.
+ *
+ * The minter is `null` throughout, deliberately: an unpaired Mac has no way to
+ * mint anything, and a provider that needs no token must still work there.
+ */
+describe("a token-less provider through the exec path", () => {
+  itSpawns("runs plow-messages once, unminted, with the agent's argv intact", async () => {
+    const d = device(null, [messagesVendorDir()]);
+    const result = await run(d, ["plow-messages", "search", "palm court", "--limit", "5"]);
+    expect(jv(result).get("status").str).toBe("completed");
+    expect(String(jv(result).get("output").str ?? "")).toContain(
+      "ARGV=search palm court --limit 5 TOKEN=none",
+    );
+    expect(execEnd(d)).toBe(0);
+  });
+
+  itSpawns("refuses an unlisted subcommand before spawning", async () => {
+    const d = device(null, [messagesVendorDir()]);
+    const result = await run(d, ["plow-messages", "send", "hi"]);
+    expect(jv(result).get("status").str).toBe("error");
+    expectNeverSpawned(d);
+  });
+
+  itSpawns("refuses the name when nothing is staged", async () => {
+    const d = device(null, [tmp()]);
+    const result = await run(d, ["plow-messages", "chats"]);
+    expect(jv(result).get("error").str).toContain("not installed on this Mac");
+    expectNeverSpawned(d);
+  });
+});
