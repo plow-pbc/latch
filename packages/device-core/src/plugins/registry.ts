@@ -9,7 +9,7 @@ import path from "node:path";
 import { parseFrontmatter, type Skill } from "../skills.js";
 import { classifyArgv } from "./argvRules.js";
 import { resolveEnv, type EnvContext } from "./env.js";
-import { listInstalled, pluginDirs, type Installed } from "./install.js";
+import { listInstalledNames, pluginDirs, readInstalled, type Installed } from "./install.js";
 import type { PluginManifest } from "./manifest.js";
 
 export interface LoadedPlugin {
@@ -38,8 +38,11 @@ export class PluginRegistry {
   load(): LoadedPlugin[] {
     this.plugins = new Map();
     this.issues = [];
-    for (const { installed, manifest } of listInstalled(this.pluginsRoot)) {
+    for (const name of listInstalledNames(this.pluginsRoot)) {
       try {
+        const found = readInstalled(this.pluginsRoot, name);
+        if (!found) continue; // installed.json or the manifest file itself is absent — not yet a complete install
+        const { installed, manifest } = found;
         const collision = [...this.plugins.values()].find((p) => p.manifest.command === manifest.command);
         if (collision) throw new Error(`command ${manifest.command} is already claimed by ${collision.manifest.name}`);
         const dirs = pluginDirs(this.pluginsRoot, manifest.name);
@@ -51,7 +54,7 @@ export class PluginRegistry {
         const healthy = manifest.daemon === null ? () => true : () => false;
         this.plugins.set(manifest.name, { manifest, installed, dirs, skill, healthy });
       } catch (e) {
-        this.issues.push({ name: manifest.name, problem: e instanceof Error ? e.message : "failed to load" });
+        this.issues.push({ name, problem: e instanceof Error ? e.message : "failed to load" });
       }
     }
     return [...this.plugins.values()];

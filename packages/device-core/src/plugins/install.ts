@@ -201,12 +201,18 @@ export function readInstalled(pluginsRoot: string, name: string): { installed: I
   return { installed, manifest };
 }
 
-export function listInstalled(pluginsRoot: string): { installed: Installed; manifest: PluginManifest }[] {
+/** Every directory under `pluginsRoot` that looks like an install, by name — before either JSON file is parsed. */
+export function listInstalledNames(pluginsRoot: string): string[] {
   if (!fs.existsSync(pluginsRoot)) return [];
-  const names = fs
+  return fs
     .readdirSync(pluginsRoot, { withFileTypes: true })
     .filter((e) => e.isDirectory() && !e.name.startsWith("."))
     .map((e) => e.name)
     .sort();
-  return names.map((name) => readInstalled(pluginsRoot, name)).filter((x): x is { installed: Installed; manifest: PluginManifest } => x !== null);
+}
+
+export function listInstalled(pluginsRoot: string): { installed: Installed; manifest: PluginManifest }[] {
+  return listInstalledNames(pluginsRoot)
+    .map((name) => readInstalled(pluginsRoot, name))
+    .filter((x): x is { installed: Installed; manifest: PluginManifest } => x !== null);
 }

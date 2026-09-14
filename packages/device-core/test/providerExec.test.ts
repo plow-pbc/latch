@@ -748,7 +748,7 @@ esac
 
   itSpawns("runs help without minting for any account", async () => {
     const mintAll = vi.fn(async () => ({ accounts: AB, degraded: [] }));
-    const d = device({ mintAll }, [plowVendorDir()]);
+    const d = device({ mintAll, mintScoped: async () => { throw MintError.unpaired(); } }, [plowVendorDir()]);
     const out = String(jv(await run(d, ["plow-gog", "gmail", "--help"])).get("output").str ?? "");
     expect(out).toContain("ARGV=--no-input --wrap-untrusted --enable-commands=gmail,calendar gmail --help");
     expect(mintAll).not.toHaveBeenCalled();

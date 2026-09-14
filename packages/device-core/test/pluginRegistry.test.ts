@@ -48,6 +48,16 @@ describe("PluginRegistry", () => {
     expect(reg.all().map((p) => p.manifest.name)).toEqual(["fix"]);
     expect(reg.problems()).toEqual([{ name: "fox", problem: "skill has no frontmatter" }]);
   });
+  it("skips an installed plugin whose on-disk manifest is corrupt, without throwing", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "latch-plugins-"));
+    await installPlugin(root, fixturePlugin({ env: FIXTURE_ENV }), deps);
+    await installPlugin(root, fixturePlugin({ name: "fox", command: "fox" }), deps);
+    fs.writeFileSync(path.join(root, "fox", "repo", "latch-plugin.json"), "{not json");
+    const reg = new PluginRegistry(root);
+    expect(() => reg.load()).not.toThrow();
+    expect(reg.all().map((p) => p.manifest.name)).toEqual(["fix"]);
+    expect(reg.problems()).toEqual([{ name: "fox", problem: "manifest is not valid JSON" }]);
+  });
   it("skips a plugin whose command collides with one already loaded", async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "latch-plugins-"));
     await installPlugin(root, fixturePlugin({ env: FIXTURE_ENV }), deps);
