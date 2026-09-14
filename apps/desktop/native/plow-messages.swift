@@ -398,11 +398,14 @@ func runSearch(_ o: Options, _ store: Store) {
     //  - SQLite's `lower()` folds ASCII and nothing else, which is exactly the
     //    fold `asciiLower` applies to the decoded body.
     //
-    // A false NEGATIVE is still possible in principle, because typedstream may
-    // frame a long string in pieces: a phrase split across a frame boundary is
-    // in the decoded body but not contiguous in the blob. That is what the
-    // zero-hit rescan below covers, and why the help text asks for a short
-    // fragment rather than a whole remembered sentence.
+    // A false NEGATIVE remains possible in principle, and is NOT mitigated in
+    // code: typedstream may frame a long string in pieces, so a phrase split
+    // across a frame boundary is in the decoded body but not contiguous in the
+    // blob. A rescan without the prefilter would cover it and was deliberately
+    // removed — on a real 498,332-row store it cost 11.9s against 1.3s, which
+    // made "no such message", the commonest answer, the one that blows the
+    // call budget, for a blob never observed to need it. The help text's
+    // "short distinctive fragment" advice is the whole of the protection.
     if let phrase = o.phrase, !phrase.isEmpty {
         conditions.append(
             "(instr(lower(cast(m.attributedBody as text)), lower(?)) > 0"
