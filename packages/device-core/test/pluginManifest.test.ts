@@ -65,6 +65,12 @@ describe("parseManifest", () => {
     ["a binary with a non-string name", withPatch({ runtime: { binaries: [{ name: true, version: "1", url: { arm64: "https://x/b", x64: "https://x/b" }, sha256: { arm64: "a".repeat(64), x64: "a".repeat(64) } }], sources: [] } }), "binary name must be a string"],
     ["a binary with a non-string version", withPatch({ runtime: { binaries: [{ name: "b", version: {}, url: { arm64: "https://x/b", x64: "https://x/b" }, sha256: { arm64: "a".repeat(64), x64: "a".repeat(64) } }], sources: [] } }), "binary b version must be a string"],
     ["a source with a non-string name", withPatch({ runtime: { binaries: [], sources: [{ name: true, git: "https://x/s", commit: "a".repeat(40) }] } }), "source name must be a string"],
+    ["a runtime.binaries that is not an array", withPatch({ runtime: { binaries: "nope", sources: [] } }), "runtime.binaries must be an array"],
+    ["a runtime.sources that is not an array", withPatch({ runtime: { binaries: [], sources: "nope" } }), "runtime.sources must be an array"],
+    ["an argv.read that is not an array", withPatch({ argv: { read: "nope", write: [["put"]] } }), "argv.read must be an array"],
+    ["an argv.write that is not an array", withPatch({ argv: { read: [["query"]], write: "nope" } }), "argv.write must be an array"],
+    ["a daemon that is not an object", withPatch({ daemon: "nope" }), "daemon must be an object"],
+    ["a non-string top-level version", withPatch({ version: true }), "manifest version must be a string"],
   ])("refuses %s", (_name, raw, message) => {
     expect(() => parseManifest(raw)).toThrow(new PluginError(message));
   });
