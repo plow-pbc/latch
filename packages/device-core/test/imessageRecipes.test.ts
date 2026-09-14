@@ -247,10 +247,14 @@ function makeStore(dir: string): string {
         ` values (5003, 400, ${ns(5000)}, 'Loved "dinner at Palm Court still stands"', 0, 2000);`,
       `insert into message (ROWID, handle_id, date, text, is_from_me)` +
         ` values (5004, 400, ${ns(4000)}, 'see you there', 0);`,
+      // 5005: exercises the doubled-apostrophe substitution the prose teaches.
+      `insert into message (ROWID, handle_id, date, text, is_from_me)` +
+        ` values (5005, 400, ${ns(3000)}, 'can''t make it', 0);`,
       "insert into chat_message_join (chat_id, message_id) values (30, 5001);",
       "insert into chat_message_join (chat_id, message_id) values (30, 5002);",
       "insert into chat_message_join (chat_id, message_id) values (30, 5003);",
       "insert into chat_message_join (chat_id, message_id) values (30, 5004);",
+      "insert into chat_message_join (chat_id, message_id) values (30, 5005);",
     ].join(" "),
   ]);
   return store;
@@ -338,6 +342,13 @@ describe("the imessage recipes the skill publishes", () => {
     // phrase must not act as "match anything" — 5001's text contains no
     // literal "palm % stands", so this must return nothing.
     expect(query(store, IMESSAGE_QUERIES.search.replace(IMESSAGE_SEARCH_PHRASE_PLACEHOLDER, "palm % stands"))).toEqual([]);
+    // The doubled-apostrophe form the prose tells the agent to substitute
+    // with (`don't` → `don''t`) must find the row whose text has the apostrophe.
+    expect(
+      query(store, IMESSAGE_QUERIES.search.replace(IMESSAGE_SEARCH_PHRASE_PLACEHOLDER, "can''t make")).map((r) =>
+        Number(r[0]),
+      ),
+    ).toEqual([5005]);
   });
 
   it("finds the unreplied set: inbound direct chats only, not outbound, not tapback-only, not group", () => {
