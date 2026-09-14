@@ -55,6 +55,25 @@ describe("installPlugin", () => {
     expect(fs.existsSync(pluginDirs(r, "fix").root)).toBe(false);
   });
 
+  it("wraps a binary fetch that throws synchronously, not just a rejected promise", async () => {
+    const binary = { runtime: { binaries: [{ name: "tool", version: "1", url: { arm64: "https://x/t", x64: "https://x/t" }, sha256: { arm64: sha, x64: sha } }], sources: [] } };
+    // Node's fetch throws synchronously for a url it can't parse, before a
+    // promise — and so a `.catch()` on one — ever exists.
+    const syncThrowingFetch = (() => {
+      throw new TypeError("Failed to parse URL from https://x/t");
+    }) as unknown as typeof fetch;
+    const r = root();
+    await expect(installPlugin(r, fixturePlugin(binary), deps(syncThrowingFetch))).rejects.toThrow(new PluginError("binary tool could not be downloaded"));
+    expect(fs.existsSync(pluginDirs(r, "fix").root)).toBe(false);
+  });
+
+  it("refuses a binary whose https-prefixed url does not parse, without quoting it", async () => {
+    const binary = { runtime: { binaries: [{ name: "tool", version: "1", url: { arm64: "https://x y/t", x64: "https://x y/t" }, sha256: { arm64: sha, x64: sha } }], sources: [] } };
+    const r = root();
+    await expect(installPlugin(r, fixturePlugin(binary), deps())).rejects.toThrow(new PluginError("binary tool has an unparseable url"));
+    expect(fs.existsSync(pluginDirs(r, "fix").root)).toBe(false);
+  });
+
   it("extracts an archive binary even when its download url carries a query string", async () => {
     const srcDir = fs.mkdtempSync(path.join(os.tmpdir(), "latch-archive-"));
     fs.writeFileSync(path.join(srcDir, "tool"), "#!/bin/sh\necho tool $*\n", { mode: 0o755 });

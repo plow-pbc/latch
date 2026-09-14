@@ -45,6 +45,7 @@ export function pluginDirs(pluginsRoot: string, name: string) {
 }
 
 async function git(op: string, args: string[], cwd?: string): Promise<void> {
+  // `op` names the error, `args` is the real argv; keep the two in sync by hand.
   try {
     await run("/usr/bin/git", args, { cwd, env: { ...process.env, GIT_TERMINAL_PROMPT: "0" } });
   } catch {
@@ -64,16 +65,29 @@ async function freePort(): Promise<number> {
 }
 
 async function stageBinary(b: PluginManifest["runtime"]["binaries"][number], dirs: ReturnType<typeof pluginDirs>, deps: InstallDeps): Promise<void> {
-  const res = await deps.fetch(b.url[deps.arch]).catch(() => {
-    throw new PluginError(`binary ${b.name} could not be downloaded`); // a fetch exception is the caller's URL; never quote it
-  });
+  // try/catch, not `.catch()`: a malformed-but-https-prefixed manifest url
+  // makes both `fetch` and `new URL` throw SYNCHRONOUSLY, before a `.catch`
+  // on the call expression's result would ever attach — and that raw error
+  // carries the url. Neither bytes nor a parsed URL exist until this returns.
+  let res: Response;
+  let url: string;
+  try {
+    url = b.url[deps.arch];
+    res = await deps.fetch(url);
+  } catch {
+    throw new PluginError(`binary ${b.name} could not be downloaded`); // the url is the caller's; never quote it
+  }
   if (!res.ok) throw new PluginError(`binary ${b.name} could not be downloaded`);
   const bytes = Buffer.from(await res.arrayBuffer());
   if (crypto.createHash("sha256").update(bytes).digest("hex") !== b.sha256[deps.arch]) throw new PluginError(`binary ${b.name} did not match its sha256`);
-  const url = b.url[deps.arch];
   // Test the path, not the raw URL: a presigned download (S3, a GitHub
   // release asset) carries a query string after the extension.
-  const archive = /\.(zip|tar\.gz|tgz)$/.test(new URL(url).pathname);
+  let archive: boolean;
+  try {
+    archive = /\.(zip|tar\.gz|tgz)$/.test(new URL(url).pathname);
+  } catch {
+    throw new PluginError(`binary ${b.name} has an unparseable url`); // never quote it
+  }
   if (!archive) {
     fs.writeFileSync(path.join(dirs.runtimeBin, b.name), bytes, { mode: 0o755 });
     return;
