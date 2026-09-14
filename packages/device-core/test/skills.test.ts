@@ -178,7 +178,8 @@ describe("the built-in imessage skill", () => {
     ["which side sent it", /is_from_me/],
     ["how a group chat is told apart", /chat_identifier like 'chat%'/],
     ["a name resolved to handles through the contacts skill", /read the .?contacts.? skill\s+for their handles/i],
-    ["a phone matched on its digits, not its formatting", /match a phone on its last ten digits/i],
+    ["a name matching several people going back to the owner", /more than one person, ask the owner which/i],
+    ["a phone matched on all its digits, not its formatting", /match a phone on all its digits/i],
     ["the Apple epoch offset", /978307200/],
     ["the NSString extraction contract", /NSString/],
     ["that the contract was validated, not guessed", /591\/591/],
@@ -307,7 +308,7 @@ describe("the built-in contacts skill", () => {
     expect(skill.description).toMatch(/contacts/i);
   });
 
-  it("routes every named person here, since texts and mail are filed by handle, not name", () => {
+  it("routes every named person here, since texts are filed by handle, not name", () => {
     // The description is all an agent sees before choosing a skill: one that
     // only claims number/email/address requests loses "find my thread with
     // <name>" to imessage, which cannot resolve a name.

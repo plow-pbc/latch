@@ -97,14 +97,14 @@ export function contactsSkillFor(home: string): Skill {
     name: "contacts",
     description:
       "Read and update the owner's macOS Contacts. Use it whenever they name someone — for a " +
-      "number, email or address, or to find that person's texts or mail, which are filed under " +
-      "a phone or email, not a name — rather than answering that you cannot see their contacts.",
+      "number, email or address, or to find that person's texts, which are filed under a " +
+      "phone or email, not a name — rather than answering that you cannot see their contacts.",
     body: `# The owner's contacts are on this Mac
 
 Contacts.app keeps the owner's address book in Core Data SQLite stores. When the owner names
-someone — for their number, email or address, to find their texts or mail (filed under a
-phone or email, never a name), or to correct their card — **do it**: read the stores, or
-write through Contacts.app. Do not answer that you cannot see their contacts.
+someone — for their number, email or address, to find their texts (filed under a phone or
+email, never a name), or to correct their card — **do it**: read the stores, or write
+through Contacts.app. Do not answer that you cannot see their contacts.
 
 There is more than one store. The root one:
 
