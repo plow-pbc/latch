@@ -26,13 +26,22 @@ export class PluginRegistry {
 
   constructor(private readonly pluginsRoot: string) {}
 
-  /** Reads every installed plugin. A malformed one is skipped and reported
-   * via `problems()`, never thrown — one broken plugin can't stop the rest. */
+  /**
+   * Reads every installed plugin. A malformed one — including a `command`
+   * a plugin loaded earlier this same call already claims — is skipped and
+   * reported via `problems()`, never thrown; one broken plugin can't stop
+   * the rest. A one-shot bootstrap: calling it again resets every plugin's
+   * `healthy()` to the daemon-absent/just-loaded default, so a caller that
+   * reloads after install/remove must re-apply `setHealth` for daemons it
+   * already knows are up.
+   */
   load(): LoadedPlugin[] {
     this.plugins = new Map();
     this.issues = [];
     for (const { installed, manifest } of listInstalled(this.pluginsRoot)) {
       try {
+        const collision = [...this.plugins.values()].find((p) => p.manifest.command === manifest.command);
+        if (collision) throw new Error(`command ${manifest.command} is already claimed by ${collision.manifest.name}`);
         const dirs = pluginDirs(this.pluginsRoot, manifest.name);
         const raw = fs.readFileSync(path.join(dirs.repo, manifest.skill), "utf8");
         const skill = parseFrontmatter(raw);

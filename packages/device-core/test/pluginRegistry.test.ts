@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
-import fs from "node:fs"; import os from "node:os"; import path from "node:path";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { installPlugin } from "../src/plugins/install.js";
 import { PluginRegistry } from "../src/plugins/registry.js";
 import { fixturePlugin, FIXTURE_ENV } from "./pluginFixture.js";
@@ -36,5 +38,23 @@ describe("PluginRegistry", () => {
     expect(env.FIX_KEY).toBe("minted:llm:chat");
     expect(env.FIX_SECRET).toHaveLength(64);
     expect(env.FIX_HOME).toBe(path.join(root, "fix", "home"));
+  });
+  it("skips a plugin with no readable skill, surfacing it via problems() without stopping the others", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "latch-plugins-"));
+    await installPlugin(root, fixturePlugin({ env: FIXTURE_ENV }), deps);
+    await installPlugin(root, fixturePlugin({ name: "fox", command: "fox" }, { "skill.md": "not frontmatter" }), deps);
+    const reg = new PluginRegistry(root);
+    reg.load();
+    expect(reg.all().map((p) => p.manifest.name)).toEqual(["fix"]);
+    expect(reg.problems()).toEqual([{ name: "fox", problem: "skill has no frontmatter" }]);
+  });
+  it("skips a plugin whose command collides with one already loaded", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "latch-plugins-"));
+    await installPlugin(root, fixturePlugin({ env: FIXTURE_ENV }), deps);
+    await installPlugin(root, fixturePlugin({ name: "fox" }), deps); // command stays "fix"
+    const reg = new PluginRegistry(root);
+    reg.load();
+    expect(reg.all().map((p) => p.manifest.name)).toEqual(["fix"]);
+    expect(reg.problems()).toEqual([{ name: "fox", problem: "command fix is already claimed by fix" }]);
   });
 });
