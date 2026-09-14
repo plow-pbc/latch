@@ -29,6 +29,8 @@ export const IMESSAGE_CHAT_GUID_PLACEHOLDER = "CHAT_GUID_FROM_THE_QUERY_ABOVE";
  *  an older successful row at the same handle/chat can never be mistaken for
  *  the delivery of the send that just happened. */
 export const IMESSAGE_SNAPSHOT_ROWID_PLACEHOLDER = "MAX_ROWID_BEFORE_THE_SEND";
+/** Sentinel the search recipe carries where the owner's phrase goes. */
+export const IMESSAGE_SEARCH_PHRASE_PLACEHOLDER = "PHRASE_THE_OWNER_ASKED_FOR";
 
 /**
  * The SQL this skill teaches, as text an agent runs verbatim.
@@ -84,6 +86,28 @@ export const IMESSAGE_QUERIES = {
    and m.associated_message_type = 0
    and m.item_type = 0
  order by m.date;`,
+
+  /** Find messages containing a phrase — in `text` OR in the `attributedBody`
+   *  blob, because on a modern store `text` is NULL for nearly every row and a
+   *  `where text like …` alone is a confident false negative (latch#385: an
+   *  agent searched `text` and told the owner a message did not exist; it was
+   *  in the blob). `cast(… as text)` keeps every byte — validated equal to a
+   *  bytewise `instr` on a real store — and `lower()` makes the blob half
+   *  match the way `like` already does. */
+  search: `select m.ROWID, c.guid as chat_guid, c.chat_identifier, c.display_name,
+       h.id as sender, m.is_from_me,
+       datetime(m.date/1000000000 + 978307200, 'unixepoch', 'localtime') as at,
+       m.text, hex(m.attributedBody) as body_hex
+  from message m
+  join chat_message_join j on j.message_id = m.ROWID
+  join chat c on c.ROWID = j.chat_id
+  left join handle h on h.ROWID = m.handle_id
+ where (m.text like '%${IMESSAGE_SEARCH_PHRASE_PLACEHOLDER}%'
+        or instr(lower(cast(m.attributedBody as text)), lower('${IMESSAGE_SEARCH_PHRASE_PLACEHOLDER}')) > 0)
+   and m.associated_message_type = 0
+   and m.item_type = 0
+ order by m.date desc
+ limit 50;`,
 
   /** Direct chats whose newest real message is inbound — the unreplied set. */
   unreplied: `select c.guid as chat_guid, c.chat_identifier, h.id as sender,
