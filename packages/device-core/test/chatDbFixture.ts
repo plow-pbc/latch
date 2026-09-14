@@ -208,6 +208,29 @@ export function makeStore(dir: string): string {
       "insert into chat_message_join (chat_id, message_id) values (40, 6001);",
       "insert into chat_message_join (chat_id, message_id) values (40, 6002);",
       "insert into chat_message_join (chat_id, message_id) values (40, 6003);",
+
+      // A MALFORMED typedstream body (6004) and an attachment-only row with no
+      // body at all (6005). Both are rows a reader must survive: a message
+      // body is attacker-supplied — anyone who can text the owner chooses
+      // these bytes — and before the ObjC shim 6004 aborted the whole process
+      // rather than yielding one unreadable row.
+      `insert into message (ROWID, handle_id, date, text, attributedBody, is_from_me)` +
+        ` values (6004, 500, ${ns(2500)}, NULL, X'040b73747265616d747970656481e800FFFFFFFFFFFF', 0);`,
+      `insert into message (ROWID, handle_id, date, text, is_from_me)` +
+        ` values (6005, 500, ${ns(2400)}, NULL, 0);`,
+      "insert into chat_message_join (chat_id, message_id) values (40, 6004);",
+      "insert into chat_message_join (chat_id, message_id) values (40, 6005);",
+
+      // chat 41: a direct chat whose newest real message is an ATTACHMENT with
+      // no caption. `unreplied` selects exactly one row per chat, so a reader
+      // that drops a bodiless row drops the whole chat — the owner is never
+      // told a photo is waiting on them.
+      "insert into chat (ROWID, guid, chat_identifier, display_name, style)" +
+        " values (41, 'chat-guid-41', '+15557777777', NULL, 45);",
+      "insert into handle (ROWID, id) values (502, '+15557777777');",
+      `insert into message (ROWID, handle_id, date, text, is_from_me)` +
+        ` values (6101, 502, ${ns(600)}, NULL, 0);`,
+      "insert into chat_message_join (chat_id, message_id) values (41, 6101);",
     ].join(" "),
   ]);
   return store;

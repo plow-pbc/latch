@@ -283,11 +283,11 @@ struct Row {
 /// ones with embedded NUL bytes.
 func decodeBody(attributedBody: Data?, text: String?) -> String? {
     if let blob = attributedBody, !blob.isEmpty {
-        // A malformed blob raises an ObjC exception rather than returning nil,
-        // which Swift cannot catch — so this is guarded by the archiver's own
-        // validation below rather than by try/catch. In practice a truncated
-        // blob returns nil, which falls through to `text`.
-        if let object = NSUnarchiver.unarchiveObject(with: blob) {
+        // Through the bridging header's `@try`, never `NSUnarchiver` directly:
+        // a malformed blob RAISES rather than returning nil, and an uncaught
+        // NSException aborts the process. `plow-messages-bridge.h` has the
+        // measurement and why an attacker-supplied body makes it load-bearing.
+        if let object = PlowMessagesUnarchive(blob) {
             if let attributed = object as? NSAttributedString {
                 return attributed.string
             }
@@ -323,8 +323,16 @@ struct Message {
     let at: Double
     let body: String?
 
-    init?(_ r: Row) {
-        guard let body = decodeBody(attributedBody: r.blob(8), text: r.string(7)) else { return nil }
+    /// Never failable. A row whose body will not decode — an attachment with
+    /// no caption, or a blob the shim refused — is a message that EXISTS with
+    /// nothing to read, and dropping it is the silent omission this CLI is
+    /// here to end. It mattered most in `unreplied`, whose SQL selects exactly
+    /// one row per chat: dropping that row took the whole chat out of the
+    /// answer, so an owner with an unanswered photo saw nothing awaiting a
+    /// reply. `search` filters bodiless rows itself, where a phrase cannot
+    /// match them anyway.
+    init(_ r: Row) {
+        body = decodeBody(attributedBody: r.blob(8), text: r.string(7))
         rowid = r.int(0)
         chatGuid = r.string(1)
         chatIdentifier = r.string(2)
@@ -332,7 +340,6 @@ struct Message {
         sender = r.string(4)
         isFromMe = r.int(5) == 1
         at = Double(r.int(6)) / 1_000_000_000 + CORE_DATA_EPOCH
-        self.body = body
     }
 
     func write() {
@@ -425,27 +432,26 @@ func runSearch(_ o: Options, _ store: Store) {
         let sql = MESSAGE_COLUMNS + " where " + where_.joined(separator: " and ")
             + " order by m.date \(direction)"
         store.query(sql, bound) { row in
-            guard found.count < limit, let m = Message(row) else { return }
+            guard found.count < limit else { return }
+            let m = Message(row)
             guard let phrase = o.phrase, !phrase.isEmpty else { return found.append(m) }
+            // A bodiless row cannot contain a phrase; with no phrase it is
+            // browsable like any other.
             if asciiContains(m.body ?? "", phrase) { found.append(m) }
         }
         return found
     }
 
-    var rows = gather(conditions, params)
-
-    // Nothing matched. Before answering "no such message" — the exact answer
-    // #385 got wrong — pay for one full decode pass with the prefilter
-    // dropped, so a phrase that typedstream framing split cannot read as an
-    // absence. Only on zero hits, so the common case never pays for it.
-    let hasPhrase = !(o.phrase ?? "").isEmpty
-    if rows.isEmpty && hasPhrase {
-        rows = gather(
-            conditions.filter { !$0.hasPrefix("(instr(") },
-            Array(params.dropFirst(2)))
-    }
-
-    for m in rows { m.write() }
+    // One pass. An earlier draft re-scanned without the prefilter whenever a
+    // search came back empty, on the theory that typedstream framing might
+    // split a phrase across a frame boundary and hide it from the byte-level
+    // match. Measured on a real 498,332-row store that rescan cost 11.9s
+    // against 1.3s for the ordinary path — it made "no such message", the
+    // commonest answer, the one that blows the call budget — and no blob was
+    // ever found that actually needed it. Hence the help text's advice to
+    // search a short distinctive fragment, which is the cheap version of the
+    // same protection.
+    for m in gather(conditions, params) { m.write() }
 }
 
 func runThread(_ o: Options, _ store: Store) {
@@ -473,8 +479,8 @@ func runThread(_ o: Options, _ store: Store) {
     let sql = MESSAGE_COLUMNS + " where " + conditions.joined(separator: " and ")
         + " order by m.date desc"
     store.query(sql, params) { row in
-        guard found.count < limit, let m = Message(row) else { return }
-        found.append(m)
+        guard found.count < limit else { return }
+        found.append(Message(row))
     }
     for m in found.reversed() { m.write() }
 }
@@ -523,10 +529,7 @@ func runUnreplied(_ o: Options, _ store: Store) {
                        order by m2.date desc limit 1)
      order by m.date desc
     """
-    store.query(sql, []) { row in
-        guard let m = Message(row) else { return }
-        m.write()
-    }
+    store.query(sql, []) { row in Message(row).write() }
 }
 
 // MARK: - Entry

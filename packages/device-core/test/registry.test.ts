@@ -288,7 +288,11 @@ describe("the google-workspace skill", () => {
   const body = vendoredProvider(["plow-gog"])!.skillFor("/Users/example").body;
 
   it("is the one skill both provider rows publish, under the stable name", () => {
-    expect(vendoredProvider(["plow-gog"])!.skill).toBe(gog.skill);
+    // The ROW, not its skill: `.skill` survived the rename to `skillFor` here
+    // and read `undefined === undefined`, so it passed while asserting
+    // nothing. Row identity is what this test always meant — both spellings
+    // resolve to one provider, so there is one page to keep current.
+    expect(vendoredProvider(["plow-gog"])).toBe(gog);
     expect(gog.skillFor("/Users/example").name).toBe("google-workspace");
   });
 

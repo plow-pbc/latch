@@ -115,21 +115,71 @@ describe("plow-messages search", () => {
     expect(code).toBe(0);
   });
 
+  itMac.each([
+    // The filters that scope a search, each asserted by what it EXCLUDES —
+    // a filter that silently passes everything looks identical to one that
+    // works when only the included row is checked.
+    { name: "--chat-id", args: ["--chat-id", "40"], expect: [6002, 6001] },
+    { name: "--chat-id elsewhere", args: ["--chat-id", "1"], expect: [] },
+    { name: "--after-rowid", args: ["--after-rowid", "6001"], expect: [6002] },
+  ])("scopes a search with $name", ({ args, expect: rowids }) => {
+    expect(cli("search", "order", ...args).rows.map((r) => r.rowid)).toEqual(rowids);
+  });
+
+  itMac("bounds a search by date, excluding what falls outside the window", () => {
+    // 6001 is ~3000s old and 6002 ~2000s; a boundary between them must keep
+    // one and drop the other, in both directions.
+    const between = new Date(Date.now() - 2500 * 1000).toISOString().replace(/\.\d+Z$/, "Z");
+    expect(cli("search", "order", "--after", between).rows.map((r) => r.rowid)).toEqual([6002]);
+    expect(cli("search", "order", "--before", between).rows.map((r) => r.rowid)).toEqual([6001]);
+  });
+
   itMac("honours --limit and --handle", () => {
     expect(cli("search", "order", "--limit", "1").rows.map((r) => r.rowid)).toEqual([6002]);
     expect(cli("search", "order", "--handle", "36246").rows.map((r) => r.rowid)).toEqual([6002]);
   });
 });
 
+describe("plow-messages and a body it cannot read", () => {
+  itMac("survives a malformed typedstream blob instead of aborting the process", () => {
+    // Before the ObjC shim in plow-messages-bridge.h, NSUnarchiver RAISED on
+    // this blob and the uncaught NSException killed the process — so one
+    // crafted message, from anyone who can text the owner, broke every query
+    // that touched its row. The whole thread still has to come back.
+    const { rows, code } = cli("thread", "--chat-id", "40");
+    expect(code).toBe(0);
+    expect(rows.map((r) => r.rowid)).toContain(6004);
+    expect(rows.find((r) => r.rowid === 6004)?.body).toBeNull();
+  });
+
+  itMac("reports an attachment-only row as a message with no body, not as no message", () => {
+    expect(cli("thread", "--chat-id", "40").rows.find((r) => r.rowid === 6005)?.body).toBeNull();
+  });
+
+  itMac("still names a chat whose newest message is an attachment as unreplied", () => {
+    // The silent omission this CLI exists to end, relocated: `unreplied`
+    // selects exactly ONE row per chat, so dropping a bodiless row would take
+    // the entire chat out of the answer.
+    expect(cli("unreplied").rows.map((r) => r.chat_guid)).toContain("chat-guid-41");
+  });
+
+  itMac("never lets an undecodable body match a phrase", () => {
+    expect(cli("search", "streamtyped").rows).toEqual([]);
+  });
+});
+
 describe("plow-messages thread", () => {
   itMac("reads oldest first and drops the tapback", () => {
     const rows = cli("thread", "--chat-id", "40").rows;
-    expect(rows.map((r) => r.rowid)).toEqual([6001, 6002]);
-    expect(rows.map((r) => r.body)).toEqual([DELIVERED, COSTCO]);
+    // Oldest first, the tapback (6003) gone, and the two unreadable rows
+    // (6004 malformed, 6005 attachment-only) still present in their places —
+    // a thread with a hole in it reads as a conversation that did not happen.
+    expect(rows.map((r) => r.rowid)).toEqual([6001, 6004, 6005, 6002]);
+    expect(rows.map((r) => r.body)).toEqual([DELIVERED, null, null, COSTCO]);
   });
 
   itMac("finds the chat from a handle, so an agent never has to guess a chat id", () => {
-    expect(cli("thread", "--handle", "36246").rows.map((r) => r.rowid)).toEqual([6001, 6002]);
+    expect(cli("thread", "--handle", "36246").rows.map((r) => r.rowid)).toEqual([6001, 6004, 6005, 6002]);
   });
 
   itMac("refuses without a chat or a handle rather than reading every chat", () => {
@@ -151,11 +201,17 @@ describe("plow-messages chats", () => {
 
 describe("plow-messages unreplied", () => {
   itMac("lists a direct chat awaiting a reply and no group chat", () => {
-    const rows = cli("unreplied").rows;
-    // chat 4 is the direct chat whose newest real row is inbound; chat 3's is
-    // outbound, chat 5's newest is a tapback over an outbound, and chat 6 is a
-    // group — none qualify.
-    expect(rows.map((r) => r.chat_guid)).toEqual(["chat-guid-4"]);
+    const guids = cli("unreplied").rows.map((r) => r.chat_guid);
+    // chat 4's newest real row is inbound text; chat 10's and chat 41's are
+    // inbound with NO readable body (a non-typedstream blob and an attachment)
+    // — all three are awaiting a reply, and a reader that required a decoded
+    // body reported only the first.
+    expect(new Set(guids)).toEqual(new Set(["chat-guid-4", "chat-guid-10", "chat-guid-41"]));
+    // chat 3's newest is outbound, chat 5's is a tapback over an outbound, and
+    // chat 6 is a group — none qualify.
+    for (const excluded of ["chat-guid-3", "chat-guid-5", "chat-guid-6"]) {
+      expect(guids).not.toContain(excluded);
+    }
   });
 });
 

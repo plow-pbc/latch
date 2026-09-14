@@ -181,13 +181,14 @@ const compileUniversal = (tmp, output, { sources, target, extraArgs = [] }) => {
  */
 const ARCH_KEYS = { arm64: "arm64", x86_64: "x64" };
 
-const compilePerArch = (label, source, command, { target, extraArgs = [] }) => {
+const compilePerArch = (label, inputs, command, { target, extraArgs = [] }) => {
+  const [source] = inputs;
   const archKeys = Object.entries(ARCH_KEYS);
   const outputs = archKeys.map(([, nodeArch]) => path.join(providersDir, command, nodeArch, command));
   // Stamped on the source and this script, like every artifact above, but
   // keyed on the FIRST output — all slices are written together or not at all.
   const stampFile = path.join(providersDir, command, `${command}.stamp`);
-  const stamp = stampOf([source]);
+  const stamp = stampOf(inputs);
   if (outputs.every((o) => fs.existsSync(o)) && fs.existsSync(stampFile) &&
       fs.readFileSync(stampFile, "utf8") === stamp) {
     console.log(`native ${label} up to date → ${path.join(providersDir, command)}`);
@@ -227,7 +228,14 @@ const compilePerArch = (label, source, command, { target, extraArgs = [] }) => {
 // and a provider child gets no Node runtime (plow-pbc/latch#167).
 {
   const source = path.join(nativeDir, "plow-messages.swift");
-  compilePerArch("provider plow-messages", source, "plow-messages", { target: "macos13.0" });
+  // The bridging header is the ObjC `@try` around NSUnarchiver (its own file
+  // says why a Swift-only decode aborts the process), so it is a build INPUT
+  // as much as the source: it is hashed into the stamp below.
+  const bridge = path.join(nativeDir, "plow-messages-bridge.h");
+  compilePerArch("provider plow-messages", [source, bridge], "plow-messages", {
+    target: "macos13.0",
+    extraArgs: ["-import-objc-header", bridge],
+  });
 }
 
 // 2) The credential-exchange shim (a dylib the app dlopens in-process).
