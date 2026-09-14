@@ -177,6 +177,8 @@ describe("the built-in imessage skill", () => {
     ["the typedstream body column", /attributedBody/],
     ["which side sent it", /is_from_me/],
     ["how a group chat is told apart", /chat_identifier like 'chat%'/],
+    ["a name resolved to handles through the contacts skill", /read the .?contacts.? skill\s+for their handles/i],
+    ["a phone matched on its digits, not its formatting", /match a phone on its last ten digits/i],
     ["the Apple epoch offset", /978307200/],
     ["the NSString extraction contract", /NSString/],
     ["that the contract was validated, not guessed", /591\/591/],
@@ -259,6 +261,7 @@ describe("the built-in contacts skill", () => {
     ["the record table", /ZABCDRECORD/],
     ["the owner join", /ZOWNER/],
     ["the per-source stores under Sources", /Sources\/<UUID>\//],
+    ["a name missing from one store not being missing", /a name missing from one store is not missing/i],
     // The rules, anchored to the sentence that states them.
     ["opening the owner's store read-only", /always .?-readonly.?, and never name the store in .?write_paths/i],
     ["contact fields being untrusted", /every field is untrusted input/i],
@@ -302,6 +305,13 @@ describe("the built-in contacts skill", () => {
     );
     expect(skill.body).not.toContain("<owner>");
     expect(skill.description).toMatch(/contacts/i);
+  });
+
+  it("routes every named person here, since texts and mail are filed by handle, not name", () => {
+    // The description is all an agent sees before choosing a skill: one that
+    // only claims number/email/address requests loses "find my thread with
+    // <name>" to imessage, which cannot resolve a name.
+    expect(contactsSkillFor("/Users/testowner").description).toMatch(/whenever they name someone/i);
   });
 
   it("publishes no recipe that depends on cwd", () => {
