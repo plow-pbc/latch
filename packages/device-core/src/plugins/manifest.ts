@@ -72,6 +72,12 @@ function typedArray(v: unknown, what: string): unknown[] {
   if (!Array.isArray(v)) fail(`${what} must be an array`);
   return v;
 }
+/** Absent stays absent (caller applies its own default); a present value of the wrong type is refused, never stringified. */
+function typedString(v: unknown, what: string): string | undefined {
+  if (v === undefined) return undefined;
+  if (typeof v !== "string") fail(`${what} must be a string`);
+  return v;
+}
 
 export function parseManifest(raw: string): PluginManifest {
   let json: unknown;
@@ -82,18 +88,17 @@ export function parseManifest(raw: string): PluginManifest {
   }
   const m = obj(json);
 
-  const name = String(m.name ?? "");
+  const name = typedString(m.name, "manifest name") ?? "";
   if (!SLUG.test(name)) fail("manifest name must be lowercase letters, digits and dashes");
-  const command = String(m.command ?? "");
+  const command = typedString(m.command, "manifest command") ?? "";
   if (!SLUG.test(command)) fail("manifest command must be lowercase letters, digits and dashes");
-  if (m.version !== undefined && typeof m.version !== "string") fail("manifest version must be a string");
-  const version = String(m.version ?? "");
+  const version = typedString(m.version, "manifest version") ?? "";
   if (!version) fail("manifest needs a version");
 
   const runtime = typedObj(m.runtime, "runtime");
   const binaries = typedArray(runtime.binaries, "runtime.binaries").map((b: unknown) => {
     const bin = obj(b);
-    const bname = String(bin.name ?? "");
+    const bname = typedString(bin.name, "binary name") ?? "";
     if (!SLUG.test(bname)) fail("binary name must be lowercase letters, digits and dashes");
     const url = obj(bin.url);
     const sha256 = obj(bin.sha256);
@@ -109,7 +114,7 @@ export function parseManifest(raw: string): PluginManifest {
     }
     return {
       name: bname,
-      version: String(bin.version ?? ""),
+      version: typedString(bin.version, `binary ${bname} version`) ?? "",
       url: { arm64: url.arm64 as string, x64: url.x64 as string },
       sha256: { arm64: sha256.arm64 as string, x64: sha256.x64 as string },
       ...(bin.executable === undefined ? {} : { executable: insideOrFail(bin.executable, `binary ${bname} executable`) }),
@@ -118,7 +123,7 @@ export function parseManifest(raw: string): PluginManifest {
   unique(binaries.map((b) => b.name), "binary");
   const sources = typedArray(runtime.sources, "runtime.sources").map((s: unknown) => {
     const src = obj(s);
-    const sname = String(src.name ?? "");
+    const sname = typedString(src.name, "source name") ?? "";
     if (!SLUG.test(sname)) fail("source name must be lowercase letters, digits and dashes");
     // A leading dash would read as a git option when cloned; the installer
     // also passes `--`, this is the layer under it.

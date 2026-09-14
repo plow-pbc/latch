@@ -60,6 +60,11 @@ describe("parseManifest", () => {
     ["an env that is not an object", withPatch({ env: [] }), "env must be an object"],
     ["an argv that is not an object", withPatch({ argv: "nope" }), "argv must be an object"],
     ["an empty daemon argv", withPatch({ daemon: { argv: [], health: "/health" } }), "daemon needs argv and health"],
+    ["a non-string name", withPatch({ name: true }), "manifest name must be a string"],
+    ["a non-string command", withPatch({ command: true }), "manifest command must be a string"],
+    ["a binary with a non-string name", withPatch({ runtime: { binaries: [{ name: true, version: "1", url: { arm64: "https://x/b", x64: "https://x/b" }, sha256: { arm64: "a".repeat(64), x64: "a".repeat(64) } }], sources: [] } }), "binary name must be a string"],
+    ["a binary with a non-string version", withPatch({ runtime: { binaries: [{ name: "b", version: {}, url: { arm64: "https://x/b", x64: "https://x/b" }, sha256: { arm64: "a".repeat(64), x64: "a".repeat(64) } }], sources: [] } }), "binary b version must be a string"],
+    ["a source with a non-string name", withPatch({ runtime: { binaries: [], sources: [{ name: true, git: "https://x/s", commit: "a".repeat(40) }] } }), "source name must be a string"],
   ])("refuses %s", (_name, raw, message) => {
     expect(() => parseManifest(raw)).toThrow(new PluginError(message));
   });
