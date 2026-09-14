@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
+import { execFileSync } from "node:child_process";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
@@ -52,6 +53,26 @@ describe("installPlugin", () => {
     const r = root();
     await expect(installPlugin(r, fixturePlugin(binary), deps(failingFetch))).rejects.toThrow(new PluginError("binary tool could not be downloaded"));
     expect(fs.existsSync(pluginDirs(r, "fix").root)).toBe(false);
+  });
+
+  it("extracts an archive binary even when its download url carries a query string", async () => {
+    const srcDir = fs.mkdtempSync(path.join(os.tmpdir(), "latch-archive-"));
+    fs.writeFileSync(path.join(srcDir, "tool"), "#!/bin/sh\necho tool $*\n", { mode: 0o755 });
+    const tgz = path.join(srcDir, "tool.tar.gz");
+    execFileSync("/usr/bin/tar", ["-czf", tgz, "-C", srcDir, "tool"]);
+    const archiveBytes = fs.readFileSync(tgz);
+    const archiveSha = crypto.createHash("sha256").update(archiveBytes).digest("hex");
+    const binary = {
+      runtime: {
+        binaries: [{ name: "tool", version: "1", url: { arm64: "https://x/tool.tar.gz?X-Amz-Signature=abc", x64: "https://x/tool.tar.gz?X-Amz-Signature=abc" }, sha256: { arm64: archiveSha, x64: archiveSha } }],
+        sources: [],
+      },
+    };
+    const r = root();
+    await installPlugin(r, fixturePlugin(binary), deps(fakeFetch(archiveBytes)));
+    const linked = path.join(pluginDirs(r, "fix").runtimeBin, "tool");
+    expect(fs.lstatSync(linked).isSymbolicLink()).toBe(true);
+    expect(fs.statSync(linked).mode & 0o111).not.toBe(0);
   });
 
   it("clones a source at its commit and runs its install argv with runtime/bin on PATH", async () => {

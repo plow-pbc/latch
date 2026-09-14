@@ -44,11 +44,11 @@ export function pluginDirs(pluginsRoot: string, name: string) {
   };
 }
 
-async function git(args: string[], cwd?: string): Promise<void> {
+async function git(op: string, args: string[], cwd?: string): Promise<void> {
   try {
     await run("/usr/bin/git", args, { cwd, env: { ...process.env, GIT_TERMINAL_PROMPT: "0" } });
   } catch {
-    throw new PluginError("git clone failed"); // the URL is the caller's; never quote it
+    throw new PluginError(`git ${op} failed`); // the URL/ref is the caller's; never quote it
   }
 }
 
@@ -71,7 +71,9 @@ async function stageBinary(b: PluginManifest["runtime"]["binaries"][number], dir
   const bytes = Buffer.from(await res.arrayBuffer());
   if (crypto.createHash("sha256").update(bytes).digest("hex") !== b.sha256[deps.arch]) throw new PluginError(`binary ${b.name} did not match its sha256`);
   const url = b.url[deps.arch];
-  const archive = /\.(zip|tar\.gz|tgz)$/.test(url);
+  // Test the path, not the raw URL: a presigned download (S3, a GitHub
+  // release asset) carries a query string after the extension.
+  const archive = /\.(zip|tar\.gz|tgz)$/.test(new URL(url).pathname);
   if (!archive) {
     fs.writeFileSync(path.join(dirs.runtimeBin, b.name), bytes, { mode: 0o755 });
     return;
@@ -102,7 +104,7 @@ export async function installPlugin(pluginsRoot: string, gitUrl: string, deps: I
   let dirs: ReturnType<typeof pluginDirs> | null = null;
   let fresh = true;
   try {
-    await git(["clone", "-q", "--depth", "1", "--", gitUrl, path.join(staging, "repo")]);
+    await git("clone", ["clone", "-q", "--depth", "1", "--", gitUrl, path.join(staging, "repo")]);
     const manifest = parseManifest(fs.readFileSync(path.join(staging, "repo", "latch-plugin.json"), "utf8"));
     if (!fs.existsSync(path.join(staging, "repo", manifest.skill))) throw new PluginError("manifest skill file is missing");
     const { stdout: commit } = await run("/usr/bin/git", ["-C", path.join(staging, "repo"), "rev-parse", "HEAD"]);
@@ -121,8 +123,8 @@ export async function installPlugin(pluginsRoot: string, gitUrl: string, deps: I
     for (const s of manifest.runtime.sources) {
       deps.log(`cloning ${s.name}`);
       const dest = path.join(dirs.runtime, s.name);
-      await git(["clone", "-q", "--", s.git, dest]);
-      await git(["-C", dest, "checkout", "-q", s.commit]);
+      await git("clone", ["clone", "-q", "--", s.git, dest]);
+      await git("checkout", ["-C", dest, "checkout", "-q", s.commit]);
       if (s.install) {
         try {
           await run(s.install[0], s.install.slice(1), { cwd: dest, env: { ...process.env, PATH: `${dirs.runtimeBin}:${process.env.PATH ?? ""}` } });

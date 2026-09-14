@@ -159,6 +159,10 @@ export function parseManifest(raw: string): PluginManifest {
     const v = obj(value);
     const kinds = (["fixed", "secret", "mint"] as const).filter((k) => typeof v[k] === "string");
     if (kinds.length !== 1) fail(`env value ${key} must be one of fixed, secret or mint`);
+    // A secret name becomes a filename under secrets/ (install.ts path.joins
+    // it directly); without this it is attacker-controlled and could write or
+    // read outside that directory.
+    if (kinds[0] === "secret" && !SLUG.test(v.secret as string)) fail(`env value ${key} secret must be lowercase letters, digits and dashes`);
     env[key] = { [kinds[0]]: v[kinds[0]] } as EnvSource;
   }
 
