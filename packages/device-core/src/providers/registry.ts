@@ -17,12 +17,14 @@
  * here rather than the agent minting and passing one: the agent never holds it.
  */
 
+import os from "node:os";
 import type { Skill } from "../skills.js";
 import { isHelpInvocation } from "./gogGate.js";
 import { GOG_CANONICAL } from "./gogGroups.js";
 import { GOG_SKILL } from "./gogSkill.js";
 import { fileArgsIn } from "./gogFlags.js";
 import { planPlowGog } from "./plowGog.js";
+import { PLOW_MESSAGES_SUBCOMMANDS, plowMessagesSkillFor } from "./plowMessagesSkill.js";
 
 export interface ProviderFileArg {
   readonly access: "read" | "write";
@@ -157,7 +159,51 @@ const PLOW_GOG: VendoredProvider = {
   },
 };
 
-export const PROVIDERS: readonly VendoredProvider[] = [PLOW_GOG];
+/**
+ * A first-party CLI over the owner's Messages archive. Token-less: it reaches
+ * no service. The allowlist IS the gate (latch#361's shape): four read
+ * subcommands and help, refused by name before an intent exists.
+ *
+ * INTERIM, and the deferral is deliberate. This refuses, and refusing is all
+ * it does — the rule key still comes from the full argv (`RuleKey.compute`
+ * over the normalized capabilities, and a `process.exec` capability carries
+ * argv), so an always-allow the owner grants for `search "palm court"` does
+ * NOT cover `search "dentist"`. At ~1,160 iMessage calls per 21 days that is
+ * an approval per phrase, which is not the surface #167's spec describes
+ * ("read prefixes — one always-allow covers all").
+ *
+ * What creates that property is latch#361's declarative pair, being built in
+ * https://github.com/plow-pbc/latch/pull/387: `plugins/argvRules.ts`
+ * `classifyArgv` keys a read on `<command> <prefix>` while the card, sandbox
+ * and audit still see the full argv. When that lands, this function and
+ * `PLOW_MESSAGES_SUBCOMMANDS` are replaced by a declared
+ * `argv: { read: [["search"], ["thread"], ["chats"], ["unreplied"]], write: [] }`
+ * — the same shape a third-party plugin declares, which is what makes the
+ * built-ins the reference plugins rather than a parallel mechanism.
+ *
+ * Until then the gate is honest about what it is: it closes the surface, and
+ * the skill does not promise an approval breadth that does not exist yet.
+ */
+export function refusePlowMessages(argv: readonly string[]): string | null {
+  const sub = argv[1];
+  if (sub === "--help" || sub === "-h") return null;
+  if (sub !== undefined && (PLOW_MESSAGES_SUBCOMMANDS as readonly string[]).includes(sub)) return null;
+  return `plow-messages needs a subcommand: ${PLOW_MESSAGES_SUBCOMMANDS.join(", ")}`;
+}
+
+const PLOW_MESSAGES: VendoredProvider = {
+  command: "plow-messages",
+  binary: "plow-messages",
+  mint: null,
+  belt: [],
+  // The skill names the owner's real store dir; `os.homedir()` here is the
+  // same home `deviceAgent` hands the other skills as `ownerHome`.
+  skill: plowMessagesSkillFor(os.homedir()),
+  fileArgs: () => [],
+  refuse: refusePlowMessages,
+};
+
+export const PROVIDERS: readonly VendoredProvider[] = [PLOW_GOG, PLOW_MESSAGES];
 
 /**
  * The provider an argv invokes, or null when it invokes none.

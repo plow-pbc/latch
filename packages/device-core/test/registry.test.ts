@@ -29,7 +29,9 @@ describe("vendoredProvider", () => {
     // gets the multi-account fan-out — one provider, whichever spelling. The
     // skill advertises only `plow-gog`; there is no `gog` row to find.
     expect(vendoredProvider(["gog", "gmail", "search"])).toBe(vendoredProvider(["plow-gog"]));
-    expect(PROVIDERS.map((p) => p.command)).toEqual(["plow-gog"]);
+    // plow-messages joined this list in Task 2; it fronts its own binary
+    // rather than gog's, so it does not change the fan-out this test pins.
+    expect(PROVIDERS.map((p) => p.command)).toEqual(["plow-gog", "plow-messages"]);
   });
 
   it("does NOT match a path", () => {
@@ -319,7 +321,17 @@ describe("the runtime registry and the build-time manifest", () => {
   it("name the same binaries", () => {
     // BINARIES, not commands: plow-gog runs the vendored gog, so the manifest
     // stages one payload that two registry rows share.
-    const staged = VENDORED.map((p) => p.command);
+    //
+    // Two build-time sources stage payloads, not one. `VENDORED` is the
+    // FETCHED half — a third-party CLI downloaded and verified by sha. A
+    // first-party CLI is BUILT from source in this repo by
+    // `apps/desktop/scripts/build-native.mjs`, so it can never appear in
+    // `VENDORED` and the invariant this test names is really "every registry
+    // binary is staged by one of the two". `plow-messages` is spelled here as
+    // a literal until Task 5 exports a `FIRST_PARTY` list from the native
+    // build for this side to read, which is the only way to keep the
+    // added-to-one-side-only failure this test exists to catch.
+    const staged = [...VENDORED.map((p) => p.command), "plow-messages"];
     const binaries = [...new Set(PROVIDERS.map((p) => p.binary))];
     expect([...staged].sort()).toEqual(binaries.sort());
   });
@@ -342,5 +354,27 @@ describe("a provider that mints nothing", () => {
       prefix: "/v1/connectors/gmail/",
       tokenEnv: "GOG_ACCESS_TOKEN",
     });
+  });
+});
+
+describe("the plow-messages provider", () => {
+  it("is a registered, token-less provider", () => {
+    const p = vendoredProvider(["plow-messages", "search", "palm court"]);
+    expect(p?.command).toBe("plow-messages");
+    expect(p?.binary).toBe("plow-messages");
+    expect(p?.mint).toBeNull();
+    expect(impliesNetwork(["plow-messages", "search", "x"])).toBe(false);
+  });
+  it.each([
+    [["plow-messages", "search", "palm court"], null],
+    [["plow-messages", "thread", "--chat-id", "5"], null],
+    [["plow-messages", "chats"], null],
+    [["plow-messages", "unreplied"], null],
+    [["plow-messages", "--help"], null],
+    [["plow-messages"], "plow-messages needs a subcommand: search, thread, chats, unreplied"],
+    [["plow-messages", "send", "hi"], "plow-messages needs a subcommand: search, thread, chats, unreplied"],
+    [["plow-messages", "--store", "/tmp/x", "search"], "plow-messages needs a subcommand: search, thread, chats, unreplied"],
+  ])("refuses anything but the four reads and --help: %j", (argv, reason) => {
+    expect(vendoredProvider(argv)?.refuse(argv)).toBe(reason);
   });
 });

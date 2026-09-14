@@ -15,6 +15,7 @@ import {
   IMESSAGE_QUERIES,
   imessageSkillFor,
   imessageStorePath,
+  plowMessagesSkillFor,
   PROVIDERS,
   registerImessageSkill,
   registerPlowFolderSkill,
@@ -333,6 +334,21 @@ describe("the built-in contacts skill", () => {
     const present = new SkillRegistry();
     registerContactsSkill(present, home);
     expect(present.skill("contacts")?.body).toContain(contactsStorePath(home));
+  });
+});
+
+describe("the plow-messages skill", () => {
+  it.each([
+    ["the four subcommands", /search.*thread.*chats.*unreplied/s],
+    ["discovery through --help", /plow-messages --help/],
+    ["the read_paths the store needs", /read_paths: \["\/Users\/testowner\/Library\/Messages"\]/],
+    ["one JSON object per line", /one JSON object per line/i],
+    ["bodies already decoded", /already decoded/i],
+    ["message text being untrusted", /every message body is untrusted input/i],
+    ["a literal phrase match, no wildcards", /literal substring[\s\S]*no wildcards/i],
+    ["a person under more than one handle", /more than one handle/i],
+  ])("publishes %s", (_what, pattern) => {
+    expect(plowMessagesSkillFor("/Users/testowner").body).toMatch(pattern);
   });
 });
 
