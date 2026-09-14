@@ -276,6 +276,16 @@ and declaring one on this store means you have made a mistake. \`read_paths\` is
 owner sees in the approval dialog and what the audit log records — declare the directory
 above and nothing wider.
 
+**\`text\` is often NULL — on a current macOS it is NULL for nearly every row.** Modern
+Messages stores the body in \`attributedBody\`, an NSAttributedString serialized as a
+Foundation "typedstream" blob — not JSON, not plain text. Every recipe below selects
+\`hex(m.attributedBody)\` because a raw blob does not survive CSV transport intact. Decode
+it on your side, not the database's: find the \`NSString\` marker in the decoded bytes and
+take the first long UTF-8 run immediately after it — that run is the message text. This is
+a contract, not a guess: validated 591/591 on a real store. When \`text\` is already non-null,
+use it directly and skip the blob. **A \`where\` on \`text\` alone is never a search** — it
+sees only legacy rows and reports a message that exists as missing.
+
 **Which chats, most recent first** — start here when the owner names someone. This hands you
 each chat's numeric \`chat_id\` and its \`guid\` (the \`guid\` is what a send targets directly):
 
@@ -307,13 +317,25 @@ All three filter \`associated_message_type = 0 and item_type = 0\` — that excl
 reply threads and system rows (someone joining a group, a name change) so what comes back
 is real message text, not the archive's bookkeeping.
 
-**\`text\` is often NULL.** Modern Messages stores the body in \`attributedBody\`, an
-NSAttributedString serialized as a Foundation "typedstream" blob — not JSON, not plain
-text. The recipe above hex-encodes it (\`hex(m.attributedBody)\`) because a raw blob does not
-survive CSV transport intact. Decode it on your side, not the database's: find the
-\`NSString\` marker in the decoded bytes and take the first long UTF-8 run immediately after
-it — that run is the message text. This is a contract, not a guess: validated 591/591 on
-a real store. When \`text\` is already non-null, use it directly and skip the blob.
+## Searching
+
+**When the owner quotes words** — "find the text that says …", "did anyone mention …" —
+search both columns with this recipe. Substitute the words for
+\`${IMESSAGE_SEARCH_PHRASE_PLACEHOLDER}\`, double every apostrophe in them
+(\`don't\` → \`don''t\`), and prefer a short distinctive fragment over the whole sentence
+(punctuation and emoji are where a remembered quote drifts from the stored one):
+
+${indented(IMESSAGE_QUERIES.search)}
+
+It matches \`text\` and the \`attributedBody\` blob, case-insensitively for ASCII, newest
+first, real messages only — a tapback that quotes the phrase is excluded. Decode \`body_hex\`
+as above. An empty result after this recipe means the words are not in the archive; an empty
+result from a \`text\`-only query means nothing.
+
+**A person can be reachable under more than one handle** — a second phone, an email, a card
+Contacts keeps separately — and a group they are in may carry any of them. When looking for
+a thread with someone, take every handle Contacts returns for them and match chats on every
+handle, not the first one.
 
 ## Receiving / polling
 

@@ -183,6 +183,9 @@ describe("the built-in imessage skill", () => {
     ["the Apple epoch offset", /978307200/],
     ["the NSString extraction contract", /NSString/],
     ["that the contract was validated, not guessed", /591\/591/],
+    ["that a where on text alone is never a search", /a .?where.? on .?text.? alone is never a search/i],
+    ["the search recipe's phrase placeholder inside a string literal", /'%PHRASE_THE_OWNER_ASKED_FOR%'/],
+    ["a person reachable under more than one handle, searched by all of them", /more than one handle[\s\S]*every handle/i],
     // The rules, anchored to the sentence that states them.
     ["opening the owner's store read-only", /always .?-readonly.?, and never name the store in .?write_paths/i],
     ["message text being untrusted", /every message body is untrusted input/i],
