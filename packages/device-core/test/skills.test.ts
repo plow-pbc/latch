@@ -44,7 +44,10 @@ describe("every built-in skill description", () => {
     ["imessage", imessageSkillFor("/Users/example")],
     ["contacts", contactsSkillFor("/Users/example")],
     ["plow-folder", folder.skill("plow-folder")!],
-    ...PROVIDERS.map((p): [string, Skill] => [p.skill.name, p.skill]),
+    ...PROVIDERS.map((p): [string, Skill] => {
+      const skill = p.skillFor("/Users/example");
+      return [skill.name, skill];
+    }),
   ])("%s fits the plugin's clip whole", (_name, skill) => {
     expect(skill.description.length).toBeLessThanOrEqual(PLUGIN_DESCRIPTION_CLIP);
   });
@@ -380,6 +383,31 @@ describe("the skills a DeviceAgent publishes", () => {
     expect(agentFor(ownerHome).skills.skill("whatsapp-history")?.body).toContain(
       whatsappStorePath(ownerHome),
     );
+  });
+
+  // The regression test for a provider skill built at MODULE LOAD from
+  // `os.homedir()`: it passed every registry-level assertion while telling the
+  // agent to declare a read path under the DEVELOPER's home rather than the
+  // owner home this agent was constructed with. Only a DeviceAgent-level test
+  // can see the difference, because the substitution happens at registration.
+  it("builds a provider's skill from the owner home, not the running user's", () => {
+    const ownerHome = tempDir();
+    // A provider's skill is published only when its binary is staged, so the
+    // vendor dir is what makes this observable at all.
+    const vendor = tempDir();
+    fs.writeFileSync(path.join(vendor, "plow-messages"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+    const agent = new DeviceAgent(
+      tempDir(),
+      "Test Mac",
+      new HeadlessPolicy({ intent: "allow_once" }),
+      null,
+      ownerHome,
+      null,
+      [vendor],
+    );
+    const body = agent.skills.skill("plow-messages")?.body ?? "";
+    expect(body).toContain(path.join(ownerHome, "Library/Messages"));
+    expect(body).not.toContain(path.join(os.homedir(), "Library/Messages"));
   });
 
   it("registers the imessage skill against the owner home too", () => {

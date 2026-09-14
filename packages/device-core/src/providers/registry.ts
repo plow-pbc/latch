@@ -17,7 +17,6 @@
  * here rather than the agent minting and passing one: the agent never holds it.
  */
 
-import os from "node:os";
 import type { Skill } from "../skills.js";
 import { isHelpInvocation } from "./gogGate.js";
 import { GOG_CANONICAL } from "./gogGroups.js";
@@ -114,8 +113,16 @@ export interface VendoredProvider {
    * staged, and carried on the row so the provider's name has ONE spelling —
    * a rename here cannot silently unpublish a skill registered under a
    * literal somewhere else.
+   *
+   * A FUNCTION of the owner's home, not a value, because a provider over a
+   * local store has to tell the agent which absolute path to declare as a
+   * read capability — and `ownerHome` is injected, not ambient (`DeviceAgent`
+   * takes it precisely so nothing here reads the running user's home; a
+   * test's throwaway root is what keeps the suite off the developer's own
+   * store). A provider whose page says nothing about the home ignores the
+   * argument, which costs it nothing and keeps ONE shape for every row.
    */
-  readonly skill: Skill;
+  readonly skillFor: (ownerHome: string) => Skill;
 }
 
 /**
@@ -143,7 +150,7 @@ const PLOW_GOG: VendoredProvider = {
   // The bound is DERIVED from the same list the check reads, so the two
   // cannot drift into disagreeing about what is in scope.
   belt: ["--no-input", "--wrap-untrusted", `--enable-commands=${GOG_CANONICAL.join(",")}`],
-  skill: GOG_SKILL,
+  skillFor: () => GOG_SKILL,
   fileArgs: fileArgsIn,
   // The planner IS the gate: a refused plan and a refused argv are one
   // decision, so the dialog and the orchestrator cannot disagree about it.
@@ -196,9 +203,7 @@ const PLOW_MESSAGES: VendoredProvider = {
   binary: "plow-messages",
   mint: null,
   belt: [],
-  // The skill names the owner's real store dir; `os.homedir()` here is the
-  // same home `deviceAgent` hands the other skills as `ownerHome`.
-  skill: plowMessagesSkillFor(os.homedir()),
+  skillFor: plowMessagesSkillFor,
   fileArgs: () => [],
   refuse: refusePlowMessages,
 };

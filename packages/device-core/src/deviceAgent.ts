@@ -399,7 +399,9 @@ export class DeviceAgent {
     // path refuses unconditionally. The SAME predicate that gate uses — two
     // sites answering one question two ways is what produces that gap — and
     // driven off the registry, so a provider's name has one spelling.
-    for (const p of PROVIDERS) if (this.hasStaged(p.binary)) this.skills.register(p.skill);
+    for (const p of PROVIDERS) {
+      if (this.hasStaged(p.binary)) this.skills.register(p.skillFor(ownerHome));
+    }
     if (browserRuntime) {
       this.skills.register(BROWSING_SKILL);
       const browserDir = path.join(home, "device/browser");
@@ -887,6 +889,14 @@ export class DeviceAgent {
     const waitMs = jv(payload).get("wait_ms").int ?? 10000;
     const argv = exec.argv ?? [];
 
+    // What the child actually runs, where from, and what it automates. An
+    // ordinary command runs exactly what the owner approved; the provider
+    // branch below overrides all three and then falls into the same tail,
+    // because the only thing a provider changes is WHICH binary runs.
+    let execArgv: string[] = argv;
+    let execCwd = exec.cwd;
+    let automationTarget = appleEvents ? appleEventTarget(argv) : null;
+
     // A vendored provider CLI gets its tokens minted into its children's
     // environment and is orchestrated per account. Everything else is the
     // ordinary exec path — the capability the owner approved is the argv, the
@@ -921,59 +931,41 @@ export class DeviceAgent {
       if (!this.hasStaged(provider.binary)) {
         return this.execError(intent.intentId, `${provider.command} is not installed on this Mac`);
       }
-      // A first-party CLI over a local store reaches no service, so there is
-      // nothing to mint and no account to fan out across: one run, the
-      // agent's argv behind the staged binary. Everything the fan-out does
-      // for the rest of the seam is unchanged here — the capability the owner
-      // approved is still the literal argv, and the sandbox, the reaper and
-      // the audit never knew which kind of provider they were running.
-      if (provider.mint === null) {
-        this.audit.record("exec_start", { intentId: intent.intentId, argv });
-        try {
-          const result = await this.executor.run({
-            argv: [provider.binary, ...provider.belt, ...argv.slice(1)],
-            readPaths,
-            writePaths,
-            network,
-            appleEvents,
-            waitMs,
-          });
-          return this.finishRun(intent.intentId, result, {
-            argv,
-            // A provider never takes the agent's cwd: the child runs from the
-            // executor's per-run scratch dir, so there is none to diagnose
-            // against.
-            cwd: undefined,
-            readPaths,
-            writePaths,
-            automationTarget: null,
-            sandboxed: true,
-          });
-        } catch (error: unknown) {
-          const message = error instanceof Error ? error.message : String(error);
-          return this.execError(intent.intentId, message);
-        }
+      if (provider.mint !== null) {
+        return this.executePlowGog(intent, provider, argv, { readPaths, writePaths, network, appleEvents, waitMs });
       }
-      return this.executePlowGog(intent, provider, argv, { readPaths, writePaths, network, appleEvents, waitMs });
+      // A first-party CLI over a local store reaches no service, so there is
+      // nothing to mint and no account to fan out across. What it needs is the
+      // STAGED binary behind the agent's argv, and no cwd — a provider child
+      // runs from the executor's per-run scratch dir, so the agent's cwd is
+      // neither honoured nor something to diagnose against. Everything after
+      // this point is the ordinary exec path, unchanged: the capability the
+      // owner approved is still the literal argv, and the sandbox, the reaper
+      // and the audit never knew which kind of command they were running.
+      execArgv = [provider.binary, ...provider.belt, ...argv.slice(1)];
+      execCwd = undefined;
+      automationTarget = null;
     }
 
     this.audit.record("exec_start", { intentId: intent.intentId, argv });
     try {
       const result = await this.executor.run({
-        argv,
-        cwd: exec.cwd,
+        argv: execArgv,
+        cwd: execCwd,
         readPaths,
         writePaths,
         network,
         appleEvents,
         waitMs,
       });
+      // `argv`, not `execArgv`: the audit and the diagnosis record what the
+      // OWNER approved, never the belted or staged form they never read.
       return this.finishRun(intent.intentId, result, {
         argv,
-        cwd: exec.cwd,
+        cwd: execCwd,
         readPaths,
         writePaths,
-        automationTarget: appleEvents ? appleEventTarget(argv) : null,
+        automationTarget,
         sandboxed: true,
       });
     } catch (error: unknown) {

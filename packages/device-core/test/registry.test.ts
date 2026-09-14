@@ -226,7 +226,7 @@ describe("the scope bound", () => {
     expect(gog.belt).toContain(bound);
     // Every naming on the page agrees, and there is at least one: an empty
     // match set fails this too, since `[]` is not `[bound]`.
-    const named = gog.skill.body.match(/--enable-commands=[^`\s]*/g) ?? [];
+    const named = gog.skillFor("/Users/example").body.match(/--enable-commands=[^`\s]*/g) ?? [];
     expect([...new Set(named)]).toEqual([bound]);
   });
 
@@ -285,11 +285,11 @@ describe("the plow-gog provider's refusal", () => {
 });
 
 describe("the google-workspace skill", () => {
-  const body = vendoredProvider(["plow-gog"])!.skill.body;
+  const body = vendoredProvider(["plow-gog"])!.skillFor("/Users/example").body;
 
   it("is the one skill both provider rows publish, under the stable name", () => {
     expect(vendoredProvider(["plow-gog"])!.skill).toBe(gog.skill);
-    expect(gog.skill.name).toBe("google-workspace");
+    expect(gog.skillFor("/Users/example").name).toBe("google-workspace");
   });
 
   it("teaches the multi-account contract", () => {
