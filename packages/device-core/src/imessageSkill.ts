@@ -278,7 +278,7 @@ above and nothing wider.
 
 **\`text\` is often NULL — on a current macOS it is NULL for nearly every row.** Modern
 Messages stores the body in \`attributedBody\`, an NSAttributedString serialized as a
-Foundation "typedstream" blob — not JSON, not plain text. Every recipe below selects
+Foundation "typedstream" blob — not JSON, not plain text. The read recipes below select
 \`hex(m.attributedBody)\` because a raw blob does not survive CSV transport intact. Decode
 it on your side, not the database's: find the \`NSString\` marker in the decoded bytes and
 take the first long UTF-8 run immediately after it — that run is the message text. This is
@@ -321,7 +321,9 @@ is real message text, not the archive's bookkeeping.
 
 **When the owner quotes words** — "find the text that says …", "did anyone mention …" —
 search both columns with this recipe. Substitute the words for
-\`${IMESSAGE_SEARCH_PHRASE_PLACEHOLDER}\`, double every apostrophe in them
+\`${IMESSAGE_SEARCH_PHRASE_PLACEHOLDER}\` in BOTH places it appears, once per column
+searched — leaving either one unreplaced silently searches \`attributedBody\` for the
+literal sentinel and is back to a text-only search. Double every apostrophe in them
 (\`don't\` → \`don''t\`), and prefer a short distinctive fragment over the whole sentence
 (punctuation and emoji are where a remembered quote drifts from the stored one):
 
