@@ -16,6 +16,8 @@ import {
 import { overrideVar } from "../src/providers/vendoredBinary.js";
 // @ts-expect-error — a build-time .mjs manifest with no type declarations.
 import { VENDORED } from "../../../scripts/vendored-providers.mjs";
+// @ts-expect-error — a build-time .mjs manifest with no type declarations.
+import { FIRST_PARTY } from "../../../scripts/first-party-providers.mjs";
 
 const gog = vendoredProvider(["gog"])!;
 
@@ -326,16 +328,14 @@ describe("the runtime registry and the build-time manifest", () => {
     // BINARIES, not commands: plow-gog runs the vendored gog, so the manifest
     // stages one payload that two registry rows share.
     //
-    // Two build-time sources stage payloads, not one. `VENDORED` is the
-    // FETCHED half — a third-party CLI downloaded and verified by sha. A
-    // first-party CLI is BUILT from source in this repo by
-    // `apps/desktop/scripts/build-native.mjs`, so it can never appear in
-    // `VENDORED` and the invariant this test names is really "every registry
-    // binary is staged by one of the two". `plow-messages` is spelled here as
-    // a literal until Task 5 exports a `FIRST_PARTY` list from the native
-    // build for this side to read, which is the only way to keep the
-    // added-to-one-side-only failure this test exists to catch.
-    const staged = [...VENDORED.map((p) => p.command), "plow-messages"];
+    // Two build-time sources stage payloads, not one: `VENDORED` is fetched
+    // and sha-pinned, `FIRST_PARTY` is compiled from source in this repo, and
+    // a first-party CLI can never appear in the fetched list. So the real
+    // invariant is that every registry binary is staged by ONE OF THE TWO —
+    // and both are read here rather than one being spelled as a literal,
+    // because a literal is what stops catching the added-to-one-side-only
+    // failure the moment a second first-party provider lands.
+    const staged = [...VENDORED, ...FIRST_PARTY].map((p) => p.command);
     const binaries = [...new Set(PROVIDERS.map((p) => p.binary))];
     expect([...staged].sort()).toEqual(binaries.sort());
   });

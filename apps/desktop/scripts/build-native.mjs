@@ -46,6 +46,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { FIRST_PARTY } from "../../../scripts/first-party-providers.mjs";
 
 const dir = path.dirname(fileURLToPath(import.meta.url));
 const nativeDir = path.join(dir, "../native");
@@ -222,20 +223,26 @@ const compilePerArch = (label, inputs, command, { target, extraArgs = [] }) => {
   }
 };
 
-// 1d) plow-messages, a FIRST-PARTY PROVIDER rather than an app helper: it is
-// staged for `plow_run_command` to resolve, not loaded by the app. Swift
-// because Foundation decodes the typedstream `attributedBody` blobs natively
-// and a provider child gets no Node runtime (plow-pbc/latch#167).
-{
-  const source = path.join(nativeDir, "plow-messages.swift");
-  // The bridging header is the ObjC `@try` around NSUnarchiver (its own file
-  // says why a Swift-only decode aborts the process), so it is a build INPUT
-  // as much as the source: it is hashed into the stamp below.
-  const bridge = path.join(nativeDir, "plow-messages-bridge.h");
-  compilePerArch("provider plow-messages", [source, bridge], "plow-messages", {
-    target: "macos13.0",
-    extraArgs: ["-import-objc-header", bridge],
-  });
+// 1d) The FIRST-PARTY PROVIDERS, which are not app helpers: they are staged
+// for `plow_run_command` to resolve, not loaded by the app. Swift because
+// Foundation decodes typedstream natively and a provider child gets no Node
+// runtime (plow-pbc/latch#167). Driven off `FIRST_PARTY` rather than spelled
+// here, so the build side and the registry test read ONE list.
+for (const provider of FIRST_PARTY) {
+  const source = path.join(nativeDir, provider.source);
+  // A bridging header is a build INPUT, not just a header — it carries the
+  // ObjC `@try` the Swift source calls — so it is hashed into the stamp and a
+  // change to it rebuilds the binary.
+  const bridge = provider.bridge ? path.join(nativeDir, provider.bridge) : null;
+  compilePerArch(
+    `provider ${provider.command}`,
+    bridge === null ? [source] : [source, bridge],
+    provider.command,
+    {
+      target: provider.target,
+      extraArgs: bridge === null ? [] : ["-import-objc-header", bridge],
+    },
+  );
 }
 
 // 2) The credential-exchange shim (a dylib the app dlopens in-process).
