@@ -134,6 +134,16 @@ describe("plow-messages search", () => {
     expect(cli("search", "order", "--before", between).rows.map((r) => r.rowid)).toEqual([6001]);
   });
 
+  itMac("browses a chat with no phrase at all, bodiless rows included", () => {
+    // The no-phrase path is a SEPARATE branch from the phrase match, and it is
+    // where a bodiless row has to appear: with nothing to match against, a
+    // reader that still required a decoded body would hand back a chat with
+    // holes in it. Newest first, tapback excluded.
+    const rows = cli("search", "--chat-id", "40").rows;
+    expect(rows.map((r) => r.rowid)).toEqual([6002, 6005, 6004, 6001]);
+    expect(rows.filter((r) => r.body === null).map((r) => r.rowid)).toEqual([6005, 6004]);
+  });
+
   itMac("honours --limit and --handle", () => {
     expect(cli("search", "order", "--limit", "1").rows.map((r) => r.rowid)).toEqual([6002]);
     expect(cli("search", "order", "--handle", "36246").rows.map((r) => r.rowid)).toEqual([6002]);
