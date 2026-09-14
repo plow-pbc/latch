@@ -102,6 +102,14 @@ describe("installPlugin", () => {
     expect(fs.readFileSync(path.join(pluginDirs(r, "fix").runtime, "lib", "built.txt"), "utf8")).toBe("built\n");
   });
 
+  it("names a source checkout failure distinctly from a clone failure", async () => {
+    const src = fixturePlugin(); // clone succeeds; the pinned commit doesn't exist in it
+    const r = root();
+    await expect(
+      installPlugin(r, fixturePlugin({ runtime: { binaries: [], sources: [{ name: "lib", git: src, commit: "a".repeat(40) }] } }), deps()),
+    ).rejects.toThrow(new PluginError("git checkout failed"));
+  });
+
   it("runs the postinstall hook with fixed and secret env, and refuses the install when it fails", async () => {
     const r = root();
     await installPlugin(r, fixturePlugin({ env: FIXTURE_ENV, hooks: { postinstall: "hooks/post.sh" } }, { "hooks/post.sh": '#!/bin/sh\necho "$FIX_HOME" > "$FIX_HOME/seen"\n' }), deps());
