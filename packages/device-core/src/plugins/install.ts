@@ -64,7 +64,9 @@ async function freePort(): Promise<number> {
 }
 
 async function stageBinary(b: PluginManifest["runtime"]["binaries"][number], dirs: ReturnType<typeof pluginDirs>, deps: InstallDeps): Promise<void> {
-  const res = await deps.fetch(b.url[deps.arch]);
+  const res = await deps.fetch(b.url[deps.arch]).catch(() => {
+    throw new PluginError(`binary ${b.name} could not be downloaded`); // a fetch exception is the caller's URL; never quote it
+  });
   if (!res.ok) throw new PluginError(`binary ${b.name} could not be downloaded`);
   const bytes = Buffer.from(await res.arrayBuffer());
   if (crypto.createHash("sha256").update(bytes).digest("hex") !== b.sha256[deps.arch]) throw new PluginError(`binary ${b.name} did not match its sha256`);

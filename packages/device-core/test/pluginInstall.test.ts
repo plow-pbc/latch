@@ -44,6 +44,16 @@ describe("installPlugin", () => {
     expect(fs.existsSync(pluginDirs(r2, "fix").root)).toBe(false);
   });
 
+  it("wraps a binary fetch's network exception so the url never reaches the error", async () => {
+    const binary = { runtime: { binaries: [{ name: "tool", version: "1", url: { arm64: "https://x/t", x64: "https://x/t" }, sha256: { arm64: sha, x64: sha } }], sources: [] } };
+    const failingFetch = (async () => {
+      throw new Error("getaddrinfo ENOTFOUND https://x/t");
+    }) as unknown as typeof fetch;
+    const r = root();
+    await expect(installPlugin(r, fixturePlugin(binary), deps(failingFetch))).rejects.toThrow(new PluginError("binary tool could not be downloaded"));
+    expect(fs.existsSync(pluginDirs(r, "fix").root)).toBe(false);
+  });
+
   it("clones a source at its commit and runs its install argv with runtime/bin on PATH", async () => {
     const src = fixturePlugin(); // any git repo will do as a source
     const commit = fs.readFileSync(path.join(src, ".git", "refs", "heads", fs.readdirSync(path.join(src, ".git", "refs", "heads"))[0]), "utf8").trim();
