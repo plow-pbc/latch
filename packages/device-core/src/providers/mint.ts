@@ -47,4 +47,11 @@ export interface Minter {
    * server-side, so this Mac holds no second copy of a fact the server owns.
    */
   mintAll(provider: VendoredProvider): Promise<MintedAccounts>;
+
+  /**
+   * One short-lived token for a single declared scope, for a plugin's `mint`
+   * env values. Per-invocation and never cached to disk — the caller asks
+   * again next time one is needed.
+   */
+  mintScoped(scope: string): Promise<string>;
 }

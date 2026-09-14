@@ -45,6 +45,9 @@ export function buildMinter(opts: { api: PlowApi; home: string }): Minter {
   return {
     mintAll: (provider) =>
       authorised(provider, (c) => opts.api.mintAccountTokens(c, provider.mintPrefix, provider.mintAction)),
+    // No Plow-side scoped-mint endpoint exists yet; a plugin's `mint` env
+    // values refuse until that lands, same as an unpaired Mac would.
+    mintScoped: () => Promise.reject(MintError.unpaired()),
   };
 }
 

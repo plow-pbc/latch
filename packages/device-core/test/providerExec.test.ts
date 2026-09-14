@@ -119,6 +119,9 @@ function minterOf(mint: (provider: VendoredProvider) => Promise<string>): Minter
       accounts: [{ account: "a@example.com", token: await mint(provider), isDefault: true }],
       degraded: [],
     }),
+    mintScoped: async () => {
+      throw MintError.unpaired();
+    },
   };
 }
 
@@ -324,7 +327,12 @@ esac
     accounts: { account: string; token: string; isDefault: boolean }[],
     degraded: { account: string; reason: string }[] = [],
   ): Minter {
-    return { mintAll: async () => ({ accounts, degraded }) };
+    return {
+      mintAll: async () => ({ accounts, degraded }),
+      mintScoped: async () => {
+        throw MintError.unpaired();
+      },
+    };
   }
 
   const AB = [
@@ -751,6 +759,9 @@ esac
       {
         mintAll: async () => {
           throw MintError.failed("plow-gog", "could not reach Plow");
+        },
+        mintScoped: async () => {
+          throw MintError.unpaired();
         },
       },
       [plowVendorDir()],
