@@ -50,6 +50,10 @@ import { fileURLToPath } from "node:url";
 const dir = path.dirname(fileURLToPath(import.meta.url));
 const nativeDir = path.join(dir, "../native");
 const outDir = path.join(dir, "../dist/native");
+/** The provider staging tree at the repo root — gitignored, and what
+ *  electron-builder copies to `Resources/providers`. Shared with the
+ *  FETCHED providers, so a built one needs no second copy path. */
+const providersDir = path.join(dir, "../../../vendor/providers");
 
 fs.mkdirSync(outDir, { recursive: true });
 
@@ -157,6 +161,73 @@ const compileUniversal = (tmp, output, { sources, target, extraArgs = [] }) => {
     compileUniversal(tmp, output, { sources: [source], target: "macos13.0" });
     fs.chmodSync(output, 0o755);
   });
+}
+
+/**
+ * One swiftc run per arch, each slice left WHERE THE PROVIDER RESOLVER LOOKS
+ * rather than lipo-fused.
+ *
+ * The helpers above are universal because electron-builder copies each of them
+ * through both of its arch passes untouched, so a single byte-identical file is
+ * what makes the two passes agree. A provider is the opposite shape: its
+ * payload is resolved at RUNTIME from
+ * `vendor/providers/<command>/<process.arch>/<command>` (see
+ * `providers/vendoredBinary.ts`), the same layout the FETCHED providers stage
+ * into, so a first-party CLI built from source has to land there too — one
+ * slice per arch directory, and nothing to fuse.
+ *
+ * Arch keys are NODE's (`arm64`, `x64`), not swiftc's, because it is
+ * `process.arch` that indexes them.
+ */
+const ARCH_KEYS = { arm64: "arm64", x86_64: "x64" };
+
+const compilePerArch = (label, source, command, { target, extraArgs = [] }) => {
+  const archKeys = Object.entries(ARCH_KEYS);
+  const outputs = archKeys.map(([, nodeArch]) => path.join(providersDir, command, nodeArch, command));
+  // Stamped on the source and this script, like every artifact above, but
+  // keyed on the FIRST output — all slices are written together or not at all.
+  const stampFile = path.join(providersDir, command, `${command}.stamp`);
+  const stamp = stampOf([source]);
+  if (outputs.every((o) => fs.existsSync(o)) && fs.existsSync(stampFile) &&
+      fs.readFileSync(stampFile, "utf8") === stamp) {
+    console.log(`native ${label} up to date → ${path.join(providersDir, command)}`);
+    return;
+  }
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "domo-provider-"));
+  try {
+    for (const [swiftArch, nodeArch] of archKeys) {
+      const staged = path.join(tmp, nodeArch, command);
+      fs.mkdirSync(path.dirname(staged), { recursive: true });
+      execFileSync(
+        swiftc,
+        ["-O", "-sdk", sdk, "-target", `${swiftArch}-apple-${target}`, ...extraArgs, source, "-o", staged],
+        { stdio: "inherit" },
+      );
+      fs.chmodSync(staged, 0o755);
+    }
+    // Moved into place only after BOTH slices compiled, so a failure on the
+    // second arch cannot leave the first one staged and resolvable — which
+    // would ship one arch's users a provider and the other's nothing.
+    for (const [, nodeArch] of archKeys) {
+      const dest = path.join(providersDir, command, nodeArch, command);
+      fs.mkdirSync(path.dirname(dest), { recursive: true });
+      fs.copyFileSync(path.join(tmp, nodeArch, command), dest);
+      fs.chmodSync(dest, 0o755);
+    }
+    fs.writeFileSync(stampFile, stamp);
+    console.log(`built native ${label} (per-arch) → ${path.join(providersDir, command)}`);
+  } finally {
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
+};
+
+// 1d) plow-messages, a FIRST-PARTY PROVIDER rather than an app helper: it is
+// staged for `plow_run_command` to resolve, not loaded by the app. Swift
+// because Foundation decodes the typedstream `attributedBody` blobs natively
+// and a provider child gets no Node runtime (plow-pbc/latch#167).
+{
+  const source = path.join(nativeDir, "plow-messages.swift");
+  compilePerArch("provider plow-messages", source, "plow-messages", { target: "macos13.0" });
 }
 
 // 2) The credential-exchange shim (a dylib the app dlopens in-process).
