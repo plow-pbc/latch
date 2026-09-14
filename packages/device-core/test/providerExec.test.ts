@@ -797,6 +797,18 @@ describe("a token-less provider through the exec path", () => {
     expect(execEnd(d)).toBe(0);
   });
 
+  itSpawns("runs --help, which is the first thing the skill tells an agent to do", async () => {
+    // The allowlist exempts `--help`, and the skill's opening line is to run
+    // it — so this argv is the likeliest first invocation any agent makes, and
+    // it reaches the child through the token-less branch rather than through
+    // gog's separate help case.
+    const d = device(null, [messagesVendorDir()]);
+    const result = await run(d, ["plow-messages", "--help"]);
+    expect(jv(result).get("status").str).toBe("completed");
+    expect(String(jv(result).get("output").str ?? "")).toContain("ARGV=--help");
+    expect(execEnd(d)).toBe(0);
+  });
+
   itSpawns("refuses an unlisted subcommand before spawning", async () => {
     const d = device(null, [messagesVendorDir()]);
     const result = await run(d, ["plow-messages", "send", "hi"]);
