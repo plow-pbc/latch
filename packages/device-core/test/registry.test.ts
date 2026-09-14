@@ -330,3 +330,17 @@ describe("the runtime registry and the build-time manifest", () => {
     for (const p of VENDORED) expect(Object.keys(p.arches).sort()).toEqual(["arm64", "x64"]);
   });
 });
+
+describe("a provider that mints nothing", () => {
+  it("plow-gog still mints, so it implies network", () => {
+    expect(impliesNetwork(["plow-gog", "gmail", "search", "x"])).toBe(true);
+  });
+  it("carries its mint as one nullable field, so a token-less provider is representable", () => {
+    const gog = vendoredProvider(["plow-gog"]);
+    expect(gog?.mint).toEqual({
+      action: "access-token",
+      prefix: "/v1/connectors/gmail/",
+      tokenEnv: "GOG_ACCESS_TOKEN",
+    });
+  });
+});

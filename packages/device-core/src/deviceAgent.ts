@@ -1227,6 +1227,8 @@ export class DeviceAgent {
     // `refuse` already rejected these before the dialog; a hand-built intent
     // reaches the same answer.
     if (plan.kind === "refused") return this.execError(intent.intentId, plan.reason);
+    const mint = provider.mint;
+    if (mint === null) return this.execError(intent.intentId, `${provider.command} does not fan out`);
     const runGog = (tail: readonly string[], token: string | null) =>
       this.executor.run({
         argv: [provider.binary, ...provider.belt, ...tail],
@@ -1236,7 +1238,7 @@ export class DeviceAgent {
         appleEvents: opts.appleEvents,
         waitMs: opts.waitMs,
         // A help run gets no token, same as the gog path.
-        env: token === null ? undefined : { [provider.tokenEnv]: token },
+        env: token === null ? undefined : { [mint.tokenEnv]: token },
       });
     // An inner run that outlives wait_ms is WAITED OUT, not abandoned: the
     // per-account children have no public handle — the outer call owns the

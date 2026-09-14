@@ -44,18 +44,20 @@ export interface VendoredProvider {
    * Every staging/resolution site reads this, never `command`.
    */
   readonly binary: string;
-  /** The connector action that mints this provider's token. */
-  readonly mintAction: string;
-  /** Where the mint's routes hang, e.g. `/v1/connectors/gmail/`. */
-  readonly mintPrefix: string;
   /**
-   * The environment variable the CLI reads its token from.
-   *
-   * No account variable beside it, deliberately: the token IS the account
-   * binding, so an account flag in agent-supplied argv cannot redirect the
-   * call, and Plow resolves the owner's connected account server-side.
+   * How this provider's token is minted, or null for a provider that reaches
+   * no service and needs none (a first-party CLI over a local store). The
+   * three parts travel together because they are meaningless apart.
    */
-  readonly tokenEnv: string;
+  readonly mint: {
+    /** The connector action that mints this provider's token. */
+    readonly action: string;
+    /** Where the mint's routes hang, e.g. `/v1/connectors/gmail/`. */
+    readonly prefix: string;
+    /** The environment variable the CLI reads its token from. No account
+     *  variable beside it, deliberately: the token IS the account binding. */
+    readonly tokenEnv: string;
+  } | null;
   /**
    * Flags Latch puts in front of the command path on every invocation, whatever
    * the agent asked for.
@@ -130,14 +132,12 @@ export interface VendoredProvider {
 const PLOW_GOG: VendoredProvider = {
   command: "plow-gog",
   binary: "gog",
-  mintAction: "access-token",
   // Not a Gmail-only scope, though the prefix says gmail: checked against
   // plow's GMAIL_DEFAULT_SCOPES, the mint covers calendar.readonly and
   // calendar.events too, which is what gog's ~40 calendar leaves are spent on.
   // The route was mounted on this prefix because the calendar routes already
   // lived there — the name is Plow's history, not a narrower grant.
-  mintPrefix: "/v1/connectors/gmail/",
-  tokenEnv: "GOG_ACCESS_TOKEN",
+  mint: { action: "access-token", prefix: "/v1/connectors/gmail/", tokenEnv: "GOG_ACCESS_TOKEN" },
   // The bound is DERIVED from the same list the check reads, so the two
   // cannot drift into disagreeing about what is in scope.
   belt: ["--no-input", "--wrap-untrusted", `--enable-commands=${GOG_CANONICAL.join(",")}`],
@@ -201,5 +201,6 @@ export function needsToken(argv: readonly string[]): boolean {
  * them drifted within a single commit.
  */
 export function impliesNetwork(argv: readonly string[]): boolean {
-  return vendoredProvider(argv) !== null && needsToken(argv);
+  const provider = vendoredProvider(argv);
+  return provider !== null && provider.mint !== null && needsToken(argv);
 }
