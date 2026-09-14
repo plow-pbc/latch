@@ -42,9 +42,21 @@ export interface PluginManifest {
 const SLUG = /^[a-z][a-z0-9-]{0,31}$/;
 const SHA = /^[0-9a-f]{64}$/;
 const ARCHES = ["arm64", "x64"] as const;
+/**
+ * A path INSIDE the plugin's own tree: relative, no `..`, no leading `/`.
+ * Every path-shaped field (exec.cwd, skill, hooks, a binary's executable) is
+ * joined under `$DOMO_HOME/plugins/<name>/` by the installer, so a traversal
+ * here would be a write or an exec outside the plugin's directory.
+ */
+const INSIDE = /^(?!\/)(?!.*(^|\/)\.\.(\/|$))[^\0]+$/;
 
 function fail(message: string): never {
   throw new PluginError(message);
+}
+const isInside = (v: unknown): v is string => typeof v === "string" && INSIDE.test(v);
+/** One name per binary / source: a duplicate would make `runtime/<name>` ambiguous. */
+function unique(names: string[], what: string): void {
+  if (new Set(names).size !== names.length) fail(`${what} names must be unique`);
 }
 const isStrings = (v: unknown): v is string[] => Array.isArray(v) && v.every((s) => typeof s === "string");
 const obj = (v: unknown): Record<string, unknown> =>
@@ -74,7 +86,11 @@ export function parseManifest(raw: string): PluginManifest {
     const url = obj(bin.url);
     const sha256 = obj(bin.sha256);
     for (const arch of ARCHES) {
-      if (typeof url[arch] !== "string") fail(`binary ${bname} needs a url for arm64 and x64`);
+      // https only: the bytes are verified by sha, but a plaintext or file: URL
+      // is still a download the owner did not intend to trust the network with.
+      if (typeof url[arch] !== "string" || !url[arch].startsWith("https://")) {
+        fail(`binary ${bname} needs an https url for arm64 and x64`);
+      }
       if (typeof sha256[arch] !== "string" || !SHA.test(sha256[arch] as string)) {
         fail(`binary ${bname} needs a sha256 for arm64 and x64`);
       }
@@ -84,25 +100,32 @@ export function parseManifest(raw: string): PluginManifest {
       version: String(bin.version ?? ""),
       url: { arm64: url.arm64 as string, x64: url.x64 as string },
       sha256: { arm64: sha256.arm64 as string, x64: sha256.x64 as string },
-      ...(typeof bin.executable === "string" ? { executable: bin.executable } : {}),
+      ...(bin.executable === undefined ? {} : { executable: insideOrFail(bin.executable, `binary ${bname} executable`) }),
     };
   });
+  unique(binaries.map((b) => b.name), "binary");
   const sources = (Array.isArray(runtime.sources) ? runtime.sources : []).map((s: unknown) => {
     const src = obj(s);
     const sname = String(src.name ?? "");
     if (!SLUG.test(sname)) fail("source name must be lowercase letters, digits and dashes");
-    if (typeof src.git !== "string" || !src.git) fail(`source ${sname} needs a git url`);
+    // A leading dash would read as a git option when cloned; the installer
+    // also passes `--`, this is the layer under it.
+    if (typeof src.git !== "string" || !src.git || src.git.startsWith("-")) fail(`source ${sname} needs a git url`);
     if (typeof src.commit !== "string" || !/^[0-9a-f]{40}$/.test(src.commit)) {
       fail(`source ${sname} needs a 40-character commit`);
     }
     if (src.install !== undefined && !isStrings(src.install)) fail(`source ${sname} install must be an argv array`);
     return { name: sname, git: src.git, commit: src.commit, ...(src.install ? { install: src.install as string[] } : {}) };
   });
+  unique(sources.map((s) => s.name), "source");
 
   const exec = obj(m.exec);
   if (typeof exec.cwd !== "string" || !isStrings(exec.argv) || exec.argv.length === 0) {
     fail("manifest needs exec.cwd and exec.argv");
   }
+  // cwd names a runtime/ entry the installer creates: a source, or `plugin`
+  // (the repo itself). Anything else is a directory outside the staged tree.
+  if (exec.cwd !== "plugin" && !sources.some((s) => s.name === exec.cwd)) fail("exec.cwd must be plugin or a source name");
 
   let daemon: PluginManifest["daemon"] = null;
   if (m.daemon !== undefined && m.daemon !== null) {
@@ -137,8 +160,8 @@ export function parseManifest(raw: string): PluginManifest {
   }
 
   const hooks = obj(m.hooks);
-  if (hooks.postinstall !== undefined && typeof hooks.postinstall !== "string") fail("hooks.postinstall must be a path");
-  if (typeof m.skill !== "string" || !m.skill) fail("manifest needs a skill path");
+  const postinstall = hooks.postinstall === undefined ? null : insideOrFail(hooks.postinstall, "hooks.postinstall");
+  const skill = insideOrFail(m.skill, "skill");
 
   return {
     name,
@@ -149,7 +172,12 @@ export function parseManifest(raw: string): PluginManifest {
     daemon,
     env,
     argv: { read: read as string[][], write: write as string[][] },
-    hooks: hooks.postinstall ? { postinstall: hooks.postinstall as string } : {},
-    skill: m.skill,
+    hooks: postinstall === null ? {} : { postinstall },
+    skill,
   };
+}
+
+function insideOrFail(v: unknown, what: string): string {
+  if (!isInside(v)) fail(`${what} must be a path inside the plugin`);
+  return v;
 }
