@@ -314,11 +314,9 @@ describe("the imessage recipes the skill publishes", () => {
   });
 
   it("search finds a phrase in attributedBody as well as text (latch#385), case-insensitively, newest first, real rows only", () => {
-    // The placeholder appears twice in the recipe (once per column searched),
-    // so a single `.replace()` leaves the second occurrence — the attributedBody
-    // clause — unsubstituted; `.replaceAll()` is what an agent doing this
-    // substitution for real would do.
-    const sql = IMESSAGE_QUERIES.search.replaceAll(
+    // The placeholder is carried once, in a one-row CTE, so a single
+    // `.replace()` substitutes it everywhere it is consumed.
+    const sql = IMESSAGE_QUERIES.search.replace(
       IMESSAGE_SEARCH_PHRASE_PLACEHOLDER,
       "palm court STILL stands",
     );
@@ -335,7 +333,11 @@ describe("the imessage recipes the skill publishes", () => {
     // The tapback quoting the phrase is bookkeeping, not a message.
     expect(rows.some((r) => Number(r[0]) === 5003)).toBe(false);
     // A phrase in no row at all is an empty result, not an error.
-    expect(query(store, IMESSAGE_QUERIES.search.replaceAll(IMESSAGE_SEARCH_PHRASE_PLACEHOLDER, "no such phrase"))).toEqual([]);
+    expect(query(store, IMESSAGE_QUERIES.search.replace(IMESSAGE_SEARCH_PHRASE_PLACEHOLDER, "no such phrase"))).toEqual([]);
+    // Matching is a literal substring, not a `like` wildcard: a `%` in the
+    // phrase must not act as "match anything" — 5001's text contains no
+    // literal "palm % stands", so this must return nothing.
+    expect(query(store, IMESSAGE_QUERIES.search.replace(IMESSAGE_SEARCH_PHRASE_PLACEHOLDER, "palm % stands"))).toEqual([]);
   });
 
   it("finds the unreplied set: inbound direct chats only, not outbound, not tapback-only, not group", () => {

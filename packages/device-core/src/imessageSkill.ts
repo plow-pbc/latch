@@ -89,21 +89,25 @@ export const IMESSAGE_QUERIES = {
 
   /** Find messages containing a phrase — in `text` OR in the `attributedBody`
    *  blob, because on a modern store `text` is NULL for nearly every row and a
-   *  `where text like …` alone is a confident false negative (latch#385: an
-   *  agent searched `text` and told the owner a message did not exist; it was
-   *  in the blob). `cast(… as text)` keeps every byte — validated equal to a
-   *  bytewise `instr` on a real store — and `lower()` makes the blob half
-   *  match the way `like` already does. */
-  search: `select m.ROWID, c.guid as chat_guid, c.chat_identifier, c.display_name,
+   *  text-only search is a confident false negative (latch#385: an agent
+   *  searched `text` and told the owner a message did not exist; it was in
+   *  the blob). Both branches match with `instr`, not `like`, so a phrase
+   *  containing `%` or `_` is matched literally rather than as a wildcard.
+   *  `cast(… as text)` keeps every byte of the blob — validated equal to a
+   *  bytewise `instr` on a real store. The phrase is carried once, in a
+   *  one-row CTE, so there is only one place to substitute it into. */
+  search: `with search_phrase(value) as (values ('${IMESSAGE_SEARCH_PHRASE_PLACEHOLDER}'))
+  select m.ROWID, c.guid as chat_guid, c.chat_identifier, c.display_name,
        h.id as sender, m.is_from_me,
        datetime(m.date/1000000000 + 978307200, 'unixepoch', 'localtime') as at,
        m.text, hex(m.attributedBody) as body_hex
-  from message m
+  from search_phrase p
+  cross join message m
   join chat_message_join j on j.message_id = m.ROWID
   join chat c on c.ROWID = j.chat_id
   left join handle h on h.ROWID = m.handle_id
- where (m.text like '%${IMESSAGE_SEARCH_PHRASE_PLACEHOLDER}%'
-        or instr(lower(cast(m.attributedBody as text)), lower('${IMESSAGE_SEARCH_PHRASE_PLACEHOLDER}')) > 0)
+ where (instr(lower(m.text), lower(p.value)) > 0
+        or instr(lower(cast(m.attributedBody as text)), lower(p.value)) > 0)
    and m.associated_message_type = 0
    and m.item_type = 0
  order by m.date desc
@@ -321,15 +325,14 @@ is real message text, not the archive's bookkeeping.
 
 **When the owner quotes words** — "find the text that says …", "did anyone mention …" —
 search both columns with this recipe. Substitute the words for
-\`${IMESSAGE_SEARCH_PHRASE_PLACEHOLDER}\` in BOTH places it appears, once per column
-searched — leaving either one unreplaced silently searches \`attributedBody\` for the
-literal sentinel and is back to a text-only search. Double every apostrophe in them
+\`${IMESSAGE_SEARCH_PHRASE_PLACEHOLDER}\`, double every apostrophe in them
 (\`don't\` → \`don''t\`), and prefer a short distinctive fragment over the whole sentence
 (punctuation and emoji are where a remembered quote drifts from the stored one):
 
 ${indented(IMESSAGE_QUERIES.search)}
 
-It matches \`text\` and the \`attributedBody\` blob, case-insensitively for ASCII, newest
+It matches \`text\` and the \`attributedBody\` blob as a literal substring, case-insensitive
+for ASCII and with no wildcards (a \`%\` or \`_\` in the phrase matches only itself), newest
 first, real messages only — a tapback that quotes the phrase is excluded. Decode \`body_hex\`
 as above. An empty result after this recipe means the words are not in the archive; an empty
 result from a \`text\`-only query means nothing.
