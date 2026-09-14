@@ -179,7 +179,7 @@ describe("the built-in imessage skill", () => {
     ["how a group chat is told apart", /chat_identifier like 'chat%'/],
     ["a name resolved to handles through the contacts skill", /read the .?contacts.? skill\s+for their handles/i],
     ["a name matching several people going back to the owner", /more than one person, ask the owner which/i],
-    ["a phone matched on all its digits, not its formatting", /match a phone on all its digits/i],
+    ["a phone matched on all its digits, its country code taken as Messages does", /match a phone on all its digits[\s\S]*as Messages does/i],
     ["the Apple epoch offset", /978307200/],
     ["the NSString extraction contract", /NSString/],
     ["that the contract was validated, not guessed", /591\/591/],

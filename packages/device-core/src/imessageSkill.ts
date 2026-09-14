@@ -264,10 +264,11 @@ the **handle**: the phone or email of the person the owner means. A name is not 
 (names live in Contacts) — if the owner gave only a name, first read the \`contacts\` skill
 for their handles. If the name matches more than one person, ask the owner which one.
 Contacts keeps a phone as typed, so match a phone on all its digits with the formatting
-stripped, reading a bare ten-digit number as \`+1\` and those ten. Only when Contacts has no
-such person, say so rather than guessing a \`chat_id\`. With the row in hand, gather that one
-chat by its \`chat_id\` — never the all-chat query below, which hands the agent far more of the
-owner's private messages than a question about one person needs:
+stripped; one typed without a country code takes this Mac's region's, as Messages does
+(\`+1\` on a US Mac). Only when Contacts has no such person, say so rather than guessing a
+\`chat_id\`. With the row in hand, gather that one chat by its \`chat_id\` — never the all-chat
+query below, which hands the agent far more of the owner's private messages than a question
+about one person needs:
 
 ${indented(IMESSAGE_QUERIES.gatherChat)}
 
