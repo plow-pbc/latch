@@ -1,6 +1,8 @@
 # gog — the pin-bump checklist
 
-Bumping gog's pin — the whole checklist, and its only home.
+Bumping gog's pin — the whole checklist, and its only home. (The vendored
+copy of this checklist in `scripts/vendored-providers.mjs` is retired by
+the next PR in this stack — this one is the "only home" that stands.)
 
 Per-version verdicts about gog's own grammar. They live on gog's row rather
 than in the fetcher, which knows nothing about any particular CLI.

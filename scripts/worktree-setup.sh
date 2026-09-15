@@ -48,7 +48,7 @@ for dir in vendor/camoufox-browser vendor/downloads vendor/providers vendor/plug
     # -c uses APFS clonefile; fall back to a plain copy on other filesystems.
     cp -Rpc "$main_root/$dir" "$dir" 2>/dev/null || cp -Rp "$main_root/$dir" "$dir"
   else
-    echo "note: $main_root/$dir does not exist — skipping (run \`just fetch-browser\` later if you need the browser stack)"
+    echo "note: $main_root/$dir does not exist — skipping (run the matching just recipe later if you need it — fetch-browser, fetch-vendored or stage-plugins)"
   fi
 done
 

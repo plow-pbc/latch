@@ -1,4 +1,3 @@
-// scripts/stage-plugins.mjs
 /**
  * Stage every bundled plugin (apps/desktop/plugins/<name>) into
  * vendor/plugins/<name>, both arches, through the SAME staging code the
@@ -20,13 +19,13 @@ const bundledPlugins = fs
   .readdirSync(bundled)
   .filter((name) => fs.existsSync(path.join(bundled, name, "latch-plugin.json")));
 const arg = process.argv[2] ?? "--all";
+if (arg !== "--all" && !bundledPlugins.includes(arg)) {
+  console.error(`usage: stage-plugins.mjs <${bundledPlugins.join("|")}|--all>`);
+  process.exit(2);
+}
 const names = arg === "--all" ? bundledPlugins : [arg];
 for (const name of names) {
   const src = path.join(bundled, name);
-  if (!fs.existsSync(path.join(src, "latch-plugin.json"))) {
-    console.error(`usage: stage-plugins.mjs <${bundledPlugins.join("|")}|--all>`);
-    process.exit(2);
-  }
   const dest = path.join(vendor, name);
   fs.rmSync(dest, { recursive: true, force: true });
   fs.cpSync(src, dest, { recursive: true });

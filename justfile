@@ -175,7 +175,9 @@ _package profile flags: build
     # Providers first: small downloads that succeed or fail in seconds, where a
     # checkout that has not fetched them would otherwise pay the whole browser
     # fetch, build and universal merge before failing on a missing
-    # extraResources source. Idempotent — exits early on a tree already at the pin.
+    # extraResources source. fetch-vendored is idempotent — exits early on a
+    # tree already at the pin; stage-plugins re-extracts every time (its
+    # archive cache is what's cheap, not the runtime tree).
     node scripts/fetch-vendored.mjs --all
     node scripts/stage-plugins.mjs --all
     node scripts/build-browser-runtime.mjs --browser-both
