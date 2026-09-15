@@ -56,7 +56,9 @@ export async function stageBinaries(
       }
       const into = path.join(runtime, b.name);
       fs.mkdirSync(into, { recursive: true });
-      execFileSync("tar", ["xf", archive, "-C", into]);
+      // One named member, the way the retired fetch-vendored.mjs did it: an
+      // archive carrying anything else never lands in the runtime tree.
+      execFileSync("tar", ["xf", archive, "-C", into, "--", b.executable ?? b.name]);
       const executable = path.join(into, b.executable ?? b.name);
       // Keyed on the binary's own (already unique) name, not the archive's
       // internal executable basename, so two binaries whose executables

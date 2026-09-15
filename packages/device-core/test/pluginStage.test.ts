@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { parseManifest, PluginError } from "../src/plugins/manifest.js";
 import { binDir, runPostinstall, stageBinaries, type Arch } from "../src/plugins/stage.js";
-import { MINIMAL, tarball } from "./pluginFixtures.js";
+import { DECOY, MINIMAL, tarball } from "./pluginFixtures.js";
 
 const ARCH = process.arch as Arch;
 const cleanups: (() => void)[] = [];
@@ -38,6 +38,9 @@ describe("stageBinaries", () => {
     const staged = path.join(binDir(pluginDir, ARCH), "tool");
     expect(fetched).toBe(1);
     expect(execFileSync(staged, ["a"], { encoding: "utf8" })).toBe("ARGV=a\n");
+    // Only the member the manifest names is extracted, so the rest of a
+    // digest-matching archive never lands under runtime/.
+    expect(fs.existsSync(path.join(pluginDir, "runtime", ARCH, "tool", DECOY))).toBe(false);
   });
 
   it("refuses an archive whose bytes do not match the pin, staging nothing", async () => {
