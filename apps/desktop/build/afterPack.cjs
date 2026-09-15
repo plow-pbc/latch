@@ -147,16 +147,6 @@ module.exports = async function afterPack(context) {
         "package with `just package` or `just package-unnotarized`",
     );
   }
-  // Vendored provider CLIs are signed by electron-builder's own signer — they
-  // are outside signIgnore's browser-runtime scope and have no nested plists for
-  // the universal merge to rewrite. What they need from here is proof each is in
-  // the packed app for BOTH arches: a tree carrying only the packaging Mac's
-  // arch clears every other gate and reaches the other arch's users with no
-  // provider tools at all.
-  //
-  // The BINARY, with a size — not `bare` on the directory, which passes for a
-  // folder carrying only a stray .DS_Store the copy picked up.
-  //
   // The vault's Keychain root: the native-keychain addon MUST be in the packed
   // app and universal. Its install script is tolerant on purpose (a dev box
   // without Xcode CLT still installs, the key store falls back), but a RELEASE
@@ -181,7 +171,13 @@ module.exports = async function afterPack(context) {
   // its executable staged for both arches inside the packed app. Checked
   // against each declared binary's own name (what stageBinaries writes to
   // bin/), not exec.argv[0] — argv[0] may name something that falls through
-  // to PATH rather than a binary this plugin stages.
+  // to PATH rather than a binary this plugin stages. A staged binary is signed
+  // by electron-builder's own signer: it is outside signIgnore's
+  // browser-runtime scope and has no nested plists for the universal merge to
+  // rewrite, so what it needs from here is proof it is in the packed app.
+  //
+  // The BINARY, with a size — not `bare` on the directory, which passes for a
+  // folder carrying only a stray .DS_Store the copy picked up.
   const bundled = path.join(__dirname, "..", "plugins");
   for (const name of fs.readdirSync(bundled)) {
     // A stray non-plugin entry (a .DS_Store, say) has no manifest to read.

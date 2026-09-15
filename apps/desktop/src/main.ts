@@ -2082,8 +2082,8 @@ app.whenReady().then(async () => {
     // knows it. `home` above is the app's own (branch-suffixed in a from-source
     // run); this is where WhatsApp and everything else of theirs actually lives.
     os.homedir(),
-    // How a vendored provider CLI is authorised. The exec path reports a
-    // missing one through the approval dialog rather than throwing.
+    // How a provider is authorised. The exec path reports a missing one
+    // through the approval dialog rather than throwing.
     buildMinter({ api: new PlowApi(apiBaseUrl), home }),
     // The plugins this Mac has staged: packaged Resources, a from-source
     // vendor tree (app.getAppPath() is apps/desktop under `just app`, so climb
