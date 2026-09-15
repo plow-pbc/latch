@@ -19,6 +19,7 @@ vendor/providers/
 # widening it would leave two ~13 MB binaries untracked and UNIGNORED there.
 # Delete once no live checkout predates that move.
 vendor/gog/
+vendor/plugins/
 vendor/camoufox-browser/
 vendor/downloads/
 # The frozen fingerprint pool is build output (scripts/build-browser-runtime.mjs
