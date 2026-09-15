@@ -35,6 +35,13 @@ export interface PluginManifest {
   argv: { read: string[][]; write: string[][] };
   hooks: { postinstall?: string };
   skill: string | null; // path in repo/, or null when a code layer publishes the skill
+  requires: PluginRequires;
+}
+
+export interface PluginRequires {
+  accounts: string[]; // connector ids, e.g. "google"
+  permissions: string[]; // HostPermission ids, e.g. "contacts"
+  paths: string[]; // paths the plugin needs, e.g. "~/Plow/wiki"
 }
 
 const SLUG = /^[a-z][a-z0-9-]{0,31}$/;
@@ -190,6 +197,18 @@ export function parseManifest(raw: string): PluginManifest {
   const postinstall = hooks.postinstall === undefined ? null : insideOrFail(hooks.postinstall, "hooks.postinstall");
   const skill = m.skill === undefined ? null : insideOrFail(m.skill, "skill");
 
+  const req = typedObj(m.requires, "requires");
+  const strList = (v: unknown, field: string): string[] =>
+    typedArray(v, field).map((e: unknown) => {
+      if (typeof e !== "string") fail(`${field} entries must be strings`);
+      return e;
+    });
+  const requires: PluginRequires = {
+    accounts: strList(req.accounts, "requires.accounts"),
+    permissions: strList(req.permissions, "requires.permissions"),
+    paths: strList(req.paths, "requires.paths"),
+  };
+
   return {
     name,
     version,
@@ -201,6 +220,7 @@ export function parseManifest(raw: string): PluginManifest {
     argv: { read: read as string[][], write: write as string[][] },
     hooks: postinstall === null ? {} : { postinstall },
     skill,
+    requires,
   };
 }
 

@@ -72,7 +72,21 @@ describe("parseManifest", () => {
     ["an argv.write that is not an array", withPatch({ argv: { read: [["query"]], write: "nope" } }), "argv.write must be an array"],
     ["a daemon that is not an object", withPatch({ daemon: "nope" }), "daemon must be an object"],
     ["a non-string top-level version", withPatch({ version: true }), "manifest version must be a string"],
+    ["a non-array requires.accounts", withPatch({ requires: { accounts: "google" } }), "requires.accounts must be an array"],
+    ["a non-string entry in requires.permissions", withPatch({ requires: { permissions: [7] } }), "requires.permissions entries must be strings"],
   ])("refuses %s", (_name, raw, message) => {
     expect(() => parseManifest(raw)).toThrow(new PluginError(message));
+  });
+
+  it("defaults requires to empty arrays when the manifest omits it", () => {
+    const m = parseManifest(JSON.stringify(MINIMAL));
+    expect(m.requires).toEqual({ accounts: [], permissions: [], paths: [] });
+  });
+
+  it("keeps every declared requirement", () => {
+    const m = parseManifest(JSON.stringify({ ...MINIMAL, requires: {
+      accounts: ["google"], permissions: ["contacts"], paths: ["~/Plow/wiki"],
+    }}));
+    expect(m.requires).toEqual({ accounts: ["google"], permissions: ["contacts"], paths: ["~/Plow/wiki"] });
   });
 });
