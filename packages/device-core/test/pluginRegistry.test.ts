@@ -2,9 +2,10 @@ import { afterEach, describe, expect, it } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { PluginError } from "../src/plugins/manifest.js";
+import { parseManifest, PluginError } from "../src/plugins/manifest.js";
 import { loadPlugins, pluginRoots } from "../src/plugins/registry.js";
-import { fakePlugin, MINIMAL } from "./pluginFixtures.js";
+import { stageBinaries, type Arch } from "../src/plugins/stage.js";
+import { fakePlugin, MINIMAL, tarball } from "./pluginFixtures.js";
 
 const cleanups: (() => void)[] = [];
 afterEach(() => { for (const c of cleanups.splice(0)) c(); delete process.env.DOMO_PLUGINS; });
@@ -25,12 +26,41 @@ describe("loadPlugins", () => {
     expect(p.binDir).toBe(path.join(dir, "runtime", process.arch, "bin"));
   });
 
-  it("omits a plugin whose executable is not staged, and a directory with no manifest", () => {
+  it("omits a plugin whose declared binary is not staged, and a directory with no manifest", () => {
     const root = tmp();
-    fakePlugin(root, MINIMAL, SCRIPT);
-    fs.rmSync(path.join(root, "fix", "runtime"), { recursive: true });
+    const withBinary = {
+      ...MINIMAL,
+      runtime: { binaries: [{
+        name: "tool", version: "1",
+        url: { arm64: "https://x/tool", x64: "https://x/tool" },
+        sha256: { arm64: "a".repeat(64), x64: "a".repeat(64) },
+      }], sources: [] },
+    };
+    fakePlugin(root, withBinary, SCRIPT);
+    fs.rmSync(path.join(root, "fix", "runtime", process.arch, "bin", "tool"));
     fs.mkdirSync(path.join(root, "stray"));
     expect(loadPlugins([root])).toEqual([]);
+  });
+
+  it("is present once stageBinaries has staged its declared binary, not before", async () => {
+    const { file, sha256 } = tarball(tmp);
+    const root = tmp();
+    const manifest = parseManifest(JSON.stringify({
+      ...MINIMAL,
+      runtime: { binaries: [{
+        name: "tool", version: "1",
+        url: { arm64: "https://example.invalid/tool", x64: "https://example.invalid/tool" },
+        sha256: { arm64: sha256, x64: sha256 },
+      }], sources: [] },
+    }));
+    const dir = path.join(root, manifest.name);
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, "latch-plugin.json"), JSON.stringify(manifest));
+    expect(loadPlugins([root])).toEqual([]);
+    await stageBinaries(manifest, dir, process.arch as Arch, tmp(), async () => fs.readFileSync(file));
+    const [p] = loadPlugins([root]);
+    expect(p.manifest.name).toBe(manifest.name);
+    expect(p.binDir).toBe(path.join(dir, "runtime", process.arch, "bin"));
   });
 
   it("takes the first root that has a name, and a missing root is not an error", () => {

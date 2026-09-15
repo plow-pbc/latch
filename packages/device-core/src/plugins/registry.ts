@@ -1,10 +1,13 @@
 /**
  * Which plugins this Mac has, staged and ready to exec.
  *
- * One on-disk shape for every root: `<root>/<name>/latch-plugin.json` and
- * `<root>/<name>/runtime/<arch>/bin/<exec.argv[0]>`. A plugin is present only
- * when that executable is: a manifest with nothing staged is absent, so an
- * argv naming it falls to the provider gate (bare `gog`) or ordinary exec.
+ * One on-disk shape for every root: `<root>/<name>/latch-plugin.json`, and
+ * `<root>/<name>/runtime/<arch>/bin/<binary name>` for each binary the
+ * manifest declares — exactly what stageBinaries writes. A plugin is present
+ * when its manifest parses AND every declared binary is staged there; a
+ * plugin with none (its argv[0] falls through to PATH, or names a provider
+ * like bare `gog`) is present on its manifest alone. Staged-ness says
+ * nothing about exec.argv[0] — that's resolved at exec time, not here.
  */
 import fs from "node:fs";
 import path from "node:path";
@@ -45,7 +48,7 @@ export function loadPlugins(roots: readonly string[]): StagedPlugin[] {
       const manifest = parseManifest(fs.readFileSync(file, "utf8"));
       if (manifest.name !== name) throw new PluginError("plugin directory must be named after its manifest");
       const bin = binDir(dir, arch);
-      if (!executable(path.join(bin, manifest.exec.argv[0]))) continue;
+      if (!manifest.runtime.binaries.every((b) => executable(path.join(bin, b.name)))) continue;
       out.push({ manifest, dir, binDir: bin });
     }
   }
