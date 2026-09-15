@@ -52,6 +52,12 @@ const ARCHES = ["arm64", "x64"] as const;
  * here would be a write or an exec outside the plugin's directory.
  */
 const INSIDE = /^(?!\/)(?!.*(^|\/)\.\.(\/|$))[^\0]+$/;
+/**
+ * Like INSIDE but allows a leading `/`: exec.argv[0] can name a bare staged
+ * binary or an absolute system executable (/bin/sh) — path.join nests either
+ * harmlessly under bin/, so only a `..` segment can climb back out of it.
+ */
+const NO_DOTDOT = /^(?!.*(^|\/)\.\.(\/|$))[^\0]+$/;
 
 function fail(message: string): never {
   throw new PluginError(message);
@@ -145,6 +151,11 @@ export function parseManifest(raw: string): PluginManifest {
   if (typeof exec.cwd !== "string" || !isStrings(exec.argv) || exec.argv.length === 0) {
     fail("manifest needs exec.cwd and exec.argv");
   }
+  // The registry joins argv[0] under a plugin's bin/ to check it's staged. A
+  // leading "/" (an absolute system binary, e.g. /bin/sh) nests harmlessly
+  // there, but ".." would climb back out and let a manifest claim "staged"
+  // for an arbitrary file on the host that never went through stageBinaries.
+  if (!NO_DOTDOT.test(exec.argv[0])) fail("exec.argv[0] must not contain a .. segment");
   // cwd names a runtime/ entry the installer creates: a source, or `plugin`
   // (the repo itself). Anything else is a directory outside the staged tree.
   if (exec.cwd !== "plugin" && !sources.some((s) => s.name === exec.cwd)) fail("exec.cwd must be plugin or a source name");

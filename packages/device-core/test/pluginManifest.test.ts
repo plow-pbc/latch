@@ -45,6 +45,7 @@ describe("parseManifest", () => {
     ["a source git url that reads as a git option", withPatch({ runtime: { binaries: [], sources: [{ name: "s", git: "--upload-pack=x", commit: "a".repeat(40) }] } }), "source s needs a git url"],
     ["two sources with one name", withPatch({ runtime: { binaries: [], sources: [1, 2].map(() => ({ name: "s", git: "https://x/s", commit: "a".repeat(40) })) } }), "source names must be unique"],
     ["an exec.cwd that is not a runtime entry", withPatch({ exec: { cwd: "../..", argv: ["x"] } }), "exec.cwd must be plugin or a source name"],
+    ["an exec.argv[0] that climbs out of the staged bin", withPatch({ exec: { cwd: "plugin", argv: ["../../../etc/passwd"] } }), "exec.argv[0] must not contain a .. segment"],
     ["a skill path outside the repo", withPatch({ skill: "/etc/passwd" }), "skill must be a path inside the plugin"],
     ["a postinstall hook that climbs out", withPatch({ hooks: { postinstall: "hooks/../../x.sh" } }), "hooks.postinstall must be a path inside the plugin"],
     ["an empty postinstall hook", withPatch({ hooks: { postinstall: "" } }), "hooks.postinstall must be a path inside the plugin"],
