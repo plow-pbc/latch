@@ -24,10 +24,8 @@ import os from "node:os";
 import path from "node:path";
 import {
   IMESSAGE_CHAT_GUID_PLACEHOLDER,
-  IMESSAGE_CHAT_ID_PLACEHOLDER,
   IMESSAGE_HANDLE_PLACEHOLDER,
   IMESSAGE_QUERIES,
-  IMESSAGE_SEARCH_PHRASE_PLACEHOLDER,
   IMESSAGE_SNAPSHOT_ROWID_PLACEHOLDER,
 } from "@domo/device-core";
 import { makeEmptyStore, makeStore } from "./chatDbFixture.js";

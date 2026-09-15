@@ -34,8 +34,6 @@ const FIXTURE = (name: string): string =>
 const sqlite = (args: string[]): string =>
   execFileSync(SQLITE, args, { encoding: "utf8", stdio: "pipe", env: { ...process.env, TZ: "UTC" } });
 
-/** The rowids the typedstream fixtures occupy, for a test that names them. */
-export const FIXTURE_ROWS = { delivered: 6001, costco: 6002, tapback: 6003 } as const;
 
 /** The chat.db-shaped schema, from a real `pragma table_info` dump — only the
  *  columns the recipes touch. Shared so an empty store and a seeded one agree. */

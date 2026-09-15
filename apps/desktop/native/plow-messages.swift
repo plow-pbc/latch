@@ -36,7 +36,16 @@ let UNREPLIED_WINDOW_SECONDS = 129_600
 /// Real messages only, everywhere. A tapback ("Loved …") is
 /// `associated_message_type != 0` and a join/leave notice is `item_type != 0`;
 /// both read as messages the owner never received.
-let REAL_ROWS = "m.associated_message_type = 0 and m.item_type = 0"
+///
+/// Taken on an ALIAS rather than written out, because `unreplied` needs the
+/// same predicate under a second alias inside its correlated subquery. Two
+/// hand-written copies of the rule that keeps tapbacks out of an answer is one
+/// edit away from a tapback counting as a reply.
+func realRows(_ alias: String) -> String {
+    "\(alias).associated_message_type = 0 and \(alias).item_type = 0"
+}
+
+let REAL_ROWS = realRows("m")
 
 let USAGE = """
 plow-messages — read the owner's iMessage archive, bodies already decoded.
@@ -499,7 +508,7 @@ func runUnreplied(_ o: Options, _ store: Store) {
        and m.ROWID = (select m2.ROWID from message m2
                         join chat_message_join j2 on j2.message_id = m2.ROWID
                        where j2.chat_id = c.ROWID
-                         and m2.associated_message_type = 0 and m2.item_type = 0
+                         and \(realRows("m2"))
                        order by m2.date desc limit 1)
      order by m.date desc
     """

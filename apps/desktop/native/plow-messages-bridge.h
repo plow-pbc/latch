@@ -21,6 +21,16 @@
 
 /// Decode a typedstream blob, or return nil if it is malformed IN ANY WAY —
 /// including the ways that raise rather than return.
+///
+/// What this does NOT cover, stated rather than left implied: legacy
+/// `NSUnarchiver` has no `requiresSecureCoding` and no class allowlist, so a
+/// crafted blob can name a class and have its `initWithCoder:` run during a
+/// decode that then "succeeds". The `@try` bounds the crash, not that. Two
+/// things bound the rest, and neither is this file: the result is used only
+/// when it casts to `NSAttributedString` or `NSString`, and the whole CLI runs
+/// under `sandbox-exec` with the Messages store as its only read path. It is
+/// the same decoder Messages.app runs over the same bytes, so this is a
+/// platform-level residual we accept knowingly — not one nobody noticed.
 static inline id PlowMessagesUnarchive(NSData *data) {
     @try {
         return [NSUnarchiver unarchiveObjectWithData:data];
