@@ -1,19 +1,13 @@
 import { afterEach, describe, expect, it } from "vitest";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { parseManifest, PluginError } from "../src/plugins/manifest.js";
 import { loadPlugins, pluginRoots } from "../src/plugins/registry.js";
 import { stageBinaries, type Arch } from "../src/plugins/stage.js";
-import { fakePlugin, MINIMAL, tarball } from "./pluginFixtures.js";
+import { fakePlugin, MINIMAL, tarball, tempDirs } from "./pluginFixtures.js";
 
-const cleanups: (() => void)[] = [];
-afterEach(() => { for (const c of cleanups.splice(0)) c(); delete process.env.DOMO_PLUGINS; });
-function tmp(): string {
-  const d = fs.mkdtempSync(path.join(os.tmpdir(), "latch-reg-"));
-  cleanups.push(() => fs.rmSync(d, { recursive: true, force: true }));
-  return d;
-}
+const { tmp, cleanup } = tempDirs("latch-reg-");
+afterEach(() => { cleanup(); delete process.env.DOMO_PLUGINS; });
 const SCRIPT = "#!/bin/sh\necho hi\n";
 
 describe("loadPlugins", () => {
