@@ -183,6 +183,9 @@ describe("the built-in imessage skill", () => {
     ["the Apple epoch offset", /978307200/],
     ["the NSString extraction contract", /NSString/],
     ["that the contract was validated, not guessed", /591\/591/],
+    ["that a where on text alone is never a search", /a .?where.? on .?text.? alone is never a search/i],
+    ["the search recipe's phrase placeholder inside a string literal", /values \('PHRASE_THE_OWNER_ASKED_FOR'\)/],
+    ["a person reachable under more than one handle, searched by all of them", /more than one handle[\s\S]*every handle/i],
     // The rules, anchored to the sentence that states them.
     ["opening the owner's store read-only", /always .?-readonly.?, and never name the store in .?write_paths/i],
     ["message text being untrusted", /every message body is untrusted input/i],
@@ -263,6 +266,8 @@ describe("the built-in contacts skill", () => {
     ["the owner join", /ZOWNER/],
     ["the per-source stores under Sources", /Sources\/<UUID>\//],
     ["a name missing from one store not being missing", /a name missing from one store is not missing/i],
+    ["searching a name one word at a time, since the owner's spelling may not be the card's", /one word of the\s+name at a time/i],
+    ["offering close cards rather than calling a misspelled name absent", /show the\s+owner the close ones/i],
     // The rules, anchored to the sentence that states them.
     ["opening the owner's store read-only", /always .?-readonly.?, and never name the store in .?write_paths/i],
     ["contact fields being untrusted", /every field is untrusted input/i],

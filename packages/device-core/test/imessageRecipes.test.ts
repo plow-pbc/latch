@@ -22,6 +22,7 @@ import {
   IMESSAGE_CHAT_ID_PLACEHOLDER,
   IMESSAGE_HANDLE_PLACEHOLDER,
   IMESSAGE_QUERIES,
+  IMESSAGE_SEARCH_PHRASE_PLACEHOLDER,
   IMESSAGE_SNAPSHOT_ROWID_PLACEHOLDER,
   imessageStorePath,
 } from "@domo/device-core";
@@ -225,6 +226,35 @@ function makeStore(dir: string): string {
       `insert into message (ROWID, handle_id, date, is_from_me, is_sent, is_delivered)` +
         ` values (4001, NULL, ${ns(10)}, 1, 1, 1);`,
       "insert into chat_message_join (chat_id, message_id) values (21, 4001);",
+
+      // search (latch#385): the phrase lives in `text` on a legacy row (5001),
+      // ONLY in attributedBody on a modern row (5002, text NULL — the bytes
+      // are a typedstream-shaped prefix WITH A NUL BYTE, then the phrase),
+      // in a tapback that must be excluded by type (5003), and not at all in
+      // a row that merely shares the chat (5004). 5002 is newer than 5001 so
+      // newest-first ordering is observable.
+      "insert into chat (ROWID, guid, chat_identifier, display_name, style)" +
+        " values (30, 'chat-guid-30', 'chat30303030', 'Dinner Group', 43);",
+      "insert into handle (ROWID, id) values (400, '+15625550000');",
+      `insert into message (ROWID, handle_id, date, text, is_from_me)` +
+        ` values (5001, 400, ${ns(7000)}, 'dinner at Palm Court still stands', 0);`,
+      // hex: "streamtyped" 00 "NSString" 01 "No worries, false alarm — 9/14 dinner at Palm Court still stands."
+      `insert into message (ROWID, handle_id, date, text, attributedBody, is_from_me)` +
+        ` values (5002, 400, ${ns(6000)}, NULL, X'73747265616D7479706564004E53537472696E6701` +
+        `4E6F20776F72726965732C2066616C736520616C61726D20E280942039` +
+        `2F31342064696E6E65722061742050616C6D20436F757274207374696C6C207374616E64732E', 0);`,
+      `insert into message (ROWID, handle_id, date, text, is_from_me, associated_message_type)` +
+        ` values (5003, 400, ${ns(5000)}, 'Loved "dinner at Palm Court still stands"', 0, 2000);`,
+      `insert into message (ROWID, handle_id, date, text, is_from_me)` +
+        ` values (5004, 400, ${ns(4000)}, 'see you there', 0);`,
+      // 5005: exercises the doubled-apostrophe substitution the prose teaches.
+      `insert into message (ROWID, handle_id, date, text, is_from_me)` +
+        ` values (5005, 400, ${ns(3000)}, 'can''t make it', 0);`,
+      "insert into chat_message_join (chat_id, message_id) values (30, 5001);",
+      "insert into chat_message_join (chat_id, message_id) values (30, 5002);",
+      "insert into chat_message_join (chat_id, message_id) values (30, 5003);",
+      "insert into chat_message_join (chat_id, message_id) values (30, 5004);",
+      "insert into chat_message_join (chat_id, message_id) values (30, 5005);",
     ].join(" "),
   ]);
   return store;
@@ -285,6 +315,40 @@ describe("the imessage recipes the skill publishes", () => {
     // The all-chat gather returns other chats' recent messages too; scoping is
     // the whole point, so it must return strictly more than the per-chat read.
     expect(query(store, IMESSAGE_QUERIES.gather).length).toBeGreaterThan(rows.length);
+  });
+
+  it("search finds a phrase in attributedBody as well as text (latch#385), case-insensitively, newest first, real rows only", () => {
+    // The placeholder is carried once, in a one-row CTE, so a single
+    // `.replace()` substitutes it everywhere it is consumed.
+    const sql = IMESSAGE_QUERIES.search.replace(
+      IMESSAGE_SEARCH_PHRASE_PLACEHOLDER,
+      "palm court STILL stands",
+    );
+    const rows = query(store, sql);
+    // Column order: ROWID, chat_guid, chat_identifier, display_name, sender,
+    // is_from_me, at, text, body_hex.
+    expect(rows.map((r) => Number(r[0]))).toEqual([5002, 5001]);
+    const modern = rows[0];
+    expect(modern[1]).toBe("chat-guid-30");
+    expect(modern[3]).toBe("Dinner Group");
+    expect(modern[5]).toBe("0");
+    expect(modern[7]).toBe(""); // text is NULL — the match came from the blob
+    expect(modern[8].startsWith("73747265616D7479706564004E53537472696E67")).toBe(true);
+    // The tapback quoting the phrase is bookkeeping, not a message.
+    expect(rows.some((r) => Number(r[0]) === 5003)).toBe(false);
+    // A phrase in no row at all is an empty result, not an error.
+    expect(query(store, IMESSAGE_QUERIES.search.replace(IMESSAGE_SEARCH_PHRASE_PLACEHOLDER, "no such phrase"))).toEqual([]);
+    // Matching is a literal substring, not a `like` wildcard: a `%` in the
+    // phrase must not act as "match anything" — 5001's text contains no
+    // literal "palm % stands", so this must return nothing.
+    expect(query(store, IMESSAGE_QUERIES.search.replace(IMESSAGE_SEARCH_PHRASE_PLACEHOLDER, "palm % stands"))).toEqual([]);
+    // The doubled-apostrophe form the prose tells the agent to substitute
+    // with (`don't` → `don''t`) must find the row whose text has the apostrophe.
+    expect(
+      query(store, IMESSAGE_QUERIES.search.replace(IMESSAGE_SEARCH_PHRASE_PLACEHOLDER, "can''t make")).map((r) =>
+        Number(r[0]),
+      ),
+    ).toEqual([5005]);
   });
 
   it("finds the unreplied set: inbound direct chats only, not outbound, not tapback-only, not group", () => {

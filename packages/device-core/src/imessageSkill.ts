@@ -29,6 +29,8 @@ export const IMESSAGE_CHAT_GUID_PLACEHOLDER = "CHAT_GUID_FROM_THE_QUERY_ABOVE";
  *  an older successful row at the same handle/chat can never be mistaken for
  *  the delivery of the send that just happened. */
 export const IMESSAGE_SNAPSHOT_ROWID_PLACEHOLDER = "MAX_ROWID_BEFORE_THE_SEND";
+/** Sentinel the search recipe carries where the owner's phrase goes. */
+export const IMESSAGE_SEARCH_PHRASE_PLACEHOLDER = "PHRASE_THE_OWNER_ASKED_FOR";
 
 /**
  * The SQL this skill teaches, as text an agent runs verbatim.
@@ -84,6 +86,32 @@ export const IMESSAGE_QUERIES = {
    and m.associated_message_type = 0
    and m.item_type = 0
  order by m.date;`,
+
+  /** Find messages containing a phrase — in `text` OR in the `attributedBody`
+   *  blob, because on a modern store `text` is NULL for nearly every row and a
+   *  text-only search is a confident false negative (latch#385: an agent
+   *  searched `text` and told the owner a message did not exist; it was in
+   *  the blob). Both branches match with `instr`, not `like`, so a phrase
+   *  containing `%` or `_` is matched literally rather than as a wildcard.
+   *  `cast(… as text)` keeps every byte of the blob — validated equal to a
+   *  bytewise `instr` on a real store. The phrase is carried once, in a
+   *  one-row CTE, so there is only one place to substitute it into. */
+  search: `with search_phrase(value) as (values ('${IMESSAGE_SEARCH_PHRASE_PLACEHOLDER}'))
+  select m.ROWID, c.guid as chat_guid, c.chat_identifier, c.display_name,
+       h.id as sender, m.is_from_me,
+       datetime(m.date/1000000000 + 978307200, 'unixepoch', 'localtime') as at,
+       m.text, hex(m.attributedBody) as body_hex
+  from search_phrase p
+  cross join message m
+  join chat_message_join j on j.message_id = m.ROWID
+  join chat c on c.ROWID = j.chat_id
+  left join handle h on h.ROWID = m.handle_id
+ where (instr(lower(m.text), lower(p.value)) > 0
+        or instr(lower(cast(m.attributedBody as text)), lower(p.value)) > 0)
+   and m.associated_message_type = 0
+   and m.item_type = 0
+ order by m.date desc
+ limit 50;`,
 
   /** Direct chats whose newest real message is inbound — the unreplied set. */
   unreplied: `select c.guid as chat_guid, c.chat_identifier, h.id as sender,
@@ -252,6 +280,16 @@ and declaring one on this store means you have made a mistake. \`read_paths\` is
 owner sees in the approval dialog and what the audit log records — declare the directory
 above and nothing wider.
 
+**\`text\` is often NULL — on a current macOS it is NULL for nearly every row.** Modern
+Messages stores the body in \`attributedBody\`, an NSAttributedString serialized as a
+Foundation "typedstream" blob — not JSON, not plain text. The read recipes below select
+\`hex(m.attributedBody)\` because a raw blob does not survive CSV transport intact. Decode
+it on your side, not the database's: find the \`NSString\` marker in the decoded bytes and
+take the first long UTF-8 run immediately after it — that run is the message text. This is
+a contract, not a guess: validated 591/591 on a real store. When \`text\` is already non-null,
+use it directly and skip the blob. **A \`where\` on \`text\` alone is never a search** — it
+sees only legacy rows and reports a message that exists as missing.
+
 **Which chats, most recent first** — start here when the owner names someone. This hands you
 each chat's numeric \`chat_id\` and its \`guid\` (the \`guid\` is what a send targets directly):
 
@@ -283,13 +321,26 @@ All three filter \`associated_message_type = 0 and item_type = 0\` — that excl
 reply threads and system rows (someone joining a group, a name change) so what comes back
 is real message text, not the archive's bookkeeping.
 
-**\`text\` is often NULL.** Modern Messages stores the body in \`attributedBody\`, an
-NSAttributedString serialized as a Foundation "typedstream" blob — not JSON, not plain
-text. The recipe above hex-encodes it (\`hex(m.attributedBody)\`) because a raw blob does not
-survive CSV transport intact. Decode it on your side, not the database's: find the
-\`NSString\` marker in the decoded bytes and take the first long UTF-8 run immediately after
-it — that run is the message text. This is a contract, not a guess: validated 591/591 on
-a real store. When \`text\` is already non-null, use it directly and skip the blob.
+## Searching
+
+**When the owner quotes words** — "find the text that says …", "did anyone mention …" —
+search both columns with this recipe. Substitute the words for
+\`${IMESSAGE_SEARCH_PHRASE_PLACEHOLDER}\`, double every apostrophe in them
+(\`don't\` → \`don''t\`), and prefer a short distinctive fragment over the whole sentence
+(punctuation and emoji are where a remembered quote drifts from the stored one):
+
+${indented(IMESSAGE_QUERIES.search)}
+
+It matches \`text\` and the \`attributedBody\` blob as a literal substring, case-insensitive
+for ASCII and with no wildcards (a \`%\` or \`_\` in the phrase matches only itself), newest
+first, real messages only — a tapback that quotes the phrase is excluded. Decode \`body_hex\`
+as above. An empty result after this recipe means the words are not in the archive; an empty
+result from a \`text\`-only query means nothing.
+
+**A person can be reachable under more than one handle** — a second phone, an email, a card
+Contacts keeps separately — and a group they are in may carry any of them. When looking for
+a thread with someone, take every handle Contacts returns for them and match chats on every
+handle, not the first one.
 
 ## Receiving / polling
 
