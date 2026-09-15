@@ -274,22 +274,46 @@ describe("the packaging hook refuses before it signs", () => {
     });
   });
 
-  // The silent half-install: a tree carrying only the packaging Mac's arch
-  // clears every other gate and reaches the other arch's users with nothing.
-  // Checked against the binary's own name (what stageBinaries writes to bin/),
-  // not argv[0].
+  // One expectation over every way a staged binary can be unusable, for every
+  // binary of every bundled plugin. The silent half-install is the hazard: a
+  // tree carrying only the packaging Mac's arch clears every other gate and
+  // reaches the other arch's users with nothing. Checked against the binary's
+  // own name (what stageBinaries writes to bin/), not argv[0] — and on the
+  // BINARY with a size, so a zero-byte file left by a half-written extract
+  // does not pass. `arches` is what the refusal must name: the both-missing
+  // row is why it is the joined list rather than the first one found.
   it.each(
     PLUGINS.flatMap(({ name, binaries }) =>
-      binaries.flatMap((binary) =>
-        ["arm64", "x64"].map((arch) => ({ name, binary: binary.name, arch })),
-      ),
+      binaries.flatMap((binary) => {
+        const bin = (root: string, arch: string) =>
+          path.join(root, "runtime", arch, "bin", binary.name);
+        return [
+          ...["arm64", "x64"].map((arch) => ({
+            name, binary: binary.name, how: `absent for ${arch}`, arches: arch,
+            damage: (root: string) => fs.rmSync(bin(root, arch)),
+          })),
+          {
+            name, binary: binary.name, how: "a zero-byte binary for arm64", arches: "arm64",
+            damage: (root: string) => fs.writeFileSync(bin(root, "arm64"), ""),
+          },
+          {
+            name, binary: binary.name, how: "absent for both arches", arches: "arm64, x64",
+            damage: (root: string) => {
+              for (const arch of ["arm64", "x64"]) fs.rmSync(bin(root, arch));
+            },
+          },
+        ];
+      }),
     ),
-  )("refuses $name/$binary/$arch when it is missing", async ({ name, binary, arch }) => {
+  )("refuses $name/$binary when it is $how", async ({ name, binary, arches, damage }) => {
     pack();
-    fs.rmSync(path.join(resourcesDir(), "plugins", name, "runtime", arch, "bin", binary));
-    await expect(afterPack(contextFor(dir))).rejects.toThrow(
-      new RegExp(`no ${name} plugin's ${binary} for ${arch}`),
-    );
+    damage(path.join(resourcesDir(), "plugins", name));
+    const failure = await afterPack(contextFor(dir)).catch((e: Error) => e);
+    expect(failure).toBeInstanceOf(Error);
+    // Anchored to the arch gate: without it, any error naming both arches
+    // passes — a refusal enumerating missing binary PATHS would, without the
+    // gate ever emitting its summary.
+    expect((failure as Error).message).toContain(`no ${name} plugin's ${binary} for ${arches}`);
   });
 
   it("refuses a camoufox tree a fuse left without a bundle", async () => {

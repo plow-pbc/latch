@@ -44,6 +44,7 @@ import {
   parseOnePux,
   type ParsedImport,
   parsePasswordExport,
+  PluginError,
   pluginRoots,
   readCredentialsState,
   resolveBrowserRuntime,
@@ -2071,6 +2072,28 @@ app.whenReady().then(async () => {
   // live pre-cutover app (a sibling worktree's `just app`) has that app as
   // its parent and is left alone.
   await reapOrphanedLegacyVaultServers();
+  // The plugins this Mac has staged: packaged Resources, a from-source vendor
+  // tree (app.getAppPath() is apps/desktop under `just app`, so climb two),
+  // and the owner's installed ones under DOMO_HOME.
+  //
+  // Read HERE, not inside the constructor call below: a refused manifest (a
+  // corrupt bundled one, or a DOMO_PLUGINS pointed somewhere wrong) throws,
+  // and this runs inside `app.whenReady().then(...)`, which has no `.catch` —
+  // the rejection is swallowed and the launch dies with no device, no relay
+  // and nothing said. Failing fast is right; failing NAMELESS is not.
+  // PluginError's messages are fixed sentences naming a field, never manifest
+  // text, so printing one is safe.
+  let plugins;
+  try {
+    plugins = loadPlugins(pluginRoots({
+      resourcesDir: process.resourcesPath,
+      repoRoot: path.resolve(app.getAppPath(), "..", ".."),
+      home,
+    }));
+  } catch (e) {
+    if (e instanceof PluginError) console.error(`[plugins] ${e.message}`);
+    throw e;
+  }
   // Packaged: the browser runtime lives in Contents/Resources/browser-runtime
   // (extraResources). In dev the resolver falls back to the repo's vendor/.
   device = new DeviceAgent(
@@ -2085,14 +2108,7 @@ app.whenReady().then(async () => {
     // How a provider is authorised. The exec path reports a missing one
     // through the approval dialog rather than throwing.
     buildMinter({ api: new PlowApi(apiBaseUrl), home }),
-    // The plugins this Mac has staged: packaged Resources, a from-source
-    // vendor tree (app.getAppPath() is apps/desktop under `just app`, so climb
-    // two), and the owner's installed ones under DOMO_HOME.
-    loadPlugins(pluginRoots({
-      resourcesDir: process.resourcesPath,
-      repoRoot: path.resolve(app.getAppPath(), "..", ".."),
-      home,
-    })),
+    plugins,
     plowPaymentApproval(new PlowApi(apiBaseUrl)),
     // How a refused operation is investigated (device-core's hostGate/): the
     // real probes over the owner's real home, with the compiled helper that

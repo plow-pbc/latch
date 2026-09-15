@@ -417,11 +417,15 @@ export class Executor {
     private readonly reapAfterMs: number = REAP_AFTER_MS,
     /**
      * The staged plugins' bin directories, prepended to the child's PATH so a
-     * plugin's own `exec.argv[0]` resolves to the binary this app ships rather
-     * than to whatever the owner happens to have installed.
+     * plugin run BY NAME — a daemon or wrapper, and any plugin no provider row
+     * drives — reaches the binary this app ships rather than whatever the
+     * owner happens to have installed. plow-gog does not rely on this: the
+     * exec path passes an absolute argv[0] under the plugin's own bin dir.
      *
      * Prepended rather than appended for that reason: which binary a bare name
-     * reaches is a security decision, not a convenience.
+     * reaches is a security decision, not a convenience. The dirs are also
+     * granted read in the profile, which is what lets a child exec what its
+     * PATH just resolved.
      */
     private readonly binDirs: readonly string[] = [],
   ) {

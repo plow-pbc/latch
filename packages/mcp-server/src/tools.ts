@@ -469,9 +469,9 @@ export const TOOLS: ToolSpec[] = [
       // live provider token: nobody should be asked to authorise a call this
       // Mac was always going to refuse. The device checks again; it is the
       // chokepoint and cannot rely on this caller.
-      const provider = vendoredProvider(argv);
       const refusal = providerRefusal(argv);
       if (refusal !== null) throw new ToolError(refusal);
+      const provider = vendoredProvider(argv);
 
       // Resolve every declared or provider-derived path before it becomes the
       // bound the human approves and the sandbox enforces.

@@ -20,7 +20,12 @@ import {
 const gog = vendoredProvider(["plow-gog"])!;
 
 describe("vendoredProvider", () => {
-  it("matches a bare command name", () => {
+  it("matches a bare command name, whether or not the plugin is staged", () => {
+    // Staging is not consulted here on purpose. Returning null for an unstaged
+    // provider would let the command fall through to the ordinary exec path
+    // and run whatever the owner happens to have on their own PATH —
+    // unbelted, unrefused, against their own credentials. The device turns an
+    // unstaged provider into a refusal instead.
     expect(vendoredProvider(["plow-gog", "gmail", "search"])?.command).toBe("plow-gog");
   });
 
@@ -43,14 +48,6 @@ describe("vendoredProvider", () => {
   it("is null for an ordinary command, and for nothing at all", () => {
     expect(vendoredProvider(["ls", "-la"])).toBeNull();
     expect(vendoredProvider([])).toBeNull();
-  });
-
-  it("matches the NAME regardless of staging, so an unstaged one is refused rather than passed through", () => {
-    // Returning null for an unstaged provider would let the command fall
-    // through to the ordinary exec path and run whatever `gog` the owner
-    // happens to have on their own PATH — unbelted, unrefused, against their
-    // own credentials. The device turns this into a refusal instead.
-    expect(vendoredProvider(["plow-gog", "gmail", "search", "q"])).not.toBeNull();
   });
 });
 
@@ -288,8 +285,8 @@ describe("the google-workspace skill", () => {
   });
 
   it("no longer claims there is one mailbox", () => {
-    // Nor advertises a second spelling: bare `gog` reaches the same provider
-    // and is deliberately left out of the page.
+    // Nor advertises a second spelling: a bare `gog` argv is refused, so the
+    // page teaches `plow-gog` and nothing else.
     expect(body).not.toContain("deprecated");
     expect(body).not.toContain("no account switch");
     expect(body).not.toContain("## One mailbox");
@@ -302,11 +299,19 @@ describe("the runtime registry and the bundled plugins", () => {
   // The parse is the rest of the gate: a manifest missing either arch's url or
   // digest is refused there, and a row carrying one arch would otherwise reach
   // the other arch's users with no provider tools at all.
-  it("name a plugin the app bundles", () => {
+  it("name a plugin the app bundles, whose own command is the refused spelling", () => {
     for (const p of PROVIDERS) {
       const raw = fs.readFileSync(
         new URL(`../../../apps/desktop/plugins/${p.plugin}/latch-plugin.json`, import.meta.url), "utf8");
-      expect(parseManifest(raw).name).toBe(p.plugin);
+      const manifest = parseManifest(raw);
+      expect(manifest.name).toBe(p.plugin);
+      // The spelling an agent would reach for having read the manifest — not
+      // just the plugin's directory name — is the one pointed at the provider.
+      // A manifest whose `command` drifted from its `name` would leave that
+      // spelling falling through to the ordinary exec path unrefused.
+      expect(providerRefusal([manifest.command, "x"])).toBe(
+        `${p.plugin} is driven through ${p.command}`,
+      );
     }
   });
 });

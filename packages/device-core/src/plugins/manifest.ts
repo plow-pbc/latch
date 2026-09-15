@@ -151,9 +151,12 @@ export function parseManifest(raw: string): PluginManifest {
     fail("manifest needs exec.cwd and exec.argv");
   }
   // A ".." here would let a manifest name an arbitrary host file as the
-  // thing to exec. An absolute argv[0] (e.g. /bin/sh) is legitimate: when no
-  // declared binary provides it, it falls through to PATH or the filesystem
-  // at exec time — registry.ts never joins argv[0] under bin/ at all.
+  // thing to exec. An absolute argv[0] (e.g. /bin/sh) is legitimate for a
+  // plugin run BY NAME: nothing joins it under bin/, so it falls through to
+  // PATH or the filesystem at exec time. A plugin driven by a provider row
+  // (plow-gog) is the other case — the exec path joins its argv[0] under the
+  // staged bin/ — so that one must be relative and name a staged binary, or
+  // the join nests an absolute path and resolves nothing.
   if (!NO_DOTDOT.test(exec.argv[0])) fail("exec.argv[0] must not contain a .. segment");
   // cwd names a runtime/ entry the installer creates: a source, or `plugin`
   // (the repo itself). Anything else is a directory outside the staged tree.

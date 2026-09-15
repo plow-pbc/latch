@@ -1,5 +1,5 @@
 /**
- * The one decision this file exists to make testable with no display: which
+ * The two things this file exists to make testable with no display: which
  * credential leaves this Mac, and what a mint's answer is allowed to say.
  */
 import { afterEach, describe, expect, it } from "vitest";
