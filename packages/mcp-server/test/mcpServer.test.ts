@@ -734,7 +734,7 @@ describe("review findings", () => {
       return allowed;
     }
 
-    // A vendored provider reaches its service by definition, so the network
+    // A provider reaches its service by definition, so the network
     // capability is not the agent's to remember. Without this the skill's own
     // canonical example is approved with network denied and the sandbox
     // refuses every Google request — the advertised flow, broken. An explicit
@@ -750,7 +750,7 @@ describe("review findings", () => {
       expect(await allowedFor("network", argv, network === undefined ? {} : { network })).toBe(allowed);
     });
 
-    // Unlike network, apple_events is opt-in only: there is no vendored
+    // Unlike network, apple_events is opt-in only: there is no provider
     // command that implies it, so the capability is pushed only when the
     // agent asks for it, and omitted (not sent as `allowed: false`) otherwise
     // so an unrelated command's approval rule hash does not change.

@@ -13,6 +13,10 @@ apps/desktop/release/
 docs/superpowers/specs/
 docs/superpowers/plans/
 
+# Retired staging trees; delete these lines once no live checkout carries them.
+vendor/providers/
+vendor/gog/
+
 vendor/plugins/
 vendor/camoufox-browser/
 vendor/downloads/

@@ -282,6 +282,10 @@ describe("the packaging hook refuses before it signs", () => {
   // BINARY with a size, so a zero-byte file left by a half-written extract
   // does not pass. `arches` is what the refusal must name: the both-missing
   // row is why it is the joined list rather than the first one found.
+  //
+  // The `absent` rows are also the stray-file case the hook's own comment
+  // names: they take the binary out and leave the directory standing, which
+  // is exactly what a `bare` check on the directory would wave through.
   it.each(
     PLUGINS.flatMap(({ name, binaries }) =>
       binaries.flatMap((binary) => {

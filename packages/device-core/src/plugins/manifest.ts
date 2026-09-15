@@ -1,12 +1,11 @@
 /**
  * `latch-plugin.json`, parsed and refused.
  *
- * Every refusal is a fixed sentence naming a FIELD, never quoting a value:
- * the message reaches the Settings card and the audit log, and a manifest is
- * third-party text. The one exception is the argv-overlap sentence below,
- * which quotes a prefix from the manifest itself — acceptable there because
- * that sentence only ever reaches the installer's caller (the owner) at
- * install time, never the audit log.
+ * Every refusal is a fixed sentence naming a FIELD, never quoting a value — a
+ * manifest is third-party text. The one exception is the argv-overlap sentence
+ * below, which quotes a prefix from the manifest itself. Both are acceptable
+ * because a PluginError reaches the owner directly — the installer's caller,
+ * or launch-time stderr — never the audit log or an agent.
  */
 export class PluginError extends Error {
   constructor(message: string) {

@@ -1,8 +1,12 @@
 /**
- * Vendored provider CLIs, and what running one costs.
+ * Providers, and what running one costs.
+ *
+ * A provider is a code row — gate, planner, mint, skill — layered on a bundled
+ * plugin. The plugin pins, stages and bounds the binary; the row is the
+ * judgment about driving it, and neither half is the other's.
  *
  * The pattern (latch#181): an agent runs a command through `plow_run_command`,
- * Latch recognises `argv[0]` as a vendored CLI, mints that provider's
+ * Latch recognises `argv[0]` as a provider's command, mints that provider's
  * short-lived token, and puts it in the child's environment. Everything else is
  * the `process.exec` path that already exists — capability, approval dialog,
  * always-allow rules, adversarial reviewer, seatbelt profile, audit.
@@ -33,7 +37,7 @@ export interface ProviderFileArg {
   readonly paths: readonly string[];
 }
 
-/** What one vendored CLI needs in order to run. */
+/** What one provider needs in order to run. */
 export interface VendoredProvider {
   /** `argv[0]`. */
   readonly command: string;

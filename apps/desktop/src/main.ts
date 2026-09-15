@@ -2081,8 +2081,10 @@ app.whenReady().then(async () => {
   // and this runs inside `app.whenReady().then(...)`, which has no `.catch` —
   // the rejection is swallowed and the launch dies with no device, no relay
   // and nothing said. Failing fast is right; failing NAMELESS is not.
-  // PluginError's messages are fixed sentences naming a field, never manifest
-  // text, so printing one is safe.
+  // Printing one is safe: a PluginError's message is a fixed sentence naming a
+  // field, except the argv-overlap one, which quotes manifest text — and both
+  // reach the owner directly (here, launch-time stderr; otherwise the
+  // installer's caller), never the audit log or an agent.
   let plugins;
   try {
     plugins = loadPlugins(pluginRoots({

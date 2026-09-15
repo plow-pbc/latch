@@ -312,6 +312,15 @@ describe("the runtime registry and the bundled plugins", () => {
       expect(providerRefusal([manifest.command, "x"])).toBe(
         `${p.plugin} is driven through ${p.command}`,
       );
+      // Every staged binary name is on the child's PATH, so every one of them
+      // is a spelling that reaches this plugin's binary — each must land on
+      // the same refusal, and exec.argv[0] must name one of them rather than
+      // something only the owner's own PATH could answer.
+      const staged = manifest.runtime.binaries.map((b) => b.name);
+      expect(staged).toContain(manifest.exec.argv[0]);
+      for (const b of staged) {
+        expect(providerRefusal([b, "x"])).toBe(`${p.plugin} is driven through ${p.command}`);
+      }
     }
   });
 });
