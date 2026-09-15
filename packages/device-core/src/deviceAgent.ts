@@ -12,7 +12,8 @@
  * object* owns where an intent's contents go.
  */
 import { AlwaysAllowRule, capabilityDisplay, Intent, intentIsExpired, JSONValue, jv, overlapsRoot } from "@domo/protocol";
-import { PROVIDERS, vendoredProvider, type VendoredProvider } from "./providers/registry.js";
+import { PROVIDERS, providerFor, providerRefusal, type Provider } from "./providers/registry.js";
+import type { StagedPlugin } from "./plugins/registry.js";
 import { MintError, type MintedAccounts, type Minter } from "./providers/mint.js";
 import { conflictRefusal, gogExitReason, mergeFanout, planPlowGog } from "./providers/plowGog.js";
 import fs from "node:fs";
@@ -308,19 +309,19 @@ export class DeviceAgent {
      */
     ownerHome: string = home,
     /**
-     * How a vendored provider CLI is authorised. Null in a test that does not
+     * How a provider's CLI is authorised. Null in a test that does not
      * exercise one, and on a Mac that has never paired — the exec path reports
      * that rather than throwing, so an unpaired Mac gets a sentence in the
      * approval dialog instead of a stack trace.
      */
     private readonly minter: Minter | null = null,
     /**
-     * Directories holding vendored provider CLIs, prepended to an exec child's
-     * PATH so a bare `gog` reaches the binary this app ships. Empty in a test
-     * and on a Mac with none staged, where every non-provider command still
-     * runs and a provider one reports that it is not installed.
+     * The plugins this Mac has staged (`plugins/registry.ts`). plow-gog execs
+     * the gog plugin's binary by absolute path under its own bin dir; a
+     * provider whose plugin is absent reports that it is not installed rather
+     * than running whatever the owner has on PATH.
      */
-    private readonly vendorDirs: readonly string[] = [],
+    private readonly plugins: readonly StagedPlugin[] = [],
     /** Consulted before releasing a credential into a bank destination. `null`
      * (the default) fails closed — every financial release is blocked. The app
      * injects the real plow-consume client so production can obtain approvals. */
@@ -375,7 +376,7 @@ export class DeviceAgent {
         });
       },
     );
-    this.executor = new Executor(path.join(home, "device/scratch"), undefined, this.vendorDirs);
+    this.executor = new Executor(path.join(home, "device/scratch"));
     this.skills = new SkillRegistry();
     // `ownerHome`, not `home` — this describes where WhatsApp put the owner's
     // messages on the real machine, while `home` is a DOMO_HOME a test points
@@ -399,7 +400,7 @@ export class DeviceAgent {
     // path refuses unconditionally. The SAME predicate that gate uses — two
     // sites answering one question two ways is what produces that gap — and
     // driven off the registry, so a provider's name has one spelling.
-    for (const p of PROVIDERS) if (this.hasStaged(p.binary)) this.skills.register(p.skill);
+    for (const p of PROVIDERS) if (this.plugin(p.plugin) !== null) this.skills.register(p.skill);
     if (browserRuntime) {
       this.skills.register(BROWSING_SKILL);
       const browserDir = path.join(home, "device/browser");
@@ -856,18 +857,18 @@ export class DeviceAgent {
   }
 
   /**
-   * Whether this Mac actually ships the named CLI.
+   * The named plugin, if this Mac has it staged.
    *
-   * Per-provider rather than "is anything staged": the day a second row joins
+   * Per-plugin rather than "is anything staged": the day a second row joins
    * the registry, a Mac with only gog staged would otherwise report the other
    * as present — publishing its skill and minting for it.
    */
-  private hasStaged(command: string): boolean {
-    return this.vendorDirs.some((d) => fs.existsSync(path.join(d, command)));
+  private plugin(name: string): StagedPlugin | null {
+    return this.plugins.find((p) => p.manifest.name === name) ?? null;
   }
 
   /** Every connected account's token, for the provider's fan-out. */
-  private async mintAllFor(provider: VendoredProvider): Promise<MintedAccounts> {
+  private async mintAllFor(provider: Provider): Promise<MintedAccounts> {
     if (this.minter === null) throw MintError.unpaired();
     return this.minter.mintAll(provider);
   }
@@ -887,19 +888,20 @@ export class DeviceAgent {
     const waitMs = jv(payload).get("wait_ms").int ?? 10000;
     const argv = exec.argv ?? [];
 
-    // A vendored provider CLI gets its tokens minted into its children's
+    // A provider's CLI gets its tokens minted into its children's
     // environment and is orchestrated per account. Everything else is the
     // ordinary exec path — the capability the owner approved is the argv, the
     // sandbox profile and the audit are unchanged, and `tools/list` never
     // grew a tool for it.
-    const provider = vendoredProvider(argv);
+    // The device is the chokepoint and cannot rely on its caller having
+    // checked. The tool checks too, so a refusal never reaches an approval
+    // dialog — but an intent can arrive from a replayed or hand-built
+    // request that never passed through it. Ahead of the lookup, because a
+    // bare plugin name is refused rather than resolving to a provider.
+    const refusal = providerRefusal(argv);
+    if (refusal !== null) return this.execError(intent.intentId, refusal);
+    const provider = providerFor(argv);
     if (provider !== null) {
-      // The device is the chokepoint and cannot rely on its caller having
-      // checked. The tool checks too, so a refusal never reaches an approval
-      // dialog — but an intent can arrive from a replayed or hand-built
-      // request that never passed through it.
-      const refusal = provider.refuse(argv);
-      if (refusal !== null) return this.execError(intent.intentId, refusal);
       const approvedReads = new Set(readPaths);
       const approvedWrites = new Set(writePaths);
       for (const fileArg of provider.fileArgs(argv)) {
@@ -913,15 +915,16 @@ export class DeviceAgent {
           }
         }
       }
-      // A provider NAME with no staged binary is refused, never let through.
+      // A provider NAME with no staged plugin is refused, never let through.
       // Falling through would run whatever `gog` the owner happens to have on
       // their own PATH — unbelted, unrefused, and against their own
       // credentials rather than a minted one. The name is this Mac's to
       // resolve; if it cannot, that is an answer, not a pass.
-      if (!this.hasStaged(provider.binary)) {
+      const plugin = this.plugin(provider.plugin);
+      if (plugin === null) {
         return this.execError(intent.intentId, `${provider.command} is not installed on this Mac`);
       }
-      return this.executePlowGog(intent, provider, argv, { readPaths, writePaths, network, appleEvents, waitMs });
+      return this.executePlowGog(intent, plugin, provider, argv, { readPaths, writePaths, network, appleEvents, waitMs });
     }
 
     this.audit.record("exec_start", { intentId: intent.intentId, argv });
@@ -1205,8 +1208,8 @@ export class DeviceAgent {
   }
 
   /**
-   * The plow-gog orchestration: one approved argv, N runs of the vendored gog
-   * — one per connected Google account. The plan is pure (`plowGog.ts`); what
+   * The plow-gog orchestration: one approved argv, N runs of the staged gog
+   * plugin's binary — one per connected Google account. The plan is pure (`plowGog.ts`); what
    * happens here is everything with a side effect: the batch mint, account
    * resolution, the conflict precheck, the runs, and the audit.
    *
@@ -1219,7 +1222,8 @@ export class DeviceAgent {
    */
   private async executePlowGog(
     intent: Intent,
-    provider: VendoredProvider,
+    plugin: StagedPlugin,
+    provider: Provider,
     argv: string[],
     opts: { readPaths: string[]; writePaths: string[]; network: boolean; appleEvents: boolean; waitMs: number },
   ): Promise<JSONValue> {
@@ -1229,8 +1233,12 @@ export class DeviceAgent {
     if (plan.kind === "refused") return this.execError(intent.intentId, plan.reason);
     const runGog = (tail: readonly string[], token: string | null) =>
       this.executor.run({
-        argv: [provider.binary, ...provider.belt, ...tail],
-        readPaths: opts.readPaths,
+        // The belt is the plugin manifest's, and argv[0] is absolute: PATH
+        // never decides which gog runs.
+        argv: [path.join(plugin.binDir, plugin.manifest.exec.argv[0]!), ...plugin.manifest.exec.argv.slice(1), ...tail],
+        // The binary must be readable to exec it, and a staged plugin lives
+        // inside the .app bundle, which the profile's home grant does not reach.
+        readPaths: [...opts.readPaths, plugin.binDir],
         writePaths: opts.writePaths,
         network: opts.network,
         appleEvents: opts.appleEvents,

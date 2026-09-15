@@ -1,8 +1,9 @@
 /**
- * The argv gate for the vendored gog, whichever spelling reaches it —
- * `plow-gog`, or the bare `gog` that resolves to the same provider. `refuse`'s
- * doc in `registry.ts` owns WHY each shape is refused; the sentences live here,
- * beside the planner that also reads them, so one spelling of each exists.
+ * The argv gate for `plow-gog`, the one spelling that reaches it. A bare `gog`
+ * argv is refused by `providerRefusal` before this gate runs, so nothing here
+ * has to consider it. `refuse`'s doc in `registry.ts` owns WHY each shape is
+ * refused; the sentences live here, beside the planner that also reads them,
+ * so one spelling of each exists.
  *
  * Every string returned reaches the approval dialog and the append-only audit
  * log, so the rule `gogFlags` follows applies throughout: a reason may name a

@@ -1,12 +1,12 @@
 /**
- * What a vendored provider CLI needs in order to be authorised.
+ * What a provider's CLI needs in order to be authorised.
  *
  * The INTERFACE only. The transport is `PlowApi`'s — bearer auth in a header
  * and nowhere else, a bounded request, and a response that repeats its own
  * credential never reaching the screen. A second HTTP client would be a second
  * copy of exactly the three properties that must not drift.
  */
-import type { VendoredProvider } from "./registry.js";
+import type { Provider } from "./registry.js";
 
 /** A mint failed. Every message is safe to display, log and audit. */
 export class MintError extends Error {
@@ -46,5 +46,5 @@ export interface Minter {
    * accounts stays Plow's answer: it resolves the owner's connected ones
    * server-side, so this Mac holds no second copy of a fact the server owns.
    */
-  mintAll(provider: VendoredProvider): Promise<MintedAccounts>;
+  mintAll(provider: Provider): Promise<MintedAccounts>;
 }

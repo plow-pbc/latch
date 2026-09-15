@@ -734,23 +734,23 @@ describe("review findings", () => {
       return allowed;
     }
 
-    // A vendored provider reaches its service by definition, so the network
+    // A provider reaches its service by definition, so the network
     // capability is not the agent's to remember. Without this the skill's own
     // canonical example is approved with network denied and the sandbox
     // refuses every Google request — the advertised flow, broken. An explicit
     // `false` does not disarm it either: honouring that would approve a gog
     // call the sandbox then denies, which is the same bug spelled out loud.
     it.each([
-      ["a gog command implies network", ["gog", "gmail", "search", "q"], undefined, true],
-      ["and an explicit false does not disarm it", ["gog", "gmail", "search", "q"], false, true],
-      ["gog --help does not, like the mint it also skips", ["gog", "--help"], undefined, false],
+      ["a plow-gog command implies network", ["plow-gog", "gmail", "search", "q"], undefined, true],
+      ["and an explicit false does not disarm it", ["plow-gog", "gmail", "search", "q"], false, true],
+      ["plow-gog --help does not, like the mint it also skips", ["plow-gog", "--help"], undefined, false],
       ["and an ordinary command still asks", ["/bin/echo", "x"], undefined, false],
       ["...and still means false when it says so", ["/bin/echo", "x"], false, false],
     ])("%s", async (_name, argv, network, allowed) => {
       expect(await allowedFor("network", argv, network === undefined ? {} : { network })).toBe(allowed);
     });
 
-    // Unlike network, apple_events is opt-in only: there is no vendored
+    // Unlike network, apple_events is opt-in only: there is no provider
     // command that implies it, so the capability is pushed only when the
     // agent asks for it, and omitted (not sent as `allowed: false`) otherwise
     // so an unrelated command's approval rule hash does not change.
