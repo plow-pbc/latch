@@ -91,7 +91,12 @@ export class PluginRegistry {
       secret: async (name) => {
         try {
           return await fs.promises.readFile(path.join(plugin.dirs.secrets, name), "utf8");
-        } catch {
+        } catch (e) {
+          // ONLY a missing file is "no such secret". A permissions or I/O
+          // failure reported as one sends whoever debugs it hunting for a
+          // secret that is sitting right there — so let those surface as
+          // themselves. The sentence stays fixed and path-free either way.
+          if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
           throw new PluginError(`no secret named ${name}`); // never the path
         }
       },

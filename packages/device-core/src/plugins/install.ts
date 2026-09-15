@@ -100,12 +100,15 @@ function refuseUnsupported(manifest: PluginManifest): void {
 export async function installPlugin(pluginsRoot: string, gitUrl: string): Promise<Installed> {
   // Clone into a staging dir first: the NAME comes from the manifest, and the
   // manifest comes from the clone.
+  // Validate BEFORE anything is created on disk: a rejected url must leave
+  // nothing behind, and the `finally` that removes the staging dir only
+  // covers the try below it.
+  validateGitUrl(gitUrl);
+  const origin = normalizeOrigin(gitUrl);
   fs.mkdirSync(pluginsRoot, { recursive: true });
   const staging = fs.mkdtempSync(path.join(pluginsRoot, ".install-"));
   let dirs: ReturnType<typeof pluginDirs> | null = null;
   let fresh = true;
-  validateGitUrl(gitUrl);
-  const origin = normalizeOrigin(gitUrl);
   try {
     await git("clone", ["-q", "--depth", "1", "--", gitUrl, path.join(staging, "repo")]);
     const manifest = parseManifest(fs.readFileSync(path.join(staging, "repo", "latch-plugin.json"), "utf8"));
@@ -184,7 +187,10 @@ export function listInstalledNames(pluginsRoot: string): string[] {
   if (!fs.existsSync(pluginsRoot)) return [];
   return fs
     .readdirSync(pluginsRoot, { withFileTypes: true })
-    .filter((e) => e.isDirectory() && !e.name.startsWith("."))
+    // A name that isn't a slug can't be one of ours — `pluginDirs` refuses it
+    // outright, so skipping here keeps one stray directory from aborting the
+    // whole listing. One broken plugin never stops the others.
+    .filter((e) => e.isDirectory() && SLUG.test(e.name))
     .map((e) => e.name)
     .sort();
 }

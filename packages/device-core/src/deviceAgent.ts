@@ -589,11 +589,11 @@ export class DeviceAgent {
    * skill file never stops the rest — `load()` skips it and returns it here
    * as a problem, so the app can tell the owner which install needs fixing.
    */
-  async startPlugins(opts: { plowApiBase: string }): Promise<{ name: string; problem: string }[]> {
+  async startPlugins(opts: { plowApiBase: string }): Promise<readonly { name: string; problem: string }[]> {
     this.plowApiBase = opts.plowApiBase;
     this.plugins.load();
     for (const p of this.plugins.all()) this.skills.register(p.skill);
-    return [...this.plugins.problems()];
+    return this.plugins.problems(); // problems() already returns a copy
   }
 
   /**

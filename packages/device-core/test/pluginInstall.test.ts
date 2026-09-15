@@ -30,6 +30,25 @@ describe("installPlugin", () => {
     expect(listInstalled(r).map((p) => p.installed.name)).toEqual(["fix"]);
   });
 
+  it("leaves no staging directory behind when the git url is refused", async () => {
+    // The url is validated before anything is created: the `finally` that
+    // removes the staging dir only covers the clone, so a url rejected
+    // before it would otherwise orphan a `.install-` dir on every attempt.
+    const r = root();
+    await expect(installPlugin(r, "ext::sh -c 'echo pwned'")).rejects.toThrow(PluginError);
+    expect(fs.readdirSync(r)).toEqual([]);
+  });
+
+  it("lists a good install even when a stray directory sits beside it", async () => {
+    // One unusable entry under the plugins root never stops the others
+    // loading — the slug guard in pluginDirs refuses such a name, so the
+    // listing has to skip it rather than propagate the refusal.
+    const r = root();
+    await installPlugin(r, fixturePlugin());
+    fs.mkdirSync(path.join(r, "Not A Plugin"));
+    expect(listInstalled(r).map((p) => p.installed.name)).toEqual(["fix"]);
+  });
+
   it("refuses a plugin command that shadows a vendored provider, before creating anything", async () => {
     const r = root();
     await expect(installPlugin(r, fixturePlugin({ command: "gog" }))).rejects.toThrow(
