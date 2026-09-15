@@ -7,8 +7,10 @@ the next PR in this stack — this one is the "only home" that stands.)
 Per-version verdicts about gog's own grammar. They live on gog's row rather
 than in the fetcher, which knows nothing about any particular CLI.
 
-1. Set `version` in `latch-plugin.json` and both `sha256` values (the
-   tarballs, checked against upstream's `checksums.txt`).
+1. In `latch-plugin.json` set `version`, the version segment of both `url`s,
+   and both `sha256` values (the tarballs, checked against upstream's
+   `checksums.txt`). A stale url downloads the old release and fails the
+   sha check — the pin is the sha, the url is where it comes from.
 2. Run `just stage-plugins gog`; the postinstall hook asserts no gog flag is
    negatable.
 3. Re-run these six BY HAND against the new binary. The first five are
