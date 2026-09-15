@@ -1,7 +1,16 @@
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
+
+/** A suite's throwaway dirs: `tmp()` makes one, `cleanup()` (from `afterEach`) removes them all. */
+export function tempDirs(prefix: string): { tmp: () => string; cleanup: () => void } {
+  const made: string[] = [];
+  const tmp = () => { const d = fs.mkdtempSync(path.join(os.tmpdir(), prefix)); made.push(d); return d; };
+  const cleanup = () => { for (const d of made.splice(0)) fs.rmSync(d, { recursive: true, force: true }); };
+  return { tmp, cleanup };
+}
 
 export const MINIMAL = {
   name: "fix", version: "1", command: "fix",

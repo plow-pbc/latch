@@ -1,20 +1,14 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { parseManifest, PluginError } from "../src/plugins/manifest.js";
 import { binDir, runPostinstall, stageBinaries, type Arch } from "../src/plugins/stage.js";
-import { DECOY, MINIMAL, tarball } from "./pluginFixtures.js";
+import { DECOY, MINIMAL, tarball, tempDirs } from "./pluginFixtures.js";
 
 const ARCH = process.arch as Arch;
-const cleanups: (() => void)[] = [];
-afterEach(() => { for (const c of cleanups.splice(0)) c(); });
-function tmp(): string {
-  const d = fs.mkdtempSync(path.join(os.tmpdir(), "latch-stage-"));
-  cleanups.push(() => fs.rmSync(d, { recursive: true, force: true }));
-  return d;
-}
+const { tmp, cleanup } = tempDirs("latch-stage-");
+afterEach(cleanup);
 
 function manifestWith(sha256: string, extra: Record<string, unknown> = {}) {
   return parseManifest(JSON.stringify({
