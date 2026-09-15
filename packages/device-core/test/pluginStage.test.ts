@@ -74,6 +74,49 @@ describe("stageBinaries", () => {
     expect(fetched).toBe(1);
     expect(execFileSync(path.join(binDir(pluginDir, ARCH), "tool"), ["x"], { encoding: "utf8" })).toBe("ARGV=x\n");
   });
+
+  it("stages two binaries whose executables share a basename without one overwriting the other", async () => {
+    const a = tarball();
+    const b = tarball();
+    const pluginDir = tmp();
+    const bin = (name: string, sha: string) => ({
+      name, version: "1", executable: "tool",
+      url: { arm64: `https://example.invalid/${name}`, x64: `https://example.invalid/${name}` },
+      sha256: { arm64: sha, x64: sha },
+    });
+    const manifest = parseManifest(JSON.stringify({
+      ...MINIMAL,
+      exec: { cwd: "plugin", argv: ["tool-a", "--fixed"] },
+      runtime: { binaries: [bin("tool-a", a.sha256), bin("tool-b", b.sha256)], sources: [] },
+    }));
+    await stageBinaries(manifest, pluginDir, ARCH, tmp(), async (url) =>
+      fs.readFileSync(url.endsWith("tool-a") ? a.file : b.file),
+    );
+    expect(fs.readdirSync(binDir(pluginDir, ARCH)).sort()).toEqual(["tool-a", "tool-b"]);
+  });
+
+  it("leaves no runtime tree when a later binary in the manifest fails to stage", async () => {
+    const { file, sha256 } = tarball();
+    const pluginDir = tmp();
+    const manifest = parseManifest(JSON.stringify({
+      ...MINIMAL,
+      exec: { cwd: "plugin", argv: ["tool", "--fixed"] },
+      runtime: {
+        binaries: [
+          { name: "tool", version: "1", url: { arm64: "https://example.invalid/tool", x64: "https://example.invalid/tool" }, sha256: { arm64: sha256, x64: sha256 } },
+          { name: "broken", version: "1", url: { arm64: "https://example.invalid/broken", x64: "https://example.invalid/broken" }, sha256: { arm64: "1".repeat(64), x64: "1".repeat(64) } },
+        ],
+        sources: [],
+      },
+    }));
+    await expect(
+      stageBinaries(manifest, pluginDir, ARCH, tmp(), async (url) => {
+        if (url.endsWith("broken")) throw new Error("network down");
+        return fs.readFileSync(file);
+      }),
+    ).rejects.toThrow("network down");
+    expect(fs.existsSync(binDir(pluginDir, ARCH))).toBe(false);
+  });
 });
 
 describe("runPostinstall", () => {

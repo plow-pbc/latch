@@ -38,25 +38,35 @@ export async function stageBinaries(
   fs.rmSync(runtime, { recursive: true, force: true });
   const bin = binDir(pluginDir, arch);
   fs.mkdirSync(bin, { recursive: true });
-  for (const b of manifest.runtime.binaries) {
-    const want = b.sha256[arch];
-    const archive = path.join(downloads, `${manifest.name}-${b.name}-${b.version}-${arch}`);
-    if (!fs.existsSync(archive) || digest(archive) !== want) {
-      fs.mkdirSync(downloads, { recursive: true });
-      fs.writeFileSync(archive, await fetch(b.url[arch]));
-      if (digest(archive) !== want) {
-        fs.rmSync(archive, { force: true });
-        fs.rmSync(runtime, { recursive: true, force: true });
-        throw new PluginError(`binary ${b.name} does not match its sha256 for ${arch}`);
+  // One try/catch for the whole loop: a fetch or tar failure partway through
+  // must leave no runtime tree behind, same as a digest mismatch does — a
+  // half-staged plugin would still pass loadPlugins' single-executable check.
+  try {
+    for (const b of manifest.runtime.binaries) {
+      const want = b.sha256[arch];
+      const archive = path.join(downloads, `${manifest.name}-${b.name}-${b.version}-${arch}`);
+      if (!fs.existsSync(archive) || digest(archive) !== want) {
+        fs.mkdirSync(downloads, { recursive: true });
+        fs.writeFileSync(archive, await fetch(b.url[arch]));
+        if (digest(archive) !== want) {
+          fs.rmSync(archive, { force: true });
+          throw new PluginError(`binary ${b.name} does not match its sha256 for ${arch}`);
+        }
       }
+      const into = path.join(runtime, b.name);
+      fs.mkdirSync(into, { recursive: true });
+      execFileSync("tar", ["xf", archive, "-C", into]);
+      const executable = path.join(into, b.executable ?? b.name);
+      // Keyed on the binary's own (already unique) name, not the archive's
+      // internal executable basename, so two binaries whose executables
+      // happen to share a basename never overwrite each other in bin/.
+      const staged = path.join(bin, b.name);
+      fs.copyFileSync(executable, staged);
+      fs.chmodSync(staged, 0o755);
     }
-    const into = path.join(runtime, b.name);
-    fs.mkdirSync(into, { recursive: true });
-    execFileSync("tar", ["xf", archive, "-C", into]);
-    const executable = path.join(into, b.executable ?? b.name);
-    const staged = path.join(bin, path.basename(executable));
-    fs.copyFileSync(executable, staged);
-    fs.chmodSync(staged, 0o755);
+  } catch (err) {
+    fs.rmSync(runtime, { recursive: true, force: true });
+    throw err;
   }
 }
 
