@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
 
 const afterPack = createRequire(import.meta.url)("../build/afterPack.cjs") as (
@@ -25,6 +26,19 @@ import { VENDORED } from "../../../scripts/vendored-providers.mjs";
 
 /** Every vendored CLI the packed app must carry, and the arches it stages. */
 const PROVIDERS: { command: string; arches: Record<string, unknown> }[] = VENDORED;
+
+/** Every bundled plugin (apps/desktop/plugins/<name>), read the same way the
+ * hook does: from disk, not a fixture list, so a new plugin's manifest is
+ * covered here without a matching edit to this file. */
+const PLUGINS_DIR = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "plugins");
+const PLUGINS: { name: string; binaries: { name: string }[] }[] = fs
+  .readdirSync(PLUGINS_DIR)
+  .filter((name) => fs.existsSync(path.join(PLUGINS_DIR, name, "latch-plugin.json")))
+  .map((name) => ({
+    name,
+    binaries: JSON.parse(fs.readFileSync(path.join(PLUGINS_DIR, name, "latch-plugin.json"), "utf8")).runtime
+      .binaries,
+  }));
 
 const IDENTITY = "Developer ID Application: Nobody (TEAMID)";
 
@@ -52,6 +66,20 @@ describe("the packaging hook refuses before it signs", () => {
       for (const arch of Object.keys(arches)) {
         fs.mkdirSync(path.join(resourcesDir(), "providers", command, arch), { recursive: true });
         fs.writeFileSync(path.join(resourcesDir(), "providers", command, arch, command), "#!/bin/sh\n");
+      }
+    }
+  };
+
+  /** Every bundled plugin as production stages it: one executable per binary,
+   * per arch, at runtime/<arch>/bin/<binary name> — what stageBinaries writes. */
+  const packPlugins = () => {
+    for (const { name, binaries } of PLUGINS) {
+      for (const { name: binary } of binaries) {
+        for (const arch of ["arm64", "x64"]) {
+          const bin = path.join(resourcesDir(), "plugins", name, "runtime", arch, "bin", binary);
+          fs.mkdirSync(path.dirname(bin), { recursive: true });
+          fs.writeFileSync(bin, "#!/bin/sh\n");
+        }
       }
     }
   };
@@ -90,6 +118,7 @@ describe("the packaging hook refuses before it signs", () => {
   const pack = (omit?: string) => {
     const runtime = runtimeDir();
     packProviders();
+    packPlugins();
     if (omit !== "keychain-addon") packKeychainAddon();
     for (const payload of PAYLOADS) {
       if (payload === omit) continue;
@@ -309,6 +338,22 @@ describe("the packaging hook refuses before it signs", () => {
     // binary PATHS would, without the gate ever emitting its summary.
     expect(message).toContain(`no ${p.command} for`);
     for (const arch of Object.keys(p.arches)) expect(message).toContain(arch);
+  });
+
+  // Same silent-half-install hazard as a vendored provider, checked against
+  // the binary's own name (what stageBinaries writes to bin/), not argv[0].
+  it.each(
+    PLUGINS.flatMap(({ name, binaries }) =>
+      binaries.flatMap((binary) =>
+        ["arm64", "x64"].map((arch) => ({ name, binary: binary.name, arch })),
+      ),
+    ),
+  )("refuses $name/$binary/$arch when it is missing", async ({ name, binary, arch }) => {
+    pack();
+    fs.rmSync(path.join(resourcesDir(), "plugins", name, "runtime", arch, "bin", binary));
+    await expect(afterPack(contextFor(dir))).rejects.toThrow(
+      new RegExp(`no ${name} plugin's ${binary} for ${arch}`),
+    );
   });
 
   it("refuses a camoufox tree a fuse left without a bundle", async () => {

@@ -145,6 +145,10 @@ extraResources:
   - from: ../../vendor/providers
     to: providers
     filter: ["**/*", "!*/VERSION"]
+  # Every bundled plugin, per-arch, in ONE entry: vendor/plugins/<name>/ holds
+  # the manifest and runtime/<arch>/bin. `loadPlugins` reads <Resources>/plugins.
+  - from: ../../vendor/plugins
+    to: plugins
   # The native helpers (scripts/build-native.mjs, a `just build` step): the
   # Full Disk Access flow's window tracker, the permission-status helper the
   # host-gate diagnosis asks about Automation, and the credential-exchange
@@ -204,7 +208,7 @@ mac:
   # (universal2, byte-identical in both slices) are refused by the merger the
   # same way. (No SQLite entry: the WASM cookie-merge module is arch-neutral,
   # so the merge handles it like any file.)
-  x64ArchFiles: "**/{providers,node_modules/@domo/native-keychain,node_modules/@domo/native-credential-import,node_modules/@domo/native-permissions}/**"
+  x64ArchFiles: "**/{providers,plugins,node_modules/@domo/native-keychain,node_modules/@domo/native-credential-import,node_modules/@domo/native-permissions}/**"
   notarize: true
   extendInfo:
     NSAppleEventsUsageDescription: "Plow Latch sends the Messages and automation commands you approve on this Mac."
