@@ -16,6 +16,8 @@ import {
 import { overrideVar } from "../src/providers/vendoredBinary.js";
 // @ts-expect-error — a build-time .mjs manifest with no type declarations.
 import { VENDORED } from "../../../scripts/vendored-providers.mjs";
+// @ts-expect-error — a build-time .mjs manifest with no type declarations.
+import { FIRST_PARTY } from "../../../scripts/first-party-providers.mjs";
 
 const gog = vendoredProvider(["gog"])!;
 
@@ -29,7 +31,9 @@ describe("vendoredProvider", () => {
     // gets the multi-account fan-out — one provider, whichever spelling. The
     // skill advertises only `plow-gog`; there is no `gog` row to find.
     expect(vendoredProvider(["gog", "gmail", "search"])).toBe(vendoredProvider(["plow-gog"]));
-    expect(PROVIDERS.map((p) => p.command)).toEqual(["plow-gog"]);
+    // plow-messages joined this list in Task 2; it fronts its own binary
+    // rather than gog's, so it does not change the fan-out this test pins.
+    expect(PROVIDERS.map((p) => p.command)).toEqual(["plow-gog", "plow-messages"]);
   });
 
   it("does NOT match a path", () => {
@@ -224,7 +228,7 @@ describe("the scope bound", () => {
     expect(gog.belt).toContain(bound);
     // Every naming on the page agrees, and there is at least one: an empty
     // match set fails this too, since `[]` is not `[bound]`.
-    const named = gog.skill.body.match(/--enable-commands=[^`\s]*/g) ?? [];
+    const named = gog.skillFor("/Users/example").body.match(/--enable-commands=[^`\s]*/g) ?? [];
     expect([...new Set(named)]).toEqual([bound]);
   });
 
@@ -283,11 +287,15 @@ describe("the plow-gog provider's refusal", () => {
 });
 
 describe("the google-workspace skill", () => {
-  const body = vendoredProvider(["plow-gog"])!.skill.body;
+  const body = vendoredProvider(["plow-gog"])!.skillFor("/Users/example").body;
 
   it("is the one skill both provider rows publish, under the stable name", () => {
-    expect(vendoredProvider(["plow-gog"])!.skill).toBe(gog.skill);
-    expect(gog.skill.name).toBe("google-workspace");
+    // The ROW, not its skill: `.skill` survived the rename to `skillFor` here
+    // and read `undefined === undefined`, so it passed while asserting
+    // nothing. Row identity is what this test always meant — both spellings
+    // resolve to one provider, so there is one page to keep current.
+    expect(vendoredProvider(["plow-gog"])).toBe(gog);
+    expect(gog.skillFor("/Users/example").name).toBe("google-workspace");
   });
 
   it("teaches the multi-account contract", () => {
@@ -319,7 +327,15 @@ describe("the runtime registry and the build-time manifest", () => {
   it("name the same binaries", () => {
     // BINARIES, not commands: plow-gog runs the vendored gog, so the manifest
     // stages one payload that two registry rows share.
-    const staged = VENDORED.map((p) => p.command);
+    //
+    // Two build-time sources stage payloads, not one: `VENDORED` is fetched
+    // and sha-pinned, `FIRST_PARTY` is compiled from source in this repo, and
+    // a first-party CLI can never appear in the fetched list. So the real
+    // invariant is that every registry binary is staged by ONE OF THE TWO —
+    // and both are read here rather than one being spelled as a literal,
+    // because a literal is what stops catching the added-to-one-side-only
+    // failure the moment a second first-party provider lands.
+    const staged = [...VENDORED, ...FIRST_PARTY].map((p) => p.command);
     const binaries = [...new Set(PROVIDERS.map((p) => p.binary))];
     expect([...staged].sort()).toEqual(binaries.sort());
   });
@@ -328,5 +344,41 @@ describe("the runtime registry and the build-time manifest", () => {
   // arch's users with no provider tools at all.
   it("stage a binary for both macOS arches", () => {
     for (const p of VENDORED) expect(Object.keys(p.arches).sort()).toEqual(["arm64", "x64"]);
+  });
+});
+
+describe("a provider that mints nothing", () => {
+  it("plow-gog still mints, so it implies network", () => {
+    expect(impliesNetwork(["plow-gog", "gmail", "search", "x"])).toBe(true);
+  });
+  it("carries its mint as one nullable field, so a token-less provider is representable", () => {
+    const gog = vendoredProvider(["plow-gog"]);
+    expect(gog?.mint).toEqual({
+      action: "access-token",
+      prefix: "/v1/connectors/gmail/",
+      tokenEnv: "GOG_ACCESS_TOKEN",
+    });
+  });
+});
+
+describe("the plow-messages provider", () => {
+  it("is a registered, token-less provider", () => {
+    const p = vendoredProvider(["plow-messages", "search", "palm court"]);
+    expect(p?.command).toBe("plow-messages");
+    expect(p?.binary).toBe("plow-messages");
+    expect(p?.mint).toBeNull();
+    expect(impliesNetwork(["plow-messages", "search", "x"])).toBe(false);
+  });
+  it.each([
+    [["plow-messages", "search", "palm court"], null],
+    [["plow-messages", "thread", "--chat-id", "5"], null],
+    [["plow-messages", "chats"], null],
+    [["plow-messages", "unreplied"], null],
+    [["plow-messages", "--help"], null],
+    [["plow-messages"], "plow-messages needs a subcommand: search, thread, chats, unreplied"],
+    [["plow-messages", "send", "hi"], "plow-messages needs a subcommand: search, thread, chats, unreplied"],
+    [["plow-messages", "--store", "/tmp/x", "search"], "plow-messages needs a subcommand: search, thread, chats, unreplied"],
+  ])("refuses anything but the four reads and --help: %j", (argv, reason) => {
+    expect(vendoredProvider(argv)?.refuse(argv)).toBe(reason);
   });
 });

@@ -42,6 +42,7 @@ export type { MintedAccounts, Minter } from "./providers/mint.js";
 export { overrideVar, resolveVendoredBinary } from "./providers/vendoredBinary.js";
 export type { VendoredLocation } from "./providers/vendoredBinary.js";
 export { reservedFlagIn } from "./providers/gogFlags.js";
+export { PLOW_MESSAGES_SUBCOMMANDS, plowMessagesSkillFor } from "./providers/plowMessagesSkill.js";
 export * from "./fileOps.js";
 export * from "./hostGate/index.js";
 export * from "./identity.js";
