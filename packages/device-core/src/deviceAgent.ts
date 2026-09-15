@@ -316,10 +316,10 @@ export class DeviceAgent {
      */
     private readonly minter: Minter | null = null,
     /**
-     * The plugins this Mac has staged (`plugins/registry.ts`). Their bin dirs
-     * lead an exec child's PATH so a provider's argv[0] reaches the binary
-     * this app ships; a provider whose plugin is absent reports that it is
-     * not installed rather than running whatever the owner has on PATH.
+     * The plugins this Mac has staged (`plugins/registry.ts`). plow-gog execs
+     * the gog plugin's binary by absolute path under its own bin dir; a
+     * provider whose plugin is absent reports that it is not installed rather
+     * than running whatever the owner has on PATH.
      */
     private readonly plugins: readonly StagedPlugin[] = [],
     /** Consulted before releasing a credential into a bank destination. `null`
@@ -376,7 +376,7 @@ export class DeviceAgent {
         });
       },
     );
-    this.executor = new Executor(path.join(home, "device/scratch"), undefined, this.plugins.map((p) => p.binDir));
+    this.executor = new Executor(path.join(home, "device/scratch"));
     this.skills = new SkillRegistry();
     // `ownerHome`, not `home` — this describes where WhatsApp put the owner's
     // messages on the real machine, while `home` is a DOMO_HOME a test points
@@ -1236,7 +1236,9 @@ export class DeviceAgent {
         // The belt is the plugin manifest's, and argv[0] is absolute: PATH
         // never decides which gog runs.
         argv: [path.join(plugin.binDir, plugin.manifest.exec.argv[0]!), ...plugin.manifest.exec.argv.slice(1), ...tail],
-        readPaths: opts.readPaths,
+        // The binary must be readable to exec it, and a staged plugin lives
+        // inside the .app bundle, which the profile's home grant does not reach.
+        readPaths: [...opts.readPaths, plugin.binDir],
         writePaths: opts.writePaths,
         network: opts.network,
         appleEvents: opts.appleEvents,

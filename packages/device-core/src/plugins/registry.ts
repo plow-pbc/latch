@@ -7,9 +7,7 @@
  * when its manifest parses AND every declared binary is staged there; a plugin
  * declaring none (its argv[0] falls through to PATH) is present on its
  * manifest alone. Staged-ness says nothing about exec.argv[0] — that's
- * resolved at exec time, not here, and how depends on who runs the plugin: a
- * plugin run BY NAME reaches argv[0] through the PATH `binDir` leads, so an
- * absolute argv[0] is legitimate there; a plugin driven by a provider row
+ * resolved at exec time, not here: a plugin driven by a provider row
  * (plow-gog) has its argv[0] joined under `binDir` by the exec path, so that
  * one must be relative and name a staged binary.
  */

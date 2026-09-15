@@ -415,19 +415,6 @@ export class Executor {
     public readonly scratchRoot: string,
     /** Overridden only by tests, which cannot wait out the real window. */
     private readonly reapAfterMs: number = REAP_AFTER_MS,
-    /**
-     * The staged plugins' bin directories, prepended to the child's PATH so a
-     * plugin run BY NAME — a daemon or wrapper, and any plugin no provider row
-     * drives — reaches the binary this app ships rather than whatever the
-     * owner happens to have installed. plow-gog does not rely on this: the
-     * exec path passes an absolute argv[0] under the plugin's own bin dir.
-     *
-     * Prepended rather than appended for that reason: which binary a bare name
-     * reaches is a security decision, not a convenience. The dirs are also
-     * granted read in the profile, which is what lets a child exec what its
-     * PATH just resolved.
-     */
-    private readonly binDirs: readonly string[] = [],
   ) {
     fs.mkdirSync(scratchRoot, { recursive: true });
   }
@@ -462,11 +449,7 @@ export class Executor {
     // cwd must be readable for the process to even start; it was part of the
     // approved exec capability, so allowing it matches the approval.
     const workingDir = args.cwd !== undefined ? canonicalize(args.cwd) : scratch;
-    // The bin dirs are always readable, because a staged plugin lives inside
-    // the .app bundle rather than under the owner's home — the broad home
-    // grant in the profile does not reach it, so without this the child cannot
-    // even exec the binary its PATH just resolved.
-    const reads = [...args.readPaths, ...this.binDirs, workingDir];
+    const reads = [...args.readPaths, workingDir];
 
     // Frozen as the generator saw them: canonical now, and never resolved
     // again. A later `grants()` asks what THIS profile allowed, and a run
@@ -559,7 +542,6 @@ export class Executor {
         // its token, never the shape of the world its child runs in.
         PATH:
           [
-            ...this.binDirs,
             `${realHome}/.local/bin`,
             `${realHome}/bin`,
             `${realHome}/.cargo/bin`,
