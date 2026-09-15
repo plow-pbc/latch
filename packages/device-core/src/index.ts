@@ -50,3 +50,5 @@ export { binDir, fetchBytes, runPostinstall, stageBinaries } from "./plugins/sta
 export type { Arch, FetchBytes } from "./plugins/stage.js";
 export { parseManifest, PluginError } from "./plugins/manifest.js";
 export type { PluginManifest } from "./plugins/manifest.js";
+export { loadPlugins, pluginRoots } from "./plugins/registry.js";
+export type { StagedPlugin } from "./plugins/registry.js";
