@@ -424,9 +424,16 @@ export class Executor {
      * matches on a bare `argv[0]`, so which binary that name reaches is a
      * security decision, not a convenience.
      */
-    private readonly vendorDirs: readonly string[] = [],
+    private readonly vendorDirs: string[] = [],
   ) {
     fs.mkdirSync(scratchRoot, { recursive: true });
+  }
+
+  /** Extend the child PATH/read set after construction — a plugin's bin/ and
+   *  runtime/, staged once `DeviceAgent.startPlugins` loads the registry.
+   *  Push-if-absent: a reload must not duplicate an already-added dir. */
+  addVendorDirs(dirs: string[]): void {
+    for (const dir of dirs) if (!this.vendorDirs.includes(dir)) this.vendorDirs.push(dir);
   }
 
   async run(args: {

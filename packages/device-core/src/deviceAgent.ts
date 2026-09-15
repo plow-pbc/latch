@@ -15,6 +15,9 @@ import { AlwaysAllowRule, capabilityDisplay, Intent, intentIsExpired, JSONValue,
 import { PROVIDERS, vendoredProvider, type VendoredProvider } from "./providers/registry.js";
 import { MintError, type MintedAccounts, type Minter } from "./providers/mint.js";
 import { conflictRefusal, gogExitReason, mergeFanout, planPlowGog } from "./providers/plowGog.js";
+import { PluginError } from "./plugins/manifest.js";
+import { ruleArgv } from "./plugins/argvRules.js";
+import { PluginRegistry, type LoadedPlugin } from "./plugins/registry.js";
 import fs from "node:fs";
 import path from "node:path";
 import { APPROVAL_SOURCE_EXPIRED } from "./approvalStore.js";
@@ -255,6 +258,12 @@ export class DeviceAgent {
   readonly audit: AuditLog;
   readonly policy: PolicyEngine;
   readonly executor: Executor;
+  /** Installed plugins: third-party CLIs the owner installed from a git URL.
+   *  Empty until `startPlugins` loads it. */
+  readonly plugins: PluginRegistry;
+  /** `startPlugins`'s `plowApiBase`, for `\${plow_api_base}` substitution in a
+   *  plugin's env. Empty until then. */
+  private plowApiBase = "";
   /** Owner-published skills (how-to guides), surfaced via plow_list_skills/plow_read_skill. */
   readonly skills: SkillRegistry;
   /** Null when no browser runtime is installed — browser tools report so. */
@@ -336,7 +345,8 @@ export class DeviceAgent {
     this.ownerHome = ownerHome;
     this.hostProbes = hostProbes ?? nodeProbes({ ownerHome });
     this.audit = new AuditLog(path.join(home, "device/audit.ndjson"));
-    this.policy = new PolicyEngine(path.join(home, "device/rules.json"));
+    this.plugins = new PluginRegistry(path.join(home, "plugins"));
+    this.policy = new PolicyEngine(path.join(home, "device/rules.json"), (intent) => this.pluginRuleView(intent));
     // Every rule that comes to exist, and every one that stops, is a line in
     // the log. A rule is not always the twin of an `always_allow` decision:
     // an answer that arrived after the approval's deadline denies the request
@@ -375,7 +385,7 @@ export class DeviceAgent {
         });
       },
     );
-    this.executor = new Executor(path.join(home, "device/scratch"), undefined, this.vendorDirs);
+    this.executor = new Executor(path.join(home, "device/scratch"), undefined, [...this.vendorDirs]);
     this.skills = new SkillRegistry();
     // `ownerHome`, not `home` — this describes where WhatsApp put the owner's
     // messages on the real machine, while `home` is a DOMO_HOME a test points
@@ -571,6 +581,38 @@ export class DeviceAgent {
    * it is a file and a Keychain item, not a process. */
   async shutdown(): Promise<void> {
     await this.browserSessions?.closeAll("shutdown");
+  }
+
+  /**
+   * Load installed plugins: PATH, skills, daemons. Called once after
+   * construction by the app and by tests. One broken plugin's manifest or
+   * skill file never stops the rest — `load()` skips it and returns it here
+   * as a problem, so the app can tell the owner which install needs fixing.
+   */
+  async startPlugins(opts: { plowApiBase: string }): Promise<{ name: string; problem: string }[]> {
+    this.plowApiBase = opts.plowApiBase;
+    this.plugins.load();
+    this.executor.addVendorDirs(this.plugins.vendorDirs());
+    for (const p of this.plugins.all()) this.skills.register(p.skill);
+    return [...this.plugins.problems()];
+  }
+
+  /**
+   * The rule view `PolicyEngine` applies before hashing an intent into a
+   * rule key. A plugin READ is keyed on `<command> <allowed prefix>`
+   * (`argvRules.ts`) so one "always allow" covers every future query
+   * regardless of its text; a write, and everything that is not a plugin's
+   * exec capability at all, is keyed on itself. Returns a NEW Intent and
+   * never mutates the one it is handed — `PolicyEngine`'s contract, because
+   * the same object is reused afterwards for the grant, the approval card,
+   * the sandbox profile and the audit log.
+   */
+  private pluginRuleView(intent: Intent): Intent {
+    const exec = intent.capabilities.find((c) => c.kind === "process.exec");
+    const plugin = exec?.argv ? this.plugins.find(exec.argv) : null;
+    if (!exec || !plugin) return intent;
+    const argv = [...ruleArgv(plugin.manifest, exec.argv!)];
+    return { ...intent, capabilities: intent.capabilities.map((c) => (c === exec ? { ...c, argv } : c)) };
   }
 
   /**
@@ -887,6 +929,13 @@ export class DeviceAgent {
     const waitMs = jv(payload).get("wait_ms").int ?? 10000;
     const argv = exec.argv ?? [];
 
+    // An installed plugin's own exec path: its argv allowlist, its own env
+    // (fixed, secret, or minted), never the provider orchestration below.
+    const plugin = this.plugins.find(argv);
+    if (plugin !== null) {
+      return this.executePlugin(intent, plugin, argv, { readPaths, writePaths, network, appleEvents, waitMs });
+    }
+
     // A vendored provider CLI gets its tokens minted into its children's
     // environment and is orchestrated per account. Everything else is the
     // ordinary exec path — the capability the owner approved is the argv, the
@@ -941,6 +990,69 @@ export class DeviceAgent {
         readPaths,
         writePaths,
         automationTarget: appleEvents ? appleEventTarget(argv) : null,
+        sandboxed: true,
+      });
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error);
+      return this.execError(intent.intentId, message);
+    }
+  }
+
+  /**
+   * Run an installed plugin: the device is the chokepoint — the allowlist
+   * and daemon-health refusal run BEFORE any env is resolved or anything is
+   * minted, so an off-allowlist or unhealthy-daemon call never spawns and
+   * never mints. The resolved env (fixed values, a plugin's own secret, a
+   * freshly minted token) reaches only the child's environment: it is never
+   * on argv, in an error string, or in the audit log, which records the
+   * argv the owner approved and nothing else.
+   */
+  private async executePlugin(
+    intent: Intent,
+    plugin: LoadedPlugin,
+    argv: string[],
+    opts: { readPaths: string[]; writePaths: string[]; network: boolean; appleEvents: boolean; waitMs: number },
+  ): Promise<JSONValue> {
+    const refusal = this.plugins.refuse(argv);
+    if (refusal !== null) return this.execError(intent.intentId, refusal);
+    let env: Record<string, string>;
+    try {
+      env = await this.plugins.env(
+        plugin,
+        this.minter === null ? null : (scope) => this.minter!.mintScoped(scope),
+        this.plowApiBase,
+      );
+    } catch (e) {
+      // A PluginError/MintError message is a fixed sentence and safe to
+      // surface; anything else is not repeated back.
+      const message = e instanceof PluginError || e instanceof MintError ? e.message : `could not authorise ${plugin.manifest.command}`;
+      return this.execError(intent.intentId, message);
+    }
+    this.audit.record("exec_start", { intentId: intent.intentId, argv });
+    try {
+      // A plugin's own repo is not a vendor dir (only bin/ and runtime/ are,
+      // for the PATH lookup) and not an approved fs.read path, yet the
+      // manifest's exec.cwd routinely lands there (a symlink under runtime/
+      // to the cloned repo, for a source-mode plugin) and the command reads
+      // its own files once it cd's in. `cwd` is always added to the
+      // sandbox's reads (Executor.run), so running from it is what makes the
+      // plugin's own tree — never the owner's approved paths — readable.
+      const result = await this.executor.run({
+        argv,
+        cwd: plugin.dirs.repo,
+        readPaths: opts.readPaths,
+        writePaths: opts.writePaths,
+        network: opts.network,
+        appleEvents: opts.appleEvents,
+        waitMs: opts.waitMs,
+        env,
+      });
+      return this.finishRun(intent.intentId, result, {
+        argv,
+        cwd: plugin.dirs.repo,
+        readPaths: opts.readPaths,
+        writePaths: opts.writePaths,
+        automationTarget: null,
         sandboxed: true,
       });
     } catch (error: unknown) {
