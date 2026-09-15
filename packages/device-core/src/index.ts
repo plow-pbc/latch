@@ -46,3 +46,7 @@ export * from "./fileOps.js";
 export * from "./hostGate/index.js";
 export * from "./identity.js";
 export * from "./policyEngine.js";
+export { binDir, fetchBytes, runPostinstall, stageBinaries } from "./plugins/stage.js";
+export type { Arch, FetchBytes } from "./plugins/stage.js";
+export { parseManifest, PluginError } from "./plugins/manifest.js";
+export type { PluginManifest } from "./plugins/manifest.js";
