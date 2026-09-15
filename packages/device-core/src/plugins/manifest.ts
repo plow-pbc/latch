@@ -45,6 +45,12 @@ export interface PluginRequires {
 }
 
 const SLUG = /^[a-z][a-z0-9-]{0,31}$/;
+// requires.accounts/permissions hold connector and HostPermission ids, which
+// unlike name/command/binary names include snake_case entries
+// ("full_disk_access", "screen_recording", "files_desktop") — so this allows
+// underscores where SLUG (dash-only, for the identifiers this manifest itself
+// names) does not.
+const IDENT = /^[a-z][a-z0-9_-]{0,31}$/;
 const SHA = /^[0-9a-f]{64}$/;
 const ARCHES = ["arm64", "x64"] as const;
 /**
@@ -210,16 +216,16 @@ export function parseManifest(raw: string): PluginManifest {
   // connector/permission ids: that set lives in other layers, and importing
   // it here would couple manifest parsing to them. paths are filesystem
   // paths, not identifiers, and keep accepting any string.
-  const slugList = (v: unknown, field: string): string[] => {
+  const identList = (v: unknown, field: string): string[] => {
     const arr = strList(v, field);
     for (const id of arr) {
-      if (!SLUG.test(id)) fail(`${field} entries must be lowercase letters, digits and dashes`);
+      if (!IDENT.test(id)) fail(`${field} entries must be lowercase letters, digits, dashes and underscores`);
     }
     return arr;
   };
   const requires: PluginRequires = {
-    accounts: slugList(req.accounts, "requires.accounts"),
-    permissions: slugList(req.permissions, "requires.permissions"),
+    accounts: identList(req.accounts, "requires.accounts"),
+    permissions: identList(req.permissions, "requires.permissions"),
     paths: strList(req.paths, "requires.paths"),
   };
 
