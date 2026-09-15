@@ -50,9 +50,9 @@ function build(input: {
 }): PluginRowsInput {
   const blocked: Record<string, number> = {};
   if (input.hits !== undefined) {
-    for (const id of [...input.requires.accounts, ...input.requires.permissions, ...input.requires.paths]) {
-      blocked[id] = input.hits;
-    }
+    for (const id of input.requires.accounts) blocked[`account:${id}`] = input.hits;
+    for (const id of input.requires.permissions) blocked[`permission:${id}`] = input.hits;
+    for (const id of input.requires.paths) blocked[`path:${id}`] = input.hits;
   }
   return {
     plugins: [{ manifest: manifest(input.requires), enabled: input.enabled }],
@@ -124,4 +124,14 @@ it("full_disk_access is unmet when the inventory says not granted", () => {
   const input = build({ requires: { ...none, permissions: ["full_disk_access"] }, enabled: true });
   const [row] = pluginRows(input) as [PluginRow];
   expect(row.status).toBe("needs-setup");
+});
+
+// requires.paths accepts any string, so a path can share literal text with
+// an account/permission id — blocked must be keyed by kind, not id alone,
+// or the two would double-count each other's hits.
+it("blocked hits don't cross-count between a permission and a path sharing one id", () => {
+  const input = build({ requires: { ...none, permissions: ["contacts"], paths: ["contacts"] }, enabled: true });
+  input.blocked = { "permission:contacts": 5 };
+  const [row] = pluginRows(input) as [PluginRow];
+  expect(row.blockedCount).toBe(5);
 });

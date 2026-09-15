@@ -38,6 +38,7 @@ export interface PluginRowsInput {
   connectedAccounts: string[];
   /** Paths that exist and the app can use; the caller stats them. */
   availablePaths: string[];
+  /** Block hit counts, keyed "kind:id" (e.g. "account:google"). */
   blocked: Record<string, number>;
 }
 
@@ -87,11 +88,12 @@ export function pluginRows(input: PluginRowsInput): PluginRow[] {
       ? unmetRequirements(manifest, input.inventory, input.connectedAccounts, input.availablePaths)
       : [];
     const status: PluginStatus = !enabled ? "off" : unmet.length > 0 ? "needs-setup" : "ready";
-    // blocked is a flat id -> count map shared across account/permission/path
-    // ids: connector ids, HostPermission ids and filesystem paths are
-    // distinct vocabularies that don't collide in practice, so one map
-    // keyed on id alone is fine here.
-    const blockedCount = status === "needs-setup" ? unmet.reduce((n, r) => n + (input.blocked[r.id] ?? 0), 0) : 0;
+    // blocked is keyed by "kind:id", not id alone: requires.paths accepts any
+    // string (see manifest.ts), so a path can legally read "contacts" or
+    // "google" and would otherwise collide with an account/permission id of
+    // the same name.
+    const blockedCount =
+      status === "needs-setup" ? unmet.reduce((n, r) => n + (input.blocked[`${r.kind}:${r.id}`] ?? 0), 0) : 0;
     return {
       name: manifest.name,
       isCli: manifest.exec.argv.length > 0,
