@@ -416,15 +416,14 @@ export class Executor {
     /** Overridden only by tests, which cannot wait out the real window. */
     private readonly reapAfterMs: number = REAP_AFTER_MS,
     /**
-     * Directories holding vendored provider CLIs, prepended to the child's
-     * PATH so `gog` resolves to the binary this app ships rather than to
-     * whatever the owner happens to have installed.
+     * The staged plugins' bin directories, prepended to the child's PATH so a
+     * plugin's own `exec.argv[0]` resolves to the binary this app ships rather
+     * than to whatever the owner happens to have installed.
      *
-     * Prepended rather than appended for that reason: the provider registry
-     * matches on a bare `argv[0]`, so which binary that name reaches is a
-     * security decision, not a convenience.
+     * Prepended rather than appended for that reason: which binary a bare name
+     * reaches is a security decision, not a convenience.
      */
-    private readonly vendorDirs: readonly string[] = [],
+    private readonly binDirs: readonly string[] = [],
   ) {
     fs.mkdirSync(scratchRoot, { recursive: true });
   }
@@ -459,11 +458,11 @@ export class Executor {
     // cwd must be readable for the process to even start; it was part of the
     // approved exec capability, so allowing it matches the approval.
     const workingDir = args.cwd !== undefined ? canonicalize(args.cwd) : scratch;
-    // The vendor dirs are always readable, because a vendored CLI lives inside
+    // The bin dirs are always readable, because a staged plugin lives inside
     // the .app bundle rather than under the owner's home — the broad home
     // grant in the profile does not reach it, so without this the child cannot
     // even exec the binary its PATH just resolved.
-    const reads = [...args.readPaths, ...this.vendorDirs, workingDir];
+    const reads = [...args.readPaths, ...this.binDirs, workingDir];
 
     // Frozen as the generator saw them: canonical now, and never resolved
     // again. A later `grants()` asks what THIS profile allowed, and a run
@@ -556,7 +555,7 @@ export class Executor {
         // its token, never the shape of the world its child runs in.
         PATH:
           [
-            ...this.vendorDirs,
+            ...this.binDirs,
             `${realHome}/.local/bin`,
             `${realHome}/bin`,
             `${realHome}/.cargo/bin`,

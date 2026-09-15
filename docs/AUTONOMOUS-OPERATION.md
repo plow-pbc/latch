@@ -152,7 +152,7 @@ skill says how to read it.
 Everything up to the artifact:
 
 - clone, install deps, `just build`, `npx vitest run`
-- `just fetch-gog` and any other vendored runtime fetch — digest-verified, no keychain
+- `just stage-plugins` and any other runtime fetch — digest-verified, no keychain
 - open a PR, iterate review, merge
 - **sign and notarize a build of `main`**, by dispatching
   `build-release-candidate.yml` — a human approves the `release` environment,

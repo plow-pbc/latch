@@ -16,9 +16,6 @@ import {
   providerRefusal,
   vendoredProvider,
 } from "../src/providers/registry.js";
-import { overrideVar } from "../src/providers/vendoredBinary.js";
-// @ts-expect-error — a build-time .mjs manifest with no type declarations.
-import { VENDORED } from "../../../scripts/vendored-providers.mjs";
 
 const gog = vendoredProvider(["plow-gog"])!;
 
@@ -170,25 +167,6 @@ describe("needsToken", () => {
   });
 });
 
-describe("overrideVar", () => {
-  it("folds what a shell cannot export", () => {
-    // A name Node reads back through process.env[...] perfectly well and no
-    // shell can `export`, so an unfolded one fails for the human only — and
-    // only on the second provider, which is the whole failure this prevents.
-    expect(overrideVar("gog")).toBe("DOMO_GOG");
-    expect(overrideVar("gh-cli")).toBe("DOMO_GH_CLI");
-    expect(overrideVar("gh.cli")).toBe("DOMO_GH_CLI");
-  });
-
-  it("stays unique across PROVIDERS, because the fold is not injective", () => {
-    // Those last two collide on purpose. Two rows differing only in
-    // punctuation would silently share one override: the resolver returns a
-    // path, just the wrong one.
-    const names = PROVIDERS.map((p) => overrideVar(p.command));
-    expect(new Set(names).size).toBe(PROVIDERS.length);
-  });
-});
-
 describe("impliesNetwork", () => {
   // Decides two things in two packages — the capability `mcp-server` builds,
   // and through `Executor.isReapable` whether the run escapes the silent-run
@@ -219,7 +197,7 @@ describe("the scope bound", () => {
   // gog enforces this ITSELF, before any network call. `refuse` still checks
   // the group because it does so before the dialog and the mint; this is the
   // layer beneath it. Per-version verdicts: step 5 of the checklist in
-  // `scripts/vendored-providers.mjs`.
+  // `apps/desktop/plugins/gog/README.md`.
   // Across the interpolation seam: the page an agent reads is built from the
   // same list, so an empty or doubled substitution shows up here rather than
   // in someone's transcript. The scope is stated in prose at ONE site now —
@@ -232,15 +210,6 @@ describe("the scope bound", () => {
     expect(manifest.exec.argv).toContain(bound);
     const named = gog.skill.body.match(/--enable-commands=[^`\s]*/g) ?? [];
     expect([...new Set(named)]).toEqual([bound]);
-
-    // The pin lives in two places until PR 2b retires the vendored copy;
-    // nothing else asserts they agree, and a bump to one without the other
-    // would ship a binary the manifest never verified, or a stale one.
-    const vendoredGog = VENDORED.find((p: { command: string }) => p.command === "gog");
-    expect(manifest.version).toBe(vendoredGog.version);
-    for (const arch of ["arm64", "x64"] as const) {
-      expect(manifest.runtime.binaries[0]!.sha256[arch]).toBe(vendoredGog.arches[arch].sha256);
-    }
   });
 
   // The invariant behind the bound, asserted on the lists rather than by
@@ -327,21 +296,17 @@ describe("the google-workspace skill", () => {
   });
 });
 
-describe("the runtime registry and the build-time manifest", () => {
-  // A provider added to one side only is the failure this catches, and it is
-  // the likeliest one: the two lists live in different halves of the repo
-  // because one needs a build and the other must not.
-  it("name the same binaries", () => {
-    // BINARIES, not commands: plow-gog runs the vendored gog, so the manifest
-    // stages one payload that two registry rows share.
-    const staged = VENDORED.map((p) => p.command);
-    const binaries = [...new Set(PROVIDERS.map((p) => p.plugin))];
-    expect([...staged].sort()).toEqual(binaries.sort());
-  });
-
-  // A row carrying one arch clears every other gate and reaches the other
-  // arch's users with no provider tools at all.
-  it("stage a binary for both macOS arches", () => {
-    for (const p of VENDORED) expect(Object.keys(p.arches).sort()).toEqual(["arm64", "x64"]);
+describe("the runtime registry and the bundled plugins", () => {
+  // A provider row naming a plugin this app does not bundle publishes a skill
+  // for a CLI no Mac can ever have staged, and refuses every invocation of it.
+  // The parse is the rest of the gate: a manifest missing either arch's url or
+  // digest is refused there, and a row carrying one arch would otherwise reach
+  // the other arch's users with no provider tools at all.
+  it("name a plugin the app bundles", () => {
+    for (const p of PROVIDERS) {
+      const raw = fs.readFileSync(
+        new URL(`../../../apps/desktop/plugins/${p.plugin}/latch-plugin.json`, import.meta.url), "utf8");
+      expect(parseManifest(raw).name).toBe(p.plugin);
+    }
   });
 });

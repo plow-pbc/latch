@@ -162,9 +162,9 @@ module.exports = async function afterPack(context) {
   // without Xcode CLT still installs, the key store falls back), but a RELEASE
   // that shipped without it would silently downgrade every new vault from the
   // SecItem access group to safeStorage — a guarantee this hook exists to
-  // enforce, not to hope for. Both arches checked for the same reason the
-  // providers are: a thin addon clears every gate on the packaging Mac and
-  // lands broken on the other arch's users.
+  // enforce, not to hope for. Both arches checked for the same reason a
+  // plugin's binaries are: a thin addon clears every gate on the packaging Mac
+  // and lands broken on the other arch's users.
   const keychainAddon = path.join(
     context.appOutDir, appName, "Contents", "Resources",
     "app.asar.unpacked", "node_modules", "@domo", "native-keychain", "build", "Release", "keychain.node",
@@ -177,22 +177,6 @@ module.exports = async function afterPack(context) {
   }
   assertUniversalMachO("native-keychain addon", keychainAddon, "rebuild it universal (binding.gyp forces both arches)");
 
-  // `await import`, because the manifest is ESM and this hook is not. It is the
-  // one list of providers; a literal here was true of one and false of two.
-  const { VENDORED } = await import("../../../scripts/vendored-providers.mjs");
-  for (const { command, arches } of VENDORED) {
-    const dir = path.join(context.appOutDir, appName, "Contents", "Resources", "providers", command);
-    const missingArches = Object.keys(arches).filter((a) => {
-      const binary = path.join(dir, a, command);
-      return !fs.existsSync(binary) || fs.statSync(binary).size === 0;
-    });
-    if (missingArches.length > 0) {
-      throw new Error(
-        `[afterPack] the packed app has no ${command} for ${missingArches.join(", ")} — ` +
-          `run \`just fetch-vendored ${command}\``,
-      );
-    }
-  }
   // The bundled plugins: every manifest under apps/desktop/plugins must have
   // its executable staged for both arches inside the packed app. Checked
   // against each declared binary's own name (what stageBinaries writes to

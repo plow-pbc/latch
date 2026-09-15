@@ -7,9 +7,10 @@
  * the `process.exec` path that already exists — capability, approval dialog,
  * always-allow rules, adversarial reviewer, seatbelt profile, audit.
  *
- * **This adds nothing to `tools/list`.** A new provider is a vendored binary, a
- * PATH entry, one row here, and a skill — the alternative it replaces was a
- * hand-written MCP tool surface per provider.
+ * **This adds nothing to `tools/list`.** A new provider is a bundled plugin
+ * (`apps/desktop/plugins/`, `packages/device-core/src/plugins/`), one row here,
+ * and a skill — the alternative it replaces was a hand-written MCP tool surface
+ * per provider.
  *
  * **The token rides `env`, never argv.** A token on a command line lands in the
  * calling agent's captured output and from there in a persisted transcript,

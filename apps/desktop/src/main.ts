@@ -38,11 +38,13 @@ import {
   requestFolderAccess,
   importLogins,
   importPreview,
+  loadPlugins,
   markAgainstVault,
   parseCredentialExchange,
   parseOnePux,
   type ParsedImport,
   parsePasswordExport,
+  pluginRoots,
   readCredentialsState,
   resolveBrowserRuntime,
   totpCode,
@@ -62,7 +64,7 @@ import { launchAtLoginState, LoginItemApi, setLaunchAtLogin } from "./loginItem.
 import { KeepAwake } from "./keepAwake.js";
 import { devIconScript } from "./devIcon.js";
 import { migrateLegacyHome } from "./migrateHome.js";
-import { buildMinter, vendorDirs } from "./providerWiring.js";
+import { buildMinter } from "./providerWiring.js";
 import { resolveInstancePaths } from "./paths.js";
 import { ImportStaging, passwordsAppCanHandOff } from "./importStaging.js";
 import { loadSettings, saveSettings, useCredentialCodec, WindowBounds } from "./settings.js";
@@ -2083,17 +2085,14 @@ app.whenReady().then(async () => {
     // How a vendored provider CLI is authorised. The exec path reports a
     // missing one through the approval dialog rather than throwing.
     buildMinter({ api: new PlowApi(apiBaseUrl), home }),
-    // Packaged: Contents/Resources/<command>/<arch>. From source:
-    // vendor/<command>. The RESOLVER is keyed on the command; staging is not
-    // — each provider still needs its own `fetch-<command>` recipe and its own
-    // extraResources entry, and gog is the only one written today.
-    // `app.getAppPath()` is <root>/apps/desktop
-    // under `just app`, not the workspace root, so the from-source lookup has
-    // to climb two levels or it can never resolve.
-    vendorDirs({
+    // The plugins this Mac has staged: packaged Resources, a from-source
+    // vendor tree (app.getAppPath() is apps/desktop under `just app`, so climb
+    // two), and the owner's installed ones under DOMO_HOME.
+    loadPlugins(pluginRoots({
       resourcesDir: process.resourcesPath,
       repoRoot: path.resolve(app.getAppPath(), "..", ".."),
-    }),
+      home,
+    })),
     plowPaymentApproval(new PlowApi(apiBaseUrl)),
     // How a refused operation is investigated (device-core's hostGate/): the
     // real probes over the owner's real home, with the compiled helper that
