@@ -47,9 +47,8 @@ export function pluginDirs(pluginsRoot: string, name: string) {
 
 /** `op` both names the error and becomes the subcommand, so the two can't drift apart. */
 async function git(op: string, rest: string[], cwd?: string): Promise<void> {
-  const args = [...(cwd ? ["-C", cwd] : []), op, ...rest];
   try {
-    await run("/usr/bin/git", args, { cwd, env: { ...process.env, GIT_TERMINAL_PROMPT: "0" } });
+    await run("/usr/bin/git", [op, ...rest], { cwd, env: { ...process.env, GIT_TERMINAL_PROMPT: "0" } });
   } catch {
     throw new PluginError(`git ${op} failed`); // the URL/ref is the caller's; never quote it
   }
