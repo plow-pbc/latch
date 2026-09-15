@@ -107,10 +107,23 @@ async function stageBinary(b: PluginManifest["runtime"]["binaries"][number], dir
     // List before extracting: an absolute entry, or one a `..` climbs out
     // with, is a write outside the plugin's own tree — a new capability a
     // binaries-only plugin (no postinstall, no source install) never opted
-    // into. Never quote the entry; it's third-party archive text.
-    const { stdout } = await run("/usr/bin/tar", ["-tf", tmp]);
-    for (const entry of stdout.split("\n").map((line) => line.trim()).filter(Boolean)) {
-      const resolved = path.resolve(extracted, entry);
+    // into. `-tf` alone can't see entry TYPE, so a symlink (or hardlink)
+    // entry whose NAME resolves safely but whose TARGET doesn't is invisible
+    // to a name-only check — the classic tar-slip: plant a symlink, then a
+    // second entry that writes "through" it. `-tvf`'s mode column's first
+    // character is the type (bsdtar: `l` symlink, `h` hardlink), so refuse
+    // both outright rather than trying to resolve targets. A line this
+    // parser can't classify is refused, not allowed — fail closed. Never
+    // quote the entry; it's third-party archive text.
+    const { stdout } = await run("/usr/bin/tar", ["-tvf", tmp]);
+    const lineShape = /^(\S+)(?:\s+\S+){7}\s+(.*)$/;
+    for (const line of stdout.split("\n")) {
+      if (!line.trim()) continue;
+      const m = lineShape.exec(line);
+      if (!m) throw new PluginError(`binary ${b.name} archive has an entry that could not be classified`);
+      const type = m[1]![0];
+      if (type === "l" || type === "h") throw new PluginError(`binary ${b.name} archive contains a symlink or hardlink entry`);
+      const resolved = path.resolve(extracted, m[2]!);
       if (resolved !== extracted && !resolved.startsWith(extracted + path.sep)) {
         throw new PluginError(`binary ${b.name} archive has an entry outside its extraction directory`);
       }

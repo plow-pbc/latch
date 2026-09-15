@@ -149,6 +149,65 @@ describe("installPlugin", () => {
     expect(fs.existsSync(escapedFile)).toBe(false); // never extracted outside the extraction dir
   });
 
+  it("refuses an archive with a symlink entry, even when every entry NAME resolves inside", async () => {
+    // The tar-slip a name-only containment check can't see: entry "link" is
+    // a symlink whose NAME resolves safely inside the extraction dir but
+    // whose TARGET is outside, and entry "link/payload" is a regular file
+    // that, at `tar -xf` time, writes THROUGH that symlink to wherever it
+    // points. `tar -tf` reports neither entry's type, so both names pass a
+    // name-only check. Built with real tar, not crafted bytes.
+    const deep = fs.mkdtempSync(path.join(os.tmpdir(), "latch-archive-"));
+    const marker = fs.mkdtempSync(path.join(os.tmpdir(), "latch-marker-"));
+    fs.writeFileSync(path.join(deep, "tool"), "#!/bin/sh\necho tool $*\n", { mode: 0o755 });
+    fs.symlinkSync(marker, path.join(deep, "link"));
+    fs.writeFileSync(path.join(deep, "link", "payload"), "placeholder, so tar has something to archive");
+    const escapedFile = path.join(marker, "payload");
+    const tgz = path.join(deep, "tool.tar.gz");
+    execFileSync("/usr/bin/tar", ["-czf", tgz, "-C", deep, "tool", "link", "link/payload"]);
+    fs.rmSync(escapedFile); // extraction must not recreate it outside the extraction dir
+    const archiveBytes = fs.readFileSync(tgz);
+    const archiveSha = crypto.createHash("sha256").update(archiveBytes).digest("hex");
+    const binary = {
+      runtime: {
+        binaries: [{ name: "tool", version: "1", url: { arm64: "https://x/tool.tar.gz", x64: "https://x/tool.tar.gz" }, sha256: { arm64: archiveSha, x64: archiveSha } }],
+        sources: [],
+      },
+    };
+    const r = root();
+    await expect(installPlugin(r, fixturePlugin(binary), deps(fakeFetch(archiveBytes)))).rejects.toThrow(
+      new PluginError("binary tool archive contains a symlink or hardlink entry"),
+    );
+    expect(fs.existsSync(pluginDirs(r, "fix").root)).toBe(false);
+    expect(fs.existsSync(escapedFile)).toBe(false); // never extracted outside the extraction dir
+  });
+
+  it("refuses an archive entry with an absolute path", async () => {
+    const srcDir = fs.mkdtempSync(path.join(os.tmpdir(), "latch-archive-"));
+    const marker = fs.mkdtempSync(path.join(os.tmpdir(), "latch-marker-"));
+    fs.writeFileSync(path.join(srcDir, "tool"), "#!/bin/sh\necho tool $*\n", { mode: 0o755 });
+    const escapedFile = path.join(marker, "evil");
+    fs.writeFileSync(escapedFile, "placeholder, so tar has something to archive");
+    const tgz = path.join(srcDir, "tool.tar.gz");
+    // `tar -P` keeps the entry name's leading "/" on creation (bsdtar
+    // strips it by default) — exactly the shape `path.resolve` must catch.
+    execFileSync("/usr/bin/tar", ["-P", "-czf", tgz, "-C", srcDir, "tool", escapedFile]);
+    fs.rmSync(escapedFile);
+    const archiveBytes = fs.readFileSync(tgz);
+    const archiveSha = crypto.createHash("sha256").update(archiveBytes).digest("hex");
+    const binary = {
+      runtime: {
+        binaries: [{ name: "tool", version: "1", url: { arm64: "https://x/tool.tar.gz", x64: "https://x/tool.tar.gz" }, sha256: { arm64: archiveSha, x64: archiveSha } }],
+        sources: [],
+      },
+    };
+    const r = root();
+    await expect(installPlugin(r, fixturePlugin(binary), deps(fakeFetch(archiveBytes)))).rejects.toThrow(
+      new PluginError("binary tool archive has an entry outside its extraction directory"),
+    );
+    expect(fs.existsSync(pluginDirs(r, "fix").root)).toBe(false);
+    expect(fs.existsSync(escapedFile)).toBe(false); // never extracted outside the extraction dir
+  });
+
   it("clones a source at its commit and runs its install argv with runtime/bin on PATH", async () => {
     const src = fixturePlugin(); // any git repo will do as a source
     const commit = fs.readFileSync(path.join(src, ".git", "refs", "heads", fs.readdirSync(path.join(src, ".git", "refs", "heads"))[0]), "utf8").trim();
