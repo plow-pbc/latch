@@ -17,7 +17,7 @@ function tmp(): string {
 const SCRIPT = "#!/bin/sh\necho hi\n";
 
 describe("loadPlugins", () => {
-  it("loads a staged plugin and names its bin dir", () => {
+  it("loads a plugin with no declared binaries, present on its manifest alone", () => {
     const root = tmp();
     const dir = fakePlugin(root, MINIMAL, SCRIPT);
     const [p] = loadPlugins([root]);
