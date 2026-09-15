@@ -1,5 +1,5 @@
 /**
- * plow-gog: the multi-account front for the vendored gog binary.
+ * plow-gog: the multi-account front for the bundled gog plugin's binary.
  *
  * Same argv grammar, same gate, same belt — the difference is account reach.
  * Curated reads fan out across every connected Google account and come back
@@ -51,7 +51,7 @@ export type PlowGogPlan =
 /**
  * The curated fan-out reads, by canonical group then verb — including gog's
  * own verb aliases (`search (find,query,ls,list)`, `events (list,ls)`),
- * verified against the vendored binary's help at 0.36.0. Everything else
+ * verified against the staged binary's help at 0.36.0. Everything else
  * stays single-account.
  */
 const FANOUT: Readonly<Record<string, Readonly<Record<string, PlowGogSort>>>> = {
@@ -68,7 +68,7 @@ const FANOUT: Readonly<Record<string, Readonly<Record<string, PlowGogSort>>>> = 
 
 /**
  * The one shape whose run is conflict-gated: `calendar create` and its
- * aliases (verified against the vendored binary's help at 0.36.0).
+ * aliases (verified against the staged binary's help at 0.36.0).
  * Deliberately the ONLY verb recognition outside the fan-out table — there is
  * no read-vs-write classification to mirror gog's grammar with, because with
  * more than one account connected EVERY single-account command requires
@@ -123,7 +123,7 @@ function accountAt(
  * `automation.exit_codes`) and maps Google's own failures onto that same
  * table, so the NUMBER carries the diagnosis and the child's output — which is
  * service-fetched text — never has to travel in a reason string (the
- * `gogFlags.ts` rule). Verified against the vendored binary at 0.36.0.
+ * `gogFlags.ts` rule). Verified against the staged binary at 0.36.0.
  *
  * Without this the only account-level diagnosis was `gog exited 2`, and a
  * fan-out that came back empty for every account could not be told apart from

@@ -21,12 +21,6 @@ const afterPack = createRequire(import.meta.url)("../build/afterPack.cjs") as (
  * and the vault ships no payload (TypeScript in dist/ plus a Keychain item). */
 const PAYLOADS = ["camoufox"];
 
-// @ts-expect-error — a build-time .mjs with no type declarations.
-import { VENDORED } from "../../../scripts/vendored-providers.mjs";
-
-/** Every vendored CLI the packed app must carry, and the arches it stages. */
-const PROVIDERS: { command: string; arches: Record<string, unknown> }[] = VENDORED;
-
 /** Every bundled plugin (apps/desktop/plugins/<name>), read the same way the
  * hook does: from disk, not a fixture list, so a new plugin's manifest is
  * covered here without a matching edit to this file. */
@@ -59,16 +53,6 @@ describe("the packaging hook refuses before it signs", () => {
 
   const resourcesDir = () => path.join(dir, "Plow Latch.app", "Contents", "Resources");
   const runtimeDir = () => path.join(resourcesDir(), "browser-runtime");
-
-  /** Every provider as production ships it: one thin binary per arch. */
-  const packProviders = () => {
-    for (const { command, arches } of PROVIDERS) {
-      for (const arch of Object.keys(arches)) {
-        fs.mkdirSync(path.join(resourcesDir(), "providers", command, arch), { recursive: true });
-        fs.writeFileSync(path.join(resourcesDir(), "providers", command, arch, command), "#!/bin/sh\n");
-      }
-    }
-  };
 
   /** Every bundled plugin as production stages it: one executable per binary,
    * per arch, at runtime/<arch>/bin/<binary name> — what stageBinaries writes. */
@@ -117,7 +101,6 @@ describe("the packaging hook refuses before it signs", () => {
   /** A packed app whose payloads all carry something, minus `omit`. */
   const pack = (omit?: string) => {
     const runtime = runtimeDir();
-    packProviders();
     packPlugins();
     if (omit !== "keychain-addon") packKeychainAddon();
     for (const payload of PAYLOADS) {
@@ -291,69 +274,50 @@ describe("the packaging hook refuses before it signs", () => {
     });
   });
 
-  // One expectation over every way an arch can be unusable, for every arch of
-  // every row: absent, empty and stray-file-only are the same failure to the
-  // gate — the binary is not there.
-  it.each(
-    PROVIDERS.flatMap(({ command, arches }) =>
-      Object.keys(arches).flatMap((arch) =>
-        [
-          { how: "absent", damage: (d: string) => fs.rmSync(d, { recursive: true, force: true }) },
-          { how: "a zero-byte binary", damage: (d: string) => fs.writeFileSync(path.join(d, command), "") },
-          {
-            how: "an arch folder carrying only a stray file",
-            damage: (d: string) => {
-              fs.rmSync(path.join(d, command));
-              fs.writeFileSync(path.join(d, ".DS_Store"), "junk");
-            },
-          },
-        ].map((c) => ({ ...c, command, arch })),
-      ),
-    ),
-  )("refuses $command/$arch when it is $how", async ({ command, arch, damage }) => {
-    // Silent half-install: a tree carrying only the packaging Mac's arch clears
-    // every other gate and reaches the other arch's users with nothing.
-    pack();
-    damage(path.join(resourcesDir(), "providers", command, arch));
-    await expect(afterPack(contextFor(dir))).rejects.toThrow(
-      new RegExp(`no ${command} for ${arch}`),
-    );
-  });
-
-  it.each(PROVIDERS)("names every arch $command is missing, not just the first", async (p) => {
-    // One run of `just fetch-vendored` fixes them all; being told about one
-    // arch at a time means one package run per arch to learn that.
-    //
-    // MEMBERSHIP, not a joined string. The claim is that every missing arch is
-    // named — a hook that sorted them, or listed them one per line, would still
-    // satisfy it. Asserting the join would pin the row's declaration order and
-    // the separator, and fail a correct hook.
-    pack();
-    fs.rmSync(path.join(resourcesDir(), "providers", p.command), { recursive: true, force: true });
-    const failure = await afterPack(contextFor(dir)).catch((e: Error) => e);
-    expect(failure).toBeInstanceOf(Error);
-    const message = (failure as Error).message;
-    // Anchored to the arch gate, then membership within it. Without the anchor
-    // any error naming both arches passes — a refusal enumerating missing
-    // binary PATHS would, without the gate ever emitting its summary.
-    expect(message).toContain(`no ${p.command} for`);
-    for (const arch of Object.keys(p.arches)) expect(message).toContain(arch);
-  });
-
-  // Same silent-half-install hazard as a vendored provider, checked against
-  // the binary's own name (what stageBinaries writes to bin/), not argv[0].
+  // One expectation over every way a staged binary can be unusable, for every
+  // binary of every bundled plugin. The silent half-install is the hazard: a
+  // tree carrying only the packaging Mac's arch clears every other gate and
+  // reaches the other arch's users with nothing. Checked against the binary's
+  // own name (what stageBinaries writes to bin/), not argv[0] — and on the
+  // BINARY with a size, so a zero-byte file left by a half-written extract
+  // does not pass. `arches` is what the refusal must name: the both-missing
+  // row is why it is the joined list rather than the first one found.
+  //
+  // The `absent` rows are also the stray-file case the hook's own comment
+  // names: they take the binary out and leave the directory standing, which
+  // is exactly what a `bare` check on the directory would wave through.
   it.each(
     PLUGINS.flatMap(({ name, binaries }) =>
-      binaries.flatMap((binary) =>
-        ["arm64", "x64"].map((arch) => ({ name, binary: binary.name, arch })),
-      ),
+      binaries.flatMap((binary) => {
+        const bin = (root: string, arch: string) =>
+          path.join(root, "runtime", arch, "bin", binary.name);
+        return [
+          ...["arm64", "x64"].map((arch) => ({
+            name, binary: binary.name, how: `absent for ${arch}`, arches: arch,
+            damage: (root: string) => fs.rmSync(bin(root, arch)),
+          })),
+          {
+            name, binary: binary.name, how: "a zero-byte binary for arm64", arches: "arm64",
+            damage: (root: string) => fs.writeFileSync(bin(root, "arm64"), ""),
+          },
+          {
+            name, binary: binary.name, how: "absent for both arches", arches: "arm64, x64",
+            damage: (root: string) => {
+              for (const arch of ["arm64", "x64"]) fs.rmSync(bin(root, arch));
+            },
+          },
+        ];
+      }),
     ),
-  )("refuses $name/$binary/$arch when it is missing", async ({ name, binary, arch }) => {
+  )("refuses $name/$binary when it is $how", async ({ name, binary, arches, damage }) => {
     pack();
-    fs.rmSync(path.join(resourcesDir(), "plugins", name, "runtime", arch, "bin", binary));
-    await expect(afterPack(contextFor(dir))).rejects.toThrow(
-      new RegExp(`no ${name} plugin's ${binary} for ${arch}`),
-    );
+    damage(path.join(resourcesDir(), "plugins", name));
+    const failure = await afterPack(contextFor(dir)).catch((e: Error) => e);
+    expect(failure).toBeInstanceOf(Error);
+    // Anchored to the arch gate: without it, any error naming both arches
+    // passes — a refusal enumerating missing binary PATHS would, without the
+    // gate ever emitting its summary.
+    expect((failure as Error).message).toContain(`no ${name} plugin's ${binary} for ${arches}`);
   });
 
   it("refuses a camoufox tree a fuse left without a bundle", async () => {

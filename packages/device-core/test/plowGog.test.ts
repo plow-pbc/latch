@@ -482,7 +482,7 @@ describe("mergeFanout", () => {
 
 /**
  * gog's published exit table (`gog schema --json` → `automation.exit_codes`),
- * verified against the vendored binary at 0.36.0. The sentences are fixed:
+ * verified against the staged binary at 0.36.0. The sentences are fixed:
  * the child's own output is service-fetched text and never reaches a reason.
  */
 describe("gog exit reasons", () => {

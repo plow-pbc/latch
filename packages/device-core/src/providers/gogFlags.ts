@@ -24,9 +24,9 @@
  * path instead of the old blanket refusal making attachments impossible.
  *
  * What a bumper has to DO is not written here. Every bump runs through
- * `scripts/vendored-providers.mjs`, whose checklist carries the digests, the
- * probes to re-run by hand, and what the automated assertion does and does not
- * cover. A second copy here is a second thing to keep in step.
+ * `apps/desktop/plugins/gog/README.md`, whose checklist carries the digests,
+ * the probes to re-run by hand, and what the automated assertion does and does
+ * not cover. A second copy here is a second thing to keep in step.
  */
 
 import type { ProviderFileArg } from "./registry.js";
@@ -74,7 +74,7 @@ export function reservedFlagIn(argv: readonly string[]): string | null {
  *
  * Rules, not a leaf list: every input-file flag ends in `-file`, `--attach` is
  * its one exceptional spelling, and gog's output paths start with `--out`.
- * The rules were verified across the pinned CLI in the vendored-provider bump
+ * The rules were verified across the pinned CLI in the gog plugin's bump
  * checklist. `--` ends this scan because everything after it is positional.
  */
 export function fileArgsIn(argv: readonly string[]): ProviderFileArg[] {

@@ -40,7 +40,7 @@ echo "main checkout: $main_root"
 # browser stack — browserRuntime.ts refuses to offer browsing without either, so
 # the pool (packages/browser-server/fingerprints.json, gitignored build output)
 # is cloned alongside the browser, not left for a launch to discover missing.
-for dir in vendor/camoufox-browser vendor/downloads vendor/providers vendor/plugins packages/browser-server/fingerprints.json; do
+for dir in vendor/camoufox-browser vendor/downloads vendor/plugins packages/browser-server/fingerprints.json; do
   if [[ -e "$dir" ]]; then
     echo "$dir already present — leaving it alone"
   elif [[ -e "$main_root/$dir" ]]; then
@@ -48,7 +48,7 @@ for dir in vendor/camoufox-browser vendor/downloads vendor/providers vendor/plug
     # -c uses APFS clonefile; fall back to a plain copy on other filesystems.
     cp -Rpc "$main_root/$dir" "$dir" 2>/dev/null || cp -Rp "$main_root/$dir" "$dir"
   else
-    echo "note: $main_root/$dir does not exist — skipping (run the matching just recipe later if you need it — fetch-browser, fetch-vendored or stage-plugins)"
+    echo "note: $main_root/$dir does not exist — skipping (run the matching just recipe later if you need it — fetch-browser or stage-plugins)"
   fi
 done
 

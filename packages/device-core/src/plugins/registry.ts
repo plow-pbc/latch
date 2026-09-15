@@ -4,10 +4,12 @@
  * One on-disk shape for every root: `<root>/<name>/latch-plugin.json`, and
  * `<root>/<name>/runtime/<arch>/bin/<binary name>` for each binary the
  * manifest declares — exactly what stageBinaries writes. A plugin is present
- * when its manifest parses AND every declared binary is staged there; a
- * plugin with none (its argv[0] falls through to PATH, or names a provider
- * like bare `gog`) is present on its manifest alone. Staged-ness says
- * nothing about exec.argv[0] — that's resolved at exec time, not here.
+ * when its manifest parses AND every declared binary is staged there; a plugin
+ * declaring none (its argv[0] falls through to PATH) is present on its
+ * manifest alone. Staged-ness says nothing about exec.argv[0] — that's
+ * resolved at exec time, not here: a plugin driven by a provider row
+ * (plow-gog) has its argv[0] joined under `binDir` by the exec path, so that
+ * one must be relative and name a staged binary.
  */
 import fs from "node:fs";
 import path from "node:path";
@@ -62,7 +64,15 @@ export function loadPlugins(roots: readonly string[]): StagedPlugin[] {
  */
 export function pluginRoots(opts: { resourcesDir?: string; repoRoot?: string; home: string }): string[] {
   const roots: string[] = [];
-  if (process.env.DOMO_PLUGINS) roots.push(path.resolve(process.env.DOMO_PLUGINS));
+  if (process.env.DOMO_PLUGINS) {
+    // The operator NAMED this one, so a missing directory is a wrong path, not
+    // an empty root: refuse it rather than quietly reading the next root.
+    const named = path.resolve(process.env.DOMO_PLUGINS);
+    if (!fs.statSync(named, { throwIfNoEntry: false })?.isDirectory()) {
+      throw new PluginError("DOMO_PLUGINS must name an existing directory");
+    }
+    roots.push(named);
+  }
   if (opts.resourcesDir) roots.push(path.join(opts.resourcesDir, "plugins"));
   if (opts.repoRoot) roots.push(path.join(opts.repoRoot, "vendor", "plugins"));
   roots.push(path.join(opts.home, "plugins"));

@@ -38,11 +38,14 @@ import {
   requestFolderAccess,
   importLogins,
   importPreview,
+  loadPlugins,
   markAgainstVault,
   parseCredentialExchange,
   parseOnePux,
   type ParsedImport,
   parsePasswordExport,
+  PluginError,
+  pluginRoots,
   readCredentialsState,
   resolveBrowserRuntime,
   totpCode,
@@ -62,7 +65,7 @@ import { launchAtLoginState, LoginItemApi, setLaunchAtLogin } from "./loginItem.
 import { KeepAwake } from "./keepAwake.js";
 import { devIconScript } from "./devIcon.js";
 import { migrateLegacyHome } from "./migrateHome.js";
-import { buildMinter, vendorDirs } from "./providerWiring.js";
+import { buildMinter } from "./providerWiring.js";
 import { resolveInstancePaths } from "./paths.js";
 import { ImportStaging, passwordsAppCanHandOff } from "./importStaging.js";
 import { loadSettings, saveSettings, useCredentialCodec, WindowBounds } from "./settings.js";
@@ -2069,6 +2072,30 @@ app.whenReady().then(async () => {
   // live pre-cutover app (a sibling worktree's `just app`) has that app as
   // its parent and is left alone.
   await reapOrphanedLegacyVaultServers();
+  // The plugins this Mac has staged: packaged Resources, a from-source vendor
+  // tree (app.getAppPath() is apps/desktop under `just app`, so climb two),
+  // and the owner's installed ones under DOMO_HOME.
+  //
+  // Read HERE, not inside the constructor call below: a refused manifest (a
+  // corrupt bundled one, or a DOMO_PLUGINS pointed somewhere wrong) throws,
+  // and this runs inside `app.whenReady().then(...)`, which has no `.catch` —
+  // the rejection is swallowed and the launch dies with no device, no relay
+  // and nothing said. Failing fast is right; failing NAMELESS is not.
+  // Printing one is safe: a PluginError's message is a fixed sentence naming a
+  // field, except the argv-overlap one, which quotes manifest text — and both
+  // reach the owner directly (here, launch-time stderr; otherwise the
+  // installer's caller), never the audit log or an agent.
+  let plugins;
+  try {
+    plugins = loadPlugins(pluginRoots({
+      resourcesDir: process.resourcesPath,
+      repoRoot: path.resolve(app.getAppPath(), "..", ".."),
+      home,
+    }));
+  } catch (e) {
+    if (e instanceof PluginError) console.error(`[plugins] ${e.message}`);
+    throw e;
+  }
   // Packaged: the browser runtime lives in Contents/Resources/browser-runtime
   // (extraResources). In dev the resolver falls back to the repo's vendor/.
   device = new DeviceAgent(
@@ -2080,20 +2107,10 @@ app.whenReady().then(async () => {
     // knows it. `home` above is the app's own (branch-suffixed in a from-source
     // run); this is where WhatsApp and everything else of theirs actually lives.
     os.homedir(),
-    // How a vendored provider CLI is authorised. The exec path reports a
-    // missing one through the approval dialog rather than throwing.
+    // How a provider is authorised. The exec path reports a missing one
+    // through the approval dialog rather than throwing.
     buildMinter({ api: new PlowApi(apiBaseUrl), home }),
-    // Packaged: Contents/Resources/<command>/<arch>. From source:
-    // vendor/<command>. The RESOLVER is keyed on the command; staging is not
-    // — each provider still needs its own `fetch-<command>` recipe and its own
-    // extraResources entry, and gog is the only one written today.
-    // `app.getAppPath()` is <root>/apps/desktop
-    // under `just app`, not the workspace root, so the from-source lookup has
-    // to climb two levels or it can never resolve.
-    vendorDirs({
-      resourcesDir: process.resourcesPath,
-      repoRoot: path.resolve(app.getAppPath(), "..", ".."),
-    }),
+    plugins,
     plowPaymentApproval(new PlowApi(apiBaseUrl)),
     // How a refused operation is investigated (device-core's hostGate/): the
     // real probes over the owner's real home, with the compiled helper that

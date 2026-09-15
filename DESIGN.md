@@ -101,8 +101,10 @@ Design points:
   spin-up) become the intent's `plan_context`.
 - **Network default:** `run_command` denies network unless `network: true` was
   explicitly declared (and therefore approved). The one exception is a
-  vendored provider command (`packages/device-core/src/providers/registry.ts`,
-  which owns the account of what a provider is): anything that is not a help
+  provider command, which is driven by a bundled plugin
+  (`apps/desktop/plugins/`, `packages/device-core/src/plugins/`;
+  `packages/device-core/src/providers/registry.ts` owns the account of what a
+  provider is — plow-gog is the one today): anything that is not a help
   invocation — `--help`/`-h` last, with no `--` before it — reaches its
   service by definition, so the capability is added regardless of the field —
   omitted, or explicitly `false`. Nothing is hidden by this; it is in the
@@ -741,12 +743,12 @@ it closes.
 `SkillRegistry`); agents discover them via `plow_list_skills` and read them
 with `plow_read_skill`. Several ship built in, and the invariant is that **each
 registers only when the thing it describes is actually here, as of launch** — a
-resolved browser runtime, a message store present on disk, a vendored provider's
-staged binary. The `DeviceAgent` constructor (`deviceAgent.ts`) is the
+resolved browser runtime, a message store present on disk, the staged plugin a
+provider drives. The `DeviceAgent` constructor (`deviceAgent.ts`) is the
 registration site and the canonical list of what ships; this paragraph names no
 inventory, so a new skill cannot make it drift. A skill naming a capability this
 Mac lacks is a guaranteed denial, so its absence is the honest answer instead. Every probe runs once, in
-the `DeviceAgent` constructor — installing WhatsApp, or staging a provider,
+the `DeviceAgent` constructor — installing WhatsApp, or staging a plugin,
 after launch needs a restart to publish the skill. A provider carries its skill
 on its registry row rather than being registered under a literal elsewhere, so
 the provider's name has one spelling and a rename cannot silently unpublish it.

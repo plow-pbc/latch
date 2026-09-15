@@ -75,16 +75,8 @@ test-vectors:
     npx vitest run packages/protocol packages/transport
 
 # ---------------------------------------------------------------------------
-# Vendored provider CLIs — see packages/device-core/src/providers/
+# Bundled plugins — see packages/device-core/src/plugins/
 # ---------------------------------------------------------------------------
-
-# Fetch a pinned provider CLI for both macOS arches into
-# vendor/providers/<name>/<arch>/.
-# The sha256 is verified before extraction. Needed for a from-source run of that
-# provider's tools, and by `just package`. Defaults to every provider.
-# What is pinned, and how to bump it: scripts/vendored-providers.mjs
-fetch-vendored name="--all":
-    node scripts/fetch-vendored.mjs {{name}}
 
 # Stage every bundled plugin (apps/desktop/plugins/<name>) into
 # vendor/plugins/<name>/runtime/<arch>/bin, both arches, sha256-verified,
@@ -172,13 +164,11 @@ package-unnotarized: (_package "domo-notary" "-c.mac.notarize=false")
 # have no tag. --publish never: the generic provider is download-only; uploads
 # belong to the release scripts, never electron-builder.
 _package profile flags: build
-    # Providers first: small downloads that succeed or fail in seconds, where a
-    # checkout that has not fetched them would otherwise pay the whole browser
+    # Plugins first: small downloads that succeed or fail in seconds, where a
+    # checkout that has not staged them would otherwise pay the whole browser
     # fetch, build and universal merge before failing on a missing
-    # extraResources source. fetch-vendored is idempotent — exits early on a
-    # tree already at the pin; stage-plugins re-extracts every time (its
-    # archive cache is what's cheap, not the runtime tree).
-    node scripts/fetch-vendored.mjs --all
+    # extraResources source. stage-plugins re-extracts every time (its archive
+    # cache is what's cheap, not the runtime tree).
     node scripts/stage-plugins.mjs --all
     node scripts/build-browser-runtime.mjs --browser-both
     @build="$(date -u +%Y%m%d%H%M)"; \

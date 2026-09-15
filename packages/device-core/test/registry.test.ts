@@ -13,47 +13,41 @@ import {
   impliesNetwork,
   needsToken,
   PROVIDERS,
-  vendoredProvider,
+  providerFor,
+  providerRefusal,
 } from "../src/providers/registry.js";
-import { overrideVar } from "../src/providers/vendoredBinary.js";
-// @ts-expect-error — a build-time .mjs manifest with no type declarations.
-import { VENDORED } from "../../../scripts/vendored-providers.mjs";
 
-const gog = vendoredProvider(["gog"])!;
+const gog = providerFor(["plow-gog"])!;
 
-describe("vendoredProvider", () => {
-  it("matches a bare command name", () => {
-    expect(vendoredProvider(["plow-gog", "gmail", "search"])?.command).toBe("plow-gog");
+describe("providerFor", () => {
+  it("matches a bare command name, whether or not the plugin is staged", () => {
+    // Staging is not consulted here on purpose. Returning null for an unstaged
+    // provider would let the command fall through to the ordinary exec path
+    // and run whatever the owner happens to have on their own PATH —
+    // unbelted, unrefused, against their own credentials. The device turns an
+    // unstaged provider into a refusal instead.
+    expect(providerFor(["plow-gog", "gmail", "search"])?.command).toBe("plow-gog");
   });
 
-  it("routes the bundled binary's own name to the provider that fronts it", () => {
-    // An agent that learned `gog` before plow-gog existed keeps working and
-    // gets the multi-account fan-out — one provider, whichever spelling. The
-    // skill advertises only `plow-gog`; there is no `gog` row to find.
-    expect(vendoredProvider(["gog", "gmail", "search"])).toBe(vendoredProvider(["plow-gog"]));
-    expect(PROVIDERS.map((p) => p.command)).toEqual(["plow-gog"]);
+  it("does NOT match the plugin's own name: bare gog is refused, naming plow-gog", () => {
+    expect(providerFor(["gog", "gmail", "search", "q"])).toBeNull();
+    expect(providerRefusal(["gog", "gmail", "search", "q"])).toBe("gog is driven through plow-gog");
+    expect(providerRefusal(["plow-gog", "gmail", "search", "q"])).toBeNull();
+    expect(providerRefusal(["/bin/echo", "gog"])).toBeNull();
   });
 
   it("does NOT match a path", () => {
-    // The vendored binary is reached through the PATH this Mac controls.
+    // The plugin's binary is reached by absolute path under its own bin dir.
     // Honouring a caller-supplied path would let an agent point the mint at a
     // binary of its choosing.
     for (const argv of [["/usr/local/bin/gog"], ["./gog"], ["../gog"]]) {
-      expect(vendoredProvider(argv)).toBeNull();
+      expect(providerFor(argv)).toBeNull();
     }
   });
 
   it("is null for an ordinary command, and for nothing at all", () => {
-    expect(vendoredProvider(["ls", "-la"])).toBeNull();
-    expect(vendoredProvider([])).toBeNull();
-  });
-
-  it("matches the NAME regardless of staging, so an unstaged one is refused rather than passed through", () => {
-    // Returning null for an unstaged provider would let the command fall
-    // through to the ordinary exec path and run whatever `gog` the owner
-    // happens to have on their own PATH — unbelted, unrefused, against their
-    // own credentials. The device turns this into a refusal instead.
-    expect(vendoredProvider(["gog", "gmail", "search", "q"])).not.toBeNull();
+    expect(providerFor(["ls", "-la"])).toBeNull();
+    expect(providerFor([])).toBeNull();
   });
 });
 
@@ -170,40 +164,24 @@ describe("needsToken", () => {
   });
 });
 
-describe("overrideVar", () => {
-  it("folds what a shell cannot export", () => {
-    // A name Node reads back through process.env[...] perfectly well and no
-    // shell can `export`, so an unfolded one fails for the human only — and
-    // only on the second provider, which is the whole failure this prevents.
-    expect(overrideVar("gog")).toBe("DOMO_GOG");
-    expect(overrideVar("gh-cli")).toBe("DOMO_GH_CLI");
-    expect(overrideVar("gh.cli")).toBe("DOMO_GH_CLI");
-  });
-
-  it("stays unique across PROVIDERS, because the fold is not injective", () => {
-    // Those last two collide on purpose. Two rows differing only in
-    // punctuation would silently share one override: the resolver returns a
-    // path, just the wrong one.
-    const names = PROVIDERS.map((p) => overrideVar(p.command));
-    expect(new Set(names).size).toBe(PROVIDERS.length);
-  });
-});
-
 describe("impliesNetwork", () => {
   // Decides two things in two packages — the capability `mcp-server` builds,
   // and through `Executor.isReapable` whether the run escapes the silent-run
   // reaper. Spelled twice, one copy dropped the provider gate inside a single
   // commit and approved network for `/bin/echo`.
   it.each([
-    [["gog", "gmail", "search", "q"], true],
-    [["gog", "--help"], false],
-    [["gog", "gmail", "-h"], false],
+    [["plow-gog", "gmail", "search", "q"], true],
+    [["plow-gog", "--help"], false],
+    [["plow-gog", "gmail", "-h"], false],
     // TRAILING only, which is the subtlety both the agent-facing sentence and
     // `Executor.isReapable` now rest on: --help anywhere else is a real
     // invocation, and this one runs a search.
-    [["gog", "gmail", "search", "--help", "q"], true],
-    [["gog", "gmail", "search", "--", "-h"], true],
-    [["gog"], true],
+    [["plow-gog", "gmail", "search", "--help", "q"], true],
+    [["plow-gog", "gmail", "search", "--", "-h"], true],
+    [["plow-gog"], true],
+    // The plugin's own name is not a provider row, so it implies nothing —
+    // `providerRefusal` has already refused it by the time this is asked.
+    [["gog", "gmail", "search", "q"], false],
     [["/bin/echo", "x"], false],
     [["/usr/local/bin/gog", "gmail", "search"], false],
     [[], false],
@@ -216,20 +194,11 @@ describe("the scope bound", () => {
   // gog enforces this ITSELF, before any network call. `refuse` still checks
   // the group because it does so before the dialog and the mint; this is the
   // layer beneath it. Per-version verdicts: step 5 of the checklist in
-  // `scripts/vendored-providers.mjs`.
+  // `apps/desktop/plugins/gog/README.md`.
   // Across the interpolation seam: the page an agent reads is built from the
   // same list, so an empty or doubled substitution shows up here rather than
   // in someone's transcript. The scope is stated in prose at ONE site now —
   // the other refers to it — so there is no wording to keep in step.
-  it("rides the belt, and the page names the same one", () => {
-    const bound = `--enable-commands=${[...GOG_CANONICAL].join(",")}`;
-    expect(gog.belt).toContain(bound);
-    // Every naming on the page agrees, and there is at least one: an empty
-    // match set fails this too, since `[]` is not `[bound]`.
-    const named = gog.skill.body.match(/--enable-commands=[^`\s]*/g) ?? [];
-    expect([...new Set(named)]).toEqual([bound]);
-  });
-
   it("is the bundled gog plugin's exec.argv, and the page names the same one", () => {
     const raw = fs.readFileSync(
       new URL("../../../apps/desktop/plugins/gog/latch-plugin.json", import.meta.url), "utf8");
@@ -238,15 +207,6 @@ describe("the scope bound", () => {
     expect(manifest.exec.argv).toContain(bound);
     const named = gog.skill.body.match(/--enable-commands=[^`\s]*/g) ?? [];
     expect([...new Set(named)]).toEqual([bound]);
-
-    // The pin lives in two places until PR 2b retires the vendored copy;
-    // nothing else asserts they agree, and a bump to one without the other
-    // would ship a binary the manifest never verified, or a stale one.
-    const vendoredGog = VENDORED.find((p: { command: string }) => p.command === "gog");
-    expect(manifest.version).toBe(vendoredGog.version);
-    for (const arch of ["arm64", "x64"] as const) {
-      expect(manifest.runtime.binaries[0]!.sha256[arch]).toBe(vendoredGog.arches[arch].sha256);
-    }
   });
 
   // The invariant behind the bound, asserted on the lists rather than by
@@ -265,13 +225,13 @@ describe("the scope bound", () => {
 });
 
 describe("the plow-gog provider's refusal", () => {
-  const plowGog = vendoredProvider(["plow-gog"])!;
+  const plowGog = providerFor(["plow-gog"])!;
 
   it("resolves from argv[0], like any provider", () => {
     expect(plowGog.command).toBe("plow-gog");
-    // Its binary is the SAME vendored gog — a provider module, not a second
-    // payload — which is what `binary` on the row exists to say.
-    expect(plowGog.binary).toBe("gog");
+    // It drives the bundled gog PLUGIN — a provider module, not a second
+    // payload — which is what `plugin` on the row exists to say.
+    expect(plowGog.plugin).toBe("gog");
   });
 
   // Parity with gog: the same hazards refuse with the same sentences, because
@@ -304,10 +264,10 @@ describe("the plow-gog provider's refusal", () => {
 });
 
 describe("the google-workspace skill", () => {
-  const body = vendoredProvider(["plow-gog"])!.skill.body;
+  const body = providerFor(["plow-gog"])!.skill.body;
 
   it("is the one skill both provider rows publish, under the stable name", () => {
-    expect(vendoredProvider(["plow-gog"])!.skill).toBe(gog.skill);
+    expect(providerFor(["plow-gog"])!.skill).toBe(gog.skill);
     expect(gog.skill.name).toBe("google-workspace");
   });
 
@@ -325,29 +285,36 @@ describe("the google-workspace skill", () => {
   });
 
   it("no longer claims there is one mailbox", () => {
-    // Nor advertises a second spelling: bare `gog` reaches the same provider
-    // and is deliberately left out of the page.
+    // Nor advertises a second spelling: a bare `gog` argv is refused, so the
+    // page teaches `plow-gog` and nothing else.
     expect(body).not.toContain("deprecated");
     expect(body).not.toContain("no account switch");
     expect(body).not.toContain("## One mailbox");
   });
 });
 
-describe("the runtime registry and the build-time manifest", () => {
-  // A provider added to one side only is the failure this catches, and it is
-  // the likeliest one: the two lists live in different halves of the repo
-  // because one needs a build and the other must not.
-  it("name the same binaries", () => {
-    // BINARIES, not commands: plow-gog runs the vendored gog, so the manifest
-    // stages one payload that two registry rows share.
-    const staged = VENDORED.map((p) => p.command);
-    const binaries = [...new Set(PROVIDERS.map((p) => p.binary))];
-    expect([...staged].sort()).toEqual(binaries.sort());
-  });
-
-  // A row carrying one arch clears every other gate and reaches the other
-  // arch's users with no provider tools at all.
-  it("stage a binary for both macOS arches", () => {
-    for (const p of VENDORED) expect(Object.keys(p.arches).sort()).toEqual(["arm64", "x64"]);
+describe("the runtime registry and the bundled plugins", () => {
+  // A provider row naming a plugin this app does not bundle publishes a skill
+  // for a CLI no Mac can ever have staged, and refuses every invocation of it.
+  // The parse is the rest of the gate: a manifest missing either arch's url or
+  // digest is refused there, and a row carrying one arch would otherwise reach
+  // the other arch's users with no provider tools at all.
+  it("name a plugin the app bundles, whose own command is the refused spelling", () => {
+    for (const p of PROVIDERS) {
+      const raw = fs.readFileSync(
+        new URL(`../../../apps/desktop/plugins/${p.plugin}/latch-plugin.json`, import.meta.url), "utf8");
+      const manifest = parseManifest(raw);
+      expect(manifest.name).toBe(p.plugin);
+      // The spelling an agent would reach for having read the manifest — not
+      // just the plugin's directory name — is the one pointed at the provider.
+      // A manifest whose `command` drifted from its `name` would leave that
+      // spelling falling through to the ordinary exec path unrefused.
+      expect(providerRefusal([manifest.command, "x"])).toBe(
+        `${p.plugin} is driven through ${p.command}`,
+      );
+      // exec.argv[0] must name a staged binary: the provider execs it by
+      // absolute path under the plugin's bin dir, never through PATH.
+      expect(manifest.runtime.binaries.map((b) => b.name)).toContain(manifest.exec.argv[0]);
+    }
   });
 });
