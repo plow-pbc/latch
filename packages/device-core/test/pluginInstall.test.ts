@@ -38,37 +38,20 @@ describe("installPlugin", () => {
     expect(fs.existsSync(pluginDirs(r, "fix").root)).toBe(false);
   });
 
-  it("refuses a manifest that declares runtime.binaries, leaving nothing behind", async () => {
+  // One shape per declaration this build cannot yet materialize: refused
+  // outright, at install, rather than silently installing something
+  // narrower than the manifest asked for.
+  it.each([
+    ["runtime.binaries", { runtime: { binaries: [{ name: "b", version: "1", url: { arm64: "https://x/b", x64: "https://x/b" }, sha256: { arm64: "a".repeat(64), x64: "a".repeat(64) } }], sources: [] } }, "runtime.binaries or runtime.sources"],
+    ["runtime.sources", { runtime: { binaries: [], sources: [{ name: "s", git: "https://x/s", commit: "a".repeat(40) }] } }, "runtime.binaries or runtime.sources"],
+    ["hooks.postinstall", { hooks: { postinstall: "hooks/post.sh" } }, "hooks.postinstall"],
+    ["a daemon", { daemon: { argv: ["serve"], health: "/health" } }, "a daemon"],
+  ])("refuses a manifest that declares %s, leaving nothing behind", async (_label, patch, fragment) => {
     const r = root();
-    await expect(
-      installPlugin(
-        r,
-        fixturePlugin({ runtime: { binaries: [{ name: "b", version: "1", url: { arm64: "https://x/b", x64: "https://x/b" }, sha256: { arm64: "a".repeat(64), x64: "a".repeat(64) } }], sources: [] } }),
-      ),
-    ).rejects.toThrow(new PluginError("this build cannot install a plugin that declares runtime.binaries or runtime.sources yet"));
-    expect(fs.existsSync(r)).toBe(true);
+    await expect(installPlugin(r, fixturePlugin(patch))).rejects.toThrow(
+      new PluginError(`this build cannot install a plugin that declares ${fragment} yet`),
+    );
     expect(fs.readdirSync(r).filter((n) => !n.startsWith("."))).toEqual([]);
-  });
-
-  it("refuses a manifest that declares runtime.sources", async () => {
-    const r = root();
-    await expect(
-      installPlugin(r, fixturePlugin({ runtime: { binaries: [], sources: [{ name: "s", git: "https://x/s", commit: "a".repeat(40) }] } })),
-    ).rejects.toThrow(new PluginError("this build cannot install a plugin that declares runtime.binaries or runtime.sources yet"));
-  });
-
-  it("refuses a manifest that declares hooks.postinstall", async () => {
-    const r = root();
-    await expect(installPlugin(r, fixturePlugin({ hooks: { postinstall: "hooks/post.sh" } }, { "hooks/post.sh": "#!/bin/sh\n" }))).rejects.toThrow(
-      new PluginError("this build cannot install a plugin that declares hooks.postinstall yet"),
-    );
-  });
-
-  it("refuses a manifest that declares a daemon", async () => {
-    const r = root();
-    await expect(installPlugin(r, fixturePlugin({ daemon: { argv: ["serve"], health: "/health" } }))).rejects.toThrow(
-      new PluginError("this build cannot install a plugin that declares a daemon yet"),
-    );
   });
 
   it("refuses a manifest whose declared skill file is missing", async () => {
