@@ -145,6 +145,7 @@ describe("installPlugin", () => {
     await expect(
       installPlugin(r, fixturePlugin({ runtime: { binaries: [], sources: [{ name: "lib", git: src, commit: "a".repeat(40) }] } }), deps()),
     ).rejects.toThrow(new PluginError("git checkout failed"));
+    expect(fs.existsSync(pluginDirs(r, "fix").root)).toBe(false);
   });
 
   it("runs the postinstall hook with fixed and secret env, and refuses the install when it fails", async () => {
