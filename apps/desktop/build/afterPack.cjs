@@ -200,7 +200,10 @@ module.exports = async function afterPack(context) {
   // to PATH rather than a binary this plugin stages.
   const bundled = path.join(__dirname, "..", "plugins");
   for (const name of fs.readdirSync(bundled)) {
-    const manifest = JSON.parse(fs.readFileSync(path.join(bundled, name, "latch-plugin.json"), "utf8"));
+    // A stray non-plugin entry (a .DS_Store, say) has no manifest to read.
+    const manifestFile = path.join(bundled, name, "latch-plugin.json");
+    if (!fs.existsSync(manifestFile)) continue;
+    const manifest = JSON.parse(fs.readFileSync(manifestFile, "utf8"));
     const dir = path.join(context.appOutDir, appName, "Contents", "Resources", "plugins", name);
     for (const binary of manifest.runtime.binaries) {
       const missingArches = ["arm64", "x64"].filter((a) => {
