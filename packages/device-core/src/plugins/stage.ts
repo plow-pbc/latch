@@ -44,7 +44,8 @@ export async function stageBinaries(
   try {
     for (const b of manifest.runtime.binaries) {
       const want = b.sha256[arch];
-      const archive = path.join(downloads, `${manifest.name}-${b.name}-${b.version}-${arch}`);
+      // Keyed on the pin itself: a bump changes the sha, so it can never hit a stale cache entry.
+      const archive = path.join(downloads, `${manifest.name}-${b.name}-${arch}-${want}`);
       if (!fs.existsSync(archive) || digest(archive) !== want) {
         fs.mkdirSync(downloads, { recursive: true });
         fs.writeFileSync(archive, await fetch(b.url[arch]));
