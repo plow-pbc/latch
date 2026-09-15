@@ -19,7 +19,6 @@
 
 import type { Skill } from "../skills.js";
 import { isHelpInvocation } from "./gogGate.js";
-import { GOG_CANONICAL } from "./gogGroups.js";
 import { GOG_SKILL } from "./gogSkill.js";
 import { fileArgsIn } from "./gogFlags.js";
 import { planPlowGog } from "./plowGog.js";
@@ -38,12 +37,15 @@ export interface VendoredProvider {
   /** `argv[0]`. */
   readonly command: string;
   /**
-   * The staged binary this provider execs — usually `command` itself, but a
-   * provider that ORCHESTRATES another provider's CLI names that one:
-   * plow-gog runs the vendored gog N times and stages no payload of its own.
-   * Every staging/resolution site reads this, never `command`.
+   * The bundled plugin whose executable this provider drives: its manifest name.
+   *
+   * The plugin's `exec.argv` carries the flags that go in front of every
+   * invocation, `--enable-commands` among them — and gog enforces that bound
+   * ITSELF before any network call. `refuse` still checks the group because it
+   * does so before the dialog and the mint; the manifest is the layer under
+   * it, and the one that holds if the other is ever wrong.
    */
-  readonly binary: string;
+  readonly plugin: string;
   /** The connector action that mints this provider's token. */
   readonly mintAction: string;
   /** Where the mint's routes hang, e.g. `/v1/connectors/gmail/`. */
@@ -56,26 +58,6 @@ export interface VendoredProvider {
    * call, and Plow resolves the owner's connected account server-side.
    */
   readonly tokenEnv: string;
-  /**
-   * Flags Latch puts in front of the command path on every invocation, whatever
-   * the agent asked for.
-   *
-   * NOT a read/write boundary: the capability IS the argv, so the human
-   * approves the literal command and there is no claim left to enforce. What
-   * remains are the flags that are unconditionally right — no interactive
-   * prompting in a headless child, the marker that keeps fetched message text
-   * from reading as instructions, and the scope bound.
-   *
-   * `--enable-commands` is that bound, and gog enforces it ITSELF before any
-   * network call. `refuse` still checks the group because it does so before the
-   * dialog and the mint; this is the layer under it, and the one that holds if
-   * the other is ever wrong. gog's last-wins parsing would let a caller append
-   * their own to widen it, which is why it is in `RESERVED_EXACT`.
-   *
-   * The per-version verdicts behind all of that are step 5 of the pin-bump
-   * checklist in `scripts/vendored-providers.mjs`, their only home.
-   */
-  readonly belt: readonly string[];
   /**
    * Reject argv the human must not be asked to approve, before any intent
    * exists. Returns a reason, or null.
@@ -115,21 +97,18 @@ export interface VendoredProvider {
 }
 
 /**
- * The multi-account front for the vendored gog. One approved argv, N runs of
- * the binary — one per connected Google account — merged into one
+ * The multi-account front for the bundled gog plugin. One approved argv, N runs
+ * of the plugin's binary — one per connected Google account — merged into one
  * account-tagged result; `deviceAgent.executePlowGog` is the orchestration.
  *
- * A bare `gog` argv is this row too (`vendoredProvider` matches the binary's
- * name as well as the command's). Nothing advertises that spelling — the skill
- * teaches `plow-gog` — but an agent that learned `gog` before this row existed
- * keeps working, and gets the fan-out rather than a second, single-account
- * path beside it. The alternative, a registered `gog` row of its own, was what
- * let an agent that probed `command -v plow-gog` (no such binary: this row
- * stages none) conclude that `gog` was the one that existed.
+ * A bare `gog` argv is NOT this row: `providerRefusal` answers it with a
+ * sentence naming `plow-gog`. One surface carries the multi-account judgment,
+ * and an agent that types the plugin's own binary name is pointed at it rather
+ * than falling through to a single-account path beside it.
  */
 const PLOW_GOG: VendoredProvider = {
   command: "plow-gog",
-  binary: "gog",
+  plugin: "gog",
   mintAction: "access-token",
   // Not a Gmail-only scope, though the prefix says gmail: checked against
   // plow's GMAIL_DEFAULT_SCOPES, the mint covers calendar.readonly and
@@ -138,9 +117,6 @@ const PLOW_GOG: VendoredProvider = {
   // lived there — the name is Plow's history, not a narrower grant.
   mintPrefix: "/v1/connectors/gmail/",
   tokenEnv: "GOG_ACCESS_TOKEN",
-  // The bound is DERIVED from the same list the check reads, so the two
-  // cannot drift into disagreeing about what is in scope.
-  belt: ["--no-input", "--wrap-untrusted", `--enable-commands=${GOG_CANONICAL.join(",")}`],
   skill: GOG_SKILL,
   fileArgs: fileArgsIn,
   // The planner IS the gate: a refused plan and a refused argv are one
@@ -162,16 +138,28 @@ export const PROVIDERS: readonly VendoredProvider[] = [PLOW_GOG];
 /**
  * The provider an argv invokes, or null when it invokes none.
  *
- * Matched on `argv[0]` exactly, against the command OR the binary it stages —
- * naming the bundled binary directly is naming the provider that fronts it.
- * A path (`/usr/local/bin/gog`) is deliberately NOT a match: honouring a
+ * Matched on `argv[0]` exactly, against the COMMAND alone. A path
+ * (`/usr/local/bin/gog`) is deliberately NOT a match: honouring a
  * caller-supplied one would let an agent point the mint at a binary of its
- * choosing.
+ * choosing. Neither is the plugin's own name — `providerRefusal` below refuses
+ * that, rather than routing it here.
  */
 export function vendoredProvider(argv: readonly string[]): VendoredProvider | null {
   const head = argv[0];
   if (head === undefined) return null;
-  return PROVIDERS.find((p) => p.command === head || p.binary === head) ?? null;
+  return PROVIDERS.find((p) => p.command === head) ?? null;
+}
+
+/**
+ * What refuses an argv before any intent exists: the provider's own gate, or
+ * the fixed sentence for a plugin a provider row drives — an agent that types
+ * the binary's name gets pointed at the surface with the judgment in it.
+ */
+export function providerRefusal(argv: readonly string[]): string | null {
+  const provider = vendoredProvider(argv);
+  if (provider !== null) return provider.refuse(argv);
+  const claimed = PROVIDERS.find((p) => p.plugin === argv[0]);
+  return claimed === undefined ? null : `${claimed.plugin} is driven through ${claimed.command}`;
 }
 
 /**

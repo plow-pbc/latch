@@ -35,6 +35,7 @@ import {
   MAX_CLICK_TIMEOUT_MS,
   MAX_FILE_BYTES,
   impliesNetwork,
+  providerRefusal,
   vendoredProvider,
   resolveAppBundleId,
 } from "@domo/device-core";
@@ -469,7 +470,7 @@ export const TOOLS: ToolSpec[] = [
       // Mac was always going to refuse. The device checks again; it is the
       // chokepoint and cannot rely on this caller.
       const provider = vendoredProvider(argv);
-      const refusal = provider?.refuse(argv) ?? null;
+      const refusal = providerRefusal(argv);
       if (refusal !== null) throw new ToolError(refusal);
 
       // Resolve every declared or provider-derived path before it becomes the

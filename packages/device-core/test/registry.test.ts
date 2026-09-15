@@ -13,25 +13,25 @@ import {
   impliesNetwork,
   needsToken,
   PROVIDERS,
+  providerRefusal,
   vendoredProvider,
 } from "../src/providers/registry.js";
 import { overrideVar } from "../src/providers/vendoredBinary.js";
 // @ts-expect-error — a build-time .mjs manifest with no type declarations.
 import { VENDORED } from "../../../scripts/vendored-providers.mjs";
 
-const gog = vendoredProvider(["gog"])!;
+const gog = vendoredProvider(["plow-gog"])!;
 
 describe("vendoredProvider", () => {
   it("matches a bare command name", () => {
     expect(vendoredProvider(["plow-gog", "gmail", "search"])?.command).toBe("plow-gog");
   });
 
-  it("routes the bundled binary's own name to the provider that fronts it", () => {
-    // An agent that learned `gog` before plow-gog existed keeps working and
-    // gets the multi-account fan-out — one provider, whichever spelling. The
-    // skill advertises only `plow-gog`; there is no `gog` row to find.
-    expect(vendoredProvider(["gog", "gmail", "search"])).toBe(vendoredProvider(["plow-gog"]));
-    expect(PROVIDERS.map((p) => p.command)).toEqual(["plow-gog"]);
+  it("does NOT match the plugin's own name: bare gog is refused, naming plow-gog", () => {
+    expect(vendoredProvider(["gog", "gmail", "search", "q"])).toBeNull();
+    expect(providerRefusal(["gog", "gmail", "search", "q"])).toBe("gog is driven through plow-gog");
+    expect(providerRefusal(["plow-gog", "gmail", "search", "q"])).toBeNull();
+    expect(providerRefusal(["/bin/echo", "gog"])).toBeNull();
   });
 
   it("does NOT match a path", () => {
@@ -53,7 +53,7 @@ describe("vendoredProvider", () => {
     // through to the ordinary exec path and run whatever `gog` the owner
     // happens to have on their own PATH — unbelted, unrefused, against their
     // own credentials. The device turns this into a refusal instead.
-    expect(vendoredProvider(["gog", "gmail", "search", "q"])).not.toBeNull();
+    expect(vendoredProvider(["plow-gog", "gmail", "search", "q"])).not.toBeNull();
   });
 });
 
@@ -195,15 +195,18 @@ describe("impliesNetwork", () => {
   // reaper. Spelled twice, one copy dropped the provider gate inside a single
   // commit and approved network for `/bin/echo`.
   it.each([
-    [["gog", "gmail", "search", "q"], true],
-    [["gog", "--help"], false],
-    [["gog", "gmail", "-h"], false],
+    [["plow-gog", "gmail", "search", "q"], true],
+    [["plow-gog", "--help"], false],
+    [["plow-gog", "gmail", "-h"], false],
     // TRAILING only, which is the subtlety both the agent-facing sentence and
     // `Executor.isReapable` now rest on: --help anywhere else is a real
     // invocation, and this one runs a search.
-    [["gog", "gmail", "search", "--help", "q"], true],
-    [["gog", "gmail", "search", "--", "-h"], true],
-    [["gog"], true],
+    [["plow-gog", "gmail", "search", "--help", "q"], true],
+    [["plow-gog", "gmail", "search", "--", "-h"], true],
+    [["plow-gog"], true],
+    // The plugin's own name is not a provider row, so it implies nothing —
+    // `providerRefusal` has already refused it by the time this is asked.
+    [["gog", "gmail", "search", "q"], false],
     [["/bin/echo", "x"], false],
     [["/usr/local/bin/gog", "gmail", "search"], false],
     [[], false],
@@ -221,15 +224,6 @@ describe("the scope bound", () => {
   // same list, so an empty or doubled substitution shows up here rather than
   // in someone's transcript. The scope is stated in prose at ONE site now —
   // the other refers to it — so there is no wording to keep in step.
-  it("rides the belt, and the page names the same one", () => {
-    const bound = `--enable-commands=${[...GOG_CANONICAL].join(",")}`;
-    expect(gog.belt).toContain(bound);
-    // Every naming on the page agrees, and there is at least one: an empty
-    // match set fails this too, since `[]` is not `[bound]`.
-    const named = gog.skill.body.match(/--enable-commands=[^`\s]*/g) ?? [];
-    expect([...new Set(named)]).toEqual([bound]);
-  });
-
   it("is the bundled gog plugin's exec.argv, and the page names the same one", () => {
     const raw = fs.readFileSync(
       new URL("../../../apps/desktop/plugins/gog/latch-plugin.json", import.meta.url), "utf8");
@@ -269,9 +263,9 @@ describe("the plow-gog provider's refusal", () => {
 
   it("resolves from argv[0], like any provider", () => {
     expect(plowGog.command).toBe("plow-gog");
-    // Its binary is the SAME vendored gog — a provider module, not a second
-    // payload — which is what `binary` on the row exists to say.
-    expect(plowGog.binary).toBe("gog");
+    // It drives the bundled gog PLUGIN — a provider module, not a second
+    // payload — which is what `plugin` on the row exists to say.
+    expect(plowGog.plugin).toBe("gog");
   });
 
   // Parity with gog: the same hazards refuse with the same sentences, because
@@ -341,7 +335,7 @@ describe("the runtime registry and the build-time manifest", () => {
     // BINARIES, not commands: plow-gog runs the vendored gog, so the manifest
     // stages one payload that two registry rows share.
     const staged = VENDORED.map((p) => p.command);
-    const binaries = [...new Set(PROVIDERS.map((p) => p.binary))];
+    const binaries = [...new Set(PROVIDERS.map((p) => p.plugin))];
     expect([...staged].sort()).toEqual(binaries.sort());
   });
 

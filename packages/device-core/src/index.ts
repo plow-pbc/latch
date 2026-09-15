@@ -34,6 +34,7 @@ export * from "./executor.js";
 export {
   impliesNetwork,
   PROVIDERS,
+  providerRefusal,
   vendoredProvider,
 } from "./providers/registry.js";
 export type { VendoredProvider } from "./providers/registry.js";
