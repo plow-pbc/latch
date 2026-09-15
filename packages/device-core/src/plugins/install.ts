@@ -119,7 +119,12 @@ async function stageBinary(b: PluginManifest["runtime"]["binaries"][number], dir
     const lineShape = /^(\S+)(?:\s+\S+){7}\s+(.*)$/;
     for (const line of stdout.split("\n")) {
       if (!line.trim()) continue;
-      const m = lineShape.exec(line);
+      // Match against the trimmed-right line: `(.*)$` excludes line
+      // terminators and `$` (no `m` flag) requires true end-of-string, so a
+      // trailing `\r` or stray whitespace in tar's own output would
+      // otherwise make a legitimate, classifiable line fail to match and get
+      // refused as unclassifiable.
+      const m = lineShape.exec(line.trimEnd());
       if (!m) throw new PluginError(`binary ${b.name} archive has an entry that could not be classified`);
       const type = m[1]![0];
       if (type === "l" || type === "h") throw new PluginError(`binary ${b.name} archive contains a symlink or hardlink entry`);

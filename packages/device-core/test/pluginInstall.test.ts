@@ -181,6 +181,32 @@ describe("installPlugin", () => {
     expect(fs.existsSync(escapedFile)).toBe(false); // never extracted outside the extraction dir
   });
 
+  it("refuses an archive with a hardlink entry", async () => {
+    // The detection (`type === "h"`) rests on bsdtar's `-tvf` mode column
+    // reporting a hardlink with a leading `h` — verified on this machine to
+    // be what `/usr/bin/tar` actually emits, not assumed. Built with real
+    // tar, not crafted bytes, so a platform where that assumption doesn't
+    // hold would fail this test rather than silently pass.
+    const deep = fs.mkdtempSync(path.join(os.tmpdir(), "latch-archive-"));
+    fs.writeFileSync(path.join(deep, "tool"), "#!/bin/sh\necho tool $*\n", { mode: 0o755 });
+    fs.linkSync(path.join(deep, "tool"), path.join(deep, "hardlink"));
+    const tgz = path.join(deep, "tool.tar.gz");
+    execFileSync("/usr/bin/tar", ["-czf", tgz, "-C", deep, "tool", "hardlink"]);
+    const archiveBytes = fs.readFileSync(tgz);
+    const archiveSha = crypto.createHash("sha256").update(archiveBytes).digest("hex");
+    const binary = {
+      runtime: {
+        binaries: [{ name: "tool", version: "1", url: { arm64: "https://x/tool.tar.gz", x64: "https://x/tool.tar.gz" }, sha256: { arm64: archiveSha, x64: archiveSha } }],
+        sources: [],
+      },
+    };
+    const r = root();
+    await expect(installPlugin(r, fixturePlugin(binary), deps(fakeFetch(archiveBytes)))).rejects.toThrow(
+      new PluginError("binary tool archive contains a symlink or hardlink entry"),
+    );
+    expect(fs.existsSync(pluginDirs(r, "fix").root)).toBe(false);
+  });
+
   it("refuses an archive entry with an absolute path", async () => {
     const srcDir = fs.mkdtempSync(path.join(os.tmpdir(), "latch-archive-"));
     const marker = fs.mkdtempSync(path.join(os.tmpdir(), "latch-marker-"));
