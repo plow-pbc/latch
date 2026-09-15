@@ -21,7 +21,7 @@ function manifestWith(sha256: string, extra: Record<string, unknown> = {}) {
     ...MINIMAL,
     exec: { cwd: "plugin", argv: ["tool", "--fixed"] },
     runtime: { binaries: [{
-      name: "tool", version: "1",
+      name: "tool",
       url: { arm64: "https://example.invalid/tool", x64: "https://example.invalid/tool" },
       sha256: { arm64: sha256, x64: sha256 },
     }], sources: [] },
@@ -70,7 +70,7 @@ describe("stageBinaries", () => {
     const b = tarball(tmp);
     const pluginDir = tmp();
     const bin = (name: string, sha: string) => ({
-      name, version: "1", executable: "tool",
+      name, executable: "tool",
       url: { arm64: `https://example.invalid/${name}`, x64: `https://example.invalid/${name}` },
       sha256: { arm64: sha, x64: sha },
     });
@@ -93,8 +93,8 @@ describe("stageBinaries", () => {
       exec: { cwd: "plugin", argv: ["tool", "--fixed"] },
       runtime: {
         binaries: [
-          { name: "tool", version: "1", url: { arm64: "https://example.invalid/tool", x64: "https://example.invalid/tool" }, sha256: { arm64: sha256, x64: sha256 } },
-          { name: "broken", version: "1", url: { arm64: "https://example.invalid/broken", x64: "https://example.invalid/broken" }, sha256: { arm64: "1".repeat(64), x64: "1".repeat(64) } },
+          { name: "tool", url: { arm64: "https://example.invalid/tool", x64: "https://example.invalid/tool" }, sha256: { arm64: sha256, x64: sha256 } },
+          { name: "broken", url: { arm64: "https://example.invalid/broken", x64: "https://example.invalid/broken" }, sha256: { arm64: "1".repeat(64), x64: "1".repeat(64) } },
         ],
         sources: [],
       },

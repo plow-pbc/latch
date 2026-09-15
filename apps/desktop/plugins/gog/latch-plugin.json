@@ -6,7 +6,6 @@
     "binaries": [
       {
         "name": "gog",
-        "version": "0.36.0",
         "url": {
           "arm64": "https://github.com/openclaw/gogcli/releases/download/v0.36.0/gogcli_0.36.0_darwin_arm64.tar.gz",
           "x64": "https://github.com/openclaw/gogcli/releases/download/v0.36.0/gogcli_0.36.0_darwin_amd64.tar.gz"

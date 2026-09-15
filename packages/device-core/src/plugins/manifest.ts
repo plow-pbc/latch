@@ -24,7 +24,6 @@ export interface PluginManifest {
   runtime: {
     binaries: {
       name: string;
-      version: string;
       url: Record<"arm64" | "x64", string>;
       sha256: Record<"arm64" | "x64", string>;
       executable?: string;
@@ -41,9 +40,6 @@ export interface PluginManifest {
 
 const SLUG = /^[a-z][a-z0-9-]{0,31}$/;
 const SHA = /^[0-9a-f]{64}$/;
-// Interpolated into stage.ts's cache-archive filename: no "/" allowed, or it
-// would traverse out of the downloads directory when path.join normalizes it.
-const VERSION = /^[0-9A-Za-z][0-9A-Za-z._-]{0,63}$/;
 const ARCHES = ["arm64", "x64"] as const;
 /**
  * Forbids a `..` path segment: joined under a directory, `..` climbs back
@@ -108,8 +104,6 @@ export function parseManifest(raw: string): PluginManifest {
     const bin = obj(b);
     const bname = typedString(bin.name, "binary name") ?? "";
     if (!SLUG.test(bname)) fail("binary name must be lowercase letters, digits and dashes");
-    const bversion = typedString(bin.version, `binary ${bname} version`) ?? "";
-    if (!VERSION.test(bversion)) fail(`binary ${bname} version must be letters, digits, dots, dashes or underscores`);
     const url = obj(bin.url);
     const sha256 = obj(bin.sha256);
     for (const arch of ARCHES) {
@@ -124,7 +118,6 @@ export function parseManifest(raw: string): PluginManifest {
     }
     return {
       name: bname,
-      version: bversion,
       url: { arm64: url.arm64 as string, x64: url.x64 as string },
       sha256: { arm64: sha256.arm64 as string, x64: sha256.x64 as string },
       ...(bin.executable === undefined ? {} : { executable: insideOrFail(bin.executable, `binary ${bname} executable`) }),
