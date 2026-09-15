@@ -86,6 +86,12 @@ test-vectors:
 fetch-vendored name="--all":
     node scripts/fetch-vendored.mjs {{name}}
 
+# Stage every bundled plugin (apps/desktop/plugins/<name>) into
+# vendor/plugins/<name>/runtime/<arch>/bin, both arches, sha256-verified,
+# then run its postinstall hook. What is pinned: each latch-plugin.json.
+stage-plugins name="--all": build
+    node scripts/stage-plugins.mjs {{name}}
+
 
 # ---------------------------------------------------------------------------
 # Browser runtime (Camoufox + build-time fingerprint pool — no Python)
@@ -169,8 +175,11 @@ _package profile flags: build
     # Providers first: small downloads that succeed or fail in seconds, where a
     # checkout that has not fetched them would otherwise pay the whole browser
     # fetch, build and universal merge before failing on a missing
-    # extraResources source. Idempotent — exits early on a tree already at the pin.
+    # extraResources source. fetch-vendored is idempotent — exits early on a
+    # tree already at the pin; stage-plugins re-extracts every time (its
+    # archive cache is what's cheap, not the runtime tree).
     node scripts/fetch-vendored.mjs --all
+    node scripts/stage-plugins.mjs --all
     node scripts/build-browser-runtime.mjs --browser-both
     @build="$(date -u +%Y%m%d%H%M)"; \
     base="$(node -p "require('{{root}}/apps/desktop/package.json').version.split('.').slice(0,2).join('.')")"; \

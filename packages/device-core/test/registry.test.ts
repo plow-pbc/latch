@@ -5,8 +5,10 @@
  * and again at the device, and what it catches are the hazards a human cannot
  * see by reading the command — the command itself looks legitimate.
  */
+import fs from "node:fs";
 import { describe, expect, it } from "vitest";
 import { GOG_ALIASES, GOG_CANONICAL } from "../src/providers/gogGroups.js";
+import { parseManifest } from "../src/plugins/manifest.js";
 import {
   impliesNetwork,
   needsToken,
@@ -226,6 +228,25 @@ describe("the scope bound", () => {
     // match set fails this too, since `[]` is not `[bound]`.
     const named = gog.skill.body.match(/--enable-commands=[^`\s]*/g) ?? [];
     expect([...new Set(named)]).toEqual([bound]);
+  });
+
+  it("is the bundled gog plugin's exec.argv, and the page names the same one", () => {
+    const raw = fs.readFileSync(
+      new URL("../../../apps/desktop/plugins/gog/latch-plugin.json", import.meta.url), "utf8");
+    const manifest = parseManifest(raw);
+    const bound = `--enable-commands=${[...GOG_CANONICAL].join(",")}`;
+    expect(manifest.exec.argv).toContain(bound);
+    const named = gog.skill.body.match(/--enable-commands=[^`\s]*/g) ?? [];
+    expect([...new Set(named)]).toEqual([bound]);
+
+    // The pin lives in two places until PR 2b retires the vendored copy;
+    // nothing else asserts they agree, and a bump to one without the other
+    // would ship a binary the manifest never verified, or a stale one.
+    const vendoredGog = VENDORED.find((p: { command: string }) => p.command === "gog");
+    expect(manifest.version).toBe(vendoredGog.version);
+    for (const arch of ["arm64", "x64"] as const) {
+      expect(manifest.runtime.binaries[0]!.sha256[arch]).toBe(vendoredGog.arches[arch].sha256);
+    }
   });
 
   // The invariant behind the bound, asserted on the lists rather than by

@@ -193,6 +193,31 @@ module.exports = async function afterPack(context) {
       );
     }
   }
+  // The bundled plugins: every manifest under apps/desktop/plugins must have
+  // its executable staged for both arches inside the packed app. Checked
+  // against each declared binary's own name (what stageBinaries writes to
+  // bin/), not exec.argv[0] — argv[0] may name something that falls through
+  // to PATH rather than a binary this plugin stages.
+  const bundled = path.join(__dirname, "..", "plugins");
+  for (const name of fs.readdirSync(bundled)) {
+    // A stray non-plugin entry (a .DS_Store, say) has no manifest to read.
+    const manifestFile = path.join(bundled, name, "latch-plugin.json");
+    if (!fs.existsSync(manifestFile)) continue;
+    const manifest = JSON.parse(fs.readFileSync(manifestFile, "utf8"));
+    const dir = path.join(context.appOutDir, appName, "Contents", "Resources", "plugins", name);
+    for (const binary of manifest.runtime.binaries) {
+      const missingArches = ["arm64", "x64"].filter((a) => {
+        const bin = path.join(dir, "runtime", a, "bin", binary.name);
+        return !fs.existsSync(bin) || fs.statSync(bin).size === 0;
+      });
+      if (missingArches.length > 0) {
+        throw new Error(
+          `[afterPack] the packed app has no ${name} plugin's ${binary.name} for ${missingArches.join(", ")} — ` +
+            `run \`just stage-plugins ${name}\``,
+        );
+      }
+    }
+  }
   // camoufox's interior: a fuse that stopped partway leaves files behind but no
   // bundle to sign.
   const camoufoxApps = findApps(camoufox);
