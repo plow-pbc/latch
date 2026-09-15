@@ -87,6 +87,38 @@ describe("installPlugin", () => {
     expect(fs.statSync(linked).mode & 0o111).not.toBe(0);
   });
 
+  it("refuses an archive whose entries escape the extraction dir", async () => {
+    // A real tar-slip: a LEGITIMATE "tool" entry (so a containment-blind
+    // extractor would otherwise succeed) alongside one named with enough
+    // `../` to climb above the plugin's runtime/ tree entirely — crafted the
+    // same way bsdtar writes one: it strips a leading `/` but not a relative
+    // `..`.
+    const srcDir = fs.mkdtempSync(path.join(os.tmpdir(), "latch-archive-"));
+    const deep = path.join(srcDir, "a", "b");
+    fs.mkdirSync(deep, { recursive: true });
+    fs.writeFileSync(path.join(deep, "tool"), "#!/bin/sh\necho tool $*\n", { mode: 0o755 });
+    const marker = fs.mkdtempSync(path.join(os.tmpdir(), "latch-marker-"));
+    const escapedFile = path.join(marker, "escaped");
+    fs.writeFileSync(escapedFile, "placeholder, so tar has something to archive");
+    const tgz = path.join(srcDir, "tool.tar.gz");
+    execFileSync("/usr/bin/tar", ["-czf", tgz, "-C", deep, "tool", path.relative(deep, escapedFile)]);
+    fs.rmSync(escapedFile); // extraction must not recreate it outside the extraction dir
+    const archiveBytes = fs.readFileSync(tgz);
+    const archiveSha = crypto.createHash("sha256").update(archiveBytes).digest("hex");
+    const binary = {
+      runtime: {
+        binaries: [{ name: "tool", version: "1", url: { arm64: "https://x/tool.tar.gz", x64: "https://x/tool.tar.gz" }, sha256: { arm64: archiveSha, x64: archiveSha } }],
+        sources: [],
+      },
+    };
+    const r = root();
+    await expect(installPlugin(r, fixturePlugin(binary), deps(fakeFetch(archiveBytes)))).rejects.toThrow(
+      new PluginError("binary tool archive has an entry outside its extraction directory"),
+    );
+    expect(fs.existsSync(pluginDirs(r, "fix").root)).toBe(false);
+    expect(fs.existsSync(escapedFile)).toBe(false); // never extracted outside the extraction dir
+  });
+
   it("clones a source at its commit and runs its install argv with runtime/bin on PATH", async () => {
     const src = fixturePlugin(); // any git repo will do as a source
     const commit = fs.readFileSync(path.join(src, ".git", "refs", "heads", fs.readdirSync(path.join(src, ".git", "refs", "heads"))[0]), "utf8").trim();

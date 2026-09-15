@@ -94,9 +94,20 @@ async function stageBinary(b: PluginManifest["runtime"]["binaries"][number], dir
   const tmp = path.join(dirs.runtime, `${b.name}.download`);
   fs.writeFileSync(tmp, bytes);
   try {
+    // List before extracting: an absolute entry, or one a `..` climbs out
+    // with, is a write outside the plugin's own tree — a new capability a
+    // binaries-only plugin (no postinstall, no source install) never opted
+    // into. Never quote the entry; it's third-party archive text.
+    const { stdout } = await run("/usr/bin/tar", ["-tf", tmp]);
+    for (const entry of stdout.split("\n").map((line) => line.trim()).filter(Boolean)) {
+      const resolved = path.resolve(extracted, entry);
+      if (resolved !== extracted && !resolved.startsWith(extracted + path.sep)) {
+        throw new PluginError(`binary ${b.name} archive has an entry outside its extraction directory`);
+      }
+    }
     await run("/usr/bin/tar", ["-xf", tmp, "-C", extracted]);
-  } catch {
-    throw new PluginError(`binary ${b.name} could not be extracted`);
+  } catch (e) {
+    throw e instanceof PluginError ? e : new PluginError(`binary ${b.name} could not be extracted`);
   } finally {
     fs.rmSync(tmp, { force: true });
   }
