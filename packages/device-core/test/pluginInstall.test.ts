@@ -79,6 +79,24 @@ describe("installPlugin", () => {
     expect(fs.existsSync(pluginDirs(r, "fix").root)).toBe(false);
   });
 
+  it("writes a bare-host url ending in .zip as a plain binary, never extracted", async () => {
+    // ".zip" is a real gTLD: a manifest binary hosted at a bare domain like
+    // https://mytool.zip has NO path component at all, so it must never be
+    // routed through the archive extractor just because the whole url ends
+    // in an archive-like suffix.
+    const binary = {
+      runtime: {
+        binaries: [{ name: "tool", version: "1", url: { arm64: "https://mytool.zip", x64: "https://mytool.zip" }, sha256: { arm64: sha, x64: sha } }],
+        sources: [],
+      },
+    };
+    const r = root();
+    await installPlugin(r, fixturePlugin(binary), deps(fakeFetch(bytes)));
+    const written = path.join(pluginDirs(r, "fix").runtimeBin, "tool");
+    expect(fs.lstatSync(written).isSymbolicLink()).toBe(false);
+    expect(fs.readFileSync(written)).toEqual(bytes);
+  });
+
   it("extracts an archive binary even when its download url carries a query string", async () => {
     const srcDir = fs.mkdtempSync(path.join(os.tmpdir(), "latch-archive-"));
     fs.writeFileSync(path.join(srcDir, "tool"), "#!/bin/sh\necho tool $*\n", { mode: 0o755 });

@@ -82,9 +82,19 @@ async function stageBinary(b: PluginManifest["runtime"]["binaries"][number], dir
   if (!res.ok) throw new PluginError(`binary ${b.name} could not be downloaded`);
   const bytes = Buffer.from(await res.arrayBuffer());
   if (crypto.createHash("sha256").update(bytes).digest("hex") !== b.sha256[deps.arch]) throw new PluginError(`binary ${b.name} did not match its sha256`);
-  // Test the path, not the raw URL: a presigned download (S3, a GitHub
-  // release asset) carries a query string after the extension.
-  const archive = /\.(zip|tar\.gz|tgz)$/.test(url.split(/[?#]/)[0]!);
+  // Test the path, not the scheme or host: drop any query/fragment, then
+  // keep only what follows the authority's first `/`. A bare host like
+  // "https://mytool.zip" has no path at all — `.zip` is a real gTLD — so it
+  // must not match just because the whole url ends in an archive suffix. A
+  // presigned download (S3, a GitHub release asset) still matches: its
+  // query string was already stripped, and its path keeps the extension.
+  // Every step is a string op (indexOf/slice/split), so this can't throw.
+  const withoutQuery = url.split(/[?#]/)[0]!;
+  const schemeEnd = withoutQuery.indexOf("://");
+  const authority = schemeEnd === -1 ? withoutQuery : withoutQuery.slice(schemeEnd + 3);
+  const slash = authority.indexOf("/");
+  const pathTail = slash === -1 ? "" : authority.slice(slash);
+  const archive = /\.(zip|tar\.gz|tgz)$/.test(pathTail);
   if (!archive) {
     fs.writeFileSync(path.join(dirs.runtimeBin, b.name), bytes, { mode: 0o755 });
     return;
