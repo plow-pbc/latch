@@ -74,8 +74,11 @@ describe("loadPlugins", () => {
 });
 
 describe("pluginRoots", () => {
-  it("refuses a DOMO_PLUGINS that names no directory, instead of reading the next root", () => {
-    process.env.DOMO_PLUGINS = path.join(tmp(), "absent");
+  it.each([
+    ["nothing", (d: string) => path.join(d, "absent")],
+    ["a file", (d: string) => { const f = path.join(d, "file"); fs.writeFileSync(f, ""); return f; }],
+  ])("refuses a DOMO_PLUGINS that names %s, instead of reading the next root", (_, at) => {
+    process.env.DOMO_PLUGINS = at(tmp());
     expect(() => pluginRoots({ home: "/h" })).toThrow(PluginError);
   });
 

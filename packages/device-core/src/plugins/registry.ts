@@ -68,7 +68,9 @@ export function pluginRoots(opts: { resourcesDir?: string; repoRoot?: string; ho
     // The operator NAMED this one, so a missing directory is a wrong path, not
     // an empty root: refuse it rather than quietly reading the next root.
     const named = path.resolve(process.env.DOMO_PLUGINS);
-    if (!fs.existsSync(named)) throw new PluginError("DOMO_PLUGINS must name an existing directory");
+    if (!fs.statSync(named, { throwIfNoEntry: false })?.isDirectory()) {
+      throw new PluginError("DOMO_PLUGINS must name an existing directory");
+    }
     roots.push(named);
   }
   if (opts.resourcesDir) roots.push(path.join(opts.resourcesDir, "plugins"));
