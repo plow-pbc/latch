@@ -11,7 +11,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { promisify } from "node:util";
-import { parseManifest, PluginError, type PluginManifest } from "./manifest.js";
+import { parseManifest, PluginError, SLUG, type PluginManifest } from "./manifest.js";
 import { vendoredProvider } from "../providers/registry.js";
 
 const run = promisify(execFile);
@@ -22,9 +22,13 @@ export interface Installed {
   command: string;
   commit: string;
   installedAt: string;
+  /** Normalized `gitUrl`. Absent on a plugin installed before this field
+   * existed — treated as unknown, never as a match (see `installPlugin`). */
+  origin?: string;
 }
 
 export function pluginDirs(pluginsRoot: string, name: string) {
+  if (!SLUG.test(name)) throw new PluginError("plugin name must be lowercase letters, digits and dashes");
   const root = path.join(pluginsRoot, name);
   return {
     root,
@@ -35,10 +39,42 @@ export function pluginDirs(pluginsRoot: string, name: string) {
   };
 }
 
+/**
+ * `https://` for a real remote, or a bare absolute filesystem path (what the
+ * test fixtures and a local install both pass) for a local clone. Anything
+ * else — `ssh://`, `file://`, and every git transport helper (`ext::`,
+ * `fd::`, ...) — is refused before git ever sees it: a transport helper runs
+ * an arbitrary shell command on clone. A colon anywhere in what would
+ * otherwise read as a local path is refused too, since that is exactly how a
+ * transport helper is spelled.
+ */
+function validateGitUrl(gitUrl: string): void {
+  if (gitUrl.startsWith("https://")) return;
+  if (gitUrl.startsWith("/") && !gitUrl.includes(":")) return;
+  throw new PluginError("plugin git url must be https or a local path"); // never quote the url
+}
+
+function normalizeOrigin(gitUrl: string): string {
+  return gitUrl.trim().replace(/\/+$/, "");
+}
+
+function readOrigin(installedFile: string): string | undefined {
+  try {
+    return (JSON.parse(fs.readFileSync(installedFile, "utf8")) as Installed).origin;
+  } catch {
+    return undefined;
+  }
+}
+
 /** `op` both names the error and becomes the subcommand, so the two can't drift apart. */
 async function git(op: string, rest: string[], cwd?: string): Promise<void> {
   try {
-    await run("/usr/bin/git", [op, ...rest], { cwd, env: { ...process.env, GIT_TERMINAL_PROMPT: "0" } });
+    await run("/usr/bin/git", [op, ...rest], {
+      cwd,
+      // Backstop for `validateGitUrl`: even if that check were ever
+      // bypassed, git itself refuses every transport but the two we allow.
+      env: { ...process.env, GIT_TERMINAL_PROMPT: "0", GIT_ALLOW_PROTOCOL: "https:file" },
+    });
   } catch {
     throw new PluginError(`git ${op} failed`); // the url/ref is the caller's; never quote it
   }
@@ -68,6 +104,8 @@ export async function installPlugin(pluginsRoot: string, gitUrl: string): Promis
   const staging = fs.mkdtempSync(path.join(pluginsRoot, ".install-"));
   let dirs: ReturnType<typeof pluginDirs> | null = null;
   let fresh = true;
+  validateGitUrl(gitUrl);
+  const origin = normalizeOrigin(gitUrl);
   try {
     await git("clone", ["-q", "--depth", "1", "--", gitUrl, path.join(staging, "repo")]);
     const manifest = parseManifest(fs.readFileSync(path.join(staging, "repo", "latch-plugin.json"), "utf8"));
@@ -82,8 +120,16 @@ export async function installPlugin(pluginsRoot: string, gitUrl: string): Promis
     }
     if (!fs.existsSync(path.join(staging, "repo", manifest.skill))) throw new PluginError("manifest skill file is missing");
     const { stdout: commit } = await run("/usr/bin/git", ["-C", path.join(staging, "repo"), "rev-parse", "HEAD"]);
-    dirs = pluginDirs(pluginsRoot, manifest.name);
-    fresh = !fs.existsSync(dirs.root);
+    const candidate = pluginDirs(pluginsRoot, manifest.name);
+    fresh = !fs.existsSync(candidate.root);
+    if (!fresh && readOrigin(candidate.installedFile) !== origin) {
+      // A same-named install from elsewhere: refuse rather than reuse its
+      // secrets/ and home/ for a repo we have no reason to trust is the same
+      // plugin. An unrecorded origin (a plugin installed before this field
+      // existed) counts as unknown, never as a match — fail closed.
+      throw new PluginError(`a plugin named ${manifest.name} is already installed from a different origin; remove it first`);
+    }
+    dirs = candidate; // only start touching disk once the origin check has passed
     // A reinstall replaces repo/ and keeps home/ + secrets/.
     fs.rmSync(dirs.repo, { recursive: true, force: true });
     for (const d of [dirs.root, dirs.secrets, dirs.home]) fs.mkdirSync(d, { recursive: true });
@@ -101,6 +147,7 @@ export async function installPlugin(pluginsRoot: string, gitUrl: string): Promis
       command: manifest.command,
       commit: commit.trim(),
       installedAt: new Date().toISOString(),
+      origin,
     };
     fs.writeFileSync(dirs.installedFile, JSON.stringify(installed, null, 2) + "\n");
     return installed;

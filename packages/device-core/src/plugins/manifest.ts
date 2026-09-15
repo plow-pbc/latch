@@ -39,7 +39,7 @@ export interface PluginManifest {
   skill: string; // path in repo/
 }
 
-const SLUG = /^[a-z][a-z0-9-]{0,31}$/;
+export const SLUG = /^[a-z][a-z0-9-]{0,31}$/;
 const SHA = /^[0-9a-f]{64}$/;
 const ARCHES = ["arm64", "x64"] as const;
 /**

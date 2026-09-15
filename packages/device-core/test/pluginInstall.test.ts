@@ -70,13 +70,49 @@ describe("installPlugin", () => {
     expect(fs.existsSync(pluginDirs(r, "fix").root)).toBe(false);
   });
 
-  it("reinstalling keeps home and the same secret", async () => {
+  it("refuses a git url using a transport helper (ext::), never quoting it", async () => {
+    const r = root();
+    await expect(installPlugin(r, "ext::sh -c 'touch /tmp/latch-plugins-pwned; exit 1'")).rejects.toThrow(
+      new PluginError("plugin git url must be https or a local path"),
+    );
+  });
+
+  it("still clones a normal (local path) git url", async () => {
+    const r = root();
+    const installed = await installPlugin(r, fixturePlugin());
+    expect(installed.name).toBe("fix");
+  });
+
+  it("refuses installing a different plugin that reuses an existing name, without touching its secrets or home", async () => {
     const r = root();
     await installPlugin(r, fixturePlugin({ env: FIXTURE_ENV }));
     const d = pluginDirs(r, "fix");
+    const secret = fs.readFileSync(path.join(d.secrets, "token"), "utf8");
+    fs.writeFileSync(path.join(d.home, "data"), "kept");
+    const otherOrigin = fixturePlugin({ env: FIXTURE_ENV }); // different repo, same manifest name "fix"
+    await expect(installPlugin(r, otherOrigin)).rejects.toThrow(
+      new PluginError("a plugin named fix is already installed from a different origin; remove it first"),
+    );
+    expect(fs.readFileSync(path.join(d.secrets, "token"), "utf8")).toBe(secret);
+    expect(fs.readFileSync(path.join(d.home, "data"), "utf8")).toBe("kept");
+    expect(fs.existsSync(d.repo)).toBe(true);
+  });
+
+  it("removePlugin refuses a name that escapes the plugins root", () => {
+    const r = root();
+    expect(() => removePlugin(r, "../../etc", { purge: true })).toThrow(
+      new PluginError("plugin name must be lowercase letters, digits and dashes"),
+    );
+  });
+
+  it("reinstalling from the same origin keeps home and the same secret", async () => {
+    const r = root();
+    const origin = fixturePlugin({ env: FIXTURE_ENV });
+    await installPlugin(r, origin);
+    const d = pluginDirs(r, "fix");
     fs.writeFileSync(path.join(d.home, "data"), "kept");
     const secret = fs.readFileSync(path.join(d.secrets, "token"), "utf8");
-    await installPlugin(r, fixturePlugin({ env: FIXTURE_ENV }));
+    await installPlugin(r, origin);
     expect(fs.readFileSync(path.join(d.home, "data"), "utf8")).toBe("kept");
     expect(fs.readFileSync(path.join(d.secrets, "token"), "utf8")).toBe(secret);
   });
