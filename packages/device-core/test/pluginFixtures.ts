@@ -40,40 +40,19 @@ export function tarball(tmp: () => string): { file: string; sha256: string } {
 }
 
 /**
- * A local git repo holding a tiny Python package (one script, `fixtool`,
- * that prints its argv) committed at HEAD, so a "tool" binary can be staged
- * via `git+file://` with no network. Returns that url and HEAD's commit.
+ * A local git repo with one committed file, so a `runtime.sources` entry can
+ * be staged via `git+file://` with no network. Returns that url and HEAD's
+ * commit.
  */
 export function gitFixture(tmp: () => string): { git: string; commit: string } {
   const dir = tmp();
-  fs.mkdirSync(path.join(dir, "src", "fixpkg"), { recursive: true });
-  fs.writeFileSync(
-    path.join(dir, "pyproject.toml"),
-    [
-      "[project]",
-      'name = "fixpkg"',
-      'version = "0.1.0"',
-      'requires-python = ">=3.9"',
-      "",
-      "[project.scripts]",
-      'fixtool = "fixpkg:main"',
-      "",
-      "[build-system]",
-      'requires = ["hatchling"]',
-      'build-backend = "hatchling.build"',
-      "",
-    ].join("\n"),
-  );
-  fs.writeFileSync(
-    path.join(dir, "src", "fixpkg", "__init__.py"),
-    'import sys\ndef main():\n    print("ARGV=" + " ".join(sys.argv[1:]))\n',
-  );
+  fs.writeFileSync(path.join(dir, "README.md"), "fixture source\n");
   const git = (...args: string[]) => execFileSync("git", args, { cwd: dir });
   git("init", "-q");
   git("-c", "user.email=fixture@fixture", "-c", "user.name=fixture", "add", "-A");
   git("-c", "user.email=fixture@fixture", "-c", "user.name=fixture", "commit", "-q", "-m", "init");
   const commit = execFileSync("git", ["rev-parse", "HEAD"], { cwd: dir, encoding: "utf8" }).trim();
-  return { git: `file://${dir}`, commit };
+  return { git: dir, commit };
 }
 
 /**

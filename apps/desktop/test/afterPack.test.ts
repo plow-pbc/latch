@@ -30,8 +30,8 @@ const PLUGINS: { name: string; binaries: { name: string }[] }[] = fs
   .filter((name) => fs.existsSync(path.join(PLUGINS_DIR, name, "latch-plugin.json")))
   .map((name) => ({
     name,
-    binaries: JSON.parse(fs.readFileSync(path.join(PLUGINS_DIR, name, "latch-plugin.json"), "utf8")).runtime
-      .binaries,
+    binaries:
+      JSON.parse(fs.readFileSync(path.join(PLUGINS_DIR, name, "latch-plugin.json"), "utf8")).runtime.binaries ?? [],
   }));
 
 const IDENTITY = "Developer ID Application: Nobody (TEAMID)";

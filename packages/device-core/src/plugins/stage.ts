@@ -1,12 +1,14 @@
 /**
- * Staging a plugin's binaries into `runtime/<arch>/bin`: a pinned downloaded
- * archive, or a "tool" installed by `uv` from a pinned git commit.
+ * Staging a plugin's runtime tree: pinned downloaded archives into
+ * `runtime/<arch>/bin`, and git sources — cloned at a pinned commit, then
+ * built by their own `install` argv — into `runtime/<arch>/<source name>`.
  *
  * ONE code path for a bundled plugin (`scripts/stage-plugins.mjs`, into
- * `vendor/plugins`) and an installed one (into `$DOMO_HOME/plugins`). The
- * archive is kept under `downloads` and re-hashed on every run; the runtime
- * tree is rebuilt from it every time, so a modified staged binary never
- * survives a stage — the property the old per-binary digest pin carried.
+ * `vendor/plugins`) and an installed one (into `$DOMO_HOME/plugins`). A
+ * binary's archive is kept under `downloads` and re-hashed on every run; the
+ * runtime tree is rebuilt from it every time, so a modified staged binary
+ * never survives a stage — the property the old per-binary digest pin
+ * carried. A source is re-cloned fresh on every stage for the same reason.
  */
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -44,10 +46,6 @@ export async function stageBinaries(
   // half-staged plugin would still pass loadPlugins' single-executable check.
   try {
     for (const b of manifest.runtime.binaries) {
-      if ("git" in b) {
-        stageTool(b, bin, runtime);
-        continue;
-      }
       const want = b.sha256[arch];
       // Keyed on the pin itself: a bump changes the sha, so it can never hit a stale cache entry.
       const archive = path.join(downloads, `${manifest.name}-${b.name}-${arch}-${want}`);
@@ -72,6 +70,7 @@ export async function stageBinaries(
       fs.copyFileSync(executable, staged);
       fs.chmodSync(staged, 0o755);
     }
+    for (const s of manifest.runtime.sources) stageSource(s, runtime);
   } catch (err) {
     fs.rmSync(runtime, { recursive: true, force: true });
     throw err;
@@ -79,21 +78,30 @@ export async function stageBinaries(
 }
 
 /**
- * A "tool" binary: installed by `uv tool install` from a pinned git commit,
- * rather than downloaded as an archive. The commit hash is its integrity
- * pin, playing the sha256 digest's role, so there is no separate byte check
- * here. `uv` writes the shim straight into `bin`, the same directory a
- * pinned binary's tar member lands in — the manifest's binary `name` must
- * match the package's `project.scripts` entry point, or the shim `uv`
- * produces has some other name and this plugin simply never stages
- * (loadPlugins' executable check in registry.ts fails loud on the missing
- * file, the same outcome a wrong tar member name gets).
+ * A source: cloned at its pinned commit into `runtime/<arch>/<source name>`
+ * — the same "named entry under the arch's runtime dir" convention a
+ * binary's extracted archive uses — then built in place by its own
+ * `install` argv, if it declares one. The commit hash is the integrity pin;
+ * there is no separate digest, same as a binary's tar member has none once
+ * its sha256 has matched. Every refusal names the source's declared `name`
+ * only — never the git url, the commit, or a command's output, all of which
+ * are third-party text.
  */
-function stageTool(tool: { name: string; git: string; commit: string }, bin: string, runtime: string): void {
-  execFileSync("uv", ["tool", "install", "--force", "--reinstall", `git+${tool.git}@${tool.commit}`], {
-    env: { ...process.env, UV_TOOL_DIR: path.join(runtime, "tools", tool.name), UV_TOOL_BIN_DIR: bin },
-    stdio: "pipe",
-  });
+function stageSource(source: { name: string; git: string; commit: string; install?: string[] }, runtime: string): void {
+  const into = path.join(runtime, source.name);
+  try {
+    execFileSync("git", ["clone", "--quiet", "--", source.git, into], { stdio: "pipe" });
+    execFileSync("git", ["-C", into, "checkout", "--quiet", source.commit], { stdio: "pipe" });
+  } catch {
+    throw new PluginError(`source ${source.name} failed to clone at its pinned commit`);
+  }
+  if (source.install !== undefined) {
+    try {
+      execFileSync(source.install[0]!, source.install.slice(1), { cwd: into, stdio: "pipe" });
+    } catch {
+      throw new PluginError(`source ${source.name} failed to install`);
+    }
+  }
 }
 
 export function runPostinstall(manifest: PluginManifest, pluginDir: string, arch: Arch): string | null {

@@ -106,18 +106,33 @@ describe("stageBinaries", () => {
   });
 });
 
-describe("stageBinaries with a tool", () => {
-  it("installs a pinned git commit via uv and stages the shim into bin/, no download needed", async () => {
+describe("stageBinaries with a source", () => {
+  it("clones a source at its pinned commit and runs its install argv there, no download needed", async () => {
     const { git, commit } = gitFixture(tmp);
     const pluginDir = tmp();
     const manifest = parseManifest(JSON.stringify({
       ...MINIMAL,
-      exec: { cwd: "plugin", argv: ["fixtool", "--fixed"] },
-      runtime: { binaries: [{ name: "fixtool", git, commit }], sources: [] },
+      exec: { cwd: "lib", argv: ["cli"] },
+      runtime: { binaries: [], sources: [{ name: "lib", git, commit, install: ["sh", "-c", "printf ok > installed"] }] },
     }));
-    await stageBinaries(manifest, pluginDir, ARCH, tmp(), async () => { throw new Error("a tool never downloads"); });
-    const staged = path.join(binDir(pluginDir, ARCH), "fixtool");
-    expect(execFileSync(staged, ["a"], { encoding: "utf8" })).toBe("ARGV=a\n");
+    await stageBinaries(manifest, pluginDir, ARCH, tmp(), async () => { throw new Error("a source never downloads"); });
+    const into = path.join(pluginDir, "runtime", ARCH, "lib");
+    expect(fs.readFileSync(path.join(into, "README.md"), "utf8")).toBe("fixture source\n");
+    expect(fs.readFileSync(path.join(into, "installed"), "utf8")).toBe("ok");
+  });
+
+  it("refuses a source pinned to a commit it does not have, staging nothing", async () => {
+    const { git } = gitFixture(tmp);
+    const pluginDir = tmp();
+    const manifest = parseManifest(JSON.stringify({
+      ...MINIMAL,
+      exec: { cwd: "lib", argv: ["cli"] },
+      runtime: { binaries: [], sources: [{ name: "lib", git, commit: "1".repeat(40) }] },
+    }));
+    await expect(
+      stageBinaries(manifest, pluginDir, ARCH, tmp(), async () => { throw new Error("unreachable"); }),
+    ).rejects.toThrow(new PluginError("source lib failed to clone at its pinned commit"));
+    expect(fs.existsSync(binDir(pluginDir, ARCH))).toBe(false);
   });
 });
 

@@ -35,12 +35,6 @@ describe("parseManifest", () => {
     expect(m.hooks).toEqual({ postinstall: "hooks/post.sh" });
   });
 
-  it("accepts a tool binary pinned to a 40-char commit", () => {
-    const tool = { name: "wiki", git: "https://x/wiki", commit: "d".repeat(40) };
-    const m = parseManifest(withPatch({ runtime: { binaries: [tool], sources: [] } }));
-    expect(m.runtime.binaries).toEqual([tool]);
-  });
-
   it.each([
     ["not JSON", "{", "manifest is not valid JSON"],
     ["a bad name", withPatch({ name: "Bad Name" }), "manifest name must be lowercase letters, digits and dashes"],
@@ -50,9 +44,6 @@ describe("parseManifest", () => {
     ["a binary with a non-https url", withPatch({ runtime: { binaries: [{ name: "b", url: { arm64: "http://x/b", x64: "https://x/b" }, sha256: { arm64: "a".repeat(64), x64: "a".repeat(64) } }], sources: [] } }), "binary b needs an https url for arm64 and x64"],
     ["a binary whose executable escapes its archive", withPatch({ runtime: { binaries: [{ name: "b", executable: "../b", url: { arm64: "https://x/b", x64: "https://x/b" }, sha256: { arm64: "a".repeat(64), x64: "a".repeat(64) } }], sources: [] } }), "binary b executable must be a path inside the plugin"],
     ["two binaries with one name", withPatch({ runtime: { binaries: [1, 2].map(() => ({ name: "b", url: { arm64: "https://x/b", x64: "https://x/b" }, sha256: { arm64: "a".repeat(64), x64: "a".repeat(64) } })), sources: [] } }), "binary names must be unique"],
-    ["a tool binary without a pinned commit", withPatch({ runtime: { binaries: [{ name: "b", git: "https://x/b" }], sources: [] } }), "binary b needs a 40-character commit"],
-    ["a tool binary with a floating commit-ish ref", withPatch({ runtime: { binaries: [{ name: "b", git: "https://x/b", commit: "main" }], sources: [] } }), "binary b needs a 40-character commit"],
-    ["a tool binary without a git url", withPatch({ runtime: { binaries: [{ name: "b", git: "" }], sources: [] } }), "binary b needs a git url"],
     ["a source git url that reads as a git option", withPatch({ runtime: { binaries: [], sources: [{ name: "s", git: "--upload-pack=x", commit: "a".repeat(40) }] } }), "source s needs a git url"],
     ["two sources with one name", withPatch({ runtime: { binaries: [], sources: [1, 2].map(() => ({ name: "s", git: "https://x/s", commit: "a".repeat(40) })) } }), "source names must be unique"],
     ["an exec.cwd that is not a runtime entry", withPatch({ exec: { cwd: "../..", argv: ["x"] } }), "exec.cwd must be plugin or a source name"],
