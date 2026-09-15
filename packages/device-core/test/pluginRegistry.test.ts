@@ -74,14 +74,21 @@ describe("loadPlugins", () => {
 });
 
 describe("pluginRoots", () => {
+  it("refuses a DOMO_PLUGINS that names no directory, instead of reading the next root", () => {
+    process.env.DOMO_PLUGINS = path.join(tmp(), "absent");
+    expect(() => pluginRoots({ home: "/h" })).toThrow(PluginError);
+  });
+
   it("orders override, Resources, vendor tree, then the owner's installed plugins", () => {
-    process.env.DOMO_PLUGINS = "/o";
+    const o = tmp();
+    process.env.DOMO_PLUGINS = o;
     expect(pluginRoots({ resourcesDir: "/r", repoRoot: "/c", home: "/h" })).toEqual([
-      "/o", "/r/plugins", "/c/vendor/plugins", "/h/plugins",
+      o, "/r/plugins", "/c/vendor/plugins", "/h/plugins",
     ]);
     // Resolved, so no root — and so no binDir — can depend on the cwd.
-    process.env.DOMO_PLUGINS = "rel/plugins";
-    expect(pluginRoots({ home: "/h" })[0]).toBe(path.resolve("rel/plugins"));
+    const rel = path.relative(process.cwd(), tmp());
+    process.env.DOMO_PLUGINS = rel;
+    expect(pluginRoots({ home: "/h" })[0]).toBe(path.resolve(rel));
     delete process.env.DOMO_PLUGINS;
     expect(pluginRoots({ home: "/h" })).toEqual(["/h/plugins"]);
   });

@@ -64,7 +64,13 @@ export function loadPlugins(roots: readonly string[]): StagedPlugin[] {
  */
 export function pluginRoots(opts: { resourcesDir?: string; repoRoot?: string; home: string }): string[] {
   const roots: string[] = [];
-  if (process.env.DOMO_PLUGINS) roots.push(path.resolve(process.env.DOMO_PLUGINS));
+  if (process.env.DOMO_PLUGINS) {
+    // The operator NAMED this one, so a missing directory is a wrong path, not
+    // an empty root: refuse it rather than quietly reading the next root.
+    const named = path.resolve(process.env.DOMO_PLUGINS);
+    if (!fs.existsSync(named)) throw new PluginError("DOMO_PLUGINS must name an existing directory");
+    roots.push(named);
+  }
   if (opts.resourcesDir) roots.push(path.join(opts.resourcesDir, "plugins"));
   if (opts.repoRoot) roots.push(path.join(opts.repoRoot, "vendor", "plugins"));
   roots.push(path.join(opts.home, "plugins"));
