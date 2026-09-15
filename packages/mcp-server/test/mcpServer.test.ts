@@ -741,9 +741,9 @@ describe("review findings", () => {
     // `false` does not disarm it either: honouring that would approve a gog
     // call the sandbox then denies, which is the same bug spelled out loud.
     it.each([
-      ["a gog command implies network", ["gog", "gmail", "search", "q"], undefined, true],
-      ["and an explicit false does not disarm it", ["gog", "gmail", "search", "q"], false, true],
-      ["gog --help does not, like the mint it also skips", ["gog", "--help"], undefined, false],
+      ["a plow-gog command implies network", ["plow-gog", "gmail", "search", "q"], undefined, true],
+      ["and an explicit false does not disarm it", ["plow-gog", "gmail", "search", "q"], false, true],
+      ["plow-gog --help does not, like the mint it also skips", ["plow-gog", "--help"], undefined, false],
       ["and an ordinary command still asks", ["/bin/echo", "x"], undefined, false],
       ["...and still means false when it says so", ["/bin/echo", "x"], false, false],
     ])("%s", async (_name, argv, network, allowed) => {
