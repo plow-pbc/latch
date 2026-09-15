@@ -12,6 +12,11 @@ describe("parseManifest", () => {
     expect(m.runtime.binaries).toEqual([]);
   });
 
+  it("accepts a manifest with no skill: a code layer may publish one for it", () => {
+    const { skill: _omitted, ...noSkill } = MINIMAL;
+    expect(parseManifest(JSON.stringify(noSkill)).skill).toBeNull();
+  });
+
   it("accepts a full manifest: binaries, a source, exec in that source, a daemon and a hook", () => {
     const bin = { name: "bun", version: "1", url: { arm64: "https://x/bun", x64: "https://x/bun" }, sha256: { arm64: "a".repeat(64), x64: "b".repeat(64) }, executable: "bun-darwin/bun" };
     const m = parseManifest(withPatch({

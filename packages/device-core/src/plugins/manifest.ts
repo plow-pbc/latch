@@ -36,7 +36,7 @@ export interface PluginManifest {
   env: Record<string, EnvSource>;
   argv: { read: string[][]; write: string[][] };
   hooks: { postinstall?: string };
-  skill: string; // path in repo/
+  skill: string | null; // path in repo/, or null when a code layer publishes the skill
 }
 
 const SLUG = /^[a-z][a-z0-9-]{0,31}$/;
@@ -178,7 +178,7 @@ export function parseManifest(raw: string): PluginManifest {
 
   const hooks = obj(m.hooks);
   const postinstall = hooks.postinstall === undefined ? null : insideOrFail(hooks.postinstall, "hooks.postinstall");
-  const skill = insideOrFail(m.skill, "skill");
+  const skill = m.skill === undefined ? null : insideOrFail(m.skill, "skill");
 
   return {
     name,
