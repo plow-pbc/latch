@@ -83,6 +83,29 @@ describe("a plugin through the exec path", () => {
     expect(log).not.toContain(fs.readFileSync(path.join(d.home, "plugins/fix/secrets/token"), "utf8"));
   });
 
+  itSpawns("runs a source-mode plugin from runtime/<source>, needing no repo/ grant", async () => {
+    // exec.cwd names a declared source, not "plugin": the process runs from
+    // runtime/lib, already inside vendorDirs()'s runtime/ entry, so this
+    // never touches the repo/-grant branch the "plugin" case does.
+    const src = fixturePlugin(); // any git repo will do as a source; it has its own cli.sh
+    const commit = fs
+      .readFileSync(path.join(src, ".git", "refs", "heads", fs.readdirSync(path.join(src, ".git", "refs", "heads"))[0]!), "utf8")
+      .trim();
+    const d = device(minterWith({ mintScoped: async (scope) => `MINTED-${scope}` }));
+    await installPlugin(
+      path.join(d.home, "plugins"),
+      fixturePlugin({
+        env: FIXTURE_ENV,
+        runtime: { binaries: [], sources: [{ name: "lib", git: src, commit }] },
+        exec: { cwd: "lib", argv: ["/bin/sh", "cli.sh"] },
+      }),
+      deps,
+    );
+    await d.startPlugins({ plowApiBase: "https://api.example" });
+    const out = jv(await run(d, ["fix", "query", "hello"])).get("output").str ?? "";
+    expect(out).toContain("ARGV=query hello");
+  });
+
   it("refuses off-allowlist argv at the device, recorded as exec_error, never spawned", async () => {
     const d = device(okMinter());
     await installPlugin(path.join(d.home, "plugins"), fixturePlugin({ env: FIXTURE_ENV }), deps);

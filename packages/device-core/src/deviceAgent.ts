@@ -1030,16 +1030,19 @@ export class DeviceAgent {
     }
     this.audit.record("exec_start", { intentId: intent.intentId, argv });
     try {
-      // A plugin's own repo is not a vendor dir (only bin/ and runtime/ are,
-      // for the PATH lookup) and not an approved fs.read path, yet the
-      // manifest's exec.cwd routinely lands there (a symlink under runtime/
-      // to the cloned repo, for a source-mode plugin) and the command reads
-      // its own files once it cd's in. `cwd` is always added to the
-      // sandbox's reads (Executor.run), so running from it is what makes the
-      // plugin's own tree — never the owner's approved paths — readable.
+      // Neither `dirs.bin` nor `dirs.runtime` (the only two in `vendorDirs()`)
+      // is where the command actually runs: `exec.cwd` is validated to be
+      // either the literal "plugin" (the cloned repo itself) or a declared
+      // source name, a directory `runtime/<name>` already inside `runtime/`
+      // and so already readable. Only the "plugin" case needs a grant this
+      // run doesn't already have — `cwd` is always added to the sandbox's
+      // reads (Executor.run), so running from it is what makes the plugin's
+      // own tree, and never the owner's approved paths, readable.
+      const cwd =
+        plugin.manifest.exec.cwd === "plugin" ? plugin.dirs.repo : path.join(plugin.dirs.runtime, plugin.manifest.exec.cwd);
       const result = await this.executor.run({
         argv,
-        cwd: plugin.dirs.repo,
+        cwd,
         readPaths: opts.readPaths,
         writePaths: opts.writePaths,
         network: opts.network,
@@ -1049,7 +1052,7 @@ export class DeviceAgent {
       });
       return this.finishRun(intent.intentId, result, {
         argv,
-        cwd: plugin.dirs.repo,
+        cwd,
         readPaths: opts.readPaths,
         writePaths: opts.writePaths,
         automationTarget: null,
