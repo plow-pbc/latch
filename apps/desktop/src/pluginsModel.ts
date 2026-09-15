@@ -15,10 +15,19 @@ import { PERMISSION_TITLES } from "./capabilitiesModel.js";
 
 export type PluginStatus = "off" | "needs-setup" | "ready";
 
+export type UnmetKind = "account" | "permission" | "path";
+
 export interface UnmetRequirement {
-  kind: "account" | "permission" | "path";
+  kind: UnmetKind;
   id: string;
   action: string; // e.g. "Connect Google", "Grant Contacts"
+}
+
+/** The one place the PluginRowsInput.blocked key format is spelled out —
+ *  shared by the reducer and by whatever populates blocked, so the two
+ *  sides can't drift apart on separator or field order. */
+export function blockedKey(kind: UnmetKind, id: string): string {
+  return `${kind}:${id}`;
 }
 
 export interface PluginRow {
@@ -93,7 +102,7 @@ export function pluginRows(input: PluginRowsInput): PluginRow[] {
     // "google" and would otherwise collide with an account/permission id of
     // the same name.
     const blockedCount =
-      status === "needs-setup" ? unmet.reduce((n, r) => n + (input.blocked[`${r.kind}:${r.id}`] ?? 0), 0) : 0;
+      status === "needs-setup" ? unmet.reduce((n, r) => n + (input.blocked[blockedKey(r.kind, r.id)] ?? 0), 0) : 0;
     return {
       name: manifest.name,
       isCli: manifest.exec.argv.length > 0,
