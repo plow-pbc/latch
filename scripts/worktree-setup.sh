@@ -40,7 +40,7 @@ echo "main checkout: $main_root"
 # browser stack — browserRuntime.ts refuses to offer browsing without either, so
 # the pool (packages/browser-server/fingerprints.json, gitignored build output)
 # is cloned alongside the browser, not left for a launch to discover missing.
-for dir in vendor/camoufox-browser vendor/downloads vendor/providers packages/browser-server/fingerprints.json; do
+for dir in vendor/camoufox-browser vendor/downloads vendor/providers vendor/plugins packages/browser-server/fingerprints.json; do
   if [[ -e "$dir" ]]; then
     echo "$dir already present — leaving it alone"
   elif [[ -e "$main_root/$dir" ]]; then

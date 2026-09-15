@@ -5,8 +5,10 @@
  * and again at the device, and what it catches are the hazards a human cannot
  * see by reading the command — the command itself looks legitimate.
  */
+import fs from "node:fs";
 import { describe, expect, it } from "vitest";
 import { GOG_ALIASES, GOG_CANONICAL } from "../src/providers/gogGroups.js";
+import { parseManifest } from "../src/plugins/manifest.js";
 import {
   impliesNetwork,
   needsToken,
@@ -224,6 +226,15 @@ describe("the scope bound", () => {
     expect(gog.belt).toContain(bound);
     // Every naming on the page agrees, and there is at least one: an empty
     // match set fails this too, since `[]` is not `[bound]`.
+    const named = gog.skill.body.match(/--enable-commands=[^`\s]*/g) ?? [];
+    expect([...new Set(named)]).toEqual([bound]);
+  });
+
+  it("is the bundled gog plugin's exec.argv, and the page names the same one", () => {
+    const raw = fs.readFileSync(
+      new URL("../../../apps/desktop/plugins/gog/latch-plugin.json", import.meta.url), "utf8");
+    const bound = `--enable-commands=${[...GOG_CANONICAL].join(",")}`;
+    expect(parseManifest(raw).exec.argv).toContain(bound);
     const named = gog.skill.body.match(/--enable-commands=[^`\s]*/g) ?? [];
     expect([...new Set(named)]).toEqual([bound]);
   });
