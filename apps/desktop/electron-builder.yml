@@ -147,8 +147,12 @@ extraResources:
     filter: ["**/*", "!*/VERSION"]
   # Every bundled plugin, per-arch, in ONE entry: vendor/plugins/<name>/ holds
   # the manifest and runtime/<arch>/bin. `loadPlugins` reads <Resources>/plugins.
+  # The staging tree also carries each plugin's build-time-only files — the
+  # bump checklist and the postinstall hook, which ran before packaging — and
+  # those stay out of the signed bundle.
   - from: ../../vendor/plugins
     to: plugins
+    filter: ["**/*", "!*/README.md", "!*/postinstall.mjs"]
   # The native helpers (scripts/build-native.mjs, a `just build` step): the
   # Full Disk Access flow's window tracker, the permission-status helper the
   # host-gate diagnosis asks about Automation, and the credential-exchange

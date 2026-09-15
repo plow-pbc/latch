@@ -5,7 +5,7 @@ copy of this checklist in `scripts/vendored-providers.mjs` is retired by
 the next PR in this stack — this one is the "only home" that stands.)
 
 Per-version verdicts about gog's own grammar. They live on gog's row rather
-than in the fetcher, which knows nothing about any particular CLI.
+than in the staging code, which knows nothing about any particular CLI.
 
 1. In `latch-plugin.json` set `version`, the version segment of both `url`s,
    and both `sha256` values (the tarballs, checked against upstream's
