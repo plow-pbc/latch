@@ -13,14 +13,20 @@ export const MINIMAL = {
 };
 
 /**
- * A gzipped tarball holding one executable `tool` that prints its argv.
- * `tmp` is the caller's own throwaway-dir helper, so cleanup stays with it.
+ * A gzipped tarball holding an executable `tool` that prints its argv, plus
+ * DECOY — a second member no manifest names, so every stage test exercises
+ * the narrowing that keeps an archive's other contents out of the runtime
+ * tree. `tmp` is the caller's own throwaway-dir helper, so cleanup stays
+ * with it.
  */
+export const DECOY = "decoy";
+
 export function tarball(tmp: () => string): { file: string; sha256: string } {
   const src = tmp();
   fs.writeFileSync(path.join(src, "tool"), '#!/bin/sh\necho "ARGV=$*"\n', { mode: 0o755 });
+  fs.writeFileSync(path.join(src, DECOY), "not ours\n");
   const file = path.join(tmp(), "tool.tgz");
-  execFileSync("tar", ["czf", file, "-C", src, "tool"]);
+  execFileSync("tar", ["czf", file, "-C", src, "tool", DECOY]);
   return { file, sha256: createHash("sha256").update(fs.readFileSync(file)).digest("hex") };
 }
 

@@ -59,10 +59,14 @@ export function loadPlugins(roots: readonly string[]): StagedPlugin[] {
   return out;
 }
 
-/** `DOMO_PLUGINS` is the test/operator override, ahead of everything. */
+/**
+ * `DOMO_PLUGINS` is the test/operator override, ahead of everything. It is
+ * resolved because every root is carried through to a `binDir`, and a relative
+ * one would make the child's PATH and the sandbox's reads depend on a cwd.
+ */
 export function pluginRoots(opts: { resourcesDir?: string; repoRoot?: string; home: string }): string[] {
   const roots: string[] = [];
-  if (process.env.DOMO_PLUGINS) roots.push(process.env.DOMO_PLUGINS);
+  if (process.env.DOMO_PLUGINS) roots.push(path.resolve(process.env.DOMO_PLUGINS));
   if (opts.resourcesDir) roots.push(path.join(opts.resourcesDir, "plugins"));
   if (opts.repoRoot) roots.push(path.join(opts.repoRoot, "vendor", "plugins"));
   roots.push(path.join(opts.home, "plugins"));
