@@ -1,5 +1,6 @@
 /**
- * Staging a plugin's pinned binaries into `runtime/<arch>/bin`.
+ * Staging a plugin's binaries into `runtime/<arch>/bin`: a pinned downloaded
+ * archive, or a "tool" installed by `uv` from a pinned git commit.
  *
  * ONE code path for a bundled plugin (`scripts/stage-plugins.mjs`, into
  * `vendor/plugins`) and an installed one (into `$DOMO_HOME/plugins`). The
@@ -43,6 +44,10 @@ export async function stageBinaries(
   // half-staged plugin would still pass loadPlugins' single-executable check.
   try {
     for (const b of manifest.runtime.binaries) {
+      if ("git" in b) {
+        stageTool(b, bin, runtime);
+        continue;
+      }
       const want = b.sha256[arch];
       // Keyed on the pin itself: a bump changes the sha, so it can never hit a stale cache entry.
       const archive = path.join(downloads, `${manifest.name}-${b.name}-${arch}-${want}`);
@@ -71,6 +76,24 @@ export async function stageBinaries(
     fs.rmSync(runtime, { recursive: true, force: true });
     throw err;
   }
+}
+
+/**
+ * A "tool" binary: installed by `uv tool install` from a pinned git commit,
+ * rather than downloaded as an archive. The commit hash is its integrity
+ * pin, playing the sha256 digest's role, so there is no separate byte check
+ * here. `uv` writes the shim straight into `bin`, the same directory a
+ * pinned binary's tar member lands in — the manifest's binary `name` must
+ * match the package's `project.scripts` entry point, or the shim `uv`
+ * produces has some other name and this plugin simply never stages
+ * (loadPlugins' executable check in registry.ts fails loud on the missing
+ * file, the same outcome a wrong tar member name gets).
+ */
+function stageTool(tool: { name: string; git: string; commit: string }, bin: string, runtime: string): void {
+  execFileSync("uv", ["tool", "install", "--force", "--reinstall", `git+${tool.git}@${tool.commit}`], {
+    env: { ...process.env, UV_TOOL_DIR: path.join(runtime, "tools", tool.name), UV_TOOL_BIN_DIR: bin },
+    stdio: "pipe",
+  });
 }
 
 export function runPostinstall(manifest: PluginManifest, pluginDir: string, arch: Arch): string | null {

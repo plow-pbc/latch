@@ -4,7 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { parseManifest, PluginError } from "../src/plugins/manifest.js";
 import { binDir, runPostinstall, stageBinaries, type Arch } from "../src/plugins/stage.js";
-import { DECOY, MINIMAL, tarball, tempDirs } from "./pluginFixtures.js";
+import { DECOY, gitFixture, MINIMAL, tarball, tempDirs } from "./pluginFixtures.js";
 
 const ARCH = process.arch as Arch;
 const { tmp, cleanup } = tempDirs("latch-stage-");
@@ -103,6 +103,21 @@ describe("stageBinaries", () => {
       }),
     ).rejects.toThrow("network down");
     expect(fs.existsSync(binDir(pluginDir, ARCH))).toBe(false);
+  });
+});
+
+describe("stageBinaries with a tool", () => {
+  it("installs a pinned git commit via uv and stages the shim into bin/, no download needed", async () => {
+    const { git, commit } = gitFixture(tmp);
+    const pluginDir = tmp();
+    const manifest = parseManifest(JSON.stringify({
+      ...MINIMAL,
+      exec: { cwd: "plugin", argv: ["fixtool", "--fixed"] },
+      runtime: { binaries: [{ name: "fixtool", git, commit }], sources: [] },
+    }));
+    await stageBinaries(manifest, pluginDir, ARCH, tmp(), async () => { throw new Error("a tool never downloads"); });
+    const staged = path.join(binDir(pluginDir, ARCH), "fixtool");
+    expect(execFileSync(staged, ["a"], { encoding: "utf8" })).toBe("ARGV=a\n");
   });
 });
 

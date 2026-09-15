@@ -21,12 +21,14 @@ export interface PluginManifest {
   version: string;
   command: string; // same charset as name; argv[0] agents type
   runtime: {
-    binaries: {
-      name: string;
-      url: Record<"arm64" | "x64", string>;
-      sha256: Record<"arm64" | "x64", string>;
-      executable?: string;
-    }[];
+    // A binary is either a pinned downloaded archive, or a "tool": installed
+    // by `uv tool install` from a pinned git commit (the commit hash is the
+    // integrity pin, playing the sha256's role). Discriminated structurally,
+    // by which fields are present, not by a tag — see parseManifest.
+    binaries: (
+      | { name: string; url: Record<"arm64" | "x64", string>; sha256: Record<"arm64" | "x64", string>; executable?: string }
+      | { name: string; git: string; commit: string }
+    )[];
     sources: { name: string; git: string; commit: string; install?: string[] }[];
   };
   exec: { cwd: string; argv: string[] }; // cwd is a runtime/ entry ("gbrain", "plugin"); each binary is staged as runtime/<arch>/bin/<binary name>, which leads a child's PATH — argv[0] names one of those or anything else on PATH
@@ -116,6 +118,15 @@ export function parseManifest(raw: string): PluginManifest {
     const bin = obj(b);
     const bname = typedString(bin.name, "binary name") ?? "";
     if (!SLUG.test(bname)) fail("binary name must be lowercase letters, digits and dashes");
+    // A "tool" binary carries `git`, never `url`/`sha256` — the commit pin
+    // below IS its integrity check, so no digest field applies.
+    if (bin.git !== undefined) {
+      if (typeof bin.git !== "string" || !bin.git || bin.git.startsWith("-")) fail(`binary ${bname} needs a git url`);
+      if (typeof bin.commit !== "string" || !/^[0-9a-f]{40}$/.test(bin.commit)) {
+        fail(`binary ${bname} needs a 40-character commit`);
+      }
+      return { name: bname, git: bin.git, commit: bin.commit };
+    }
     const url = obj(bin.url);
     const sha256 = obj(bin.sha256);
     for (const arch of ARCHES) {
