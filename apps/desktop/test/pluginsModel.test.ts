@@ -46,6 +46,7 @@ function build(input: {
   requires: PluginRequires;
   enabled: boolean;
   hits?: number;
+  availablePaths?: string[];
 }): PluginRowsInput {
   const blocked: Record<string, number> = {};
   if (input.hits !== undefined) {
@@ -57,6 +58,7 @@ function build(input: {
     plugins: [{ manifest: manifest(input.requires), enabled: input.enabled }],
     inventory: inventory(),
     connectedAccounts: [],
+    availablePaths: input.availablePaths ?? [],
     blocked,
   };
 }
@@ -73,6 +75,13 @@ describe("pluginRows status", () => {
     ],
     ["off wins over an unmet requirement", { requires: { ...none, accounts: ["google"] }, enabled: false }, "off", 0],
     ["off even when otherwise ready", { requires: none, enabled: false }, "off", 0],
+    ["needs-setup when a path is missing", { requires: { ...none, paths: ["~/Plow/wiki"] }, enabled: true }, "needs-setup", 0],
+    [
+      "ready when the only requirement is a met path (plow-wiki's shape)",
+      { requires: { ...none, paths: ["~/Plow/wiki"] }, enabled: true, availablePaths: ["~/Plow/wiki"] },
+      "ready",
+      0,
+    ],
   ] as const)("%s", (_name, input, status, blockedCount) => {
     const [row] = pluginRows(build(input)) as [PluginRow];
     expect(row.status).toBe(status);
@@ -99,4 +108,20 @@ it("a met permission requirement never appears in unmet", () => {
   const [row] = pluginRows(input) as [PluginRow];
   expect(row.status).toBe("ready");
   expect(row.unmet).toEqual([]);
+});
+
+// full_disk_access is read from its own inventory field rather than the
+// generic permissions list (see unmetRequirements), so it gets its own
+// met/unmet pair rather than a shared table row.
+it("full_disk_access is met when the inventory says granted", () => {
+  const input = build({ requires: { ...none, permissions: ["full_disk_access"] }, enabled: true });
+  input.inventory = inventory({ full_disk_access: { granted: true, probes: [] } });
+  const [row] = pluginRows(input) as [PluginRow];
+  expect(row.status).toBe("ready");
+});
+
+it("full_disk_access is unmet when the inventory says not granted", () => {
+  const input = build({ requires: { ...none, permissions: ["full_disk_access"] }, enabled: true });
+  const [row] = pluginRows(input) as [PluginRow];
+  expect(row.status).toBe("needs-setup");
 });

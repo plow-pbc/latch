@@ -36,6 +36,8 @@ export interface PluginRowsInput {
   plugins: { manifest: PluginManifest; enabled: boolean }[];
   inventory: HostInventory;
   connectedAccounts: string[];
+  /** Paths that exist and the app can use; the caller stats them. */
+  availablePaths: string[];
   blocked: Record<string, number>;
 }
 
@@ -49,6 +51,7 @@ function unmetRequirements(
   manifest: PluginManifest,
   inventory: HostInventory,
   connectedAccounts: readonly string[],
+  availablePaths: readonly string[],
 ): UnmetRequirement[] {
   const unmet: UnmetRequirement[] = [];
   for (const id of manifest.requires.accounts) {
@@ -65,10 +68,14 @@ function unmetRequirements(
       unmet.push({ kind: "permission", id, action: `Grant ${PERMISSION_TITLES[id] ?? capitalize(id)}` });
     }
   }
-  // No input here can confirm a path is accessible (this module does no
-  // I/O), so a declared path always needs the owner's attention.
+  // Met literally against availablePaths: no tilde expansion, normalization
+  // or realpath resolution here — this module does no I/O, so the caller
+  // stats and normalizes before passing paths in, and must pass declared
+  // paths through in the same form for this comparison to mean anything.
   for (const id of manifest.requires.paths) {
-    unmet.push({ kind: "path", id, action: `Grant access to ${id}` });
+    if (!availablePaths.includes(id)) {
+      unmet.push({ kind: "path", id, action: `Grant access to ${id}` });
+    }
   }
   return unmet;
 }
@@ -76,8 +83,14 @@ function unmetRequirements(
 /** Build the tab's rows, one per installed plugin, in the order given. */
 export function pluginRows(input: PluginRowsInput): PluginRow[] {
   return input.plugins.map(({ manifest, enabled }) => {
-    const unmet = enabled ? unmetRequirements(manifest, input.inventory, input.connectedAccounts) : [];
+    const unmet = enabled
+      ? unmetRequirements(manifest, input.inventory, input.connectedAccounts, input.availablePaths)
+      : [];
     const status: PluginStatus = !enabled ? "off" : unmet.length > 0 ? "needs-setup" : "ready";
+    // blocked is a flat id -> count map shared across account/permission/path
+    // ids: connector ids, HostPermission ids and filesystem paths are
+    // distinct vocabularies that don't collide in practice, so one map
+    // keyed on id alone is fine here.
     const blockedCount = status === "needs-setup" ? unmet.reduce((n, r) => n + (input.blocked[r.id] ?? 0), 0) : 0;
     return {
       name: manifest.name,
