@@ -1004,7 +1004,8 @@ export class DeviceAgent {
    * off-allowlist or unhealthy-daemon call never spawns. The resolved env
    * (a fixed value, the plugin's own generated secret) reaches only the
    * child's environment: it is never on argv, in an error string, or in the
-   * audit log, which records the argv the owner approved and nothing else.
+   * audit log, which records the actual invocation argv — finer-grained than
+   * the `<command> <allowed prefix>` an always-allow read rule was keyed on.
    * This build mints nothing for a plugin — a manifest `mint` env source
    * refuses via `env.ts`'s own fixed sentence, caught below like any other
    * `PluginError`, and never reaches `Minter`.

@@ -382,10 +382,11 @@ export const TOOLS: ToolSpec[] = [
       "and in exchange its only writable place is `$TMPDIR`, a directory of its own that is deleted " +
       "when it is killed. Declare a write path (or " +
       "network, or apple_events) and it is never killed that way, because it could be mid-work and a " +
-      "truncated file — or a message already sent — is worse than the wait. A vendored provider or an installed plugin command counts as having declared network even " +
-      "though you did not — so it is never killed that way either, and the `$TMPDIR` exchange is " +
-      "off — unless it asks for help (`--help`/`-h` last, no `--` before it), which " +
-      "reaches nothing and is exempt. " +
+      "truncated file — or a message already sent — is worse than the wait. A vendored provider or an " +
+      "installed plugin command counts as having declared network even though you did not — so it is " +
+      "never killed that way either, and the `$TMPDIR` exchange is off. A vendored provider is exempt " +
+      "when it asks for help (`--help`/`-h` last, no `--` before it), which reaches nothing; a plugin " +
+      "command has no such exemption — it always counts as network. " +
       "A run ends when the command itself exits, and its stdout and stderr close with it — so a job " +
       "left running in the background will normally be killed by its next write unless it redirects " +
       "both (`>log 2>&1`), its output is not captured, and no handle tracks it. "  +
