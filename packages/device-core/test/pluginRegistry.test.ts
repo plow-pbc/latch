@@ -36,6 +36,15 @@ describe("PluginRegistry", () => {
     await expect(reg2.env(reg2.all()[0]!, null, "https://api.example")).rejects.toThrow("this Mac is not paired with Plow");
   });
 
+  it("wraps a missing secret file as a PluginError naming the field, not the path", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "latch-plugins-"));
+    await installPlugin(root, fixturePlugin({ env: FIXTURE_ENV }));
+    const reg = new PluginRegistry(root);
+    reg.load();
+    fs.rmSync(path.join(root, "fix", "secrets", "token"));
+    await expect(reg.env(reg.all()[0]!, null, "https://api.example")).rejects.toThrow("no secret named token");
+  });
+
   it("setHealth gates every invocation while unhealthy, before any intent", async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "latch-plugins-"));
     await installPlugin(root, fixturePlugin({ env: FIXTURE_ENV }));

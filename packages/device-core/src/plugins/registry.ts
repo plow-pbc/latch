@@ -10,7 +10,7 @@ import { parseFrontmatter, type Skill } from "../skills.js";
 import { classifyArgv } from "./argvRules.js";
 import { resolveEnv, type EnvContext } from "./env.js";
 import { listInstalledNames, pluginDirs, readInstalled, type Installed } from "./install.js";
-import type { PluginManifest } from "./manifest.js";
+import { PluginError, type PluginManifest } from "./manifest.js";
 
 export interface LoadedPlugin {
   manifest: PluginManifest;
@@ -62,7 +62,7 @@ export class PluginRegistry {
   }
 
   problems(): readonly { name: string; problem: string }[] {
-    return this.issues;
+    return [...this.issues];
   }
 
   /** Exact argv[0] === command; a path never matches (same rule as `vendoredProvider`). */
@@ -88,7 +88,13 @@ export class PluginRegistry {
       pluginHome: plugin.dirs.home,
       port: null, // no manifest this build installs may declare a daemon
       plowApiBase,
-      secret: (name) => fs.readFileSync(path.join(plugin.dirs.secrets, name), "utf8"),
+      secret: async (name) => {
+        try {
+          return await fs.promises.readFile(path.join(plugin.dirs.secrets, name), "utf8");
+        } catch {
+          throw new PluginError(`no secret named ${name}`); // never the path
+        }
+      },
       mint,
     };
     return resolveEnv(plugin.manifest, ctx);

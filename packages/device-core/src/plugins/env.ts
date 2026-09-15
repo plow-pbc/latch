@@ -4,7 +4,7 @@ export interface EnvContext {
   pluginHome: string;
   port: number | null;
   plowApiBase: string;
-  secret: (name: string) => string; // throws PluginError if unknown
+  secret: (name: string) => Promise<string>; // throws PluginError if unknown
   mint: ((scope: string) => Promise<string>) | null; // null → a `mint` value refuses
 }
 
@@ -22,7 +22,7 @@ export async function resolveEnv(manifest: PluginManifest, ctx: EnvContext): Pro
   const out: Record<string, string> = {};
   for (const [key, source] of Object.entries(manifest.env)) {
     if ("fixed" in source) out[key] = substitute(source.fixed, ctx);
-    else if ("secret" in source) out[key] = ctx.secret(source.secret);
+    else if ("secret" in source) out[key] = await ctx.secret(source.secret);
     else {
       if (ctx.mint === null) throw new PluginError("this Mac is not paired with Plow");
       out[key] = await ctx.mint(source.mint);
