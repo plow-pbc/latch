@@ -19,5 +19,5 @@
     "write": [["init"], ["index"], ["snapshot"]]
   },
   "skill": "skill.md",
-  "requires": { "accounts": [], "permissions": [], "paths": ["~/Plow/wiki"] }
+  "requires": { "accounts": [], "permissions": [], "paths": ["~/Plow/wiki", "~/Plow/wiki.git"] }
 }
