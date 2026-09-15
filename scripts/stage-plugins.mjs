@@ -14,12 +14,15 @@ const bundled = path.join(repoRoot, "apps", "desktop", "plugins");
 const vendor = path.join(repoRoot, "vendor", "plugins");
 const downloads = path.join(repoRoot, "vendor", "downloads");
 
+// Filtered to entries that actually have a manifest, so a stray non-plugin
+// file under apps/desktop/plugins (a .DS_Store, say) doesn't abort --all.
+const every = fs.readdirSync(bundled).filter((name) => fs.existsSync(path.join(bundled, name, "latch-plugin.json")));
 const arg = process.argv[2] ?? "--all";
-const names = arg === "--all" ? fs.readdirSync(bundled) : [arg];
+const names = arg === "--all" ? every : [arg];
 for (const name of names) {
   const src = path.join(bundled, name);
   if (!fs.existsSync(path.join(src, "latch-plugin.json"))) {
-    console.error(`usage: stage-plugins.mjs <${fs.readdirSync(bundled).join("|")}|--all>`);
+    console.error(`usage: stage-plugins.mjs <${every.join("|")}|--all>`);
     process.exit(2);
   }
   const dest = path.join(vendor, name);
