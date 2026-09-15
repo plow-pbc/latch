@@ -43,6 +43,7 @@ describe("parseManifest", () => {
     ["a postinstall hook that climbs out", withPatch({ hooks: { postinstall: "hooks/../../x.sh" } }), "hooks.postinstall must be a path inside the plugin"],
     ["an empty postinstall hook", withPatch({ hooks: { postinstall: "" } }), "hooks.postinstall must be a path inside the plugin"],
     ["an env value with two sources", withPatch({ env: { X: { fixed: "a", secret: "b" } } }), "env value X must be one of fixed, secret or mint"],
+    ["a secret name that escapes secrets/", withPatch({ env: { X: { secret: "../../etc/passwd" } } }), "env value X secret must be lowercase letters, digits and dashes"],
     ["a source without a 40-char commit", withPatch({ runtime: { binaries: [], sources: [{ name: "s", git: "g", commit: "abc" }] } }), "source s needs a 40-character commit"],
     ["overlapping read and write prefixes", withPatch({ argv: { read: [["put"]], write: [["put", "x"]] } }), "argv prefixes must not overlap: put"],
     ["an empty prefix", withPatch({ argv: { read: [[]], write: [] } }), "argv prefixes must not be empty"],
