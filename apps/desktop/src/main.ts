@@ -2072,9 +2072,9 @@ app.whenReady().then(async () => {
   // live pre-cutover app (a sibling worktree's `just app`) has that app as
   // its parent and is left alone.
   await reapOrphanedLegacyVaultServers();
-  // The plugins this Mac has staged: packaged Resources, a from-source vendor
-  // tree (app.getAppPath() is apps/desktop under `just app`, so climb two),
-  // and the owner's installed ones under DOMO_HOME.
+  // The plugins this Mac has staged: packaged Resources, or a from-source
+  // vendor tree (app.getAppPath() is apps/desktop under `just app`, so climb
+  // two). An owner-installed root arrives with the installer.
   //
   // Read HERE, not inside the constructor call below: a refused manifest (a
   // corrupt bundled one, or a DOMO_PLUGINS pointed somewhere wrong) throws,
