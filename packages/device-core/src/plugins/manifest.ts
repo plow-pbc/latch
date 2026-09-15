@@ -198,14 +198,28 @@ export function parseManifest(raw: string): PluginManifest {
   const skill = m.skill === undefined ? null : insideOrFail(m.skill, "skill");
 
   const req = typedObj(m.requires, "requires");
-  const strList = (v: unknown, field: string): string[] =>
-    typedArray(v, field).map((e: unknown) => {
-      if (typeof e !== "string") fail(`${field} entries must be strings`);
-      return e;
-    });
+  const strList = (v: unknown, field: string): string[] => {
+    const arr = typedArray(v, field);
+    if (!isStrings(arr)) fail(`${field} entries must be strings`);
+    return arr;
+  };
+  // accounts and permissions are identifiers (connector ids / HostPermission
+  // ids), so they get the same SLUG shape check every other identifier field
+  // in this manifest gets — a typo'd id fails loudly here instead of no-oping
+  // downstream. This checks shape only, never against a closed set of known
+  // connector/permission ids: that set lives in other layers, and importing
+  // it here would couple manifest parsing to them. paths are filesystem
+  // paths, not identifiers, and keep accepting any string.
+  const slugList = (v: unknown, field: string): string[] => {
+    const arr = strList(v, field);
+    for (const id of arr) {
+      if (!SLUG.test(id)) fail(`${field} entries must be lowercase letters, digits and dashes`);
+    }
+    return arr;
+  };
   const requires: PluginRequires = {
-    accounts: strList(req.accounts, "requires.accounts"),
-    permissions: strList(req.permissions, "requires.permissions"),
+    accounts: slugList(req.accounts, "requires.accounts"),
+    permissions: slugList(req.permissions, "requires.permissions"),
     paths: strList(req.paths, "requires.paths"),
   };
 

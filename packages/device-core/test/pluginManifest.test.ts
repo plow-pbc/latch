@@ -74,6 +74,9 @@ describe("parseManifest", () => {
     ["a non-string top-level version", withPatch({ version: true }), "manifest version must be a string"],
     ["a non-array requires.accounts", withPatch({ requires: { accounts: "google" } }), "requires.accounts must be an array"],
     ["a non-string entry in requires.permissions", withPatch({ requires: { permissions: [7] } }), "requires.permissions entries must be strings"],
+    ["a non-slug requires.accounts entry", withPatch({ requires: { accounts: ["Not Slug"] } }), "requires.accounts entries must be lowercase letters, digits and dashes"],
+    ["a non-slug requires.permissions entry", withPatch({ requires: { permissions: [""] } }), "requires.permissions entries must be lowercase letters, digits and dashes"],
+    ["a requires that is not an object", withPatch({ requires: "nope" }), "requires must be an object"],
   ])("refuses %s", (_name, raw, message) => {
     expect(() => parseManifest(raw)).toThrow(new PluginError(message));
   });
