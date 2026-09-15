@@ -10,6 +10,9 @@ describe("parseManifest", () => {
     expect(m.daemon).toBeNull();
     expect(m.hooks).toEqual({});
     expect(m.runtime.binaries).toEqual([]);
+    // MINIMAL's exec.argv[0] is the absolute "/bin/sh": a leading "/" must
+    // still parse, since only a ".." segment is forbidden there.
+    expect(m.exec.argv[0]).toBe("/bin/sh");
   });
 
   it("accepts a manifest with no skill: a code layer may publish one for it", () => {
