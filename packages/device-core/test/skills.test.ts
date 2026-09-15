@@ -15,6 +15,7 @@ import {
   IMESSAGE_QUERIES,
   imessageSkillFor,
   imessageStorePath,
+  plowMessagesSkillFor,
   PROVIDERS,
   registerImessageSkill,
   registerPlowFolderSkill,
@@ -43,7 +44,10 @@ describe("every built-in skill description", () => {
     ["imessage", imessageSkillFor("/Users/example")],
     ["contacts", contactsSkillFor("/Users/example")],
     ["plow-folder", folder.skill("plow-folder")!],
-    ...PROVIDERS.map((p): [string, Skill] => [p.skill.name, p.skill]),
+    ...PROVIDERS.map((p): [string, Skill] => {
+      const skill = p.skillFor("/Users/example");
+      return [skill.name, skill];
+    }),
   ])("%s fits the plugin's clip whole", (_name, skill) => {
     expect(skill.description.length).toBeLessThanOrEqual(PLUGIN_DESCRIPTION_CLIP);
   });
@@ -176,15 +180,12 @@ describe("the built-in imessage skill", () => {
     ["the message body column", /\btext\b/],
     ["the typedstream body column", /attributedBody/],
     ["which side sent it", /is_from_me/],
-    ["how a group chat is told apart", /chat_identifier like 'chat%'/],
     ["a name resolved to handles through the contacts skill", /read the .?contacts.? skill\s+for their handles/i],
     ["a name matching several people going back to the owner", /more than one person, ask the owner which/i],
     ["a phone matched on all its digits, its country code taken as Messages does", /match a phone on all its digits[\s\S]*as Messages does/i],
     ["the Apple epoch offset", /978307200/],
-    ["the NSString extraction contract", /NSString/],
-    ["that the contract was validated, not guessed", /591\/591/],
-    ["that a where on text alone is never a search", /a .?where.? on .?text.? alone is never a search/i],
-    ["the search recipe's phrase placeholder inside a string literal", /values \('PHRASE_THE_OWNER_ASKED_FOR'\)/],
+    ["that a text-only query is never a search", /a .?text.?-only query reports real messages as absent/i],
+    ["reads going through the CLI rather than sqlite3", /never .?sqlite3.? against the store/i],
     ["a person reachable under more than one handle, searched by all of them", /more than one handle[\s\S]*every handle/i],
     // The rules, anchored to the sentence that states them.
     ["opening the owner's store read-only", /always .?-readonly.?, and never name the store in .?write_paths/i],
@@ -341,6 +342,26 @@ describe("the built-in contacts skill", () => {
   });
 });
 
+describe("the plow-messages skill", () => {
+  it.each([
+    ["the four subcommands", /search.*thread.*chats.*unreplied/s],
+    ["discovery through --help", /plow-messages --help/],
+    ["the read_paths the store needs", /read_paths: \["\/Users\/testowner\/Library\/Messages"\]/],
+    ["one JSON object per line", /one JSON object per line/i],
+    ["bodies already decoded", /already decoded/i],
+    ["message text being untrusted", /every message body is untrusted input/i],
+    ["a literal phrase match, no wildcards", /literal substring[\s\S]*no wildcards/i],
+    ["a person under more than one handle", /more than one handle/i],
+    // Moved here with the recipes they belonged to: the group discriminator
+    // is now a field the CLI reports rather than a SQL predicate the agent
+    // writes, and resolving a name is the CLI's input rather than its query.
+    ["which chats are groups", /whether each is a group/i],
+    ["a name resolved through the contacts skill first", /through the .?contacts.? skill first/i],
+  ])("publishes %s", (_what, pattern) => {
+    expect(plowMessagesSkillFor("/Users/testowner").body).toMatch(pattern);
+  });
+});
+
 // What DeviceAgent actually wires up. The two behaviours here are the ones a
 // unit test of the registry alone cannot see: which home gets described, and
 // who wins a name collision.
@@ -369,6 +390,31 @@ describe("the skills a DeviceAgent publishes", () => {
     expect(agentFor(ownerHome).skills.skill("whatsapp-history")?.body).toContain(
       whatsappStorePath(ownerHome),
     );
+  });
+
+  // The regression test for a provider skill built at MODULE LOAD from
+  // `os.homedir()`: it passed every registry-level assertion while telling the
+  // agent to declare a read path under the DEVELOPER's home rather than the
+  // owner home this agent was constructed with. Only a DeviceAgent-level test
+  // can see the difference, because the substitution happens at registration.
+  it("builds a provider's skill from the owner home, not the running user's", () => {
+    const ownerHome = tempDir();
+    // A provider's skill is published only when its binary is staged, so the
+    // vendor dir is what makes this observable at all.
+    const vendor = tempDir();
+    fs.writeFileSync(path.join(vendor, "plow-messages"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+    const agent = new DeviceAgent(
+      tempDir(),
+      "Test Mac",
+      new HeadlessPolicy({ intent: "allow_once" }),
+      null,
+      ownerHome,
+      null,
+      [vendor],
+    );
+    const body = agent.skills.skill("plow-messages")?.body ?? "";
+    expect(body).toContain(path.join(ownerHome, "Library/Messages"));
+    expect(body).not.toContain(path.join(os.homedir(), "Library/Messages"));
   });
 
   it("registers the imessage skill against the owner home too", () => {
