@@ -35,6 +35,18 @@ describe("installPlugin", () => {
     expect(listInstalled(r).map((p) => p.installed.name)).toEqual(["fix"]);
   });
 
+  it("refuses a plugin command that shadows a vendored provider, before creating anything", async () => {
+    const r = root();
+    await expect(installPlugin(r, fixturePlugin({ command: "gog" }), deps())).rejects.toThrow(
+      new PluginError("command gog is already provided by Latch"),
+    );
+    expect(fs.existsSync(pluginDirs(r, "fix").root)).toBe(false);
+    const r2 = root();
+    await expect(installPlugin(r2, fixturePlugin({ command: "plow-gog" }), deps())).rejects.toThrow(
+      new PluginError("command plow-gog is already provided by Latch"),
+    );
+  });
+
   it("stages a binary whose sha matches, and refuses one whose sha does not — leaving nothing", async () => {
     const binary = (s: string) => ({ runtime: { binaries: [{ name: "tool", version: "1", url: { arm64: "https://x/t", x64: "https://x/t" }, sha256: { arm64: s, x64: s } }], sources: [] } });
     const r = root();

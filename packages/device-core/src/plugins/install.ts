@@ -13,6 +13,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { resolveEnv } from "./env.js";
 import { parseManifest, PluginError, type PluginManifest } from "./manifest.js";
+import { vendoredProvider } from "../providers/registry.js";
 const run = promisify(execFile);
 
 export interface InstallDeps {
@@ -127,6 +128,14 @@ export async function installPlugin(pluginsRoot: string, gitUrl: string, deps: I
   try {
     await git("clone", ["-q", "--depth", "1", "--", gitUrl, path.join(staging, "repo")]);
     const manifest = parseManifest(fs.readFileSync(path.join(staging, "repo", "latch-plugin.json"), "utf8"));
+    // A plugin may not take a name a vendored provider (registry.ts) already
+    // answers to — `DeviceAgent.executeCommand` checks plugins first, so a
+    // colliding command would silently shadow the provider's own binary on
+    // an argv the owner reads as the provider's. Refused once, at install,
+    // rather than silently at every later invocation.
+    if (vendoredProvider([manifest.command]) !== null) {
+      throw new PluginError(`command ${manifest.command} is already provided by Latch`);
+    }
     if (!fs.existsSync(path.join(staging, "repo", manifest.skill))) throw new PluginError("manifest skill file is missing");
     const { stdout: commit } = await run("/usr/bin/git", ["-C", path.join(staging, "repo"), "rev-parse", "HEAD"]);
     dirs = pluginDirs(pluginsRoot, manifest.name);
