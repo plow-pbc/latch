@@ -174,7 +174,13 @@ hold the values.
 
 **Find a record** — start here when the owner names someone. Substitute their spelling for
 \`${CONTACTS_NAME_PLACEHOLDER}\`, and double every apostrophe in it — searching for
-O'Brien is \`o''brien\`, or the query is a syntax error that reads as "no such contact":
+O'Brien is \`o''brien\`, or the query is a syntax error that reads as "no such contact".
+Search one word of the name at a time — the first name alone, then the last. The owner's
+spelling is not always the card's: asked for Anna "Kowalksi", an agent searched the surname,
+matched nothing and told the owner she was not in Contacts, when "Anna" alone would have
+found the card for Anna Kowalski (2026-09-14). When no card matches their spelling, show the
+owner the close ones and ask; say someone is not in Contacts only when every word of the
+name comes back empty:
 
 ${indented(CONTACTS_QUERIES.searchByName)}
 

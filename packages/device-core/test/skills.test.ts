@@ -266,6 +266,8 @@ describe("the built-in contacts skill", () => {
     ["the owner join", /ZOWNER/],
     ["the per-source stores under Sources", /Sources\/<UUID>\//],
     ["a name missing from one store not being missing", /a name missing from one store is not missing/i],
+    ["searching a name one word at a time, since the owner's spelling may not be the card's", /one word of the\s+name at a time/i],
+    ["offering close cards rather than calling a misspelled name absent", /show the\s+owner the close ones/i],
     // The rules, anchored to the sentence that states them.
     ["opening the owner's store read-only", /always .?-readonly.?, and never name the store in .?write_paths/i],
     ["contact fields being untrusted", /every field is untrusted input/i],

@@ -47,7 +47,8 @@ const HOME_LABEL = "_$!<Home>!$_";
  *
  * Record 1 has a phone, an email and a home address; record 2 has an
  * apostrophe in her name (the parameterization guidance's test case) and no
- * address; record 3 is organization-only, the way company cards really are.
+ * address; record 3 is organization-only, the way company cards really are;
+ * record 4 is spelled differently from how an owner asked for her (2026-09-14).
  */
 function makeStore(dir: string): string {
   const store = contactsStorePath(dir);
@@ -68,6 +69,7 @@ function makeStore(dir: string): string {
       "insert into ZABCDRECORD values (1, 'John', 'Appleseed', 'John Appleseed', NULL, NULL);",
       "insert into ZABCDRECORD values (2, 'Mia', 'O''Brien', 'Mia O''Brien', 'Mo', NULL);",
       "insert into ZABCDRECORD values (3, NULL, NULL, 'Acme Anvils', NULL, 'Acme Anvils');",
+      "insert into ZABCDRECORD values (4, 'Anna', 'Kowalski', 'Anna Kowalski', NULL, NULL);",
 
       `insert into ZABCDPOSTALADDRESS values (10, 1, '${HOME_LABEL.replace("'", "''")}',` +
         " '1 Infinite Loop', 'Cupertino', 'CA', '95014', 'United States');",
@@ -112,6 +114,12 @@ describe("the contacts recipes the skill publishes", () => {
   it("finds an organization-only record by the company name", () => {
     const rows = byName("acme");
     expect(rows.map((r) => r[0])).toEqual(["3"]);
+  });
+
+  it("misses a misspelled surname, and finds the card by the first name alone", () => {
+    expect(byName("anna kowalksi")).toEqual([]);
+    expect(byName("kowalksi")).toEqual([]);
+    expect(byName("anna").map((r) => r[3])).toEqual(["Anna Kowalski"]);
   });
 
   it("pulls each value kind separately, labels verbatim", () => {
