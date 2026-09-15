@@ -38,7 +38,7 @@ export interface ProviderFileArg {
 }
 
 /** What one provider needs in order to run. */
-export interface VendoredProvider {
+export interface Provider {
   /** `argv[0]`. */
   readonly command: string;
   /**
@@ -111,7 +111,7 @@ export interface VendoredProvider {
  * and an agent that types the plugin's own binary name is pointed at it rather
  * than falling through to a single-account path beside it.
  */
-const PLOW_GOG: VendoredProvider = {
+const PLOW_GOG: Provider = {
   command: "plow-gog",
   plugin: "gog",
   mintAction: "access-token",
@@ -138,7 +138,7 @@ const PLOW_GOG: VendoredProvider = {
   },
 };
 
-export const PROVIDERS: readonly VendoredProvider[] = [PLOW_GOG];
+export const PROVIDERS: readonly Provider[] = [PLOW_GOG];
 
 /**
  * The provider an argv invokes, or null when it invokes none.
@@ -149,7 +149,7 @@ export const PROVIDERS: readonly VendoredProvider[] = [PLOW_GOG];
  * choosing. Neither is the plugin's own name — `providerRefusal` below refuses
  * that, rather than routing it here.
  */
-export function vendoredProvider(argv: readonly string[]): VendoredProvider | null {
+export function providerFor(argv: readonly string[]): Provider | null {
   const head = argv[0];
   if (head === undefined) return null;
   return PROVIDERS.find((p) => p.command === head) ?? null;
@@ -161,7 +161,7 @@ export function vendoredProvider(argv: readonly string[]): VendoredProvider | nu
  * the binary's name gets pointed at the surface with the judgment in it.
  */
 export function providerRefusal(argv: readonly string[]): string | null {
-  const provider = vendoredProvider(argv);
+  const provider = providerFor(argv);
   if (provider !== null) return provider.refuse(argv);
   const claimed = PROVIDERS.find((p) => p.plugin === argv[0]);
   return claimed === undefined ? null : `${claimed.plugin} is driven through ${claimed.command}`;
@@ -194,5 +194,5 @@ export function needsToken(argv: readonly string[]): boolean {
  * them drifted within a single commit.
  */
 export function impliesNetwork(argv: readonly string[]): boolean {
-  return vendoredProvider(argv) !== null && needsToken(argv);
+  return providerFor(argv) !== null && needsToken(argv);
 }

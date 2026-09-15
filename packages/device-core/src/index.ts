@@ -34,10 +34,10 @@ export * from "./executor.js";
 export {
   impliesNetwork,
   PROVIDERS,
+  providerFor,
   providerRefusal,
-  vendoredProvider,
 } from "./providers/registry.js";
-export type { VendoredProvider } from "./providers/registry.js";
+export type { Provider } from "./providers/registry.js";
 export { MintError } from "./providers/mint.js";
 export type { MintedAccounts, Minter } from "./providers/mint.js";
 export { reservedFlagIn } from "./providers/gogFlags.js";

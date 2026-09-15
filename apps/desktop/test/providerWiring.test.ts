@@ -9,9 +9,9 @@ import path from "node:path";
 import { buildMinter } from "../src/providerWiring.js";
 import { PlowApi } from "../src/plowApi.js";
 import { saveSettings } from "../src/settings.js";
-import { vendoredProvider } from "@domo/device-core";
+import { providerFor } from "@domo/device-core";
 
-const GOG = vendoredProvider(["plow-gog"])!;
+const GOG = providerFor(["plow-gog"])!;
 const cleanups: (() => void)[] = [];
 afterEach(() => {
   while (cleanups.length) cleanups.pop()!();

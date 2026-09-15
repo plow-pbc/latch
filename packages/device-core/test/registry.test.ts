@@ -13,41 +13,41 @@ import {
   impliesNetwork,
   needsToken,
   PROVIDERS,
+  providerFor,
   providerRefusal,
-  vendoredProvider,
 } from "../src/providers/registry.js";
 
-const gog = vendoredProvider(["plow-gog"])!;
+const gog = providerFor(["plow-gog"])!;
 
-describe("vendoredProvider", () => {
+describe("providerFor", () => {
   it("matches a bare command name, whether or not the plugin is staged", () => {
     // Staging is not consulted here on purpose. Returning null for an unstaged
     // provider would let the command fall through to the ordinary exec path
     // and run whatever the owner happens to have on their own PATH —
     // unbelted, unrefused, against their own credentials. The device turns an
     // unstaged provider into a refusal instead.
-    expect(vendoredProvider(["plow-gog", "gmail", "search"])?.command).toBe("plow-gog");
+    expect(providerFor(["plow-gog", "gmail", "search"])?.command).toBe("plow-gog");
   });
 
   it("does NOT match the plugin's own name: bare gog is refused, naming plow-gog", () => {
-    expect(vendoredProvider(["gog", "gmail", "search", "q"])).toBeNull();
+    expect(providerFor(["gog", "gmail", "search", "q"])).toBeNull();
     expect(providerRefusal(["gog", "gmail", "search", "q"])).toBe("gog is driven through plow-gog");
     expect(providerRefusal(["plow-gog", "gmail", "search", "q"])).toBeNull();
     expect(providerRefusal(["/bin/echo", "gog"])).toBeNull();
   });
 
   it("does NOT match a path", () => {
-    // The vendored binary is reached through the PATH this Mac controls.
+    // The plugin's binary is reached by absolute path under its own bin dir.
     // Honouring a caller-supplied path would let an agent point the mint at a
     // binary of its choosing.
     for (const argv of [["/usr/local/bin/gog"], ["./gog"], ["../gog"]]) {
-      expect(vendoredProvider(argv)).toBeNull();
+      expect(providerFor(argv)).toBeNull();
     }
   });
 
   it("is null for an ordinary command, and for nothing at all", () => {
-    expect(vendoredProvider(["ls", "-la"])).toBeNull();
-    expect(vendoredProvider([])).toBeNull();
+    expect(providerFor(["ls", "-la"])).toBeNull();
+    expect(providerFor([])).toBeNull();
   });
 });
 
@@ -225,7 +225,7 @@ describe("the scope bound", () => {
 });
 
 describe("the plow-gog provider's refusal", () => {
-  const plowGog = vendoredProvider(["plow-gog"])!;
+  const plowGog = providerFor(["plow-gog"])!;
 
   it("resolves from argv[0], like any provider", () => {
     expect(plowGog.command).toBe("plow-gog");
@@ -264,10 +264,10 @@ describe("the plow-gog provider's refusal", () => {
 });
 
 describe("the google-workspace skill", () => {
-  const body = vendoredProvider(["plow-gog"])!.skill.body;
+  const body = providerFor(["plow-gog"])!.skill.body;
 
   it("is the one skill both provider rows publish, under the stable name", () => {
-    expect(vendoredProvider(["plow-gog"])!.skill).toBe(gog.skill);
+    expect(providerFor(["plow-gog"])!.skill).toBe(gog.skill);
     expect(gog.skill.name).toBe("google-workspace");
   });
 

@@ -1,7 +1,7 @@
 /**
  * The provider seam, end to end through the exec path.
  *
- * What matters is that a vendored CLI is authorised and run WITHOUT anything
+ * What matters is that a provider's CLI is authorised and run WITHOUT anything
  * tool-shaped: the capability is the argv the owner approved, the token never
  * touches it, and a refusal or a failed mint never spawns a child.
  */
@@ -18,8 +18,8 @@ import {
   loadPlugins,
   MintError,
   type Minter,
+  type Provider,
   type StagedPlugin,
-  type VendoredProvider,
 } from "@domo/device-core";
 import { fakePlugin } from "./pluginFixtures.js";
 
@@ -137,7 +137,7 @@ function execEnd(d: DeviceAgent): number | undefined {
 
 /** A Minter that mints ONE account with whatever `mint` yields (or throws),
  * which is enough for every single-account test here. */
-function minterOf(mint: (provider: VendoredProvider) => Promise<string>): Minter {
+function minterOf(mint: (provider: Provider) => Promise<string>): Minter {
   return {
     mintAll: async (provider) => ({
       accounts: [{ account: "a@example.com", token: await mint(provider), isDefault: true }],
@@ -168,7 +168,7 @@ function run(d: DeviceAgent, argv: string[], waitMs = 8000): Promise<JSONValue> 
   );
 }
 
-describe("a vendored provider through the exec path", () => {
+describe("a provider through the exec path", () => {
   // `gmail get` is a single-account verb, so one account means one run of the
   // staged plugin's binary and the child's own output comes back — what these
   // assert on.

@@ -8,7 +8,7 @@
 import {
   MintError,
   type Minter,
-  type VendoredProvider,
+  type Provider,
 } from "@domo/device-core";
 import type { PlowApi } from "./plowApi.js";
 import { loadSettings } from "./settings.js";
@@ -23,7 +23,7 @@ import { loadSettings } from "./settings.js";
  */
 export function buildMinter(opts: { api: PlowApi; home: string }): Minter {
   const authorised = async <T>(
-    provider: VendoredProvider,
+    provider: Provider,
     call: (credential: string) => Promise<T>,
   ): Promise<T> => {
     // Read per call, never captured: re-pairing takes effect on the next

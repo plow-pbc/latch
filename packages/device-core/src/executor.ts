@@ -430,7 +430,7 @@ export class Executor {
     /**
      * Extra environment for the child, merged over the curated set below.
      *
-     * This is how a vendored provider CLI receives its token: in the child's
+     * This is how a provider's CLI receives its token: in the child's
      * environment and nowhere else. A token on the command line lands in the
      * calling agent's captured output and from there in a persisted
      * transcript, where it outlives the token by a long way — and unlike argv,

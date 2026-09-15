@@ -12,7 +12,7 @@
  * object* owns where an intent's contents go.
  */
 import { AlwaysAllowRule, capabilityDisplay, Intent, intentIsExpired, JSONValue, jv, overlapsRoot } from "@domo/protocol";
-import { PROVIDERS, providerRefusal, vendoredProvider, type VendoredProvider } from "./providers/registry.js";
+import { PROVIDERS, providerFor, providerRefusal, type Provider } from "./providers/registry.js";
 import type { StagedPlugin } from "./plugins/registry.js";
 import { MintError, type MintedAccounts, type Minter } from "./providers/mint.js";
 import { conflictRefusal, gogExitReason, mergeFanout, planPlowGog } from "./providers/plowGog.js";
@@ -309,7 +309,7 @@ export class DeviceAgent {
      */
     ownerHome: string = home,
     /**
-     * How a vendored provider CLI is authorised. Null in a test that does not
+     * How a provider's CLI is authorised. Null in a test that does not
      * exercise one, and on a Mac that has never paired — the exec path reports
      * that rather than throwing, so an unpaired Mac gets a sentence in the
      * approval dialog instead of a stack trace.
@@ -868,7 +868,7 @@ export class DeviceAgent {
   }
 
   /** Every connected account's token, for the provider's fan-out. */
-  private async mintAllFor(provider: VendoredProvider): Promise<MintedAccounts> {
+  private async mintAllFor(provider: Provider): Promise<MintedAccounts> {
     if (this.minter === null) throw MintError.unpaired();
     return this.minter.mintAll(provider);
   }
@@ -888,7 +888,7 @@ export class DeviceAgent {
     const waitMs = jv(payload).get("wait_ms").int ?? 10000;
     const argv = exec.argv ?? [];
 
-    // A vendored provider CLI gets its tokens minted into its children's
+    // A provider's CLI gets its tokens minted into its children's
     // environment and is orchestrated per account. Everything else is the
     // ordinary exec path — the capability the owner approved is the argv, the
     // sandbox profile and the audit are unchanged, and `tools/list` never
@@ -900,7 +900,7 @@ export class DeviceAgent {
     // bare plugin name is refused rather than resolving to a provider.
     const refusal = providerRefusal(argv);
     if (refusal !== null) return this.execError(intent.intentId, refusal);
-    const provider = vendoredProvider(argv);
+    const provider = providerFor(argv);
     if (provider !== null) {
       const approvedReads = new Set(readPaths);
       const approvedWrites = new Set(writePaths);
@@ -1223,7 +1223,7 @@ export class DeviceAgent {
   private async executePlowGog(
     intent: Intent,
     plugin: StagedPlugin,
-    provider: VendoredProvider,
+    provider: Provider,
     argv: string[],
     opts: { readPaths: string[]; writePaths: string[]; network: boolean; appleEvents: boolean; waitMs: number },
   ): Promise<JSONValue> {

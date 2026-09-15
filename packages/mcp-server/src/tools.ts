@@ -35,8 +35,8 @@ import {
   MAX_CLICK_TIMEOUT_MS,
   MAX_FILE_BYTES,
   impliesNetwork,
+  providerFor,
   providerRefusal,
-  vendoredProvider,
   resolveAppBundleId,
 } from "@domo/device-core";
 import { BlockedError, DeferredResults, DeniedError, DeviceError, Progress } from "./deferred.js";
@@ -471,7 +471,7 @@ export const TOOLS: ToolSpec[] = [
       // chokepoint and cannot rely on this caller.
       const refusal = providerRefusal(argv);
       if (refusal !== null) throw new ToolError(refusal);
-      const provider = vendoredProvider(argv);
+      const provider = providerFor(argv);
 
       // Resolve every declared or provider-derived path before it becomes the
       // bound the human approves and the sandbox enforces.
