@@ -31,7 +31,7 @@ describe("loadPlugins", () => {
     const withBinary = {
       ...MINIMAL,
       runtime: { binaries: [{
-        name: "tool", version: "1",
+        name: "tool",
         url: { arm64: "https://x/tool", x64: "https://x/tool" },
         sha256: { arm64: "a".repeat(64), x64: "a".repeat(64) },
       }], sources: [] },
@@ -48,7 +48,7 @@ describe("loadPlugins", () => {
     const manifest = parseManifest(JSON.stringify({
       ...MINIMAL,
       runtime: { binaries: [{
-        name: "tool", version: "1",
+        name: "tool",
         url: { arm64: "https://example.invalid/tool", x64: "https://example.invalid/tool" },
         sha256: { arm64: sha256, x64: sha256 },
       }], sources: [] },
