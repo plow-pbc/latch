@@ -413,7 +413,9 @@ func runSearch(_ o: Options, _ store: Store) {
     func gather(_ where_: [String], _ bound: [String]) -> [Message] {
         var found: [Message] = []
         let sql = MESSAGE_COLUMNS + " where " + where_.joined(separator: " and ")
-            + " order by m.date \(direction)"
+            // ROWID breaks a date tie, so paging with --after-rowid cannot
+            // skip or repeat a row when two share a nanosecond timestamp.
+            + " order by m.date \(direction), m.ROWID \(direction)"
         store.query(sql, bound) { row in
             guard found.count < limit else { return }
             let m = Message(row)
@@ -460,7 +462,7 @@ func runThread(_ o: Options, _ store: Store) {
     // rows worth keeping when there are more than `limit` are the recent ones.
     var found: [Message] = []
     let sql = MESSAGE_COLUMNS + " where " + conditions.joined(separator: " and ")
-        + " order by m.date desc"
+        + " order by m.date desc, m.ROWID desc"
     store.query(sql, params) { row in
         guard found.count < limit else { return }
         found.append(Message(row))
@@ -470,12 +472,19 @@ func runThread(_ o: Options, _ store: Store) {
 
 func runChats(_ o: Options, _ store: Store) {
     let limit = o.limit ?? 40
+    // `REAL_ROWS` here too, and it is not cosmetic: without it `max(m.date)`
+    // is the newest row of ANY kind, so a chat whose only recent activity is a
+    // tapback sorts as recently active and reports that reaction's timestamp
+    // as `last_message` — a reaction reading as a message, which is the class
+    // this CLI exists to remove. A chat holding nothing but reactions drops
+    // out entirely, which is correct: nobody has said anything in it.
     let sql = """
     select c.ROWID, c.guid, c.chat_identifier, c.display_name, max(m.date),
            case when c.chat_identifier like 'chat%' then 'group' else 'direct' end
       from chat c
       join chat_message_join j on j.chat_id = c.ROWID
       join message m on m.ROWID = j.message_id
+     where \(REAL_ROWS)
      group by c.ROWID
      order by max(m.date) desc
      limit \(limit)
@@ -554,7 +563,10 @@ while let arg = rest.first {
     case "--after": options.after = parseBoundary(value("--after"), flag: "--after")
     case "--before": options.before = parseBoundary(value("--before"), flag: "--before")
     case "--after-rowid": options.afterRowid = intArg(value("--after-rowid"), "--after-rowid")
-    case "--limit": options.limit = Int(intArg(value("--limit"), "--limit"))
+    case "--limit":
+        let n = intArg(value("--limit"), "--limit")
+        guard n > 0 else { fail("--limit wants a positive number, not \(n)", code: 2) }
+        options.limit = Int(n)
     case "--order":
         let v = value("--order")
         guard v == "asc" || v == "desc" else { fail("--order wants asc or desc, not \(v)", code: 2) }

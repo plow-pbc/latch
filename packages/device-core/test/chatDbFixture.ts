@@ -258,6 +258,16 @@ export function makeStore(dir: string): string {
       `insert into message (ROWID, handle_id, date, text, is_from_me)` +
         ` values (6101, 502, ${ns(600)}, NULL, 0);`,
       "insert into chat_message_join (chat_id, message_id) values (41, 6101);",
+
+      // chat 42: nothing but a tapback, and the NEWEST row in the store. A
+      // `chats` query that does not filter to real rows ranks it first and
+      // reports the reaction's timestamp as its last message.
+      "insert into chat (ROWID, guid, chat_identifier, display_name, style)" +
+        " values (42, 'chat-guid-42', '+15558888888', NULL, 45);",
+      "insert into handle (ROWID, id) values (503, '+15558888888');",
+      `insert into message (ROWID, handle_id, date, text, is_from_me, associated_message_type)` +
+        ` values (6201, 503, ${ns(5)}, 'Loved a message', 0, 2000);`,
+      "insert into chat_message_join (chat_id, message_id) values (42, 6201);",
     ].join(" "),
   ]);
   return store;

@@ -144,6 +144,29 @@ describe("plow-messages search", () => {
     expect(rows.filter((r) => r.body === null).map((r) => r.rowid)).toEqual([6005, 6004]);
   });
 
+  itMac.each([
+    // A limit that is not a limit. SQLite reads a negative LIMIT as
+    // UNBOUNDED, so `chats --limit -1` used to return everything while
+    // `search --limit -1` returned nothing — the same argument doing opposite
+    // things. Both refuse now.
+    ["search", ["search", "order", "--limit", "-1"]],
+    ["chats", ["chats", "--limit", "-1"]],
+    ["thread", ["thread", "--chat-id", "40", "--limit", "0"]],
+  ])("refuses a non-positive --limit on %s", (_sub, args) => {
+    const { code, stderr } = cli(...args);
+    expect(code).toBe(2);
+    expect(stderr).toContain("--limit wants a positive number");
+  });
+
+  itMac("accepts a bare date boundary, not only a full ISO instant", () => {
+    // The USAGE text documents `--after 2026-09-01`; only the instant form
+    // was covered, so the day-only branch of parseBoundary was untested.
+    const today = new Date();
+    const day = new Date(today.getTime() - 86400 * 1000).toISOString().slice(0, 10);
+    expect(cli("search", "order", "--after", day).rows.length).toBeGreaterThan(0);
+    expect(cli("search", "order", "--after", "not-a-date").code).toBe(2);
+  });
+
   itMac("honours --limit and --handle", () => {
     expect(cli("search", "order", "--limit", "1").rows.map((r) => r.rowid)).toEqual([6002]);
     expect(cli("search", "order", "--handle", "36246").rows.map((r) => r.rowid)).toEqual([6002]);
@@ -206,6 +229,23 @@ describe("plow-messages chats", () => {
     expect(deliveries).toMatchObject({ guid: "chat-guid-40", kind: "group", display_name: "Deliveries" });
     // A chat_identifier that does not start with `chat` is a direct message.
     expect(rows.find((r) => r.chat_id === 1)).toMatchObject({ kind: "direct" });
+  });
+});
+
+describe("plow-messages chats", () => {
+  itMac("ranks on real messages, so a reaction cannot make a chat look active", () => {
+    // chat 42 holds one tapback and nothing else, and it is the newest row in
+    // the store — without the real-rows filter it sorts first and reports the
+    // reaction's time as `last_message`. A chat with nothing but reactions is
+    // a chat nobody has spoken in.
+    expect(cli("chats").rows.map((r) => r.guid)).not.toContain("chat-guid-42");
+  });
+
+  itMac("dates a chat by its newest real message, not by a later reaction", () => {
+    // chat 40's newest real row is 6002; 6003 is a tapback that postdates it.
+    const deliveries = cli("chats").rows.find((r) => r.chat_id === 40);
+    const newestReal = cli("thread", "--chat-id", "40").rows.at(-1);
+    expect(deliveries?.last_message).toBe(newestReal?.at);
   });
 });
 
