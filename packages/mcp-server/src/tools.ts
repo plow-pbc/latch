@@ -382,7 +382,7 @@ export const TOOLS: ToolSpec[] = [
       "and in exchange its only writable place is `$TMPDIR`, a directory of its own that is deleted " +
       "when it is killed. Declare a write path (or " +
       "network, or apple_events) and it is never killed that way, because it could be mid-work and a " +
-      "truncated file — or a message already sent — is worse than the wait. A vendored provider command counts as having declared network even " +
+      "truncated file — or a message already sent — is worse than the wait. A vendored provider or an installed plugin command counts as having declared network even " +
       "though you did not — so it is never killed that way either, and the `$TMPDIR` exchange is " +
       "off — unless it asks for help (`--help`/`-h` last, no `--` before it), which " +
       "reaches nothing and is exempt. " +
@@ -472,6 +472,14 @@ export const TOOLS: ToolSpec[] = [
       const refusal = provider?.refuse(argv) ?? null;
       if (refusal !== null) throw new ToolError(refusal);
 
+      // An installed plugin is gated the same way, at the same chokepoint: an
+      // argv outside its manifest's allowlist (or a daemon that is not up)
+      // refuses here, before a card is ever shown — the device checks again,
+      // but it is not this caller's call to rely on that.
+      const plugin = ctx.device.plugins.find(argv);
+      const pluginRefusal = ctx.device.plugins.refuse(argv);
+      if (pluginRefusal !== null) throw new ToolError(pluginRefusal);
+
       // Resolve every declared or provider-derived path before it becomes the
       // bound the human approves and the sandbox enforces.
       const rawCwd = a.get("cwd").str;
@@ -503,9 +511,15 @@ export const TOOLS: ToolSpec[] = [
         ...await resolveAll(strings(a.get("read_paths").arr)),
         ...providerReadPaths,
       ]);
+      // The plugin's own home is appended — visibly, not hidden to make the
+      // run work: the approval card shows `Write: …/plugins/fix/home` like any
+      // other write path, because the plugin's store is its own and the
+      // sandbox derives from what the owner sees, never from what is kept off
+      // the card.
       const writePaths = unique([
         ...await resolveAll(strings(a.get("write_paths").arr)),
         ...providerWritePaths,
+        ...(plugin ? [await resolved(plugin.dirs.home)] : []),
       ]);
       const capabilities: Capability[] = [
         { kind: "process.exec", argv, cwd },
@@ -524,7 +538,7 @@ export const TOOLS: ToolSpec[] = [
         // says so because it is the agent's account of when a run is killable.
         {
           kind: "network",
-          allowed: (a.get("network").bool ?? false) || impliesNetwork(argv),
+          allowed: (a.get("network").bool ?? false) || impliesNetwork(argv) || plugin !== null,
         },
       ];
       // Unlike network, no vendored command implies this one, so it is pushed

@@ -16,6 +16,7 @@ import {
   DENIAL_SOURCE_NO_REVIEWER,
   DeviceAgent,
   HeadlessPolicy,
+  installPlugin,
   MAX_FILE_BYTES,
   PolicyDelegate,
 } from "@domo/device-core";
@@ -30,6 +31,7 @@ import {
   toAuthInfo,
 } from "@domo/mcp-server";
 import { callTool, parse, pollUntil, rpc } from "./client.js";
+import { fixturePlugin, FIXTURE_ENV } from "../../device-core/test/pluginFixtures.js";
 
 // The cases that run a real command go through seatbelt (`sandbox-exec`),
 // which is the Mac's own; off it the spawn fails before the case's own claim
@@ -1019,4 +1021,51 @@ describe("per-agent isolation (§4.4)", () => {
     expect(new Set(received.map((r) => r.agent)).size).toBe(2);
   });
 
+});
+
+// An installed plugin is gated at the same chokepoint as a vendored
+// provider (the `refuse` check above `decideAndRun`), and its own home is
+// implied as a write path exactly the way a provider implies network.
+describe("an installed plugin is gated before an intent and implies its own home", () => {
+  async function pluginServer(
+    delegate: PolicyDelegate = new HeadlessPolicy({ intent: "allow_once" }),
+  ): Promise<{ server: DomoMcpServer; device: DeviceAgent; home: string }> {
+    const home = tempDir();
+    await installPlugin(path.join(home, "plugins"), fixturePlugin({ env: FIXTURE_ENV }));
+    const device = new DeviceAgent(home, "Test Mac", delegate);
+    await device.startPlugins({ plowApiBase: "https://api.example" });
+    const server = createDomoMcpServer(device);
+    cleanups.push(() => server.close());
+    return { server, device, home };
+  }
+
+  it("an argv outside the plugin's allowlist is refused before any intent reaches the device", async () => {
+    const { server, device } = await pluginServer();
+    const { isError, payload } = await callTool(
+      server,
+      "plow_run_command",
+      { argv: ["fix", "serve"], wait_ms: 1_000 },
+      AGENT,
+    );
+    expect(isError).toBe(true);
+    expect(JSON.stringify(payload)).toContain("fix allows: query, put");
+    // Not merely "threw" — no intent_* row exists, so nothing reached the device.
+    expect(device.audit.entries().map((e) => jv(e).get("event").str)).toEqual([]);
+  });
+
+  it("an allowed argv builds network and a write path scoped to the plugin's own home", async () => {
+    let approved: { kind: string; allowed?: boolean; paths?: string[] }[] = [];
+    const { server, home } = await pluginServer({
+      async decideIntent(intent) {
+        approved = intent.capabilities;
+        return "deny" as const;
+      },
+    });
+    await callTool(server, "plow_run_command", { argv: ["fix", "query", "x"], wait_ms: 1_000 }, AGENT);
+    expect(approved.find((c) => c.kind === "network")).toEqual({ kind: "network", allowed: true });
+    expect(approved.find((c) => c.kind === "fs.write")).toEqual({
+      kind: "fs.write",
+      paths: [canonicalize(path.join(home, "plugins", "fix", "home"))],
+    });
+  });
 });
