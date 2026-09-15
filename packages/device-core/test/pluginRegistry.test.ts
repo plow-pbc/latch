@@ -85,6 +85,9 @@ describe("pluginRoots", () => {
     expect(pluginRoots({ resourcesDir: "/r", repoRoot: "/c", home: "/h" })).toEqual([
       "/o", "/r/plugins", "/c/vendor/plugins", "/h/plugins",
     ]);
+    // Resolved, so no root — and so no binDir — can depend on the cwd.
+    process.env.DOMO_PLUGINS = "rel/plugins";
+    expect(pluginRoots({ home: "/h" })[0]).toBe(path.resolve("rel/plugins"));
     delete process.env.DOMO_PLUGINS;
     expect(pluginRoots({ home: "/h" })).toEqual(["/h/plugins"]);
   });
