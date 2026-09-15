@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { classifyArgv, ruleArgv } from "../src/plugins/argvRules.js";
 import { parseManifest } from "../src/plugins/manifest.js";
-import { MINIMAL } from "./pluginManifest.test.js";
+import { MINIMAL } from "./pluginFixtures.js";
 
 const m = parseManifest(JSON.stringify({ ...MINIMAL, argv: { read: [["query"], ["get", "page"]], write: [["put"]] } }));
 

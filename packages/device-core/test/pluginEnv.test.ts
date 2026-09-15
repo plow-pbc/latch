@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { resolveEnv, substitute } from "../src/plugins/env.js";
 import { parseManifest, PluginError } from "../src/plugins/manifest.js";
-import { MINIMAL } from "./pluginManifest.test.js";
+import { MINIMAL } from "./pluginFixtures.js";
 
 const m = parseManifest(JSON.stringify({ ...MINIMAL, env: {
   A_HOME: { fixed: "${plugin_home}" }, A_URL: { fixed: "http://127.0.0.1:${port}" },

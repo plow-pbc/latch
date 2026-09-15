@@ -1,14 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { parseManifest, PluginError } from "../src/plugins/manifest.js";
+import { MINIMAL } from "./pluginFixtures.js";
 
-export const MINIMAL = {
-  name: "fix", version: "1", command: "fix",
-  runtime: { binaries: [], sources: [] },
-  exec: { cwd: "plugin", argv: ["/bin/sh", "cli.sh"] },
-  env: { FIX_HOME: { fixed: "${plugin_home}" } },
-  argv: { read: [["query"]], write: [["put"]] },
-  skill: "skill.md",
-};
 const withPatch = (patch: object) => JSON.stringify({ ...MINIMAL, ...patch });
 
 describe("parseManifest", () => {
