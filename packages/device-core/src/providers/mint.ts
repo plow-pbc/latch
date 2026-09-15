@@ -45,6 +45,9 @@ export interface Minter {
    * One token per connected account, for the provider's fan-out. Which
    * accounts stays Plow's answer: it resolves the owner's connected ones
    * server-side, so this Mac holds no second copy of a fact the server owns.
+   *
+   * Callable only for a provider whose `mint` is non-null; calling it for one
+   * that mints nothing is a programming error, not a runtime case to handle.
    */
   mintAll(provider: VendoredProvider): Promise<MintedAccounts>;
 }

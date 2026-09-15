@@ -23,6 +23,7 @@ import { GOG_CANONICAL } from "./gogGroups.js";
 import { GOG_SKILL } from "./gogSkill.js";
 import { fileArgsIn } from "./gogFlags.js";
 import { planPlowGog } from "./plowGog.js";
+import { PLOW_MESSAGES_SUBCOMMANDS, plowMessagesSkillFor } from "./plowMessagesSkill.js";
 
 export interface ProviderFileArg {
   readonly access: "read" | "write";
@@ -44,18 +45,20 @@ export interface VendoredProvider {
    * Every staging/resolution site reads this, never `command`.
    */
   readonly binary: string;
-  /** The connector action that mints this provider's token. */
-  readonly mintAction: string;
-  /** Where the mint's routes hang, e.g. `/v1/connectors/gmail/`. */
-  readonly mintPrefix: string;
   /**
-   * The environment variable the CLI reads its token from.
-   *
-   * No account variable beside it, deliberately: the token IS the account
-   * binding, so an account flag in agent-supplied argv cannot redirect the
-   * call, and Plow resolves the owner's connected account server-side.
+   * How this provider's token is minted, or null for a provider that reaches
+   * no service and needs none (a first-party CLI over a local store). The
+   * three parts travel together because they are meaningless apart.
    */
-  readonly tokenEnv: string;
+  readonly mint: {
+    /** The connector action that mints this provider's token. */
+    readonly action: string;
+    /** Where the mint's routes hang, e.g. `/v1/connectors/gmail/`. */
+    readonly prefix: string;
+    /** The environment variable the CLI reads its token from. No account
+     *  variable beside it, deliberately: the token IS the account binding. */
+    readonly tokenEnv: string;
+  } | null;
   /**
    * Flags Latch puts in front of the command path on every invocation, whatever
    * the agent asked for.
@@ -110,8 +113,16 @@ export interface VendoredProvider {
    * staged, and carried on the row so the provider's name has ONE spelling —
    * a rename here cannot silently unpublish a skill registered under a
    * literal somewhere else.
+   *
+   * A FUNCTION of the owner's home, not a value, because a provider over a
+   * local store has to tell the agent which absolute path to declare as a
+   * read capability — and `ownerHome` is injected, not ambient (`DeviceAgent`
+   * takes it precisely so nothing here reads the running user's home; a
+   * test's throwaway root is what keeps the suite off the developer's own
+   * store). A provider whose page says nothing about the home ignores the
+   * argument, which costs it nothing and keeps ONE shape for every row.
    */
-  readonly skill: Skill;
+  readonly skillFor: (ownerHome: string) => Skill;
 }
 
 /**
@@ -130,18 +141,16 @@ export interface VendoredProvider {
 const PLOW_GOG: VendoredProvider = {
   command: "plow-gog",
   binary: "gog",
-  mintAction: "access-token",
   // Not a Gmail-only scope, though the prefix says gmail: checked against
   // plow's GMAIL_DEFAULT_SCOPES, the mint covers calendar.readonly and
   // calendar.events too, which is what gog's ~40 calendar leaves are spent on.
   // The route was mounted on this prefix because the calendar routes already
   // lived there — the name is Plow's history, not a narrower grant.
-  mintPrefix: "/v1/connectors/gmail/",
-  tokenEnv: "GOG_ACCESS_TOKEN",
+  mint: { action: "access-token", prefix: "/v1/connectors/gmail/", tokenEnv: "GOG_ACCESS_TOKEN" },
   // The bound is DERIVED from the same list the check reads, so the two
   // cannot drift into disagreeing about what is in scope.
   belt: ["--no-input", "--wrap-untrusted", `--enable-commands=${GOG_CANONICAL.join(",")}`],
-  skill: GOG_SKILL,
+  skillFor: () => GOG_SKILL,
   fileArgs: fileArgsIn,
   // The planner IS the gate: a refused plan and a refused argv are one
   // decision, so the dialog and the orchestrator cannot disagree about it.
@@ -157,7 +166,49 @@ const PLOW_GOG: VendoredProvider = {
   },
 };
 
-export const PROVIDERS: readonly VendoredProvider[] = [PLOW_GOG];
+/**
+ * A first-party CLI over the owner's Messages archive. Token-less: it reaches
+ * no service. The allowlist IS the gate (latch#361's shape): four read
+ * subcommands and help, refused by name before an intent exists.
+ *
+ * INTERIM, and the deferral is deliberate. This refuses, and refusing is all
+ * it does — the rule key still comes from the full argv (`RuleKey.compute`
+ * over the normalized capabilities, and a `process.exec` capability carries
+ * argv), so an always-allow the owner grants for `search "palm court"` does
+ * NOT cover `search "dentist"`. At ~1,160 iMessage calls per 21 days that is
+ * an approval per phrase, which is not the surface #167's spec describes
+ * ("read prefixes — one always-allow covers all").
+ *
+ * What creates that property is latch#361's declarative pair, being built in
+ * https://github.com/plow-pbc/latch/pull/387: `plugins/argvRules.ts`
+ * `classifyArgv` keys a read on `<command> <prefix>` while the card, sandbox
+ * and audit still see the full argv. When that lands, this function and
+ * `PLOW_MESSAGES_SUBCOMMANDS` are replaced by a declared
+ * `argv: { read: [["search"], ["thread"], ["chats"], ["unreplied"]], write: [] }`
+ * — the same shape a third-party plugin declares, which is what makes the
+ * built-ins the reference plugins rather than a parallel mechanism.
+ *
+ * Until then the gate is honest about what it is: it closes the surface, and
+ * the skill does not promise an approval breadth that does not exist yet.
+ */
+export function refusePlowMessages(argv: readonly string[]): string | null {
+  const sub = argv[1];
+  if (sub === "--help" || sub === "-h") return null;
+  if (sub !== undefined && (PLOW_MESSAGES_SUBCOMMANDS as readonly string[]).includes(sub)) return null;
+  return `plow-messages needs a subcommand: ${PLOW_MESSAGES_SUBCOMMANDS.join(", ")}`;
+}
+
+const PLOW_MESSAGES: VendoredProvider = {
+  command: "plow-messages",
+  binary: "plow-messages",
+  mint: null,
+  belt: [],
+  skillFor: plowMessagesSkillFor,
+  fileArgs: () => [],
+  refuse: refusePlowMessages,
+};
+
+export const PROVIDERS: readonly VendoredProvider[] = [PLOW_GOG, PLOW_MESSAGES];
 
 /**
  * The provider an argv invokes, or null when it invokes none.
@@ -201,5 +252,6 @@ export function needsToken(argv: readonly string[]): boolean {
  * them drifted within a single commit.
  */
 export function impliesNetwork(argv: readonly string[]): boolean {
-  return vendoredProvider(argv) !== null && needsToken(argv);
+  const provider = vendoredProvider(argv);
+  return provider !== null && provider.mint !== null && needsToken(argv);
 }
