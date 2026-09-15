@@ -75,7 +75,7 @@ export class SkillRegistry {
   }
 }
 
-function parseFrontmatter(raw: string): Skill | null {
+export function parseFrontmatter(raw: string): Skill | null {
   const m = raw.match(/^---\n([\s\S]*?)\n---\n?([\s\S]*)$/);
   if (!m) return null;
   let name = "";

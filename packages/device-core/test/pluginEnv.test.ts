@@ -7,7 +7,7 @@ const m = parseManifest(JSON.stringify({ ...MINIMAL, env: {
   A_HOME: { fixed: "${plugin_home}" }, A_URL: { fixed: "http://127.0.0.1:${port}" },
   A_BASE: { fixed: "${plow_api_base}/v1" }, A_TOKEN: { secret: "daemon-token" }, A_KEY: { mint: "llm:chat" },
 }}));
-const ctx = { pluginHome: "/p/home", port: 4242, plowApiBase: "https://api.example", secret: (n: string) => `S:${n}`, mint: async (s: string) => `M:${s}` };
+const ctx = { pluginHome: "/p/home", port: 4242, plowApiBase: "https://api.example", secret: async (n: string) => `S:${n}`, mint: async (s: string) => `M:${s}` };
 
 describe("resolveEnv", () => {
   it("substitutes every placeholder and reads each source", async () => {
