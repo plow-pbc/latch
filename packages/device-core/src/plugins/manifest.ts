@@ -210,8 +210,9 @@ export function parseManifest(raw: string): PluginManifest {
     return arr;
   };
   // accounts and permissions are identifiers (connector ids / HostPermission
-  // ids), so they get the same SLUG shape check every other identifier field
-  // in this manifest gets — a typo'd id fails loudly here instead of no-oping
+  // ids), so they get an identifier shape check (IDENT, not the dash-only
+  // SLUG used by name/command/binary/source fields — several HostPermission
+  // ids are snake_case) — a typo'd id fails loudly here instead of no-oping
   // downstream. This checks shape only, never against a closed set of known
   // connector/permission ids: that set lives in other layers, and importing
   // it here would couple manifest parsing to them. paths are filesystem
