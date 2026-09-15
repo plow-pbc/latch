@@ -305,11 +305,10 @@ describe("the runtime registry and the bundled plugins", () => {
         new URL(`../../../apps/desktop/plugins/${p.plugin}/latch-plugin.json`, import.meta.url), "utf8");
       const manifest = parseManifest(raw);
       expect(manifest.name).toBe(p.plugin);
-      // The spelling an agent would reach for having read the manifest — not
-      // just the plugin's directory name — is the one pointed at the provider.
-      // A manifest whose `command` drifted from its `name` would leave that
-      // spelling falling through to the ordinary exec path unrefused.
-      expect(providerRefusal([manifest.command, "x"])).toBe(
+      // `command` is the argv[0] agents type, and for a provider-driven plugin
+      // that is the provider's; the plugin's own name is the refused spelling.
+      expect(manifest.command).toBe(p.command);
+      expect(providerRefusal([p.plugin, "x"])).toBe(
         `${p.plugin} is driven through ${p.command}`,
       );
       // exec.argv[0] must name a staged binary: the provider execs it by

@@ -16,7 +16,6 @@ describe("loadPlugins", () => {
     const dir = fakePlugin(root, MINIMAL, SCRIPT);
     const [p] = loadPlugins([root]);
     expect(p.manifest.name).toBe("fix");
-    expect(p.dir).toBe(dir);
     expect(p.binDir).toBe(path.join(dir, "runtime", process.arch, "bin"));
   });
 
@@ -65,6 +64,22 @@ describe("loadPlugins", () => {
     expect(loaded.map((p) => p.manifest.version)).toEqual(["first"]);
   });
 
+  it("an unstaged plugin in a higher root claims its name; a lower root cannot supply the binary", () => {
+    const first = tmp(); const second = tmp();
+    const withBinary = {
+      ...MINIMAL,
+      runtime: { binaries: [{
+        name: "tool",
+        url: { arm64: "https://x/tool", x64: "https://x/tool" },
+        sha256: { arm64: "a".repeat(64), x64: "a".repeat(64) },
+      }], sources: [] },
+    };
+    fakePlugin(first, withBinary, SCRIPT);
+    fs.rmSync(path.join(first, "fix", "runtime", process.arch, "bin", "tool"));
+    fakePlugin(second, withBinary, SCRIPT);
+    expect(loadPlugins([first, second])).toEqual([]);
+  });
+
   it("refuses a manifest whose name is not its directory", () => {
     const root = tmp();
     fakePlugin(root, MINIMAL, SCRIPT);
@@ -79,20 +94,20 @@ describe("pluginRoots", () => {
     ["a file", (d: string) => { const f = path.join(d, "file"); fs.writeFileSync(f, ""); return f; }],
   ])("refuses a DOMO_PLUGINS that names %s, instead of reading the next root", (_, at) => {
     process.env.DOMO_PLUGINS = at(tmp());
-    expect(() => pluginRoots({ home: "/h" })).toThrow(PluginError);
+    expect(() => pluginRoots({})).toThrow(PluginError);
   });
 
-  it("orders override, Resources, vendor tree, then the owner's installed plugins", () => {
+  it("orders override, Resources, then the vendor tree", () => {
     const o = tmp();
     process.env.DOMO_PLUGINS = o;
-    expect(pluginRoots({ resourcesDir: "/r", repoRoot: "/c", home: "/h" })).toEqual([
-      o, "/r/plugins", "/c/vendor/plugins", "/h/plugins",
+    expect(pluginRoots({ resourcesDir: "/r", repoRoot: "/c" })).toEqual([
+      o, "/r/plugins", "/c/vendor/plugins",
     ]);
     // Resolved, so no root — and so no binDir — can depend on the cwd.
     const rel = path.relative(process.cwd(), tmp());
     process.env.DOMO_PLUGINS = rel;
-    expect(pluginRoots({ home: "/h" })[0]).toBe(path.resolve(rel));
+    expect(pluginRoots({})[0]).toBe(path.resolve(rel));
     delete process.env.DOMO_PLUGINS;
-    expect(pluginRoots({ home: "/h" })).toEqual(["/h/plugins"]);
+    expect(pluginRoots({})).toEqual([]);
   });
 });

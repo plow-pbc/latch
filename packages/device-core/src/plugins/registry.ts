@@ -18,7 +18,6 @@ import { binDir, type Arch } from "./stage.js";
 
 export interface StagedPlugin {
   manifest: PluginManifest;
-  dir: string;
   binDir: string;
 }
 
@@ -35,6 +34,10 @@ function executable(file: string): boolean {
 export function loadPlugins(roots: readonly string[]): StagedPlugin[] {
   const arch = process.arch as Arch;
   const out: StagedPlugin[] = [];
+  // A name is claimed by the FIRST manifest that carries it, staged or not: an
+  // incomplete plugin in a higher root must not let a lower root supply the
+  // binary a provider row will hand a minted token to.
+  const claimed = new Set<string>();
   for (const root of roots) {
     let names: string[];
     try {
@@ -43,15 +46,16 @@ export function loadPlugins(roots: readonly string[]): StagedPlugin[] {
       continue;
     }
     for (const name of names) {
-      if (out.some((p) => p.manifest.name === name)) continue;
+      if (claimed.has(name)) continue;
       const dir = path.join(root, name);
       const file = path.join(dir, "latch-plugin.json");
       if (!fs.existsSync(file)) continue;
+      claimed.add(name);
       const manifest = parseManifest(fs.readFileSync(file, "utf8"));
       if (manifest.name !== name) throw new PluginError("plugin directory must be named after its manifest");
       const bin = binDir(dir, arch);
       if (!manifest.runtime.binaries.every((b) => executable(path.join(bin, b.name)))) continue;
-      out.push({ manifest, dir, binDir: bin });
+      out.push({ manifest, binDir: bin });
     }
   }
   return out;
@@ -62,7 +66,7 @@ export function loadPlugins(roots: readonly string[]): StagedPlugin[] {
  * resolved because every root is carried through to a `binDir`, and a relative
  * one would make the child's PATH and the sandbox's reads depend on a cwd.
  */
-export function pluginRoots(opts: { resourcesDir?: string; repoRoot?: string; home: string }): string[] {
+export function pluginRoots(opts: { resourcesDir?: string; repoRoot?: string }): string[] {
   const roots: string[] = [];
   if (process.env.DOMO_PLUGINS) {
     // The operator NAMED this one, so a missing directory is a wrong path, not
@@ -75,6 +79,5 @@ export function pluginRoots(opts: { resourcesDir?: string; repoRoot?: string; ho
   }
   if (opts.resourcesDir) roots.push(path.join(opts.resourcesDir, "plugins"));
   if (opts.repoRoot) roots.push(path.join(opts.repoRoot, "vendor", "plugins"));
-  roots.push(path.join(opts.home, "plugins"));
   return roots;
 }

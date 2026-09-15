@@ -2090,7 +2090,6 @@ app.whenReady().then(async () => {
     plugins = loadPlugins(pluginRoots({
       resourcesDir: process.resourcesPath,
       repoRoot: path.resolve(app.getAppPath(), "..", ".."),
-      home,
     }));
   } catch (e) {
     if (e instanceof PluginError) console.error(`[plugins] ${e.message}`);

@@ -1,7 +1,7 @@
 {
   "name": "gog",
   "version": "0.36.0",
-  "command": "gog",
+  "command": "plow-gog",
   "runtime": {
     "binaries": [
       {
