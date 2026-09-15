@@ -6,7 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { installPlugin, listInstalled, pluginDirs, removePlugin } from "../src/plugins/install.js";
 import { PluginError } from "../src/plugins/manifest.js";
-import { fixturePlugin, FIXTURE_ENV } from "./pluginFixture.js";
+import { fixturePlugin, FIXTURE_ENV } from "./pluginFixtures.js";
 
 const roots: string[] = [];
 const root = () => {

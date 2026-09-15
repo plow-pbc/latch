@@ -31,7 +31,7 @@ import {
   toAuthInfo,
 } from "@domo/mcp-server";
 import { callTool, parse, pollUntil, rpc } from "./client.js";
-import { fixturePlugin, FIXTURE_ENV } from "../../device-core/test/pluginFixture.js";
+import { fixturePlugin, FIXTURE_ENV } from "../../device-core/test/pluginFixtures.js";
 
 // The cases that run a real command go through seatbelt (`sandbox-exec`),
 // which is the Mac's own; off it the spawn fails before the case's own claim

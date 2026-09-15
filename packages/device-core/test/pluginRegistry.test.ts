@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { installPlugin } from "../src/plugins/install.js";
 import { PluginRegistry } from "../src/plugins/registry.js";
-import { fixturePlugin, FIXTURE_ENV } from "./pluginFixture.js";
+import { fixturePlugin, FIXTURE_ENV } from "./pluginFixtures.js";
 
 const deps = { fetch: globalThis.fetch, arch: "arm64" as const, plowApiBase: "https://api.example", log: () => {} };
 

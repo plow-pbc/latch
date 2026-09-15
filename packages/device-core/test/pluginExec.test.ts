@@ -19,7 +19,7 @@ import {
   type Minter,
 } from "@domo/device-core";
 
-import { fixturePlugin, FIXTURE_ENV } from "./pluginFixture.js";
+import { fixturePlugin, FIXTURE_ENV } from "./pluginFixtures.js";
 
 const ON_MAC = process.platform === "darwin";
 const itSpawns = it.skipIf(!ON_MAC);
