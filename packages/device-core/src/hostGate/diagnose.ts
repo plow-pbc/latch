@@ -708,7 +708,7 @@ export function ownerAction(
       if (permission === "contacts" || permission === "calendars") {
         // Asked for in the app itself (Settings' Permissions section raises
         // the dialog); the pane is where a refusal is undone.
-        return `In the ${app} app's Settings tab, allow ${label} — or in System Settings > Privacy & Security > ${label}, allow ${app}.`;
+        return `In the ${app} app's Settings > Permissions, allow ${label} — or in System Settings > Privacy & Security > ${label}, allow ${app}.`;
       }
       const umbrella = COVERED_BY_FULL_DISK_ACCESS.has(permission)
         ? ` Granting ${app} Full Disk Access instead covers this and every other folder at once.`

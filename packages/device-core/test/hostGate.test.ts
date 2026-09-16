@@ -183,7 +183,7 @@ describe("reading an error", () => {
     expect(denied.cause).toBe("macos_permission");
     expect(denied.confidence).toBe("confirmed");
     expect(denied.permission).toBe("contacts");
-    expect(denied.owner_action).toMatch(/Settings tab, allow Contacts/);
+    expect(denied.owner_action).toMatch(/Settings > Permissions, allow Contacts/);
     expect(denied.owner_action).toMatch(/System Settings > Privacy & Security > Contacts/);
     const unasked = diagnose(facts({ ...base, service_status: "not_asked" }));
     expect(unasked.cause).toBe("macos_permission");
