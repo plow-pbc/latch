@@ -615,7 +615,7 @@ describe("a plugin's always-allow rule, narrowed by argv shape", () => {
       // (not just the narrowed argv) is what keeps that true. This is
       // intentional — the fix for the over-prompt this guards is narrowing
       // WHAT the rule covers, never narrowing the key itself.
-      await run(d, ["kb", "get", "alpha"], ["/tmp/b"]);
+      await run(d, ["kb", "get", "alpha"], 8000, ["/tmp/b"]);
       expect(asked()).toBe(2);
     },
   );
