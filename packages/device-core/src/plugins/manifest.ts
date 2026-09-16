@@ -7,6 +7,19 @@
  * because a PluginError reaches the owner directly — the installer's caller,
  * or launch-time stderr — never the audit log or an agent.
  */
+import { PERMISSION_LABELS } from "../hostGate/guardedPaths.js";
+
+/**
+ * The account connectors this Mac can actually connect — the desktop's
+ * `ConnectorsState` has one, and "Connect Google" is the only button the
+ * Plugins tab can offer. A manifest naming anything else declares a
+ * requirement nothing on this Mac can ever meet, and the plugin sits on
+ * "Needs setup" forever with no way out. Refused here, at the boundary.
+ */
+const ACCOUNT_IDS: ReadonlySet<string> = new Set(["google"]);
+/** Every macOS switch, off the table that names them — not a second list. */
+const PERMISSION_IDS: ReadonlySet<string> = new Set(Object.keys(PERMISSION_LABELS));
+
 export class PluginError extends Error {
   constructor(message: string) {
     super(message);
@@ -21,8 +34,8 @@ export type EnvSource = { fixed: string } | { secret: string } | { mint: string 
  *  and empty when the manifest omits it, so a consumer never branches on
  *  absence. */
 export interface PluginRequires {
-  accounts: string[]; // connector ids, e.g. "google"
-  permissions: string[]; // HostPermission ids, e.g. "contacts"
+  accounts: string[]; // a connector id the app can connect, e.g. "google"
+  permissions: string[]; // a HostPermission id, e.g. "contacts"
   paths: string[]; // paths the plugin needs, e.g. "~/Plow/wiki"
 }
 
@@ -49,9 +62,6 @@ export interface PluginManifest {
 }
 
 const SLUG = /^[a-z][a-z0-9-]{0,31}$/;
-/** A requirement id: SLUG plus `_`, because the real permission ids carry
- *  one (`full_disk_access`) and SLUG would refuse them. */
-const ID = /^[a-z][a-z0-9_-]{0,31}$/;
 const SHA = /^[0-9a-f]{64}$/;
 const ARCHES = ["arm64", "x64"] as const;
 /**
@@ -208,16 +218,19 @@ export function parseManifest(raw: string): PluginManifest {
   }
 
   // Every refusal names the field, never the value: a requirement id is
-  // third-party text like the rest of the manifest.
+  // third-party text like the rest of the manifest. The domain is closed on
+  // purpose — an id outside it is not an unknown requirement to show the
+  // owner, it is one the app has no action for, which reads as permanently
+  // unmet and is indistinguishable from a real blocker.
   const req = typedObj(m.requires, "requires");
-  const idList = (v: unknown, field: string): string[] =>
+  const idList = (v: unknown, field: string, allowed: ReadonlySet<string>, what: string): string[] =>
     strList(v, field).map((e) => {
-      if (!ID.test(e)) fail(`${field} entries must be lowercase letters, digits, dashes and underscores`);
+      if (!allowed.has(e)) fail(`${field} entries must name ${what}`);
       return e;
     });
   const requires: PluginRequires = {
-    accounts: idList(req.accounts, "requires.accounts"),
-    permissions: idList(req.permissions, "requires.permissions"),
+    accounts: idList(req.accounts, "requires.accounts", ACCOUNT_IDS, "an account connector this Mac offers"),
+    permissions: idList(req.permissions, "requires.permissions", PERMISSION_IDS, "a macOS permission this Mac has a switch for"),
     // Not an id and not INSIDE: a required path is the owner's, outside the
     // plugin's tree by design (`~/Plow/wiki`). It is still the one requirement
     // whose raw text reaches the owner — the Plugins tab renders it as "Create
