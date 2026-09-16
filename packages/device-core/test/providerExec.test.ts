@@ -149,7 +149,14 @@ function minterOf(mint: (provider: Provider) => Promise<string>): Minter {
 
 const okMinter = (): Minter => minterOf(async () => TOKEN);
 
-function run(d: DeviceAgent, argv: string[], waitMs = 8000): Promise<JSONValue> {
+/** `readPaths` adds an `fs.read` capability — the rule key hashes the WHOLE
+ * capability set, so a test that varies paths is testing a different intent. */
+function run(
+  d: DeviceAgent,
+  argv: string[],
+  waitMs = 8000,
+  readPaths?: string[],
+): Promise<JSONValue> {
   return d.handleIntent(
     makeIntent({
       agentId: "a1",
@@ -162,6 +169,7 @@ function run(d: DeviceAgent, argv: string[], waitMs = 8000): Promise<JSONValue> 
         // `needsToken` alone answers true for `/bin/echo`, which would have
         // approved network for an ordinary command here.
         { kind: "network", allowed: impliesNetwork(argv) },
+        ...(readPaths === undefined ? [] : [{ kind: "fs.read" as const, paths: readPaths }]),
       ],
       sessionId: "s1",
     }),
@@ -595,25 +603,8 @@ describe("a plugin's always-allow rule, narrowed by argv shape", () => {
       const { delegate, asked } = countingAlwaysAllow();
       const d = kbDevice(delegate);
 
-      function runWithReadPaths(argv: string[], paths: string[]): Promise<JSONValue> {
-        return d.handleIntent(
-          makeIntent({
-            agentId: "a1",
-            agentDisplay: "Agent",
-            deviceId: d.identity.deviceId,
-            request: `run: ${argv.join(" ")}`,
-            capabilities: [
-              { kind: "process.exec", argv },
-              { kind: "network", allowed: impliesNetwork(argv) },
-              { kind: "fs.read", paths },
-            ],
-            sessionId: "s1",
-          }),
-          { wait_ms: 8000 },
-        );
-      }
 
-      await runWithReadPaths(["kb", "get", "alpha"], ["/tmp/a"]);
+      await run(d, ["kb", "get", "alpha"], 8000, ["/tmp/a"]);
       expect(asked()).toBe(1);
 
       // Same argv prefix ("get"), so the narrowed rule view sees an identical
@@ -624,7 +615,7 @@ describe("a plugin's always-allow rule, narrowed by argv shape", () => {
       // (not just the narrowed argv) is what keeps that true. This is
       // intentional — the fix for the over-prompt this guards is narrowing
       // WHAT the rule covers, never narrowing the key itself.
-      await runWithReadPaths(["kb", "get", "alpha"], ["/tmp/b"]);
+      await run(d, ["kb", "get", "alpha"], ["/tmp/b"]);
       expect(asked()).toBe(2);
     },
   );
