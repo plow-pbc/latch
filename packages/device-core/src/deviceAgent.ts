@@ -1074,7 +1074,10 @@ export class DeviceAgent {
       // No separate read grant for the binary: the executor already reads
       // `cwd` recursively to exec anything under it, and `plugin.binDir` is
       // always a subdirectory of it.
-      if (exec.cwd === undefined || canonicalize(exec.cwd) !== canonicalize(plugin.dir)) {
+      // `plugin.dir` is a lexical join (registry.ts), never realpath'd, so
+      // canonicalize once and use THAT for both the comparison and the run.
+      const canonicalDir = canonicalize(plugin.dir);
+      if (exec.cwd === undefined || canonicalize(exec.cwd) !== canonicalDir) {
         return this.execError(intent.intentId, "approved cwd does not match this plugin's own directory");
       }
       // Having proved it EQUALS the plugin's directory, run and audit the
@@ -1084,7 +1087,7 @@ export class DeviceAgent {
       // spelling that passes it would otherwise land in `audit.ndjson`, the
       // project's test oracle, as something other than the true physical
       // path everything else here is written against.
-      exec = { ...exec, cwd: plugin.dir };
+      exec = { ...exec, cwd: canonicalDir };
     }
 
     this.audit.record("exec_start", { intentId: intent.intentId, argv });
