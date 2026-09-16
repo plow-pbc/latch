@@ -434,11 +434,6 @@ async function parentOpen(probes: HostProbes, p: string): Promise<OpenOutcome> {
   return open === "ok" ? "ENOENT" : open;
 }
 
-/**
- * The decision tree. Pure, and ordered by how much each fact discriminates:
- * a hang says more than an errno, the app's own attempt says more than the
- * path's prefix, and a prefix says more than nothing.
- */
 /** Full Disk Access is on, and the refusal is a sandboxed run failing to
  *  inherit it — a different state, and a different remedy, from never having
  *  been granted. Read by both the sentence and `requires_relaunch`. */
@@ -446,6 +441,11 @@ function grantNotInherited(permission: HostPermission | null, f: HostFacts): boo
   return permission === "full_disk_access" && f.full_disk_access_granted === true;
 }
 
+/**
+ * The decision tree. Pure, and ordered by how much each fact discriminates:
+ * a hang says more than an errno, the app's own attempt says more than the
+ * path's prefix, and a prefix says more than nothing.
+ */
 export function diagnose(f: HostFacts): Diagnosis {
   const evidence: string[] = [];
   const ruledOut: string[] = [];
