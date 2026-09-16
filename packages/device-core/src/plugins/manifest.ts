@@ -16,6 +16,16 @@ export class PluginError extends Error {
 
 export type EnvSource = { fixed: string } | { secret: string } | { mint: string };
 
+/** What a plugin needs before it can work: a connector the owner must
+ *  connect, a macOS switch, and filesystem it reads. Every list is present
+ *  and empty when the manifest omits it, so a consumer never branches on
+ *  absence. */
+export interface PluginRequires {
+  accounts: string[]; // connector ids, e.g. "google"
+  permissions: string[]; // HostPermission ids, e.g. "contacts"
+  paths: string[]; // paths the plugin needs, e.g. "~/Plow/wiki"
+}
+
 export interface PluginManifest {
   name: string; // ^[a-z][a-z0-9-]{0,31}$
   version: string;
@@ -34,10 +44,14 @@ export interface PluginManifest {
   env: Record<string, EnvSource>;
   argv: { read: string[][]; write: string[][] };
   hooks: { postinstall?: string };
+  requires: PluginRequires;
   skill: string | null; // path in repo/, or null when a code layer publishes the skill
 }
 
 const SLUG = /^[a-z][a-z0-9-]{0,31}$/;
+/** A requirement id: SLUG plus `_`, because the real permission ids carry
+ *  one (`full_disk_access`) and SLUG would refuse them. */
+const ID = /^[a-z][a-z0-9_-]{0,31}$/;
 const SHA = /^[0-9a-f]{64}$/;
 const ARCHES = ["arm64", "x64"] as const;
 /**
@@ -74,6 +88,13 @@ function typedArray(v: unknown, what: string): unknown[] {
   if (v === undefined || v === null) return [];
   if (!Array.isArray(v)) fail(`${what} must be an array`);
   return v;
+}
+/** A present-but-wrong-type list is refused, never coerced; absent is empty. */
+function strList(v: unknown, field: string): string[] {
+  return typedArray(v, field).map((e: unknown) => {
+    if (typeof e !== "string") fail(`${field} entries must be strings`);
+    return e;
+  });
 }
 /** Absent stays absent (caller applies its own default); a present value of the wrong type is refused, never stringified. */
 function typedString(v: unknown, what: string): string | undefined {
@@ -186,6 +207,25 @@ export function parseManifest(raw: string): PluginManifest {
     }
   }
 
+  // Every refusal names the field, never the value: a requirement id is
+  // third-party text like the rest of the manifest.
+  const req = typedObj(m.requires, "requires");
+  const idList = (v: unknown, field: string): string[] =>
+    strList(v, field).map((e) => {
+      if (!ID.test(e)) fail(`${field} entries must be lowercase letters, digits, dashes and underscores`);
+      return e;
+    });
+  const requires: PluginRequires = {
+    accounts: idList(req.accounts, "requires.accounts"),
+    permissions: idList(req.permissions, "requires.permissions"),
+    // Not an id and not INSIDE: a required path is the owner's, outside the
+    // plugin's tree by design (`~/Plow/wiki`). Only emptiness is refused.
+    paths: strList(req.paths, "requires.paths").map((e) => {
+      if (!e) fail("requires.paths entries must not be empty");
+      return e;
+    }),
+  };
+
   const hooks = obj(m.hooks);
   const postinstall = hooks.postinstall === undefined ? null : insideOrFail(hooks.postinstall, "hooks.postinstall");
   const skill = m.skill === undefined ? null : insideOrFail(m.skill, "skill");
@@ -200,6 +240,7 @@ export function parseManifest(raw: string): PluginManifest {
     env,
     argv: { read: read as string[][], write: write as string[][] },
     hooks: postinstall === null ? {} : { postinstall },
+    requires,
     skill,
   };
 }
