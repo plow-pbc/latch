@@ -1177,11 +1177,16 @@ describe("a plugin the owner turned off", () => {
     );
     const d = device(okMinter(), gogPlugin(), home);
     const advertised = () => d.skills.manifest().find((s) => s.name === GOG_SKILL)?.description;
+    // The Plugins tab's row reads the same sentence the agent does — and while
+    // the plugin is off, the declared one rather than a blank row.
     expect(advertised()).toBe("The owner's own notes.");
+    expect(d.pluginDescription("gog")).toBe("The owner's own notes.");
     d.setDisabledPlugins(["gog"]);
     expect(advertised()).toBe("The owner's own notes.");
+    expect(d.pluginDescription("gog")).toBe("The owner's own notes.");
     d.setDisabledPlugins([]);
     expect(advertised()).toBe("The owner's own notes.");
+    expect(d.pluginDescription("gog")).toBe("The owner's own notes.");
     expect(d.skills.skill(GOG_SKILL)?.body).toBe("Drive it this way.");
   });
 });
