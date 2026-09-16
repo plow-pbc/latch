@@ -86,7 +86,9 @@ describe.skipIf(!ON_MAC)("real sandboxed execution", () => {
       'use IPC::SysV qw(IPC_PRIVATE IPC_CREAT); print shmget(IPC_PRIVATE, 4096, 0600|IPC_CREAT), " ", msgget(IPC_PRIVATE, 0600|IPC_CREAT)',
     ).split(" ");
     cleanups.push(() => {
-      perl(`use IPC::SysV qw(IPC_RMID); shmctl(${shm}, IPC_RMID, 0) or die "shmctl: $!"; msgctl(${queue}, IPC_RMID, 0) or die "msgctl: $!"`);
+      perl(
+        `use IPC::SysV qw(IPC_RMID); my @failed; shmctl(${shm}, IPC_RMID, 0) or push @failed, "shmctl: $!"; msgctl(${queue}, IPC_RMID, 0) or push @failed, "msgctl: $!"; die "@failed" if @failed`,
+      );
     });
     const executor = new Executor(tempDir());
     const result = await executor.run({
