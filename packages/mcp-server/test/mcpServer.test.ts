@@ -890,7 +890,8 @@ describe("review findings", () => {
   });
 
   // A staged non-provider plugin's own manifest belt (argv.read/argv.write)
-  // is checked at execution time (deviceAgent.ts's executePlugin). Without
+  // is checked at execution time (deviceAgent.ts's plugin dispatch, in
+  // executeCommand). Without
   // this same check before an intent exists, an owner could be shown — and
   // approve — a card for an invocation the device would then refuse: the
   // capability the card displayed never matched what could run. Same
@@ -941,10 +942,11 @@ describe("review findings", () => {
       expect(events(device)).not.toContain("exec_start");
     });
 
-    // executePlugin (deviceAgent.ts) always execs in the plugin's own
-    // directory — a caller-supplied cwd is never read. Folding it into the
-    // capability anyway would show the owner an approval card claiming the
-    // run happens somewhere it never will. Refused by name, same as env
+    // A plugin's own dispatch (deviceAgent.ts's executeCommand) always execs
+    // in the plugin's own directory — a caller-supplied cwd is never read.
+    // Folding it into the capability anyway would show the owner an
+    // approval card claiming the run happens somewhere it never will.
+    // Refused by name, same as env
     // above, rather than silently dropped: a silent drop would let an agent
     // believe it chose a cwd it didn't.
     it("refuses a caller-supplied cwd for a plugin before an intent is ever built", async () => {
@@ -986,9 +988,9 @@ describe("review findings", () => {
     // conditional on its value differing from the plugin's own directory.
     // Pins that a later "only refuse when cwd disagrees with plugin.dir"
     // special case would fail this test rather than silently reopening the
-    // gap: executePlugin always execs in plugin.dir regardless, so even a
-    // cwd that happens to equal it is still a caller belief the card would
-    // have to lie about if it were ever allowed through.
+    // gap: a plugin's own dispatch always execs in plugin.dir regardless, so
+    // even a cwd that happens to equal it is still a caller belief the card
+    // would have to lie about if it were ever allowed through.
     it("refuses a caller-supplied cwd equal to the plugin's own directory too", async () => {
       const root = tempDir();
       stagePlugin(root);
