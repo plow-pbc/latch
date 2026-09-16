@@ -1,0 +1,27 @@
+{
+  "name": "wiki",
+  "version": "0.0.0-unreleased",
+  "command": "wiki",
+  "runtime": {
+    "binaries": [
+      {
+        "name": "wiki",
+        "url": {
+          "arm64": "https://github.com/plow-pbc/plow-wiki/releases/download/UNRELEASED/wiki_UNRELEASED_darwin_arm64.tar.gz",
+          "x64": "https://github.com/plow-pbc/plow-wiki/releases/download/UNRELEASED/wiki_UNRELEASED_darwin_amd64.tar.gz"
+        },
+        "sha256": {
+          "arm64": "0000000000000000000000000000000000000000000000000000000000000000",
+          "x64": "0000000000000000000000000000000000000000000000000000000000000000"
+        }
+      }
+    ]
+  },
+  "exec": { "argv": ["wiki"] },
+  "env": { "WIKI_PATH": { "fixed": "${owner_home}/Plow/wiki" } },
+  "argv": {
+    "read": [["validate"], ["history"]],
+    "write": [["init"], ["index"], ["snapshot"]]
+  },
+  "skill": "skill.md"
+}
