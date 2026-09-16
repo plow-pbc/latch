@@ -1,14 +1,14 @@
 /**
- * The Capabilities tab's view model — pure, like viewModel.ts, so the tab's
- * whole logic is unit-testable without Electron.
+ * Settings' Permissions section's view model — pure, like viewModel.ts, so
+ * the section's whole logic is unit-testable without Electron.
  *
- * The tab answers one question: what does this Mac let agents do right now,
+ * It answers one question: what does this Mac let agents do right now,
  * and what has that stopped? Every row is a switch (a macOS permission, or
  * Automation consent for one app) from the standing inventory; the counts
  * beside a row come from the audit log's `host_permission_blocked` rows,
  * grouped by the permission they name and joined to their `intent_received`
  * for the agent and the goal. A row exists because a switch exists; it
- * NEEDS ATTENTION — and counts toward the tab's badge — only while the
+ * NEEDS ATTENTION — and shows in the banner — only while the
  * switch is off and something has hit it, and the owner has not said "not
  * now" since the last hit. Status comes from the live inventory, so a row
  * stops needing attention the moment the switch is flipped, with nobody

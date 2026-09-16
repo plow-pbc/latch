@@ -23,7 +23,7 @@
   --zinc-bg: #f4f4f5; --zinc-fg: #52525b; --zinc-bd: #e4e4e7;
   /* Light enough to read against the --blue-fg primary button. */
   --focus: #60a5fa;
-  /* The Capabilities tab's "will not work" dot: the text red lifted and
+  /* The Permissions section's "will not work" dot: the text red lifted and
      desaturated, so a column of them reads as status rather than alarm. */
   --dot-off: #d9555b;
   --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
@@ -426,7 +426,7 @@ textarea.text { min-height: 70px; resize: vertical; }
 .support-copy { min-width: 0; }
 .support-title { font-weight: 600; margin-bottom: 2px; }
 
-/* The Capabilities tab (capabilitiesModel.ts). Dots: green granted, red
+/* The Permissions section (capabilitiesModel.ts). Dots: green granted, red
    will not work as things stand (refused, or never asked), grey unknown. */
 .status-dot.off { background: var(--dot-off); }
 .cap-banner {

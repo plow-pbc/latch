@@ -22,4 +22,4 @@ delete settings.blockedBannerSeenAt;
 delete settings.capabilityDismissals;
 fs.writeFileSync(file, JSON.stringify(settings, null, 2) + "\n", { mode: 0o600 });
 console.log(had ? `forgot the banner's dismissal at ${had}` : "the banner had never been dismissed");
-console.log("Refocus the app or open the Capabilities tab; no relaunch needed.");
+console.log("Refocus the app or open Settings; no relaunch needed.");

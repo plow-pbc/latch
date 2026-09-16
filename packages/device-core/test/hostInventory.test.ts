@@ -91,7 +91,7 @@ describe("hostInventory", () => {
   });
 
   it("asks about the targets the built-in skills drive", () => {
-    // One table with the Capabilities tab's Automation rows, so what the
+    // One table with the Permissions section's Automation rows, so what the
     // agent is told after a block is what the owner sees.
     expect(AUTOMATION_TARGETS).toEqual(AUTOMATION_APPS.map((a) => a.name));
     expect(AUTOMATION_TARGETS).toContain("Mail");

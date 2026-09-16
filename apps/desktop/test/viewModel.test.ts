@@ -555,7 +555,7 @@ describe("auditActivities (grouping)", () => {
     expect(run.decision).toBe("Allowed");
     expect(run.status).toBe("Blocked · Full Disk Access");
     expect(run.tone).toBe("amber");
-    // Its own bucket: the Capabilities tab's "Show in Audit" filters to it.
+    // Its own bucket: the Permissions section's "Show in Audit" filters to it.
     expect(run.decisionKind).toBe("allowed");
     expect(run.statusKind).toBe("blocked");
     expect(run.exitCode).toBe(1);
@@ -572,7 +572,7 @@ describe("auditActivities (grouping)", () => {
     expect(orphan.decisionKind).toBe("none");
     expect(orphan.statusKind).toBe("blocked");
     // The switch a block named is searchable, in System Settings' words —
-    // the Capabilities tab's "Show in Audit" relies on it — and so is the
+    // the Permissions section's "Show in Audit" relies on it — and so is the
     // timeline line, so what the detail pane shows is what the box finds.
     expect(run.permission).toBe("Full Disk Access");
     // Every switch a block can name reads in System Settings' words.
@@ -586,7 +586,7 @@ describe("auditActivities (grouping)", () => {
     ])[0]!;
     expect(mail.status).toBe("Blocked · app refuses sandboxed senders");
     expect(mail.timeline[0]!.text).toMatch(/refused by the app for a sandboxed sender — Mail refuses/);
-    // The block's own time, for the Capabilities tab's "Show in Audit" cutoff:
+    // The block's own time, for the Permissions section's "Show in Audit" cutoff:
     // the request began before a dismissal could, the refusal after.
     expect(run.blockedAt).toBe("2026-08-18T12:00:03Z");
     expect(activityMatches(run, "full disk access")).toBe(true);

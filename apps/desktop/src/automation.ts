@@ -1,6 +1,6 @@
 /**
  * Automation (Apple events) consent, per target app — the "Control other
- * apps" rows of the Capabilities tab.
+ * apps" rows of the Permissions section.
  *
  * macOS keys this permission on the PAIR (responsible process → target app)
  * and asks the first time a pair is used, exactly as those prompts arrive for

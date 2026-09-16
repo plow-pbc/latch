@@ -37,7 +37,7 @@ const STATUS_FILTERS = [
   ["any", "Any"], ["completed", "Completed"], ["running", "Running"], ["blocked", "Blocked"], ["failed", "Failed"],
 ];
 // The Date filter: rows at or after a cutoff. The presets are relative to
-// now; "since" is a fixed moment set by the Capabilities tab's "Show in
+// now; "since" is a fixed moment set by the Permissions section's "Show in
 // Audit" (the dismissal its count starts from) and listed in the menu only
 // while it is set.
 let dateFilter = "any";
@@ -347,7 +347,7 @@ async function refreshAuditNow(opts) {
     decision: decisionFilter,
     status: statusFilter,
     cutoffMs: cutoff,
-    // The Capabilities tab counts by the block's own time, so its cutoff
+    // The Permissions section counts by the block's own time, so its cutoff
     // keys on that; the presets key on when the row began.
     cutoffKey: dateFilter === "since" ? "blocked" : "ts",
     // The selected row stays loaded even when new activity above it pushes
@@ -2184,7 +2184,7 @@ let permissionsMounted = null;
 /** The audit tab, filtered to what this Mac blocked: the Blocked chip, and
     the search box set to `term` — a switch's name from a row's button, or
     cleared from the banner's, so a stale search never hides the rows. */
-// The Capabilities tab's "Show in Audit": the blocked rows, narrowed to one
+// The Permissions section's "Show in Audit": the blocked rows, narrowed to one
 // switch by `term` when a row asked, and to the moment the count started
 // from by `since` — so the list is exactly the requests it counted.
 async function showAuditBlocked(term = "", since = null) {
@@ -3015,7 +3015,7 @@ window.domo.onAuditChanged((change) => {
   if (currentTab === "audit") refreshAudit({ followTop: true, changed: new Set(change?.ids ?? ["*"]) });
 });
 // A block by this Mac is an audit row, and the only kind that moves the
-// Capabilities tab's badge, lines and banner — main says so only for those,
+// Permissions section's badge, lines and banner — main says so only for those,
 // because refreshing the tab takes the standing permission inventory (a
 // helper process per switch), which every audit line used to trigger.
 window.domo.onCapabilitiesChanged(() => {

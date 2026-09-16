@@ -249,7 +249,7 @@ describe("plow_device_status", () => {
     expect(isError).toBe(false);
     expect(payload.checked_at).toMatch(/^\d{4}-/);
     expect(payload.full_disk_access.granted).toBe(false);
-    // The whole table the Capabilities tab shows, not only the skills' two:
+    // The whole table the Permissions section shows, not only the skills' two:
     // after a Mail refusal the agent must be able to see Mail's row.
     expect(payload.automation.map((a: { target: string }) => a.target)).toContain("Mail");
     expect(payload.automation).toEqual(

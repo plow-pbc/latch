@@ -102,7 +102,7 @@ func responsibleAppBundle() -> String? {
 }
 
 /// Draw an image into a 128px PNG and print it base64 — 2x the panel's 32pt
-/// tile, the 56pt drag image and the Capabilities tab's 24pt row icon, so
+/// tile, the 56pt drag image and the Permissions section's 24pt row icon, so
 /// all stay crisp on retina.
 func printPNG(_ draw: (NSRect) -> Void) -> Never {
     let side = 128
@@ -124,7 +124,7 @@ func printPNG(_ draw: (NSRect) -> Void) -> Never {
 }
 
 // One-shot mode: print an app's icon by BUNDLE ID, for the apps the
-// Capabilities tab lists for Automation (Messages, Mail, …) — LaunchServices
+// Permissions section lists for Automation (Messages, Mail, …) — LaunchServices
 // finds the bundle, NSWorkspace draws the real icon.
 if let flag = CommandLine.arguments.firstIndex(of: "--app-icon"),
    CommandLine.arguments.count > flag + 1 {

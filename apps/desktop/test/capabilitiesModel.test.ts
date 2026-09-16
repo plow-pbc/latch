@@ -1,5 +1,5 @@
 /**
- * The Capabilities tab's view model: audit rows and the inventory in, rows
+ * The Permissions section's view model: audit rows and the inventory in, rows
  * with counts, a banner and a badge out. Pure, so every rule the tab shows
  * is pinned here — above all what earns the badge and what clears it.
  */

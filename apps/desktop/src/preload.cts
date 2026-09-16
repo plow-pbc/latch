@@ -80,8 +80,8 @@ contextBridge.exposeInMainWorld("domo", {
   // Availability booleans and the active model — never a credential.
   inferenceGet: () => ipcRenderer.invoke("settings:getInference"),
   statusGet: () => ipcRenderer.invoke("status:get"),
-  // The Capabilities tab (capabilitiesModel.ts): every switch with its
-  // status and what it stopped, the banner, and the badge — one whole-state
+  // Settings' Permissions section (capabilitiesModel.ts): every switch with
+  // its status and what it stopped, and the banner — one whole-state
   // shape per read, like every other pane. `act` does the row's one thing
   // (the panel flow, a request, a folder touch) and answers with the fresh
   // state; `dismiss` and `bannerSeen` record the owner's "not now".
@@ -121,7 +121,7 @@ contextBridge.exposeInMainWorld("domo", {
   // Start the Full Disk Access grant flow: main opens the pane and floats the
   // drag panel next to System Settings (fdaGrantFlow.ts owns the whole
   // lifecycle). Setup's "Data & permissions" step uses this; the
-  // Capabilities tab goes through `capabilitiesAct`.
+  // Permissions section goes through `capabilitiesAct`.
   fullDiskGrantFlow: () => ipcRenderer.invoke("fullDisk:grantFlow"),
   // The floating panel's close button; main owns the panel's lifecycle.
   fullDiskDismiss: () => ipcRenderer.send("fullDisk:dismiss"),
@@ -150,7 +150,7 @@ contextBridge.exposeInMainWorld("domo", {
   onAuditChanged: (cb: (change: { ids: string[] }) => void) =>
     ipcRenderer.on("audit:changed", (_event, change: { ids: string[] }) => cb(change)),
   // A block by this Mac, or its clearing: the only lines that move the
-  // Capabilities tab, so the only ones that refresh it.
+  // Permissions section, so the only ones that refresh it.
   onCapabilitiesChanged: (cb: () => void) => ipcRenderer.on("capabilities:changed", cb),
   onStatusChanged: (cb: () => void) => ipcRenderer.on("status:changed", cb),
 

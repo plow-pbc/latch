@@ -986,7 +986,7 @@ export class DeviceAgent {
    * in the capability the approver saw, so the start event carries only the
    * target. A failure is diagnosed like a command's, with the app the agent
    * named as the automation target, so a denied or never-asked Automation
-   * grant lands on the Capabilities tab's row for that app the same way —
+   * grant lands on the Permissions section's row for that app the same way —
    * and a refusal that is the app's own is said to be no gate.
    */
   private async executeAppleScript(
@@ -1101,7 +1101,7 @@ export class DeviceAgent {
         //
         // The clearing is recorded too, when the parked verdict was: a
         // run that went on to an end of its own was let through the
-        // dialog, and the Capabilities tab must stop counting a block the
+        // dialog, and the Permissions section must stop counting a block the
         // owner has answered — a folder it cannot query would otherwise
         // stay red on the strength of a guess. A reaped run was still
         // parked, and its verdict stands.
@@ -1533,7 +1533,7 @@ export class DeviceAgent {
   /**
    * Forget a `prompt_waiting` verdict for a run that went on — the owner
    * answered the dialog (or it never mattered) — and record the clearing,
-   * so the Capabilities tab stops counting a block the owner has answered:
+   * so the Permissions section stops counting a block the owner has answered:
    * a folder it cannot query would otherwise stay red on the strength of a
    * guess. Any other verdict stands. Idempotent; at most one clearing per
    * run is recorded, because the dedupe key goes with it.

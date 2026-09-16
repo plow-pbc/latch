@@ -125,7 +125,7 @@ is the standing inventory — what would be refused if asked — with no
 approval, for the user's "what can you reach?" and for the whole picture
 after a block; the copy tells an agent to try rather than check, since only
 a refused attempt lights the owner's surfaces. The owner's side
-of the same facts is the app's Capabilities tab: every switch with what it
+of the same facts is the app's Permissions section: every switch with what it
 stopped, badged by the rows that need a decision (DESIGN.md §6a).
 
 **Paths are resolved before the human sees them.** Every path an agent supplies

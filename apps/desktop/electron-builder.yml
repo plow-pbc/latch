@@ -208,7 +208,7 @@ mac:
   notarize: true
   extendInfo:
     NSAppleEventsUsageDescription: "Plow Latch sends the Messages and automation commands you approve on this Mac."
-    # The consent dialogs the Capabilities tab raises on purpose
+    # The consent dialogs the Permissions section raises on purpose
     # (@domo/native-permissions, in the app's own process) are shown only to
     # a caller whose bundle carries these; without them macOS refuses the
     # request instead of asking. A from-source run gets them from

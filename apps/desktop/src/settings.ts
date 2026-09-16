@@ -176,7 +176,7 @@ export interface Settings {
   updatesLastCheckedAt?: string;
   /**
    * What macOS last said about Automation consent, per target bundle id
-   * (automation.ts). A memo of macOS's answer for the Capabilities tab, not
+   * (automation.ts). A memo of macOS's answer for the Permissions section, not
    * the permission itself — macOS holds that, can only report it while the
    * target app is running, and System Settings can change it behind the
    * app's back; a conclusive read overwrites this.

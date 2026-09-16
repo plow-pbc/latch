@@ -171,7 +171,7 @@ describe("reading an error", () => {
     // The event reached Contacts.app (Automation consent is granted); what
     // came back is a -54, which is the Contacts data permission refusing
     // the calling app. Denied: confirmed. Never asked: likely, since a
-    // scripted read raises no dialog — the Capabilities tab's row does.
+    // scripted read raises no dialog — the Permissions section's row does.
     // Granted: something else, and no switch to send the owner to.
     const base = {
       automation_target: "Contacts",
@@ -183,7 +183,7 @@ describe("reading an error", () => {
     expect(denied.cause).toBe("macos_permission");
     expect(denied.confidence).toBe("confirmed");
     expect(denied.permission).toBe("contacts");
-    expect(denied.owner_action).toMatch(/Capabilities tab, allow Contacts/);
+    expect(denied.owner_action).toMatch(/Settings tab, allow Contacts/);
     expect(denied.owner_action).toMatch(/System Settings > Privacy & Security > Contacts/);
     const unasked = diagnose(facts({ ...base, service_status: "not_asked" }));
     expect(unasked.cause).toBe("macos_permission");
