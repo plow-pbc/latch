@@ -889,13 +889,15 @@ export class DeviceAgent {
    * The `PolicyEngine` rule view (see its constructor doc): an intent whose
    * `process.exec` argv resolves to a staged plugin has that one capability's
    * argv narrowed through `ruleArgv` — a read collapses to `<command>
-   * <prefix>`, so one "always allow" covers every later query regardless of
-   * its tail; a write (or anything that isn't a plugin at all) passes
-   * through unchanged. Always returns a NEW Intent and never mutates the one
-   * it is handed: the object handed in is reused afterwards for the grant,
-   * the approval card, the sandbox profile and the audit log, all of which
-   * must keep the real, full argv — only the rule itself sees the narrowed
-   * view.
+   * <prefix>`, so the query TEXT may vary freely under one "always allow";
+   * a write (or anything that isn't a plugin at all) passes through
+   * unchanged. Only argv is narrowed — the rest of the intent's capabilities
+   * (paths, network, …) still participate in the rule key, so a call
+   * carrying different ones is a different request and re-prompts. Always
+   * returns a NEW Intent and never mutates the one it is handed: the object
+   * handed in is reused afterwards for the grant, the approval card, the
+   * sandbox profile and the audit log, all of which must keep the real, full
+   * argv — only the rule itself sees the narrowed view.
    */
   private pluginRuleView(intent: Intent): Intent {
     const cap = intent.capabilities.find((c) => c.kind === "process.exec");

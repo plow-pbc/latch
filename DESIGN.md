@@ -178,9 +178,11 @@ Decisions: **Always allow / Allow once / Deny.**
   canonicalized and sorted). **Exact match**: same command template (full
   argv) and same path scopes only — `git status` approved does not cover
   `git push`. The one exception is an installed plugin's *read* prefix
-  (`plugins/argvRules.ts`): the rule is keyed on `<command> <prefix>`, so one
-  approval covers every later query regardless of text; a write is keyed on
-  the full argv.
+  (`plugins/argvRules.ts`): that one capability's argv is keyed on `<command>
+  <prefix>`, so its query text may vary freely — but the rest of the
+  normalized capability set (paths, etc.) still participates in the key, so a
+  call approved for one set of paths does not cover a call for a different
+  one; a write is keyed on the full argv.
 - Rules are listed and revocable in the app. Goal text is never part of a rule.
 - A third *observed* layer — processes spawned, files actually touched by the
   in-process file tools, sandbox denials, exit codes — lands in the audit log,

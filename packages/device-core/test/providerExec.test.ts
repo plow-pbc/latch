@@ -588,6 +588,46 @@ describe("a plugin's always-allow rule, narrowed by argv shape", () => {
       expect(asked()).toBe(2);
     },
   );
+
+  itSpawns(
+    "still re-prompts a read carrying different read_paths — the rule key covers the whole capability set, not just the narrowed argv",
+    async () => {
+      const { delegate, asked } = countingAlwaysAllow();
+      const d = kbDevice(delegate);
+
+      function runWithReadPaths(argv: string[], paths: string[]): Promise<JSONValue> {
+        return d.handleIntent(
+          makeIntent({
+            agentId: "a1",
+            agentDisplay: "Agent",
+            deviceId: d.identity.deviceId,
+            request: `run: ${argv.join(" ")}`,
+            capabilities: [
+              { kind: "process.exec", argv },
+              { kind: "network", allowed: impliesNetwork(argv) },
+              { kind: "fs.read", paths },
+            ],
+            sessionId: "s1",
+          }),
+          { wait_ms: 8000 },
+        );
+      }
+
+      await runWithReadPaths(["kb", "get", "alpha"], ["/tmp/a"]);
+      expect(asked()).toBe(1);
+
+      // Same argv prefix ("get"), so the narrowed rule view sees an identical
+      // process.exec capability — but a different approved fs.read path is a
+      // materially different request. This must NOT be answered from the
+      // first's rule: the owner who approved "read /tmp/a" never approved
+      // "read /tmp/b", and the rule key including the full capability set
+      // (not just the narrowed argv) is what keeps that true. This is
+      // intentional — the fix for the over-prompt this guards is narrowing
+      // WHAT the rule covers, never narrowing the key itself.
+      await runWithReadPaths(["kb", "get", "alpha"], ["/tmp/b"]);
+      expect(asked()).toBe(2);
+    },
+  );
 });
 
 /**
