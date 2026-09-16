@@ -1140,6 +1140,8 @@ describe("a plugin the owner turned off", () => {
 
     d.setDisabledPlugins(["gog"]);
     expect(publishes(d)).toBe(false);
+    // Unpublished, but the row that offers to turn it back on is not blank.
+    expect(d.pluginDescription("gog")).toBe(providerFor(["plow-gog"])!.skill.description);
     const response = await run(d, ["plow-gog", "gmail", "search", "q"]);
     expect(jv(response).get("error").str).toBe("plow-gog is not installed on this Mac");
     expectNeverSpawned(d);
