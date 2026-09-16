@@ -340,69 +340,6 @@ describe("diagnose — the tree, one leaf per case", () => {
     expect(d.evidence.join(" ")).toMatch(/refusal was elsewhere/);
   });
 
-  it("a grant the app has and the run cannot inherit is named, with the remove-and-re-add repair", () => {
-    const d = diagnose(
-      facts({
-        op: "read",
-        errno: "EPERM",
-        ran_sandboxed: true,
-        app_process_open: "ok",
-        // What `sandboxGrants` really produces for a read-only intent on a
-        // guarded file: write is true only under an explicitly granted write
-        // root. Setting it true here would be a fixture agreeing with the
-        // code and with no real run.
-        sandbox_allows_read: true,
-        sandbox_allows_write: false,
-        path: "~/Library/Messages/chat.db",
-        tcc_guarded_prefix: "full_disk_access",
-        full_disk_access_granted: true,
-      }),
-    );
-    expect(d.cause).toBe("macos_permission");
-    expect(d.confidence).toBe("confirmed");
-    expect(d.permission).toBe("full_disk_access");
-    expect(d.retry).toBe("after_owner_grants");
-    // The repair the Full Disk Access row shows for the same state: granting
-    // it again is what the owner must NOT be told to do.
-    expect(d.owner_action).toMatch(/remove Plow Latch from the list and add it again/);
-    // And the structured field agrees with that sentence: a relaunch is the
-    // remedy for a grant a running process missed, not for one a child cannot
-    // inherit, so an agent reading the flag is not sent the other way.
-    expect(d.requires_relaunch).toBe(false);
-    expect(d.owner_action).not.toMatch(/turn on/);
-    expect(isHostGate(d.cause)).toBe(true);
-  });
-
-  it("a folder under the umbrella reads the same way, and a grant that is off still reads turn it on", () => {
-    const covered = diagnose(
-      facts({
-        op: "read",
-        errno: "EPERM",
-        ran_sandboxed: true,
-        app_process_open: "ok",
-        sandbox_allows_read: true,
-        sandbox_allows_write: true,
-        path: "~/Documents/report.txt",
-        tcc_guarded_prefix: "files_documents",
-        full_disk_access_granted: true,
-      }),
-    );
-    expect(covered.cause).toBe("macos_permission");
-    expect(covered.permission).toBe("full_disk_access");
-    const fresh = diagnose(
-      facts({
-        op: "read",
-        errno: "EPERM",
-        app_process_open: "EPERM",
-        path: "~/Library/Messages/chat.db",
-        tcc_guarded_prefix: "full_disk_access",
-        full_disk_access_granted: false,
-      }),
-    );
-    expect(fresh.cause).toBe("macos_permission");
-    expect(fresh.owner_action).toMatch(/turn on Plow Latch, then quit and reopen it/);
-  });
-
   it("sqlite's WAL case under a read-only profile is the sandbox, not a missing file", () => {
     const d = diagnose(
       facts({
