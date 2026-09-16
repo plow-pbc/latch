@@ -1077,6 +1077,14 @@ export class DeviceAgent {
       if (exec.cwd === undefined || canonicalize(exec.cwd) !== canonicalize(plugin.dir)) {
         return this.execError(intent.intentId, "approved cwd does not match this plugin's own directory");
       }
+      // Having proved it EQUALS the plugin's directory, run and audit the
+      // device's own canonical form rather than the caller's spelling of it.
+      // Today's only producer sends an already-resolved path, but the check
+      // above exists for an intent built some other way — and a symlinked
+      // spelling that passes it would otherwise land in `audit.ndjson`, the
+      // project's test oracle, as something other than the true physical
+      // path everything else here is written against.
+      exec = { ...exec, cwd: plugin.dir };
     }
 
     this.audit.record("exec_start", { intentId: intent.intentId, argv });
