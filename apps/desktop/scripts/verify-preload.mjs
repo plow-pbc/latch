@@ -2239,7 +2239,12 @@ app.whenReady().then(async () => {
   const activeTab = `document.querySelector("#seg button.active")?.dataset.tab`;
   const landing = async (permission) => {
     const before = await win.webContents.executeJavaScript(activeTab);
-    win.webContents.send("ui:showCapabilities", blockDestination(permission, probeStaged));
+    // Mirrors main's own channel choice, not just its tab choice: an audit
+    // landing travels a different channel, so sending everything down
+    // ui:showCapabilities would leave that wire unproven.
+    const tab = blockDestination(permission, probeStaged);
+    if (tab === "audit") win.webContents.send("ui:showAuditBlocked");
+    else win.webContents.send("ui:showCapabilities", tab);
     // Waited on as "no longer where it was", never as "where we expect": the
     // expectation is asserted below, so the wait cannot assert it away.
     await waitFor(win, `${activeTab} !== ${JSON.stringify(before)}`, `the block on ${permission} to land`);
@@ -2248,6 +2253,7 @@ app.whenReady().then(async () => {
   const blockLanding = {
     declaredByAPlugin: await landing("calendars"),
     declaredByNobody: await landing("contacts"),
+    namesNoSwitch: await landing(null),
   };
 
   // The floating grant panel (fdaGrantFlow.ts) comes up through the same
@@ -2443,6 +2449,7 @@ app.whenReady().then(async () => {
     capabilities.noBanner &&
     blockLanding.declaredByAPlugin === "plugins" &&
     blockLanding.declaredByNobody === "settings" &&
+    blockLanding.namesNoSwitch === "audit" &&
     capabilities.calendarsUsedBy === "Used by wiki" &&
     capabilities.contactsUsedByNobody &&
     capabilities.fdaUsedByNobody &&
