@@ -521,8 +521,22 @@ export const TOOLS: ToolSpec[] = [
         ...await resolveAll(strings(a.get("write_paths").arr)),
         ...providerWritePaths,
       ]);
+      // A provider ignores cwd entirely: executePlowGog's runGog builds
+      // executor.run({...}) with no cwd field at all, so folding a
+      // caller-supplied one into the capability would show the owner a card
+      // claiming the run happens somewhere it never will — the same lie the
+      // plugin path above refuses outright. Unlike the plugin path this is
+      // stripped, not refused: the plugin path is brand new with no existing
+      // callers, so teaching the caller via refusal costs nothing, while
+      // `gog` is live and first-party (driven through plow-gog today), so
+      // turning a previously-accepted argument into a refusal risks breaking
+      // a real caller. Stripping removes the owner-facing lie — the actual
+      // security property — without changing what succeeds. `cwd` itself is
+      // still resolved above and used to make relative provider file args
+      // absolute; only the capability (and therefore the card) never sees it.
+      const execCwd = provider === null ? cwd : undefined;
       const capabilities: Capability[] = [
-        { kind: "process.exec", argv, cwd },
+        { kind: "process.exec", argv, cwd: execCwd },
         // A provider implies network. Its whole purpose is to reach
         // the service its minted token authenticates against, so a gog call
         // approved without it is a call the sandbox then denies — and making
