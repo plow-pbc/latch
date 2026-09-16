@@ -6,6 +6,7 @@
  * touches it, and a refusal or a failed mint never spawns a child.
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -456,6 +457,29 @@ describe("a staged non-provider plugin through the exec path", () => {
 
     expect(r.get("error").str).toContain("approved cwd does not match this plugin's own directory");
     expectNeverSpawned(d);
+  });
+
+  // The SysV semaphore grant (`Executor.run`'s `sysvSemaphores`, for a
+  // PyInstaller onefile plugin) must ride a staged plugin's own pinned
+  // binary and nothing else: one semaphore made outside the sandbox, the
+  // same `semctl` on it from a staged binary and from an ordinary approved
+  // command. Only the first may succeed. Made and removed outside the
+  // sandbox because removal is gated too.
+  itSpawns("grants SysV semaphores to a staged plugin binary, and refuses them to an ordinary command", async () => {
+    const perl = (script: string): string => execFileSync("/usr/bin/perl", ["-e", script], { encoding: "utf8" }).trim();
+    const sem = perl('use IPC::SysV qw(IPC_PRIVATE IPC_CREAT); print semget(IPC_PRIVATE, 1, 0600|IPC_CREAT)');
+    try {
+      const probe = 'use IPC::SysV qw(SETVAL); print semctl($ARGV[0], 0, SETVAL, 1) ? "SEM_OK\n" : "SEM_DENIED\n"';
+      // The staged binary sees ["--quiet", "say", <sem>] (manifest exec tail, then the call's).
+      const plugins = echoerPlugin(`#!/bin/sh\nexec /usr/bin/perl -e '${probe}' -- "$3"\n`);
+      const d = device(null, plugins);
+      const viaPlugin = String(jv(await run(d, ["echoer", "say", sem], 8000, undefined, plugins[0]!.dir)).get("output").str);
+      const viaCommand = String(jv(await run(d, ["/usr/bin/perl", "-e", probe, "--", sem])).get("output").str);
+      expect(viaPlugin).toContain("SEM_OK");
+      expect(viaCommand).toContain("SEM_DENIED");
+    } finally {
+      perl(`use IPC::SysV qw(IPC_RMID); semctl(${sem}, 0, IPC_RMID, 0) or die "semctl: $!"`);
+    }
   });
 
   // The `wiki` shape: an entrypoint that is NOT one of the manifest's own
