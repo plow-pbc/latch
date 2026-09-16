@@ -486,10 +486,10 @@ export const TOOLS: ToolSpec[] = [
       // caller-supplied one is still refused unconditionally rather than
       // compared against it.
       const rawCwd = a.get("cwd").str;
-      if (provider === null) {
-        const pluginRefusal = ctx.device.pluginRefusal(argv, rawCwd ?? undefined);
-        if (pluginRefusal !== null) throw new ToolError(pluginRefusal);
-      }
+      // Unconditional: a provider's command is a staged plugin's too, and
+      // "turned off" is the device's answer for both before any card.
+      const pluginRefusal = ctx.device.pluginRefusal(argv, rawCwd ?? undefined);
+      if (pluginRefusal !== null) throw new ToolError(pluginRefusal);
       // Resolved here, before the intent is built, so the approval card
       // shows the owner the true run location (`Run: <argv> (in <dir>)`)
       // instead of nothing — the device then refuses at execution if the

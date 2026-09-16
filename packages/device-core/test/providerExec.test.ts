@@ -1151,12 +1151,26 @@ describe("a plugin the owner turned off", () => {
     expect(publishes(d)).toBe(false);
     // Unpublished, but the row that offers to turn it back on is not blank.
     expect(d.pluginDescription("gog")).toBe(providerFor(["plow-gog"])!.skill.description);
+    // Refused by name before any card, and again at the executor.
+    expect(d.pluginRefusal(["plow-gog", "gmail", "search", "q"])).toBe("plow-gog is turned off on this Mac");
     const response = await run(d, ["plow-gog", "gmail", "search", "q"]);
-    expect(jv(response).get("error").str).toBe("plow-gog is not installed on this Mac");
+    expect(jv(response).get("error").str).toBe("plow-gog is turned off on this Mac");
     expectNeverSpawned(d);
 
     d.setDisabledPlugins([]);
     expect(publishes(d)).toBe(true);
+  });
+
+  // Off at approval is not the question — off NOW is. The mint is a network
+  // wait the owner can flip the switch during, and a token minted for a
+  // plugin that is off by the time it returns must never reach a child.
+  it("never launches a credentialed child for a plugin turned off during the mint", async () => {
+    let d: DeviceAgent | null = null;
+    const flipsDuringMint = minterOf(async () => { d!.setDisabledPlugins(["gog"]); return TOKEN; });
+    d = device(flipsDuringMint, gogPlugin());
+    const response = await run(d, ["plow-gog", "gmail", "search", "q"]);
+    expect(jv(response).get("error").str).toBe("plow-gog is turned off on this Mac");
+    expectNeverSpawned(d);
   });
 
   // A non-provider plugin has no PROVIDERS row to refuse through, and its

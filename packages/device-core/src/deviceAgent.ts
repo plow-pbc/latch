@@ -964,9 +964,16 @@ export class DeviceAgent {
    * silent drop would leave the caller believing it chose a cwd it didn't.
    */
   pluginRefusal(argv: readonly string[], cwd?: string): string | null {
-    const plugin = pluginFor(this.plugins, argv[0] ?? "");
+    // A provider's row names its plugin; anything else is named by argv[0].
+    const provider = providerFor(argv);
+    const plugin = provider
+      ? (this.plugins.find((p) => p.manifest.name === provider.plugin) ?? null)
+      : pluginFor(this.plugins, argv[0] ?? "");
     if (plugin === null) return null;
-    if (this.plugin(plugin.manifest.name) === null) return `${plugin.manifest.command} is turned off on this Mac`;
+    if (this.plugin(plugin.manifest.name) === null) return `${provider?.command ?? plugin.manifest.command} is turned off on this Mac`;
+    // Off is the one answer shared with a provider's command; the rest of its
+    // belt is `providerRefusal`'s, and it takes a cwd (stripped, never run in).
+    if (provider !== null) return null;
     if (cwd !== undefined) return "cwd is refused for a plugin; it always runs in its own directory";
     const verdict = classifyArgv(plugin.manifest, argv);
     return verdict.kind === "refused" ? verdict.reason : null;
@@ -1041,7 +1048,7 @@ export class DeviceAgent {
       // resolve; if it cannot, that is an answer, not a pass.
       const plugin = this.plugin(provider.plugin);
       if (plugin === null) {
-        return this.execError(intent.intentId, `${provider.command} is not installed on this Mac`);
+        return this.execError(intent.intentId, this.pluginRefusal(argv) ?? `${provider.command} is not installed on this Mac`);
       }
       return this.executePlowGog(intent, plugin, provider, argv, { readPaths, writePaths, network, appleEvents, waitMs });
     }
@@ -1459,6 +1466,10 @@ export class DeviceAgent {
       const message = e instanceof MintError ? e.message : `could not authorise ${provider.command}`;
       return this.execError(intent.intentId, message);
     }
+    // The owner may have flipped the switch while the mint was out: nothing
+    // credentialed launches for a plugin that is off NOW, not off at approval.
+    const off = this.pluginRefusal(argv);
+    if (off !== null) return this.execError(intent.intentId, off);
 
     if (plan.kind === "accounts") {
       // Answered from the mint — no gog run, no further network.
@@ -1624,6 +1635,8 @@ export class DeviceAgent {
       // The create child's own outcome gets the one exec_end, in finishRun.
       if (refusal !== null) return this.execError(intent.intentId, refusal);
     }
+    const offSince = this.pluginRefusal(argv); // the probe was another wait
+    if (offSince !== null) return this.execError(intent.intentId, offSince);
     return this.finishRun(intent.intentId, await runGog(plan.gogArgv.slice(1), target.token));
   }
 
