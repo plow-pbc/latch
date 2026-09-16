@@ -911,27 +911,27 @@ describe("review findings", () => {
       );
     }
 
-    it("refuses an off-allowlist argv before an intent is ever built, never reaching approval", async () => {
+    // One staged "echoer" plugin, a fresh device and server around it, and
+    // cleanup registered — the lifecycle every test below needs, varying
+    // only the policy delegate.
+    function makePluginServer(delegate: PolicyDelegate) {
       const root = tempDir();
       stagePlugin(root);
-      let decided = false;
       const home = tempDir();
-      const device = new DeviceAgent(
-        home,
-        "Test Mac",
-        {
-          async decideIntent() {
-            decided = true;
-            return "allow_once" as const;
-          },
-        },
-        null,
-        undefined,
-        null,
-        loadPlugins([root]),
-      );
+      const device = new DeviceAgent(home, "Test Mac", delegate, null, undefined, null, loadPlugins([root]));
       const server = createDomoMcpServer(device, {});
       cleanups.push(() => server.close());
+      return { server, device, root, home };
+    }
+
+    it("refuses an off-allowlist argv before an intent is ever built, never reaching approval", async () => {
+      let decided = false;
+      const { server, device } = makePluginServer({
+        async decideIntent() {
+          decided = true;
+          return "allow_once" as const;
+        },
+      });
 
       const { isError, payload } = await callTool(server, "plow_run_command", { argv: ["echoer", "shout", "hi"] }, AGENT);
 
@@ -950,26 +950,13 @@ describe("review findings", () => {
     // above, rather than silently dropped: a silent drop would let an agent
     // believe it chose a cwd it didn't.
     it("refuses a caller-supplied cwd for a plugin before an intent is ever built", async () => {
-      const root = tempDir();
-      stagePlugin(root);
       let decided = false;
-      const home = tempDir();
-      const device = new DeviceAgent(
-        home,
-        "Test Mac",
-        {
-          async decideIntent() {
-            decided = true;
-            return "allow_once" as const;
-          },
+      const { server, device, home } = makePluginServer({
+        async decideIntent() {
+          decided = true;
+          return "allow_once" as const;
         },
-        null,
-        undefined,
-        null,
-        loadPlugins([root]),
-      );
-      const server = createDomoMcpServer(device, {});
-      cleanups.push(() => server.close());
+      });
 
       const { isError, payload } = await callTool(
         server,
@@ -992,26 +979,13 @@ describe("review findings", () => {
     // even a cwd that happens to equal it is still a caller belief the card
     // would have to lie about if it were ever allowed through.
     it("refuses a caller-supplied cwd equal to the plugin's own directory too", async () => {
-      const root = tempDir();
-      stagePlugin(root);
       let decided = false;
-      const home = tempDir();
-      const device = new DeviceAgent(
-        home,
-        "Test Mac",
-        {
-          async decideIntent() {
-            decided = true;
-            return "allow_once" as const;
-          },
+      const { server, device, root } = makePluginServer({
+        async decideIntent() {
+          decided = true;
+          return "allow_once" as const;
         },
-        null,
-        undefined,
-        null,
-        loadPlugins([root]),
-      );
-      const server = createDomoMcpServer(device, {});
-      cleanups.push(() => server.close());
+      });
 
       const pluginDir = path.join(root, "echoer");
       const { isError, payload } = await callTool(
@@ -1036,25 +1010,13 @@ describe("review findings", () => {
     // it in the very capability the approver is shown — same as any other
     // `cwd` (capability.ts's `capabilityDisplay`).
     it("offers the plugin's own directory as the approved cwd, so the card shows the true run location", async () => {
-      const root = tempDir();
-      stagePlugin(root);
       let cwd: string | undefined;
-      const device = new DeviceAgent(
-        tempDir(),
-        "Test Mac",
-        {
-          async decideIntent(intent) {
-            cwd = intent.capabilities.find((c) => c.kind === "process.exec")?.cwd;
-            return "deny" as const;
-          },
+      const { server, root } = makePluginServer({
+        async decideIntent(intent) {
+          cwd = intent.capabilities.find((c) => c.kind === "process.exec")?.cwd;
+          return "deny" as const;
         },
-        null,
-        undefined,
-        null,
-        loadPlugins([root]),
-      );
-      const server = createDomoMcpServer(device, {});
-      cleanups.push(() => server.close());
+      });
 
       await callTool(server, "plow_run_command", { argv: ["echoer", "say"] }, AGENT);
 
@@ -1062,20 +1024,7 @@ describe("review findings", () => {
     });
 
     it.skipIf(!ON_MAC)("a staged plugin with no cwd argument still runs normally", async () => {
-      const root = tempDir();
-      stagePlugin(root);
-      const home = tempDir();
-      const device = new DeviceAgent(
-        home,
-        "Test Mac",
-        { async decideIntent() { return "allow_once" as const; } },
-        null,
-        undefined,
-        null,
-        loadPlugins([root]),
-      );
-      const server = createDomoMcpServer(device, {});
-      cleanups.push(() => server.close());
+      const { server, device } = makePluginServer({ async decideIntent() { return "allow_once" as const; } });
 
       const { isError } = await callTool(server, "plow_run_command", { argv: ["echoer", "say"] }, AGENT);
 
