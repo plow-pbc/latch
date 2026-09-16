@@ -30,8 +30,11 @@ const PLUGINS: { name: string; binaries: { name: string }[] }[] = fs
   .filter((name) => fs.existsSync(path.join(PLUGINS_DIR, name, "latch-plugin.json")))
   .map((name) => ({
     name,
+    // `?? []`: a source-only plugin (wiki) omits `runtime.binaries` entirely,
+    // same as manifest.ts's own parser defaults it — nothing here to pack or
+    // check per-binary, but the reader must not throw on the day one exists.
     binaries: JSON.parse(fs.readFileSync(path.join(PLUGINS_DIR, name, "latch-plugin.json"), "utf8")).runtime
-      .binaries,
+      .binaries ?? [],
   }));
 
 const IDENTITY = "Developer ID Application: Nobody (TEAMID)";

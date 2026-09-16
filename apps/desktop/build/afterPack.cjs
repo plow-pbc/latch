@@ -185,7 +185,9 @@ module.exports = async function afterPack(context) {
     if (!fs.existsSync(manifestFile)) continue;
     const manifest = JSON.parse(fs.readFileSync(manifestFile, "utf8"));
     const dir = path.join(context.appOutDir, appName, "Contents", "Resources", "plugins", name);
-    for (const binary of manifest.runtime.binaries) {
+    // A source-only plugin (wiki) omits `runtime.binaries` entirely, same as
+    // manifest.ts's own parser defaults it — nothing here to check for one.
+    for (const binary of manifest.runtime.binaries ?? []) {
       const missingArches = ["arm64", "x64"].filter((a) => {
         const bin = path.join(dir, "runtime", a, "bin", binary.name);
         return !fs.existsSync(bin) || fs.statSync(bin).size === 0;

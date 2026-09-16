@@ -1,0 +1,22 @@
+{
+  "name": "wiki",
+  "version": "1",
+  "command": "wiki",
+  "runtime": {
+    "sources": [
+      {
+        "name": "plow-wiki",
+        "git": "https://github.com/plow-pbc/plow-wiki",
+        "commit": "bd10e747a2bda7384a0fdd3aaa5572be8018ec4a",
+        "install": ["uv", "sync", "--frozen"]
+      }
+    ]
+  },
+  "exec": { "cwd": "plow-wiki", "argv": ["wiki"] },
+  "env": { "WIKI_PATH": { "fixed": "${owner_home}/Plow/wiki" } },
+  "argv": {
+    "read": [["validate"], ["history"]],
+    "write": [["init"], ["index"], ["snapshot"]]
+  },
+  "skill": "skill.md"
+}
