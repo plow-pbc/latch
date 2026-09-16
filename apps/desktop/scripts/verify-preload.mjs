@@ -2151,7 +2151,9 @@ app.whenReady().then(async () => {
   // says Off with its requirements withdrawn — the owner's problem again only
   // when they turn it back on.
   await win.webContents.executeJavaScript(
-    `document.querySelectorAll(".plugin-switch input")[1].click(), true`);
+    `[...document.querySelectorAll(".plugin-row")]
+       .find((r) => r.querySelector(".plugin-name span")?.textContent === "wiki")
+       .querySelector(".plugin-switch input").click(), true`);
   await waitFor(win, `!document.querySelector(".plugin-req")`, "the disabled plugin to drop its requirements");
   const pluginOff = await win.webContents.executeJavaScript(`(${() => {
     const wiki = [...document.querySelectorAll(".plugin-row")]

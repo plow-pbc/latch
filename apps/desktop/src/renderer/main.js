@@ -2660,6 +2660,9 @@ async function renderPlugins() {
   /** What an unmet requirement has already cost, and the requests themselves. */
   const blockedLine = (r) => {
     const inAudit = el("button", { class: "cap-more", text: "Show in Audit" });
+    // Unfiltered, unlike the Permissions pane's version: a row aggregates
+    // every unmet requirement this plugin has, so there is no one switch or
+    // timestamp to narrow to. Deliberate, not an oversight.
     inAudit.addEventListener("click", () => showAuditBlocked());
     return el("div", { class: "cap-sub cap-asks" }, [
       el("span", { class: "cap-count", text: `Blocked ${r.blockedCount} request${r.blockedCount === 1 ? "" : "s"}` }),
