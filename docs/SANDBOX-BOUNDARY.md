@@ -59,8 +59,12 @@ exactly the approved capabilities**".
 
 - **`(allow ipc-sysv-sem)`** — every child may create and operate SysV semaphores. Added for the
   wiki plugin: a PyInstaller onefile binary on macOS syncs its bootloader with the Python child
-  through one, and `semctl` under `(deny default)` failed before Python started. Semaphores only —
-  SysV shared memory and message queues stay denied.
+  through one, and `semctl` under `(deny default)` failed before Python started. Semaphores only:
+  seatbelt gates the operations rather than creation (`shmget`, `msgget` and `semget` all return an
+  id under any profile), and attaching SysV shared memory stays denied. SBPL has no filter for this
+  operation, so the grant is the host's whole SysV semaphore namespace, not the child's own sets: a
+  child can reach a semaphore an unrelated process created. Accepted, like `signal (target
+  children)` above it.
 
 - **the declared-read loop** — the agent's declared `read_paths` are appended *after* the above. They can only
   ever widen an already-broad grant; they never narrow it.

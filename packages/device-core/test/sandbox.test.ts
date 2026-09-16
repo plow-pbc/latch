@@ -72,14 +72,17 @@ describe.skipIf(!ON_MAC)("real sandboxed execution", () => {
   // A PyInstaller onefile binary (the wiki plugin) coordinates its bootloader
   // and the Python child through a SysV semaphore; `semctl` is what the
   // profile used to deny, so a create-set-remove round trip is the behavior
-  // that has to hold, not just `semget`.
-  it("lets a child use a SysV semaphore", async () => {
+  // that has to hold, not just `semget` — seatbelt gates the operations, not
+  // creation, so every `*get` returns an id under any profile. The grant is
+  // semaphores ONLY: the same script proves attaching SysV shared memory is
+  // still refused, so a future `ipc-sysv-*` generalization fails here.
+  it("lets a child use a SysV semaphore, and still refuses SysV shared memory", async () => {
     const executor = new Executor(tempDir());
     const result = await executor.run({
       argv: [
         "/usr/bin/perl",
         "-e",
-        'use IPC::SysV qw(IPC_PRIVATE IPC_CREAT IPC_RMID SETVAL); my $id = semget(IPC_PRIVATE, 1, 0600|IPC_CREAT); defined $id or die "semget: $!"; semctl($id, 0, SETVAL, 1) or die "semctl: $!"; semctl($id, 0, IPC_RMID, 0); print "SEM_OK\n"',
+        'use IPC::SysV qw(IPC_PRIVATE IPC_CREAT IPC_RMID SETVAL); my $id = semget(IPC_PRIVATE, 1, 0600|IPC_CREAT); defined $id or die "semget: $!"; semctl($id, 0, SETVAL, 1) or die "semctl: $!"; semctl($id, 0, IPC_RMID, 0); print "SEM_OK\n"; my $shm = shmget(IPC_PRIVATE, 4096, 0600|IPC_CREAT); defined $shm or die "shmget: $!"; my $b; my $r = shmread($shm, $b, 0, 4); shmctl($shm, IPC_RMID, 0); $r and die "shm attach succeeded"; print "SHM_DENIED\n"',
       ],
       readPaths: [],
       writePaths: [],
@@ -89,6 +92,7 @@ describe.skipIf(!ON_MAC)("real sandboxed execution", () => {
     });
     expect(result.exitCode).toBe(0);
     expect(result.output.toString()).toContain("SEM_OK");
+    expect(result.output.toString()).toContain("SHM_DENIED");
   });
 
   it("blocks a write outside the approved scope", async () => {

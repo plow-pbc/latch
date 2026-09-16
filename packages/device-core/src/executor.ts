@@ -47,8 +47,8 @@ export const SandboxProfile = {
       // A PyInstaller onefile binary on macOS (plow-wiki's `wiki`) syncs its
       // bootloader with the Python child through a SysV semaphore, and
       // `semctl` under `(deny default)` fails before Python starts. No
-      // filter narrows this rule; it admits SysV semaphores only, not
-      // shared memory or message queues.
+      // filter narrows this rule (the whole host namespace); it admits SysV
+      // semaphore operations only — attaching shared memory stays denied.
       "(allow ipc-sysv-sem)",
       "(allow sysctl-read)",
       // TODO(v1.x): tighten to the specific services processes need.
