@@ -509,6 +509,47 @@ differential downloads may soften this; shipping the browser runtime
 out-of-band (it is already pinned by `runtime.lock.json`) is the eventual fix
 if update size becomes a problem.
 
+## 11c. Message archive (msgvault)
+
+The device can keep a local, searchable archive of the owner's messages —
+imported iMessages today — powered by the vendored
+[msgvault](https://github.com/kenn-io/msgvault) CLI (MIT; pins in
+`vendor/msgvault.lock.json`, fetched by `just fetch-msgvault`). ONLY the
+bundled per-arch binary (`Contents/Resources/msgvault/<arch>/`) is ever used
+— a system install (Homebrew etc.) is deliberately ignored, because its
+version is a moving target whose flags and output framing we have not tested;
+the pin is the contract. The archive lives at `$DOMO_HOME/msgvault`, so every
+instance (branch homes, test homes) is hermetic and a user's own `~/.msgvault`
+is never touched. msgvault spawns its own long-lived daemon that owns the
+SQLite archive; it lives in Domo's home and is stopped on app quit so it
+never outlives the binary path it was launched from.
+
+**Capability shape.** All read tools (`msgvault_search`,
+`msgvault_get_message`, `msgvault_stats`) construct the identical capability
+`{ kind: "msgvault", access: "read" }`; the query/id ride in the payload as
+delivery detail. One always-allow rule therefore covers all read-only archive
+access — the grant a human can actually reason about ("this agent may read my
+message archive"), since per-query rules would never match twice.
+
+**Enforcement posture (stated limit, like §11a's).** msgvault runs OUTSIDE
+the seatbelt executor: a `sandbox-exec` child cannot use the app's Full Disk
+Access grant (TCC keys on the responsible app), and msgvault detaches a
+daemon no profile could contain. The bound is therefore the approved
+capability plus trusted TS in `packages/device-core/src/msgvault/`: a fixed
+op whitelist, fixed argv shapes with agent strings only ever after a `--`
+terminator, and stdout parsed as JSON. Audit events (`msgvault_query`,
+`msgvault_error`, `msgvault_import_*`) are the test oracle; the fake CLI
+(`e2e/fixtures/fakeMsgvault.cjs`) makes the flow CI-testable with no real
+binary and no chat.db.
+
+**Importing is owner-only.** There is no import tool: the human runs it from
+Settings' Capabilities section (currently capped at 100 messages per run while
+the feature is new). Reading `~/Library/Messages/chat.db` needs Full Disk
+Access, which macOS grants per app bundle with no API — the tab probes by
+attempting the read and deep-links the System Settings pane. The import
+bypasses the intent pipeline deliberately (the owner's click is the
+approval) but is still audited.
+
 ## 12. Roadmap
 
 1. **v1 (this repo, now):** everything above, local, tested.

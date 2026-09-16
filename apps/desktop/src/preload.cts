@@ -85,6 +85,11 @@ contextBridge.exposeInMainWorld("domo", {
   // poll; no push channel — the renderer's own interval is the clock.
   viewerState: () => ipcRenderer.invoke("viewer:state"),
 
+  // Message archive: owner-only import (Settings → Capabilities). Main pushes
+  // capabilities:changed as the import job advances; state rides capabilitiesGet.
+  msgvaultImport: () => ipcRenderer.invoke("msgvault:import"),
+  onCapabilitiesChanged: (cb: () => void) => ipcRenderer.on("capabilities:changed", cb),
+
   // Approval window.
   approvalGet: () => ipcRenderer.invoke("approval:get"),
   // Announces that the suggestion listener below is installed. Main holds the

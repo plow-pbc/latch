@@ -23,6 +23,9 @@ import { BROWSING_SKILL } from "./browser/browsingSkill.js";
 import { Executor } from "./executor.js";
 import { FileOps } from "./fileOps.js";
 import { DeviceIdentity, loadOrCreateIdentity } from "./identity.js";
+import { MsgvaultClient, MsgvaultError } from "./msgvault/msgvaultClient.js";
+import { ResolvedMsgvaultRuntime } from "./msgvault/msgvaultRuntime.js";
+import { MSGVAULT_SKILL } from "./msgvault/msgvaultSkill.js";
 import { PolicyDelegate, PolicyEngine } from "./policyEngine.js";
 import { SkillRegistry } from "./skills.js";
 
@@ -77,6 +80,10 @@ export class DeviceAgent {
   readonly credentialBroker: CredentialBroker | null = null;
   /** The vault this machine runs, when this build ships one. */
   readonly vaultServer: VaultServer | null = null;
+  /** Null when no msgvault binary was found — msgvault tools report so. */
+  readonly msgvault: MsgvaultClient | null = null;
+  /** Exposed so the Capabilities tab can show which binary answers queries. */
+  readonly msgvaultRuntime: ResolvedMsgvaultRuntime | null = null;
   private readonly browserHost: BrowserHost | null = null;
   private readonly seenNonces = new Set<string>();
 
@@ -85,6 +92,7 @@ export class DeviceAgent {
     name: string,
     private readonly delegate: PolicyDelegate,
     browserRuntime?: ResolvedBrowserRuntime | null,
+    msgvaultRuntime?: ResolvedMsgvaultRuntime | null,
   ) {
     this.identity = loadOrCreateIdentity(home, name);
     this.audit = new AuditLog(path.join(home, "device/audit.ndjson"));
@@ -177,6 +185,16 @@ export class DeviceAgent {
       this.browserSessions = new BrowserSessions(this.browserHost, credentials, auditFn);
       this.browserHost.onCrash = () => this.browserSessions?.noteCrash();
     }
+    if (msgvaultRuntime) {
+      this.msgvaultRuntime = msgvaultRuntime;
+      this.skills.register(MSGVAULT_SKILL);
+      this.msgvault = new MsgvaultClient({
+        command: msgvaultRuntime.command,
+        // Inside this instance's DOMO_HOME, so branch and test homes never
+        // share an archive or a daemon — and never touch a user's ~/.msgvault.
+        msgvaultHome: path.join(home, "msgvault"),
+      });
+    }
   }
 
   /**
@@ -213,6 +231,11 @@ export class DeviceAgent {
   async shutdown(): Promise<void> {
     await this.browserSessions?.closeAll("shutdown");
     this.vaultServer?.stop();
+    // The msgvault daemon lives in our home and was spawned from this app;
+    // stop it so it never outlives the binary path it was launched from.
+    await this.msgvault?.stopDaemon().catch(() => {
+      /* nothing to stop, or it will notice on its own */
+    });
   }
 
   /**
@@ -287,6 +310,9 @@ export class DeviceAgent {
     // so they can never fall into the exec path.
     if (intent.capabilities.some((c) => c.kind === "browser" || c.kind === "credential")) {
       return this.executeBrowserIntent(intent, payload);
+    }
+    if (intent.capabilities.some((c) => c.kind === "msgvault")) {
+      return this.executeMsgvault(intent, payload);
     }
     const exec = intent.capabilities.find((c) => c.kind === "process.exec");
     if (exec) return this.executeCommand(intent, exec, payload);
@@ -447,6 +473,54 @@ export class DeviceAgent {
       metadata,
       headed ?? undefined,
     );
+  }
+
+  /**
+   * A read-only query against the local message archive. The approved bound is
+   * the msgvault capability; which query runs is delivery detail in the
+   * payload, constrained to a fixed op whitelist so the payload can never
+   * reach an unapproved subcommand.
+   */
+  private async executeMsgvault(intent: Intent, payload: JSONValue): Promise<JSONValue> {
+    if (!this.msgvault) {
+      return { status: "error", error: "msgvault is not available on this device" };
+    }
+    const p = jv(payload);
+    const op = p.get("op").str;
+    try {
+      let result: JSONValue;
+      switch (op) {
+        case "search": {
+          const query = p.get("query").str ?? "";
+          result = await this.msgvault.search({
+            query,
+            limit: p.get("limit").num ?? undefined,
+            offset: p.get("offset").num ?? undefined,
+            account: p.get("account").str ?? undefined,
+          });
+          this.audit.record("msgvault_query", { intentId: intent.intentId, op, query });
+          break;
+        }
+        case "show": {
+          const id = p.get("id").str ?? "";
+          result = await this.msgvault.showMessage(id);
+          this.audit.record("msgvault_query", { intentId: intent.intentId, op, message_id: id });
+          break;
+        }
+        case "stats": {
+          result = await this.msgvault.stats();
+          this.audit.record("msgvault_query", { intentId: intent.intentId, op });
+          break;
+        }
+        default:
+          return { status: "error", error: `unknown msgvault op: ${op ?? "(none)"}` };
+      }
+      return { status: "completed", result };
+    } catch (e) {
+      const message = e instanceof MsgvaultError ? e.message : String(e);
+      this.audit.record("msgvault_error", { intentId: intent.intentId, op: op ?? "", error: message });
+      return { status: "error", error: message };
+    }
   }
 
   /**

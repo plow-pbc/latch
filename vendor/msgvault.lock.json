@@ -1,0 +1,19 @@
+{
+  "msgvault": {
+    "version": "0.19.3",
+    "assets": {
+      "arm64": {
+        "url": "https://github.com/kenn-io/msgvault/releases/download/v0.19.3/msgvault_0.19.3_darwin_arm64.tar.gz",
+        "sha256": "548621c1f5ddddb97dcddb1b3bbfb49fb1787d5a7ca5fd2133b9d5e910b5a37a"
+      },
+      "x64": {
+        "url": "https://github.com/kenn-io/msgvault/releases/download/v0.19.3/msgvault_0.19.3_darwin_amd64.tar.gz",
+        "sha256": "bad208d55f43518cfcadd0893efa298712a206ae4a7034cde8cdef3b521b72f6"
+      }
+    },
+    "license": {
+      "url": "https://raw.githubusercontent.com/kenn-io/msgvault/v0.19.3/LICENSE",
+      "sha256": "6c53c20cce3570ab804556dc5ae92ca9a0dcc429b41b28c5fd0c3cc1910fe3be"
+    }
+  }
+}

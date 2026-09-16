@@ -731,6 +731,7 @@ function capText(c) {
       return c.access === "metadata"
         ? "credentials: list names/labels"
         : "credentials: fill " + (c.items || []).join(", ");
+    case "msgvault": return "messages: read archive";
     default: return c.kind;
   }
 }
@@ -988,11 +989,37 @@ async function renderSettings() {
   // moment the pane can learn what happened over there.
   const capDot = el("span", { class: "status-dot" });
   const capStatus = el("span", { class: "faint", text: "…" });
+  // Message archive (msgvault): status, import button, and last-run line are
+  // display nodes updated by the same apply, so the focus refresh and the
+  // capabilities:changed push (import progress) both keep them honest.
+  const mvStatus = el("p", { class: "faint", text: "…" });
+  const mvLast = el("p", { class: "faint", text: "" });
+  const importBtn = el("button", { class: "btn", text: "Import iMessages" });
   const applyCapabilities = (caps) => {
     capDot.className = "status-dot" + (caps.fullDiskAccess ? " on" : "");
     capStatus.textContent = caps.fullDiskAccess ? "Granted" : "Not granted";
+    const mv = caps.msgvault ?? { installed: false, import: null };
+    const running = mv.import?.status === "running";
+    mvStatus.textContent = !mv.installed
+      ? "Not available — this build ships no msgvault binary."
+      : mv.version ?? "Ready";
+    importBtn.textContent = running
+      ? "Importing…"
+      : `Import iMessages (last ${mv.importLimit ?? 100})`;
+    // Needs the binary AND Full Disk Access; the FDA row above explains how.
+    importBtn.disabled = running || !mv.installed || !caps.fullDiskAccess;
+    const last = mv.import?.last ?? null;
+    mvLast.textContent = last
+      ? (last.ok ? "Last import: " : "Last import failed: ") + last.summary +
+        " (" + new Date(last.finishedAt).toLocaleString() + ")"
+      : "No import has run yet.";
   };
   applyCapabilities(await window.domo.capabilitiesGet());
+  importBtn.addEventListener("click", async () => {
+    importBtn.disabled = true;
+    await window.domo.msgvaultImport();
+    applyCapabilities(await window.domo.capabilitiesGet());
+  });
   const openFullDisk = el("button", { class: "btn", text: "Open System Settings" });
   openFullDisk.addEventListener("click", () => window.domo.openExternal("fullDiskSettings"));
 
@@ -1253,6 +1280,20 @@ async function renderSettings() {
       ]),
       el("div", { class: "support-row" }, [
         el("div", { class: "support-copy" }, [
+          el("div", { class: "cap-title" }, [
+            el("span", { class: "support-title", text: "Message Archive" }),
+          ]),
+          el("p", { class: "faint", text:
+            "Imports your iMessages into a local, searchable archive on this Mac. " +
+            "Agents can search it only after you approve. Importing needs Full Disk Access (above)." }),
+          mvStatus,
+          mvLast,
+        ]),
+        el("div", { class: "spacer" }),
+        importBtn,
+      ]),
+      el("div", { class: "support-row" }, [
+        el("div", { class: "support-copy" }, [
           el("div", { class: "support-title", text: "Launch at Login" }),
           el("p", { class: "faint", text:
             "Agents can reach this Mac only while Plow is running." }),
@@ -1344,6 +1385,11 @@ window.domo.onShowSettings(() => selectTab("settings"));
 // the person comes back. `refresh` updates display nodes only, so a focus
 // change can never cost a half-typed key.
 window.addEventListener("focus", () => {
+  if (currentTab === "settings") settingsMounted?.refresh();
+});
+// Import progress (started / finished) pushes from main; same in-place
+// refresh as the focus path, for the same half-typed-key reason.
+window.domo.onCapabilitiesChanged(() => {
   if (currentTab === "settings") settingsMounted?.refresh();
 });
 

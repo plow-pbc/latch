@@ -15,7 +15,8 @@ export type CapabilityKind =
   | "network"
   | "tool"
   | "browser"
-  | "credential";
+  | "credential"
+  | "msgvault";
 
 export interface Capability {
   kind: CapabilityKind;
@@ -25,7 +26,7 @@ export interface Capability {
   allowed?: boolean; // network
   tool?: string; // tool
   origins?: string[]; // browser: host patterns ("dominos.com", "*.dominos.com")
-  access?: "metadata" | "fill"; // credential: list names/labels vs type values into pages
+  access?: "metadata" | "fill" | "read"; // credential: list names/labels vs type values; msgvault: read
   items?: string[]; // credential(fill): vault item ids
   reason?: string; // display-only justification
 }
@@ -65,6 +66,8 @@ export function capabilityDisplay(c: Capability): string {
       return c.access === "metadata"
         ? "Credentials: list vault item names & field labels (no secret values)"
         : `Credentials: fill ${(c.items ?? []).join(", ")} into approved sites (values never leave this Mac)`;
+    case "msgvault":
+      return "Messages: search & read this Mac's message archive (read-only)";
   }
 }
 

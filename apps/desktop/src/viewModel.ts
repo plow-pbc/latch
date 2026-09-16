@@ -25,6 +25,7 @@ export interface ApprovalViewModel {
   runsCommand: boolean;
   usesBrowser: boolean;
   fillsCredentials: boolean;
+  readsMessages: boolean;
   /** browser capability origins, for the card. */
   origins: string[];
   /** credential(fill) items with titles resolved ON-DEVICE (never from the
@@ -73,6 +74,7 @@ export function approvalViewModel(
     runsCommand: caps.some((c) => c.kind === "process.exec"),
     usesBrowser: caps.some((c) => c.kind === "browser"),
     fillsCredentials: caps.some((c) => c.kind === "credential" && c.access === "fill"),
+    readsMessages: caps.some((c) => c.kind === "msgvault"),
     origins: caps.find((c) => c.kind === "browser")?.origins ?? [],
     credentialItems,
   };
@@ -502,6 +504,20 @@ function describeStep(e: JSONValue): AuditStep {
     case "credential_denied":
       text = `Credential refused: ${ev.get("item").str ?? ""} · ${ev.get("field").str ?? ""} — ${ev.get("reason").str ?? ""}`;
       state = "bad";
+      break;
+    case "msgvault_query":
+      text = ev.get("op").str === "show"
+        ? `Message read: ${ev.get("message_id").str ?? ""}`
+        : ev.get("op").str === "stats"
+          ? "Message archive stats read"
+          : `Messages searched: ${ev.get("query").str ?? ""}`;
+      state = "ok";
+      break;
+    case "msgvault_error": text = `Message archive error: ${ev.get("error").str ?? ""}`; state = "bad"; break;
+    case "msgvault_import_started": text = `iMessage import started (limit ${ev.get("limit").int ?? "?"})`; break;
+    case "msgvault_import_finished":
+      text = `iMessage import ${ev.get("ok").bool ? "finished" : "failed"}: ${ev.get("summary").str ?? ""}`;
+      state = ev.get("ok").bool ? "ok" : "bad";
       break;
     case "browser_crashed": text = "Browser crashed"; state = "bad"; break;
     default: text = event;

@@ -73,6 +73,12 @@ extraResources:
   - from: ../../vendor/vault-server
     to: browser-runtime/vault-server
     filter: ["**/*", "!*/.commit", "!.web-vault.sha256"]
+  # The msgvault CLI (message-archive search): per-arch Go binaries fetched by
+  # scripts/fetch-msgvault.mjs, resolved at runtime via process.resourcesPath
+  # ("msgvault/<arch>/msgvault"). LICENSE ships — redistribution requires it.
+  - from: ../../vendor/msgvault
+    to: msgvault
+    filter: ["**/*", "!*/.sha256"]
 
 mac:
   icon: ../../artwork/domo-desktop-icon.png
@@ -97,15 +103,20 @@ mac:
   # stamp the app's minimal entitlements onto Firefox and break it at runtime.
   # The outer app signature still seals these files; notarization sees our
   # hardened-runtime + timestamped signatures on them.
+  # These are REGEXES against absolute paths. The msgvault one is anchored to
+  # Resources/ because a bare "msgvault/.*" also matches a CHECKOUT whose
+  # directory is named msgvault — which sign-ignored every file in the app,
+  # leaving the bundle itself unsigned.
   signIgnore:
     - "browser-runtime/.*"
+    - "Resources/msgvault/.*"
   # The Python runtime and the fused Camoufox tree are universal2, so the merge
   # passes them through untouched. The vault and its CLI are not: each ships as
   # two THIN per-arch trees (<payload>/arm64, <payload>/x86_64) copied
   # identically into both electron slices, and the merger would try to lipo a
   # thin binary against its identical twin and fail. This pattern passes those
   # two through instead. Fusing them the way Camoufox is fused is issue #15.
-  x64ArchFiles: "**/browser-runtime/{vault-cli,vault-server}/**"
+  x64ArchFiles: "**/{browser-runtime/vault-cli,browser-runtime/vault-server,msgvault}/**"
   notarize: true
 
 # Re-sign browser-runtime after the universal merge (which rewrites nested

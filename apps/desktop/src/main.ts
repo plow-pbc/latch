@@ -28,6 +28,7 @@ import {
   readCredentials,
   readCredentialsState,
   resolveBrowserRuntime,
+  resolveMsgvaultRuntime,
 } from "@domo/device-core";
 import { createDomoMcpServer, DomoMcpServer } from "@domo/mcp-server";
 import { RelayClient } from "@domo/relay-client";
@@ -53,6 +54,7 @@ import {
   setInferenceProvider,
   signOutOfPlow,
 } from "./settingsActions.js";
+import { IMESSAGE_IMPORT_LIMIT, MsgvaultImportJob } from "./msgvaultImport.js";
 
 // One folder per instance (paths.ts): the home carries everything, including
 // Chromium's userData/sessionData at <home>/electron — never a second
@@ -134,6 +136,9 @@ let onboarding: Onboarding | null = null;
 let connectClient: ConnectClient | null = null;
 let onboardingWindow: BrowserWindow | null = null;
 let updates: UpdateController | null = null;
+let importJob: MsgvaultImportJob | null = null;
+/** Fetched once per launch; the binary's version does not change under us. */
+let msgvaultVersion: Promise<string | null> | null = null;
 
 /**
  * Policy delegate that drives Electron approval windows. Each decision opens a
@@ -596,12 +601,31 @@ ipcMain.handle("status:get", async () => ({
   name: device?.identity.name ?? "",
   connected: connected,
 }));
-// macOS permission ceilings on the app itself — today just Full Disk Access.
-// A fresh probe per read, because the answer changes outside the app (in
-// System Settings) and there is no event to invalidate a cache on.
-ipcMain.handle("capabilities:get", async () => ({
-  fullDiskAccess: await probeFullDiskAccess(),
-}));
+// macOS permission ceilings on the app itself (today just Full Disk Access)
+// plus the message archive that depends on them. A fresh FDA probe per read,
+// because the answer changes outside the app (in System Settings) and there
+// is no event to invalidate a cache on. A pure read — it must NOT publish
+// (see the note on onboarding:get); import progress arrives via the
+// capabilities:changed push instead.
+ipcMain.handle("capabilities:get", async () => {
+  const runtime = device?.msgvaultRuntime ?? null;
+  const client = device?.msgvault ?? null;
+  if (client && msgvaultVersion === null) msgvaultVersion = client.version();
+  return {
+    fullDiskAccess: await probeFullDiskAccess(),
+    msgvault: {
+      installed: runtime !== null,
+      binaryPath: runtime?.binaryPath ?? null,
+      version: client ? await msgvaultVersion : null,
+      importLimit: IMESSAGE_IMPORT_LIMIT,
+      import: importJob?.state() ?? null,
+    },
+  };
+});
+
+// Owner-only: the click IS the approval (no intent), and the audit log still
+// records the run. False when an import is already running.
+ipcMain.handle("msgvault:import", async () => importJob?.start() ?? false);
 
 // Launch at Login. macOS owns the bit and loginItem.ts owns the rules (fresh
 // OS read per get, packaged-only writes); this is only the seam that hands it
@@ -792,6 +816,7 @@ app.whenReady().then(async () => {
     hostName(),
     approvals,
     resolveBrowserRuntime(process.resourcesPath),
+    resolveMsgvaultRuntime(process.resourcesPath),
   );
   // Same tick as the store's construction (see onAbandoned): an approval that
   // was pending when the app last quit gets closed out in the audit log too,
@@ -809,6 +834,15 @@ app.whenReady().then(async () => {
         (vaultState.status === "locked" ? ` (${vaultState.reason})` : ""),
     );
   }
+  const msgvault = device.msgvault;
+  if (msgvault) {
+    importJob = new MsgvaultImportJob({
+      runImport: () => msgvault.importIMessage(IMESSAGE_IMPORT_LIMIT),
+      audit: (event, fields) => device?.audit.record(event, fields),
+      onChange: () => notifyRenderer("capabilities:changed"),
+    });
+  }
+
   // Live-refresh the audit view whenever a new event is recorded.
   device.audit.events.on("change", () => notifyRenderer("audit:changed"));
   mcp = createDomoMcpServer(device);

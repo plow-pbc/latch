@@ -58,15 +58,23 @@ module.exports = async function afterPack(context) {
   }
 
   const appName = `${context.packager.appInfo.productFilename}.app`;
-  const runtime = path.join(context.appOutDir, appName, "Contents", "Resources", "browser-runtime");
-  if (!fs.existsSync(runtime)) return;
+  const resources = path.join(context.appOutDir, appName, "Contents", "Resources");
+  const runtime = path.join(resources, "browser-runtime");
+  // The msgvault CLI ships beside browser-runtime and has the same problem:
+  // signIgnore keeps electron-builder off it, so this hook is what turns its
+  // fetch-time signature into the Developer ID one notarization needs.
+  const msgvaultDir = path.join(resources, "msgvault");
+  const roots = [runtime, msgvaultDir].filter((p) => fs.existsSync(p));
+  if (roots.length === 0) return;
 
   // 1) Drop non-signable leftovers (belt — the build script prunes them too).
   let dropped = 0;
-  for (const f of walk(runtime)) {
-    if (f.endsWith(".o") || f.endsWith(".a")) {
-      fs.rmSync(f, { force: true });
-      dropped++;
+  for (const root of roots) {
+    for (const f of walk(root)) {
+      if (f.endsWith(".o") || f.endsWith(".a")) {
+        fs.rmSync(f, { force: true });
+        dropped++;
+      }
     }
   }
 
@@ -140,26 +148,35 @@ module.exports = async function afterPack(context) {
     }
   }
 
+  // 4d) msgvault — one loose Go binary per arch, helper entitlements.
+  if (fs.existsSync(msgvaultDir)) {
+    for (const f of walk(msgvaultDir)) {
+      if (isMachO(f)) signFile(f, HELPER_ENTITLEMENTS);
+    }
+  }
+
   // 5) Verify EVERY Mach-O carries a Developer ID cert, hardened runtime, and a
   // secure timestamp — the three things notarization checks. Fails the build in
   // seconds instead of after a ~15-minute notarization round-trip.
   const problems = [];
   let verified = 0;
-  for (const f of walk(runtime)) {
-    if (!isMachO(f)) continue;
-    verified++;
-    const info = spawnSync("codesign", ["-dvvv", f], { encoding: "utf8" }).stderr || "";
-    if (!info.includes("Authority=Developer ID Application")) problems.push([f, "no Developer ID"]);
-    else if (!/\bTimestamp=/.test(info)) problems.push([f, "no secure timestamp"]);
-    else if (!/flags=.*runtime/.test(info)) problems.push([f, "no hardened runtime"]);
+  for (const root of roots) {
+    for (const f of walk(root)) {
+      if (!isMachO(f)) continue;
+      verified++;
+      const info = spawnSync("codesign", ["-dvvv", f], { encoding: "utf8" }).stderr || "";
+      if (!info.includes("Authority=Developer ID Application")) problems.push([f, "no Developer ID"]);
+      else if (!/\bTimestamp=/.test(info)) problems.push([f, "no secure timestamp"]);
+      else if (!/flags=.*runtime/.test(info)) problems.push([f, "no hardened runtime"]);
+    }
   }
   if (problems.length > 0) {
     const lines = problems
       .slice(0, 15)
-      .map(([f, why]) => `  ${why}: ${f.split("browser-runtime/")[1] ?? f}`)
+      .map(([f, why]) => `  ${why}: ${f.split("Resources/")[1] ?? f}`)
       .join("\n");
     throw new Error(
-      `[afterPack] ${problems.length} browser-runtime Mach-O still fail signing checks:\n${lines}`,
+      `[afterPack] ${problems.length} bundled Mach-O still fail signing checks:\n${lines}`,
     );
   }
 

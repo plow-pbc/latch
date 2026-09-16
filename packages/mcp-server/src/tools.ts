@@ -606,6 +606,103 @@ export const TOOLS: ToolSpec[] = [
     },
   },
   {
+    name: "plow_msgvault_search",
+    description:
+      "Full-text search of the message archive on the user's own Mac (imported iMessages " +
+      "and other sources) — read-only. Gmail-like syntax: bare words, quoted phrases, from:, " +
+      "after:/before: dates. Returns message summaries with ids for plow_msgvault_get_message. " +
+      "The user may be asked to approve, so this can return a pending handle. The first call " +
+      "can be slow while the archive engine starts. Read the msgvault-messages skill first.",
+    inputSchema: {
+      type: "object",
+      required: ["query"],
+      properties: {
+        query: { type: "string", description: "Search query (Gmail-like syntax)" },
+        limit: { type: "integer", minimum: 1, maximum: 100, description: "Max results (default 20)" },
+        offset: { type: "integer", minimum: 0, description: "Skip the first N results" },
+        account: { type: "string", description: "Limit to one account" },
+        goal: GOAL,
+      },
+      additionalProperties: false,
+    },
+    deferrable: true,
+    async run(args, ctx, progress) {
+      const a = jv(args);
+      const query = a.get("query").str;
+      if (query === null || query === "") throw new ToolError("missing 'query'");
+      const response = await decideAndRun(
+        ctx,
+        progress,
+        `search messages: ${query}`,
+        a.get("goal").str ?? undefined,
+        [{ kind: "msgvault", access: "read" }],
+        {
+          op: "search",
+          query,
+          limit: a.get("limit").num,
+          offset: a.get("offset").num,
+          account: a.get("account").str,
+        },
+      );
+      return jv(response).get("result").value ?? null;
+    },
+  },
+  {
+    name: "plow_msgvault_get_message",
+    description:
+      "Read one full message from the message archive on the user's own Mac, by id (ids " +
+      "come from plow_msgvault_search). Read-only; the user may be asked to approve.",
+    inputSchema: {
+      type: "object",
+      required: ["id"],
+      properties: {
+        id: { type: "string", description: "Message id from plow_msgvault_search" },
+        goal: GOAL,
+      },
+      additionalProperties: false,
+    },
+    deferrable: true,
+    async run(args, ctx, progress) {
+      const a = jv(args);
+      const id = a.get("id").str;
+      if (id === null || id === "") throw new ToolError("missing 'id'");
+      const response = await decideAndRun(
+        ctx,
+        progress,
+        `read message: ${id}`,
+        a.get("goal").str ?? undefined,
+        [{ kind: "msgvault", access: "read" }],
+        { op: "show", id },
+      );
+      return jv(response).get("result").value ?? null;
+    },
+  },
+  {
+    name: "plow_msgvault_stats",
+    description:
+      "What the message archive on the user's own Mac holds: message counts, sources, date " +
+      "range. Read-only; the user may be asked to approve. Useful before searching to know " +
+      "whether an import has happened at all.",
+    inputSchema: {
+      type: "object",
+      properties: { goal: GOAL },
+      additionalProperties: false,
+    },
+    deferrable: true,
+    async run(args, ctx, progress) {
+      const a = jv(args);
+      const response = await decideAndRun(
+        ctx,
+        progress,
+        "message archive stats",
+        a.get("goal").str ?? undefined,
+        [{ kind: "msgvault", access: "read" }],
+        { op: "stats" },
+      );
+      return jv(response).get("result").value ?? null;
+    },
+  },
+  {
     name: "plow_get_result",
     description:
       "Retrieve the result of any call that returned a pending handle — whichever tool created it. " +

@@ -22,7 +22,11 @@ npm workspaces. Libraries in `packages/`, executables/apps in `apps/`:
   DESIGN.md §11a). `vendor/browser-server/` is the vendored Python
   Camoufox server + 1Password broker (pins in `runtime.lock.json`;
   `just fetch-browser-runtime`/`fetch-browser` build the gitignored runtime;
-  tests use fake servers and need no Python).
+  tests use fake servers and need no Python). `src/msgvault/` is the local
+  message-archive subsystem (DESIGN.md §11c) wrapping the vendored msgvault
+  CLI (pins in `vendor/msgvault.lock.json`; `just fetch-msgvault` builds the
+  gitignored `vendor/msgvault/`; tests use `e2e/fixtures/fakeMsgvault.cjs`
+  and need no real binary or chat.db).
 - `packages/mcp-server` (`@domo/mcp-server`) — the MCP server this Mac serves
   (revision 2026-07-28): the reduced tool surface (including the `plow_browser_*`
   tools), capability construction from tool arguments, and the deferred-result

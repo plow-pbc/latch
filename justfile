@@ -83,6 +83,15 @@ fetch-browser:
 fetch-browser-both:
     node scripts/build-browser-runtime.mjs --browser-both
 
+# Fetch the msgvault CLI (message-archive search) for THIS Mac's arch into
+# vendor/msgvault. Hash-pinned by vendor/msgvault.lock.json.
+fetch-msgvault:
+    node scripts/fetch-msgvault.mjs
+
+# Both arches — what `just package` bundles into the DMG.
+fetch-msgvault-both:
+    node scripts/fetch-msgvault.mjs --both
+
 # Run the real-browser integration tier: real Python runtime + real Camoufox
 # ordering a pizza on a local fixture site through the MCP server on the Mac.
 # Needs `just fetch-browser-runtime fetch-browser` first.
@@ -137,6 +146,7 @@ package-unnotarized: (_package "domo-notary" "-c.mac.notarize=false")
 # belong to the release scripts, never electron-builder.
 _package profile flags: build
     node scripts/build-browser-runtime.mjs --browser-both
+    node scripts/fetch-msgvault.mjs --both
     @build="$(date -u +%Y%m%d%H%M)"; \
     base="$(node -p "require('{{root}}/apps/desktop/package.json').version.split('.').slice(0,2).join('.')")"; \
     version="${base}.${build}"; \

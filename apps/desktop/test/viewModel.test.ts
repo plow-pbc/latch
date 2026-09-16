@@ -49,6 +49,16 @@ describe("approvalViewModel", () => {
     expect(vm.needsNetwork).toBe(true);
   });
 
+  it("flags message-archive access with its display line", () => {
+    const vm = approvalViewModel(
+      intentOf({ capabilities: [{ kind: "msgvault", access: "read" }] }),
+    );
+    expect(vm.readsMessages).toBe(true);
+    expect(vm.capabilities.map((c) => c.display)).toEqual([
+      "Messages: search & read this Mac's message archive (read-only)",
+    ]);
+  });
+
   it("carries goal/request as plain strings (no markup interpretation)", () => {
     const vm = approvalViewModel(
       intentOf({ goal: "<img src=x onerror=alert(1)>", request: "run: ls" }),
