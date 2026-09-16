@@ -1,16 +1,15 @@
 /**
  * The Plugins tab's view model. What is pinned here: which requirement
- * kinds are met from which input, that `off` outranks an unmet requirement,
- * and that the hit count rides alongside `needs-setup` rather than being a
- * status of its own.
+ * kinds are met from which input, and that `off` outranks an unmet
+ * requirement.
  */
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { parseManifest, type HostInventory, type PluginManifest } from "@domo/device-core";
-import { blockedGroups, capabilitiesView, permissionStatuses } from "../src/capabilitiesModel.js";
-import { blockDestination, permissionUsers, pluginBlockCounts, pluginRows, pluginsBadge, type PluginsInput } from "../src/pluginsModel.js";
+import { capabilitiesView, permissionStatuses } from "../src/capabilitiesModel.js";
+import { blockDestination, permissionUsers, pluginRows, type PluginsInput } from "../src/pluginsModel.js";
 import { inventory } from "./hostFixtures.js";
 
 const manifest = (requires: object, name = "wiki"): PluginManifest =>
@@ -33,7 +32,6 @@ const statuses = (inv: HostInventory) =>
 function build(o: {
   requires: object;
   enabled: boolean;
-  hits?: number;
   connected?: string[];
   paths?: string[];
   inventory?: HostInventory;
@@ -43,26 +41,22 @@ function build(o: {
     permissionStatus: statuses(o.inventory ?? inventory()),
     connectedAccounts: o.connected ?? [],
     availablePaths: o.paths ?? [],
-    blocked: o.hits === undefined ? {} : { wiki: o.hits },
   };
 }
 
 describe("pluginRows status", () => {
   it.each([
-    ["ready when nothing is required", { requires: none, enabled: true }, "ready", 0],
-    ["needs-setup when an account is missing", { requires: { accounts: ["google"] }, enabled: true }, "needs-setup", 0],
-    ["ready once that account is connected", { requires: { accounts: ["google"] }, enabled: true, connected: ["google"] }, "ready", 0],
-    ["needs-setup and counts hits", { requires: { permissions: ["contacts"] }, enabled: true, hits: 3 }, "needs-setup", 3],
-    ["ready on a granted permission", { requires: { permissions: ["calendars"] }, enabled: true }, "ready", 0],
-    ["needs-setup for a path that does not exist", { requires: { paths: ["~/Plow/wiki"] }, enabled: true }, "needs-setup", 0],
-    ["ready once that path exists", { requires: { paths: ["~/Plow/wiki"] }, enabled: true, paths: ["~/Plow/wiki"] }, "ready", 0],
-    ["off wins over an unmet requirement", { requires: { accounts: ["google"] }, enabled: false, hits: 3 }, "off", 0],
-    ["off even when otherwise ready", { requires: none, enabled: false }, "off", 0],
-    ["counts nothing while ready", { requires: none, enabled: true, hits: 3 }, "ready", 0],
-  ])("%s", (_name, input, status, blockedCount) => {
-    const [row] = pluginRows(build(input));
-    expect(row!.status).toBe(status);
-    expect(row!.blockedCount).toBe(blockedCount);
+    ["ready when nothing is required", { requires: none, enabled: true }, "ready"],
+    ["needs-setup when an account is missing", { requires: { accounts: ["google"] }, enabled: true }, "needs-setup"],
+    ["ready once that account is connected", { requires: { accounts: ["google"] }, enabled: true, connected: ["google"] }, "ready"],
+    ["needs-setup on a permission that is not granted", { requires: { permissions: ["contacts"] }, enabled: true }, "needs-setup"],
+    ["ready on a granted permission", { requires: { permissions: ["calendars"] }, enabled: true }, "ready"],
+    ["needs-setup for a path that does not exist", { requires: { paths: ["~/Plow/wiki"] }, enabled: true }, "needs-setup"],
+    ["ready once that path exists", { requires: { paths: ["~/Plow/wiki"] }, enabled: true, paths: ["~/Plow/wiki"] }, "ready"],
+    ["off wins over an unmet requirement", { requires: { accounts: ["google"] }, enabled: false }, "off"],
+    ["off even when otherwise ready", { requires: none, enabled: false }, "off"],
+  ])("%s", (_name, input, status) => {
+    expect(pluginRows(build(input))[0]!.status).toBe(status);
   });
 });
 
@@ -116,33 +110,6 @@ it("marks a plugin that declares exec.argv as a CLI and carries its skill's desc
   expect(row!.description).toBe("Keeps a wiki.");
 });
 
-it("counts a permission's blocks against every plugin that requires it", () => {
-  const events = [
-    { event: "host_permission_blocked", permission: "contacts", intentId: "i1", handle: "h1", ts: "2026-09-02T09:00:00Z" },
-    { event: "host_permission_blocked", permission: "calendars", intentId: "i2", handle: "h2", ts: "2026-09-02T09:01:00Z" },
-  ];
-  const plugins = [{ manifest: manifest({ permissions: ["contacts"] }) }, { manifest: manifest({ permissions: ["photos"] }, "photo") }];
-  expect(pluginBlockCounts(blockedGroups(events), plugins)).toEqual({ wiki: 1 });
-});
-
-it("attributes an automation block by its permission, not its bundle id", () => {
-  const events = [
-    { event: "host_permission_blocked", permission: "automation:com.apple.Notes", intentId: "i1", handle: "h1", ts: "2026-09-02T09:00:00Z" },
-  ];
-  const plugins = [{ manifest: manifest({ permissions: ["automation"] }) }];
-  expect(pluginBlockCounts(blockedGroups(events), plugins)).toEqual({ wiki: 1 });
-});
-
-it("badges only the plugins something has actually hit, and clears when the switch flips", () => {
-  const hit = pluginRows(build({ requires: { permissions: ["contacts"] }, enabled: true, hits: 3 }));
-  expect(pluginsBadge(hit)).toBe(1);
-  // Nothing has hit it: still needs setup, still not on the badge.
-  expect(pluginsBadge(pluginRows(build({ requires: { permissions: ["contacts"] }, enabled: true })))).toBe(0);
-  // The umbrella grant IS the switch flipping — no one marked anything done.
-  const granted = build({ requires: { permissions: ["contacts"] }, enabled: true, hits: 3, inventory: inventory({ full_disk_access: { granted: true, probes: [] } }) });
-  expect(pluginsBadge(pluginRows(granted))).toBe(0);
-});
-
 it("names every plugin that declares a permission, off ones included, and omits a switch nobody declares", () => {
   const plugins = [
     { manifest: manifest({ permissions: ["contacts", "calendars"] }) },
@@ -188,7 +155,6 @@ describe("the shipped plugins", () => {
       permissionStatus: statuses(inventory()),
       connectedAccounts: connected,
       availablePaths: [],
-      blocked: {},
     });
     expect(row).toMatchObject({ name: "gog", status, unmet });
   });

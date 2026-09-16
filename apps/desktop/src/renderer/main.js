@@ -2180,18 +2180,6 @@ async function refreshUpdateBanner() {
 
 let pluginsMounted = null;
 let permissionsMounted = null;
-const pluginCount = document.getElementById("pluginCount");
-
-/** The tab's badge, read fresh: plugins something has been blocked on. */
-async function refreshPluginsBadge(state) {
-  try {
-    const n = (state ?? (await window.domo.pluginsGet())).badge ?? 0;
-    pluginCount.textContent = String(n);
-    pluginCount.hidden = n === 0;
-  } catch {
-    pluginCount.hidden = true;
-  }
-}
 
 /** The audit tab, filtered to what this Mac blocked: the Blocked chip, and
     the search box set to `term` — a switch's name from a row's button, or
@@ -2657,20 +2645,6 @@ async function renderPlugins() {
     ]);
   };
 
-  /** What an unmet requirement has already cost, and the requests themselves. */
-  const blockedLine = (r) => {
-    const inAudit = el("button", { class: "cap-more", text: "Show in Audit" });
-    // Unfiltered, unlike the Permissions pane's version: a row aggregates
-    // every unmet requirement this plugin has, so there is no one switch or
-    // timestamp to narrow to. Deliberate, not an oversight.
-    inAudit.addEventListener("click", () => showAuditBlocked());
-    return el("div", { class: "cap-sub cap-asks" }, [
-      el("span", { class: "cap-count", text: `Blocked ${r.blockedCount} request${r.blockedCount === 1 ? "" : "s"}` }),
-      el("span", { text: " · " }),
-      inAudit,
-    ]);
-  };
-
   const pluginRow = (r) => {
     const s = STATUS[r.status];
     const box = el("input", { attrs: { type: "checkbox" } });
@@ -2692,7 +2666,6 @@ async function renderPlugins() {
           r.isCli ? badge("zinc", "CLI") : null,
         ]),
         r.description ? el("div", { class: "cap-sub", text: r.description }) : null,
-        r.blockedCount > 0 ? blockedLine(r) : null,
       ]),
       badge(s.tone, s.word),
       el("label", { class: "check plugin-switch", attrs: { title: "Turn this plugin on or off" } }, [box]),
@@ -2704,7 +2677,6 @@ async function renderPlugins() {
   };
 
   const draw = (state) => {
-    refreshPluginsBadge(state);
     panel.replaceChildren(group(
       "Plugins",
       "The tools agents can run on this Mac. Turning one off unpublishes its skill and refuses its commands.",
@@ -3047,11 +3019,10 @@ window.domo.onAuditChanged((change) => {
 // because refreshing the tab takes the standing permission inventory (a
 // helper process per switch), which every audit line used to trigger.
 window.domo.onCapabilitiesChanged(() => {
-  // A block moves the Plugins tab (a plugin's count and the badge) and the
-  // Permissions section in Settings alike; whichever is on screen re-reads,
-  // and the badge is refreshed from wherever the owner is standing.
+  // A block can move a plugin's row (a switch it needs may now read denied)
+  // and the Permissions section in Settings alike; whichever is on screen
+  // re-reads.
   if (currentTab === "plugins") pluginsMounted?.refresh();
-  else refreshPluginsBadge();
   if (currentTab === "settings") permissionsMounted?.refresh();
 });
 window.domo.onStatusChanged(() => {
@@ -3125,7 +3096,6 @@ window.addEventListener("focus", () => {
     permissionsMounted?.refresh();
   }
   if (currentTab === "plugins") pluginsMounted?.refresh();
-  else refreshPluginsBadge();
 });
 
 // Restore the last-selected tab (falls back to the HTML default on any miss).
@@ -3135,7 +3105,6 @@ async function boot() {
   const saved = await window.domo.uiGetTab();
   const known = ["agents", "audit", "rules", "vault", "plugins", "settings"];
   selectTab(known.includes(saved) ? saved : "audit");
-  refreshPluginsBadge();
   // A credential exchange can arrive before this window exists (the system
   // launches the app for it); the push above then had no listener, so ask.
   // Only when landing elsewhere: a boot onto the Vault tab found it already.

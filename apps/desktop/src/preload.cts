@@ -89,9 +89,9 @@ contextBridge.exposeInMainWorld("domo", {
   capabilitiesAct: (key: string) => ipcRenderer.invoke("capabilities:act", key),
   capabilitiesDismiss: (key: string) => ipcRenderer.invoke("capabilities:dismiss", key),
   capabilitiesBannerSeen: () => ipcRenderer.invoke("capabilities:bannerSeen"),
-  // The Plugins tab (pluginsModel.ts): one row per staged plugin — what it
-  // still needs and what that has blocked — plus the tab's badge, in one
-  // whole-state shape per read. `setEnabled` is the owner's off switch and
+  // The Plugins tab (pluginsModel.ts): one row per staged plugin and what it
+  // still needs, in one whole-state shape per read. `setEnabled` is the
+  // owner's off switch and
   // answers with the fresh state, like every other act on this bridge.
   pluginsGet: () => ipcRenderer.invoke("plugins:get"),
   pluginsSetEnabled: (name: string, on: boolean) => ipcRenderer.invoke("plugins:setEnabled", name, on),

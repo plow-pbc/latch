@@ -62,7 +62,7 @@ import { appBundleName, appBundlePath, decodeTileImage } from "./permissionFlow.
 import { FdaGrantFlow, GrantTarget } from "./fdaGrantFlow.js";
 import { AUTOMATION_APPS, automationApp, osascriptRunner, reconcile, requestAutomation } from "./automation.js";
 import { blockedGroups, capabilitiesView, CapabilitiesView, isGroup, paneFor, permissionStatuses, PERMISSION_TITLES } from "./capabilitiesModel.js";
-import { blockDestination, permissionUsers, pluginBlockCounts, pluginRows, pluginsBadge } from "./pluginsModel.js";
+import { blockDestination, permissionUsers, pluginRows } from "./pluginsModel.js";
 import { launchAtLoginState, LoginItemApi, setLaunchAtLogin } from "./loginItem.js";
 import { KeepAwake } from "./keepAwake.js";
 import { devIconScript } from "./devIcon.js";
@@ -1558,9 +1558,8 @@ async function availablePaths(declared: readonly string[]): Promise<string[]> {
   return unique.filter((_, i) => there[i]);
 }
 
-/** The whole tab, fresh: what is staged, what each plugin still needs, and
- *  what those unmet requirements have already blocked. */
-async function pluginsNow(): Promise<{ rows: ReturnType<typeof pluginRows>; badge: number }> {
+/** The whole tab, fresh: what is staged, and what each plugin still needs. */
+async function pluginsNow(): Promise<{ rows: ReturnType<typeof pluginRows> }> {
   const disabled = new Set(loadSettings(home).disabledPlugins ?? []);
   const rows = pluginRows({
     plugins: stagedPlugins.map((p) => ({
@@ -1576,11 +1575,8 @@ async function pluginsNow(): Promise<{ rows: ReturnType<typeof pluginRows>; badg
     // One connector today, and it is connected exactly when an account is.
     connectedAccounts: (connectors?.state().google.accounts.length ?? 0) > 0 ? ["google"] : [],
     availablePaths: await availablePaths(stagedPlugins.flatMap((p) => p.manifest.requires.paths)),
-    // The log as the live index holds it, folded once — the same grouping the
-    // permission rows read.
-    blocked: pluginBlockCounts(blockedGroups(device ? ensureAuditIndex().events() : []), stagedPlugins),
   });
-  return { rows, badge: pluginsBadge(rows) };
+  return { rows };
 }
 
 ipcMain.handle("plugins:get", async () => pluginsNow());

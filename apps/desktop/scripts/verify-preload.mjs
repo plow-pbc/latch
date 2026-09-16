@@ -19,7 +19,7 @@ import {
 import { loadSettings, saveSettings } from "../dist/settings.js";
 import { launchAtLoginState, setLaunchAtLogin } from "../dist/loginItem.js";
 import { capabilitiesView, permissionStatuses } from "../dist/capabilitiesModel.js";
-import { blockDestination, permissionUsers, pluginRows, pluginsBadge } from "../dist/pluginsModel.js";
+import { blockDestination, permissionUsers, pluginRows } from "../dist/pluginsModel.js";
 import { parseManifest } from "@domo/device-core";
 
 const dir = path.dirname(fileURLToPath(import.meta.url));
@@ -90,8 +90,8 @@ ipcMain.handle("capabilities:dismiss", async () => probeCapabilities().view);
 ipcMain.handle("capabilities:bannerSeen", async () => probeCapabilities().view);
 ipcMain.handle("grant:state", async () => ({ key: "full_disk_access", label: "Full Disk Access", granted: false }));
 // The Plugins tab renders from the REAL view model (pluginsModel.ts) over a
-// stub registry: one CLI that is ready, and one that needs an account it has
-// already been blocked on — the two halves of the tab in one read. gog is the
+// stub registry: one CLI that is ready, and one that needs an account it
+// cannot work without — the two halves of the tab in one read. gog is the
 // SHIPPED manifest, read off disk, so what the tab tells the owner about the
 // one plugin that ships is what its own file declares. The off switch answers
 // with the fresh state, exactly as main does.
@@ -121,9 +121,8 @@ const probePluginRows = () => {
     permissionStatus: permissionStatuses(probeCapabilities().view),
     connectedAccounts: [],
     availablePaths: [],
-    blocked: { gog: 2 },
   });
-  return { rows, badge: pluginsBadge(rows) };
+  return { rows };
 };
 ipcMain.handle("plugins:get", async () => probePluginRows());
 ipcMain.handle("plugins:setEnabled", async (_e, name, on) => {
@@ -2130,8 +2129,8 @@ app.whenReady().then(async () => {
   // The Plugins tab: one row per staged plugin, the CLI badge read off
   // exec.argv, the description from its skill, and — for the one whose
   // account is not connected — the unmet requirement with the button that
-  // fixes it. The badge counts the plugin something has actually been blocked
-  // on, and nothing else.
+  // fixes it. No count of what a plugin has blocked, anywhere: the audit log
+  // cannot say which plugin a refusal belonged to.
   await win.webContents.executeJavaScript(`window.__domoSelectTab && window.__domoSelectTab("plugins")`);
   await waitFor(win, `document.querySelectorAll(".plugin-row").length === 2`, "the Plugins tab");
   const plugins = await win.webContents.executeJavaScript(`(${() => {
@@ -2143,18 +2142,17 @@ app.whenReady().then(async () => {
       // Derived from exec.argv, never declared.
       cliBadges: rows.every((r) => r.querySelector(".plugin-name .badge")?.textContent.trim() === "CLI"),
       describes: (gog?.querySelector(".cap-sub")?.textContent ?? "").includes("Gmail and Calendar"),
-      // Needs setup, not a fourth status, with what it has cost alongside.
+      // Needs setup, and no claim about what it has blocked.
       saysNeedsSetup: (gog?.textContent ?? "").includes("Needs setup"),
-      saysBlockedTwice: (gog?.textContent ?? "").includes("Blocked 2 requests"),
+      claimsNoBlockCount: !/Blocked \d+ request/.test(document.querySelector("#view")?.innerText ?? ""),
       // The unmet requirement, named, with its action as a button.
       namesRequirement: req?.querySelector(".cap-name")?.textContent === "Account",
       offersTheFix: req?.querySelector("button.btn")?.textContent.trim() === "Connect Google",
       // The ready one is silent about everything it already has.
       readyIsQuiet: rows.some((r) => (r.textContent ?? "").includes("Ready")) &&
         document.querySelectorAll(".plugin-req").length === 1,
-      // One plugin has been blocked on, so the badge says 1.
-      badge: document.getElementById("pluginCount")?.textContent,
-      badgeShown: document.getElementById("pluginCount")?.hidden === false,
+      // The tab carries no badge: it counted the same misattribution.
+      noBadge: !document.querySelector('#seg button[data-tab="plugins"] .tabcount'),
       // Every switch is on, and it is a real control (the off switch).
       switchesOn: [...document.querySelectorAll(".plugin-switch input")].every((b) => b.checked),
       switchCount: document.querySelectorAll(".plugin-switch input").length,
@@ -2174,8 +2172,6 @@ app.whenReady().then(async () => {
     return {
       saysOff: (gog?.textContent ?? "").includes("Off"),
       noRequirements: !document.querySelector(".plugin-req"),
-      // Off is not counted: the badge clears with nobody marking anything done.
-      badgeCleared: document.getElementById("pluginCount")?.hidden === true,
     };
   }})()`);
 
@@ -2461,17 +2457,15 @@ app.whenReady().then(async () => {
     plugins.cliBadges &&
     plugins.describes &&
     plugins.saysNeedsSetup &&
-    plugins.saysBlockedTwice &&
+    plugins.claimsNoBlockCount &&
     plugins.namesRequirement &&
     plugins.offersTheFix &&
     plugins.readyIsQuiet &&
-    plugins.badge === "1" &&
-    plugins.badgeShown &&
+    plugins.noBadge &&
     plugins.switchesOn &&
     plugins.switchCount === 2 &&
     pluginOff.saysOff &&
     pluginOff.noRequirements &&
-    pluginOff.badgeCleared &&
     capabilities.fdaNoInlineDragTile &&
     settings.supportMarks &&
     settings.launchTitle &&

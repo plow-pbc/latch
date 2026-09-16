@@ -133,24 +133,6 @@ body {
   cursor: pointer;
 }
 .seg button.active { background: var(--card); color: var(--fg); box-shadow: var(--shadow); }
-/* The Capabilities tab's badge: rows needing a decision, not events. Amber,
-   because a block by this Mac is nobody refusing — the audit row's tone. */
-.tabcount {
-  /* A fixed 16px box, as wide as it is tall at minimum: one digit is a
-     circle, two or more stretch it into a pill. Centred on the label's cap
-     height, not sat on its baseline — an inline box with padding hangs
-     below the text otherwise. */
-  display: inline-flex; align-items: center; justify-content: center;
-  vertical-align: middle; position: relative; top: -1px;
-  height: 16px; min-width: 16px; padding: 0 5px; box-sizing: border-box;
-  margin-left: 6px;
-  font-size: 10px; font-weight: 700; line-height: 1;
-  border-radius: 999px;
-  background: var(--amber-fg); color: var(--card);
-  font-variant-numeric: tabular-nums;
-}
-.tabcount[hidden] { display: none; }
-
 .toolbar {
   display: flex;
   align-items: center;

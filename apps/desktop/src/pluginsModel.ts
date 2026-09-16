@@ -9,18 +9,16 @@
  * inventory. The full inventory lives in Settings, and whether a permission
  * is MET is that pane's answer, handed in — never re-derived here.
  *
- * `blockedCount` keeps the Capabilities badge's semantics exactly: it counts
- * only while a requirement is unmet AND something has actually hit it, and it
- * clears the moment the switch flips, with nobody marking anything done. It
- * is not a fourth status — a plugin that has been hit still needs the same
- * remedy; the count changes the urgency.
- *
- * The audit log is not re-folded here: `blocked` arrives already grouped by
- * `capabilitiesModel`'s `blockedGroups`, joined to plugins by
- * `pluginBlockCounts` below. One fold of the log, one place it lives.
+ * A row carries no count of what it has blocked, deliberately. The audit
+ * log's blocks name the PERMISSION they were refused for and nothing about
+ * which plugin wanted it, so adding a group's count to every plugin
+ * declaring that permission made one Contacts refusal read as two blocked
+ * requests across two plugins. An attribution the log cannot support is a
+ * false claim, and it bought the owner nothing: `unmet` already names the
+ * remedy, and the remedy does not change with the count.
  */
 import type { PluginManifest } from "@domo/device-core";
-import { PERMISSION_TITLES, type BlockedGroup, type RowStatus } from "./capabilitiesModel.js";
+import { PERMISSION_TITLES, type RowStatus } from "./capabilitiesModel.js";
 
 export type PluginStatus = "off" | "needs-setup" | "ready";
 
@@ -49,8 +47,6 @@ export interface PluginRow {
   description: string | null;
   status: PluginStatus;
   unmet: UnmetRequirement[];
-  /** 0 when nothing has hit an unmet requirement. */
-  blockedCount: number;
 }
 
 export interface PluginsInput {
@@ -67,8 +63,6 @@ export interface PluginsInput {
    *  Without this every `requires.paths` reads unmet forever and a
    *  path-declaring plugin is permanently "needs setup". */
   availablePaths: string[];
-  /** Per plugin name, how many requests its unmet requirements have blocked. */
-  blocked: Record<string, number>;
 }
 
 /** One row per plugin, in the order they were staged. */
@@ -92,47 +86,13 @@ export function pluginRows(input: PluginsInput): PluginRow[] {
       description: description ?? null,
       status,
       unmet: status === "off" ? [] : unmet,
-      blockedCount: status === "needs-setup" ? (input.blocked[manifest.name] ?? 0) : 0,
     };
   });
-}
-
-/**
- * The `blocked` input, from the audit log's own grouping: a group counts for
- * every plugin that requires the permission it names. Whether a plugin is
- * enabled is not this function's question — `pluginRows` zeroes the count for
- * any status but `needs-setup`. Automation groups key on
- * `automation:<bundle id>`, so the bare permission id is compared against the
- * part before the colon.
- */
-export function pluginBlockCounts(
-  groups: readonly BlockedGroup[],
-  plugins: readonly { manifest: PluginManifest }[],
-): Record<string, number> {
-  const counts: Record<string, number> = {};
-  for (const { manifest } of plugins) {
-    const required = new Set(manifest.requires.permissions);
-    for (const g of groups) {
-      if (required.has(g.key.split(":")[0]!)) counts[manifest.name] = (counts[manifest.name] ?? 0) + g.count;
-    }
-  }
-  return counts;
 }
 
 /** An id as the owner reads it: "google" → "Google", "one-password" → "One Password". */
 function titleCase(id: string): string {
   return id.split(/[-_]/).map((w) => w.charAt(0).toUpperCase() + w.slice(1)).join(" ");
-}
-
-/**
- * The tab's badge, with the Capabilities badge's semantics carried over
- * whole: a plugin counts while a requirement is unmet AND something has
- * actually hit it. `pluginRows` has already zeroed the count for every other
- * status, so this is the count of rows the owner is being told about — it
- * clears when the switch flips, with nobody marking anything done.
- */
-export function pluginsBadge(rows: readonly PluginRow[]): number {
-  return rows.filter((r) => r.blockedCount > 0).length;
 }
 
 /**
