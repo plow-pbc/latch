@@ -172,6 +172,10 @@ function privacyScreen() {
     ]),
   );
   return el("div", { class: "step-inner" }, [
+    el("div", { class: "waiting-status verified" }, [
+      icon("checkmark", { class: "verified-check", strokeWidth: "1.7" }),
+      el("span", { class: "status-text", text: "Verified. This Mac is linked." }),
+    ]),
     el("div", { class: "head-center" }, [
       el("h1", { text: "Stay in control of how your AI agents use your data" }),
       el("p", {
@@ -244,16 +248,14 @@ function startActivationCountdown(node, until) {
 
 function verifyScreen() {
   const activation = state.activation;
-  const verified = state.step === "verified";
-  const heading = [el("h1", { text: "Verify your phone to connect this Mac" })];
-  if (activation || !verified) {
-    heading.push(el("p", {
-      class: "subhead",
-      text: "Send the message below from the phone number you want to use with Plow.",
-    }));
-  }
   const parts = [
-    el("div", { class: "head-center" }, heading),
+    el("div", { class: "head-center" }, [
+      el("h1", { text: "Verify your phone to connect this Mac" }),
+      el("p", {
+        class: "subhead",
+        text: "Send the message below from the phone number you want to use with Plow.",
+      }),
+    ]),
   ];
 
   if (activation) {
@@ -276,61 +278,42 @@ function verifyScreen() {
         ]),
       ]),
     );
-  } else if (!verified) {
+  } else {
     parts.push(el("p", { class: "state-note", text: "Getting a code from Plow…" }));
   }
 
-  if (activation || verified) {
-    const status = el("div", { class: `waiting-status${verified ? " verified" : ""}` }, [
-      ...(verified
-        ? [icon("checkmark", { class: "verified-check", strokeWidth: "1.7" })]
-        : state.activationStale
-          ? []
-          : [el("span", { class: "waiting-spinner" })]),
+  if (activation) {
+    parts.push(el("div", { class: "waiting-status" }, [
+      ...(state.activationStale ? [] : [el("span", { class: "waiting-spinner" })]),
       el("span", {
         class: "status-text",
-        text: verified
-          ? "Verified. This Mac is linked."
-          : state.activationStale
-            ? "Still not signed in"
-            : "Waiting for your text…",
+        text: state.activationStale ? "Still not signed in" : "Waiting for your text…",
       }),
-    ]);
-    parts.push(status);
+    ]));
 
-    if (activation && !verified) {
-      const countdown = el("p", { class: "countdown", attrs: { "aria-live": "off" } });
-      if (!state.activationStale) startActivationCountdown(countdown, activation.pollUntil);
-      parts.push(countdown);
-    }
+    const countdown = el("p", { class: "countdown", attrs: { "aria-live": "off" } });
+    if (!state.activationStale) startActivationCountdown(countdown, activation.pollUntil);
+    parts.push(countdown);
 
-    if (state.activationStale && !verified) {
+    if (state.activationStale) {
       parts.push(el("div", { class: "inline-actions" }, [
         button("Try again", "link-button", () => update(() => window.domo.onboardingNewCode())),
       ]));
     }
 
-    if (activation) {
-      const activate = button(
-        "",
-        `verify-activate${verified ? " done" : ""}`,
-        verified
-          ? null
-          : async () => {
-              activate.disabled = true;
-              activate.classList.add("sending");
-              await update(() => window.domo.onboardingOpenMessages());
-            },
-      );
+    {
+      const activate = button("", "verify-activate", async () => {
+        activate.disabled = true;
+        activate.classList.add("sending");
+        await update(() => window.domo.onboardingOpenMessages());
+      });
       activate.append(
         icon("messages", { strokeWidth: "1.7" }),
         document.createTextNode("Open Messages to activate"),
       );
-      activate.disabled = verified;
-      activate.setAttribute("aria-disabled", String(activate.disabled));
 
       const actions = [activate];
-      if (!verified && !state.activationStale) {
+      if (!state.activationStale) {
         actions.push(el("p", { class: "alternate" }, [
           button("Still waiting? Send it again", "link-button", () =>
             update(() => window.domo.onboardingNewCode()),
@@ -602,9 +585,7 @@ function doneScreen() {
 function screenForStep() {
   if (state.step === "welcome") return welcomeScreen();
   if (state.step === "privacy") return privacyScreen();
-  if (state.step === "activate" || state.step === "waiting" || state.step === "verified") {
-    return verifyScreen();
-  }
+  if (state.step === "activate" || state.step === "waiting") return verifyScreen();
   if (state.step === "data") return dataScreen();
   if (state.step === "availability") return availabilityScreen();
   if (state.step === "connect") return connectScreen();
@@ -624,26 +605,16 @@ function footerForStep() {
       action: () => update(() => window.domo.onboardingAdvance()),
     };
   }
+  if (step === "activate" || step === "waiting") {
+    return { back: true, dot: 0, label: "Continue", arrow: true, disabled: true, action: null };
+  }
   if (step === "privacy") {
     return {
-      back: true,
-      dot: 0,
-      label: "Continue",
-      arrow: true,
-      action: () => update(() => window.domo.onboardingAdvance()),
-    };
-  }
-  if (step === "activate" || step === "waiting" || step === "verified") {
-    const verified = step === "verified";
-    return {
-      back: !verified,
+      back: false,
       dot: 1,
       label: "Continue",
       arrow: true,
-      disabled: !verified,
-      action: verified
-        ? () => update(() => window.domo.onboardingAdvance())
-        : null,
+      action: () => update(() => window.domo.onboardingAdvance()),
     };
   }
   if (step === "availability") {
@@ -730,7 +701,7 @@ function render() {
     });
     primaryLabel.textContent = config.label;
     primaryArrow.toggleAttribute("hidden", !config.arrow);
-    primaryButton.disabled = !!config.disabled || (!!state.busy && state.step !== "verified");
+    primaryButton.disabled = !!config.disabled || (!!state.busy && state.step !== "privacy");
     primaryAction = config.action;
   } else {
     primaryAction = null;
