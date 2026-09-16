@@ -61,7 +61,7 @@ import { AuditIndex, AuditQuery } from "./auditIndex.js";
 import { appBundleName, appBundlePath, decodeTileImage } from "./permissionFlow.js";
 import { FdaGrantFlow, GrantTarget } from "./fdaGrantFlow.js";
 import { AUTOMATION_APPS, automationApp, osascriptRunner, reconcile, requestAutomation } from "./automation.js";
-import { blockedGroups, capabilitiesView, CapabilitiesView, isGroup, paneFor, PERMISSION_TITLES } from "./capabilitiesModel.js";
+import { blockedGroups, capabilitiesView, CapabilitiesView, isGroup, paneFor, permissionStatuses, PERMISSION_TITLES } from "./capabilitiesModel.js";
 import { blockDestination, permissionUsers, pluginBlockCounts, pluginRows, pluginsBadge } from "./pluginsModel.js";
 import { launchAtLoginState, LoginItemApi, setLaunchAtLogin } from "./loginItem.js";
 import { KeepAwake } from "./keepAwake.js";
@@ -1568,7 +1568,11 @@ async function pluginsNow(): Promise<{ rows: ReturnType<typeof pluginRows>; badg
       enabled: !disabled.has(p.manifest.name),
       description: pluginDescription(p.manifest.name),
     })),
-    inventory: device ? await device.hostInventory() : null,
+    // Settings' own answer for every switch, not a second reading of the
+    // inventory: the pane folds the audit log and the folder memos into it,
+    // and a row that disagrees with Settings about a granted switch is the
+    // tab telling the owner to fix something already fixed.
+    permissionStatus: permissionStatuses(await capabilitiesNow()),
     // One connector today, and it is connected exactly when an account is.
     connectedAccounts: (connectors?.state().google.accounts.length ?? 0) > 0 ? ["google"] : [],
     availablePaths: await availablePaths(stagedPlugins.flatMap((p) => p.manifest.requires.paths)),

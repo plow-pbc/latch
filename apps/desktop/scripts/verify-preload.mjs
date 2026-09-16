@@ -18,7 +18,7 @@ import {
 } from "../dist/settingsActions.js";
 import { loadSettings, saveSettings } from "../dist/settings.js";
 import { launchAtLoginState, setLaunchAtLogin } from "../dist/loginItem.js";
-import { capabilitiesView } from "../dist/capabilitiesModel.js";
+import { capabilitiesView, permissionStatuses } from "../dist/capabilitiesModel.js";
 import { blockDestination, permissionUsers, pluginRows, pluginsBadge } from "../dist/pluginsModel.js";
 import { parseManifest } from "@domo/device-core";
 
@@ -116,7 +116,9 @@ const probeStaged = [
 const probePluginRows = () => {
   const rows = pluginRows({
     plugins: probeStaged.map((p) => ({ ...p, enabled: probePlugins[p.manifest.name] })),
-    inventory: probeInventory,
+    // The REAL status map, off the same view the Permissions section draws:
+    // wiki's calendars reads granted there, so it reads met here.
+    permissionStatus: permissionStatuses(probeCapabilities().view),
     connectedAccounts: [],
     availablePaths: [],
     blocked: { gog: 2 },

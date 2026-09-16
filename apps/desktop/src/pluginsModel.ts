@@ -6,8 +6,8 @@
  * A row answers one question per plugin: can it work right now, and if not,
  * what is the one thing the owner has to do? A requirement that is MET is
  * silent — the tab is a list of what is stopping the agent, not an
- * inventory. The full inventory lives in Settings, built from the same
- * `HostInventory` this file reads.
+ * inventory. The full inventory lives in Settings, and whether a permission
+ * is MET is that pane's answer, handed in — never re-derived here.
  *
  * `blockedCount` keeps the Capabilities badge's semantics exactly: it counts
  * only while a requirement is unmet AND something has actually hit it, and it
@@ -19,9 +19,8 @@
  * `capabilitiesModel`'s `blockedGroups`, joined to plugins by
  * `pluginBlockCounts` below. One fold of the log, one place it lives.
  */
-import type { HostInventory, HostPermission, PluginManifest } from "@domo/device-core";
-import { COVERED_BY_FULL_DISK_ACCESS } from "@domo/device-core";
-import { PERMISSION_TITLES, type BlockedGroup } from "./capabilitiesModel.js";
+import type { PluginManifest } from "@domo/device-core";
+import { PERMISSION_TITLES, type BlockedGroup, type RowStatus } from "./capabilitiesModel.js";
 
 export type PluginStatus = "off" | "needs-setup" | "ready";
 
@@ -56,9 +55,12 @@ export interface PluginRow {
 
 export interface PluginsInput {
   plugins: { manifest: PluginManifest; enabled: boolean; description?: string | null }[];
-  /** Null before this Mac has taken one — every permission then reads unmet,
-   *  which is the honest answer and the same one capabilitiesModel gives. */
-  inventory: HostInventory | null;
+  /** Every switch's status, as `capabilitiesModel.permissionStatuses` reads
+   *  it — folder memos, the audit fold and the Full Disk Access umbrella
+   *  already in. Not re-derived here: a second opinion about a status is how
+   *  a switch Settings already knows is granted reads "Needs setup" on this
+   *  tab. An id it has no answer for is unmet, which is the honest answer. */
+  permissionStatus: Record<string, RowStatus>;
   /** Connector ids the owner has connected, e.g. "google". */
   connectedAccounts: string[];
   /** The declared paths that exist, spelled as the manifest spells them.
@@ -77,7 +79,7 @@ export function pluginRows(input: PluginsInput): PluginRow[] {
     const { accounts: needAccounts, permissions, paths: needPaths } = manifest.requires;
     const unmet: UnmetRequirement[] = [
       ...needAccounts.filter((id) => !accounts.has(id)).map((id) => ({ kind: "account" as const, id, action: `Connect ${titleCase(id)}` })),
-      ...permissions.filter((id) => !permissionMet(input.inventory, id)).map((id) => ({ kind: "permission" as const, id, action: `Grant ${PERMISSION_TITLES[id] ?? titleCase(id)}` })),
+      ...permissions.filter((id) => input.permissionStatus[id] !== "granted").map((id) => ({ kind: "permission" as const, id, action: `Grant ${PERMISSION_TITLES[id] ?? titleCase(id)}` })),
       ...needPaths.filter((p) => !paths.has(p)).map((id) => ({ kind: "path" as const, id, action: `Create ${id}` })),
     ];
     // Off wins: a disabled plugin's unmet requirements are not the owner's
@@ -115,19 +117,6 @@ export function pluginBlockCounts(
     }
   }
   return counts;
-}
-
-/**
- * Whether macOS grants a permission today. Full Disk Access is an umbrella:
- * granted, it answers for everything it covers, exactly as the Capabilities
- * tab reads it. Anything this Mac cannot query reads unmet — the tab then
- * offers the owner the switch, which is harmless, where claiming "ready" on
- * a guess would strand an agent.
- */
-function permissionMet(inventory: HostInventory | null, id: string): boolean {
-  if (inventory === null) return false;
-  if (inventory.full_disk_access.granted && COVERED_BY_FULL_DISK_ACCESS.has(id as HostPermission)) return true;
-  return inventory.permissions.some((p) => p.permission === id && p.status === "granted");
 }
 
 /** An id as the owner reads it: "google" → "Google", "one-password" → "One Password". */

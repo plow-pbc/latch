@@ -8,8 +8,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { parseManifest, type PluginManifest } from "@domo/device-core";
-import { blockedGroups } from "../src/capabilitiesModel.js";
+import { parseManifest, type HostInventory, type PluginManifest } from "@domo/device-core";
+import { blockedGroups, capabilitiesView, permissionStatuses } from "../src/capabilitiesModel.js";
 import { blockDestination, permissionUsers, pluginBlockCounts, pluginRows, pluginsBadge, type PluginsInput } from "../src/pluginsModel.js";
 import { inventory } from "./hostFixtures.js";
 
@@ -23,6 +23,12 @@ const manifest = (requires: object, name = "wiki"): PluginManifest =>
 
 const none = {};
 
+/** Every switch's status exactly as Settings reads it — the canonical map,
+ *  from the real view model, so a test cannot assert a status the pane does
+ *  not actually give. */
+const statuses = (inv: HostInventory) =>
+  permissionStatuses(capabilitiesView({ inventory: inv, automation: [], events: [], dismissals: {}, bannerSeenAt: null }));
+
 /** The shorthand the table rows carry, as one `pluginRows` input. */
 function build(o: {
   requires: object;
@@ -30,10 +36,11 @@ function build(o: {
   hits?: number;
   connected?: string[];
   paths?: string[];
+  inventory?: HostInventory;
 }): PluginsInput {
   return {
     plugins: [{ manifest: manifest(o.requires), enabled: o.enabled, description: "Keeps a wiki." }],
-    inventory: inventory(),
+    permissionStatus: statuses(o.inventory ?? inventory()),
     connectedAccounts: o.connected ?? [],
     availablePaths: o.paths ?? [],
     blocked: o.hits === undefined ? {} : { wiki: o.hits },
@@ -60,10 +67,9 @@ describe("pluginRows status", () => {
 });
 
 it("names each unmet requirement with the action that fixes it, and stays silent about the met ones", () => {
-  const [row] = pluginRows({
-    ...build({ requires: { accounts: ["google"], permissions: ["contacts", "calendars"], paths: ["~/Plow/wiki"] }, enabled: true }),
-    connectedAccounts: [],
-  });
+  const [row] = pluginRows(
+    build({ requires: { accounts: ["google"], permissions: ["contacts", "calendars"], paths: ["~/Plow/wiki"] }, enabled: true }),
+  );
   expect(row!.unmet).toEqual([
     { kind: "account", id: "google", action: "Connect Google" },
     { kind: "permission", id: "contacts", action: "Grant Contacts" },
@@ -71,9 +77,31 @@ it("names each unmet requirement with the action that fixes it, and stays silent
   ]);
 });
 
-it("reads Full Disk Access as the umbrella it is", () => {
-  const input = build({ requires: { permissions: ["contacts"] }, enabled: true });
-  const [row] = pluginRows({ ...input, inventory: inventory({ full_disk_access: { granted: true, probes: [] } }) });
+it("reads Full Disk Access as the umbrella it is, because Settings does", () => {
+  const fda = inventory({ full_disk_access: { granted: true, probes: [] } });
+  const [row] = pluginRows(build({ requires: { permissions: ["contacts"] }, enabled: true, inventory: fda }));
+  expect(row!.status).toBe("ready");
+});
+
+/**
+ * The bug this wiring exists to make impossible: a folder Settings has
+ * already reconciled to granted — from its own memo, not from anything the
+ * live inventory can answer — must not read "Needs setup" here.
+ */
+it("takes a folder's status from Settings' memo, not from the raw inventory", () => {
+  const permissionStatus = permissionStatuses(capabilitiesView({
+    inventory: inventory(),
+    automation: [],
+    events: [],
+    dismissals: {},
+    bannerSeenAt: null,
+    folders: { files_documents: "granted" },
+    foldersAt: { files_documents: "2026-09-02T08:00:00Z" },
+  }));
+  const [row] = pluginRows({
+    ...build({ requires: { permissions: ["files_documents"] }, enabled: true }),
+    permissionStatus,
+  });
   expect(row!.status).toBe("ready");
 });
 
@@ -111,7 +139,7 @@ it("badges only the plugins something has actually hit, and clears when the swit
   // Nothing has hit it: still needs setup, still not on the badge.
   expect(pluginsBadge(pluginRows(build({ requires: { permissions: ["contacts"] }, enabled: true })))).toBe(0);
   // The umbrella grant IS the switch flipping — no one marked anything done.
-  const granted = { ...build({ requires: { permissions: ["contacts"] }, enabled: true, hits: 3 }), inventory: inventory({ full_disk_access: { granted: true, probes: [] } }) };
+  const granted = build({ requires: { permissions: ["contacts"] }, enabled: true, hits: 3, inventory: inventory({ full_disk_access: { granted: true, probes: [] } }) });
   expect(pluginsBadge(pluginRows(granted))).toBe(0);
 });
 
@@ -157,7 +185,7 @@ describe("the shipped plugins", () => {
   ])("reads gog as $status with connected accounts $connected", ({ connected, status, unmet }) => {
     const [row] = pluginRows({
       plugins: [{ manifest: shipped("gog"), enabled: true }],
-      inventory: inventory(),
+      permissionStatus: statuses(inventory()),
       connectedAccounts: connected,
       availablePaths: [],
       blocked: {},

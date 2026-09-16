@@ -497,6 +497,25 @@ export function capabilitiesView(input: CapabilitiesInput): CapabilitiesView {
   return { badge, banner: banner(sections, input.bannerSeenAt), sections };
 }
 
+/**
+ * Every switch's status, by its row key — the one place anything else asks
+ * whether a permission is met. Built from the rows above, so the folder
+ * memos, the audit fold and the dismissal cutoff are already in it; a
+ * caller that re-derived a status from the raw inventory would be a second
+ * opinion, and the two would disagree exactly where it matters.
+ *
+ * Full Disk Access, granted, answers for everything it covers — including
+ * the folder rows, which the view stops listing once it is on.
+ */
+export function permissionStatuses(view: CapabilitiesView): Record<string, RowStatus> {
+  const statuses: Record<string, RowStatus> = {};
+  for (const section of view.sections) for (const r of section.rows) statuses[r.key] = r.status;
+  if (statuses.full_disk_access === "granted") {
+    for (const id of COVERED_BY_FULL_DISK_ACCESS) statuses[id] = "granted";
+  }
+  return statuses;
+}
+
 /** The later of two timestamps, either possibly absent. */
 function later(a: string | null, b: string | null): string | null {
   if (a === null) return b;
