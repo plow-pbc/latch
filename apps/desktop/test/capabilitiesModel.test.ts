@@ -170,9 +170,12 @@ describe("capabilitiesView", () => {
     const statuses = permissionStatuses(view);
     expect(statuses.full_disk_access).toBe("denied");
     expect(statuses.contacts).toBe("not_asked");
-    // And the row says why, so "denied" beside a System Settings list that
-    // shows it granted is not a contradiction the owner has to resolve alone.
-    expect(rows.find((r) => r.key === "full_disk_access")!.detail).toContain("cannot inherit");
+    // And the row says what to DO, so "denied" beside a System Settings list
+    // showing it granted is not a contradiction the owner resolves alone —
+    // and it is the re-add, not the relaunch a fresh grant would ask for.
+    expect(rows.find((r) => r.key === "full_disk_access")!.hint).toContain("add it again");
+    const fresh = capabilitiesView(input()).sections.flatMap((s) => s.rows);
+    expect(fresh.find((r) => r.key === "full_disk_access")!.hint).toBe("Quit and reopen after granting.");
   });
 
   it("the banner counts rows that are off AND were hit; a switch nobody hit does not", () => {

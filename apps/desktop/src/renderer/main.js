@@ -2549,9 +2549,7 @@ async function permissionsPane() {
         ? [el("div", { class: "cap-sentence" }, [el("p", { class: "lbl", text: "What the agent was told" }), el("span", { text: sentence })])]
         : []),
       el("div", { class: "cap-actions" }, [
-        ...(r.key === "full_disk_access" && r.status !== "granted"
-          ? [el("span", { class: "badge b-amber" }, [el("span", { class: "dot" }), el("span", { text: "Quit and reopen after granting" })])]
-          : []),
+        ...(r.hint ? [el("span", { class: "badge b-amber" }, [el("span", { class: "dot" }), el("span", { text: r.hint })])] : []),
         el("div", { class: "spacer" }),
         inAudit,
         notNow,

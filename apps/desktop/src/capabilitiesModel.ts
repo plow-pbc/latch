@@ -198,6 +198,10 @@ export interface CapabilityRow {
   statusText: string;
   /** What the switch is for. Empty where the section's line says it all. */
   detail: string;
+  /** What to DO about this row being off, when the remedy is not just the
+   *  button — and null once it is on. Owned here because the same status can
+   *  have two different repairs, which a line in the renderer cannot know. */
+  hint: string | null;
   action: RowAction;
   actionLabel: string | null;
   count: number;
@@ -327,6 +331,7 @@ export function capabilitiesView(input: CapabilitiesInput): CapabilitiesView {
     status: RowStatus,
     detail: string,
     action: RowAction,
+    hint: string | null = null,
   ): CapabilityRow => {
     const g = groups.get(key);
     const off = status !== "granted";
@@ -336,6 +341,7 @@ export function capabilitiesView(input: CapabilitiesInput): CapabilitiesView {
       status,
       statusText: statusWords(status),
       detail,
+      hint: off ? hint : null,
       action: off ? action : "none",
       actionLabel: off ? actionLabel(action) : null,
       count: g?.count ?? 0,
@@ -357,15 +363,17 @@ export function capabilitiesView(input: CapabilitiesInput): CapabilitiesView {
       "full_disk_access",
       PERMISSION_TITLES.full_disk_access!,
       fda === null ? "unknown" : inherited ? "granted" : "denied",
-      // Granted-but-not-inherited reads "denied" deliberately, and says why:
-      // a plugin requires this switch directly, so the row's status IS a
-      // readiness answer, and a grant a child cannot use is not access. The
-      // repair is the same pane the denied row already opens — re-adding this
-      // app is what re-establishes attribution after a signature change.
+      "Needed for Messages, Mail, and Safari data. Covers Desktop, Documents, and Downloads if granted.",
+      "grant",
+      // The repair, which is NOT the same in the two off states and so cannot
+      // be one hardcoded line in the renderer: a fresh grant needs a relaunch,
+      // a grant a child cannot inherit needs the app removed and re-added.
+      // Granted-but-not-inherited reads "denied" deliberately — a plugin may
+      // require this switch directly, so the status is a readiness answer, and
+      // a grant a child cannot use is not access.
       fda === true && !inherited
         ? "Granted to this app, but a sandboxed run cannot inherit it — remove Plow Latch from the list and add it again."
-        : "Needed for Messages, Mail, and Safari data. Covers Desktop, Documents, and Downloads if granted.",
-      "grant",
+        : "Quit and reopen after granting.",
     ),
   );
   if (!inherited) {
