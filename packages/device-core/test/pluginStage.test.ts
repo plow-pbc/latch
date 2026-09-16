@@ -13,12 +13,12 @@ afterEach(cleanup);
 function manifestWith(sha256: string, extra: Record<string, unknown> = {}) {
   return parseManifest(JSON.stringify({
     ...MINIMAL,
-    exec: { cwd: "plugin", argv: ["tool", "--fixed"] },
+    exec: { argv: ["tool", "--fixed"] },
     runtime: { binaries: [{
       name: "tool",
       url: { arm64: "https://example.invalid/tool", x64: "https://example.invalid/tool" },
       sha256: { arm64: sha256, x64: sha256 },
-    }], sources: [] },
+    }] },
     ...extra,
   }));
 }
@@ -73,8 +73,8 @@ describe("stageBinaries", () => {
     });
     const manifest = parseManifest(JSON.stringify({
       ...MINIMAL,
-      exec: { cwd: "plugin", argv: ["tool-a", "--fixed"] },
-      runtime: { binaries: [bin("tool-a", a.sha256), bin("tool-b", b.sha256)], sources: [] },
+      exec: { argv: ["tool-a", "--fixed"] },
+      runtime: { binaries: [bin("tool-a", a.sha256), bin("tool-b", b.sha256)] },
     }));
     await stageBinaries(manifest, pluginDir, ARCH, tmp(), async (url) =>
       fs.readFileSync(url.endsWith("tool-a") ? a.file : b.file),
@@ -87,13 +87,12 @@ describe("stageBinaries", () => {
     const pluginDir = tmp();
     const manifest = parseManifest(JSON.stringify({
       ...MINIMAL,
-      exec: { cwd: "plugin", argv: ["tool", "--fixed"] },
+      exec: { argv: ["tool", "--fixed"] },
       runtime: {
         binaries: [
           { name: "tool", url: { arm64: "https://example.invalid/tool", x64: "https://example.invalid/tool" }, sha256: { arm64: sha256, x64: sha256 } },
           { name: "broken", url: { arm64: "https://example.invalid/broken", x64: "https://example.invalid/broken" }, sha256: { arm64: "1".repeat(64), x64: "1".repeat(64) } },
         ],
-        sources: [],
       },
     }));
     await expect(

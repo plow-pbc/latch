@@ -78,9 +78,8 @@ const GOG_MANIFEST = {
       url: { arm64: "https://example.invalid/gog-arm64.tar.gz", x64: "https://example.invalid/gog-x64.tar.gz" },
       sha256: { arm64: "0".repeat(64), x64: "0".repeat(64) },
     }],
-    sources: [],
   },
-  exec: { cwd: "plugin", argv: ["gog", "--no-input", "--wrap-untrusted", "--enable-commands=gmail,calendar"] },
+  exec: { argv: ["gog", "--no-input", "--wrap-untrusted", "--enable-commands=gmail,calendar"] },
   env: {}, argv: { read: [], write: [] },
 };
 
@@ -285,8 +284,8 @@ describe("a provider through the exec path", () => {
       root,
       {
         name: "impostor", version: "test", command: "plow-gog",
-        runtime: { binaries: [], sources: [] },
-        exec: { cwd: "plugin", argv: ["/bin/sh", "-c", "echo SHOULD_NOT_RUN"] },
+        runtime: { binaries: [] },
+        exec: { argv: ["/bin/sh", "-c", "echo SHOULD_NOT_RUN"] },
         env: {}, argv: { read: [], write: [] },
       },
       "#!/bin/sh\necho SHOULD_NOT_RUN\n",
@@ -338,7 +337,7 @@ describe("a provider through the exec path", () => {
     fakePlugin(otherRoot, {
       ...GOG_MANIFEST,
       name: "other", command: "other",
-      runtime: { binaries: [{ ...GOG_MANIFEST.runtime.binaries[0], name: "other" }], sources: [] },
+      runtime: { binaries: [{ ...GOG_MANIFEST.runtime.binaries[0], name: "other" }] },
     }, "#!/bin/sh\n");
     expect(device(okMinter(), loadPlugins([otherRoot])).skills.manifest().map((s) => s.name)).not.toContain(
       "google-workspace",
@@ -367,9 +366,8 @@ describe("a staged non-provider plugin through the exec path", () => {
         url: { arm64: "https://example.invalid/e-arm64.tar.gz", x64: "https://example.invalid/e-x64.tar.gz" },
         sha256: { arm64: "0".repeat(64), x64: "0".repeat(64) },
       }],
-      sources: [],
     },
-    exec: { cwd: "plugin", argv: ["echo-bin", "--quiet"] },
+    exec: { argv: ["echo-bin", "--quiet"] },
     env: {}, argv: { read: [["say"]], write: [] },
     skill: "skill.md",
   };
@@ -430,7 +428,7 @@ describe("a staged non-provider plugin through the exec path", () => {
       // as plow-gog's does — proof the entrypoint resolved against the
       // staged tree, not PATH, and ran with the manifest's fixed prefix.
       expect(out).toContain("ARGV=--quiet say hello");
-      // exec.cwd: "plugin" must resolve to the plugin's own staged
+      // The run must resolve to the plugin's own staged
       // directory, not wherever the parent process happens to be running
       // (cwd: undefined would have handed the child the executor's scratch
       // dir instead). `plugin.dir` is canonical by construction — loadPlugins
@@ -468,8 +466,8 @@ describe("a staged non-provider plugin through the exec path", () => {
   // the code back) is what proves the relative entry was left alone instead.
   const RELAY_MANIFEST = {
     name: "relay", version: "test", command: "relay",
-    runtime: { binaries: [], sources: [] },
-    exec: { cwd: "plugin", argv: ["echo", "RELAY"] },
+    runtime: { binaries: [] },
+    exec: { argv: ["echo", "RELAY"] },
     env: {}, argv: { read: [["say"]], write: [] },
   };
 
@@ -491,55 +489,138 @@ describe("a staged non-provider plugin through the exec path", () => {
     },
   );
 
-  // A manifest may declare exec.cwd as a source name rather than "plugin"
-  // (manifest.ts validates it against runtime.sources), but nothing on this
-  // Mac clones a source anywhere yet — there is no staged directory to
-  // resolve it to. Same standard as env: refused by name, never handed a
-  // guessed path.
-  it("refuses a source-rooted cwd this Mac cannot resolve, before spawning", async () => {
-    const root = tmp();
-    const dir = fakePlugin(
-      root,
-      {
-        name: "sourcey", version: "test", command: "sourcey",
-        runtime: {
-          binaries: [],
-          sources: [{ name: "repo", git: "https://example.invalid/repo.git", commit: "0".repeat(40) }],
-        },
-        exec: { cwd: "repo", argv: ["/bin/sh", "-c", "echo SHOULD_NOT_RUN"] },
-        env: {}, argv: { read: [["say"]], write: [] },
-      },
-      "#!/bin/sh\necho SHOULD_NOT_RUN\n",
-    );
-    fs.mkdirSync(path.join(dir, "runtime", "repo"), { recursive: true });
-    const d = device(null, loadPlugins([root]));
-    const r = jv(await run(d, ["sourcey", "say", "hi"]));
-    expect(r.get("error").str).toContain("sourcey needs a source-rooted cwd this Mac cannot resolve yet");
-    expectNeverSpawned(d);
-  });
+  /**
+   * Every way env resolution can fail ends the same way for the CALLING
+   * AGENT: one fixed sentence per cause, nothing spawned, and no trace of the
+   * underlying detail — the secret's name, a resolved local filesystem path.
+   * Only the secret row threads the sentinel into a real thrown message
+   * today; the mint row carries it against the day `mint`'s own refusal names
+   * the scope it could not reach, which is exactly the drift the fixed
+   * sentence exists to absorb. No secret store or mint scope is wired to a plugin's env
+   * yet, and handing a plugin a guessed credential would be a silent wrong
+   * answer where this Mac fails loud instead; a `fixed` source no longer
+   * belongs in that refusal at all (see the resolution test below).
+   *
+   * The third row is the one whose detail has somewhere to go. A plain
+   * `Error` out of env resolution is a bug in THIS Mac's own code rather than
+   * an unresolvable manifest, so it fails loud instead of refusing — but its
+   * message can name a resolved local path, and the MCP tool handler's
+   * generic catch would hand that straight to the remote agent. It is audited
+   * in full, which is the owner's only diagnostic for the bug, and rethrown
+   * as a fixed sentence. `audited` asserts BOTH halves: a "fix" that dropped
+   * the detail everywhere would satisfy the caller half on its own while
+   * leaving the owner nothing to debug from.
+   *
+   * Nothing throws a plain `Error` out of `resolveEnv` today — `substitute`,
+   * `secret` and `mint` all throw `PluginError` — so that bug is injected.
+   * `pluginEnvContext` reads `plugin.dir` inside the same `try`, which is
+   * where a path-resolution bug would actually live and what would actually
+   * put a local path in the message, so that is where it goes in.
+   */
+  const SENTINEL = "/Users/somebody/Library/Application-Support/Plow-Latch/staged/envy";
 
-  // No secret store, mint scope, or Plow API base is wired to a plugin's env
-  // yet, so a manifest declaring one is refused by name before anything
-  // spawns — handing a plugin a guessed or fake credential value would be a
-  // silent wrong answer, and this Mac fails loud instead.
-  it("refuses a manifest declaring env this Mac cannot resolve, before spawning", async () => {
+  it.each([
+    {
+      cause: "a secret env source this Mac cannot resolve",
+      env: { ENVY_TOKEN: { secret: SENTINEL } },
+      breakEnvResolution: false,
+      says: "envy needs env this Mac cannot resolve yet",
+      audited: null,
+    },
+    {
+      cause: "a mint env source this Mac cannot resolve",
+      env: { ENVY_TOKEN: { mint: SENTINEL } },
+      breakEnvResolution: false,
+      says: "envy needs env this Mac cannot resolve yet",
+      audited: null,
+    },
+    {
+      cause: "a genuine bug in this Mac's own env resolution",
+      env: { ENVY_TOKEN: { fixed: "${plugin_home}/wiki" } },
+      breakEnvResolution: true,
+      says: "envy failed to resolve its env",
+      audited: SENTINEL,
+    },
+  ])("answers $cause without leaking its detail, before spawning", async (row) => {
     const root = tmp();
     fakePlugin(
       root,
       {
         name: "envy", version: "test", command: "envy",
-        runtime: { binaries: [], sources: [] },
-        exec: { cwd: "plugin", argv: ["/bin/sh", "-c", "echo SHOULD_NOT_RUN"] },
-        env: { ENVY_TOKEN: { fixed: "x" } },
+        runtime: { binaries: [] },
+        exec: { argv: ["/bin/sh", "-c", "echo SHOULD_NOT_RUN"] },
+        env: row.env,
         argv: { read: [["say"]], write: [] },
       },
       "#!/bin/sh\necho SHOULD_NOT_RUN\n",
     );
-    const d = device(null, loadPlugins([root]));
-    const r = jv(await run(d, ["envy", "say", "hi"]));
-    expect(r.get("error").str).toContain("envy needs env this Mac cannot resolve yet");
+    const plugins = loadPlugins([root]);
+    const cwd = plugins[0]!.dir; // read before the sabotage below makes it throw
+    if (row.breakEnvResolution) {
+      Object.defineProperty(plugins[0]!, "dir", {
+        get(): string {
+          throw new Error(`ENOENT: no such file or directory, scandir '${SENTINEL}'`);
+        },
+      });
+    }
+    const d = device(null, plugins);
+    // A refusal comes back as a response and a bug rethrows, but both reach
+    // the agent through mcp-server's one tool handler, so both are the same
+    // leak surface — read as one string either way.
+    const seen = await run(d, ["envy", "say", "hi"], 8000, undefined, cwd).then(
+      (r) => JSON.stringify(r),
+      (e: unknown) => String(e instanceof Error ? e.message : e),
+    );
+    expect(seen).toContain(row.says);
+    for (const [form, text] of [
+      ["as written", SENTINEL],
+      ["percent-encoded", encodeURIComponent(SENTINEL)],
+      ["base64", Buffer.from(SENTINEL).toString("base64")],
+    ] as const) {
+      // Named, so a failure says which encoding carried it out.
+      expect(seen, `the sentinel leaked to the caller ${form}`).not.toContain(text);
+    }
     expectNeverSpawned(d);
+    // The owner's half: the audit log is where the real detail is SUPPOSED to
+    // be, and the only place.
+    const audit = d.audit.entries().map((e) => JSON.stringify(e)).join("\n");
+    if (row.audited === null) expect(audit).not.toContain(SENTINEL);
+    else expect(audit).toContain(row.audited);
   });
+
+  // The gap those refusals leave open: a `fixed` env source (wiki's
+  // WIKI_PATH among them) resolves for real and reaches the child's
+  // environment — and ONLY there. Proven without printing the value itself
+  // (providerExec's own token tests use the same shape): the script reports
+  // its length, never its bytes, so a leak into argv, the audit log, or the
+  // response would show up as the wrong length or the value itself, either
+  // of which fails the assertions below.
+  itSpawns(
+    "resolves a fixed env source into the child's environment, and nowhere else",
+    async () => {
+      const FIXED = "not-a-secret-fixed-value";
+      const root = tmp();
+      fakePlugin(
+        root,
+        {
+          name: "envy", version: "test", command: "envy",
+          runtime: { binaries: [] },
+          exec: { argv: ["/bin/sh", "-c", 'echo "LEN=${#ENVY_TOKEN}"'] },
+          env: { ENVY_TOKEN: { fixed: FIXED } },
+          argv: { read: [["say"]], write: [] },
+        },
+        "#!/bin/sh\n",
+      );
+      const plugins = loadPlugins([root]);
+      const d = device(null, plugins);
+      const response = await run(d, ["envy", "say", "hi"], 8000, undefined, plugins[0]!.dir);
+      const out = String(jv(response).get("output").str ?? "");
+      expect(out).toContain(`LEN=${FIXED.length}`);
+      expect(out).not.toContain(FIXED);
+      expect(JSON.stringify(response)).not.toContain(FIXED);
+      expect(fs.readFileSync(d.audit.file, "utf8")).not.toContain(FIXED);
+    },
+  );
 });
 
 /**
@@ -560,9 +641,8 @@ describe("a plugin's always-allow rule, narrowed by argv shape", () => {
         url: { arm64: "https://example.invalid/kb-arm64.tar.gz", x64: "https://example.invalid/kb-x64.tar.gz" },
         sha256: { arm64: "0".repeat(64), x64: "0".repeat(64) },
       }],
-      sources: [],
     },
-    exec: { cwd: "plugin", argv: ["kb-bin"] },
+    exec: { argv: ["kb-bin"] },
     env: {}, argv: { read: [["get"]], write: [["put"]] },
   };
 

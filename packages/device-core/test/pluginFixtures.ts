@@ -14,8 +14,8 @@ export function tempDirs(prefix: string): { tmp: () => string; cleanup: () => vo
 
 export const MINIMAL = {
   name: "fix", version: "1", command: "fix",
-  runtime: { binaries: [], sources: [] },
-  exec: { cwd: "plugin", argv: ["/bin/sh", "cli.sh"] },
+  runtime: { binaries: [] },
+  exec: { argv: ["/bin/sh", "cli.sh"] },
   env: { FIX_HOME: { fixed: "${plugin_home}" } },
   argv: { read: [["query"]], write: [["put"]] },
   skill: "skill.md",
